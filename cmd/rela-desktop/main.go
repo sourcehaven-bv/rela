@@ -336,10 +336,13 @@ func (d *Desktop) CloneProject(repoURL, baseDir string) map[string]any {
 	d.lastCloneDir = targetDir
 	d.mu.Unlock()
 
+	// repoName is the URL's last path segment, so a hostile URL can make it
+	// ".." — BaseDir makes Clone reject a targetDir that escapes baseDir.
 	err := git.Clone(git.CloneOptions{
-		URL:   repoURL,
-		Path:  targetDir,
-		Token: token,
+		URL:     repoURL,
+		Path:    targetDir,
+		BaseDir: baseDir,
+		Token:   token,
 	})
 	if err != nil {
 		return map[string]any{"error": fmt.Sprintf("Clone failed: %v", err)}

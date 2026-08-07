@@ -1531,6 +1531,8 @@ navigation:
 | `list`      | string | List name to navigate to (mutually exclusive with other types) |
 | `kanban`    | string | Kanban board name to navigate to                               |
 | `dashboard` | bool   | Link to the dashboard page                                     |
+| `graph`     | bool   | Link to the graph explorer                                     |
+| `document`  | string | Standalone document to open (see [Standalone documents](#standalone-documents)) |
 | `search`    | bool   | Link to the search page                                        |
 | `settings`  | bool   | Link to the settings page                                      |
 | `action`    | string | Action ID to trigger when clicked (renders as a sidebar button)|
@@ -2305,21 +2307,34 @@ No configuration is needed — the analysis page is always available in the side
 
 ## Documents
 
-Documents are read-only rendered markdown panels attached to an entity's detail
-view. A document's configuration declares which entity type it applies to and
-how to produce the markdown — either a shell `command:` that writes markdown to
-stdout, or a Lua `script:` that does the same via the embedded runtime.
-Captured markdown is converted to HTML via goldmark. Links using
-app-relative paths (e.g. `/form/<form_id>/<entity_id>`, `/entity/ticket/TKT-001`)
-get a `return_to` query param appended automatically on form links so the
-user lands back on the document after submitting the form. See "Links in
-rendered documents" below.
+Documents are read-only rendered markdown, produced either by a shell
+`command:` that writes markdown to stdout or by a Lua `script:` that does the
+same via the embedded runtime.
 
-The frontend's `DocumentsPanel.vue` shows every document whose `entity_type`
-matches the current entity. SSE live-reload re-renders a document when the
-entity changes (see the "SSE live-reload" caveat below).
+There are two kinds, distinguished by whether `entity_type:` is set:
 
-A document is also reachable on its own page at
+| Kind | `entity_type:` | URL | Where it appears |
+|------|----------------|-----|------------------|
+| **Entity-anchored** | set | `/document/<name>/<entity_id>` | Panel on the entity's detail view |
+| **Standalone** | omitted | `/document/<name>` | Sidebar, via a `document:` navigation entry |
+
+Use an entity-anchored document for content *about one entity* (a release's
+notes, a ticket's summary). Use a [standalone document](#standalone-documents)
+for content that is company-wide — a periodic sales report aggregated across
+many types — which would otherwise have to be anchored to an arbitrary entity
+that does not actually drive its content.
+
+Captured markdown is converted to HTML via goldmark. Links using app-relative
+paths (e.g. `/form/<form_id>/<entity_id>`, `/entity/ticket/TKT-001`) get a
+`return_to` query param appended automatically on form links so the user lands
+back on the document after submitting the form. See "Links in rendered
+documents" below.
+
+The frontend's `DocumentsPanel.vue` shows every entity-anchored document whose
+`entity_type` matches the current entity. SSE live-reload re-renders a document
+when any entity changes (see the "SSE live-reload" caveat below).
+
+An entity-anchored document is also reachable on its own page at
 `/document/<name>/<entity_id>` (used by `rela.url.document` links and direct
 deep-links). On that page the header shows Back and Refresh by default; add
 an `edit:` block to the doc config to also expose an Edit button that takes
@@ -2332,28 +2347,134 @@ returns to the document.
 documents:
   release_notes:
     title: "Release Notes"         # shown as the panel title
-    entity_type: release           # REQUIRED; renderer runs only for this type
+    entity_type: release           # renderer runs only for this type
     script: docs/release_notes.lua # OR command: — exactly one must be set
     timeout: 15                    # seconds; defaults to 30
     edit:                          # optional; renders an Edit button on the
-      form: edit_release           # standalone /document/... page
+      form: edit_release           # full-page /document/... view
       label: "Edit release"
   ticket_summary:
     title: "Ticket Summary"
     entity_type: ticket
     command: "my-renderer {id}"    # {id} / {id_lower} are substituted
     timeout: 30
+  sales_review:                    # standalone — no entity_type
+    title: "Verkooprapportage"
+    script: docs/sales_review.lua
+    permission: report:sales       # optional; see "Gating a document"
 ```
 
-Validation is strict: `entity_type:` must be set, and exactly one of
-`command:` or `script:` must be non-empty. Configs with both, or with
-neither, are rejected at startup. For `script:` docs, the referenced file
-is checked for existence at startup too, so typos fail loudly instead of at
-the first HTTP request. When an `edit:` block is present, both `form:` and
-`label:` are required and `form:` must reference a known form ID. Note that a
-bare `edit:` line with no subkeys is treated as "field absent" (no button, no
-validation error); to catch a stub block write `edit: {}` instead so the
-required-field checks fire.
+| Field         | Type   | Description                                                       |
+| ------------- | ------ | ----------------------------------------------------------------- |
+| `title`       | string | Display title                                                     |
+| `entity_type` | string | Entity type this document is about. Omit for a standalone document |
+| `command`     | string | Shell command producing markdown on stdout (exclusive with `script`) |
+| `script`      | string | Lua script under `scripts/` (exclusive with `command`)            |
+| `timeout`     | int    | Render timeout in seconds; defaults to 30                         |
+| `permission`  | string | Global named permission required to render (optional)             |
+| `edit`        | map    | Edit button config; entity-anchored documents only                |
+
+Validation is strict: exactly one of `command:` or `script:` must be non-empty.
+Configs with both, or with neither, are rejected at startup. For `script:`
+docs, the referenced file is checked for existence at startup too, so typos
+fail loudly instead of at the first HTTP request. When an `edit:` block is
+present, both `form:` and `label:` are required and `form:` must reference a
+known form ID. Note that a bare `edit:` line with no subkeys is treated as
+"field absent" (no button, no validation error); to catch a stub block write
+`edit: {}` instead so the required-field checks fire.
+
+`entity_type:` is optional — omitting it declares a standalone document rather
+than being an error. An `edit:` block on a standalone document is rejected,
+since there is no entity for the button to open.
+
+### Standalone documents
+
+A document with no `entity_type:` renders company-wide content — typically a
+report aggregated across many entity types — at `/document/<name>`, with no
+entity id in the URL. Reach it from the sidebar with a `document:` navigation
+entry:
+
+```yaml
+documents:
+  sales_review:
+    title: "Verkooprapportage"
+    script: docs/sales_review.lua
+
+navigation:
+  - label: "Dashboard"
+    dashboard: true
+  - label: "Verkooprapportage"
+    document: sales_review
+```
+
+Rules:
+
+- **Script-only.** A `command:` renderer's `{id}` / `{id_lower}` placeholders
+  refer to an entry entity, which a standalone document does not have, so
+  `command:` is rejected rather than substituted with an empty id.
+- **`rela.document.entry_id` is `nil`** (not `""`). Scripts should already
+  tolerate this — list-render mode has behaved the same way since it shipped.
+- **Only standalone documents can be navigation entries.** Pointing
+  `document:` at an entity-anchored document is a config error: the sidebar has
+  no entity id to put in the URL.
+- **No disk caching.** Command renders cache on the entry entity's hash, and
+  there is no entry entity here. Use `rela.cache.memoize` inside the script.
+- **SSE live-reload re-renders on any entity change**, since the document
+  declares no dependencies. Until `rela.document.depends_on` lands (TKT-E1FO1),
+  the Refresh button is the reliable way to update a stale report.
+
+### Gating a document
+
+`permission:` restricts a document to principals holding a global named
+permission granted through a role's `permissions:` list in `acl.yaml` — the
+same mechanism behind `history:read` and the `delegate-*` family:
+
+```yaml
+# data-entry.yaml
+documents:
+  sales_review:
+    script: docs/sales_review.lua
+    permission: report:sales
+
+# acl.yaml
+roles:
+  directie:
+    permissions: [report:sales]
+```
+
+A principal without the permission gets a **403** naming the document and the
+required permission, and the renderer never runs.
+
+The menu is **not** filtered: a `document:` navigation entry is shown to every
+principal, and `/api/v1/_config` serves the document config in full. That is
+deliberate and matches the rest of the app — see
+[ACL security](acl-security.md#sidebar-menu-structure-is-principal-independent).
+Your `data-entry.yaml` is an operator-authored file that lives in your repo, so
+document names, script paths, and permission names are not secrets; hiding them
+from the API would buy nothing and make the menu differ per user for no gain.
+A user may therefore see an entry that 403s, which is the accepted trade: an
+actionable error beats a silently divergent menu.
+
+What *is* protected is the entity data behind the document, by the read ACL —
+that is the boundary, and it does not depend on `permission:` at all.
+
+Note this differs from `commands:`, which **fails closed** under a configured
+`acl.yaml`: a command without `permission:` is denied. Documents fail open
+because their content is already bounded by the read ACL, while a command
+shells out and its side effects are not. If you are adding both to the same
+config, the identical-looking `permission:` key has opposite defaults.
+
+`permission:` is **optional, and its absence is not an oversight.** Document
+*content* is already bounded by the ACL: a document's Lua reads go through the
+same gated reader as every other read path, so a principal who cannot read the
+underlying entities renders an empty or partial report either way. Use
+`permission:` when the *composition* is sensitive even though the parts are
+individually readable, or simply to keep reports a user cannot act on out of
+their menu. It is not the confidentiality boundary, so requiring it everywhere
+would be ceremony.
+
+On an entity-anchored document `permission:` applies *in addition to* the
+per-entity read gate — it narrows access, and can never widen it.
 
 ### Shell command renderer (`command:`)
 
@@ -2385,7 +2506,21 @@ When invoked in document mode, the runtime exposes extra context:
 |----------------------------|---------|
 | `rela.mode`                | Always `"document"` in this context; `nil` elsewhere |
 | `rela.document.id`         | The key under `documents:` in `data-entry.yaml` |
-| `rela.document.entry_id`   | The ID of the entity being rendered |
+| `rela.document.entry_id`   | The ID of the entity being rendered; **`nil` for a standalone document** |
+
+A script shared between both document kinds should branch on `entry_id`
+rather than assume it:
+
+```lua
+if rela.document.entry_id then
+  -- entity-anchored render
+else
+  -- standalone render: aggregate across the graph
+end
+```
+
+`entry_id` is absent (Lua `nil`), never an empty string — `""` is truthy in
+Lua, so the guard above would take the wrong branch and then fail.
 
 Example — a document that composes a markdown doc from an entity plus its
 graph neighbours:
@@ -2584,6 +2719,10 @@ covered in the **User defaults** section earlier in this guide.
   only re-render when the **entry** entity changes, not the walked ones.
   The refresh button in the UI is the escape hatch. A follow-up ticket
   (TKT-E1FO1) tracks the fix for explicit dependency tracking.
+- **Standalone documents** have no entry entity, so neither the disk cache nor
+  entry-scoped reload applies. They are script-only (use `rela.cache.memoize`),
+  and the same TKT-E1FO1 limitation applies more broadly: a standalone report
+  is refreshed on demand.
 
 ### Security notes
 
@@ -2593,6 +2732,13 @@ covered in the **User defaults** section earlier in this guide.
 - The HTTP handler enforces `entity_type:` on every request: a document
   configured for `entity_type: release` cannot be rendered against a
   ticket, even if the caller bypasses the frontend filter.
+- The two URL shapes are not interchangeable: requesting an entity-anchored
+  document without an id, or a standalone document with one, is a 400. Neither
+  falls back to rendering against a guessed or empty entity.
+- Document scripts read through the same ACL-gated reader as the rest of the
+  API, so a standalone document renders only what its caller may already see —
+  it is not a way to bypass read gating. Add `permission:` when the aggregate
+  itself should be restricted (see "Gating a document").
 - Rendered markdown uses goldmark's `html.WithUnsafe` — the frontend
   (DOMPurify) is the sanitization boundary. If you add another consumer of
   the rendered HTML (PDF export, copy-HTML button, etc.), it must add its

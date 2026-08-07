@@ -125,10 +125,10 @@ linters:
         - G204
         - G304
         - G306
-        # Taint-analysis checks (gosec v2) surface hardening work that
-        # belongs in FEAT-ESLP (data-entry server hardening). The remaining
-        # ones are deferred so the v2 migration doesn't block on threat-model
-        # decisions; track the work under that feature instead.
+        # Remaining taint-analysis checks (gosec v2) surface hardening work
+        # that belongs in FEAT-ESLP (data-entry server hardening). Deferring
+        # these so the v2 migration doesn't block on threat-model decisions;
+        # track the work under that feature instead.
         #
         # G702 is ENABLED: every external-command site has been reviewed and
         # is either argv-array (no shell) or a shell snippet that comes from
@@ -137,6 +137,11 @@ linters:
         # comments naming their trust boundary — see internal/dataentry
         # commands.go and document.go. Keep it enabled: it is what catches a
         # new exec site that splices request data into a shell.
+        #
+        # G703 (path traversal) is ENABLED: its findings are resolved, and the
+        # remaining safe-by-design write sites carry narrow `#nosec G703`
+        # annotations naming their trust boundary. Do not re-add it here — a
+        # new G703 finding is a real path-containment question.
         #
         # G704 (SSRF) is ENABLED: its two findings were reviewed and are
         # operator-configured destinations (.rela/ai.yaml base_url; the
@@ -152,7 +157,6 @@ linters:
         # G706 (log injection) is ENABLED — it is enforced everywhere except
         # internal/dataentry, which is excluded by path below with a pinned
         # structural invariant. See that exclusion for the rationale.
-        - G703  # path traversal via taint analysis
       config:
         global:
           audit: true

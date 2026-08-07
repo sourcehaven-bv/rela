@@ -15,7 +15,9 @@ import DOMPurify from 'dompurify'
 
 const props = defineProps<{
   name: string
-  entityId: string
+  /** Absent for a standalone document (route `/document/:name`), which
+   *  renders company-wide content with no entry entity. */
+  entityId?: string
 }>()
 
 const route = useRoute()
@@ -60,7 +62,12 @@ const backTarget = useBackTarget()
 // data-entry.yaml). Absent = no button. Server-side validation guarantees
 // `form` references a real form and `label` is non-empty when the block
 // is present.
-const editConfig = computed(() => docConfig.value?.edit)
+//
+// Requires an entityId: the button navigates to a form for THIS document's
+// entity, and a standalone document has none. Config validation already
+// rejects `edit:` on a standalone document, so this guard is belt-and-braces
+// against a hand-edited or hot-reloaded config reaching the view.
+const editConfig = computed(() => (props.entityId ? docConfig.value?.edit : undefined))
 
 // editEntity navigates to the configured edit form for this entity. Unlike
 // EntityDetail.vue's edit button (which relies on router.back() because the
@@ -113,7 +120,9 @@ const handleContentClick = createDocumentClickHandler(router)
 
 // Handle entity change events via centralized SSE. Type-scoped feed (no
 // entity id, TKT-POT9GQ) → re-render the document on any entity change;
-// the re-render is cheap and server-gated.
+// the re-render is cheap and server-gated. This also covers standalone
+// documents, whose aggregate content can change with any entity — the feed
+// carries no id to filter on either way.
 function handleEntityChange() {
   loadDocument(true)
 }
@@ -142,7 +151,9 @@ onUnmounted(() => {
       <div class="header-left">
         <BackButton v-if="backTarget" :target="backTarget" />
       </div>
-      <h1>{{ docTitle }}: {{ entityId }}</h1>
+      <!-- The ": <id>" suffix is entity-anchored only; a standalone document
+           has no id, and an unconditional colon renders as "Title:". -->
+      <h1>{{ entityId ? `${docTitle}: ${entityId}` : docTitle }}</h1>
       <div class="header-right">
         <button v-if="editConfig" class="btn btn-secondary" @click="editEntity">
           {{ editConfig.label }}
@@ -171,8 +182,13 @@ onUnmounted(() => {
 
     <div v-else class="empty-state">
       <p>No document content available</p>
-      <p class="muted">
+      <!-- Standalone documents have no entity, so naming one would be a
+           misleading hint about what went wrong. -->
+      <p v-if="entityId" class="muted">
         Document "{{ name }}" may not be configured or the entity "{{ entityId }}" may not exist.
+      </p>
+      <p v-else class="muted">
+        Document "{{ name }}" may not be configured, or its renderer produced no output.
       </p>
     </div>
   </div>

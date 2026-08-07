@@ -216,6 +216,23 @@ func validateNavEntry(nav NavigationEntry, cfg *Config) []string {
 		}
 	}
 
+	if nav.Document != "" {
+		doc, ok := cfg.Documents[nav.Document]
+		switch {
+		case !ok:
+			errs = append(errs, fmt.Sprintf(
+				"navigation: references unknown document %q", nav.Document))
+		case !doc.IsStandalone():
+			// An entity-anchored document needs an entry id in its URL, and a
+			// sidebar entry has no entity to supply one. Rejecting at config
+			// load beats emitting a link that always 400s.
+			errs = append(errs, fmt.Sprintf(
+				"navigation: document %q has entity_type %q so it cannot be a navigation entry "+
+					"(only documents without entity_type can; they render at /document/%s)",
+				nav.Document, doc.EntityType, nav.Document))
+		}
+	}
+
 	if nav.IsGroup() {
 		// A group is a container, not a destination — there is nothing for a
 		// permission to gate, and a gated group would be ambiguous with the
@@ -1398,8 +1415,18 @@ func validateDocuments(cfg *Config) []string {
 	var errs []string
 
 	for docID, doc := range cfg.Documents {
-		if doc.EntityType == "" {
-			errs = append(errs, fmt.Sprintf("document %q: entity_type is required", docID))
+		// entity_type is NOT required: omitting it declares a standalone
+		// document (DocumentConfig.IsStandalone). What a standalone document
+		// cannot have is an edit: block — that button navigates to a form for
+		// the document's entity, and there is no entity. Checked here rather
+		// than left to render time so the author learns at config load.
+		//
+		// The nil-vs-{} caveat on Edit (see its godoc) does not matter here:
+		// both shapes mean "no button", and only a non-nil Edit is an error.
+		if doc.IsStandalone() && doc.Edit != nil {
+			errs = append(errs, fmt.Sprintf(
+				"document %q: edit is not supported without entity_type (a standalone document has no entity to edit)",
+				docID))
 		}
 
 		hasCmd := doc.Command != ""
