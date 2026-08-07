@@ -1104,6 +1104,19 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 			}
 		}
 
+		// Icon names are checked unconditionally — deliberately NOT inside the
+		// enum guards above, which only run when column_property resolves to an
+		// enum. A bad icon name is wrong regardless, and burying it behind an
+		// unrelated error would surface it only after the first one was fixed.
+		for i, col := range kanban.Columns {
+			errs = append(errs, validateIconName(col.Icon,
+				fmt.Sprintf("kanban %q: columns[%d]", kanbanID, i))...)
+		}
+		for i, lane := range kanban.Swimlanes {
+			errs = append(errs, validateIconName(lane.Icon,
+				fmt.Sprintf("kanban %q: swimlanes[%d]", kanbanID, i))...)
+		}
+
 		// Validate swimlane_property if specified
 		if kanban.SwimlaneProperty != "" { //nolint:nestif // nested guards each check a distinct optional field of the kanban config.
 			propDef, ok := entDef.Properties[kanban.SwimlaneProperty]
