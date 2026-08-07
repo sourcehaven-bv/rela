@@ -92,6 +92,12 @@ export interface FormField {
   visible_when?: string
   /** Condition expression; the field is required only when it evaluates true. */
   required_when?: string
+  /**
+   * Width on the 12-column form grid (TKT-5V8704). Absent means full width —
+   * one field per row, the default. Same semantics as a view section field's
+   * span, so an author learns the model once.
+   */
+  span?: number
 }
 
 export interface RelationProperty {
@@ -135,6 +141,8 @@ export interface FormFieldOrRelation {
   // Common props
   label?: string
   widget?: string
+  /** Width on the 12-column form grid; absent = full width. See FormField. */
+  span?: number
   // Wizard conditions (see FormField / FormRelation)
   visible_when?: string
   required_when?: string

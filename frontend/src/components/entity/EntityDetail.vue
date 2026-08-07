@@ -440,6 +440,7 @@ function mapFieldsToProperties(fields: ViewSectionField[] | undefined): Property
       value: field.values ?? [],
       propType: field.propType,
       propertyDef: def,
+      span: field.span,
       inaccessible: field.inaccessible ?? false,
       inaccessibleReason: field.property ? inaccessibleByName.value.get(field.property) : undefined,
       attachments: field.property ? entry.value?._attachments?.[field.property] : undefined,

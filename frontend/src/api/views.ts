@@ -12,6 +12,10 @@ export interface ViewSectionField {
   // True when the underlying entity is git-crypt encrypted; PropertyDisplay
   // renders a lock indicator instead of the (absent) value.
   inaccessible?: boolean
+  // Authored width on the 12-column property grid (TKT-5V8704), carried from
+  // the view/form config. Absent or 0 means full width — the default, and what
+  // every auto-generated view emits. See utils/fieldSpan.ts.
+  span?: number
 }
 
 // Entity data for view sections.

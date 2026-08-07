@@ -185,6 +185,33 @@ type FormField struct {
 	Default      string              `yaml:"default" json:"default,omitempty"`
 	Hidden       bool                `yaml:"hidden" json:"hidden,omitempty"`
 	Transitions  map[string][]string `yaml:"transitions,omitempty" json:"transitions,omitempty"`
+
+	// Span places the field on the 12-column layout grid; 0 means full width.
+	// Same semantics as ViewSectionField.Span — forms and view sections are
+	// separate structs but share one layout model, so an author doesn't have
+	// to learn two.
+	Span int `yaml:"span,omitempty" json:"span,omitempty"`
+}
+
+// SpanColumns is the width of the layout grid that FormField.Span and
+// ViewSectionField.Span address. 12 is the Filament/Bootstrap convention,
+// chosen because it divides cleanly into halves, thirds, quarters and sixths.
+const SpanColumns = 12
+
+// validateSpan reports a config error for an out-of-range span.
+//
+// Deliberately loud rather than clamped: this codebase validates data-entry.yaml
+// strictly at load (ValidateConfig even suggests corrections for typo'd keys),
+// so silently rendering `span: 13` as full width would leave an author with a
+// layout that ignores what they wrote and no diagnostic to grep for. The
+// frontend still defends independently — a bad value arriving over the wire
+// falls back to full width rather than emitting broken CSS.
+func validateSpan(span int, context string) []string {
+	if span == 0 || (span >= 1 && span <= SpanColumns) {
+		return nil
+	}
+	return []string{fmt.Sprintf("%s: span %d is out of range (must be 1-%d, or omitted for full width)",
+		context, span, SpanColumns)}
 }
 
 // FormRelation defines a relation field in a form. VisibleWhen is an optional
@@ -608,9 +635,16 @@ type ViewSection struct {
 }
 
 // ViewSectionField defines a field within a view section.
+//
+// Span places the field on the shared 12-column layout grid (see SpanColumns).
+// Zero — the default, and what every auto-generated view emits — means full
+// width, so a section with no spans authored reads as one scannable column.
+// Adjacency is therefore always DECLARED: two fields share a row because an
+// author said so, never because a viewport happened to fit them.
 type ViewSectionField struct {
 	Property string `yaml:"property" json:"property"`
 	Label    string `yaml:"label,omitempty" json:"label,omitempty"`
+	Span     int    `yaml:"span,omitempty" json:"span,omitempty"`
 }
 
 // CommandConfig defines an executable command triggered from the UI.

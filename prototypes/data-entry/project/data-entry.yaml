@@ -71,15 +71,23 @@ forms:
       - property: description
         widget: textarea
         help: "Detailed description of the issue"
+      # Title and description stay full width — a summary line and a textarea
+      # both want the room. The short fields below pair up on the 12-column
+      # grid: who reported / who owns it, then when / how long.
       - property: priority
+        span: 4
       - property: reporter
         label: "Reported by"
         placeholder: "your.name"
+        span: 4
       - property: assignee
         label: "Assign to"
         placeholder: "assignee.name"
+        span: 4
       - property: due_date
+        span: 6
       - property: estimated_hours
+        span: 6
       - property: status
         hidden: true
     relations:
@@ -430,12 +438,25 @@ views:
         source: entry
         display: properties
         fields:
+          # `span` places a field on the 12-column grid; omit it for full
+          # width (the default). Grouping is DECLARED here, not left to
+          # whatever the viewport happens to fit.
+          #
+          # Workflow state, then the two people, then the two numbers —
+          # three rows of related fields rather than six fields wrapping
+          # wherever they land.
           - property: status
+            span: 6
           - property: priority
+            span: 6
           - property: assignee
+            span: 6
           - property: reporter
+            span: 6
           - property: due_date
+            span: 6
           - property: estimated_hours
+            span: 6
       # Ticket body (markdown content)
       - source: entry
         display: content

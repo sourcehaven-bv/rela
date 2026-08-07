@@ -314,6 +314,7 @@ func validateFormField(
 			errs = append(errs, validateTransitions(formID, i, f, propDef, meta)...)
 		}
 	}
+	errs = append(errs, validateSpan(f.Span, fmt.Sprintf("form %q: %sfield[%d]", formID, ctx, i))...)
 	return errs
 }
 
@@ -904,6 +905,16 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 				errs = append(errs, fmt.Sprintf(
 					"view %q: section[%d] has invalid display mode %q (valid: %s)",
 					viewID, i, s.Display, joinMapKeys(validSectionDisplayModes)))
+			}
+
+			// Spans are checked unconditionally — deliberately NOT inside the
+			// `sourceType != ""` guard below, which only runs when the source
+			// collection resolves. A bad span is wrong regardless of whether
+			// the section's source is valid, and hiding it behind an unrelated
+			// error would surface it only after the first one was fixed.
+			for j, f := range s.Fields {
+				errs = append(errs, validateSpan(f.Span,
+					fmt.Sprintf("view %q: section[%d] field[%d]", viewID, i, j))...)
 			}
 
 			// Validate fields (if source type is known)

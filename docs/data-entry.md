@@ -337,6 +337,7 @@ Each entry in `fields:` configures one property input:
 | `default`     | string            | Default value for new entities                                 |
 | `hidden`      | bool              | Include in form data but hide from UI                          |
 | `widget`      | string            | Input widget type (see below)                                  |
+| `span`        | int (1-12)        | Width on the layout grid; omit for full width (see below)      |
 | `transitions` | map[string]list   | Allowed state transitions for enum fields (edit forms only)    |
 
 > **Labels are authored, never derived.** When `label` is omitted the raw
@@ -347,6 +348,58 @@ Each entry in `fields:` configures one property input:
 > label you want, in your project's own language. The same rule applies to list
 > column headers, relation field labels, view-section fields, and Lua flow
 > fields. `rela migrate` will never remove a `label:` you have written.
+
+### Field Layout (`span`)
+
+Fields lay out on a **12-column grid**. A field with no `span` takes the full
+row, so a form or view section reads as one scannable column by default — you
+have to author nothing to get a sensible layout.
+
+Set `span` to put related fields side by side:
+
+```yaml
+fields:
+  - property: title # full width (no span)
+  - property: description
+    widget: textarea # full width
+  - property: priority
+    span: 4 # ┐
+  - property: reporter
+    span: 4 # ├ three across one row (4+4+4 = 12)
+  - property: assignee
+    span: 4 # ┘
+  - property: due_date
+    span: 6 # ┐ two across the next row
+  - property: estimated_hours
+    span: 6 # ┘
+```
+
+`span` works the same way on form fields and on view-section fields, so the
+model is worth learning once.
+
+**Adjacency is something you declare.** Two fields share a row because you said
+they belong together — not because the browser window happened to be wide
+enough. That is the point: a layout that regroups itself at different window
+sizes is not a layout you can reason about.
+
+Row behaviour, all deliberate:
+
+- **A row that doesn't add up to 12 leaves the remainder empty.** Two `span: 5`
+  fields occupy 10 columns and the last 2 stay blank; fields do not stretch to
+  close the gap.
+- **A field that doesn't fit wraps to the next row**, leaving the remainder of
+  the previous one empty. `span: 8` followed by `span: 6` gives you two rows.
+- **On narrow screens every field goes full width.** A `span: 4` date input on a
+  phone would be unusable, so the grid collapses to one column below 640px.
+- **Long-form values ignore `span`** on entity detail pages: a paragraph
+  squeezed into a third of the row is unreadable whatever the config says.
+
+A `span` outside 1-12 is a **config error at startup**, reported with the
+offending field's position — rela will not silently round it or ignore it:
+
+```text
+form "create_ticket": field[3]: span 13 is out of range (must be 1-12, or omitted for full width)
+```
 
 ### Widget Types
 
