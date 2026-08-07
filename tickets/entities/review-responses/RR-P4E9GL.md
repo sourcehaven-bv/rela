@@ -1,0 +1,9 @@
+---
+id: RR-P4E9GL
+type: review-response
+title: Standalone renders have neither dedup nor a concurrency cap (availability)
+finding: 'The decision not to singleflight standalone renders is correct (a key that collapses two principals is a cross-principal leak, RR-2QSGLU), but it answered correctness and left availability unasked. There is no concurrency limit anywhere on the Lua render path — confirmed by grep across internal/dataentry, internal/script and internal/lua. The multipliers this feature adds: a standalone document aggregates across the whole graph by design; it sits on a sidebar link so every user opens it, not just users on one entity page; and DocumentView re-renders on every entity:changed SSE event, which is type-scoped with no id filter. Twenty users with the report open plus a bulk import means twenty concurrent full-graph aggregations per write. The entity-anchored path at least had singleflight collapsing the same-principal-same-entity storm; standalone has neither protection.'
+severity: significant
+reason: 'Real, but pre-existing in kind and larger than this ticket. The uncapped Lua render path predates standalone documents — an entity-anchored script: document with a wide traversal has the same exposure, and singleflight only ever collapsed identical (principal, entry, config) triples, not load in general. Standalone documents raise the likelihood, not the ceiling. The right fix is a bounded pool shared across all Lua renders, following the internal/cmdexec precedent this repo already documents (built once and shared, not per request), which is a change to the shared render path rather than to this feature. Filed as TKT-OGR566. Not blocking: it degrades availability under load, does not leak data, and the per-document timeout: bounds any single render.'
+status: deferred
+---

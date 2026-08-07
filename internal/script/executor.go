@@ -113,6 +113,32 @@ func (e *Engine) ExecuteDocument(
 		lua.WithDocumentMode(documentID, entryID), entryID, timeout)
 }
 
+// ExecuteStandaloneDocument loads and runs a Lua script in document-rendering
+// mode for a STANDALONE document — one declared without an `entity_type:`,
+// whose content is company-wide rather than about one entity (TKT-M1AX6P).
+// Output handling is identical to [Engine.ExecuteDocument]; the difference is
+// that rela.document.entry_id is Lua nil.
+//
+// documentID is the key under documents: in data-entry.yaml (exposed as
+// rela.document.id). timeout overrides the default lua timeout when non-zero.
+//
+// A separate method rather than ExecuteDocument with an empty entryID, for the
+// reason [lua.WithStandaloneDocumentMode] gives: the absent entry id should be
+// structural, not an empty string a caller might forget to special-case. The
+// empty `subject` passed through to error wrapping is honest — there is no
+// entity this render is about.
+func (e *Engine) ExecuteStandaloneDocument(
+	ctx context.Context,
+	path string,
+	deps lua.WriteDeps,
+	stdout io.Writer,
+	documentID string,
+	timeout time.Duration,
+) error {
+	return e.runDocumentScript(ctx, path, deps, stdout,
+		lua.WithStandaloneDocumentMode(documentID), "", timeout)
+}
+
 // wrapScriptError builds a *lua.ScriptError from a runtime failure.
 // Captured output is left for the caller to attach via AttachCapturedOutput
 // when they own the buffer (e.g. the document renderer).

@@ -2006,6 +2006,48 @@ func TestV1SidebarWithNavigation(t *testing.T) {
 	}
 }
 
+// TestV1SidebarDocumentEntry pins the href a `document:` navigation entry
+// produces (TKT-M1AX6P). The kind→href mapping lives server-side, so this is
+// where the /document/<name> contract with the SPA router is asserted.
+func TestV1SidebarDocumentEntry(t *testing.T) {
+	app := newTestAppV1(t)
+
+	app.Cfg().Documents = map[string]dataentryconfig.DocumentConfig{
+		"sales_review": {Title: "Verkooprapportage", Script: "docs/sales.lua"},
+	}
+	app.Cfg().Navigation = []dataentryconfig.NavigationEntry{
+		{Label: "Verkooprapportage", Document: "sales_review"},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_sidebar", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.views.handleV1Sidebar(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+
+	var resp v1.SidebarResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(resp.Navigation) != 1 || len(resp.Navigation[0].Items) != 1 {
+		t.Fatalf("expected 1 group with 1 item, got %+v", resp.Navigation)
+	}
+
+	item := resp.Navigation[0].Items[0]
+	if item.Href != "/document/sales_review" {
+		t.Errorf("expected href /document/sales_review, got %q", item.Href)
+	}
+	if item.Label != "Verkooprapportage" {
+		t.Errorf("expected label Verkooprapportage, got %q", item.Label)
+	}
+	// A document entry is a link, not an action button.
+	if item.Action != "" {
+		t.Errorf("expected no action, got %q", item.Action)
+	}
+}
+
 // TestV1SidebarAppliesListFilters verifies that sidebar counts for a list
 // respect the list's configured filters, not just the entity-type total.
 // Regression guard for the bug where "Open Tickets" (filter status=open)

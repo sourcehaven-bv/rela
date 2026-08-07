@@ -460,6 +460,12 @@ func (h *viewsHandler) navEntryToSidebarItem(
 	case entry.Settings:
 		item.Href = "/settings"
 		item.Icon = "settings"
+	case entry.Document != "":
+		// Standalone documents only — validateNavEntry rejects an
+		// entity-anchored document here, since this href has no entity id
+		// segment to fill.
+		item.Href = "/document/" + entry.Document
+		item.Icon = "document"
 	case entry.Action != "":
 		item.Action = entry.Action
 		// Href stays empty — frontend renders this as a button

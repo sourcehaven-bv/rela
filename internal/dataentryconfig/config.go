@@ -447,6 +447,11 @@ type NavigationEntry struct {
 	Search    bool   `yaml:"search,omitempty" json:"search,omitempty"`
 	Settings  bool   `yaml:"settings,omitempty" json:"settings,omitempty"`
 	Action    string `yaml:"action,omitempty" json:"action,omitempty"`
+	// Document names a STANDALONE document (one with no entity_type) under
+	// documents:. Entity-anchored documents cannot appear here — they need
+	// an entry id the sidebar has no way to supply. Enforced by
+	// validateNavEntry.
+	Document string `yaml:"document,omitempty" json:"document,omitempty"`
 
 	// Permission optionally hides this entry from the sidebar for principals
 	// who do not hold the named global ACL permission (TKT-TXDK8U). Empty —
@@ -646,12 +651,24 @@ type CommandScope struct {
 	Dashboard   bool     `yaml:"dashboard,omitempty"`
 }
 
-// DocumentConfig defines how to render a document from an entry entity.
+// DocumentConfig defines how to render a document, either from an entry
+// entity or standalone.
 //
 // Exactly one of Command or Script must be set. Command shells out to an
 // external process that produces markdown on stdout; Script executes a Lua
 // script from scripts/ under the project root and captures its stdout.
 // Validated via validateDocuments at config-load time.
+//
+// A document is one of two KINDS, discriminated by EntityType:
+//
+//   - Entity-anchored (EntityType set) — renders about one entity, served at
+//     /_documents/{name}/{entryID}, ACL-gated on that entity.
+//   - Standalone (EntityType empty) — renders company-wide content aggregated
+//     across the graph, served at /_documents/{name}, reachable from a
+//     `document:` navigation entry. rela.document.entry_id is nil.
+//
+// The two are mutually exclusive at every consumer: each endpoint shape
+// rejects the other kind rather than inventing a missing entry id.
 type DocumentConfig struct {
 	// Title is the display title for the document.
 	Title string `yaml:"title,omitempty" json:"title,omitempty"`
@@ -659,7 +676,27 @@ type DocumentConfig struct {
 	// Used by the frontend to filter which documents to show for a given entity,
 	// and by the HTTP handler to reject cross-type requests (a doc with
 	// entity_type=release cannot render against a ticket entity).
+	//
+	// EMPTY means the document is standalone (see the type doc). It is not a
+	// missing-required-field: standalone is a first-class kind.
 	EntityType string `yaml:"entity_type,omitempty" json:"entity_type,omitempty"`
+	// Permission optionally gates rendering on a global named permission from
+	// acl.yaml (the acl.PermHistoryRead / delegate-X family). Empty means any
+	// principal may render the document.
+	//
+	// This is an INTENT and UX gate, not the confidentiality boundary: a
+	// document's Lua reads already go through the ACL-gated
+	// lua.ReadDeps.VisibleReader, so a principal who may not read the
+	// underlying entities renders an empty or partial document either way.
+	// Permission exists for documents whose COMPOSITION is sensitive even
+	// though the parts are individually readable, and to keep useless entries
+	// out of a user's sidebar. Because it is not the boundary, it is optional
+	// — requiring it on every standalone document would be ceremony.
+	//
+	// Honored for both document kinds. On an entity-anchored document it
+	// applies IN ADDITION to the per-entity read gate (both must pass); it can
+	// never widen entity visibility.
+	Permission string `yaml:"permission,omitempty" json:"permission,omitempty"`
 	// Command is the external render command. Placeholders:
 	//   {id}       - entry ID
 	//   {id_lower} - lowercase entry ID
@@ -684,7 +721,15 @@ type DocumentConfig struct {
 	Edit *DocumentEdit `yaml:"edit,omitempty" json:"edit,omitempty"`
 }
 
-// DocumentEdit configures the Edit button on the standalone document view.
+// IsStandalone reports whether the document renders without an entry entity.
+// It is the single discriminator between the two document kinds; consumers
+// must branch on this rather than testing EntityType inline, so the meaning of
+// "empty entity_type" stays in one place.
+func (d DocumentConfig) IsStandalone() bool {
+	return d.EntityType == ""
+}
+
+// DocumentEdit configures the Edit button on the full-page document view.
 // Both fields are required when the parent block is present.
 type DocumentEdit struct {
 	// Form is the form ID to navigate to. Must reference an existing form.

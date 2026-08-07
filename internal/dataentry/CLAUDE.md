@@ -65,6 +65,40 @@ Rules for new write affordances in the Vue SPA (`frontend/`):
   plus a `perItemVerbs`/`perCollectionVerbs` update, and (b) the inline
   `v-if` on the component. No ESLint enforcement; code review catches drift.
 
+## Documents (`documents:` + `/_documents/...`)
+
+Two kinds, discriminated by `DocumentConfig.IsStandalone()` (empty
+`entity_type:`). Rules for new code:
+
+- **Never let one URL shape serve the other kind.** `/_documents/{name}/{id}`
+  is entity-anchored, `/_documents/{name}` is standalone; each 400s on the
+  other. Do not "helpfully" fall back to rendering with an empty or guessed
+  entry id — that produces a document about the wrong thing, silently.
+- **`permission:` is an intent gate, NOT the confidentiality boundary.**
+  Document content is bounded by `lua.ReadDeps.VisibleReader` like every other
+  read path, so a principal who cannot read the underlying entities renders an
+  empty report regardless. That is why documents are ungated by default
+  (`TestStandaloneDocument_UngatedByDefault` pins it) — don't "harden" it into
+  a required field. `permission:` exists for aggregates whose *composition* is
+  sensitive.
+- **Gate before the renderer anyway.** Content would be safe either way, but a
+  denied caller must not be able to trigger an expensive Lua aggregation.
+- **Deny with a 403 that NAMES the document and permission.** Do not disguise
+  it as the unknown-document 404: which documents exist is not a secret (they
+  are `data-entry.yaml` keys — see "The configuration is not a secret; the data
+  is" in the root CLAUDE.md), and an opaque denial is unsupportable at scale.
+  The uniform 404 is for **entity ids**, where existence genuinely is secret.
+- **Do NOT filter `/_config` per principal.** It serves the navigation tree
+  verbatim ("The configuration is not a secret; the data is"); an earlier draft
+  of TKT-M1AX6P filtered it and that was reverted — don't reintroduce it. The
+  *sidebar* is a different matter: TKT-TXDK8U added an opt-in `permission:`
+  filter on nav entries (see the section below). A document with no
+  `permission:` is still listed for everyone and 403s on render.
+- **A standalone render has no entry entity, so it has no `ContentHash`,
+  `Entities`, or disk cache**, and it is script-only. Don't reintroduce those
+  by keying a cache on something else; there is nothing to invalidate against
+  (TKT-E1FO1 is the real fix).
+
 ## Sidebar navigation filtering (`permission:` on a nav entry)
 
 `permitsNavEntry` (`views_handler.go`) omits entries the principal cannot use

@@ -75,6 +75,42 @@
   store handles into one, that is the bug: `luaUpdateEntity` and anything
   like it must keep the raw handle. Pinned by
   `TestScriptReads_UpdatePreservesHiddenProperties`.
+- **The configuration is not a secret; the data is.** `metamodel.yaml`,
+  `data-entry.yaml`, `acl.yaml`, `schedules.yaml`, `scripts/`, `actions/`,
+  `templates/` are operator-authored files that live in the repo — routinely a
+  public one, as in any open-source app. Their *contents are already
+  disclosed*. So list names, view/kanban/document/form/action names, entity and
+  property names, `permission:` values, `script:` paths, even `command:`
+  strings are **not** confidential, and code must not contort to conceal them:
+  no filtering config endpoints per-principal, no
+  indistinguishable-404-vs-403 on a *config key*, no narrowed wire types
+  justified as leak prevention, no tests asserting a config name is
+  unenumerable. The generalization of the `visible:` rule above (which already
+  says property *names* need no concealment because the metamodel is served
+  over the API) — it holds for every config surface, not just the metamodel.
+
+  What IS secret is **entity and relation content, and entity existence**. The
+  read-path gating in `docs/acl-security.md` and the row-level rule above are
+  about *rows*, not about the schema describing them. Keep the uniform 404 for
+  an **entity id**; a 403 naming the missing permission is the right answer for
+  a **config-declared capability**, and is more useful to the operator
+  debugging it.
+
+  This is settled, not open: `docs/acl-security.md` § "Sidebar menu structure
+  is principal-independent" already records the decision — the menu is served
+  identically to every principal and only *counts* are gated, because "the
+  metamodel is not a secret (it's served by `/api/v1/_schema`)" and a divergent
+  menu per principal complicates SPA caching "for no confidentiality gain".
+  Per-principal menu filtering is named there as a possible future tightening
+  **deliberately not done**. Don't reintroduce it as a security measure.
+
+  Two things this does NOT license. (1) *Secrets* are not config:
+  `.rela/secrets.yaml`, DSNs, and tokens stay off the wire — that is why
+  `RELA_DATABASE_URL` is env-only. (2) A gate may still exist for
+  non-confidentiality reasons — to keep an unusable entry out of a sidebar, or
+  to stop an unauthorized caller triggering an expensive render — just don't
+  justify it as concealment, because the next person will build on a secrecy
+  property that was never real. Write down which of the two you mean.
 - **Boundaries are enforced.** `just arch-lint` checks package import
   rules; run it before PR.
 

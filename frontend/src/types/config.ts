@@ -351,6 +351,8 @@ export interface NavigationEntry {
   search?: boolean
   settings?: boolean
   action?: string
+  /** Names a standalone document (one configured without an entity_type). */
+  document?: string
   /** Global named permission required for this entry to appear in the sidebar.
    *  The SPA does not act on it — the server already omits filtered entries
    *  from /_sidebar, which is what the menu is built from. Present here only
@@ -386,16 +388,26 @@ export interface SidebarData {
   logoUrl?: string | null
 }
 
-// Document config for external rendering via shell commands
+// Document config, mirroring the Go `dataentryconfig.DocumentConfig` that
+// /_config serves verbatim. Exactly one of `command` / `script` is set
+// (enforced server-side).
 export interface DocumentConfig {
   title?: string
-  entity_type?: string // Entity type this document applies to (for frontend filtering)
-  command: string
+  /** Entity type this document applies to (for frontend filtering).
+   *  ABSENT means a standalone document: it renders at /document/:name with
+   *  no entry entity, rather than being attached to one. */
+  entity_type?: string
+  command?: string
+  script?: string
   timeout?: number
+  /** Global named permission required to render this document, if any.
+   *  Present here because the config is not secret; the SPA does not act on
+   *  it — the render endpoint enforces it and returns 403. */
+  permission?: string
   edit?: DocumentEdit
 }
 
-// DocumentEdit configures the Edit button on the standalone document view.
+// DocumentEdit configures the Edit button on the full-page document view.
 // Both fields are required when the parent block is present (validated server-side).
 export interface DocumentEdit {
   form: string

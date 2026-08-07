@@ -597,6 +597,26 @@ So `permission:` on a nav entry buys tidiness, not protection. Never
 reach for it in place of a read grant, and never assume an entry's
 absence means a principal cannot get at what it points to.
 
+The same holds for the rest of the app's configuration.
+`/api/v1/_config` serves lists, views, kanbans, documents and
+navigation in full — including a document's `permission:` value. Your
+`data-entry.yaml` is an operator-authored file that lives in your
+repo, so its keys, script paths and permission names are already
+disclosed; withholding them from the API would conceal nothing. A
+capability a principal lacks is refused at the endpoint with a **403
+that names it**, not hidden behind a 404 pretending it does not
+exist — an operator reading that error can act on it.
+
+Entity ids are the opposite case, and the distinction is the whole
+point: there the uniform 404 is required, because whether an entity
+exists is a genuine secret.
+
+Note this section rejects per-principal menu hiding as a *security*
+measure. Hiding entries a user cannot act on is still wanted as a
+**UX** improvement and is tracked separately; if that lands, the
+filter is an affordance — the endpoints keep enforcing independently,
+and a hidden entry stays reachable by direct URL.
+
 ### Sidebar config-filter performance caveat
 
 A sidebar list with `filters:` evaluates them in-memory after the ACL

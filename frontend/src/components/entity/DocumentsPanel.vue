@@ -49,12 +49,20 @@ watch(sanitizedContent, async () => {
   }
 })
 
-// Find documents that apply to this entity type
+// Find documents that apply to this entity type.
+//
+// Standalone documents (no entity_type) are excluded by construction: their
+// entity_type is undefined, which never equals a real type. They render at
+// /document/:name from a navigation entry and have no entity to attach to.
+//
+// Documents gated by `permission:` ARE listed here, and render a 403 if the
+// user lacks it. That matches the sidebar, which is principal-independent by
+// design (docs/acl-security.md) — the config is not a secret, so we show what
+// is configured and let the server answer authoritatively.
 const availableDocuments = computed(() => {
   const docs: Array<{ name: string; config: DocumentConfig }> = []
   for (const [name, config] of schemaStore.documents) {
-    const targetType = config.entity_type
-    if (targetType === props.entityType) {
+    if (config.entity_type && config.entity_type === props.entityType) {
       docs.push({ name, config })
     }
   }
