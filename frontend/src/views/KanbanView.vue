@@ -640,18 +640,18 @@ function createNew() {
 .header-left {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-md);
 }
 
 .header-actions {
   display: flex;
-  gap: 12px;
+  gap: var(--space-md);
 }
 
 .btn {
   padding: 8px 16px;
-  border-radius: 6px;
-  font-size: 14px;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-base);
   font-weight: 500;
   cursor: pointer;
   border: none;
@@ -669,21 +669,21 @@ function createNew() {
 
 .filter-bar {
   display: flex;
-  gap: 16px;
+  gap: var(--space-lg);
   margin-bottom: 20px;
   padding: 12px 16px;
   background: var(--card-bg);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
 }
 
 .filter-group {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2xs);
 }
 
 .filter-group label {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 500;
   color: var(--muted-text);
   text-transform: uppercase;
@@ -692,8 +692,8 @@ function createNew() {
 .filter-group select {
   padding: 6px 10px;
   border: 1px solid var(--border-color);
-  border-radius: 6px;
-  font-size: 14px;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-base);
   min-width: 120px;
   background: var(--input-bg);
   color: var(--text-color);
@@ -703,16 +703,16 @@ function createNew() {
   padding: 10px 16px;
   margin-bottom: 16px;
   border: 1px solid #f59e0b;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: rgba(245, 158, 11, 0.12);
   color: var(--text-color);
-  font-size: 14px;
+  font-size: var(--font-size-base);
 }
 
 .loading-state {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-md);
   padding: 48px;
   color: var(--muted-text);
 }
@@ -722,7 +722,7 @@ function createNew() {
   height: 24px;
   border: 3px solid var(--border-color);
   border-top-color: var(--accent-color);
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   animation: spin 1s linear infinite;
 }
 
@@ -734,7 +734,7 @@ function createNew() {
 
 .kanban-board {
   display: flex;
-  gap: 16px;
+  gap: var(--space-lg);
   min-height: 500px;
   padding-bottom: 20px;
   /* Per CSS spec a non-visible overflow on one axis coerces the other from
@@ -752,7 +752,7 @@ function createNew() {
   min-width: 280px;
   max-width: 350px;
   background: var(--hover-bg);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   display: flex;
   flex-direction: column;
 }
@@ -766,7 +766,7 @@ function createNew() {
 }
 
 .column-title {
-  font-size: 14px;
+  font-size: var(--font-size-base);
   font-weight: 600;
   color: var(--text-color);
 }
@@ -775,8 +775,8 @@ function createNew() {
   background: var(--border-color);
   color: var(--muted-text);
   padding: 2px 8px;
-  border-radius: 12px;
-  font-size: 12px;
+  border-radius: var(--radius-xl);
+  font-size: var(--font-size-sm);
   font-weight: 500;
 }
 
@@ -785,14 +785,14 @@ function createNew() {
   padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-sm);
   overflow-y: auto;
 }
 
 .kanban-card {
   background: var(--card-bg);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   padding: 12px;
   cursor: grab;
   transition: all 0.15s;
@@ -809,13 +809,13 @@ function createNew() {
 
 .card-id {
   font-family: monospace;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--muted-text);
   margin-bottom: 4px;
 }
 
 .card-title {
-  font-size: 14px;
+  font-size: var(--font-size-base);
   font-weight: 500;
   color: var(--text-color);
   margin-bottom: 8px;
@@ -824,13 +824,13 @@ function createNew() {
 .card-fields {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2xs);
 }
 
 .card-field {
   display: flex;
-  gap: 4px;
-  font-size: 12px;
+  gap: var(--space-2xs);
+  font-size: var(--font-size-sm);
 }
 
 .field-label {
@@ -843,7 +843,7 @@ function createNew() {
 
 .empty-column {
   color: var(--muted-text);
-  font-size: 13px;
+  font-size: var(--font-size-dense);
   text-align: center;
   padding: 24px;
 }
@@ -855,7 +855,7 @@ function createNew() {
   gap: 1px;
   background: var(--border-color);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   /* Two-value form: scroll horizontally when the grid is wider than the
      viewport, while keeping the vertical `hidden` that clips cells to the
      rounded border. A bare `overflow-x: auto` would drop that clipping. */
@@ -881,7 +881,7 @@ function createNew() {
   padding: 12px 16px;
   text-align: center;
   font-weight: 600;
-  font-size: 14px;
+  font-size: var(--font-size-base);
 }
 
 .swimlane-row {
@@ -890,7 +890,7 @@ function createNew() {
 
 .swimlane-label {
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--font-size-dense);
   color: var(--text-color);
   writing-mode: horizontal-tb;
 }
@@ -900,7 +900,7 @@ function createNew() {
   padding: 8px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-sm);
   min-height: 100px;
   overflow-y: auto;
 }
@@ -911,7 +911,7 @@ function createNew() {
 
 .empty-cell {
   color: var(--muted-text);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   text-align: center;
   padding: 8px;
   opacity: 0.5;
@@ -919,7 +919,7 @@ function createNew() {
 
 @media (max-width: 768px) {
   .kanban-board {
-    gap: 12px;
+    gap: var(--space-md);
     min-height: 300px;
   }
 

@@ -1213,12 +1213,12 @@ watch(
 .inaccessible-banner {
   display: flex;
   align-items: flex-start;
-  gap: 12px;
+  gap: var(--space-md);
   margin-bottom: 24px;
   padding: 12px 16px;
   border: 1px solid var(--color-border, #ccc);
   border-left: 4px solid var(--color-warning, #d9970e);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--color-surface, #fafafa);
 }
 
@@ -1229,7 +1229,7 @@ watch(
 
 .inaccessible-banner p {
   margin: 4px 0 0;
-  font-size: 14px;
+  font-size: var(--font-size-base);
   line-height: 1.5;
 }
 
@@ -1247,19 +1247,19 @@ watch(
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
+  gap: var(--space-lg);
   margin-bottom: 24px;
 }
 
 .header-info {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-sm);
 }
 
 .entity-type-badge {
   display: inline-block;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -1275,7 +1275,7 @@ watch(
 
 .header-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-sm);
 }
 
 .header-actions kbd {
@@ -1324,7 +1324,7 @@ watch(
 }
 
 .mobile-overflow-btn {
-  font-size: 18px;
+  font-size: var(--font-size-lg);
   line-height: 1;
   padding: 6px 12px;
 }
@@ -1335,8 +1335,8 @@ watch(
   top: calc(100% + 4px);
   background: var(--card-bg);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
-  box-shadow: 0 4px 12px rgb(0 0 0 / 12%);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
   min-width: 160px;
   z-index: 50;
 }
@@ -1348,7 +1348,7 @@ watch(
   background: none;
   border: none;
   text-align: left;
-  font-size: 14px;
+  font-size: var(--font-size-base);
   color: var(--text-color);
   cursor: pointer;
 }
@@ -1362,12 +1362,12 @@ watch(
 .scope-nav {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-md);
   margin-bottom: 20px;
 }
 
 .scope-nav-progress {
-  font-size: 13px;
+  font-size: var(--font-size-dense);
   font-weight: 600;
   color: var(--text-color);
   font-family: monospace;
@@ -1375,7 +1375,7 @@ watch(
 
 .scope-nav-label {
   flex: 1;
-  font-size: 13px;
+  font-size: var(--font-size-dense);
   color: var(--muted-text);
 }
 
@@ -1383,7 +1383,7 @@ watch(
 .jump-bar {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-sm);
   padding: 12px 0;
   border-bottom: 1px solid var(--border-color);
   margin-bottom: 24px;
@@ -1393,8 +1393,8 @@ watch(
   padding: 6px 12px;
   background: var(--hover-bg);
   border: 1px solid var(--border-color);
-  border-radius: 4px;
-  font-size: 13px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-dense);
   color: var(--text-color);
   cursor: pointer;
   transition: all 0.15s;
@@ -1410,7 +1410,7 @@ watch(
 .sections {
   display: flex;
   flex-direction: column;
-  gap: 32px;
+  gap: var(--space-2xl);
 }
 
 .view-section {
@@ -1421,7 +1421,7 @@ watch(
    .section-heading` (RR-ZE29PY): the properties inline-edit section renders
    its heading inside that component, which can't reach these scoped styles. */
 .section-heading {
-  font-size: 18px;
+  font-size: var(--font-size-lg);
   font-weight: 600;
   margin: 0 0 16px;
   padding-bottom: 8px;
@@ -1430,7 +1430,7 @@ watch(
 }
 
 .cb-stats {
-  font-size: 14px;
+  font-size: var(--font-size-base);
   font-weight: 500;
   color: var(--muted-text);
   margin-left: 8px;
@@ -1441,7 +1441,7 @@ watch(
   text-align: center;
   color: var(--muted-text);
   background: var(--hover-bg);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   font-style: italic;
 }
 
@@ -1457,26 +1457,26 @@ watch(
   padding: 16px;
   background: var(--card-bg);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
 }
 
 .content-cards {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-lg);
 }
 
 .content-card {
   padding: 16px;
   background: var(--card-bg);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
 }
 
 .content-card .card-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-sm);
   margin-bottom: 12px;
   cursor: pointer;
 }
@@ -1489,14 +1489,14 @@ watch(
 .cards-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 16px;
+  gap: var(--space-lg);
 }
 
 .entity-card {
   padding: 16px;
   background: var(--card-bg);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   transition: border-color 0.15s;
 }
@@ -1508,7 +1508,7 @@ watch(
 .card-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-sm);
   margin-bottom: 12px;
 }
 
@@ -1528,7 +1528,7 @@ watch(
 }
 
 .entity-id {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-family: monospace;
   color: var(--muted-text);
 }
@@ -1540,7 +1540,7 @@ watch(
   font-size: 16px;
   cursor: pointer;
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .edit-btn:hover {
@@ -1551,14 +1551,14 @@ watch(
 .card-fields {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2xs);
 }
 
 .card-field {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
+  gap: var(--space-xs);
+  font-size: var(--font-size-dense);
 }
 
 .field-label {
@@ -1576,24 +1576,24 @@ watch(
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-sm);
 }
 
 .list-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-md);
   padding: 8px 12px;
   background: var(--card-bg);
   border: 1px solid var(--border-color);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .list-link {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-sm);
   cursor: pointer;
   flex: 1;
 }
@@ -1604,7 +1604,7 @@ watch(
 
 .list-fields {
   display: flex;
-  gap: 6px;
+  gap: var(--space-xs);
 }
 
 /* AutoSaveIndicator slot for inline-edit rows (TKT-IHC7C). Rendered inline
@@ -1630,7 +1630,7 @@ watch(
 }
 
 .group-heading {
-  font-size: 14px;
+  font-size: var(--font-size-base);
   font-weight: 600;
   color: var(--muted-text);
   margin: 0 0 8px;
@@ -1641,7 +1641,7 @@ watch(
 .data-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 14px;
+  font-size: var(--font-size-base);
 }
 
 .data-table th,
@@ -1688,8 +1688,8 @@ watch(
   color: var(--muted-text);
   cursor: pointer;
   padding: 4px 8px;
-  font-size: 14px;
-  border-radius: 4px;
+  font-size: var(--font-size-base);
+  border-radius: var(--radius-sm);
 }
 
 .icon-btn:hover {
@@ -1719,7 +1719,7 @@ watch(
      above. */
   .mobile-actions {
     display: flex;
-    gap: 8px;
+    gap: var(--space-sm);
     align-items: center;
   }
 
@@ -1732,7 +1732,7 @@ watch(
   }
 
   .header-info h1 {
-    font-size: 22px;
+    font-size: var(--font-size-xl);
   }
 
   .detail-section {

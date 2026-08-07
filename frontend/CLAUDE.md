@@ -92,3 +92,44 @@ Global styles in `App.vue` use CSS custom properties for theming:
 - Light/dark mode via `:root.dark` class
 - Shared utility classes: `.btn`, `.btn-primary`, `.modal`, `.page-header`
 - Components use scoped styles with BEM-like naming
+
+### Design tokens: two files, different contracts
+
+| File | Holds | Contract |
+|------|-------|----------|
+| `src/styles/tokens.css` | **Colour only** | Copied byte-identically into the Go binary (`internal/dataentry/apps_tokens.css`) and served to custom apps as `_rela.css`. `TestAppTokensCSSInSyncWithFrontend` fails on drift. |
+| `src/styles/scales.css` | Spacing, radius, typography, elevation | SPA-only, except the four `--font-size-*` steps noted below. |
+
+Both are imported from `main.ts`. Keep them separate: `tokens.css` documents
+itself as theme-tokens-only, so dimension scales do **not** belong there.
+
+**Use the scales instead of hardcoding.** Prefer `var(--space-sm)`,
+`var(--radius-md)`, `var(--font-size-base)`, `var(--shadow-sm)` over raw px.
+Before this existed the SPA had 10 distinct border-radius values and 17 font
+sizes chosen per-component, so nothing lined up between components.
+
+**`--font-size-{sm,base,lg,xl}` is a frozen cross-boundary contract.** The same
+four names and values are declared in Go, in `appTypographyCSS`
+(`internal/dataentry/apps_css.go`), and served to every custom app — TKT-PF4E6S
+froze them. Changing one side without the other makes an app's typography drift
+from the host UI it renders inside.
+
+`TestFrozenTypographyContractMatchesSPA` reads **both files off disk and
+compares them to each other**, so a revalue on either side fails. Don't
+"simplify" it into asserting Go against literals in the test file: that only
+proves Go is self-consistent and cannot see a change to `scales.css` at all.
+
+SPA-only sizes stay **outside** the ramp's naming. `--font-size-dense` (13px)
+is a role name, not a `-md` step, precisely so nobody reads it as part of the
+contract and copies it into a custom app — where it is undefined and would
+silently fall back to the inherited size. `TestAppCSSSource` pins the negative
+side (apps must not define it).
+
+**Token values are chosen to be value-preserving,** not to be the shortest
+ramp: `--radius-lg` is 8px because 8px is the card radius across the app, so
+adopting the token doesn't quietly flatten every card. When you add a token,
+prefer an existing value in the tree over a rounder number.
+
+Off-scale sizes (9/10/15/16/17/20/21/24/48px) are deliberately left as
+literals — each is rare and rounding them would change a size the author picked
+on purpose.

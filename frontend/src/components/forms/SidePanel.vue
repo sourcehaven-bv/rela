@@ -232,7 +232,7 @@ onMounted(() => loadSidePanel())
   height: 24px;
   border: 2px solid var(--border-color);
   border-top-color: var(--accent-color);
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   animation: spin 1s linear infinite;
 }
 
@@ -245,14 +245,14 @@ onMounted(() => loadSidePanel())
 .error-state {
   padding: 16px;
   color: var(--error-color, #ef4444);
-  font-size: 14px;
+  font-size: var(--font-size-base);
 }
 
 .panel-section {
   margin-bottom: 16px;
   background: var(--card-bg);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   overflow: hidden;
 }
 
@@ -265,7 +265,7 @@ onMounted(() => loadSidePanel())
   background: none;
   border: none;
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--font-size-base);
   font-weight: 600;
   color: var(--text-color);
   text-align: left;
@@ -286,7 +286,7 @@ onMounted(() => loadSidePanel())
 }
 
 .empty-state {
-  font-size: 13px;
+  font-size: var(--font-size-dense);
   color: var(--muted-text);
   font-style: italic;
 }
@@ -299,7 +299,7 @@ onMounted(() => loadSidePanel())
 .property-item {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-3xs);
   margin-bottom: 12px;
 }
 
@@ -308,7 +308,7 @@ onMounted(() => loadSidePanel())
 }
 
 .property-item dt {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   text-transform: uppercase;
   color: var(--muted-text);
@@ -317,7 +317,7 @@ onMounted(() => loadSidePanel())
 
 .property-item dd {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--font-size-base);
   color: var(--text-color);
 }
 
@@ -328,7 +328,7 @@ onMounted(() => loadSidePanel())
   padding: 0;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-sm);
 }
 
 .entity-list-item {
@@ -344,14 +344,14 @@ onMounted(() => loadSidePanel())
 .entity-cards {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-md);
 }
 
 .entity-card {
   padding: 12px;
   background: var(--hover-bg);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   transition: all 0.15s;
 }
@@ -366,13 +366,13 @@ onMounted(() => loadSidePanel())
 }
 
 .card-id {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-family: monospace;
   color: var(--muted-text);
 }
 
 .card-title {
-  font-size: 14px;
+  font-size: var(--font-size-base);
   font-weight: 500;
   color: var(--text-color);
   margin-bottom: 8px;
@@ -381,14 +381,14 @@ onMounted(() => loadSidePanel())
 .card-fields {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-sm);
 }
 
 .card-field {
   display: flex;
   align-items: center;
-  gap: 4px;
-  font-size: 12px;
+  gap: var(--space-2xs);
+  font-size: var(--font-size-sm);
 }
 
 .field-label {
@@ -411,9 +411,9 @@ onMounted(() => loadSidePanel())
   padding: 8px 12px;
   background: var(--hover-bg);
   border: 1px dashed var(--border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   color: var(--muted-text);
-  font-size: 13px;
+  font-size: var(--font-size-dense);
   cursor: pointer;
   transition: all 0.15s;
 }
@@ -427,7 +427,7 @@ onMounted(() => loadSidePanel())
 .btn-group {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-sm);
 }
 
 .btn-add-sm {

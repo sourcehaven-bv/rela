@@ -1,0 +1,98 @@
+/* rela dimension scales — spacing, radius, typography, elevation.
+ *
+ * The SIBLING of tokens.css, deliberately separate. tokens.css is the theme
+ * (color) contract that is copied byte-identically into the Go binary and
+ * served to custom apps as _rela.css; its doc comment restricts it to theme
+ * tokens only. These scales are layout, not theme, so they live here and are
+ * imported from main.ts alongside it.
+ *
+ * WHY THIS FILE EXISTS
+ * Before it, the SPA had color discipline and nothing else: 10 distinct
+ * border-radius values (2/3/4/6/8/10/12/16/20/999px), 17 distinct font sizes
+ * (9px through 48px), and spacing that mixed px with 0.25/0.3/0.4/0.6rem.
+ * Values were picked per-component, so nothing lined up between components.
+ *
+ * --font-size-* IS A FROZEN CROSS-BOUNDARY CONTRACT
+ * The four names --font-size-{sm,base,lg,xl} and their values are ALSO defined
+ * in Go, in appTypographyCSS (internal/dataentry/apps_css.go), and served to
+ * every custom app. TKT-PF4E6S froze them. The values below are deliberately
+ * identical to that block. If you change one, change both, or an app's
+ * typography silently drifts from the host UI it is embedded in.
+ * TestAppCSSSource pins the Go side.
+ *
+ * The -xs / -2xl / -3xl steps are SPA-only extensions: apps get the four
+ * contract sizes, the SPA gets the full ramp. Extending the ramp here is safe;
+ * renaming or revaluing the four contract steps is not.
+ */
+:root {
+  /* Spacing — 4px base. Covers the observed 4/6/8/12/16/24/32/48 cluster
+   * without the rem/px mixing. Use these for padding, margin, and gap. */
+  --space-3xs: 2px;
+  --space-2xs: 4px;
+  --space-xs: 6px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 24px;
+  --space-2xl: 32px;
+  --space-3xl: 48px;
+
+  /* Radius. Four steps, chosen to be VALUE-PRESERVING for the sites migrated
+   * in TKT-8VVBRI rather than to be the shortest possible ramp: 4px and 6px
+   * are the two most common values (13 and 11 uses on the migrated surfaces)
+   * and 8px is the card radius (10 uses), so collapsing 8 into 6 would have
+   * quietly flattened every card in the app. 2px and 3px DID round up to -sm
+   * (4 sites, +1/+2px on hairline chips) — the only deliberate visual change.
+   *
+   * --radius-pill is for fully-rounded chips. --radius-circle is a SHAPE, not
+   * a step on this ramp: it is a percentage, so it can never substitute for
+   * its px siblings — don't reach for it on a card. */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-pill: 999px;
+  --radius-circle: 50%;
+
+  /* Typography. The four contract steps (sm/base/lg/xl) are frozen; the rest
+   * extend the ramp for SPA-only chrome and page titles.
+   *
+   * --font-size-dense (13px) is deliberately NOT named as a ramp step. 13px is
+   * the second-most-used size in the SPA (86 declarations, behind only 14px's
+   * 110) and carries dense secondary text — table cells, meta rows, card
+   * bodies — but it is SPA-only and undefined in the _rela.css served to apps.
+   * Naming it "--font-size-md" would have wedged an SPA-only value inside the
+   * contract's 12->14 gap, where it reads like a contract member: an app author
+   * copying a var(--font-size-md) usage would get a silent fallback to the
+   * inherited size, with no error. A role name can't be mistaken for a step.
+   * TestAppCSSSource pins the negative side (apps must NOT define it). */
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-dense: 13px;
+  --font-size-base: 14px;
+  --font-size-lg: 18px;
+  --font-size-xl: 22px;
+  --font-size-2xl: 26px;
+  --font-size-3xl: 32px;
+
+  /* Elevation. Deliberately few: the UI is mostly flat, with borders rather
+   * than shadows carrying separation. -sm for resting cards, -md for hover /
+   * sticky bars, -lg for overlays (modals, popovers, dropdowns).
+   *
+   * Values are taken from shadows already in the tree rather than invented, so
+   * adopting a token is value-preserving: -sm is EntityList's list-content
+   * shadow, -lg is EntityDetail's overflow-menu shadow. */
+  --shadow-sm: 0 1px 3px rgb(0 0 0 / 10%);
+  --shadow-md: 0 2px 8px rgb(0 0 0 / 12%);
+  --shadow-lg: 0 4px 12px rgb(0 0 0 / 12%);
+}
+
+/* Dark mode needs heavier shadows: on a dark surface a 10%-alpha black shadow
+ * is effectively invisible. Same names, same `:root.dark` selector convention
+ * as tokens.css (App.vue toggles the class on <html>). Exercised by the two
+ * migrated call sites below, so this branch is not dead code. */
+:root.dark {
+  --shadow-sm: 0 1px 3px rgb(0 0 0 / 30%);
+  --shadow-md: 0 2px 8px rgb(0 0 0 / 40%);
+  --shadow-lg: 0 4px 12px rgb(0 0 0 / 45%);
+}

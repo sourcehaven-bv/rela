@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -125,6 +126,65 @@ func TestAppTokensCSSInSyncWithFrontend(t *testing.T) {
 	}
 }
 
+// frozenTypographySteps are the --font-size-* names frozen by TKT-PF4E6S as
+// part of the app-facing _rela.css contract. They are declared twice — in Go
+// (appTypographyCSS) and in the SPA (frontend/src/styles/scales.css) — and
+// must hold identical values on both sides.
+var frozenTypographySteps = []string{
+	"--font-size-sm",
+	"--font-size-base",
+	"--font-size-lg",
+	"--font-size-xl",
+}
+
+// cssDeclValue returns the value of a CSS custom-property declaration.
+// Whitespace-tolerant and anchored on the property name, so reformatting
+// (`--x:12px` vs `--x: 12px`) doesn't produce a spurious failure and a longer
+// name (`--prefix--font-size-sm`) doesn't match a shorter one.
+func cssDeclValue(css, name string) (string, bool) {
+	re := regexp.MustCompile(`(?:^|[;{\s])` + regexp.QuoteMeta(name) + `\s*:\s*([^;]+);`)
+	m := re.FindStringSubmatch(css)
+	if m == nil {
+		return "", false
+	}
+	return strings.TrimSpace(m[1]), true
+}
+
+// TestFrozenTypographyContractMatchesSPA pins the frozen --font-size-* steps
+// ACROSS the language boundary: Go's appTypographyCSS against the SPA's
+// frontend/src/styles/scales.css.
+//
+// This test exists because asserting Go output against literals in a Go test
+// file only proves Go is self-consistent — it cannot see a revalue on the CSS
+// side. Both files are read here and compared to EACH OTHER, so there is no
+// third copy of the values to drift out of step.
+//
+// A mismatch means the SPA and every embedded custom app render different type
+// sizes: an app links _rela.css and must match the host UI it sits inside.
+func TestFrozenTypographyContractMatchesSPA(t *testing.T) {
+	spa, err := os.ReadFile(filepath.Join("..", "..", "frontend", "src", "styles", "scales.css"))
+	if err != nil {
+		t.Fatalf("read frontend scales.css: %v", err)
+	}
+	goCSS := appCSSSource(nil)
+	for _, name := range frozenTypographySteps {
+		goVal, ok := cssDeclValue(goCSS, name)
+		if !ok {
+			t.Errorf("appTypographyCSS is missing frozen step %s", name)
+			continue
+		}
+		spaVal, ok := cssDeclValue(string(spa), name)
+		if !ok {
+			t.Errorf("frontend/src/styles/scales.css is missing frozen step %s", name)
+			continue
+		}
+		if goVal != spaVal {
+			t.Errorf("frozen typography contract %s drifted: Go=%q scales.css=%q\n"+
+				"TKT-PF4E6S froze these — change both sides or neither", name, goVal, spaVal)
+		}
+	}
+}
+
 func TestAppCSSSource(t *testing.T) {
 	// nil palette → fall back to the embedded default tokens. The embed
 	// carries a :root.dark block, so it must be present here.
@@ -137,6 +197,23 @@ func TestAppCSSSource(t *testing.T) {
 		if !strings.Contains(css, want) {
 			t.Errorf("appCSSSource(nil) missing %q", want)
 		}
+	}
+	// The four --font-size-* steps must be present by name. Their VALUES are
+	// pinned against the SPA's copy by TestFrozenTypographyContractMatchesSPA
+	// — deliberately not here, because asserting Go against literals in a Go
+	// test file only proves Go is self-consistent.
+	for _, name := range frozenTypographySteps {
+		if _, ok := cssDeclValue(css, name); !ok {
+			t.Errorf("appCSSSource(nil) missing frozen typography step %q", name)
+		}
+	}
+	// --font-size-dense is SPA-only (see frontend/src/styles/scales.css): 13px
+	// for dense text, deliberately NOT named as a ramp step so it can't be
+	// mistaken for part of the contract. Pinning the negative side stops a
+	// drive-by edit from silently widening the frozen contract.
+	if _, ok := cssDeclValue(css, "--font-size-dense"); ok {
+		t.Error("--font-size-dense is SPA-only; adding it to appTypographyCSS widens the " +
+			"frozen app contract — that needs a ticket, not a drive-by")
 	}
 	// Stays tokens + atomic controls — must NOT smuggle in component-shaped
 	// classes (the documented line).

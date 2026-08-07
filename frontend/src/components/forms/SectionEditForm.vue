@@ -284,7 +284,7 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-sm);
   margin: 0 0 16px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--border-color);
@@ -295,7 +295,7 @@ defineExpose({
    (font, margin, border via the row) — the Properties heading must match
    every sibling section heading on the page. */
 .section-edit-form-header .section-heading {
-  font-size: 18px;
+  font-size: var(--font-size-lg);
   font-weight: 600;
   margin: 0;
   color: var(--text-color);
@@ -311,12 +311,12 @@ defineExpose({
 .property-item {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2xs);
   min-width: 200px;
 }
 
 .property-item dt {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   text-transform: uppercase;
   color: var(--muted-text);
@@ -325,7 +325,7 @@ defineExpose({
 
 .property-item dd {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--font-size-base);
   color: var(--text-color);
   line-height: 1.5;
 }
