@@ -188,6 +188,60 @@ index.
   fail-closed. Don't assume one `acl.yaml` grants the same authority on
   every transport.
 
+## Unknown verified identities (`unmatched_principal`)
+
+When a **verified** JWT principal's subject resolves to no
+`user_entity_type` entity (the `principal_property` lookup found no
+match), rela must decide what an identity it trusts but does not *know*
+may do. The `unmatched_principal` key chooses:
+
+```yaml
+user_entity_type: persoon
+principal_property: sub
+unmatched_principal: reject   # anonymous (default) | reject | provision
+```
+
+- **`anonymous`** (default, and the behavior when the key is absent): the
+  request proceeds. The principal keeps any roles its verified assertion
+  grants (see `asserted_role_assignments`), but has no resolved entity, so
+  local roles, ancestry, and `principal_property` grants do not apply. This
+  is the SSO-newcomer case — a user provisioned in the IdP but not yet in
+  the graph can still act on their asserted roles.
+- **`reject`**: a graph-is-authority posture. The entity graph is the
+  authority on who may mutate, so an unknown verified identity's **writes**
+  are denied (403). Its **reads** are unaffected — it still sees what its
+  asserted roles allow. Blocking reads too is a larger, separate choice and
+  is not what this does.
+- **`provision`**: reserved for a future release (lazy creation of a stub
+  user entity). Accepted at load today, but currently behaves as
+  `anonymous` and logs a one-time warning, so the key's vocabulary is
+  stable.
+
+Load-bearing details:
+
+- **Scope is the verified-JWT data-entry write path only.** `reject`
+  keys on the fact that identity came from the fail-closed JWT gate AND
+  resolved to no entity. A `--principal-header` deployment, and the
+  CLI/MCP/scheduler entry points, are never subject to it — their
+  principals legitimately don't resolve to a `persoon` either, and a
+  blanket rule would wrongly deny them. It gates writes (CRUD, sync, and
+  Lua-action writes all funnel through the one write-authorization point);
+  reads and non-`/api/` paths are untouched.
+- **`reject` and `provision` require the lookup.** Both need
+  `user_entity_type` + `principal_property` set — otherwise "unmatched"
+  has no meaning (with the lookup disabled the resolver returns no-match
+  for *every* request, so every principal would look unmatched and be
+  rejected). Setting `reject` without them is a **load error**, not a
+  runtime foot-gun.
+- **The 403 discloses only that the identity is unmatched.** Like every
+  ACL denial on the data-entry write path, the body carries a
+  `rule_kind`/`reason` (here, `unmatched-principal` — "verified principal
+  resolves to no user entity") so the SPA's affordance contract stays
+  uniform. It does **not** reveal anything the caller doesn't already
+  know: an unmatched principal knows it has no entity. It does not
+  distinguish "no IdP account" from "no graph entity," and it exposes no
+  policy detail beyond the rule that fired.
+
 ## Roles from a verified assertion (`asserted_role_assignments`)
 
 `asserted_role_assignments` maps a `roles` claim from a signed identity
@@ -523,12 +577,25 @@ caches from leaking one principal's view to another:
 ### Sidebar menu structure is principal-independent
 
 The sidebar's *structure* (groups, labels, links) reveals metamodel
-shape, not data shape, and is served identically to every principal —
-only the *counts* are gated. Hiding whole menu entries per principal
-is a possible future tightening, deliberately not done here: the
-metamodel is not a secret (it's served by `/api/v1/_schema`), and a
-divergent menu per principal complicates SPA caching for no
-confidentiality gain today.
+shape, not data shape. It is served identically to every principal
+**except** for entries an operator explicitly marks with a
+`permission:` (see GUIDE-data-entry, "Hiding entries a user cannot act
+on"); the *counts* are gated per principal as always.
+
+That exception is a **UX convenience and is not a confidentiality
+control** — the distinction matters, because the reasoning that once
+argued against per-principal menus still holds:
+
+- The metamodel is not a secret; it is served by `/api/v1/_schema`.
+- Neither is the navigation config: `/api/v1/_config` serves the whole
+  tree, `permission:` values included, to every principal.
+- A hidden entry's target enforces exactly what it enforced before. Type
+  the URL and you reach it; a list still returns its ACL-scoped rows,
+  which for a principal permitted to read none of them is an empty list.
+
+So `permission:` on a nav entry buys tidiness, not protection. Never
+reach for it in place of a read grant, and never assume an entry's
+absence means a principal cannot get at what it points to.
 
 ### Sidebar config-filter performance caveat
 
@@ -610,6 +677,38 @@ the hidden property redacted from its body. The property-level conformance
 suite (`storetest.RunVisibleFieldSearchTests`) pins this across all
 backends.
 
+**Relation meta is redacted the same way.** A relation carries its own
+property map (`meta`), and a role's `relations:` grant can add a `visible:`
+block beside its write-side `fields:` block to redact those per-field:
+
+```yaml
+roles:
+  owner:
+    relations:
+      ticket:
+        - relation: employed-by
+          visible:
+            - field: salary          # only `salary` visible; every other
+                                      # meta key on the edge is closed-world hidden
+            - field: approval_note
+              when: "has_role('hr')"  # conditional, same predicate vocabulary
+```
+
+The block is keyed on the relation's **source** entity type (the `from`
+side owns the grant), and redaction runs on every browser-reachable relation
+read shape — the `/relations` map, the single-relation-type GET, and both the
+outgoing and incoming direction (an incoming edge resolves its grant against
+the true source, not the entity being viewed). It also runs on relation
+history (see below). The machine-to-machine sync channel (`/api/sync/`) is the
+one deliberate exception — it is a full-fidelity replication path outside the
+`visible:` contract; see "What still leaks (deferred)". The deny universe is the edge's actual
+meta keys, so a free-form key never declared in the metamodel is redacted
+too — a caller cannot smuggle a secret past the closed-world by using an
+undeclared property name. Relations have no display-title channel, so there
+is no `_title` fallback to worry about; the redaction is a straight
+value-omission from `meta`. A relation type with no `visible:` block emits
+its meta unchanged (permissive default).
+
 ## What still leaks (deferred)
 
 - **`/api/v1/_position` per-id semantics** — `_position` is gated on
@@ -626,6 +725,22 @@ backends.
   neither the entity-level read gate nor `visible:` redaction; they
   return full entity bodies. The MCP server is local-only (stdio), so
   this is an accepted gap at this stage.
+- **Machine-to-machine sync (`/api/sync/`)** — the fs↔pg replication
+  channel (FEAT-NJ9FEN) returns each record's **full canonical body**
+  (all entity properties and all relation meta), gated only by the
+  **row-level** read verdict — it does not apply `visible:` field/meta
+  redaction. This is by design and cannot be closed by simply redacting
+  it: the sync GET is a read that feeds a write (the client hashes the
+  body and pushes it back under `If-Match`), so a redacted read would
+  erase the hidden fields on the authoritative store — the "never redact
+  a read that feeds a write" data-destruction bug. A deployment that puts
+  `visible:`-redacted data behind sync must therefore treat sync-channel
+  access as equivalent to unredacted read: gate `/api/sync/` behind a
+  trusted-replica boundary (network/mTLS/a dedicated sync principal), not
+  ordinary reader access. This applies to both entity fields (pre-existing)
+  and relation meta (TKT-B1F5Q1). A per-field sync-redaction that stays
+  round-trip-safe (e.g. a merge that re-reads hidden fields on push) is the
+  documented follow-up, not built here.
 
 For threat-modelling purposes today: per-entity GET, write, include,
 list, sidebar, pagination, global-search, and the SSE event stream are
@@ -717,6 +832,36 @@ entirely (the snapshot already contains every field; the reveal just skips the
 strip). Grant it only to trusted audit/compliance roles — it exposes fields the
 live `visible:` policy would redact. A non-holder always sees the fail-closed
 redaction described above.
+
+**Relation history is governed by the current live world — deliberately unlike
+entity history.** Where *entity* history reconstructs the moment of capture and
+adds a `history:read-redacted` audit reveal, *relation* history takes a simpler,
+stricter stance: a relation's meta is redacted against **today's** `visible:`
+policy evaluated against the **live source entity**, and the version's frozen
+values are never served on their own terms.
+
+- **Source entity live** → redact per-field against the current policy and the
+  live source, exactly as a live relation GET. Reader-side access is live in both
+  directions: lose the role that granted a field today and you lose it in history
+  too; gain the role and you gain it. (This is the point — being removed from a
+  team takes effect on history, not just on live reads. A copy the reader already
+  made is a separate matter; rela simply stops *serving* it.)
+- **Source entity deleted** → **no meta is served, to anyone.** The thing that
+  grants access to a relation's properties is the live relation; once its source
+  is gone there is nothing to evaluate current ACL against (and the version row
+  stores the source *id*, not its *type*, so the type is unrecoverable — the
+  caller-supplied URL `{fromType}` is never trusted, or a principal could spoof a
+  type their own role has a favorable grant for). There is deliberately **no
+  `history:read-redacted` reveal** for a deleted relation: gone is gone. The
+  timeline/attribution metadata (version, op, who, when) still serves — only the
+  ACL-governed property values follow this rule.
+
+(The version rows themselves are *retained* — history is append-only, and a
+deleted source's relation-version rows persist until an operator runs the audited
+`relation-history-purge`. "Not served" is an access guarantee, not an erasure
+one; erasure is the separate operator tool. Relation restore reads the raw frozen
+meta, never the redacted view — a redacted read-modify-write would erase the
+caller's hidden meta on save.)
 
 ## Command execution gating (`command:*`)
 
@@ -831,11 +976,13 @@ denied `to` could enumerate `from`'s outgoing relation histories and learn about
 the hidden `to` endpoint. A deleted relation (endpoints gone) uses the same global
 `history:read`; a non-holder gets the same 404 as a nonexistent relation.
 
-Note that relations have **no field-level (`visible:`) redaction** anywhere today
-— a live relation GET returns its properties in full — so relation history
-exposes exactly what a live relation read exposes, no more. A relation
-field-redaction path is a separate follow-up; the dual-endpoint gate is what
-bounds relation-history visibility today.
+Relations DO support field-level (`visible:`) redaction (TKT-B1F5Q1) — on the
+live relation GET and in history. Relation history exposes exactly what a live
+relation read exposes, no more, and its history redaction is governed by the
+**current live world** against the **live source** (a deleted source serves no
+meta at all). See the property-level-redaction section above; the dual-endpoint
+gate bounds *which relations' histories* are reachable, and the live-world rule
+bounds *which meta fields* within a reachable one.
 
 ## Where to read next
 

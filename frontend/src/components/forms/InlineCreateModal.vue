@@ -43,24 +43,27 @@ const fields = computed(() => {
 })
 
 // Reset form when modal opens
-watch(() => props.show, (show) => {
-  if (show) {
-    error.value = null
-    formData.value = {}
-    idControls.reset()
+watch(
+  () => props.show,
+  (show) => {
+    if (show) {
+      error.value = null
+      formData.value = {}
+      idControls.reset()
 
-    // Initialize with defaults
-    for (const field of fields.value) {
-      if (field.def.default) {
-        formData.value[field.name] = field.def.default
-      } else if (field.def.type === 'boolean') {
-        formData.value[field.name] = false
-      } else {
-        formData.value[field.name] = ''
+      // Initialize with defaults
+      for (const field of fields.value) {
+        if (field.def.default) {
+          formData.value[field.name] = field.def.default
+        } else if (field.def.type === 'boolean') {
+          formData.value[field.name] = false
+        } else {
+          formData.value[field.name] = ''
+        }
       }
     }
   }
-})
+)
 
 // Get enum values for a property
 function getEnumValues(def: PropertyDef): string[] {
@@ -91,13 +94,6 @@ function isBoolean(def: PropertyDef): boolean {
 
 function isTextarea(def: PropertyDef): boolean {
   return def.format === 'long' || def.format === 'multiline'
-}
-
-// Format label
-function formatLabel(name: string): string {
-  return name
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
 // Submit
@@ -157,12 +153,7 @@ function handleClose() {
                 ID
                 <span class="required">*</span>
               </label>
-              <input
-                v-model="manualId"
-                type="text"
-                required
-                placeholder="Unique ID..."
-              />
+              <input v-model="manualId" type="text" required placeholder="Unique ID..." />
             </div>
 
             <!-- Prefix picker (multi-prefix types) -->
@@ -179,7 +170,7 @@ function handleClose() {
             <!-- Dynamic fields from entity type -->
             <div v-for="field in fields" :key="field.name" class="form-field">
               <label>
-                {{ formatLabel(field.name) }}
+                {{ field.name }}
                 <span v-if="field.def.required" class="required">*</span>
               </label>
 
@@ -191,7 +182,7 @@ function handleClose() {
                     v-model="formData[field.name]"
                     type="checkbox"
                   />
-                  <label :for="`inline-${field.name}`">{{ formatLabel(field.name) }}</label>
+                  <label :for="`inline-${field.name}`">{{ field.name }}</label>
                 </div>
               </template>
 
@@ -232,7 +223,12 @@ function handleClose() {
           </div>
 
           <footer class="modal-footer">
-            <button type="button" class="btn btn-secondary" :disabled="loading" @click="handleClose">
+            <button
+              type="button"
+              class="btn btn-secondary"
+              :disabled="loading"
+              @click="handleClose"
+            >
               Cancel
             </button>
             <button type="submit" class="btn btn-primary" :disabled="loading">
@@ -323,9 +319,9 @@ function handleClose() {
   color: var(--text-color);
 }
 
-.form-field input[type="text"],
-.form-field input[type="number"],
-.form-field input[type="date"],
+.form-field input[type='text'],
+.form-field input[type='number'],
+.form-field input[type='date'],
 .form-field textarea,
 .form-field select {
   padding: 10px 12px;
@@ -355,7 +351,7 @@ function handleClose() {
   gap: 8px;
 }
 
-.checkbox-row input[type="checkbox"] {
+.checkbox-row input[type='checkbox'] {
   width: 18px;
   height: 18px;
 }

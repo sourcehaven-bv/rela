@@ -12,6 +12,7 @@ import './styles/back-button.css'
 import './styles/mobile-bars.css'
 import './styles/text-utilities.css'
 import './styles/markdown-content.css'
+import './styles/view-info.css'
 
 const app = createApp(App)
 

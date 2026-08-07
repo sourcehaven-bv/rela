@@ -137,7 +137,19 @@ func (a *App) NewRouter() http.Handler {
 	// principal is still the unstamped default at the time
 	// ForPrincipal is called.
 	if d, ok := a.acl.(*acl.Declarative); ok && d != nil {
-		handler = attachACLRequest(handler, d)
+		// jwtVerified tells attachACLRequest that identity is a verified-JWT
+		// assertion (the gate is installed), so an unmatched principal can be
+		// distinguished from a spoofable-header one — the fact the
+		// `unmatched_principal: reject` gate keys on. Wiring state, not a
+		// per-principal marker (a JWT and a header principal are identical on
+		// the Principal).
+		//
+		// This snapshots a.jwtGate at NewRouter time. SetJWTGate MUST run before
+		// NewRouter (it does in production wiring and in every test) — otherwise
+		// this captures nil and `unmatched_principal: reject` silently never
+		// fires. If a future refactor reorders these, that invariant breaks
+		// quietly; keep SetJWTGate ahead of NewRouter.
+		handler = attachACLRequest(handler, d, a.jwtGate != nil)
 	}
 	// The JWT gate wraps BETWEEN attachACLRequest and stampAuditPrincipal, so at
 	// request time it runs after the stamper and before ACL. This ordering is
@@ -198,7 +210,7 @@ func isAPIPath(p string) bool {
 // acl.WithRequest). The middleware is at the outer edge of the
 // production chain so this guard rarely fires in production, but it
 // makes the test composition story safer.
-func attachACLRequest(next http.Handler, d *acl.Declarative) http.Handler {
+func attachACLRequest(next http.Handler, d *acl.Declarative, jwtVerified bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !isAPIPath(r.URL.Path) {
 			next.ServeHTTP(w, r)
@@ -258,7 +270,7 @@ func attachACLRequest(next http.Handler, d *acl.Declarative) http.Handler {
 		// preserving the raw header value in RawUser. Any non-match /
 		// ambiguous / errored lookup keeps the raw principal (fail-open to
 		// pre-feature behavior) — see acl.Declarative.ResolvePrincipal.
-		ctx = resolvePrincipalEntity(ctx, d, r)
+		ctx = resolvePrincipalEntity(ctx, d, r, jwtVerified)
 
 		req, err := d.ForPrincipal(principal.From(ctx))
 		if err != nil {
@@ -308,7 +320,13 @@ func attachACLRequest(next http.Handler, d *acl.Declarative) http.Handler {
 // (pre-feature behavior); ambiguity and errors are logged, a plain
 // no-match is not (a principal absent from the graph is expected, e.g. a
 // break-glass identity assigned by raw UPN).
-func resolvePrincipalEntity(ctx context.Context, d *acl.Declarative, r *http.Request) context.Context {
+// jwtVerified reports whether identity came from a verified-JWT assertion (the
+// gate is installed). Combined with a genuine no-match while the lookup is
+// enabled, it lets the caller mark the request unmatched-verified so
+// `unmatched_principal: reject` can deny its writes — see [acl.WithUnmatchedVerified].
+func resolvePrincipalEntity(
+	ctx context.Context, d *acl.Declarative, r *http.Request, jwtVerified bool,
+) context.Context {
 	p := principal.From(ctx)
 	id, err := d.ResolvePrincipal(ctx, p.User)
 	if err != nil {
@@ -317,6 +335,14 @@ func resolvePrincipalEntity(ctx context.Context, d *acl.Declarative, r *http.Req
 		return ctx
 	}
 	if id == "" || id == p.User {
+		// No entity resolved. If identity is a verified JWT and the lookup was
+		// actually enabled (id=="" from a disabled lookup is not a "no-match",
+		// it's "not attempted"), mark the request so the write path can enforce
+		// `unmatched_principal: reject`. The mark is inert unless the policy
+		// opts in.
+		if jwtVerified && id == "" && d.Policy().PrincipalPropertyLookupEnabled() {
+			ctx = acl.WithUnmatchedVerified(ctx)
+		}
 		return ctx
 	}
 	// Rebuild via Verified so the assertion claims survive the substitution.

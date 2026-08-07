@@ -139,9 +139,17 @@ linters:
         # operator-configured destinations (.rela/ai.yaml base_url; the
         # `rela sync --remote` flag), annotated with narrow nolint
         # directives naming the trust boundary at each call site.
+        #
+        # G705 (XSS) is ENABLED: the data-entry HTML/feed sinks were audited
+        # and fixed — the entity-help fragment now renders through
+        # html/template (contextual auto-escaping) instead of fmt.Fprintf,
+        # and the calendar feeds serve escaped non-HTML bodies under nosniff.
+        # Remaining G705 sites carry a narrow #nosec with the reason.
+        #
+        # G706 (log injection) is ENABLED — it is enforced everywhere except
+        # internal/dataentry, which is excluded by path below with a pinned
+        # structural invariant. See that exclusion for the rationale.
         - G702  # command injection via taint analysis
-        - G705  # XSS via taint analysis
-        - G706  # log injection via taint analysis
       config:
         global:
           audit: true
@@ -259,6 +267,32 @@ linters:
       - linters:
           - usetesting
         path: internal/testutil/.*\.go
+      # G706 (log injection) in internal/dataentry: false positives.
+      #
+      # gosec's taint analysis treats slog.Info/Warn/Error/Debug as a sink and
+      # flags any request-derived value reaching one, without distinguishing the
+      # log MESSAGE from a structured ATTRIBUTE, and without following the value
+      # into the handler that encodes it. Injection requires an attacker newline
+      # to reach the output unescaped; neither is possible here:
+      #
+      #   1. Every slog message in the package is a compile-time constant —
+      #      user data travels only as a key/value attribute. Enforced by
+      #      TestSlogMessagesAreConstant (internal/dataentry/loginjection_test.go),
+      #      which fails the build on a dynamic message.
+      #   2. Attribute values are escaped by slog.NewTextHandler, installed at
+      #      every entry point (internal/cli/kong.go, cmd/rela-server,
+      #      cmd/rela-desktop). It quotes values containing control characters
+      #      via strconv.Quote — which gosec itself accepts as a G706 sanitizer,
+      #      but cannot see through the handler indirection. Pinned by
+      #      TestSlogTextHandlerEscapesNewlines.
+      #
+      # This is a path exclusion rather than ~20 //nosec comments so the
+      # reasoning lives in one place and the guarantee is tested, not asserted.
+      # If either test fails, fix the log call — do not widen this exclusion.
+      - linters:
+          - gosec
+        path: internal/dataentry/
+        text: G706
       - linters:
           - dupl
           - errcheck

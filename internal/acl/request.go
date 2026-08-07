@@ -183,6 +183,38 @@ func FromContext(ctx context.Context) *Request {
 	return r
 }
 
+// unmatchedVerifiedKey is the ctx key for the "verified-but-unmatched" flag.
+type unmatchedVerifiedKey struct{}
+
+// WithUnmatchedVerified marks ctx to record that the request's principal was
+// CRYPTOGRAPHICALLY VERIFIED but resolved to no user entity (the
+// principal_property lookup found no match).
+//
+// It is set by the data-entry middleware, which is the only layer that knows
+// both facts: that a verified-JWT gate is the identity source (wiring state,
+// not a per-principal marker — a JWT and a proxy-header principal are
+// indistinguishable on the Principal), and that resolution found no entity. The
+// flag lets [Declarative.AuthorizeWrite] — the single point every entity write
+// funnels through — enforce `unmatched_principal: reject` uniformly across
+// every data-entry write path (CRUD, sync, action, attachment) without the
+// write layer learning about transports.
+//
+// A boolean fact on ctx, set on the read path; it performs no write and is
+// gone when the request ends. CLI/MCP/scheduler/header requests never set it.
+func WithUnmatchedVerified(ctx context.Context) context.Context {
+	return context.WithValue(ctx, unmatchedVerifiedKey{}, true)
+}
+
+// UnmatchedVerifiedFrom reports whether ctx was marked by
+// [WithUnmatchedVerified].
+func UnmatchedVerifiedFrom(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	v, _ := ctx.Value(unmatchedVerifiedKey{}).(bool)
+	return v
+}
+
 // isUnstamped reports whether the principal looks like a default /
 // missing-stamp value. The acl package treats "" and "unknown" as
 // equivalent — the principal package's SystemUser() default is the

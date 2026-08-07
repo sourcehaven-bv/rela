@@ -64,10 +64,28 @@ func (a *App) handleV1Feed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Feed bodies embed user-authored entity content (Summary/Description are
+	// read straight off entity properties in feed_provider.go), so the response
+	// must never be interpreted as HTML. Two things guarantee that:
+	//
+	//  1. The serializers escape structurally for their own grammar, not HTML:
+	//     iCalendar via calfeed.escapeText + writeLine's CRLF strip
+	//     (internal/calfeed/ical.go:166, :149), JSON via encoding/json, which
+	//     also escapes <, >, & to </>/& by default.
+	//  2. nosniff pins the declared Content-Type, so a browser cannot
+	//     MIME-sniff a text/calendar or application/json body into text/html
+	//     and execute a payload the escaping above deliberately left inert
+	//     (e.g. "<script>" inside an iCalendar SUMMARY, which is legal
+	//     iCalendar TEXT and must stay a literal string).
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+
 	switch format {
 	case "ics":
 		body := calfeed.ICal{Now: time.Now().UTC()}.RenderCollection(feed)
 		w.Header().Set("Content-Type", "text/calendar; charset=utf-8")
+		// #nosec G705 -- not an HTML sink: iCalendar TEXT escaped by
+		// calfeed.escapeText (internal/calfeed/ical.go:166) and served as
+		// text/calendar under the nosniff header set above.
 		_, _ = w.Write(body)
 	case "json":
 		body, err := calfeed.RenderJSON(feed)
@@ -76,6 +94,9 @@ func (a *App) handleV1Feed(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		// #nosec G705 -- not an HTML sink: encoding/json escapes <, >, & to
+		// </>/& (internal/calfeed/json.go RenderJSON) and the
+		// body is served as application/json under the nosniff header above.
 		_, _ = w.Write(body)
 	}
 }

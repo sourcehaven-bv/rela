@@ -16,30 +16,26 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// ValidateID rejects IDs that would cause key collisions or bucket-key
-// corruption across store backends.
+// ValidateID is the store-boundary gate for entity IDs. It delegates to
+// [entity.ValidateID], which owns the single ID grammar and documents why
+// each rule exists.
 //
-// In addition to the `--` separator rule (which collides with the
-// from--type--to relation key format), IDs cannot contain path
-// separators, NUL, or ASCII control characters. Those would break
-// nested-bucket range scans in backends that key on bucket hierarchy
-// (see internal/store/boltstore) and have always been latent hazards
-// in fsstore (NUL crashes file creation on POSIX; `/` silently creates
-// nested directories).
+// This function used to carry its own, looser rule (rejecting only empty,
+// "--", path separators, and control characters). That was the validator
+// actually enforced on every write path, while the stricter
+// [entity.ValidateID] ran only on the manual-ID and rename paths — so
+// generated IDs, the importer, and direct store writes could persist IDs
+// containing spaces, shell metacharacters, or Unicode homoglyphs. The two
+// have been collapsed into one rule (TKT-IZGF7T); do not reintroduce a
+// store-local variant.
+//
+// It stays a named function rather than an alias for two reasons: it is the
+// validity oracle for the storetest fuzz harness, and it prefixes errors with
+// "store: " so a rejection surfaced from a backend names the layer that
+// refused the write.
 func ValidateID(id string) error {
-	if id == "" {
-		return errors.New("store: empty ID")
-	}
-	if strings.Contains(id, "--") {
-		return fmt.Errorf("store: ID %q contains consecutive dashes", id)
-	}
-	if strings.ContainsAny(id, "/\\") {
-		return fmt.Errorf("store: ID %q contains path separator", id)
-	}
-	for i := range len(id) {
-		if id[i] < 0x20 || id[i] == 0x7f {
-			return fmt.Errorf("store: ID %q contains control character", id)
-		}
+	if err := entity.ValidateID(id); err != nil {
+		return fmt.Errorf("store: %w", err)
 	}
 	return nil
 }
@@ -82,6 +78,34 @@ func ValidateProperty(prop string) error {
 		return fmt.Errorf("store: property name %q contains slash", prop)
 	}
 	return nil
+}
+
+// FoldID returns the case-folded form of an entity ID, for use as an
+// identity key rather than as a display or storage value.
+//
+// Two IDs that fold to the same value are ONE entity (BUG-3RCWNS). This is
+// not a stylistic rule — it is forced by fsstore, which writes "<id>.md" and
+// so inherits the host filesystem's case behavior: on macOS and Windows
+// "abc" and "ABC" are the same file. memstore and pgstore
+// (id TEXT COLLATE "C") are byte-exact and would otherwise keep them as two
+// separate entities.
+//
+// The backends must agree, because entities move between them: migrating a
+// project that holds both "abc" and "ABC" into fsstore would silently drop
+// one, and `rela sync` between a byte-exact and a case-folding store has no
+// defined convergence. Enforcing identity in the shared layer is what keeps
+// the backends substitutable (FEAT-CO4YP); the conformance suite pins it via
+// CreateRejectsCaseVariantID.
+//
+// Uses strings.ToLower rather than strings.EqualFold's full Unicode folding
+// because entity IDs are ASCII by construction (see entity.ValidateID), so
+// the simple mapping is total over the legal input set and, unlike Unicode
+// folding, cannot map two distinct ASCII IDs together.
+//
+// Callers must keep storing the ORIGINAL id — this value is only ever a
+// lookup key. Casing is preserved in the entity and on disk.
+func FoldID(id string) string {
+	return strings.ToLower(id)
 }
 
 // SortedInsert adds key to a sorted slice, maintaining sort order.

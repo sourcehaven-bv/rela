@@ -22,31 +22,6 @@ func decodeConfig(t *testing.T, config string) map[string]any {
 	return out
 }
 
-func TestTitleCase(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected string
-	}{
-		{"hello", "Hello"},
-		{"hello-world", "Hello World"},
-		{"hello_world", "Hello World"},
-		{"my-test-case", "My Test Case"},
-		{"snake_case_name", "Snake Case Name"},
-		{"mixed-case_name", "Mixed Case Name"},
-		{"", ""},
-		{"single", "Single"},
-		{"UPPERCASE", "UPPERCASE"},
-		{"already Title Case", "Already Title Case"},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.input, func(t *testing.T) {
-			result := titleCase(tc.input)
-			assert.Equal(t, tc.expected, result)
-		})
-	}
-}
-
 func TestScanForRelaProjects(t *testing.T) {
 	// Create temp directory structure
 	tmpDir := t.TempDir()
@@ -95,6 +70,7 @@ func TestGenerateDataEntryConfig(t *testing.T) {
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"feature": {
+				Label: "Feature",
 				Properties: map[string]metamodel.PropertyDef{
 					"title":    {Type: "string"},
 					"status":   {Type: "string"},
@@ -102,6 +78,7 @@ func TestGenerateDataEntryConfig(t *testing.T) {
 				},
 			},
 			"bug": {
+				Label: "Bug",
 				Properties: map[string]metamodel.PropertyDef{
 					"title":       {Type: "string"},
 					"description": {Type: "text"},
@@ -163,6 +140,7 @@ func TestGenerateDataEntryConfig_KebabCaseEntityType(t *testing.T) {
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"test-case": {
+				Label: "Test Case",
 				Properties: map[string]metamodel.PropertyDef{
 					"test-name": {Type: "string"},
 				},
@@ -175,6 +153,8 @@ func TestGenerateDataEntryConfig_KebabCaseEntityType(t *testing.T) {
 	forms := cfg["forms"].(map[string]any)
 	testCase := forms["test_case"].(map[string]any) // hyphen -> underscore for the key
 	assert.Equal(t, "test-case", testCase["entity_type"])
+	// The title comes from the AUTHORED metamodel label, not from
+	// titleCase(typeName) — DEC-6C1NAA.
 	assert.Equal(t, "Test Case", testCase["title"])
 
 	lists := cfg["lists"].(map[string]any)
@@ -185,6 +165,59 @@ func TestGenerateDataEntryConfig_KebabCaseEntityType(t *testing.T) {
 	nav := navigation[0].(map[string]any)
 	assert.Equal(t, "Test Cases", nav["label"])
 	assert.Equal(t, "test_cases", nav["list"])
+}
+
+// TestGenerateDataEntryConfig_NoDerivedFieldLabels pins DEC-6C1NAA for the
+// scaffolder: generated fields and columns carry no `label:` key at all, so a
+// new project never inherits an English orthographic guess. The user authors
+// each label in their own language.
+func TestGenerateDataEntryConfig_NoDerivedFieldLabels(t *testing.T) {
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ticket": {
+				Label: "Ticket",
+				Properties: map[string]metamodel.PropertyDef{
+					"due_date": {Type: "date"},
+				},
+			},
+		},
+	}
+
+	raw := generateDataEntryConfig("Test App", meta)
+	assert.NotContains(t, raw, "Due Date",
+		"scaffolder must not emit a title-cased label for due_date")
+
+	cfg := decodeConfig(t, raw)
+
+	forms := cfg["forms"].(map[string]any)
+	fields := forms["ticket"].(map[string]any)["fields"].([]any)
+	require.Len(t, fields, 1)
+	field := fields[0].(map[string]any)
+	assert.Equal(t, "due_date", field["property"])
+	assert.NotContains(t, field, "label", "generated fields carry no label key")
+
+	lists := cfg["lists"].(map[string]any)
+	columns := lists["tickets"].(map[string]any)["columns"].([]any)
+	require.Len(t, columns, 1)
+	assert.NotContains(t, columns[0].(map[string]any), "label",
+		"generated columns carry no label key")
+}
+
+// TestGenerateDataEntryConfig_FallsBackToTypeNameWithoutLabel covers the
+// in-memory-metamodel path: the loader requires entity labels, but this
+// generator can be handed a metamodel built in code. A missing label must
+// yield the raw type name, never an empty title or a bare "s" plural.
+func TestGenerateDataEntryConfig_FallsBackToTypeNameWithoutLabel(t *testing.T) {
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ticket": {Properties: map[string]metamodel.PropertyDef{"title": {Type: "string"}}},
+		},
+	}
+
+	cfg := decodeConfig(t, generateDataEntryConfig("Test App", meta))
+
+	assert.Equal(t, "ticket", cfg["forms"].(map[string]any)["ticket"].(map[string]any)["title"])
+	assert.Equal(t, "tickets", cfg["lists"].(map[string]any)["tickets"].(map[string]any)["title"])
 }
 
 func TestGenerateDataEntryConfig_MaxColumns(t *testing.T) {

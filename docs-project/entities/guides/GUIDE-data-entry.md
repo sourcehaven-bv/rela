@@ -345,6 +345,15 @@ Each entry in `fields:` configures one property input:
 | `widget`      | string            | Input widget type (see below)                                  |
 | `transitions` | map[string]list   | Allowed state transitions for enum fields (edit forms only)    |
 
+> **Labels are authored, never derived.** When `label` is omitted the raw
+> property name is displayed — rela never converts `laatste_contact` into
+> `Laatste Contact`. Any such conversion would encode an English orthographic
+> convention (word splitting, capitalization) into a metamodel that is
+> deliberately language-neutral, and it is wrong for most languages. Write the
+> label you want, in your project's own language. The same rule applies to list
+> column headers, relation field labels, view-section fields, and Lua flow
+> fields. `rela migrate` will never remove a `label:` you have written.
+
 ### Widget Types
 
 | Widget     | Description                                      | Use For                        |
@@ -1312,6 +1321,8 @@ kanbans:
 | ------------------ | ------ | ---------------------------------------------------------- |
 | `entity_type`      | string | Entity type to display on the board                        |
 | `title`            | string | Board heading                                              |
+| `header`           | string | Markdown rendered above the board (info/help; see below)   |
+| `footer`           | string | Markdown rendered below the board                          |
 | `column_property`  | string | Property to group by for columns (must be enum/custom type)|
 | `columns`          | list   | Explicit column definitions (optional)                     |
 | `swimlane_property`| string | Property to group by for swimlanes (optional)              |
@@ -1321,6 +1332,34 @@ kanbans:
 | `create_form`      | string | Form name for the "New" button                             |
 | `filters`          | list   | Static filters (same as lists)                             |
 | `filter_controls`  | list   | Interactive filter controls (same as lists)                |
+
+#### Header and footer info regions
+
+Boards support the same admin-authored info regions as lists — see
+[Header and footer info regions](#header-and-footer-info-regions) under Lists
+for the full description. `header` and `footer` accept Markdown, render as
+sanitized HTML above and below the board, and are authored in
+`data-entry.yaml` only.
+
+```yaml
+kanbans:
+  ticket_board:
+    entity_type: ticket
+    title: "Ticket Board"
+    header: |
+      Cards move **left to right**. Drag a card to change its status — see the
+      [workflow guide](/entity/guide-ticket-workflow).
+    footer: |
+      _Reopening a done ticket? Talk to the maintainers first._
+    column_property: status
+```
+
+The regions sit outside the board's horizontal scroll area, so they stay
+visible when a wide board scrolls sideways.
+
+Unlike lists, a kanban has **no `description` fallback** for `header`: that
+alias exists on lists only because `description` predated the info regions and
+was already present in configs. Set `header` directly.
 
 ### Columns
 
@@ -1344,7 +1383,7 @@ kanbans:
 | Field   | Type   | Description                                    |
 | ------- | ------ | ---------------------------------------------- |
 | `value` | string | Enum value that maps to this column            |
-| `label` | string | Display label (defaults to title-cased value)  |
+| `label` | string | Display label (defaults to the raw enum value)  |
 
 Entities with column property values not in the explicit list are hidden from the board.
 
@@ -1368,7 +1407,7 @@ kanbans:
 | Field   | Type   | Description                                      |
 | ------- | ------ | ------------------------------------------------ |
 | `value` | string | Enum value that maps to this swimlane            |
-| `label` | string | Display label (defaults to title-cased value)    |
+| `label` | string | Display label (defaults to the raw enum value)    |
 
 Without explicit swimlanes, values are inferred from the metamodel. Entities whose swimlane
 property value is not in the list are hidden.
@@ -1469,7 +1508,7 @@ kanbans:
 ## Navigation
 
 The navigation section defines the sidebar menu. Each entry is either a direct item (linking to a
-list, dashboard, or graph) or a **group** containing multiple items:
+list, kanban, dashboard, search or settings page) or a **group** containing multiple items:
 
 ```yaml
 navigation:
@@ -1486,8 +1525,8 @@ navigation:
     items:
       - label: "Categories"
         list: categories
-  - label: "Graph Explorer"
-    graph: true
+  - label: "Search"
+    search: true
 ```
 
 ### Direct Items
@@ -1498,8 +1537,10 @@ navigation:
 | `list`      | string | List name to navigate to (mutually exclusive with other types) |
 | `kanban`    | string | Kanban board name to navigate to                               |
 | `dashboard` | bool   | Link to the dashboard page                                     |
-| `graph`     | bool   | Link to the graph explorer                                     |
+| `search`    | bool   | Link to the search page                                        |
+| `settings`  | bool   | Link to the settings page                                      |
 | `action`    | string | Action ID to trigger when clicked (renders as a sidebar button)|
+| `permission`| string | Hide this entry from users who lack the named ACL permission (see below) |
 
 ### Groups
 
@@ -1520,8 +1561,56 @@ will reject it with a clear error message.
 The first navigable entry is the default landing page — the first direct item, or the first item
 inside the first group. Order matters; items appear in the sidebar in the order listed.
 
-List entries show an entity count badge next to the label (based on the list's filters). Dashboard
-and graph entries do not show a count.
+List and kanban entries show an entity count badge next to the label (based on their filters).
+Dashboard, search and settings entries do not show a count.
+
+### Hiding entries a user cannot act on (`permission:`)
+
+An entry with a `permission:` is omitted from the sidebar for principals who do
+not hold that permission — a global named permission granted through a role's
+`permissions:` list in `acl.yaml`, the same mechanism behind `history:read` and
+the `delegate-*` family:
+
+```yaml
+navigation:
+  - label: "Tickets"
+    list: all_tickets
+  - label: "Audit log"
+    list: audit_log
+    permission: admin:read      # only holders see this entry
+  - group: "Admin"
+    items:
+      - label: "Settings"
+        settings: true
+        permission: admin:settings
+```
+
+A group whose every item is hidden disappears with them, so you never get a
+heading with nothing under it. `permission:` is not valid **on** a group —
+gate the items instead.
+
+Behaviour without a policy: with no `acl.yaml`, every entry is shown — nothing
+is denied when nothing is configured. The same applies under `--read-only`,
+which restricts *writes* and leaves reads untouched, so there is no permission
+model to consult and no reason to hide read surfaces from an observe-only
+operator.
+
+**This is a convenience, not a security control.** It keeps menu entries a user
+cannot act on out of their way; it does not protect anything. The target of a
+hidden entry behaves exactly as it always did — type its URL and you reach it,
+and a list still returns its ACL-scoped rows, which for someone permitted to
+read none of them is simply an empty list. Nor is anything concealed:
+`/api/v1/_config` serves the whole navigation tree to every principal.
+
+So do not use `permission:` here *instead of* real access control. What
+protects your data is the read ACL on the entities themselves; this only
+decides what appears in a menu.
+
+One caveat worth knowing: the permission name is **not** checked against
+`acl.yaml` at config load (the same is true of `commands:` and `documents:`).
+A typo like `admin:raed` produces an entry nobody can see, with no error. If a
+menu item has vanished, check the spelling against the `permissions:` list on
+your roles first.
 
 Direct items and groups can be freely mixed in any order.
 

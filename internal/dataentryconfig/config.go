@@ -378,9 +378,17 @@ func (c *Config) HasPropertyFilterControl(entityType, property string) bool {
 }
 
 // Kanban defines a kanban board view for an entity type.
+//
+// Header and Footer carry admin-authored markdown rendered above and below the
+// board, respectively (sanitized client-side via renderMarkdown), matching the
+// list info regions. Unlike List there is no Description fallback: that alias
+// exists only because List.Description predated the feature and was already
+// present in configs, and a Kanban has no such legacy field to accommodate.
 type Kanban struct {
 	EntityType       string           `yaml:"entity_type" json:"entity"`
 	Title            string           `yaml:"title" json:"title"`
+	Header           string           `yaml:"header" json:"header,omitempty"`
+	Footer           string           `yaml:"footer" json:"footer,omitempty"`
 	ColumnProperty   string           `yaml:"column_property" json:"column_property"`
 	Columns          []KanbanColumn   `yaml:"columns,omitempty" json:"columns,omitempty"`
 	SwimlaneProperty string           `yaml:"swimlane_property,omitempty" json:"swimlane_property,omitempty"`
@@ -439,6 +447,30 @@ type NavigationEntry struct {
 	Search    bool   `yaml:"search,omitempty" json:"search,omitempty"`
 	Settings  bool   `yaml:"settings,omitempty" json:"settings,omitempty"`
 	Action    string `yaml:"action,omitempty" json:"action,omitempty"`
+
+	// Permission optionally hides this entry from the sidebar for principals
+	// who do not hold the named global ACL permission (TKT-TXDK8U). Empty —
+	// the overwhelmingly common case — means the entry is always shown.
+	//
+	// This is a UX filter, NOT an access control. The entry's target enforces
+	// (or does not enforce) exactly what it did before: a hidden list is still
+	// reachable by typing its URL, and still returns its normal ACL-scoped
+	// rows, which for a principal who may read none of them is an empty list.
+	// The point is to keep menu entries a user cannot act on out of their way,
+	// not to conceal that they are configured — `/api/v1/_config` still serves
+	// the whole navigation tree to everyone (see "The configuration is not a
+	// secret; the data is" in the root CLAUDE.md).
+	//
+	// Behavior with no `acl.yaml`: shown. No policy configured means no
+	// restrictions, matching the read gate's allow-all posture. Same under
+	// `--read-only`, which restricts writes only and so has no permission
+	// model to consult — hiding there would remove read surfaces an
+	// observe-only principal can use, and would hide them from everyone
+	// rather than from non-holders.
+	//
+	// Not valid on a group entry — a group is a container, not a destination;
+	// groups disappear on their own when every child is filtered out.
+	Permission string `yaml:"permission,omitempty" json:"permission,omitempty"`
 
 	// Group fields
 	Group     string            `yaml:"group,omitempty" json:"group,omitempty"`

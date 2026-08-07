@@ -827,13 +827,31 @@ func generateDataEntryConfig(appName string, meta *metamodel.Metamodel) string {
 		}
 		sort.Strings(propNames)
 
+		// No generated field/column labels: a label is authored, never derived
+		// (DEC-6C1NAA). Emitting titleCase(property) here would bake an English
+		// orthographic guess into every new project's config. An unlabelled
+		// field renders its raw property name until the user writes a label in
+		// their own language. Titles and nav DO get a label because entDef.Label
+		// is a required, user-authored metamodel field — not a derivation. The
+		// loader enforces that it is set, but this generator can also be handed
+		// an in-memory metamodel, so fall back to the raw type name rather than
+		// emitting an empty title (or a bare "s" for the plural).
+		typeLabel := entDef.Label
+		if typeLabel == "" {
+			typeLabel = typeName
+		}
+		typeLabelPlural := entDef.LabelPlural
+		if typeLabelPlural == "" {
+			typeLabelPlural = typeLabel + "s"
+		}
+
 		fields := make([]map[string]string, 0, len(propNames))
 		for _, propName := range propNames {
-			fields = append(fields, map[string]string{"property": propName, "label": titleCase(propName)})
+			fields = append(fields, map[string]string{"property": propName})
 		}
 		appendMapEntry(&forms, formID, map[string]any{
 			"entity_type": typeName,
-			"title":       titleCase(typeName),
+			"title":       typeLabel,
 			"fields":      fields,
 		})
 
@@ -842,18 +860,18 @@ func generateDataEntryConfig(appName string, meta *metamodel.Metamodel) string {
 			if i >= maxColumns {
 				break
 			}
-			columns = append(columns, map[string]string{"property": propName, "label": titleCase(propName)})
+			columns = append(columns, map[string]string{"property": propName})
 		}
 		appendMapEntry(&lists, listID, map[string]any{
 			"entity_type": typeName,
-			"title":       titleCase(typeName) + "s",
+			"title":       typeLabelPlural,
 			"columns":     columns,
 			"create_form": formID,
 			"edit_form":   formID,
 		})
 
 		navItem := yaml.Node{Kind: yaml.MappingNode}
-		appendMapEntry(&navItem, "label", titleCase(typeName)+"s")
+		appendMapEntry(&navItem, "label", typeLabelPlural)
 		appendMapEntry(&navItem, "list", listID)
 		navigation.Content = append(navigation.Content, &navItem)
 	}
@@ -892,17 +910,4 @@ func appendMapEntry(m *yaml.Node, key string, value any) {
 		_ = valNode.Encode(value)
 	}
 	m.Content = append(m.Content, keyNode, valNode)
-}
-
-// titleCase converts a-kebab-case or snake_case to Title Case.
-func titleCase(s string) string {
-	s = strings.ReplaceAll(s, "-", " ")
-	s = strings.ReplaceAll(s, "_", " ")
-	words := strings.Fields(s)
-	for i, w := range words {
-		if w != "" {
-			words[i] = strings.ToUpper(w[:1]) + w[1:]
-		}
-	}
-	return strings.Join(words, " ")
 }

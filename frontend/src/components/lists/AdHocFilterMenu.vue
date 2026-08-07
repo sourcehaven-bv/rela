@@ -51,7 +51,7 @@ const props = withDefaults(
     lockedProperties: () => new Set<string>(),
     buttonLabel: '+ Filter',
     buttonHotkey: 'F',
-  },
+  }
 )
 
 const emit = defineEmits<{
@@ -82,7 +82,7 @@ const allOptions = computed((): FilterOption[] => {
         out.push({
           category: 'property',
           property: name,
-          label: titleCase(name),
+          label: name,
           propertyDef: def,
         })
       }
@@ -96,7 +96,7 @@ const allOptions = computed((): FilterOption[] => {
       out.push({
         category: 'property',
         property: name,
-        label: titleCase(name),
+        label: name,
         propertyDef: def,
       })
     }
@@ -110,7 +110,7 @@ const filteredOptions = computed(() => {
   if (!search.value) return allOptions.value
   const q = search.value.toLowerCase()
   return allOptions.value.filter(
-    (o) => o.label.toLowerCase().includes(q) || o.property.toLowerCase().includes(q),
+    (o) => o.label.toLowerCase().includes(q) || o.property.toLowerCase().includes(q)
   )
 })
 
@@ -155,10 +155,6 @@ function valueLabel(value: string): string {
   const inline = sel.propertyDef?.labels?.[value]
   if (inline !== undefined) return inline
   return schemaStore.getEnumLabel(value, sel.property) ?? value
-}
-
-function titleCase(str: string): string {
-  return str.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
 function toggle() {
@@ -213,9 +209,8 @@ function handleKeydown(e: KeyboardEvent) {
     case 'Enter':
       e.preventDefault()
       if (selected.value) {
-        const v = valueOptions.value.length > 0
-          ? valueOptions.value[menuIndex.value]
-          : valueInput.value
+        const v =
+          valueOptions.value.length > 0 ? valueOptions.value[menuIndex.value] : valueInput.value
         if (v) commit(v)
       } else {
         const o = filteredOptions.value[menuIndex.value]
@@ -290,9 +285,7 @@ defineExpose({ open: openMenu, close })
             <span class="option-category">{{ option.category }}</span>
             <span class="option-label">{{ option.label }}</span>
           </div>
-          <div v-if="filteredOptions.length === 0" class="filter-empty">
-            No matching properties
-          </div>
+          <div v-if="filteredOptions.length === 0" class="filter-empty">No matching properties</div>
         </div>
       </template>
 

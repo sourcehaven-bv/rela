@@ -76,6 +76,21 @@ const relationType = computed(() => {
   return schemaStore.getRelationType(props.field.relation)
 })
 
+// Label resolution (DEC-6C1NAA): an authored form label wins, then the
+// metamodel's own label for the relation type, then the raw relation id.
+// Mirrors RelationPicker — the cleanup migration strips a form label that
+// duplicates the metamodel label, so the SPA must read it back here.
+// Incoming cards show edges pointing AT us, so the inverse label applies.
+// Mirrors RelationPicker and the server's relationDisplayLabel.
+const relationLabel = computed(
+  () =>
+    props.field.label ||
+    (isIncoming.value ? relationType.value?.inverse?.label : undefined) ||
+    relationType.value?.label ||
+    props.field.relation ||
+    ''
+)
+
 const relationProperties = computed<Record<string, PropertyDef>>(() => {
   return relationType.value?.properties ?? {}
 })
@@ -360,10 +375,6 @@ function cancelAdd() {
   newMeta.value = {}
 }
 
-function formatLabel(name: string): string {
-  return name.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
-}
-
 function entryStatus(id: string): 'added' | 'updated' | null {
   if (addedIds.value.has(id)) return 'added'
   if (updatedIds.value.has(id)) return 'updated'
@@ -466,7 +477,7 @@ function onDragEnd() {
 <template>
   <div class="relation-cards">
     <label class="section-label">
-      {{ field.label || field.relation }}
+      {{ relationLabel }}
       <span v-if="hasPendingChanges" class="pending-badge">unsaved</span>
     </label>
 
@@ -529,7 +540,7 @@ function onDragEnd() {
         <!-- Property fields - always editable, no click-to-edit -->
         <div v-if="fieldProperties.length" class="card-properties">
           <div v-for="prop in fieldProperties" :key="prop.property" class="card-property">
-            <span class="prop-label">{{ prop.label || formatLabel(prop.property) }}</span>
+            <span class="prop-label">{{ prop.label || prop.property }}</span>
 
             <!-- Enum select (SlimSelect) -->
             <SlimSelect
@@ -571,9 +582,7 @@ function onDragEnd() {
     </div>
 
     <!-- Empty state -->
-    <div v-else-if="!loading" class="empty-state">
-      No {{ field.label || field.relation }} relations yet.
-    </div>
+    <div v-else-if="!loading" class="empty-state">No {{ relationLabel }} relations yet.</div>
 
     <!-- Add relation -->
     <div v-if="showAddSearch" class="add-section">
@@ -618,7 +627,7 @@ function onDragEnd() {
         <div v-if="fieldProperties.length" class="new-meta-fields">
           <div v-for="prop in fieldProperties" :key="prop.property" class="form-field">
             <label>
-              {{ prop.label || formatLabel(prop.property) }}
+              {{ prop.label || prop.property }}
               <span v-if="prop.required" class="required">*</span>
             </label>
 
@@ -674,7 +683,7 @@ function onDragEnd() {
       class="add-btn"
       @click="showAddSearch = true"
     >
-      + Add {{ field.label || field.relation }}
+      + Add {{ relationLabel }}
     </button>
   </div>
 </template>

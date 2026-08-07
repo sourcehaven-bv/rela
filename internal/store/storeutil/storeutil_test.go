@@ -41,10 +41,34 @@ func TestValidateID(t *testing.T) {
 		assert.NoError(t, storeutil.ValidateID("a"))
 	})
 
-	t.Run("accepts multi-byte UTF-8", func(t *testing.T) {
-		// Continuation bytes are 0x80+ so they never register as control chars.
-		assert.NoError(t, storeutil.ValidateID("café"))
-		assert.NoError(t, storeutil.ValidateID("日本語"))
+	t.Run("rejects multi-byte UTF-8", func(t *testing.T) {
+		// IDs are ASCII-only (TKT-IZGF7T): an ID is used verbatim as a
+		// filename, and macOS/Linux disagree on NFC vs NFD normalization, so
+		// the same logical entity would fork into two files across platforms.
+		// Human-language names belong in the `title` property.
+		//
+		// These reach the character-class check rather than the
+		// control-character scan: continuation bytes are 0x80+, so they never
+		// register as control characters.
+		for _, id := range []string{"café", "日本語"} {
+			err := storeutil.ValidateID(id)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "invalid characters")
+		}
+	})
+
+	t.Run("rejects leading dash", func(t *testing.T) {
+		// A leading "-" reads as an option flag to any command the ID is
+		// passed to ("-rf"), i.e. argument injection.
+		err := storeutil.ValidateID("-rf")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "may not start with a dash")
+	})
+
+	t.Run("rejects shell metacharacters and spaces", func(t *testing.T) {
+		for _, id := range []string{"a b", "a;b", "a$(id)", "a*b", "a'b"} {
+			assert.Error(t, storeutil.ValidateID(id), "id %q should be rejected", id)
+		}
 	})
 }
 
