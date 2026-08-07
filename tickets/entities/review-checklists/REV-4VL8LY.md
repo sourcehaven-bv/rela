@@ -57,13 +57,27 @@ predicted.
 - **AC 3** documented error string verified byte-exact against real output.
 - **AC 6** narrow-viewport collapse confirmed at 560px.
 
-**A second bug was found and fixed during verification**, not by tests:
-converting `.form-fields` to a grid broke the form, because `FormFieldList` also
-emits relation widgets that carry their own root class. The first fix then
-silently swallowed every authored span through an equal-specificity collision.
-Both were diagnosed from computed style — `--field-span: 4` present while
-`grid-column` computed to `span 12`. Worth stating plainly: the unit tests were
-green through both of those.
+**Three bugs were found by using the running app, not by tests.** Worth
+recording plainly, because the unit suite was green through all of them:
+
+1. Converting `.form-fields` to a grid broke the form — `FormFieldList` also
+emits relation widgets carrying their own root class, which became auto-width
+grid items.
+2. The first fix for (1) silently swallowed every authored span via an
+equal-specificity collision. Diagnosed from computed style: `--field-span: 4`
+present while `grid-column` computed to `span 12`.
+3. **Reported by the user, and the sharpest of the three.** Grid items default
+to `align-items: stretch`, so a row is as tall as its tallest item. The `status`
+field's transitions panel left **176px of dead space** under `priority` and
+`assignee`. `align-items: start` stopped the boxes stretching but could not
+reclaim the reserved row height — the fix was to give `status` its own row.
+Measured rather than assumed: the transitions text does *not* wrap at `span: 4`
+(194px natural vs a 209px track), so the problem was row height, not width.
+Every shared row now measures 0px dead space.
+
+The detail page deliberately keeps `status` on a shared row: its read-only view
+renders no transitions panel (62px, not 243px), so it strands nothing. That
+asymmetry is the per-surface tuning the feature exists to enable.
 
 ## Documentation (enhancements only)
 
@@ -82,8 +96,17 @@ needed user-facing docs.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass
+- [x] PR URL documented below
 
-**PR:** pending — opening after PR 1 (#1281) merges, since this branches off it.
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1282
+
+Opened against `feat/design-tokens-TKT-8VVBRI` (PR 1) rather than `develop`,
+since this is stacked on it — **retarget to `develop` when #1281 merges**.
+
+CI note: the same GitHub scheduling issue seen on #1281 applies — only the
+auto-merge workflow fired initially and the `CI` workflow needed a nudge. The
+full pipeline was run locally with the CI flags in the meantime (`go test -race
+-shuffle=on`, `golangci-lint run`, the frontend job's typecheck/lint/test/build
+sequence, and the work-tree-clean tripwire).
