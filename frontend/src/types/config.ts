@@ -348,7 +348,14 @@ export interface NavigationEntry {
   list?: string
   dashboard?: boolean
   kanban?: string
+  search?: boolean
+  settings?: boolean
   action?: string
+  /** Global named permission required for this entry to appear in the sidebar.
+   *  The SPA does not act on it — the server already omits filtered entries
+   *  from /_sidebar, which is what the menu is built from. Present here only
+   *  because /_config serves the navigation tree verbatim. */
+  permission?: string
   icon?: string
   // Group fields
   group?: string
