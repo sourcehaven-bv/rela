@@ -566,8 +566,9 @@ type InverseDef struct {
 	// ID is the identifier for the inverse relation (e.g., "addressedBy")
 	ID string `yaml:"id,omitempty"`
 
-	// Label is the display label for the inverse relation (e.g., "addressed by")
-	// If not specified, it's auto-derived from ID by converting camelCase to space-separated.
+	// Label is the display label for the inverse relation (e.g., "addressed by").
+	// If not specified, the raw ID is displayed — labels are authored, never
+	// derived (DEC-6C1NAA).
 	Label string `yaml:"label,omitempty"`
 }
 
@@ -576,48 +577,21 @@ func (i *InverseDef) GetID() string {
 	return i.ID
 }
 
-// GetLabel returns the display label, auto-deriving from ID if not specified
+// GetLabel returns the display label, falling back to the raw ID.
+//
+// A label is authored, never derived (DEC-6C1NAA). This used to convert
+// camelCase to space-separated lowercase ("addressedBy" → "addressed by"),
+// which bakes an English orthographic convention into a language-neutral
+// metamodel. Write an explicit `label:` to control the display text.
 func (i *InverseDef) GetLabel() string {
 	if i.Label != "" {
 		return i.Label
 	}
-	// Auto-derive from ID by converting camelCase to space-separated lowercase
-	if i.ID == "" {
-		return ""
-	}
-	return camelCaseToSpaced(i.ID)
-}
-
-// camelCaseToSpaced converts camelCase/PascalCase to space-separated lowercase.
-// Examples: "addressedBy" → "addressed by", "implementedBy" → "implemented by"
-func camelCaseToSpaced(s string) string {
-	if s == "" {
-		return ""
-	}
-
-	const asciiCaseOffset = 'a' - 'A'   // 32, but as a named constant
-	result := make([]byte, 0, len(s)+4) // Extra space for inserted spaces
-
-	for i := range len(s) {
-		c := s[i]
-		isUpper := c >= 'A' && c <= 'Z'
-
-		switch {
-		case i > 0 && isUpper:
-			// Insert space before uppercase letters (except at start) and convert to lowercase
-			result = append(result, ' ', c+asciiCaseOffset)
-		case isUpper:
-			// First character - just convert to lowercase
-			result = append(result, c+asciiCaseOffset)
-		default:
-			result = append(result, c)
-		}
-	}
-	return string(result)
+	return i.ID
 }
 
 // UnmarshalYAML allows InverseDef to be unmarshaled from either a string or an object.
-// String form: "addressedBy" (ID only, label auto-derived)
+// String form: "addressedBy" (ID only; the ID doubles as the display label)
 // Object form: { id: "addressedBy", label: "addressed by" }
 func (i *InverseDef) UnmarshalYAML(unmarshal func(any) error) error {
 	// First try to unmarshal as a string (simple form)

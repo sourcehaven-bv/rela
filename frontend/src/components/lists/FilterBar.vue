@@ -71,7 +71,9 @@ const resolvedFilters = computed((): ResolvedFilter[] => {
 
 function resolveFilter(fc: FilterControl): ResolvedFilter {
   const key = fc.relation || fc.property || ''
-  const label = fc.label || titleCase(key)
+  // DEC-6C1NAA: a label is authored, never derived — an unset filter label
+  // shows the raw property/relation id.
+  const label = fc.label || key
 
   if (fc.relation) {
     const candidates = relationCandidates.value[key] ?? []
@@ -155,10 +157,6 @@ function resolveWidgetType(
   }
   // Text for everything else
   return 'text'
-}
-
-function titleCase(str: string): string {
-  return str.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
 // Which control keys are text widgets (vs select / multi-select). Text

@@ -179,9 +179,13 @@ func (h *viewsHandler) buildSectionEntityData(
 				propType = pd.Type
 			}
 		}
+		// A label is authored, never derived (DEC-6C1NAA): an unset label
+		// falls back to the raw property name rather than a title-cased
+		// guess, which would bake an English convention into a
+		// language-neutral metamodel.
 		label := f.Label
 		if label == "" {
-			label = titleCase(f.Property)
+			label = f.Property
 		}
 		sed.Fields = append(sed.Fields, SectionFieldData{
 			Property: f.Property, Label: label, Values: values, PropType: propType,
@@ -221,9 +225,10 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 							propType = pd.Type
 						}
 					}
+					// Authored, never derived — see DEC-6C1NAA above.
 					label := f.Label
 					if label == "" {
-						label = titleCase(f.Property)
+						label = f.Property
 					}
 					sd.Fields = append(sd.Fields, SectionFieldData{
 						Property: f.Property, Label: label, Values: values, PropType: propType,

@@ -1,6 +1,7 @@
 package migration
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -126,7 +127,10 @@ func TestDataEntryCleanupMigration_Detect(t *testing.T) {
 		expect bool
 	}{
 		{
-			name: "detects redundant label in form field",
+			// DEC-6C1NAA: a title-cased label is NOT redundant. It used to be
+			// stripped, which silently downgraded the field to its raw
+			// identifier (BUG-8N2WT2).
+			name: "does not detect title-cased label in form field",
 			yaml: `
 forms:
   create_ticket:
@@ -134,10 +138,10 @@ forms:
       - property: title
         label: "Title"
 `,
-			expect: true,
+			expect: false,
 		},
 		{
-			name: "detects redundant label in list column",
+			name: "does not detect title-cased label in list column",
 			yaml: `
 lists:
   all_tickets:
@@ -145,7 +149,7 @@ lists:
       - property: status
         label: "Status"
 `,
-			expect: true,
+			expect: false,
 		},
 		{
 			name: "detects redundant widget: select in relation",
@@ -181,7 +185,9 @@ forms:
 			expect: false,
 		},
 		{
-			name: "handles snake_case property correctly",
+			// The multi-word case is where the old behavior was most
+			// damaging: "Due Date" was stripped and rendered as `due_date`.
+			name: "does not detect snake_case property label",
 			yaml: `
 forms:
   create_ticket:
@@ -189,7 +195,7 @@ forms:
       - property: due_date
         label: "Due Date"
 `,
-			expect: true,
+			expect: false,
 		},
 		{
 			name: "does not match partial label",
@@ -417,7 +423,8 @@ func TestDataEntryCleanupMigration_Apply(t *testing.T) {
 		wantKeep   []string
 	}{
 		{
-			name: "removes redundant label from form field",
+			// DEC-6C1NAA: labels survive, whatever they look like.
+			name: "keeps title-cased label on form field",
 			input: `
 forms:
   create_ticket:
@@ -426,11 +433,11 @@ forms:
         label: "Title"
         placeholder: "Enter title"
 `,
-			wantAbsent: []string{`label: "Title"`, `label: Title`},
-			wantKeep:   []string{"property: title", "placeholder:"},
+			wantAbsent: nil,
+			wantKeep:   []string{"property: title", "placeholder:", "Title"},
 		},
 		{
-			name: "removes redundant label from list column",
+			name: "keeps title-cased label on list column",
 			input: `
 lists:
   all_tickets:
@@ -439,8 +446,8 @@ lists:
         label: "Status"
         sortable: true
 `,
-			wantAbsent: []string{`label: "Status"`, `label: Status`},
-			wantKeep:   []string{"property: status", "sortable: true"},
+			wantAbsent: nil,
+			wantKeep:   []string{"property: status", "sortable: true", "Status"},
 		},
 		{
 			name: "removes widget: select from relation",
@@ -480,7 +487,7 @@ forms:
 			wantKeep:   []string{"widget: multi-select"},
 		},
 		{
-			name: "handles mixed redundant and custom",
+			name: "strips only the redundant widget, never a label",
 			input: `
 forms:
   create_ticket:
@@ -495,8 +502,8 @@ forms:
       - relation: tagged
         widget: multi-select
 `,
-			wantAbsent: []string{`label: "Title"`, `label: Title`},
-			wantKeep:   []string{"Assign to", "widget: multi-select"},
+			wantAbsent: []string{"widget: select"},
+			wantKeep:   []string{"Title", "Assign to", "widget: multi-select"},
 		},
 	}
 
@@ -675,28 +682,151 @@ forms:
 	}
 }
 
-func TestTitleCase(t *testing.T) {
-	tests := []struct {
-		input string
-		want  string
+// TestLabelsAreNeverStripped pins DEC-6C1NAA: a label is authored, never
+// derived, so the migration must not remove one just because it happens to
+// match a title-cased identifier.
+//
+// This is the direct regression test for BUG-8N2WT2. Previously each of these
+// labels satisfied isRedundantLabel and was deleted, and because the server
+// refuses to start on unmigrated config the user could not decline the
+// downgrade: the field then rendered its raw identifier forever.
+func TestLabelsAreNeverStripped(t *testing.T) {
+	labels := []struct {
+		property string
+		label    string
 	}{
 		{"title", "Title"},
 		{"due_date", "Due Date"},
 		{"first-name", "First Name"},
-		{"status", "Status"},
 		{"estimated_hours", "Estimated Hours"},
 		{"is_blocked", "Is Blocked"},
-		{"", ""},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			got := titleCase(tt.input)
-			if got != tt.want {
-				t.Errorf("titleCase(%q) = %q, want %q", tt.input, got, tt.want)
+	for _, tt := range labels {
+		t.Run(tt.property, func(t *testing.T) {
+			yamlStr := `forms:
+  test_form:
+    entity_type: ticket
+    fields:
+      - property: ` + tt.property + `
+        label: "` + tt.label + `"
+`
+			var doc yaml.Node
+			if err := yaml.Unmarshal([]byte(yamlStr), &doc); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+
+			m := &DataEntryCleanupMigration{}
+			if m.Detect(&doc) {
+				t.Errorf("Detect() = true for label %q on property %q; a title-cased "+
+					"label must not be treated as redundant (server would refuse to start)",
+					tt.label, tt.property)
+			}
+
+			if err := m.Apply(&doc); err != nil {
+				t.Fatalf("Apply: %v", err)
+			}
+			out, err := yaml.Marshal(&doc)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if !strings.Contains(string(out), tt.label) {
+				t.Errorf("Apply() stripped label %q; labels are authored, never derived\ngot:\n%s",
+					tt.label, out)
 			}
 		})
 	}
+}
+
+// TestListColumnLabelsAreNeverStripped covers the same rule for list columns,
+// which the migration used to clean up via the same predicate.
+func TestListColumnLabelsAreNeverStripped(t *testing.T) {
+	yamlStr := `lists:
+  tickets:
+    columns:
+      - property: due_date
+        label: "Due Date"
+`
+	var doc yaml.Node
+	if err := yaml.Unmarshal([]byte(yamlStr), &doc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	m := &DataEntryCleanupMigration{}
+	if m.Detect(&doc) {
+		t.Error("Detect() = true for a title-cased list column label; want false")
+	}
+	if err := m.Apply(&doc); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	out, err := yaml.Marshal(&doc)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(out), "Due Date") {
+		t.Errorf("Apply() stripped a list column label\ngot:\n%s", out)
+	}
+}
+
+// TestRelationLabelStrippedOnlyWhenMetamodelSupplied pins the one label the
+// migration may still remove: a relation label duplicating the metamodel's own
+// label for that relation type. That value is server-authored and served to the
+// SPA, which recovers it from relationType.label — a derivation from an
+// authored label, not from an identifier.
+//
+// The titleCase(relation) arm is gone, so a label matching only the
+// title-cased relation name must now survive.
+func TestRelationLabelStrippedOnlyWhenMetamodelSupplied(t *testing.T) {
+	const relYAML = `forms:
+  test_form:
+    entity_type: ticket
+    relations:
+      - relation: blocked_by
+        label: "%s"
+        widget: cards
+`
+
+	t.Run("metamodel label is stripped", func(t *testing.T) {
+		var doc yaml.Node
+		if err := yaml.Unmarshal(fmt.Appendf(nil, relYAML, "Blocked By"), &doc); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		m := &DataEntryCleanupMigration{}
+		m.SetMetamodel(&mockMetamodel{
+			relations: map[string]mockRelationDef{"blocked_by": {label: "Blocked By"}},
+		})
+
+		if !m.Detect(&doc) {
+			t.Fatal("Detect() = false; a label duplicating the metamodel label is redundant")
+		}
+		if err := m.Apply(&doc); err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		out, _ := yaml.Marshal(&doc)
+		if strings.Contains(string(out), "Blocked By") {
+			t.Errorf("Apply() kept a label duplicating the metamodel label\ngot:\n%s", out)
+		}
+	})
+
+	t.Run("title-cased relation name survives without a metamodel match", func(t *testing.T) {
+		var doc yaml.Node
+		if err := yaml.Unmarshal(fmt.Appendf(nil, relYAML, "Blocked By"), &doc); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		// No metamodel label for this relation, so the only thing "Blocked By"
+		// could match is titleCase("blocked_by") — which is no longer a reason
+		// to strip it.
+		m := &DataEntryCleanupMigration{}
+		m.SetMetamodel(&mockMetamodel{})
+
+		if err := m.Apply(&doc); err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		out, _ := yaml.Marshal(&doc)
+		if !strings.Contains(string(out), "Blocked By") {
+			t.Errorf("Apply() stripped a relation label that only matched titleCase\ngot:\n%s", out)
+		}
+	})
 }
 
 func TestResolveWidgetFromType(t *testing.T) {

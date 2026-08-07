@@ -188,6 +188,60 @@ index.
   fail-closed. Don't assume one `acl.yaml` grants the same authority on
   every transport.
 
+## Unknown verified identities (`unmatched_principal`)
+
+When a **verified** JWT principal's subject resolves to no
+`user_entity_type` entity (the `principal_property` lookup found no
+match), rela must decide what an identity it trusts but does not *know*
+may do. The `unmatched_principal` key chooses:
+
+```yaml
+user_entity_type: persoon
+principal_property: sub
+unmatched_principal: reject   # anonymous (default) | reject | provision
+```
+
+- **`anonymous`** (default, and the behavior when the key is absent): the
+  request proceeds. The principal keeps any roles its verified assertion
+  grants (see `asserted_role_assignments`), but has no resolved entity, so
+  local roles, ancestry, and `principal_property` grants do not apply. This
+  is the SSO-newcomer case — a user provisioned in the IdP but not yet in
+  the graph can still act on their asserted roles.
+- **`reject`**: a graph-is-authority posture. The entity graph is the
+  authority on who may mutate, so an unknown verified identity's **writes**
+  are denied (403). Its **reads** are unaffected — it still sees what its
+  asserted roles allow. Blocking reads too is a larger, separate choice and
+  is not what this does.
+- **`provision`**: reserved for a future release (lazy creation of a stub
+  user entity). Accepted at load today, but currently behaves as
+  `anonymous` and logs a one-time warning, so the key's vocabulary is
+  stable.
+
+Load-bearing details:
+
+- **Scope is the verified-JWT data-entry write path only.** `reject`
+  keys on the fact that identity came from the fail-closed JWT gate AND
+  resolved to no entity. A `--principal-header` deployment, and the
+  CLI/MCP/scheduler entry points, are never subject to it — their
+  principals legitimately don't resolve to a `persoon` either, and a
+  blanket rule would wrongly deny them. It gates writes (CRUD, sync, and
+  Lua-action writes all funnel through the one write-authorization point);
+  reads and non-`/api/` paths are untouched.
+- **`reject` and `provision` require the lookup.** Both need
+  `user_entity_type` + `principal_property` set — otherwise "unmatched"
+  has no meaning (with the lookup disabled the resolver returns no-match
+  for *every* request, so every principal would look unmatched and be
+  rejected). Setting `reject` without them is a **load error**, not a
+  runtime foot-gun.
+- **The 403 discloses only that the identity is unmatched.** Like every
+  ACL denial on the data-entry write path, the body carries a
+  `rule_kind`/`reason` (here, `unmatched-principal` — "verified principal
+  resolves to no user entity") so the SPA's affordance contract stays
+  uniform. It does **not** reveal anything the caller doesn't already
+  know: an unmatched principal knows it has no entity. It does not
+  distinguish "no IdP account" from "no graph entity," and it exposes no
+  policy detail beyond the rule that fired.
+
 ## Roles from a verified assertion (`asserted_role_assignments`)
 
 `asserted_role_assignments` maps a `roles` claim from a signed identity
@@ -523,12 +577,25 @@ caches from leaking one principal's view to another:
 ### Sidebar menu structure is principal-independent
 
 The sidebar's *structure* (groups, labels, links) reveals metamodel
-shape, not data shape, and is served identically to every principal —
-only the *counts* are gated. Hiding whole menu entries per principal
-is a possible future tightening, deliberately not done here: the
-metamodel is not a secret (it's served by `/api/v1/_schema`), and a
-divergent menu per principal complicates SPA caching for no
-confidentiality gain today.
+shape, not data shape. It is served identically to every principal
+**except** for entries an operator explicitly marks with a
+`permission:` (see GUIDE-data-entry, "Hiding entries a user cannot act
+on"); the *counts* are gated per principal as always.
+
+That exception is a **UX convenience and is not a confidentiality
+control** — the distinction matters, because the reasoning that once
+argued against per-principal menus still holds:
+
+- The metamodel is not a secret; it is served by `/api/v1/_schema`.
+- Neither is the navigation config: `/api/v1/_config` serves the whole
+  tree, `permission:` values included, to every principal.
+- A hidden entry's target enforces exactly what it enforced before. Type
+  the URL and you reach it; a list still returns its ACL-scoped rows,
+  which for a principal permitted to read none of them is an empty list.
+
+So `permission:` on a nav entry buys tidiness, not protection. Never
+reach for it in place of a read grant, and never assume an entry's
+absence means a principal cannot get at what it points to.
 
 ### Sidebar config-filter performance caveat
 

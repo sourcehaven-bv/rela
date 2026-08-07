@@ -112,6 +112,47 @@ type Policy struct {
 	AssertedRoles       map[string]RoleList        `yaml:"asserted_role_assignments"`
 	RoleRelations       map[string]RoleRelationDef `yaml:"role_relations"`
 	InheritRolesThrough []string                   `yaml:"inherit_roles_through"`
+
+	// UnmatchedPrincipal decides what happens when a verified principal's
+	// identifier resolves to no [Policy.UserEntityType] entity (the
+	// principal_property lookup found no match). It governs the data-entry
+	// write path only; reads, and the CLI/MCP/scheduler entry points, are
+	// unaffected.
+	//
+	//   - "" / "anonymous" (default): the request proceeds as today — the
+	//     principal keeps its asserted roles but has no resolved user entity,
+	//     so anything keyed on that entity (local roles, ancestry) does not
+	//     apply.
+	//   - "reject": a graph-is-authority posture — the unknown identity's
+	//     WRITES are denied (403). Requires [Policy.PrincipalProperty] and
+	//     [Policy.UserEntityType] (else "unmatched" is undefined, since the
+	//     lookup is disabled and every principal looks unmatched); [Policy.Validate]
+	//     rejects "reject" without both.
+	//   - "provision": RESERVED for a future ticket (lazy stub creation). Accepted
+	//     at load so the vocabulary is stable, but currently behaves as
+	//     "anonymous" with a one-time warning.
+	UnmatchedPrincipal string `yaml:"unmatched_principal"`
+}
+
+// UnmatchedPrincipal modes — the values [Policy.UnmatchedPrincipal] accepts.
+const (
+	// UnmatchedAnonymous is the default: an unmatched verified principal
+	// proceeds with its asserted roles and no resolved entity.
+	UnmatchedAnonymous = "anonymous"
+	// UnmatchedReject denies an unmatched verified principal's writes.
+	UnmatchedReject = "reject"
+	// UnmatchedProvision is reserved for lazy stub provisioning (a future
+	// ticket). Accepted at load; behaves as anonymous until implemented.
+	UnmatchedProvision = "provision"
+)
+
+// effectiveUnmatchedPrincipal returns the mode with the empty default resolved
+// to [UnmatchedAnonymous], so callers read one value.
+func (p *Policy) effectiveUnmatchedPrincipal() string {
+	if p.UnmatchedPrincipal == "" {
+		return UnmatchedAnonymous
+	}
+	return p.UnmatchedPrincipal
 }
 
 // RoleList is a list of role names that accepts either a bare scalar or a
@@ -151,6 +192,15 @@ func (r *RoleList) UnmarshalYAML(unmarshal func(any) error) error {
 func (p *Policy) principalPropertyLookupEnabled() bool {
 	return strings.TrimSpace(p.UserEntityType) != "" &&
 		strings.TrimSpace(p.PrincipalProperty) != ""
+}
+
+// PrincipalPropertyLookupEnabled is the exported form of
+// [Policy.principalPropertyLookupEnabled], for out-of-package callers that must
+// distinguish "the resolver attempted a lookup and found no entity" from "no
+// lookup was configured" — e.g. the data-entry middleware deciding whether a
+// no-match is a genuine unmatched principal.
+func (p *Policy) PrincipalPropertyLookupEnabled() bool {
+	return p.principalPropertyLookupEnabled()
 }
 
 // EffectiveMembershipRelation returns the relation type the resolver
@@ -370,6 +420,7 @@ var knownPolicyKeys = map[string]bool{
 	"asserted_role_assignments": true,
 	"role_relations":            true,
 	"inherit_roles_through":     true,
+	"unmatched_principal":       true,
 }
 
 // LoadPolicy reads and parses `acl.yaml` at the given path.
@@ -547,8 +598,42 @@ func (p *Policy) normalizeAssertedRoles() {
 // on-demand `rela acl audit` linter — see internal/aclaudit and
 // TKT-TS0J5K — which can rank findings by severity and cross-check the
 // metamodel, neither of which fits a boot gate.
+// validateUnmatchedPrincipal checks the unmatched_principal enum and its
+// dependency on the principal_property lookup. Extracted from [Policy.Validate]
+// to keep that function's cognitive complexity in bounds.
+func (p *Policy) validateUnmatchedPrincipal() error {
+	switch p.UnmatchedPrincipal {
+	case "", UnmatchedAnonymous, UnmatchedReject, UnmatchedProvision:
+		// ok
+	default:
+		return fmt.Errorf(
+			"unmatched_principal: %q is not a valid mode (want %q, %q, or %q)",
+			p.UnmatchedPrincipal, UnmatchedAnonymous, UnmatchedReject, UnmatchedProvision)
+	}
+	// reject and provision key off the principal_property lookup: "unmatched"
+	// only has meaning when the resolver maps an identifier to a user entity.
+	// Without the lookup enabled, ResolvePrincipal returns no-match for EVERY
+	// request, so every principal would look unmatched — a foot-gun that would
+	// reject (or provision for) everyone. Fail loud at load rather than mis-gate
+	// at runtime.
+	if p.UnmatchedPrincipal == UnmatchedReject || p.UnmatchedPrincipal == UnmatchedProvision {
+		if !p.principalPropertyLookupEnabled() {
+			return fmt.Errorf(
+				"unmatched_principal: %q requires both user_entity_type and "+
+					"principal_property to be set (else every principal is unmatched)",
+				p.UnmatchedPrincipal)
+		}
+	}
+	return nil
+}
+
 func (p *Policy) Validate() error {
 	p.normalizeAssertedRoles()
+
+	if err := p.validateUnmatchedPrincipal(); err != nil {
+		return err
+	}
+
 	for i, t := range p.InheritRolesThrough {
 		if isBlank(t) {
 			return fmt.Errorf("inherit_roles_through[%d]: relation type must not be empty or whitespace", i)

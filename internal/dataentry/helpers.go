@@ -308,19 +308,6 @@ func slugify(s string) string {
 	return strings.Trim(b.String(), "-")
 }
 
-// titleCase converts snake_case/kebab-case to Title Case.
-func titleCase(s string) string {
-	s = strings.ReplaceAll(s, "_", " ")
-	s = strings.ReplaceAll(s, "-", " ")
-	words := strings.Fields(s)
-	for i, w := range words {
-		if w != "" {
-			words[i] = strings.ToUpper(w[:1]) + w[1:]
-		}
-	}
-	return strings.Join(words, " ")
-}
-
 // resolvePropertyType returns the metamodel type name for a property on an entity type.
 func resolvePropertyType(prop, entityType string, meta *metamodel.Metamodel) string {
 	entDef, ok := meta.GetEntityDef(entityType)

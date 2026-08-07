@@ -94,7 +94,23 @@ const targetTypes = computed(() => {
   return isIncoming.value ? relationType.value.from : relationType.value.to
 })
 
-const label = computed(() => props.field.label || props.field.relation || '')
+// Label resolution (DEC-6C1NAA): an authored form label wins, then the
+// metamodel's own label for the relation type, then the raw relation id.
+// The metamodel label is server-authored and language-neutral, so consulting
+// it is not a derivation from an identifier — and the cleanup migration
+// strips a form label that duplicates it, so the SPA MUST read it here or
+// that label is lost.
+// An incoming picker shows edges pointing AT us, so the inverse label is the
+// correct one ("blocked by", not "blocks"). Mirrors the server-side resolution
+// in internal/dataentry/export.go relationDisplayLabel.
+const label = computed(
+  () =>
+    props.field.label ||
+    (isIncoming.value ? relationType.value?.inverse?.label : undefined) ||
+    relationType.value?.label ||
+    props.field.relation ||
+    ''
+)
 const help = computed(() => props.field.help || relationType.value?.description || '')
 
 const isMulti = computed(() => {
@@ -119,8 +135,7 @@ const filteredCandidates = computed(() => {
   return candidates.value.filter(
     (c) =>
       !effectiveValue.value.includes(c.id) &&
-      (c.id.toLowerCase().includes(query) ||
-        (c._title ?? '').toLowerCase().includes(query))
+      (c.id.toLowerCase().includes(query) || (c._title ?? '').toLowerCase().includes(query))
   )
 })
 
@@ -164,7 +179,7 @@ async function loadIncomingValue() {
       props.entityType,
       props.entityId,
       props.field.relation,
-      'incoming',
+      'incoming'
     )
     const ids = edges.map((e) => e.id)
     incomingValue.value = ids
@@ -234,9 +249,7 @@ function buildOutgoingTypes(ids: string[]): Map<string, string> {
 
 function selectEntity(entity: Entity) {
   if (isIncoming.value) {
-    incomingValue.value = isMulti.value
-      ? [...incomingValue.value, entity.id]
-      : [entity.id]
+    incomingValue.value = isMulti.value ? [...incomingValue.value, entity.id] : [entity.id]
     emitIncomingDiff()
   } else {
     const next = isMulti.value ? [...props.value, entity.id] : [entity.id]
@@ -318,19 +331,10 @@ onBeforeUnmount(() => {
 
     <!-- Selected entities -->
     <div v-if="selectedEntities.length" class="selected-entities">
-      <div
-        v-for="entity in selectedEntities"
-        :key="entity.id"
-        class="selected-entity"
-      >
+      <div v-for="entity in selectedEntities" :key="entity.id" class="selected-entity">
         <span class="entity-type">{{ entity.type }}</span>
         <span class="entity-label">{{ formatEntityLabel(entity) }}</span>
-        <button
-          v-if="canRemove"
-          type="button"
-          class="remove-btn"
-          @click="removeEntity(entity.id)"
-        >
+        <button v-if="canRemove" type="button" class="remove-btn" @click="removeEntity(entity.id)">
           &times;
         </button>
       </div>
@@ -383,9 +387,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <div v-if="loading" class="loading-indicator">
-        Loading...
-      </div>
+      <div v-if="loading" class="loading-indicator">Loading...</div>
     </div>
 
     <p v-if="help" class="field-help">{{ help }}</p>

@@ -324,3 +324,119 @@ describe('RelationPicker — incoming direction on create (BUG-10IPBP)', () => {
     wrapper.unmount()
   })
 })
+
+// DEC-6C1NAA — a label is authored, never derived. The cleanup migration
+// strips a form label that duplicates the metamodel's relation label, so the
+// SPA MUST read `relationType.label` back or that label is lost (BUG-8N2WT2).
+// The old fallback chain was `field.label || field.relation`, which ignored the
+// metamodel entirely and rendered the raw snake_case relation id.
+describe('RelationPicker label resolution', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    seedCandidates([])
+  })
+
+  function mountWithRelationLabel(
+    fieldLabel: string | undefined,
+    metamodelLabel: string | undefined
+  ) {
+    const schemaStore = useSchemaStore()
+    schemaStore.entityTypes.set('ticket', {
+      name: 'ticket',
+      label: 'Ticket',
+      properties: {},
+    } as never)
+    schemaStore.relationTypes.set('contact_van_opportunity', {
+      name: 'contact_van_opportunity',
+      label: metamodelLabel,
+      from: ['ticket'],
+      to: ['ticket'],
+      max_outgoing: 1,
+    } as never)
+
+    const field: FormFieldOrRelation = { relation: 'contact_van_opportunity' }
+    if (fieldLabel !== undefined) field.label = fieldLabel
+
+    return mount(RelationPicker, {
+      props: { field, value: [], entityType: 'ticket', entityId: 'TKT-1' },
+      attachTo: document.body,
+    })
+  }
+
+  it('uses the metamodel relation label when the form label was stripped', async () => {
+    const wrapper = mountWithRelationLabel(undefined, 'Contactpersoon')
+    await flushPromises()
+    expect(wrapper.find('label').text()).toContain('Contactpersoon')
+    wrapper.unmount()
+  })
+
+  it('falls back to the raw relation id, never a title-cased guess', async () => {
+    const wrapper = mountWithRelationLabel(undefined, undefined)
+    await flushPromises()
+    const text = wrapper.find('label').text()
+    expect(text).toContain('contact_van_opportunity')
+    expect(text).not.toContain('Contact Van Opportunity')
+    wrapper.unmount()
+  })
+
+  it('prefers an explicit form label over the metamodel label', async () => {
+    const wrapper = mountWithRelationLabel('Eigen label', 'Contactpersoon')
+    await flushPromises()
+    expect(wrapper.find('label').text()).toContain('Eigen label')
+    wrapper.unmount()
+  })
+})
+
+// An incoming picker shows edges pointing AT us, so the INVERSE label is the
+// correct display text — "blocked by", not "blocks". The server already
+// resolves this way (internal/dataentry/export.go relationDisplayLabel); the
+// SPA did not, so an unlabelled incoming picker showed the outgoing label.
+describe('RelationPicker incoming label resolution', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    seedCandidates([])
+  })
+
+  function mountIncomingLabel(inverseLabel?: string) {
+    const schemaStore = useSchemaStore()
+    schemaStore.entityTypes.set('ticket', {
+      name: 'ticket',
+      label: 'Ticket',
+      properties: {},
+    } as never)
+    schemaStore.relationTypes.set('blocks', {
+      name: 'blocks',
+      label: 'Blocks',
+      inverse: inverseLabel ? { id: 'blockedBy', label: inverseLabel } : { id: 'blockedBy' },
+      from: ['ticket'],
+      to: ['ticket'],
+      max_incoming: 1,
+    } as never)
+
+    return mount(RelationPicker, {
+      props: {
+        field: { relation: 'blocks', direction: 'incoming' },
+        value: [],
+        entityType: 'ticket',
+        entityId: 'TKT-1',
+      },
+      attachTo: document.body,
+    })
+  }
+
+  it('prefers the inverse label for an incoming relation', async () => {
+    const wrapper = mountIncomingLabel('Blocked by')
+    await flushPromises()
+    const text = wrapper.find('label').text()
+    expect(text).toContain('Blocked by')
+    expect(text).not.toContain('Blocks')
+    wrapper.unmount()
+  })
+
+  it('falls back to the outgoing label when no inverse label is authored', async () => {
+    const wrapper = mountIncomingLabel(undefined)
+    await flushPromises()
+    expect(wrapper.find('label').text()).toContain('Blocks')
+    wrapper.unmount()
+  })
+})

@@ -799,7 +799,7 @@ relations:
     from: [decision]
     to: [requirement]
     min_outgoing: 1 # Each decision must address at least one requirement
-    inverse: addressedBy # Simple form - label auto-derived as "addressed by"
+    inverse: addressedBy # Simple form - the ID is also the display label
 ```
 
 ### Inverse Relations
@@ -809,15 +809,16 @@ The `inverse` field can be specified in two forms:
 **Simple form** (recommended for most cases):
 
 ```yaml
-inverse: addressedBy # Label auto-derived from ID
+inverse: addressedBy # The ID doubles as the display label
 ```
 
-The label is automatically derived by converting camelCase to space-separated lowercase:
+Without an explicit `label`, the ID itself is displayed — `addressedBy` renders as
+`addressedBy`. Labels are **authored, never derived**: rela does not convert an
+identifier into prose, because any such conversion encodes an English orthographic
+convention (word splitting, capitalization) that is wrong for most languages. Use the
+expanded form below to control the display text.
 
-- `addressedBy` → `addressed by`
-- `implementedBy` → `implemented by`
-
-**Expanded form** (when custom label needed):
+**Expanded form** (recommended whenever the ID is not the text you want shown):
 
 ```yaml
 inverse:

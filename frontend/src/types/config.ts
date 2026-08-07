@@ -160,19 +160,32 @@ export interface ListConfig {
 }
 
 /**
- * Resolve the raw markdown for a list's top info region. `header` is canonical;
- * `description` is a fallback — the field predates this feature but was never
- * rendered, so we adopt it as an alias rather than require every config to be
- * rewritten. Returns '' when neither is set (a blank/whitespace-only value is
- * treated as unset). The caller passes the result through renderMarkdown.
+ * Resolve the raw markdown for a view's top info region. `header` is canonical.
+ * Returns '' when unset (a blank/whitespace-only value counts as unset). The
+ * caller passes the result through renderMarkdown.
+ *
+ * `description` is an OPT-IN legacy alias, enabled per call site via
+ * `allowDescriptionAlias`. Only lists pass it: there the field predated this
+ * feature and was never rendered, so adopting it as an alias avoided rewriting
+ * every existing config. Kanban deliberately has no such fallback (TKT-6S331G).
+ *
+ * The opt-in is a flag rather than a type constraint because TypeScript erases
+ * at runtime: a structural parameter would happily read `description` off any
+ * object carrying one, and these configs are parsed from the /_config response.
+ * Relying on `KanbanConfig` merely lacking the field would make the policy a
+ * comment that a later Go `Kanban.Description` field could silently void.
  */
-export function listHeaderMarkdown(list: ListConfig | undefined): string {
-  return list?.header?.trim() || list?.description?.trim() || ''
+export function viewHeaderMarkdown(
+  view: { header?: string; description?: string } | undefined,
+  opts: { allowDescriptionAlias?: boolean } = {}
+): string {
+  const alias = opts.allowDescriptionAlias ? view?.description?.trim() : ''
+  return view?.header?.trim() || alias || ''
 }
 
-/** Resolve the raw markdown for a list's bottom info region ('' when unset). */
-export function listFooterMarkdown(list: ListConfig | undefined): string {
-  return list?.footer?.trim() || ''
+/** Resolve the raw markdown for a view's bottom info region ('' when unset). */
+export function viewFooterMarkdown(view: { footer?: string } | undefined): string {
+  return view?.footer?.trim() || ''
 }
 
 // Helper to get edit form for an entity type
@@ -240,6 +253,14 @@ export interface ViewSection {
 export interface KanbanConfig {
   entity: string
   title?: string
+  /** Markdown rendered above the board. */
+  header?: string
+  /** Markdown rendered below the board. */
+  footer?: string
+  // Deliberately no `description`: unlike ListConfig, kanban has no legacy field
+  // to adopt as a header alias. Enforced at the call site, which does NOT pass
+  // viewHeaderMarkdown's `allowDescriptionAlias` — not by this field's absence,
+  // which types alone cannot guarantee at runtime.
   column_property: string
   columns?: KanbanColumn[]
   swimlane_property?: string
@@ -327,7 +348,14 @@ export interface NavigationEntry {
   list?: string
   dashboard?: boolean
   kanban?: string
+  search?: boolean
+  settings?: boolean
   action?: string
+  /** Global named permission required for this entry to appear in the sidebar.
+   *  The SPA does not act on it — the server already omits filtered entries
+   *  from /_sidebar, which is what the menu is built from. Present here only
+   *  because /_config serves the navigation tree verbatim. */
+  permission?: string
   icon?: string
   // Group fields
   group?: string

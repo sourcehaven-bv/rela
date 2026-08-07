@@ -38,10 +38,12 @@ describe('AdHocFilterMenu', () => {
     await wrapper.find('.filter-btn').trigger('click')
     await flushPromises()
 
+    // DEC-6C1NAA: property options show the raw property name, not a
+    // title-cased guess.
     const labels = wrapper.findAll('.option-label').map((n) => n.text())
-    expect(labels).toContain('Title')
-    expect(labels).toContain('Status')
-    expect(labels).not.toContain('Priority')
+    expect(labels).toContain('title')
+    expect(labels).toContain('status')
+    expect(labels).not.toContain('priority')
 
     wrapper.unmount()
   })
@@ -54,15 +56,11 @@ describe('AdHocFilterMenu', () => {
     await wrapper.find('.filter-btn').trigger('click')
     await flushPromises()
 
-    const statusOption = wrapper
-      .findAll('.filter-option')
-      .find((n) => n.text().includes('Status'))
+    const statusOption = wrapper.findAll('.filter-option').find((n) => n.text().includes('status'))
     expect(statusOption).toBeDefined()
     await statusOption!.trigger('click')
 
-    const openOption = wrapper
-      .findAll('.filter-option')
-      .find((n) => n.text().trim() === 'open')
+    const openOption = wrapper.findAll('.filter-option').find((n) => n.text().trim() === 'open')
     expect(openOption).toBeDefined()
     await openOption!.trigger('click')
 
@@ -95,9 +93,7 @@ describe('AdHocFilterMenu', () => {
     await wrapper.find('.filter-btn').trigger('click')
     await flushPromises()
 
-    const statusOption = wrapper
-      .findAll('.filter-option')
-      .find((n) => n.text().includes('Status'))
+    const statusOption = wrapper.findAll('.filter-option').find((n) => n.text().includes('status'))
     await statusOption!.trigger('click')
 
     // Value picker shows the label, not the raw snake_case value.
@@ -120,9 +116,7 @@ describe('AdHocFilterMenu', () => {
     await wrapper.find('.filter-btn').trigger('click')
     await flushPromises()
 
-    const titleOption = wrapper
-      .findAll('.filter-option')
-      .find((n) => n.text().includes('Title'))
+    const titleOption = wrapper.findAll('.filter-option').find((n) => n.text().includes('title'))
     await titleOption!.trigger('click')
     await flushPromises()
 
@@ -147,9 +141,7 @@ describe('AdHocFilterMenu', () => {
     await wrapper.find('.filter-btn').trigger('click')
     await flushPromises()
 
-    const titleOption = wrapper
-      .findAll('.filter-option')
-      .find((n) => n.text().includes('Title'))
+    const titleOption = wrapper.findAll('.filter-option').find((n) => n.text().includes('title'))
     await titleOption!.trigger('click')
     await flushPromises()
 

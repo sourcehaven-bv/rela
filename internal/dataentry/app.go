@@ -813,6 +813,8 @@ func NewApp(
 		services:    app.Services,
 		logo:        logo,
 		gateRead:    app.gateReadOrNotFound,
+		// Late-bound: tests reassign app.acl after construction.
+		aclImpl: func() acl.ACL { return app.acl },
 	}
 
 	// commandHandler owns the user-configured command surface. Its

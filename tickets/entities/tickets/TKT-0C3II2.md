@@ -1,75 +1,101 @@
 ---
 id: TKT-0C3II2
 type: ticket
-title: Auto-provision a user entity for an unmatched verified principal
+title: Reject an unmatched verified principal's writes (unmatched_principal policy key)
 kind: enhancement
 priority: medium
-effort: m
-status: backlog
+effort: s
+status: done
 ---
 
-Follow-up to TKT-RP3X3Q. Decide and implement what happens when a
-cryptographically verified principal has **no matching user entity** in the
-graph — today it degrades to an anonymous-but-role-bearing principal.
+A cryptographically verified principal whose subject resolves to no
+`user_entity_type` entity currently proceeds **anonymous but role-bearing** on
+every path (keeps asserted roles; loses anything keyed on a resolved entity).
+This ticket lets a **graph-is-authority** deployment opt into rejecting such a
+principal's **writes** instead — the entity graph is the authority on who may
+mutate, and an unknown verified identity is denied.
 
-## Context
+## Scope: reject only (provision split out)
 
-TKT-RP3X3Q makes asserted roles from a verified JWT grantable in `acl.yaml`.
-That decoupled role-granting from graph membership, which raised the question:
-what should a verified principal with valid roles but no `user_entity_type`
-entity be able to do?
+This ticket ships the `unmatched_principal` policy key with two of its three
+values: **`anonymous`** (default, today's behaviour) and **`reject`**. The third
+value, **`provision`** (lazy declarative stub creation), is **deferred** — its
+design is parked in `.ignored/provision-unmatched-principal-design.md` after a
+design review found the write-seam genuinely unresolved (see "Why split" below).
 
-**Decided for TKT-RP3X3Q (interim):** unmatched principal → anonymous. The
-request stays authenticated and keeps its asserted roles; it simply has no
-resolved user entity, so anything keyed on that entity (local roles via
-`role_relations`, ancestry via `inherit_roles_through`, `principal_property`
-lookups) does not apply. This is a deliberate interim position, not the end
-state.
+`reject` is a pure **gate** decision — deny a write, no write of its own — so it
+is small, self-contained, and high-value. `provision` is a write with a harder
+seam; forcing both onto one policy key at one seam is what the review flagged.
 
-## Why a follow-up is needed
+## Why split (design-review findings)
 
-Behind an OIDC proxy with SSO JIT provisioning, this is not an edge case — it is
-the **first request of every new user**. Pratique will happily mint a valid
-assertion for a freshly-provisioned member (`roles: []` or a default role) who
-has never existed in rela. The anonymous fallback means such a user gets
-asserted-role grants but silently loses every graph-derived affordance, with no
-signal to the operator that a person is transacting without an entity.
+The combined plan's review (RR-BZQ049, RR-9XBIJZ, RR-9THKDO, RR-64WDUD) found:
+- The provision/reject hook as planned (per-CRUD-handler) missed sync, Lua-action,
+attachment, and git-sync writes — a `reject`-bypass **and** incomplete
+provision. The choke-point fix is tractable for `reject` (a gate, no write) but
+hard for `provision` (needs `writeMu` + manager + ctx re-stamp + read-gate
+rebuild).
+- `provision`'s "automations add the groups" idea contradicted the minimal grant
+(RR-64WDUD) — resolved to "bare stub only," but that plus the seam make
+`provision` its own piece of work.
 
-Consequences worth designing away:
+So: ship `reject` here at a correct gate seam; `provision` gets its own ticket
+from the parked doc.
 
-- **Audit attribution degrades.** Writes are attributed to the raw subject with
-no entity to join against, so per-user history is harder to reconstruct.
-- **Silent, not loud.** Nothing surfaces "N verified principals have no user
-entity" — the operator finds out when someone reports missing permissions.
-- **Drift.** Users provisioned in the IdP and users present in rela diverge
-over time with no reconciliation.
+## Decided design (reject)
 
-## Questions to answer
+- **`unmatched_principal: anonymous | reject`** — a new `acl.Policy` key. Default
+`anonymous` (byte-identical to today). `provision` is a **reserved** third
+value: `Validate` accepts it but the data-entry path treats it as `anonymous`
+with a one-time `slog.Warn("provision not yet implemented")` until its own
+ticket lands — so an operator who sets it isn't silently ignored, and the key's
+vocabulary is stable.
+- **`reject` denies WRITES on the data-entry path.** An unmatched verified
+principal's mutating request gets a generic 403; a GET stays anonymous-read
+(documented posture — a graph-is-authority deployment still lets unknowns read
+what their asserted roles allow; blocking reads is a separate, larger choice).
+- **The seam must cover EVERY data-entry write, not just CRUD** (RR-BZQ049).
+Because `reject` performs no write, it can be enforced where the write is
+*authorized*, or in a shared pre-write check the CRUD + sync + action +
+attachment + git paths all reach. Resolve the exact seam in planning — but a
+gate has far more freedom than the provision write did (no `writeMu`/manager/
+re-stamp needed).
+- **Data-entry-path scoped** (RR-9THKDO / AC): fires only for a verified-JWT
+unmatched principal. Guard from wiring state (`a.jwtGate != nil`), NOT from a
+per-Principal marker (JWT and header principals both stamp
+`Tool=ToolDataEntry`). The scheduler/header/loopback/CLI/MCP principals must be
+untouched.
+- **`reject` requires `principal_property` + `user_entity_type`** (load invariant)
+— otherwise "unmatched" is undefined (the lookup is disabled and every request
+looks unmatched). `Validate` rejects `reject` without both set.
+- `isUnstamped` and the shared `ForPrincipal` gate are NOT touched — a blanket
+rule there would reject the scheduler/header/loopback principals too.
 
-1. **Auto-create, or not?** Options: create a `user_entity_type` entity on first
-verified request; create lazily only on first *write*; never create but surface
-an operator report; or an explicit `rela user import` reconciliation command.
-2. **If auto-created, with what?** `sub` is the stable key, but `email`,
-`org_id`/`org_slug` are also on the assertion (see TKT-RP3X3Q for the full
-verified claim set). Which become properties? Which relations, if any?
-3. **Who is the author?** An auto-created entity is a write on the read path —
-which violates the project rule against user-supplied work on reads, and needs a
-system principal, an audit story, and a decision about whether it runs inside a
-`Tx`.
-4. **Idempotency and races.** Concurrent first requests from the same subject
-must not create duplicates. `if_exists: skip` semantics, or a unique constraint
-on the principal property.
-5. **Should it be opt-in?** A deployment that treats the graph as the authority
-on who exists may want unmatched principals rejected outright rather than
-auto-created. Likely a policy key with a fail-closed default.
-6. **Interaction with `isUnstamped`.** The current fail-closed gate
-(`acl/request.go:189`) checks User/Tool only. Any change here touches a security
-gate and needs its own review.
+## Acceptance criteria
 
-## Notes
+1. `unmatched_principal` absent or `anonymous` ⇒ behaviour byte-identical to today.
+2. `reject` ⇒ an unmatched verified principal's **write** (CRUD, sync, action,
+attachment, git) gets 403; a matched principal's write proceeds.
+3. `reject` ⇒ a **GET** by the unmatched principal is unaffected (anonymous read).
+4. `reject`/the key are **data-entry-path-scoped**: scheduler, header-mode,
+CLI, MCP principals are untouched (a scheduler write is not rejected).
+5. `reject` set without `principal_property` + `user_entity_type` ⇒ **load error**.
+6. Unknown `unmatched_principal` value ⇒ load error. `provision` is accepted at
+load (reserved) but behaves as `anonymous` + a warn until its own ticket.
+7. `reject`'s 403 leaks nothing (does not reveal IdP-existence vs. no-entity).
+8. `isUnstamped` / shared `ForPrincipal` untouched.
 
-- Related: the org-enforcement follow-up also carved out of TKT-RP3X3Q. Both
-concern "what does a verified multi-tenant identity mean to the graph", and may
-want a shared decision record.
-- `create_entity` automations with `if_exists: skip` are the existing in-repo
-precedent for idempotent entity creation.
+## Out of scope
+
+- **`provision`** — parked (`.ignored/provision-unmatched-principal-design.md`);
+own ticket. Includes: the stub, `system:provisioner` + its migration, email
+threading onto the Principal, the write-seam, the webhook race.
+- Rejecting **reads** for an unmatched principal (larger posture choice).
+- Org entities/relations/enforcement; `rela user import`; changing `isUnstamped`.
+
+## Notes / prior art
+
+- `asserted_role_assignments` (TKT-RP3X3Q) — the idiom for a new `Policy` key +
+`knownPolicyKeys` + `Validate`.
+- The parked design doc holds the full `provision` analysis and the four
+design-review findings (RR-BZQ049/9XBIJZ/9THKDO/64WDUD).

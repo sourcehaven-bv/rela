@@ -199,6 +199,31 @@ func (s *FSStore) PropertyValues(_ context.Context, property string, limit int) 
 
 // --- EntityWriter ---
 
+// idTaken reports whether any key of index case-folds to the same identity as
+// id. except is skipped so a rename can ask "does any OTHER entity claim this
+// identity?" without self-colliding.
+//
+// Scans the existing index on each call rather than maintaining a second
+// case-folded map: the entity index is mutated at several sites, and a
+// parallel index would silently drift at whichever one a future change
+// forgets to update. Runs only on create and rename, never on a read path.
+//
+// A free function rather than a method — FSStore is at its plimsoll
+// max-methods line, and this needs no receiver state beyond the index.
+// Callers must hold s.mu.
+func idTaken(index map[string]entityMeta, id, except string) bool {
+	folded := storeutil.FoldID(id)
+	for existing := range index {
+		if existing == except {
+			continue
+		}
+		if storeutil.FoldID(existing) == folded {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *FSStore) createEntity(_ context.Context, e *entity.Entity) error {
 	if err := storeutil.ValidateID(e.ID); err != nil {
 		return err
@@ -207,7 +232,10 @@ func (s *FSStore) createEntity(_ context.Context, e *entity.Entity) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, exists := s.entities[e.ID]; exists {
+	// Case-folded: on a case-insensitive filesystem (macOS, Windows) "ABC"
+	// and "abc" are the same file, so a byte-exact check here would let the
+	// write silently overwrite the existing entity (BUG-3RCWNS).
+	if idTaken(s.entities, e.ID, "") {
 		return store.ErrConflict
 	}
 
@@ -376,7 +404,8 @@ func (s *FSStore) renameEntity(_ context.Context, oldID, newID string) (*store.R
 	if !ok {
 		return nil, store.ErrNotFound
 	}
-	if _, exists := s.entities[newID]; exists {
+	// except=oldID: an entity may change its own casing (abc -> ABC).
+	if idTaken(s.entities, newID, oldID) {
 		return nil, store.ErrConflict
 	}
 
