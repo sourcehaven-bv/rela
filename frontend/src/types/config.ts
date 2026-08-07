@@ -288,11 +288,19 @@ export interface KanbanColumn {
   value: string
   label?: string
   color?: string
+  /**
+   * Name of an icon from the shared registry (see utils/icons.ts), rendered
+   * beside the label. A NAME, never a glyph: an emoji written into `label`
+   * renders verbatim, and the SPA never parses one back out of label text.
+   */
+  icon?: string
 }
 
 export interface KanbanSwimlane {
   value: string
   label?: string
+  /** Icon name; see KanbanColumn.icon. */
+  icon?: string
 }
 
 export interface KanbanCardField {

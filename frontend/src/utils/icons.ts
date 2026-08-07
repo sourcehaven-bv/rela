@@ -73,12 +73,19 @@ export const iconNames = (): string[] => Object.keys(ICONS).sort()
  * `<component :is>` without a guard.
  */
 export function resolveIcon(name?: string | null): Component {
-  if (!name) return DEFAULT_ICON
-  return ICONS[name] ?? DEFAULT_ICON
+  // isKnownIcon, not `ICONS[name] ?? DEFAULT_ICON`: a bare index lookup finds
+  // INHERITED Object.prototype members, so a config naming `toString` or
+  // `constructor` would yield a function that is not a component and blow up
+  // the render. An own-property check is the difference between a fallback
+  // icon and a crash.
+  if (!isKnownIcon(name)) return DEFAULT_ICON
+  return ICONS[name]
 }
 
 /** isKnownIcon reports whether a name resolves to a real icon (not the
- * fallback). Used by tests; the server is what validates author input. */
-export function isKnownIcon(name?: string | null): boolean {
-  return !!name && Object.hasOwn(ICONS, name)
+ * fallback). A type predicate so callers can index ICONS afterwards. Used by
+ * tests; the server is what validates author input. */
+export function isKnownIcon(name?: string | null): name is string {
+  // Not Object.hasOwn — the project's TS lib target predates it.
+  return !!name && Object.prototype.hasOwnProperty.call(ICONS, name)
 }

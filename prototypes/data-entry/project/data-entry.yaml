@@ -590,12 +590,20 @@ kanbans:
     title: "Ticket Board"
     column_property: status
     columns:
+      # `icon:` names an icon from the shared registry; the label stays plain
+      # text. Emoji used to live inside the label string, which meant they
+      # ignored the theme, rendered differently per OS, and could not be
+      # styled — and the SPA had no way to tell an intentional emoji in a
+      # label apart from one meant as an icon.
       - value: open
-        label: "\U0001F4E5 To Do"
+        label: "To Do"
+        icon: inbox
       - value: in-progress
-        label: "\U0001F527 In Progress"
+        label: "In Progress"
+        icon: progress
       - value: resolved
-        label: "✅ Done"
+        label: "Done"
+        icon: done
     card:
       title: title
       fields:

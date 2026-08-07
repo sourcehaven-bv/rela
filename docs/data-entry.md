@@ -1398,14 +1398,42 @@ kanbans:
 | `header`           | string | Markdown rendered above the board (info/help; see below)   |
 | `footer`           | string | Markdown rendered below the board                          |
 | `column_property`  | string | Property to group by for columns (must be enum/custom type)|
-| `columns`          | list   | Explicit column definitions (optional)                     |
+| `columns`          | list   | Explicit column definitions (`value`, `label`, `icon`)     |
 | `swimlane_property`| string | Property to group by for swimlanes (optional)              |
-| `swimlanes`        | list   | Explicit swimlane definitions (optional)                   |
+| `swimlanes`        | list   | Explicit swimlane definitions (`value`, `label`, `icon`)   |
 | `card`             | object | Card display configuration                                 |
 | `edit_form`        | string | Form name for editing cards (click to open)                |
 | `create_form`      | string | Form name for the "New" button                             |
 | `filters`          | list   | Static filters (same as lists)                             |
 | `filter_controls`  | list   | Interactive filter controls (same as lists)                |
+
+#### Column and swimlane icons
+
+Columns and swimlanes take an optional `icon:` — a **name**, not a glyph:
+
+```yaml
+columns:
+  - value: open
+    label: "To Do"
+    icon: inbox
+  - value: in-progress
+    label: "In Progress"
+    icon: progress
+  - value: resolved
+    label: "Done"
+    icon: done
+```
+
+Icons are SVG and inherit the current text colour, so they follow the light /
+dark theme and any styling applied to the header. Valid names:
+`dashboard`, `list`, `kanban`, `search`, `analysis`, `apps`, `settings`,
+`document`, `sun`, `moon`, `inbox`, `progress`, `done`, `clock`, `status`.
+An unknown name is a config error at startup, listing the valid set.
+
+You can still put an emoji directly in `label:` — it renders verbatim, and
+rela will never strip or reinterpret it. But an emoji cannot take the theme's
+colour and renders differently on every operating system, so `icon:` is
+preferred where one of the names above fits.
 
 #### Header and footer info regions
 

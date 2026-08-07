@@ -7,6 +7,7 @@ import { getSidebar, runAction } from '@/api'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { ApiError, getErrorMessage, getScriptError } from '@/api/errors'
 import type { SidebarGroup, SidebarItem } from '@/types'
+import { resolveIcon, ICONS } from '@/utils/icons'
 
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
@@ -101,14 +102,12 @@ function isActive(href: string): boolean {
   return route.path === href || route.path.startsWith(href + '/')
 }
 
-function getIconEmoji(icon?: string): string {
-  switch (icon) {
-    case 'list': return '📋'
-    case 'kanban': return '📊'
-    case 'dashboard': return '🏠'
-    default: return '📄'
-  }
-}
+// Config-supplied icon names resolve through the shared allowlist registry;
+// unknown names fall back to a default rather than throwing, so a stale config
+// still renders. The name -> icon mapping used to live here as a switch
+// returning emoji, which could not take `currentColor`, ignored the theme, and
+// rendered differently on every OS.
+const navIcon = (icon?: string) => resolveIcon(icon)
 
 async function handleAction(item: SidebarItem, ev?: Event) {
   if (!item.action) return
@@ -161,12 +160,12 @@ async function handleAction(item: SidebarItem, ev?: Event) {
     <!-- Fixed top items: Search and Analysis -->
     <div class="sidebar-top-items">
       <RouterLink to="/search" class="nav-item" :class="{ active: route.path === '/search' }">
-        <span class="nav-icon">🔍</span>
+        <component :is="ICONS.search" class="nav-icon" :size="18" aria-hidden="true" />
         <span class="nav-label">Search</span>
         <kbd v-if="!uiStore.sidebarCollapsed">/</kbd>
       </RouterLink>
       <RouterLink to="/analyze" class="nav-item" :class="{ active: route.path === '/analyze' }">
-        <span class="nav-icon">⚠️</span>
+        <component :is="ICONS.analysis" class="nav-icon" :size="18" aria-hidden="true" />
         <span class="nav-label">Analysis</span>
       </RouterLink>
     </div>
@@ -184,7 +183,7 @@ async function handleAction(item: SidebarItem, ev?: Event) {
               :disabled="actionInFlight.has(item.action)"
               @click="handleAction(item, $event)"
             >
-              <span class="nav-icon">{{ getIconEmoji(item.icon) }}</span>
+              <component :is="navIcon(item.icon)" class="nav-icon" :size="18" aria-hidden="true" />
               <span class="nav-label">{{ item.label }}</span>
             </button>
             <RouterLink
@@ -193,7 +192,7 @@ async function handleAction(item: SidebarItem, ev?: Event) {
               class="nav-item"
               :class="{ active: isActive(item.href) }"
             >
-              <span class="nav-icon">{{ getIconEmoji(item.icon) }}</span>
+              <component :is="navIcon(item.icon)" class="nav-icon" :size="18" aria-hidden="true" />
               <span class="nav-label">{{ item.label }}</span>
               <span v-if="item.count !== undefined && !uiStore.sidebarCollapsed" class="nav-count">{{ item.count }}</span>
             </RouterLink>
@@ -209,7 +208,7 @@ async function handleAction(item: SidebarItem, ev?: Event) {
               :disabled="actionInFlight.has(item.action)"
               @click="handleAction(item, $event)"
             >
-              <span class="nav-icon">{{ getIconEmoji(item.icon) }}</span>
+              <component :is="navIcon(item.icon)" class="nav-icon" :size="18" aria-hidden="true" />
               <span class="nav-label">{{ item.label }}</span>
             </button>
             <RouterLink
@@ -218,7 +217,7 @@ async function handleAction(item: SidebarItem, ev?: Event) {
               class="nav-item"
               :class="{ active: isActive(item.href) }"
             >
-              <span class="nav-icon">{{ getIconEmoji(item.icon) }}</span>
+              <component :is="navIcon(item.icon)" class="nav-icon" :size="18" aria-hidden="true" />
               <span class="nav-label">{{ item.label }}</span>
               <span v-if="item.count !== undefined && !uiStore.sidebarCollapsed" class="nav-count">{{ item.count }}</span>
             </RouterLink>
@@ -236,7 +235,7 @@ async function handleAction(item: SidebarItem, ev?: Event) {
           class="nav-item"
           :class="{ active: isActive(`/app/${app.id}`) }"
         >
-          <span class="nav-icon">🧩</span>
+          <component :is="ICONS.apps" class="nav-icon" :size="18" aria-hidden="true" />
           <span class="nav-label">{{ app.label }}</span>
         </RouterLink>
       </div>
@@ -249,7 +248,7 @@ async function handleAction(item: SidebarItem, ev?: Event) {
         <span class="nav-label">{{ gitStore.branch }} · {{ gitStore.statusText }}</span>
       </div>
       <RouterLink to="/settings" class="nav-item" :class="{ active: route.path === '/settings' }">
-        <span class="nav-icon">⚙️</span>
+        <component :is="ICONS.settings" class="nav-icon" :size="18" aria-hidden="true" />
         <span class="nav-label">Settings</span>
       </RouterLink>
       <button
@@ -257,7 +256,7 @@ async function handleAction(item: SidebarItem, ev?: Event) {
         class="nav-item nav-action"
         @click="uiStore.toggleDarkMode()"
       >
-        <span class="nav-icon">{{ uiStore.isDark ? '☀️' : '🌙' }}</span>
+        <component :is="uiStore.isDark ? ICONS.sun : ICONS.moon" class="nav-icon" :size="18" aria-hidden="true" />
         <span class="nav-label">{{ uiStore.isDark ? 'Light Mode' : 'Dark Mode' }}</span>
       </button>
     </div>
@@ -377,10 +376,15 @@ async function handleAction(item: SidebarItem, ev?: Event) {
   border-right: 3px solid var(--accent-color, #6366f1);
 }
 
+/* SVG icons, not emoji: `width` keeps the 24px gutter the labels align to,
+ * while flex-shrink stops the icon squashing when a label is long. The icon
+ * inherits `currentColor` from .nav-item, which is the whole reason for the
+ * swap — an emoji could not take the theme's colour, so it stayed the same
+ * hue in light and dark mode and on hover. */
 .nav-icon {
   width: 24px;
+  flex-shrink: 0;
   margin-right: 12px;
-  text-align: center;
 }
 
 .sidebar.collapsed .nav-icon {
