@@ -5,7 +5,7 @@ title: 'Design tokens: spacing, radius, typography and elevation scales for the 
 kind: enhancement
 priority: medium
 effort: m
-status: review
+status: done
 ---
 
 ## Description

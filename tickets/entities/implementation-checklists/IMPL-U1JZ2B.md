@@ -2,7 +2,7 @@
 id: IMPL-U1JZ2B
 type: implementation-checklist
 title: 'Implementation: Scannable detail-page field layout: single-column default + authored span (views and forms)'
-status: in-progress
+status: pending
 ---
 
 <!-- @managed: claude-workflow v1 -->
