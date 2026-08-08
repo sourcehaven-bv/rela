@@ -5,7 +5,7 @@ title: 'Provision a stub user entity for an unmatched verified principal (unmatc
 kind: enhancement
 priority: medium
 effort: m
-status: in-progress
+status: review
 ---
 
 Follow-up to TKT-0C3II2, which shipped `unmatched_principal: anonymous | reject`
