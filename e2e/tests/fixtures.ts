@@ -1247,7 +1247,10 @@ documents:
   feature_summary:
     title: "Feature Summary"
     entity_type: feature
-    command: "printf '# Summary for %s\\n\\nDocument body.' {id}"
+    # argv array, no shell (TKT-QGHNVA). {in} is the entry entity's markdown;
+    # its frontmatter carries `id:`, so `cat` emits a document that identifies
+    # the entity without the id ever reaching the command line.
+    command: ["cat", "{in}"]
     edit:
       # Reusing the shared 'feature' form rather than adding a dedicated
       # edit-mode form: adding feature_edit would shift the form count
@@ -1260,7 +1263,7 @@ documents:
   feature_readonly:
     title: "Feature Readonly"
     entity_type: feature
-    command: "printf '# Read-only view of %s' {id}"
+    command: ["cat", "{in}"]
 
 navigation:
   - label: "Dashboard"
