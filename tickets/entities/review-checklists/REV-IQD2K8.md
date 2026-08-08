@@ -92,8 +92,11 @@ testing nothing.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass — monitored on PR #1295; every gate CI runs was also
+      run locally first (`go test ./...`, `just lint`, `just arch-lint`,
+      `just plimsoll`, `just coverage-check`, frontend tests + ESLint,
+      markdownlint on both edited docs, and the full e2e suite)
+- [x] PR URL documented below
 
-**PR:** <!-- pending -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1295
