@@ -112,12 +112,19 @@ from `/_sidebar`. Rules for new code:
   purpose (root CLAUDE.md, "The configuration is not a secret; the data is").
   Filtering it would be concealment-shaped, and an earlier attempt at exactly
   that was reverted in TKT-M1AX6P. `TestNavPermission_ConfigUnfiltered` pins it.
-- **The ReadOnlyACL arm is load-bearing.** `readGateFromContext` returns
-  `nopReadGate` under ReadOnlyACL *and* NopACL, and its `HoldsPermission`
-  returns true — so a predicate written against the read gate alone fails OPEN
-  under `--read-only`. That is the RR-CWWJGW shape. Keep the explicit arm ahead
-  of the gate; `TestNavPermission_ReadOnlyHides` is the canary. Match value
-  **and** pointer forms — `AuthorizeWrite` has a value receiver.
+- **The ReadOnlyACL arm is load-bearing, and it SHOWS.** `acl.ReadOnlyACL`
+  implements only `AuthorizeWrite` — it restricts no reads — while nav entries
+  are overwhelmingly read surfaces, and it carries no identity, so hiding would
+  drop entries for *everyone* rather than for non-holders. It is therefore
+  grouped with `NopACL`: no policy, no permission model, nothing hidden. Do not
+  "fix" it to deny by copying `authorizeCommand`, whose arm is right for it
+  because commands shell out. Keep the arm **explicit** rather than falling
+  through to the read gate: `readGateFromContext` returns `nopReadGate` under
+  ReadOnlyACL *and* NopACL, and its `HoldsPermission` returns true, so the gate
+  would reach the same answer by accident (the RR-CWWJGW shape).
+  `TestNavPermission_ReadOnlyShowsEverything` pins the behaviour and
+  `TestNavPermission_ReadOnlyArmIsExplicit` pins that it is deliberate. Match
+  value **and** pointer forms — `AuthorizeWrite` has a value receiver.
 - **The switch stays closed.** A new `acl.ACL` implementation hides gated
   entries until someone adds an arm; the failure mode of forgetting should be a
   missing menu item, not an unintended one.
