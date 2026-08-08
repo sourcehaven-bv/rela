@@ -93,10 +93,21 @@ testing nothing.
 ## Pull Request
 
 - [x] Run `/pr` command to create PR and monitor CI
-- [x] All CI checks pass — monitored on PR #1295; every gate CI runs was also
-      run locally first (`go test ./...`, `just lint`, `just arch-lint`,
-      `just plimsoll`, `just coverage-check`, frontend tests + ESLint,
-      markdownlint on both edited docs, and the full e2e suite)
+- [x] All CI checks pass — PR #1295: 24 pass, 0 fail, 1 skipped (auto-merge).
+
+**One CI failure, on the first run: E2E.** Not a product defect — the e2e job
+runs `npm run lint` (an ESLint rule enforcing the Page Object Pattern: specs
+may not call Playwright selectors directly) and `npm run typecheck` *before*
+the tests, and neither is part of `just e2e`. The new inline-create specs used
+`appPage.locator(...)` inline, so they passed locally and failed CI with 19
+lint errors. Fixed by moving every selector into `FormPage` as nine named
+methods; all 14 forms specs and the full 236-test suite still pass.
+
+*Process gap this exposed:* I checked the CI **job list** for gates I had not
+run, but not each job's **steps**, so a job whose name I recognised ("E2E")
+looked covered when two of its three steps were not. Every CI step now has a
+verified local equivalent — including the two missed here plus the production
+frontend build and `scripts/check-audit-retention-docs.sh`.
 - [x] PR URL documented below
 
 **PR:** https://github.com/sourcehaven-bv/rela/pull/1295
