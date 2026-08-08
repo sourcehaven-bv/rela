@@ -93,9 +93,25 @@ future body-redaction change must land.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass
+- [x] PR URL documented below
 
-**PR:** not yet created. Work is committed on a branch; opening the PR and
-watching CI is the remaining step before `done`.
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1288
+
+First CI run: 24 of 25 checks green; **Rela Tickets failed**, which is the
+repo's own dogfooded gate on this workflow. It caught five things a
+human reviewer would have had to notice by hand:
+
+- `TKT-FJ6END` still in `review` status (cannot merge)
+- `RR-IHWEB0` still `open` (cannot merge)
+- `RR-0A3JYK` marked `wont-fix` with no `reason` property — I had put the
+  justification in `resolution`, which is the wrong field
+- `PLAN-16QNDP` and `REV-UF5PRS` marked `done` with unchecked items —
+  including a mis-formatted N/A line that needed the
+  `- [x] ~~item~~ (N/A: why)` form
+
+All fixed: RR-IHWEB0 deferred to the new **TKT-M5W1CY** (wiring an
+affordance resolver into appbuild — a change in ACL enforcement scope
+that needs its own review), RR-0A3JYK given a proper `reason`, and both
+checklists completed.

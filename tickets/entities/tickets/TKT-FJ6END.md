@@ -5,7 +5,7 @@ title: Lua scripts cannot distinguish an ACL-redacted property from a genuinely-
 kind: enhancement
 priority: medium
 effort: m
-status: review
+status: done
 ---
 
 Entities reaching Lua via `visibility.ScriptReader` are field-redacted: hidden

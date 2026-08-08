@@ -261,8 +261,8 @@ disclosed but values are not.
 name-observable to scripts, consistent with the existing `_redacted` wire field.
 - [x] Godoc on `entity.InaccessibleReason` — correct the "Lua-driven
 access control" invitation, which points a future author at the rejected design.
-- [ ] N/A: `docs/metamodel.md`, `docs/cli-reference.md`, README — no
-metamodel, CLI, or project-level change.
+- [x] ~~`docs/metamodel.md`, `docs/cli-reference.md`, README~~ (N/A: no
+metamodel, CLI, or project-level change)
 
 ## Design Review
 
