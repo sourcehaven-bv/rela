@@ -845,6 +845,10 @@ entities:
         type: string
       done:
         type: boolean
+      # BUG-FB0LN8: lets a fixture hide a default-policy field alongside a
+      # clear-policy one in a single pass.
+      note:
+        type: string
 
   # TKT-E7NNM fixtures: covers manual-ID, multi-prefix, and the combinations
   # we want to exercise in forms.spec.ts. Keep names short and orthogonal
@@ -1089,6 +1093,39 @@ forms:
       - property: assignee
         visible_when: "form.done == true"
         required_when: "form.done == true"
+
+  # BUG-FB0LN8: clear_when_hidden "yes" opts back in to clearing a hidden
+  # branch's stored value — the behavior that used to be unconditional. Keeps
+  # the old semantics pinned now that the default is to KEEP the value.
+  task_clear_when_hidden:
+    entity_type: task
+    title: "Task (clears on hide)"
+    fields:
+      - property: title
+        required: true
+      - property: done
+        widget: checkbox
+      - property: assignee
+        visible_when: "form.done == true"
+        clear_when_hidden: "yes"
+
+  # MIXED policies hidden by ONE trigger, via a SELECT. A keep-policy and a
+  # clear-policy field hide in the same pass, so each must honor its own
+  # setting rather than the batch taking one decision for all of them.
+  task_mixed_policies:
+    entity_type: task
+    title: "Task (mixed clear policies, one trigger)"
+    fields:
+      - property: title
+        required: true
+      - property: status
+      - property: note
+        visible_when: "form.status == 'approved'"
+      - property: assignee
+        visible_when: "form.status == 'approved'"
+      - property: done
+        visible_when: "form.status == 'approved'"
+        clear_when_hidden: "yes"
 
   tag:
     entity_type: tag
