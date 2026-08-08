@@ -43,6 +43,9 @@ async function loadSidebar() {
     sidebarAppName.value = data.app.name
     sidebarGroups.value = data.navigation
     schemaStore.setLogoUrl(data.logoUrl ?? null)
+    // Principal-scoped inline-create offers ride on this payload; see
+    // SidebarData.inline_create for why the sidebar carries them.
+    schemaStore.setInlineCreate(data.inline_create ?? {})
   } catch (err) {
     // Suppress cancellation errors from rapid navigation in Firefox
     // (see BUG-6C3V and src/composables/usePageData.ts).

@@ -354,29 +354,44 @@ export class FormPage extends BasePage {
   }
 
   /** True if the page shows an inline-create UI for related entities. */
-  async hasInlineCreateButton(): Promise<boolean> {
-    return this.page
-      .locator(
-        'button:has-text("New"), .btn-inline-create, [data-create-inline]',
-      )
-      .first()
-      .isVisible()
-      .catch(() => false);
+  // --- Inline entity creation (TKT-OMUD56) ---
+  //
+  // These previously matched loose selectors that hit nothing, so the only
+  // inline-create test was vacuous. They now target the real markup.
+
+  /** The "+ New <Label>" buttons inside a relation widget. */
+  inlineCreateButtons(scope?: Locator): Locator {
+    return (scope ?? this.page).locator(".add-new-btn");
   }
 
-  async clickInlineCreateButton() {
-    await this.page
-      .locator(
-        'button:has-text("New"), .btn-inline-create, [data-create-inline]',
-      )
-      .first()
+  /** Open the inline-create modal for a target type. */
+  async clickInlineCreate(label: string, scope?: Locator) {
+    await this.inlineCreateButtons(scope)
+      .filter({ hasText: `+ New ${label}` })
       .click();
   }
 
+  /** The inline-create dialog. */
+  get inlineCreateModal(): Locator {
+    return this.page.locator(".inline-create-modal");
+  }
+
   async expectInlineFormVisible() {
-    await expect(
-      this.page.locator(".inline-form, .modal, dialog"),
-    ).toBeVisible();
+    await expect(this.inlineCreateModal).toBeVisible();
+    // The nested form, not just the shell.
+    await expect(this.inlineCreateModal.locator("form")).toBeVisible();
+  }
+
+  /** Fill a field inside the inline-create modal (ids are shared with the page form). */
+  async fillInlineField(property: string, value: string) {
+    await this.inlineCreateModal.locator(`#field-${property}`).fill(value);
+  }
+
+  /** Submit the nested form. */
+  async submitInlineForm() {
+    await this.inlineCreateModal
+      .locator('button[type="submit"]')
+      .click();
   }
 
   // --- Markdown body editor (EasyMDE) ---

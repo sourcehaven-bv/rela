@@ -185,16 +185,159 @@ test.describe('Edit Form - Default Relation Picker Save (BUG-UNEBR regression)',
   });
 });
 
+// Inline entity creation from a relation field (TKT-OMUD56).
+//
+// The affordance is derived, not configured: it appears for a target type when
+// the principal may create it AND a form resolves for it. In this fixture
+// `feature` has a form and `tag` does not, so the task form's
+// implements -> feature relation offers it and the feature form's
+// tagged -> tag relation does not.
+//
+// The load-bearing test here is draft survival: the whole point of creating in
+// a modal rather than navigating is that the host form's in-progress input
+// stays put. That is an interaction between two mounted DynamicForms, which
+// unit tests with a mocked router cannot reproduce.
 test.describe('Inline Entity Creation', () => {
-  test('inline create UI is either present or absent gracefully', async ({ appPage }) => {
+  test('offers "+ New" for a target type that has a form', async ({ appPage }) => {
     const formPage = new FormPage(appPage);
     await formPage.navigateToCreateForm('task');
 
-    if (await formPage.hasInlineCreateButton()) {
-      await formPage.clickInlineCreateButton();
-      await formPage.expectInlineFormVisible();
-    }
-    // If no inline-create UI is configured in the inline project,
-    // the assertion above is skipped — that's by design for the inline fixture.
+    const picker = formPage.relationPickerByLabel('Implements Feature');
+    await picker.locator('input[role="combobox"]').click();
+
+    await expect(
+      formPage.inlineCreateButtons(picker).filter({ hasText: '+ New Feature' }),
+    ).toBeVisible();
+  });
+
+  test('offers "+ New" from the cards widget too', async ({ appPage, api }) => {
+    // RelationCards had no inline-create affordance at all before this. It
+    // needs its own, and the created entity must land in the LINK step (not be
+    // linked outright) so required edge properties can still be filled.
+    //
+    // Uses the EDIT form because RelationCards requires an entityId; on a
+    // create form the same relation falls back to a picker.
+    //
+    // (Every entity type in this fixture has a form, so the "no form => no
+    // affordance" arm has no fixture to exercise here; it is covered by
+    // TestInlineCreate_RequiresAForm on the server and by the
+    // useInlineCreate/widget unit tests.)
+    const feature = await api.createEntity('features', {
+      properties: { title: 'Inline create from cards', status: 'draft', priority: 'low' },
+    });
+
+    const formPage = new FormPage(appPage);
+    await formPage.navigateToEditForm('feature', feature.id);
+
+    // Scope by the section label, not by text anywhere in the widget: a
+    // sibling widget's placeholder can contain the same word.
+    const tagged = appPage
+      .locator('.relation-cards')
+      .filter({ has: appPage.locator('.section-label:has-text("tagged")') });
+    await tagged.locator('.add-btn').click();
+    // `tagged` is feature -> feature in this fixture.
+    await formPage.clickInlineCreate('Feature', tagged);
+    await formPage.expectInlineFormVisible();
+
+    await formPage.fillInlineField('title', 'Created from cards');
+    await formPage.submitInlineForm();
+    await expect(formPage.inlineCreateModal).toBeHidden();
+
+    // Selected for linking, with the edge-meta form shown — not yet linked,
+    // so the relation's `added_by` / `added_date` can still be filled.
+    await expect(tagged.locator('.new-relation-form')).toBeVisible();
+    await expect(tagged.locator('.created-notice')).toContainText('Created from cards');
+
+    await api.deleteEntity('features', feature.id).catch(() => {});
+  });
+
+  test('opens a real configured form, not a metamodel dump', async ({ appPage }) => {
+    // The removed modal rendered every metamodel property with an ad-hoc
+    // widget dispatch. The nested form must render the CONFIGURED form: the
+    // feature form declares title/status/priority/description and a body.
+    const formPage = new FormPage(appPage);
+    await formPage.navigateToCreateForm('task');
+
+    const picker = formPage.relationPickerByLabel('Implements Feature');
+    await picker.locator('input[role="combobox"]').click();
+    await formPage.clickInlineCreate('Feature', picker);
+
+    await formPage.expectInlineFormVisible();
+    await expect(formPage.inlineCreateModal.locator('#field-title')).toBeVisible();
+    await expect(formPage.inlineCreateModal.locator('#field-status')).toBeVisible();
+    await expect(formPage.inlineCreateModal.locator('#field-priority')).toBeVisible();
+  });
+
+  test('creating inline links the new entity and preserves the host draft', async ({
+    appPage,
+    api,
+  }) => {
+    // AC5 + AC6 together, which is the feature in one test: the host form's
+    // typed input must survive, and the created entity must end up linked.
+    const formPage = new FormPage(appPage);
+    await formPage.navigateToCreateForm('task');
+
+    await formPage.fillField('title', 'Host task draft');
+    await formPage.fillField('assignee', 'jeroen');
+
+    const picker = formPage.relationPickerByLabel('Implements Feature');
+    await picker.locator('input[role="combobox"]').click();
+    await formPage.clickInlineCreate('Feature', picker);
+    await formPage.expectInlineFormVisible();
+
+    await formPage.fillInlineField('title', 'Created inline');
+    await formPage.submitInlineForm();
+    await expect(formPage.inlineCreateModal).toBeHidden();
+
+    // The host draft is intact — no navigation happened.
+    await expect(appPage.locator('#field-title')).toHaveValue('Host task draft');
+    await expect(appPage.locator('#field-assignee')).toHaveValue('jeroen');
+    // ...and the new feature is selected in the picker.
+    await expect(picker.locator('.selected-entity')).toContainText('Created inline');
+
+    // Saving the host persists the edge.
+    const created = await formPage.submitAndExpectCreate('tasks');
+    const task = await api.getEntity('tasks', created.id);
+    const edges = (task.relations?.implements ?? []) as string[];
+    expect(edges).toHaveLength(1);
+
+    await api.deleteEntity('tasks', created.id).catch(() => {});
+    await api.deleteEntity('features', edges[0]).catch(() => {});
+  });
+
+  test('cancelling leaves the host draft untouched and creates nothing', async ({ appPage }) => {
+    const formPage = new FormPage(appPage);
+    await formPage.navigateToCreateForm('task');
+
+    await formPage.fillField('title', 'Untouched draft');
+
+    const picker = formPage.relationPickerByLabel('Implements Feature');
+    await picker.locator('input[role="combobox"]').click();
+    await formPage.clickInlineCreate('Feature', picker);
+    await formPage.expectInlineFormVisible();
+
+    await formPage.inlineCreateModal
+      .locator('button')
+      .filter({ hasText: 'Cancel' })
+      .click();
+
+    await expect(formPage.inlineCreateModal).toBeHidden();
+    await expect(appPage.locator('#field-title')).toHaveValue('Untouched draft');
+    await expect(picker.locator('.selected-entity')).toHaveCount(0);
+  });
+
+  test('a nested form does not offer inline create in turn', async ({ appPage }) => {
+    // AC10, the structural depth cap. The feature form has relation widgets of
+    // its own; inside the modal none of them may offer a further "+ New",
+    // because a modal-on-modal has no defined Escape recipient.
+    const formPage = new FormPage(appPage);
+    await formPage.navigateToCreateForm('task');
+
+    const picker = formPage.relationPickerByLabel('Implements Feature');
+    await picker.locator('input[role="combobox"]').click();
+    await formPage.clickInlineCreate('Feature', picker);
+    await formPage.expectInlineFormVisible();
+
+    await expect(formPage.inlineCreateButtons(formPage.inlineCreateModal)).toHaveCount(0);
   });
 });

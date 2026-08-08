@@ -436,8 +436,6 @@ Each entry in `relations:` configures a relation picker:
 | `label`        | string | Display label                                                  |
 | `required`     | bool   | At least one relation must be selected                         |
 | `widget`       | string | `"select"`, `"multi-select"`, `"cards"`, or `"search"` (auto-detected) |
-| `allow_create` | bool   | Show an inline "create new" button                             |
-| `create_form`  | string | Form name to use for inline creation                           |
 | `properties`   | list   | Editable properties on the relation (only with `cards` widget) |
 
 **Relation widget types:**
@@ -452,9 +450,35 @@ Each entry in `relations:` configures a relation picker:
 Widget is auto-detected based on metamodel: if the relation type has `properties` or `content: true` defined,
 the UI uses `cards`. Otherwise, cardinality determines `select` vs `multi-select`.
 
-**Inline creation:** When `allow_create: true` and `create_form` is set, a button appears next to
-the relation picker. Clicking it opens a modal with the referenced form, and the newly created
-entity is automatically linked.
+**Inline creation:** A `+ New <Type>` button appears in the relation widget when you need to link
+something that does not exist yet. Clicking it opens the target type's create form in a modal,
+and the new entity is selected for linking — all without leaving the form you are filling in, so
+your in-progress input is preserved.
+
+There is no configuration for this. The button appears for a target type when **both** hold:
+
+1. the current user has permission to `create` that entity type, and
+2. a form is registered for that type.
+
+That means you control it the same way you control everything else: by registering (or not
+registering) a form for the type, and through `acl.yaml`. This mirrors how the side panel's "Add"
+buttons already resolve their form.
+
+Because a create form is an ordinary form definition, **a deliberately small form gives a small
+inline modal** — if you want inline creation to ask for a title and nothing else, register a form
+with just that field. The form definition *is* the "which fields" mechanism.
+
+Two details worth knowing:
+
+- If a type has only an `mode: edit` form, that form is used (an edit form works for creation when
+  no entity id is supplied). Register a dedicated create form if you want different fields.
+- `visible_when` inside the nested form is evaluated against the **nested** entity's own values.
+  A condition cannot reference the parent form you opened it from.
+- Nesting stops at one level: a relation field *inside* the inline modal offers link-existing only.
+
+> **Changed:** `allow_create` and `create_form` on a form relation are no longer read — the rule
+> above replaced them. Leaving them in your YAML is harmless (they are ignored), but you can delete
+> them. If a `+ New` button disappeared after upgrading, the target type has no registered form.
 
 ### Reverse (incoming) Relations
 
@@ -2058,8 +2082,6 @@ forms:
         target_type: category
         label: "Category"
         widget: select
-        allow_create: true
-        create_form: create_category
 
   edit_ticket:
     entity_type: ticket

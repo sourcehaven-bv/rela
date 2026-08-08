@@ -199,8 +199,6 @@ type FormRelation struct {
 	VisibleWhen  string             `yaml:"visible_when,omitempty" json:"visible_when,omitempty"`
 	Widget       string             `yaml:"widget" json:"widget,omitempty"`
 	Display      string             `yaml:"display" json:"display,omitempty"`
-	AllowCreate  bool               `yaml:"allow_create" json:"allow_create,omitempty"`
-	CreateForm   string             `yaml:"create_form" json:"create_form,omitempty"`
 	Properties   []RelationProperty `yaml:"properties" json:"properties,omitempty"`
 	Fields       []ViewSectionField `yaml:"fields" json:"fields,omitempty"`
 	EmptyMessage string             `yaml:"empty_message" json:"empty_message,omitempty"`

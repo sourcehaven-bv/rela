@@ -47,6 +47,11 @@ export const useSchemaStore = defineStore('schema', () => {
   // then mutated by SettingsView's upload/remove handlers so the
   // sidebar updates without a page reload.
   const logoUrl = ref<string | null>(null)
+  // Entity type -> form id for inline creation, fed by Sidebar's
+  // `_sidebar` fetch (the only principal-scoped boot payload). Empty
+  // until that lands, which is why the offer simply does not render on
+  // the first paint rather than flickering on.
+  const inlineCreate = ref<Record<string, string>>({})
   const loaded = ref(false)
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -290,6 +295,17 @@ export const useSchemaStore = defineStore('schema', () => {
     logoUrl.value = url
   }
 
+  function setInlineCreate(map: Record<string, string>) {
+    inlineCreate.value = map
+  }
+
+  // The inline-create form id for an entity type, or undefined when the
+  // type is not offered (no form, or no create permission). Presence in
+  // the map IS the affordance — see SidebarData.inline_create.
+  const inlineCreateFormFor = computed(
+    () => (entityType: string) => inlineCreate.value[entityType]
+  )
+
   return {
     // State
     entityTypes,
@@ -311,6 +327,7 @@ export const useSchemaStore = defineStore('schema', () => {
     paletteDark,
     darkDisabled,
     logoUrl,
+    inlineCreate,
     loaded,
     loading,
     error,
@@ -330,10 +347,12 @@ export const useSchemaStore = defineStore('schema', () => {
     stylesForProperty,
     entityTypeList,
     relationTypeList,
+    inlineCreateFormFor,
 
     // Actions
     load,
     reload,
     setLogoUrl,
+    setInlineCreate,
   }
 })
