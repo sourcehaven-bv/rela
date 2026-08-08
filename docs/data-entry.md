@@ -2514,7 +2514,14 @@ needs it reads it from the file.
 >   (bubblewrap on Linux, `sandbox-exec` on macOS) and **fail closed**: on a host
 >   with no mechanism available, the render is refused rather than run
 >   unconfined. Previously `command:` ran through a bare `sh -c` with no
->   confinement. Install bubblewrap on Linux deployments.
+>   confinement.
+>
+>   On Linux, installing bubblewrap is necessary but **not always sufficient**:
+>   bwrap also needs unprivileged user namespaces. Distributions that restrict
+>   them (Ubuntu 23.10+ with `kernel.apparmor_restrict_unprivileged_userns=1`,
+>   or `kernel.unprivileged_userns_clone=0`) will refuse renders even with
+>   bubblewrap installed. The server logs the specific reason at startup under
+>   `external command confinement`.
 >
 > Shell features (pipes, redirection) are unavailable by design. If you need
 > them, put them in a script file and invoke that script as the program.

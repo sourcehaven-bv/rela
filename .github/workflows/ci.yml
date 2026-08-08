@@ -220,7 +220,12 @@ jobs:
 
   e2e:
     name: E2E
-    runs-on: ubuntu-latest
+    # 26.04, not ubuntu-latest — same reason as the `test` job above: the
+    # command sandbox needs unprivileged user namespaces, which earlier images
+    # restrict via AppArmor. This job only started needing a working sandbox
+    # when document `command:` renderers moved off `sh -c` onto cmdexec
+    # (TKT-QGHNVA), which fails closed rather than running unconfined.
+    runs-on: ubuntu-26.04
     # A postgres service backs the pgstore-only e2e specs (relation/entity
     # content history). The default fsstore specs ignore it; the postgres specs
     # skip when RELA_E2E_DATABASE_URL is unset, so this is what turns them on.
