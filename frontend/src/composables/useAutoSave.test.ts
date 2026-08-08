@@ -118,6 +118,38 @@ describe('useAutoSave', () => {
     )
   })
 
+  // BUG-FB0LN8: the clear-confirm decline path needs to drop a staged write
+  // WITHOUT revertField's form-state restore — the caller owns the restore and
+  // knows the exact value, where revertField would apply its own (possibly
+  // staler) lastSeenServer baseline.
+  it('cancelPendingField drops a staged write before it fires', async () => {
+    const h = makeHarness({ title: 'Original' })
+    h.autoSave.scheduleFieldSave('title', 'Changed')
+    expect(h.autoSave.cancelPendingField('title')).toBe(true)
+    await vi.advanceTimersByTimeAsync(500)
+    expect(h.updateMock).not.toHaveBeenCalled()
+  })
+
+  it('cancelPendingField does not touch form state', async () => {
+    const h = makeHarness({ title: 'Original' })
+    h.autoSave.scheduleFieldSave('title', 'Changed')
+    h.autoSave.cancelPendingField('title')
+    await vi.advanceTimersByTimeAsync(500)
+    // revertField would have pushed the server baseline back into the form via
+    // applyServerProperty. cancelPendingField must leave the restore to the
+    // caller, who knows the correct value.
+    expect(h.applyServerProperty).not.toHaveBeenCalled()
+  })
+
+  it('cancelPendingField reports false once the write has already fired', async () => {
+    const h = makeHarness({ title: 'Original' })
+    h.autoSave.scheduleFieldSave('title', 'Changed')
+    await vi.advanceTimersByTimeAsync(500)
+    expect(h.updateMock).toHaveBeenCalledTimes(1)
+    // Nothing left to cancel — the caller must re-save the old value instead.
+    expect(h.autoSave.cancelPendingField('title')).toBe(false)
+  })
+
   it('AC3: rapid edits coalesce to one PATCH with the latest value', async () => {
     const h = makeHarness({ title: 'Original' })
     h.autoSave.scheduleFieldSave('title', 'a')

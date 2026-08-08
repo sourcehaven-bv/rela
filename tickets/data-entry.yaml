@@ -1220,11 +1220,6 @@ kanbans:
   idea_board:
     entity_type: idea
     title: "Idea Pipeline"
-    header: |
-      Ideas move **left to right** as they earn confidence. Drag a card to
-      change its status.
-    footer: |
-      _Parked ideas are reviewed each quarter — nothing here is discarded._
     column_property: status
     columns:
       - value: captured

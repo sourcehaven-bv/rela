@@ -272,7 +272,7 @@ func validateForms(cfg *Config, meta *metamodel.Metamodel) []string {
 
 		// Flat (single-page) fields/relations.
 		for i, f := range form.Fields {
-			errs = append(errs, validateFormField(formID, "", i, f, form.EntityType, entDef, meta)...)
+			errs = append(errs, validateFormField(formID, "", i, f, form.EntityType, entDef, meta, false)...)
 		}
 		for i, r := range form.Relations {
 			errs = append(errs, validateFormRelation(cfg, formID, "", i, r, form.EntityType, meta)...)
@@ -285,7 +285,8 @@ func validateForms(cfg *Config, meta *metamodel.Metamodel) []string {
 				errs = append(errs, fmt.Sprintf("form %q: %shas no title", formID, ctx))
 			}
 			for i, f := range step.Fields {
-				errs = append(errs, validateFormField(formID, ctx, i, f, form.EntityType, entDef, meta)...)
+				errs = append(errs, validateFormField(
+					formID, ctx, i, f, form.EntityType, entDef, meta, step.VisibleWhen != "")...)
 			}
 			for i, r := range step.Relations {
 				errs = append(errs, validateFormRelation(cfg, formID, ctx, i, r, form.EntityType, meta)...)
@@ -299,9 +300,12 @@ func validateForms(cfg *Config, meta *metamodel.Metamodel) []string {
 // validateFormField checks one form field against the metamodel. ctx is an
 // optional location prefix (e.g. "step[0] ") so wizard and flat forms share
 // the rule set while keeping distinct error messages.
+// stepConditional reports whether the field's enclosing wizard step carries a
+// `visible_when`. A field on a conditional step can be hidden without a
+// `visible_when` of its own, so `clear_when_hidden` still applies to it.
 func validateFormField(
 	formID, ctx string, i int, f FormField, entityType string,
-	entDef *metamodel.EntityDef, meta *metamodel.Metamodel,
+	entDef *metamodel.EntityDef, meta *metamodel.Metamodel, stepConditional bool,
 ) []string {
 	var errs []string
 	if _, ok := entDef.Properties[f.Property]; !ok {
@@ -313,6 +317,25 @@ func validateFormField(
 		if propDef, hasProp := entDef.Properties[f.Property]; hasProp {
 			errs = append(errs, validateTransitions(formID, i, f, propDef, meta)...)
 		}
+	}
+	// clear_when_hidden is allowlist-validated: a typo must not silently
+	// resolve to a destructive default. Note YAML `no`/`yes` decode to the
+	// literal strings "no"/"yes" here (the field is typed string, and yaml.v3
+	// uses the YAML 1.2 core schema), so they land in the allowlist as
+	// written; `off`/`false` do not and are rejected.
+	if f.ClearWhenHidden != "" && !ValidClearWhenHidden[f.ClearWhenHidden] {
+		errs = append(errs, fmt.Sprintf(
+			"form %q: %sfield[%d] property %q has invalid clear_when_hidden %q (valid: %s)",
+			formID, ctx, i, f.Property, f.ClearWhenHidden,
+			strings.Join(sortedMapKeys(ValidClearWhenHidden), ", ")))
+	}
+	// A field can be hidden by its own `visible_when` OR by its enclosing
+	// wizard step's. With neither, `clear_when_hidden` could never fire — that
+	// is an author mistake worth reporting rather than a silently inert key.
+	if f.ClearWhenHidden != "" && f.VisibleWhen == "" && !stepConditional {
+		errs = append(errs, fmt.Sprintf(
+			"form %q: %sfield[%d] property %q sets clear_when_hidden but neither it nor its step has a visible_when (it would never apply)",
+			formID, ctx, i, f.Property))
 	}
 	return errs
 }
