@@ -1650,7 +1650,40 @@ navigation:
 | `search`    | bool   | Link to the search page                                        |
 | `settings`  | bool   | Link to the settings page                                      |
 | `action`    | string | Action ID to trigger when clicked (renders as a sidebar button)|
+| `icon`      | string | Icon name; overrides the icon derived from the entry type (see below) |
 | `permission`| string | Hide this entry from users who lack the named ACL permission (see below) |
+
+#### Item icons
+
+Each entry gets an icon from its *type* — every `list:` entry the same list
+glyph, every `kanban:` the same board glyph. In a sidebar with several lists
+that means several identical rows, distinguishable only by their labels.
+
+`icon:` overrides it:
+
+```yaml
+navigation:
+  - group: "Tickets"
+    items:
+      - label: "My Tickets"
+        list: my_tickets
+        icon: inbox
+      - label: "Open Tickets"
+        list: open_tickets
+        icon: status
+      - label: "All Tickets"
+        list: all_tickets # no icon: keeps the derived list glyph
+```
+
+Valid names are the same set kanban columns use: `dashboard`, `list`,
+`kanban`, `search`, `analysis`, `apps`, `settings`, `document`, `sun`, `moon`,
+`inbox`, `progress`, `done`, `clock`, `status`. An unknown name is a config
+error at startup.
+
+An `action:` entry derives no icon of its own, so `icon:` is the only way to
+give one a symbol. A **group** cannot take an icon — it renders as a plain
+section title with nowhere to put one — and naming one there is an error
+rather than silently ignored.
 
 ### Groups
 

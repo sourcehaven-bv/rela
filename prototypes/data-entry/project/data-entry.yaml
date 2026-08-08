@@ -640,10 +640,15 @@ navigation:
     document: status_review
   - group: "Tickets"
     items:
+      # Without `icon:` all three lists get the same derived glyph, so the
+      # sidebar reads as three identical rows distinguished only by their
+      # labels. An authored icon gives each one a shape you can aim for.
       - label: "My Tickets"
         list: my_tickets
+        icon: inbox
       - label: "Open Tickets"
         list: open_tickets
+        icon: status
       - label: "All Tickets"
         list: all_tickets
       - label: "Ticket Board"

@@ -106,3 +106,47 @@ func TestValidateIconName(t *testing.T) {
 		t.Errorf("message must list the valid names, got %q", errs[0])
 	}
 }
+
+// TestNavigationIconValidation covers `icon:` on navigation entries.
+//
+// Without an authored icon every list entry gets the same derived glyph, so a
+// sidebar of five lists carries no signal beyond its labels. The override has
+// to be validated like any other config name: loudly, at load.
+func TestNavigationIconValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		nav     NavigationEntry
+		wantErr string
+	}{
+		{"no icon is fine", NavigationEntry{Label: "Tickets", Dashboard: true}, ""},
+		{"known icon on an item", NavigationEntry{Label: "Inbox", Dashboard: true, Icon: "inbox"}, ""},
+		{"unknown icon is rejected", NavigationEntry{Label: "Inbox", Dashboard: true, Icon: "nope"}, "unknown icon"},
+		{
+			"icon on a group is rejected",
+			NavigationEntry{Group: "Tickets", Icon: "inbox"},
+			"cannot have an icon",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			errs := validateNavEntry(tc.nav, &Config{})
+			if tc.wantErr == "" {
+				for _, e := range errs {
+					if strings.Contains(e, "icon") {
+						t.Errorf("unexpected icon error: %s", e)
+					}
+				}
+				return
+			}
+			found := false
+			for _, e := range errs {
+				if strings.Contains(e, tc.wantErr) {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("want an error containing %q, got %v", tc.wantErr, errs)
+			}
+		})
+	}
+}

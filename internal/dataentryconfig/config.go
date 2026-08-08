@@ -577,6 +577,16 @@ type NavigationEntry struct {
 	// validateNavEntry.
 	Document string `yaml:"document,omitempty" json:"document,omitempty"`
 
+	// Icon overrides the icon derived from the entry's kind. Without it every
+	// list entry gets the same list glyph and every board the same board one,
+	// so "My Tickets" and "Open Tickets" are visually identical — the sidebar
+	// carries no signal beyond its labels. Names come from the shared registry
+	// (see ValidIconNames); an unknown one is a load-time error.
+	//
+	// Action entries have no derived icon at all, so for those this is the
+	// only way to get one.
+	Icon string `yaml:"icon,omitempty" json:"icon,omitempty"`
+
 	// Permission optionally hides this entry from the sidebar for principals
 	// who do not hold the named global ACL permission (TKT-TXDK8U). Empty —
 	// the overwhelmingly common case — means the entry is always shown.

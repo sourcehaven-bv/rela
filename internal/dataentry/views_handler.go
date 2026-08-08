@@ -472,6 +472,14 @@ func (h *viewsHandler) navEntryToSidebarItem(
 		// Href stays empty — frontend renders this as a button
 	}
 
+	// An authored icon wins over the kind-derived default set above. Applied
+	// after the switch so it covers every branch — including `action`, which
+	// derives no icon of its own and would otherwise be the one entry kind
+	// that could never have one.
+	if entry.Icon != "" {
+		item.Icon = entry.Icon
+	}
+
 	return item
 }
 
