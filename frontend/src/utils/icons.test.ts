@@ -54,13 +54,13 @@ describe('icon registry', () => {
       'list',
       'kanban',
       'search',
-      'analysis',
+      'warning',
       'apps',
       'settings',
       'sun',
       'moon',
       'inbox',
-      'progress',
+      'wrench',
       'done',
     ]) {
       expect(isKnownIcon(required)).toBe(true)

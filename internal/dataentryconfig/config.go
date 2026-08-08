@@ -249,7 +249,7 @@ var ValidIconNames = map[string]bool{
 	"list":      true,
 	"kanban":    true,
 	"search":    true,
-	"analysis":  true,
+	"warning":   true,
 	"apps":      true,
 	"settings":  true,
 	"document":  true,
@@ -257,11 +257,11 @@ var ValidIconNames = map[string]bool{
 	"sun":  true,
 	"moon": true,
 	// Workflow-ish names, useful for kanban columns
-	"inbox":    true,
-	"progress": true,
-	"done":     true,
-	"clock":    true,
-	"status":   true,
+	"inbox":  true,
+	"wrench": true,
+	"done":   true,
+	"clock":  true,
+	"status": true,
 }
 
 // validateIconName reports a config error for an unknown icon name.

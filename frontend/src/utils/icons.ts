@@ -47,16 +47,16 @@ export const ICONS: Record<string, Component> = {
   list: List,
   kanban: Kanban,
   search: Search,
-  analysis: AlertTriangle,
+  warning: AlertTriangle,
   apps: Blocks,
   settings: Settings,
   document: FileText,
   // Theme toggle
   sun: Sun,
   moon: Moon,
-  // Workflow-ish names, useful for kanban columns
+  // Glyph-descriptive names, useful for kanban columns and nav items
   inbox: Inbox,
-  progress: Wrench,
+  wrench: Wrench,
   done: CheckCircle2,
   clock: Clock,
   status: CircleDot,

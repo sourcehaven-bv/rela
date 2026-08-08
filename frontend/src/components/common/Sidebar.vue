@@ -102,12 +102,11 @@ function isActive(href: string): boolean {
   return route.path === href || route.path.startsWith(href + '/')
 }
 
-// Config-supplied icon names resolve through the shared allowlist registry;
-// unknown names fall back to a default rather than throwing, so a stale config
-// still renders. The name -> icon mapping used to live here as a switch
+// Icon names come from config and resolve through the shared allowlist
+// registry (utils/icons.ts); unknown names fall back to a default rather than
+// throwing, so a stale config still renders. This used to be a local switch
 // returning emoji, which could not take `currentColor`, ignored the theme, and
 // rendered differently on every OS.
-const navIcon = (icon?: string) => resolveIcon(icon)
 
 async function handleAction(item: SidebarItem, ev?: Event) {
   if (!item.action) return
@@ -165,7 +164,7 @@ async function handleAction(item: SidebarItem, ev?: Event) {
         <kbd v-if="!uiStore.sidebarCollapsed">/</kbd>
       </RouterLink>
       <RouterLink to="/analyze" class="nav-item" :class="{ active: route.path === '/analyze' }">
-        <component :is="ICONS.analysis" class="nav-icon" :size="18" aria-hidden="true" />
+        <component :is="ICONS.warning" class="nav-icon" :size="18" aria-hidden="true" />
         <span class="nav-label">Analysis</span>
       </RouterLink>
     </div>
@@ -183,7 +182,7 @@ async function handleAction(item: SidebarItem, ev?: Event) {
               :disabled="actionInFlight.has(item.action)"
               @click="handleAction(item, $event)"
             >
-              <component :is="navIcon(item.icon)" class="nav-icon" :size="18" aria-hidden="true" />
+              <component :is="resolveIcon(item.icon)" class="nav-icon" :size="18" aria-hidden="true" />
               <span class="nav-label">{{ item.label }}</span>
             </button>
             <RouterLink
@@ -192,7 +191,7 @@ async function handleAction(item: SidebarItem, ev?: Event) {
               class="nav-item"
               :class="{ active: isActive(item.href) }"
             >
-              <component :is="navIcon(item.icon)" class="nav-icon" :size="18" aria-hidden="true" />
+              <component :is="resolveIcon(item.icon)" class="nav-icon" :size="18" aria-hidden="true" />
               <span class="nav-label">{{ item.label }}</span>
               <span v-if="item.count !== undefined && !uiStore.sidebarCollapsed" class="nav-count">{{ item.count }}</span>
             </RouterLink>
@@ -208,7 +207,7 @@ async function handleAction(item: SidebarItem, ev?: Event) {
               :disabled="actionInFlight.has(item.action)"
               @click="handleAction(item, $event)"
             >
-              <component :is="navIcon(item.icon)" class="nav-icon" :size="18" aria-hidden="true" />
+              <component :is="resolveIcon(item.icon)" class="nav-icon" :size="18" aria-hidden="true" />
               <span class="nav-label">{{ item.label }}</span>
             </button>
             <RouterLink
@@ -217,7 +216,7 @@ async function handleAction(item: SidebarItem, ev?: Event) {
               class="nav-item"
               :class="{ active: isActive(item.href) }"
             >
-              <component :is="navIcon(item.icon)" class="nav-icon" :size="18" aria-hidden="true" />
+              <component :is="resolveIcon(item.icon)" class="nav-icon" :size="18" aria-hidden="true" />
               <span class="nav-label">{{ item.label }}</span>
               <span v-if="item.count !== undefined && !uiStore.sidebarCollapsed" class="nav-count">{{ item.count }}</span>
             </RouterLink>
@@ -376,15 +375,23 @@ async function handleAction(item: SidebarItem, ev?: Event) {
   border-right: 3px solid var(--accent-color, #6366f1);
 }
 
-/* SVG icons, not emoji: `width` keeps the 24px gutter the labels align to,
- * while flex-shrink stops the icon squashing when a label is long. The icon
- * inherits `currentColor` from .nav-item, which is the whole reason for the
- * swap — an emoji could not take the theme's colour, so it stayed the same
- * hue in light and dark mode and on hover. */
+/* SVG icons, not emoji. The icon inherits `currentColor` from .nav-item, which
+ * is the whole reason for the swap — an emoji could not take the theme's
+ * colour, so it stayed the same hue in light and dark mode and on hover.
+ *
+ * Do NOT set `width` here to make the gutter. Lucide emits width/height as
+ * PRESENTATION ATTRIBUTES, and CSS beats those — so `width: 24px` overrode the
+ * 18px attribute while `height` stayed at 18, rendering every icon 24x18 (a
+ * 4:3 horizontal stretch, easy to miss because a squashed circle still reads
+ * as a circle). Size comes from the `:size` prop; the 24px gutter the labels
+ * align to comes from the box model instead. */
 .nav-icon {
-  width: 24px;
-  flex-shrink: 0;
-  margin-right: 12px;
+  /* Size the BOX to the icon (18px, matching the :size prop) and make up the
+   * 24px gutter with margin. flex-basis is not an option: on a row flex item
+   * it resolves to the main-size, i.e. width — the same trap as setting
+   * `width` directly. */
+  flex: 0 0 auto;
+  margin-right: 18px;
 }
 
 .sidebar.collapsed .nav-icon {

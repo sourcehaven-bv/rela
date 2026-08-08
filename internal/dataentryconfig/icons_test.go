@@ -12,7 +12,7 @@ import (
 // iconKeyRe matches an entry in the SPA registry's ICONS map, e.g. `  list: List,`
 // or `  "kanban": Kanban,`. Deliberately anchored to two-space indentation so
 // it matches map entries and not the surrounding prose or imports.
-var iconKeyRe = regexp.MustCompile(`(?m)^\s{2}"?([a-z][a-z0-9-]*)"?:\s*[A-Z]`)
+var iconKeyRe = regexp.MustCompile(`(?m)^\s+"?([a-zA-Z][a-zA-Z0-9-]*)"?:\s*\S`)
 
 // TestIconAllowlistMatchesFrontend pins the Go icon allowlist to the SPA's
 // registry (frontend/src/utils/icons.ts).
@@ -54,8 +54,18 @@ func TestIconAllowlistMatchesFrontend(t *testing.T) {
 	for _, m := range iconKeyRe.FindAllStringSubmatch(body, -1) {
 		spa[m[1]] = true
 	}
-	if len(spa) == 0 {
-		t.Fatal("parsed zero icon names from frontend icons.ts — the regexp has drifted from the file's shape")
+	// A COUNT check, not a non-empty check. The dangerous failure is a PARTIAL
+	// parse: a spread, a nested literal, an aliased import or a commented-out
+	// entry makes one name invisible while the rest still parse, so a
+	// non-empty guard stays silent and the test quietly stops covering that
+	// name. Comparing against the Go list's length turns any parse regression
+	// into a failure, because the two must be the same size by definition.
+	if len(spa) != len(ValidIconNames) {
+		t.Fatalf("parsed %d names from frontend icons.ts but ValidIconNames has %d — "+
+			"either the lists genuinely differ (see the errors below) or the parser "+
+			"has drifted from the file's shape (a spread, nested literal, or aliased "+
+			"import will do it). Parsed: %v",
+			len(spa), len(ValidIconNames), sortedKeys(spa))
 	}
 
 	var missingInGo, missingInSPA []string
@@ -149,4 +159,14 @@ func TestNavigationIconValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+// sortedKeys returns a map's keys sorted, for deterministic failure output.
+func sortedKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

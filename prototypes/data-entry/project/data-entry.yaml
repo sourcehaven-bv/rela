@@ -600,7 +600,7 @@ kanbans:
         icon: inbox
       - value: in-progress
         label: "In Progress"
-        icon: progress
+        icon: wrench
       - value: resolved
         label: "Done"
         icon: done

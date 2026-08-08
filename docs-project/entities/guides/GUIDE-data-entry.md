@@ -1431,10 +1431,11 @@ columns:
 ```
 
 Icons are SVG and inherit the current text colour, so they follow the light /
-dark theme and any styling applied to the header. Valid names:
-`dashboard`, `list`, `kanban`, `search`, `analysis`, `apps`, `settings`,
-`document`, `sun`, `moon`, `inbox`, `progress`, `done`, `clock`, `status`.
-An unknown name is a config error at startup, listing the valid set.
+dark theme and any styling applied to the header.
+
+An unknown name is a config error at startup **that lists every valid name**, so
+the error message is the authoritative reference — deliberately not repeated
+here, where a copy would silently go stale as icons are added.
 
 You can still put an emoji directly in `label:` — it renders verbatim, and
 rela will never strip or reinterpret it. But an emoji cannot take the theme's
@@ -1675,10 +1676,8 @@ navigation:
         list: all_tickets # no icon: keeps the derived list glyph
 ```
 
-Valid names are the same set kanban columns use: `dashboard`, `list`,
-`kanban`, `search`, `analysis`, `apps`, `settings`, `document`, `sun`, `moon`,
-`inbox`, `progress`, `done`, `clock`, `status`. An unknown name is a config
-error at startup.
+Valid names are the same set kanban columns use. An unknown name is a config
+error at startup listing them all.
 
 An `action:` entry derives no icon of its own, so `icon:` is the only way to
 give one a symbol. A **group** cannot take an icon — it renders as a plain
