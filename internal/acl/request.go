@@ -237,8 +237,20 @@ func WithUnmatchedVerified(ctx context.Context) context.Context {
 	return context.WithValue(ctx, unmatchedVerifiedKey{}, true)
 }
 
+// WithMatchedVerified CLEARS the unmatched-verified flag on ctx, marking that a
+// principal which arrived unmatched now resolves to a real user entity. Lazy
+// provisioning (`unmatched_principal: provision`, TKT-ANUJDS) calls this after
+// it creates the stub and re-stamps ctx to the resolved entity: the principal is
+// no longer unmatched, so [Declarative.AuthorizeWrite] must judge the triggering
+// write on the resolved identity's roles, NOT re-enter the unmatched gate. It
+// overrides the key with false so [UnmatchedVerifiedFrom] reports false even
+// though an ancestor ctx set it true.
+func WithMatchedVerified(ctx context.Context) context.Context {
+	return context.WithValue(ctx, unmatchedVerifiedKey{}, false)
+}
+
 // UnmatchedVerifiedFrom reports whether ctx was marked by
-// [WithUnmatchedVerified].
+// [WithUnmatchedVerified] and not subsequently cleared by [WithMatchedVerified].
 func UnmatchedVerifiedFrom(ctx context.Context) bool {
 	if ctx == nil {
 		return false

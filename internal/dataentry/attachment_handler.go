@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"context"
 	"net/http"
 	"sync"
 
@@ -40,4 +41,20 @@ type attachmentHandler struct {
 	fields     func() FieldVerdictResolver
 	gateRead   func(w http.ResponseWriter, r *http.Request, typeName, entityID string) bool
 	writeMu    *sync.Mutex
+
+	// provision implements unmatched_principal: provision (TKT-ANUJDS), set by
+	// App after construction. Called under writeMu at the top of each attachment
+	// write; a no-op unless an unmatched verified principal hits a provision
+	// policy. See writeHandler.enterWrite for the shared rationale.
+	provision func(context.Context) context.Context
+}
+
+// enterWrite acquires writeMu and runs the provision seam under it, returning
+// the request the handler must use. The caller defers Unlock itself.
+func (h *attachmentHandler) enterWrite(r *http.Request) *http.Request {
+	h.writeMu.Lock()
+	if h.provision != nil {
+		return r.WithContext(h.provision(r.Context()))
+	}
+	return r
 }

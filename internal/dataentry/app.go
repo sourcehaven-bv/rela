@@ -807,6 +807,7 @@ func NewApp(
 	// are resolved once from the concrete store/manager (nil on fs/memory builds,
 	// where the sync endpoints degrade to 501).
 	app.sync = newSyncHandler(st, app.entityManager, &app.writeMu)
+	app.sync.provision = app.provisionCtx
 
 	// viewsHandler owns the read-only view-assembly surface (view traversal,
 	// section building, /_views, /_sidepanel, /_sidebar). Fixed service
@@ -913,6 +914,7 @@ func NewApp(
 		fields:     func() FieldVerdictResolver { return app.fieldResolver },
 		gateRead:   app.gateReadOrNotFound,
 		writeMu:    &app.writeMu,
+		provision:  app.provisionCtx,
 	}
 
 	// writeHandler owns the entity/relation CRUD + clone + conflict-resolve
@@ -939,6 +941,7 @@ func NewApp(
 		fullScriptDetail:   app.allowFullScriptDetail,
 		paths:              paths,
 		writeMu:            &app.writeMu,
+		provision:          app.provisionCtx,
 	}
 
 	// Nudge the operator to make a conscious virus-scan choice: if the

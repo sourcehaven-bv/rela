@@ -95,7 +95,7 @@ func (h *syncHandler) handleSyncPut(w http.ResponseWriter, r *http.Request, kind
 	}
 	ifMatch := strings.TrimSpace(r.Header.Get("If-Match"))
 
-	h.writeMu.Lock()
+	r = h.enterWrite(r)
 	defer h.writeMu.Unlock()
 
 	switch kind {
@@ -171,7 +171,7 @@ func (h *syncHandler) putRelation(w http.ResponseWriter, r *http.Request, ap syn
 // with the push precondition (no blind delete of an existing record). 200 on
 // success, 412 on a missing/mismatched If-Match, 404 if the record is gone.
 func (h *syncHandler) handleSyncDelete(w http.ResponseWriter, r *http.Request, kind, rest string) {
-	h.writeMu.Lock()
+	r = h.enterWrite(r)
 	defer h.writeMu.Unlock()
 	ifMatch := strings.TrimSpace(r.Header.Get("If-Match"))
 

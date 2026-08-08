@@ -372,6 +372,7 @@ func (a assertionVerifierAdapter) VerifyAssertion(
 		Roles:         c.Roles,
 		PrincipalType: c.PrincipalType,
 		Scopes:        c.Scopes,
+		Email:         c.Email,
 	}, nil
 }
 
