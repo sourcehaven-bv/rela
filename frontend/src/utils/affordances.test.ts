@@ -35,6 +35,22 @@ describe('isFieldWritable', () => {
   it('combines both channels — fieldReadonly true wins over verdict writable', () => {
     expect(isFieldWritable({ writable: true }, true)).toBe(false)
   })
+
+  // BUG-FB0LN8: a redaction tombstone carries ONLY `visible: false` — the
+  // server suppresses `writable` for a value the caller cannot read. Checking
+  // `writable !== false` alone would call a redacted field writable and render
+  // an empty, editable widget whose every write the server 403s.
+  it('is never writable when the field is redacted', () => {
+    expect(isFieldWritable({ visible: false })).toBe(false)
+  })
+
+  it('stays non-writable for a redacted field even if writable is explicitly true', () => {
+    expect(isFieldWritable({ visible: false, writable: true })).toBe(false)
+  })
+
+  it('is unaffected by an explicit visible: true', () => {
+    expect(isFieldWritable({ visible: true })).toBe(true)
+  })
 })
 
 describe('optionVerdictsFor', () => {

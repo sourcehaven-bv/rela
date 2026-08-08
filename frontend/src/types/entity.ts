@@ -25,7 +25,10 @@ export interface Entity {
   _actions?: Record<string, boolean>
   // Per-field write affordances on per-entity GET responses.
   // Sparse: only fields whose verdict deviates from default appear.
-  // Hidden fields are omitted from `properties` AND from `_fields`.
+  // A hidden field's VALUE is omitted from `properties`, and the field
+  // carries a `{visible: false}` tombstone here so a client can tell
+  // "redacted" from "unset" (BUG-FB0LN8). Read-only per-row surfaces
+  // (view sections) omit hidden fields from both maps instead.
   // Absent on list / mutation responses; present (possibly empty) on
   // per-entity GET (closed-world signal — empty means "evaluated, no
   // deviations"). See docs/data-entry/api-reference.md.
@@ -59,11 +62,23 @@ export interface Entity {
 }
 
 // FieldAffordance carries per-field write / option affordances on
-// the wire. Sparse: `writable` undefined means default (writable);
-// `options` lists only the false entries (allowed options are
-// implicit via the metamodel).
+// the wire. Sparse: `writable` / `visible` undefined means the
+// permissive default (writable, visible); `options` lists only the
+// false entries (allowed options are implicit via the metamodel).
+//
+// `visible: false` is an explicit redaction tombstone (BUG-FB0LN8): the
+// field is declared by the metamodel but its VALUE is withheld by
+// field-level ACL, so it is also absent from `properties`. Render it
+// read-only/redacted — never as an empty input, which would invite a
+// write the server rejects. Do NOT infer redaction from a key's mere
+// absence: absence is ambiguous (redacted, never set, or locally
+// cleared), and guessing is what caused BUG-FB0LN8.
+//
+// A hidden field carries ONLY this tombstone; writability and option
+// verdicts are suppressed server-side for values the caller can't read.
 export interface FieldAffordance {
   writable?: boolean
+  visible?: boolean
   options?: Record<string, boolean>
 }
 

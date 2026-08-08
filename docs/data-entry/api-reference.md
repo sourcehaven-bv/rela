@@ -419,7 +419,8 @@ regardless of source.
   "properties": { /* hidden fields are OMITTED entirely */ },
   "_fields": {
     "kind": { "writable": false },
-    "status": { "options": { "done": false } }
+    "status": { "options": { "done": false } },
+    "salary": { "visible": false }
   },
   "_relations": {
     "affects":    { "creatable": false },
@@ -436,11 +437,31 @@ from the permissive default appear. An absent key in either map means
 signal letting the SPA distinguish "evaluated, no deviations" from
 "affordances not available" (anonymous fallback / pre-rollout server).
 
-Hidden fields are doubly invisible: omitted from `properties` AND absent
-from `_fields`. The SPA filters its config-driven form-field list against
-both: a field declared in `data-entry.yaml` is rendered only if it appears
-in `_fields` OR `properties`. This makes "hidden = omitted" actually hide
-the input.
+A hidden field's **value** is omitted from `properties`, and the field
+carries an explicit `{"visible": false}` **tombstone** in `_fields`
+(BUG-FB0LN8). The SPA renders a read-only "redacted" affordance for a
+tombstoned field, and renders a normal input for any other property its
+entity type declares.
+
+The tombstone exists because absence is ambiguous. A key missing from
+`properties` may be redacted, never set, or deleted by the client itself —
+and a client forced to infer intent from absence gets it wrong. It used to:
+the form treated "absent" as "hidden", so once a conditional field's value
+was cleared the input could never be rendered again, silently destroying
+user data with no recovery path.
+
+The tombstone discloses only the field **name**. That is not a secret:
+`GET /api/v1/_schema` already serves every declared property of every type,
+unfiltered, to any authenticated caller. Field-level `visible:` redaction
+protects **values**, and makes no claim to conceal which properties exist.
+(Row-level ACL is different — whether an entity *exists* is a genuine
+secret, and a hidden entity 404s indistinguishably.)
+
+**Exception — read-only per-row surfaces.** `v1.ViewEntity._fields` on
+cards / list rows keeps the stricter closed-world shape: hidden fields are
+absent from both `_props` and `_fields`. A read-only row never decides
+whether to render an input, so it has no use for the disambiguation and
+does not pay its disclosure.
 
 ### Write-side parity
 
@@ -612,7 +633,13 @@ sparse semantics as `V1Entity._fields`:
 property hidden by the metamodel + ACL never appears in either map. The
 two maps may diverge in one direction only — `_fields` can carry a key
 absent from `_props` when the property has no stored value but a
-non-default verdict (e.g. `writable: false` on an unset field). Table
+non-default verdict (e.g. `writable: false` on an unset field).
+
+Note this row surface deliberately does **not** carry the
+`{"visible": false}` tombstone that `V1Entity._fields` emits: a read-only
+row never decides whether to render an input, so it keeps the stricter
+closed-world invariant (`keys(_fields) ∩ hidden == ∅`). See the
+`_fields` section above. Table
 sections (`display: table`) and the entry-source section keep their
 existing shape; the entry section's properties + affordances ride on
 the parent `entry` (`V1Entity`).

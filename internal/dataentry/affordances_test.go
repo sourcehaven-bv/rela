@@ -494,7 +494,13 @@ func TestComputeFieldAffordances_SparseWritable(t *testing.T) {
 	}
 }
 
-func TestComputeFieldAffordances_HiddenFieldsOmittedFromMap(t *testing.T) {
+// BUG-FB0LN8: a hidden field appears in _fields as an explicit
+// `{visible: false}` tombstone, carrying NOTHING else. The value stays
+// omitted from `properties` (that is the redaction); the tombstone only
+// disambiguates "redacted" from "unset" so clients stop inferring intent
+// from absence. Writability and option filters are suppressed — they are
+// meaningless for an unreadable value and would leak policy detail.
+func TestComputeFieldAffordances_HiddenFieldsCarryVisibleTombstoneOnly(t *testing.T) {
 	svc := affordanceServiceWithResolver(fakeResolver{
 		fv: FieldVerdicts{
 			Writable: map[string]bool{"priority": false}, // also marked read-only
@@ -503,8 +509,70 @@ func TestComputeFieldAffordances_HiddenFieldsOmittedFromMap(t *testing.T) {
 		},
 	})
 	got := svc.computeFieldAffordances(context.Background(), &entity.Entity{Type: "ticket"})
+	entry, ok := got["priority"]
+	if !ok {
+		t.Fatalf("hidden field must appear as a tombstone; got %+v", got)
+	}
+	if entry.Visible == nil || *entry.Visible {
+		t.Errorf("priority.Visible: got %v, want pointer-to-false", entry.Visible)
+	}
+	if entry.Writable != nil {
+		t.Errorf("hidden field must not carry a writable verdict; got %v", *entry.Writable)
+	}
+	if len(entry.Options) != 0 {
+		t.Errorf("hidden field must not carry option verdicts; got %v", entry.Options)
+	}
+}
+
+// The read-only per-row surface (cards/list rows) keeps RR-FD1B's stricter
+// closed-world invariant: hidden fields are absent from _fields entirely.
+// The tombstone earns its disclosure only on the edit path, where a client
+// must distinguish "redacted" from "unset" to decide whether to render an
+// input; a read-only row makes no such decision.
+func TestComputeVisibleFieldAffordances_NoTombstonesOnReadOnlyRows(t *testing.T) {
+	svc := affordanceServiceWithResolver(fakeResolver{
+		fv: FieldVerdicts{
+			Writable: map[string]bool{"kind": false},
+			Visible:  map[string]bool{"priority": false},
+		},
+	})
+	e := &entity.Entity{Type: "ticket"}
+	got := svc.computeVisibleFieldAffordances(context.Background(), e)
 	if _, ok := got["priority"]; ok {
-		t.Errorf("hidden field must NOT appear in _fields (closed-world); got %+v", got)
+		t.Errorf("hidden field must be wholly absent from a read-only row; got %+v", got)
+	}
+	// Non-hidden verdicts still ride along.
+	if kind, ok := got["kind"]; !ok {
+		t.Errorf("kind should keep its writable verdict; got %+v", got)
+	} else if kind.Writable == nil || *kind.Writable {
+		t.Errorf("kind.Writable: got %v, want pointer-to-false", kind.Writable)
+	}
+	// ...while the edit-path surface DOES tombstone the same field.
+	edit := svc.computeFieldAffordances(context.Background(), e)
+	if _, ok := edit["priority"]; !ok {
+		t.Errorf("edit-path _fields must tombstone the hidden field; got %+v", edit)
+	}
+}
+
+// A visible field is never given a tombstone — `visible` stays nil so the
+// sparse wire shape is unchanged for the overwhelmingly common case.
+func TestComputeFieldAffordances_VisibleFieldsHaveNoTombstone(t *testing.T) {
+	svc := affordanceServiceWithResolver(fakeResolver{
+		fv: FieldVerdicts{
+			Writable: map[string]bool{"kind": false},
+			Visible:  map[string]bool{"kind": true, "title": true},
+		},
+	})
+	got := svc.computeFieldAffordances(context.Background(), &entity.Entity{Type: "ticket"})
+	if _, ok := got["title"]; ok {
+		t.Errorf("visible+writable field must stay absent (sparse); got %+v", got)
+	}
+	kind, ok := got["kind"]
+	if !ok {
+		t.Fatalf("kind should be present for its writable verdict")
+	}
+	if kind.Visible != nil {
+		t.Errorf("visible field must not carry a visible verdict; got %v", *kind.Visible)
 	}
 }
 
