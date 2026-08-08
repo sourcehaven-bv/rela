@@ -1,19 +1,25 @@
 import type { FieldAffordance } from '@/types'
 
-// isFieldWritable: the rendered field is writable unless EITHER the
-// static config marks it readonly OR the server's `_fields` verdict
-// reports `writable === false`. Both signals are honored — the server
-// verdict is authoritative on the wire, but a form config can still
-// pin a field readonly for static reasons (e.g. ID display).
+// isFieldWritable: the rendered field is writable unless the static
+// config marks it readonly, the server's `_fields` verdict reports
+// `writable === false`, or the field is redacted (`visible === false`).
+// All three signals are honored — the server verdict is authoritative
+// on the wire, but a form config can still pin a field readonly for
+// static reasons (e.g. ID display).
 //
-// `fieldReadonly` is optional so view-side hosts (SectionEditForm)
-// that have no static-readonly concept can omit it; passing
-// `undefined` falls through cleanly to the verdict check.
+// The `visible === false` case matters because a redaction tombstone
+// carries ONLY that verdict: the server suppresses `writable` for a
+// value the caller cannot read (BUG-FB0LN8), so `writable !== false`
+// alone would report a redacted field as writable and render an empty,
+// editable widget whose every write the server 403s. Checking it here
+// rather than per-consumer is deliberate — the gap this closes was one
+// consumer compensating while another did not.
 export function isFieldWritable(
   verdict: FieldAffordance | undefined,
   fieldReadonly?: boolean,
 ): boolean {
   if (fieldReadonly) return false
+  if (verdict?.visible === false) return false
   return verdict?.writable !== false
 }
 
