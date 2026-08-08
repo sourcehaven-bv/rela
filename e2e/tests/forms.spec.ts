@@ -203,7 +203,7 @@ test.describe('Inline Entity Creation', () => {
     await formPage.navigateToCreateForm('task');
 
     const picker = formPage.relationPickerByLabel('Implements Feature');
-    await picker.locator('input[role="combobox"]').click();
+    await formPage.openRelationPicker(picker);
 
     await expect(
       formPage.inlineCreateButtons(picker).filter({ hasText: '+ New Feature' }),
@@ -229,12 +229,8 @@ test.describe('Inline Entity Creation', () => {
     const formPage = new FormPage(appPage);
     await formPage.navigateToEditForm('feature', feature.id);
 
-    // Scope by the section label, not by text anywhere in the widget: a
-    // sibling widget's placeholder can contain the same word.
-    const tagged = appPage
-      .locator('.relation-cards')
-      .filter({ has: appPage.locator('.section-label:has-text("tagged")') });
-    await tagged.locator('.add-btn').click();
+    const tagged = formPage.relationCardsByLabel('tagged');
+    await formPage.openCardsAddPanel(tagged);
     // `tagged` is feature -> feature in this fixture.
     await formPage.clickInlineCreate('Feature', tagged);
     await formPage.expectInlineFormVisible();
@@ -245,8 +241,8 @@ test.describe('Inline Entity Creation', () => {
 
     // Selected for linking, with the edge-meta form shown — not yet linked,
     // so the relation's `added_by` / `added_date` can still be filled.
-    await expect(tagged.locator('.new-relation-form')).toBeVisible();
-    await expect(tagged.locator('.created-notice')).toContainText('Created from cards');
+    await expect(formPage.cardsPendingLink(tagged)).toBeVisible();
+    await expect(formPage.cardsCreatedNotice(tagged)).toContainText('Created from cards');
 
     await api.deleteEntity('features', feature.id).catch(() => {});
   });
@@ -259,13 +255,13 @@ test.describe('Inline Entity Creation', () => {
     await formPage.navigateToCreateForm('task');
 
     const picker = formPage.relationPickerByLabel('Implements Feature');
-    await picker.locator('input[role="combobox"]').click();
+    await formPage.openRelationPicker(picker);
     await formPage.clickInlineCreate('Feature', picker);
 
     await formPage.expectInlineFormVisible();
-    await expect(formPage.inlineCreateModal.locator('#field-title')).toBeVisible();
-    await expect(formPage.inlineCreateModal.locator('#field-status')).toBeVisible();
-    await expect(formPage.inlineCreateModal.locator('#field-priority')).toBeVisible();
+    await expect(formPage.inlineField('title')).toBeVisible();
+    await expect(formPage.inlineField('status')).toBeVisible();
+    await expect(formPage.inlineField('priority')).toBeVisible();
   });
 
   test('creating inline links the new entity and preserves the host draft', async ({
@@ -281,7 +277,7 @@ test.describe('Inline Entity Creation', () => {
     await formPage.fillField('assignee', 'jeroen');
 
     const picker = formPage.relationPickerByLabel('Implements Feature');
-    await picker.locator('input[role="combobox"]').click();
+    await formPage.openRelationPicker(picker);
     await formPage.clickInlineCreate('Feature', picker);
     await formPage.expectInlineFormVisible();
 
@@ -290,10 +286,10 @@ test.describe('Inline Entity Creation', () => {
     await expect(formPage.inlineCreateModal).toBeHidden();
 
     // The host draft is intact — no navigation happened.
-    await expect(appPage.locator('#field-title')).toHaveValue('Host task draft');
-    await expect(appPage.locator('#field-assignee')).toHaveValue('jeroen');
+    await expect(formPage.field('title')).toHaveValue('Host task draft');
+    await expect(formPage.field('assignee')).toHaveValue('jeroen');
     // ...and the new feature is selected in the picker.
-    await expect(picker.locator('.selected-entity')).toContainText('Created inline');
+    await expect(formPage.pickerSelections(picker)).toContainText('Created inline');
 
     // Saving the host persists the edge.
     const created = await formPage.submitAndExpectCreate('tasks');
@@ -312,18 +308,15 @@ test.describe('Inline Entity Creation', () => {
     await formPage.fillField('title', 'Untouched draft');
 
     const picker = formPage.relationPickerByLabel('Implements Feature');
-    await picker.locator('input[role="combobox"]').click();
+    await formPage.openRelationPicker(picker);
     await formPage.clickInlineCreate('Feature', picker);
     await formPage.expectInlineFormVisible();
 
-    await formPage.inlineCreateModal
-      .locator('button')
-      .filter({ hasText: 'Cancel' })
-      .click();
+    await formPage.cancelInlineForm();
 
     await expect(formPage.inlineCreateModal).toBeHidden();
-    await expect(appPage.locator('#field-title')).toHaveValue('Untouched draft');
-    await expect(picker.locator('.selected-entity')).toHaveCount(0);
+    await expect(formPage.field('title')).toHaveValue('Untouched draft');
+    await expect(formPage.pickerSelections(picker)).toHaveCount(0);
   });
 
   test('a nested form does not offer inline create in turn', async ({ appPage }) => {
@@ -334,7 +327,7 @@ test.describe('Inline Entity Creation', () => {
     await formPage.navigateToCreateForm('task');
 
     const picker = formPage.relationPickerByLabel('Implements Feature');
-    await picker.locator('input[role="combobox"]').click();
+    await formPage.openRelationPicker(picker);
     await formPage.clickInlineCreate('Feature', picker);
     await formPage.expectInlineFormVisible();
 
