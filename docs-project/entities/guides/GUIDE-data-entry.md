@@ -2516,6 +2516,12 @@ needs it reads it from the file.
 >   on `PATH` or by absolute path rather than relying on a relative path such
 >   as `render.sh`.
 >
+> - **A sandbox is now required.** Commands run confined via `internal/cmdexec`
+>   (bubblewrap on Linux, `sandbox-exec` on macOS) and **fail closed**: on a host
+>   with no mechanism available, the render is refused rather than run
+>   unconfined. Previously `command:` ran through a bare `sh -c` with no
+>   confinement. Install bubblewrap on Linux deployments.
+>
 > Shell features (pipes, redirection) are unavailable by design. If you need
 > them, put them in a script file and invoke that script as the program.
 

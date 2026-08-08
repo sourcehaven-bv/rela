@@ -255,6 +255,13 @@ jobs:
           cache: 'npm'
           cache-dependency-path: e2e/package-lock.json
 
+      # Document `command:` renderers run confined via internal/cmdexec, which
+      # FAILS CLOSED when no sandbox is available (TKT-QGHNVA moved them off
+      # `sh -c`). Without bubblewrap the fixture documents never render and the
+      # document specs fail. Same rationale as the `test` job above.
+      - name: Install bubblewrap (command sandbox)
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
