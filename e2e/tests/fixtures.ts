@@ -1247,9 +1247,9 @@ documents:
   feature_summary:
     title: "Feature Summary"
     entity_type: feature
-    # argv array, no shell (TKT-QGHNVA). {in} is the entry entity's markdown;
-    # its frontmatter carries `id:`, so `cat` emits a document that identifies
-    # the entity without the id ever reaching the command line.
+    # argv array, no shell (TKT-QGHNVA). {in} is the entry entity's markdown
+    # file; its frontmatter carries the id, so cat emits a document naming the
+    # entity without the id ever reaching the command line.
     command: ["cat", "{in}"]
     edit:
       # Reusing the shared 'feature' form rather than adding a dedicated
