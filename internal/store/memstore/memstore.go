@@ -362,6 +362,7 @@ func (m *MemStore) createEntity(_ context.Context, e *entity.Entity) error {
 	}
 
 	stored := e.Clone()
+	stored.Redacted = nil // per-reader ACL artifact, never content (RR-KBWJPV)
 	stored.UpdatedAt = time.Now()
 	m.entities[e.ID] = stored
 	m.entityOrder = sortedInsert(m.entityOrder, e.ID)
@@ -384,6 +385,7 @@ func (m *MemStore) updateEntity(_ context.Context, e *entity.Entity) error {
 	}
 
 	stored := e.Clone()
+	stored.Redacted = nil // per-reader ACL artifact, never content (RR-KBWJPV)
 	stored.UpdatedAt = time.Now()
 	m.entities[e.ID] = stored
 	m.notifyPut(stored)

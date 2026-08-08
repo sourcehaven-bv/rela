@@ -157,3 +157,48 @@ func TestCloneInaccessibleIsolation(t *testing.T) {
 	rclone.Inaccessible[0].Name = "mutated"
 	assert.Equal(t, "*", r.Inaccessible[0].Name)
 }
+
+func TestCloneRedactedIsolation(t *testing.T) {
+	// Clone must deep-copy Redacted for the same reason it deep-copies
+	// Inaccessible: a shared backing array lets a consumer's mutation
+	// reach into the original. RR-1G0T3F.
+	e := entity.New("T-1", "ticket")
+	e.Redacted = []string{"salary"}
+
+	clone := e.Clone()
+	clone.Redacted[0] = "mutated"
+
+	assert.Equal(t, "salary", e.Redacted[0], "mutating clone must not affect original")
+}
+
+func TestIsRedacted(t *testing.T) {
+	tests := []struct {
+		name     string
+		redacted []string
+		probe    string
+		want     bool
+	}{
+		{"withheld property", []string{"salary"}, "salary", true},
+		{"unset property", []string{"salary"}, "title", false},
+		{"nothing redacted", nil, "salary", false},
+		{"empty name", []string{"salary"}, "", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := entity.New("T-1", "ticket")
+			e.Redacted = tc.redacted
+			assert.Equal(t, tc.want, e.IsRedacted(tc.probe))
+		})
+	}
+}
+
+// TestRedactedDoesNotLock pins the whole reason Redacted is a separate
+// field from Inaccessible: IsLocked gates writes and makes the validator
+// silently skip an entity, so an ACL-redacted read must never look
+// locked. See the InaccessibleReason godoc.
+func TestRedactedDoesNotLock(t *testing.T) {
+	e := entity.New("T-1", "ticket")
+	e.Redacted = []string{"salary"}
+
+	assert.False(t, e.IsLocked(), "ACL redaction must not mark an entity locked")
+}

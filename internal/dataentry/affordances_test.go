@@ -2,6 +2,8 @@ package dataentry
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -754,5 +756,36 @@ func TestComputeRelationAffordances_MetaFieldOverrides(t *testing.T) {
 	}
 	if note.Writable == nil || *note.Writable {
 		t.Errorf("note.Writable: got %v, want false-pointer", note.Writable)
+	}
+}
+
+// TestDomainRedactedNotOnWire pins RR-79L852. visibility.Redact populates
+// entity.Entity.Redacted on the HTTP read paths too (views.go, export.go,
+// export_list.go), not just the Lua ones. The wire's channel for this is
+// v1.Entity._redacted (DEC-T0XIWQ), computed from FIELD VERDICTS — the
+// domain field must never become a second, unversioned source for it.
+//
+// Drives the real entitySerializer: an earlier version of this test built
+// its own v1.Entity in a helper, which could not fail because the helper
+// simply never set the field (RR-VXZEUN).
+func TestDomainRedactedNotOnWire(t *testing.T) {
+	app := newTestAppV1(t)
+	e := &entity.Entity{
+		ID:         "TKT-1",
+		Type:       "ticket",
+		Properties: map[string]any{"title": "T"},
+		// A domain-side value the serializer must ignore. If it ever
+		// propagates, it would masquerade as a verdict-derived _redacted.
+		Redacted: []string{"DOMAIN-SIDE-LEAK"},
+	}
+
+	out := app.serializer.toV1(t.Context(), e, nil, nil, nil, app.Meta(), "tickets")
+
+	blob, err := json.Marshal(out)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(blob), "DOMAIN-SIDE-LEAK") {
+		t.Errorf("domain Redacted field reached the wire: %s", blob)
 	}
 }

@@ -1316,8 +1316,22 @@ func EntityToTable(ls *lua.LState, e *entity.Entity) *lua.LTable {
 	}
 	t.RawSetString("properties", props)
 
+	// Names withheld by field-level ACL, as a set so a script can both
+	// iterate it and test membership. Always present (empty when nothing
+	// was hidden) — on ungated runtimes (CLI, MCP, docs) it is always
+	// empty because no policy was evaluated. Values are NOT here; they
+	// were stripped from properties above.
+	redacted := ls.NewTable()
+	for _, name := range e.Redacted {
+		redacted.RawSetString(name, lua.LTrue)
+	}
+	t.RawSetString("redacted", redacted)
+
 	// Add prop(name, default) method via a function field
 	t.RawSetString("prop", ls.NewFunction(luaEntityProp))
+
+	// Add is_redacted(name) method to distinguish withheld from unset
+	t.RawSetString("is_redacted", ls.NewFunction(luaEntityIsRedacted))
 
 	// Add strip_prefix() method to get ID without type prefix
 	t.RawSetString("strip_prefix", ls.NewFunction(luaEntityStripPrefix))
@@ -1355,6 +1369,28 @@ func luaEntityProp(ls *lua.LState) int {
 	}
 
 	ls.Push(val)
+	return 1
+}
+
+// luaEntityIsRedacted implements entity:is_redacted(name) -> bool
+// Reports whether field-level ACL withheld the named property from the
+// reading principal, letting a script render "[redacted]" rather than a
+// blank that reads as "never set".
+//
+// False means "not withheld", which on an ungated runtime (CLI, MCP,
+// docs) is every property — those paths evaluate no policy.
+func luaEntityIsRedacted(ls *lua.LState) int {
+	self := ls.CheckTable(1)
+	name := ls.CheckString(2)
+
+	redactedVal := self.RawGetString("redacted")
+	redacted, ok := redactedVal.(*lua.LTable)
+	if !ok {
+		ls.Push(lua.LFalse)
+		return 1
+	}
+
+	ls.Push(lua.LBool(lua.LVAsBool(redacted.RawGetString(name))))
 	return 1
 }
 

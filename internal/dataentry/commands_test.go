@@ -1390,3 +1390,41 @@ func TestCommandCancelOwnerBound(t *testing.T) {
 		}
 	})
 }
+
+// TestBuildEntityInput_CarriesRedactedNames pins the command-stdin contract
+// for ACL-redacted properties (RR-TD74AU). commandInput embeds the DOMAIN
+// entity, so `redacted` ships on stdin alongside the pre-existing
+// `inaccessible`. That is deliberate — a command hitting a stripped property
+// otherwise cannot tell "withheld" from "never set" — and it discloses names
+// only, matching the `_redacted` wire field and the Lua binding.
+func TestBuildEntityInput_CarriesRedactedNames(t *testing.T) {
+	app, entities := testAppInstance()
+	bindRepo(app, "/test/project")
+
+	e := entities.ticket1.Clone()
+	delete(e.Properties, "status")
+	e.Redacted = []string{"status"}
+
+	input := app.commands.buildEntityInput(context.Background(), e)
+
+	data, err := json.Marshal(input)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+	var decoded struct {
+		Entity struct {
+			Properties map[string]any `json:"properties"`
+			Redacted   []string       `json:"redacted"`
+		} `json:"entity"`
+	}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+
+	if len(decoded.Entity.Redacted) != 1 || decoded.Entity.Redacted[0] != "status" {
+		t.Errorf("redacted names missing from stdin payload: %v", decoded.Entity.Redacted)
+	}
+	if _, present := decoded.Entity.Properties["status"]; present {
+		t.Error("redacted property VALUE reached the command payload")
+	}
+}
