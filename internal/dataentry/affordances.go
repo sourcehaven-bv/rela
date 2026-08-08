@@ -211,8 +211,11 @@ type FieldVerdicts struct {
 	Writable map[string]bool
 
 	// Visible maps fieldName → visible. Absence = visible. False means
-	// the property is omitted from the wire `properties` map AND from
-	// `_fields`; the SPA's filter never sees the key.
+	// the property's VALUE is omitted from the wire `properties` map; on
+	// per-entity responses the field also gets a `{visible: false}`
+	// tombstone in `_fields` so the client can distinguish "redacted"
+	// from "unset" (BUG-FB0LN8). Read-only per-row surfaces omit it from
+	// both maps — see computeVisibleFieldAffordances.
 	Visible map[string]bool
 
 	// Options maps fieldName → optionValue → allowed. Absence of the
@@ -713,9 +716,17 @@ func (svc affordanceService) validateRelationMetaWrite(
 
 // computeFieldAffordances returns the sparse `_fields` wire map for
 // entity e: only fields whose verdict deviates from the permissive
-// default appear. Hidden fields (Visible[name] == false) are absent
-// from the returned map AND must be omitted from the entity's
-// Properties by the caller — they are doubly-invisible to the client.
+// default appear. Hidden fields (Visible[name] == false) appear as an
+// explicit `{visible: false}` tombstone and must still be omitted from
+// the entity's Properties by the caller — the VALUE is withheld, the
+// field's existence is not (BUG-FB0LN8).
+//
+// The tombstone exists because absence is ambiguous: a key missing from
+// `properties` may be redacted, never set, or deleted. Clients that had
+// to guess got it wrong in a way that silently destroyed user data. It
+// discloses only the field NAME, which /api/v1/_schema already serves
+// in full to any authenticated caller; field-level redaction protects
+// values, not the shape of the metamodel.
 //
 // Empty input verdicts yield an empty (non-nil) map so the wire shape
 // is consistent: `_fields: {}` under the nop resolver, sparse entries
@@ -726,19 +737,54 @@ func (svc affordanceService) computeFieldAffordances(
 	return computeFieldAffordancesFrom(svc.resolver().FieldVerdicts(ctx, e))
 }
 
+// computeVisibleFieldAffordances is computeFieldAffordances without the
+// `{visible: false}` tombstones — hidden fields are absent from the map
+// entirely, the pre-BUG-FB0LN8 closed-world shape.
+//
+// This is for READ-ONLY per-row surfaces (cards/list rows in
+// v1.ViewEntity._fields, TKT-IHC7D), which preserve RR-FD1B's stricter
+// invariant: keys(_props) ∩ hidden == ∅ AND keys(_fields) ∩ hidden == ∅.
+// The tombstone earns its disclosure on the EDIT path, where a client
+// must tell "redacted" from "unset" to decide whether to render an input.
+// A read-only row makes no such decision, so it gets no tombstone.
+func (svc affordanceService) computeVisibleFieldAffordances(
+	ctx context.Context, e *entityPkg.Entity,
+) map[string]v1.FieldAffordance {
+	v := svc.resolver().FieldVerdicts(ctx, e)
+	out := computeFieldAffordancesFrom(v)
+	for name := range out {
+		if v.isHidden(name) {
+			delete(out, name)
+		}
+	}
+	return out
+}
+
 // computeFieldAffordancesFrom is computeFieldAffordances given an
 // already-resolved verdict set, so callers that need the verdicts for more
 // than one thing (e.g. _fields + _attachments) resolve them once.
 func computeFieldAffordancesFrom(v FieldVerdicts) map[string]v1.FieldAffordance {
 	out := make(map[string]v1.FieldAffordance)
 
+	// visible=false tombstones. A hidden field carries ONLY this verdict:
+	// writability and option filters are meaningless for a value the
+	// caller cannot read, and emitting them would leak policy detail
+	// beyond the field's existence.
+	for name := range v.Visible {
+		if !v.isHidden(name) {
+			continue // sparse: default is visible
+		}
+		f := false
+		out[name] = v1.FieldAffordance{Visible: &f}
+	}
+
 	// writable=false entries
 	for name, writable := range v.Writable {
 		if writable {
 			continue // sparse: default is writable
 		}
-		if !v.Visible[name] && v.isHidden(name) {
-			continue // hidden takes precedence; skip from _fields entirely
+		if v.isHidden(name) {
+			continue // hidden takes precedence; the tombstone above is the whole verdict
 		}
 		entry := out[name]
 		f := false

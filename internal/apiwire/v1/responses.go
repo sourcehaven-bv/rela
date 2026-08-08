@@ -23,8 +23,12 @@ type Entity struct {
 	Inaccessible []InaccessibleField `json:"inaccessible,omitempty"`
 	// FieldAffordances carries per-field write affordances on per-entity
 	// GET responses. Sparse: only fields whose verdict deviates from the
-	// permissive default appear. Hidden fields are omitted from
-	// `Properties` AND from this map entirely. Pointer semantics
+	// permissive default appear. A hidden field's VALUE is omitted from
+	// `Properties`, and the field carries a `{visible: false}` tombstone
+	// here so a client can tell "redacted" from "unset" (BUG-FB0LN8).
+	// Read-only per-row surfaces (ViewEntity) omit hidden fields from
+	// both maps instead — see computeVisibleFieldAffordances.
+	// Pointer semantics
 	// distinguish "absent on the wire" (nil pointer; list / mutation
 	// responses) from "present and empty" (`{}`; per-entity GET with no
 	// deviations under nop resolver — closed-world signal matching the
@@ -66,12 +70,23 @@ type Entity struct {
 }
 
 // FieldAffordance describes per-field write / option affordances on
-// the wire. Sparse: `Writable` is nil when the default (writable)
-// holds; `Options` lists only the false entries (allowed options are
-// implicit via the metamodel). See the closed-world contract in
-// docs/data-entry/api-reference.md.
+// the wire. Sparse: `Writable` and `Visible` are nil when their
+// permissive defaults (writable, visible) hold; `Options` lists only
+// the false entries (allowed options are implicit via the metamodel).
+// See the closed-world contract in docs/data-entry/api-reference.md.
+//
+// `Visible: false` is an explicit redaction tombstone (BUG-FB0LN8):
+// the field is declared by the metamodel but its VALUE is withheld by
+// field-level ACL, so it is also absent from the entity's Properties.
+// Without the tombstone a redacted field is byte-identical on the wire
+// to one that is merely unset, and clients are forced to infer intent
+// from absence — an ambiguous sentinel that cost us silent data loss.
+// Field-level redaction hides values only and makes no claim to
+// conceal which properties exist (the metamodel is served in full via
+// /api/v1/_schema), so naming the redacted field discloses nothing new.
 type FieldAffordance struct {
 	Writable *bool           `json:"writable,omitempty"`
+	Visible  *bool           `json:"visible,omitempty"`
 	Options  map[string]bool `json:"options,omitempty"`
 }
 

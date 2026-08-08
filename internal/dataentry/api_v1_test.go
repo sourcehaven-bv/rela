@@ -4413,8 +4413,12 @@ func TestV1Affordance_PerEntityGet_DemoFixture(t *testing.T) {
 		t.Fatal("FieldAffordances nil")
 	}
 	fa := *got.FieldAffordances
-	if _, ok := fa["priority"]; ok {
-		t.Errorf("priority must be absent from _fields (hidden): %v", fa)
+	// BUG-FB0LN8: a hidden field carries an explicit {visible:false}
+	// tombstone. Its VALUE is still withheld (asserted on Properties above).
+	if prio, ok := fa["priority"]; !ok {
+		t.Errorf("priority must appear in _fields as a tombstone (hidden): %v", fa)
+	} else if prio.Visible == nil || *prio.Visible {
+		t.Errorf("priority.Visible: got %v, want pointer-to-false", prio.Visible)
 	}
 	if _, ok := fa["title"]; ok {
 		t.Errorf("title must be absent from _fields (default writable): %v", fa)
@@ -4484,8 +4488,27 @@ func TestV1Affordance_PatchEcho_StripsHidden(t *testing.T) {
 		t.Fatalf("PATCH returned %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if strings.Contains(body, `"title"`) || strings.Contains(body, "secret") {
-		t.Errorf("PATCH echo must NOT contain hidden field; got: %s", body)
+	// The hidden field's VALUE must never appear anywhere in the echo.
+	if strings.Contains(body, "secret") {
+		t.Errorf("PATCH echo must NOT contain the hidden field's value; got: %s", body)
+	}
+	var echo v1.Entity
+	if err := json.Unmarshal(rec.Body.Bytes(), &echo); err != nil {
+		t.Fatalf("unmarshal echo: %v", err)
+	}
+	if _, ok := echo.Properties["title"]; ok {
+		t.Errorf("PATCH echo properties must omit the hidden field; got: %s", body)
+	}
+	// BUG-FB0LN8: the field's existence is disclosed via the tombstone, so
+	// a client can tell "redacted" from "unset" without guessing.
+	if echo.FieldAffordances == nil {
+		t.Fatal("PATCH echo missing _fields")
+	}
+	title, ok := (*echo.FieldAffordances)["title"]
+	if !ok {
+		t.Errorf("PATCH echo _fields must carry the hidden field's tombstone; got: %s", body)
+	} else if title.Visible == nil || *title.Visible {
+		t.Errorf("title.Visible: got %v, want pointer-to-false", title.Visible)
 	}
 }
 
@@ -4978,10 +5001,15 @@ func TestHandleV1DryRunCreate_Affordances(t *testing.T) {
 		if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
 			t.Fatalf("decode: %v; body=%s", err, body)
 		}
-		if v.FieldAffordances != nil {
-			if _, present := (*v.FieldAffordances)["status"]; present {
-				t.Errorf("hidden field must be absent from _fields; got %s", body)
-			}
+		// BUG-FB0LN8: hidden fields carry a {visible:false} tombstone in
+		// _fields; only the VALUE is withheld (asserted on Properties below).
+		if v.FieldAffordances == nil {
+			t.Fatalf("_fields missing; got %s", body)
+		}
+		if status, present := (*v.FieldAffordances)["status"]; !present {
+			t.Errorf("hidden field must appear in _fields as a tombstone; got %s", body)
+		} else if status.Visible == nil || *status.Visible {
+			t.Errorf("status.Visible: got %v, want pointer-to-false", status.Visible)
 		}
 		if _, present := v.Properties["status"]; present {
 			t.Errorf("hidden field must be stripped from properties; got %s", body)

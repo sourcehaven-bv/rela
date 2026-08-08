@@ -169,7 +169,7 @@ func (h *viewsHandler) buildSectionEntityData(
 		Type:          e.Type,
 		EditFormID:    h.editFormForType(e.Type),
 		Props:         h.affordances.copyVisibleProperties(ctx, e),
-		FieldVerdicts: h.affordances.computeFieldAffordances(ctx, e),
+		FieldVerdicts: h.affordances.computeVisibleFieldAffordances(ctx, e),
 	}
 	for _, f := range secFields {
 		values := propertyToStrings(e.Properties[f.Property])
