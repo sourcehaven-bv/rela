@@ -369,3 +369,110 @@ func TestScriptReads_NilReaderDenies(t *testing.T) {
 		t.Errorf("nil-reader runtime leaked entity data: %q", out.String())
 	}
 }
+
+// TestScriptReads_RedactedIsDistinguishableFromUnset (TKT-FJ6END): the
+// motivating case. `salary` is hidden by policy and `nickname` was never
+// set — both read as nil, so without a marker a script renders the same
+// blank for "you may not see this" and "nobody filled it in".
+func TestScriptReads_RedactedIsDistinguishableFromUnset(t *testing.T) {
+	_, deps := newACLWorld(t)
+
+	out := runAsAlice(t, deps, `
+local p = rela.get_entity("P-1")
+rela.output("salary_val=" .. tostring(p.properties.salary))
+rela.output("salary_redacted=" .. tostring(p:is_redacted("salary")))
+rela.output("nickname_val=" .. tostring(p.properties.nickname))
+rela.output("nickname_redacted=" .. tostring(p:is_redacted("nickname")))
+rela.output("name_redacted=" .. tostring(p:is_redacted("name")))
+`)
+	// Both values read nil...
+	if !strings.Contains(out, "salary_val=nil") || !strings.Contains(out, "nickname_val=nil") {
+		t.Fatalf("expected both to read nil: %q", out)
+	}
+	// ...but only the policy-hidden one is marked redacted.
+	if !strings.Contains(out, "salary_redacted=true") {
+		t.Errorf("hidden property not reported as redacted: %q", out)
+	}
+	if !strings.Contains(out, "nickname_redacted=false") {
+		t.Errorf("never-set property wrongly reported as redacted: %q", out)
+	}
+	if !strings.Contains(out, "name_redacted=false") {
+		t.Errorf("granted property wrongly reported as redacted: %q", out)
+	}
+}
+
+// TestScriptReads_RedactedSetIsIterable pins the table form, for scripts
+// that render every withheld field rather than probing one by name.
+func TestScriptReads_RedactedSetIsIterable(t *testing.T) {
+	_, deps := newACLWorld(t)
+
+	out := runAsAlice(t, deps, `
+local p = rela.get_entity("P-1")
+local names = {}
+for name in pairs(p.redacted) do names[#names+1] = name end
+table.sort(names)
+rela.output("redacted=" .. table.concat(names, ","))
+`)
+	if !strings.Contains(out, "redacted=salary") {
+		t.Errorf("redacted set wrong: %q", out)
+	}
+}
+
+// TestScriptReads_RedactedNeverCarriesValues is the security invariant:
+// the marker discloses NAMES only. The value must appear nowhere.
+func TestScriptReads_RedactedNeverCarriesValues(t *testing.T) {
+	_, deps := newACLWorld(t)
+
+	out := runAsAlice(t, deps, `
+local p = rela.get_entity("P-1")
+for name, v in pairs(p.redacted) do
+  rela.output("entry=" .. name .. "/" .. tostring(v))
+end
+rela.output("direct=" .. tostring(p.properties.salary))
+rela.output("via_prop=" .. tostring(p:prop("salary", "absent")))
+`)
+	// "100000" is P-1's salary in the fixture.
+	if strings.Contains(out, "100000") {
+		t.Fatalf("redacted VALUE leaked to script: %q", out)
+	}
+	if !strings.Contains(out, "entry=salary/true") {
+		t.Errorf("redacted set should map name->true: %q", out)
+	}
+}
+
+// TestScriptReads_ListEntitiesMarksRedacted covers the list path, which
+// reaches Redact through a different branch (pushdown or Filter) than
+// get_entity.
+func TestScriptReads_ListEntitiesMarksRedacted(t *testing.T) {
+	_, deps := newACLWorld(t)
+
+	out := runAsAlice(t, deps, `
+for _, e in ipairs(rela.list_entities("person")) do
+  rela.output(e.id .. ":" .. tostring(e:is_redacted("salary")) .. ":" .. tostring(e.properties.salary))
+end
+`)
+	if !strings.Contains(out, "P-1:true:nil") {
+		t.Errorf("list path did not mark redaction: %q", out)
+	}
+}
+
+// TestScriptReads_UngatedRuntimeReportsNothingRedacted pins the documented
+// behavior of the operator-boundary runtimes (CLI, MCP, docs): they
+// evaluate no policy, so nothing is redacted and every value is present.
+// A false here means "not withheld", never "withheld but unreported".
+func TestScriptReads_UngatedRuntimeReportsNothingRedacted(t *testing.T) {
+	st, deps := newACLWorld(t)
+	deps.VisibleReader = visibility.Unrestricted(st)
+
+	out := runAsAlice(t, deps, `
+local p = rela.get_entity("P-1")
+rela.output("salary=" .. tostring(p.properties.salary))
+rela.output("redacted=" .. tostring(p:is_redacted("salary")))
+`)
+	if !strings.Contains(out, "salary=100000") {
+		t.Errorf("ungated runtime should see the raw value: %q", out)
+	}
+	if !strings.Contains(out, "redacted=false") {
+		t.Errorf("ungated runtime should report nothing redacted: %q", out)
+	}
+}

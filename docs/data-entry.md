@@ -1945,6 +1945,35 @@ and relations between them.
 
 **`global`** — runs from the dashboard. Receives only project metadata.
 
+#### Redacted and inaccessible properties
+
+Entities on stdin are the same ACL-filtered entities the page rendered, so a
+property hidden from the current user by a `visible:` rule is **absent from
+`properties`**. Absence alone is ambiguous — the property may simply never have
+been set — so the payload names the withheld ones:
+
+```json
+{
+  "context": "entity",
+  "entity": {
+    "id": "P-1",
+    "type": "person",
+    "properties": {"name": "Ann"},
+    "redacted": ["salary"],
+    "inaccessible": [{"name": "content", "reason": "git-crypt"}]
+  }
+}
+```
+
+- `redacted` — property names withheld by field-level ACL. Names only; the
+  values are not in the payload. Absent or empty when nothing was redacted.
+- `inaccessible` — fields whose stored bytes are unreadable (git-crypt
+  encrypted with no local key). Distinct from `redacted`: the data is
+  unavailable to *everyone* here, not just this user.
+
+A command that writes entities back should treat both as read-only signals and
+must not echo them into a write — doing so would erase the hidden values.
+
 ### Visibility Rules (`available_on`)
 
 Without `available_on`, a command appears on every page that matches its context. Add
