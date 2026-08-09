@@ -98,7 +98,7 @@ function handleKeydown(e: KeyboardEvent) {
     >
       <div class="modal">
         <h3 :id="titleId">{{ title }}</h3>
-        <p v-if="$slots.default || message">
+        <p v-if="$slots.default || message" class="modal-message">
           <slot>{{ message }}</slot>
         </p>
         <div class="modal-actions">
@@ -123,3 +123,13 @@ function handleKeydown(e: KeyboardEvent) {
     </div>
   </Teleport>
 </template>
+
+<style scoped>
+/* Preserve authored line breaks so a caller can present a list (e.g. "these
+   fields will be cleared") without it collapsing into one run-on paragraph.
+   `pre-line` keeps newlines but still wraps long lines and collapses the
+   incidental indentation of a template literal. */
+.modal-message {
+  white-space: pre-line;
+}
+</style>
