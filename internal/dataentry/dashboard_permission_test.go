@@ -353,8 +353,6 @@ func TestDashboardPermission_ConfigUnfiltered(t *testing.T) {
 // slice unmarshals identically to an empty one, so only the wire form can
 // catch a regression to `null`, which the SPA would have to special-case.
 func TestDashboardPermission_EmptyCardsIsAlways200(t *testing.T) {
-	d := mustNewACL(t, gatedNavPolicy(), newTestAppV1(t).store)
-
 	cases := []struct {
 		name string
 		dash *dataentryconfig.DashboardConfig
@@ -372,7 +370,12 @@ func TestDashboardPermission_EmptyCardsIsAlways200(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			app := newTestAppV1(t)
 			installDashboardConfig(app, tc.dash)
-			app.acl = mustNewACL(t, gatedNavPolicy(), app.store)
+			// One Declarative, used for BOTH the handler's ACL and the gate on
+			// the context. Building the gate from a second policy would make
+			// the "every card filtered" case pass by coincidence rather than
+			// because this principal genuinely lacks the permission.
+			d := mustNewACL(t, gatedNavPolicy(), app.store)
+			app.acl = d
 
 			body := dashboardBody(gateCtxFor(principalCtx("bob"), t, d), t, app)
 			if !strings.Contains(body, `"cards":[]`) {

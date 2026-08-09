@@ -243,10 +243,18 @@ export const useSchemaStore = defineStore('schema', () => {
       // Fetched alongside schema/config rather than on dashboard entry, so the
       // per-principal card list costs no extra round-trip on the critical path
       // and repeat visits to /dashboard stay free.
+      //
+      // It is explicitly NOT a boot dependency: a rejection here is swallowed
+      // to undefined, so the dashboard degrades to its empty state while the
+      // sidebar, lists and forms load normally. Letting it reject would take
+      // the WHOLE app to App.vue's error screen — doLoad re-throws — which is
+      // a catastrophic failure mode for a UX filter most deployments (no
+      // acl.yaml) never exercise. A newer SPA against an older server, where
+      // this route 404s, is the concrete case.
       const [schemaData, configData, dashboardData] = await Promise.all([
         getSchema(),
         getConfig(),
-        getDashboard(),
+        getDashboard().catch(() => undefined),
       ])
 
       // Schema

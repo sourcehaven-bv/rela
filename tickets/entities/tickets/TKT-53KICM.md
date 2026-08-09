@@ -5,7 +5,7 @@ title: 'Permission-based dashboard card filtering (UX: hide cards a user cannot 
 kind: enhancement
 priority: medium
 effort: m
-status: in-progress
+status: review
 ---
 
 ## Goal

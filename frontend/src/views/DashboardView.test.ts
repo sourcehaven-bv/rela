@@ -120,6 +120,35 @@ describe('DashboardView', () => {
     expect(wrapper.text()).toContain('Open')
   })
 
+  // Card data is keyed by card identity, not array position. With an
+  // index-keyed map, dropping the FIRST of two cards leaves the survivor
+  // rendering the dropped card's number — a wrong figure presented as fact.
+  // The per-principal card list makes a mid-life shape change plausible.
+  it('never binds one card’s data to another card’s tile', async () => {
+    const store = seedDashboard([card({ title: 'A', query: 'q-a' }), card({ title: 'B', query: 'q-b' })])
+    searchEntitiesMock.mockImplementation(() =>
+      Promise.resolve({
+        data: [],
+        meta: { total: searchEntitiesMock.mock.calls.length === 1 ? 100 : 200, page: 1, per_page: 50, has_more: false },
+      }),
+    )
+
+    const wrapper = await mountView()
+    expect(wrapper.text()).toContain('100')
+    expect(wrapper.text()).toContain('200')
+
+    // A now disappears (e.g. its permission was revoked); B must keep its own
+    // count of 200 and must not inherit A's 100.
+    store.dashboard = { title: 'Overview', cards: [card({ title: 'B', query: 'q-b' })] }
+    await flushPromises()
+
+    const tiles = wrapper.findAll('.dashboard-card')
+    expect(tiles).toHaveLength(1)
+    expect(tiles[0].text()).toContain('B')
+    expect(tiles[0].text()).toContain('200')
+    expect(tiles[0].text()).not.toContain('100')
+  })
+
   it('queries the search endpoint once per rendered card', async () => {
     seedDashboard([card({ title: 'Open' }), card({ title: 'Recent' })])
 

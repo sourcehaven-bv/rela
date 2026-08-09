@@ -393,8 +393,8 @@ func permitsNavEntry(ctx context.Context, aclImpl acl.ACL, entry dataentryconfig
 // reads whatsoever. The gated elements are overwhelmingly read surfaces (list,
 // kanban, dashboard, search, dashboard cards), and hiding them would remove
 // things an observe-only principal can use perfectly well. It would also hide
-// them from EVERYONE,
-// since ReadOnlyACL has no identity to check — so `permission:` would silently
+// them from EVERYONE, since ReadOnlyACL has no identity to check — so
+// `permission:` would silently
 // change meaning from "hide from non-holders" to "hide from all" based on a
 // process-wide flag about writes. An operator in post-incident forensic mode
 // (a documented ReadOnlyACL use case) would lose exactly the audit-log entry

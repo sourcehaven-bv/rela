@@ -170,6 +170,38 @@ describe('Schema Store', () => {
       expect(store.error).toBe('Network error')
     })
 
+    // A /_dashboard failure must NOT fail the boot. doLoad re-throws, and
+    // App.vue turns a rejected load into the full-screen error state — so
+    // letting this one endpoint reject would take down the sidebar, every
+    // list and every form for the sake of a UX filter most deployments never
+    // exercise. The concrete case is a newer SPA against an older server,
+    // where the route simply does not exist.
+    it('degrades to an empty dashboard when /_dashboard fails, without failing the boot', async () => {
+      const { getSchema, getConfig } = await import('@/api/schema')
+      const { getDashboard } = await import('@/api/dashboard')
+
+      vi.mocked(getSchema).mockResolvedValue({ entities: {}, relations: {}, types: {} })
+      vi.mocked(getConfig).mockResolvedValue({
+        app: { name: 'test' },
+        forms: {},
+        lists: {},
+        views: {},
+        kanbans: {},
+        navigation: [{ label: 'Tasks', list: 'tasks' }],
+      })
+      vi.mocked(getDashboard).mockRejectedValue(new Error('404 not found'))
+
+      const store = useSchemaStore()
+      await expect(store.load()).resolves.toBeUndefined()
+
+      expect(store.loaded).toBe(true)
+      expect(store.error).toBeNull()
+      // The rest of the app is fully usable...
+      expect(store.navigation).toEqual([{ label: 'Tasks', list: 'tasks' }])
+      // ...and only the dashboard degrades.
+      expect(store.dashboard).toBeUndefined()
+    })
+
     it('handles non-Error exceptions', async () => {
       const { getSchema, getConfig } = await import('@/api/schema')
 
