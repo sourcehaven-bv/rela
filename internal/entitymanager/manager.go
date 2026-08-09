@@ -562,6 +562,44 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 	}); err != nil {
 		return nil, err
 	}
+	// Hard-validate BEFORE the existence probe. Order is load-bearing and
+	// predates the updateCore extraction: an invalid entity reports its
+	// validation error even when the id does not exist. PatchEntity cannot
+	// share this half (it has no candidate entity until after the read), so
+	// the pre-check lives here rather than in updateCore, which re-runs the
+	// same partition on the merged result.
+	preErrs := m.deps.Meta.ValidateEntity(e.ID, e.Type, e.Properties)
+	if hard, _ := partitionValidationErrors(preErrs); len(hard) > 0 {
+		return nil, newValidationError(hard)
+	}
+
+	oldEntity, getErr := m.deps.Store.GetEntity(ctx, e.ID)
+	if getErr != nil {
+		return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, e.ID)
+	}
+
+	return m.updateCore(ctx, e, oldEntity)
+}
+
+// updateCore is the shared post-authorization update pipeline: validate,
+// run on-update automation, enforce transitions and unique constraints,
+// persist, audit, and dispatch the cascade.
+//
+// Method on Manager (not a free function over [Deps] like [createCore])
+// because the cascade needs m.gated() to stop elevation propagating into
+// descendants. It deliberately contains **no ACL check and no attribution**
+// — both belong to the entry points ([UpdateEntity], [PatchEntity]), which
+// authorize with the subject shape appropriate to how they learned the
+// entity type. Putting authorize here would double-authorize PatchEntity
+// (which must authorize early, before it can merge) and emit two
+// denied-write audit rows for one denial.
+//
+// oldEntity is passed in rather than re-read: both callers already hold it
+// (UpdateEntity to prove existence, PatchEntity as the merge base), so
+// threading it through keeps the write path at one read.
+func (m *Manager) updateCore(
+	ctx context.Context, e, oldEntity *entity.Entity,
+) (*entity.UpdateResult, error) {
 	// DEC-HWZHA: partition validation errors once. Hard errors abort;
 	// soft conditions populate Result.Warnings. If automation runs and
 	// mutates properties, we recompute warnings against the post-
@@ -570,11 +608,6 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 	hard, soft := partitionValidationErrors(preErrs)
 	if len(hard) > 0 {
 		return nil, newValidationError(hard)
-	}
-
-	oldEntity, getErr := m.deps.Store.GetEntity(ctx, e.ID)
-	if getErr != nil {
-		return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, e.ID)
 	}
 
 	result := &entity.UpdateResult{Entity: e, Warnings: soft}
