@@ -1749,9 +1749,10 @@ func (r *Runtime) luaUpdateEntity(ls *lua.LState) int {
 	result, err := r.deps.EntityManager.PatchEntity(ctx, id, patch)
 	if err != nil {
 		// Preserve the pre-TKT-80EWGM message for a missing entity: scripts
-		// match on it. lua cannot import entitymanager for its sentinel
-		// (consumer-side interface), so the check is on the wrapped text.
-		if strings.Contains(err.Error(), "entity not found") {
+		// match on it. The check is STRUCTURAL (see [NotFoundError]) — a
+		// text match would misreport an illegal-transition rejection, whose
+		// message embeds the caller's own property value, as a 404.
+		if isEntityNotFound(err) {
 			ls.RaiseError("entity not found: %s", id)
 			return 0
 		}

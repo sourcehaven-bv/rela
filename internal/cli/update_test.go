@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -121,19 +123,60 @@ func TestUpdateCmd_BuildsTargetedPatch(t *testing.T) {
 // TestUpdateCmd_ClearBodyConflictsWithBody pins the guard: the two ways
 // of specifying a body are mutually exclusive, and the conflict is a
 // loud error rather than a silent precedence rule.
+//
+// The check is on the FLAGS, not the resolved content — otherwise
+// `--clear-body -B empty.md` would slip through, since an empty file
+// resolves to "" and would look like "no body was supplied".
 func TestUpdateCmd_ClearBodyConflictsWithBody(t *testing.T) {
-	cmd := UpdateCmd{ID: "TASK-1", ClearBody: true, Body: "text"}
-	p := &capturingPatcher{}
-
-	err := cmd.Run(context.Background(), &writeServices{
-		readServices:  readServices{},
-		EntityManager: p,
-	})
-	if err == nil {
-		t.Fatal("expected an error when --clear-body is combined with -b")
+	for _, tc := range []struct {
+		name string
+		cmd  UpdateCmd
+	}{
+		{"with --body", UpdateCmd{ID: "TASK-1", ClearBody: true, Body: "text"}},
+		{"with --body-file", UpdateCmd{ID: "TASK-1", ClearBody: true, BodyFile: "notes.md"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &capturingPatcher{}
+			err := tc.cmd.Run(context.Background(), &writeServices{
+				readServices:  readServices{},
+				EntityManager: p,
+			})
+			if err == nil {
+				t.Fatal("expected an error when --clear-body is combined with a body source")
+			}
+			if p.called != 0 {
+				t.Error("a conflicting invocation must not reach the write path")
+			}
+		})
 	}
-	if p.called != 0 {
-		t.Error("a conflicting invocation must not reach the write path")
+}
+
+// TestUpdateCmd_EmptyBodyFileIsHonored pins that naming an empty file is
+// treated as an explicit instruction, not as "no updates specified". The
+// operator pointed at a source; degrading that to an error about supplying
+// nothing would be baffling.
+func TestUpdateCmd_EmptyBodyFileIsHonored(t *testing.T) {
+	captureOut(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "empty.md")
+	if err := os.WriteFile(path, []byte("   \n"), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	p := &capturingPatcher{}
+	err := (&UpdateCmd{ID: "TASK-1", BodyFile: path}).Run(
+		context.Background(), &writeServices{
+			readServices:  readServices{},
+			EntityManager: p,
+		})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if p.gotPatch.Content == nil {
+		t.Fatal("Content = nil; an explicitly named body file must be honored")
+	}
+	if *p.gotPatch.Content != "" {
+		t.Errorf("Content = %q, want empty", *p.gotPatch.Content)
 	}
 }
 

@@ -302,6 +302,10 @@ the empty string_ (the key remains, with an empty value). `-U key` _removes
 the property altogether_. Use `-U` when you mean "this no longer applies";
 use `-P key=` when you mean "this is known to be blank".
 
+`-B/--body-file` is honored even when the file is empty — naming a source is
+an explicit instruction. Use `--clear-body` when you mean to clear the body,
+and note the two cannot be combined.
+
 **Examples:**
 
 ```bash

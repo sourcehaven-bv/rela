@@ -2,6 +2,7 @@ package lua
 
 import (
 	"context"
+	"errors"
 	"iter"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -97,6 +98,32 @@ type Mutator interface {
 	DeleteEntity(ctx context.Context, id string, cascade bool) (*entity.DeleteResult, error)
 	CreateRelation(ctx context.Context, from, relType, to string, opts entity.RelationOptions) (*entity.Relation, error)
 	DeleteRelation(ctx context.Context, from, relType, to string) error
+}
+
+// NotFoundError is an OPTIONAL capability a [Mutator]'s returned error may
+// implement to say "the target entity does not exist". Declared here at the
+// consumer so lua needs no dependency on internal/entitymanager (same
+// rationale as [Mutator] itself); the production error type satisfies it.
+//
+// Why this exists rather than a string match: several hard errors embed
+// caller-supplied values. An illegal state-machine transition formats the
+// attempted value with %q, so `strings.Contains(err.Error(), "entity not
+// found")` misreports a *rejected transition* as a *missing entity* when a
+// script sets a property to that literal text — and a script branching on
+// that message could try to recreate a row that still exists. Structural
+// beats textual.
+type NotFoundError interface {
+	error
+	// EntityNotFound reports that the write failed because the target
+	// entity does not exist, as opposed to any other hard error.
+	EntityNotFound() bool
+}
+
+// isEntityNotFound reports whether err (or anything it wraps) declares
+// itself an entity-not-found condition.
+func isEntityNotFound(err error) bool {
+	var nfe NotFoundError
+	return errors.As(err, &nfe) && nfe.EntityNotFound()
 }
 
 // WriteDeps is the capability bundle required to run a read-write Lua runtime.

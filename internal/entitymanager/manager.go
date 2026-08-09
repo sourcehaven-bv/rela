@@ -211,7 +211,8 @@ type Deps struct {
 	// identity (the write-side analog of the read-side AllowAllReader,
 	// DEC-ZBI39P). Operator-trust-boundary entry points (CLI) wire
 	// AllowAllFieldGate because they have full access by design;
-	// request-scoped surfaces wire a policy-backed implementation.
+	// request-scoped surfaces are where a policy-backed implementation
+	// belongs — none is wired yet (TKT-0XL8MF); see [FieldWriteGate].
 	//
 	// Required rather than optional-nil on purpose: a silently-nil authz
 	// gate is the "forgotten wiring must not become an ACL bypass" failure
@@ -223,6 +224,14 @@ type Deps struct {
 // properties of e. Defined here at the call site (CLAUDE.md consumer-side
 // interfaces) so entitymanager needs no dependency on the affordance
 // resolver that backs it in production.
+//
+// **STATUS: no production surface wires a real implementation yet.** Every
+// current wiring site passes [AllowAllFieldGate], so this gate is inert
+// outside tests — field-level write authz is enforced only by
+// internal/dataentry's own validateFieldWrite on its HTTP path, exactly as
+// before. The seam exists so the policy-backed implementation is a wiring
+// change rather than a rewrite; see TKT-0XL8MF. Do not assume a write
+// reaching PatchEntity has been field-gated.
 //
 // set holds the properties being upserted (key → new value); unset holds
 // the ones being removed. An implementation returns a non-nil error to
@@ -680,7 +689,10 @@ func (m *Manager) PatchEntity(
 	// a raw store handle of their own.
 	stored, getErr := m.deps.Store.GetEntity(ctx, id)
 	if getErr != nil {
-		return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, id)
+		// Structural, not textual: consumers holding a narrow write
+		// interface (the Lua bindings) must be able to tell this apart
+		// from other hard errors without matching on the message.
+		return nil, newEntityNotFound(id)
 	}
 
 	// A locked (git-crypt) entity reads as a shell whose real property
@@ -727,8 +739,10 @@ func (m *Manager) PatchEntity(
 // denied-write audit rows for one denial.
 //
 // oldEntity is passed in rather than re-read: both callers already hold it
-// (UpdateEntity to prove existence, PatchEntity as the merge base), so
-// threading it through keeps the write path at one read.
+// (UpdateEntity to prove existence, PatchEntity as the merge base), so the
+// manager itself reads the row once per write. Callers may still read
+// separately for their own reasons — internal/mcp does, to validate
+// property names against the entity type before dispatching.
 func (m *Manager) updateCore(
 	ctx context.Context, e, oldEntity *entity.Entity,
 ) (*entity.UpdateResult, error) {

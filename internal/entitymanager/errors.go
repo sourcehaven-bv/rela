@@ -20,6 +20,34 @@ var ErrEntityNotFound = errors.New("entity not found")
 // ErrRelationNotFound is returned when a relation lookup fails.
 var ErrRelationNotFound = errors.New("relation not found")
 
+// entityNotFoundError wraps [ErrEntityNotFound] with the id and exposes a
+// structural EntityNotFound() marker, so consumers that cannot import this
+// package (the Lua bindings hold only a narrow consumer-side Mutator
+// interface) can distinguish "missing entity" from any other hard error
+// WITHOUT matching on the error text.
+//
+// Text matching is unsafe here: several hard errors embed caller-supplied
+// values — an illegal state-machine transition formats the attempted value
+// with %q — so a caller setting a property to the literal "entity not
+// found" would have its transition rejection misreported as a 404.
+//
+// errors.Is(err, ErrEntityNotFound) keeps working: Unwrap returns the
+// sentinel.
+type entityNotFoundError struct{ id string }
+
+func (e entityNotFoundError) Error() string {
+	return fmt.Sprintf("%s: %s", ErrEntityNotFound.Error(), e.id)
+}
+
+func (e entityNotFoundError) Unwrap() error { return ErrEntityNotFound }
+
+// EntityNotFound marks this as the entity-does-not-exist condition. See
+// the lua package's NotFoundError for the consumer-side contract.
+func (e entityNotFoundError) EntityNotFound() bool { return true }
+
+// newEntityNotFound builds the not-found error for a given id.
+func newEntityNotFound(id string) error { return entityNotFoundError{id: id} }
+
 // ErrEntityVanishedOnUpdate is returned by the sync apply path when an
 // update-intent write finds its target row gone at write time: the existence
 // probe observed the entity, but the durable UpdateEntity hit

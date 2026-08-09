@@ -326,18 +326,57 @@ func TestPatchEntity_NonStringValuesSurvive(t *testing.T) {
 
 // TestPatchEntity_NilPropertiesEntity covers an entity stored with no
 // property map at all — Clone allocates one, so the patch must still work.
+//
+// The unset-only sub-case is the subtle one: Apply only allocates a map
+// when Properties is non-empty, so a MetaUnset-only patch runs delete()
+// against a possibly-nil map. That is a no-op in Go rather than a panic,
+// but the invariant is load-bearing (both MCP and CLI can emit unset-only
+// patches) and worth pinning rather than leaving to language trivia.
 func TestPatchEntity_NilPropertiesEntity(t *testing.T) {
 	t.Parallel()
-	mgr, st := newPatchManager(t, nil)
-	seedTask(t, st, "TASK-1", nil, "")
 
-	if _, err := mgr.PatchEntity(context.Background(), "TASK-1", entity.Patch{
-		Properties: map[string]any{"title": "set-on-nil-map"},
-	}); err != nil {
-		t.Fatalf("PatchEntity: %v", err)
-	}
-	if got := mustGet(t, st, "TASK-1").Properties["title"]; got != "set-on-nil-map" {
-		t.Errorf("title = %v, want it set", got)
+	t.Run("set on a nil property map", func(t *testing.T) {
+		t.Parallel()
+		mgr, st := newPatchManager(t, nil)
+		seedTask(t, st, "TASK-1", nil, "")
+
+		if _, err := mgr.PatchEntity(context.Background(), "TASK-1", entity.Patch{
+			Properties: map[string]any{"title": "set-on-nil-map"},
+		}); err != nil {
+			t.Fatalf("PatchEntity: %v", err)
+		}
+		if got := mustGet(t, st, "TASK-1").Properties["title"]; got != "set-on-nil-map" {
+			t.Errorf("title = %v, want it set", got)
+		}
+	})
+
+	t.Run("unset-only against a nil property map does not panic", func(t *testing.T) {
+		t.Parallel()
+		mgr, st := newPatchManager(t, nil)
+		seedTask(t, st, "TASK-2", nil, "body")
+
+		if _, err := mgr.PatchEntity(context.Background(), "TASK-2", entity.Patch{
+			MetaUnset: []string{"never-existed"},
+		}); err != nil {
+			t.Fatalf("PatchEntity: %v", err)
+		}
+		if got := mustGet(t, st, "TASK-2").Content; got != "body" {
+			t.Errorf("body = %q, want it untouched", got)
+		}
+	})
+}
+
+// TestPatch_ApplyOnNilMap pins the same invariant at the unit level, on
+// the value type itself, so a future change of property container fails
+// here rather than only through the manager.
+func TestPatch_ApplyOnNilMap(t *testing.T) {
+	t.Parallel()
+
+	e := &entity.Entity{ID: "X-1", Type: "task"} // Properties is nil
+	entity.Patch{MetaUnset: []string{"nope"}}.Apply(e)
+
+	if len(e.Properties) != 0 {
+		t.Errorf("Properties = %v, want empty", e.Properties)
 	}
 }
 

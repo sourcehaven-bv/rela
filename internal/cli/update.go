@@ -62,16 +62,26 @@ func (c *UpdateCmd) Run(ctx context.Context, svc *writeServices) error {
 		}
 	}
 
+	// Check the FLAGS, not the resolved content: `--clear-body -B empty.md`
+	// is just as contradictory as `--clear-body -b text`, and testing the
+	// content would let the empty-file case through silently.
+	if c.ClearBody && (c.Body != "" || c.BodyFile != "") {
+		return errors.New("--clear-body cannot be combined with -b/--body or -B/--body-file")
+	}
+
 	bodyContent, err := c.getBodyContent()
 	if err != nil {
 		return err
 	}
 	switch {
-	case c.ClearBody && bodyContent != "":
-		return errors.New("--clear-body cannot be combined with -b/--body or -B/--body-file")
 	case c.ClearBody:
-		empty := ""
-		patch.Content = &empty
+		patch.Content = new("")
+	case c.BodyFile != "":
+		// An explicitly-supplied file wins even when it is empty or all
+		// whitespace: the operator named a source, so honor it rather than
+		// silently degrading to "no updates specified". Use --clear-body to
+		// clear deliberately.
+		patch.Content = &bodyContent
 	case bodyContent != "":
 		patch.Content = &bodyContent
 	}
