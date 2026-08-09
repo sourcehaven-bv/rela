@@ -111,8 +111,15 @@ function getCellLink(entity: Entity, col: { link?: string }): string | undefined
 }
 
 // Lifecycle
-onMounted(() => {
-  loadData()
+onMounted(async () => {
+  // The card list comes from the store's /_dashboard fetch, so wait for it
+  // before deciding there is nothing to show. Without this the "no cards"
+  // empty state — which is indistinguishable from the all-filtered state —
+  // flashes on every load between mount and the config arriving.
+  if (!schemaStore.loaded) {
+    await schemaStore.load()
+  }
+  await loadData()
 })
 </script>
 
@@ -129,7 +136,17 @@ onMounted(() => {
     </div>
 
     <template v-else>
-      <div class="dashboard-grid">
+      <!--
+        No cards to show. Deliberately one state for three causes: no
+        `dashboard:` configured, an empty `cards:`, and every card filtered out
+        by `permission:` (TKT-53KICM). Distinguishing them would tell a user
+        about cards they cannot use, which is the opposite of the point.
+      -->
+      <p v-if="cards.length === 0" class="no-data dashboard-empty">
+        No dashboard cards to show.
+      </p>
+
+      <div v-else class="dashboard-grid">
         <div
           v-for="(card, index) in cards"
           :key="index"

@@ -8,10 +8,19 @@ vi.mock('@/api/schema', () => ({
   getConfig: vi.fn(),
 }))
 
+// The per-principal dashboard is loaded alongside schema/config (TKT-53KICM).
+// Defaulted in beforeEach so the many tests that don't care about cards need
+// no per-test setup.
+vi.mock('@/api/dashboard', () => ({
+  getDashboard: vi.fn(),
+}))
+
 describe('Schema Store', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    const { getDashboard } = await import('@/api/dashboard')
+    vi.mocked(getDashboard).mockResolvedValue({ cards: [] })
   })
 
   describe('initial state', () => {
@@ -61,8 +70,17 @@ describe('Schema Store', () => {
         views: { 'task-view': { entity: 'task', sections: [] } },
         kanbans: { 'task-board': { entity: 'task', column_property: 'status', card: { title: 'title' } } },
         documents: { report: { command: 'echo test' } },
-        dashboard: { cards: [] },
+        // The UNFILTERED config block, deliberately different from what
+        // /_dashboard returns below, so the assertion can tell which source
+        // the store actually read (TKT-53KICM).
+        dashboard: { cards: [{ title: 'Unfiltered', query: 'q', display: 'count' }] },
         navigation: [{ label: 'Tasks', list: 'tasks' }],
+      })
+
+      const { getDashboard } = await import('@/api/dashboard')
+      vi.mocked(getDashboard).mockResolvedValue({
+        title: 'Overview',
+        cards: [{ title: 'Filtered', query: 'q', display: 'count' }],
       })
 
       const store = useSchemaStore()
@@ -86,7 +104,12 @@ describe('Schema Store', () => {
       expect(store.views.size).toBe(1)
       expect(store.kanbans.size).toBe(1)
       expect(store.documents.size).toBe(1)
-      expect(store.dashboard).toEqual({ cards: [] })
+      // From /_dashboard, NOT the /_config block: reading the latter would
+      // show every principal the unfiltered card list.
+      expect(store.dashboard).toEqual({
+        title: 'Overview',
+        cards: [{ title: 'Filtered', query: 'q', display: 'count' }],
+      })
       expect(store.navigation).toEqual([{ label: 'Tasks', list: 'tasks' }])
     })
 

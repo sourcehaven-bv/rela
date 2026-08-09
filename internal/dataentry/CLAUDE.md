@@ -91,36 +91,56 @@ Two kinds, discriminated by `DocumentConfig.IsStandalone()` (empty
 - **Do NOT filter `/_config` per principal.** It serves the navigation tree
   verbatim ("The configuration is not a secret; the data is"); an earlier draft
   of TKT-M1AX6P filtered it and that was reverted — don't reintroduce it. The
-  *sidebar* is a different matter: TKT-TXDK8U added an opt-in `permission:`
-  filter on nav entries (see the section below). A document with no
-  `permission:` is still listed for everyone and 403s on render.
+  *sidebar* and *dashboard* are a different matter: TKT-TXDK8U added an opt-in
+  `permission:` filter on nav entries and TKT-53KICM the same on dashboard
+  cards, each served by its own per-principal endpoint (see the section below).
+  A document with no `permission:` is still listed for everyone and 403s on
+  render.
 - **A standalone render has no entry entity, so it has no `ContentHash`,
   `Entities`, or disk cache**, and it is script-only. Don't reintroduce those
   by keying a cache on something else; there is nothing to invalidate against
   (TKT-E1FO1 is the real fix).
 
-## Sidebar navigation filtering (`permission:` on a nav entry)
+## Presentation filtering (`permission:` on a nav entry or dashboard card)
 
-`permitsNavEntry` (`views_handler.go`) omits entries the principal cannot use
-from `/_sidebar`. Rules for new code:
+`permitsGatedUIElement` (`views_handler.go`) is the ONE policy switch behind
+both surfaces: `permitsNavEntry` wraps it to omit entries from `/_sidebar`
+(TKT-TXDK8U), and `handleV1Dashboard` calls it to omit cards from
+`/_dashboard` (TKT-53KICM). Rules for new code:
 
 - **It is a UX filter, not a boundary.** Nothing downstream may rely on an
-  entry being hidden. The target enforces what it always did, and
-  `TestNavPermission_FilterIsPresentationOnly` asserts precisely that. Same
-  rule as `_actions` above.
-- **Do NOT filter `/_config`.** It serves the navigation tree verbatim, on
-  purpose (root CLAUDE.md, "The configuration is not a secret; the data is").
-  Filtering it would be concealment-shaped, and an earlier attempt at exactly
-  that was reverted in TKT-M1AX6P. `TestNavPermission_ConfigUnfiltered` pins it.
+  element being hidden. The target enforces what it always did — a hidden
+  card's query still returns its ACL-scoped rows through `_search`.
+  `TestNavPermission_FilterIsPresentationOnly` and
+  `TestDashboardPermission_FilterIsPresentationOnly` assert precisely that, in
+  both directions. Same rule as `_actions` above.
+- **Do NOT filter `/_config`.** It serves the navigation tree AND the
+  `dashboard:` block verbatim, on purpose (root CLAUDE.md, "The configuration
+  is not a secret; the data is"). Filtering it would be concealment-shaped, and
+  an earlier attempt at exactly that was reverted in TKT-M1AX6P.
+  `TestNavPermission_ConfigUnfiltered` and
+  `TestDashboardPermission_ConfigUnfiltered` pin it. This is *why* the
+  dashboard needed its own endpoint rather than a filtered `_config`.
 - **The ReadOnlyACL arm is load-bearing.** `readGateFromContext` returns
   `nopReadGate` under ReadOnlyACL *and* NopACL, and its `HoldsPermission`
   returns true — so a predicate written against the read gate alone fails OPEN
   under `--read-only`. That is the RR-CWWJGW shape. Keep the explicit arm ahead
-  of the gate; `TestNavPermission_ReadOnlyHides` is the canary. Match value
+  of the gate; `TestNavPermission_ReadOnlyArmIsExplicit` and
+  `TestDashboardPermission_ReadOnlyArmIsExplicit` are the canaries (each
+  attaches a deny-everything gate, so removing the arm fails them). Match value
   **and** pointer forms — `AuthorizeWrite` has a value receiver.
 - **The switch stays closed.** A new `acl.ACL` implementation hides gated
-  entries until someone adds an arm; the failure mode of forgetting should be a
-  missing menu item, not an unintended one.
+  elements until someone adds an arm; the failure mode of forgetting should be
+  a missing menu item, not an unintended one.
+- **Keep the grep guard's allow-lists short.** `TestNavFilterStaysPresentational`
+  greps two needles: `permitsNavEntry(` (one file) and `permitsGatedUIElement(`
+  (two). Adding a caller means widening a list, which is a deliberate argued
+  exception — not routine. If you need an authorization check, build one; see
+  `authorizeCommand`.
+- **A third gated surface shares the predicate, it does not copy it.** Copying
+  reintroduces the chance to get the read-only arm wrong, which was RR-XYO03L
+  (critical): the copy denied under ReadOnlyACL and so hid entries from
+  *everyone* based on a process-wide flag about writes.
 
 ## Custom apps (`apps/<id>/` + `_apps/{id}/...` + the bridge)
 

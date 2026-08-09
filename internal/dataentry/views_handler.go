@@ -349,16 +349,28 @@ func (c *sidebarCounts) countWithFilters(
 }
 
 // permitsNavEntry reports whether a navigation entry should appear in this
-// principal's sidebar (TKT-TXDK8U).
+// principal's sidebar (TKT-TXDK8U). It is a thin wrapper over
+// [permitsGatedUIElement]; the policy and its reasoning live there.
+func permitsNavEntry(ctx context.Context, aclImpl acl.ACL, entry dataentryconfig.NavigationEntry) bool {
+	return permitsGatedUIElement(ctx, aclImpl, entry.Permission)
+}
+
+// permitsGatedUIElement reports whether a `permission:`-gated UI element should
+// be shown to this principal (TKT-TXDK8U for sidebar nav entries, TKT-53KICM
+// for dashboard cards).
 //
-// This is a UX filter and NOTHING ELSE. Hiding an entry changes no
-// enforcement: its target is reachable by typing the URL and behaves exactly
-// as it did before — a list still returns its ACL-scoped rows, which for a
-// principal who may read none of them is simply an empty list. Nor does it
-// conceal configuration: `/api/v1/_config` keeps serving the whole navigation
-// tree to every principal, deliberately (root CLAUDE.md, "The configuration is
-// not a secret; the data is"). The goal is only to keep entries a user cannot
-// act on out of their menu.
+// This is a UX filter and NOTHING ELSE. It decides what to RENDER, never what
+// to allow. If you want an authorization check, this is the wrong function —
+// build one, and see authorizeCommand for the shape.
+//
+// Hiding an element changes no enforcement: its target is reachable by typing
+// the URL and behaves exactly as it did before — a list still returns its
+// ACL-scoped rows, which for a principal who may read none of them is simply an
+// empty list, and a dashboard card's query still runs through the ACL-scoped
+// search path. Nor does it conceal configuration: `/api/v1/_config` keeps
+// serving the whole navigation tree and `dashboard:` block to every principal,
+// deliberately (root CLAUDE.md, "The configuration is not a secret; the data
+// is"). The goal is only to keep things a user cannot act on out of their way.
 //
 // Policy, keyed on the configured ACL implementation, mirroring
 // authorizeCommand (DEC-EIHQSU):
@@ -378,9 +390,10 @@ func (c *sidebarCounts) countWithFilters(
 // It is tempting to mirror authorizeCommand, which denies everything under
 // ReadOnlyACL. That is right for commands — they SHELL OUT, a write-shaped act
 // — but [acl.ReadOnlyACL] only implements AuthorizeWrite; it restricts no
-// reads whatsoever. Nav entries are overwhelmingly read surfaces (list, kanban,
-// dashboard, search), and hiding them would remove entries an observe-only
-// principal can use perfectly well. It would also hide them from EVERYONE,
+// reads whatsoever. The gated elements are overwhelmingly read surfaces (list,
+// kanban, dashboard, search, dashboard cards), and hiding them would remove
+// things an observe-only principal can use perfectly well. It would also hide
+// them from EVERYONE,
 // since ReadOnlyACL has no identity to check — so `permission:` would silently
 // change meaning from "hide from non-holders" to "hide from all" based on a
 // process-wide flag about writes. An operator in post-incident forensic mode
@@ -400,8 +413,8 @@ func (c *sidebarCounts) countWithFilters(
 // and pointer forms of the nop/read-only types are matched, because their
 // AuthorizeWrite has a value receiver — matching only the value form would
 // drop a `&acl.ReadOnlyACL{}` into the default arm.
-func permitsNavEntry(ctx context.Context, aclImpl acl.ACL, entry dataentryconfig.NavigationEntry) bool {
-	if entry.Permission == "" {
+func permitsGatedUIElement(ctx context.Context, aclImpl acl.ACL, permission string) bool {
+	if permission == "" {
 		return true
 	}
 	// A nil ACL means the handler was wired without one. Hide, for the same
@@ -421,7 +434,7 @@ func permitsNavEntry(ctx context.Context, aclImpl acl.ACL, entry dataentryconfig
 		if a == nil {
 			return false // misconfigured policy must not fail open
 		}
-		return readGateFromContext(ctx).HoldsPermission(ctx, entry.Permission)
+		return readGateFromContext(ctx).HoldsPermission(ctx, permission)
 
 	default:
 		return false

@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { getSchema, getConfig } from '@/api/schema'
+import { getDashboard } from '@/api/dashboard'
 import { registerEntityPlurals } from '@/api/entities'
 import { getErrorMessage } from '@/api/errors'
 import type {
@@ -12,7 +13,7 @@ import type {
   ListConfig,
   ViewConfig,
   KanbanConfig,
-  DashboardConfig,
+  DashboardResponse,
   NavigationEntry,
   AppConfig,
   AppEntry,
@@ -32,7 +33,10 @@ export const useSchemaStore = defineStore('schema', () => {
   const documents = ref<Map<string, DocumentConfig>>(new Map())
   const apps = ref<Map<string, AppEntry>>(new Map())
   const actions = ref<Map<string, ActionConfig>>(new Map())
-  const dashboard = ref<DashboardConfig | undefined>(undefined)
+  // The PER-PRINCIPAL dashboard from `/_dashboard`, not the verbatim
+  // `dashboard:` block on `/_config` (TKT-53KICM). Cards the caller cannot use
+  // are already omitted server-side; never re-derive visibility here.
+  const dashboard = ref<DashboardResponse | undefined>(undefined)
   const navigation = ref<NavigationEntry[]>([])
   const app = ref<AppConfig>({ name: 'rela' })
   // The deployment description for the global "About" help (TKT-DUQBD0): the
@@ -236,7 +240,14 @@ export const useSchemaStore = defineStore('schema', () => {
     error.value = null
 
     try {
-      const [schemaData, configData] = await Promise.all([getSchema(), getConfig()])
+      // Fetched alongside schema/config rather than on dashboard entry, so the
+      // per-principal card list costs no extra round-trip on the critical path
+      // and repeat visits to /dashboard stay free.
+      const [schemaData, configData, dashboardData] = await Promise.all([
+        getSchema(),
+        getConfig(),
+        getDashboard(),
+      ])
 
       // Schema
       entityTypes.value = new Map(Object.entries(schemaData.entities || {}))
@@ -263,7 +274,9 @@ export const useSchemaStore = defineStore('schema', () => {
       documents.value = new Map(Object.entries(configData.documents || {}))
       apps.value = new Map(Object.entries(configData.apps || {}))
       actions.value = new Map(Object.entries(configData.actions || {}))
-      dashboard.value = configData.dashboard
+      // From /_dashboard, NOT configData.dashboard: the latter is the
+      // unfiltered config block every principal receives.
+      dashboard.value = dashboardData
       navigation.value = configData.navigation || []
 
       // Apply palette if present
