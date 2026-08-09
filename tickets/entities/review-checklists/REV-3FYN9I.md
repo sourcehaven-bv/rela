@@ -35,7 +35,8 @@ rejected load into the full-screen error state, any `/_dashboard` failure took
 down the *whole app* — sidebar, lists, forms — for a UX filter most deployments
 never exercise. The realistic trigger is a newer SPA against an older server.
 Fixed by settling the fetch to `undefined`; pinned by a store test that asserts
-the boot succeeds and only the dashboard degrades.
+the boot succeeds and only the dashboard degrades. Confirmed live with a proxy
+that 404s only that route: the app boots, sidebar usable, no error screen.
 
 The **significant** finding was the same gap from the other side: no route
 probe, so deleting the `mux.HandleFunc` line left the entire package suite green
@@ -91,8 +92,9 @@ whose name asserts the *opposite* of the pinned behavior. Corrected.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] ~~Run `/pr` command to create PR and monitor CI~~ (N/A: not requested — work is committed on `feat/dashboard-card-permissions`, pushing/opening a PR is the user's call)
+- [x] ~~All CI checks pass~~ (N/A: no PR opened; the equivalent local gates all pass — see Automated Checks)
+- [x] ~~PR URL documented below~~ (N/A: no PR opened)
 
-**PR:** <!-- pending: not yet requested by the user -->
+**PR:** none — two commits on `feat/dashboard-card-permissions` (`e6147c07`
+feature, `02e52f85` review fixes), not pushed.
