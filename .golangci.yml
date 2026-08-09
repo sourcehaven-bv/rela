@@ -130,6 +130,14 @@ linters:
         # these so the v2 migration doesn't block on threat-model decisions;
         # track the work under that feature instead.
         #
+        # G702 is ENABLED: every external-command site has been reviewed and
+        # is either argv-array (no shell) or a shell snippet that comes from
+        # the operator-authored data-entry.yaml rather than request input.
+        # The reviewed exceptions carry narrow, per-line `#nosec G702`
+        # comments naming their trust boundary — see internal/dataentry
+        # commands.go and document.go. Keep it enabled: it is what catches a
+        # new exec site that splices request data into a shell.
+        #
         # G703 (path traversal) is ENABLED: its findings are resolved, and the
         # remaining safe-by-design write sites carry narrow `#nosec G703`
         # annotations naming their trust boundary. Do not re-add it here — a
@@ -149,7 +157,6 @@ linters:
         # G706 (log injection) is ENABLED — it is enforced everywhere except
         # internal/dataentry, which is excluded by path below with a pinned
         # structural invariant. See that exclusion for the rationale.
-        - G702  # command injection via taint analysis
       config:
         global:
           audit: true

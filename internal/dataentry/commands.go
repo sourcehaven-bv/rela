@@ -468,6 +468,15 @@ func (h *commandHandler) handleCommandExec(w http.ResponseWriter, r *http.Reques
 	// but mirror handleCommandCancel's SIGINT+3s-grace contract so scripts that
 	// catch SIGINT (e.g., to flush output or commit a transaction) still get
 	// the chance rather than being SIGKILLed outright.
+	// #nosec G702 -- cmd.Script is operator-authored: it comes from the
+	// `commands:` map in the project's data-entry.yaml (dataentryconfig),
+	// selected by name via commandID. The request may only choose a
+	// registered command key; it never supplies a command, flag, or path.
+	// Request-derived values reach the script only as stdin JSON and
+	// RELA_* env vars, never as shell text. A shell is intentional here —
+	// `script:` is documented as a shell snippet, and executing it is the
+	// feature. The trust boundary is the config file (operator/repo write
+	// access), enforced upstream by authorizeCommand.
 	proc := exec.CommandContext(r.Context(), "sh", "-c", cmd.Script)
 	proc.Cancel = func() error { return proc.Process.Signal(syscall.SIGINT) }
 	proc.WaitDelay = cancelGrace
@@ -636,22 +645,41 @@ func (h *commandHandler) handleOpenFile(w http.ResponseWriter, r *http.Request) 
 // openFileCommand builds the OS-specific launcher for handleOpenFile.
 // Returned command has no context binding — the launcher process must
 // survive the HTTP handler's return (see handleOpenFile for rationale).
+//
+// Security: the program name is a compile-time constant on every branch and
+// filePath is passed as a distinct argv element, so no shell parses it — the
+// only injection shape left is argument injection (a path read as a flag),
+// which the `--` separator below closes. filePath has already been through
+// containedProjectPath in the caller: it is absolute, symlink-resolved, and
+// proven to be inside the project root, so it always starts with `/` (or a
+// drive letter on Windows) and can never be NUL-bearing.
 func openFileCommand(goos, action, filePath string) *exec.Cmd {
 	switch goos {
 	case "darwin":
 		if action == "reveal" {
-			return exec.Command("open", "-R", filePath) //nolint:noctx // fire-and-forget launcher
+			// #nosec G702 -- argv array, no shell; constant program `open`.
+			// filePath is containedProjectPath-validated and `--` stops flag parsing.
+			return exec.Command("open", "-R", "--", filePath) //nolint:noctx // fire-and-forget launcher
 		}
-		return exec.Command("open", filePath) //nolint:noctx // fire-and-forget launcher
+		// #nosec G702 -- argv array, no shell; see function doc.
+		return exec.Command("open", "--", filePath) //nolint:noctx // fire-and-forget launcher
 	case "linux":
 		if action == "reveal" {
+			// #nosec G702 -- argv array, no shell; see function doc.
 			return exec.Command("xdg-open", filepath.Dir(filePath)) //nolint:noctx // fire-and-forget launcher
 		}
+		// #nosec G702 -- argv array, no shell; see function doc.
 		return exec.Command("xdg-open", filePath) //nolint:noctx // fire-and-forget launcher
 	case "windows":
 		if action == "reveal" {
+			// #nosec G702 -- argv array, no shell; constant program `explorer`.
 			return exec.Command("explorer", "/select,", filePath) //nolint:noctx // fire-and-forget launcher
 		}
+		// #nosec G702 -- `cmd /c start` with an explicit empty title argument, so
+		// filePath lands in the path slot rather than being read as the title.
+		// filePath is containedProjectPath-validated (absolute, inside the project
+		// root, no NUL). Windows is not a supported data-entry server platform;
+		// this branch exists for the desktop build.
 		return exec.Command("cmd", "/c", "start", "", filePath) //nolint:noctx // fire-and-forget launcher
 	default:
 		return nil
@@ -694,13 +722,27 @@ func (h *commandHandler) handleOpenURL(w http.ResponseWriter, r *http.Request) {
 
 // openURLCommand builds the OS-specific URL launcher. Returned command is
 // deliberately unbound from any HTTP request context — see handleOpenURL.
+//
+// Security: the program name is a compile-time constant on every branch and
+// rawURL is a distinct argv element, so no shell parses it. rawURL has already
+// passed validateOpenURL in the caller, which parses it with net/url and
+// admits only the http, https, and mailto schemes — so it always begins with a
+// scheme name, never a `-`, closing the argument-injection shape. The `--`
+// separator below makes that structural rather than a consequence of the
+// scheme allow-list.
 func openURLCommand(goos, rawURL string) *exec.Cmd {
 	switch goos {
 	case "darwin":
-		return exec.Command("open", rawURL) //nolint:noctx // fire-and-forget launcher
+		// #nosec G702 -- argv array, no shell; validateOpenURL-restricted scheme
+		// and `--` stops flag parsing. See function doc.
+		return exec.Command("open", "--", rawURL) //nolint:noctx // fire-and-forget launcher
 	case "linux":
+		// #nosec G702 -- argv array, no shell; see function doc.
 		return exec.Command("xdg-open", rawURL) //nolint:noctx // fire-and-forget launcher
 	case "windows":
+		// #nosec G702 -- `cmd /c start` with an explicit empty title argument, so
+		// rawURL lands in the target slot rather than being read as the title.
+		// Scheme is restricted to http/https/mailto by validateOpenURL.
 		return exec.Command("cmd", "/c", "start", "", rawURL) //nolint:noctx // fire-and-forget launcher
 	default:
 		return nil
