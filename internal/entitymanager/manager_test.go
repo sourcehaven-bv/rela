@@ -164,6 +164,7 @@ func newManager(t *testing.T, automations []automation.Automation) (*entitymanag
 		Audit:       audit.Nop{},
 		ACL:         acl.NopACL{},
 		Transitions: machines,
+		FieldGate:   entitymanager.AllowAllFieldGate{},
 	}
 	if automations != nil {
 		engine := automation.NewEngine(automations)
@@ -210,6 +211,7 @@ func createDec(t *testing.T, mgr *entitymanager.Manager, title string) *entity.E
 func TestNew_RejectsNilStore(t *testing.T) {
 	t.Parallel()
 	_, err := entitymanager.New(entitymanager.Deps{
+		FieldGate: entitymanager.AllowAllFieldGate{},
 		Meta:      parseMeta(t),
 		Templater: nopTemplater{},
 	})
@@ -221,6 +223,7 @@ func TestNew_RejectsNilStore(t *testing.T) {
 func TestNew_RejectsNilMeta(t *testing.T) {
 	t.Parallel()
 	_, err := entitymanager.New(entitymanager.Deps{
+		FieldGate: entitymanager.AllowAllFieldGate{},
 		Store:     memstore.New(),
 		Templater: nopTemplater{},
 	})
@@ -232,8 +235,9 @@ func TestNew_RejectsNilMeta(t *testing.T) {
 func TestNew_RejectsNilTemplater(t *testing.T) {
 	t.Parallel()
 	_, err := entitymanager.New(entitymanager.Deps{
-		Store: memstore.New(),
-		Meta:  parseMeta(t),
+		FieldGate: entitymanager.AllowAllFieldGate{},
+		Store:     memstore.New(),
+		Meta:      parseMeta(t),
 	})
 	if err == nil || !strings.Contains(err.Error(), "Templater") {
 		t.Fatalf("expected Templater-required error, got %v", err)
@@ -243,6 +247,7 @@ func TestNew_RejectsNilTemplater(t *testing.T) {
 func TestNew_RejectsNilAudit(t *testing.T) {
 	t.Parallel()
 	_, err := entitymanager.New(entitymanager.Deps{
+		FieldGate: entitymanager.AllowAllFieldGate{},
 		Store:     memstore.New(),
 		Meta:      parseMeta(t),
 		Templater: nopTemplater{},
@@ -255,6 +260,7 @@ func TestNew_RejectsNilAudit(t *testing.T) {
 func TestNew_RejectsNilACL(t *testing.T) {
 	t.Parallel()
 	_, err := entitymanager.New(entitymanager.Deps{
+		FieldGate: entitymanager.AllowAllFieldGate{},
 		Store:     memstore.New(),
 		Meta:      parseMeta(t),
 		Templater: nopTemplater{},
@@ -268,6 +274,7 @@ func TestNew_RejectsNilACL(t *testing.T) {
 func TestNew_RejectsNilTransitions(t *testing.T) {
 	t.Parallel()
 	_, err := entitymanager.New(entitymanager.Deps{
+		FieldGate: entitymanager.AllowAllFieldGate{},
 		Store:     memstore.New(),
 		Meta:      parseMeta(t),
 		Templater: nopTemplater{},
@@ -289,6 +296,7 @@ func TestNew_RejectsAutomationsWithoutCascade(t *testing.T) {
 		Audit:       audit.Nop{},
 		ACL:         acl.NopACL{},
 		Transitions: statemachine.EmptySet(),
+		FieldGate:   entitymanager.AllowAllFieldGate{},
 		Automations: engine,
 	})
 	if err == nil || !strings.Contains(err.Error(), "Automations and Cascade") {
@@ -305,6 +313,7 @@ func TestNew_AllowsNoAutomation(t *testing.T) {
 		Audit:       audit.Nop{},
 		ACL:         acl.NopACL{},
 		Transitions: statemachine.EmptySet(),
+		FieldGate:   entitymanager.AllowAllFieldGate{},
 	}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -630,6 +639,7 @@ func TestCreate_PassesManagerAsMutator(t *testing.T) {
 		Audit:        audit.Nop{},
 		ACL:          acl.NopACL{},
 		Transitions:  statemachine.EmptySet(),
+		FieldGate:    entitymanager.AllowAllFieldGate{},
 		Automations:  engine,
 		Cascade:      runner,
 		ScriptRunner: scripts,
@@ -948,6 +958,7 @@ func TestCreate_PropagatesNonConflictStoreError(t *testing.T) {
 		Audit:       audit.Nop{},
 		ACL:         acl.NopACL{},
 		Transitions: statemachine.EmptySet(),
+		FieldGate:   entitymanager.AllowAllFieldGate{},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -1004,6 +1015,7 @@ func TestCreate_SoftValidationProducesWarning(t *testing.T) {
 		Audit:       audit.Nop{},
 		ACL:         acl.NopACL{},
 		Transitions: statemachine.EmptySet(),
+		FieldGate:   entitymanager.AllowAllFieldGate{},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -1064,6 +1076,7 @@ func TestUpdate_SoftValidationProducesWarning(t *testing.T) {
 		Audit:       audit.Nop{},
 		ACL:         acl.NopACL{},
 		Transitions: statemachine.EmptySet(),
+		FieldGate:   entitymanager.AllowAllFieldGate{},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)

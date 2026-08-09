@@ -59,6 +59,7 @@ func TestRename_FailsClosedOnNonNotFoundFetchError(t *testing.T) {
 		Audit:       audit.Nop{},
 		ACL:         acl.ReadOnlyACL{},
 		Transitions: statemachine.EmptySet(),
+		FieldGate:   entitymanager.AllowAllFieldGate{},
 	}
 	mgr, err := entitymanager.New(deps)
 	if err != nil {

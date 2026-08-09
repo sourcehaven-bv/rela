@@ -193,6 +193,7 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 			},
 		),
 		Transitions:     tw.Enforcer,
+		FieldGate:       entitymanager.AllowAllFieldGate{},
 		TransitionGuard: tw.Guard,
 		TransitionGraph: tw.Graph,
 	})

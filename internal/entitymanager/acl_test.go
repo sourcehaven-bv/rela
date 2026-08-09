@@ -31,6 +31,7 @@ func newManagerWithACL(
 		Audit:       sink,
 		ACL:         aclImpl,
 		Transitions: statemachine.EmptySet(),
+		FieldGate:   entitymanager.AllowAllFieldGate{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -51,6 +52,7 @@ func seedEntity(t *testing.T, store *countingStore, entityType, title string) {
 		Audit:       audit.Nop{},
 		ACL:         acl.NopACL{},
 		Transitions: statemachine.EmptySet(),
+		FieldGate:   entitymanager.AllowAllFieldGate{},
 	})
 	if err != nil {
 		t.Fatalf("seedEntity: New: %v", err)
@@ -72,6 +74,7 @@ func seedRelation(t *testing.T, store *countingStore, from, relType, to string) 
 		Audit:       audit.Nop{},
 		ACL:         acl.NopACL{},
 		Transitions: statemachine.EmptySet(),
+		FieldGate:   entitymanager.AllowAllFieldGate{},
 	})
 	if err != nil {
 		t.Fatalf("seedRelation: New: %v", err)
@@ -373,7 +376,8 @@ role_relations:
 	// We rebuild the Manager with the real ACL once the data is in.
 	store := &countingStore{Store: memstore.New()}
 	seedMgr, err := entitymanager.New(entitymanager.Deps{
-		Store: store, Meta: meta, Templater: nopTemplater{},
+		FieldGate: entitymanager.AllowAllFieldGate{},
+		Store:     store, Meta: meta, Templater: nopTemplater{},
 		Audit: audit.Nop{}, ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
 	})
 	if err != nil {
@@ -421,7 +425,8 @@ role_relations:
 		t.Fatalf("NewDeclarative: %v", err)
 	}
 	mgr, err := entitymanager.New(entitymanager.Deps{
-		Store: store, Meta: meta, Templater: nopTemplater{},
+		FieldGate: entitymanager.AllowAllFieldGate{},
+		Store:     store, Meta: meta, Templater: nopTemplater{},
 		Audit: sink, ACL: declarative, Transitions: statemachine.EmptySet(),
 	})
 	if err != nil {
@@ -536,7 +541,8 @@ assignments:
 
 	store := &countingStore{Store: memstore.New()}
 	seedMgr, err := entitymanager.New(entitymanager.Deps{
-		Store: store, Meta: meta, Templater: nopTemplater{},
+		FieldGate: entitymanager.AllowAllFieldGate{},
+		Store:     store, Meta: meta, Templater: nopTemplater{},
 		Audit: audit.Nop{}, ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
 	})
 	if err != nil {
@@ -571,7 +577,8 @@ assignments:
 		t.Fatalf("NewDeclarative: %v", err)
 	}
 	mgr, err := entitymanager.New(entitymanager.Deps{
-		Store: store, Meta: meta, Templater: nopTemplater{},
+		FieldGate: entitymanager.AllowAllFieldGate{},
+		Store:     store, Meta: meta, Templater: nopTemplater{},
 		Audit: sink, ACL: declarative, Transitions: statemachine.EmptySet(),
 	})
 	if err != nil {

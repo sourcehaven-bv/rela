@@ -858,6 +858,7 @@ func assemble(
 		VersionRecorder:         versionRecorderFor(versions),
 		RelationVersionRecorder: relationVersionRecorderFor(versions),
 		Transitions:             tw.Enforcer,
+		FieldGate:               entitymanager.AllowAllFieldGate{},
 		TransitionGuard:         tw.Guard,
 		TransitionGraph:         tw.Graph,
 	})
