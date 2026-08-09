@@ -117,6 +117,41 @@ describe('DateWidget', () => {
     await input.setValue('2026-06-01')
     expect(w.emitted('update:modelValue')?.[0]).toEqual(['2026-06-01'])
   })
+
+  // The API returns RFC3339 for `date` properties (`2026-09-15T00:00:00Z`),
+  // but `<input type="date">` accepts ONLY `YYYY-MM-DD` and silently renders
+  // blank otherwise — so the form showed an empty input over a stored value,
+  // which reads as "my data is gone". The old test only ever passed an
+  // already-normalized date, which is how this slipped through.
+  it('narrows an RFC3339 timestamp to the date part so the input is populated', () => {
+    const w = mount(DateWidget, {
+      props: { modelValue: '2026-09-15T00:00:00Z', mode: 'edit' as const, propertyName: '' },
+    })
+    expect((w.find('input[type="date"]').element as HTMLInputElement).value).toBe('2026-09-15')
+  })
+
+  it('narrows a timestamp with an offset too', () => {
+    const w = mount(DateWidget, {
+      props: { modelValue: '2026-09-15T13:45:00+02:00', mode: 'edit' as const, propertyName: '' },
+    })
+    expect((w.find('input[type="date"]').element as HTMLInputElement).value).toBe('2026-09-15')
+  })
+
+  it('passes an un-parseable value through rather than swallowing it', () => {
+    // The browser will reject it for display, but we must not silently rewrite
+    // whatever the user or a hand-edited file put there.
+    const w = mount(DateWidget, {
+      props: { modelValue: 'not-a-date', mode: 'edit' as const, propertyName: '' },
+    })
+    expect(w.find('input[type="date"]').exists()).toBe(true)
+  })
+
+  it('renders empty for no value', () => {
+    const w = mount(DateWidget, {
+      props: { modelValue: '', mode: 'edit' as const, propertyName: '' },
+    })
+    expect((w.find('input[type="date"]').element as HTMLInputElement).value).toBe('')
+  })
 })
 
 describe('DatetimeWidget', () => {
