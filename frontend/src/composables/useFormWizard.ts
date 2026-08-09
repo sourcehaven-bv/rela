@@ -75,6 +75,20 @@ export interface FormWizard {
   seedFromUrl: () => void
 }
 
+export interface FormWizardOptions {
+  /**
+   * Mirror the current step into `?step=N` (default true).
+   *
+   * Set false for a wizard rendered inside another form's page — an embedded
+   * create modal (TKT-OMUD56). The query key is global, so two live wizards
+   * would write the same `step` param: the nested form's writes would move the
+   * host's step, and the host's echo guard would see a foreign value and clamp
+   * its own index to it. A nested wizard is short-lived and not deep-linkable,
+   * so it simply keeps its step in memory.
+   */
+  syncUrl?: boolean
+}
+
 export function useFormWizard(
   formConfig: Ref<FormConfig | undefined> | ComputedRef<FormConfig | undefined>,
   // A getter, not a computed: it is invoked inside each derived computed so the
@@ -82,8 +96,10 @@ export function useFormWizard(
   // tracking scope. A cached computed would return a stable object whose
   // property reads are not re-tracked, so visibility would never update as the
   // user types (the `form.done == true` reveal would go stale).
-  getBindings: () => Bindings
+  getBindings: () => Bindings,
+  options: FormWizardOptions = {}
 ): FormWizard {
+  const syncUrl = options.syncUrl !== false
   const route = useRoute()
   const router = useRouter()
 
@@ -195,7 +211,7 @@ export function useFormWizard(
   // `visible_when` — and clamp against a smaller visibleSteps would otherwise
   // strand the user on the wrong step.
   function seedFromUrl(): void {
-    if (!isMultiStep.value) return
+    if (!isMultiStep.value || !syncUrl) return
     const raw = route.query.step
     const parsed = typeof raw === 'string' ? parseInt(raw, 10) : NaN
     currentStep.value = clamp(parsed)
@@ -204,7 +220,8 @@ export function useFormWizard(
 
   let lastWritten = ''
   function writeStep(i: number): void {
-    if (!isMultiStep.value) return // single-step forms never touch the URL
+    // Single-step forms never touch the URL; nor do URL-desynced ones.
+    if (!isMultiStep.value || !syncUrl) return
     const value = String(i)
     lastWritten = value
     const query = { ...route.query, step: value }
@@ -216,6 +233,7 @@ export function useFormWizard(
   watch(
     () => route.query.step,
     (raw) => {
+      if (!syncUrl) return
       const incoming = typeof raw === 'string' ? raw : ''
       if (incoming === lastWritten) return
       const parsed = incoming ? parseInt(incoming, 10) : 0

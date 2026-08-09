@@ -20,6 +20,7 @@ import { defaultRegistry } from '@/widgets/registry'
 import { useAutoSave, type AutoSaveErrorInfo } from '@/composables/useAutoSave'
 import { isFieldWritable, optionVerdictsFor } from '@/utils/affordances'
 import { isClearedForType } from '@/utils/formValue'
+import { fieldSpanStyle } from '@/utils/fieldSpan'
 import FieldShell from './FieldShell.vue'
 import StatusControl from './StatusControl.vue'
 import AutoSaveIndicator from './AutoSaveIndicator.vue'
@@ -31,6 +32,9 @@ export type SectionEditField = {
   property: string
   label: string
   verdict?: FieldAffordance
+  // Authored width on the 12-column layout grid (TKT-5V8704). Undefined /
+  // 0 means full width, which is the default for every auto-generated view.
+  span?: number
   // Machine-aware status control (TKT-3G93B8): when present (even empty), the
   // field is a state machine and renders as a StatusControl instead of its
   // resolved widget. Undefined = not a machine field (or a surface without
@@ -227,6 +231,7 @@ defineExpose({
         v-for="row in widgetRows"
         :key="row.field.property"
         class="property-item"
+        :style="fieldSpanStyle(row.field.span)"
       >
         <dt>{{ row.field.label }}</dt>
         <dd>
@@ -284,7 +289,7 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-sm);
   margin: 0 0 16px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--border-color);
@@ -295,38 +300,13 @@ defineExpose({
    (font, margin, border via the row) — the Properties heading must match
    every sibling section heading on the page. */
 .section-edit-form-header .section-heading {
-  font-size: 18px;
+  font-size: var(--font-size-lg);
   font-weight: 600;
   margin: 0;
   color: var(--text-color);
 }
 
-.properties-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px 32px;
-  margin: 0;
-}
-
-.property-item {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 200px;
-}
-
-.property-item dt {
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  color: var(--muted-text);
-  margin: 0;
-}
-
-.property-item dd {
-  margin: 0;
-  font-size: 14px;
-  color: var(--text-color);
-  line-height: 1.5;
-}
+/* .properties-list / .property-item now live in styles/properties-list.css,
+ * shared with PropertyDisplay and SidePanel. Do not redefine them here — the
+ * three scoped copies drifting apart is what this ticket removed. */
 </style>

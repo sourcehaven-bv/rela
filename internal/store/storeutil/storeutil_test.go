@@ -57,12 +57,14 @@ func TestValidateID(t *testing.T) {
 		}
 	})
 
-	t.Run("rejects leading dash", func(t *testing.T) {
-		// A leading "-" reads as an option flag to any command the ID is
-		// passed to ("-rf"), i.e. argument injection.
-		err := storeutil.ValidateID("-rf")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "may not start with a dash")
+	t.Run("rejects non-alphanumeric first character", func(t *testing.T) {
+		// An identifier opens with a letter or digit: "-" reads as an option
+		// flag, "_" as a hidden/private marker.
+		for _, id := range []string{"-rf", "_private"} {
+			err := storeutil.ValidateID(id)
+			require.Error(t, err, "id %q should be rejected", id)
+			assert.Contains(t, err.Error(), "must start with a letter or digit")
+		}
 	})
 
 	t.Run("rejects shell metacharacters and spaces", func(t *testing.T) {

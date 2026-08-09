@@ -354,29 +354,92 @@ export class FormPage extends BasePage {
   }
 
   /** True if the page shows an inline-create UI for related entities. */
-  async hasInlineCreateButton(): Promise<boolean> {
-    return this.page
-      .locator(
-        'button:has-text("New"), .btn-inline-create, [data-create-inline]',
-      )
-      .first()
-      .isVisible()
-      .catch(() => false);
+  // --- Inline entity creation (TKT-OMUD56) ---
+  //
+  // These previously matched loose selectors that hit nothing, so the only
+  // inline-create test was vacuous. They now target the real markup.
+
+  /** The "+ New <Label>" buttons inside a relation widget. */
+  inlineCreateButtons(scope?: Locator): Locator {
+    return (scope ?? this.page).locator(".add-new-btn");
   }
 
-  async clickInlineCreateButton() {
-    await this.page
-      .locator(
-        'button:has-text("New"), .btn-inline-create, [data-create-inline]',
-      )
-      .first()
+  /** Open the inline-create modal for a target type. */
+  async clickInlineCreate(label: string, scope?: Locator) {
+    await this.inlineCreateButtons(scope)
+      .filter({ hasText: `+ New ${label}` })
       .click();
   }
 
+  /** The inline-create dialog. */
+  get inlineCreateModal(): Locator {
+    return this.page.locator(".inline-create-modal");
+  }
+
   async expectInlineFormVisible() {
-    await expect(
-      this.page.locator(".inline-form, .modal, dialog"),
-    ).toBeVisible();
+    await expect(this.inlineCreateModal).toBeVisible();
+    // The nested form, not just the shell.
+    await expect(this.inlineCreateModal.locator("form")).toBeVisible();
+  }
+
+  /** Fill a field inside the inline-create modal (ids are shared with the page form). */
+  async fillInlineField(property: string, value: string) {
+    await this.inlineCreateModal.locator(`#field-${property}`).fill(value);
+  }
+
+  /** A field inside the inline-create modal, for visibility assertions. */
+  inlineField(property: string): Locator {
+    return this.inlineCreateModal.locator(`#field-${property}`);
+  }
+
+  /** Submit the nested form. */
+  async submitInlineForm() {
+    await this.inlineCreateModal.locator('button[type="submit"]').click();
+  }
+
+  /** Cancel the nested form via its Cancel button. */
+  async cancelInlineForm() {
+    await this.inlineCreateModal.locator('button').filter({ hasText: "Cancel" }).click();
+  }
+
+  /** Open a relation picker's dropdown by clicking its search combobox. */
+  async openRelationPicker(picker: Locator) {
+    await picker.locator('input[role="combobox"]').click();
+  }
+
+  /** Selected-entity tiles inside a relation picker. */
+  pickerSelections(picker: Locator): Locator {
+    return picker.locator(".selected-entity");
+  }
+
+  /** A cards relation widget, scoped by its section label.
+   *
+   *  Scoping on the label (rather than any text in the widget) matters: a
+   *  sibling widget's search placeholder can contain the same word. */
+  relationCardsByLabel(label: string): Locator {
+    return this.page
+      .locator(".relation-cards")
+      .filter({ has: this.page.locator(`.section-label:has-text("${label}")`) });
+  }
+
+  /** Open a cards widget's add panel. */
+  async openCardsAddPanel(cards: Locator) {
+    await cards.locator(".add-btn").click();
+  }
+
+  /** The pending link form shown once a cards target is selected. */
+  cardsPendingLink(cards: Locator): Locator {
+    return cards.locator(".new-relation-form");
+  }
+
+  /** The "Created <title> — link it below" notice in a cards widget. */
+  cardsCreatedNotice(cards: Locator): Locator {
+    return cards.locator(".created-notice");
+  }
+
+  /** A top-level form field, for asserting the host draft survived. */
+  field(property: string): Locator {
+    return this.page.locator(`#field-${property}`);
   }
 
   // --- Markdown body editor (EasyMDE) ---

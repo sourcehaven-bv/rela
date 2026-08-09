@@ -14,6 +14,7 @@ import { isClearedForType } from '@/utils/formValue'
 import { useEntityIDControls } from '@/composables/useEntityIDControls'
 import { useConfirm } from '@/composables/useConfirm'
 import type {
+  Entity,
   PropertyDef,
   FormFieldOrRelation,
   Template,
@@ -46,6 +47,32 @@ import HelpModal from '@/components/ui/HelpModal.vue'
 const props = defineProps<{
   formId: string
   entityId?: string
+  /**
+   * Render as a nested form inside a host (the inline-create modal) rather
+   * than as a page (TKT-OMUD56).
+   *
+   * A second mounted DynamicForm would otherwise fight the first over
+   * process-global state: the document-level Cmd+Enter listener, the route
+   * guard (whose `useConfirm` is a singleton that returns ONE user decision to
+   * every concurrent caller), the `?step=` wizard query key, and the router
+   * itself — a `router.push` on create unmounts the host form and destroys its
+   * draft, which is the whole thing inline creation exists to avoid.
+   *
+   * So `embedded` suppresses every page-level side effect and replaces
+   * navigation with `inline-created` / `inline-cancelled`. It is read at setup
+   * time and never reactive afterwards.
+   */
+  embedded?: boolean
+}>()
+
+/**
+ * Deliberately namespaced. Declaring emits removes these names from `$attrs`,
+ * so a plain `created` / `cancel` would silently swallow a future mount's
+ * native listener of the same name (RR-P3CO33).
+ */
+const emit = defineEmits<{
+  'inline-created': [entity: Entity]
+  'inline-cancelled': []
 }>()
 
 const router = useRouter()
@@ -186,7 +213,9 @@ const conditionBindings = (): Bindings => ({
   current_user: {},
 })
 
-const wizard = useFormWizard(formConfig, conditionBindings)
+// An embedded wizard keeps its step in memory: `?step=` is a single global key
+// that the host form already owns (see FormWizardOptions.syncUrl).
+const wizard = useFormWizard(formConfig, conditionBindings, { syncUrl: !props.embedded })
 
 // Visible-step indices that currently have a validation error, so the stepper
 // can flag them. Recomputes as `errors` changes, so a pill's flag clears the
@@ -385,8 +414,14 @@ function initializeDefaults() {
 
   idControls.reset()
 
-  // Parse query params for pre-filling (prop.*, rel.*, link_*)
-  const query = route.query
+  // Parse query params for pre-filling (prop.*, rel.*, link_*).
+  //
+  // Embedded forms read an EMPTY query: they are mounted over whatever page
+  // the host is on, so `route.query` belongs to that page. Honouring it would
+  // pre-fill the nested entity from the host's parameters and — via link_* —
+  // auto-link it to the host's peer, both silently wrong. Field defaults and
+  // templates below still apply; only the URL-sourced overlay is dropped.
+  const query = props.embedded ? {} : route.query
   const queryProps: Record<string, string> = {}
   const queryRels: Record<string, string[]> = {}
 
@@ -932,8 +967,18 @@ async function handleSubmit() {
       }
     }
 
-    uiStore.success('Entity created successfully')
     dirty.value = false
+
+    // Embedded: hand the entity to the host and stop. No navigation (it would
+    // unmount the form that opened us, taking its draft with it) and no toast
+    // — the host reports the creation itself, next to the link step the user
+    // still has to complete.
+    if (props.embedded) {
+      emit('inline-created', entity)
+      return
+    }
+
+    uiStore.success('Entity created successfully')
 
     // Navigate to return_to or entity detail
     if (returnTo.value) {
@@ -967,6 +1012,10 @@ async function handleSubmit() {
 }
 
 function handleCancel() {
+  if (props.embedded) {
+    emit('inline-cancelled')
+    return
+  }
   router.back()
 }
 
@@ -1161,10 +1210,23 @@ function handleKeydown(e: KeyboardEvent) {
 onMounted(async () => {
   // Setup event listeners
   window.addEventListener('beforeunload', handleBeforeUnload)
-  document.addEventListener('keydown', handleKeydown)
+  // Embedded: the host modal owns Cmd+Enter. This listener is document-level
+  // with no target check, so two mounted forms would BOTH act on one keypress
+  // — the modal submitting while the page form behind it also submits (or
+  // silently advances a wizard step). beforeunload above is left registered:
+  // duplicate handlers there just mean the browser warns if either form is
+  // dirty, which is correct for a nested draft.
+  if (!props.embedded) {
+    document.addEventListener('keydown', handleKeydown)
+  }
 
-  // return_to is honoured in both modes — read it eagerly.
-  applyReturnToFromQuery()
+  // return_to is honoured in both modes — read it eagerly. Skipped when
+  // embedded: a nested form inherits the HOST page's query string, so it would
+  // otherwise adopt the parent's return_to (and, below, its prop.*/rel.*/link_*
+  // pre-fill) as if they were its own.
+  if (!props.embedded) {
+    applyReturnToFromQuery()
+  }
 
   // Load form data
   loading.value = true
@@ -1282,33 +1344,63 @@ onBeforeUnmount(() => {
 // because there are no global beforeResolve guards that could cancel the
 // navigation downstream — if one were added, the assignment should move into
 // a router.afterEach hook gated on success.
-onBeforeRouteLeave(async () => {
-  // TKT-E6094: in edit mode, flush autosave before navigating away.
-  // On clean commit we proceed silently; on error or timeout we
-  // prompt the user to confirm.
-  if (autoSave.value) {
-    const result = await autoSave.value.commitImmediately()
-    if (result.settled && !result.error) {
-      dirty.value = false
-      return true
+//
+// Registration is skipped entirely when embedded. Two guards on one route
+// record both fire on a single navigation, and both call the SINGLETON
+// `confirm()` — whose in-flight promise is shared, so one dialog's answer is
+// returned to both callers. A "Leave" meant for the page would silently
+// discard the nested draft too. `props.embedded` is never reactive after
+// mount, so this setup-time conditional is sound; the host modal owns
+// discard-confirmation for the nested form.
+if (!props.embedded) {
+  onBeforeRouteLeave(async () => {
+    // TKT-E6094: in edit mode, flush autosave before navigating away.
+    // On clean commit we proceed silently; on error or timeout we
+    // prompt the user to confirm.
+    if (autoSave.value) {
+      const result = await autoSave.value.commitImmediately()
+      if (result.settled && !result.error) {
+        dirty.value = false
+        return true
+      }
+      return await confirm({
+        title: 'Unsaved changes',
+        message: result.error ?? 'Some changes are still saving.',
+        confirmLabel: 'Leave anyway',
+        danger: true,
+      })
     }
-    return await confirm({
+    // Create-mode / no autosave: original prompt.
+    if (!dirty.value) return true
+    const ok = await confirm({
       title: 'Unsaved changes',
-      message: result.error ?? 'Some changes are still saving.',
-      confirmLabel: 'Leave anyway',
+      message: 'You have unsaved changes. Are you sure you want to leave?',
+      confirmLabel: 'Leave',
       danger: true,
     })
-  }
-  // Create-mode / no autosave: original prompt.
-  if (!dirty.value) return true
-  const ok = await confirm({
-    title: 'Unsaved changes',
-    message: 'You have unsaved changes. Are you sure you want to leave?',
-    confirmLabel: 'Leave',
-    danger: true,
+    if (ok) dirty.value = false
+    return ok
   })
-  if (ok) dirty.value = false
-  return ok
+}
+
+/**
+ * Surface for a host that renders this form inside its own chrome (the
+ * inline-create modal).
+ *
+ * The host needs to know whether there is unsaved input and to trigger a
+ * submit. Both must be ASKED FOR, not inferred: sniffing bubbling `input` /
+ * `change` events off a wrapper element misses every non-native widget — a
+ * relation-picker selection, a wizard step, and the CodeMirror-backed markdown
+ * body all emit Vue events that do not bubble as DOM events, so a form with a
+ * written body would read as pristine and be discarded without a prompt.
+ */
+defineExpose({
+  /** True when the user has entered anything not yet persisted. */
+  isDirty: () => dirty.value,
+  /** True while a create request is in flight. */
+  isSaving: () => saving.value,
+  /** Submit the form, exactly as the Create button does. */
+  submit: () => handleSubmit(),
 })
 </script>
 
@@ -1319,8 +1411,10 @@ onBeforeRouteLeave(async () => {
     :class="{ 'with-sidepanel': isEdit }"
     :data-testid="`form-state-${loadState}`"
   >
-    <div class="dynamic-form">
-      <header class="form-header mobile-topbar">
+    <div class="dynamic-form" :class="{ embedded }">
+      <!-- The host modal supplies its own title and help affordance, so the
+           page header would be a duplicate heading inside the dialog. -->
+      <header v-if="!embedded" class="form-header mobile-topbar">
         <h1>{{ title }}</h1>
         <button
           type="button"
@@ -1560,6 +1654,13 @@ onBeforeRouteLeave(async () => {
   width: 100%;
 }
 
+/* Embedded: the host dialog owns the width. The page min-width would
+   otherwise force the modal wider than a narrow viewport allows. */
+.dynamic-form.embedded {
+  max-width: none;
+  min-width: 0;
+}
+
 .form-header {
   margin-bottom: 24px;
   display: flex;
@@ -1718,16 +1819,55 @@ onBeforeRouteLeave(async () => {
   margin: 0 0 12px;
 }
 
+/* Same 12-column layout grid as the detail page (TKT-5V8704), so `span:` in
+ * data-entry.yaml means the same thing on a form as in a view section. Forms
+ * were already single-column via flex-column; the grid preserves that for
+ * unspanned fields while letting an author group related ones onto a row. */
 .form-fields {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 20px var(--space-xl);
+  /* Top-align, don't stretch. Grid items default to `stretch`, which makes
+     every field in a row as tall as the tallest — so one field with a
+     transitions panel or a long help text under it leaves its neighbours
+     with a void beneath their input. Aligning to the start keeps each
+     control tight to its own label. */
+  align-items: start;
+}
+
+/* EVERY direct child spans the full 12 by default, not just `.form-field`.
+ * FormFieldList also emits RelationCards / RelationPicker, which carry their
+ * own root class — without this they'd become auto-width grid items and the
+ * whole form would collapse into narrow columns.
+ *
+ * The var() fallback (not a bare `span 12`) is load-bearing: `.form-fields > *`
+ * and `.form-field` have equal specificity, so a plain `span 12` here would win
+ * on source order and silently swallow every authored span. Reading the same
+ * custom property means both rules agree, and the ONE default lives in the
+ * fallback. */
+.form-fields > * {
+  grid-column: span var(--field-span, 12);
+  min-width: 0;
 }
 
 .form-field {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  /* Grid items floor at min-content without this; a long placeholder or
+     option label would push its track wider than its share. */
+  min-width: 0;
+}
+
+@media (max-width: 640px) {
+  .form-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .form-fields > *,
+  .form-field {
+    grid-column: span 1;
+  }
 }
 
 .form-field label {

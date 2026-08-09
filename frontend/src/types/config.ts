@@ -92,6 +92,12 @@ export interface FormField {
   visible_when?: string
   /** Condition expression; the field is required only when it evaluates true. */
   required_when?: string
+  /**
+   * Width on the 12-column form grid (TKT-5V8704). Absent means full width —
+   * one field per row, the default. Same semantics as a view section field's
+   * span, so an author learns the model once.
+   */
+  span?: number
 }
 
 export interface RelationProperty {
@@ -107,8 +113,6 @@ export interface FormRelation {
   label?: string
   required?: boolean
   widget?: string
-  allow_create?: boolean
-  create_form?: string
   properties?: RelationProperty[]
   /** Condition expression; the relation widget is hidden when it evaluates false. */
   visible_when?: string
@@ -129,12 +133,20 @@ export interface FormFieldOrRelation {
   direction?: 'outgoing' | 'incoming'
   target_type?: string
   required?: boolean
-  allow_create?: boolean
-  create_form?: string
   properties?: RelationProperty[]
   // Common props
   label?: string
   widget?: string
+  /**
+   * Width on the 12-column form grid; absent = full width. See FormField.
+   *
+   * Only meaningful on the FIELD half of this union. A relation entry renders
+   * via RelationCards / RelationPicker, which do not read it — those widgets
+   * (a card list, a searchable multi-select) have a natural minimum width that
+   * a narrow column would break. The config validator rejects a span on a
+   * relation so an author is told rather than left wondering.
+   */
+  span?: number
   // Wizard conditions (see FormField / FormRelation)
   visible_when?: string
   required_when?: string
@@ -386,6 +398,20 @@ export interface SidebarData {
   /** URL of the user-uploaded sidebar logo (with cache-busting query
    *  parameter), or null/undefined when no logo is set. */
   logoUrl?: string | null
+  /**
+   * Entity type → form id for inline creation from a relation field.
+   * A type is present only when the principal may create it AND a create
+   * form resolves for it, so presence alone is the affordance — no
+   * client-side permission arithmetic, and no reimplementation of the
+   * server's form-resolution ordering.
+   *
+   * Rides on the sidebar because it is the one boot-time payload that is
+   * principal-scoped (`_config` is pinned principal-independent;
+   * `_schema` is a pure metamodel projection).
+   *
+   * A UI hint only: the create POST re-authorizes.
+   */
+  inline_create?: Record<string, string>
 }
 
 // Document config, mirroring the Go `dataentryconfig.DocumentConfig` that

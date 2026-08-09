@@ -129,9 +129,9 @@ func (id EntityID) MatchesPattern(pattern string) bool {
 	return strings.EqualFold(prefix, pattern)
 }
 
-// idPattern is the one grammar every entity ID must satisfy:
-// ASCII letters, digits, underscore, and hyphen.
-var idPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+// idPattern is the one grammar every entity ID must satisfy: it starts with an
+// ASCII letter or digit, then allows letters, digits, underscore, and hyphen.
+var idPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
 
 // ValidateID reports whether s is a valid entity ID. It is the SINGLE
 // validity rule for entity IDs across the whole codebase — storeutil.ValidateID
@@ -156,11 +156,14 @@ var idPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 //     name belongs. Identifiers stay ASCII the same way DNS labels, Kubernetes
 //     resource names, and package names do.
 //
-//   - No leading hyphen. A leading "-" makes the ID look like an option flag
-//     to any command it is passed to ("-rf"), which is argument injection
-//     rather than a filesystem concern. This is defense in depth, not the
-//     primary control: TKT-QGHNVA removes user-controlled data from command
-//     lines entirely. Keep this check even after that lands.
+//   - Must start with a letter or digit. An identifier that opens with "-" or
+//     "_" is malformed on its face: it reads as an option flag ("-rf") or a
+//     hidden/private marker rather than a name, and every identifier grammar
+//     worth copying (DNS labels, Kubernetes names, most language identifiers)
+//     says the same. This is a well-formedness rule, NOT a security control —
+//     do not let it become load-bearing for command safety. Argument injection
+//     is prevented structurally instead: nothing request-derived reaches a
+//     command line (see internal/cmdexec and the documents renderer).
 //
 //   - No consecutive hyphens. "--" is the relation-key separator in
 //     "FROM--TYPE--TO.md", so an ID containing it makes the relation filename
@@ -199,8 +202,8 @@ func ValidateID(s string) error {
 		return fmt.Errorf("consecutive dashes not allowed in entity ID: %s", s)
 	}
 
-	if strings.HasPrefix(s, "-") {
-		return fmt.Errorf("entity ID may not start with a dash (reads as a command-line flag): %s", s)
+	if s[0] == '-' || s[0] == '_' {
+		return fmt.Errorf("entity ID must start with a letter or digit: %s", s)
 	}
 
 	if !idPattern.MatchString(s) {

@@ -526,9 +526,11 @@ func TestValidateID(t *testing.T) {
 		{"DEL", "foo\x7fbar", "control character"},
 		{"consecutive dashes", "FOO--BAR", "consecutive dashes"},
 
-		// Argument injection: these are the reason for the leading-dash rule.
-		{"leading dash", "-rf", "may not start with a dash"},
-		{"leading dash word", "-oevil", "may not start with a dash"},
+		// An identifier must open with a letter or digit; "-" reads as an
+		// option flag and "_" as a hidden/private marker.
+		{"leading dash", "-rf", "must start with a letter or digit"},
+		{"leading dash word", "-oevil", "must start with a letter or digit"},
+		{"leading underscore", "_private", "must start with a letter or digit"},
 
 		// ASCII-only: NFC/NFD divergence across platforms, plus homoglyphs.
 		{"latin accent", "café", "invalid characters"},

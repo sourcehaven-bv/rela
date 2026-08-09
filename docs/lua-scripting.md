@@ -1349,6 +1349,52 @@ Entities also have helper methods:
 
 - `entity:prop(name, default)` - Get property with fallback default
 - `entity:strip_prefix()` - Get ID without type prefix (e.g., "001" from "TKT-001")
+- `entity:is_redacted(name)` - Whether ACL withheld the property (see below)
+
+### Redacted properties
+
+When an ACL policy hides a property from the reading principal, the value is
+stripped before the script sees it — `properties.salary` is `nil`. That is
+indistinguishable from a property nobody ever filled in, so scripts that render
+reports get a blank where "[redacted]" would be more honest.
+
+The `redacted` table names the withheld properties, and `entity:is_redacted(name)`
+tests one:
+
+```lua
+local p = rela.get_entity("P-1")
+
+if p:is_redacted("salary") then
+    rela.output("salary: [redacted]")
+else
+    rela.output("salary: " .. p:prop("salary", "(not set)"))
+end
+
+-- Or iterate everything that was withheld:
+for name in pairs(p.redacted) do
+    rela.output("withheld: " .. name)
+end
+```
+
+Two things to know:
+
+- **Names only, never values.** The withheld value is not reachable from
+  `redacted`, from `properties`, or via `prop()`. Disclosing the *name* is
+  intentional and matches the HTTP API's `_redacted` field: field-level ACL
+  hides property values, and the metamodel that declares property names is
+  already served over `/api/v1/_schema`.
+- **`false` means "not withheld here", not "you are allowed to see it".**
+  Whether field policy is evaluated at all depends on the runtime:
+
+  | Runtime | Entity gating | Field redaction | `is_redacted` |
+  |---|---|---|---|
+  | Data-entry (documents, views, actions) | yes | yes | meaningful |
+  | Scheduler (`run_as:`) | yes | **no** | always `false` |
+  | CLI, MCP, docs | no | no | always `false` |
+
+  The scheduler row is the one to watch: scheduled tasks are gated on *which
+  entities* they may read, but field-level `visible:` redaction is not applied
+  there, so a job sees every property of an entity its identity can read.
 
 ## Filter Expressions
 

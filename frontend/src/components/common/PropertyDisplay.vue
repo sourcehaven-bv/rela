@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import type { Component } from 'vue'
 import InaccessibleField from './InaccessibleField.vue'
 import { defaultRegistry } from '@/widgets/registry'
+import { fieldSpanStyle } from '@/utils/fieldSpan'
 import type { AttachmentInfo, EntityType, PropertyDef } from '@/types'
 
 export interface PropertyItem {
@@ -17,6 +18,10 @@ export interface PropertyItem {
   // do a schema lookup per row (RR-UD1H).
   propertyDef?: PropertyDef
   isLongText?: boolean
+  // Authored width on the 12-column property grid (TKT-5V8704). Absent or 0
+  // means full width. Ignored when the value is long-form: a paragraph
+  // squeezed into a third of the row is unreadable whatever the author said.
+  span?: number
   inaccessible?: boolean // Property exists but value is unreadable (e.g. encrypted)
   inaccessibleReason?: string // Reason marker (e.g. "git-crypt") shown in tooltip
   // Attachment LIST for a `file`-type property, supplied by callers from
@@ -82,6 +87,7 @@ function isLong(prop: PropertyItem): boolean {
       :key="row.prop.name"
       class="property-item"
       :class="{ 'property-long': isLong(row.prop) }"
+      :style="isLong(row.prop) ? undefined : fieldSpanStyle(row.prop.span)"
     >
       <dt>{{ row.prop.label }}</dt>
       <dd>
@@ -105,37 +111,9 @@ function isLong(prop: PropertyItem): boolean {
 </template>
 
 <style scoped>
-.properties-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px 32px;
-}
-
-.property-item {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 120px;
-}
-
-.property-item.property-long {
-  flex-basis: 100%;
-  min-width: 100%;
-}
-
-.property-item dt {
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  color: var(--muted-text);
-}
-
-.property-item dd {
-  margin: 0;
-  font-size: 14px;
-  color: var(--text-color);
-  line-height: 1.5;
-}
+/* .properties-list / .property-item / .property-long live in
+ * styles/properties-list.css, shared with SectionEditForm and SidePanel.
+ * Do not redefine them here. */
 
 .property-item.property-long dd {
   white-space: pre-wrap;

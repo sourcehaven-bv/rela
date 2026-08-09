@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"maps"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
@@ -181,6 +183,13 @@ func (r *PolicyReader) redacted(ctx context.Context, e *entity.Entity) *entity.E
 // visible neighbor before deriving its display title (the RR-5N4K35
 // title-leak class). Redact performs NO row-gate of its own: callers own
 // that decision.
+//
+// PRECONDITION: e must be a raw store entity, never the output of a prior
+// Redact. On the nothing-hidden path the input is returned untouched, so a
+// stale [entity.Entity.Redacted] from an earlier pass would survive and
+// misreport as this redactor's verdict. Clearing it unconditionally would
+// cost the allocation-free identity guarantee above, so the contract is the
+// caller's to keep. No production caller stacks readers today (RR-Q1VCKR).
 func Redact(ctx context.Context, red FieldRedactor, e *entity.Entity) *entity.Entity {
 	if e == nil {
 		return nil
@@ -191,6 +200,14 @@ func Redact(ctx context.Context, red FieldRedactor, e *entity.Entity) *entity.En
 	}
 	out := *e
 	out.Properties = filterProps(e.Properties, hidden)
+	// Record WHICH properties were withheld so a consumer can render
+	// "[redacted]" instead of a blank that reads as "never set"
+	// (TKT-FJ6END). Names only — the values stay stripped above.
+	//
+	// Freshly allocated and sorted, never appended to e.Redacted: the
+	// shallow copy above aliases the original's slice header, so growing
+	// it in place could write into the caller's backing array.
+	out.Redacted = slices.Sorted(maps.Keys(hidden))
 	return &out
 }
 

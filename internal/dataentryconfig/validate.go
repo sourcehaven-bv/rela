@@ -251,6 +251,26 @@ func validateNavEntry(nav NavigationEntry, cfg *Config) []string {
 	return errs
 }
 
+// validateSidePanelSpans checks `span` on a form's side-panel section fields.
+//
+// Side panels reuse ViewSection/ViewSectionField and render through the same
+// buildSections path as a view, so a span authored there reaches the wire — but
+// no other validator descends into form.SidePanel, so it would otherwise go
+// unchecked. Nil panel is the common case and yields nothing.
+func validateSidePanelSpans(formID string, panel *SidePanelConfig) []string {
+	if panel == nil {
+		return nil
+	}
+	var errs []string
+	for i, sec := range panel.Sections {
+		for j, f := range sec.Fields {
+			errs = append(errs, validateSpan(f.Span,
+				fmt.Sprintf("form %q: side_panel section[%d] field[%d]", formID, i, j))...)
+		}
+	}
+	return errs
+}
+
 // validateForms validates form definitions.
 func validateForms(cfg *Config, meta *metamodel.Metamodel) []string {
 	var errs []string
@@ -275,7 +295,7 @@ func validateForms(cfg *Config, meta *metamodel.Metamodel) []string {
 			errs = append(errs, validateFormField(formID, "", i, f, form.EntityType, entDef, meta)...)
 		}
 		for i, r := range form.Relations {
-			errs = append(errs, validateFormRelation(cfg, formID, "", i, r, form.EntityType, meta)...)
+			errs = append(errs, validateFormRelation(formID, "", i, r, form.EntityType, meta)...)
 		}
 
 		// Wizard steps: each step's fields/relations reuse the same checks.
@@ -288,9 +308,22 @@ func validateForms(cfg *Config, meta *metamodel.Metamodel) []string {
 				errs = append(errs, validateFormField(formID, ctx, i, f, form.EntityType, entDef, meta)...)
 			}
 			for i, r := range step.Relations {
-				errs = append(errs, validateFormRelation(cfg, formID, ctx, i, r, form.EntityType, meta)...)
+				errs = append(errs, validateFormRelation(formID, ctx, i, r, form.EntityType, meta)...)
 			}
 		}
+
+		// Side-panel sections carry ViewSectionField, the same struct used by
+		// views — so they carry `span` too, and executeSidePanel renders them
+		// through the same buildSections path. Nothing else in this file
+		// descends into form.SidePanel, so without this a bad span there is
+		// accepted in silence: exactly the failure validateSpan exists to
+		// prevent, on a real config path.
+		//
+		// Scoped to span deliberately. Side-panel property names have never
+		// been validated either, and fixing that is a wider behavior change
+		// (it could start rejecting configs that load today) that belongs in
+		// its own ticket rather than riding along with a layout PR.
+		errs = append(errs, validateSidePanelSpans(formID, form.SidePanel)...)
 	}
 
 	return errs
@@ -314,15 +347,26 @@ func validateFormField(
 			errs = append(errs, validateTransitions(formID, i, f, propDef, meta)...)
 		}
 	}
+	errs = append(errs, validateSpan(f.Span, fmt.Sprintf("form %q: %sfield[%d]", formID, ctx, i))...)
 	return errs
 }
 
 // validateFormRelation checks one form relation against the metamodel. ctx is
 // an optional location prefix (see validateFormField).
 func validateFormRelation(
-	cfg *Config, formID, ctx string, i int, r FormRelation, entityType string, meta *metamodel.Metamodel,
+	formID, ctx string, i int, r FormRelation, entityType string, meta *metamodel.Metamodel,
 ) []string {
 	var errs []string
+
+	// A span on a relation is a config mistake, not a layout instruction:
+	// RelationCards / RelationPicker never read it, so it would be silently
+	// discarded. Saying so beats leaving the author to conclude the feature
+	// is broken. See FormRelation.Span.
+	if r.Span != 0 {
+		errs = append(errs, fmt.Sprintf(
+			"form %q: %srelation[%d] cannot have a span (relation widgets always take the full row)",
+			formID, ctx, i))
+	}
 
 	relDef, ok := meta.GetRelationDef(r.Relation)
 	switch {
@@ -354,14 +398,6 @@ func validateFormRelation(
 		errs = append(errs, fmt.Sprintf(
 			"form %q: %srelation[%d] has invalid widget %q (valid: select, multi-select, cards)",
 			formID, ctx, i, r.Widget))
-	}
-
-	if r.CreateForm != "" {
-		if _, ok := cfg.Forms[r.CreateForm]; !ok {
-			errs = append(errs, fmt.Sprintf(
-				"form %q: %srelation[%d] references unknown create_form %q",
-				formID, ctx, i, r.CreateForm))
-		}
 	}
 
 	return errs
@@ -904,6 +940,16 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 				errs = append(errs, fmt.Sprintf(
 					"view %q: section[%d] has invalid display mode %q (valid: %s)",
 					viewID, i, s.Display, joinMapKeys(validSectionDisplayModes)))
+			}
+
+			// Spans are checked unconditionally — deliberately NOT inside the
+			// `sourceType != ""` guard below, which only runs when the source
+			// collection resolves. A bad span is wrong regardless of whether
+			// the section's source is valid, and hiding it behind an unrelated
+			// error would surface it only after the first one was fixed.
+			for j, f := range s.Fields {
+				errs = append(errs, validateSpan(f.Span,
+					fmt.Sprintf("view %q: section[%d] field[%d]", viewID, i, j))...)
 			}
 
 			// Validate fields (if source type is known)
