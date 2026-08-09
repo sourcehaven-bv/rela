@@ -277,26 +277,52 @@ rela update <id> [flags]
 
 **Flags:**
 
-| Flag                | Description     |
-| ------------------- | --------------- |
-| `-t, --title`       | New title       |
-| `-s, --status`      | New status      |
-| `-p, --priority`    | New priority    |
-| `-d, --description` | New description |
+| Flag                | Description                                             |
+| ------------------- | ------------------------------------------------------- |
+| `-t, --title`       | New title                                               |
+| `-s, --status`      | New status                                              |
+| `-p, --priority`    | New priority                                            |
+| `-d, --description` | New description                                         |
+| `-P, --property`    | Set a property (`key=value`, repeatable)                |
+| `-U, --unset`       | Remove a property entirely (repeatable)                 |
+| `-b, --body`        | Replace the markdown body                               |
+| `-B, --body-file`   | Read the body from a file (`-` for stdin)               |
+| `--clear-body`      | Remove the markdown body                                |
+| `--strict`          | Exit 1 if soft validation warnings are surfaced         |
 
 At least one flag is required.
+
+**Updates are targeted.** Only the properties you name are changed;
+everything else on the entity is left exactly as it was. There is no need
+to re-supply fields you are not editing, and no risk of blanking them by
+omission.
+
+**`-P key=` and `-U key` are different.** `-P key=` _sets the property to
+the empty string_ (the key remains, with an empty value). `-U key` _removes
+the property altogether_. Use `-U` when you mean "this no longer applies";
+use `-P key=` when you mean "this is known to be blank".
 
 **Examples:**
 
 ```bash
-# Update status
+# Update status — every other property is untouched
 rela update REQ-001 --status accepted
 
 # Update multiple fields
 rela update DEC-042 --title "Revised title" --status proposed
 
-# Update description
-rela update SOL-001 --description "Detailed implementation notes"
+# Set an arbitrary property
+rela update REQ-001 -P owner=alice
+
+# Set a property to the empty string (key kept)
+rela update REQ-001 -P owner=
+
+# Remove a property entirely (key gone)
+rela update REQ-001 -U owner
+
+# Replace the body, then clear it
+rela update REQ-001 --body "New notes"
+rela update REQ-001 --clear-body
 ```
 
 ---
