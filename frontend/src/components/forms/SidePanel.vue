@@ -119,7 +119,7 @@ onMounted(() => loadSidePanel())
 
           <!-- Properties display -->
           <template v-else-if="section.display === 'properties'">
-            <dl class="properties-list">
+            <dl class="properties-list properties-list--compact">
               <div v-for="field in section.fields" :key="field.label" class="property-item">
                 <dt>{{ field.label }}</dt>
                 <dd>
@@ -291,34 +291,18 @@ onMounted(() => loadSidePanel())
   font-style: italic;
 }
 
-/* Properties display */
-.properties-list {
-  margin: 0;
-}
-
-.property-item {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3xs);
-  margin-bottom: 12px;
-}
-
-.property-item:last-child {
-  margin-bottom: 0;
-}
-
+/* Properties display.
+ *
+ * The base grid comes from styles/properties-list.css; `--compact` (declared
+ * there) collapses it to one column with tighter spacing. The side panel is a
+ * fixed narrow rail, so an authored span would produce ~60px columns — the
+ * layout model deliberately does not apply here. What IS shared is the label /
+ * value typography, so the panel can't drift from the main surface again.
+ *
+ * The only local rules are the panel's own denser label treatment. */
 .property-item dt {
   font-size: var(--font-size-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  color: var(--muted-text);
   letter-spacing: 0.5px;
-}
-
-.property-item dd {
-  margin: 0;
-  font-size: var(--font-size-base);
-  color: var(--text-color);
 }
 
 /* List display */

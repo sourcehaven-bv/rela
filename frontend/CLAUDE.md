@@ -133,3 +133,28 @@ prefer an existing value in the tree over a rounder number.
 Off-scale sizes (9/10/15/16/17/20/21/24/48px) are deliberately left as
 literals — each is rare and rounding them would change a size the author picked
 on purpose.
+
+### Property layout: one grid, one stylesheet
+
+`src/styles/properties-list.css` owns `.properties-list` / `.property-item`,
+shared by `SectionEditForm`, `PropertyDisplay` and `SidePanel`. **Do not
+redefine those classes in a component `<style>` block** — they used to be
+declared three times with three different `min-width` values, scoped so they
+could never actually share, which is why the detail page didn't align with
+itself.
+
+Layout is a **12-column grid** (TKT-5V8704). Every item spans all 12 unless the
+view/form config authors a `span:`, which arrives as a `--field-span` custom
+property. The default lives in exactly one place: the `var(--field-span, 12)`
+fallback. Don't emit a literal `12` from Go or a component — that creates a
+second copy of the default.
+
+`utils/fieldSpan.ts` is the only place a span becomes CSS. It clamps to 1-12
+and returns `undefined` for anything else, so config never reaches a stylesheet
+unvalidated. The server already rejects bad spans at load with a specific
+error; the frontend clamp is defence-in-depth for hand-crafted responses.
+
+Careful with grid children: in `DynamicForm`, `.form-fields > *` and
+`.form-field` have equal specificity, so both read `var(--field-span, 12)`. A
+bare `span 12` on the first rule would win on source order and silently swallow
+every authored span — which is exactly what happened the first time.

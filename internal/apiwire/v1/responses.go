@@ -331,12 +331,17 @@ type SidePanelSection struct {
 // human-readable rendering. Inaccessible is true when the underlying entity
 // is git-crypt encrypted — the field is known to exist in the schema but
 // its value cannot be read.
+// Span is the field's width on the 12-column layout grid (0 = full width).
+// Field order and types must stay in lockstep with dataentry.SectionFieldData:
+// the handlers convert between them with a direct struct conversion, so the
+// compiler is what keeps the wire surface and the internal DTO from drifting.
 type SectionField struct {
 	Property     string   `json:"property,omitempty"`
 	Label        string   `json:"label"`
 	Values       []string `json:"values,omitempty"`
 	PropType     string   `json:"propType,omitempty"`
 	Inaccessible bool     `json:"inaccessible,omitempty"`
+	Span         int      `json:"span,omitempty"`
 }
 
 // SidePanelEntity represents an entity in a side panel section.

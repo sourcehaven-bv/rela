@@ -59,6 +59,7 @@ export function buildSectionEditFields(
         label: f.label,
         verdict,
         transitions,
+        span: f.span,
         kind: 'schema',
         propertyDef: def,
       })
@@ -68,6 +69,7 @@ export function buildSectionEditFields(
         label: f.label,
         verdict,
         transitions,
+        span: f.span,
         kind: 'hint',
         routingHint: viewFieldRoutingHint(f),
       })

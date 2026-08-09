@@ -71,15 +71,26 @@ forms:
       - property: description
         widget: textarea
         help: "Detailed description of the issue"
+      # Title and description stay full width — a summary line and a textarea
+      # both want the room. The short fields pair up on the 12-column grid.
+      #
+      # The same grouping is authored on edit_ticket and the ticket view, so
+      # the three ticket surfaces line up with each other. Keep them in step:
+      # a field that moves here should move there too.
       - property: priority
+        span: 4
       - property: reporter
         label: "Reported by"
         placeholder: "your.name"
+        span: 4
       - property: assignee
         label: "Assign to"
         placeholder: "assignee.name"
+        span: 4
       - property: due_date
+        span: 4
       - property: estimated_hours
+        span: 4
       - property: status
         hidden: true
     relations:
@@ -93,22 +104,35 @@ forms:
     mode: edit
     body: true
     fields:
+      # Same grouping as create_ticket and the ticket view: title and
+      # description full width, the three classification fields across one
+      # row, then the two numbers. Editing a ticket should feel like the
+      # screen you were just reading.
       - property: title
       - property: description
         widget: textarea
-      - property: priority
+      # status keeps a full row of its own: the transitions panel below it is
+      # ~180px tall, and a grid row is as tall as its tallest item — so pairing
+      # it with short fields leaves them floating above a large void. A field
+      # that carries a blurb wants its own row.
       - property: status
         transitions:
           open: [in-progress, closed]
           in-progress: [open, resolved]
           resolved: [closed, in-progress]
           closed: [open]
+      - property: priority
+        span: 4
       - property: assignee
         label: "Assign to"
+        span: 4
       - property: reporter
         label: "Reported by"
+        span: 4
       - property: due_date
+        span: 6
       - property: estimated_hours
+        span: 6
       - property: is_blocked
     relations:
       - relation: belongs-to
@@ -422,12 +446,32 @@ views:
         source: entry
         display: properties
         fields:
+          # `span` places a field on the 12-column grid; omit it for full
+          # width (the default). Grouping is DECLARED here, not left to
+          # whatever the viewport happens to fit.
+          #
+          # Widths follow what each field actually holds, which is the point
+          # of authoring them per surface rather than taking a uniform grid.
+          #
+          # Row 1 — the two enums that answer "where is this and how urgent":
+          # short values, so a third each, with the wider assignee alongside.
+          # Row 2 — two names side by side, equal weight.
+          # Row 3 — a date and a number, both narrow; the row deliberately
+          # stops at 8/12 rather than stretching to fill. An empty remainder
+          # is better than a date input the width of a paragraph.
           - property: status
+            span: 3
           - property: priority
+            span: 3
           - property: assignee
+            span: 6
           - property: reporter
+            span: 6
           - property: due_date
+            span: 6
           - property: estimated_hours
+            span: 4
+
       # Ticket body (markdown content)
       - source: entry
         display: content

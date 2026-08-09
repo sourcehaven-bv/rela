@@ -1,0 +1,127 @@
+/* Shared property-list layout — the label/value grid used to present an
+ * entity's properties.
+ *
+ * WHY THIS FILE EXISTS
+ * `.properties-list` / `.property-item` used to be defined THREE times, in
+ * three scoped <style> blocks that could never actually share:
+ *
+ *   SectionEditForm.vue   flex-wrap, min-width: 200px
+ *   PropertyDisplay.vue   flex-wrap, min-width: 120px, + .property-long
+ *   SidePanel.vue         flex-wrap, a third set of values
+ *
+ * Same class names, three behaviours. That is why the detail page did not
+ * align with itself. Consolidating follows the TKT-W3OPRX precedent (which did
+ * the same for triplicated markdown-body CSS); it is loaded globally from
+ * main.ts, so the component <style> blocks must NOT redefine these classes.
+ *
+ * THE LAYOUT MODEL (TKT-5V8704)
+ * A 12-column grid. Every item spans all 12 by default — one field per row,
+ * a single column to scan down. An author opts fields onto a shared row by
+ * declaring `span:` in data-entry.yaml, which arrives as a `--field-span`
+ * custom property (see FieldGrid's span helper).
+ *
+ * The old layout was `flex-wrap` with a min-width, which meant ADJACENCY WAS
+ * IMPLICIT: items stretched to fill each row, so column edges differed line to
+ * line, and the wrap point was whatever the viewport allowed — which is how a
+ * trailing field ended up orphaned on its own row at 1440px. Here adjacency is
+ * always declared: two fields share a row because someone said so.
+ *
+ * ROW BEHAVIOUR — deliberate, do not "fix":
+ *   - Spans that don't fill a row leave the remainder EMPTY. Items do not
+ *     stretch to close the gap. This is CSS Grid's natural behaviour and
+ *     matches Filament, the reference model.
+ *   - An item that doesn't fit the columns left in a row wraps to the next
+ *     one, leaving that remainder empty too.
+ *   - Below --properties-list-collapse the grid drops to one column: a
+ *     `span: 4` at phone width is ~110px, unusable for a date input.
+ */
+
+.properties-list {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  /* minmax(0, 1fr) rather than 1fr: a bare 1fr floors at min-content, so one
+   * long unbroken value (an ID, a URL) would push the track wider than its
+   * share and knock the whole row out of alignment. */
+  gap: var(--space-lg) var(--space-xl);
+  /* Top-align, don't stretch. Grid items default to `stretch`, so one tall
+   * field in a row (a state-machine control with a transitions panel, a
+   * multi-line value) would make every neighbour equally tall and leave a
+   * void under their controls. */
+  align-items: start;
+  margin: 0;
+}
+
+.property-item {
+  /* Full width unless an authored span says otherwise. The fallback in the
+   * var() is what makes "no span authored" mean "single column" — the common
+   * case, since auto-generated views emit no spans at all. */
+  grid-column: span var(--field-span, 12);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  /* Grid items default to min-width:auto, which refuses to shrink below their
+   * content — a long value would blow out the track. */
+  min-width: 0;
+}
+
+/* Labels are sentence-case, NOT uppercase — a deliberate change, not an
+ * oversight from consolidating the three forked copies.
+ *
+ * All three carried `text-transform: uppercase` on dt, so the detail page and
+ * side panel SHOUTED their labels while the forms one line away used sentence
+ * case. That inconsistency was one of the things this arc set out to fix, and
+ * uppercase also mangles non-English labels (rela's metamodel is deliberately
+ * language-neutral, and casing rules are not universal). Pinned by
+ * propertiesListGrid.test.ts. */
+.property-item dt,
+.property-item .property-label {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--muted-text);
+  margin: 0;
+}
+
+.property-item dd,
+.property-item .property-value {
+  margin: 0;
+  font-size: var(--font-size-base);
+  color: var(--text-color);
+  line-height: 1.5;
+  min-width: 0;
+}
+
+/* Long-form values (multiline text, markdown) always take the full row: a
+ * paragraph squeezed into a third of the width is unreadable regardless of
+ * what the author declared. Overrides the authored span on purpose. */
+.property-item.property-long {
+  grid-column: span 12;
+}
+
+/* Compact variant for narrow rails (the form side panel). Always one column:
+ * the rail is a few hundred px wide, so a `span: 4` there would be ~60px and
+ * the layout model simply doesn't apply. Typography still comes from the rules
+ * above, which is the point of sharing — the panel can't drift from the main
+ * surface the way the three forked copies did. */
+.properties-list--compact {
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-md);
+}
+
+.properties-list--compact .property-item,
+.properties-list--compact .property-item.property-long {
+  grid-column: span 1;
+}
+
+@media (max-width: 640px) {
+  .properties-list {
+    /* One column. `span 12` still resolves, and any authored span is capped
+     * by the track count, so no rule has to be undone per-item. */
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-md);
+  }
+
+  .property-item,
+  .property-item.property-long {
+    grid-column: span 1;
+  }
+}

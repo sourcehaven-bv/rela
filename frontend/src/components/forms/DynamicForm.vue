@@ -1819,16 +1819,55 @@ defineExpose({
   margin: 0 0 12px;
 }
 
+/* Same 12-column layout grid as the detail page (TKT-5V8704), so `span:` in
+ * data-entry.yaml means the same thing on a form as in a view section. Forms
+ * were already single-column via flex-column; the grid preserves that for
+ * unspanned fields while letting an author group related ones onto a row. */
 .form-fields {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 20px var(--space-xl);
+  /* Top-align, don't stretch. Grid items default to `stretch`, which makes
+     every field in a row as tall as the tallest — so one field with a
+     transitions panel or a long help text under it leaves its neighbours
+     with a void beneath their input. Aligning to the start keeps each
+     control tight to its own label. */
+  align-items: start;
+}
+
+/* EVERY direct child spans the full 12 by default, not just `.form-field`.
+ * FormFieldList also emits RelationCards / RelationPicker, which carry their
+ * own root class — without this they'd become auto-width grid items and the
+ * whole form would collapse into narrow columns.
+ *
+ * The var() fallback (not a bare `span 12`) is load-bearing: `.form-fields > *`
+ * and `.form-field` have equal specificity, so a plain `span 12` here would win
+ * on source order and silently swallow every authored span. Reading the same
+ * custom property means both rules agree, and the ONE default lives in the
+ * fallback. */
+.form-fields > * {
+  grid-column: span var(--field-span, 12);
+  min-width: 0;
 }
 
 .form-field {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  /* Grid items floor at min-content without this; a long placeholder or
+     option label would push its track wider than its share. */
+  min-width: 0;
+}
+
+@media (max-width: 640px) {
+  .form-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .form-fields > *,
+  .form-field {
+    grid-column: span 1;
+  }
 }
 
 .form-field label {

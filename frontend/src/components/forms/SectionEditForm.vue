@@ -20,6 +20,7 @@ import { defaultRegistry } from '@/widgets/registry'
 import { useAutoSave, type AutoSaveErrorInfo } from '@/composables/useAutoSave'
 import { isFieldWritable, optionVerdictsFor } from '@/utils/affordances'
 import { isClearedForType } from '@/utils/formValue'
+import { fieldSpanStyle } from '@/utils/fieldSpan'
 import FieldShell from './FieldShell.vue'
 import StatusControl from './StatusControl.vue'
 import AutoSaveIndicator from './AutoSaveIndicator.vue'
@@ -31,6 +32,9 @@ export type SectionEditField = {
   property: string
   label: string
   verdict?: FieldAffordance
+  // Authored width on the 12-column layout grid (TKT-5V8704). Undefined /
+  // 0 means full width, which is the default for every auto-generated view.
+  span?: number
   // Machine-aware status control (TKT-3G93B8): when present (even empty), the
   // field is a state machine and renders as a StatusControl instead of its
   // resolved widget. Undefined = not a machine field (or a surface without
@@ -227,6 +231,7 @@ defineExpose({
         v-for="row in widgetRows"
         :key="row.field.property"
         class="property-item"
+        :style="fieldSpanStyle(row.field.span)"
       >
         <dt>{{ row.field.label }}</dt>
         <dd>
@@ -301,32 +306,7 @@ defineExpose({
   color: var(--text-color);
 }
 
-.properties-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px 32px;
-  margin: 0;
-}
-
-.property-item {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2xs);
-  min-width: 200px;
-}
-
-.property-item dt {
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  text-transform: uppercase;
-  color: var(--muted-text);
-  margin: 0;
-}
-
-.property-item dd {
-  margin: 0;
-  font-size: var(--font-size-base);
-  color: var(--text-color);
-  line-height: 1.5;
-}
+/* .properties-list / .property-item now live in styles/properties-list.css,
+ * shared with PropertyDisplay and SidePanel. Do not redefine them here — the
+ * three scoped copies drifting apart is what this ticket removed. */
 </style>
