@@ -316,18 +316,18 @@ func (a *App) Meta() *metamodel.Metamodel { return a.State().Meta }
 // script, an export_render override, or an MCP-invoked script sees exactly
 // the caller's view — hidden entities absent, hidden properties redacted.
 // Identity resolves per call from the ctx, so one bundle serves every
-// request. WritePrepStore stays RAW so update_entity's read-before-write
-// cannot erase hidden properties (see lua.ReadDeps.WritePrepStore).
+// request. Note there is no raw read handle here at all: update_entity
+// patches through the manager, which does its own write-prep read
+// (TKT-80EWGM), so a redacted read can no longer feed a write.
 func (a *App) luaWriteDeps() lua.WriteDeps {
 	redactor := appRedactor(a)
 	return lua.WriteDeps{
 		ReadDeps: lua.ReadDeps{
-			VisibleReader:  a.scriptReader(redactor),
-			WritePrepStore: a.store,
-			Tracer:         a.scriptTracer(redactor),
-			Searcher:       a.searcher,
-			Meta:           a.Meta(),
-			ProjectRoot:    a.paths.Root,
+			VisibleReader: a.scriptReader(redactor),
+			Tracer:        a.scriptTracer(redactor),
+			Searcher:      a.searcher,
+			Meta:          a.Meta(),
+			ProjectRoot:   a.paths.Root,
 		},
 		EntityManager: a.entityManager,
 	}
@@ -741,12 +741,11 @@ func NewApp(
 	// (ReadDeps.VisibleReader) both go through it.
 	gatedReader := lateGatedReader{app: app}
 	readDeps := lua.ReadDeps{
-		VisibleReader:  gatedReader,
-		WritePrepStore: st,
-		Tracer:         lateGatedTracer{app: app},
-		Searcher:       searcher,
-		Meta:           meta,
-		ProjectRoot:    paths.Root,
+		VisibleReader: gatedReader,
+		Tracer:        lateGatedTracer{app: app},
+		Searcher:      searcher,
+		Meta:          meta,
+		ProjectRoot:   paths.Root,
 	}
 	val := validator.New(gatedReader, meta, readDeps)
 	app.validator = val

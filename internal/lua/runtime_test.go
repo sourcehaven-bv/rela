@@ -111,12 +111,11 @@ func (m *mockWorkspace) seedRelation(r *entity.Relation) {
 func (m *mockWorkspace) services(projectRoot string) WriteDeps {
 	return WriteDeps{
 		ReadDeps: ReadDeps{
-			VisibleReader:  m.store,
-			WritePrepStore: m.store,
-			Tracer:         tracer.New(m.store),
-			Searcher:       &mockSearcher{ws: m},
-			Meta:           m.meta,
-			ProjectRoot:    projectRoot,
+			VisibleReader: m.store,
+			Tracer:        tracer.New(m.store),
+			Searcher:      &mockSearcher{ws: m},
+			Meta:          m.meta,
+			ProjectRoot:   projectRoot,
 		},
 		EntityManager: &mockManager{ws: m},
 	}
@@ -191,6 +190,25 @@ func (m *mockManager) UpdateEntity(
 		return nil, err
 	}
 	return &entity.UpdateResult{Entity: e}, nil
+}
+
+// PatchEntity mirrors the real manager's targeted-write semantics
+// (read the STORED entity, merge, unset, then save) so binding tests
+// exercise the same preserve-what-you-did-not-name behavior they do
+// in production rather than a permissive stub.
+func (m *mockManager) PatchEntity(
+	ctx context.Context, id string, p entity.Patch,
+) (*entity.UpdateResult, error) {
+	stored, err := m.ws.store.GetEntity(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("entity not found: %s", id)
+	}
+	updated := stored.Clone()
+	p.Apply(updated)
+	if err := m.ws.store.UpdateEntity(ctx, updated); err != nil {
+		return nil, err
+	}
+	return &entity.UpdateResult{Entity: updated}, nil
 }
 
 func (m *mockManager) DeleteEntity(
@@ -2446,12 +2464,14 @@ func (s *ctxSpySearcher) Search(ctx context.Context, q search.Query) iter.Seq2[s
 func spiedDeps(realDeps WriteDeps, rec *ctxRecorder) WriteDeps {
 	return WriteDeps{
 		ReadDeps: ReadDeps{
-			VisibleReader:  &ctxSpyStore{Store: realDeps.WritePrepStore, rec: rec},
-			WritePrepStore: realDeps.WritePrepStore,
-			Tracer:         &ctxSpyTracer{inner: realDeps.Tracer, rec: rec},
-			Searcher:       &ctxSpySearcher{inner: realDeps.Searcher, rec: rec},
-			Meta:           realDeps.Meta,
-			ProjectRoot:    realDeps.ProjectRoot,
+			// The fixture's VisibleReader is backed by the mock store, so it
+			// satisfies store.Store; assert rather than carry a second raw
+			// handle just for the spy.
+			VisibleReader: &ctxSpyStore{Store: realDeps.VisibleReader.(store.Store), rec: rec},
+			Tracer:        &ctxSpyTracer{inner: realDeps.Tracer, rec: rec},
+			Searcher:      &ctxSpySearcher{inner: realDeps.Searcher, rec: rec},
+			Meta:          realDeps.Meta,
+			ProjectRoot:   realDeps.ProjectRoot,
 		},
 		EntityManager: realDeps.EntityManager,
 	}

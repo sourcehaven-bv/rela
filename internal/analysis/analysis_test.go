@@ -47,10 +47,9 @@ func newServiceWith(t *testing.T, meta *metamodel.Metamodel, seed func(store.Sto
 		Meta:   meta,
 		Tracer: tr,
 		LuaReadDeps: lua.ReadDeps{
-			VisibleReader:  st,
-			WritePrepStore: st,
-			Tracer:         tr,
-			Meta:           meta,
+			VisibleReader: st,
+			Tracer:        tr,
+			Meta:          meta,
 		},
 	})
 	if err != nil {

@@ -27,6 +27,10 @@ import (
 type Mutator interface {
 	CreateEntity(ctx context.Context, e *entity.Entity, opts entity.CreateOptions) (*entity.CreateResult, error)
 	UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.UpdateResult, error)
+	// PatchEntity applies a targeted set of property changes, preserving
+	// everything the patch does not name (TKT-80EWGM). Script runtimes use
+	// this for partial writes so they need no raw store handle.
+	PatchEntity(ctx context.Context, id string, p entity.Patch) (*entity.UpdateResult, error)
 	DeleteEntity(ctx context.Context, id string, cascade bool) (*entity.DeleteResult, error)
 	CreateRelation(ctx context.Context, from, relType, to string, opts entity.RelationOptions) (*entity.Relation, error)
 	DeleteRelation(ctx context.Context, from, relType, to string) error

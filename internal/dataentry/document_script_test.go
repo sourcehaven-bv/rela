@@ -428,10 +428,9 @@ print(got)
 	deps := func() lua.WriteDeps {
 		return lua.WriteDeps{
 			ReadDeps: lua.ReadDeps{
-				VisibleReader:  st,
-				WritePrepStore: st,
-				Tracer:         tracer.New(st),
-				ProjectRoot:    projectRoot,
+				VisibleReader: st,
+				Tracer:        tracer.New(st),
+				ProjectRoot:   projectRoot,
 			},
 			EntityManager: entitymanagertest.PanicOnUse{},
 		}

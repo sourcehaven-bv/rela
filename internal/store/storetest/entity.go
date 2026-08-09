@@ -38,10 +38,11 @@ func RunEntityTests(t *testing.T, f Factory) {
 	// structs directly rather than serializing through markdown, so a
 	// markdown-only assertion would not cover it (RR-KBWJPV).
 	//
-	// A redacted entity should never reach a write path at all — that is
-	// what lua.ReadDeps.WritePrepStore keeps separate — but the whole
-	// design rests on that separation, so it is worth one cheap assertion
-	// that a slip does not persist someone's per-principal view.
+	// A redacted entity should never reach a write path at all — write-prep
+	// reads go through entitymanager.PatchEntity, which merges against the
+	// raw stored entity — but the whole design rests on that separation, so
+	// it is worth one cheap assertion that a slip does not persist someone's
+	// per-principal view.
 	t.Run("RedactedNotPersisted", func(t *testing.T) {
 		s := f(t)
 		e := entity.New("FEAT-002", "feature")

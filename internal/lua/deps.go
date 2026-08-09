@@ -43,22 +43,19 @@ type ReadDeps struct {
 	// scripts can see.
 	//
 	// A nil VisibleReader DENIES (the binding raises); it never falls back
-	// to WritePrepStore. A forgotten wiring must not become an ACL bypass
+	// to a raw handle. A forgotten wiring must not become an ACL bypass
 	// (RR-X9NVHI).
-	VisibleReader EntityReader
-
-	// WritePrepStore is the RAW, ungated store handle, used by exactly one
-	// binding: rela.update_entity's read-before-write.
 	//
-	// DO NOT route read-outs through this, and DO NOT "tidy" it away by
-	// pointing update_entity at VisibleReader. update_entity does
-	// GetEntity → Clone → merge → save, so reading a REDACTED entity there
-	// would drop the caller's hidden properties from the clone and ERASE
-	// THEM ON SAVE — silent data destruction. This is the read-out /
-	// write-prep boundary DEC-ZBI39P calls out; the two fields are separate
-	// so the wrong choice is visible at the call site. Nil on reader
-	// runtimes (NewReader), which have no write bindings.
-	WritePrepStore store.Store
+	// There is deliberately NO second, raw store field beside this one.
+	// rela.update_entity used to need one for its read-before-write — and
+	// that field was a standing hazard, since pointing it at VisibleReader
+	// by mistake made the save erase whatever the caller could not see.
+	// The binding now builds an [entity.Patch] and lets the manager merge
+	// against the raw stored entity internally (TKT-80EWGM), so no Lua
+	// binding holds an ungated read path and the mistake is unavailable.
+	// Elevated reads are the sole exception and stay explicitly opt-in via
+	// [WriteDeps.ElevatedReader].
+	VisibleReader EntityReader
 
 	// Tracer is the graph-traversal surface. Wiring injects either the
 	// plain tracer or a visibility decorator over it; the trace bindings
@@ -85,13 +82,18 @@ type ReadDeps struct {
 // site supplies an implementation (the production one being the
 // project's EntityManager).
 //
-// Five methods — RenameEntity and UpdateRelation are intentionally
+// Six methods — RenameEntity and UpdateRelation are intentionally
 // absent because no Lua binding invokes them. Narrowed from the
 // wider EntityManager interface in TKT-IF37 to drop lua's transitive
 // dependency on internal/entitymanager.
+//
+// PatchEntity is what rela.update_entity is built on: the binding names
+// the properties the script touched and nothing else, so it needs no raw
+// store handle of its own to read-modify-write through (TKT-80EWGM).
 type Mutator interface {
 	CreateEntity(ctx context.Context, e *entity.Entity, opts entity.CreateOptions) (*entity.CreateResult, error)
 	UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.UpdateResult, error)
+	PatchEntity(ctx context.Context, id string, p entity.Patch) (*entity.UpdateResult, error)
 	DeleteEntity(ctx context.Context, id string, cascade bool) (*entity.DeleteResult, error)
 	CreateRelation(ctx context.Context, from, relType, to string, opts entity.RelationOptions) (*entity.Relation, error)
 	DeleteRelation(ctx context.Context, from, relType, to string) error
@@ -117,13 +119,12 @@ type WriteDeps struct {
 	// ungated — the closure is the boundary, so a half-elevated read would
 	// be a confusing contract.
 	//
-	// SEPARATE from WritePrepStore on purpose, even though production wires
-	// both from the same raw store. WritePrepStore is present on EVERY
-	// writer runtime (update_entity's read-before-write needs it); routing
-	// elevated reads through it would hand every writer runtime an ungated
-	// read path and dissolve the two-key gate that makes elevation
-	// opt-in. This field is set at the same site, under the same two
-	// conditions, as ElevatedManager.
+	// This is now the ONLY raw read handle a writer runtime can carry, and
+	// it is opt-in: set at the same site, under the same two conditions, as
+	// ElevatedManager. Previously a second raw field (WritePrepStore) was
+	// present on EVERY writer runtime for update_entity's read-before-write;
+	// removing it (TKT-80EWGM) means an ungated read path now exists only
+	// where elevation was explicitly requested.
 	//
 	// Nil is a DENY, not a fallback: admin.get_entity raises rather than
 	// silently reading through the gated VisibleReader. Elevation that
