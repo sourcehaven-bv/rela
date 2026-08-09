@@ -123,8 +123,23 @@ so nobody builds on protection that is not yet there.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass
+- [x] PR URL documented below
 
-**PR:** <!-- pending -->
+All 21 code checks green: Test (`-race -shuffle=on`), Lint, E2E, Postgres
+Backend, Architecture, Frontend, Build, God-object lint, Lint Markdown,
+Vulnerability Check, Fuzz, CodeQL (go / actions / js-ts), and all 7
+Cross-Compile targets including both postgres variants.
+
+The `Rela Tickets` check failed while this box was unticked — correctly. It
+enforces "done review checklists cannot have unchecked items", which cannot
+be satisfied until CI has actually run. Resolved by finishing the workflow
+(tick once green, move the ticket to `done`), not by weakening the rule.
+
+`Docs` regenerates from `docs-project/` and fails on any diff. Verified
+locally by running `./scripts/generate-docs.sh` — the generator reproduces
+the cli-reference edit byte-for-byte, because the source entity was edited
+alongside the generated file.
+
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1306

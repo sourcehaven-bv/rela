@@ -5,7 +5,7 @@ title: 'Unified targeted-write primitive: entitymanager.PatchEntity replaces fou
 kind: refactor
 priority: medium
 effort: l
-status: review
+status: done
 ---
 
 Add a single targeted/partial entity-write primitive on `entitymanager.Manager`
