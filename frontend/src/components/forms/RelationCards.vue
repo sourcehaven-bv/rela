@@ -6,6 +6,8 @@ import 'slim-select/styles'
 import { useSchemaStore } from '@/stores'
 import { getEntityRelations, searchEntities, getEntity, getErrorMessage } from '@/api'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
+import InlineCreateFormModal from './InlineCreateFormModal.vue'
+import { useInlineCreate } from '@/composables/useInlineCreate'
 import type { FormFieldOrRelation, RelationProperty } from '@/types/config'
 import type { RelationEntry, Entity } from '@/types/entity'
 import type { PropertyDef } from '@/types/schema'
@@ -310,6 +312,10 @@ async function doSearch(q: string) {
 }
 
 function selectTarget(entity: Entity) {
+  // Clear any inline-create notice: picking a DIFFERENT target must not keep
+  // showing "Created <other thing>" next to it. handleInlineCreated re-sets it
+  // after this call.
+  justCreated.value = null
   selectedTarget.value = entity
   searchQuery.value = ''
   searchResults.value = []
@@ -318,6 +324,43 @@ function selectTarget(entity: Entity) {
   for (const prop of fieldProperties.value) {
     newMeta.value[prop.property] = ''
   }
+}
+
+// Inline-create targets for this relation's candidate types (TKT-OMUD56).
+// Presence is the affordance: the server lists a type only when the principal
+// may create it and a form resolves. Empty inside an already-nested form.
+const inlineCreateTargets = useInlineCreate(targetTypes)
+
+const showCreateModal = ref(false)
+const createTargetType = ref('')
+const createFormId = ref('')
+// Set after an inline create so the user can see the entity exists even if
+// they then abandon the link step — the entity is already persisted, and
+// silently closing would hide that (RR-3UOH1I).
+const justCreated = ref<string | null>(null)
+
+function openCreateModal(target: { entityType: string; formId: string }) {
+  createTargetType.value = target.entityType
+  createFormId.value = target.formId
+  showCreateModal.value = true
+}
+
+// Route the new entity into the normal link flow rather than linking it
+// outright: a relation with required edge properties still needs them filled,
+// and selectTarget is exactly the state that asks for them.
+// Clear the form id too, so the modal component unmounts rather than lingering
+// hidden with its stale focus/modal-stack state.
+function closeCreateModal() {
+  showCreateModal.value = false
+  createFormId.value = ''
+}
+
+function handleInlineCreated(entity: Entity) {
+  closeCreateModal()
+  // Order matters: selectTarget clears the notice (so picking a DIFFERENT
+  // target later doesn't keep showing a stale "Created …"), so set it after.
+  selectTarget(entity)
+  justCreated.value = entityDisplayTitle(entity)
 }
 
 function addRelation() {
@@ -344,6 +387,7 @@ function addRelation() {
   selectedTarget.value = null
   newMeta.value = {}
   showAddSearch.value = false
+  justCreated.value = null
 
   emitUpdate()
 }
@@ -368,6 +412,7 @@ function removeRelation(targetId: string) {
 }
 
 function cancelAdd() {
+  justCreated.value = null
   showAddSearch.value = false
   selectedTarget.value = null
   searchQuery.value = ''
@@ -611,10 +656,29 @@ function onDragEnd() {
         <div v-else-if="searchQuery && !searching" class="search-empty">
           No matching entities found
         </div>
+
+        <!-- Create a target that doesn't exist yet (TKT-OMUD56). -->
+        <div v-if="inlineCreateTargets.length > 0" class="inline-create-actions">
+          <button
+            v-for="target in inlineCreateTargets"
+            :key="target.entityType"
+            type="button"
+            class="add-new-btn"
+            @click="openCreateModal(target)"
+          >
+            + New {{ target.label }}
+          </button>
+        </div>
       </div>
 
       <!-- Property form for new relation -->
       <div v-if="selectedTarget" class="new-relation-form">
+        <!-- The inline-created entity already exists independently of this
+             link. Say so, or cancelling here looks like it was never created
+             (RR-3UOH1I). -->
+        <p v-if="justCreated" class="created-notice" role="status">
+          Created <strong>{{ justCreated }}</strong> — link it below.
+        </p>
         <div class="selected-target">
           Linking to: <strong>{{ selectedTarget.id }}</strong>
           {{
@@ -675,6 +739,15 @@ function onDragEnd() {
       >
         Cancel
       </button>
+
+      <InlineCreateFormModal
+        v-if="createFormId"
+        :show="showCreateModal"
+        :form-id="createFormId"
+        :entity-type="createTargetType"
+        @close="closeCreateModal"
+        @created="handleInlineCreated"
+      />
     </div>
 
     <button
@@ -1113,6 +1186,39 @@ function onDragEnd() {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+/* Inline create (TKT-OMUD56) */
+.inline-create-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-color);
+}
+
+.add-new-btn {
+  padding: 6px 10px;
+  background: none;
+  border: 1px dashed var(--border-color);
+  border-radius: 6px;
+  color: var(--accent-color, #6366f1);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.add-new-btn:hover {
+  background: var(--hover-bg);
+}
+
+.created-notice {
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--hover-bg);
+  color: var(--text-secondary);
+  font-size: 13px;
 }
 
 /* Buttons */

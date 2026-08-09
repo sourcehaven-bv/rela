@@ -967,8 +967,9 @@ func TestOpenFileCommand(t *testing.T) {
 		path     string
 		wantArgs []string // expected args including argv[0]
 	}{
-		{"darwin open", "darwin", "open", "/tmp/x.pdf", []string{"open", "/tmp/x.pdf"}},
-		{"darwin reveal", "darwin", "reveal", "/tmp/x.pdf", []string{"open", "-R", "/tmp/x.pdf"}},
+		// `--` terminates open(1) flag parsing so a path can never be read as a flag.
+		{"darwin open", "darwin", "open", "/tmp/x.pdf", []string{"open", "--", "/tmp/x.pdf"}},
+		{"darwin reveal", "darwin", "reveal", "/tmp/x.pdf", []string{"open", "-R", "--", "/tmp/x.pdf"}},
 		{"linux open", "linux", "open", "/tmp/x.pdf", []string{"xdg-open", "/tmp/x.pdf"}},
 		{"linux reveal", "linux", "reveal", "/tmp/sub/x.pdf", []string{"xdg-open", "/tmp/sub"}},
 		{"windows open", "windows", "open", `C:\x.pdf`, []string{"cmd", "/c", "start", "", `C:\x.pdf`}},
@@ -998,7 +999,7 @@ func TestOpenURLCommand(t *testing.T) {
 		url      string
 		wantArgs []string
 	}{
-		{"darwin", "darwin", "https://example.com", []string{"open", "https://example.com"}},
+		{"darwin", "darwin", "https://example.com", []string{"open", "--", "https://example.com"}},
 		{"linux", "linux", "https://example.com", []string{"xdg-open", "https://example.com"}},
 		{"windows", "windows", "https://example.com", []string{"cmd", "/c", "start", "", "https://example.com"}},
 	}

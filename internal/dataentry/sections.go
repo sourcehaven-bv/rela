@@ -53,12 +53,52 @@ func propertyToStrings(v any) []string {
 // human-readable form. Inaccessible is true when the underlying entity is
 // git-crypt encrypted and the value cannot be read with the current key —
 // frontends render a lock indicator instead of the (absent) value.
+// Span is the field's width on the 12-column layout grid, carried through from
+// the view config. 0 means full width — the default for every auto-generated
+// view, so a section with no spans authored renders as one scannable column.
 type SectionFieldData struct {
 	Property     string
 	Label        string
 	Values       []string
 	PropType     string
 	Inaccessible bool
+	Span         int
+}
+
+// buildSectionFieldData resolves one configured field against an entity.
+//
+// Shared by both construction sites — buildSectionEntityData (cards/list rows)
+// and the entry-source `properties` branch of buildSections (the detail page).
+// They were near-identical literals, which is exactly how a new field like Span
+// ends up wired into one and silently dropped from the other.
+func buildSectionFieldData(
+	f ViewSectionField, e *entity.Entity, eDef *metamodel.EntityDef,
+) SectionFieldData {
+	propType := ""
+	if eDef != nil {
+		if pd, ok := eDef.Properties[f.Property]; ok {
+			propType = pd.Type
+		}
+	}
+	// A label is authored, never derived (DEC-6C1NAA): an unset label falls
+	// back to the raw property name rather than a title-cased guess, which
+	// would bake an English convention into a language-neutral metamodel.
+	label := f.Label
+	if label == "" {
+		label = f.Property
+	}
+	return SectionFieldData{
+		Property:     f.Property,
+		Label:        label,
+		Values:       propertyToStrings(e.Properties[f.Property]),
+		PropType:     propType,
+		Inaccessible: e.IsInaccessible(f.Property),
+		// int, not dataentryconfig.Span: the named type exists to enforce
+		// strict YAML decoding at config load. Past that boundary the value is
+		// just a number, and the wire DTO shouldn't drag a config type onto
+		// the API surface.
+		Span: int(f.Span),
+	}
 }
 
 // SectionEntityData holds a resolved entity for template rendering.
@@ -172,25 +212,7 @@ func (h *viewsHandler) buildSectionEntityData(
 		FieldVerdicts: h.affordances.computeFieldAffordances(ctx, e),
 	}
 	for _, f := range secFields {
-		values := propertyToStrings(e.Properties[f.Property])
-		propType := ""
-		if eDef != nil {
-			if pd, ok := eDef.Properties[f.Property]; ok {
-				propType = pd.Type
-			}
-		}
-		// A label is authored, never derived (DEC-6C1NAA): an unset label
-		// falls back to the raw property name rather than a title-cased
-		// guess, which would bake an English convention into a
-		// language-neutral metamodel.
-		label := f.Label
-		if label == "" {
-			label = f.Property
-		}
-		sed.Fields = append(sed.Fields, SectionFieldData{
-			Property: f.Property, Label: label, Values: values, PropType: propType,
-			Inaccessible: e.IsInaccessible(f.Property),
-		})
+		sed.Fields = append(sed.Fields, buildSectionFieldData(f, e, eDef))
 	}
 	return sed
 }
@@ -218,22 +240,7 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 			switch sec.Display {
 			case "properties":
 				for _, f := range sec.Fields {
-					values := propertyToStrings(e.Properties[f.Property])
-					propType := ""
-					if entDef != nil {
-						if pd, ok := entDef.Properties[f.Property]; ok {
-							propType = pd.Type
-						}
-					}
-					// Authored, never derived — see DEC-6C1NAA above.
-					label := f.Label
-					if label == "" {
-						label = f.Property
-					}
-					sd.Fields = append(sd.Fields, SectionFieldData{
-						Property: f.Property, Label: label, Values: values, PropType: propType,
-						Inaccessible: e.IsInaccessible(f.Property),
-					})
+					sd.Fields = append(sd.Fields, buildSectionFieldData(f, e, entDef))
 				}
 			case "content":
 				sd.Content = e.Content

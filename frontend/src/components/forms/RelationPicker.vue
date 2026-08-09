@@ -5,7 +5,8 @@ import { isCancelledFetch } from '@/composables/usePageData'
 import { getEntityRelations } from '@/api'
 import { entityDisplayTitleWithId } from '@/utils/entityDisplay'
 import type { FormFieldOrRelation, Entity, RelationEntry, RelationAffordance } from '@/types'
-import InlineCreateModal from './InlineCreateModal.vue'
+import InlineCreateFormModal from './InlineCreateFormModal.vue'
+import { useInlineCreate } from '@/composables/useInlineCreate'
 
 // Per-edge state emitted on the incoming-changed channel after
 // TKT-GFQK unified the save path. DynamicForm wraps this into a
@@ -56,6 +57,9 @@ const searchQuery = ref('')
 const showDropdown = ref(false)
 const showCreateModal = ref(false)
 const createTargetType = ref('')
+// Form id for the open create modal, set alongside createTargetType so the
+// modal always renders the form the server resolved for that exact type.
+const createFormId = ref('')
 
 // For direction: incoming, the picker manages its own value list. The
 // parent's `:value` prop is sourced from `entity.relations`, which the
@@ -277,14 +281,31 @@ function formatEntityLabel(entity: Entity): string {
   return entityDisplayTitleWithId(entity)
 }
 
-function openCreateModal(targetType: string) {
-  createTargetType.value = targetType
+// Inline-create targets for this relation's candidate types. A type appears
+// only when the principal may create it AND a create form resolves — the
+// server decides both, so there is no permission arithmetic here. Empty inside
+// an already-nested form (the depth cap).
+const inlineCreateTargets = useInlineCreate(targetTypes)
+
+function openCreateModal(target: { entityType: string; formId: string }) {
+  createTargetType.value = target.entityType
+  createFormId.value = target.formId
   showCreateModal.value = true
   showDropdown.value = false
 }
 
+// Clear the form id too, so the modal component unmounts rather than lingering
+// hidden with its stale focus/modal-stack state.
+function closeCreateModal() {
+  showCreateModal.value = false
+  createFormId.value = ''
+}
+
 function handleEntityCreated(entity: Entity) {
-  // Add to candidates and select it
+  closeCreateModal()
+  // Push into candidates before selecting: `loadCandidates` fetches only the
+  // first 100 per type, so a freshly created entity is generally outside that
+  // window and would otherwise be unresolvable for display.
   candidates.value.push(entity)
   selectEntity(entity)
 }
@@ -374,15 +395,15 @@ onBeforeUnmount(() => {
           +{{ filteredCandidates.length - 10 }} more...
         </div>
         <!-- Add new buttons -->
-        <div v-if="targetTypes.length > 0" class="dropdown-actions">
+        <div v-if="inlineCreateTargets.length > 0" class="dropdown-actions">
           <button
-            v-for="targetType in targetTypes"
-            :key="targetType"
+            v-for="target in inlineCreateTargets"
+            :key="target.entityType"
             type="button"
             class="add-new-btn"
-            @click.stop="openCreateModal(targetType)"
+            @click.stop="openCreateModal(target)"
           >
-            + Add new {{ schemaStore.getEntityType(targetType)?.label || targetType }}
+            + New {{ target.label }}
           </button>
         </div>
       </div>
@@ -393,10 +414,12 @@ onBeforeUnmount(() => {
     <p v-if="help" class="field-help">{{ help }}</p>
 
     <!-- Inline Create Modal -->
-    <InlineCreateModal
+    <InlineCreateFormModal
+      v-if="createFormId"
       :show="showCreateModal"
+      :form-id="createFormId"
       :entity-type="createTargetType"
-      @close="showCreateModal = false"
+      @close="closeCreateModal"
       @created="handleEntityCreated"
     />
   </div>

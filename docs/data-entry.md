@@ -337,6 +337,7 @@ Each entry in `fields:` configures one property input:
 | `default`     | string            | Default value for new entities                                 |
 | `hidden`      | bool              | Include in form data but hide from UI                          |
 | `widget`      | string            | Input widget type (see below)                                  |
+| `span`        | int (1-12)        | Width on the layout grid; omit for full width (see below)      |
 | `transitions` | map[string]list   | Allowed state transitions for enum fields (edit forms only)    |
 
 > **Labels are authored, never derived.** When `label` is omitted the raw
@@ -347,6 +348,61 @@ Each entry in `fields:` configures one property input:
 > label you want, in your project's own language. The same rule applies to list
 > column headers, relation field labels, view-section fields, and Lua flow
 > fields. `rela migrate` will never remove a `label:` you have written.
+
+### Field Layout (`span`)
+
+Fields lay out on a **12-column grid**. A field with no `span` takes the full
+row, so a form or view section reads as one scannable column by default — you
+have to author nothing to get a sensible layout.
+
+Set `span` to put related fields side by side:
+
+```yaml
+fields:
+  - property: title # full width (no span)
+  - property: description
+    widget: textarea # full width
+  - property: priority
+    span: 4 # ┐
+  - property: reporter
+    span: 4 # ├ three across one row (4+4+4 = 12)
+  - property: assignee
+    span: 4 # ┘
+  - property: due_date
+    span: 6 # ┐ two across the next row
+  - property: estimated_hours
+    span: 6 # ┘
+```
+
+`span` works the same way on form fields and on view-section fields, so the
+model is worth learning once.
+
+**Adjacency is something you declare.** Two fields share a row because you said
+they belong together — not because the browser window happened to be wide
+enough. That is the point: a layout that regroups itself at different window
+sizes is not a layout you can reason about.
+
+Row behaviour, all deliberate:
+
+- **A row that doesn't add up to 12 leaves the remainder empty.** Two `span: 5`
+  fields occupy 10 columns and the last 2 stay blank; fields do not stretch to
+  close the gap.
+- **A field that doesn't fit wraps to the next row**, leaving the remainder of
+  the previous one empty. `span: 8` followed by `span: 6` gives you two rows.
+- **On narrow screens every field goes full width.** A `span: 4` date input on a
+  phone would be unusable, so the grid collapses to one column below 640px.
+- **Long-form values ignore `span`** on entity detail pages: a paragraph
+  squeezed into a third of the row is unreadable whatever the config says.
+
+A `span` outside 1-12 is a **config error at startup**, reported with the
+offending field's position — rela will not silently round it or ignore it:
+
+```text
+form "create_ticket": field[3]: span 13 is out of range (must be 1-12, or omitted for full width)
+```
+
+A `span` on a **relation** is also an error: relation widgets (card lists,
+searchable pickers) always take the full row, so a narrow one would break them.
 
 ### Widget Types
 
@@ -436,8 +492,6 @@ Each entry in `relations:` configures a relation picker:
 | `label`        | string | Display label                                                  |
 | `required`     | bool   | At least one relation must be selected                         |
 | `widget`       | string | `"select"`, `"multi-select"`, `"cards"`, or `"search"` (auto-detected) |
-| `allow_create` | bool   | Show an inline "create new" button                             |
-| `create_form`  | string | Form name to use for inline creation                           |
 | `properties`   | list   | Editable properties on the relation (only with `cards` widget) |
 
 **Relation widget types:**
@@ -452,9 +506,35 @@ Each entry in `relations:` configures a relation picker:
 Widget is auto-detected based on metamodel: if the relation type has `properties` or `content: true` defined,
 the UI uses `cards`. Otherwise, cardinality determines `select` vs `multi-select`.
 
-**Inline creation:** When `allow_create: true` and `create_form` is set, a button appears next to
-the relation picker. Clicking it opens a modal with the referenced form, and the newly created
-entity is automatically linked.
+**Inline creation:** A `+ New <Type>` button appears in the relation widget when you need to link
+something that does not exist yet. Clicking it opens the target type's create form in a modal,
+and the new entity is selected for linking — all without leaving the form you are filling in, so
+your in-progress input is preserved.
+
+There is no configuration for this. The button appears for a target type when **both** hold:
+
+1. the current user has permission to `create` that entity type, and
+2. a form is registered for that type.
+
+That means you control it the same way you control everything else: by registering (or not
+registering) a form for the type, and through `acl.yaml`. This mirrors how the side panel's "Add"
+buttons already resolve their form.
+
+Because a create form is an ordinary form definition, **a deliberately small form gives a small
+inline modal** — if you want inline creation to ask for a title and nothing else, register a form
+with just that field. The form definition *is* the "which fields" mechanism.
+
+Two details worth knowing:
+
+- If a type has only an `mode: edit` form, that form is used (an edit form works for creation when
+  no entity id is supplied). Register a dedicated create form if you want different fields.
+- `visible_when` inside the nested form is evaluated against the **nested** entity's own values.
+  A condition cannot reference the parent form you opened it from.
+- Nesting stops at one level: a relation field *inside* the inline modal offers link-existing only.
+
+> **Changed:** `allow_create` and `create_form` on a form relation are no longer read — the rule
+> above replaced them. Leaving them in your YAML is harmless (they are ignored), but you can delete
+> them. If a `+ New` button disappeared after upgrading, the target type has no registered form.
 
 ### Reverse (incoming) Relations
 
@@ -609,9 +689,15 @@ step. An out-of-range or non-numeric `?step=` falls back to the first step.
 blocks progression while any are invalid. The final step's Submit re-validates
 every visible step.
 
-**Hidden branches are not saved.** If a step or field is hidden by a
+**Hidden branches are not saved on create.** If a step or field is hidden by a
 `visible_when` that is false at submit time, its values are dropped from the
-created/updated entity — a toggled-off branch never persists stale data.
+**created** entity — a branch the user revealed, filled, then abandoned never
+persists.
+
+**On edit, hiding does not delete.** A field that already had a stored value
+keeps it when its branch hides, and gets it back when the branch is revealed.
+Hiding is a presentation decision, not a delete. Use
+[`clear_when_hidden`](#clear_when_hidden) to opt a field into clearing.
 
 #### Condition expressions (`visible_when` / `required_when`)
 
@@ -650,6 +736,39 @@ Notes:
   a property that doesn't exist on the entity is reported at author time. (The
   check uses a slightly stricter grammar than the browser, so it may flag a few
   conditions the runtime would tolerate — treat every reported error as real.)
+
+#### `clear_when_hidden`
+
+Decides what happens to a field's **stored value** when its `visible_when` turns
+false while editing. Per-field; the default keeps the value.
+
+| Value | Behavior when the branch hides |
+| --- | --- |
+| `no` *(default)* | Keep the value. Hiding and revealing is lossless. |
+| `yes` | Clear the value. |
+
+```yaml
+fields:
+  - property: inkooproute
+  - property: inschrijfdeadline
+    visible_when: "form.inkooproute == 'aanbesteding'"
+    # omit clear_when_hidden (or set `no`) to keep the date when the
+    # branch hides; set `yes` to clear it
+```
+
+Notes:
+
+- Under the default, a hidden field's value is held client-side, so revealing
+  the branch again restores it with no server round-trip — and the value was
+  never deleted server-side, so it survives a reload too.
+- This is per-**field** only. When a whole step hides, each of its fields
+  honors its own setting.
+- Setting it without a `visible_when` is a config error — it could never apply.
+  A field on a conditional *step* is fine: the step can hide it.
+- An interactive `confirm` value (ask before clearing, undo the triggering
+  change on decline) is **not accepted yet** — a config using it fails
+  validation. It needs the form to distinguish "the user proposed a change"
+  from "the change was committed", which is tracked separately.
 
 ## Lists
 
@@ -2058,8 +2177,6 @@ forms:
         target_type: category
         label: "Category"
         widget: select
-        allow_create: true
-        create_form: create_category
 
   edit_ticket:
     entity_type: ticket

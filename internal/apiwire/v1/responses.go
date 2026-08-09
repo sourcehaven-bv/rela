@@ -331,12 +331,17 @@ type SidePanelSection struct {
 // human-readable rendering. Inaccessible is true when the underlying entity
 // is git-crypt encrypted — the field is known to exist in the schema but
 // its value cannot be read.
+// Span is the field's width on the 12-column layout grid (0 = full width).
+// Field order and types must stay in lockstep with dataentry.SectionFieldData:
+// the handlers convert between them with a direct struct conversion, so the
+// compiler is what keeps the wire surface and the internal DTO from drifting.
 type SectionField struct {
 	Property     string   `json:"property,omitempty"`
 	Label        string   `json:"label"`
 	Values       []string `json:"values,omitempty"`
 	PropType     string   `json:"propType,omitempty"`
 	Inaccessible bool     `json:"inaccessible,omitempty"`
+	Span         int      `json:"span,omitempty"`
 }
 
 // SidePanelEntity represents an entity in a side panel section.
@@ -375,6 +380,26 @@ type SidebarResponse struct {
 	// `_settings`) so the SPA can render the logo on first paint without
 	// blocking on a settings fetch.
 	LogoURL *string `json:"logoUrl,omitempty"`
+
+	// InlineCreate maps an entity type to the form id the SPA should use
+	// to create one inline from a relation field (TKT-OMUD56). A type
+	// appears ONLY when both conditions hold: the principal may create it,
+	// and a create form resolves for it. So presence alone is the offer —
+	// the client needs no second lookup and no permission arithmetic.
+	//
+	// Sending the resolved form id (rather than letting the client find
+	// its own) keeps `createFormForType`'s ordering authoritative in one
+	// place; the natsort-and-prefer-non-edit rule is not reimplemented
+	// client-side where it could silently diverge.
+	//
+	// It rides on the sidebar because this is the one boot-time payload
+	// that is already principal-scoped: `_config` is pinned
+	// principal-INDEPENDENT (TestNavPermission_ConfigUnfiltered) and
+	// `_schema` is a pure metamodel projection.
+	//
+	// A UI hint, never authorization: POST /api/v1/{plural} re-authorizes,
+	// so a stale or forged map can only surface a button that then 403s.
+	InlineCreate map[string]string `json:"inline_create,omitempty"`
 }
 
 // ConflictItem represents a conflicted file.
