@@ -49,4 +49,4 @@ RR-IRV2WJ, RR-NKWJS6, RR-23W88J (significant, addressed).
 - [x] All CI checks pass (monitored after push)
 - [x] PR URL documented below
 
-**PR:** *added after gh pr create*
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1305
