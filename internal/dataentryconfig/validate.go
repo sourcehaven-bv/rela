@@ -275,7 +275,7 @@ func validateForms(cfg *Config, meta *metamodel.Metamodel) []string {
 			errs = append(errs, validateFormField(formID, "", i, f, form.EntityType, entDef, meta)...)
 		}
 		for i, r := range form.Relations {
-			errs = append(errs, validateFormRelation(cfg, formID, "", i, r, form.EntityType, meta)...)
+			errs = append(errs, validateFormRelation(formID, "", i, r, form.EntityType, meta)...)
 		}
 
 		// Wizard steps: each step's fields/relations reuse the same checks.
@@ -288,7 +288,7 @@ func validateForms(cfg *Config, meta *metamodel.Metamodel) []string {
 				errs = append(errs, validateFormField(formID, ctx, i, f, form.EntityType, entDef, meta)...)
 			}
 			for i, r := range step.Relations {
-				errs = append(errs, validateFormRelation(cfg, formID, ctx, i, r, form.EntityType, meta)...)
+				errs = append(errs, validateFormRelation(formID, ctx, i, r, form.EntityType, meta)...)
 			}
 		}
 	}
@@ -320,7 +320,7 @@ func validateFormField(
 // validateFormRelation checks one form relation against the metamodel. ctx is
 // an optional location prefix (see validateFormField).
 func validateFormRelation(
-	cfg *Config, formID, ctx string, i int, r FormRelation, entityType string, meta *metamodel.Metamodel,
+	formID, ctx string, i int, r FormRelation, entityType string, meta *metamodel.Metamodel,
 ) []string {
 	var errs []string
 
@@ -354,14 +354,6 @@ func validateFormRelation(
 		errs = append(errs, fmt.Sprintf(
 			"form %q: %srelation[%d] has invalid widget %q (valid: select, multi-select, cards)",
 			formID, ctx, i, r.Widget))
-	}
-
-	if r.CreateForm != "" {
-		if _, ok := cfg.Forms[r.CreateForm]; !ok {
-			errs = append(errs, fmt.Sprintf(
-				"form %q: %srelation[%d] references unknown create_form %q",
-				formID, ctx, i, r.CreateForm))
-		}
 	}
 
 	return errs

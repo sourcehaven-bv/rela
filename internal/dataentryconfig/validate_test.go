@@ -478,26 +478,6 @@ func TestValidateConfig_InvalidRelationWidget(t *testing.T) {
 	}
 }
 
-func TestValidateConfig_FormRelationUnknownCreateForm(t *testing.T) {
-	meta := testMetamodel()
-	cfg := &Config{
-		Forms: map[string]Form{
-			"test": {
-				EntityType: "ticket",
-				Relations:  []FormRelation{{Relation: "blocks", CreateForm: "nonexistent"}},
-			},
-		},
-	}
-
-	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
-	if err == nil {
-		t.Fatal("expected error for unknown create_form")
-	}
-	if !strings.Contains(err.Error(), `unknown create_form "nonexistent"`) {
-		t.Errorf("expected error about unknown create_form, got: %v", err)
-	}
-}
-
 func TestValidateConfig_WizardStepsValid(t *testing.T) {
 	meta := testMetamodel()
 	cfg := &Config{

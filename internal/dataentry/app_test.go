@@ -347,6 +347,11 @@ func TestCreateFormForType(t *testing.T) {
 		}
 	})
 
+	// The edit-mode fallback is load-bearing, not incidental: an edit form
+	// works for creation when no entity id is supplied. Two callers depend on
+	// it — side-panel add targets (sections.go) and inline create
+	// (inlineCreateForms, TKT-OMUD56). "Fixing" this to return "" for an
+	// edit-only type would silently remove both affordances (RR-KGCF61).
 	t.Run("falls back to edit form", func(t *testing.T) {
 		app2, _ := testAppInstance()
 		app2.Cfg().Forms = map[string]Form{
@@ -355,6 +360,19 @@ func TestCreateFormForType(t *testing.T) {
 		got := app2.views.createFormForType("ticket")
 		if got != "edit-ticket" {
 			t.Errorf("expected edit-ticket as fallback, got %s", got)
+		}
+	})
+
+	t.Run("prefers a create form over an edit form regardless of name order", func(t *testing.T) {
+		app2, _ := testAppInstance()
+		// "a-edit" sorts before "z-create": preference must beat ordering,
+		// or an alphabetically-early edit form would win.
+		app2.Cfg().Forms = map[string]Form{
+			"a-edit":   {EntityType: "ticket", Mode: "edit"},
+			"z-create": {EntityType: "ticket"},
+		}
+		if got := app2.views.createFormForType("ticket"); got != "z-create" {
+			t.Errorf("expected z-create (non-edit preferred), got %s", got)
 		}
 	})
 

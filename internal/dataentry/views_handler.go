@@ -251,6 +251,7 @@ func (h *viewsHandler) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 		Navigation: navigation,
 	}
 	resp.LogoURL = h.logo.URL()
+	resp.InlineCreate = h.inlineCreateForms(r.Context())
 
 	writeV1JSON(w, http.StatusOK, resp)
 }
@@ -679,6 +680,60 @@ func (h *viewsHandler) editFormForType(entityType string) string {
 		}
 	}
 	return ""
+}
+
+// inlineCreateForms maps each entity type the principal may create inline to
+// the form id to create it with. A type is present only when BOTH conditions of
+// TKT-OMUD56 hold — a create form resolves for it, and the ACL permits
+// `create` — so presence alone is the affordance and the SPA performs no
+// permission arithmetic of its own.
+//
+// The form lookup runs first because it is a pure config read: a type nothing
+// can create has no ACL question worth asking, so this also keeps the ACL
+// evaluations to the types that could actually be offered.
+//
+// The `create` verdict is the same OpCreate question computeCollectionActions
+// asks for a list response, so a type's verdict here cannot diverge from the
+// one on GET /api/v1/{plural}. UI hint only: the write endpoint re-authorizes
+// (affordances_contract_test.go pins that invariant).
+//
+// This loops over entity types, so it resolves the principal's Request ONCE and
+// reuses it. Going through the top-level ACL entry point per type would rebuild
+// that scope every iteration — and role resolution walks `member-of` through
+// the store, so an N-type metamodel would pay N graph traversals on every app
+// load. Reusing the scope is exactly what it exists for.
+func (h *viewsHandler) inlineCreateForms(ctx context.Context) map[string]string {
+	s := h.schema()
+
+	// The middleware attaches a per-request scope; fall back to the unscoped
+	// path when one is absent (tests and any non-HTTP caller), which is
+	// correct-but-slower rather than a different answer.
+	scope := acl.FromContext(ctx)
+	mayCreate := func(entityType string) bool {
+		req := translateVerb("create", entityType, "")
+		if scope != nil {
+			return scope.AuthorizeWrite(ctx, req).Allow
+		}
+		return h.currentACL().AuthorizeWrite(ctx, req).Allow
+	}
+
+	var out map[string]string
+	for name := range s.Meta.Entities {
+		// Form lookup first: it is a pure config read, so a type nothing can
+		// create never costs an authorization.
+		formID := h.createFormForType(name)
+		if formID == "" {
+			continue
+		}
+		if !mayCreate(name) {
+			continue
+		}
+		if out == nil {
+			out = make(map[string]string)
+		}
+		out[name] = formID
+	}
+	return out
 }
 
 // createFormForType returns the first form ID that can be used to create an entity
