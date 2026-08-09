@@ -84,15 +84,18 @@ right end state and would delete the parser entirely. Deliberately not done here
 ## Pull Request
 
 - [x] Run `/pr` command to create PR and monitor CI
-- [x] ~~All CI checks pass~~ (BLOCKED, not skipped: this PR targets
-      #1282's branch, and ci.yml only triggers on PRs to main/develop, so
-      CI cannot run until #1282 merges and this retargets. The full
-      pipeline was run locally instead — see Automated Checks above.)
+- [x] All CI checks pass
 - [x] PR URL documented below
 
 **PR:** https://github.com/sourcehaven-bv/rela/pull/1285
 
-Stacked on #1282, so it targets `feat/field-span-layout-TKT-5V8704` rather than
-`develop` — **CI will not run until #1282 merges and this retargets**, the same
-constraint #1282 had against #1281. The full CI pipeline was run locally in the
-meantime (race tests, golangci-lint, the frontend job sequence, docs-check).
+#1282 has since merged, so this retargeted to `develop` and CI ran for the
+first time: **all checks green** (Test, Frontend, Lint, Architecture, Build,
+E2E, Fuzz, Postgres, Docs, Rela Tickets, CodeQL, all six cross-compiles).
+
+Getting there needed a rebase: #1282 was squash-merged, so `develop` held its
+work as one commit while this branch still carried the originals — same
+changes, different SHAs, hence conflicts. Replaying only this PR's own six
+commits onto `develop` resolved it with no manual conflict resolution.
+Re-verified afterwards: frontend 1542/1542, Go tests ok, golangci-lint 0
+issues, docs-check passes.
