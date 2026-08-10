@@ -148,19 +148,18 @@ const (
 // matter: an operator who adds custom.css and sees it served at /_custom/ but
 // never applied would reasonably file a bug.
 type shellVariants struct {
-	plain   []byte // neither file
-	css     []byte // custom.css only
-	js      []byte // custom.js only
-	both    []byte
-	enabled bool // false → always serve plain
+	plain []byte // neither file
+	css   []byte // custom.css only
+	js    []byte // custom.js only
+	both  []byte
 }
 
 // buildShellVariants precomputes every injected form of the shell.
 //
 // If the shell lacks the expected insertion points, injection is skipped for
 // that tag rather than producing corrupt HTML.
-func buildShellVariants(shell []byte, enabled bool) shellVariants {
-	v := shellVariants{plain: shell, enabled: enabled}
+func buildShellVariants(shell []byte) shellVariants {
+	v := shellVariants{plain: shell}
 	v.css = injectTags(shell, customCSSTag, "")
 	v.js = injectTags(shell, "", customJSTag)
 	v.both = injectTags(shell, customCSSTag, customJSTag)
@@ -168,10 +167,8 @@ func buildShellVariants(shell []byte, enabled bool) shellVariants {
 }
 
 // selectShell returns the shell to serve for the current filesystem state.
+// The caller is responsible for the enabled check.
 func (v shellVariants) selectShell(projectRoot string) []byte {
-	if !v.enabled {
-		return v.plain
-	}
 	hasCSS := customAssetExists(projectRoot, customCSSFile)
 	hasJS := customAssetExists(projectRoot, customJSFile)
 	switch {
@@ -225,9 +222,41 @@ func insertBefore(s, marker, tag string) string {
 	return s[:i] + tag + "\n" + indent + s[i:]
 }
 
-// customInjectionEnabled reports whether the SPA shell should reference the
-// operator's customisation files. Defaults to true; an operator opts out via
-// app.disable_custom_injection in data-entry.yaml.
-func (a *App) customInjectionEnabled() bool {
-	return !a.State().Cfg.App.DisableCustomInjection
+// customAssets owns the operator-customisation surface: locating the two files
+// under the project root, serving them, and deciding which SPA shell variant to
+// hand out.
+//
+// A focused type rather than more methods on App — these four fields are one
+// coherent thing (where the files live, whether referencing them is enabled,
+// and the precomputed shells), and nothing here needs the rest of App.
+type customAssets struct {
+	projectRoot string
+	// enabled is read per request rather than snapshotted: data-entry.yaml is
+	// reloadable, so caching the flag at construction would leave a running
+	// server honoring a stale disable_custom_injection.
+	enabled  func() bool
+	variants shellVariants
+}
+
+// newCustomAssets precomputes the shell variants once. shell is the embedded
+// index.html; enabled is consulted per request.
+func newCustomAssets(projectRoot string, shell []byte, enabled func() bool) *customAssets {
+	return &customAssets{
+		projectRoot: projectRoot,
+		enabled:     enabled,
+		variants:    buildShellVariants(shell),
+	}
+}
+
+// shell returns the SPA shell to serve for the current filesystem and config
+// state, or nil when there is no shell to rewrite (unreadable embedded
+// index.html) and the caller should fall back to the plain file server.
+func (c *customAssets) shell() []byte {
+	if len(c.variants.plain) == 0 {
+		return nil
+	}
+	if !c.enabled() {
+		return c.variants.plain
+	}
+	return c.variants.selectShell(c.projectRoot)
 }

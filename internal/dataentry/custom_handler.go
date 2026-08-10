@@ -5,8 +5,8 @@ import (
 	"strings"
 )
 
-// handleCustomAsset serves the operator's custom.css / custom.js from the
-// project root at /_custom/<name>.
+// serveAsset serves the operator's custom.css / custom.js from the project root
+// at /_custom/<name>.
 //
 // Every failure is a uniform 404 — a missing file, a directory, an oversize
 // file and a non-allowlisted name are indistinguishable. That is not a
@@ -14,10 +14,14 @@ import (
 // entity data, and the root CLAUDE.md rule says config is not a secret); it is
 // simply that there is no useful distinction to draw and one path is easier to
 // reason about.
-func (a *App) handleCustomAsset(w http.ResponseWriter, r *http.Request) {
+//
+// Note this is NOT gated on the injection flag: disable_custom_injection only
+// suppresses the shell references, so an operator can still fetch the files
+// directly to check what is being served.
+func (c *customAssets) serveAsset(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimPrefix(r.URL.Path, customURLPrefix)
 
-	body, err := openCustomAsset(a.paths.Root, name)
+	body, err := openCustomAsset(c.projectRoot, name)
 	if err != nil {
 		http.NotFound(w, r)
 		return

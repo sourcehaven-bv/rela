@@ -113,7 +113,19 @@ func (a *App) NewRouter() http.Handler {
 	// Operator customisation assets (custom.css / custom.js from the project
 	// root). Registered before the SPA catch-all so /_custom/* never falls
 	// through to the shell. See custom.go for the trust model.
-	mux.HandleFunc(customURLPrefix, a.handleCustomAsset)
+	//
+	// The enabled check is a closure, not a snapshot: data-entry.yaml is
+	// reloadable, so caching disable_custom_injection here would leave a
+	// running server honoring a stale value.
+	//
+	// Serving is independent of injection: an unreadable shell (or
+	// disable_custom_injection) must not stop /_custom/ from serving, so the
+	// route is registered unconditionally and only the shell rewrite degrades.
+	shell, shellErr := fs.ReadFile(spaFS, spaIndexFile)
+	custom := newCustomAssets(a.paths.Root, shell, func() bool {
+		return shellErr == nil && !a.State().Cfg.App.DisableCustomInjection
+	})
+	mux.HandleFunc(customURLPrefix, custom.serveAsset)
 
 	// Serve Vue SPA at root (catch-all for client-side routing).
 	//
@@ -130,7 +142,7 @@ func (a *App) NewRouter() http.Handler {
 	// TRIP-WIRE: if a CSP is ever applied to the SPA route, that reasoning
 	// lapses and this injection must be revisited (it would need to permit
 	// the /_custom/ paths explicitly).
-	mux.Handle("/", a.spaHandlerWithCustom(spaFS))
+	mux.Handle("/", spaHandlerWithCustom(spaFS, custom))
 
 	// Apply security middlewares as the outermost wrapper so they protect
 	// every route, including the SSE handlers and static assets. The
@@ -659,6 +671,7 @@ func stampAuditPrincipal(next http.Handler, resolve PrincipalResolver) http.Hand
 
 // spaHandlerWithCustom wraps spaHandler so that requests resolving to the SPA
 // shell are served a variant referencing the operator's custom.css/custom.js.
+// An unreadable shell degrades to the plain SPA handler.
 //
 // The four possible shells are precomputed once at router construction (no
 // per-request rewrite, so there is no cache-population race and no lock on the
@@ -666,26 +679,18 @@ func stampAuditPrincipal(next http.Handler, resolve PrincipalResolver) http.Hand
 // check, so adding custom.css does not require a server restart.
 //
 // Requests for real files (assets, favicon, …) are delegated untouched.
-func (a *App) spaHandlerWithCustom(fsys fs.FS) http.Handler {
+func spaHandlerWithCustom(fsys fs.FS, custom *customAssets) http.Handler {
 	fallback := spaHandler(fsys)
 
-	shell, err := fs.ReadFile(fsys, spaIndexFile)
-	if err != nil {
-		// CheckEmbeddedSPA already verifies index.html at startup; if it is
-		// somehow unreadable here there is nothing to inject into, so serve
-		// the SPA exactly as before rather than failing the whole router.
-		return fallback
-	}
-
-	variants := buildShellVariants(shell, a.customInjectionEnabled())
-
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !servesSPAShell(fsys, r.URL.Path) {
+		body := custom.shell()
+		// A non-shell path, or an unreadable shell (nil body): delegate to the
+		// plain file server exactly as before.
+		if body == nil || !servesSPAShell(fsys, r.URL.Path) {
 			fallback.ServeHTTP(w, r)
 			return
 		}
 
-		body := variants.selectShell(a.paths.Root)
 		h := w.Header()
 		h.Set("Content-Type", "text/html; charset=utf-8")
 		// The shell is rewritten per filesystem state, so the embedded file's

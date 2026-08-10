@@ -137,7 +137,7 @@ const testShell = "<!DOCTYPE html>\n<html>\n  <head>\n    <title>rela</title>\n 
 func TestBuildShellVariants_NoInjectionWhenAbsent(t *testing.T) {
 	// The strongest form of "no injection": a stock deployment's HTML is
 	// byte-identical to the embedded shell.
-	v := buildShellVariants([]byte(testShell), true)
+	v := buildShellVariants([]byte(testShell))
 	got := v.selectShell(t.TempDir())
 	if string(got) != testShell {
 		t.Errorf("shell was modified with no customisation files present:\ngot  %q\nwant %q", got, testShell)
@@ -172,8 +172,8 @@ func TestSelectShell(t *testing.T) {
 			for _, f := range tt.files {
 				writeCustom(t, root, f, "")
 			}
-			v := buildShellVariants([]byte(testShell), !tt.disableInject)
-			got := string(v.selectShell(root))
+			custom := newCustomAssets(root, []byte(testShell), func() bool { return !tt.disableInject })
+			got := string(custom.shell())
 
 			if gotCSS := strings.Contains(got, customCSSTag); gotCSS != tt.wantCSS {
 				t.Errorf("css tag present = %v, want %v", gotCSS, tt.wantCSS)
@@ -224,11 +224,10 @@ func TestInjectTags_MissingMarkers(t *testing.T) {
 // --- handler -----------------------------------------------------------
 
 func TestHandleCustomAsset(t *testing.T) {
-	app := newHandlerTestApp(t)
 	root := t.TempDir()
-	app.paths.Root = root
 	writeCustom(t, root, customCSSFile, ".a{color:red}")
 	writeCustom(t, root, "secret.txt", "TOPSECRET")
+	custom := newCustomAssets(root, []byte(testShell), func() bool { return true })
 
 	tests := []struct {
 		name            string
@@ -253,7 +252,7 @@ func TestHandleCustomAsset(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, tt.path, http.NoBody)
 			rec := httptest.NewRecorder()
-			app.handleCustomAsset(rec, req)
+			custom.serveAsset(rec, req)
 
 			if rec.Code != tt.wantStatus {
 				t.Fatalf("status = %d, want %d", rec.Code, tt.wantStatus)
@@ -370,4 +369,61 @@ func TestCustomAssetExists_MatchesOpen(t *testing.T) {
 			t.Error("a symlink escaping the project root must not count as present")
 		}
 	})
+}
+
+// TestCustomAssets_EnabledIsReadPerRequest pins that disable_custom_injection
+// is consulted live rather than snapshotted at construction. data-entry.yaml is
+// reloadable, so a snapshot would leave a running server honoring a stale
+// value — the operator flips the flag, reloads, and nothing changes.
+func TestCustomAssets_EnabledIsReadPerRequest(t *testing.T) {
+	root := t.TempDir()
+	writeCustom(t, root, customCSSFile, ".a{}")
+
+	enabled := true
+	custom := newCustomAssets(root, []byte(testShell), func() bool { return enabled })
+
+	if !strings.Contains(string(custom.shell()), customCSSTag) {
+		t.Fatal("expected the stylesheet reference while enabled")
+	}
+	enabled = false
+	if strings.Contains(string(custom.shell()), customCSSTag) {
+		t.Error("shell still references custom.css after the flag flipped to disabled")
+	}
+	enabled = true
+	if !strings.Contains(string(custom.shell()), customCSSTag) {
+		t.Error("shell did not pick the reference back up after re-enabling")
+	}
+}
+
+// TestCustomAssets_ServingIgnoresInjectionFlag pins that
+// disable_custom_injection suppresses only the shell references — the files
+// stay individually fetchable, which is what makes the flag usable for
+// bisecting whether a customisation is causing a bug.
+func TestCustomAssets_ServingIgnoresInjectionFlag(t *testing.T) {
+	root := t.TempDir()
+	writeCustom(t, root, customCSSFile, ".a{color:red}")
+	custom := newCustomAssets(root, []byte(testShell), func() bool { return false })
+
+	rec := httptest.NewRecorder()
+	custom.serveAsset(rec, httptest.NewRequest(http.MethodGet, customURLPrefix+customCSSFile, http.NoBody))
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200: the file must stay fetchable when injection is disabled", rec.Code)
+	}
+	if strings.Contains(string(custom.shell()), customCSSTag) {
+		t.Error("shell must not reference custom.css while injection is disabled")
+	}
+}
+
+// TestCustomAssets_UnreadableShellDegrades pins that an empty/unreadable
+// embedded shell yields nil (caller falls back to the plain file server)
+// rather than serving a corrupt or empty document.
+func TestCustomAssets_UnreadableShellDegrades(t *testing.T) {
+	root := t.TempDir()
+	writeCustom(t, root, customCSSFile, ".a{}")
+	custom := newCustomAssets(root, nil, func() bool { return true })
+
+	if custom.shell() != nil {
+		t.Error("expected nil shell so the caller delegates to the plain SPA handler")
+	}
 }
