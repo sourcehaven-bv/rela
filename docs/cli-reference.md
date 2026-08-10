@@ -169,15 +169,33 @@ rela list [type] [flags]
 
 **Flags:**
 
-| Flag      | Description                                   |
-| --------- | --------------------------------------------- |
-| `--where` | Filter by property (repeatable for AND logic) |
-| `--sort`  | Sort by property (or `id`, `modified`)        |
-| `--desc`  | Sort descending                               |
+| Flag       | Description                                                    |
+| ---------- | ------------------------------------------------------------- |
+| `--filter` | Filter by a predicate expression (recommended)                |
+| `--where`  | Filter by property, legacy syntax (repeatable, AND). Deprecated — prefer `--filter`. |
+| `--sort`   | Sort by property (or `id`, `modified`)                        |
+| `--desc`   | Sort descending                                               |
 
-**Filter Operators:**
+**`--filter` (predicate expressions):**
 
-The `--where` flag supports multiple comparison operators:
+`--filter` takes a boolean predicate over the entity's fields, so it can
+express conditions the legacy `--where` cannot — notably `or` and grouped
+logic:
+
+```bash
+rela list ticket --filter "entity.status == 'ready' and entity.priority > 3"
+rela list ticket --filter "entity.status == 'done' or entity.priority > 8"
+```
+
+Comparisons are typed by the property's declared metamodel type (integers
+compare numerically, dates instant-granularly). Host functions are
+available for pattern matching: `match(field, glob)`, `regex(field, re)`,
+`fuzzy(field, target)`, and `contains(list_field, value)`.
+
+**`--where` (legacy, deprecated):**
+
+`--where` is transpiled to a predicate internally; prefer `--filter`. It
+supports these comparison operators:
 
 | Operator | Description                     | Example                             |
 | -------- | ------------------------------- | ----------------------------------- |

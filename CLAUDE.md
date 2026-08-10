@@ -233,6 +233,34 @@ Subsystems (see each package's doc comment for details):
 
 Other packages under `internal/` are self-descriptive — ls the tree.
 
+### Condition engine: `internal/predicate` + `internal/predicatefns`
+
+`internal/predicate` is the **condition engine** — a sandboxed, typed
+boolean-expression evaluator (Lua-expression subset; no I/O at eval;
+depth/step budgets). `internal/predicatefns` is its metamodel-aware glue:
+the `ScalarType`/`EntityRecordType` type adapter, the host-fn stdlib
+(`match`/`regex`/`fuzzy`/`contains`/`len`/`today`), the `FromFilter`
+transpiler, and the `Evaluator` (compile-once, metamodel-scoped Program
+cache). New condition/`when:`-style code evaluates through `predicate`.
+
+These surfaces are on predicate: ACL affordance `when:`
+(`internal/affordances`), state-machine transition `When:`
+(`internal/statemachine`), wizard-form condition lint
+(`internal/conditionlint`), automation `on.when:`/`validate:`
+(`internal/automation`), metamodel validation `When:`/`Then:`
+(`internal/validation`), and the CLI `--filter` flag (`internal/cli/list.go`).
+
+`internal/filter` is NOT frozen — it remains the **query-filtering** DSL
+(the `--where` string syntax and metamodel legacy filter-strings). Legacy
+`--where`/`When:`/`Then:` inputs are transpiled to predicate via
+`predicatefns.FromFilter` on load (`--where` is deprecated in favor of
+`--filter`). `filter.Match` still directly backs query-filtering in
+`internal/dataentry` (SPA view/feed `where:`), `internal/lua` (script
+queries), `internal/search/searchparser`, and `internal/cli/analyze.go` —
+these were **not** migrated (they filter result sets, they don't gate
+conditions). Don't describe filter as "removed" or "frozen"; it's the
+query-filter DSL, predicate is the condition/policy engine.
+
 ### View export & transforms (`internal/transform`)
 
 The `transforms:` map in the metamodel registers named `markdown → format`
