@@ -1,4 +1,3 @@
-import type { Plugin } from 'vite'
 import postcss, { type AtRule, type Rule } from 'postcss'
 
 /**
@@ -107,18 +106,4 @@ export function wrapCss(source: string): string | null {
   out.append(layer)
 
   return out.toString()
-}
-
-export function relaCssLayer(): Plugin {
-  return {
-    name: 'rela-css-layer',
-    enforce: 'post',
-    generateBundle(_options, bundle) {
-      for (const [fileName, chunk] of Object.entries(bundle)) {
-        if (chunk.type !== 'asset' || !fileName.endsWith('.css')) continue
-        const wrapped = wrapCss(String(chunk.source))
-        if (wrapped !== null) chunk.source = wrapped
-      }
-    },
-  }
 }

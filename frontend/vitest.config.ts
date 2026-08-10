@@ -24,7 +24,7 @@ export default defineConfig({
     globals: true,
     environment: 'happy-dom',
     setupFiles: ['./src/test/setup.ts'],
-    include: ['src/**/*.{test,spec}.{js,ts,vue}'],
+    include: ['src/**/*.{test,spec}.{js,ts,vue}', '*.{test,spec}.ts'],
   },
   resolve: {
     alias: {

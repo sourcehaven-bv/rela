@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import postcss from 'postcss'
-import { wrapCss, RELA_LAYER } from '../../relaCssLayer'
+import { wrapCss, RELA_LAYER } from './relaCssLayer'
 
 /**
  * Pins the cascade-layer wrap that makes operator `custom.css` win.
