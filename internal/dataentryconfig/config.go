@@ -7,6 +7,7 @@ package dataentryconfig
 import (
 	"fmt"
 	"net/url"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
@@ -232,6 +233,49 @@ func (s *Span) UnmarshalYAML(value *yaml.Node) error {
 	}
 	*s = Span(int(f))
 	return nil
+}
+
+// ValidIconNames is the allowlist of icon names an author may reference from
+// data-entry.yaml. It MUST stay in step with the SPA's registry in
+// frontend/src/utils/icons.ts — TestIconAllowlistMatchesFrontend reads that
+// file and fails on drift, in either direction: a name the config accepts but
+// the SPA can't render silently degrades to a fallback icon, and a name the SPA
+// knows but the config rejects is a feature an author can't reach.
+//
+// Exported so the icon-name check and its test share one source.
+var ValidIconNames = map[string]bool{
+	// Navigation
+	"dashboard": true,
+	"list":      true,
+	"kanban":    true,
+	"search":    true,
+	"warning":   true,
+	"apps":      true,
+	"settings":  true,
+	"document":  true,
+	// Theme toggle
+	"sun":  true,
+	"moon": true,
+	// Workflow-ish names, useful for kanban columns
+	"inbox":  true,
+	"wrench": true,
+	"done":   true,
+	"clock":  true,
+	"status": true,
+}
+
+// validateIconName reports a config error for an unknown icon name.
+//
+// Loud at load, like validateSpan: the SPA falls back to a default icon so a
+// stale config still renders, but silently swapping an author's chosen icon for
+// a generic one with no diagnostic is the failure mode strict validation exists
+// to prevent. An empty name means "no icon" and is always valid.
+func validateIconName(icon, context string) []string {
+	if icon == "" || ValidIconNames[icon] {
+		return nil
+	}
+	return []string{fmt.Sprintf("%s: unknown icon %q (valid: %s)",
+		context, icon, strings.Join(sortedMapKeys(ValidIconNames), ", "))}
 }
 
 // validateSpan reports a config error for an out-of-range span.
@@ -471,15 +515,25 @@ type Kanban struct {
 }
 
 // KanbanColumn defines a column in the kanban board.
+// Icon names an icon from the shared registry to render beside the label
+// (see ValidIconNames). It is a NAME, never a glyph: putting an emoji in
+// Label works and is left alone, but the SPA will never parse one back out
+// of label text — that would silently rewrite what an author typed.
 type KanbanColumn struct {
 	Value string `yaml:"value" json:"value"`
 	Label string `yaml:"label,omitempty" json:"label,omitempty"`
+	Icon  string `yaml:"icon,omitempty" json:"icon,omitempty"`
 }
 
 // KanbanSwimlane defines a swimlane row in the kanban board.
+//
+// Carries Icon for the same reason KanbanColumn does: identical Value/Label
+// shape, rendered the same way, so supporting one and not the other would be
+// an arbitrary asymmetry an author would trip over.
 type KanbanSwimlane struct {
 	Value string `yaml:"value" json:"value"`
 	Label string `yaml:"label,omitempty" json:"label,omitempty"`
+	Icon  string `yaml:"icon,omitempty" json:"icon,omitempty"`
 }
 
 // KanbanCard defines how cards are displayed on the board.
@@ -522,6 +576,16 @@ type NavigationEntry struct {
 	// an entry id the sidebar has no way to supply. Enforced by
 	// validateNavEntry.
 	Document string `yaml:"document,omitempty" json:"document,omitempty"`
+
+	// Icon overrides the icon derived from the entry's kind. Without it every
+	// list entry gets the same list glyph and every board the same board one,
+	// so "My Tickets" and "Open Tickets" are visually identical — the sidebar
+	// carries no signal beyond its labels. Names come from the shared registry
+	// (see ValidIconNames); an unknown one is a load-time error.
+	//
+	// Action entries have no derived icon at all, so for those this is the
+	// only way to get one.
+	Icon string `yaml:"icon,omitempty" json:"icon,omitempty"`
 
 	// Permission optionally hides this entry from the sidebar for principals
 	// who do not hold the named global ACL permission (TKT-TXDK8U). Empty —

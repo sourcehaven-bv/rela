@@ -195,6 +195,14 @@ func validateNavigation(cfg *Config) []string {
 func validateNavEntry(nav NavigationEntry, cfg *Config) []string {
 	var errs []string
 
+	// The name itself is checked for groups too, so a typo is reported even on
+	// an entry that will also be rejected for having an icon at all.
+	label := nav.Label
+	if label == "" {
+		label = nav.Group
+	}
+	errs = append(errs, validateIconName(nav.Icon, fmt.Sprintf("navigation %q", label))...)
+
 	if nav.List != "" {
 		if _, ok := cfg.Lists[nav.List]; !ok {
 			errs = append(errs, fmt.Sprintf(
@@ -238,6 +246,13 @@ func validateNavEntry(nav NavigationEntry, cfg *Config) []string {
 		// permission to gate, and a gated group would be ambiguous with the
 		// empty-group rule (a group disappears on its own once every child is
 		// filtered out). Rejecting is clearer than silently ignoring it.
+		// Same reasoning as permission: a group renders as a bare section
+		// title with no icon slot, so an icon here would be silently dropped.
+		if nav.Icon != "" {
+			errs = append(errs, fmt.Sprintf(
+				"navigation: group %q cannot have an icon (a group renders as a section "+
+					"title; set icon on its items instead)", nav.Group))
+		}
 		if nav.Permission != "" {
 			errs = append(errs, fmt.Sprintf(
 				"navigation: group %q cannot have a permission (set it on the items instead; "+
@@ -1102,6 +1117,19 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 					}
 				}
 			}
+		}
+
+		// Icon names are checked unconditionally — deliberately NOT inside the
+		// enum guards above, which only run when column_property resolves to an
+		// enum. A bad icon name is wrong regardless, and burying it behind an
+		// unrelated error would surface it only after the first one was fixed.
+		for i, col := range kanban.Columns {
+			errs = append(errs, validateIconName(col.Icon,
+				fmt.Sprintf("kanban %q: columns[%d]", kanbanID, i))...)
+		}
+		for i, lane := range kanban.Swimlanes {
+			errs = append(errs, validateIconName(lane.Icon,
+				fmt.Sprintf("kanban %q: swimlanes[%d]", kanbanID, i))...)
 		}
 
 		// Validate swimlane_property if specified

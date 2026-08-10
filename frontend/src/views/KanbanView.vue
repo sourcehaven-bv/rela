@@ -6,7 +6,7 @@ import { useSchemaStore, useUIStore } from '@/stores'
 import { listAllEntities, updateEntity, getErrorMessage } from '@/api'
 import { entityKeys } from '@/queries/entities'
 import { beginOptimistic, rollbackOptimistic, settleOptimistic } from '@/queries/optimisticList'
-import type { Entity, KanbanConfig, KanbanCardField } from '@/types'
+import type { Entity, KanbanConfig, KanbanCardField, KanbanColumn, KanbanSwimlane } from '@/types'
 import { viewHeaderMarkdown, viewFooterMarkdown } from '@/types'
 import Badge from '@/components/common/Badge.vue'
 import BackButton from '@/components/common/BackButton.vue'
@@ -14,6 +14,7 @@ import { useBackTarget } from '@/composables/useBackTarget'
 import { actionAllowed } from '@/utils/affordancesWarning'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { renderMarkdown } from '@/utils/markdown'
+import { resolveIcon } from '@/utils/icons'
 
 const props = defineProps<{
   id: string
@@ -125,7 +126,7 @@ const columns = computed(() => {
     const val = String(entity.properties[property] || '')
     if (val) values.add(val)
   }
-  return Array.from(values).map((v) => ({ value: v, label: v }))
+  return Array.from(values).map((v): KanbanColumn => ({ value: v, label: v }))
 })
 
 const filteredEntities = computed(() => {
@@ -175,7 +176,7 @@ const swimlanes = computed(() => {
     const val = String(entity.properties[property] || '')
     if (val) values.add(val)
   }
-  return Array.from(values).sort().map((v) => ({ value: v, label: v }))
+  return Array.from(values).sort().map((v): KanbanSwimlane => ({ value: v, label: v }))
 })
 
 const hasSwimmlanes = computed(() => swimlanes.value.length > 0)
@@ -503,6 +504,13 @@ function createNew() {
         @drop="onDrop($event, column.value)"
       >
         <div class="column-header">
+          <component
+            :is="resolveIcon(column.icon)"
+            v-if="column.icon"
+            class="column-icon"
+            :size="16"
+            aria-hidden="true"
+          />
           <span class="column-title">{{ columnTitle(column) }}</span>
           <span class="column-count">{{ entitiesByColumn[column.value]?.length || 0 }}</span>
         </div>
@@ -554,6 +562,13 @@ function createNew() {
           :key="column.value"
           class="swimlane-column-header"
         >
+          <component
+            :is="resolveIcon(column.icon)"
+            v-if="column.icon"
+            class="column-icon"
+            :size="16"
+            aria-hidden="true"
+          />
           <span class="column-title">{{ columnTitle(column) }}</span>
         </div>
       </div>
@@ -565,6 +580,13 @@ function createNew() {
         class="swimlane-row"
       >
         <div class="swimlane-label-cell">
+          <component
+            :is="resolveIcon(swimlane.icon)"
+            v-if="swimlane.icon"
+            class="column-icon"
+            :size="16"
+            aria-hidden="true"
+          />
           <span class="swimlane-label">{{ swimlane.label || swimlane.value }}</span>
         </div>
         <div
@@ -763,6 +785,14 @@ function createNew() {
   align-items: center;
   padding: 12px 16px;
   border-bottom: 1px solid var(--border-color);
+}
+
+/* Config-authored icon beside a column or swimlane label. Inherits
+ * currentColor, so it follows the theme — the emoji it replaces could not. */
+.column-icon {
+  flex-shrink: 0;
+  margin-right: var(--space-xs);
+  vertical-align: text-bottom;
 }
 
 .column-title {
