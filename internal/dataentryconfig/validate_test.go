@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
@@ -193,6 +195,185 @@ func TestValidateConfig_UnknownFormFieldProperty(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), `property "unknown_prop" not in metamodel`) {
 		t.Errorf("expected error about unknown property, got: %v", err)
+	}
+}
+
+// BUG-FB0LN8: clear_when_hidden is allowlist-validated so a typo cannot
+// silently resolve to a destructive default.
+func TestValidateConfig_ClearWhenHiddenAllowlist(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		wantErr bool
+	}{
+		{name: "no", value: "no"},
+		{name: "yes", value: "yes"},
+		// "confirm" is deliberately NOT accepted yet — see ClearWhenHidden docs.
+		{name: "confirm is rejected until propose/commit lands", value: "confirm", wantErr: true},
+		{name: "empty means default", value: ""},
+		{name: "off is rejected", value: "off", wantErr: true},
+		{name: "false is rejected", value: "false", wantErr: true},
+		{name: "true is rejected", value: "true", wantErr: true},
+		{name: "typo is rejected", value: "confrim", wantErr: true},
+		{name: "never is rejected", value: "never", wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &Config{
+				Forms: map[string]Form{
+					"test": {
+						EntityType: "ticket",
+						Fields: []FormField{{
+							Property:        "assignee",
+							VisibleWhen:     "form.status == 'open'",
+							ClearWhenHidden: tc.value,
+						}},
+					},
+				},
+			}
+			err := ValidateConfig([]byte(`version: "1.0"`), cfg, testMetamodel())
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for clear_when_hidden %q", tc.value)
+				}
+				if !strings.Contains(err.Error(), "invalid clear_when_hidden") {
+					t.Errorf("expected allowlist error, got: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("clear_when_hidden %q should be valid, got: %v", tc.value, err)
+			}
+		})
+	}
+}
+
+// The checks must reach STEP-NESTED fields too — a wizard step hiding is the
+// motivating case for clear_when_hidden, so validating only top-level
+// form.Fields would miss exactly the configs most likely to use it.
+func TestValidateConfig_ClearWhenHiddenValidatedInWizardSteps(t *testing.T) {
+	cfg := &Config{
+		Forms: map[string]Form{
+			"test": {
+				EntityType: "ticket",
+				Steps: []FormStep{{
+					Title: "Assignment",
+					Fields: []FormField{{
+						Property:        "assignee",
+						VisibleWhen:     "form.status == 'open'",
+						ClearWhenHidden: "off", // invalid
+					}},
+				}},
+			},
+		},
+	}
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, testMetamodel())
+	if err == nil {
+		t.Fatal("expected error for invalid clear_when_hidden on a step field")
+	}
+	if !strings.Contains(err.Error(), "invalid clear_when_hidden") {
+		t.Errorf("expected allowlist error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "step[0]") {
+		t.Errorf("expected the error to locate the step, got: %v", err)
+	}
+}
+
+// clear_when_hidden without visible_when can never fire — flag it as a
+// config mistake rather than letting it sit there looking meaningful.
+func TestValidateConfig_ClearWhenHiddenRequiresVisibleWhen(t *testing.T) {
+	cfg := &Config{
+		Forms: map[string]Form{
+			"test": {
+				EntityType: "ticket",
+				Fields:     []FormField{{Property: "assignee", ClearWhenHidden: "yes"}},
+			},
+		},
+	}
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, testMetamodel())
+	if err == nil {
+		t.Fatal("expected error for clear_when_hidden without visible_when")
+	}
+	if !strings.Contains(err.Error(), "neither it nor its step has a visible_when") {
+		t.Errorf("expected without-visible_when error, got: %v", err)
+	}
+}
+
+// A field on a CONDITIONAL STEP can be hidden without a visible_when of its
+// own — the step hides it. clear_when_hidden is meaningful there, so the
+// "would never apply" check must not fire. Caught while building the demo
+// project: the naive rule rejected a perfectly valid wizard config.
+func TestValidateConfig_ClearWhenHiddenInheritsStepVisibility(t *testing.T) {
+	cfg := &Config{
+		Forms: map[string]Form{
+			"test": {
+				EntityType: "ticket",
+				Steps: []FormStep{{
+					Title:       "Assignment",
+					VisibleWhen: "form.status == 'open'", // the step hides the field
+					Fields: []FormField{{
+						Property:        "assignee",
+						ClearWhenHidden: "yes", // no field-level visible_when
+					}},
+				}},
+			},
+		},
+	}
+	if err := ValidateConfig([]byte(`version: "1.0"`), cfg, testMetamodel()); err != nil {
+		t.Errorf("a field on a conditional step may set clear_when_hidden, got: %v", err)
+	}
+}
+
+// ...but a field on an UNCONDITIONAL step still can't: nothing would ever hide it.
+func TestValidateConfig_ClearWhenHiddenOnUnconditionalStepRejected(t *testing.T) {
+	cfg := &Config{
+		Forms: map[string]Form{
+			"test": {
+				EntityType: "ticket",
+				Steps: []FormStep{{
+					Title: "Assignment", // no visible_when
+					Fields: []FormField{{
+						Property:        "assignee",
+						ClearWhenHidden: "yes",
+					}},
+				}},
+			},
+		},
+	}
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, testMetamodel())
+	if err == nil {
+		t.Fatal("expected error: neither the field nor its step can hide it")
+	}
+	if !strings.Contains(err.Error(), "neither it nor its step has a visible_when") {
+		t.Errorf("expected without-visible_when error, got: %v", err)
+	}
+}
+
+// The YAML footgun: bare `no`/`yes` are booleans under YAML 1.1. yaml.v3
+// uses the 1.2 core schema and the field is typed string, so they decode as
+// the literal text and land in the allowlist as written. Pinned because a
+// regression here would turn `clear_when_hidden: no` into the empty string —
+// which still means "no" today, but would silently drift if the default ever
+// changed.
+func TestFormField_ClearWhenHiddenYAMLScalars(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"clear_when_hidden: no", "no"},
+		{"clear_when_hidden: yes", "yes"},
+		{`clear_when_hidden: "no"`, "no"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.in, func(t *testing.T) {
+			var f FormField
+			if err := yaml.Unmarshal([]byte(tc.in), &f); err != nil {
+				t.Fatalf("unmarshal %q: %v", tc.in, err)
+			}
+			if f.ClearWhenHidden != tc.want {
+				t.Errorf("got %q, want %q", f.ClearWhenHidden, tc.want)
+			}
+			if !ValidClearWhenHidden[f.ClearWhenHidden] {
+				t.Errorf("%q decoded to %q which is not in the allowlist", tc.in, f.ClearWhenHidden)
+			}
+		})
 	}
 }
 

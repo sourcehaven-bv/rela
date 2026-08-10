@@ -13,6 +13,7 @@ import {
 import { isClearedForType } from '@/utils/formValue'
 import { useEntityIDControls } from '@/composables/useEntityIDControls'
 import { useConfirm } from '@/composables/useConfirm'
+import { useHiddenFieldPolicy, clearWhenHiddenOf } from '@/composables/useHiddenFieldPolicy'
 import type {
   Entity,
   PropertyDef,
@@ -217,6 +218,22 @@ const conditionBindings = (): Bindings => ({
 // that the host form already owns (see FormWizardOptions.syncUrl).
 const wizard = useFormWizard(formConfig, conditionBindings, { syncUrl: !props.embedded })
 
+// Field lookup by property, for reading per-field config (clear_when_hidden)
+// without re-scanning allFields at every call site.
+const fieldByProperty = computed(() => {
+  const map = new Map<string, FormFieldOrRelation>()
+  for (const f of allFields.value) {
+    if (f.property) map.set(f.property, f)
+  }
+  return map
+})
+
+// BUG-FB0LN8: the fate of a condition-hidden field's STORED value. Default is
+// to keep it — hiding is presentation, not a delete. See useHiddenFieldPolicy.
+const hiddenPolicy = useHiddenFieldPolicy({
+  policyFor: (property) => clearWhenHiddenOf(fieldByProperty.value.get(property)),
+})
+
 // Visible-step indices that currently have a validation error, so the stepper
 // can flag them. Recomputes as `errors` changes, so a pill's flag clears the
 // moment its field becomes valid.
@@ -232,13 +249,17 @@ const stepsWithErrors = computed<Set<number>>(() => {
 const errorCount = computed(() => Object.keys(errors.value).length)
 
 // React to a conditional field/step becoming hidden (its `visible_when` flipped
-// false). Two effects, both keyed on a property leaving `activeProperties`:
-//   1. Always: drop any standing validation error for the now-hidden field, so
-//      a hidden field can't leave a phantom "N fields need attention" with no
-//      flagged, reachable step (RR-U9ERK).
-//   2. Edit mode only: unset its stored value (autosave) — the edit analogue of
-//      create's submit-time hidden-branch pruning, so a toggled-off branch
-//      doesn't linger on the entity.
+// false). Three effects, keyed on a property entering or leaving
+// `activeProperties`:
+//   1. Always: drop any standing validation error for a now-hidden field, so it
+//      can't leave a phantom "N fields need attention" with no flagged,
+//      reachable step (RR-U9ERK).
+//   2. Hiding: RETAIN the value (out of formData) rather than unsetting it, then
+//      apply the field's `clear_when_hidden` policy — which defaults to keeping
+//      it. This used to unconditionally PATCH `properties_unset`, destroying
+//      stored data as a side effect of a UI visibility change (BUG-FB0LN8).
+//   3. Revealing: restore the retained value, so hide → reveal is lossless and
+//      needs no server round-trip.
 // Skips the initial hydration (`loading`); only touches wizard-governed
 // (managed) fields, so a plain non-conditional field is never affected.
 watch(
@@ -247,28 +268,51 @@ watch(
     if (loading.value || !prevActive) return
     const managed = wizard.managedProperties.value
     let nextErrors: Record<string, string> | null = null
+
+    // Reveal: put back what we held while the branch was hidden.
+    for (const prop of active) {
+      if (prevActive.has(prop) || !managed.has(prop)) continue
+      if (!hiddenPolicy.hasRetained(prop)) continue
+      if (!isClearedForType(formData.value[prop], entityType.value?.properties?.[prop])) continue
+      formData.value[prop] = hiddenPolicy.retainedValue(prop)
+      hiddenPolicy.release(prop)
+    }
+
+    const hiding: string[] = []
     for (const prop of prevActive) {
       if (active.has(prop) || !managed.has(prop)) continue // still shown / not governed
-      // Clear a standing error for the now-hidden field.
       if (errors.value[prop]) {
         nextErrors ??= { ...errors.value }
         delete nextErrors[prop]
       }
-      // Edit mode: unset a stored value so the hidden branch doesn't persist.
-      if (
-        isEdit.value &&
-        autoSave.value &&
-        formData.value[prop] !== undefined &&
-        formData.value[prop] !== '' &&
-        formData.value[prop] !== null
-      ) {
-        delete formData.value[prop]
-        autoSave.value.scheduleUnset(prop)
-      }
+      hiding.push(prop)
     }
     if (nextErrors) errors.value = nextErrors
+    if (hiding.length) applyHidePolicy(hiding)
   }
 )
+
+// Apply `clear_when_hidden` to the fields that just hid.
+//
+// Retention happens unconditionally, so a reveal is lossless whatever the
+// policy says; only the server-side clear is per-field. Synchronous on purpose:
+// both policies are decided from state we already hold, so there is no window
+// in which the form and the server can disagree. (An interactive `confirm`
+// policy would introduce exactly that window — see useHiddenFieldPolicy for why
+// it waits on the propose/commit refactor.)
+function applyHidePolicy(hiding: string[]) {
+  for (const prop of hiding) {
+    hiddenPolicy.retain(prop, formData.value[prop])
+  }
+  if (!isEdit.value) return // create has no stored value to lose (RR-O4SRG owns that path)
+  if (!autoSave.value) return // nothing can be written yet; retention already stands
+
+  for (const prop of hiddenPolicy.clearOnHide(hiding)) {
+    delete formData.value[prop]
+    hiddenPolicy.release(prop)
+    autoSave.value.scheduleUnset(prop)
+  }
+}
 
 // TKT-G7N5 F1 / TKT-3I5U / DEC-T0XIWQ: filter the config-driven field list
 // against the entity's affordances. Both render paths (this and the wizard's
@@ -361,6 +405,13 @@ async function loadEntity(force = false) {
     // The EntityDetail Edit button already hides for the same
     // verdict, so this branch fires only for direct-URL navigation.
     notEditable.value = !actionAllowed(entity, 'update')
+    // Retained hidden values belong to the form state we are about to replace.
+    // Carrying them across a reload — or across an entity switch, since this
+    // component is not re-keyed per entity — would restore one entity's value
+    // onto another, or resurrect a value the server no longer has (BUG-FB0LN8).
+    // The stored value is safe on the server, so dropping the cache is lossless:
+    // a later reveal reads it back from `properties`.
+    hiddenPolicy.releaseAll()
     formData.value = { ...entity.properties }
     relations.value = entity.relations ? { ...entity.relations } : {}
     content.value = entity.content || ''

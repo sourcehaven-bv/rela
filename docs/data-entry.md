@@ -689,9 +689,15 @@ step. An out-of-range or non-numeric `?step=` falls back to the first step.
 blocks progression while any are invalid. The final step's Submit re-validates
 every visible step.
 
-**Hidden branches are not saved.** If a step or field is hidden by a
+**Hidden branches are not saved on create.** If a step or field is hidden by a
 `visible_when` that is false at submit time, its values are dropped from the
-created/updated entity — a toggled-off branch never persists stale data.
+**created** entity — a branch the user revealed, filled, then abandoned never
+persists.
+
+**On edit, hiding does not delete.** A field that already had a stored value
+keeps it when its branch hides, and gets it back when the branch is revealed.
+Hiding is a presentation decision, not a delete. Use
+[`clear_when_hidden`](#clear_when_hidden) to opt a field into clearing.
 
 #### Condition expressions (`visible_when` / `required_when`)
 
@@ -730,6 +736,39 @@ Notes:
   a property that doesn't exist on the entity is reported at author time. (The
   check uses a slightly stricter grammar than the browser, so it may flag a few
   conditions the runtime would tolerate — treat every reported error as real.)
+
+#### `clear_when_hidden`
+
+Decides what happens to a field's **stored value** when its `visible_when` turns
+false while editing. Per-field; the default keeps the value.
+
+| Value | Behavior when the branch hides |
+| --- | --- |
+| `no` *(default)* | Keep the value. Hiding and revealing is lossless. |
+| `yes` | Clear the value. |
+
+```yaml
+fields:
+  - property: inkooproute
+  - property: inschrijfdeadline
+    visible_when: "form.inkooproute == 'aanbesteding'"
+    # omit clear_when_hidden (or set `no`) to keep the date when the
+    # branch hides; set `yes` to clear it
+```
+
+Notes:
+
+- Under the default, a hidden field's value is held client-side, so revealing
+  the branch again restores it with no server round-trip — and the value was
+  never deleted server-side, so it survives a reload too.
+- This is per-**field** only. When a whole step hides, each of its fields
+  honors its own setting.
+- Setting it without a `visible_when` is a config error — it could never apply.
+  A field on a conditional *step* is fine: the step can hide it.
+- An interactive `confirm` value (ask before clearing, undo the triggering
+  change on decline) is **not accepted yet** — a config using it fails
+  validation. It needs the form to distinguish "the user proposed a change"
+  from "the change was committed", which is tracked separately.
 
 ## Lists
 

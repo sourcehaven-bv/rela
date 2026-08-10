@@ -181,7 +181,10 @@ test.describe('Settings', () => {
 
       await settingsPage.navigateToSettings();
 
-      await settingsPage.expectAppInfo('Forms', '9'); // feature, bug, task, task_wizard, task_flat_conditional, tag, decision, module, specification
+      // feature, bug, task, task_wizard, task_flat_conditional,
+      // task_clear_when_hidden, task_mixed_policies, tag, decision,
+      // module, specification
+      await settingsPage.expectAppInfo('Forms', '11');
     });
 
     test('shows lists count', async ({ appPage }) => {

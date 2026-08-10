@@ -166,26 +166,54 @@ type SidePanelConfig struct {
 	Sections []ViewSection  `yaml:"sections" json:"sections"`
 }
 
+// ClearWhenHidden values. Default (empty) is ClearWhenHiddenNo: a
+// condition-hidden field KEEPS its stored value (BUG-FB0LN8).
+//
+// A third value, "confirm" (ask the user before clearing, and undo the
+// triggering change if they decline), is DELIBERATELY not accepted yet. It
+// needs the form to separate "the user proposed a change" from "the change was
+// committed" — today an edit mutates form state and arms the autosave in one
+// step, so a decline has to reconstruct state after the fact, which is where
+// several bugs lived. Rejecting the value outright is the honest interim: a
+// config that asks for it fails loudly at author time rather than silently
+// behaving like something else. See TKT-7S5735 (propose/commit refactor).
+const (
+	ClearWhenHiddenNo  = "no"
+	ClearWhenHiddenYes = "yes"
+)
+
+// ValidClearWhenHidden is the allowlist for FormField.ClearWhenHidden.
+var ValidClearWhenHidden = map[string]bool{
+	ClearWhenHiddenNo:  true,
+	ClearWhenHiddenYes: true,
+}
+
 // FormField defines a single field in a form.
 //
 // VisibleWhen / RequiredWhen are optional condition expressions (see the
 // frontend conditions engine) evaluated against earlier field values. They are
 // opaque strings to Go — the SPA parses and evaluates them; the `rela` config
-// lint checks them syntactically. VisibleWhen hides the field (and drops its
-// value from the payload) when false; RequiredWhen makes the field required
-// only when true.
+// lint checks them syntactically. VisibleWhen hides the field when false;
+// RequiredWhen makes the field required only when true. See ClearWhenHidden
+// for what happens to a hidden field's stored value.
 type FormField struct {
-	Property     string              `yaml:"property" json:"property"`
-	Label        string              `yaml:"label" json:"label,omitempty"`
-	Placeholder  string              `yaml:"placeholder" json:"placeholder,omitempty"`
-	Help         string              `yaml:"help" json:"help,omitempty"`
-	Widget       string              `yaml:"widget" json:"widget,omitempty"`
-	Required     *bool               `yaml:"required,omitempty" json:"required,omitempty"`
-	RequiredWhen string              `yaml:"required_when,omitempty" json:"required_when,omitempty"`
-	VisibleWhen  string              `yaml:"visible_when,omitempty" json:"visible_when,omitempty"`
-	Default      string              `yaml:"default" json:"default,omitempty"`
-	Hidden       bool                `yaml:"hidden" json:"hidden,omitempty"`
-	Transitions  map[string][]string `yaml:"transitions,omitempty" json:"transitions,omitempty"`
+	Property     string `yaml:"property" json:"property"`
+	Label        string `yaml:"label" json:"label,omitempty"`
+	Placeholder  string `yaml:"placeholder" json:"placeholder,omitempty"`
+	Help         string `yaml:"help" json:"help,omitempty"`
+	Widget       string `yaml:"widget" json:"widget,omitempty"`
+	Required     *bool  `yaml:"required,omitempty" json:"required,omitempty"`
+	RequiredWhen string `yaml:"required_when,omitempty" json:"required_when,omitempty"`
+	VisibleWhen  string `yaml:"visible_when,omitempty" json:"visible_when,omitempty"`
+	// ClearWhenHidden decides the fate of this field's STORED value when
+	// VisibleWhen turns false (BUG-FB0LN8). "" / "no" (default) keeps it —
+	// hiding is presentation, not a delete; "yes" clears it. Per-FIELD only:
+	// a step hiding is simply "all of its fields hid", each honoring its own
+	// setting, so there is no step-level key.
+	ClearWhenHidden string              `yaml:"clear_when_hidden,omitempty" json:"clear_when_hidden,omitempty"`
+	Default         string              `yaml:"default" json:"default,omitempty"`
+	Hidden          bool                `yaml:"hidden" json:"hidden,omitempty"`
+	Transitions     map[string][]string `yaml:"transitions,omitempty" json:"transitions,omitempty"`
 
 	// Span places the field on the 12-column layout grid; 0 means full width.
 	// Same semantics as ViewSectionField.Span — forms and view sections are
