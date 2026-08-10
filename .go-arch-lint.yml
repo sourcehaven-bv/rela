@@ -269,6 +269,8 @@ deps:
       - metamodel
       - output
       - pgstore
+      - predicate
+      - predicatefns
       - principal
       - project
       - projectsetup
