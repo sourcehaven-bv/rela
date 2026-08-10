@@ -51,6 +51,18 @@ func (r *Request) readQuery(ctx context.Context, entityType string) ReadQueryRes
 	}
 	sort.Strings(conferring)
 
+	// Fail closed on an empty member set. `Endpoints: nil` means "ANY
+	// endpoint" to store.GraphQuery (the absence-query widening), so
+	// handing it an empty set would degrade this gate from "reachable
+	// from ME" to "reachable from ANYONE" — a read bypass, not a
+	// narrowing. Today walkMembers only returns empty for an unstamped
+	// principal, which Declarative.ForPrincipal already rejects; this
+	// guard states the invariant HERE so the gate does not depend on a
+	// validation living in another file to stay safe.
+	if len(globals.Members) == 0 {
+		return ReadQueryResult{DenyAll: true}
+	}
+
 	q := &store.GraphQuery{
 		EntityType: entityType,
 		HasInbound: &store.RelationPredicate{

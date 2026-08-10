@@ -128,6 +128,76 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 			"an entity with no status is not in the 'status != doing' population")
 	})
 
+	// Value-shape parity. The naive backend compares Go values via
+	// propmatch; pgstore compares jsonb in SQL. Every shape a property
+	// can hold must land on the same answer in both, or a query means
+	// different things per backend — the failure CLAUDE.md's parity rule
+	// exists to prevent. Lists are the shape most likely to break: `->>`
+	// renders an array as JSON text, so a naive `slices.Contains` match
+	// and a SQL `= 'a'` disagree unless the SQL branches on type.
+	t.Run("Props_value_shapes", func(t *testing.T) {
+		s := f(t)
+		seedEntityWithProps(t, s, "doc", "D-str", map[string]any{"p": "a"})
+		seedEntityWithProps(t, s, "doc", "D-otherstr", map[string]any{"p": "z"})
+		seedEntityWithProps(t, s, "doc", "D-blank", map[string]any{"p": ""})
+		seedEntityWithProps(t, s, "doc", "D-absent", nil)
+		seedEntityWithProps(t, s, "doc", "D-emptylist", map[string]any{"p": []any{}})
+		seedEntityWithProps(t, s, "doc", "D-list", map[string]any{"p": []any{"a", "b"}})
+		seedEntityWithProps(t, s, "doc", "D-otherlist", map[string]any{"p": []any{"x"}})
+		seedEntityWithProps(t, s, "doc", "D-int", map[string]any{"p": 3})
+		seedEntityWithProps(t, s, "doc", "D-bool", map[string]any{"p": true})
+
+		shapeCases := []struct {
+			name string
+			pred store.PropPredicate
+			want []string
+		}{
+			{
+				// An empty list is as empty as an absent key: a
+				// multi-select with nothing selected reads as unset.
+				name: "is-empty covers absent, blank and empty list",
+				pred: store.PropPredicate{Property: "p", Op: store.PropEqual},
+				want: []string{"D-absent", "D-blank", "D-emptylist"},
+			},
+			{
+				name: "is-not-empty is the exact complement",
+				pred: store.PropPredicate{Property: "p", Op: store.PropNotEqual},
+				want: []string{"D-bool", "D-int", "D-list", "D-otherlist", "D-otherstr", "D-str"},
+			},
+			{
+				// Multi-select: a list matches when ANY element does.
+				name: "equality matches scalar and list membership",
+				pred: store.PropPredicate{Property: "p", Op: store.PropEqual, Value: "a"},
+				want: []string{"D-list", "D-str"},
+			},
+			{
+				// Exclusion must not sweep in the empty rows.
+				name: "exclusion excludes matches and empties",
+				pred: store.PropPredicate{Property: "p", Op: store.PropNotEqual, Value: "a"},
+				want: []string{"D-bool", "D-int", "D-otherlist", "D-otherstr"},
+			},
+			{
+				name: "int compares by text form",
+				pred: store.PropPredicate{Property: "p", Op: store.PropEqual, Value: "3"},
+				want: []string{"D-int"},
+			},
+			{
+				name: "bool compares by text form",
+				pred: store.PropPredicate{Property: "p", Op: store.PropEqual, Value: "true"},
+				want: []string{"D-bool"},
+			},
+		}
+		for _, tc := range shapeCases {
+			t.Run(tc.name, func(t *testing.T) {
+				got := runGraphQuery(t, s, store.GraphQuery{
+					EntityType: "doc",
+					Props:      []store.PropPredicate{tc.pred},
+				})
+				require.Equal(t, tc.want, got)
+			})
+		}
+	})
+
 	t.Run("Props_combine_with_relation_predicate", func(t *testing.T) {
 		s := f(t)
 		seedEntityWithProps(t, s, "ticket", "TKT-1", map[string]any{"status": "ready"})

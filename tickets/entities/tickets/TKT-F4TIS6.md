@@ -5,7 +5,7 @@ title: Extend store.GraphQuery with property predicates and relation negation
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+status: review
 ---
 
 ## Goal

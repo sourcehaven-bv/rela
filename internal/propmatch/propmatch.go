@@ -26,6 +26,15 @@
 // needs the metamodel's declared layout to avoid comparing dates
 // lexicographically, so it stays in [internal/filter] above the store.
 // Callers get [Undecided] for those and fall back.
+//
+// # Callers do not all route every shape here
+//
+// [internal/filter] intercepts list-valued properties before delegating
+// (it has richer per-operator list handling for regex/fuzzy), so only
+// its empty-list case reaches [Decide]. The store backends, by
+// contrast, route every shape through here. Both must agree — the
+// storetest conformance suite's Props_value_shapes case pins scalars,
+// lists, empty lists, ints and bools across backends.
 package propmatch
 
 import (

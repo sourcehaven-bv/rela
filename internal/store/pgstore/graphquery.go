@@ -150,30 +150,59 @@ func existsCond(body string, negate bool) string {
 
 // propCond renders one property predicate as a jsonb comparison.
 //
-// Emptiness must match [internal/propmatch] exactly, since the same
-// predicate may be answered by the naive backend: an ABSENT key and a
-// present-but-empty value are the SAME state. `properties ->> key`
-// yields NULL for a missing key (and for a JSON null), so the is-empty
-// test is "IS NULL OR empty-string".
+// This MUST agree with [propmatch.Decide] on every value shape, because
+// the same predicate is answered by the naive backend on fs/mem — the
+// backend-parity rule in CLAUDE.md. Two shapes need explicit handling
+// beyond a plain `->>` comparison:
 //
-// The NOT-equal case carries the same guard deliberately. SQL's
-// three-valued logic would already drop a NULL row (NULL <> 'x' is
+//   - LISTS (multi-select). `->>` renders an array as its JSON text
+//     (`["a", "b"]`), so a plain `= 'a'` would never match, while the
+//     naive side matches if ANY element equals the target. Equality
+//     therefore branches to the containment operator `?` for arrays.
+//     Likewise an EMPTY array is empty to the naive side but renders as
+//     the two-character string `[]`, which is neither NULL nor blank.
+//   - ABSENT vs JSON null vs empty string. All three are the SAME
+//     "empty" state; `->>` already collapses the first two to SQL NULL.
+//
+// The NOT-equal cases carry an explicit emptiness guard deliberately.
+// SQL's three-valued logic drops a NULL row on its own (NULL <> 'x' is
 // NULL, not true), but a present-but-empty value would otherwise
 // satisfy the comparison and widen the filter to include unset rows —
-// the asymmetry pinned by the conformance suite.
+// the asymmetry pinned by the conformance suite. COALESCE is needed on
+// the `?` operator for the same reason: it yields NULL, not false, for
+// a missing key.
 func propCond(b *sqlBuilder, p store.PropPredicate) string {
-	col := fmt.Sprintf("(e.properties ->> %s)", b.arg(p.Property))
+	propArg := b.arg(p.Property)
+	txt := fmt.Sprintf("(e.properties ->> %s)", propArg)
+	jsn := fmt.Sprintf("(e.properties -> %s)", propArg)
+
+	// isEmpty covers: missing key, JSON null, empty string, empty array.
+	isEmpty := fmt.Sprintf(
+		"(%s IS NULL OR %s = '' OR (jsonb_typeof(%s) = 'array' AND jsonb_array_length(%s) = 0))",
+		txt, txt, jsn, jsn)
+
 	switch {
 	case p.Value == "" && p.Op == store.PropEqual:
-		return fmt.Sprintf("(%s IS NULL OR %s = '')", col, col)
+		return isEmpty
 	case p.Value == "" && p.Op == store.PropNotEqual:
-		return fmt.Sprintf("(%s IS NOT NULL AND %s <> '')", col, col)
+		return "NOT " + isEmpty
 	case p.Op == store.PropNotEqual:
-		return fmt.Sprintf("(%s IS NOT NULL AND %s <> '' AND %s <> %s)",
-			col, col, col, b.arg(p.Value))
+		return fmt.Sprintf("(NOT %s AND NOT %s)", isEmpty, equalsCond(b, txt, jsn, p.Value))
 	default:
-		return fmt.Sprintf("%s = %s", col, b.arg(p.Value))
+		return equalsCond(b, txt, jsn, p.Value)
 	}
+}
+
+// equalsCond renders value equality, matching [propmatch] semantics: a
+// scalar compares by its text form, an array matches when ANY element
+// equals the target (multi-select). COALESCE keeps the containment test
+// false rather than NULL when the key is absent, so a surrounding NOT
+// behaves.
+func equalsCond(b *sqlBuilder, txt, jsn, value string) string {
+	valArg := b.arg(value)
+	return fmt.Sprintf(
+		"(CASE WHEN jsonb_typeof(%s) = 'array' THEN COALESCE(%s ? %s, false) ELSE %s = %s END)",
+		jsn, jsn, valArg, txt, valArg)
 }
 
 // buildGraphQuerySQL emits the SQL + args list for a GraphQuery. When

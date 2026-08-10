@@ -83,6 +83,19 @@ type PropPredicate struct {
 //     has the inbound/outbound edge. Example: ACL containment
 //     inheritance (EntityInheritThrough = ["belongs-to"]).
 type RelationPredicate struct {
+	// Endpoints restricts which entities on the far side of the relation
+	// count as a match.
+	//
+	// An EMPTY (or nil) Endpoints means "ANY endpoint": the predicate is
+	// then purely about the edge existing, which is what an absence
+	// query needs ("has no implements edge at all", with Negate). Note
+	// this is a WIDENING, not a narrowing — a caller deriving endpoints
+	// from a principal or a lookup MUST guard against accidentally
+	// passing an empty set, or the predicate silently stops constraining
+	// (see internal/acl.readQuery, which fails closed for exactly this).
+	//
+	// InheritThrough is inert when Endpoints is empty: there is nothing
+	// to expand from, so the endpoint closure is skipped entirely.
 	Endpoints []string
 	OfTypes   []string
 

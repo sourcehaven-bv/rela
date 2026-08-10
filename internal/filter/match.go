@@ -96,10 +96,17 @@ func Match(rec Record, filter *Filter, propDef *metamodel.PropertyDef, m *metamo
 // For = operator: returns true if ANY element equals the filter value
 // For != operator: returns true if NO element equals the filter value
 func matchList(list []string, filter *Filter, _ *metamodel.PropertyDef, _ *metamodel.Metamodel) (bool, error) {
-	// Handle empty list
+	// An empty list is empty in the same sense an absent key is —
+	// delegated to propmatch so this path cannot drift from the scalar
+	// one (or from the store-side pushdown, which answers the same
+	// predicate on the same data).
 	if len(list) == 0 {
-		if filter.Operator == OpEqual && filter.Value == "" {
-			return true, nil
+		if filter.Operator == OpEqual || filter.Operator == OpNotEqual {
+			op := propmatch.OpEqual
+			if filter.Operator == OpNotEqual {
+				op = propmatch.OpNotEqual
+			}
+			return propmatch.Decide([]string{}, op, filter.Value) == propmatch.Match, nil
 		}
 		return false, nil
 	}
