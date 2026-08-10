@@ -387,6 +387,14 @@ jobs:
     env:
       POSTGRES_USER: rela
       POSTGRES_DB: rela_test
+      # This job's entire purpose is proving the postgres backend matches the
+      # default one, and the pgstore suite SKIPS itself when the DSN is absent
+      # — a skip that is indistinguishable from a pass in the exit code and the
+      # CI summary. Without this, a dropped env var or a renamed service
+      # container silently turns the backend-parity gate into a no-op and
+      # nothing goes red. Setting it makes the suite hard-fail instead of
+      # skipping (see requireDBEnv in internal/store/pgstore/testdb_test.go).
+      RELA_TEST_DATABASE_REQUIRED: "1"
     services:
       postgres:
         image: postgres:16
@@ -444,8 +452,24 @@ jobs:
           go build -tags memorybackend ./...
           go build -tags postgres ./...
 
+      # RELA_TEST_DATABASE_REQUIRED (job env) makes the suite hard-fail rather
+      # than skip if the DSN is missing. The grep below is the second, blunter
+      # half of the same guard: it catches a suite that skipped for any OTHER
+      # reason — a future build tag, a t.Skip added inside a subtest, a
+      # conformance case quietly excluded — which the env var alone would not
+      # notice. Both are cheap; the failure they prevent (silent backend
+      # divergence) is not.
       - name: Run pgstore conformance + fuzz seeds (race) against PostgreSQL
-        run: go test -race -tags postgres ./internal/store/pgstore/...
+        run: |
+          set -euo pipefail
+          go test -race -tags postgres -v ./internal/store/pgstore/... 2>&1 | tee pgstore-test.log
+          if grep -q -- '--- SKIP' pgstore-test.log; then
+            echo "::error::pgstore tests SKIPPED in the Postgres Backend job."
+            echo "This job exists to prove backend parity; a skipped suite is not a pass."
+            grep -- '--- SKIP' pgstore-test.log
+            exit 1
+          fi
+          echo "OK: pgstore suite ran against PostgreSQL with no skips."
 
   # Cross-compile every (GOOS, build-tag) combination GoReleaser ships so a
   # platform-specific compile break (e.g. a unix-only syscall used without a
