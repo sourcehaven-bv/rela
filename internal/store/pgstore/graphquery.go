@@ -101,18 +101,7 @@ func buildMatchingIDsSQL(q store.GraphQuery, ids []string) (sqlText string, args
 	b := &sqlBuilder{}
 	typeArg := b.arg(q.EntityType)
 
-	var withParts []string
-	var existsParts []string
-	if q.HasInbound != nil {
-		w, ex := buildPredicateSQL(b, "in", *q.HasInbound, typeArg, store.DirectionIncoming)
-		withParts = append(withParts, w...)
-		existsParts = append(existsParts, ex)
-	}
-	if q.HasOutbound != nil {
-		w, ex := buildPredicateSQL(b, "out", *q.HasOutbound, typeArg, store.DirectionOutgoing)
-		withParts = append(withParts, w...)
-		existsParts = append(existsParts, ex)
-	}
+	withParts, condParts := buildPredicateParts(b, q, typeArg)
 	idsArg := b.arg(ids)
 
 	var sb strings.Builder
@@ -123,12 +112,68 @@ func buildMatchingIDsSQL(q store.GraphQuery, ids []string) (sqlText string, args
 	}
 	sb.WriteString("SELECT e.id FROM entities e WHERE e.type = " + typeArg)
 	sb.WriteString(" AND e.id = ANY(" + idsArg + ")")
-	for _, ex := range existsParts {
-		sb.WriteString(" AND EXISTS (")
-		sb.WriteString(ex)
-		sb.WriteByte(')')
+	for _, c := range condParts {
+		sb.WriteString(" AND " + c)
 	}
 	return sb.String(), b.args
+}
+
+// buildPredicateParts emits the CTE definitions and the WHERE-clause
+// conjuncts shared by [buildMatchingIDsSQL] and [buildGraphQuerySQL] —
+// relation predicates (as EXISTS / NOT EXISTS) and property predicates
+// (as jsonb comparisons). Kept in one place so the two query shapes
+// cannot drift.
+func buildPredicateParts(b *sqlBuilder, q store.GraphQuery, typeArg string) (with, conds []string) {
+	if q.HasInbound != nil {
+		w, ex := buildPredicateSQL(b, "in", *q.HasInbound, typeArg, store.DirectionIncoming)
+		with = append(with, w...)
+		conds = append(conds, existsCond(ex, q.HasInbound.Negate))
+	}
+	if q.HasOutbound != nil {
+		w, ex := buildPredicateSQL(b, "out", *q.HasOutbound, typeArg, store.DirectionOutgoing)
+		with = append(with, w...)
+		conds = append(conds, existsCond(ex, q.HasOutbound.Negate))
+	}
+	for _, p := range q.Props {
+		conds = append(conds, propCond(b, p))
+	}
+	return with, conds
+}
+
+// existsCond wraps an EXISTS body, negating it for an absence query.
+func existsCond(body string, negate bool) string {
+	if negate {
+		return "NOT EXISTS (" + body + ")"
+	}
+	return "EXISTS (" + body + ")"
+}
+
+// propCond renders one property predicate as a jsonb comparison.
+//
+// Emptiness must match [internal/propmatch] exactly, since the same
+// predicate may be answered by the naive backend: an ABSENT key and a
+// present-but-empty value are the SAME state. `properties ->> key`
+// yields NULL for a missing key (and for a JSON null), so the is-empty
+// test is "IS NULL OR empty-string".
+//
+// The NOT-equal case carries the same guard deliberately. SQL's
+// three-valued logic would already drop a NULL row (NULL <> 'x' is
+// NULL, not true), but a present-but-empty value would otherwise
+// satisfy the comparison and widen the filter to include unset rows —
+// the asymmetry pinned by the conformance suite.
+func propCond(b *sqlBuilder, p store.PropPredicate) string {
+	col := fmt.Sprintf("(e.properties ->> %s)", b.arg(p.Property))
+	switch {
+	case p.Value == "" && p.Op == store.PropEqual:
+		return fmt.Sprintf("(%s IS NULL OR %s = '')", col, col)
+	case p.Value == "" && p.Op == store.PropNotEqual:
+		return fmt.Sprintf("(%s IS NOT NULL AND %s <> '')", col, col)
+	case p.Op == store.PropNotEqual:
+		return fmt.Sprintf("(%s IS NOT NULL AND %s <> '' AND %s <> %s)",
+			col, col, col, b.arg(p.Value))
+	default:
+		return fmt.Sprintf("%s = %s", col, b.arg(p.Value))
+	}
 }
 
 // buildGraphQuerySQL emits the SQL + args list for a GraphQuery. When
@@ -163,19 +208,7 @@ func buildGraphQuerySQL(q store.GraphQuery, countOnly bool) (sqlText string, arg
 	// $1 is always q.EntityType.
 	typeArg := b.arg(q.EntityType)
 
-	var withParts []string
-	var existsParts []string
-
-	if q.HasInbound != nil {
-		w, ex := buildPredicateSQL(b, "in", *q.HasInbound, typeArg, store.DirectionIncoming)
-		withParts = append(withParts, w...)
-		existsParts = append(existsParts, ex)
-	}
-	if q.HasOutbound != nil {
-		w, ex := buildPredicateSQL(b, "out", *q.HasOutbound, typeArg, store.DirectionOutgoing)
-		withParts = append(withParts, w...)
-		existsParts = append(existsParts, ex)
-	}
+	withParts, condParts := buildPredicateParts(b, q, typeArg)
 
 	// Branch the SELECT list + ORDER BY: count queries skip column
 	// fetching and ordering; row queries return the standard entity
@@ -195,10 +228,8 @@ func buildGraphQuerySQL(q store.GraphQuery, countOnly bool) (sqlText string, arg
 		sb.WriteByte('\n')
 	}
 	sb.WriteString("SELECT " + selectList + " FROM entities e WHERE e.type = " + typeArg)
-	for _, ex := range existsParts {
-		sb.WriteString(" AND EXISTS (")
-		sb.WriteString(ex)
-		sb.WriteByte(')')
+	for _, c := range condParts {
+		sb.WriteString(" AND " + c)
 	}
 	sb.WriteString(orderBy)
 
@@ -217,13 +248,23 @@ func buildPredicateSQL(
 	b *sqlBuilder, prefix string,
 	p store.RelationPredicate, typeArg string, dir store.Direction,
 ) (with []string, exists string) {
-	endpointsArg := b.arg(p.Endpoints)
+	// The endpoints arg is registered LAZILY: with no endpoints named
+	// ("any endpoint") nothing references it, and an unreferenced
+	// placeholder makes PostgreSQL reject the statement with "could not
+	// determine data type of parameter" (42P18).
+	var endpointsArg string
+	if len(p.Endpoints) > 0 {
+		endpointsArg = b.arg(p.Endpoints)
+	}
 
 	// endpointSrc: SQL expression yielding the set of endpoint IDs
 	// the EXISTS clause matches against. Without InheritThrough this
 	// is just the unnested input; with it, a recursive CTE.
-	endpointSrc := fmt.Sprintf(`SELECT unnest(%s::text[]) COLLATE "C"`, endpointsArg)
-	if len(p.InheritThrough) > 0 && p.Depth > 0 {
+	var endpointSrc string
+	if endpointsArg != "" {
+		endpointSrc = fmt.Sprintf(`SELECT unnest(%s::text[]) COLLATE "C"`, endpointsArg)
+	}
+	if len(p.Endpoints) > 0 && len(p.InheritThrough) > 0 && p.Depth > 0 {
 		throughArg := b.arg(p.InheritThrough)
 		depthArg := b.arg(cappedDepth(p.Depth))
 		cteName := prefix + "_endpoint_closure"
@@ -274,8 +315,15 @@ func buildPredicateSQL(
 		typesArg := b.arg(p.OfTypes)
 		fmt.Fprintf(&existsSB, "r.rel_type = ANY(%s) AND ", typesArg)
 	}
-	fmt.Fprintf(&existsSB, "%s IN (%s) AND %s IN (%s)",
-		endpointCol, endpointSrc, entityCol, entityJoin)
+	// An empty Endpoints list means "any endpoint" — the predicate is
+	// then purely about the edge existing, which is what an absence
+	// query ("has no implements edge at all") needs. Emitting the
+	// endpoint constraint against an empty array would match nothing and
+	// make every negated any-endpoint query match everything.
+	if len(p.Endpoints) > 0 {
+		fmt.Fprintf(&existsSB, "%s IN (%s) AND ", endpointCol, endpointSrc)
+	}
+	fmt.Fprintf(&existsSB, "%s IN (%s)", entityCol, entityJoin)
 
 	return with, existsSB.String()
 }

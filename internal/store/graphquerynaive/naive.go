@@ -16,6 +16,7 @@ import (
 	"iter"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/propmatch"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -128,6 +129,12 @@ func collectByType(ctx context.Context, r Reader, typ string) ([]*entity.Entity,
 }
 
 func matches(ctx context.Context, r Reader, e *entity.Entity, q store.GraphQuery) (bool, error) {
+	// Property predicates first: they are pure in-memory checks on an
+	// entity already in hand, so a non-match skips the relation walks
+	// (which do I/O per candidate).
+	if !matchesProps(e, q.Props) {
+		return false, nil
+	}
 	if q.HasInbound != nil {
 		ok, err := matchesPredicate(ctx, r, e, *q.HasInbound, store.DirectionIncoming)
 		if err != nil || !ok {
@@ -141,6 +148,22 @@ func matches(ctx context.Context, r Reader, e *entity.Entity, q store.GraphQuery
 		}
 	}
 	return true, nil
+}
+
+// matchesProps reports whether every predicate holds (AND). Emptiness
+// and equality are delegated to internal/propmatch so this agrees
+// exactly with internal/filter and with the pgstore pushdown.
+func matchesProps(e *entity.Entity, props []store.PropPredicate) bool {
+	for _, p := range props {
+		op := propmatch.OpEqual
+		if p.Op == store.PropNotEqual {
+			op = propmatch.OpNotEqual
+		}
+		if propmatch.Decide(e.Properties[p.Property], op, p.Value) != propmatch.Match {
+			return false
+		}
+	}
+	return true
 }
 
 func matchesPredicate(
@@ -165,6 +188,28 @@ func matchesPredicate(
 		typeSet[t] = true
 	}
 
+	// An empty Endpoints list means "any endpoint": the predicate is
+	// then purely about the edge existing (optionally of OfTypes), which
+	// is what an absence query like "has no implements edge at all"
+	// needs. With endpoints named, only those count.
+	anyEndpoint := len(p.Endpoints) == 0
+
+	found, err := hasMatchingRelation(ctx, r, candidates, dir, typeSet, endpointSet, anyEndpoint)
+	if err != nil {
+		return false, err
+	}
+	if p.Negate {
+		return !found, nil
+	}
+	return found, nil
+}
+
+// hasMatchingRelation reports whether any candidate has an edge in dir
+// satisfying the type and endpoint constraints.
+func hasMatchingRelation(
+	ctx context.Context, r Reader, candidates []string, dir store.Direction,
+	typeSet, endpointSet map[string]bool, anyEndpoint bool,
+) (bool, error) {
 	for _, c := range candidates {
 		for rel, err := range r.ListRelations(ctx, store.RelationQuery{
 			EntityID:  c,
@@ -176,11 +221,12 @@ func matchesPredicate(
 			if len(typeSet) > 0 && !typeSet[rel.Type] {
 				continue
 			}
-			var other string
+			if anyEndpoint {
+				return true, nil
+			}
+			other := rel.To
 			if dir == store.DirectionIncoming {
 				other = rel.From
-			} else {
-				other = rel.To
 			}
 			if endpointSet[other] {
 				return true, nil
