@@ -207,3 +207,39 @@ User-authored apps served in a sandboxed iframe. An app is a **folder**
   api-client call. Adding a capability = adding a named method, never a generic
   "fetch this path". Keep `appSDKMethods` (Go, in `apps_sdk.go`) in sync with
   `BRIDGE_METHODS` (the dispatcher).
+
+## Operator customisation (`custom.css` / `custom.js` + `/_custom/`)
+
+Operator-authored files in the project root, served at `/_custom/` and
+referenced from the SPA shell. Rules for new code:
+
+- **The SPA shell rewrite is the ONE server-side HTML rewrite in this codebase,
+  and it is deliberately scoped to rela's own shell.** The `apps/` rule below
+  ("served, not injected") still stands and is not weakened by it. The reason
+  the two differ is a *security boundary*, not ownership: an app's path-scoped
+  CSP **is** the entire boundary confining an untrusted installable app, so
+  injecting script into an app's index would require widening that CSP and
+  puncture it. The SPA shell has no CSP at all, so the rewrite crosses no
+  boundary. **TRIP-WIRE: if a CSP is ever added to the SPA route, that
+  reasoning lapses and the injection must be revisited.**
+- **Splice, don't parse.** `injectTags` does a targeted string insertion before
+  `</head>` / `</body>`. Do NOT swap in a `golang.org/x/net/html` parse+render
+  round-trip: it normalises the whole document (attribute quoting/order, entity
+  re-encoding) and would be the first `html.Render` in `internal/`. The shell is
+  our own embedded, known-shape output. x/net/html already being a dependency is
+  not a reason to use it.
+- **Four shells precomputed, existence re-checked per request.** Precomputing
+  removes the cache-population race; the per-request stat means adding
+  `custom.css` needs no restart. A file that is *served* at `/_custom/` but
+  never *referenced* in the shell is the confusing half-state this avoids.
+- **Two allowlisted filenames, never a path segment.** `openCustomAsset` accepts
+  only `custom.css` / `custom.js` by exact comparison, so traversal is
+  impossible before the filesystem is touched; `os.OpenRoot` stays as
+  defence-in-depth (and catches a symlink escaping the root). Every failure
+  collapses to one 404.
+- **`custom.js` is FULLY TRUSTED — the opposite posture from `apps/`.** It runs
+  same-origin in the SPA's document with no CSP, no sandbox, and unrestricted
+  API access. That is correct (the operator already controls metamodel, Lua and
+  ACL), but never reason "apps are sandboxed, therefore this is too."
+- **Token CSS must never be layered.** See `frontend/CLAUDE.md`;
+  `TestTokensCSSNeverLayered` pins both copies.

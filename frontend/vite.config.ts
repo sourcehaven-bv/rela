@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import { relaCssLayer } from './relaCssLayer'
 import { fileURLToPath, URL } from 'node:url'
 
 // Get API base URL from environment variable or default to localhost:8080
@@ -21,7 +22,21 @@ export default defineConfig(({ mode }) => {
   const e2eTestHooks = mode === 'development'
 
   return {
-    plugins: [vue()],
+    plugins: [
+      vue({
+        template: {
+          compilerOptions: {
+            // <rela-slot> and <rela-editor> are native custom elements, not Vue
+            // components. Without this, an unregistered <rela-slot> logs
+            // "Failed to resolve component" on every render. This only affects
+            // Vue's component RESOLUTION — relaEditor.ts's
+            // customElements.define() is untouched.
+            isCustomElement: (tag) => tag.startsWith('rela-'),
+          },
+        },
+      }),
+      relaCssLayer(),
+    ],
     base: '/',
     define: {
       __E2E_TEST_HOOKS__: JSON.stringify(e2eTestHooks),

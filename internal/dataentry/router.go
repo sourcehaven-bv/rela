@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -44,7 +45,7 @@ func CheckEmbeddedSPA() error {
 	if err != nil {
 		return fmt.Errorf("mount embedded SPA filesystem (static/v2): %w", err)
 	}
-	if _, err := fs.Stat(spaFS, "index.html"); err != nil {
+	if _, err := fs.Stat(spaFS, spaIndexFile); err != nil {
 		return fmt.Errorf("embedded SPA is missing index.html (run `just build-frontend`): %w", err)
 	}
 	return nil
@@ -109,8 +110,27 @@ func (a *App) NewRouter() http.Handler {
 	// needs neither the same-origin gate nor the JWT identity gate.
 	a.registerWebhookRoutes(mux)
 
-	// Serve Vue SPA at root (catch-all for client-side routing)
-	mux.Handle("/", spaHandler(spaFS))
+	// Operator customisation assets (custom.css / custom.js from the project
+	// root). Registered before the SPA catch-all so /_custom/* never falls
+	// through to the shell. See custom.go for the trust model.
+	mux.HandleFunc(customURLPrefix, a.handleCustomAsset)
+
+	// Serve Vue SPA at root (catch-all for client-side routing).
+	//
+	// The shell is rewritten to reference the operator's custom.css/custom.js
+	// when those exist. This is the ONE server-side HTML rewrite in the
+	// codebase, and it is deliberately scoped to rela's own shell.
+	//
+	// Why apps/<id>/index.html must NOT be rewritten but this may: an app's
+	// CSP *is* the entire security boundary confining an untrusted, installable
+	// app (path-scoped script-src, connect-src 'none'). Injecting script into
+	// an app's index would require widening that CSP and puncture the boundary.
+	// The SPA shell has no CSP at all, so this rewrite crosses no boundary.
+	//
+	// TRIP-WIRE: if a CSP is ever applied to the SPA route, that reasoning
+	// lapses and this injection must be revisited (it would need to permit
+	// the /_custom/ paths explicitly).
+	mux.Handle("/", a.spaHandlerWithCustom(spaFS))
 
 	// Apply security middlewares as the outermost wrapper so they protect
 	// every route, including the SSE handlers and static assets. The
@@ -635,6 +655,59 @@ func stampAuditPrincipal(next http.Handler, resolve PrincipalResolver) http.Hand
 		ctx := principal.With(r.Context(), resolve(r))
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// spaHandlerWithCustom wraps spaHandler so that requests resolving to the SPA
+// shell are served a variant referencing the operator's custom.css/custom.js.
+//
+// The four possible shells are precomputed once at router construction (no
+// per-request rewrite, so there is no cache-population race and no lock on the
+// hot path); which one to serve is chosen per request by a cheap existence
+// check, so adding custom.css does not require a server restart.
+//
+// Requests for real files (assets, favicon, …) are delegated untouched.
+func (a *App) spaHandlerWithCustom(fsys fs.FS) http.Handler {
+	fallback := spaHandler(fsys)
+
+	shell, err := fs.ReadFile(fsys, spaIndexFile)
+	if err != nil {
+		// CheckEmbeddedSPA already verifies index.html at startup; if it is
+		// somehow unreadable here there is nothing to inject into, so serve
+		// the SPA exactly as before rather than failing the whole router.
+		return fallback
+	}
+
+	variants := buildShellVariants(shell, a.customInjectionEnabled())
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !servesSPAShell(fsys, r.URL.Path) {
+			fallback.ServeHTTP(w, r)
+			return
+		}
+
+		body := variants.selectShell(a.paths.Root)
+		h := w.Header()
+		h.Set("Content-Type", "text/html; charset=utf-8")
+		// The shell is rewritten per filesystem state, so the embedded file's
+		// length/modtime no longer describe it. Set Content-Length explicitly
+		// rather than letting http.FileServer derive headers from bytes we did
+		// not serve.
+		h.Set("Content-Length", strconv.Itoa(len(body)))
+		if r.Method == http.MethodHead {
+			return
+		}
+		_, _ = w.Write(body)
+	})
+}
+
+// servesSPAShell reports whether a request path falls through to the SPA shell
+// rather than resolving to a real embedded file. Mirrors spaHandler's rule.
+func servesSPAShell(fsys fs.FS, urlPath string) bool {
+	if urlPath == "" || urlPath == "/" {
+		return true
+	}
+	_, err := fs.Stat(fsys, strings.TrimPrefix(urlPath, "/"))
+	return err != nil
 }
 
 // spaHandler wraps a filesystem and serves index.html for any path that doesn't
