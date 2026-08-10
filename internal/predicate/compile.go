@@ -284,7 +284,18 @@ func (w *walker) walkExpr(e ast.Expr) (node, error) {
 	case *ast.ArithmeticOpExpr:
 		return nil, &CompileError{Line: x.Line(), Reason: "arithmetic operators are not allowed"}
 	case *ast.UnaryMinusOpExpr:
-		return nil, &CompileError{Line: x.Line(), Reason: "unary minus is not allowed"}
+		// A negative numeric LITERAL (`-100`, `-1.5`) is folded to a
+		// negative constant so `entity.balance > -100` works (RR-G3Y70).
+		// General unary minus on an expression (`-entity.count`) stays
+		// rejected — this is not arithmetic, only literal negation.
+		if num, ok := x.Expr.(*ast.NumberExpr); ok {
+			f, err := parseLuaNumber(num.Value)
+			if err != nil {
+				return nil, &CompileError{Line: x.Line(), Reason: err.Error()}
+			}
+			return &constNode{v: NewNumber(-f)}, nil
+		}
+		return nil, &CompileError{Line: x.Line(), Reason: "unary minus is allowed only on a numeric literal (e.g. -100)"}
 	case *ast.UnaryLenOpExpr:
 		return nil, &CompileError{Line: x.Line(), Reason: "length operator (#) is not allowed"}
 	case *ast.Comma3Expr:
