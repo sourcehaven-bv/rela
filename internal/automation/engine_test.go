@@ -1,6 +1,7 @@
 package automation
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -20,7 +21,7 @@ func TestEngine_EntityCreated(t *testing.T) {
 	})
 
 	entity := buildEntity(testutil.Entity("ticket"))
-	result := engine.Process(Event{
+	result := engine.Process(context.Background(), Event{
 		Type:   EventEntityCreated,
 		Entity: entity,
 	})
@@ -38,7 +39,7 @@ func TestEngine_EntityCreated_WrongType(t *testing.T) {
 
 	// Entity of different type - should not trigger
 	entity := buildEntity(testutil.Entity("bug"))
-	result := engine.Process(Event{
+	result := engine.Process(context.Background(), Event{
 		Type:   EventEntityCreated,
 		Entity: entity,
 	})
@@ -64,7 +65,7 @@ func TestEngine_PropertyChange(t *testing.T) {
 	newEntity := oldEntity.Clone()
 	newEntity.Properties["status"] = "in-progress"
 
-	result := engine.Process(Event{
+	result := engine.Process(context.Background(), Event{
 		Type:      EventEntityUpdated,
 		Entity:    newEntity,
 		OldEntity: oldEntity,
@@ -88,7 +89,7 @@ func TestEngine_PropertyChange_NoChange(t *testing.T) {
 	oldEntity := buildEntity(testutil.Entity("ticket").With("status", "in-progress"))
 	newEntity := oldEntity.Clone()
 
-	result := engine.Process(Event{
+	result := engine.Process(context.Background(), Event{
 		Type:      EventEntityUpdated,
 		Entity:    newEntity,
 		OldEntity: oldEntity,
@@ -113,7 +114,7 @@ func TestEngine_PropertyChange_FromConstraint(t *testing.T) {
 	newEntity := oldEntity.Clone()
 	newEntity.Properties["status"] = "in-progress"
 
-	result := engine.Process(Event{
+	result := engine.Process(context.Background(), Event{
 		Type:      EventEntityUpdated,
 		Entity:    newEntity,
 		OldEntity: oldEntity,
@@ -128,7 +129,7 @@ func TestEngine_PropertyChange_FromConstraint(t *testing.T) {
 	newEntity2 := oldEntity2.Clone()
 	newEntity2.Properties["status"] = "in-progress"
 
-	result2 := engine.Process(Event{
+	result2 := engine.Process(context.Background(), Event{
 		Type:      EventEntityUpdated,
 		Entity:    newEntity2,
 		OldEntity: oldEntity2,
@@ -152,7 +153,7 @@ func TestEngine_ValidationWarning(t *testing.T) {
 	newEntity := oldEntity.Clone()
 	newEntity.Properties["status"] = "in-progress"
 
-	result := engine.Process(Event{
+	result := engine.Process(context.Background(), Event{
 		Type:      EventEntityUpdated,
 		Entity:    newEntity,
 		OldEntity: oldEntity,
@@ -180,7 +181,7 @@ func TestEngine_ValidationPasses(t *testing.T) {
 	newEntity.Properties["status"] = "in-progress"
 	newEntity.Properties["why1"] = "Database connection timeout"
 
-	result := engine.Process(Event{
+	result := engine.Process(context.Background(), Event{
 		Type:      EventEntityUpdated,
 		Entity:    newEntity,
 		OldEntity: oldEntity,
@@ -201,7 +202,7 @@ func TestEngine_CreateRelation(t *testing.T) {
 	})
 
 	entity := buildEntity(testutil.Entity("ticket"))
-	result := engine.Process(Event{
+	result := engine.Process(context.Background(), Event{
 		Type:   EventEntityCreated,
 		Entity: entity,
 	})
@@ -226,7 +227,7 @@ func TestEngine_MultipleEntityTypes(t *testing.T) {
 
 	for _, entityType := range []string{"ticket", "bug", "feature"} {
 		entity := buildEntity(testutil.Entity(entityType).ID("E-001"))
-		result := engine.Process(Event{
+		result := engine.Process(context.Background(), Event{
 			Type:   EventEntityCreated,
 			Entity: entity,
 		})
@@ -238,7 +239,7 @@ func TestEngine_MultipleEntityTypes(t *testing.T) {
 
 	// Other type should not trigger
 	entity := buildEntity(testutil.Entity("decision").ID("D-001"))
-	result := engine.Process(Event{
+	result := engine.Process(context.Background(), Event{
 		Type:   EventEntityCreated,
 		Entity: entity,
 	})
@@ -260,7 +261,7 @@ func TestEngine_RelationCreated(t *testing.T) {
 	entity := buildEntity(testutil.Entity("ticket").ID("T-001"))
 	rel := buildRelation(testutil.NewRelation("S-001", "implements", "T-001"))
 
-	result := engine.Process(Event{
+	result := engine.Process(context.Background(), Event{
 		Type:     EventRelationCreated,
 		Entity:   entity,
 		Relation: rel,
@@ -291,7 +292,7 @@ func TestEngine_CreateEntity_OnPropertyChange(t *testing.T) {
 		With("status", "planning").
 		With("title", "Implement feature X"))
 
-	result := engine.Process(Event{
+	result := engine.Process(context.Background(), Event{
 		Type:      EventEntityUpdated,
 		Entity:    newEntity,
 		OldEntity: oldEntity,
@@ -329,7 +330,7 @@ func TestEngine_CreateEntity_OnCreated(t *testing.T) {
 
 	entity := buildEntity(testutil.Entity("ticket").ID("T-001").With("title", "New ticket"))
 
-	result := engine.Process(Event{
+	result := engine.Process(context.Background(), Event{
 		Type:   EventEntityCreated,
 		Entity: entity,
 	})
@@ -360,7 +361,7 @@ func TestEngine_CreateEntity_NoRelation(t *testing.T) {
 
 	entity := buildEntity(testutil.Entity("ticket").ID("T-001"))
 
-	result := engine.Process(Event{
+	result := engine.Process(context.Background(), Event{
 		Type:   EventEntityCreated,
 		Entity: entity,
 	})
@@ -391,7 +392,7 @@ func TestEngine_CreateEntity_MissingType(t *testing.T) {
 
 	entity := buildEntity(testutil.Entity("ticket").ID("T-001"))
 
-	result := engine.Process(Event{
+	result := engine.Process(context.Background(), Event{
 		Type:   EventEntityCreated,
 		Entity: entity,
 	})
@@ -415,7 +416,7 @@ func TestEngine_CreateEntity_IfExistsDefaultsToSkip(t *testing.T) {
 
 	entity := buildEntity(testutil.Entity("ticket").ID("T-001"))
 
-	result := engine.Process(Event{
+	result := engine.Process(context.Background(), Event{
 		Type:   EventEntityCreated,
 		Entity: entity,
 	})
@@ -445,7 +446,7 @@ func TestEngine_CreateEntity_IfExistsExplicit(t *testing.T) {
 
 	entity := buildEntity(testutil.Entity("ticket").ID("T-001"))
 
-	result := engine.Process(Event{
+	result := engine.Process(context.Background(), Event{
 		Type:   EventEntityCreated,
 		Entity: entity,
 	})
@@ -486,7 +487,7 @@ func TestEngine_CreateEntity_WithTemplate(t *testing.T) {
 		With("kind", "enhancement").
 		With("title", "Add new feature"))
 
-	result := engine.Process(Event{
+	result := engine.Process(context.Background(), Event{
 		Type:      EventEntityUpdated,
 		Entity:    newEntity,
 		OldEntity: oldEntity,
@@ -516,7 +517,7 @@ func TestEngine_CreateEntity_TemplateEmpty(t *testing.T) {
 
 	entity := buildEntity(testutil.Entity("ticket").ID("T-001"))
 
-	result := engine.Process(Event{
+	result := engine.Process(context.Background(), Event{
 		Type:   EventEntityCreated,
 		Entity: entity,
 	})
@@ -547,7 +548,7 @@ func TestEngine_CreateEntity_TemplateMissingProperty(t *testing.T) {
 
 	entity := buildEntity(testutil.Entity("ticket").ID("T-001"))
 
-	result := engine.Process(Event{
+	result := engine.Process(context.Background(), Event{
 		Type:   EventEntityCreated,
 		Entity: entity,
 	})
@@ -617,7 +618,7 @@ func TestEngine_CreateEntity_TemplatePathTraversal(t *testing.T) {
 
 			entity := buildEntity(testutil.Entity("ticket").ID("T-001").With("kind", tc.kind))
 
-			result := engine.Process(Event{
+			result := engine.Process(context.Background(), Event{
 				Type:   EventEntityCreated,
 				Entity: entity,
 			})
@@ -661,7 +662,7 @@ func TestEngine_WhenConditionMet(t *testing.T) {
 	newEntity := oldEntity.Clone()
 	newEntity.Properties["status"] = "review"
 
-	result := engine.Process(Event{
+	result := engine.Process(context.Background(), Event{
 		Type:      EventEntityUpdated,
 		Entity:    newEntity,
 		OldEntity: oldEntity,
@@ -689,7 +690,7 @@ func TestEngine_WhenConditionNotMet(t *testing.T) {
 	newEntity := oldEntity.Clone()
 	newEntity.Properties["status"] = "review"
 
-	result := engine.Process(Event{
+	result := engine.Process(context.Background(), Event{
 		Type:      EventEntityUpdated,
 		Entity:    newEntity,
 		OldEntity: oldEntity,
@@ -720,7 +721,7 @@ func TestEngine_MultipleWhenConditions(t *testing.T) {
 	newEntity := oldEntity.Clone()
 	newEntity.Properties["status"] = "review"
 
-	result := engine.Process(Event{
+	result := engine.Process(context.Background(), Event{
 		Type:      EventEntityUpdated,
 		Entity:    newEntity,
 		OldEntity: oldEntity,
@@ -739,7 +740,7 @@ func TestEngine_MultipleWhenConditions(t *testing.T) {
 	newEntity2 := oldEntity2.Clone()
 	newEntity2.Properties["status"] = "review"
 
-	result2 := engine.Process(Event{
+	result2 := engine.Process(context.Background(), Event{
 		Type:      EventEntityUpdated,
 		Entity:    newEntity2,
 		OldEntity: oldEntity2,
@@ -765,7 +766,7 @@ func TestEngine_NoWhenConditions(t *testing.T) {
 	newEntity := oldEntity.Clone()
 	newEntity.Properties["status"] = "review"
 
-	result := engine.Process(Event{
+	result := engine.Process(context.Background(), Event{
 		Type:      EventEntityUpdated,
 		Entity:    newEntity,
 		OldEntity: oldEntity,
@@ -789,7 +790,7 @@ func TestEngine_WhenConditionOnCreated(t *testing.T) {
 	// Enhancement ticket
 	entity := buildEntity(testutil.Entity("ticket").ID("T-001").With("kind", "enhancement"))
 
-	result := engine.Process(Event{
+	result := engine.Process(context.Background(), Event{
 		Type:   EventEntityCreated,
 		Entity: entity,
 	})
@@ -801,7 +802,7 @@ func TestEngine_WhenConditionOnCreated(t *testing.T) {
 	// Bug ticket - should not trigger
 	bugEntity := buildEntity(testutil.Entity("ticket").ID("T-002").With("kind", "bug"))
 
-	result2 := engine.Process(Event{
+	result2 := engine.Process(context.Background(), Event{
 		Type:   EventEntityCreated,
 		Entity: bugEntity,
 	})
@@ -825,7 +826,7 @@ func TestEngine_WhenConditionOnRelationCreated(t *testing.T) {
 	entity := buildEntity(testutil.Entity("ticket").ID("T-001").With("kind", "enhancement"))
 	rel := buildRelation(testutil.NewRelation("S-001", "implements", "T-001"))
 
-	result := engine.Process(Event{
+	result := engine.Process(context.Background(), Event{
 		Type:     EventRelationCreated,
 		Entity:   entity,
 		Relation: rel,
@@ -839,7 +840,7 @@ func TestEngine_WhenConditionOnRelationCreated(t *testing.T) {
 	bugEntity := buildEntity(testutil.Entity("ticket").ID("T-002").With("kind", "bug"))
 	rel2 := buildRelation(testutil.NewRelation("S-002", "implements", "T-002"))
 
-	result2 := engine.Process(Event{
+	result2 := engine.Process(context.Background(), Event{
 		Type:     EventRelationCreated,
 		Entity:   bugEntity,
 		Relation: rel2,
@@ -861,7 +862,7 @@ func TestEngine_WhenConditionNilEntity(t *testing.T) {
 	})
 
 	// Nil entity should not panic and should not fire
-	result := engine.Process(Event{
+	result := engine.Process(context.Background(), Event{
 		Type:   EventEntityUpdated,
 		Entity: nil,
 	})
@@ -884,7 +885,7 @@ func TestEngine_LuaInline(t *testing.T) {
 	newEntity := oldEntity.Clone()
 	newEntity.Properties["status"] = "done"
 
-	result := engine.Process(Event{
+	result := engine.Process(context.Background(), Event{
 		Type:      EventEntityUpdated,
 		Entity:    newEntity,
 		OldEntity: oldEntity,
@@ -915,7 +916,7 @@ func TestEngine_LuaFile(t *testing.T) {
 	newEntity := oldEntity.Clone()
 	newEntity.Properties["status"] = "archived"
 
-	result := engine.Process(Event{
+	result := engine.Process(context.Background(), Event{
 		Type:      EventEntityUpdated,
 		Entity:    newEntity,
 		OldEntity: oldEntity,
@@ -949,7 +950,7 @@ local user = "{{user.name}}"`).
 
 	entity := buildEntity(testutil.Entity("ticket").ID("T-001"))
 
-	result := engine.Process(Event{
+	result := engine.Process(context.Background(), Event{
 		Type:   EventEntityCreated,
 		Entity: entity,
 	})
@@ -980,7 +981,7 @@ func TestEngine_LuaInlineDoesNotInterpolateEntityProperties(t *testing.T) {
 	entity := buildEntity(testutil.Entity("ticket").ID("T-001").
 		With("title", `"; os.execute("rm -rf /"); --`))
 
-	result := engine.Process(Event{
+	result := engine.Process(context.Background(), Event{
 		Type:   EventEntityCreated,
 		Entity: entity,
 	})
@@ -1006,7 +1007,7 @@ func TestEngine_LuaOnCreated(t *testing.T) {
 
 	entity := buildEntity(testutil.Entity("ticket"))
 
-	result := engine.Process(Event{
+	result := engine.Process(context.Background(), Event{
 		Type:   EventEntityCreated,
 		Entity: entity,
 	})
@@ -1028,7 +1029,7 @@ func TestEngine_LuaEmptyAction(t *testing.T) {
 
 	entity := buildEntity(testutil.Entity("ticket"))
 
-	result := engine.Process(Event{
+	result := engine.Process(context.Background(), Event{
 		Type:   EventEntityCreated,
 		Entity: entity,
 	})
@@ -1051,7 +1052,7 @@ func TestEngine_LuaMultipleActions(t *testing.T) {
 
 	entity := buildEntity(testutil.Entity("ticket"))
 
-	result := engine.Process(Event{
+	result := engine.Process(context.Background(), Event{
 		Type:   EventEntityCreated,
 		Entity: entity,
 	})
@@ -1084,7 +1085,7 @@ func TestEngine_LuaFilePathPassthrough(t *testing.T) {
 
 	entity := buildEntity(testutil.Entity("ticket"))
 
-	result := engine.Process(Event{
+	result := engine.Process(context.Background(), Event{
 		Type:   EventEntityCreated,
 		Entity: entity,
 	})
@@ -1117,7 +1118,7 @@ func TestEngine_LuaFileExtensionPassthrough(t *testing.T) {
 
 	entity := buildEntity(testutil.Entity("ticket"))
 
-	result := engine.Process(Event{
+	result := engine.Process(context.Background(), Event{
 		Type:   EventEntityCreated,
 		Entity: entity,
 	})

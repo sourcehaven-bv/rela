@@ -2,55 +2,48 @@
 id: REV-FVTZNP
 type: review-checklist
 title: 'Review: --filter CLI flag + migrate automation/validation onto predicate (TKT-7EJK4 phase 2b)'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
-## Automated Checks
+**Scope:** phase 2b — --filter CLI, negative literals, automation/validation
+migration onto predicate.
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Coverage maintained (`just coverage-check`)
+## Automated Checks
+- [x] Tests pass (`-race` green: predicate, predicatefns, automation, validation, cli; full `just ci` re-run after fixes)
+- [x] Lint clean (golangci-lint 0 issues on changed packages)
+- [x] Coverage maintained
 
 ## Code Review
+- [x] `/code-review` run (cranky-code-reviewer) on the phase-2b diff — found 2 critical + 2 significant + 1 minor + 1 nit
+- [x] All critical addressed: RR-G9KT8H (automation untranspilable->filter.Match fallback), RR-FI4DYL (validation untranspilable->filter.MatchAll fallback). Both pinned by new tests.
+- [x] All significant addressed: RR-3UR3VH (--where legacy fallback, no hard-error regression), RR-FUD017 (per-eval today() via now func)
+- [x] Minor: RR-1NIV6A (coercion-dup doc corrected; full merge = tracked follow-up). Nit: RR-CLYVDL (negative-overflow test added).
+- [x] Self-reviewed diff for unrelated changes
 
-- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
-- [ ] All critical review-responses addressed
-- [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
-
-**Review Responses:** <!-- List IDs of review-response entities created, e.g.,
-RR-xxxx -->
+**Review Responses:** RR-G9KT8H, RR-FI4DYL (critical, addressed); RR-3UR3VH,
+RR-FUD017 (significant, addressed); RR-CLYVDL (nit, addressed); RR-1NIV6A
+(minor, deferred w/ reason). Plus the two carried-forward acceptance RRs
+RR-2Y851X, RR-02P03I (addressed).
 
 ## Acceptance Verification
+- [x] AC (--filter flag) PASS — TestApplyListFilters incl. an `or` --where can't express; --where combined + transpiled + deprecation notice
+- [x] AC (negative literals) PASS — TestNegativeLiterals + reject corpus
+- [x] AC (automation/validation migrated, typed behavior preserved) PASS — existing suites incl. automation-typed-comparison-test green; untranspilable-clause fallback pinned
+- [x] AC (no eval-time I/O) PASS — arch_test green
 
-- [ ] Each acceptance criterion tested (reference planning checklist)
-- [ ] Test evidence documented in implementation checklist
-
-**Acceptance Status:**
-<!-- For each acceptance criterion, state PASS/FAIL with evidence -->
-
-## Documentation (enhancements only)
-
-Skip this section for bugs and internal refactors.
-
-- [ ] Docs-checklist created and linked via `has-docs`
-- [ ] User-facing documentation updated
-- [ ] Docs-checklist marked as done
-
-**Docs Checklist:** <!-- e.g., DOCS-xxxx -->
+## Documentation
+- [x] ~~Docs-checklist~~ (kind=refactor; but user-facing `--filter` flag added) — GUIDE-cli-reference.md updated (--filter + --where deprecation), docs regenerated; CLAUDE.md condition-engine note added. No separate docs-checklist required for a refactor with generated-doc coverage.
 
 ## Final Checks
-
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
+- [x] Commit messages explain the why
+- [x] No TODOs/FIXMEs
+- [x] Ready for another developer
 
 ## Pull Request
-
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
+- [x] Run `/pr` (this step)
+- [ ] All CI checks pass (monitored after push)
 - [ ] PR URL documented below
 
-**PR:** <!-- e.g., https://github.com/org/repo/pull/123 -->
+**PR:** *pending /pr*
