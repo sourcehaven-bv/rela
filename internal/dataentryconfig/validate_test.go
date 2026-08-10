@@ -1316,7 +1316,7 @@ func TestValidateConfig_Documents(t *testing.T) {
 	}{
 		{
 			name:    "only command is valid",
-			doc:     DocumentConfig{Command: "render.sh", EntityType: "ticket"},
+			doc:     DocumentConfig{Command: []string{"render.sh"}, EntityType: "ticket"},
 			wantErr: "",
 		},
 		{
@@ -1326,7 +1326,7 @@ func TestValidateConfig_Documents(t *testing.T) {
 		},
 		{
 			name:    "both command and script is an error",
-			doc:     DocumentConfig{Command: "render.sh", Script: "docs/render.lua", EntityType: "ticket"},
+			doc:     DocumentConfig{Command: []string{"render.sh"}, Script: "docs/render.lua", EntityType: "ticket"},
 			wantErr: "mutually exclusive",
 		},
 		{
@@ -1338,7 +1338,7 @@ func TestValidateConfig_Documents(t *testing.T) {
 			// Omitting entity_type is no longer an error — it declares a
 			// standalone document (TKT-M1AX6P).
 			name:    "standalone with command is valid",
-			doc:     DocumentConfig{Command: "render.sh"},
+			doc:     DocumentConfig{Command: []string{"render.sh"}},
 			wantErr: "",
 		},
 		{
@@ -1355,7 +1355,7 @@ func TestValidateConfig_Documents(t *testing.T) {
 		},
 		{
 			name:    "standalone with both command and script is an error",
-			doc:     DocumentConfig{Command: "render.sh", Script: "docs/render.lua"},
+			doc:     DocumentConfig{Command: []string{"render.sh"}, Script: "docs/render.lua"},
 			wantErr: "mutually exclusive",
 		},
 		{
@@ -1376,7 +1376,7 @@ func TestValidateConfig_Documents(t *testing.T) {
 		{
 			name: "edit block with valid form and label",
 			doc: DocumentConfig{
-				Command:    "render.sh",
+				Command:    []string{"render.sh"},
 				EntityType: "ticket",
 				Edit:       &DocumentEdit{Form: "edit_req", Label: "Edit requirement"},
 			},
@@ -1385,7 +1385,7 @@ func TestValidateConfig_Documents(t *testing.T) {
 		{
 			name: "edit.form references unknown form",
 			doc: DocumentConfig{
-				Command:    "render.sh",
+				Command:    []string{"render.sh"},
 				EntityType: "ticket",
 				Edit:       &DocumentEdit{Form: "bogus", Label: "Edit"},
 			},
@@ -1394,7 +1394,7 @@ func TestValidateConfig_Documents(t *testing.T) {
 		{
 			name: "edit.form empty when edit block is set",
 			doc: DocumentConfig{
-				Command:    "render.sh",
+				Command:    []string{"render.sh"},
 				EntityType: "ticket",
 				Edit:       &DocumentEdit{Form: "", Label: "Edit"},
 			},
@@ -1403,7 +1403,7 @@ func TestValidateConfig_Documents(t *testing.T) {
 		{
 			name: "edit.label empty when edit block is set",
 			doc: DocumentConfig{
-				Command:    "render.sh",
+				Command:    []string{"render.sh"},
 				EntityType: "ticket",
 				Edit:       &DocumentEdit{Form: "edit_req", Label: ""},
 			},
@@ -1451,7 +1451,7 @@ func TestValidateConfig_DocumentsEditBothEmpty(t *testing.T) {
 	cfg := &Config{
 		Documents: map[string]DocumentConfig{
 			"spec": {
-				Command:    "render.sh",
+				Command:    []string{"render.sh"},
 				EntityType: "ticket",
 				Edit:       &DocumentEdit{}, // both fields empty
 			},
@@ -1477,7 +1477,7 @@ func TestValidateConfig_DocumentsEditFormSuggestion(t *testing.T) {
 	cfg := &Config{
 		Documents: map[string]DocumentConfig{
 			"spec": {
-				Command:    "render.sh",
+				Command:    []string{"render.sh"},
 				EntityType: "ticket",
 				Edit:       &DocumentEdit{Form: "EDIT_TICKET", Label: "Edit"},
 			},
@@ -2405,4 +2405,27 @@ func TestViewCommandPermissionWarning(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestValidateDocuments_LegacyIDPlaceholderRejected pins that a config written
+// against the removed {id}/{id_lower} placeholders fails at load with the
+// replacement named, rather than silently passing the literal through
+// (TKT-QGHNVA).
+func TestValidateDocuments_LegacyIDPlaceholderRejected(t *testing.T) {
+	meta := testMetamodel()
+
+	for _, arg := range []string{"{id}", "{id_lower}", "--entry={id}"} {
+		cfg := &Config{
+			Documents: map[string]DocumentConfig{
+				"release_notes": {EntityType: "ticket", Command: []string{"my-renderer", arg}},
+			},
+		}
+		err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+		if err == nil {
+			t.Fatalf("arg %q: expected an error, got nil", arg)
+		}
+		if !strings.Contains(err.Error(), "{in}") {
+			t.Errorf("arg %q: error should name {in} as the replacement, got: %s", arg, err.Error())
+		}
+	}
 }

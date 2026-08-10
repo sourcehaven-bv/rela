@@ -774,11 +774,24 @@ type DocumentConfig struct {
 	// applies IN ADDITION to the per-entity read gate (both must pass); it can
 	// never widen entity visibility.
 	Permission string `yaml:"permission,omitempty" json:"permission,omitempty"`
-	// Command is the external render command. Placeholders:
-	//   {id}       - entry ID
-	//   {id_lower} - lowercase entry ID
+	// Command is the external render command as an ARGUMENT ARRAY, e.g.
+	//   command: ["my-renderer", "{in}"]
+	// It is executed directly — there is no shell, so pipes, redirection, and
+	// variable expansion are not available and no quoting is required.
+	//
+	// The single placeholder is {in}: a temp file holding the entry entity's
+	// markdown, frontmatter included. The id is the `id:` key of that
+	// frontmatter, so a renderer that needs it reads it from the file.
+	//
+	// The former {id} / {id_lower} placeholders are GONE (TKT-QGHNVA). They
+	// spliced a request-derived value into a shell string, which made the
+	// entity id the one piece of user-controlled data reaching `sh -c`; an id
+	// leading with "-" then landed as an option flag rather than an operand.
+	// A config still using them is rejected at load time with a message naming
+	// {in}, rather than silently substituting nothing.
+	//
 	// Mutually exclusive with Script.
-	Command string `yaml:"command,omitempty" json:"command,omitempty"`
+	Command []string `yaml:"command,omitempty" json:"command,omitempty"`
 	// Script is a relative path to a Lua file under scripts/ (e.g.
 	// "docs/release_notes.lua"). The script runs in document mode with
 	// rela.mode="document", rela.document.{id,entry_id}, and captures its

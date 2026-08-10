@@ -38,7 +38,7 @@ func TestACLDocuments_GatesHiddenEntity(t *testing.T) {
 		Content:    "confidential body",
 	})
 	app.State().Cfg.Documents = map[string]dataentryconfig.DocumentConfig{
-		"ticket-summary": {EntityType: "ticket", Command: "echo LEAKED"},
+		"ticket-summary": {EntityType: "ticket", Command: []string{"echo", "LEAKED"}},
 	}
 
 	d := mustNewACL(t, &acl.Policy{

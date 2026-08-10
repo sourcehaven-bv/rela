@@ -50,7 +50,7 @@ documents:
   ticket_summary:
     title: "Ticket Summary"
     entity_type: ticket
-    command: "my-renderer {id}"   # shell render
+    command: ["my-renderer", "{in}"] # argv, no shell; {in} = entity markdown
     timeout: 30
 
   category_overview:
