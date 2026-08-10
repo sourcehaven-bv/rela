@@ -14,9 +14,10 @@ import (
 //
 // The capability is inert until an action is allow_acl_bypass AND the
 // cascade Mutator offers ElevatedProvider — the same two keys that gate
-// elevated writes. The reader is deliberately the same raw store
-// readDeps.WritePrepStore holds, named through visibility.Unrestricted so
-// this ungated path shows up in the grep that enumerates them (TKT-1WV50C).
+// elevated writes. The reader is the raw store, named through
+// visibility.Unrestricted so this ungated path shows up in the grep that
+// enumerates them (TKT-1WV50C). Since TKT-80EWGM this is the ONLY raw read
+// a script runtime can reach — the always-present write-prep handle is gone.
 func cascadeScriptRunner(
 	engine *script.Engine, readDeps lua.ReadDeps, st store.Store, sink audit.Audit,
 ) *script.LuaScriptRunner {

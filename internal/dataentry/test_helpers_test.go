@@ -142,12 +142,11 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	// app.affordances being rebound below.
 	gatedReader := lateGatedReader{app: app}
 	app.validator = validator.New(gatedReader, svc.Meta(), lua.ReadDeps{
-		VisibleReader:  gatedReader,
-		WritePrepStore: svc.Store(),
-		Tracer:         lateGatedTracer{app: app},
-		Searcher:       svc.Searcher(),
-		Meta:           svc.Meta(),
-		ProjectRoot:    paths.Root,
+		VisibleReader: gatedReader,
+		Tracer:        lateGatedTracer{app: app},
+		Searcher:      svc.Searcher(),
+		Meta:          svc.Meta(),
+		ProjectRoot:   paths.Root,
 	})
 	app.analyze = analyzeService{reads: gatedReader, relCounts: svc.Store(), tracer: lateGatedTracer{app: app}, validator: app.validator}
 	app.templater = svc.Templater()

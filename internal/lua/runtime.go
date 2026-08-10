@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"maps"
 	"math"
 	"os"
 	"path/filepath"
@@ -1729,40 +1728,34 @@ func (r *Runtime) luaUpdateEntity(ls *lua.LState) int {
 	}
 
 	ctx := r.callerCtx()
-	if r.deps.WritePrepStore == nil {
-		ls.RaiseError("rela.update_entity: no write-prep store is configured for this runtime")
-		return 0
-	}
-	// WritePrepStore, NOT VisibleReader — deliberately raw. The clone below
-	// becomes the SAVED entity, so reading a redacted copy here would drop
-	// the caller's hidden properties and erase them on save. See the field's
-	// godoc in deps.go; the guard test pins this.
-	existing, err := r.deps.WritePrepStore.GetEntity(ctx, id)
-	if err != nil {
-		ls.RaiseError("entity not found: %s", id)
-		return 0
-	}
 
-	// Clone for update
-	updated := existing.Clone()
+	// A TARGETED write: name only what the script actually supplied and let
+	// the manager merge it against the raw stored entity. The binding holds
+	// no store handle at all, so the read-before-write that used to erase a
+	// caller's hidden properties is now unreachable from here (TKT-80EWGM).
+	var patch entity.Patch
 
 	// Merge properties if provided
 	if ls.GetTop() >= 2 && ls.Get(2).Type() == lua.LTTable {
-		propsTable := ls.CheckTable(2)
-		newProps := luaTableToGoMap(propsTable)
-		if updated.Properties == nil {
-			updated.Properties = make(map[string]any)
-		}
-		maps.Copy(updated.Properties, newProps)
+		patch.Properties = luaTableToGoMap(ls.CheckTable(2))
 	}
 
 	// Update content if provided (nil means not provided, empty string clears content)
 	if ls.GetTop() >= 3 && ls.Get(3).Type() != lua.LTNil {
-		updated.Content = ls.CheckString(3)
+		content := ls.CheckString(3)
+		patch.Content = &content
 	}
 
-	result, err := r.deps.EntityManager.UpdateEntity(ctx, updated)
+	result, err := r.deps.EntityManager.PatchEntity(ctx, id, patch)
 	if err != nil {
+		// Preserve the pre-TKT-80EWGM message for a missing entity: scripts
+		// match on it. The check is STRUCTURAL (see [NotFoundError]) — a
+		// text match would misreport an illegal-transition rejection, whose
+		// message embeds the caller's own property value, as a 404.
+		if isEntityNotFound(err) {
+			ls.RaiseError("entity not found: %s", id)
+			return 0
+		}
 		ls.RaiseError("update entity error: %s", err.Error())
 		return 0
 	}

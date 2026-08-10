@@ -64,7 +64,8 @@ func TestApplyEntity_RejectsTypeChangeOnUpdate(t *testing.T) {
 
 	// Seed a secret via a NopACL manager (seeding bypasses authz).
 	seedMgr, err := entitymanager.New(entitymanager.Deps{
-		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
+		FieldGate: entitymanager.AllowAllFieldGate{},
+		Store:     st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
 	})
 	if err != nil {
 		t.Fatalf("seed New: %v", err)
@@ -93,7 +94,8 @@ assignments:
 	}
 	sink := audit.NewMemory()
 	mgr, err := entitymanager.New(entitymanager.Deps{
-		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: sink, ACL: declarative, Transitions: statemachine.EmptySet(),
+		FieldGate: entitymanager.AllowAllFieldGate{},
+		Store:     st, Meta: meta, Templater: nopTemplater{}, Audit: sink, ACL: declarative, Transitions: statemachine.EmptySet(),
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -148,7 +150,8 @@ func TestApplyEntity_SameTypeUpdateStillWorks(t *testing.T) {
 	meta := typeConfusionMeta(t)
 
 	seedMgr, err := entitymanager.New(entitymanager.Deps{
-		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
+		FieldGate: entitymanager.AllowAllFieldGate{},
+		Store:     st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
 	})
 	if err != nil {
 		t.Fatalf("seed New: %v", err)
@@ -175,7 +178,8 @@ assignments:
 		t.Fatalf("NewDeclarative: %v", err)
 	}
 	mgr, err := entitymanager.New(entitymanager.Deps{
-		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: declarative, Transitions: statemachine.EmptySet(),
+		FieldGate: entitymanager.AllowAllFieldGate{},
+		Store:     st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: declarative, Transitions: statemachine.EmptySet(),
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)

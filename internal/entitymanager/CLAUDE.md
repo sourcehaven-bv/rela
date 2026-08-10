@@ -6,6 +6,56 @@ and consults the ACL. All entity/relation writes go through here — do not
 write directly to `store.Store` from a write path, or the audit record
 won't be emitted.
 
+## Which write method
+
+| Situation | Method |
+|---|---|
+| Changing a SUBSET of properties | `PatchEntity` |
+| Caller legitimately owns the whole entity (form save rendering every field) | `UpdateEntity` |
+| Whole-record replace from a trusted replica (sync channel) | `ApplyEntity` |
+
+**Default to `PatchEntity`.** It takes an `entity.Patch` (`Properties`
+upserts, `MetaUnset` removes, `Content` is a `*string` tri-state), does its
+own write-prep read, and merges against the raw stored entity. Properties
+the patch does not name are preserved regardless of whether the caller
+could read them — so a caller holding a redacted view cannot erase what it
+cannot see. `UpdateEntity` gives you no such protection: it saves exactly
+the entity you hand it, so every property you failed to carry across is
+gone.
+
+`UpdateEntity` and `PatchEntity` share `updateCore`, so they cannot drift
+on validation, automation, transitions, unique checks, audit, or cascade.
+Attribution and authorization deliberately stay in the entry points —
+`updateCore` has no ACL check, mirroring `createCore`. Do not move them in:
+`PatchEntity` must authorize early (it needs the stored type for the ACL
+subject), so an authorize inside the core would double-authorize and emit
+two `denied-write` rows for one denial.
+
+### PatchEntity ordering is load-bearing
+
+```text
+read (raw) → IsLocked guard → authorize → field gate → merge → updateCore
+```
+
+- The **read comes first** because `acl.EntitySubject` needs the entity's
+  real type and the caller supplied only an id. Same shape, and the same
+  accepted existence disclosure, as `DeleteEntity`.
+- The **field gate runs strictly after authorization**. Field verdicts are
+  value-dependent, so consulting them for an unauthorized caller would leak
+  both entity existence and stored property values through the
+  allow-vs-deny difference. (Naming the *rule* in a denial is fine — config
+  is not a secret. The leak is about data.)
+- `Deps.FieldGate` is **required**, with `AllowAllFieldGate{}` as the named
+  opt-out for operator-trust-boundary surfaces like the CLI. A nil gate is
+  rejected at `New` rather than silently permitting everything.
+- The gate constrains **caller-authored** changes only. Automation-derived
+  properties are system writes and are deliberately not gated, or a user who
+  cannot author `status` could never trigger an automation that sets it.
+- **Elevation is total**: `bypass_acl` skips the field gate as well as the
+  row ACL, and `recordACLBypass` still fires. A half-elevated handle that
+  silently drops some property writes is the confusing contract the
+  elevated-read seam exists to avoid.
+
 ## Audit log
 
 Every successful entity/relation create/update/delete/rename is audited as
@@ -13,8 +63,12 @@ a JSONL record under `.rela/audit/YYYY-MM-DD.jsonl`. See `docs/audit-log.md`
 for the user-facing reference. Rules for new code:
 
 - **New write paths inherit audit automatically.** Any code calling
-  `Manager.{Create,Update,Delete,Rename}{Entity,Relation}` produces a
-  record without further wiring. Do not bypass Manager.
+  `Manager.{Create,Update,Patch,Delete,Rename}{Entity,Relation}` produces a
+  record without further wiring. Do not bypass Manager. Note this is a
+  property of the shared pipeline, not of the method name: `PatchEntity`
+  audits because it routes through `updateCore`. A new entry point that
+  reimplements the pipeline instead of calling the shared core would NOT
+  inherit audit — that is the thing to check in review.
 - **New entry-point binaries stamp Principal at startup**, once:
   `ctx = principal.With(ctx, principal.Principal{User: principal.SystemUser(), Tool: principal.ToolXxx})`.
   Use a `principal.ToolCLI`/`ToolMCP`/`ToolDataEntry`/`ToolScheduler`/

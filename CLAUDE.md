@@ -67,14 +67,26 @@
   never inferred from identity. Write-prep reads (entitymanager
   diffing) keep raw store access: a redacted read-modify-write would
   clobber hidden fields.
-- **Never redact a read that feeds a write.** Read-out and write-prep are
-  different handles on purpose (`lua.ReadDeps.VisibleReader` vs
-  `WritePrepStore`). A read-modify-write that loads a *redacted* entity
-  drops the caller's hidden properties from the clone and **erases them on
-  save** — silent data destruction. If you find yourself "tidying" two
-  store handles into one, that is the bug: `luaUpdateEntity` and anything
-  like it must keep the raw handle. Pinned by
-  `TestScriptReads_UpdatePreservesHiddenProperties`.
+- **Partial writes go through `entitymanager.Manager.PatchEntity`, never
+  read-modify-write.** Name the properties you are changing in an
+  `entity.Patch` (`Properties` upserts, `MetaUnset` removes, `Content` is a
+  `*string` tri-state) and the manager merges them against the raw stored
+  entity internally. Properties you do not name are preserved — **forgetting
+  one is a no-op, not an erasure.**
+
+  The alternative — `GetEntity` → clone → merge → `UpdateEntity` — requires
+  holding the *whole* entity, so anything you failed to carry across is
+  destroyed on save. That is unrecoverable when the read was redacted: a
+  caller who cannot see a property cannot carry it, and silently deletes it.
+  This used to be guarded by prose and a raw `lua.ReadDeps.WritePrepStore`
+  handle; TKT-80EWGM removed both, so the mistake is now unavailable rather
+  than merely discouraged. Pinned by `TestPatchEntity_PreservesUnnamedProperties`
+  and `TestScriptReads_UpdatePreservesHiddenProperties`.
+
+  `UpdateEntity` still exists for callers that legitimately own the whole
+  entity (a form save that renders every field). `ApplyEntity` is the
+  whole-record replace the sync channel needs. If you are writing a *subset*,
+  you want `PatchEntity`.
 - **The configuration is not a secret; the data is.** `metamodel.yaml`,
   `data-entry.yaml`, `acl.yaml`, `schedules.yaml`, `scripts/`, `actions/`,
   `templates/` are operator-authored files that live in the repo — routinely a

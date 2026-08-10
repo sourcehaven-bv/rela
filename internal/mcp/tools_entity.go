@@ -4,6 +4,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -214,19 +215,30 @@ func (s *Server) handleUpdateEntity(
 		return errResult, nil
 	}
 
-	// Apply property updates: nil deletes, anything else sets/overwrites.
+	// Translate the wire shape into a targeted patch: MCP's in-band nil
+	// sentinel means "delete", anything else upserts. Everything not named
+	// is preserved by PatchEntity, so this tool can no longer clobber a
+	// property it did not mention (TKT-80EWGM).
+	patch := entity.Patch{Properties: make(map[string]any, len(properties))}
 	for k, v := range properties {
 		if v == nil {
-			delete(e.Properties, k)
+			patch.MetaUnset = append(patch.MetaUnset, k)
 			continue
 		}
-		e.Properties[k] = v
+		patch.Properties[k] = v
 	}
+	// Deletion order does not affect the result, but a stable slice keeps
+	// audit summaries and test expectations deterministic.
+	slices.Sort(patch.MetaUnset)
+	// Deliberately NOT a pointer-to-"": MCP has no sentinel for "clear the
+	// body", and inventing one here would silently change the tool's
+	// contract. An empty content string means "leave the body alone", as
+	// the `content == ""` guard above already implies.
 	if content != "" {
-		e.Content = content
+		patch.Content = &content
 	}
 
-	updateResult, updateErr := s.deps.EntityManager.UpdateEntity(ctx, e)
+	updateResult, updateErr := s.deps.EntityManager.PatchEntity(ctx, id, patch)
 	if updateErr != nil {
 		return mcp.NewToolResultError(updateErr.Error()), nil
 	}

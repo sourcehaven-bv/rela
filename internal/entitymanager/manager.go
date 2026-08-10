@@ -202,6 +202,66 @@ type Deps struct {
 	// `when:` precondition. May be nil when no precondition needs the graph;
 	// a `when:` that queries the graph then evaluates against an empty graph.
 	TransitionGraph statemachine.GraphLookup
+
+	// FieldGate decides whether the ctx principal may author the specific
+	// property changes in a [Manager.PatchEntity] call. Required — pass
+	// [AllowAllFieldGate] to opt out explicitly.
+	//
+	// It is a CAPABILITY injected at the wiring site, never inferred from
+	// identity (the write-side analog of the read-side AllowAllReader,
+	// DEC-ZBI39P). Operator-trust-boundary entry points (CLI) wire
+	// AllowAllFieldGate because they have full access by design;
+	// request-scoped surfaces are where a policy-backed implementation
+	// belongs — none is wired yet (TKT-0XL8MF); see [FieldWriteGate].
+	//
+	// Required rather than optional-nil on purpose: a silently-nil authz
+	// gate is the "forgotten wiring must not become an ACL bypass" failure
+	// (RR-X9NVHI), and it matches how ACL and Audit are already handled.
+	FieldGate FieldWriteGate
+}
+
+// FieldWriteGate answers whether the ctx principal may write the named
+// properties of e. Defined here at the call site (CLAUDE.md consumer-side
+// interfaces) so entitymanager needs no dependency on the affordance
+// resolver that backs it in production.
+//
+// **STATUS: no production surface wires a real implementation yet.** Every
+// current wiring site passes [AllowAllFieldGate], so this gate is inert
+// outside tests — field-level write authz is enforced only by
+// internal/dataentry's own validateFieldWrite on its HTTP path, exactly as
+// before. The seam exists so the policy-backed implementation is a wiring
+// change rather than a rewrite; see TKT-0XL8MF. Do not assume a write
+// reaching PatchEntity has been field-gated.
+//
+// set holds the properties being upserted (key → new value); unset holds
+// the ones being removed. An implementation returns a non-nil error to
+// refuse the write; the error surfaces to the caller unwrapped, so it
+// should carry whatever structured denial detail the surface needs.
+//
+// **Scope: caller-authored changes only.** Automation-derived properties
+// ([automation.Result.PropertiesSet]) are system writes and are
+// deliberately NOT passed through this gate. The gate enforces parity with
+// what the affordance resolver would surface to this principal on a read —
+// and automation is the system acting, not the principal. Gating it would
+// mean a user who cannot author `status` could never trigger an automation
+// that sets `status`, breaking ordinary workflow automations (RR-00ERM9).
+type FieldWriteGate interface {
+	CheckFieldWrite(ctx context.Context, e *entity.Entity, set map[string]any, unset []string) error
+}
+
+// AllowAllFieldGate permits every field write. It is the explicit opt-out
+// for surfaces that sit on the operator trust boundary (the CLI, where the
+// caller already has full filesystem access to the data) and for tests.
+//
+// Named and passed deliberately, exactly like [acl.NopACL] — never the
+// result of leaving [Deps.FieldGate] nil.
+type AllowAllFieldGate struct{}
+
+// CheckFieldWrite implements [FieldWriteGate] by allowing everything.
+func (AllowAllFieldGate) CheckFieldWrite(
+	context.Context, *entity.Entity, map[string]any, []string,
+) error {
+	return nil
 }
 
 // TransitionEnforcer is the narrow contract the Manager needs from the
@@ -236,6 +296,10 @@ func New(d Deps) (*Manager, error) {
 	if d.Transitions == nil {
 		return nil, errors.New(
 			"entitymanager: New: Transitions is required (use statemachine.Compile; an empty set is a no-op)")
+	}
+	if d.FieldGate == nil {
+		return nil, errors.New(
+			"entitymanager: New: FieldGate is required (use entitymanager.AllowAllFieldGate{} to opt out)")
 	}
 	if (d.Automations == nil) != (d.Cascade == nil) {
 		return nil, errors.New(
@@ -562,6 +626,126 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 	}); err != nil {
 		return nil, err
 	}
+	// Hard-validate BEFORE the existence probe. Order is load-bearing and
+	// predates the updateCore extraction: an invalid entity reports its
+	// validation error even when the id does not exist. PatchEntity cannot
+	// share this half (it has no candidate entity until after the read), so
+	// the pre-check lives here rather than in updateCore, which re-runs the
+	// same partition on the merged result.
+	preErrs := m.deps.Meta.ValidateEntity(e.ID, e.Type, e.Properties)
+	if hard, _ := partitionValidationErrors(preErrs); len(hard) > 0 {
+		return nil, newValidationError(hard)
+	}
+
+	oldEntity, getErr := m.deps.Store.GetEntity(ctx, e.ID)
+	if getErr != nil {
+		return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, e.ID)
+	}
+
+	return m.updateCore(ctx, e, oldEntity)
+}
+
+// PatchEntity applies a TARGETED set of property changes to one entity:
+// properties the patch does not name are preserved as-is, regardless of
+// whether the caller could read them. See [entity.Patch] for the
+// merge semantics (upserts, then unsets, then the body tri-state).
+//
+// This is the safe alternative to read-modify-write. A caller doing
+// GetEntity → merge → UpdateEntity must hold the WHOLE entity, so any
+// property it failed to carry across is destroyed on save — and a caller
+// reading through a redacting reader cannot carry across what it cannot
+// see. PatchEntity owns the read internally and merges against the RAW
+// stored entity, so that failure mode is unreachable: forgetting a
+// property is a no-op, not an erasure.
+//
+// **Ordering is load-bearing** (RR-32XA5V):
+//
+//	read → locked-check → authorize → field gate → merge → updateCore
+//
+// The read comes first because the ACL subject needs the entity's real
+// type and the caller supplied only an id — the same shape, and the same
+// accepted existence disclosure, as [Manager.DeleteEntity]. The field gate
+// runs strictly AFTER authorization: field verdicts are value-dependent,
+// so consulting them for an unauthorized caller would turn allow-vs-deny
+// into an oracle for stored property values and for entity existence.
+//
+// An elevated Manager (rela.bypass_acl) skips the field gate as well as
+// the row ACL. Elevation is total by design — a half-elevated handle that
+// silently drops some property writes is the confusing contract
+// lua.WriteDeps.ElevatedManager exists to avoid — and the bypass is still
+// recorded by authorizeAndAudit (RR-BA1NIV).
+func (m *Manager) PatchEntity(
+	ctx context.Context, id string, p entity.Patch,
+) (*entity.UpdateResult, error) {
+	ctx = withStoreAttribution(ctx)
+	if id == "" {
+		return nil, errors.New("entitymanager: PatchEntity: id is empty")
+	}
+
+	// RAW read, deliberately ungated: this is write-prep, and the merge
+	// base must be the complete stored entity or hidden properties would
+	// be dropped from the clone and erased on save. Consolidating this
+	// read here is the point of the primitive — consumers no longer hold
+	// a raw store handle of their own.
+	stored, getErr := m.deps.Store.GetEntity(ctx, id)
+	if getErr != nil {
+		// Structural, not textual: consumers holding a narrow write
+		// interface (the Lua bindings) must be able to tell this apart
+		// from other hard errors without matching on the message.
+		return nil, newEntityNotFound(id)
+	}
+
+	// A locked (git-crypt) entity reads as a shell whose real property
+	// values are unavailable, so merging onto it and saving would persist
+	// the shell OVER the encrypted content — the same erasure this
+	// primitive exists to prevent, via encryption instead of redaction
+	// (RR-0QWLRC). Matches ApplyEntity's guard.
+	if stored.IsLocked() {
+		return nil, fmt.Errorf("entitymanager: PatchEntity: entity %s has inaccessible fields", id)
+	}
+
+	if err := m.authorizeAndAudit(ctx, acl.WriteRequest{
+		Op:      acl.OpUpdate,
+		Subject: acl.EntitySubject{Type: stored.Type, ID: id},
+	}); err != nil {
+		return nil, err
+	}
+
+	// Field-level gate, after the row-level decision. Skipped under
+	// elevation for the same reason the row ACL is (see the doc comment).
+	if !m.bypassACL {
+		if err := m.deps.FieldGate.CheckFieldWrite(ctx, stored, p.Properties, p.MetaUnset); err != nil {
+			return nil, err
+		}
+	}
+
+	updated := stored.Clone()
+	p.Apply(updated)
+
+	return m.updateCore(ctx, updated, stored)
+}
+
+// updateCore is the shared post-authorization update pipeline: validate,
+// run on-update automation, enforce transitions and unique constraints,
+// persist, audit, and dispatch the cascade.
+//
+// Method on Manager (not a free function over [Deps] like [createCore])
+// because the cascade needs m.gated() to stop elevation propagating into
+// descendants. It deliberately contains **no ACL check and no attribution**
+// — both belong to the entry points ([UpdateEntity], [PatchEntity]), which
+// authorize with the subject shape appropriate to how they learned the
+// entity type. Putting authorize here would double-authorize PatchEntity
+// (which must authorize early, before it can merge) and emit two
+// denied-write audit rows for one denial.
+//
+// oldEntity is passed in rather than re-read: both callers already hold it
+// (UpdateEntity to prove existence, PatchEntity as the merge base), so the
+// manager itself reads the row once per write. Callers may still read
+// separately for their own reasons — internal/mcp does, to validate
+// property names against the entity type before dispatching.
+func (m *Manager) updateCore(
+	ctx context.Context, e, oldEntity *entity.Entity,
+) (*entity.UpdateResult, error) {
 	// DEC-HWZHA: partition validation errors once. Hard errors abort;
 	// soft conditions populate Result.Warnings. If automation runs and
 	// mutates properties, we recompute warnings against the post-
@@ -570,11 +754,6 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 	hard, soft := partitionValidationErrors(preErrs)
 	if len(hard) > 0 {
 		return nil, newValidationError(hard)
-	}
-
-	oldEntity, getErr := m.deps.Store.GetEntity(ctx, e.ID)
-	if getErr != nil {
-		return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, e.ID)
 	}
 
 	result := &entity.UpdateResult{Entity: e, Warnings: soft}

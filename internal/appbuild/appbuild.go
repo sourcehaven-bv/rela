@@ -197,12 +197,11 @@ func (s *Services) LuaReadDeps() lua.ReadDeps {
 		root = s.paths.Root
 	}
 	return lua.ReadDeps{
-		VisibleReader:  visibility.Unrestricted(s.store),
-		WritePrepStore: s.store,
-		Tracer:         s.tracer,
-		Searcher:       s.searcher,
-		Meta:           s.meta,
-		ProjectRoot:    root,
+		VisibleReader: visibility.Unrestricted(s.store),
+		Tracer:        s.tracer,
+		Searcher:      s.searcher,
+		Meta:          s.meta,
+		ProjectRoot:   root,
 	}
 }
 
@@ -231,7 +230,6 @@ func (s *Services) LuaReadDeps() lua.ReadDeps {
 // raw store.
 func (s *Services) luaReadDepsFor(redactor visibility.FieldRedactor) lua.ReadDeps {
 	deps := s.LuaReadDeps()
-	// WritePrepStore stays RAW on purpose — see lua.ReadDeps.WritePrepStore.
 	deps.VisibleReader = scriptEntityReader(s.store, s.aclDeclarative, redactor)
 	deps.Tracer = scriptTracer(s.tracer, s.store, s.aclDeclarative, redactor)
 	return deps
@@ -828,12 +826,11 @@ func assemble(
 	// deliberately NOT a config default; it is TKT-ACSBSA (an admin-handle
 	// extension), so a cascade that needs more must ask for it in the open.
 	readDeps := lua.ReadDeps{
-		VisibleReader:  scriptEntityReader(st, aclDeclarative, nil),
-		WritePrepStore: st,
-		Tracer:         scriptTracer(tr, st, aclDeclarative, nil),
-		Searcher:       searcher,
-		Meta:           base.meta,
-		ProjectRoot:    cfg.Paths.Root,
+		VisibleReader: scriptEntityReader(st, aclDeclarative, nil),
+		Tracer:        scriptTracer(tr, st, aclDeclarative, nil),
+		Searcher:      searcher,
+		Meta:          base.meta,
+		ProjectRoot:   cfg.Paths.Root,
 	}
 
 	tw, err := CompileTransitions(base.meta, st, resolvedACL)
@@ -858,6 +855,7 @@ func assemble(
 		VersionRecorder:         versionRecorderFor(versions),
 		RelationVersionRecorder: relationVersionRecorderFor(versions),
 		Transitions:             tw.Enforcer,
+		FieldGate:               entitymanager.AllowAllFieldGate{},
 		TransitionGuard:         tw.Guard,
 		TransitionGraph:         tw.Graph,
 	})
