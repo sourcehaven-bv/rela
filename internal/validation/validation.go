@@ -5,11 +5,14 @@ package validation
 
 import (
 	"context"
+	"sync"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 )
 
 // Violation represents a custom validation rule violation.
@@ -67,6 +70,35 @@ func (r Result) HasErrors() bool {
 type Service struct {
 	deps  lua.ReadDeps
 	cache *lua.Cache
+
+	// ev is the predicate condition engine for `When:`/`Then:` rules
+	// (TKT-J4IR1G): filter clauses are transpiled + compiled once (cached
+	// in the Evaluator) and evaluated per entity. Built lazily against
+	// deps.Meta.
+	evOnce sync.Once
+	ev     *predicatefns.Evaluator
+}
+
+// evaluator returns the predicate Evaluator bound to the service's
+// metamodel, built once.
+func (s *Service) evaluator() *predicatefns.Evaluator {
+	s.evOnce.Do(func() {
+		s.ev = predicatefns.NewEvaluator(s.deps.Meta, time.Now())
+	})
+	return s.ev
+}
+
+// matchFilters evaluates an ANDed set of filter clauses against an
+// entity through the predicate condition engine. A transpile/compile
+// error is returned so the caller can treat it as "does not apply /
+// does not satisfy" (the prior filter.MatchAll path treated an error the
+// same way).
+func (s *Service) matchFilters(e *entity.Entity, filters []*filter.Filter) (bool, error) {
+	prog, err := s.evaluator().CompileFilter(e.Type, filters)
+	if err != nil {
+		return false, err
+	}
+	return s.evaluator().Matches(context.Background(), prog, e.Type, e.ID, e.Properties)
 }
 
 // New creates a validation service for the given metamodel.
@@ -266,25 +298,23 @@ func (s *Service) checkEntityAgainstRule(
 	whenFilters, thenFilters []*filter.Filter,
 	luaCtx *luaRuleContext,
 ) entityResult {
-	entityDef, ok := s.deps.Meta.GetEntityDef(e.Type)
-	if !ok {
+	// An unknown entity type has no rules to apply.
+	if _, ok := s.deps.Meta.GetEntityDef(e.Type); !ok {
 		return entityResult{}
 	}
 
-	rec := filter.Record{ID: e.ID, Type: e.Type, Properties: e.Properties}
-
-	// Check 'when' conditions - if they don't match, rule doesn't apply
+	// Check 'when' conditions - if they don't match, rule doesn't apply.
+	// Evaluated through the predicate condition engine (TKT-J4IR1G): the
+	// filter clauses are transpiled + compiled once and cached.
 	if len(whenFilters) > 0 {
-		matches, err := filter.MatchAll(rec, whenFilters, entityDef, s.deps.Meta)
-		if err != nil || !matches {
+		if matches, err := s.matchFilters(e, whenFilters); err != nil || !matches {
 			return entityResult{}
 		}
 	}
 
-	// Check 'then' conditions - if they don't satisfy, it's a violation
+	// Check 'then' conditions - if they don't satisfy, it's a violation.
 	if len(thenFilters) > 0 {
-		satisfies, err := filter.MatchAll(rec, thenFilters, entityDef, s.deps.Meta)
-		if err != nil || !satisfies {
+		if satisfies, err := s.matchFilters(e, thenFilters); err != nil || !satisfies {
 			return entityResult{Violations: []Violation{newViolation(rule, e, rule.Description)}}
 		}
 	}

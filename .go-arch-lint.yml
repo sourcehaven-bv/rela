@@ -575,6 +575,8 @@ deps:
     mayDependOn:
       - filter
       - metamodel
+      - predicate
+      - predicatefns
   conflict:
     mayDependOn:
       - markdown
@@ -671,6 +673,8 @@ deps:
       - lua
       - markdown
       - metamodel
+      - predicate
+      - predicatefns
     canUse:
       - gopherlua
   validator:
