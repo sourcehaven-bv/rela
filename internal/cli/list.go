@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
@@ -96,8 +95,17 @@ func applyListFilters(
 		return nil, errors.New("--where/--filter require specifying an entity type")
 	}
 
-	ev := predicatefns.NewEvaluator(meta, time.Now())
+	entityDef, ok := meta.GetEntityDef(entityTypeName)
+	if !ok {
+		return nil, fmt.Errorf("unknown entity type: %s", entityTypeName)
+	}
+
+	ev := predicatefns.NewEvaluator(meta)
 	var progs []*predicate.Program
+	// legacyWhere holds --where clauses that FromFilter can't transpile
+	// (e.g. fuzzy-with-wildcard); they evaluate via filter.MatchAll so a
+	// previously-working --where invocation keeps working (RR-3UR3VH).
+	var legacyWhere []*filter.Filter
 
 	if len(where) > 0 {
 		fmt.Fprintln(os.Stderr, "warning: --where is deprecated; prefer --filter with a predicate expression")
@@ -107,9 +115,17 @@ func applyListFilters(
 		}
 		prog, err := ev.CompileFilter(entityTypeName, filters)
 		if err != nil {
-			return nil, fmt.Errorf("invalid --where filter: %w", err)
+			// Untranspilable --where: keep the legacy filter path so the
+			// flag doesn't regress. Validate the properties up front.
+			for _, f := range filters {
+				if _, ok := entityDef.Properties[f.Property]; !ok {
+					return nil, fmt.Errorf("unknown property %q for entity type %q", f.Property, entityTypeName)
+				}
+			}
+			legacyWhere = filters
+		} else {
+			progs = append(progs, prog)
 		}
-		progs = append(progs, prog)
 	}
 	if filterExpr != "" {
 		prog, err := ev.Compile(entityTypeName, filterExpr)
@@ -121,22 +137,48 @@ func applyListFilters(
 
 	var filtered []*entity.Entity
 	for _, e := range entities {
-		match := true
-		for _, prog := range progs {
-			ok, err := ev.Matches(ctx, prog, e.Type, e.ID, e.Properties)
-			if err != nil {
-				return nil, fmt.Errorf("filter error: %w", err)
-			}
-			if !ok {
-				match = false
-				break
-			}
+		match, err := listEntityMatches(ctx, ev, progs, legacyWhere, entityDef, meta, e)
+		if err != nil {
+			return nil, err
 		}
 		if match {
 			filtered = append(filtered, e)
 		}
 	}
 	return filtered, nil
+}
+
+// listEntityMatches reports whether an entity passes every compiled
+// predicate Program AND the legacy --where fallback (if any).
+func listEntityMatches(
+	ctx context.Context,
+	ev *predicatefns.Evaluator,
+	progs []*predicate.Program,
+	legacyWhere []*filter.Filter,
+	entityDef *metamodel.EntityDef,
+	meta *metamodel.Metamodel,
+	e *entity.Entity,
+) (bool, error) {
+	for _, prog := range progs {
+		ok, err := ev.Matches(ctx, prog, e.Type, e.ID, e.Properties)
+		if err != nil {
+			return false, fmt.Errorf("filter error: %w", err)
+		}
+		if !ok {
+			return false, nil
+		}
+	}
+	if len(legacyWhere) > 0 {
+		rec := storeEntityRecord(e)
+		ok, err := filter.MatchAll(rec, legacyWhere, entityDef, meta)
+		if err != nil {
+			return false, fmt.Errorf("filter error: %w", err)
+		}
+		if !ok {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func applyListSort(

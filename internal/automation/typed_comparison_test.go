@@ -103,3 +103,29 @@ func TestEngine_WhenCondition_UnknownPropertyFallsBackToString(t *testing.T) {
 		t.Errorf("undeclared property should still match via string fallback; PropertiesSet=%v", result.PropertiesSet)
 	}
 }
+
+// TestEngine_WhenCondition_UntranspilableClauseKeepsLegacyVerdict pins
+// RR-G9KT8H: a regex operator on an INTEGER property is something
+// filter.Match rejects (regex is string-only), so the automation must
+// NOT fire. The predicate transpiler can't express regex-on-int either,
+// so matchTyped falls back to filter.Match — it must reproduce that
+// reject, NOT drop to the string matcher (which would happily regex the
+// stringified "5" and wrongly fire).
+func TestEngine_WhenCondition_UntranspilableClauseKeepsLegacyVerdict(t *testing.T) {
+	auto := newAutomation().
+		OnCreate("bug").
+		When("count=~[0-9]"). // regex on an integer property
+		Set("status", "escalated").
+		Build()
+
+	ent := buildEntity(testutil.Entity("bug").With("count", 5))
+
+	engine := NewEngineFromMetamodel(intPropMeta(), nil)
+	engine.automations = []Automation{auto}
+
+	result := engine.Process(Event{Type: EventEntityCreated, Entity: ent})
+	if result.PropertiesSet["status"] == "escalated" {
+		t.Error("regex on an integer property must NOT fire (filter.Match rejects it); " +
+			"the string-fallback verdict flip is not fixed")
+	}
+}

@@ -4,7 +4,7 @@ type: ticket
 title: --filter CLI flag + migrate automation/validation onto predicate (TKT-7EJK4 phase 2b)
 kind: refactor
 priority: medium
-status: in-progress
+status: review
 ---
 
 ## Background

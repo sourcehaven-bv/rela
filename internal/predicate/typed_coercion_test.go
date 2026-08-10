@@ -106,6 +106,9 @@ func TestTypedComparison_CoercionErrors(t *testing.T) {
 		{"non-integer literal on int field", "entity.count > 1.5"},
 		// A literal beyond 2^53 can't coerce to an exact int64 (RR-O0LM1).
 		{"int literal beyond 2^53", "entity.count > 9007199254740993"},
+		// The negative-literal fold must still hit the symmetric range
+		// guard (RR-CLYVDL): a too-large negative literal is rejected.
+		{"negative int literal beyond -2^53", "entity.count > -9007199254740993"},
 		// Hex literals are capped at 53 bits at parse (exact-float64
 		// invariant); a 64-bit one is rejected before coercion.
 		{"hex literal beyond 2^53", "entity.count > 0xFFFFFFFFFFFFFFFF"},

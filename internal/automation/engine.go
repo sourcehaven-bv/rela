@@ -4,7 +4,6 @@ import (
 	"context"
 	"slices"
 	"sync"
-	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
@@ -41,7 +40,7 @@ func (e *Engine) evaluator() *predicatefns.Evaluator {
 	e.evMu.Lock()
 	defer e.evMu.Unlock()
 	if e.ev == nil {
-		e.ev = predicatefns.NewEvaluator(e.meta, time.Now())
+		e.ev = predicatefns.NewEvaluator(e.meta)
 	}
 	return e.ev
 }
@@ -413,10 +412,22 @@ func (e *Engine) matchTyped(ent *entity.Entity, f *filter.Filter) (matched, hand
 	if _, ok := def.Properties[f.Property]; !ok {
 		return false, false
 	}
+	propDef := def.Properties[f.Property]
 	prog, err := ev.CompileFilter(ent.Type, []*filter.Filter{f})
 	if err != nil {
-		// Unsupported/untranspilable clause — fall back to string match.
-		return false, false
+		// The clause is untranspilable (e.g. fuzzy-with-wildcard, or an
+		// operator/type combination FromFilter rejects). Reproduce the
+		// EXACT legacy verdict via filter.Match rather than dropping to
+		// the string matcher — the string path would accept ops
+		// filter.Match rejected (e.g. regex on an int property), flipping
+		// the verdict (RR-G9KT8H). handled=true so the caller does NOT
+		// fall back to matchSimple.
+		rec := filter.Record{ID: ent.ID, Type: ent.Type, Properties: ent.Properties}
+		m, mErr := filter.Match(rec, f, &propDef, e.meta)
+		if mErr != nil {
+			return false, true
+		}
+		return m, true
 	}
 	m, err := ev.Matches(context.Background(), prog, ent.Type, ent.ID, ent.Properties)
 	if err != nil {

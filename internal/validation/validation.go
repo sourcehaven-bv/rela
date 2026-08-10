@@ -6,7 +6,6 @@ package validation
 import (
 	"context"
 	"sync"
-	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
@@ -83,20 +82,29 @@ type Service struct {
 // metamodel, built once.
 func (s *Service) evaluator() *predicatefns.Evaluator {
 	s.evOnce.Do(func() {
-		s.ev = predicatefns.NewEvaluator(s.deps.Meta, time.Now())
+		s.ev = predicatefns.NewEvaluator(s.deps.Meta)
 	})
 	return s.ev
 }
 
 // matchFilters evaluates an ANDed set of filter clauses against an
-// entity through the predicate condition engine. A transpile/compile
-// error is returned so the caller can treat it as "does not apply /
-// does not satisfy" (the prior filter.MatchAll path treated an error the
-// same way).
+// entity through the predicate condition engine. If any clause is
+// untranspilable (e.g. fuzzy-with-wildcard), it falls back to the exact
+// legacy filter.MatchAll evaluation for the whole set rather than
+// erroring — a transpile error must NOT turn into a forced violation or
+// a silently-skipped rule (RR-FI4DYL). A genuine eval error is returned
+// so the caller treats it as "does not apply / does not satisfy",
+// matching the prior filter.MatchAll error contract.
 func (s *Service) matchFilters(e *entity.Entity, filters []*filter.Filter) (bool, error) {
 	prog, err := s.evaluator().CompileFilter(e.Type, filters)
 	if err != nil {
-		return false, err
+		// Untranspilable — reproduce the legacy verdict exactly.
+		entityDef, ok := s.deps.Meta.GetEntityDef(e.Type)
+		if !ok {
+			return false, nil
+		}
+		rec := filter.Record{ID: e.ID, Type: e.Type, Properties: e.Properties}
+		return filter.MatchAll(rec, filters, entityDef, s.deps.Meta)
 	}
 	return s.evaluator().Matches(context.Background(), prog, e.Type, e.ID, e.Properties)
 }

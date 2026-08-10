@@ -23,10 +23,14 @@ import (
 // unknown) are omitted, matching EntityRecordType. `id` and `type` are
 // always present as strings.
 //
-// This mirrors the affordances binder (bindings.go coerceScalar) — the
-// two agree by construction because both bind against the same declared
-// types. (affordances keeps its own copy only because it also binds
-// current_user and the has_* host funcs; the scalar coercion is identical.)
+// This mirrors the affordances binder (bindings.go coerceScalar): both
+// bind against the same declared types, so for the value shapes that
+// reach them from markdown frontmatter (list props decode to []any) they
+// agree. They are NOT yet a single implementation — affordances also
+// binds current_user + the has_* host funcs on top, and its coerceList
+// lacks this one's []string fast-path. Collapsing affordances onto this
+// binder (keeping its extra bindings) is a tracked follow-up (RR-1NIV6A);
+// until then, changes here that affect verdicts must be mirrored there.
 func EntityRecord(
 	meta *metamodel.Metamodel, def *metamodel.EntityDef, id, typ string, props map[string]any,
 ) predicate.Value {

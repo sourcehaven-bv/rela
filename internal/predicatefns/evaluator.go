@@ -28,16 +28,27 @@ import (
 // Both return a *Program the caller evaluates per entity with Matches.
 type Evaluator struct {
 	meta *metamodel.Metamodel
-	now  time.Time
+	// now supplies the instant `today()` returns, evaluated per Matches
+	// call. It is a func (not a captured time.Time) so a long-lived
+	// Evaluator — the automation Engine and validation Service each hold
+	// one for the process lifetime — sees the date advance rather than
+	// freezing today() at construction (RR-FUD017).
+	now func() time.Time
 
 	mu    sync.Mutex
 	cache map[string]*predicate.Program // key: type + "\x00" + source
 }
 
-// NewEvaluator returns an Evaluator bound to meta. `now` is the instant
-// `today()` returns during Eval (passed in for determinism; the engine
-// never reads the wall clock at eval time).
-func NewEvaluator(meta *metamodel.Metamodel, now time.Time) *Evaluator {
+// NewEvaluator returns an Evaluator bound to meta, with today() sourced
+// from time.Now() per evaluation. Use NewEvaluatorWithClock to pin the
+// clock (tests).
+func NewEvaluator(meta *metamodel.Metamodel) *Evaluator {
+	return NewEvaluatorWithClock(meta, time.Now)
+}
+
+// NewEvaluatorWithClock returns an Evaluator whose today() reads `now`
+// on each Matches call. `now` must be non-nil.
+func NewEvaluatorWithClock(meta *metamodel.Metamodel, now func() time.Time) *Evaluator {
 	return &Evaluator{meta: meta, now: now, cache: map[string]*predicate.Program{}}
 }
 
@@ -102,7 +113,7 @@ func (e *Evaluator) Matches(
 	if err := b.SetVar("entity", EntityRecord(e.meta, def, id, entityType, props)); err != nil {
 		return false, err
 	}
-	if err := Bind(b, e.now); err != nil {
+	if err := Bind(b, e.now()); err != nil {
 		return false, err
 	}
 	v, err := prog.Eval(ctx, b)
