@@ -161,10 +161,23 @@ every authored span — which is exactly what happened the first time.
 
 ### Cascade layers: all rela CSS lives in `@layer rela`
 
-`relaCssLayer.ts` (a Vite `generateBundle` plugin) wraps every emitted
-stylesheet in `@layer rela`. This is what lets an operator's `custom.css` win
-the cascade — an unlayered declaration outranks a layered one regardless of
-source order **or** specificity.
+A Vite `generateBundle` plugin wraps every emitted stylesheet in `@layer rela`.
+This is what lets an operator's `custom.css` win the cascade — an unlayered
+declaration outranks a layered one regardless of source order **or**
+specificity.
+
+The split is deliberate: `relaCssLayer.ts` holds the pure `wrapCss` logic (no
+`vite` import, unit-tested by `relaCssLayer.test.ts` beside it) and
+`vite.config.ts` holds the thin plugin binding, mirroring how
+`vite.editor.config.ts` defines its plugin locally.
+
+**Both files must stay at the `frontend/` root, in the `tsconfig.node.json`
+project.** They cannot move under `src/`: `vue-tsc -b` builds project
+references, so a file owned by *both* projects fails `TS6305` ("output file has
+not been built from source file") and one imported *across* the boundary
+without being listed fails `TS6307`. Neither reproduces on a warm tree — a stale
+`node_modules/.cache/tsc-node` hides `TS6305` — so verify config moves with a
+real `rm -rf node_modules && npm ci`, which is what CI runs.
 
 It is not cosmetic. The build emits ~19 stylesheets; 18 are route chunks that
 Vite appends to `<head>` at RUNTIME, i.e. *after* the operator's injected
