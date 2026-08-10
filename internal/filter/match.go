@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/propmatch"
 )
 
 // Match checks if a record's property matches a filter.
@@ -28,38 +29,33 @@ func Match(rec Record, filter *Filter, propDef *metamodel.PropertyDef, m *metamo
 		return matchList(strList, filter, propDef, m)
 	}
 
-	// Handle nil/missing/empty values
-	// Semantic: missing or empty properties do NOT match any filter, except when
-	// explicitly checking for empty values with "property=" (OpEqual with empty string).
-	// This means:
-	//   - property=value  -> false (missing/empty is not equal to value)
-	//   - property!=value -> false (missing/empty should not match "not equal to value")
+	// Emptiness is decided by internal/propmatch — the single authoritative
+	// definition, shared with the store layer so a pushed-down `prop=` means
+	// exactly what it means here. See that package's doc for the rule:
+	//   - property=value  -> false (missing/empty is not equal to a value)
+	//   - property!=value -> false (must not match "not equal to value")
 	//   - property=       -> true  (missing/empty matches "is empty")
-	//   - property!=      -> false (missing/empty should not match "is not empty")
-	if val == nil || val == "" {
-		// Only match if explicitly comparing to empty with = operator
-		if filter.Operator == OpEqual && filter.Value == "" {
-			return true, nil
-		}
-		return false, nil
-	}
-
-	// Handle empty filter value checks ("property=" or "property!=")
-	// This checks for existence/emptiness and works for all property types.
-	// When filter.Value is empty, we're checking if the property has any value,
-	// not comparing to a specific value. This avoids parse errors for non-string types.
-	if filter.Value == "" {
+	//   - property!=      -> false (does not match "is not empty")
+	//
+	// Only OpEqual/OpNotEqual are delegated: the ordered and pattern
+	// operators need the property's declared type, so they fall through to
+	// the metamodel-aware comparison below (and to its error for an empty
+	// operand).
+	if propmatch.IsEmpty(val) || filter.Value == "" {
 		switch filter.Operator {
-		case OpEqual:
-			// property= means "is empty", but we already handled nil/"" above,
-			// so if we reach here the value is not empty
-			return false, nil
-		case OpNotEqual:
-			// property!= means "is not empty" - value exists and is not empty
-			return true, nil
+		case OpEqual, OpNotEqual:
+			op := propmatch.OpEqual
+			if filter.Operator == OpNotEqual {
+				op = propmatch.OpNotEqual
+			}
+			return propmatch.Decide(val, op, filter.Value) == propmatch.Match, nil
 		case OpLess, OpLessEqual, OpGreater, OpGreaterEqual, OpRegex, OpFuzzy:
-			// For other operators with empty value, fall through to type-specific matching
-			// which will return an appropriate error
+			// An empty operand on an ordered/pattern operator: an empty
+			// VALUE falls through to type-specific matching (which errors
+			// appropriately), but an empty property never matches one.
+			if propmatch.IsEmpty(val) {
+				return false, nil
+			}
 		}
 	}
 
