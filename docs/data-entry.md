@@ -238,6 +238,11 @@ and form select options.
 
 **Available colors:** `red`, `orange`, `yellow`, `green`, `blue`, `purple`, `gray`.
 
+For customisation beyond palette and theme — arbitrary CSS or JavaScript against
+rela's own UI — see [Operator customisation hooks](customisation.md). That is an
+explicitly best-effort escape hatch; the palette/theme system remains the
+supported path for ordinary branding.
+
 ## Display names
 
 Every entity's display name — the human-readable string shown in

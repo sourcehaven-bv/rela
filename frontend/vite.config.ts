@@ -1,10 +1,33 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import type { Plugin } from 'vite'
+import { wrapCss } from './relaCssLayer'
 import { fileURLToPath, URL } from 'node:url'
 
 // Get API base URL from environment variable or default to localhost:8080
 // For e2e tests, VITE_API_BASE is set by global-setup.ts
 const apiBase = process.env.VITE_API_BASE || 'http://localhost:8080'
+
+
+// Wraps every emitted stylesheet in `@layer rela` so an operator's unlayered
+// custom.css wins the cascade. The wrap logic itself lives in
+// relaCssLayer.ts (unit-tested via relaCssLayer.test.ts); this is the Vite binding.
+//
+// Build-only: generateBundle is a Rollup build hook, so `npm run dev` has no
+// layer. Verify cascade-sensitive changes against `npm run build`.
+function relaCssLayer(): Plugin {
+  return {
+    name: 'rela-css-layer',
+    enforce: 'post',
+    generateBundle(_options, bundle) {
+      for (const [fileName, chunk] of Object.entries(bundle)) {
+        if (chunk.type !== 'asset' || !fileName.endsWith('.css')) continue
+        const wrapped = wrapCss(String(chunk.source))
+        if (wrapped !== null) chunk.source = wrapped
+      }
+    },
+  }
+}
 
 export default defineConfig(({ mode }) => {
   // Log at config evaluation time so we can see what port is being used
@@ -21,7 +44,21 @@ export default defineConfig(({ mode }) => {
   const e2eTestHooks = mode === 'development'
 
   return {
-    plugins: [vue()],
+    plugins: [
+      vue({
+        template: {
+          compilerOptions: {
+            // <rela-slot> and <rela-editor> are native custom elements, not Vue
+            // components. Without this, an unregistered <rela-slot> logs
+            // "Failed to resolve component" on every render. This only affects
+            // Vue's component RESOLUTION — relaEditor.ts's
+            // customElements.define() is untouched.
+            isCustomElement: (tag) => tag.startsWith('rela-'),
+          },
+        },
+      }),
+      relaCssLayer(),
+    ],
     base: '/',
     define: {
       __E2E_TEST_HOOKS__: JSON.stringify(e2eTestHooks),
