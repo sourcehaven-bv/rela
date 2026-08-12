@@ -6,7 +6,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/projectsetup"
-	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // MigrateCmd migrates project files (schema.yaml, etc.) to current
@@ -30,16 +29,18 @@ func (c *MigrateCmd) Run() error {
 }
 
 func runMigrateCheck(startDir string) error {
-	detections, err := projectsetup.DetectMigrations(startDir)
+	detections, schemaName, err := projectsetup.CheckPending(startDir)
 	if err != nil {
 		return err
 	}
 
-	renamePending := projectsetup.LegacySchemaPending(startDir, storage.NewSafeFS(storage.NewOsFS()))
-
-	if len(detections) > 0 || renamePending {
-		if renamePending {
+	if len(detections) > 0 || schemaName.NeedsAttention() {
+		if schemaName.RenamePending {
 			fmt.Printf("%s needs renaming to %s\n", project.LegacySchemaFile, project.SchemaFile)
+		}
+		if schemaName.Orphaned != "" {
+			fmt.Printf("%s is being IGNORED because %s exists; merge and delete it\n",
+				project.LegacySchemaFile, project.SchemaFile)
 		}
 		for _, d := range detections {
 			fmt.Printf("%s needs migration:\n", d.File.Name)
@@ -47,7 +48,12 @@ func runMigrateCheck(startDir string) error {
 				fmt.Printf("  - %s\n", m.Description)
 			}
 		}
-		fmt.Println("\nRun 'rela migrate' to apply these migrations.")
+		// An orphaned legacy file is the one condition `rela migrate` cannot
+		// resolve on its own — it only reports it — so don't point at the
+		// command as if it were the whole fix.
+		if len(detections) > 0 || schemaName.RenamePending {
+			fmt.Println("\nRun 'rela migrate' to apply these migrations.")
+		}
 		os.Exit(1)
 	}
 
@@ -68,9 +74,14 @@ func runMigrate(startDir string) error {
 	if result.SchemaRenamedFrom != "" {
 		fmt.Printf("Renamed %s → %s\n", result.SchemaRenamedFrom, project.SchemaFile)
 	}
+	if result.OrphanedLegacySchema != "" {
+		fmt.Printf("Note: %s is being IGNORED because %s exists. "+
+			"Merge anything you still need, then delete it.\n",
+			project.LegacySchemaFile, project.SchemaFile)
+	}
 
 	if result.FilesUpdated == 0 {
-		if result.SchemaRenamedFrom == "" {
+		if result.SchemaRenamedFrom == "" && result.OrphanedLegacySchema == "" {
 			fmt.Println("No migrations needed.")
 		}
 		return nil

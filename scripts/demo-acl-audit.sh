@@ -24,7 +24,7 @@ say "Building rela → ${BIN}"
 seed_metamodel() {
     local dir="$1"
     mkdir -p "${dir}"
-    cat > "${dir}/metamodel.yaml" <<'YAML'
+    cat > "${dir}/schema.yaml" <<'YAML'
 version: "1"
 namespace: "https://example.com/acl-demo#"
 entities:

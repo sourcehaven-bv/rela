@@ -192,20 +192,25 @@ func (c *Context) RelationFilePath(from, relationType, to string) string {
 	return filepath.Join(c.RelationsDir, filename)
 }
 
-// Exists reports whether the project has been initialized, accepting EITHER
-// schema file name. Checking only the new name would let a caller conclude a
-// legacy project is uninitialized and overwrite it — see SchemaFileAt.
+// Exists reports whether the project root already holds a schema file under
+// EITHER name. Callers that are about to CREATE a project must consult this
+// (or [SchemaFileAt] directly, when they need to know which name was found):
+// checking only the new name would treat a legacy project as an empty
+// directory and write a default schema.yaml over the top of it.
 func (c *Context) Exists(fs storage.FS) bool {
 	_, _, found := SchemaFileAt(c.Root, fs)
 	return found
 }
 
-// legacySchemaWarning ensures the deprecation notice is printed at most once
-// per process, however many times a project is opened.
-var legacySchemaWarning sync.Once
+// warnedLegacyRoots records project roots already warned about, so the notice
+// appears at most once PER PROJECT rather than once per process. A single Once
+// would be wrong for long-lived multi-project hosts like the desktop app:
+// after warning for one legacy project, every later one would be silent and
+// the operator would conclude those projects were fine.
+var warnedLegacyRoots sync.Map
 
-// WarnIfLegacySchema writes a one-time deprecation notice to stderr when ctx
-// resolved to the legacy schema name. It is a no-op otherwise.
+// WarnIfLegacySchema writes a deprecation notice to stderr the first time a
+// given legacy-named project is opened. It is a no-op otherwise.
 //
 // Call this from an entry point's startup path — every binary that opens a
 // project, not just the CLI, or server-only and desktop-only operators would
@@ -215,12 +220,13 @@ func WarnIfLegacySchema(ctx *Context) {
 	if ctx == nil || !ctx.SchemaIsLegacy {
 		return
 	}
-	legacySchemaWarning.Do(func() {
-		fmt.Fprintf(os.Stderr,
-			"warning: %s is deprecated and will stop being read in a future major version; "+
-				"run `rela migrate` to rename it to %s\n",
-			LegacySchemaFile, SchemaFile)
-	})
+	if _, seen := warnedLegacyRoots.LoadOrStore(ctx.Root, true); seen {
+		return
+	}
+	fmt.Fprintf(os.Stderr,
+		"warning: %s in %s is deprecated and will stop being read in a future "+
+			"major version; run `rela migrate` to rename it to %s\n",
+		LegacySchemaFile, ctx.Root, SchemaFile)
 }
 
 // SchemaFileAt reports which schema file exists directly in dir, without

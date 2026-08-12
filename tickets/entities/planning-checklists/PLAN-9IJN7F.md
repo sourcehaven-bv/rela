@@ -327,7 +327,7 @@ are mandatory, not optional:
 - [x] `docs/cli-reference.md` — `rela migrate` gains the rename behaviour; `rela init` output and refusal messages change
 - [x] `CLAUDE.md` — "Project files" tree block and the config-is-not-a-secret list
 - [x] `README.md` — any quickstart mentioning `metamodel.yaml`
-- [ ] `docs/data-entry.md` — N/A, no UI change
+- [x] ~~`docs/data-entry.md`~~ (N/A: no UI change)
 - Plus a migration/upgrade note stating both names work and when the legacy one will be dropped.
 
 ## Design Review

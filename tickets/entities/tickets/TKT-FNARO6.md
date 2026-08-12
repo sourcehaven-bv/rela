@@ -5,7 +5,7 @@ title: Rename metamodel.yaml to schema.yaml with backward-compatible dual-name d
 kind: refactor
 priority: medium
 effort: m
-status: in-progress
+status: review
 ---
 
 Consolidate the schema file name on `schema.yaml`, keeping `metamodel.yaml`

@@ -688,7 +688,7 @@ func loadDataEntryConfig(svc *readServices) *dataentryconfig.Config {
 }
 
 func runSchemaCleanup(svc *readServices, analysisResult *schema.Analysis, dryRun bool) error {
-	plan := schema.PlanCleanup(analysisResult)
+	plan := schema.PlanCleanup(analysisResult, filepath.Base(svc.Paths.SchemaPath))
 	if plan.IsEmpty() {
 		if out.Format == "json" {
 			return out.WriteAnalysisResult(output.AnalysisResult{
@@ -729,8 +729,7 @@ func runSchemaCleanup(svc *readServices, analysisResult *schema.Analysis, dryRun
 		return nil
 	}
 
-	projectRoot := filepath.Dir(svc.Paths.SchemaPath)
-	if err := schema.ExecuteCleanup(plan, projectRoot, false); err != nil {
+	if err := schema.ExecuteCleanup(plan, svc.Paths.SchemaPath, svc.Paths.Root, false); err != nil {
 		return err
 	}
 	out.WriteSuccess("Made %d changes", plan.TotalChanges())

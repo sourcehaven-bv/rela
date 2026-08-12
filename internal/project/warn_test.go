@@ -37,17 +37,19 @@ func captureStderr(t *testing.T, fn func()) string {
 	return <-done
 }
 
-// resetWarnOnce lets each test observe the first-warning behavior; production
-// deliberately keeps a process-lifetime Once.
-func resetWarnOnce() { legacySchemaWarning = sync.Once{} }
+// resetWarnOnce clears the warned-roots set so each test starts fresh.
+//
+// This and captureStderr mutate package-global and process-global state
+// (os.Stderr) respectively, so nothing in this file may use t.Parallel().
+func resetWarnOnce() { warnedLegacyRoots = sync.Map{} }
 
 // TestWarnIfLegacySchema covers the deprecation notice reachability fix
 // (RR-9XXI80): every entry point calls this at startup, so it must warn for a
 // legacy project, stay silent otherwise, and never repeat itself.
 func TestWarnIfLegacySchema(t *testing.T) {
-	t.Run("warns once for a legacy project", func(t *testing.T) {
+	t.Run("warns once per project", func(t *testing.T) {
 		resetWarnOnce()
-		ctx := &Context{SchemaIsLegacy: true}
+		ctx := &Context{Root: "/proj-a", SchemaIsLegacy: true}
 
 		out := captureStderr(t, func() {
 			WarnIfLegacySchema(ctx)
@@ -65,6 +67,27 @@ func TestWarnIfLegacySchema(t *testing.T) {
 		}
 		if !strings.Contains(out, SchemaFile) {
 			t.Errorf("warning should name the new file, got: %q", out)
+		}
+	})
+
+	// A single process-wide sync.Once would warn for the first legacy project
+	// and then stay silent for every later one — wrong for the desktop app,
+	// which opens many projects in one long-lived process, and which would
+	// leave the operator believing the later projects were fine (RR-K2ELC7).
+	t.Run("warns again for a different legacy project", func(t *testing.T) {
+		resetWarnOnce()
+
+		out := captureStderr(t, func() {
+			WarnIfLegacySchema(&Context{Root: "/proj-a", SchemaIsLegacy: true})
+			WarnIfLegacySchema(&Context{Root: "/proj-b", SchemaIsLegacy: true})
+		})
+
+		if n := strings.Count(out, LegacySchemaFile); n != 2 {
+			t.Errorf("warning appeared %d times for 2 distinct projects, want 2\ngot: %q", n, out)
+		}
+		// Naming the root is what makes two warnings distinguishable.
+		if !strings.Contains(out, "/proj-a") || !strings.Contains(out, "/proj-b") {
+			t.Errorf("each warning should name its project root, got: %q", out)
 		}
 	})
 

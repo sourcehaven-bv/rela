@@ -15,7 +15,8 @@ It's stored in `schema.yaml` at your project root.
 > work: rela reads `metamodel.yaml` when no `schema.yaml` is present, and warns
 > once at startup. Run `rela migrate` to rename the file. The legacy name will
 > keep working until a future major version. If both files exist, `schema.yaml`
-> wins and the other is ignored.
+> is used and the `metamodel.yaml` is ignored — `rela migrate` reports it so you
+> can merge and delete it.
 
 ## Structure
 

@@ -137,31 +137,85 @@ func TestMigrateRenamesLegacySchema(t *testing.T) {
 	}
 }
 
-// TestMigrateRefusesWhenBothPresent pins the refuse-don't-overwrite decision.
-// storage.FS.Rename wraps os.Rename, which replaces an existing target
-// silently on POSIX, so proceeding would destroy the operator's schema.yaml.
-func TestMigrateRefusesWhenBothPresent(t *testing.T) {
+// TestMigrateReportsOrphanedLegacySchema covers the both-files-present case.
+//
+// Discovery prefers schema.yaml, so the stale metamodel.yaml is not "pending a
+// rename" — there is nothing to rename it to. Without an explicit report it is
+// invisible: every command reads past it silently, forever. The earlier version
+// of this test accepted either an error or no error and asserted only that
+// schema.yaml was unchanged, which held trivially and pinned nothing (RR-66X91V).
+func TestMigrateReportsOrphanedLegacySchema(t *testing.T) {
 	dir := t.TempDir()
 	keep := "version: '1.0'\nentities: {}\n# the real one\n"
 	if err := os.WriteFile(filepath.Join(dir, project.SchemaFile), []byte(keep), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, project.LegacySchemaFile), []byte("version: '1.0'\n"), 0o644); err != nil {
+	legacy := filepath.Join(dir, project.LegacySchemaFile)
+	if err := os.WriteFile(legacy, []byte("version: '1.0'\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	// Discovery prefers schema.yaml, so this project is not flagged legacy and
-	// migrate proceeds without renaming. Either way the invariant is the same:
-	// schema.yaml must survive byte-for-byte.
-	if _, err := MigrateWithFS(dir, testFS()); err != nil {
-		t.Logf("migrate refused (acceptable): %v", err)
+	result, err := MigrateWithFS(dir, testFS())
+	if err != nil {
+		t.Fatalf("MigrateWithFS: %v", err)
 	}
 
-	got, err := os.ReadFile(filepath.Join(dir, project.SchemaFile))
-	if err != nil {
-		t.Fatalf("schema.yaml was removed: %v", err)
+	if result.OrphanedLegacySchema != legacy {
+		t.Errorf("OrphanedLegacySchema = %q, want %q", result.OrphanedLegacySchema, legacy)
+	}
+	if result.SchemaRenamedFrom != "" {
+		t.Errorf("must not rename when schema.yaml already exists, got %q", result.SchemaRenamedFrom)
+	}
+
+	// The live file must survive byte-for-byte: os.Rename replaces silently on
+	// POSIX, so a stray rename here would be an unrecoverable overwrite.
+	got, readErr := os.ReadFile(filepath.Join(dir, project.SchemaFile))
+	if readErr != nil {
+		t.Fatalf("schema.yaml was removed: %v", readErr)
 	}
 	if string(got) != keep {
 		t.Error("schema.yaml was overwritten by the legacy file")
 	}
+	// migrate reports the orphan; deleting the operator's file is not its call.
+	if _, statErr := os.Stat(legacy); statErr != nil {
+		t.Error("migrate deleted the orphaned legacy file; it should only report it")
+	}
+}
+
+// TestSchemaNameStatus pins what `rela migrate --check` sees, so a legacy or
+// orphaned file fails CI instead of passing quietly.
+func TestSchemaNameStatus(t *testing.T) {
+	t.Run("orphan is flagged", func(t *testing.T) {
+		dir := t.TempDir()
+		for _, n := range []string{project.SchemaFile, project.LegacySchemaFile} {
+			if err := os.WriteFile(filepath.Join(dir, n), []byte("version: '1.0'\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		ctx, err := project.Discover(dir, testFS())
+		if err != nil {
+			t.Fatal(err)
+		}
+		st := SchemaName(ctx, testFS())
+		if st.RenamePending {
+			t.Error("RenamePending must be false when schema.yaml is live")
+		}
+		if st.Orphaned == "" || !st.NeedsAttention() {
+			t.Error("an orphaned metamodel.yaml must be reported")
+		}
+	})
+
+	t.Run("clean project needs nothing", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, project.SchemaFile), []byte("version: '1.0'\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		ctx, err := project.Discover(dir, testFS())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if SchemaName(ctx, testFS()).NeedsAttention() {
+			t.Error("a schema.yaml-only project needs no attention")
+		}
+	})
 }

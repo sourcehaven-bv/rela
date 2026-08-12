@@ -1477,9 +1477,12 @@ rela migrate [flags]
 This command detects deprecated syntax patterns in your project files (e.g., `schema.yaml`) and
 transforms them to the current format while preserving comments and formatting.
 
-It also renames a legacy `metamodel.yaml` to `schema.yaml`. If both files already
-exist, the rename is refused rather than overwriting `schema.yaml` — remove or
-merge `metamodel.yaml`, then re-run.
+It also renames a legacy `metamodel.yaml` to `schema.yaml`.
+
+If a project contains **both** files, `schema.yaml` is the one rela reads and the
+`metamodel.yaml` is ignored. Nothing is renamed or deleted in that case — `migrate`
+reports the ignored file so you can merge anything you still need and remove it,
+and `migrate --check` exits non-zero until you do.
 
 **When to use:**
 

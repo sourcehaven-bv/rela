@@ -374,7 +374,7 @@ function buildIfMissing(binaryPath: string, ...buildArgs: string[]): string {
 
 function createTestProject(): string {
   const tmpDir = fs.mkdtempSync(path.join(TMPDIR, "rela-e2e-"));
-  fs.writeFileSync(path.join(tmpDir, "metamodel.yaml"), METAMODEL_YAML);
+  fs.writeFileSync(path.join(tmpDir, "schema.yaml"), METAMODEL_YAML);
   fs.writeFileSync(path.join(tmpDir, "data-entry.yaml"), DATA_ENTRY_YAML);
   fs.mkdirSync(path.join(tmpDir, "entities", "features"), { recursive: true });
   fs.mkdirSync(path.join(tmpDir, "entities", "bugs"), { recursive: true });
