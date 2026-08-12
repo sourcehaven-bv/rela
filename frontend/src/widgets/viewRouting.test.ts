@@ -63,15 +63,62 @@ describe('densePropertyRoutingHint', () => {
     ['enum', def({ type: 'enum', values: ['a', 'b'] }), 'enum'],
     ['enum via values on a string', def({ type: 'string', values: ['a'] }), 'enum'],
     ['list-valued enum', def({ type: 'enum', values: ['a'], list: true }), 'enum-list'],
-    ['list-valued string', def({ type: 'string', list: true }), 'text-list'],
   ])('routes %s to %s', (_label, propertyDef, expected) => {
     expect(densePropertyRoutingHint(propertyDef, 'p').kind).toBe(expected)
+  })
+
+  // A non-enum list must NOT reach MultiSelectWidget on a dense surface: it
+  // badges each element and em-dashes an empty array (RR-UD2C, a detail-view
+  // contract), where cells must stay visually quiet. Letting list-ness win
+  // over the type also erased the type's formatter -- a list-valued rrule
+  // rendered an em-dash instead of "every day".
+  it.each([
+    ['string', def({ type: 'string', list: true })],
+    ['date', def({ type: 'date', list: true })],
+    ['datetime', def({ type: 'datetime', list: true })],
+    ['integer', def({ type: 'integer', list: true })],
+    ['rrule', def({ type: 'rrule', list: true })],
+  ])('routes list-valued %s to preformatted text, never text-list', (_label, propertyDef) => {
+    const hint = densePropertyRoutingHint(propertyDef, 'p')
+    expect(hint.kind).toBe('text')
+    expect(hint.preformatted).toBe(true)
+  })
+
+  it('marks passthrough widgets preformatted and formatter-owning widgets not', () => {
+    // preformatted === "the widget renders String(value) and nothing else, so
+    // the caller must pre-format". Getting this wrong renders a boolean as
+    // "true" or double-formats a date.
+    const cases: [PropertyDef, boolean][] = [
+      [def({ type: 'string' }), true],
+      [def({ type: 'boolean' }), true],
+      [def({ type: 'file' }), true],
+      [def({ type: 'integer' }), true],
+      [def({ type: 'date' }), false],
+      [def({ type: 'datetime' }), false],
+      [def({ type: 'rrule' }), false],
+      [def({ type: 'enum', values: ['a'] }), false],
+      [def({ type: 'enum', values: ['a'], list: true }), false],
+    ]
+    for (const [propertyDef, expected] of cases) {
+      expect(densePropertyRoutingHint(propertyDef, 'p').preformatted).toBe(expected)
+    }
+  })
+
+  it('never routes a dense surface to text-list', () => {
+    // text-list -> MultiSelectWidget, whose empty-array em-dash is wrong for
+    // cells. Enum lists intentionally still use enum-list (badges are correct
+    // for enums); this guards the NON-enum list types.
+    const types: PropertyDef['type'][] = ['string', 'date', 'datetime', 'integer', 'file', 'rrule']
+    for (const t of types) {
+      expect(densePropertyRoutingHint(def({ type: t, list: true }), 'p').kind).not.toBe('text-list')
+    }
   })
 
   it('forwards the property name onto the hint', () => {
     expect(densePropertyRoutingHint(def({ type: 'string' }), 'title')).toEqual({
       kind: 'text',
       propertyName: 'title',
+      preformatted: true,
     })
   })
 

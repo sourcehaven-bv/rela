@@ -215,6 +215,49 @@ describe('EntityList cell rendering via widgets', () => {
     warn.mockRestore()
   })
 
+  // --- Regressions caught in review: list-ness must not erase the type's
+  // formatter, and cells must stay quiet when empty. ---
+
+  it('renders a list-valued date as joined text, not as enum badges', async () => {
+    seedSchema({ d: { type: 'date', list: true } }, [{ property: 'd' }])
+    seedEntities([
+      { id: 'T-1', type: entityType, properties: { d: ['2026-01-01', '2026-02-02'] } },
+    ])
+    const wrapper = await mountList()
+    const cell = wrapper.find('tbody td')
+    expect(cell.find('.badge').exists()).toBe(false)
+    expect(cell.text()).toContain('2026-01-01, 2026-02-02')
+  })
+
+  it('renders a list-valued rrule as its text form, not an em-dash', async () => {
+    // Routing list-ness ahead of the type sent this to MultiSelectWidget,
+    // which em-dashed it -- the value vanished entirely.
+    seedSchema({ r: { type: 'rrule', list: true } }, [{ property: 'r' }])
+    seedEntities([{ id: 'T-1', type: entityType, properties: { r: ['FREQ=DAILY'] } }])
+    const wrapper = await mountList()
+    const cell = wrapper.find('tbody td')
+    expect(cell.text()).not.toContain('—')
+    expect(cell.text()).toContain('every day')
+  })
+
+  it('leaves an empty list-valued cell blank, not an em-dash', async () => {
+    // MultiSelectWidget renders '—' for an empty array (RR-UD2C), which is a
+    // detail-view contract. formatCellValue documents the opposite for cells:
+    // "blank table cells stay visually quiet".
+    seedSchema({ tags: { type: 'enum', values: ['a'], list: true } }, [{ property: 'tags' }])
+    seedEntities([{ id: 'T-1', type: entityType, properties: { tags: [] } }])
+    const wrapper = await mountList()
+    expect(wrapper.find('tbody td').text()).not.toContain('—')
+  })
+
+  it('still badges a non-empty list-valued enum', async () => {
+    // The empty-array fix must not disable enum badging.
+    seedSchema({ tags: { type: 'enum', values: ['a', 'b'], list: true } }, [{ property: 'tags' }])
+    seedEntities([{ id: 'T-1', type: entityType, properties: { tags: ['a', 'b'] } }])
+    const wrapper = await mountList()
+    expect(wrapper.findAll('tbody .badge').length).toBe(2)
+  })
+
   it('resolves each widget once per COLUMN, not once per cell (RR-UD2A)', async () => {
     // 50 rows x 3 columns = 150 cells. Resolution happens in a computed keyed
     // on the column set, so it must run 3 times. If this regresses to per-cell,
@@ -236,6 +279,76 @@ describe('EntityList cell rendering via widgets', () => {
     expect(wrapper.findAll('tbody tr').length).toBe(50)
     expect(spy).toHaveBeenCalledTimes(3)
     spy.mockRestore()
+  })
+
+  // --- The mobile card render site. Structurally a duplicate of the desktop
+  // <td>, so it can silently drift; nothing covered it before. ---
+
+  describe('mobile card render site', () => {
+    let originalMatchMedia: typeof window.matchMedia
+
+    beforeEach(() => {
+      originalMatchMedia = window.matchMedia
+      // isMobile is seeded from matchMedia at setup, so stub before mount.
+      window.matchMedia = ((query: string) =>
+        ({
+          matches: query.includes('max-width: 768px'),
+          media: query,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+        }) as unknown as MediaQueryList) as typeof window.matchMedia
+    })
+
+    afterEach(() => {
+      window.matchMedia = originalMatchMedia
+    })
+
+    it('renders card fields through widgets, matching the desktop cell', async () => {
+      seedSchema({ title: { type: 'string' }, status: { type: 'enum', values: ['open'] } }, [
+        { property: 'title', label: 'Title' },
+        { property: 'status', label: 'Status' },
+      ])
+      seedEntities([
+        { id: 'T-1', type: entityType, properties: { title: 'Hello', status: 'open' } },
+      ])
+      const wrapper = await mountList()
+      expect(wrapper.find('.mobile-card').exists()).toBe(true)
+      // Column 0 is the card title; the enum is a badge in the field list.
+      expect(wrapper.find('.mobile-card').text()).toContain('Hello')
+      expect(wrapper.find('.mobile-card .badge').exists()).toBe(true)
+    })
+
+    it('keeps boolean card fields as Yes/No, matching desktop', async () => {
+      seedSchema({ title: { type: 'string' }, done: { type: 'boolean' } }, [
+        { property: 'title', label: 'Title' },
+        { property: 'done', label: 'Done' },
+      ])
+      seedEntities([
+        { id: 'T-1', type: entityType, properties: { title: 'A', done: false } },
+      ])
+      const wrapper = await mountList()
+      expect(wrapper.find('.mobile-card').text()).toContain('No')
+    })
+
+    it('still hides a column whose value is empty (the emptiness predicate)', async () => {
+      seedSchema({ title: { type: 'string' }, note: { type: 'string' } }, [
+        { property: 'title', label: 'Title' },
+        { property: 'note', label: 'Note' },
+      ])
+      seedEntities([{ id: 'T-1', type: entityType, properties: { title: 'A', note: '' } }])
+      const wrapper = await mountList()
+      expect(wrapper.find('.mobile-card').text()).not.toContain('Note')
+    })
+
+    it('keeps a false boolean visible rather than treating it as empty', async () => {
+      seedSchema({ title: { type: 'string' }, done: { type: 'boolean' } }, [
+        { property: 'title', label: 'Title' },
+        { property: 'done', label: 'Done' },
+      ])
+      seedEntities([{ id: 'T-1', type: entityType, properties: { title: 'A', done: false } }])
+      const wrapper = await mountList()
+      expect(wrapper.find('.mobile-card').text()).toContain('Done')
+    })
   })
 
   it('does not issue image requests for a file column (no FileWidget in cells)', async () => {

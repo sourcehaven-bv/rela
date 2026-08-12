@@ -17,7 +17,7 @@ import { resolveIcon } from '@/utils/icons'
 import { formatCellValue } from '@/utils/format'
 import { densePropertyRoutingHint } from '@/widgets/viewRouting'
 import { defaultRegistry } from '@/widgets/registry'
-import type { WidgetRoutingHint } from '@/widgets/types'
+import type { DenseRoutingHint } from '@/widgets/viewRouting'
 
 const props = defineProps<{
   id: string
@@ -366,12 +366,13 @@ function getCardFieldValue(entity: Entity, field: KanbanCardField): string {
   )
 }
 
-// Raw (unformatted) card-field value, for widget rendering. Widgets take the
-// underlying value and format it themselves; only the emptiness predicate and
-// the relation path need a string.
-function getCardFieldRawValue(entity: Entity, field: KanbanCardField): unknown {
-  if (field.relation) return getCardFieldValue(entity, field)
-  if (!field.property) return ''
+// The stored property value, unformatted. PROPERTY fields only -- a relation
+// field has no stored property and callers must use getCardFieldValue for it.
+// (An earlier version returned the joined relation string from here, which
+// made a function named "raw" hand pre-formatted text to a widget the moment
+// anyone added a relation widget.)
+function getCardFieldStoredValue(entity: Entity, field: KanbanCardField): unknown {
+  if (!field.property) return undefined
   return entity.properties[field.property]
 }
 
@@ -380,16 +381,16 @@ function getCardFieldRawValue(entity: Entity, field: KanbanCardField): unknown {
 // styled chip even for "") is noise on every card that hasn't set the
 // property, worst on mobile where card space is scarce.
 //
-// Emptiness is tested on the RAW value, not the formatted string: `false`
-// and `0` are set values that format to "No"/"0", and the old
-// `String(v || '') !== ''` test silently dropped them from the card.
+// Emptiness is decided by the FORMATTED string, matching EntityList's
+// visibleMobileColumns so the two surfaces agree. Note this is only correct
+// because formatCellValue renders `false` as "No" and `0` as "0" -- both
+// non-empty, both kept. The bug this replaced was in getCardFieldValue's old
+// `String(v || '')`, which collapsed them to '' before the predicate ever
+// ran; formatCellValue never had that flaw.
 function visibleCardFields(entity: Entity): KanbanCardField[] {
-  return (kanbanConfig.value?.card.fields ?? []).filter((field) => {
-    if (field.relation) return getCardFieldValue(entity, field) !== ''
-    const raw = getCardFieldRawValue(entity, field)
-    if (raw === null || raw === undefined || raw === '') return false
-    return !(Array.isArray(raw) && raw.length === 0)
-  })
+  return (kanbanConfig.value?.card.fields ?? []).filter(
+    (field) => getCardFieldValue(entity, field) !== ''
+  )
 }
 
 function getCardFieldLabel(field: KanbanCardField): string {
@@ -402,36 +403,36 @@ function getCardFieldLabel(field: KanbanCardField): string {
 // purpose: they have no PropertyDef and no relation widget, so they keep the
 // joined-titles string path.
 const cardFieldWidgets = computed(() => {
-  const byProperty = new Map<
-    string,
-    { component: Component; hint: WidgetRoutingHint; preformatted: boolean }
-  >()
+  const byProperty = new Map<string, { component: Component; hint: DenseRoutingHint }>()
   const type = entityType.value
   if (!type) return byProperty
   for (const field of kanbanConfig.value?.card.fields ?? []) {
     if (!field.property || field.relation || byProperty.has(field.property)) continue
     const hint = densePropertyRoutingHint(type.properties[field.property], field.property)
-    byProperty.set(field.property, {
-      component: defaultRegistry.resolveFromHint(hint),
-      hint,
-      // See EntityList: a 'text' hint is a passthrough span, so the caller
-      // must supply the formatted string (boolean -> Yes/No etc.).
-      preformatted: hint.kind === 'text',
-    })
+    byProperty.set(field.property, { component: defaultRegistry.resolveFromHint(hint), hint })
   }
   return byProperty
 })
 
-function cardFieldWidget(field: KanbanCardField) {
+// One resolved card field: the widget plus the value shaped the way it wants.
+// undefined means render the plain string span (relation fields, or a
+// property with no widget entry).
+//
+// Unlike EntityList this needs no empty-value guard: visibleCardFields has
+// already dropped empty fields before the template renders, so a widget's
+// "no value" placeholder (MultiSelectWidget's em-dash, RR-UD2C) is
+// unreachable here.
+function resolveCardField(entity: Entity, field: KanbanCardField) {
   if (field.relation || !field.property) return undefined
-  return cardFieldWidgets.value.get(field.property)
-}
-
-// Formatted string for text-routed fields, raw value for typed widgets.
-function cardFieldModelValue(entity: Entity, field: KanbanCardField): unknown {
-  return cardFieldWidget(field)?.preformatted
-    ? getCardFieldValue(entity, field)
-    : getCardFieldRawValue(entity, field)
+  const entry = cardFieldWidgets.value.get(field.property)
+  if (!entry) return undefined
+  return {
+    component: entry.component,
+    propertyName: entry.hint.propertyName,
+    modelValue: entry.hint.preformatted
+      ? getCardFieldValue(entity, field)
+      : getCardFieldStoredValue(entity, field),
+  }
 }
 
 function onDragStart(event: DragEvent, entity: Entity) {
@@ -593,12 +594,12 @@ function createNew() {
               >
                 <span class="field-label">{{ getCardFieldLabel(field) }}:</span>
                 <component
-                  :is="cardFieldWidget(field)!.component"
-                  v-if="cardFieldWidget(field)"
+                  :is="resolveCardField(entity, field)!.component"
+                  v-if="resolveCardField(entity, field)"
                   class="field-value"
-                  :model-value="cardFieldModelValue(entity, field)"
+                  :model-value="resolveCardField(entity, field)!.modelValue"
                   :mode="'display'"
-                  :property-name="cardFieldWidget(field)!.hint.propertyName"
+                  :property-name="resolveCardField(entity, field)!.propertyName"
                   :entity-type="kanbanConfig?.entity"
                 />
                 <span v-else class="field-value">{{ getCardFieldValue(entity, field) }}</span>
@@ -676,12 +677,12 @@ function createNew() {
               >
                 <span class="field-label">{{ getCardFieldLabel(field) }}:</span>
                 <component
-                  :is="cardFieldWidget(field)!.component"
-                  v-if="cardFieldWidget(field)"
+                  :is="resolveCardField(entity, field)!.component"
+                  v-if="resolveCardField(entity, field)"
                   class="field-value"
-                  :model-value="cardFieldModelValue(entity, field)"
+                  :model-value="resolveCardField(entity, field)!.modelValue"
                   :mode="'display'"
-                  :property-name="cardFieldWidget(field)!.hint.propertyName"
+                  :property-name="resolveCardField(entity, field)!.propertyName"
                   :entity-type="kanbanConfig?.entity"
                 />
                 <span v-else class="field-value">{{ getCardFieldValue(entity, field) }}</span>
