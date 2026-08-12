@@ -10,7 +10,7 @@ summary: "Config-driven web UI for entity management"
 
 The data entry application provides a web-based UI for creating, editing, and browsing entities
 stored in a rela project. It is configured entirely through a `data-entry.yaml` file placed
-alongside your `metamodel.yaml`.
+alongside your `schema.yaml`.
 
 ## Overview
 
@@ -31,13 +31,13 @@ A `data-entry.yaml` file defines:
 - **User Defaults** - Per-user default values for properties and relations, configurable via Settings page
 
 The file drives the entire UI without writing any code. The server reads `data-entry.yaml` and
-your `metamodel.yaml` together, validates them, and serves a fully functional CRUD application.
+your `schema.yaml` together, validates them, and serves a fully functional CRUD application.
 
 ## Quick Start
 
 ### 1. Create data-entry.yaml
 
-Place a `data-entry.yaml` in your project root (next to `metamodel.yaml`):
+Place a `data-entry.yaml` in your project root (next to `schema.yaml`):
 
 ```yaml
 version: "1.0"
@@ -238,7 +238,7 @@ styles:
     low: green
 ```
 
-The key is the custom type name (as defined in `metamodel.yaml` under `types:`). Each value maps
+The key is the custom type name (as defined in `schema.yaml` under `types:`). Each value maps
 to a color name. These colors are applied everywhere that enum value appears: list cells, badges,
 and form select options.
 
@@ -254,10 +254,10 @@ supported path for ordinary branding.
 Every entity's display name — the human-readable string shown in
 lists, cards, side-panel breadcrumbs, related-entity links, and
 search results — comes from the entity type's *primary property*.
-Set it with `display_property` in `metamodel.yaml`:
+Set it with `display_property` in `schema.yaml`:
 
 ```yaml
-# metamodel.yaml
+# schema.yaml
 entities:
   applicatie:
     label: Applicatie
@@ -2221,7 +2221,7 @@ When creating a new entity, default values are resolved in this order (highest p
 1. **Entity-type override** from user defaults (e.g., ticket-specific override)
 2. **Global user default** (e.g., `assignee: alice`)
 3. **Form-level default** (from `data-entry.yaml`, e.g., `default: medium`)
-4. **Metamodel default** (from `metamodel.yaml` type definition)
+4. **Metamodel default** (from `schema.yaml` type definition)
 
 User defaults never override values explicitly set by the user in the form.
 

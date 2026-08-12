@@ -729,7 +729,7 @@ func runSchemaCleanup(svc *readServices, analysisResult *schema.Analysis, dryRun
 		return nil
 	}
 
-	projectRoot := filepath.Dir(svc.Paths.MetamodelPath)
+	projectRoot := filepath.Dir(svc.Paths.SchemaPath)
 	if err := schema.ExecuteCleanup(plan, projectRoot, false); err != nil {
 		return err
 	}

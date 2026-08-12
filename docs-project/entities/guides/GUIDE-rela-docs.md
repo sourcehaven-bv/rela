@@ -13,7 +13,7 @@ hand — resolving embedded **Lua islands** that pull mechanical reference
 fragments from the deployment's schema (and a small in-memory graph the
 manual seeds). Prose stays prose; the field tables, enum meanings, state
 diagrams, relation graphs, and role matrices are generated so they can
-never drift from `metamodel.yaml` / `acl.yaml`.
+never drift from `schema.yaml` / `acl.yaml`.
 
 This is the *reference* half of a manual, generated; the *explanation*
 and *how-to* halves stay hand-written around it.

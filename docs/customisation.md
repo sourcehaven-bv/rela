@@ -7,7 +7,7 @@ Drop either file in your project root:
 
 ```text
 your-project/
-├── metamodel.yaml
+├── schema.yaml
 ├── data-entry.yaml
 ├── custom.css      ← optional
 └── custom.js       ← optional

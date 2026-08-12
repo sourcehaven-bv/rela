@@ -331,7 +331,7 @@ defense.
 
 rela-server enforces a declarative ACL at every write entry point, and — when
 a policy is configured — filters reads. The policy lives at `acl.yaml` at the
-project root (alongside `metamodel.yaml`). Three modes:
+project root (alongside `schema.yaml`). Three modes:
 
 | Mode | How | Behavior |
 |---|---|---|

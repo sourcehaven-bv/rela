@@ -78,7 +78,7 @@ func (s *Service) Rename(oldType, newType, newPlural string) (int, error) {
 	}
 	oldPlural := oldDef.GetPlural(oldType)
 
-	if err := metamodel.RenameEntityType(paths.MetamodelPath, oldType, newType, fs); err != nil {
+	if err := metamodel.RenameEntityType(paths.SchemaPath, oldType, newType, fs); err != nil {
 		return 0, fmt.Errorf("update metamodel: %w", err)
 	}
 

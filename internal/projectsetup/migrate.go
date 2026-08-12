@@ -30,6 +30,9 @@ type MigrateResult struct {
 	FilesUpdated    int
 	TotalMigrations int
 	FileResults     []MigrateFileResult
+	// SchemaRenamedFrom is the old basename when the legacy schema file was
+	// renamed during this run, or "" when no rename happened.
+	SchemaRenamedFrom string
 }
 
 // MigrateFileResult contains the result for a single file.
@@ -54,7 +57,7 @@ func DetectMigrationsWithFS(startDir string, fs storage.FS) ([]MigrateDetection,
 	}
 
 	// Load metamodel for context-aware migrations (ignore errors - may need migration itself)
-	mm, _, _ := metamodel.LoadWithoutMigrationCheck(ctx.MetamodelPath, fs)
+	mm, _, _ := metamodel.LoadWithoutMigrationCheck(ctx.SchemaPath, fs)
 
 	files := getMigrateFiles(ctx)
 	var detections []MigrateDetection
@@ -95,11 +98,20 @@ func MigrateWithFS(startDir string, fs storage.FS) (*MigrateResult, error) {
 		return nil, errors.New("no project found: run 'rela init' to create one")
 	}
 
+	// Rename the schema file BEFORE anything reads ctx.SchemaPath. Ordering is
+	// load-bearing: getMigrateFiles snapshots the path, and the loop below
+	// silently skips entries whose file is missing, so renaming afterwards
+	// would leave the project renamed but never content-migrated.
+	renamed, err := renameLegacySchema(ctx, fs)
+	if err != nil {
+		return nil, err
+	}
+
 	// Load metamodel for context-aware migrations (ignore errors - may need migration itself)
-	mm, _, _ := metamodel.LoadWithoutMigrationCheck(ctx.MetamodelPath, fs)
+	mm, _, _ := metamodel.LoadWithoutMigrationCheck(ctx.SchemaPath, fs)
 
 	files := getMigrateFiles(ctx)
-	result := &MigrateResult{}
+	result := &MigrateResult{SchemaRenamedFrom: renamed}
 
 	for _, f := range files {
 		// Skip files that don't exist
@@ -139,11 +151,51 @@ func MigrateWithFS(startDir string, fs storage.FS) (*MigrateResult, error) {
 	return result, nil
 }
 
+// LegacySchemaPending reports whether the project rooted at (or above)
+// startDir still uses the pre-rename schema filename, so `--check` callers can
+// fail CI on it without mutating anything. A discovery failure is reported as
+// "not pending" — the caller's own error path handles a missing project.
+func LegacySchemaPending(startDir string, fs storage.FS) bool {
+	ctx, err := project.Discover(startDir, fs)
+	return err == nil && ctx.SchemaIsLegacy
+}
+
+// renameLegacySchema renames metamodel.yaml to schema.yaml and updates
+// ctx.SchemaPath in place. It returns the old basename when a rename happened,
+// or "" when there was nothing to do.
+//
+// It REFUSES when both files exist rather than renaming: storage.FS.Rename
+// wraps os.Rename, which on POSIX replaces an existing target silently, so a
+// stat-then-rename guard cannot make overwriting safe — it can only decide not
+// to try. Destroying an operator's schema.yaml here would be unrecoverable, and
+// a project holding both files is ambiguous enough to be worth a human look.
+func renameLegacySchema(ctx *project.Context, fs storage.FS) (string, error) {
+	if !ctx.SchemaIsLegacy {
+		return "", nil
+	}
+
+	target := filepath.Join(ctx.Root, project.SchemaFile)
+	if _, err := fs.Stat(target); err == nil {
+		return "", fmt.Errorf(
+			"both %s and %s exist in %s: remove or merge %s, then re-run",
+			project.SchemaFile, project.LegacySchemaFile, ctx.Root, project.LegacySchemaFile)
+	}
+
+	if err := fs.Rename(ctx.SchemaPath, target); err != nil {
+		return "", fmt.Errorf("rename %s to %s: %w",
+			project.LegacySchemaFile, project.SchemaFile, err)
+	}
+
+	ctx.SchemaPath = target
+	ctx.SchemaIsLegacy = false
+	return project.LegacySchemaFile, nil
+}
+
 func getMigrateFiles(ctx *project.Context) []MigrateFile {
 	return []MigrateFile{
 		{
-			Path:     ctx.MetamodelPath,
-			Name:     "metamodel.yaml",
+			Path:     ctx.SchemaPath,
+			Name:     filepath.Base(ctx.SchemaPath),
 			FileType: migration.FileTypeMetamodel,
 		},
 		{

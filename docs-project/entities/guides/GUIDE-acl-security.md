@@ -530,7 +530,7 @@ Key properties:
   `{"*": allow-all}`, so entities whose type is absent from the
   metamodel stay searchable exactly as before ACL existed. Under a
   policy, no wildcard is emitted — an off-metamodel type (removed
-  from `metamodel.yaml` while its files remain) is hidden from
+  from `schema.yaml` while its files remain) is hidden from
   search rather than leaked.
 - **The result limit applies after visibility.** `/_search` returns
   up to 1000 results; the bound counts *visible* hits. A

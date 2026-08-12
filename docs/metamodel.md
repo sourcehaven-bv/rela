@@ -3,7 +3,13 @@
 # Metamodel Reference
 
 The metamodel defines your project's entity types, properties, and relations.
-It's stored in `metamodel.yaml` at your project root.
+It's stored in `schema.yaml` at your project root.
+
+> **Renamed from `metamodel.yaml`.** Projects created before the rename still
+> work: rela reads `metamodel.yaml` when no `schema.yaml` is present, and warns
+> once at startup. Run `rela migrate` to rename the file. The legacy name will
+> keep working until a future major version. If both files exist, `schema.yaml`
+> wins and the other is ignored.
 
 ## Structure
 
@@ -32,7 +38,7 @@ For larger projects, you can split your metamodel across multiple files using th
 ### Syntax
 
 ```yaml
-# metamodel.yaml
+# schema.yaml
 version: "1.0"
 namespace: "https://example.org/ontology/architecture#"
 
@@ -56,14 +62,14 @@ entities:
 ```
 
 The `includes:` key is always a YAML list of file paths, resolved relative to the
-project root (where `metamodel.yaml` lives).
+project root (where `schema.yaml` lives).
 
 ### Included File Format
 
 Each included file is a partial metamodel. It can contain any combination of
 `types:`, `entities:`, `relations:`, and `validations:` — but **must not** contain
 `version:`, `namespace:`, or `description:` (these are deployment-wide, allowed
-only in the root `metamodel.yaml`).
+only in the root `schema.yaml`).
 
 ```yaml
 # compliance/controls.yaml
@@ -115,7 +121,7 @@ entities:
 Circular includes are detected and produce a clear error:
 
 ```text
-circular include detected: metamodel.yaml → compliance/controls.yaml → shared/audit-types.yaml → compliance/controls.yaml
+circular include detected: schema.yaml → compliance/controls.yaml → shared/audit-types.yaml → compliance/controls.yaml
 ```
 
 ### Diamond Includes
@@ -124,7 +130,7 @@ If the same file is reachable from multiple include paths (a "diamond" pattern),
 it is loaded only once. This is not an error.
 
 ```yaml
-# metamodel.yaml
+# schema.yaml
 includes:
   - a.yaml # includes shared.yaml
   - b.yaml # also includes shared.yaml — loaded once, no conflict
@@ -147,8 +153,8 @@ To resolve conflicts, rename one of the definitions or move it to a shared file.
 | -------------------- | --------------------------------------------------------------------------------------- |
 | Duplicate definition | `duplicate entity "control": defined in both a.yaml and b.yaml`                         |
 | Circular include     | `circular include detected: a.yaml → b.yaml → a.yaml`                                   |
-| File not found       | `include file not found: missing.yaml (included from metamodel.yaml)`                   |
-| Root-only field      | `included file a.yaml must not contain "version" (only allowed in root metamodel.yaml)` |
+| File not found       | `include file not found: missing.yaml (included from schema.yaml)`                   |
+| Root-only field      | `included file a.yaml must not contain "version" (only allowed in root schema.yaml)` |
 
 ## Custom Types
 
@@ -1064,7 +1070,7 @@ entities:
 
 ## After Modifying the Metamodel
 
-After editing `metamodel.yaml`:
+After editing `schema.yaml`:
 
 ```bash
 # Rebuild the cache

@@ -33,7 +33,8 @@ func (s *Server) registerTools() {
 	s.mcp.AddTool(toolAnalyzeSchema(), s.handleAnalyzeSchema)
 
 	// Schema tools
-	s.mcp.AddTool(toolGetMetamodel(), s.handleGetMetamodel)
+	s.mcp.AddTool(toolGetSchema(), s.handleGetSchema)
+	s.mcp.AddTool(toolGetMetamodel(), s.handleGetSchema)
 	s.mcp.AddTool(toolListEntityTypes(), s.handleListEntityTypes)
 	s.mcp.AddTool(toolListRelationTypes(), s.handleListRelationTypes)
 
@@ -223,9 +224,18 @@ func toolAnalyzeSchema() mcp.Tool {
 	)
 }
 
+func toolGetSchema() mcp.Tool {
+	return mcp.NewTool("get_schema",
+		mcp.WithDescription("Get the full schema definition (entity types, relations, properties, validations)"),
+	)
+}
+
+// toolGetMetamodel is the pre-rename alias for get_schema, kept registered
+// because MCP clients pin tool names in their own config files — dropping it
+// would break every existing client on upgrade. Deprecated: use get_schema.
 func toolGetMetamodel() mcp.Tool {
 	return mcp.NewTool("get_metamodel",
-		mcp.WithDescription("Get the full metamodel definition (entity types, relations, properties, validations)"),
+		mcp.WithDescription("Deprecated alias for get_schema."),
 	)
 }
 

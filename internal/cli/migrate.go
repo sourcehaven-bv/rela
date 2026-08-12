@@ -4,11 +4,14 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/projectsetup"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
-// MigrateCmd migrates project files (metamodel.yaml, etc.) to current
-// schema. Self-discovers the project root.
+// MigrateCmd migrates project files (schema.yaml, etc.) to current
+// schema, and renames a legacy metamodel.yaml. Self-discovers the
+// project root.
 type MigrateCmd struct {
 	Check bool `help:"Check for pending migrations without applying (for CI)."`
 }
@@ -32,7 +35,12 @@ func runMigrateCheck(startDir string) error {
 		return err
 	}
 
-	if len(detections) > 0 {
+	renamePending := projectsetup.LegacySchemaPending(startDir, storage.NewSafeFS(storage.NewOsFS()))
+
+	if len(detections) > 0 || renamePending {
+		if renamePending {
+			fmt.Printf("%s needs renaming to %s\n", project.LegacySchemaFile, project.SchemaFile)
+		}
 		for _, d := range detections {
 			fmt.Printf("%s needs migration:\n", d.File.Name)
 			for _, m := range d.Migrations {
@@ -53,8 +61,18 @@ func runMigrate(startDir string) error {
 		return err
 	}
 
+	// Report the rename before the per-file results: it is a change to the
+	// project layout the operator must know about (their tooling, scripts and
+	// .gitignore may reference the old name), and it happens even when no
+	// content migration applies.
+	if result.SchemaRenamedFrom != "" {
+		fmt.Printf("Renamed %s → %s\n", result.SchemaRenamedFrom, project.SchemaFile)
+	}
+
 	if result.FilesUpdated == 0 {
-		fmt.Println("No migrations needed.")
+		if result.SchemaRenamedFrom == "" {
+			fmt.Println("No migrations needed.")
+		}
 		return nil
 	}
 	for _, fr := range result.FileResults {

@@ -7,7 +7,7 @@ and the transition help below are surfaced by the generated documentation
 (`rela docs`).
 
 This handbook is authored in Markdown; the tables, diagrams, and screenshot
-below are resolved from the project's `metamodel.yaml` and `acl.yaml` by
+below are resolved from the project's `schema.yaml` and `acl.yaml` by
 `rela-docs build`, so they can never drift from the schema. It doubles as a
 worked example of the rela-docs generator — see
 [the guide](../rela-docs.md).

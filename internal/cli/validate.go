@@ -53,13 +53,13 @@ func (c *ValidateCmd) Run(ctx context.Context) error {
 
 	hasErrors := false
 	if !quiet {
-		fmt.Println("Validating metamodel.yaml...")
+		fmt.Println("Validating schema...")
 	}
 	if result.MetamodelError != nil {
 		fmt.Printf("  ✗ %v\n", result.MetamodelError)
 		hasErrors = true
 	} else if !quiet {
-		fmt.Println("  ✓ metamodel.yaml is valid")
+		fmt.Println("  ✓ schema is valid")
 	}
 	hasErrors = reportDataEntryValidation(result, hasErrors)
 

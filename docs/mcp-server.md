@@ -42,15 +42,15 @@ Project-scoped servers defined in `.mcp.json` require interactive approval on fi
 > **Notes:**
 >
 > - Claude Code launches MCP servers with the project directory as cwd, so `rela mcp` finds
->   `metamodel.yaml` automatically — no cwd configuration is needed (or supported).
+>   `schema.yaml` automatically — no cwd configuration is needed (or supported).
 > - If both a local server and `.mcp.json` define `rela`, the local server takes priority.
 
 The server communicates over stdio using JSON-RPC. It automatically discovers the project root
-(by finding `metamodel.yaml`), loads the metamodel, and syncs the graph from markdown files.
+(by finding `schema.yaml`), loads the metamodel, and syncs the graph from markdown files.
 
 ## File Watching
 
-The server watches `entities/`, `relations/`, and `metamodel.yaml` for changes. When files are
+The server watches `entities/`, `relations/`, and `schema.yaml` for changes. When files are
 created, modified, or deleted, the graph is re-synced automatically and connected clients are
 notified via `notifications/resources/list_changed`. Changes are debounced with a 200ms window.
 

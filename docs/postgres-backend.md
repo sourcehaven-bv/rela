@@ -19,7 +19,7 @@ deployments with **multiple server processes** sharing one database (see
 PostgreSQL backs **data only**. The project's schema and configuration
 are still read from the filesystem, exactly as in the default build:
 
-- `metamodel.yaml` — the entity/relation schema.
+- `schema.yaml` — the entity/relation schema.
 - `templates/` — optional entity/relation templates.
 - `.rela/` — the per-machine cache and audit log.
 

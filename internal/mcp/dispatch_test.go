@@ -120,7 +120,8 @@ var toolCalls = map[string]struct {
 	"analyze_properties":  {args: `{}`},
 	"analyze_validations": {args: `{}`},
 	"analyze_schema":      {args: `{"threshold":0}`},
-	"get_metamodel":       {args: `{}`},
+	"get_schema":          {args: `{}`},
+	"get_metamodel":       {args: `{}`}, // deprecated alias, must keep dispatching
 	"list_entity_types":   {args: `{}`},
 	"list_relation_types": {args: `{}`},
 	"export":              {args: `{"format":"json"}`},

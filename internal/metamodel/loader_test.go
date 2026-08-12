@@ -1922,11 +1922,14 @@ entities:
 // Globs every shipped metamodel under the repo root and asserts each
 // one loads without error. RR-G175B / RR-XMJX1 / RR-MT7J7 / RR-YN32Y.
 //
-// "Shipped metamodel" means any file matching `*metamodel*.yaml` —
-// that includes the dogfood `tickets/metamodel.yaml`, the docs-project
-// metamodel, every prototype's `metamodel.yaml`, and named variants
-// like `prototypes/data-entry/catalog-metamodel.yaml`. Negative-case
-// fixture metamodels under `testdata/` and `fixtures/` are excluded.
+// "Shipped metamodel" means any file matching `*schema*.yaml` or the
+// pre-rename `*metamodel*.yaml` — that includes the dogfood
+// `tickets/schema.yaml`, the docs-project schema, every prototype's
+// `schema.yaml`, and named variants like
+// `prototypes/data-entry/catalog-metamodel.yaml`. Both names are globbed
+// because the legacy one is still a supported project layout.
+// Negative-case fixture metamodels under `testdata/` and `fixtures/`
+// are excluded.
 //
 // New metamodels get covered automatically the moment they land on
 // disk; nothing to keep in sync.
@@ -1962,7 +1965,8 @@ func TestLoad_AllShippedMetamodels(t *testing.T) {
 			return nil
 		}
 		name := d.Name()
-		if !strings.HasSuffix(name, ".yaml") || !strings.Contains(name, "metamodel") {
+		isSchemaName := strings.Contains(name, "metamodel") || strings.Contains(name, "schema")
+		if !strings.HasSuffix(name, ".yaml") || !isSchemaName {
 			return nil
 		}
 		paths = append(paths, path)

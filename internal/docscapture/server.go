@@ -140,7 +140,13 @@ func copyProjectSchema(src, dst string) error {
 		return err
 	}
 	// Files and dirs that carry schema/config/presentation (NOT entities/relations).
-	for _, name := range []string{"metamodel.yaml", "data-entry.yaml", "acl.yaml", "schedules.yaml"} {
+	// Both schema names are listed; copyIfExists skips whichever is absent.
+	// Literals rather than the project package constants: arch-lint forbids
+	// docscapture -> project, and a local type here already binds the name.
+	for _, name := range []string{
+		"schema.yaml", "metamodel.yaml",
+		"data-entry.yaml", "acl.yaml", "schedules.yaml",
+	} {
 		if err := copyIfExists(filepath.Join(src, name), filepath.Join(dst, name)); err != nil {
 			return err
 		}

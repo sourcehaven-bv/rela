@@ -11,7 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-func (s *Server) handleGetMetamodel(
+func (s *Server) handleGetSchema(
 	_ context.Context, _ mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
 	meta := s.deps.Meta
