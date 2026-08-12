@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, shallowRef, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, shallowRef, computed, watch, onMounted, onUnmounted, type Component } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQuery, useMutation, useQueryCache } from '@pinia/colada'
 import { useSchemaStore, useUIStore } from '@/stores'
@@ -15,14 +15,16 @@ import { entityDetailHref } from '@/utils/entityRoute'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { renderMarkdown } from '@/utils/markdown'
 import { actionAllowed } from '@/utils/affordancesWarning'
-import { getCellValue, formatCellValue, isEnumPropertyDef, asArray } from '@/utils/format'
+import { getCellValue, formatCellValue } from '@/utils/format'
+import { densePropertyRoutingHint } from '@/widgets/viewRouting'
+import { defaultRegistry } from '@/widgets/registry'
+import type { WidgetRoutingHint } from '@/widgets/types'
 import type { Entity, ListMeta, ListParams, ListResponse, FilterState } from '@/types'
 import { viewHeaderMarkdown, viewFooterMarkdown } from '@/types'
 import FilterBar from './FilterBar.vue'
 import Pagination from './Pagination.vue'
 import SearchBox from './SearchBox.vue'
 import AdHocFilterMenu from './AdHocFilterMenu.vue'
-import Badge from '@/components/common/Badge.vue'
 import BackButton from '@/components/common/BackButton.vue'
 import ExportMenu from '@/components/entity/ExportMenu.vue'
 import { listExportUrl } from '@/api/transforms'
@@ -531,9 +533,51 @@ function navigateToEntity(entity: Entity) {
   router.push({ path, query })
 }
 
-function isEnumColumn(column: { property?: string }): boolean {
-  if (!column.property || !entityType.value) return false
-  return isEnumPropertyDef(entityType.value.properties[column.property])
+// Widget resolution for property cells, keyed by column property name and
+// computed ONCE per column rather than per cell (RR-UD2A -- the same reason
+// PropertyDisplay precomputes `rows`). resolve()/resolveFromHint() walk a Map
+// and can console.warn; doing that per cell would be one lookup and one
+// potential warning per row per render.
+//
+// Relation columns are absent from this map on purpose: they have no
+// PropertyDef and there is no relation widget, so they stay on the string
+// path in getFormattedCellValue.
+const columnWidgets = computed(() => {
+  const byProperty = new Map<
+    string,
+    { component: Component; hint: WidgetRoutingHint; preformatted: boolean }
+  >()
+  const type = entityType.value
+  if (!type) return byProperty
+  for (const column of listConfig.value?.columns ?? []) {
+    if (!column.property || byProperty.has(column.property)) continue
+    const hint = densePropertyRoutingHint(type.properties[column.property], column.property)
+    byProperty.set(column.property, {
+      component: defaultRegistry.resolveFromHint(hint),
+      hint,
+      // A 'text' hint means the widget is a passthrough span, so the cell
+      // must supply an already-formatted string. Types that route to text
+      // deliberately (boolean -> Yes/No, file -> the filename) would
+      // otherwise render their raw value: TextWidget is String(value).
+      preformatted: hint.kind === 'text',
+    })
+  }
+  return byProperty
+})
+
+function cellWidget(column: { property?: string }) {
+  return column.property ? columnWidgets.value.get(column.property) : undefined
+}
+
+// The value handed to a cell widget: the formatted string for text-routed
+// columns, the raw value for every typed widget (which formats it itself).
+function cellModelValue(
+  entity: Entity,
+  column: { property?: string; relation?: string; direction?: 'outgoing' | 'incoming' }
+): unknown {
+  return cellWidget(column)?.preformatted
+    ? getFormattedCellValue(entity, column)
+    : getCellValue(entity, column)
 }
 
 // isCellInaccessible reports whether the cell's underlying property is
@@ -821,18 +865,15 @@ watch(searchQuery, () => {
                 class="inaccessible-cell"
                 title="inaccessible"
               >🔒</span>
-              <div
-                v-else-if="isEnumColumn(column) && asArray(getCellValue(entity, column)).length > 0"
-                class="badge-row"
-              >
-                <Badge
-                  v-for="badgeValue in asArray(getCellValue(entity, column))"
-                  :key="badgeValue"
-                  :value="badgeValue"
-                  :property="column.property"
-                  :entity-type="entityType"
-                />
-              </div>
+              <component
+                :is="cellWidget(column)!.component"
+                v-else-if="cellWidget(column)"
+                class="mobile-card-value"
+                :model-value="cellModelValue(entity, column)"
+                :mode="'display'"
+                :property-name="cellWidget(column)!.hint.propertyName"
+                :entity-type="listConfig.entity"
+              />
               <span v-else class="mobile-card-value">{{ getFormattedCellValue(entity, column) }}</span>
             </div>
           </div>
@@ -919,18 +960,14 @@ watch(searchQuery, () => {
                 class="inaccessible-cell"
                 title="inaccessible"
               >🔒</span>
-              <div
-                v-else-if="isEnumColumn(column) && asArray(getCellValue(entity, column)).length > 0"
-                class="badge-row"
-              >
-                <Badge
-                  v-for="badgeValue in asArray(getCellValue(entity, column))"
-                  :key="badgeValue"
-                  :value="badgeValue"
-                  :property="column.property"
-                  :entity-type="entityType"
-                />
-              </div>
+              <component
+                :is="cellWidget(column)!.component"
+                v-else-if="cellWidget(column)"
+                :model-value="cellModelValue(entity, column)"
+                :mode="'display'"
+                :property-name="cellWidget(column)!.hint.propertyName"
+                :entity-type="listConfig.entity"
+              />
               <span v-else>
                 {{ getFormattedCellValue(entity, column) }}
               </span>

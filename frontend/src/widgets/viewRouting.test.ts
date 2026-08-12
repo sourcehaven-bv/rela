@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import type { ViewSectionField } from '@/api'
-import { viewFieldRoutingHint } from './viewRouting'
+import type { PropertyDef } from '@/types'
+import { viewFieldRoutingHint, densePropertyRoutingHint } from './viewRouting'
 import { defaultRegistry } from './registry'
 import TextWidget from './TextWidget.vue'
 import MultiSelectWidget from './MultiSelectWidget.vue'
@@ -44,6 +45,80 @@ describe('viewFieldRoutingHint', () => {
     const b = viewFieldRoutingHint(field)
     expect(a).toEqual(b)
     expect(a.kind).toBe('enum-list')
+  })
+})
+
+describe('densePropertyRoutingHint', () => {
+  const def = (p: Partial<PropertyDef>): PropertyDef => {
+    const base: PropertyDef = { type: 'string' }
+    return { ...base, ...p }
+  }
+
+  it.each([
+    ['string', def({ type: 'string' }), 'text'],
+    ['date', def({ type: 'date' }), 'date'],
+    ['datetime', def({ type: 'datetime' }), 'datetime'],
+    ['integer', def({ type: 'integer' }), 'integer'],
+    ['rrule', def({ type: 'rrule' }), 'rrule'],
+    ['enum', def({ type: 'enum', values: ['a', 'b'] }), 'enum'],
+    ['enum via values on a string', def({ type: 'string', values: ['a'] }), 'enum'],
+    ['list-valued enum', def({ type: 'enum', values: ['a'], list: true }), 'enum-list'],
+    ['list-valued string', def({ type: 'string', list: true }), 'text-list'],
+  ])('routes %s to %s', (_label, propertyDef, expected) => {
+    expect(densePropertyRoutingHint(propertyDef, 'p').kind).toBe(expected)
+  })
+
+  it('forwards the property name onto the hint', () => {
+    expect(densePropertyRoutingHint(def({ type: 'string' }), 'title')).toEqual({
+      kind: 'text',
+      propertyName: 'title',
+    })
+  })
+
+  it('falls back to text for an unknown property (no schema entry)', () => {
+    expect(densePropertyRoutingHint(undefined, 'mystery').kind).toBe('text')
+  })
+
+  // --- The two deliberate exceptions. These are behaviour decisions from
+  // TKT-S9C14S, not oversights; a change here must be intentional. ---
+
+  it('routes boolean to text, NOT checkbox, so cells stay searchable and copy-pasteable', () => {
+    expect(densePropertyRoutingHint(def({ type: 'boolean' }), 'done').kind).toBe('text')
+  })
+
+  it('routes file to text, NOT a file widget, to avoid one image request per cell', () => {
+    expect(densePropertyRoutingHint(def({ type: 'file' }), 'attachment').kind).toBe('text')
+  })
+
+  it('never emits a hint kind that resolves to FileWidget', () => {
+    // WidgetHintKind has no 'file' member, so the hint path structurally
+    // cannot reach FileWidget. This pins that safety property against a
+    // future kind being added without revisiting dense surfaces.
+    const kinds = (['string', 'file', 'date', 'boolean', 'enum', 'rrule'] as const).map(
+      (t) => densePropertyRoutingHint(def({ type: t as PropertyDef['type'] }), 'p').kind
+    )
+    expect(kinds).not.toContain('file')
+  })
+
+  it('does not warn for any built-in property type', () => {
+    // resolveFromHint must not hit the supportedPropertyTypes mismatch path;
+    // in a 200-row table that would be one warning per row per render.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const types: PropertyDef['type'][] = [
+      'string',
+      'date',
+      'datetime',
+      'integer',
+      'boolean',
+      'enum',
+      'file',
+      'rrule',
+    ]
+    for (const t of types) {
+      defaultRegistry.resolveFromHint(densePropertyRoutingHint(def({ type: t }), 'p'))
+    }
+    expect(warn).not.toHaveBeenCalled()
+    warn.mockRestore()
   })
 })
 

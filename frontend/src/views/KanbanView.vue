@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, type Component } from 'vue'
 import { useRouter } from 'vue-router'
 import { useQuery, useMutation, useQueryCache } from '@pinia/colada'
 import { useSchemaStore, useUIStore } from '@/stores'
@@ -8,13 +8,16 @@ import { entityKeys } from '@/queries/entities'
 import { beginOptimistic, rollbackOptimistic, settleOptimistic } from '@/queries/optimisticList'
 import type { Entity, KanbanConfig, KanbanCardField, KanbanColumn, KanbanSwimlane } from '@/types'
 import { viewHeaderMarkdown, viewFooterMarkdown } from '@/types'
-import Badge from '@/components/common/Badge.vue'
 import BackButton from '@/components/common/BackButton.vue'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { actionAllowed } from '@/utils/affordancesWarning'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { renderMarkdown } from '@/utils/markdown'
 import { resolveIcon } from '@/utils/icons'
+import { formatCellValue } from '@/utils/format'
+import { densePropertyRoutingHint } from '@/widgets/viewRouting'
+import { defaultRegistry } from '@/widgets/registry'
+import type { WidgetRoutingHint } from '@/widgets/types'
 
 const props = defineProps<{
   id: string
@@ -351,17 +354,42 @@ function getCardFieldValue(entity: Entity, field: KanbanCardField): string {
       .join(', ')
   }
   if (!field.property) return ''
-  return String(entity.properties[field.property] || '')
+  // Formatted via the shared cell formatter so cards agree with list cells
+  // (dates render human-readably, booleans as Yes/No, rrules as text). This
+  // used to be a bare String(v || ''), which showed raw ISO datetimes and
+  // "true" on cards -- see TKT-S9C14S.
+  return formatCellValue(
+    entity.properties[field.property],
+    field.property,
+    entityType.value,
+    uiStore.effectiveTimezone
+  )
+}
+
+// Raw (unformatted) card-field value, for widget rendering. Widgets take the
+// underlying value and format it themselves; only the emptiness predicate and
+// the relation path need a string.
+function getCardFieldRawValue(entity: Entity, field: KanbanCardField): unknown {
+  if (field.relation) return getCardFieldValue(entity, field)
+  if (!field.property) return ''
+  return entity.properties[field.property]
 }
 
 // Card fields with an unset value are dropped entirely: a dangling
 // "effort:" label next to an empty Badge pill (enum fields render a
 // styled chip even for "") is noise on every card that hasn't set the
 // property, worst on mobile where card space is scarce.
+//
+// Emptiness is tested on the RAW value, not the formatted string: `false`
+// and `0` are set values that format to "No"/"0", and the old
+// `String(v || '') !== ''` test silently dropped them from the card.
 function visibleCardFields(entity: Entity): KanbanCardField[] {
-  return (kanbanConfig.value?.card.fields ?? []).filter(
-    (field) => getCardFieldValue(entity, field) !== ''
-  )
+  return (kanbanConfig.value?.card.fields ?? []).filter((field) => {
+    if (field.relation) return getCardFieldValue(entity, field) !== ''
+    const raw = getCardFieldRawValue(entity, field)
+    if (raw === null || raw === undefined || raw === '') return false
+    return !(Array.isArray(raw) && raw.length === 0)
+  })
 }
 
 function getCardFieldLabel(field: KanbanCardField): string {
@@ -369,11 +397,41 @@ function getCardFieldLabel(field: KanbanCardField): string {
   return field.relation || field.property || ''
 }
 
-// Relation fields never render as enum badges — only scalar enum properties do.
-function isEnumField(field: KanbanCardField): boolean {
-  if (field.relation || !field.property || !entityType.value) return false
-  const propDef = entityType.value.properties[field.property]
-  return propDef?.type === 'enum' || (propDef?.values?.length ?? 0) > 0
+// Widget resolution for property card-fields, computed once per configured
+// field rather than per card (RR-UD2A). Relation fields are absent on
+// purpose: they have no PropertyDef and no relation widget, so they keep the
+// joined-titles string path.
+const cardFieldWidgets = computed(() => {
+  const byProperty = new Map<
+    string,
+    { component: Component; hint: WidgetRoutingHint; preformatted: boolean }
+  >()
+  const type = entityType.value
+  if (!type) return byProperty
+  for (const field of kanbanConfig.value?.card.fields ?? []) {
+    if (!field.property || field.relation || byProperty.has(field.property)) continue
+    const hint = densePropertyRoutingHint(type.properties[field.property], field.property)
+    byProperty.set(field.property, {
+      component: defaultRegistry.resolveFromHint(hint),
+      hint,
+      // See EntityList: a 'text' hint is a passthrough span, so the caller
+      // must supply the formatted string (boolean -> Yes/No etc.).
+      preformatted: hint.kind === 'text',
+    })
+  }
+  return byProperty
+})
+
+function cardFieldWidget(field: KanbanCardField) {
+  if (field.relation || !field.property) return undefined
+  return cardFieldWidgets.value.get(field.property)
+}
+
+// Formatted string for text-routed fields, raw value for typed widgets.
+function cardFieldModelValue(entity: Entity, field: KanbanCardField): unknown {
+  return cardFieldWidget(field)?.preformatted
+    ? getCardFieldValue(entity, field)
+    : getCardFieldRawValue(entity, field)
 }
 
 function onDragStart(event: DragEvent, entity: Entity) {
@@ -534,11 +592,14 @@ function createNew() {
                 class="card-field"
               >
                 <span class="field-label">{{ getCardFieldLabel(field) }}:</span>
-                <Badge
-                  v-if="isEnumField(field)"
-                  :value="getCardFieldValue(entity, field)"
-                  :property="field.property"
-                  :entity-type="entityType"
+                <component
+                  :is="cardFieldWidget(field)!.component"
+                  v-if="cardFieldWidget(field)"
+                  class="field-value"
+                  :model-value="cardFieldModelValue(entity, field)"
+                  :mode="'display'"
+                  :property-name="cardFieldWidget(field)!.hint.propertyName"
+                  :entity-type="kanbanConfig?.entity"
                 />
                 <span v-else class="field-value">{{ getCardFieldValue(entity, field) }}</span>
               </div>
@@ -614,11 +675,14 @@ function createNew() {
                 class="card-field"
               >
                 <span class="field-label">{{ getCardFieldLabel(field) }}:</span>
-                <Badge
-                  v-if="isEnumField(field)"
-                  :value="getCardFieldValue(entity, field)"
-                  :property="field.property"
-                  :entity-type="entityType"
+                <component
+                  :is="cardFieldWidget(field)!.component"
+                  v-if="cardFieldWidget(field)"
+                  class="field-value"
+                  :model-value="cardFieldModelValue(entity, field)"
+                  :mode="'display'"
+                  :property-name="cardFieldWidget(field)!.hint.propertyName"
+                  :entity-type="kanbanConfig?.entity"
                 />
                 <span v-else class="field-value">{{ getCardFieldValue(entity, field) }}</span>
               </div>
