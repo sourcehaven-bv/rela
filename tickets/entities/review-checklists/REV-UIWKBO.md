@@ -2,7 +2,7 @@
 id: REV-UIWKBO
 type: review-checklist
 title: 'Review: Rename metamodel.yaml to schema.yaml with backward-compatible dual-name discovery'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -17,7 +17,8 @@ status: in-progress
 - [x] `just lint-md` clean (0 issues in 246 files)
 - [x] `just docs` regenerated; diff is rename-only plus the deprecation note
 
-Final run after review fixes: tests green, lint 0 issues, coverage 77.1% (PASS).
+Final local run after review fixes: tests green, lint 0 issues, coverage 77.1%
+(PASS).
 
 ## Code Review
 
@@ -42,8 +43,8 @@ rename whose new name is canonical), and `--check`'s double project discovery
 collapsed into a single walk via `CheckPending`.
 
 Deferred with a ticket: **TKT-5YMHT4** — desktop stderr is unreadable in a
-packaged `.app`, so the deprecation notice needs UI surfacing. Out of scope
-here, but not dropped.
+packaged `.app`, so the deprecation notice needs UI surfacing. Confirmed with
+the requester as out of scope ("desktop is not the focus atm").
 
 ## Acceptance Verification
 
@@ -71,7 +72,19 @@ Post-fix additions verified directly:
 ## Pre-merge
 
 - [x] Branch: `feat/schema-yaml-rename`
-- [ ] PR created
-- [ ] CI green
+- [x] PR created — https://github.com/sourcehaven-bv/rela/pull/1311
+- [x] CI green
 
-PR pending — see `/pr`.
+**CI: 23 of 24 checks pass.** The one failure was "Rela Tickets", which is the
+workflow gate itself — `rela validate` refuses to merge while the ticket is in
+`review` and this checklist is `in-progress`. Both are cleared by completing
+this checklist and moving the ticket to `done`; no code defect.
+
+Notably that job also proves the rename end-to-end in CI: it runs `rela
+validate` against the renamed in-repo `tickets/schema.yaml` and reports
+`Validating schema... ✓ schema is valid`.
+
+Also green: Test, Lint, Architecture, God-object lint, Lint Markdown, E2E, Fuzz,
+Frontend, Docs, Demos, Postgres Backend, Vulnerability Check, CodeQL, and all
+six Cross-Compile targets (linux/darwin/windows × default/postgres) — the last
+confirming neither build tag was broken by the discovery change.
