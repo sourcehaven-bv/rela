@@ -16,10 +16,37 @@ import (
 // keeps working (it simply sees empty date fields, and allDay=false, for a
 // timed event).
 type jsonFeed struct {
-	Name        string      `json:"name,omitempty"`
-	Description string      `json:"description,omitempty"`
-	Color       string      `json:"color,omitempty"`
-	Events      []jsonEvent `json:"events"`
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
+	Color       string `json:"color,omitempty"`
+	// Component names the entry kind this feed carries: "vevent" or "vtodo".
+	// ALWAYS emitted, so a consumer never has to infer the kind from which key
+	// is present — an empty to-do feed and an empty event feed are otherwise
+	// byte-identical, and a consumer reading "events" would show an empty
+	// calendar for a to-do list that simply has nothing due.
+	Component string      `json:"component"`
+	Events    []jsonEvent `json:"events"`
+	// Todos is populated instead of Events for a VTODO feed. It is omitted
+	// entirely for an event feed so the existing consumer contract is unchanged.
+	Todos []jsonTodo `json:"todos,omitempty"`
+}
+
+// jsonTodo is the wire shape for a VTODO entry. Kept separate from jsonEvent
+// for the same reason [Todo] is separate from [Event]: the fields genuinely
+// differ (due vs start/end, plus the completion trio).
+type jsonTodo struct {
+	UID             string      `json:"uid"`
+	Summary         string      `json:"summary"`
+	Description     string      `json:"description,omitempty"`
+	URL             string      `json:"url,omitempty"`
+	Due             string      `json:"due,omitempty"`   // YYYY-MM-DD (all-day)
+	DueAt           string      `json:"dueAt,omitempty"` // RFC3339 UTC (timed)
+	AllDay          bool        `json:"allDay"`
+	Status          string      `json:"status"`
+	Completed       string      `json:"completed,omitempty"` // RFC3339 UTC
+	PercentComplete int         `json:"percentComplete,omitempty"`
+	Priority        int         `json:"priority,omitempty"`
+	Alarms          []jsonAlarm `json:"alarms,omitempty"`
 }
 
 type jsonEvent struct {
@@ -43,13 +70,51 @@ type jsonAlarm struct {
 
 // RenderJSON renders the feed as JSON: a stable, self-describing shape for
 // non-calendar consumers (e.g. a menubar plugin or notification script). It is
-// collection-only — there is no per-event JSON rendering.
+// collection-only — there is no per-entry JSON rendering.
+//
+// A VTODO feed populates "todos" and leaves "events" an empty array, mirroring
+// [ICal.RenderCollection]: only the slice matching [Feed.Component] is emitted.
 func RenderJSON(f Feed) ([]byte, error) {
 	out := jsonFeed{
 		Name:        f.Name,
 		Description: f.Description,
 		Color:       f.Color,
+		Component:   "vevent",
 		Events:      make([]jsonEvent, 0, len(f.Events)),
+	}
+	if f.isTodo() {
+		out.Component = "vtodo"
+		out.Todos = make([]jsonTodo, 0, len(f.Todos))
+		for _, raw := range f.Todos {
+			// Normalize exactly as the iCalendar path does, so the two
+			// renderings can never disagree about the same Todo.
+			t := raw.normalized()
+			jt := jsonTodo{
+				UID:             t.UID,
+				Summary:         t.Summary,
+				Description:     t.Description,
+				URL:             t.URL,
+				AllDay:          !t.Timed,
+				Status:          string(t.status()),
+				PercentComplete: t.PercentComplete,
+				Priority:        t.Priority,
+			}
+			if !t.Due.IsZero() {
+				if t.Timed {
+					jt.DueAt = t.Due.UTC().Format(time.RFC3339)
+				} else {
+					jt.Due = t.Due.Format(time.DateOnly)
+				}
+			}
+			if !t.Completed.IsZero() {
+				jt.Completed = t.Completed.UTC().Format(time.RFC3339)
+			}
+			for _, a := range t.Alarms {
+				jt.Alarms = append(jt.Alarms, jsonAlarm(a))
+			}
+			out.Todos = append(out.Todos, jt)
+		}
+		return json.MarshalIndent(out, "", "  ")
 	}
 	for _, e := range f.Events {
 		je := jsonEvent{

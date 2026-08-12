@@ -77,6 +77,7 @@ type Config struct {
 	Kanbans     map[string]Kanban            `yaml:"kanbans"`
 	Documents   map[string]DocumentConfig    `yaml:"documents,omitempty"`
 	Feeds       map[string]Feed              `yaml:"feeds,omitempty" json:"feeds,omitempty"`
+	CalDAV      CalDAVConfig                 `yaml:"caldav,omitempty" json:"caldav,omitzero"`
 	Dashboard   *DashboardConfig             `yaml:"dashboard,omitempty"`
 	Commands    map[string]CommandConfig     `yaml:"commands,omitempty"`
 	Actions     map[string]Action            `yaml:"actions,omitempty"`
@@ -127,17 +128,6 @@ type AppConfig struct {
 	// plantuml.com server: that would silently publish private diagram source
 	// to a third party. Operators opt in by configuring a server they trust.
 	PlantUMLServerURL string `yaml:"plantuml_server_url,omitempty" json:"plantuml_server_url,omitempty"`
-	// DisableCustomInjection turns off referencing the operator's custom.css /
-	// custom.js from the SPA shell, guaranteeing a stock UI.
-	//
-	// Named as a *disable* flag against the opt-in direction of its
-	// neighbors because the feature is on by default: dropping custom.css in
-	// the project root should just work, with no second step. An operator who
-	// wants to guarantee an unmodified UI (or to bisect whether a
-	// customisation is causing a bug) sets this to true. The files remain
-	// individually fetchable under /_custom/ either way — only the shell
-	// references are suppressed.
-	DisableCustomInjection bool `yaml:"disable_custom_injection,omitempty" json:"disable_custom_injection,omitempty"`
 }
 
 // Form defines a create/edit form for an entity type.
@@ -987,4 +977,314 @@ type FeedSource struct {
 	// Alarm is an optional static RFC 5545 duration (e.g. "-PT9H") mapped to a
 	// VALARM reminder on every event from this source.
 	Alarm string `yaml:"alarm,omitempty" json:"alarm,omitempty"`
+}
+
+// CalDAVConfig groups the CalDAV collections by how they come into existence.
+//
+//	caldav:
+//	  static:
+//	    tasks: {entity_type: task, ...}
+//
+// Only `static:` exists today — one YAML key, one collection, at
+// /calendars/<key>/. The nesting is here because a second kind is coming
+// (TKT-JPDXMO): collections GENERATED from the graph, one per entity of some
+// driver type, where a key names a PATTERN that expands rather than a
+// collection that exists.
+//
+// # Why the level of nesting exists before its second member does
+//
+// Because adding it later is a breaking config change and adding it now is
+// free. `caldav:` has never shipped in a release, so there is exactly one
+// moment where the shape can be fixed without a migration and a deprecation
+// cycle, and this is it.
+//
+// The alternative considered was a top-level sibling (`caldav:` +
+// `caldav_dynamic:`). Rejected because it leaves the COMMON case unnamed: a
+// reader meeting a bare `caldav:` cannot tell there is another kind until they
+// happen to see the sibling, and the sibling is the rarer feature. Naming both
+// halves makes the pairing self-describing at the point of confusion.
+//
+// `dynamic:` is deliberately NOT declared yet. A config key that parses and
+// then errors with "not implemented" is worse than one that does not parse —
+// the second tells the operator the truth immediately. It slots in as a pure
+// addition when the feature lands.
+type CalDAVConfig struct {
+	// Static declares collections one-to-one with config keys: the key is the
+	// URL segment and the alias key (so it must stay stable — users paste the
+	// URL into clients), and Meta.Name is the display label.
+	Static map[string]CalDAVCollection `yaml:"static,omitempty" json:"static,omitempty"`
+}
+
+// IsZero reports whether any CalDAV collection is configured, so `omitzero`
+// keeps an unconfigured server's JSON free of an empty caldav object.
+func (c CalDAVConfig) IsZero() bool { return len(c.Static) == 0 }
+
+// CalDAVCollection declares one CalDAV collection: a single entity type
+// projected to a calendar component, and the inverse mapping applied when a
+// client writes back.
+//
+// ONE COLLECTION = ONE ENTITY TYPE = ONE SYMMETRICAL MAPPING. Unlike [Feed],
+// there is no sources list and no separate create block: the same declaration
+// serves both directions, so the create-target is simply the collection's type.
+// This diverges from `feeds:` deliberately, because the protocols differ. ICS is
+// one URL per feed and read-only, so [Feed.Sources] is its only way to combine
+// entity types into one calendar. CalDAV is one account URL enumerating N
+// collections — a client discovers every collection from a single account — so
+// an operator who wants tasks AND bugs declares two collections and the user
+// still configures the account once.
+//
+// The payoff is that the mapping is bidirectional by construction: with several
+// sources the read mapping would be a union while the write mapping is one
+// branch of it, requiring a create block purely to re-state which branch.
+//
+// Trade accepted: an interleaved mixed-type list is not expressible. Two
+// collections give the same visibility with separate colors and independent
+// toggling, which is arguably the better default.
+type CalDAVCollection struct {
+	// Meta is optional collection-level metadata (display name, color).
+	Meta FeedMeta `yaml:"meta,omitempty" json:"meta,omitzero"`
+	// Component is the calendar component this collection carries: "vtodo"
+	// (default) or "vevent". A collection advertises exactly one, because
+	// Apple's clients segregate by component set — Reminders binds only to a
+	// VTODO collection and Calendar.app creates its own separate VEVENT one, so
+	// a mixed collection is invisible to one of them.
+	Component string `yaml:"component,omitempty" json:"component,omitempty"`
+	// EntityType is the entity type this collection projects, and the type an
+	// inbound create constructs. Required; validated at load.
+	EntityType string `yaml:"entity_type" json:"entity_type"`
+	// Where is a list of filter clauses, all ANDed, in the internal/filter
+	// language. Empty selects every entity of the type.
+	Where []string `yaml:"where,omitempty" json:"where,omitempty"`
+	// Due names the date- or datetime-typed property mapped to the entry's
+	// deadline (VTODO DUE / VEVENT DTSTART). Optional: a to-do without a
+	// deadline is legal and common.
+	Due string `yaml:"due,omitempty" json:"due,omitempty"`
+	// Summary names the property mapped to SUMMARY. Optional; defaults to the
+	// entity type's display property.
+	Summary string `yaml:"summary,omitempty" json:"summary,omitempty"`
+	// Description names an optional property mapped to DESCRIPTION, or the
+	// sentinel [CalDAVDescriptionBody] to map the entity's markdown BODY.
+	//
+	// The body is usually the right target. DESCRIPTION is the one free-text,
+	// multi-line field a to-do has, and the body is where rela puts multi-line
+	// prose — a `string` property is a single-line form field everywhere else in
+	// the app, so routing a client's notes into one makes the SPA render a
+	// paragraph in a text input.
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	// Priority names an optional INTEGER property mapped straight onto the RFC
+	// 5545 PRIORITY value (0-9). Mutually exclusive with PriorityMap, which is
+	// what a project modeling priority as an enum wants instead.
+	Priority string `yaml:"priority,omitempty" json:"priority,omitempty"`
+	// PriorityMap maps PRIORITY onto a non-integer property (typically an enum)
+	// by BUCKETING the 0-9 range. See [CalDAVPriorityMap].
+	PriorityMap *CalDAVPriorityMap `yaml:"priority_map,omitempty" json:"priority_map,omitempty"`
+	// Location names an optional string property mapped to LOCATION.
+	Location string `yaml:"location,omitempty" json:"location,omitempty"`
+	// Categories names an optional property mapped to CATEGORIES. A list-typed
+	// property maps element-wise; a string property maps to a single category.
+	Categories string `yaml:"categories,omitempty" json:"categories,omitempty"`
+	// Start names an optional date- or datetime-typed property mapped to
+	// DTSTART — when work on a to-do begins, as against the DUE deadline.
+	Start string `yaml:"start,omitempty" json:"start,omitempty"`
+	// Rrule is an optional recurrence rule, in the same two forms `feeds:`
+	// accepts: a literal RFC 5545 rule ("FREQ=WEEKLY") or a bare property name
+	// whose per-entity value supplies one. Read-only — see the CalDAV docs.
+	Rrule string `yaml:"rrule,omitempty" json:"rrule,omitempty"`
+	// ReadOnly names mapped fields whose inbound value is DISCARDED: they are
+	// still projected outward, but a client's edit to one never reaches the
+	// entity. See [CalDAVReadOnlyFields] for the accepted names.
+	//
+	// This is a CONTAINMENT control, not an authorization one — the two are
+	// orthogonal and compose. ACL answers "may this principal write at all",
+	// per type and op, by refusing the request with a 403. ReadOnly answers
+	// "may a CalDAV client own this field", per mapped field, by accepting
+	// the request and dropping the field. An operator who wants clients to
+	// touch nothing should withhold the ACL grant, not populate this list.
+	//
+	// What it contains is a foreign data model. A CalDAV client is software
+	// the operator does not control: it decides what to send and reconstructs
+	// the whole VTODO on every edit, so a field it maps badly is rewritten
+	// even when the user touched something else. Observed on the wire: Apple
+	// Reminders normalizes DTSTART to match DUE on an all-day to-do, and
+	// Thunderbird's rich-text notes arrive flattened.
+	//
+	// A discarded field is not a failed write: the fields that ARE writable
+	// apply, and the response carries the entity's real values. Rejecting the
+	// whole PUT instead would discard the completion tick the user actually
+	// meant, since clients send every field on every edit.
+	//
+	// Whether the CLIENT then shows the revert is its own choice and they
+	// differ — Reminders reverts within seconds, Thunderbird has been seen
+	// keeping an optimistic copy across a restart. The guarantee here is that
+	// the value never reaches rela, not that the app looks right.
+	ReadOnly []string `yaml:"read_only,omitempty" json:"read_only,omitempty"`
+	// Completion maps the completion state in both directions. Required for a
+	// vtodo collection: without it a client could not check anything off.
+	Completion *CalDAVCompletion `yaml:"completion,omitempty" json:"completion,omitempty"`
+	// Defaults are literal property values applied when a CLIENT creates an
+	// entry. A client-created to-do carries only a summary (verified against
+	// Apple Reminders), so this is how a required property that VTODO cannot
+	// supply gets a value.
+	Defaults map[string]string `yaml:"defaults,omitempty" json:"defaults,omitempty"`
+	// OnDelete is the property mutation applied when a client DELETEs an entry.
+	// Absent means deletion is refused (403) — see the type doc.
+	OnDelete *CalDAVOnDelete `yaml:"on_delete,omitempty" json:"on_delete,omitempty"`
+}
+
+// CalDAVCompletion maps a VTODO's completion state to entity properties.
+//
+// STATUS, COMPLETED and PERCENT-COMPLETE are treated as ONE logical event, not
+// three independent property mappings: Apple writes all three together, and RFC
+// 4791 §7.8.9's canonical "pending to-dos" filter keys on COMPLETED while a UI
+// reads STATUS — so a half-set state reads as done in one client and pending in
+// another.
+type CalDAVCompletion struct {
+	// StatusProperty names the entity property holding completion state.
+	// Required.
+	StatusProperty string `yaml:"status_property" json:"status_property"`
+	// CompletedValue is the StatusProperty value meaning "done". Required, and
+	// validated against the property's enum when it has one.
+	CompletedValue string `yaml:"completed_value" json:"completed_value"`
+	// PendingValue is the value an inbound un-completion restores. Required.
+	PendingValue string `yaml:"pending_value" json:"pending_value"`
+	// CompletedAt optionally names a datetime property that receives the
+	// COMPLETED timestamp. Omit to discard it.
+	CompletedAt string `yaml:"completed_at,omitempty" json:"completed_at,omitempty"`
+}
+
+// CalDAVPriorityMap maps the RFC 5545 PRIORITY integer onto a property whose
+// values are not integers — typically an enum like low/normal/high.
+//
+// # Why buckets rather than exact values
+//
+// PRIORITY is an integer 0-9 (RFC 5545 3.8.1.9: 1-4 high, 5 normal, 6-9 low,
+// 0 undefined), but clients expose three or four labels and pick their own
+// number inside each band. Verified on the wire: Thunderbird sends 1 for its
+// "Hoog" and Apple Reminders sends 9 for its "Laag". An exact-value table would
+// therefore have to enumerate every integer a client might choose, and would
+// silently drop the ones it missed.
+//
+// So each entry claims a RANGE. Inbound, the first bucket containing the
+// received value wins. Outbound, the bucket's Value is emitted — the number a
+// client will map back to the same label.
+type CalDAVPriorityMap struct {
+	// Property names the entity property holding the priority. Required.
+	Property string `yaml:"property" json:"property"`
+	// Buckets map ranges of the 0-9 PRIORITY space onto property values.
+	// Required and non-empty; validated for range sanity and enum membership.
+	Buckets []CalDAVPriorityBucket `yaml:"buckets" json:"buckets"`
+}
+
+// CalDAVPriorityBucket is one band of the PRIORITY range.
+type CalDAVPriorityBucket struct {
+	// Value is the property value this band means, e.g. "high".
+	Value string `yaml:"value" json:"value"`
+	// From and To bound the band inclusively, within 0-9. A single-number band
+	// sets both to the same value.
+	From int `yaml:"from" json:"from"`
+	To   int `yaml:"to" json:"to"`
+	// Emit is the number rendered outbound for this value. Defaults to From,
+	// which is the strongest number in the band — a client shown "high" should
+	// see the value most likely to round-trip as high elsewhere.
+	Emit int `yaml:"emit,omitempty" json:"emit,omitempty"`
+}
+
+// EmitValue is the PRIORITY integer to render for this bucket.
+func (b CalDAVPriorityBucket) EmitValue() int {
+	if b.Emit != 0 {
+		return b.Emit
+	}
+	return b.From
+}
+
+// CalDAVOnDelete is the mutation applied when a client deletes an entry.
+//
+// A CalDAV DELETE maps to a property change rather than an entity delete,
+// because the client gesture is a swipe: rela has no soft-delete, and
+// DeleteEntity cascades to relations, so a mis-swipe would destroy a graph node
+// and its edges. Set Hard to opt into a real delete.
+type CalDAVOnDelete struct {
+	// Set is the property mutation to apply, e.g. {status: cancelled}.
+	Set map[string]string `yaml:"set,omitempty" json:"set,omitempty"`
+	// Hard opts into a real entity delete instead of a property mutation.
+	// Mutually exclusive with Set.
+	Hard bool `yaml:"hard,omitempty" json:"hard,omitempty"`
+}
+
+// CalDAV component kinds, as spelled in `component:`.
+const (
+	CalDAVComponentTodo  = "vtodo"
+	CalDAVComponentEvent = "vevent"
+)
+
+// CalDAVDescriptionBody is the sentinel `description:` value that maps
+// DESCRIPTION to the entity's markdown BODY rather than to a property.
+//
+// A reserved word rather than a separate `description_body: true` key, so the
+// mapping stays one line with one meaning. The cost is that a property genuinely
+// named "body" is not addressable this way; the config validation says so out
+// loud rather than silently preferring one reading.
+const CalDAVDescriptionBody = "body"
+
+// The field names accepted in `read_only:`. These are the MAPPING's names —
+// the YAML keys of [CalDAVCollection] — not entity property names and not
+// iCalendar property names.
+//
+// Naming the mapping is what makes the rule survive a config edit: an operator
+// who repoints `due: deadline` at another property does not have to remember to
+// update a read-only list that named `deadline`. It also means one name covers
+// both spellings of a mapping — `priority` covers `priority_map` too, and
+// `description` covers the body sentinel — because from the client's side those
+// are one field either way.
+const (
+	CalDAVFieldSummary     = "summary"
+	CalDAVFieldDescription = "description"
+	CalDAVFieldDue         = "due"
+	CalDAVFieldPriority    = "priority"
+	CalDAVFieldLocation    = "location"
+	CalDAVFieldCategories  = "categories"
+	CalDAVFieldStart       = "start"
+	CalDAVFieldCompletion  = "completion"
+)
+
+// CalDAVReadOnlyFields lists every name `read_only:` accepts, in the order the
+// config validation reports them.
+//
+// `rrule` is absent deliberately: it is already read-only in every
+// configuration, so listing it would imply the others are writable by contrast
+// and that naming it changes something. `uid` and `url` are likewise absent —
+// neither is a mapped field.
+var CalDAVReadOnlyFields = []string{
+	CalDAVFieldSummary,
+	CalDAVFieldDescription,
+	CalDAVFieldDue,
+	CalDAVFieldPriority,
+	CalDAVFieldLocation,
+	CalDAVFieldCategories,
+	CalDAVFieldStart,
+	CalDAVFieldCompletion,
+}
+
+// IsReadOnly reports whether inbound writes to a mapped field are discarded.
+//
+// Case-insensitive, matching how the rest of the config treats operator-typed
+// identifiers, so `read_only: [Summary]` behaves as written rather than
+// silently doing nothing.
+func (c CalDAVCollection) IsReadOnly(field string) bool {
+	for _, f := range c.ReadOnly {
+		if strings.EqualFold(strings.TrimSpace(f), field) {
+			return true
+		}
+	}
+	return false
+}
+
+// ComponentOrDefault returns the collection's component, defaulting to vtodo.
+// VTODO is the default because a VEVENT projection is already served read-only
+// by `feeds:`; a CalDAV collection exists primarily to make to-dos writable.
+func (c CalDAVCollection) ComponentOrDefault() string {
+	if c.Component == "" {
+		return CalDAVComponentTodo
+	}
+	return c.Component
 }

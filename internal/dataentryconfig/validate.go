@@ -29,6 +29,7 @@ var validTopLevelKeys = map[string]bool{
 	"kanbans":      true,
 	"documents":    true,
 	"feeds":        true,
+	"caldav":       true,
 	"dashboard":    true,
 	"commands":     true,
 	"actions":      true,
@@ -136,6 +137,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateApp(cfg)...)
 	errs = append(errs, validateDocuments(cfg)...)
 	errs = append(errs, validateFeeds(cfg, meta)...)
+	errs = append(errs, validateCalDAV(cfg, meta)...)
 	errs = append(errs, validateStyles(cfg, meta)...)
 	errs = append(errs, validateCrossReferences(cfg)...)
 
