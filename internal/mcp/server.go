@@ -23,11 +23,13 @@ package mcp
 import (
 	"context"
 	"errors"
+	"iter"
 	"log/slog"
 
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/config"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -50,7 +52,21 @@ import (
 // context MCP consumes — passing the string instead of a
 // `*project.Context` keeps that type from leaking into MCP test stubs.
 type Deps struct {
-	Store         store.Store
+	// Store is the READ handle for every MCP read surface — tools,
+	// resources, prompts, export and analyze alike. It is deliberately
+	// the narrow [GraphReader], not `store.Store`: writes go through
+	// EntityManager, so MCP never needs the wide composite, and typing
+	// the field this way makes an ungated raw read *unavailable* rather
+	// than merely discouraged (the TKT-80EWGM "make the mistake
+	// impossible" pattern, applied to reads).
+	//
+	// The wiring site decides what this is. `rela mcp` (stdio) passes the
+	// raw store — the filesystem is the trust boundary there, so a gate
+	// would defend nothing. A networked wiring passes a
+	// visibility-wrapped reader that resolves the ctx principal per call.
+	// Either way the handlers are identical; gating is entirely a wiring
+	// decision (DEC-ZBI39P).
+	Store         GraphReader
 	Meta          *metamodel.Metamodel
 	Tracer        tracer.Tracer
 	Searcher      search.Searcher
@@ -61,6 +77,23 @@ type Deps struct {
 	LuaCache      *lua.Cache
 	Watcher       Watcher
 	ProjectRoot   string
+}
+
+// GraphReader is the read capability MCP requires of its store. It is the
+// exact set the handlers call — six methods, verified by grep over
+// internal/mcp — declared here at the CALL SITE rather than reused from
+// `store.Store`, which is a ten-interface composite (CRUD, attachments,
+// watching, transactions) MCP has no business holding.
+//
+// `store.Store` satisfies this structurally, so the stdio wiring passes one
+// unchanged. A visibility decorator satisfies it too, which is the point.
+type GraphReader interface {
+	GetEntity(ctx context.Context, id string) (*entity.Entity, error)
+	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
+	GetRelation(ctx context.Context, from, relType, to string) (*entity.Relation, error)
+	ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
+	CountEntities(ctx context.Context, q store.EntityQuery) (int, error)
+	CountRelations(ctx context.Context, q store.RelationQuery) (int, error)
 }
 
 // validate rejects a Deps missing any field whose zero value would

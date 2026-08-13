@@ -40,6 +40,13 @@ func (s *Server) handleTrace(
 	id = trimID(id)
 	maxDepth := args.GetInt("max_depth", 0)
 
+	// Existence probe BEFORE traversal. This must go through deps.Store —
+	// the gated GraphReader — not a raw handle: under a networked wiring a
+	// hidden entity's GetEntity returns not-found, so "hidden" and "absent"
+	// produce the identical message and the probe is not an existence
+	// oracle (RR-FTJUUE). A raw probe here would defeat the gated tracer
+	// below, since it answers "is it in the store?" rather than "may this
+	// principal see it?".
 	if _, getErr := s.deps.Store.GetEntity(ctx, id); getErr != nil {
 		return errorResult("entity not found: " + id), nil
 	}

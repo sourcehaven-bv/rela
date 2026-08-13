@@ -336,7 +336,7 @@ func (s *Server) handleAnalyzeSchema(
 
 	dataEntry := s.loadDataEntryConfig(ctx)
 
-	counter := &schema.StoreCounter{Store: s.deps.Store}
+	counter := schema.NewStoreCounter(ctx, s.deps.Store)
 	analysis := schema.Analyze(s.deps.Meta, counter, dataEntry, threshold)
 
 	if !analysis.HasIssues() {

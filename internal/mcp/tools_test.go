@@ -73,12 +73,22 @@ func makeTestFixture(t *testing.T) (*metamodel.Metamodel, *memstore.MemStore) {
 // makeTestServer creates a Server with a populated store for handler testing.
 func makeTestServer(t *testing.T) *Server {
 	t.Helper()
+	srv, _ := makeTestServerWithStore(t)
+	return srv
+}
+
+// makeTestServerWithStore additionally returns the backing store, for the few
+// tests that need to seed extra rows. Deps.Store is the narrow read-only
+// GraphReader (writes go through EntityManager), so a test cannot reach a
+// writer through the server — by design.
+func makeTestServerWithStore(t *testing.T) (*Server, *memstore.MemStore) {
+	t.Helper()
 
 	meta, st := makeTestFixture(t)
 	return &Server{
 		deps:   newTestDeps(t, meta, st),
 		logger: slog.New(slog.DiscardHandler),
-	}
+	}, st
 }
 
 func getResultText(t *testing.T, result *mcpgo.CallToolResult) string {
@@ -624,9 +634,9 @@ func TestHandleListRelations_NoMatch(t *testing.T) {
 
 func TestHandleListRelations_Pagination(t *testing.T) {
 	t.Parallel()
-	s := makeTestServer(t)
+	s, st := makeTestServerWithStore(t)
 	// Add another relation for pagination testing
-	if _, err := s.deps.Store.CreateRelation(context.Background(), "DEC-001", "addresses", "REQ-002", nil); err != nil {
+	if _, err := st.CreateRelation(context.Background(), "DEC-001", "addresses", "REQ-002", nil); err != nil {
 		t.Fatalf("seed relation: %v", err)
 	}
 
