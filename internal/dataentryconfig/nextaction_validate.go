@@ -39,12 +39,11 @@ func validateNextActions(cfg *Config, meta *metamodel.Metamodel) []string {
 		// falling back to `card` would render a band the operator asked to be
 		// quiet at full volume, and nothing would say why.
 		switch b.Prominence {
-		case "", ProminenceBanner, ProminenceCard, ProminenceInline, ProminenceWhisper:
+		case "", ProminenceBanner, ProminenceNotice, ProminenceStatusBar:
 		default:
 			errs = append(errs, fmt.Sprintf(
-				"next_action_bands[%d]: unknown prominence %q (want %q, %q, %q or %q)",
-				i, b.Prominence, ProminenceBanner, ProminenceCard,
-				ProminenceInline, ProminenceWhisper))
+				"next_action_bands[%d]: unknown prominence %q (want %q, %q or %q)",
+				i, b.Prominence, ProminenceBanner, ProminenceNotice, ProminenceStatusBar))
 		}
 	}
 

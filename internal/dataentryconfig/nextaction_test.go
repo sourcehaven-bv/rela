@@ -257,10 +257,12 @@ func TestNextActionBand_ResolvedProminence(t *testing.T) {
 		band NextActionBand
 		want NextActionProminence
 	}{
-		{"unset defaults to card", NextActionBand{ID: "b"}, ProminenceCard},
+		// The default is the QUIETEST tier: an operator who has not thought
+		// about prominence has not earned the top of the page.
+		{"unset defaults to statusbar", NextActionBand{ID: "b"}, ProminenceStatusBar},
 		{"banner", NextActionBand{ID: "b", Prominence: ProminenceBanner}, ProminenceBanner},
-		{"inline", NextActionBand{ID: "b", Prominence: ProminenceInline}, ProminenceInline},
-		{"whisper", NextActionBand{ID: "b", Prominence: ProminenceWhisper}, ProminenceWhisper},
+		{"notice", NextActionBand{ID: "b", Prominence: ProminenceNotice}, ProminenceNotice},
+		{"statusbar", NextActionBand{ID: "b", Prominence: ProminenceStatusBar}, ProminenceStatusBar},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -289,7 +291,7 @@ func TestValidateNextActions_RejectsUnknownProminence(t *testing.T) {
 
 func TestValidateNextActions_AcceptsEveryProminence(t *testing.T) {
 	for _, p := range []NextActionProminence{
-		"", ProminenceBanner, ProminenceCard, ProminenceInline, ProminenceWhisper,
+		"", ProminenceBanner, ProminenceNotice, ProminenceStatusBar,
 	} {
 		t.Run(string(p), func(t *testing.T) {
 			cfg := validNextActionConfig()

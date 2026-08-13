@@ -392,16 +392,22 @@ export interface DashboardResponse {
  * Served by /_config so the UI can label a band rather than echo a raw id.
  */
 /**
- * How loudly a band interrupts. A closed vocabulary rather than styling
- * knobs: the operator declares the volume, the UI decides what that looks
- * like. Ordered by how much they interrupt.
+ * How much a band's suggestion interrupts. A closed vocabulary rather than
+ * styling knobs: the operator declares the volume, the UI decides what that
+ * looks like.
+ *
+ * The levels differ in what the user must do to clear it, not in decoration:
+ *
+ * - `banner`    must be dealt with — act, snooze or mute. Onboarding, urgent.
+ * - `notice`    same place, much quieter; easy to read past on purpose.
+ * - `statusbar` you must go looking: a chip that expands on click. The default.
  */
-export type NextActionProminence = 'banner' | 'card' | 'inline' | 'whisper'
+export type NextActionProminence = 'banner' | 'notice' | 'statusbar'
 
 export interface NextActionBand {
   id: string
   label?: string
-  /** Defaults to 'card' when unset. */
+  /** Defaults to 'statusbar' when unset. */
   prominence?: NextActionProminence
 }
 

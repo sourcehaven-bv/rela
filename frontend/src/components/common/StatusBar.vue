@@ -3,6 +3,8 @@ import { computed, onMounted, ref } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useGitStore, useSchemaStore, useUIStore } from '@/stores'
 import { shortcutsModalOpen } from '@/composables/useKeyboardShortcuts'
+import { useNextAction } from '@/composables/useNextAction'
+import NextActionOffers from '@/components/NextActionOffers.vue'
 import { renderMarkdown } from '@/utils/markdown'
 
 const gitStore = useGitStore()
@@ -15,6 +17,17 @@ const router = useRouter()
 // falling back to the metamodel's top-level description on the server). The
 // button is shown only when there is a description to show (TKT-DUQBD0).
 const aboutOpen = ref(false)
+
+// The quietest prominence tier: a chip that says something exists, expanding
+// on click. Present without ever being in the way — for suggestions that are
+// true most of the time and urgent none of it.
+const {
+  suggestion: naSuggestion,
+  bandLabel: naBandLabel,
+  isStatusBar: naInStatusBar,
+  expanded: naExpanded,
+  loadOnce: naLoadOnce,
+} = useNextAction()
 const appName = computed(() => schemaStore.app?.name || 'rela')
 const appDescription = computed(() => schemaStore.aboutDescription?.trim() || '')
 // The description is authored as markdown (in data-entry.yaml or the metamodel);
@@ -26,6 +39,9 @@ onMounted(() => {
   gitStore.fetchStatus().catch(() => {
     // Errors are already handled by the store
   })
+  // Resolve once per session. The composable is a singleton, so this and the
+  // page-level card share one suggestion rather than racing for two.
+  void naLoadOnce()
 })
 
 async function handleSync() {
@@ -61,8 +77,21 @@ async function handleSync() {
       </div>
     </div>
 
-    <!-- Right side: Theme, Settings, and shortcuts -->
+    <!-- Right side: next action, theme, settings, shortcuts -->
     <div class="status-right">
+      <!-- statusbar prominence: a chip, expanding into a popover. The label
+           is shown when there is room and drops to a bare dot on narrow
+           viewports, so it never crowds the bar it lives in. -->
+      <button
+        v-if="naInStatusBar && naSuggestion"
+        class="status-item na-chip"
+        :class="{ 'na-chip--open': naExpanded }"
+        :title="naSuggestion.message"
+        @click="naExpanded = !naExpanded"
+      >
+        <span class="na-chip__dot"/>
+        <span class="na-chip__text">{{ naBandLabel || 'Suggestion' }}</span>
+      </button>
       <!--
         Hide the dark/light toggle when the project's palette is in
         Regular mode — there's only one set of colors so the toggle
@@ -100,6 +129,21 @@ async function handleSync() {
         <kbd>?</kbd> <span class="shortcuts-text">Shortcuts</span>
       </button>
     </div>
+
+    <!-- Next-action popover. Teleported for the same reason as About: the
+         status bar is fixed and would clip it. -->
+    <Teleport to="body">
+      <div v-if="naExpanded && naSuggestion" class="na-pop-overlay" @click.self="naExpanded = false">
+        <div class="na-pop">
+          <div class="na-pop__band">{{ naBandLabel }}</div>
+          <p class="na-pop__message">{{ naSuggestion.message }}</p>
+          <NextActionOffers
+            :offers="naSuggestion.actions || []"
+            :entity-id="naSuggestion.entity_id"
+          />
+        </div>
+      </div>
+    </Teleport>
 
     <!-- About overlay: the deployment description. Teleported so it isn't
          clipped by the fixed status bar. -->
@@ -228,6 +272,64 @@ async function handleSync() {
 .about-icon {
   font-size: 13px;
   line-height: 1;
+}
+
+.na-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1, 4px);
+}
+
+.na-chip__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-primary, #3b82f6);
+  flex: 0 0 auto;
+}
+
+.na-chip--open {
+  background: var(--color-surface-hover, rgba(127, 127, 127, 0.15));
+}
+
+/* The label is a nicety, not the signal — below ~900px the dot alone says
+   "there is something", and the bar keeps room for git status. */
+@media (max-width: 900px) {
+  .na-chip__text {
+    display: none;
+  }
+}
+
+/* Anchored bottom-right, above the bar it belongs to, rather than centred:
+   a suggestion the user went looking for should appear where they clicked. */
+.na-pop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+}
+
+.na-pop {
+  position: absolute;
+  right: var(--space-3, 12px);
+  bottom: 40px;
+  width: min(420px, calc(100vw - 24px));
+  padding: var(--space-4, 16px);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.25));
+}
+
+.na-pop__band {
+  font-size: var(--font-size-sm, 0.75rem);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+  margin-bottom: var(--space-2, 8px);
+}
+
+.na-pop__message {
+  margin: 0 0 var(--space-3, 12px);
 }
 
 .about-overlay {

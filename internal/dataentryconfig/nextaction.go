@@ -44,12 +44,12 @@ type NextActionBand struct {
 	// Label is an optional human-readable name for operator-facing UI
 	// (a settings screen listing what can be muted). Empty falls back to ID.
 	Label string `yaml:"label,omitempty" json:"label,omitempty"`
-	// Prominence is how loudly this band interrupts. Empty means
-	// [ProminenceCard]. See [NextActionProminence].
+	// Prominence is how much this band interrupts. Empty means
+	// [ProminenceStatusBar]. See [NextActionProminence].
 	Prominence NextActionProminence `yaml:"prominence,omitempty" json:"prominence,omitempty"`
 }
 
-// NextActionProminence is how visually invasive a band's suggestion is.
+// NextActionProminence is how much a band's suggestion interrupts.
 //
 // A small CLOSED vocabulary rather than styling knobs, for the same reason
 // bands beat numeric priorities: the operator declares how loud a tier should
@@ -58,41 +58,49 @@ type NextActionBand struct {
 // and drift from the host UI — and would put the "is this urgent?" judgement
 // in a stylesheet rather than in the band list where it is reviewable.
 //
-// The levels are ordered by how much they interrupt, so a config reads as a
-// volume scale:
+// The levels differ in WHAT THE USER MUST DO TO CLEAR IT, not in decoration —
+// which is why there is no "card" tier: a bounded box and a banner both sit in
+// your way and are cleared by the same shrug, so shipping both would be two
+// spellings of one interruption model.
 //
-//	banner  — full-width, accented, at the top. For a band where someone else
-//	          is blocked; it should be hard to scroll past.
-//	card    — the default. A bounded box among the page's other content.
-//	inline  — one line, no chrome. Present but not competing.
-//	whisper — muted and small. For content and ambient sources, where being
-//	          noticed at all is optional.
+//	banner    — you must deal with it: act, snooze or mute. Sits above the
+//	            page and does not scroll away. For onboarding ("nothing here
+//	            yet") and for genuinely urgent things where someone else is
+//	            blocked. Insistent, but never blocks the user's actual work.
+//	notice    — the same place, much quieter: no accent, muted text, easy to
+//	            read past. For things worth saying once a visit that carry no
+//	            urgency.
+//	statusbar — you must go looking. A chip in the status bar, expanding on
+//	            click. For ongoing minor stuff that is true most of the time
+//	            and urgent none of it.
 //
-// Deliberately no "modal" or "toast": both take the interaction away from the
-// user, and an advisory hint that demands dismissal before you can proceed is
-// no longer advisory.
+// Deliberately no "modal" or "toast". A modal takes the interaction away from
+// the user, and an advisory hint that blocks progress until dismissed is no
+// longer advisory. A toast vanishes on a timer, so the impression that starts
+// a cooldown would fire for something the user may never have read.
 type NextActionProminence string
 
 const (
-	// ProminenceBanner is full-width and accented — hard to scroll past.
+	// ProminenceBanner is the insistent tier: above the page, accented, and
+	// answered rather than ignored.
 	ProminenceBanner NextActionProminence = "banner"
-	// ProminenceCard is a bounded box. The DEFAULT for an unset band.
-	ProminenceCard NextActionProminence = "card"
-	// ProminenceInline is a single line with no surrounding chrome.
-	ProminenceInline NextActionProminence = "inline"
-	// ProminenceWhisper is muted and small, for ambient content.
-	ProminenceWhisper NextActionProminence = "whisper"
+	// ProminenceNotice is banner's quiet sibling — same position, no accent,
+	// muted. Easy to read past on purpose.
+	ProminenceNotice NextActionProminence = "notice"
+	// ProminenceStatusBar is a chip in the status bar that expands on click.
+	// The DEFAULT for an unset band.
+	ProminenceStatusBar NextActionProminence = "statusbar"
 )
 
 // Resolved returns the effective prominence, applying the default.
 //
-// Defaulting to card rather than the quietest level is deliberate: an operator
-// who has not thought about prominence has usually written a real suggestion,
-// and silently rendering it as a whisper would hide work they meant to
-// surface. Too loud is noticed and fixed; too quiet is not.
+// Defaults to statusbar — the quietest tier — because an operator who has not
+// thought about prominence has not earned the top of the page. An unnoticed
+// suggestion is recoverable (turn it up); a nagging one teaches users to
+// ignore the whole surface, which is not.
 func (b NextActionBand) Resolved() NextActionProminence {
 	if b.Prominence == "" {
-		return ProminenceCard
+		return ProminenceStatusBar
 	}
 	return b.Prominence
 }
