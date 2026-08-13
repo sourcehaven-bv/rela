@@ -95,7 +95,7 @@ func (a *App) handleV1NextActionGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	sug, found, err := eng.Resolve(ctx, principal.From(ctx).User, time.Now())
+	sug, found, err := eng.Resolve(ctx, nextActionUser(ctx), time.Now())
 	if err != nil {
 		writeListPipelineError(w, r, err)
 		return
@@ -143,7 +143,7 @@ func (a *App) handleV1NextActionPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	user := principal.From(ctx).User
+	user := nextActionUser(ctx)
 	key := userstate.Key{
 		User:     user,
 		Source:   req.Source,
@@ -156,6 +156,27 @@ func (a *App) handleV1NextActionPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// nextActionUser is the key this request's snoozes and mutes are stored
+// under.
+//
+// An UNSTAMPED principal (no auth configured) yields principal.From's
+// "unknown" sentinel, and every such request therefore shares one bucket of
+// state. That is deliberate and correct for a single-user deployment — which
+// is exactly when there is no auth — but it means a shared unauthenticated
+// deployment gives everyone one another's snoozes.
+//
+// Not a confidentiality problem: the state holds no entity content, only
+// which suggestions someone deferred. It IS a usability one, so it is named
+// here rather than left to be discovered. Wiring any identity source (JWT,
+// header, OS user) fixes it with no change to this code.
+//
+// Deliberately NOT translated to a synthesized per-session id: that would
+// invent an identity the audit log and ACL do not share, and the project's
+// rule is to never translate an unknown principal into a guessed one.
+func nextActionUser(ctx context.Context) string {
+	return principal.From(ctx).User
 }
 
 // applyNextActionFeedback records one user response.

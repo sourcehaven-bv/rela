@@ -92,6 +92,7 @@ components:
   userstate:        { in: internal/userstate }
   nextaction:       { in: internal/nextaction }
   memuserstate:     { in: internal/userstate/memuserstate }
+  kvuserstate:      { in: internal/userstate/kvuserstate }
   pattern:          { in: internal/pattern }
   search:           { in: internal/search }
   bleveindex:       { in: internal/search/bleveindex }
@@ -440,6 +441,7 @@ deps:
       # picks the store backend. Consumers take the userstate.Store seam.
       - userstate
       - memuserstate
+      - kvuserstate
       - acl
       - app
       - audit
@@ -727,6 +729,12 @@ deps:
   # graph" shortcut the design rejects.
   memuserstate:
     mayDependOn:
+      - userstate
+  # The durable backend rides the existing per-user state seam (state.KV),
+  # the same one the scheduler and document cache use.
+  kvuserstate:
+    mayDependOn:
+      - state
       - userstate
   # nextaction is the resolution engine. It depends on NO store, searcher or
   # ACL type: candidates arrive through a consumer-side CandidateFunc that the

@@ -49,6 +49,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/templating"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 	"github.com/Sourcehaven-BV/rela/internal/userstate"
+	"github.com/Sourcehaven-BV/rela/internal/userstate/kvuserstate"
 	"github.com/Sourcehaven-BV/rela/internal/userstate/memuserstate"
 	"github.com/Sourcehaven-BV/rela/internal/validator"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
@@ -147,11 +148,33 @@ func (s *Services) VisibleSearcher() search.VisibleSearcher { return s.visibleSe
 
 // newUserState builds the next-action per-user state backend.
 //
-// Build-agnostic today — every build gets the in-memory one, because the state
-// is disposable (a lost snooze costs one repeated suggestion, not data). When a
-// durable backend lands this becomes a per-recipe choice like the store, and
-// only this function moves into the tagged recipe files.
-func newUserState() userstate.Store { return memuserstate.New() }
+// Durable by default, over the same state.KV that already holds the
+// scheduler's last-run timestamps and the document render cache — this state
+// has exactly that character (persists between runs, not tracked source), so
+// it gets the same seam and the same `.rela/` home rather than a second
+// persistence mechanism beside it.
+//
+// Falls back to the in-memory backend if the KV is unavailable, and says so.
+// Losing a snooze across a restart is a repeated suggestion, not lost data;
+// refusing to boot over it would be the wrong trade. The warning matters
+// because the degradation is otherwise invisible — the feature keeps working
+// and just forgets.
+//
+// Still build-agnostic: a multi-process deployment wants the postgres backend
+// (this one is last-writer-wins across processes), and that becomes a
+// per-recipe choice when it lands.
+func newUserState(kv state.KV) userstate.Store {
+	if kv == nil {
+		slog.Warn("next-action state: no state KV; snoozes and mutes will not survive a restart")
+		return memuserstate.New()
+	}
+	s, err := kvuserstate.New(kv)
+	if err != nil {
+		slog.Warn("next-action state: falling back to in-memory", "error", err)
+		return memuserstate.New()
+	}
+	return s
+}
 
 // UserState returns the next-action per-user state backend (snooze / mute /
 // cooldown).
@@ -629,7 +652,7 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 		store:           c.Store,
 		searcher:        c.Searcher,
 		visibleSearcher: visible,
-		userState:       newUserState(),
+		userState:       newUserState(c.StateKV),
 		entityManager:   c.EntityManager,
 		tracer:          c.Tracer,
 		validator:       c.Validator,
@@ -1168,7 +1191,7 @@ func assemble(
 		versions:        versions,
 		searcher:        searcher,
 		visibleSearcher: visible,
-		userState:       newUserState(),
+		userState:       newUserState(stateKV),
 		entityManager:   mgr,
 		tracer:          tr,
 		validator:       val,
