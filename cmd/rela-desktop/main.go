@@ -348,7 +348,7 @@ func (d *Desktop) CloneProject(repoURL, baseDir string) map[string]any {
 		return map[string]any{"error": fmt.Sprintf("Clone failed: %v", err)}
 	}
 
-	// Scan for rela projects (directories containing metamodel.yaml)
+	// Scan for rela projects (directories containing a schema file)
 	projects := scanForRelaProjects(targetDir)
 
 	if len(projects) == 0 {

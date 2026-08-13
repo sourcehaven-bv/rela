@@ -33,6 +33,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
+	"github.com/Sourcehaven-BV/rela/internal/caldavalias"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
@@ -64,9 +65,12 @@ import (
 // exception, not a ratchet target. ScheduledLuaWriteDeps() (TKT-ZF2DTV) takes
 // it to 22: it is a scheduler.WorkspaceProvider interface method, so it must be
 // exported; the two redactor-parameterized variants behind it are unexported
-// precisely to keep this surface from growing by three.
+// precisely to keep this surface from growing by three. CalDAVAliases()
+// (TKT-WAA092) takes it to 23: the alias service is constructed here and
+// consumed by cmd/rela-server when wiring the data-entry App, so it has to
+// cross the package boundary — there is no in-package caller to hide it behind.
 //
-//plimsoll:max-exported-methods=22
+//plimsoll:max-exported-methods=23
 type Services struct {
 	fs    storage.FS
 	paths *project.Context
@@ -88,6 +92,7 @@ type Services struct {
 	templater       templating.Templater
 	cfgLoader       config.Loader
 	stateKV         state.KV
+	caldavAliases   *caldavalias.Service
 	scriptEngine    *script.Engine
 	searchCloser    io.Closer
 	acl             acl.ACL
@@ -181,6 +186,11 @@ func (s *Services) Config() config.Loader { return s.cfgLoader }
 // State returns the .rela cache-directory KV (or a sentinel error-KV
 // when no cache dir is available).
 func (s *Services) State() state.KV { return s.stateKV }
+
+// CalDAVAliases is the CalDAV<->rela resource alias service. Never nil: the
+// service is always constructed (an empty table is the normal first-run state),
+// so consumers need no nil check.
+func (s *Services) CalDAVAliases() *caldavalias.Service { return s.caldavAliases }
 
 // LuaReadDeps materializes the read-only Lua capability bundle with
 // UNRESTRICTED reads — the operator-trust-boundary wiring used by the CLI
@@ -772,6 +782,25 @@ func prepare(cfg Config, opts []Option) (*buildBase, error) {
 // search.NewVisible(searcher, st) wrapper, the correct ACL-scoped
 // search implementation for every in-process store. The postgres
 // recipe passes its native implementation instead.
+
+// resolveACL settles which ACL the services use, now that the store is open.
+//
+// Deferred out of prepare because acl.Declarative needs a store-backed Graph.
+// A missing policy yields NopACL, but an error from the Declarative
+// constructor is propagated — booting allow-all on a policy that failed to
+// parse would silently disable authorization.
+func resolveACL(base *buildBase, st store.Store) (acl.ACL, *acl.Declarative, error) {
+	if base.acl == nil {
+		return buildACL(base.aclPolicy, base.meta, st)
+	}
+	// RR-36UL: when WithACL was passed a *acl.Declarative, surface it as the
+	// declarative value too so the affordance resolver path picks it up.
+	// Without this, a caller wiring WithACL(declarative) silently gets
+	// NopFieldVerdictResolver because Services.ACLDeclarative() returns nil.
+	d, _ := base.acl.(*acl.Declarative)
+	return base.acl, d, nil
+}
+
 func assemble(
 	base *buildBase, st store.Store, searcher search.Searcher,
 	visible search.VisibleSearcher, searchCloser io.Closer,
@@ -786,27 +815,9 @@ func assemble(
 		visible = v
 	}
 
-	// Now the store is open: build the Declarative ACL with a
-	// store-backed Graph. This is deferred from prepare because
-	// acl.Declarative needs the store. NopACL on missing policy; an
-	// error from the Declarative constructor is propagated (don't
-	// silently boot allow-all on a broken policy). If the caller
-	// injected an ACL via WithACL, base.acl is already set.
-	resolvedACL := base.acl
-	var aclDeclarative *acl.Declarative
-	if resolvedACL == nil {
-		var err error
-		resolvedACL, aclDeclarative, err = buildACL(base.aclPolicy, base.meta, st)
-		if err != nil {
-			return nil, err
-		}
-	} else if d, ok := resolvedACL.(*acl.Declarative); ok {
-		// RR-36UL: when WithACL was passed a *acl.Declarative,
-		// surface it on aclDeclarative too so the affordance
-		// resolver path picks it up. Without this, a caller wiring
-		// WithACL(declarative) silently gets NopFieldVerdictResolver
-		// because Services.ACLDeclarative() returns nil.
-		aclDeclarative = d
+	resolvedACL, aclDeclarative, err := resolveACL(base, st)
+	if err != nil {
+		return nil, err
 	}
 
 	autoEngine, cascadeRunner, err := buildAutomation(base.meta)
@@ -846,7 +857,13 @@ func assemble(
 	// here and threaded into the recorders and the Services bundle.
 	versions := versionServiceFor(st)
 
+	stateKV, aliases, err := buildStateAndAliases(cfg.FS, cfg.Paths)
+	if err != nil {
+		return nil, err
+	}
+
 	mgr, err := entitymanager.New(entitymanager.Deps{
+		AliasRewriter:           aliases,
 		Store:                   st,
 		Meta:                    base.meta,
 		Templater:               templater,
@@ -867,10 +884,6 @@ func assemble(
 	}
 
 	val := validator.New(st, base.meta, readDeps)
-	stateKV, err := buildStateKV(cfg.FS, cfg.Paths)
-	if err != nil {
-		return nil, err
-	}
 
 	// Start the pgstore version-reconciliation sweep (postgres build only; a
 	// no-op elsewhere). It captures create/update versions for settled entities;
@@ -891,6 +904,7 @@ func assemble(
 		templater:       templater,
 		cfgLoader:       cfgLoader,
 		stateKV:         stateKV,
+		caldavAliases:   aliases,
 		scriptEngine:    cfg.ScriptEngine,
 		searchCloser:    searchCloser,
 		acl:             resolvedACL,
@@ -1000,6 +1014,43 @@ func (s *Services) Close() error {
 		}
 	})
 	return s.closeErr
+}
+
+// buildStateAndAliases builds the per-user state store and the CalDAV alias
+// service that rides on it.
+//
+// The alias service is its own injected concern (like the version service),
+// not a store capability. Both are built BEFORE the entitymanager because its
+// rename/delete hooks take the alias service: only the write choke-point knows
+// old->new, so an alias rewrite has to ride along with the write.
+func buildStateAndAliases(fs storage.FS, paths *project.Context) (state.KV, *caldavalias.Service, error) {
+	stateKV, err := buildStateKV(fs, paths)
+	if err != nil {
+		return nil, nil, err
+	}
+	aliases, err := caldavalias.New(context.Background(), stateKV)
+	if err != nil {
+		// A corrupt alias table must NOT be fatal here.
+		//
+		// This runs on EVERY appbuild path — `rela list`, `analyze`, the MCP
+		// server, the desktop app — the vast majority of which never serve
+		// CalDAV. Failing hard meant a truncated file in the gitignored cache
+		// dir killed every command on a project with no `caldav:` block at all,
+		// citing a subsystem the user had never enabled.
+		//
+		// The fail-loud reasoning (caldavalias.ErrCorrupt) is still right where
+		// it applies: starting CalDAV with an empty table makes every synced
+		// client re-create its entries as new entities, doubling a user's list.
+		// That check now lives at the serving boundary — registerCalDAVRoutes
+		// refuses to mount without a healthy table — so the failure lands on
+		// the path that can actually cause the damage.
+		slog.Warn("caldav alias table unreadable; CalDAV will refuse to serve. "+
+			"Delete the file to start fresh (synced clients will re-create their entries).",
+			"path", filepath.Join(paths.CacheDir, "caldav", "aliases.json"),
+			"error", err)
+		return stateKV, nil, nil
+	}
+	return stateKV, aliases, nil
 }
 
 // buildStateKV returns a state.KV rooted at paths.CacheDir, or a

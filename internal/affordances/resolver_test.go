@@ -56,7 +56,6 @@ func testMeta(t *testing.T) *metamodel.Metamodel {
 					"status":     {Type: metamodel.PropertyTypeEnum, Values: []string{"open", "review", "done"}},
 					"assignee":   {Type: metamodel.PropertyTypeString},
 					"priority":   {Type: metamodel.PropertyTypeInteger},
-					"due":        {Type: metamodel.PropertyTypeDate},
 					"tags":       {Type: metamodel.PropertyTypeString, List: true},
 					"is_blocked": {Type: metamodel.PropertyTypeBoolean},
 				},

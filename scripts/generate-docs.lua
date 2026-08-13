@@ -169,7 +169,7 @@ After running `rela init`:
 
 ```text
 your-project/
-├── metamodel.yaml       # Entity types and relations config
+├── schema.yaml          # Entity types and relations config
 ├── entities/            # Markdown entity files (by type)
 │   ├── requirements/
 │   ├── decisions/

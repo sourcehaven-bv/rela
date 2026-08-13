@@ -54,6 +54,7 @@ components:
   autocascade:      { in: internal/autocascade }
   automation:       { in: internal/automation }
   calfeed:          { in: internal/calfeed }
+  caldavalias:      { in: internal/caldavalias }
   conflict:         { in: internal/conflict }
   entitymanager:    { in: internal/entitymanager }
   imgproc:          { in: internal/imgproc }
@@ -134,6 +135,14 @@ vendors:
   glamour:     { in: github.com/charmbracelet/glamour }
   huh:         { in: github.com/charmbracelet/huh }
   yaml:        { in: gopkg.in/yaml.v3 }
+  # CalDAV protocol surface (TKT-MF1CWZ). Granted ONLY to dataentry, which
+  # contains it in the caldav_* adapter files: calfeed stays the domain model
+  # and *ical.Calendar must not escape that boundary.
+  webdav:
+    in:
+      - github.com/emersion/go-webdav
+      - github.com/emersion/go-webdav/**
+  goical:      { in: github.com/emersion/go-ical }
   goldmark:
     in:
       - github.com/yuin/goldmark
@@ -309,6 +318,7 @@ deps:
       - attachment
       - audit
       - calfeed
+      - caldavalias
       - canonical
       - cmdexec
       - config
@@ -344,6 +354,8 @@ deps:
       - nethtml
       - rrulego
       - singleflight
+      - webdav
+      - goical
   dataentryconfig:
     mayDependOn:
       - filter
@@ -412,6 +424,7 @@ deps:
       - acl
       - app
       - audit
+      - caldavalias
       - autocascade
       - automation
       - bleveindex
@@ -522,7 +535,6 @@ deps:
       - entity
       - metamodel
       - predicate
-      - predicatefns
       - principal
       - statemachine
   # Read-side ACL enforcement seam (DEC-ZBI39P): visibility wrappers over
@@ -793,6 +805,10 @@ deps:
   project:
     mayDependOn:
       - storage
+  caldavalias:
+    mayDependOn:
+      - state
+
   state:
     mayDependOn:
       - storage

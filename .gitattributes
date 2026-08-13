@@ -1,0 +1,5 @@
+# iCalendar mandates CRLF line endings (RFC 5545 §3.1), and the .ics files under
+# testdata/ are byte-exact captures from real clients used as interop fixtures.
+# Git's default eol normalisation would rewrite them to LF on checkout, silently
+# invalidating what they exist to prove.
+*.ics -text

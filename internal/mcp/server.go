@@ -10,7 +10,7 @@
 //     rela://relation/{from}/{type}/{to}
 //   - Prompts: analyze-traceability, review-orphans, summarize-project,
 //     review-entity
-//   - A file watcher over entities/, relations/, and metamodel.yaml with
+//   - A file watcher over entities/, relations/, and the schema file with
 //     a 200ms debounce; tests that exercise the watcher must wait past it
 //     (see watcher.go).
 //

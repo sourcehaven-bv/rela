@@ -14,6 +14,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
+	"github.com/Sourcehaven-BV/rela/internal/caldavalias"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -101,6 +102,12 @@ type App struct {
 	// sub-interface they need rather than type-asserting the store.
 	versions      store.VersionService
 	entityManager entitymanager.EntityManager
+
+	// caldavAliases links CalDAV resources to entities. Optional: nil when no
+	// alias service is wired, in which case the CalDAV routes are not served
+	// (a collection with no way to remember client-created resources would
+	// duplicate every to-do on the next sync).
+	caldavAliases *caldavalias.Service
 	searcher      search.Searcher
 	// visibleSearcher is the ACL-scoped search seam (TKT-BA8BSX):
 	// executeQuery routes free-text searches through it so /_search
@@ -513,6 +520,10 @@ func (a *App) SetSecurityConfig(cfg SecurityConfig) error {
 // `$RELA_DATAENTRY_USER` env var overrides any incoming header and
 // the header itself overrides the default. Passing nil restores
 // [defaultPrincipalResolver] behavior.
+// SetCalDAVAliases installs the CalDAV alias service. Without it the CalDAV
+// routes are not registered.
+func (a *App) SetCalDAVAliases(s *caldavalias.Service) { a.caldavAliases = s }
+
 func (a *App) SetPrincipalResolver(r PrincipalResolver) {
 	a.principalResolver = r
 }

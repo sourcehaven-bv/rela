@@ -45,7 +45,6 @@ const (
 	FuncRegex    = "regex"    // regex(s, pattern) bool
 	FuncFuzzy    = "fuzzy"    // fuzzy(s, target) bool
 	FuncContains = "contains" // contains(list, elem) bool
-	FuncLen      = "len"      // len(list) number
 	FuncToday    = "today"    // today() date
 )
 
@@ -71,7 +70,6 @@ func Declare(env *predicate.Env) error {
 		{FuncRegex, twoStr},
 		{FuncFuzzy, twoStr},
 		{FuncContains, predicate.FuncSig{Params: []predicate.Type{strList, str}, Return: predicate.BoolType}},
-		{FuncLen, predicate.FuncSig{Params: []predicate.Type{strList}, Return: predicate.NumberType}},
 		{FuncToday, predicate.FuncSig{Return: predicate.DateType}},
 	}
 	for _, d := range decls {
@@ -103,7 +101,6 @@ func Bind(b *predicate.Bindings, now time.Time) error {
 		{FuncRegex, matchRegex},
 		{FuncFuzzy, matchFuzzy},
 		{FuncContains, contains},
-		{FuncLen, listLen},
 		{FuncToday, func(context.Context, []predicate.Value) (predicate.Value, error) {
 			return predicate.NewDate(day), nil
 		}},
@@ -176,20 +173,6 @@ func contains(_ context.Context, args []predicate.Value) (predicate.Value, error
 		}
 	}
 	return predicate.NewBool(false), nil
-}
-
-// listLen implements len(list): the number of elements. Used by the
-// filter transpiler to distinguish an empty/missing list (which filter's
-// list `!=` treats as "matches nothing") from a populated one.
-func listLen(_ context.Context, args []predicate.Value) (predicate.Value, error) {
-	if len(args) != 1 {
-		return nil, errArg
-	}
-	list, ok := args[0].(predicate.List)
-	if !ok {
-		return nil, errArg
-	}
-	return predicate.NewNumberFromInt(len(list.Elems())), nil
 }
 
 // twoStrings extracts exactly two string args.

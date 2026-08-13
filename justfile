@@ -101,6 +101,12 @@ test-verbose:
 # Requires RELA_TEST_DATABASE_URL, e.g.:
 #   RELA_TEST_DATABASE_URL=postgres://user@127.0.0.1:5432/rela_test?sslmode=disable just test-postgres
 # Without it, the pgstore conformance suite skips (so this stays a no-op-safe target).
+#
+# Set RELA_TEST_DATABASE_REQUIRED=1 to turn that skip into a hard failure —
+# use it anywhere "pgstore is green" is treated as a gate rather than a
+# convenience, since a skip and a pass look identical in the exit code. CI's
+# Postgres Backend job sets it. This suite is the ONLY enforcement of the
+# backend-parity rule, so if you are changing store behaviour, run it.
 test-postgres:
     @echo "Running postgres-tagged tests (needs RELA_TEST_DATABASE_URL)..."
     go test -race -tags postgres ./internal/store/pgstore/...

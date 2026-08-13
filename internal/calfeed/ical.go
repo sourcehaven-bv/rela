@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/base32"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -34,8 +35,13 @@ func (ic ICal) prodID() string {
 }
 
 // RenderCollection renders the whole feed as one VCALENDAR object: the standard
-// envelope wrapping one VEVENT per event via [ICal.RenderEvent]. The result is
-// CRLF-terminated (including the final END:VCALENDAR line).
+// envelope wrapping one component per entry — VEVENT via [ICal.RenderEvent], or
+// VTODO via [ICal.RenderTodo] when [Feed.Component] is [ComponentTodo]. The
+// result is CRLF-terminated (including the final END:VCALENDAR line).
+//
+// A feed renders exactly one component kind; the slice that does not match
+// Component is ignored rather than merged (see the [Feed] doc for why mixing
+// breaks Apple clients).
 func (ic ICal) RenderCollection(f Feed) []byte {
 	var b strings.Builder
 	writeLine(&b, "BEGIN:VCALENDAR")
@@ -52,8 +58,14 @@ func (ic ICal) RenderCollection(f Feed) []byte {
 		// COLOR is RFC 7986; harmless to clients that ignore it.
 		writeProp(&b, "COLOR", f.Color)
 	}
-	for _, e := range f.Events {
-		b.Write(ic.RenderEvent(e))
+	if f.isTodo() {
+		for _, t := range f.Todos {
+			b.Write(ic.RenderTodo(t))
+		}
+	} else {
+		for _, e := range f.Events {
+			b.Write(ic.RenderEvent(e))
+		}
 	}
 	writeLine(&b, "END:VCALENDAR")
 	return []byte(b.String())
@@ -106,6 +118,151 @@ func (ic ICal) RenderEvent(e Event) []byte {
 	return []byte(b.String())
 }
 
+// RenderTodo renders one to-do as a VTODO block (BEGIN:VTODO…END:VTODO),
+// CRLF-terminated. It is the single source of per-to-do serialization, mirroring
+// [ICal.RenderEvent]: both the whole-collection ICS render and a CalDAV
+// per-resource GET go through it.
+//
+// A to-do with no Due emits no DUE property (a deadline-less to-do is legal).
+// Property order follows RFC 5545's examples; Apple re-sorts on write-back
+// anyway, so no consumer may diff on raw bytes.
+func (ic ICal) RenderTodo(t Todo) []byte {
+	// Normalize FIRST: the exported fields allow a half-completed or
+	// out-of-range Todo, and this is the single chokepoint every render (and
+	// therefore every ETag) passes through. See [Todo.normalized].
+	t = t.normalized()
+
+	var b strings.Builder
+	writeLine(&b, "BEGIN:VTODO")
+	writeProp(&b, "UID", t.UID)
+	writeLine(&b, "DTSTAMP:"+formatDateTimeUTC(ic.Now))
+	// DTSTART is when work begins, as against DUE's deadline. Shares Timed with
+	// DUE: RFC 5545 3.8.2.4 requires the two to agree on value type, and a
+	// client presents a to-do as all-day or timed as a whole.
+	if !t.Start.IsZero() {
+		if t.Timed {
+			writeLine(&b, "DTSTART:"+formatDateTimeUTC(t.Start))
+		} else {
+			writeLine(&b, "DTSTART;VALUE=DATE:"+formatDate(t.Start))
+		}
+	}
+	// DUE is optional; a to-do without one has no deadline. Timed selects the
+	// format exactly as it does for an event's DTSTART.
+	if !t.Due.IsZero() {
+		if t.Timed {
+			writeLine(&b, "DUE:"+formatDateTimeUTC(t.Due))
+		} else {
+			writeLine(&b, "DUE;VALUE=DATE:"+formatDate(t.Due))
+		}
+	}
+	writeProp(&b, "SUMMARY", t.Summary)
+	if t.Description != "" {
+		writeProp(&b, "DESCRIPTION", t.Description)
+	}
+	if t.URL != "" {
+		writeProp(&b, "URL", t.URL)
+	}
+	writeLine(&b, "STATUS:"+string(t.status()))
+	// COMPLETED is RFC 5545 DATE-TIME in UTC, never a DATE — it is an instant,
+	// not a day, regardless of whether DUE is all-day.
+	if !t.Completed.IsZero() {
+		writeLine(&b, "COMPLETED:"+formatDateTimeUTC(t.Completed))
+	}
+	// Emit PERCENT-COMPLETE only when it carries information: a pending to-do
+	// at 0% is the default, so the property would be noise.
+	if t.PercentComplete != 0 {
+		writeLine(&b, fmt.Sprintf("PERCENT-COMPLETE:%d", t.PercentComplete))
+	}
+	if t.Priority != 0 {
+		writeLine(&b, fmt.Sprintf("PRIORITY:%d", t.Priority))
+	}
+	if t.Location != "" {
+		writeProp(&b, "LOCATION", t.Location)
+	}
+	// CATEGORIES is ONE property carrying a comma-separated list (RFC 5545
+	// 3.8.1.2). Each value is escaped individually, so a comma inside a
+	// category name cannot forge a list separator.
+	if cats := nonEmpty(t.Categories); len(cats) > 0 {
+		for i, c := range cats {
+			cats[i] = escapeText(c)
+		}
+		writeLine(&b, "CATEGORIES:"+strings.Join(cats, ","))
+	}
+	// writeLine, NOT writeProp: an RRULE is structured value syntax whose
+	// semicolons and commas are SEPARATORS. Escaping them (as writeProp does
+	// for free text) produces "FREQ=WEEKLY\;BYDAY=MO" — a rule no client can
+	// parse. Matches the VEVENT path, which makes the same choice.
+	if t.RRule != "" {
+		writeLine(&b, "RRULE:"+t.RRule)
+	}
+	// A relative TRIGGER on a VTODO is anchored to DTSTART or DUE (RFC 5545
+	// §3.8.6.3). With neither, an alarm has no anchor at all — an
+	// underspecified state clients resolve inconsistently. Emit alarms only
+	// when there is something to anchor them to.
+	if !t.Due.IsZero() || !t.Start.IsZero() {
+		for _, a := range t.Alarms {
+			// An unparseable trigger drops its whole VALARM: a silently
+			// mis-timed reminder is worse than an absent one.
+			if !validTrigger(a.Trigger) {
+				continue
+			}
+			desc := a.Description
+			if desc == "" {
+				desc = t.Summary
+			}
+			writeLine(&b, "BEGIN:VALARM")
+			writeLine(&b, "ACTION:DISPLAY")
+			writeProp(&b, "DESCRIPTION", desc)
+			writeLine(&b, "TRIGGER:"+a.Trigger)
+			writeLine(&b, "END:VALARM")
+		}
+	}
+	writeLine(&b, "END:VTODO")
+	return []byte(b.String())
+}
+
+// status returns the STATUS to render, defaulting the zero value to
+// NEEDS-ACTION so a caller need not set it for a plain pending to-do.
+//
+// STATUS is an enumerated value, not TEXT, so it is VALIDATED rather than
+// escaped: anything outside the VTODO status set (RFC 5545 §3.8.1.11 —
+// note VEVENT's set differs) falls back to NEEDS-ACTION. Escaping would be
+// wrong here, since an escaped non-value is still not a legal STATUS, and it
+// keeps caller-supplied content out of a line that is written unescaped.
+func (t Todo) status() TodoStatus {
+	switch t.Status {
+	case TodoNeedsAction, TodoCompleted, TodoCancelled, TodoInProcess:
+		return t.Status
+	default:
+		// Covers both the zero value and any unrecognized string.
+		return TodoNeedsAction
+	}
+}
+
+// icalDuration matches the RFC 5545 DURATION values usable as a VALARM TRIGGER
+// (§3.3.6): an optional sign, "P", then a week form or a day/time form with at
+// least one component. Deliberately a subset — enough for alarm offsets like
+// "-PT9H", "-P1D", "PT15M" — and it excludes anything containing a separator
+// that could alter the property's meaning.
+var icalDuration = regexp.MustCompile(
+	`^[+-]?P(?:\d+W|(?:\d+D)?(?:T(?:\d+H)?(?:\d+M)?(?:\d+S)?)?)$`)
+
+// validTrigger reports whether an alarm trigger is a renderable RFC 5545
+// duration.
+//
+// TRIGGER is a DURATION (or DATE-TIME), not TEXT, so it is VALIDATED rather
+// than escaped — escaping it as text would corrupt a legal value, and passing
+// it through raw would let ";" (the parameter separator) change what the
+// property means. A trigger that fails this check drops its whole VALARM: a
+// silently mis-timed alarm is worse than no alarm.
+func validTrigger(s string) bool {
+	// A bare "P"/"PT" carries no components and is not a duration.
+	if !strings.ContainsFunc(s, func(r rune) bool { return r >= '0' && r <= '9' }) {
+		return false
+	}
+	return icalDuration.MatchString(s)
+}
+
 // ETag returns a strong, stable content tag for one event: it changes if and
 // only if the rendered event content changes. Used as the CalDAV per-resource
 // ETag. Independent of [ICal.Now] (DTSTAMP is excluded) so re-rendering an
@@ -117,19 +274,52 @@ func (ic ICal) ETag(e Event) string {
 	return `"` + base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(sum[:10]) + `"`
 }
 
+// TodoETag is [ICal.ETag] for a to-do: a strong content tag that changes if and
+// only if the rendered VTODO content changes, and is independent of [ICal.Now].
+func (ic ICal) TodoETag(t Todo) string {
+	sum := sha256.Sum256(ICal{ProdID: ic.ProdID}.RenderTodo(t))
+	return `"` + base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(sum[:10]) + `"`
+}
+
 // CollectionTag returns a tag over the whole feed that changes if and only if
-// any event's content changes (added, removed, or modified). Used as the CalDAV
-// collection ctag.
+// any entry's content changes (added, removed, or modified). Used as the CalDAV
+// collection ctag, for both component kinds.
+//
+// It must be derived from CONTENT, not from a change counter: store events are
+// dropped when a subscriber's buffer fills (see store.Watcher), and the
+// filesystem backend has no monotonic sequence — a counter-derived ctag would
+// silently skip a change and leave a client permanently stale.
 func (ic ICal) CollectionTag(f Feed) string {
 	h := sha256.New()
-	for _, e := range f.Events {
-		// Include the per-event tag so any content change propagates; length-
-		// prefix to avoid boundary ambiguities between adjacent events.
-		et := ic.ETag(e)
-		fmt.Fprintf(h, "%d:%s", len(et), et)
+	// Length-prefix each entry tag to avoid boundary ambiguities between
+	// adjacent entries. Only the slice matching Component contributes, mirroring
+	// what RenderCollection actually emits.
+	if f.isTodo() {
+		for _, t := range f.Todos {
+			et := ic.TodoETag(t)
+			fmt.Fprintf(h, "%d:%s", len(et), et)
+		}
+	} else {
+		for _, e := range f.Events {
+			et := ic.ETag(e)
+			fmt.Fprintf(h, "%d:%s", len(et), et)
+		}
 	}
 	sum := h.Sum(nil)
 	return `"` + base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(sum[:10]) + `"`
+}
+
+// nonEmpty returns the non-blank entries of xs, in order, as a fresh slice.
+// A blank category would render as an empty list element, which strict parsers
+// reject.
+func nonEmpty(xs []string) []string {
+	out := make([]string, 0, len(xs))
+	for _, x := range xs {
+		if strings.TrimSpace(x) != "" {
+			out = append(out, x)
+		}
+	}
+	return out
 }
 
 // writeProp writes "NAME:VALUE" with the value escaped per RFC 5545 and the

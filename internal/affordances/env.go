@@ -3,7 +3,6 @@ package affordances
 import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
-	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 )
 
 // userRecordType is the static type for the current_user variable.
@@ -88,19 +87,11 @@ func entityRecordType(meta *metamodel.Metamodel, entityType string) predicate.Re
 
 // propertyPredicateType maps a metamodel property to a predicate type.
 // Returns (_, false) for types the predicate type system can't model,
-// so the caller omits them from the env (a predicate referencing them
-// then fails at compile with "unknown variable" — DR-C2).
-//
-// The scalar type choice (integer->IntType, date->DateTypeWithLayout,
-// boolean->BoolType, string/enum/custom->StringType, file/unknown->omit)
-// is delegated to predicatefns.ScalarTypeForProp — the single canonical
-// adapter (RR-TBG91). affordances keeps only its own policy: the list
-// wrapping here, and the id/type pseudo-fields in entityRecordType. The
-// list handling stays local because affordances declares list properties
-// as ListType and binds them with coerceList; predicatefns owns the
-// scalar decision, not the list-vs-scalar shape.
+// so the caller omits them from the env. A custom (named) type is
+// treated as a string when it resolves to an enum-like custom type,
+// else omitted.
 func propertyPredicateType(meta *metamodel.Metamodel, prop metamodel.PropertyDef) (predicate.Type, bool) {
-	elem, ok := predicatefns.ScalarTypeForProp(meta, &prop)
+	elem, ok := scalarPredicateType(meta, prop.Type)
 	if !ok {
 		return nil, false
 	}
@@ -108,4 +99,29 @@ func propertyPredicateType(meta *metamodel.Metamodel, prop metamodel.PropertyDef
 		return predicate.ListType{Elem: elem}, true
 	}
 	return elem, true
+}
+
+// scalarPredicateType maps a scalar metamodel type name to a predicate
+// scalar type. enum/date/datetime/rrule/string and string-valued custom
+// types become StringType; integer becomes NumberType; boolean becomes
+// BoolType. file and unknown types are unmodelled.
+func scalarPredicateType(meta *metamodel.Metamodel, typeName string) (predicate.Type, bool) {
+	switch typeName {
+	case "", metamodel.PropertyTypeString, metamodel.PropertyTypeEnum,
+		metamodel.PropertyTypeDate, metamodel.PropertyTypeDatetime, metamodel.PropertyTypeRrule:
+		return predicate.StringType, true
+	case metamodel.PropertyTypeInteger:
+		return predicate.NumberType, true
+	case metamodel.PropertyTypeBoolean:
+		return predicate.BoolType, true
+	case metamodel.PropertyTypeFile:
+		return nil, false
+	}
+	// Custom named types: enum-like custom types carry string values.
+	if meta != nil {
+		if _, ok := meta.Types[typeName]; ok {
+			return predicate.StringType, true
+		}
+	}
+	return nil, false
 }

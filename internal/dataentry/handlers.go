@@ -194,10 +194,10 @@ type helpContentData struct {
 // enum values, state names, and the mermaid diagram source) is auto-escaped by
 // html/template in its element context. The only fields interpolated as raw
 // markup are the htmltemplate.HTML ones — Description / Help — which hold
-// goldmark output produced from OPERATOR-authored metamodel.yaml prose by
+// goldmark output produced from OPERATOR-authored schema.yaml prose by
 // simpleMarkdownToHTML (internal/dataentry/helpers.go:345). That converter runs
 // goldmark with html.WithUnsafe() (helpers.go:341), so it passes raw HTML
-// through unsanitized; it is safe HERE only because metamodel.yaml is on-disk
+// through unsanitized; it is safe HERE only because schema.yaml is on-disk
 // operator configuration that no HTTP/MCP/Lua write path can modify — NOT
 // because the markdown is sanitized. Never route user-authored entity content
 // (entity bodies or property values) into these fields.

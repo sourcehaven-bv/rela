@@ -175,6 +175,11 @@ type Deps struct {
 	// versions are handled by the store's periodic sweep, not this hook).
 	VersionRecorder VersionRecorder
 
+	// AliasRewriter is notified when an entity is renamed or deleted so a
+	// subsystem holding references BY ENTITY ID (the CalDAV alias service) can
+	// rewrite them (see [AliasRewriter]). Optional: nil disables the hook.
+	AliasRewriter AliasRewriter
+
 	// RelationVersionRecorder captures a synchronous relation version for
 	// relation delete (explicit and entity-cascade) and endpoint rename (see
 	// [RelationVersionRecorder]). Optional: nil disables it (fs/mem builds; the
@@ -875,6 +880,11 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 	// this capture; strict atomicity is a future hardening).
 	m.recordEntityVersion(ctx, store.VersionOpDelete, current, "")
 
+	// Tell id-keyed subscribers the entity is gone. They decide what to do:
+	// the CalDAV alias service RETAINS its reference, as the tombstone that
+	// stops a stale client write resurrecting this entity.
+	m.notifyAliasesOfDelete(ctx, id)
+
 	// Capture a final version for every relation this cascade destroys, BEFORE
 	// the store delete removes them. This is the ONLY place cascade-deleted
 	// relations get versioned: the store's DeleteEntity bulk-deletes them below
@@ -994,6 +1004,10 @@ func (m *Manager) RenameEntity(
 	// choke-point knows old->new; a later sweep sees the renamed entity as an
 	// ordinary update and cannot reconstruct this link.
 	m.recordEntityVersion(ctx, store.VersionOpRename, postEntity, oldID)
+
+	// Rewrite id-keyed references for the same reason the version above carries
+	// prev_id: this is the only point that knows old->new.
+	m.rewriteAliasesForRename(ctx, oldID, postEntity.ID)
 
 	// Capture a `rename` version for each incident relation, on its NEW triple,
 	// carrying the pre-rename endpoints (prev_from/prev_to). The version's key is

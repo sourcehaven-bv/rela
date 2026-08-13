@@ -3,17 +3,7 @@ import vue from '@vitejs/plugin-vue'
 import { fileURLToPath, URL } from 'node:url'
 
 export default defineConfig({
-  // Mirror the main vite config's isCustomElement so `<rela-slot>` and
-  // `<rela-editor>` are treated as native custom elements under vitest too.
-  plugins: [
-    vue({
-      template: {
-        compilerOptions: {
-          isCustomElement: (tag) => tag.startsWith('rela-'),
-        },
-      },
-    }),
-  ],
+  plugins: [vue()],
   // Mirror the vite `define` so components referencing the compile-time
   // __E2E_TEST_HOOKS__ flag don't ReferenceError under vitest. Off in unit
   // tests — test hooks are an E2E concern (issue #890).
@@ -24,7 +14,7 @@ export default defineConfig({
     globals: true,
     environment: 'happy-dom',
     setupFiles: ['./src/test/setup.ts'],
-    include: ['src/**/*.{test,spec}.{js,ts,vue}', '*.{test,spec}.ts'],
+    include: ['src/**/*.{test,spec}.{js,ts,vue}'],
   },
   resolve: {
     alias: {
