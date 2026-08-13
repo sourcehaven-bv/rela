@@ -77,7 +77,9 @@ findings).
 - [x] All CI checks pass
 - [x] PR URL documented below
 
-**PR:** see the `has-pr` note below.
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1313 — 24/24 checks green
+(1 skipped: `auto-merge`, label-gated). No CI fixes were needed. Blocked only on
+`REVIEW_REQUIRED`, i.e. human approval.
 
 Ordering note: the workflow requires the ticket to be `done` and validating
 clean *before* the PR is opened (a ticket left in `review` fails the
