@@ -3117,7 +3117,21 @@ property, or **timed** (a UTC `DTSTART` with a time-of-day) when it is a
 
 Point your calendar app at
 `http://<host>:<port>/api/v1/_feeds/<name>.ics`. The endpoint applies the
-server's ACL: a feed only ever exposes entities the request's principal may read.
+server's ACL in both dimensions: an entity the request's principal may not read
+is absent from the feed, and a property hidden from them by a `visible:` grant is
+omitted from the event it would otherwise appear in.
+
+Field redaction applies to what the event **renders**, not to which entities the
+feed selects. A `where:` clause is evaluated against the unredacted entity on
+purpose — otherwise a hidden property would read as empty inside the filter, and
+the same feed would contain different events for different readers. Which
+entities a feed selects is an operator-authored decision; what their fields say
+is the reader's business.
+
+One consequence worth knowing: if a feed is anchored on a date property that a
+reader may not see, entities have no usable date for them and drop out of that
+reader's calendar entirely. That is deliberate — an event whose date you may not
+read is not one you should be shown.
 
 On a plain localhost server there is no authentication — the feed is readable by
 anything that can reach the port, which is appropriate for a single-user local

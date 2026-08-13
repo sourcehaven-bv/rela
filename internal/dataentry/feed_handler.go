@@ -52,7 +52,7 @@ func (a *App) handleV1Feed(w http.ResponseWriter, r *http.Request) {
 	link := func(entityType, id string) string {
 		return base + "/entity/" + entityType + "/" + id
 	}
-	provider, err := newDeclarativeFeed(name, cfg, s.Meta, feedEntitySource{app: a}, link)
+	provider, err := newDeclarativeFeed(name, cfg, s.Meta, feedEntitySource{app: a}, link, appRedactor(a))
 	if err != nil {
 		writeV1Error(w, r, http.StatusInternalServerError, "feed_error", "Feed misconfigured", "")
 		return
