@@ -251,6 +251,16 @@ var nonBrowserExemptPrefixes = []string{
 	// non-browser), so a browser fetch() of a feed still hits the same-origin
 	// check. Feed responses are read-only and ACL-scoped to the request principal.
 	"/api/v1/_feeds/",
+	// CalDAV (TKT-MF1CWZ). A calendar client is the same shape as the feed
+	// poller above: no Cookie, no Origin, no Sec-Fetch-* — so isCSRFExempt's
+	// provably-non-browser test still gates the exemption, and a browser
+	// fetch() of a CalDAV path is still same-origin checked.
+	//
+	// This is NOT a weakening for CalDAV specifically: without it the
+	// endpoint is unreachable by any real client, since every CalDAV request
+	// would fail the same-origin check. Authentication is unaffected — the
+	// JWT gate still applies, and the ACL still scopes every read.
+	"/api/v1/_caldav/",
 }
 
 // insensitivePathPrefixes carves exceptions OUT of the sensitive prefixes above.

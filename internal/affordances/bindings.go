@@ -2,9 +2,7 @@ package affordances
 
 import (
 	"context"
-	"math"
 	"strconv"
-	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -149,7 +147,7 @@ func coerceValue(prop metamodel.PropertyDef, raw any) predicate.Value {
 	if prop.List {
 		return coerceList(prop, raw)
 	}
-	return coerceScalar(&prop, raw)
+	return coerceScalar(prop.Type, raw)
 }
 
 // coerceList coerces a list-typed property. Surprising-but-deliberate
@@ -165,38 +163,28 @@ func coerceList(prop metamodel.PropertyDef, raw any) predicate.Value {
 	switch v := raw.(type) {
 	case []any:
 		for _, e := range v {
-			elems = append(elems, coerceScalar(&prop, e))
+			elems = append(elems, coerceScalar(prop.Type, e))
 		}
 	case nil:
 		// empty list
 	default:
 		// single scalar promoted to one-element list
-		elems = append(elems, coerceScalar(&prop, raw))
+		elems = append(elems, coerceScalar(prop.Type, raw))
 	}
 	return predicate.NewList(elems)
 }
 
-// coerceScalar coerces a stored scalar to the predicate Value whose type
-// matches predicatefns.ScalarTypeForProp (the shared adapter): integer ->
-// Int, date/datetime -> Date, boolean -> Bool, everything else -> String.
-// The declared type — not the raw Go type — drives the choice, so the
-// bound Value's type always matches the field's DECLARED predicate type
-// (RR-4189H: a Number bound to an IntType field, or a String to a
-// DateType field, would fail the runtime type check at Eval). Off-type or
-// unconvertible values bind as Nil (DR-C2, fail-soft).
-func coerceScalar(prop *metamodel.PropertyDef, raw any) predicate.Value {
+func coerceScalar(typeName string, raw any) predicate.Value {
 	if raw == nil {
 		return predicate.NewNil()
 	}
-	switch prop.Type {
+	switch typeName {
 	case metamodel.PropertyTypeInteger:
-		return coerceInt(raw)
-	case metamodel.PropertyTypeDate, metamodel.PropertyTypeDatetime:
-		return coerceDate(prop, raw)
+		return coerceNumber(raw)
 	case metamodel.PropertyTypeBoolean:
 		return coerceBool(raw)
 	default:
-		// string / enum / rrule / custom — string-valued.
+		// string / enum / date / rrule / custom — string-valued.
 		if s, ok := raw.(string); ok {
 			return predicate.NewString(s)
 		}
@@ -204,45 +192,17 @@ func coerceScalar(prop *metamodel.PropertyDef, raw any) predicate.Value {
 	}
 }
 
-// coerceInt binds an integer field to a predicate Int. It preserves the
-// permissive coercion the pre-Phase-2 coerceNumber offered (RR-IRV2WJ,
-// pinned by TestResolver_OffTypeProperty_CoercesNotFails): int, int64,
-// an integral float64, and a string that parses as an integer all bind;
-// a fractional float or non-numeric string binds Nil. Fractional inputs
-// bind Nil rather than truncating — silent truncation would corrupt the
-// comparison, and IntType has no fractional value to hold.
-func coerceInt(raw any) predicate.Value {
+func coerceNumber(raw any) predicate.Value {
 	switch v := raw.(type) {
 	case int:
-		return predicate.NewInt(int64(v))
+		return predicate.NewNumberFromInt(v)
 	case int64:
-		return predicate.NewInt(v)
+		return predicate.NewNumber(float64(v))
 	case float64:
-		if v == math.Trunc(v) {
-			return predicate.NewInt(int64(v))
-		}
+		return predicate.NewNumber(v)
 	case string:
-		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
-			return predicate.NewInt(n)
-		}
-	}
-	return predicate.NewNil()
-}
-
-// coerceDate binds a date/datetime field to a predicate Date. YAML
-// auto-decodes an unquoted date scalar to time.Time and a quoted one to
-// string, so BOTH must be handled (RR-WHMVLW: missing the time.Time case
-// silently binds Nil and flips ACL grants to deny). A string is parsed
-// via metamodel.ParseDateValue against the property's declared format —
-// the same parser filter.matchDate uses — never a hand-rolled layout.
-// Anything else binds Nil.
-func coerceDate(prop *metamodel.PropertyDef, raw any) predicate.Value {
-	switch v := raw.(type) {
-	case time.Time:
-		return predicate.NewDate(v)
-	case string:
-		if t, err := metamodel.ParseDateValue(v, prop); err == nil {
-			return predicate.NewDate(t)
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return predicate.NewNumber(f)
 		}
 	}
 	return predicate.NewNil()

@@ -38,25 +38,14 @@ documents:
     title: "Status Review"
     script: docs/status_review.lua
     timeout: 10
+  # Renders through Lua, not a shell. The inline `command:` this replaced
+  # spliced {id} into a shell string (TKT-QGHNVA); `command:` is now an argv
+  # array with no shell, and a renderer that needs the entity reads the graph
+  # directly rather than shelling out to the CLI.
   ticket_summary:
     title: "Ticket Summary"
     entity_type: ticket
-    command: |
-      export PATH=".rela/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
-      TITLE=$(rela show {id} -o json | jq -r '.entity.properties.title // "Untitled"')
-      STATUS=$(rela show {id} -o json | jq -r '.entity.properties.status // "unknown"')
-      PRIORITY=$(rela show {id} -o json | jq -r '.entity.properties.priority // "medium"')
-      ASSIGNEE=$(rela show {id} -o json | jq -r '.entity.properties.assignee // "unassigned"')
-      DESC=$(rela show {id} -o json | jq -r '.entity.properties.description // ""')
-      echo "# $TITLE"
-      echo ""
-      echo "**Status:** $STATUS | **Priority:** $PRIORITY | **Assignee:** $ASSIGNEE"
-      echo ""
-      if [ -n "$DESC" ]; then
-        echo "## Description"
-        echo ""
-        echo "$DESC"
-      fi
+    script: docs/ticket_summary.lua
     timeout: 30
 forms:
   create_ticket:

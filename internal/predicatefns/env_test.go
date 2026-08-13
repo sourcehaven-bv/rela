@@ -27,7 +27,7 @@ func TestEntityRecordType_EndToEnd(t *testing.T) {
 	}
 
 	env := predicate.NewEnv()
-	if err := env.DeclareVar("entity", predicatefns.EntityRecordType(nil, def)); err != nil {
+	if err := env.DeclareVar("entity", predicatefns.EntityRecordType(def)); err != nil {
 		t.Fatalf("declare: %v", err)
 	}
 	if err := predicatefns.Declare(env); err != nil {
