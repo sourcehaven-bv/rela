@@ -80,6 +80,11 @@ binds the right data to the right tile (count + breakdown cards both correct).
 
 **Docs Checklist:** DOCS-D7W18R
 
+Caught by CI: `docs/` is **generated** from `docs-project/` entities, so my
+first pass edited the generated output and `just docs` reverted it. Moved the
+same content to `GUIDE-data-entry.md` / `GUIDE-acl-security.md`; regenerating
+now produces no diff and `just docs-check` passes.
+
 ## Final Checks
 
 - [x] Commit message explains the why, not just what
@@ -90,11 +95,20 @@ One incidental fix worth flagging: `internal/dataentry/CLAUDE.md` named a
 read-only canary `TestNavPermission_ReadOnlyHides` that does not exist, and
 whose name asserts the *opposite* of the pinned behavior. Corrected.
 
+**Unrelated pre-existing breakage found while rebasing** and filed as BUG-JWTKVG
+(not fixed here — out of scope): `internal/docscapture` fails on clean `develop`
+because `prototypes/data-entry/project/data-entry.yaml:44` still uses the old
+string `command:` form after #1284 changed it to `[]string`. It hides in CI
+because those tests skip unless a browser *and* a built SPA are both present.
+Verified on an untouched `origin/develop` worktree.
+
 ## Pull Request
 
-- [x] ~~Run `/pr` command to create PR and monitor CI~~ (N/A: not requested — work is committed on `feat/dashboard-card-permissions`, pushing/opening a PR is the user's call)
-- [x] ~~All CI checks pass~~ (N/A: no PR opened; the equivalent local gates all pass — see Automated Checks)
-- [x] ~~PR URL documented below~~ (N/A: no PR opened)
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass
+- [x] PR URL documented below
 
-**PR:** none — two commits on `feat/dashboard-card-permissions` (`e6147c07`
-feature, `02e52f85` review fixes), not pushed.
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1316 — 24/24 checks pass,
+`MERGEABLE`, targeting `develop`. Rebased onto `develop` (35374c58) before
+pushing; the rebase required a frontend rebuild because a new `@layer rela` CSS
+requirement had landed meanwhile.
