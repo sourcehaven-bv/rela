@@ -274,62 +274,72 @@ async function handleSync() {
   line-height: 1;
 }
 
-.na-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1, 4px);
-}
-
+/*
+ * The status-bar chip inherits .status-item (the bar's own affordance style),
+ * so it sits at the same weight as Settings/About rather than inventing a
+ * competing look. Only the dot and the open state are added here.
+ */
 .na-chip__dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--color-primary, #3b82f6);
-  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-circle);
+  background: var(--accent-color);
+  flex-shrink: 0;
 }
 
 .na-chip--open {
-  background: var(--color-surface-hover, rgba(127, 127, 127, 0.15));
+  background: var(--hover-bg);
+  opacity: 1;
 }
 
-/* The label is a nicety, not the signal — below ~900px the dot alone says
-   "there is something", and the bar keeps room for git status. */
+/* The label is a nicety, not the signal: below 900px the dot alone says
+   "there is something", and the bar keeps its room for git status. */
 @media (max-width: 900px) {
   .na-chip__text {
     display: none;
   }
 }
 
-/* Anchored bottom-right, above the bar it belongs to, rather than centred:
-   a suggestion the user went looking for should appear where they clicked. */
+/* Anchored above the chip rather than centred: a suggestion the user went
+   looking for should appear where they clicked. The overlay is transparent
+   and exists only to catch the outside click. */
 .na-pop-overlay {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: 200;
 }
 
 .na-pop {
   position: absolute;
-  right: var(--space-3, 12px);
-  bottom: 40px;
-  width: min(420px, calc(100vw - 24px));
-  padding: var(--space-4, 16px);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md, 8px);
-  background: var(--color-surface);
-  box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.25));
+  right: 12px;
+  bottom: 36px;
+  width: min(380px, calc(100vw - 24px));
+  padding: 14px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
+/* Matches the app's existing uppercase-label convention (.cmdk-type). */
 .na-pop__band {
-  font-size: var(--font-size-sm, 0.75rem);
+  display: inline-block;
+  margin-bottom: 8px;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--hover-bg);
+  color: var(--muted-text);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--color-text-muted);
-  margin-bottom: var(--space-2, 8px);
+  letter-spacing: 0.04em;
 }
 
 .na-pop__message {
-  margin: 0 0 var(--space-3, 12px);
+  margin: 0 0 12px;
+  font-size: var(--font-size-base);
+  line-height: 1.45;
+  color: var(--text-color);
 }
 
 .about-overlay {

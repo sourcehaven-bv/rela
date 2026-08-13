@@ -39,54 +39,76 @@ onMounted(loadOnce)
  * Two page-level tiers. They differ in how hard they are to read past, not in
  * layout: a bounded "card" variant was removed because it and the banner were
  * cleared by the same shrug — two spellings of one interruption model.
+ *
+ * Tokens are the app's own (--card-bg, --border-color, --accent-color,
+ * --muted-text, --radius-lg, --font-size-*). An earlier pass invented names
+ * like --space-4 and --color-primary that do not exist in this codebase, so
+ * every rule silently ran on its fallback and nothing lined up with the
+ * surrounding UI.
  */
 .na {
-  margin-bottom: var(--space-4, 16px);
+  margin-bottom: 16px;
 }
 
-/* banner — accented, filled, deliberately hard to skim past. For onboarding
-   and for work someone else is blocked on. */
+/* banner — accented and filled, deliberately hard to skim past. For onboarding
+   and for work someone else is blocked on. The left rule carries the emphasis;
+   the tint keeps it from reading as an error. */
 .na--banner {
-  border: 1px solid var(--color-primary, #3b82f6);
-  border-left: 4px solid var(--color-primary, #3b82f6);
-  border-radius: var(--radius-md, 8px);
-  padding: var(--space-4, 16px);
-  background: color-mix(in srgb, var(--color-primary, #3b82f6) 8%, var(--color-surface));
+  border: 1px solid var(--border-color);
+  border-left: 3px solid var(--accent-color);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  background: var(--card-bg);
 }
 
 .na--banner .na__message {
-  font-weight: 600;
+  margin: 0 0 12px;
+  font-size: var(--font-size-lg);
+  line-height: 1.4;
 }
 
-/* notice — same position, no accent, no fill, muted text. Says its piece and
-   is easy to read past on purpose. */
+/* notice — same position, no box, no fill. Says its piece on one line and is
+   easy to read past on purpose. Sits on the page's own background so it reads
+   as page furniture rather than as content. */
 .na--notice {
-  padding: var(--space-2, 8px) 0;
-  border-bottom: 1px solid var(--color-border);
   display: flex;
   align-items: center;
-  gap: var(--space-3, 12px);
+  gap: 12px;
   flex-wrap: wrap;
-  color: var(--color-text-muted);
-  font-size: var(--font-size-sm, 0.875rem);
+  padding: 8px 0 12px;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .na--notice .na__message {
   margin: 0;
   flex: 1 1 auto;
+  min-width: 240px;
+  color: var(--muted-text);
+  font-size: var(--font-size-base);
 }
 
+/* The band chip follows the app's existing label convention (see .cmdk-type in
+   CommandPaletteModal) rather than inventing a third uppercase-label style. */
 .na__band {
-  font-size: var(--font-size-sm, 0.75rem);
+  display: inline-block;
+  margin-bottom: 8px;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-color);
+  color: white;
+  font-size: var(--font-size-xs);
+  font-weight: 500;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--color-primary, #3b82f6);
-  font-weight: 600;
-  margin-bottom: var(--space-2, 8px);
+  letter-spacing: 0.04em;
 }
 
-.na__message {
-  margin: 0 0 var(--space-3, 12px);
-  font-size: 1.05rem;
+@media (max-width: 768px) {
+  .na--banner {
+    padding: 12px;
+  }
+
+  .na--banner .na__message {
+    font-size: var(--font-size-base);
+  }
 }
 </style>
