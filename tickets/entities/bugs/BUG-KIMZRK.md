@@ -2,16 +2,18 @@
 id: BUG-KIMZRK
 type: bug
 title: Cascade re-write skips post-automation validation/unique/transition re-checks (create path re-checks, cascade path does not)
-description: 'SUBSTANTIALLY OVERSTATED AS ORIGINALLY FILED — see the correction section. cascadeHost.WriteEntity does NOT create an unaudited, unauthorized write path: it only ever re-writes an entity created moments earlier in the same cascade by cascadeHost.CreateEntity, which authorizes, validates, enforces transitions/uniques and audits. What genuinely remains is narrow: property values SET BY AUTOMATION after that create are persisted without re-running validation, unique or transition checks — unlike the top-level create path, which does re-check post-automation.'
-priority: low
-status: backlog
+description: 'CONFIRMED with a reproduction (2026-08-12). An on-create automation that sets a `unique: true` property on a CASCADE-created entity persists a duplicate silently — no error, empty AutomationErrors. The identical automation on a TOP-LEVEL create is correctly rejected, because manager.go:456-476 re-runs checkUniqueProperties against post-automation values while the cascade path (autocascade/runner.go:181-187 -> cascadeHost.WriteEntity) does not. Same metamodel, same automation, opposite outcomes. NOTE: this bug was originally filed with a much broader claim (unaudited/unauthorized write path) that turned out to be wrong — see the correction section. Audit and ACL are fine; the post-automation re-check gap is the whole defect.'
+priority: medium
+effort: s
+status: ready
 ---
 
 > **CORRECTION (2026-08-12).** As originally filed this bug was substantially
-> overstated. I re-read the code on current `develop` and most of the claimed
-> impact does not hold. The corrected finding is much narrower and the priority
-> is dropped `high` → `low`. Original text is kept below the correction for
-> provenance.
+> overstated — the audit/ACL claims were wrong. But the narrowed residual is
+> now **CONFIRMED with a reproduction**: a cascade-created entity silently
+> keeps a duplicate `unique:` value. Priority went `high` → `low` on the
+> correction, then `low` → `medium` once reproduced. Original text is kept
+> below for provenance.
 
 ## What is actually true
 
@@ -69,11 +71,49 @@ cascade-created entity):
 
 No audit gap. No ACL gap.
 
-## Suspected impact — low
+## Reproduction — CONFIRMED
 
-Requires a metamodel where a cascade creates an entity **and** an on-create
-automation sets a property that is `unique:`, validated, or state-machine
-governed. Plausible but not common. Prefer a failing test before any fix.
+Built as a throwaway probe against current `develop` (memstore, real engine +
+runner, no stubs). Metamodel: `persoon` with `email: {unique: true}`.
+
+Setup: seed `PERS-EXISTING` holding `taken@example.com`. Two automations —
+(1) creating a `ticket` cascades into creating a `persoon`; (2) on-create for
+`persoon` sets `email` to the value already taken.
+
+**Cascade path — constraint bypassed:**
+
+```
+CreateEntity err=<nil>
+automation errors: []
+entities created: 1
+holder: PERS-3DLE       email=taken@example.com
+holder: PERS-EXISTING   email=taken@example.com
+=== rows holding the unique value: 2 ===
+```
+
+Two rows share a `unique: true` value, and the write reported **no error at
+all** — `AutomationErrors` empty, `CreateEntity` returned nil. Silent.
+
+**Control — identical automation on a TOP-LEVEL create:**
+
+```
+top-level CreateEntity err=validation errors: ...
+=== top-level path: rows holding the unique value: 1 ===
+```
+
+Correctly rejected. Same metamodel, same automation, opposite outcomes — which
+is precisely the `manager.go:456-476` asymmetry, demonstrated rather than
+inferred.
+
+**Impact — medium.** Silent data corruption of a natural key, no error surfaced
+to the caller, and the resulting duplicate persists. Reachability needs a
+cascade-created entity plus an on-create `set` on a constrained property, which
+is not exotic: it is exactly the shape of the checklist automations in this
+project's own `metamodel.yaml`.
+
+Not raised above medium because it requires an operator-authored automation to
+set a *constrained* property, and a duplicate is recoverable once noticed
+(`analyze_unique` surfaces it).
 
 ## Suggested fix
 
@@ -83,10 +123,15 @@ Re-check post-automation values before `WriteEntity`, mirroring
 filing, which would have changed cascade failure semantics and needed its own
 design (partial-cascade rollback is wont-fix per RR-KNXFF).
 
-The linked measure `cascade-write-full-pipeline-test` should be narrowed to
-match: assert post-automation unique/validation/transition re-checks, and **drop
-the audit assertion** — audit is already correct and asserting otherwise would
-pin a false expectation.
+The linked measure `cascade-write-full-pipeline-test` is already narrowed to
+match: it asserts post-automation unique/validation/transition re-checks and
+deliberately does **not** assert audit (audit is correct; asserting otherwise
+would pin a false expectation).
+
+Start from the reproduction above — it is the regression test, minus the
+`t.Logf` scaffolding. Keep the top-level control case alongside it: the bug is
+an *asymmetry*, so a test that only exercises the cascade path would not catch
+a future regression that weakened both.
 
 ---
 
