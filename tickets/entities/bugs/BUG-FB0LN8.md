@@ -115,9 +115,32 @@ conceal *which* properties exist, since the metamodel (declared property names
 per type) is served over the API. A 'field-existence oracle' is not a threat
 this guards against." (Row-level ACL is a genuine secret and is untouched here.)
 
-> **Revised after design review.** Twelve findings (RR-2IJL4Y, RR-RK7ATG,
-> RR-805VYU, RR-F3Y9QA, RR-VFQKCY, RR-2S0333, RR-DSAN9B, RR-SH85S4, RR-O0KRI2,
-> RR-IOZI72, RR-WRUTYN, RR-9BET7H). The steps below are the post-review plan.
+> **What actually shipped** differs from the plan below in two ways, both
+> decided after review. The plan is kept for the reasoning trail; this note is
+> the authority on the final state.
+>
+> 1. **No `visible: false` tombstone.** Step 1 proposed one. While this ticket
+>    was open, #1277 (BUG-MLT9DE, decision DEC-T0XIWQ) landed on develop with
+>    the same diagnosis and a better mechanism: `_redacted: []string` naming the
+>    withheld properties. It keeps `_fields` about affordances, mirrors the
+>    existing `Inaccessible` field, and unifies the flat and wizard gates into
+>    one tested predicate. The tombstone PR was closed in its favour, and steps
+>    1-2 below are satisfied by that work, not by this one.
+> 2. **`clear_when_hidden` is `no | yes`, not `no | yes | confirm`.** The
+>    interactive `confirm` policy in steps 5-7 was built and then removed: it
+>    needs the form to separate "proposed" from "committed", which the current
+>    architecture cannot express. Three fixes each passed their tests and each
+>    then failed in manual use. The value is now rejected at config-validation
+>    time rather than shipped half-working. See RR-PZHJNN, and TKT-7S5735 for
+>    the refactor that unblocks it.
+>
+> What shipped is steps 3, 4, 8 and 9: retention in a separate ref, no eager
+> `scheduleUnset`, create path untouched, and the mechanism in its own
+> composable.
+
+> **Original plan, revised after design review.** Twelve findings (RR-2IJL4Y,
+> RR-RK7ATG, RR-805VYU, RR-F3Y9QA, RR-VFQKCY, RR-2S0333, RR-DSAN9B, RR-SH85S4,
+> RR-O0KRI2, RR-IOZI72, RR-WRUTYN, RR-9BET7H).
 
 1. **Add a `visible: false` tombstone to `_fields`.** `Visible *bool` on
 `FieldAffordance` (`internal/apiwire/v1/responses.go:73`), same sparse
