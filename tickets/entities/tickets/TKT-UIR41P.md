@@ -221,6 +221,46 @@ also covers resource and prompt handlers — which previously ran with **no**
 principal on the ctx at all. That is a strict improvement and directly relevant
 to RR-CFFL52 / RR-NSUN49.
 
+## PR 2 (read gating, stdio-only) — IN PROGRESS
+
+Rebased onto `develop` after four merges (#1308–#1313); none touched
+`internal/mcp`, but `router.go` / `middleware_security.go` / `internal/acl` all
+moved, which is PR 3 territory — rebase again before starting that.
+
+**Step 1 done — `Deps.Store` narrowed to `GraphReader`.** MCP only ever *reads*
+through the store (writes go via `EntityManager`), so the field is now the
+six-method interface the handlers actually call, declared at the call site. This
+is the R2 mitigation made real: a raw ungated read is now **unavailable**, not
+merely discouraged. The wiring site chooses the implementation — raw store for
+stdio, visibility-wrapped for a networked wiring — and the handlers are
+identical either way.
+
+Two review findings fell out of it rather than needing separate work:
+
+- **RR-CFFL52 (neighbor leak)** — `buildStoreRelations` now withholds the
+  *whole edge* when the far-end entity is unreadable. Dropping only the title
+  would still disclose the neighbor's id, and an id is exactly what the
+  row-level rule protects.
+- **RR-FTJUUE (trace oracle)** — the `trace_*` / `find_path` existence probes
+  now run through the gated handle, so hidden and absent are indistinguishable.
+
+**RR-OMB6ID resolved properly.** `schema.ValidateRelationProperties` takes a
+`RelationLister` and the counter adapter takes `TypeCounts` — consumer-side
+interfaces, matching what `internal/dataentry` already does. `StoreCounter`
+became an unexported closure-bound `storeCounter` built by `NewStoreCounter(ctx,
+st)`: a struct with an exported `Ctx` field invites a literal that forgets it,
+which for an ACL-scoped counter means silently counting the whole graph while
+still compiling and still returning plausible numbers.
+
+**Verified:** full `go test ./...` green, `just lint` 0 issues on changed
+packages, `just arch-lint` OK, and **the goldens pass unmodified** — so none of
+this changed behavior under the stdio (`NopACL`) wiring.
+
+**Still to do in PR 2:** wire the validator's candidate set through the gated
+reader (RR-H7DFZ5), gate the analyze/export/prompt/resource surfaces by passing
+gated handles at the wiring site, and add the ACL-scoped tests. The gating
+*mechanism* is now in place; what remains is wiring and coverage.
+
 ## Spec revision 2026-07-28 — verified findings
 
 Researched and **verified against the module proxy and module cache**, not just
