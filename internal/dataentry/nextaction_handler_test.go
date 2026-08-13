@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/userstate/memuserstate"
@@ -271,4 +272,72 @@ func TestNextAction_GetDoesNotStartCooldown(t *testing.T) {
 	second, _ := getNextAction(aliceCtx(), t, app)
 	require.NotNil(t, second.Suggestion, "a second GET without 'shown' must still suggest")
 	require.Equal(t, first.Suggestion.EntityID, second.Suggestion.EntityID)
+}
+
+// countSourceConfig builds a first-run source over `ticket`.
+func countSourceConfig(ungated bool) map[string]dataentryconfig.NextActionSource {
+	return map[string]dataentryconfig.NextActionSource{
+		"first-run": {
+			Band:         "blocking",
+			Count:        "ticket == 0",
+			CountUngated: ungated,
+			Suggest:      "Nothing here yet. Add a ticket?",
+		},
+	}
+}
+
+// TestNextAction_CountIsReadGatedByDefault is the disclosure guard.
+//
+// Tickets EXIST but bob may not read them. A gated count must therefore see
+// none and fire the first-run hint for bob — mildly wrong, visibly wrong, and
+// fixable in config. An UNGATED count would instead stay silent, and that
+// silence tells bob that tickets exist, which is precisely the fact rela's
+// read model treats as secret (a hidden entity is nonexistent).
+func TestNextAction_CountIsReadGatedByDefault(t *testing.T) {
+	app := newTestAppV1(t)
+	seedNextActionTickets(t, app, "TKT-001")
+
+	d := mustNewACL(t, &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
+		Assignments: map[string]string{"alice": "viewer"},
+	}, app.store)
+	app.acl = d
+
+	withNextActions(t, app,
+		[]dataentryconfig.NextActionBand{{ID: "blocking"}},
+		countSourceConfig(false))
+
+	// alice can read tickets, and one exists → no first-run hint.
+	aliceGot, code := getNextAction(gateCtxFor(principalCtx("alice"), t, d), t, app)
+	require.Equal(t, http.StatusOK, code)
+	require.Nil(t, aliceGot.Suggestion, "alice sees a ticket, so first-run must stay quiet")
+
+	// bob may read nothing → the gated count sees zero and fires.
+	bobGot, code := getNextAction(gateCtxFor(principalCtx("bob"), t, d), t, app)
+	require.Equal(t, http.StatusOK, code)
+	require.NotNil(t, bobGot.Suggestion,
+		"a gated count must not disclose that tickets exist; it fires for a principal who sees none")
+}
+
+// The opt-out must be reachable, and must be the ONLY way to get the
+// whole-graph answer.
+func TestNextAction_CountUngatedIsOptIn(t *testing.T) {
+	app := newTestAppV1(t)
+	seedNextActionTickets(t, app, "TKT-001")
+
+	d := mustNewACL(t, &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
+		Assignments: map[string]string{"alice": "viewer"},
+	}, app.store)
+	app.acl = d
+
+	withNextActions(t, app,
+		[]dataentryconfig.NextActionBand{{ID: "blocking"}},
+		countSourceConfig(true))
+
+	// With count_ungated, bob gets the whole-graph answer: a ticket exists,
+	// so the hint stays quiet even though bob cannot see it.
+	bobGot, code := getNextAction(gateCtxFor(principalCtx("bob"), t, d), t, app)
+	require.Equal(t, http.StatusOK, code)
+	require.Nil(t, bobGot.Suggestion, "count_ungated asks the whole-graph question")
 }

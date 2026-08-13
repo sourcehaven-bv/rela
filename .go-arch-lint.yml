@@ -436,6 +436,10 @@ deps:
   # any tag, so both backends' deps must be allow-listed here.
   appbuild:
     mayDependOn:
+      # The composition root picks the userstate backend, the same way it
+      # picks the store backend. Consumers take the userstate.Store seam.
+      - userstate
+      - memuserstate
       - acl
       - app
       - audit

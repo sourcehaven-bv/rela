@@ -40,7 +40,7 @@ func (a *App) nextActionCandidates() nextaction.CandidateFunc {
 	return func(ctx context.Context, src dataentryconfig.NextActionSource) ([]nextaction.Candidate, error) {
 		switch {
 		case src.Count != "":
-			return a.countCandidates(ctx, src.Count)
+			return a.countCandidates(ctx, src.Count, src.CountUngated)
 		case src.Query != "":
 			return a.queryCandidates(ctx, src.Query)
 		default:
@@ -68,17 +68,22 @@ func (a *App) queryCandidates(ctx context.Context, query string) ([]nextaction.C
 // countCandidates answers a `<entity_type> == 0` source: it yields exactly one
 // entity-less candidate when the type is empty, and none otherwise.
 //
-// The count is deliberately UNGATED (store-level, not read-gated). "Does any
-// client exist?" is a question about whether the operator has begun using the
-// app, not about whether this principal may read any particular client — and
-// gating it would make the first-run hint reappear for a principal who simply
-// cannot see the clients that do exist, which is worse than useless.
+// GATED BY DEFAULT. The count runs through the same read path as every other
+// source, so it counts what THIS principal can see: "do I have any clients?",
+// not "does anyone?". An ungated count would disclose that entities of a type
+// exist to a principal permitted to read none of them, and entity existence is
+// the strongest secret rela's read model keeps (a hidden entity is
+// nonexistent, indistinguishable from a real 404).
 //
-// This is safe because a count source's suggestion mentions NO entity: it
-// interpolates nothing, exposes no id, and its message is operator-authored
-// static text. The only bit that reaches the user is "this type is empty",
-// which the metamodel already tells them exists.
-func (a *App) countCandidates(ctx context.Context, count string) ([]nextaction.Candidate, error) {
+// `ungated` (config: count_ungated) opts out for a genuinely operator-level
+// question — "has this deployment been set up at all?" — and is never
+// inferred. The safe default's failure mode is a principal who sees no clients
+// being repeatedly offered "add a client": mild, visible, and fixable in
+// config. The unsafe default's failure mode is a silent disclosure nobody
+// notices. Prefer the loud, fixable error.
+func (a *App) countCandidates(
+	ctx context.Context, count string, ungated bool,
+) ([]nextaction.Candidate, error) {
 	entityType, ok := parseCountZero(count)
 	if !ok {
 		// Validated at config load; reaching here means the config was built
@@ -86,16 +91,37 @@ func (a *App) countCandidates(ctx context.Context, count string) ([]nextaction.C
 		return nil, nil
 	}
 
-	svc := a.Services()
-	_, total, err := svc.Store.GraphCount(ctx, store.GraphQuery{EntityType: entityType})
+	empty, err := a.countIsZero(ctx, entityType, ungated)
 	if err != nil {
-		return nil, fmt.Errorf("next-action count for %q: %w", entityType, err)
+		return nil, err
 	}
-	if total != 0 {
+	if !empty {
 		return nil, nil
 	}
 	// One candidate with no entity — the engine keys it on the source alone.
 	return []nextaction.Candidate{{}}, nil
+}
+
+// countIsZero reports whether the caller sees no entities of entityType.
+func (a *App) countIsZero(ctx context.Context, entityType string, ungated bool) (bool, error) {
+	if ungated {
+		_, total, err := a.Services().Store.GraphCount(ctx, store.GraphQuery{EntityType: entityType})
+		if err != nil {
+			return false, fmt.Errorf("next-action count for %q: %w", entityType, err)
+		}
+		return total == 0, nil
+	}
+
+	// Gated: route through the same read gate the list pipeline uses, so a
+	// hidden entity does not count. scopedSortedEntities resolves the ACL
+	// verdict FIRST and returns empty on DenyAll, which is exactly the
+	// answer we want — a principal denied the type sees "none", and the
+	// first-run hint fires for them.
+	entities, err := a.scopedSortedEntities(ctx, entityType, nil)
+	if err != nil {
+		return false, fmt.Errorf("next-action count for %q: %w", entityType, err)
+	}
+	return len(entities) == 0, nil
 }
 
 // parseCountZero extracts the entity type from the only supported aggregate

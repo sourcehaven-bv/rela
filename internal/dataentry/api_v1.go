@@ -1328,6 +1328,7 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 	}
 
 	config := v1.Config{
+		NextActionBands: s.Cfg.NextActionBands,
 		App: v1.AppConfig{
 			Name:              s.Cfg.App.Name,
 			Description:       s.Cfg.App.Description,

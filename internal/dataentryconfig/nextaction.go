@@ -83,9 +83,32 @@ type NextActionSource struct {
 	// yet, start with a client?"), which no entity-shaped source can express
 	// because an empty graph has no entities to suggest about.
 	//
+	// The count is evaluated through the caller's READ GATE by default, so
+	// it counts what this principal can see. See CountUngated for the
+	// opt-out and why it is not the default.
+	//
 	// A suggestion from a Count source has no entity id, so its key
 	// degenerates to the source id alone.
 	Count string `yaml:"count,omitempty" json:"count,omitempty"`
+
+	// CountUngated evaluates Count against the WHOLE graph rather than the
+	// caller's visible subset. Only meaningful with Count.
+	//
+	// Default (false) is gated, and that is deliberate. A gated count asks
+	// "do I have any clients?"; an ungated one asks "does anyone?". The
+	// ungated form leaks a real fact — that entities of this type exist —
+	// to a principal who may read none of them, and rela's read model treats
+	// entity existence as the strongest secret it keeps.
+	//
+	// The failure mode of the safe default is mild and self-correcting: a
+	// principal who can see no clients keeps being offered "add a client",
+	// which an operator notices and fixes in config. The failure mode of the
+	// unsafe default is silent and permanent — a disclosure nobody observes.
+	// Prefer the loud, fixable error.
+	//
+	// Set this only when the count is genuinely operator-level ("has this
+	// deployment been set up at all?") rather than about the caller's data.
+	CountUngated bool `yaml:"count_ungated,omitempty" json:"count_ungated,omitempty"`
 
 	// Pick chooses among multiple candidates. Empty means the engine's
 	// default (stable-random). See NextActionPick.

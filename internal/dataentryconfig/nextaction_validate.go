@@ -140,6 +140,12 @@ func validateNextActionCandidateSource(where string, s NextActionSource, meta *m
 	if s.Count != "" {
 		errs = append(errs, validateNextActionCount(where, s.Count, meta)...)
 	}
+	// count_ungated only means something alongside count. Silently ignoring
+	// it elsewhere would let an operator believe they had opted out of the
+	// read gate on a source that never consults it.
+	if s.CountUngated && s.Count == "" {
+		errs = append(errs, where+": count_ungated only applies to a count source")
+	}
 	return errs
 }
 

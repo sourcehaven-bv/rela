@@ -264,6 +264,17 @@ type Config struct {
 	Documents        map[string]dataentryconfig.DocumentConfig   `json:"documents,omitempty"`
 	Apps             map[string]App                              `json:"apps,omitempty"`
 	Palette          *dataentryconfig.ResolvedPalette            `json:"palette,omitempty"`
+
+	// NextActionBands is the operator's ordered priority vocabulary, so the
+	// SPA can label a suggestion's band ("Someone is waiting") rather than
+	// echoing a raw id.
+	//
+	// The SOURCES are deliberately NOT here. A suggestion arrives fully
+	// resolved from /_next_action — message already interpolated, affordances
+	// attached — so the SPA never needs the rules, and shipping them would
+	// invite a client-side re-implementation of the engine. Same reasoning as
+	// "no useACL() composable": the SPA renders what the server computed.
+	NextActionBands []dataentryconfig.NextActionBand `json:"next_action_bands,omitempty"`
 }
 
 // App is the client-facing view of a custom app. It deliberately omits the

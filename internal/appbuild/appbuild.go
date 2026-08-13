@@ -48,6 +48,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/userstate"
+	"github.com/Sourcehaven-BV/rela/internal/userstate/memuserstate"
 	"github.com/Sourcehaven-BV/rela/internal/validator"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
@@ -76,8 +78,11 @@ import (
 // returning a bundle rather than three accessors — the three handles must come
 // from the same gate to stay consistent, and splitting them would both grow this
 // surface by three and let a caller mix a gated reader with a raw tracer.
+// UserState() (TKT-CXD0A4) takes it to 25, for the same reason as the others:
+// the backend is chosen here (per build tag) and handed to the App at the
+// wiring site.
 //
-//plimsoll:max-exported-methods=24
+//plimsoll:max-exported-methods=25
 type Services struct {
 	fs    storage.FS
 	paths *project.Context
@@ -93,6 +98,7 @@ type Services struct {
 	// the generic search.NewVisible wrapper on the fs/memory builds,
 	// the pgstore-native implementation on the postgres build.
 	visibleSearcher search.VisibleSearcher
+	userState       userstate.Store
 	entityManager   entitymanager.EntityManager
 	tracer          tracer.Tracer
 	validator       validator.Validator
@@ -138,6 +144,23 @@ func (s *Services) Searcher() search.Searcher { return s.searcher }
 // generic scope-filter wrapper on the fs/memory builds, the native
 // SQL-composed implementation on the postgres build.
 func (s *Services) VisibleSearcher() search.VisibleSearcher { return s.visibleSearcher }
+
+// newUserState builds the next-action per-user state backend.
+//
+// Build-agnostic today — every build gets the in-memory one, because the state
+// is disposable (a lost snooze costs one repeated suggestion, not data). When a
+// durable backend lands this becomes a per-recipe choice like the store, and
+// only this function moves into the tagged recipe files.
+func newUserState() userstate.Store { return memuserstate.New() }
+
+// UserState returns the next-action per-user state backend (snooze / mute /
+// cooldown).
+//
+// Build-agnostic today: every build gets the in-memory backend, because this
+// state is disposable — losing it costs a user one repeated suggestion, not
+// data. When a durable backend lands it becomes a per-recipe choice like the
+// store, and only the recipes change; this accessor and its consumers do not.
+func (s *Services) UserState() userstate.Store { return s.userState }
 
 // EntityManager returns the production write path.
 func (s *Services) EntityManager() entitymanager.EntityManager { return s.entityManager }
@@ -606,6 +629,7 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 		store:           c.Store,
 		searcher:        c.Searcher,
 		visibleSearcher: visible,
+		userState:       newUserState(),
 		entityManager:   c.EntityManager,
 		tracer:          c.Tracer,
 		validator:       c.Validator,
@@ -1144,6 +1168,7 @@ func assemble(
 		versions:        versions,
 		searcher:        searcher,
 		visibleSearcher: visible,
+		userState:       newUserState(),
 		entityManager:   mgr,
 		tracer:          tr,
 		validator:       val,
