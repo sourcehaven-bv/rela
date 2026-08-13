@@ -5,7 +5,7 @@ title: Render list cells and kanban card fields through the widget registry
 kind: enhancement
 priority: high
 effort: m
-status: review
+status: done
 ---
 
 ## Goal

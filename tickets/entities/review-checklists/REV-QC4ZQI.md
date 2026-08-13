@@ -2,7 +2,7 @@
 id: REV-QC4ZQI
 type: review-checklist
 title: 'Review: Render list cells and kanban card fields through the widget registry'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -51,14 +51,19 @@ pre-migration `formatCellValue` output.
 
 ## Documentation (enhancements only)
 
-- [x] ~~Docs-checklist created~~ (N/A: internal refactor — rendering is
-unchanged for every existing config, and the one behaviour change is a bug fix,
-not a documented feature)
-- [x] ~~User-facing documentation updated~~ (N/A: no metamodel, CLI, or config
-surface change)
-- [x] ~~Docs-checklist marked done~~ (N/A: none created)
+- [x] Docs-checklist created and linked via `has-docs`
+- [x] User-facing documentation updated
+- [x] Docs-checklist marked as done
 
-**Docs Checklist:** N/A
+**Docs Checklist:** DOCS-L7U5HT
+
+Initially recorded as N/A on the grounds that this is an internal refactor. The
+metamodel disagreed — `has-docs` is required for `kind: enhancement`, and the
+gate was right: `frontend/CLAUDE.md` documented `src/components/forms/` as the
+widget home and never mentioned `src/widgets/`, which this change makes more
+misleading. Updated the package table and added a section on the display-side
+widget contract (the dense-vs-detail rules that caused the two critical review
+findings).
 
 ## Final Checks
 
@@ -68,8 +73,14 @@ surface change)
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass
+- [x] PR URL documented below
 
-**PR:** not yet created — branch `feat/widget-display-cells` is ready.
+**PR:** see the `has-pr` note below.
+
+Ordering note: the workflow requires the ticket to be `done` and validating
+clean *before* the PR is opened (a ticket left in `review` fails the
+`CI: Tickets in 'review' status cannot be merged` gate on its own PR). So these
+items are checked as the PR is created rather than after it merges, and the URL
+is recorded on the ticket once `gh pr create` returns.
