@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures';
 import { CustomisationPage } from '../pages';
-import { writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 /**
  * Operator customisation hooks — TKT-3DBK6I.
@@ -23,6 +23,13 @@ import { join } from 'node:path';
 test.describe('Operator customisation hooks', () => {
   const OPERATOR_GREEN = 'rgb(0, 255, 0)';
 
+  /** Create <project>/custom/ and write a file into it. */
+  const writeCustom = (projectDir: string, rel: string, body: string) => {
+    const full = join(projectDir, 'custom', rel);
+    mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, body);
+  };
+
   test('operator CSS wins against a route chunk loaded after client-side navigation', async ({
     appPage,
     testProject,
@@ -30,7 +37,7 @@ test.describe('Operator customisation hooks', () => {
     // A LOW-specificity operator rule (0,1,0) against rela's scoped
     // `.sidebar[data-v-hash]` (0,2,0). Before layering this lost twice over —
     // on specificity and on source order. It must now win on both.
-    writeFileSync(join(testProject, 'custom.css'), `.sidebar { background-color: ${OPERATOR_GREEN}; }`);
+    writeCustom(testProject, 'custom.css', `.sidebar { background-color: ${OPERATOR_GREEN}; }`);
 
     const custom = new CustomisationPage(appPage);
     await custom.navigateTo('/');
@@ -63,10 +70,7 @@ test.describe('Operator customisation hooks', () => {
     // exists moments later. That is the documented gotcha (operator code must
     // wait for what it needs, e.g. via MutationObserver), so the test pins
     // "the module executed", not "the app was ready".
-    writeFileSync(
-      join(testProject, 'custom.js'),
-      `document.documentElement.setAttribute('data-operator-js', 'ran');`,
-    );
+    writeCustom(testProject, 'custom.js', `document.documentElement.setAttribute('data-operator-js', 'ran');`);
 
     const custom = new CustomisationPage(appPage);
     await custom.navigateTo('/');
@@ -81,8 +85,9 @@ test.describe('Operator customisation hooks', () => {
   }) => {
     // The supported way to touch rela's DOM: observe rather than assume. This
     // pins the workaround the docs prescribe, so it cannot silently rot.
-    writeFileSync(
-      join(testProject, 'custom.js'),
+    writeCustom(
+      testProject,
+      'custom.js',
       `const mark = () => {
          if (!document.querySelector('.sidebar')) return false;
          document.documentElement.setAttribute('data-operator-js', 'sidebar-seen');
@@ -99,33 +104,60 @@ test.describe('Operator customisation hooks', () => {
     await custom.expectOperatorScriptMarker('data-operator-js', 'sidebar-seen');
   });
 
-  test('a non-allowlisted project file is not served under /_custom/', async ({
+  test('an operator asset is reachable and usable from custom.css', async ({
     appPage,
     testProject,
     serverUrl,
   }) => {
-    writeFileSync(join(testProject, 'secret.txt'), 'TOPSECRET');
+    // THE POINT OF TKT-IWMETE: operator CSS can reference its own assets.
+    // A Go test cannot prove the browser actually resolves url(/_custom/...),
+    // so this asserts a real 200 on the wire plus the applied style.
+    writeCustom(testProject, 'logo.svg', '<svg xmlns="http://www.w3.org/2000/svg"/>');
+    writeCustom(testProject, 'fonts/brand.woff2', 'NOT-A-REAL-FONT');
+    writeCustom(
+      testProject,
+      'custom.css',
+      `.sidebar { background-color: ${OPERATOR_GREEN}; background-image: url(/_custom/logo.svg); }`,
+    );
 
-    // A non-allowlisted name under the prefix is a flat 404.
-    const direct = await appPage.request.get(`${serverUrl}/_custom/secret.txt`);
-    expect(direct.status()).toBe(404);
-    expect(await direct.text()).not.toContain('TOPSECRET');
+    const custom = new CustomisationPage(appPage);
+    await custom.navigateTo('/');
+    await custom.expectSidebarBackground(OPERATOR_GREEN);
 
-    // Traversal spellings must never yield the file. The STATUS varies by
-    // spelling — Go's ServeMux normalises `/_custom/../secret.txt` to
-    // `/secret.txt` and 307s, which then falls through to the SPA shell — so
-    // the invariant worth pinning is the absence of the content, not a
-    // particular code. Asserting 404 here would encode mux normalisation
-    // behaviour rather than the security property.
-    for (const path of [
-      '/_custom/../secret.txt',
-      '/_custom/%2e%2e%2fsecret.txt',
-      '/_custom/..%2Fsecret.txt',
-      '/_custom/custom.css/../secret.txt',
-    ]) {
-      const res = await appPage.request.get(`${serverUrl}${path}`);
-      expect(await res.text(), `${path} must never serve project-root content`).not.toContain(
-        'TOPSECRET',
+    const svg = await custom.fetchCustomAsset(serverUrl, 'logo.svg');
+    expect(svg.status).toBe(200);
+    expect(svg.contentType).toContain('image/svg+xml');
+
+    const font = await custom.fetchCustomAsset(serverUrl, 'fonts/brand.woff2');
+    expect(font.status, 'nested asset must be reachable').toBe(200);
+    expect(font.contentType).toContain('font/woff2');
+  });
+
+  test('files outside custom/ are unreachable, and dotfiles inside it are refused', async ({
+    appPage,
+    testProject,
+    serverUrl,
+  }) => {
+    // INVERTED from the pre-TKT-IWMETE test: an arbitrary file INSIDE custom/
+    // is now meant to serve. What must never be reachable is anything OUTSIDE
+    // it, or a dot-prefixed path inside it.
+    writeFileSync(join(testProject, 'outside.txt'), 'LEAKED-OUTSIDE');
+    writeCustom(testProject, 'inside.txt', 'operator content');
+    writeCustom(testProject, '.env', 'SECRET=1');
+
+    const custom = new CustomisationPage(appPage);
+
+    const inside = await custom.fetchCustomAsset(serverUrl, 'inside.txt');
+    expect(inside.status, 'a plain file inside custom/ must serve').toBe(200);
+
+    const dotfile = await custom.fetchCustomAsset(serverUrl, '.env');
+    expect(dotfile.status, 'dot-prefixed entries must 404').toBe(404);
+    expect(dotfile.body).not.toContain('SECRET');
+
+    for (const p of ['../outside.txt', '..%2Foutside.txt', 'sub/../../outside.txt']) {
+      const res = await custom.fetchCustomAsset(serverUrl, p);
+      expect(res.body, `${p} must never serve content from outside custom/`).not.toContain(
+        'LEAKED-OUTSIDE',
       );
     }
   });

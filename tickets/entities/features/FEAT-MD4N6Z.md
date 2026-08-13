@@ -5,7 +5,7 @@ title: 'Operator customisation hooks: custom.css / custom.js against rela''s own
 summary: In-place customisation of rela's own UI from the operator's project directory, with a three-tier stability contract.
 description: 'Distinct from FEAT-BFDB9Q (custom apps), which are sandboxed iframes rendering as separate pages and cannot alter the main UI. This feature is the different-trust-model counterpart: an operator editing their own project directory already controls metamodel, Lua and ACL, so there is no privilege boundary left to defend, and customisation happens in place against rela''s own surfaces.'
 priority: medium
-status: proposed
+status: in-progress
 ---
 
 ## Motivation

@@ -126,14 +126,15 @@ type AppConfig struct {
 	// plantuml.com server: that would silently publish private diagram source
 	// to a third party. Operators opt in by configuring a server they trust.
 	PlantUMLServerURL string `yaml:"plantuml_server_url,omitempty" json:"plantuml_server_url,omitempty"`
-	// DisableCustomInjection turns off referencing the operator's custom.css /
-	// custom.js from the SPA shell, guaranteeing a stock UI.
+	// DisableCustomInjection turns off referencing the operator's
+	// custom/custom.css and custom/custom.js from the SPA shell, guaranteeing a
+	// stock UI.
 	//
 	// Named as a *disable* flag against the opt-in direction of its
-	// neighbors because the feature is on by default: dropping custom.css in
-	// the project root should just work, with no second step. An operator who
+	// neighbors because the feature is on by default: dropping custom.css into
+	// custom/ should just work, with no second step. An operator who
 	// wants to guarantee an unmodified UI (or to bisect whether a
-	// customisation is causing a bug) sets this to true. The files remain
+	// customisation is causing a bug) sets this to true. Files in custom/ remain
 	// individually fetchable under /_custom/ either way — only the shell
 	// references are suppressed.
 	DisableCustomInjection bool `yaml:"disable_custom_injection,omitempty" json:"disable_custom_injection,omitempty"`

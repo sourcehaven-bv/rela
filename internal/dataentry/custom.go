@@ -3,16 +3,35 @@ package dataentry
 import (
 	"errors"
 	"io"
+	"io/fs"
+	"log/slog"
 	"os"
+	"path"
 	"strings"
+
+	"github.com/Sourcehaven-BV/rela/internal/project"
 )
 
-// Operator customisation hooks (TKT-3DBK6I).
+// Operator customisation hooks (TKT-3DBK6I, TKT-IWMETE).
 //
-// An operator may drop custom.css / custom.js in their project root. Both are
-// served under customURLPrefix and, when present, referenced from the SPA
-// shell. This is deliberately a "if it breaks, you keep the pieces" feature:
-// the palette/theme system remains the supported path for ordinary branding.
+// An operator may create a custom/ directory in their project. custom.css and
+// custom.js there are referenced from the SPA shell when present; every other
+// file in the directory (fonts, logos, images, nested paths) is served as-is at
+// /_custom/<path>, so operator CSS can write url(/_custom/logo.svg). This is
+// deliberately a "if it breaks, you keep the pieces" feature: the palette/theme
+// system remains the supported path for ordinary branding.
+//
+// # The directory is PUBLIC and UNAUTHENTICATED
+//
+// /_custom/ is not an isAPIPath, so it sits outside both the JWT gate and the
+// ACL — deliberately, so the shell and its assets load before login (gating
+// them would render the login page unstyled). Everything in custom/ is
+// therefore readable by anyone who can reach the server, NOT merely by a
+// logged-in operator. This is a wider exposure than apps/, which is under
+// /api/ and thus gated, despite apps/ being the pattern this code copies.
+// Dot-prefixed paths are refused (see validCustomEntry) to catch the realistic
+// accidents; everything else is the operator's responsibility and is
+// documented as such in docs/customisation.md.
 //
 // # Trust model — NOT the same as apps/
 //
@@ -27,14 +46,16 @@ import (
 // there is no privilege boundary left to defend. Do not reason from "apps are
 // sandboxed" to "custom.js is sandboxed" — the two have opposite postures.
 const (
-	// customCSSFile / customJSFile are the ONLY two names served. An exact
-	// allowlist (rather than apps/'s arbitrary-entry handling) makes traversal
-	// structurally impossible before the filesystem is touched.
+	// customCSSFile / customJSFile are the two entry points injected into the
+	// SPA shell. They are NOT an allowlist — every file in custom/ is served.
+	// Kept at these names rather than index.* because "index" implies "served
+	// at the directory root", which is not what they are.
 	customCSSFile = "custom.css"
 	customJSFile  = "custom.js"
 
 	// customURLPrefix is the fixed mount point. Underscore-prefixed to match
-	// the reserved-path convention used by /_apps/.
+	// the reserved-path convention used by /_apps/. Registered as a ServeMux
+	// prefix pattern, so it already matches nested paths.
 	customURLPrefix = "/_custom/"
 )
 
@@ -50,33 +71,62 @@ const maxCustomFileBytes = maxAppFileBytes
 // Callers map it to a uniform 404 so a missing file, a directory, an oversize
 // file and a traversal attempt are indistinguishable from outside, and no
 // system path leaks in the message (matching openAppEntry).
+//
+// This is not a confidentiality measure — which files exist under custom/ is
+// operator config, not entity data. It is simply that there is no useful
+// distinction to draw and one path is easier to reason about. The oversize
+// branch logs server-side so an operator whose too-large image silently 404s
+// gets a diagnostic instead of a mystery.
 var errCustomAssetNotFound = errors.New("custom asset not found")
 
-// isCustomAssetName reports whether name is one of the two allowlisted files.
-func isCustomAssetName(name string) bool {
-	return name == customCSSFile || name == customJSFile
-}
-
-// customAssetContentType returns the Content-Type for an allowlisted name.
-// Only ever called with a name that passed isCustomAssetName.
-func customAssetContentType(name string) string {
-	if name == customCSSFile {
-		return "text/css; charset=utf-8"
-	}
-	return "text/javascript; charset=utf-8"
-}
-
-// openCustomAsset reads {projectRoot}/{name} traversal-resistant.
+// validCustomEntry normalises a request-relative path and reports whether it may
+// be served from custom/. Returns the cleaned path and ok.
 //
-// name MUST be one of the two allowlisted literals — it is never derived from
-// a request path segment beyond an exact comparison, so ".." and absolute
-// paths cannot reach here at all. os.OpenRoot is kept as defense-in-depth
-// (and to reject a symlink pointing outside the project), matching the
-// "earlier rejection gives better errors" rationale in openLocalScript.
+// Two independent checks, doing different jobs — do not conflate them:
+//
+//   - path.Clean + fs.ValidPath reject malformed and traversal spellings. This
+//     is what stops "../secret"; os.OpenRoot below is the real containment.
+//   - The dot-segment check rejects operator accidents (.env, .git/, .DS_Store)
+//     that are perfectly valid paths. It contributes ZERO traversal defense:
+//     path.Clean resolves ".." away BEFORE this runs, so "../secret" arrives
+//     here as "secret" with no dot segment. An earlier draft claimed otherwise.
+//
+// The dot rule is a filename-shape heuristic, not a sensitivity classifier. It
+// does NOT catch notes.md, backup.sql, id_rsa, or editor backups like
+// "custom.css~" and "#custom.css#" (only dot-prefixed swap files such as
+// .custom.css.swp). It also refuses .well-known/, the one false positive we
+// know of. Both facts are documented rather than silently assumed away.
+func validCustomEntry(entry string) (string, bool) {
+	clean := path.Clean("/" + entry)
+	if clean == "/" {
+		return "", false
+	}
+	rel := strings.TrimPrefix(clean, "/")
+	if !fs.ValidPath(rel) {
+		return "", false
+	}
+	for seg := range strings.SplitSeq(rel, "/") {
+		if strings.HasPrefix(seg, ".") {
+			return "", false
+		}
+	}
+	return rel, true
+}
+
+// openCustomEntry reads {projectRoot}/custom/{entry} traversal-resistant,
+// mirroring openAppEntry one nesting level shallower.
+//
+// The NESTED root is security-critical, not an incidental simplification. A
+// symlink inside custom/ pointing at ../metamodel.yaml never leaves the project
+// root, so a single os.OpenRoot(projectRoot) + Open("custom/"+rel) would FOLLOW
+// it and serve the file. Only the second, narrower root scoped to custom/
+// refuses it. Do not "simplify" this to one root — TestOpenCustomEntry_Symlink
+// pins the property.
 //
 // Every failure returns errCustomAssetNotFound.
-func openCustomAsset(projectRoot, name string) ([]byte, error) {
-	if !isCustomAssetName(name) {
+func openCustomEntry(projectRoot, entry string) ([]byte, error) {
+	rel, ok := validCustomEntry(entry)
+	if !ok {
 		return nil, errCustomAssetNotFound
 	}
 
@@ -86,7 +136,13 @@ func openCustomAsset(projectRoot, name string) ([]byte, error) {
 	}
 	defer func() { _ = root.Close() }()
 
-	f, err := root.Open(name)
+	customRoot, err := root.OpenRoot(project.CustomDir)
+	if err != nil {
+		return nil, errCustomAssetNotFound
+	}
+	defer func() { _ = customRoot.Close() }()
+
+	f, err := customRoot.Open(rel)
 	if err != nil {
 		return nil, errCustomAssetNotFound
 	}
@@ -94,6 +150,20 @@ func openCustomAsset(projectRoot, name string) ([]byte, error) {
 
 	info, err := f.Stat()
 	if err != nil || info.IsDir() {
+		return nil, errCustomAssetNotFound
+	}
+	// Reject oversize from the Stat, BEFORE buffering. Reading first and
+	// checking after would let one oversize file in custom/ cost 4 MiB of read
+	// and allocation per request on a route that is deliberately
+	// unauthenticated — a trivially reachable amplifier.
+	//
+	// Surfaced, not silent: the uniform 404 is explicitly not a confidentiality
+	// measure, so an operator whose hero image exceeds the cap deserves to know
+	// why it "just 404s" while their logo works. `rel` is request-relative and
+	// never the absolute project path.
+	if info.Size() > maxCustomFileBytes {
+		slog.Warn("custom asset exceeds size cap, not served",
+			"entry", rel, "max_bytes", maxCustomFileBytes)
 		return nil, errCustomAssetNotFound
 	}
 
@@ -104,20 +174,20 @@ func openCustomAsset(projectRoot, name string) ([]byte, error) {
 	return b, nil
 }
 
-// customAssetExists reports whether an allowlisted customisation file is
-// present. Runs on every SPA shell request, so it STATS rather than reads —
-// reading here would pull up to maxCustomFileBytes into memory twice per page
-// load (once per file) only to discard it.
+// customAssetExists reports whether an entry is present under custom/. Runs on
+// every SPA shell request, so it STATS rather than reads — reading here would
+// pull up to maxCustomFileBytes into memory twice per page load only to discard
+// it.
 //
 // Note this is a genuine TOCTOU with the subsequent /_custom/ fetch: the file
 // can be deleted (or half-written by an editor without atomic rename) between
 // the shell referencing it and the browser requesting it. The precomputed
 // variants remove the cache-population race, NOT this one. The consequence is
-// bounded — a 404 or a syntax error in operator-authored code — and is
-// consistent with the feature's stated "if it breaks, you keep the pieces"
-// contract, so it is accepted rather than locked against.
-func customAssetExists(projectRoot, name string) bool {
-	if !isCustomAssetName(name) {
+// bounded — a 404, or a syntax error in operator-authored code — and is
+// consistent with the feature's "if it breaks, you keep the pieces" contract.
+func customAssetExists(projectRoot, entry string) bool {
+	rel, ok := validCustomEntry(entry)
+	if !ok {
 		return false
 	}
 	root, err := os.OpenRoot(projectRoot)
@@ -126,8 +196,27 @@ func customAssetExists(projectRoot, name string) bool {
 	}
 	defer func() { _ = root.Close() }()
 
-	info, err := root.Stat(name)
-	return err == nil && !info.IsDir()
+	customRoot, err := root.OpenRoot(project.CustomDir)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = customRoot.Close() }()
+
+	info, err := customRoot.Stat(rel)
+	if err != nil || info.IsDir() || info.Size() > maxCustomFileBytes {
+		return false
+	}
+	// Readability is part of "servable": stat succeeds on a mode-0000 file, but
+	// openCustomEntry would 404 it. If these two disagree the shell injects a
+	// <link> to a URL that then 404s — the confusing half-state this function's
+	// whole contract is meant to prevent. Cheap: open and immediately close, no
+	// read. Pinned by TestCustomAssetExists_MatchesOpen.
+	f, err := customRoot.Open(rel)
+	if err != nil {
+		return false
+	}
+	_ = f.Close()
+	return true
 }
 
 // The tags injected into the SPA shell.
@@ -147,6 +236,11 @@ const (
 // means adding custom.css does NOT require a server restart. Both properties
 // matter: an operator who adds custom.css and sees it served at /_custom/ but
 // never applied would reasonably file a bug.
+// TRIP-WIRE: this table is 2^2 = 4 entries because the injected set is exactly
+// two and fixed. Arbitrary assets under custom/ are never injected, so they do
+// not multiply it. If a third injected entry is ever added (a custom.head.html,
+// a second stylesheet, a per-theme variant) this becomes 8 and the switch in
+// selectShell becomes combinatorial — redesign rather than adding a fifth field.
 type shellVariants struct {
 	plain []byte // neither file
 	css   []byte // custom.css only

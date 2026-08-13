@@ -110,9 +110,14 @@ func (a *App) NewRouter() http.Handler {
 	// needs neither the same-origin gate nor the JWT identity gate.
 	a.registerWebhookRoutes(mux)
 
-	// Operator customisation assets (custom.css / custom.js from the project
-	// root). Registered before the SPA catch-all so /_custom/* never falls
-	// through to the shell. See custom.go for the trust model.
+	// Operator customisation assets from the project's custom/ directory —
+	// custom.css / custom.js plus any fonts, logos or images they reference.
+	// Registered before the SPA catch-all so /_custom/* never falls through to
+	// the shell. The ServeMux prefix pattern already matches nested paths.
+	//
+	// This route is PUBLIC and UNAUTHENTICATED: /_custom/ is not an isAPIPath,
+	// so neither requireVerifiedJWT nor attachACLRequest applies. Deliberate —
+	// the shell's stylesheet must load before login. See custom.go.
 	//
 	// The enabled check is a closure, not a snapshot: data-entry.yaml is
 	// reloadable, so caching disable_custom_injection here would leave a
@@ -129,7 +134,7 @@ func (a *App) NewRouter() http.Handler {
 
 	// Serve Vue SPA at root (catch-all for client-side routing).
 	//
-	// The shell is rewritten to reference the operator's custom.css/custom.js
+	// The shell is rewritten to reference custom/custom.css and custom/custom.js
 	// when those exist. This is the ONE server-side HTML rewrite in the
 	// codebase, and it is deliberately scoped to rela's own shell.
 	//

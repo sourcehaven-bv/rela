@@ -6,7 +6,8 @@ import postcss, { type AtRule, type Rule } from 'postcss'
  *
  * ## Why this exists
  *
- * Operator CSS is served at `/_custom/custom.css` and injected as a `<link>` in
+ * Operator CSS is served at `/_custom/custom.css` (from the project's custom/
+ * directory) and injected as a `<link>` in
  * `<head>`. That is NOT enough on its own. The production build emits ~19 CSS
  * files: one eager `index-*.css` linked from `index.html`, plus one per
  * route-level chunk. Vite appends the chunk stylesheets to `<head>` at runtime

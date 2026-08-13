@@ -9,99 +9,144 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/project"
 )
 
-// writeCustom drops a customisation file in a project root.
+// writeCustom drops a file inside the project's custom/ directory, creating
+// intermediate dirs so nested entries ("fonts/b.woff2") work.
 func writeCustom(t *testing.T, root, name, body string) {
+	t.Helper()
+	full := filepath.Join(root, project.CustomDir, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeProjectRoot drops a file at the PROJECT ROOT, outside custom/. Used to
+// prove the old root-level layout is gone.
+func writeProjectRoot(t *testing.T, root, name, body string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestOpenCustomAsset(t *testing.T) {
+func TestOpenCustomEntry(t *testing.T) {
 	root := t.TempDir()
 	writeCustom(t, root, customCSSFile, ".a{color:red}")
 	writeCustom(t, root, customJSFile, "console.log(1)")
-	// A secret outside the allowlist we must never serve.
+	// A file that used to be refused by the two-name allowlist; now served.
 	writeCustom(t, root, "secret.txt", "TOPSECRET")
 
 	t.Run("css loads", func(t *testing.T) {
-		b, err := openCustomAsset(root, customCSSFile)
+		b, err := openCustomEntry(root, customCSSFile)
 		if err != nil || string(b) != ".a{color:red}" {
 			t.Fatalf("got (%q, %v), want the stylesheet", b, err)
 		}
 	})
 	t.Run("js loads", func(t *testing.T) {
-		b, err := openCustomAsset(root, customJSFile)
+		b, err := openCustomEntry(root, customJSFile)
 		if err != nil || string(b) != "console.log(1)" {
 			t.Fatalf("got (%q, %v), want the script", b, err)
 		}
 	})
 	t.Run("missing file errors", func(t *testing.T) {
-		if _, err := openCustomAsset(t.TempDir(), customCSSFile); err == nil {
+		if _, err := openCustomEntry(t.TempDir(), customCSSFile); err == nil {
 			t.Error("expected error for missing custom.css")
 		}
 	})
 
-	// Every one of these must be refused by the allowlist before the
-	// filesystem is touched.
+	// Only malformed/traversal/dot spellings are refused now. A plain name like
+	// "secret.txt" is NO LONGER a policy violation — under the folder layout any
+	// file the operator puts in custom/ is meant to be served (AC7).
 	bad := []string{
-		"../secret.txt",
-		"../../etc/passwd",
-		"/etc/passwd",
-		"sub/../../secret.txt",
 		"",
 		".",
-		"secret.txt",
-		"custom.css/",
-		"custom.css/.",
-		"CUSTOM.CSS", // case-insensitive filesystems (APFS) must not match
-		"custom.cs",
+		"..",
+		".env",
+		".env.backup",
+		".git/config",
+		".DS_Store",
+		"sub/.hidden",
+		"sub/.git/config",
 		"custom.css\x00",
-		"./custom.css",
 	}
 	for _, name := range bad {
 		t.Run("rejects "+strconv.Quote(name), func(t *testing.T) {
-			if _, err := openCustomAsset(root, name); err == nil {
-				t.Errorf("openCustomAsset(%q) = nil error, want rejection", name)
+			if _, err := openCustomEntry(root, name); err == nil {
+				t.Errorf("openCustomEntry(%q) = nil error, want rejection", name)
 			}
 		})
 	}
+
+	// Traversal spellings are NEUTRALIZED, not rejected: path.Clean anchors
+	// "../secret.txt" to "/secret.txt", i.e. custom/secret.txt. The property
+	// that matters is containment — see TestOpenCustomEntry_NeverEscapes.
+
+	// The inversion: these used to be refused by the two-name allowlist and
+	// must now be SERVED, because they live inside custom/.
+	t.Run("arbitrary name inside custom/ is served", func(t *testing.T) {
+		writeCustom(t, root, "secret.txt", "operator content")
+		b, err := openCustomEntry(root, "secret.txt")
+		if err != nil || string(b) != "operator content" {
+			t.Fatalf("got (%q, %v), want the file to be served", b, err)
+		}
+	})
+	t.Run("nested asset is served", func(t *testing.T) {
+		writeCustom(t, root, "fonts/brand.woff2", "FONT")
+		b, err := openCustomEntry(root, "fonts/brand.woff2")
+		if err != nil || string(b) != "FONT" {
+			t.Fatalf("got (%q, %v), want the nested asset", b, err)
+		}
+	})
+	t.Run("unknown extension is served, not 404 (AC7)", func(t *testing.T) {
+		writeCustom(t, root, "data.avif", "AVIF")
+		if _, err := openCustomEntry(root, "data.avif"); err != nil {
+			t.Errorf("unknown extension must still serve: %v", err)
+		}
+		if got := appEntryContentType("data.avif"); got != "application/octet-stream" {
+			t.Errorf("content type = %q, want application/octet-stream", got)
+		}
+	})
 }
 
-func TestOpenCustomAsset_Directory(t *testing.T) {
+func TestOpenCustomEntry_Directory(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, customCSSFile), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := openCustomAsset(root, customCSSFile); err == nil {
+	if _, err := openCustomEntry(root, customCSSFile); err == nil {
 		t.Error("a directory named custom.css must not be served")
 	}
 }
 
-func TestOpenCustomAsset_Oversize(t *testing.T) {
+func TestOpenCustomEntry_Oversize(t *testing.T) {
 	root := t.TempDir()
 	writeCustom(t, root, customCSSFile, strings.Repeat("a", maxCustomFileBytes+1))
-	if _, err := openCustomAsset(root, customCSSFile); err == nil {
+	if _, err := openCustomEntry(root, customCSSFile); err == nil {
 		t.Error("an oversize custom.css must be rejected")
 	}
 }
 
-func TestOpenCustomAsset_EmptyFileIsServed(t *testing.T) {
+func TestOpenCustomEntry_EmptyFileIsServed(t *testing.T) {
 	// Present-but-empty is a real state: it must serve (and, per
 	// TestSelectShell, still inject). "Present" is not "non-empty".
 	root := t.TempDir()
 	writeCustom(t, root, customCSSFile, "")
-	b, err := openCustomAsset(root, customCSSFile)
+	b, err := openCustomEntry(root, customCSSFile)
 	if err != nil || len(b) != 0 {
 		t.Fatalf("got (%q, %v), want empty content and no error", b, err)
 	}
 }
 
-func TestOpenCustomAsset_SymlinkEscape(t *testing.T) {
-	// os.OpenRoot is the defense-in-depth layer behind the allowlist: an
-	// allowlisted NAME pointing outside the project must still be refused.
+func TestOpenCustomEntry_SymlinkEscape(t *testing.T) {
+	// os.OpenRoot is now the PRIMARY containment boundary, not defense-in-depth
+	// behind an allowlist: TKT-IWMETE removed the two-name check, so a symlink
+	// escaping the project root must be refused by the roots alone.
 	outside := t.TempDir()
 	secret := filepath.Join(outside, "secret.txt")
 	if err := os.WriteFile(secret, []byte("TOPSECRET"), 0o644); err != nil {
@@ -111,20 +156,27 @@ func TestOpenCustomAsset_SymlinkEscape(t *testing.T) {
 	if err := os.Symlink(secret, filepath.Join(root, customCSSFile)); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	if _, err := openCustomAsset(root, customCSSFile); err == nil {
+	if _, err := openCustomEntry(root, customCSSFile); err == nil {
 		t.Error("a symlink escaping the project root must be rejected")
 	}
 }
 
-func TestCustomAssetContentType(t *testing.T) {
+func TestCustomEntryContentType(t *testing.T) {
+	// Extension-based via the shared apps/ map. Unknown → octet-stream, which a
+	// browser neither executes nor renders (AC7).
 	tests := []struct{ name, want string }{
-		{customCSSFile, "text/css; charset=utf-8"},
-		{customJSFile, "text/javascript; charset=utf-8"},
+		{"custom.css", "text/css; charset=utf-8"},
+		{"custom.js", "text/javascript; charset=utf-8"},
+		{"logo.svg", "image/svg+xml"},
+		{"fonts/brand.woff2", "font/woff2"},
+		{"pic.png", "image/png"},
+		{"data.avif", "application/octet-stream"},
+		{"noext", "application/octet-stream"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := customAssetContentType(tt.name); got != tt.want {
-				t.Errorf("customAssetContentType(%q) = %q, want %q", tt.name, got, tt.want)
+			if got := appEntryContentType(tt.name); got != tt.want {
+				t.Errorf("appEntryContentType(%q) = %q, want %q", tt.name, got, tt.want)
 			}
 		})
 	}
@@ -227,6 +279,7 @@ func TestHandleCustomAsset(t *testing.T) {
 	root := t.TempDir()
 	writeCustom(t, root, customCSSFile, ".a{color:red}")
 	writeCustom(t, root, "secret.txt", "TOPSECRET")
+	writeCustom(t, root, ".env", "SECRET=1")
 	custom := newCustomAssets(root, []byte(testShell), func() bool { return true })
 
 	tests := []struct {
@@ -244,8 +297,22 @@ func TestHandleCustomAsset(t *testing.T) {
 			wantContentType: "text/css; charset=utf-8",
 		},
 		{name: "404 for absent js", path: customURLPrefix + customJSFile, wantStatus: http.StatusNotFound},
-		{name: "404 for non-allowlisted", path: customURLPrefix + "secret.txt", wantStatus: http.StatusNotFound},
-		{name: "404 for traversal", path: customURLPrefix + "../secret.txt", wantStatus: http.StatusNotFound},
+		{
+			// INVERTED by TKT-IWMETE: under the folder layout an arbitrary file
+			// inside custom/ is meant to be served.
+			name: "serves an arbitrary file inside custom/", path: customURLPrefix + "secret.txt",
+			wantStatus: http.StatusOK, wantBody: "TOPSECRET",
+			wantContentType: "text/plain; charset=utf-8",
+		},
+		{name: "404 for dot-prefixed", path: customURLPrefix + ".env", wantStatus: http.StatusNotFound},
+		{
+			// NOT 404: path.Clean anchors "../secret.txt" to custom/secret.txt,
+			// which the fixture creates. Containment (never reaching a file
+			// OUTSIDE custom/) is asserted by
+			// TestHandleCustomAsset_TraversalNeverEscapes.
+			name: "traversal is anchored inside custom/", path: customURLPrefix + "../secret.txt",
+			wantStatus: http.StatusOK, wantBody: "TOPSECRET",
+		},
 		{name: "404 for empty name", path: customURLPrefix, wantStatus: http.StatusNotFound},
 	}
 	for _, tt := range tests {
@@ -339,11 +406,47 @@ func TestCustomAssetExists_MatchesOpen(t *testing.T) {
 			t.Error("exists=true for a directory")
 		}
 	})
-	t.Run("non-allowlisted name", func(t *testing.T) {
+	t.Run("arbitrary name inside custom/ exists (inverted)", func(t *testing.T) {
 		root := t.TempDir()
 		writeCustom(t, root, "secret.txt", "x")
-		if customAssetExists(root, "secret.txt") {
-			t.Error("exists=true for a non-allowlisted name")
+		if !customAssetExists(root, "secret.txt") {
+			t.Error("exists=false for a real file inside custom/")
+		}
+	})
+	t.Run("dot-prefixed name does not exist", func(t *testing.T) {
+		root := t.TempDir()
+		writeCustom(t, root, ".env", "x")
+		if customAssetExists(root, ".env") {
+			t.Error("exists=true for a dot-prefixed entry")
+		}
+	})
+	t.Run("oversize file", func(t *testing.T) {
+		// REGRESSION (code review): stat succeeded while open rejected on size,
+		// so the shell injected a <link> to a URL that then 404'd. The comment
+		// on this test claimed to pin exactly that and did not.
+		root := t.TempDir()
+		writeCustom(t, root, customCSSFile, strings.Repeat("a", maxCustomFileBytes+1))
+		gotExists := customAssetExists(root, customCSSFile)
+		_, openErr := openCustomEntry(root, customCSSFile)
+		if gotExists != (openErr == nil) {
+			t.Errorf("exists=%v but open-succeeds=%v — the shell would reference a 404",
+				gotExists, openErr == nil)
+		}
+	})
+	t.Run("unreadable file", func(t *testing.T) {
+		// Same divergence via permissions rather than size.
+		root := t.TempDir()
+		writeCustom(t, root, customCSSFile, ".a{}")
+		p := filepath.Join(root, project.CustomDir, customCSSFile)
+		if err := os.Chmod(p, 0o000); err != nil {
+			t.Skipf("chmod unavailable: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(p, 0o644) })
+		gotExists := customAssetExists(root, customCSSFile)
+		_, openErr := openCustomEntry(root, customCSSFile)
+		if gotExists != (openErr == nil) {
+			t.Errorf("exists=%v but open-succeeds=%v — the shell would reference a 404",
+				gotExists, openErr == nil)
 		}
 	})
 	t.Run("symlink escaping the root", func(t *testing.T) {
@@ -360,7 +463,7 @@ func TestCustomAssetExists_MatchesOpen(t *testing.T) {
 			t.Skipf("symlinks unavailable: %v", err)
 		}
 		gotExists := customAssetExists(root, customCSSFile)
-		_, openErr := openCustomAsset(root, customCSSFile)
+		_, openErr := openCustomEntry(root, customCSSFile)
 		gotOpen := openErr == nil
 		if gotExists != gotOpen {
 			t.Errorf("exists=%v but open-succeeds=%v — the two checks must agree", gotExists, gotOpen)
@@ -425,5 +528,189 @@ func TestCustomAssets_UnreadableShellDegrades(t *testing.T) {
 
 	if custom.shell() != nil {
 		t.Error("expected nil shell so the caller delegates to the plain SPA handler")
+	}
+}
+
+// TestOpenCustomEntry_SymlinkInsideProject pins the property that the NESTED
+// os.OpenRoot exists for (AC10, RR-DR-SYMLINK).
+//
+// A symlink inside custom/ pointing at a project file OUTSIDE custom/ never
+// leaves the project root, so a single os.OpenRoot(projectRoot) would happily
+// follow it and serve the file. Only the second root scoped to custom/ refuses
+// it. This is the case a "simplification" to one root would silently reopen —
+// the ../secret.txt spellings would all still pass.
+func TestOpenCustomEntry_SymlinkInsideProject(t *testing.T) {
+	root := t.TempDir()
+	writeCustom(t, root, customCSSFile, ".a{}")
+	writeProjectRoot(t, root, "metamodel.yaml", "SENSITIVE-PROJECT-FILE")
+
+	link := filepath.Join(root, project.CustomDir, "leak.yaml")
+	if err := os.Symlink(filepath.Join(root, "metamodel.yaml"), link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	b, err := openCustomEntry(root, "leak.yaml")
+	if err == nil {
+		t.Fatalf("symlink to an in-project file outside custom/ was SERVED: %q", b)
+	}
+	if strings.Contains(string(b), "SENSITIVE") {
+		t.Fatal("leaked project file content")
+	}
+}
+
+// TestRootLevelCustomNotServed pins AC4 by DISCRIMINATION, not absence.
+//
+// The obvious test — write custom.css at the project root, assert 404 — passes
+// vacuously: after TKT-IWMETE a root-level file simply is not in the custom/
+// tree, so it 404s whether or not a fallback exists. Writing BOTH copies and
+// asserting which one wins is a test a resurrected fallback would actually fail.
+func TestRootLevelCustomNotServed(t *testing.T) {
+	root := t.TempDir()
+	writeProjectRoot(t, root, customCSSFile, "ROOT-VERSION")
+	writeCustom(t, root, customCSSFile, "FOLDER-VERSION")
+
+	b, err := openCustomEntry(root, customCSSFile)
+	if err != nil {
+		t.Fatalf("custom/custom.css should serve: %v", err)
+	}
+	if got := string(b); got != "FOLDER-VERSION" {
+		t.Errorf("served %q, want FOLDER-VERSION — a root-level fallback is live", got)
+	}
+	if strings.Contains(string(b), "ROOT-VERSION") {
+		t.Error("root-level file content leaked into the response")
+	}
+}
+
+// TestRootLevelCustomNotInjected is the injection half of AC4: with ONLY the
+// root-level file present, the shell must be the plain variant.
+func TestRootLevelCustomNotInjected(t *testing.T) {
+	root := t.TempDir()
+	writeProjectRoot(t, root, customCSSFile, "ROOT-VERSION")
+	writeProjectRoot(t, root, customJSFile, "console.log(1)")
+
+	custom := newCustomAssets(root, []byte(testShell), func() bool { return true })
+	got := string(custom.shell())
+
+	if strings.Contains(got, customCSSTag) || strings.Contains(got, customJSTag) {
+		t.Error("root-level files were injected; the old layout is still live")
+	}
+	if got != testShell {
+		t.Error("shell differs from the stock shell with no custom/ dir present")
+	}
+}
+
+// TestOpenCustomEntry_Directories pins AC11: a directory request 404s and there
+// is no index resolution.
+//
+// NOTE (corrected after code review): an earlier comment here claimed the two
+// spellings take DIFFERENT guards — "fonts" via IsDir, "fonts/" via
+// fs.ValidPath. That is false. path.Clean("/fonts/") yields "/fonts", so
+// validCustomEntry returns ("fonts", true) for BOTH and they die at the same
+// IsDir check; fs.ValidPath never sees a trailing slash. Both spellings are
+// still worth asserting (a client may send either), but do not rely on a
+// second guard that is not there. TestValidCustomEntry covers the predicate.
+func TestOpenCustomEntry_Directories(t *testing.T) {
+	root := t.TempDir()
+	writeCustom(t, root, "fonts/brand.woff2", "FONT")
+	// An index.html inside the dir must NOT be resolved for a dir request.
+	writeCustom(t, root, "fonts/index.html", "<html>index</html>")
+
+	for _, entry := range []string{"fonts", "fonts/"} {
+		t.Run("dir request "+strconv.Quote(entry), func(t *testing.T) {
+			if _, err := openCustomEntry(root, entry); err == nil {
+				t.Errorf("directory request %q must 404", entry)
+			}
+		})
+	}
+	t.Run("both spellings normalise identically", func(t *testing.T) {
+		a, okA := validCustomEntry("fonts")
+		b, okB := validCustomEntry("fonts/")
+		if a != b || okA != okB {
+			t.Errorf("validCustomEntry: %q/%v vs %q/%v — spellings must normalise the same",
+				a, okA, b, okB)
+		}
+	})
+	t.Run("no index resolution", func(t *testing.T) {
+		// The file itself is still addressable by its explicit path...
+		if _, err := openCustomEntry(root, "fonts/index.html"); err != nil {
+			t.Errorf("explicit index.html path should serve: %v", err)
+		}
+	})
+}
+
+// TestValidCustomEntry covers the normalisation/rejection rule in isolation, so
+// a regression is attributable to the predicate rather than to the filesystem.
+func TestValidCustomEntry(t *testing.T) {
+	tests := []struct {
+		in      string
+		wantRel string
+		wantOK  bool
+	}{
+		{"custom.css", "custom.css", true},
+		{"fonts/brand.woff2", "fonts/brand.woff2", true},
+		{"a/b/c/d.png", "a/b/c/d.png", true},
+		{"./custom.css", "custom.css", true},
+		{"data.avif", "data.avif", true},
+		{"custom.css~", "custom.css~", true}, // editor backup: NOT caught (documented)
+		{"", "", false},
+		{".", "", false},
+		{"..", "", false},
+		{"/", "", false},
+		{".env", "", false},
+		{".env.backup", "", false},
+		{".git/config", "", false},
+		{"sub/.hidden", "", false},
+		{"sub/.git/config", "", false},
+		{".well-known/acme", "", false}, // known false positive, documented
+		{"../secret", "secret", true},   // NB: cleaned, then contained by OpenRoot
+	}
+	for _, tt := range tests {
+		t.Run(strconv.Quote(tt.in), func(t *testing.T) {
+			rel, ok := validCustomEntry(tt.in)
+			if ok != tt.wantOK || (ok && rel != tt.wantRel) {
+				t.Errorf("validCustomEntry(%q) = (%q, %v), want (%q, %v)",
+					tt.in, rel, ok, tt.wantRel, tt.wantOK)
+			}
+		})
+	}
+}
+
+// TestOpenCustomEntry_NeverEscapes is the primary containment test (AC3).
+//
+// It asserts the property that matters — no traversal spelling reaches a file
+// OUTSIDE custom/ — rather than the weaker "the request errors". Those are not
+// the same: path.Clean ANCHORS "../secret.txt" to "/secret.txt", so the request
+// resolves to custom/secret.txt and legitimately succeeds if that file exists.
+// An earlier version of this test asserted rejection, created a decoy inside
+// custom/, and would have passed even against a genuinely leaky implementation.
+//
+// So: sensitive files outside custom/, with NO same-named decoy inside, and the
+// assertion is on the CONTENT never appearing.
+func TestOpenCustomEntry_NeverEscapes(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, project.CustomDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeProjectRoot(t, root, "outside.txt", "LEAKED-OUTSIDE")
+	writeProjectRoot(t, root, "metamodel.yaml", "LEAKED-METAMODEL")
+
+	vectors := []string{
+		"../outside.txt",
+		"../../outside.txt",
+		"../metamodel.yaml",
+		"sub/../../outside.txt",
+		"/outside.txt",
+		"a/b/../../../outside.txt",
+		"....//outside.txt",
+		"..%2Foutside.txt",
+		"../../../../../../etc/passwd",
+	}
+	for _, v := range vectors {
+		t.Run(strconv.Quote(v), func(t *testing.T) {
+			b, err := openCustomEntry(root, v)
+			if err == nil && strings.Contains(string(b), "LEAKED") {
+				t.Errorf("LEAK: %q served %q from outside custom/", v, b)
+			}
+		})
 	}
 }

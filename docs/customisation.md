@@ -1,21 +1,43 @@
-# Operator customisation hooks (`custom.css` / `custom.js`)
+# Operator customisation hooks (`custom/`)
 
 Customise the rela web UI in place from your own project directory — no fork,
 no Go, no build step.
 
-Drop either file in your project root:
+Create a `custom/` directory in your project:
 
 ```text
 your-project/
 ├── metamodel.yaml
 ├── data-entry.yaml
-├── custom.css      ← optional
-└── custom.js       ← optional
+└── custom/
+    ├── custom.css      ← optional, injected into the app shell
+    ├── custom.js       ← optional, injected into the app shell
+    ├── logo.svg        ← any asset your CSS/JS references
+    └── fonts/brand.woff2
 ```
 
-rela serves them at `/_custom/custom.css` and `/_custom/custom.js`, and
-references them from the app shell **only when they exist**. A stock
-deployment's HTML is byte-for-byte unchanged.
+`custom.css` and `custom.js` are referenced from the app shell **only when they
+exist** — a stock deployment's HTML is byte-for-byte unchanged. Every file in
+the directory is served at `/_custom/<path>`, so your stylesheet can write:
+
+```css
+.sidebar { background-image: url(/_custom/logo.svg); }
+```
+
+> ## ⚠ Everything in `custom/` is published
+>
+> This directory is served **publicly and without authentication** — the app
+> shell's stylesheet has to load before anyone logs in, so its assets cannot be
+> gated. Any file you put here is readable by anyone who can reach the server,
+> by guessing or by reading your CSS.
+>
+> **Do not put anything in `custom/` that you would not publish.**
+>
+> This is a wider exposure than `apps/`, which sits behind authentication —
+> don't assume they behave the same. Paths with a dot-prefixed segment
+> (`.env`, `.git/config`, `.DS_Store`) are refused as a safety net, but that is
+> a crude filename check, not a secrets scanner: `notes.md`, `backup.sql`,
+> `id_rsa` and editor backups like `custom.css~` are all served.
 
 > **Read this before you start.**
 >
@@ -213,13 +235,20 @@ suppressed.
 
 ## Notes
 
-- Both files are optional and independent. Absent means no reference is
-  injected, and the URL 404s.
+- `custom.css` and `custom.js` are optional and independent. Absent means no
+  reference is injected, and the URL 404s.
 - Changes are picked up without a server restart. Reload the page.
 - Served with `Cache-Control: no-cache`, so an edit is visible on reload rather
   than stranding you on a cached copy.
-- Only these two exact filenames are served. There is no `/_custom/` directory
-  listing and no way to serve any other project file through this path.
+- Every file in `custom/` is served, including nested paths. Files **outside**
+  `custom/` are never reachable through `/_custom/`, and there is no directory
+  listing and no `index.html` resolution — `/_custom/fonts/` is a 404, not a
+  page.
+- Unknown file types are served as a download (`application/octet-stream`)
+  rather than being refused, so a new image format works without waiting for a
+  rela release.
+- Files larger than 4 MiB are not served; the server logs a warning naming the
+  file, so an oversized image is diagnosable rather than a silent 404.
 - Errors in `custom.js` surface through rela's own error logging and will look
   like rela bugs in a report — hence the "remove `custom.js` and retry" line
   above.

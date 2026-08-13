@@ -208,10 +208,11 @@ User-authored apps served in a sandboxed iframe. An app is a **folder**
   "fetch this path". Keep `appSDKMethods` (Go, in `apps_sdk.go`) in sync with
   `BRIDGE_METHODS` (the dispatcher).
 
-## Operator customisation (`custom.css` / `custom.js` + `/_custom/`)
+## Operator customisation (`custom/` + `/_custom/`)
 
-Operator-authored files in the project root, served at `/_custom/` and
-referenced from the SPA shell. Rules for new code:
+The operator's `custom/` project directory, served at `/_custom/<path>`.
+`custom.css` / `custom.js` there are referenced from the SPA shell; every other
+file (fonts, logos, images) is served as-is. Rules for new code:
 
 - **The SPA shell rewrite is the ONE server-side HTML rewrite in this codebase,
   and it is deliberately scoped to rela's own shell.** The `apps/` rule below
@@ -232,11 +233,27 @@ referenced from the SPA shell. Rules for new code:
   removes the cache-population race; the per-request stat means adding
   `custom.css` needs no restart. A file that is *served* at `/_custom/` but
   never *referenced* in the shell is the confusing half-state this avoids.
-- **Two allowlisted filenames, never a path segment.** `openCustomAsset` accepts
-  only `custom.css` / `custom.js` by exact comparison, so traversal is
-  impossible before the filesystem is touched; `os.OpenRoot` stays as
-  defence-in-depth (and catches a symlink escaping the root). Every failure
-  collapses to one 404.
+- **The containment boundary is `validCustomEntry` + a NESTED `os.OpenRoot`.**
+  TKT-IWMETE replaced the old two-name allowlist (which made traversal
+  impossible before touching the filesystem) with a served directory, so path
+  validation is now the primary boundary, not defence-in-depth.
+  **The nested root is security-critical**: a symlink inside `custom/` pointing
+  at `../metamodel.yaml` never leaves the project root, so a single
+  `os.OpenRoot(projectRoot)` would follow it. Only the second root scoped to
+  `custom/` refuses it — don't "simplify" it away
+  (`TestOpenCustomEntry_SymlinkInsideProject` pins this).
+- **Traversal is NEUTRALISED, not rejected.** `path.Clean` anchors
+  `../secret.txt` to `custom/secret.txt`, which may legitimately exist. Assert
+  *containment* (no file outside `custom/` is ever served), never "the request
+  errors" — a rejection-shaped test passes against a leaky implementation.
+- **The dot-segment rule is for operator accidents, not traversal.** It refuses
+  `.env`, `.git/config`, `.DS_Store`. It contributes ZERO traversal defence
+  (`path.Clean` resolves `..` before it runs) and is a filename heuristic, not a
+  secrets scanner — `notes.md` and `custom.css~` are served.
+- **`/_custom/` is PUBLIC and UNAUTHENTICATED** — not an `isAPIPath`, so outside
+  both the JWT gate and ACL, deliberately, so the shell loads before login. This
+  is a wider exposure than `apps/`, which this code otherwise copies. Every
+  failure collapses to one 404.
 - **`custom.js` is FULLY TRUSTED — the opposite posture from `apps/`.** It runs
   same-origin in the SPA's document with no CSP, no sandbox, and unrestricted
   API access. That is correct (the operator already controls metamodel, Lua and

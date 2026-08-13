@@ -22,6 +22,15 @@ export class CustomisationPage extends BasePage {
     return (await this.page.locator('link[href="/_custom/custom.css"]').count()) > 0;
   }
 
+  /**
+   * Fetch a /_custom/ asset directly and report status + content-type. Used to
+   * prove an operator asset is actually reachable, not merely referenced.
+   */
+  async fetchCustomAsset(serverUrl: string, relPath: string) {
+    const res = await this.page.request.get(`${serverUrl}/_custom/${relPath}`);
+    return { status: res.status(), contentType: res.headers()['content-type'] ?? '', body: await res.text() };
+  }
+
   /** Whether the SPA shell references the operator's module script. */
   async hasCustomScript(): Promise<boolean> {
     return (await this.page.locator('script[src="/_custom/custom.js"]').count()) > 0;
