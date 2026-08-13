@@ -825,6 +825,10 @@ deps:
       - store
   pgstore:
     mayDependOn:
+      # The postgres build carries its own next-action state backend: it is the
+      # only one safe for a multi-process deployment, and it rides the pool
+      # this package already owns rather than opening a second one.
+      - userstate
       - canonical
       - graphquerynaive
       - search

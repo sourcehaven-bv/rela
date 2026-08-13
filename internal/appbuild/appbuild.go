@@ -163,7 +163,15 @@ func (s *Services) VisibleSearcher() search.VisibleSearcher { return s.visibleSe
 // Still build-agnostic: a multi-process deployment wants the postgres backend
 // (this one is last-writer-wins across processes), and that becomes a
 // per-recipe choice when it lands.
-func newUserState(kv state.KV) userstate.Store {
+func newUserState(st store.Store, kv state.KV) userstate.Store {
+	// A store-native backend wins where one exists (postgres): it is the only
+	// one safe for the multi-process deployment, where the KV document's
+	// whole-file rewrite is last-writer-wins. Resolved by a build-tagged
+	// helper, mirroring versionServiceFor — the fs/memory builds return nil
+	// and neither know nor link the postgres implementation.
+	if s := storeUserStateFor(st); s != nil {
+		return s
+	}
 	if kv == nil {
 		slog.Warn("next-action state: no state KV; snoozes and mutes will not survive a restart")
 		return memuserstate.New()
@@ -652,7 +660,7 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 		store:           c.Store,
 		searcher:        c.Searcher,
 		visibleSearcher: visible,
-		userState:       newUserState(c.StateKV),
+		userState:       newUserState(c.Store, c.StateKV),
 		entityManager:   c.EntityManager,
 		tracer:          c.Tracer,
 		validator:       c.Validator,
@@ -1191,7 +1199,7 @@ func assemble(
 		versions:        versions,
 		searcher:        searcher,
 		visibleSearcher: visible,
-		userState:       newUserState(stateKV),
+		userState:       newUserState(st, stateKV),
 		entityManager:   mgr,
 		tracer:          tr,
 		validator:       val,
