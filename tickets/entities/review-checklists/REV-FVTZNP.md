@@ -43,7 +43,7 @@ RR-2Y851X, RR-02P03I (addressed).
 
 ## Pull Request
 - [x] Run `/pr` (this step)
-- [ ] All CI checks pass (monitored after push)
-- [ ] PR URL documented below
+- [x] All CI checks pass (monitored after push)
+- [x] PR URL documented below
 
-**PR:** *pending /pr*
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1315
