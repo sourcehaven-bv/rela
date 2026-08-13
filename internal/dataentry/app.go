@@ -835,7 +835,9 @@ func NewApp(
 		schema:      app.State,
 		services:    app.Services,
 		projectRoot: app.ProjectRoot,
-		schemaFile:  app.SchemaFileName,
+		// Inline rather than an App method: its only consumer is this
+		// closure, and App is at its plimsoll method load line.
+		schemaFile:  func() string { return filepath.Base(app.paths.SchemaPath) },
 		executeView: app.views.executeView,
 		// Late-bound: tests reassign app.acl after construction.
 		aclImpl: func() acl.ACL { return app.acl },
@@ -1014,14 +1016,6 @@ func (a *App) ProjectName() string {
 // ProjectRoot returns the root directory of the loaded project.
 func (a *App) ProjectRoot() string {
 	return a.paths.Root
-}
-
-// SchemaFileName returns the basename of the project's schema file as
-// RESOLVED at discovery — schema.yaml, or metamodel.yaml in a pre-rename
-// project. Commands receive it on stdin, so it must name the file that
-// actually exists rather than the canonical one.
-func (a *App) SchemaFileName() string {
-	return filepath.Base(a.paths.SchemaPath)
 }
 
 // colorToCSSClass maps a color name from config to a CSS class.
