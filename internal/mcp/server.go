@@ -79,19 +79,35 @@ type Deps struct {
 	ProjectRoot   string
 }
 
-// GraphReader is the read capability MCP requires of its store. It is the
-// exact set the handlers call — six methods, verified by grep over
-// internal/mcp — declared here at the CALL SITE rather than reused from
-// `store.Store`, which is a ten-interface composite (CRUD, attachments,
+// GraphReader is the read capability MCP requires of its store — the exact
+// set the handlers call, declared here at the CALL SITE rather than reused
+// from `store.Store`, which is a ten-interface composite (CRUD, attachments,
 // watching, transactions) MCP has no business holding.
 //
-// `store.Store` satisfies this structurally, so the stdio wiring passes one
-// unchanged. A visibility decorator satisfies it too, which is the point.
+// It is split deliberately. The three ENTITY/RELATION reads are the gated
+// surface: they return rows, so a wiring may substitute a decorator that
+// hides some. The two COUNTS are [GraphCounter], kept separate because a
+// count is structural — it discloses how many rows of a declared type exist,
+// not which ones — and `internal/dataentry` already draws this exact line
+// (`analyzeService.relCounts` is "raw (ungated) on purpose").
+//
+// `store.Store` satisfies the whole thing structurally, so the stdio wiring
+// passes one unchanged; a visibility decorator satisfies the gated half,
+// which is the point.
 type GraphReader interface {
+	GraphCounter
+
 	GetEntity(ctx context.Context, id string) (*entity.Entity, error)
 	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 	GetRelation(ctx context.Context, from, relType, to string) (*entity.Relation, error)
 	ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
+}
+
+// GraphCounter is the structural half of [GraphReader]: type-level tallies
+// that name no individual row. Kept as its own interface so a wiring site can
+// compose a gated row-reader with a raw counter without either pretending to
+// be the other.
+type GraphCounter interface {
 	CountEntities(ctx context.Context, q store.EntityQuery) (int, error)
 	CountRelations(ctx context.Context, q store.RelationQuery) (int, error)
 }

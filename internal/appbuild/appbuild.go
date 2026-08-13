@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -35,6 +36,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/caldavalias"
 	"github.com/Sourcehaven-BV/rela/internal/config"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -355,6 +357,122 @@ func (s *Services) luaWriteDepsFor(redactor visibility.FieldRedactor) lua.WriteD
 // affordance resolver into appbuild.
 func (s *Services) ScheduledLuaWriteDeps() lua.WriteDeps {
 	return s.luaWriteDepsFor(nil)
+}
+
+// GatedReads returns the read handles bound to whatever principal is on the
+// ctx AT CALL TIME — the reader, the traversal handle, and a validator whose
+// candidate set comes from that same gated reader.
+//
+// This is the read bundle for an identity-bearing, non-HTTP consumer. The MCP
+// server is the caller: its handlers, resources, prompts, analyze and export
+// surfaces all read through the returned reader, so gating is decided once
+// here rather than per handler (DEC-ZBI39P).
+//
+// The validator matters as much as the reader. `Services.Validator()` is built
+// over the RAW store, which is right for the unattended paths that own it —
+// but a validation rule evaluated for a requester must not read rows the
+// requester cannot see, or a hidden value reaches a violation message
+// (TKT-3FL2S6). So this builds a second validator over the gated reader.
+//
+// Identity is deliberately NOT captured here: the wrapped handles resolve the
+// ctx principal per call, so ONE bundle serves every request. Under NopACL
+// (no acl.yaml) these are the raw store/tracer — byte-identical to pre-ACL
+// behavior, not a bypass. A construction failure REFUSES via
+// visibility.DenyReader / DenyTracer rather than degrading to raw reads
+// (RR-GKCZO5).
+//
+// KNOWN LIMITATION, same as [Services.ScheduledLuaWriteDeps]: appbuild has no
+// affordance resolver, so this is ROW gating only — field-level `visible:`
+// redaction does NOT apply. Row gating bounds WHICH entities are reachable,
+// which is the larger half; do not assume field policy is enforced here.
+func (s *Services) GatedReads() GatedReadBundle {
+	reader := scriptEntityReader(s.store, s.aclDeclarative, nil)
+	tr := scriptTracer(s.tracer, s.store, s.aclDeclarative, nil)
+
+	deps := s.LuaReadDeps()
+	deps.VisibleReader = reader
+	deps.Tracer = tr
+
+	return GatedReadBundle{
+		Reader:    gatedGraphReader{rows: reader, raw: s.store},
+		Tracer:    tr,
+		Validator: validator.New(reader, s.meta, deps),
+	}
+}
+
+// GatedReadBundle is the result of [Services.GatedReads]: the three read
+// handles an identity-bearing consumer needs, each ACL-bound to the ctx
+// principal at call time.
+type GatedReadBundle struct {
+	Reader    GatedGraphReader
+	Tracer    tracer.Tracer
+	Validator validator.Validator
+}
+
+// GatedGraphReader is the row-and-tally read surface returned by
+// [Services.GatedReads]. Row reads are ACL-gated; the two counts are not —
+// see [gatedGraphReader] for why.
+type GatedGraphReader interface {
+	GetEntity(ctx context.Context, id string) (*entity.Entity, error)
+	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
+	GetRelation(ctx context.Context, from, relType, to string) (*entity.Relation, error)
+	ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
+	CountEntities(ctx context.Context, q store.EntityQuery) (int, error)
+	CountRelations(ctx context.Context, q store.RelationQuery) (int, error)
+}
+
+// gatedGraphReader composes the ACL-gated row reader with the raw store for
+// the two operations the gated reader does not provide.
+//
+// The split is deliberate, and matches the line `internal/dataentry` already
+// draws (`analyzeService.relCounts` is documented "raw (ungated) on purpose"):
+//
+//   - GetEntity / ListEntities / ListRelations go through `rows`, so a hidden
+//     entity is absent and a hidden edge is not listed.
+//   - CountEntities / CountRelations go to the raw store. A count is
+//     STRUCTURAL: it says how many rows of a declared type exist, never which.
+//     Entity *existence* is the secret the row gate protects; an aggregate
+//     tally of a type the metamodel already publishes is not.
+//   - GetRelation goes to the raw store because a relation is addressed by its
+//     two endpoint ids, which the caller must already hold. Reading one
+//     therefore confirms nothing about entities the caller could not already
+//     name. Relations carry no field-level redaction today (see
+//     docs/acl-security.md), so this matches what a live relation GET exposes.
+//
+// If either judgement changes, this is the one type to fix.
+type gatedGraphReader struct {
+	rows lua.EntityReader
+	raw  store.Store
+}
+
+func (g gatedGraphReader) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
+	return g.rows.GetEntity(ctx, id)
+}
+
+func (g gatedGraphReader) ListEntities(
+	ctx context.Context, q store.EntityQuery,
+) iter.Seq2[*entity.Entity, error] {
+	return g.rows.ListEntities(ctx, q)
+}
+
+func (g gatedGraphReader) ListRelations(
+	ctx context.Context, q store.RelationQuery,
+) iter.Seq2[*entity.Relation, error] {
+	return g.rows.ListRelations(ctx, q)
+}
+
+func (g gatedGraphReader) GetRelation(
+	ctx context.Context, from, relType, to string,
+) (*entity.Relation, error) {
+	return g.raw.GetRelation(ctx, from, relType, to)
+}
+
+func (g gatedGraphReader) CountEntities(ctx context.Context, q store.EntityQuery) (int, error) {
+	return g.raw.CountEntities(ctx, q)
+}
+
+func (g gatedGraphReader) CountRelations(ctx context.Context, q store.RelationQuery) (int, error) {
+	return g.raw.CountRelations(ctx, q)
 }
 
 // Collaborators bundles the fully-built dependencies of a [Services]
