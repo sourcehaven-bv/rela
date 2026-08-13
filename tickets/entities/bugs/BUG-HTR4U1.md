@@ -5,7 +5,7 @@ title: Docs describe weekday schedules as ISO-week-change; code fires on target-
 description: docs/scheduled-tasks.md 'Missed Run Detection' says week tasks are missed if the ISO week changed since the last run. Schedule.IsDue actually fires when the most recent occurrence of the target weekday is after lastRun. The two disagree in BOTH directions, so the doc misleads rather than merely simplifying.
 priority: low
 effort: xs
-status: ready
+status: backlog
 ---
 
 ## Symptom
