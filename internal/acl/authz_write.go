@@ -74,8 +74,29 @@ func (r *Request) authorizeRelationWrite(ctx context.Context, op Op, s RelationS
 // the resolver considered (AC7). The wire 403 path
 // ([ForbiddenError.Error]) ignores Attributions — only audit reads it.
 func (r *Request) decideFromAttrs(attrs []RoleAttribution, op Op, target, denyFmt string) Decision {
+	// The client ceiling is checked before any role, because it can only
+	// remove: if it denies this verb on this type, no role can grant it. The
+	// deny names the ceiling rather than a role, so an operator reading the
+	// audit log can tell "your policy grants nothing" apart from "your policy
+	// grants it, but this client is attenuated" — two very different fixes.
+	//
+	// It also closes the wildcard gap: a role holding `update: ["*"]` under a
+	// `deny_update: [person]` ceiling keeps its wildcard through roleFor (a
+	// plain list cannot spell "all except person"), so the denial must be
+	// applied here.
+	if !r.ceiling.permitsVerb(op, target) {
+		return Decision{
+			Allow:    false,
+			RuleKind: "client-ceiling",
+			RuleID:   r.ceiling.name,
+			Reason: fmt.Sprintf(
+				"client baseline %q does not permit %s on %q for principal type %q",
+				r.ceiling.name, op, target, r.principal.PrincipalType()),
+			Attributions: attrs,
+		}
+	}
 	for _, a := range attrs {
-		role, ok := r.d.policy.Roles[a.Role]
+		role, ok := r.roleFor(a.Role)
 		if !ok {
 			continue
 		}

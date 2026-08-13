@@ -37,6 +37,14 @@ type Request struct {
 	principal     principal.Principal
 	globals       GlobalRoles
 	globalsLoaded bool
+
+	// ceiling is the client attenuation resolved from the principal's verified
+	// principal_type + scope claims (TKT-IAC8TX). Computed once at
+	// construction: it depends only on the bound principal and the immutable
+	// policy, so there is nothing to invalidate and no reason to recompute it
+	// per call. Inactive (and fully transparent) for an interactive user or any
+	// principal whose type no baseline covers.
+	ceiling compiledCeiling
 }
 
 // ForPrincipal opens a Request scope for `p`. Returns
@@ -48,7 +56,31 @@ func (d *Declarative) ForPrincipal(p principal.Principal) (*Request, error) {
 	if isUnstamped(p) {
 		return nil, fmt.Errorf("%w: User=%q Tool=%q", ErrUnstampedPrincipal, p.User, p.Tool)
 	}
-	return &Request{d: d, principal: p}, nil
+	return &Request{
+		d:         d,
+		principal: p,
+		ceiling:   d.policy.ceilingFor(p.PrincipalType(), p.Scopes()),
+	}, nil
+}
+
+// roleFor resolves a declared role name to its definition, NARROWED by the
+// request's client ceiling.
+//
+// This is THE clamp point for client attenuation. Every evaluation path in this
+// package resolves a role name and then asks a predicate of the result, so
+// narrowing here means read gating, write authorization and permission checks
+// all inherit the ceiling without any of them knowing it exists. Reaching into
+// `r.d.policy.Roles[...]` directly from an evaluation path BYPASSES the ceiling
+// — use this instead. Pinned by TestNoDirectRoleLookupInEvaluationPaths.
+//
+// The returned RoleDef holds plain allowlists; the runtime never learns the
+// word "deny". See ceiling.go for why that is load-bearing.
+func (r *Request) roleFor(name string) (RoleDef, bool) {
+	role, ok := r.d.policy.Roles[name]
+	if !ok {
+		return RoleDef{}, false
+	}
+	return r.ceiling.clamp(role), true
 }
 
 // Globals returns the principal's global role set, computing it on

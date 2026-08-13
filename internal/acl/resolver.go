@@ -270,8 +270,14 @@ func (r *Request) holdsPermission(ctx context.Context, perm string) bool {
 
 // grantsPermission reports whether any role in attrs grants perm.
 func (r *Request) grantsPermission(attrs []RoleAttribution, perm string) bool {
+	// A client ceiling withholding this permission short-circuits every role,
+	// and closes the wildcard gap (a role holding `permissions: ["*"]` keeps
+	// its wildcard through roleFor under a pure denial).
+	if !r.ceiling.permitsPermission(perm) {
+		return false
+	}
 	for _, a := range attrs {
-		role, ok := r.d.policy.Roles[a.Role]
+		role, ok := r.roleFor(a.Role)
 		if !ok {
 			continue
 		}

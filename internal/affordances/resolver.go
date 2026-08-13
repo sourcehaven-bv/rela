@@ -413,6 +413,14 @@ func (r *PolicyResolver) FieldVerdicts(ctx context.Context, e *entity.Entity) Fi
 		}
 	}
 
+	// Client attenuation, field axis (TKT-IAC8TX). Applied AFTER every role
+	// grant because a ceiling only ever removes: whatever the roles allowed,
+	// this can subtract from, and nothing here can add. Applied BEFORE the
+	// universe is resolved so a `visible:` ceiling gets the same closed-world
+	// treatment a role-declared block does — which is what makes a property
+	// added to the metamodel later hidden from a restricted client by default.
+	r.applyClientCeiling(ctx, e.Type, visible)
+
 	fieldUniverse := r.declaredFields(e.Type)
 	out.Writable, out.Attribution = writable.deny(fieldUniverse, out.Attribution)
 	visMap, attr := visible.deny(fieldUniverse, out.Attribution)
@@ -655,6 +663,66 @@ func (r *PolicyResolver) bindingFor(ctx context.Context, e *entity.Entity) (bc *
 		resolver:    r,
 	}
 	return bc, roles
+}
+
+// applyClientCeiling subtracts the request's client-attenuation field ceiling
+// (TKT-IAC8TX) from the visible dimension.
+//
+// It runs after every role grant and can only REMOVE — a ceiling never grants,
+// so a field no role made visible cannot become visible here.
+//
+// The two spellings map onto the dimension's existing vocabulary rather than a
+// parallel mechanism:
+//
+//   - `visible:` opts the dimension into CLOSED WORLD and allows exactly the
+//     named fields, so everything else on the type — including a property added
+//     to the metamodel tomorrow — is hidden. Same machinery, same semantics as
+//     a role-declared `visible:` block.
+//   - `redact:` denies the named fields only, leaving the rest alone.
+//
+// A denial attributed to the ceiling names the baseline rather than a role, so
+// an operator debugging a hidden field can tell "no role grants this" apart
+// from "this client is attenuated".
+func (r *PolicyResolver) applyClientCeiling(ctx context.Context, entityType string, visible *dimension) {
+	// Reuse the per-request scope when one is attached, else open a fresh
+	// Request — mirroring resolveViaDeclarative below.
+	//
+	// The fallback is load-bearing, not defensive. Returning early here (the
+	// original shape) made the ceiling depend on upstream wiring: role
+	// resolution opened its own Request and the ceiling did not, so on a ctx
+	// carrying a principal but no Request the roles applied and the
+	// attenuation silently did NOT. That is the fail-open direction — a
+	// restricted client keeping its user's full field visibility — and it is
+	// invisible, because nothing errors and the roles still resolve.
+	// visibility.PolicyRedactor forwards whatever ctx it is handed and binds
+	// nothing itself, so the guarantee must live here.
+	req := acl.FromContext(ctx)
+	if req == nil {
+		var err error
+		req, err = r.declarative.ForPrincipal(principal.From(ctx))
+		if err != nil {
+			// Unstamped: no verified principal_type, so no baseline can match.
+			// A ceiling only ever narrows, so there is nothing to narrow toward
+			// and returning is correct — unlike the stamped-but-unbound case
+			// above, which this recovers.
+			return
+		}
+	}
+	fc := req.FieldCeilingFor(entityType)
+	if !fc.Constrains() {
+		return
+	}
+	rule := "client-ceiling:" + fc.Baseline
+	universe := r.declaredFields(entityType)
+
+	if fc.Visible != nil {
+		// Closed world. restrictTo INTERSECTS rather than unions — a field some
+		// role already denied stays denied even though the ceiling names it,
+		// because a ceiling may only remove.
+		visible.restrictTo(fc.Visible, universe, rule)
+		return
+	}
+	visible.redact(fc.Redact, universe, rule)
 }
 
 // resolveViaDeclarative resolves the effective role set for

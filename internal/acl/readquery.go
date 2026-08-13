@@ -25,9 +25,19 @@ type ReadQueryResult struct {
 // via the role-relations whose confers-role grants read on the type.
 // DenyAll when no role grants any kind of read.
 func (r *Request) readQuery(ctx context.Context, entityType string) ReadQueryResult {
+	// A client ceiling that denies reads of this type short-circuits every
+	// grant path below. Checked first because the ceiling can only ever remove:
+	// if it says no, no role — global, conferred or inherited — can say yes.
+	// This also closes the wildcard gap roleFor cannot express in a plain list
+	// (a role holding `read: ["*"]` under `deny_read: [person]` keeps its
+	// wildcard; see filterTypes).
+	if !r.ceiling.permitsRead(entityType) {
+		return ReadQueryResult{DenyAll: true}
+	}
+
 	globals := r.Globals(ctx)
 	for _, a := range globals.Attributions {
-		role, ok := r.d.policy.Roles[a.Role]
+		role, ok := r.roleFor(a.Role)
 		if !ok {
 			continue
 		}
@@ -38,7 +48,7 @@ func (r *Request) readQuery(ctx context.Context, entityType string) ReadQueryRes
 
 	var conferring []string
 	for relType, def := range r.d.policy.RoleRelations {
-		role, ok := r.d.policy.Roles[def.Confers]
+		role, ok := r.roleFor(def.Confers)
 		if !ok {
 			continue
 		}

@@ -303,6 +303,184 @@ The resolver's decisions:
 - **A drive-by anonymous request:** `Deny`. `ErrUnstampedPrincipal`
   surfaces; the request never reaches `AuthorizeWrite`.
 
+## Restricting a client below its user
+
+Everything above answers "what may this *person* do". Client attenuation
+answers a different question: **what may this person do *through this
+client*.**
+
+The case is any external tool acting on a person's behalf — an MCP
+server, a CI script, an integration, a personal access token pasted into
+something you did not write — where you want a *guarantee* about what it
+can reach, independent of how much the person driving it can reach.
+
+Concretely: an HR user connects an MCP server. It acts with their
+identity, so by default it can read `person.salary`, and it can delete
+things, because they can. Client attenuation lets an operator say: this
+client sees less, and can destroy less, than the person driving it.
+
+The guarantee is what matters. Trusting the tool to behave, or the
+person to only ask it for safe things, is not one — a ceiling holds
+regardless of what the tool does or is told to do.
+
+```yaml
+client_baselines:
+  apps:
+    applies_to: [app]          # matches the verified principal_type claim
+    deny_write: ["*"]          # read-only
+    redact:
+      person: [salary, bsn]    # hidden even though the user may see them
+
+scope_grants:
+  rela.tickets.write:          # matches a value in the `scope` claim
+    update: [ticket]           # hands one capability back
+```
+
+The whole model is one line:
+
+```text
+effective = user_grants ∩ (baseline ∪ matched scope_grants)
+```
+
+Read as a diagram — what the client actually gets is the overlap, and
+nothing outside the user's own circle is reachable at all:
+
+```mermaid
+graph LR
+    subgraph U["What the USER may do"]
+        direction TB
+        UO["person.salary · delete ticket<br/>(user-only: the ceiling removes these)"]
+        E["EFFECTIVE<br/>read ticket · read person.name<br/>update ticket via scope"]
+    end
+    subgraph C["What the CEILING permits<br/>baseline ∪ scopes"]
+        direction TB
+        CO["types the user was never granted<br/>(named by the ceiling, but the user<br/>lacks them — so still denied)"]
+    end
+    E -.->|"the overlap IS the answer"| C
+
+    style E fill:#c8e6c9,stroke:#388e3c,stroke-width:2px
+    style UO fill:#ffe0b2,stroke:#e65100
+    style CO fill:#eceff1,stroke:#90a4ae,stroke-dasharray: 4 3
+```
+
+`CO` is the half that trips people up: a ceiling naming a capability
+does not confer it. Listing `read: [audit-record]` in a baseline grants
+nothing to a user who was never granted audit-records — the ceiling is
+an upper bound, never a source.
+
+Two consequences follow, and both matter:
+
+- **A ceiling never grants.** The intersection with the acting user's
+  own grants means a token cannot exceed its user, whatever it claims.
+  A read-only user presenting a write scope still cannot write.
+- **More scopes never means less access.** Scopes union, so adding one
+  can only widen — within the ceiling. A client is never broken by
+  gaining a scope.
+
+### Selecting a baseline
+
+`applies_to` lists the `principal_type` values a baseline covers.
+**The sets must be disjoint** — overlap is a startup error — so exactly
+one baseline matches any request. There is deliberately no precedence
+rule to learn, and no way for a more specific baseline to silently
+widen a narrower one.
+
+A `principal_type` that matches no baseline is **unrestricted**. That
+is what makes an interactive `user` token, a `--principal-header`
+deployment and a proxy that models no principal type all work with no
+special-casing. `rela acl audit` reports a baseline that covers
+nothing, since that is a policy gap rather than a runtime error.
+
+### Two spellings, per type
+
+Each axis takes either an allowlist or a denylist — never both for the
+same axis (or, for fields, the same type); declaring both is a load
+error rather than a merge rule to memorize.
+
+| Allowlist — fail-closed | Denylist — low-effort |
+|---|---|
+| `read: [ticket, person]` | `deny_read: [audit-record]` |
+| `update: [ticket]` | `deny_update: ["*"]` |
+| `visible: {person: [name]}` | `redact: {person: [salary]}` |
+| `permissions: [history:read]` | `deny_permissions: [history:read]` |
+
+The difference is what happens to a property **added to the metamodel
+later**:
+
+- `visible:` is **closed-world**. It names the complete permitted set,
+  so a new property is hidden from the client automatically. Nobody has
+  to remember to redact it.
+- `redact:` is **open-world**. It hides only what it names, so a new
+  property stays visible.
+
+Pick `visible:` for a type whose safe set is small and whose sensitive
+set is open-ended; pick `redact:` for a type with two sensitive columns
+and many harmless ones.
+
+`deny_write: ["*"]` is shorthand for denying create, update and delete —
+"read-only client" should not take three lines.
+
+**An omitted axis is inherited**: the block does not narrow it. A
+baseline that only hides two fields stays two lines long instead of
+restating the schema.
+
+### Scopes re-open
+
+A scope grant lists what it hands back, in the allow spellings only. A
+deny inside a `scope_grants` block is a load error: a scope exists to
+re-open, and "re-open nothing" is what omitting it already says.
+
+`rela acl audit` flags a scope that re-opens something no baseline
+closes. That check earns its place because the symptom is invisible —
+the capability *is* present, so the scope looks like it works, right up
+until someone writes a second one that genuinely depended on a baseline
+closing something first.
+
+**A baseline denial is a default, not a floor.** Any scope naming a
+capability re-opens it, including one the baseline explicitly denied;
+there is no way to mark a denial un-carve-out-able. That is safe because
+the floor is the acting *user* — everything is still intersected with
+their own grants, so no scope reaches past what they hold. But read a
+baseline denial as "off unless a scope turns it on". If a capability
+must never reach a client class, do not write a scope grant naming it.
+
+### What it does not do
+
+- **`principal_type` and `scope` come only from a verified assertion.**
+  The same trust boundary as asserted roles, enforced by the type
+  system. See GUIDE-acl-security.
+- **stdio MCP is not covered.** It has no authentication at all, so
+  there is no verified claim to key on. This makes the *policy*
+  expressible; wiring `internal/mcp` through the read gate is
+  TKT-G3PPD.
+- **`Tool` is not a selector.** rela stamps it (`mcp`, `cli`,
+  `data-entry`), but the entry-point binary asserts it rather than an
+  IdP signing it. Mixing a spoofable key with signed claims in one
+  mechanism invites leaning on the weak one.
+- **Relation *meta* fields are not attenuated.** A ceiling's `visible:` /
+  `redact:` cover entity properties. Per-relation meta-field visibility
+  is a separate grant vocabulary (`relations:` on a role), and a client
+  ceiling has no equivalent — so a restricted client sees the same
+  relation meta a role grants it. Row-level `deny_read` still applies to
+  both endpoints, so a hidden entity's edges stay hidden.
+
+To see what a client actually gets, ask:
+
+```console
+$ rela acl map --principal alice --as app --scope rela.tickets.write
+Effective access for alice — verbs: read, create, update, delete
+  as client type "app" with scopes rela.tickets.write — the client_baselines ceiling is applied below.
+      person
+          read (all person): role hr [global]
+      ticket
+          read (all ticket): role hr [global]
+          update (all ticket): role hr [global]
+```
+
+Alice's own `hr` role also grants `create` and `delete` on tickets and
+`update` on people. They are absent here because the `apps` baseline
+denies writes and only `rela.tickets.write` was handed back.
+
 ## How to read a deny
 
 A `403` from a write looks like this on the wire:

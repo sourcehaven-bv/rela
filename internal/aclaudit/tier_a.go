@@ -21,6 +21,7 @@ func tierA(p *acl.Policy) []Finding {
 	f = append(f, checkDeadPermissions(p)...)       // A7
 	f = append(f, checkWildcardWriteSprawl(p)...)   // A9
 	f = append(f, checkNameWhitespace(p)...)        // A10
+	f = append(f, checkCeilings(p)...)              // A11 / A12 / A13
 	return f
 }
 

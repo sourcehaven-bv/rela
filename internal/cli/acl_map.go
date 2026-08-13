@@ -39,6 +39,47 @@ type ACLMapCmd struct {
 	Principal string `help:"Principal to map (a user entity ID, or the raw identifier — email/UPN — when principal_property is set). Omit to map EVERY principal (whole-graph inventory)." default:""`
 	Verb      string `help:"Restrict to one verb: read|create|update|delete. Omit for all four." enum:",read,create,update,delete" default:""`
 	Type      string `help:"Restrict to one entity type. Omit for all declared types." default:""`
+	As        string `help:"Map as a CLIENT of this principal_type (e.g. app, pat, service), applying the matching client_baselines ceiling. Requires --principal." default:""`
+	Scope     string `help:"Space- or comma-separated scopes the client presents, re-opening capability the baseline closed. Requires --as." default:""`
+}
+
+// clientView builds the attenuation view from --as/--scope. Returns an error
+// when the flags are combined in a way that would silently report the wrong
+// thing rather than what the operator asked for.
+func (c *ACLMapCmd) clientView() (aclmap.ClientView, error) {
+	as := strings.TrimSpace(c.As)
+	scopes := splitScopes(c.Scope)
+
+	// --as without --principal would be meaningless: the whole-graph inventory
+	// enumerates principals from the graph, and a client ceiling is a property
+	// of one caller's token. Silently ignoring it would print an unattenuated
+	// map under a flag that promised attenuation.
+	if strings.TrimSpace(c.Principal) == "" && (as != "" || len(scopes) > 0) {
+		return aclmap.ClientView{}, stderrors.New(
+			"--as/--scope describe one client's token, so they require --principal " +
+				"(the whole-graph map has no single caller to attenuate)")
+	}
+	// A scope re-opens what a baseline closed; with no baseline selected there
+	// is nothing to re-open, so this is almost certainly a mistake.
+	if as == "" && len(scopes) > 0 {
+		return aclmap.ClientView{}, stderrors.New(
+			"--scope requires --as: scopes re-open capability a client baseline closed, " +
+				"and without --as no baseline applies")
+	}
+	return aclmap.ClientView{PrincipalType: as, Scopes: scopes}, nil
+}
+
+// splitScopes accepts either the space-delimited form the `scope` claim uses
+// (RFC 6749 §3.3) or a comma-separated list, since a shell user typing a flag
+// will reach for either.
+func splitScopes(v string) []string {
+	fields := strings.FieldsFunc(v, func(r rune) bool {
+		return r == ' ' || r == ',' || r == '\t' || r == '\n'
+	})
+	if len(fields) == 0 {
+		return nil
+	}
+	return fields
 }
 
 // Run executes `rela acl map`. It dispatches to the per-principal view
@@ -53,12 +94,18 @@ func (c *ACLMapCmd) Run(ctx context.Context, svc *readServices) error {
 		return err
 	}
 
+	view, err := c.clientView()
+	if err != nil {
+		return err
+	}
+
 	entityTypes := svc.Meta.EntityTypes()
 	if strings.TrimSpace(c.Principal) == "" {
 		return c.runAll(ctx, engine, entityTypes)
 	}
 
-	result, err := engine.MapPrincipal(ctx, c.Principal, acl.Verb(c.Verb), c.Type, entityTypes)
+	result, err := engine.MapPrincipalAs(
+		ctx, c.Principal, acl.Verb(c.Verb), c.Type, entityTypes, view)
 	if err != nil {
 		return err
 	}
@@ -126,6 +173,18 @@ func writeMapText(r *aclmap.MapPrincipalResult) {
 		who = fmt.Sprintf("%s (%s)", r.Principal, r.Raw)
 	}
 	out.WriteMessage("Effective access for %s — verbs: %s", who, joinVerbs(r.Verbs))
+
+	// Name the client this map describes. Without it the artifact is
+	// ambiguous: the same principal produces different maps through different
+	// clients, and a reader who assumed "Alice's access" would draw the wrong
+	// conclusion from an attenuated one.
+	if r.As != "" {
+		line := `  as client type "` + r.As + `"`
+		if len(r.Scopes) > 0 {
+			line += " with scopes " + strings.Join(r.Scopes, " ")
+		}
+		out.WriteMessage("%s — the client_baselines ceiling is applied below.", line)
+	}
 
 	if r.EveryoneOnly {
 		out.WriteMessage("  Only the built-in everyone baseline — no assigned, group, or graph-conferred access.")

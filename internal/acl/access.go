@@ -225,12 +225,25 @@ func (r *Request) grantingAttributions(
 ) []RoleAttribution {
 	attrs := r.ForEntity(ctx, entityType, entityID)
 	op, isWrite := verb.op()
+
+	// An attestation tool must report EFFECTIVE access, so the client ceiling
+	// applies here exactly as it does at runtime. Reporting the un-attenuated
+	// role set would tell an operator a restricted client can do something it
+	// cannot — the worst error class for a tool whose whole job is answering
+	// "who can do what".
+	if isWrite && !r.ceiling.permitsVerb(op, entityType) {
+		return nil
+	}
+	if !isWrite && !r.ceiling.permitsRead(entityType) {
+		return nil
+	}
+
 	var out []RoleAttribution
 	for _, a := range attrs {
 		if a.Role == EveryoneRole {
 			continue
 		}
-		role, ok := r.d.policy.Roles[a.Role]
+		role, ok := r.roleFor(a.Role)
 		if !ok {
 			continue
 		}
