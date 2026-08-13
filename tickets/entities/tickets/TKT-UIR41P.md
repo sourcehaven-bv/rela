@@ -167,6 +167,52 @@ fail loud rather than silently serve the graph to anyone who can reach the port
 RR-NSUN49). Whole-graph `analyze_*` tools are excluded remotely or gated
 (RR-B7ZHYO); whichever, it is test-pinned.
 
+## PR 1 (SDK migration, stdio-only) — DONE
+
+Landed as two commits on `tkt-uir41p-mcp-sdk-migration`:
+
+1. `test(mcp): freeze pre-migration goldens` — captured `tools/list` (26 tools,
+   full schemas + descriptions) and one representative `tools/call` result per
+   tool **from the mark3labs binary**, committed before any migration code, so
+   the migration diffs against a frozen artifact rather than a co-edited test.
+   Determinism required pinning the fixture titles (`testutil.EntityFor` seeds
+   random ones) and normalizing `create_entity`'s minted id.
+2. `refactor(mcp): migrate to modelcontextprotocol/go-sdk v1.7.0`.
+
+**AC #6 outcome: better than required.** The criterion was relaxed to
+"semantically equivalent with a documented diff" because reflected schemas were
+expected to change the wire format. In the event there is **no diff at all** —
+both goldens pass byte-identically. The reason: rather than adopt the go-sdk's
+generic `AddTool[In, Out]` (which would have reflected new schemas from struct
+tags AND changed error-result semantics in the same step), the migration keeps
+the builder-style specs and explicit result envelopes behind three small shims —
+`toolspec.go` (emits the same `inputSchema` JSON), `result.go` (the two result
+helpers, 117 call sites), `request.go` (the argument accessors, reproducing the
+old error strings verbatim). Moving to typed `In` structs is a worthwhile
+follow-up, but it is a separate, independently reviewable change.
+
+**Verification:** full `go test ./...` green; `-race` green; `just lint` 0
+issues; `just arch-lint` OK (vendor alias repointed); coverage for
+`internal/mcp` **rose 56% → 66.4%** against a floor of 50, so risk R3 did not
+materialize. Manually smoke-tested the real `rela mcp` binary over stdio
+against the live `tickets/` project: `initialize` negotiates, `show_entity`
+returns this ticket, `tools/list` returns 26 tools.
+
+**Documented behavior delta (one).** The file watcher no longer emits
+`notifications/resources/list_changed`. The go-sdk fires that automatically when
+the resource *set* changes and exposes no ad-hoc send; rela's watcher signals
+that resource *contents* changed, which is a different event. The resource set
+here is static (one resource + two URI templates), so the callback now just
+logs. Clients re-read on demand and see fresh data. This also pre-empts the
+stateless-transport constraint documented below, and is recorded in
+`internal/mcp/server.go`.
+
+Also of note for PR 2: the go-sdk's middleware is **method-level**
+(`AddReceivingMiddleware`) rather than tool-level, so the principal stamp now
+also covers resource and prompt handlers — which previously ran with **no**
+principal on the ctx at all. That is a strict improvement and directly relevant
+to RR-CFFL52 / RR-NSUN49.
+
 ## Spec revision 2026-07-28 — verified findings
 
 Researched and **verified against the module proxy and module cache**, not just
