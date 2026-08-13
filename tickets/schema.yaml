@@ -84,7 +84,7 @@ types:
   idea_value:
     values: [nice-to-have, useful, valuable, critical]
   ticket_tag:
-    values: [good-first, needs-investigation, needs-design, tech-debt, regression, blocked-upstream]
+    values: [good-first, needs-investigation, needs-design, tech-debt, regression, blocked-upstream, security]
 entities:
   # ===================
   # Architecture
