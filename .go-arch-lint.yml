@@ -90,6 +90,7 @@ components:
   filter:           { in: internal/filter }
   propmatch:        { in: internal/propmatch }
   userstate:        { in: internal/userstate }
+  nextaction:       { in: internal/nextaction }
   memuserstate:     { in: internal/userstate/memuserstate }
   pattern:          { in: internal/pattern }
   search:           { in: internal/search }
@@ -717,6 +718,15 @@ deps:
   # graph" shortcut the design rejects.
   memuserstate:
     mayDependOn:
+      - userstate
+  # nextaction is the resolution engine. It depends on NO store, searcher or
+  # ACL type: candidates arrive through a consumer-side CandidateFunc that the
+  # wiring site supplies already read-gated. That is what keeps the engine
+  # testable without a graph, and what stops read-path ACL leaking in here.
+  nextaction:
+    mayDependOn:
+      - dataentryconfig
+      - entity
       - userstate
   # propmatch is a PURE LEAF (stdlib only) on purpose — it is imported by
   # both filter (a branch) and the store layer, so anything added to it
