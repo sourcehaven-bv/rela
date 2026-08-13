@@ -22,6 +22,14 @@ export interface Config {
   navigation: NavigationEntry[]
   documents?: Record<string, DocumentConfig>
   apps?: Record<string, AppEntry>
+  /**
+   * Operator-declared priority tiers for next-action suggestions, so the UI
+   * can label a band rather than echo a raw id. The SOURCES are deliberately
+   * absent: a suggestion arrives fully resolved from /_next_action, and
+   * serving the rules would invite a client-side re-implementation of the
+   * engine (same reasoning as "no useACL() composable").
+   */
+  next_action_bands?: NextActionBand[]
 }
 
 /** A custom app surfaced in the SPA (HTML fetched from /api/v1/_apps/{id}). */
@@ -378,6 +386,57 @@ export interface DashboardResponse {
   description?: string
   cards: DashboardCard[]
 }
+
+/**
+ * One priority tier, declared by the operator. List order IS priority order.
+ * Served by /_config so the UI can label a band rather than echo a raw id.
+ */
+export interface NextActionBand {
+  id: string
+  label?: string
+}
+
+/**
+ * One affordance on a suggestion: a discriminated union where exactly one of
+ * action/set/navigate/snooze/dismiss/acknowledge is set. The server validates
+ * that invariant, so the UI can switch on whichever field is present.
+ */
+export interface NextActionOffer {
+  label?: string
+  action?: string
+  set?: Record<string, string>
+  confirm?: boolean
+  navigate?: string
+  snooze?: string[]
+  dismiss?: boolean
+  acknowledge?: boolean
+}
+
+/**
+ * The one suggestion to show. Arrives FULLY RESOLVED — message already
+ * interpolated, affordances attached — so the UI renders it rather than
+ * re-deriving anything. The rules themselves are deliberately not served.
+ */
+export interface NextActionSuggestion {
+  source: string
+  band: string
+  entity_id?: string
+  /**
+   * Opaque key component from the source's key_props. Echo it back verbatim
+   * on feedback — it is part of the suggestion key, so omitting it stores a
+   * snooze under a key the server never checks.
+   */
+  variant?: string
+  message: string
+  actions?: NextActionOffer[]
+}
+
+export interface NextActionResponse {
+  suggestion: NextActionSuggestion | null
+}
+
+/** How a user answered a suggestion. */
+export type NextActionFeedbackKind = 'snooze' | 'dismiss' | 'mute' | 'unmute' | 'shown'
 
 export interface AnalyzeIssue {
   entityId: string

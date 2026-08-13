@@ -14,6 +14,7 @@ import type {
   ViewConfig,
   KanbanConfig,
   DashboardResponse,
+  NextActionBand,
   NavigationEntry,
   AppConfig,
   AppEntry,
@@ -37,6 +38,11 @@ export const useSchemaStore = defineStore('schema', () => {
   // `dashboard:` block on `/_config` (TKT-53KICM). Cards the caller cannot use
   // are already omitted server-side; never re-derive visibility here.
   const dashboard = ref<DashboardResponse | undefined>(undefined)
+  // Operator-declared priority tiers for next-action suggestions, so the UI can
+  // label a band rather than echo a raw id. The SOURCES are deliberately not
+  // served: a suggestion arrives fully resolved, and shipping the rules would
+  // invite a client-side re-implementation of the engine.
+  const nextActionBands = ref<NextActionBand[]>([])
   const navigation = ref<NavigationEntry[]>([])
   const app = ref<AppConfig>({ name: 'rela' })
   // The deployment description for the global "About" help (TKT-DUQBD0): the
@@ -285,6 +291,7 @@ export const useSchemaStore = defineStore('schema', () => {
       // From /_dashboard, NOT configData.dashboard: the latter is the
       // unfiltered config block every principal receives.
       dashboard.value = dashboardData
+      nextActionBands.value = configData.next_action_bands || []
       navigation.value = configData.navigation || []
 
       // Apply palette if present
@@ -340,6 +347,7 @@ export const useSchemaStore = defineStore('schema', () => {
     apps,
     actions,
     dashboard,
+    nextActionBands,
     navigation,
     app,
     aboutDescription,

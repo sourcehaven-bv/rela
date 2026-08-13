@@ -38,11 +38,18 @@ type nextActionResponse struct {
 
 // nextActionWire is one suggestion as the SPA sees it.
 type nextActionWire struct {
-	Source   string                            `json:"source"`
-	Band     string                            `json:"band"`
-	EntityID string                            `json:"entity_id,omitempty"`
-	Message  string                            `json:"message"`
-	Actions  []dataentryconfig.NextActionOffer `json:"actions,omitempty"`
+	Source   string `json:"source"`
+	Band     string `json:"band"`
+	EntityID string `json:"entity_id,omitempty"`
+	// Variant carries the source's key_props values. The client MUST echo it
+	// back on feedback: it is part of the suggestion key, so a snooze stored
+	// without it lands under a different key than the one Resolve checks and
+	// silently fails to suppress anything.
+	//
+	// Opaque to the client — it exists to be returned verbatim, not parsed.
+	Variant string                            `json:"variant,omitempty"`
+	Message string                            `json:"message"`
+	Actions []dataentryconfig.NextActionOffer `json:"actions,omitempty"`
 }
 
 // nextActionFeedbackRequest is the body of POST /api/v1/_next_action.
@@ -102,6 +109,7 @@ func (a *App) handleV1NextActionGet(w http.ResponseWriter, r *http.Request) {
 		Source:   sug.Source,
 		Band:     sug.Band,
 		EntityID: sug.EntityID,
+		Variant:  sug.Key.Variant,
 		Message:  sug.Message,
 		Actions:  sug.Actions,
 	}})

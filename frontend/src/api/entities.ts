@@ -8,6 +8,8 @@ import type {
   Template,
   RelationEntry,
   ModernRelationsField,
+  NextActionResponse,
+  NextActionFeedbackKind,
 } from '@/types'
 import { warnIfMissingActions } from '@/utils/affordancesWarning'
 
@@ -320,3 +322,29 @@ export async function deleteRelation(
   return api.delete(`/${getPlural(type)}/${entityId}/relations/${relationName}/${targetId}${query}`)
 }
 
+
+/**
+ * Fetch the single advisory suggestion to show now, or null when nothing is
+ * owed. A null suggestion is the NORMAL, frequent answer for a well-configured
+ * system — not an error, and not an empty state worth apologising for.
+ */
+export async function getNextAction(signal?: AbortSignal): Promise<NextActionResponse> {
+  return api.get<NextActionResponse>('/_next_action', undefined, signal)
+}
+
+/**
+ * Record how the user answered a suggestion.
+ *
+ * `shown` is sent when the suggestion is actually displayed, which is what
+ * starts its cooldown — the GET deliberately does not, so a prefetch or a
+ * discarded response cannot silently consume the suggestion.
+ */
+export async function sendNextActionFeedback(body: {
+  source: string
+  entity_id?: string
+  variant?: string
+  kind: NextActionFeedbackKind
+  duration?: string
+}): Promise<void> {
+  await api.post('/_next_action', body)
+}

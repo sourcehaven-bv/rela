@@ -341,3 +341,40 @@ func TestNextAction_CountUngatedIsOptIn(t *testing.T) {
 	require.Equal(t, http.StatusOK, code)
 	require.Nil(t, bobGot.Suggestion, "count_ungated asks the whole-graph question")
 }
+
+// TestNextAction_VariantRoundTrips is the regression guard for a bug found in
+// the browser: a source with key_props builds a suggestion key containing a
+// Variant, but the GET response omitted it, so a client echoing back only
+// (source, entity_id) stored its snooze under a DIFFERENT key. The POST
+// returned 204 and the suggestion kept reappearing — a silent no-op.
+//
+// The round trip is the contract: whatever identifies the suggestion on the
+// way out must be sufficient to suppress it on the way back in.
+func TestNextAction_VariantRoundTrips(t *testing.T) {
+	app := newTestAppV1(t)
+	seedNextActionTickets(t, app, "TKT-001")
+	withNextActions(t, app,
+		[]dataentryconfig.NextActionBand{{ID: "stalled"}},
+		map[string]dataentryconfig.NextActionSource{
+			"tickets": {
+				Band:     "stalled",
+				Query:    "type:ticket",
+				Suggest:  "{id}",
+				KeyProps: []string{"status"},
+			},
+		})
+
+	got, _ := getNextAction(aliceCtx(), t, app)
+	require.NotNil(t, got.Suggestion)
+	require.NotEmpty(t, got.Suggestion.Variant,
+		"a source with key_props must expose the variant, or feedback cannot address the suggestion")
+
+	// Echo back exactly what the GET provided.
+	body := `{"source":"tickets","entity_id":"` + got.Suggestion.EntityID +
+		`","variant":"` + got.Suggestion.Variant + `","kind":"snooze","duration":"7d"}`
+	require.Equal(t, http.StatusNoContent, postFeedback(aliceCtx(), t, app, body))
+
+	after, _ := getNextAction(aliceCtx(), t, app)
+	require.Nil(t, after.Suggestion,
+		"echoing the full key back must actually suppress the suggestion")
+}
