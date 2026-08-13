@@ -64,6 +64,7 @@ func TestRouterWalk_AllAPIRoutesReachHandlers(t *testing.T) {
 		{http.MethodGet, "/api/v1/_search?q=ticket", 0},
 		{http.MethodGet, "/api/v1/_position?type=ticket&id=TKT-001", 0},
 		{http.MethodGet, "/api/v1/_analyze", 0},
+		{http.MethodGet, "/api/v1/_next_action", http.StatusOK}, // no sources configured → empty suggestion
 		{http.MethodGet, "/api/v1/_git/status", 0},
 		{http.MethodPost, "/api/v1/_git/sync", 0},
 		{http.MethodGet, "/api/v1/_settings", 0},

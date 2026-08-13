@@ -322,6 +322,11 @@ deps:
       - dataentryconfig
   dataentry:
     mayDependOn:
+      # The next-action engine and its per-user state. dataentry supplies the
+      # ACL-gated CandidateFunc; it does NOT choose a userstate backend —
+      # that is a wiring-site decision, like the store backend.
+      - nextaction
+      - userstate
       - acl
       - affordances
       - apiwire
