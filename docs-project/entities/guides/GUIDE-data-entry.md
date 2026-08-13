@@ -1376,6 +1376,50 @@ dashboard:
 | `columns` | list   | Column definitions (`table` mode only, same format as list columns) |
 | `sort`    | object | Sort order (`table` mode only)                                     |
 | `limit`   | int    | Maximum rows to display (`table` mode only)                        |
+| `permission` | string | Hide this card from principals who do not hold the named ACL permission |
+
+### Hiding cards a user cannot use (`permission`)
+
+A card carrying a `permission:` is omitted from the dashboard for principals
+who do not hold it:
+
+```yaml
+dashboard:
+  cards:
+    - title: "Open Tickets"        # everyone sees this
+      query: "type:ticket status:open"
+      display: count
+
+    - title: "Audit Log"           # only holders of admin:read
+      query: "type:audit-entry"
+      display: table
+      permission: admin:read
+      columns:
+        - property: title
+```
+
+**This is a UX filter, not an access control.** Card data already flows through
+the ACL-scoped search path, so a principal who cannot read the matching
+entities already sees a card reading `0` or an empty table — `permission:`
+just stops rendering that useless tile. Hiding a card grants and revokes
+nothing: its query typed into the search page returns exactly the rows it
+always did. Nor does it conceal configuration — `/api/v1/_config` still serves
+the whole `dashboard:` block, `permission:` values included, to every
+principal. Only `/api/v1/_dashboard` is filtered.
+
+With no `acl.yaml`, and under `--read-only`, gated cards are **shown**: neither
+configures a permission model, so there is nothing to check. (`--read-only`
+restricts writes only; hiding read surfaces there would hide them from
+everyone, since the flag carries no identity.)
+
+When every card is filtered out, the dashboard renders an empty state — the
+same one shown when no cards are configured at all.
+
+> **Gotcha: permission names are not validated.** A typo like `admin:raed`
+> yields a card **nobody can see**, with no error and no warning at startup.
+> If a card has vanished, check it against the `permissions:` list on your
+> roles in `acl.yaml` first. This applies equally to `permission:` on
+> commands, documents, and navigation entries.
 
 ### Display Modes
 
