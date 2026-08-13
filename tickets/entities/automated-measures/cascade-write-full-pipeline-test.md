@@ -4,8 +4,8 @@ type: automated-measure
 title: 'Test: cascade-created entity re-checks validation/unique/transitions against POST-automation values'
 description: 'Pins that automation-set properties applied to a cascade-created entity (autocascade/runner.go:181-187 -> cascadeHost.WriteEntity) are re-validated before persisting: unique-constraint checks, metamodel validation, and state-machine enforcement against the POST-automation values. Mirrors the top-level create path (manager.go:456-476), which already re-checks uniques post-automation on the stated grounds that the create path ''must not be the weaker one''. NOTE: deliberately does NOT assert audit — the cascade create is already audited via recordCascade (cascadehost.go:62), and the absence of a second record on the property-set step is intentional (it would double-count one creation).'
 kind: test
-location: internal/entitymanager/ (new test alongside audit_durability_test.go) — to be created by BUG-KIMZRK
-status: proposed
+location: internal/entitymanager/cascade_recheck_test.go (TestCascadeWrite_UniqueRecheckedAfterAutomation, TestTopLevelCreate_UniqueRecheckedAfterAutomation, TestCascadeWrite_TransitionRecheckedAfterAutomation, TestCascadeWrite_ValidAutomationValueStillLands)
+status: active
 ---
 
 ## What it asserts

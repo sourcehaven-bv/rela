@@ -5,7 +5,13 @@ title: Cascade re-write skips post-automation validation/unique/transition re-ch
 description: 'CONFIRMED with a reproduction (2026-08-12). An on-create automation that sets a `unique: true` property on a CASCADE-created entity persists a duplicate silently — no error, empty AutomationErrors. The identical automation on a TOP-LEVEL create is correctly rejected, because manager.go:456-476 re-runs checkUniqueProperties against post-automation values while the cascade path (autocascade/runner.go:181-187 -> cascadeHost.WriteEntity) does not. Same metamodel, same automation, opposite outcomes. NOTE: this bug was originally filed with a much broader claim (unaudited/unauthorized write path) that turned out to be wrong — see the correction section. Audit and ACL are fine; the post-automation re-check gap is the whole defect.'
 priority: medium
 effort: s
-status: ready
+why1: An automation set a `unique:` property (and a state-machine value) on a cascade-created entity to an illegal value, and it persisted silently.
+why2: cascadeHost.WriteEntity wrote straight to the store with no constraint checks — it re-persists an entity after automation mutates it.
+why3: createCore ran its unique/transition/validation checks against the PRE-automation candidate; nothing re-examined the values automation introduced afterwards.
+why4: The re-check was added to the top-level create path (manager.go, 'the create path must not be the weaker one') but not to the cascade path, because the two apply automation results in different places and the fix was made at only one of them.
+why5: Nothing structurally couples 'automation mutated this entity' to 'therefore re-validate before persisting'. The obligation lived in a comment on one path rather than in a shared helper both paths must pass through, so the second site was easy to miss.
+prevention: 'Regression tests pin BOTH paths, deliberately including the top-level control case — the defect was an ASYMMETRY, so a cascade-only test would miss a future change that weakened both. Both re-checks were mutation-tested (removing either makes its test fail). Longer term the real fix is structural: a single apply-automation-results helper that both paths call, which re-validates as part of applying — see the follow-up note on the ticket.'
+status: review
 ---
 
 > **CORRECTION (2026-08-12).** As originally filed this bug was substantially
@@ -76,8 +82,8 @@ No audit gap. No ACL gap.
 Built as a throwaway probe against current `develop` (memstore, real engine +
 runner, no stubs). Metamodel: `persoon` with `email: {unique: true}`.
 
-Setup: seed `PERS-EXISTING` holding `taken@example.com`. Two automations —
-(1) creating a `ticket` cascades into creating a `persoon`; (2) on-create for
+Setup: seed `PERS-EXISTING` holding `taken@example.com`. Two automations — (1)
+creating a `ticket` cascades into creating a `persoon`; (2) on-create for
 `persoon` sets `email` to the value already taken.
 
 **Cascade path — constraint bypassed:**
@@ -130,8 +136,8 @@ would pin a false expectation).
 
 Start from the reproduction above — it is the regression test, minus the
 `t.Logf` scaffolding. Keep the top-level control case alongside it: the bug is
-an *asymmetry*, so a test that only exercises the cascade path would not catch
-a future regression that weakened both.
+an *asymmetry*, so a test that only exercises the cascade path would not catch a
+future regression that weakened both.
 
 ---
 
