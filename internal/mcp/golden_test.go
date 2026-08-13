@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -15,20 +16,24 @@ import (
 // Golden artifacts for the go-sdk migration (TKT-UIR41P, PR 1).
 //
 // AC #6 asks that `rela mcp` stay semantically equivalent across the move from
-// mark3labs/mcp-go to modelcontextprotocol/go-sdk. Literal byte-identity is
-// impossible — the go-sdk reflects input schemas from struct tags and uses a
-// different error-result convention — so the criterion is "semantically
-// equivalent, with a documented diff".
+// mark3labs/mcp-go to modelcontextprotocol/go-sdk. The criterion was written as
+// "semantically equivalent, with a documented diff", on the assumption that the
+// go-sdk's reflected input schemas and different error-result convention would
+// force a wire change.
+//
+// OUTCOME: no diff. The migration kept the hand-built schema shape (toolspec.go)
+// and the explicit result envelope (result.go) instead of adopting the reflected
+// generic AddTool, so both artifacts below are byte-identical pre- and
+// post-migration. That is a stronger result than AC #6 required.
 //
 // A test that is rewritten alongside the code it guards is not a regression
-// net: both sides move together and the diff hides. So these goldens are
+// net: both sides move together and the diff hides. So these goldens were
 // captured from the PRE-migration binary and committed BEFORE the migration
-// starts. Afterwards the same test replays them and reports a structured diff,
-// which a human reads once and signs off — rather than silently re-recording.
+// started, in their own commit.
 //
 // Regenerate deliberately (and only when the diff has been reviewed):
 //
-//	go test ./internal/mcp -run TestGolden -update
+//	UPDATE_GOLDEN=1 go test ./internal/mcp -run TestGolden
 //
 // The two artifacts live in testdata/:
 //
@@ -169,11 +174,10 @@ func captureToolsList(t *testing.T) []goldenTool {
 // TestGolden_ToolsList pins the wire-visible tool contract: names,
 // descriptions and input schemas.
 //
-// Post-migration this is the test that will fail, and that failure is
-// EXPECTED: reflected schemas differ from hand-built ones in field ordering,
-// `required`, and `additionalProperties`. The point is that the diff is
-// surfaced for review instead of passing unnoticed. Document the accepted
-// delta on the ticket before regenerating.
+// This passed unchanged across the go-sdk migration, which is the evidence
+// for AC #6 on the schema side. A failure here means a tool's public contract
+// moved: review the diff and record the accepted delta on the ticket before
+// regenerating, never regenerate to make it green.
 func TestGolden_ToolsList(t *testing.T) {
 	t.Parallel()
 
@@ -184,7 +188,7 @@ func TestGolden_ToolsList(t *testing.T) {
 	}
 
 	want := readGolden(t, goldenToolsList)
-	if string(got) != string(normalizeTrailingNewline(want)) {
+	if !bytes.Equal(got, normalizeTrailingNewline(want)) {
 		t.Errorf("tools/list differs from the committed golden.\n"+
 			"This is expected after the go-sdk migration (reflected schemas differ from\n"+
 			"hand-built ones). Review the diff, record the accepted delta on TKT-UIR41P,\n"+
@@ -230,7 +234,7 @@ func TestGolden_ToolCalls(t *testing.T) {
 	}
 
 	want := readGolden(t, goldenToolCalls)
-	if string(got) != string(normalizeTrailingNewline(want)) {
+	if !bytes.Equal(got, normalizeTrailingNewline(want)) {
 		t.Errorf("tools/call results differ from the committed golden.\n"+
 			"Unlike the schema diff, a change here is a BEHAVIORAL regression and should\n"+
 			"be treated as a bug in the migration until proven otherwise.\n\n--- got ---\n%s", got)

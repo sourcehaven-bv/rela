@@ -25,8 +25,7 @@ import (
 	"errors"
 	"log/slog"
 
-	mcpgo "github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
@@ -116,7 +115,7 @@ type Watcher interface {
 //
 //plimsoll:max-methods=48
 type Server struct {
-	mcp       *server.MCPServer
+	mcp       *mcpgo.Server
 	deps      Deps
 	logger    *slog.Logger
 	principal principal.Principal
@@ -134,18 +133,23 @@ func WithPrincipal(p principal.Principal) Option {
 	return func(s *Server) { s.principal = p }
 }
 
-// principalMiddleware is the mcp-go ToolHandlerMiddleware that
-// stamps the server's Principal on every tool ctx. Registered once
-// in NewServer via server.WithToolHandlerMiddleware so no per-handler
-// opt-in is required (CLAUDE.md: "make the wrong thing impossible to
-// write" — a new write tool added to the server inherits the stamp
-// automatically).
+// principalMiddleware stamps the server's Principal on every inbound
+// request ctx. Registered once in NewServer via AddReceivingMiddleware
+// so no per-handler opt-in is required (CLAUDE.md: "make the wrong thing
+// impossible to write" — a new write tool added to the server inherits
+// the stamp automatically).
+//
+// The go-sdk's middleware is method-level rather than tool-level, so
+// unlike the previous ToolHandlerMiddleware this also covers resource
+// and prompt handlers. That is a strict improvement: those surfaces
+// read the graph too (see RR-CFFL52 / RR-NSUN49) and previously ran
+// with no principal on the ctx at all.
 //
 // NewServer guarantees s.principal is non-zero by the time this
 // middleware is registered, so there's no "no Principal" branch here.
-func (s *Server) principalMiddleware(next server.ToolHandlerFunc) server.ToolHandlerFunc {
-	return func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-		return next(principal.With(ctx, s.principal), req)
+func (s *Server) principalMiddleware(next mcpgo.MethodHandler) mcpgo.MethodHandler {
+	return func(ctx context.Context, method string, req mcpgo.Request) (mcpgo.Result, error) {
+		return next(principal.With(ctx, s.principal), method, req)
 	}
 }
 
@@ -170,27 +174,26 @@ func NewServer(deps Deps, version string, opts ...Option) (*Server, error) {
 		return nil, err
 	}
 
-	mcpServer := server.NewMCPServer(
-		"rela",
-		version,
-		server.WithToolCapabilities(true),
-		server.WithResourceCapabilities(false, true),
-		server.WithPromptCapabilities(true),
-		server.WithRecovery(),
-		server.WithToolHandlerMiddleware(s.principalMiddleware),
-		server.WithInstructions(
-			"rela is a schema-driven entity-graph platform. The domain is defined by a "+
-				"YAML metamodel (entity types, relation types, properties, validation rules); "+
-				"entities and relations are stored as markdown files with YAML frontmatter. "+
-				"Traceability is one common use case, not the only one — the graph can model "+
-				"requirements, compliance controls, project plans, issue trackers, "+
-				"knowledge bases, or any typed-entity-and-relation domain. "+
-				"Use tools to query, create, update, and delete entities and relations. "+
+	// Capabilities are inferred by the go-sdk from the features actually
+	// registered below (tools/resources/prompts each gain listChanged when
+	// the first one is added), so there is no explicit With*Capabilities
+	// equivalent to carry over.
+	mcpServer := mcpgo.NewServer(
+		&mcpgo.Implementation{Name: "rela", Version: version},
+		&mcpgo.ServerOptions{
+			Instructions: "rela is a schema-driven entity-graph platform. The domain is defined by a " +
+				"YAML metamodel (entity types, relation types, properties, validation rules); " +
+				"entities and relations are stored as markdown files with YAML frontmatter. " +
+				"Traceability is one common use case, not the only one — the graph can model " +
+				"requirements, compliance controls, project plans, issue trackers, " +
+				"knowledge bases, or any typed-entity-and-relation domain. " +
+				"Use tools to query, create, update, and delete entities and relations. " +
 				"Use resources to read entity and metamodel data directly.",
-		),
+		},
 	)
 
 	s.mcp = mcpServer
+	s.mcp.AddReceivingMiddleware(s.principalMiddleware)
 
 	s.registerTools()
 	s.registerResources()
@@ -199,26 +202,37 @@ func NewServer(deps Deps, version string, opts ...Option) (*Server, error) {
 	return s, nil
 }
 
-// Serve starts the MCP server on stdio.
-func (s *Server) Serve() error {
+// Serve starts the MCP server on stdio and blocks until the peer
+// disconnects or ctx is cancelled.
+func (s *Server) Serve(ctx context.Context) error {
 	s.logger.Info("starting rela MCP server on stdio")
 
 	// Start the file watcher; MCP only cares "something changed."
+	//
+	// Behavior change vs mark3labs (TKT-UIR41P, documented delta): the
+	// previous library exposed SendNotificationToAllClients, which this
+	// callback used to push notifications/resources/list_changed on every
+	// file change. The go-sdk has no equivalent — it emits list_changed
+	// automatically when the resource SET changes (AddResource /
+	// RemoveResources), which is a different event from "the contents
+	// behind a resource template changed", and offers no exported way to
+	// send an ad-hoc one.
+	//
+	// Resources here are a static list plus two URI templates, so the set
+	// never changes at runtime; only contents do. Rather than fake a
+	// set-change to trigger the notification, the callback now just logs.
+	// Clients re-read on demand and see fresh data, because every read
+	// goes to the store. The practical loss is that a client caching a
+	// resource list is not proactively invalidated — acceptable, and
+	// aligned with the direction of the 2026-07-28 spec, which requires an
+	// explicit subscriptions/listen opt-in for these notifications anyway.
 	if err := s.deps.Watcher.Start(func() {
 		s.logger.Info("graph re-synced from file changes")
-		if s.mcp != nil {
-			s.mcp.SendNotificationToAllClients(
-				mcpgo.MethodNotificationResourcesListChanged, nil,
-			)
-		}
 	}); err != nil {
 		s.logger.Warn("file watcher not started", "error", err)
 	}
 
 	defer s.deps.Watcher.Stop()
 
-	// mcp-go's WithErrorLogger expects a stdlib *log.Logger; bridge to slog
-	// so all output flows through the configured slog handler.
-	bridged := slog.NewLogLogger(s.logger.Handler(), slog.LevelError)
-	return server.ServeStdio(s.mcp, server.WithErrorLogger(bridged))
+	return s.mcp.Run(ctx, &mcpgo.StdioTransport{})
 }

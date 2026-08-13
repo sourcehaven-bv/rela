@@ -4,7 +4,7 @@ package mcp
 import (
 	"context"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
@@ -12,8 +12,8 @@ import (
 )
 
 func (s *Server) handleGetSchema(
-	_ context.Context, _ mcp.CallToolRequest,
-) (*mcp.CallToolResult, error) {
+	_ context.Context, _ *mcpgo.CallToolRequest,
+) (*mcpgo.CallToolResult, error) {
 	meta := s.deps.Meta
 	result := map[string]any{
 		"version":   meta.GetVersion(),
@@ -28,14 +28,14 @@ func (s *Server) handleGetSchema(
 
 	text, err := marshalJSON(result)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
-	return mcp.NewToolResultText(text), nil
+	return textResult(text), nil
 }
 
 func (s *Server) handleListEntityTypes(
-	ctx context.Context, _ mcp.CallToolRequest,
-) (*mcp.CallToolResult, error) {
+	ctx context.Context, _ *mcpgo.CallToolRequest,
+) (*mcpgo.CallToolResult, error) {
 	type entityTypeInfo struct {
 		Name       string                           `json:"name"`
 		Label      string                           `json:"label"`
@@ -69,14 +69,14 @@ func (s *Server) handleListEntityTypes(
 
 	text, err := marshalJSON(result)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
-	return mcp.NewToolResultText(text), nil
+	return textResult(text), nil
 }
 
 func (s *Server) handleListRelationTypes(
-	ctx context.Context, _ mcp.CallToolRequest,
-) (*mcp.CallToolResult, error) {
+	ctx context.Context, _ *mcpgo.CallToolRequest,
+) (*mcpgo.CallToolResult, error) {
 	type relationTypeInfo struct {
 		Name        string   `json:"name"`
 		Label       string   `json:"label"`
@@ -115,7 +115,7 @@ func (s *Server) handleListRelationTypes(
 
 	text, err := marshalJSON(result)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
-	return mcp.NewToolResultText(text), nil
+	return textResult(text), nil
 }
