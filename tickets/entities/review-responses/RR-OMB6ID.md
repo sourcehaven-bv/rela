@@ -3,8 +3,9 @@ id: RR-OMB6ID
 type: review-response
 title: schema.StoreCounter hardcodes context.Background(), making ctx-resolving ACL wrappers inert — invalidates the plan's stated R2 mitigation
 finding: internal/schema/store_adapter.go:15 and :20 call sc.Store.CountEntities/CountRelations with context.Background(), discarding the request ctx. The whole plan rests on internal/visibility resolving the principal from ctx per call; on any collaborator that drops the ctx the gate sees no principal and the wrapper is inert. Narrowing Deps.Store therefore does NOT make analyze_schema safe, and ValidateRelationProperties additionally requires the wide concrete store.Store so the narrowing will not even compile without refactoring internal/schema.
-severity: critical
-status: open
+severity: minor
+resolution: 'Scope was overstated. internal/dataentry does NOT use schema.StoreCounter - it declares its own narrow ctx-taking interfaces (analyzeReader, relationCounter at analyze.go:32-41), which is the consumer-side-interface rule working as intended. StoreCounter has exactly two callers, both local/trusted: internal/mcp/tools_analysis.go:339 and internal/cli/analyze.go:670. So the context.Background() defect is confined to analyze_schema, which reports metamodel TYPE USAGE (counts per declared type), not entity rows - and type names are config, not secret, per CLAUDE.md. No broad internal/schema refactor is on the critical path. The CI check for context.Background() on gated read paths remains a good idea and is recorded as a follow-up suggestion.'
+status: addressed
 ---
 
 ## Finding

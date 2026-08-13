@@ -147,10 +147,15 @@ schemas from struct tags and uses a different error-result convention, so
 `tools/list` output necessarily differs.) Verified against golden `tools/list` +
 representative `tools/call` outputs captured from the CURRENT binary and
 committed **before** the migration starts.
-7. **No Lua executes on the remote transport** — not merely "`lua_*` absent from
-`tools/list`". Note `analyze_validations` runs operator-authored `lua_file:`
-rules on the read path (RR-H7DFZ5), so the weaker phrasing would pass while the
-claim is false.
+7. `lua_eval` / `lua_run` / `lua_list` are **absent from the remote tool list**,
+pinned by a test; stdio still exposes them.
+
+   Deliberately NOT extended to "no Lua executes remotely": `analyze_validations`
+   runs operator-authored `lua_file:` validation rules, and that is fine. The
+   CLAUDE.md "don't run user-supplied Lua on the read path" rule targets
+   unbounded per-record work on hot list views — not a bounded validation run the
+   caller explicitly asked for. What must be fixed there is the *candidate set*,
+   which is currently ungated (RR-H7DFZ5).
 8. The server implements `server/discover` and negotiates protocol revision
 `2026-07-28`.
 9. An unauthenticated request to `/api/v1/_mcp` returns 401 with a
@@ -162,10 +167,13 @@ The CSRF exemption the endpoint needs is only sound while the JWT gate is
 active; header-identity mode fails open to `unknown`, so the combination must
 fail loud rather than silently serve the graph to anyone who can reach the port
 (same posture as `validateIdentityFlags`).
-11. Read gating covers **all four** read surfaces — tools, resources
-(`rela://…`), prompts, and export — not just tool handlers (RR-CFFL52,
-RR-NSUN49). Whole-graph `analyze_*` tools are excluded remotely or gated
-(RR-B7ZHYO); whichever, it is test-pinned.
+11. Read gating covers **all** read surfaces — tools, resources (`rela://…`),
+prompts, export, analyze, and the validator's candidate set — not just tool
+handlers (RR-CFFL52, RR-NSUN49, RR-H7DFZ5). The `analyze_*` tools are **gated,
+not excluded**: `internal/dataentry/analyze.go` already solved this
+(TKT-3FL2S6) by injecting a gated reader + gated tracer into `analyzeService`,
+so hidden entities never enter a check and counts reflect only the visible
+slice. MCP reuses that pattern rather than inventing one.
 
 ## PR 1 (SDK migration, stdio-only) — DONE
 

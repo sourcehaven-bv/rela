@@ -394,7 +394,11 @@ entity data and orphan lists directly into text handed to an LLM. Gating tools
 and resources but not prompts leaves the leak intact in the least obvious place.
 *Resolution:* same injected gated reader/tracer.
 
-**D3 — the `analyze_*` tools aggregate over the WHOLE graph. (significant)**
+**D3 — SUPERSEDED. See D13 below: the analyze gating is already solved in-tree
+and should be reused, not worked around.**
+
+**D3 (original text, kept for the record) — the `analyze_*` tools aggregate
+over the WHOLE graph. (significant)**
 `analyze_unique` (`tools_analysis.go:171`) reports same-type entities sharing a
 property value — leaking both ids **and property values**. `analyze_cardinality`
 (`:108`), `analyze_properties` (`:216`, `:239`) and `analyze_schema` (`:337`)
@@ -527,10 +531,70 @@ RR-B7ZHYO (significant), RR-P34E8J (significant), RR-OMB6ID (critical),
 RR-H7DFZ5 (critical), RR-FTJUUE (critical), RR-H8S10M (significant),
 RR-PQ5UN1 (significant). D5, D6 and D12 corrected inline.
 
-**Status: plan NOT ready for implementation of PR 2/3.** PR 1 may proceed once
-AC #6 is restated and goldens are frozen. The read-surface inventory must be
-rebuilt from `grep -rn 'deps\.\(Store\|Tracer\|Searcher\|Validator\)'
-internal/mcp/` across all surfaces, and effort re-estimated now that the
-`internal/schema` refactor is on the critical path.
+### D13 — the analyze gating is ALREADY SOLVED in-tree; reuse it (corrects D3)
+
+Raised by the ticket owner, and verified: the browser's `_analyze` endpoint is
+already principal-gated, so "whole-graph analysis" is a solved problem here, not
+a hard one.
+
+`analyzeService` (`internal/dataentry/analyze.go:53`) holds:
+
+```go
+type analyzeService struct {
+    reads     analyzeReader     // GATED per requesting principal (TKT-3FL2S6)
+    relCounts relationCounter   // raw; structural counts, cannot leak
+    tracer    tracer.Tracer     // the gated decorator
+    validator validator.Validator
+}
+```
+
+Every check re-loads each candidate through the gated `reads` before it can
+become an issue — `analyzeOrphans` (`:150-166`) carries an explicit comment
+warning *not* to emit an issue straight from an orphan id, because that would
+reopen the leak TKT-3FL2S6 closed. `handleV1Analyze` (`api_v1.go:1412-1419`)
+then needs **no post-hoc output filter**: the issues already are the requester's
+visible slice. Pinned by `TestACLAnalyze_*` in `acl_analyze_test.go`, including
+the readable-but-redacted-primary-title case (BUG-R9EHKV) and an assertion that
+aggregate **counts** agree with the visible issue list.
+
+**So: gate the analyzers, don't exclude them.** MCP reuses this composition
+rather than inventing one. Under `NopACL` the gated handles are the raw ones, so
+stdio behavior is unchanged.
+
+**How `dataentry` sidesteps the ctx problem (D7/RR-OMB6ID), checked:** it does
+**not** use `schema.StoreCounter` at all. It declares its own narrow,
+ctx-taking consumer-side interfaces — `analyzeReader` (`GetEntity` +
+`ListEntities`) and `relationCounter` (`CountRelations`), `analyze.go:32-41` —
+and notes that `relCounts` is raw on purpose because a structural relation count
+cannot leak. That is the CLAUDE.md consumer-side-interface rule doing exactly
+its job, and it is the shape MCP should copy.
+
+So `schema.StoreCounter` has only two callers, both local/trusted surfaces:
+`internal/mcp/tools_analysis.go:339` and `internal/cli/analyze.go:670`. The
+`context.Background()` defect is therefore confined to **`analyze_schema`**,
+which reports metamodel *type usage* (counts per declared type) rather than
+reading entity rows. Options for PR 2, cheapest first: leave `analyze_schema`
+ungated and say so (type names are config, not secret — CLAUDE.md); or thread
+ctx through `TypeCounter`. **No broad `internal/schema` refactor is on the
+critical path** — that part of D7 was overstated.
+
+### D14 — Lua on the read path is fine (corrects the AC #7 tightening)
+
+Also from the ticket owner: the CLAUDE.md rule "don't run user-supplied Lua on
+the read path" targets **unbounded per-record work on hot list views**, not a
+bounded, operator-authored validation run the caller explicitly requested. So
+`analyze_validations` executing `lua_file:` rules is acceptable, and AC #7 goes
+back to its original meaning — no `lua_eval`/`lua_run`/`lua_list` remotely.
+
+The genuine half of RR-H7DFZ5 stands: the validator's **candidate set** is
+ungated (`mcp_wiring.go` passes `svc.Validator()` over the raw store), and
+`export` dumps the whole graph unfiltered. Both are fixed by the same injected
+gated reader.
+
+**Status: PR 1 COMPLETE** (see the ticket). PR 2 is now better-scoped than at
+first review: the pattern to copy exists, so the work is wiring MCP's `Deps` to
+gated handles across all surfaces (tools, resources, prompts, export, analyze,
+validator) plus the trace pre-flight fix (D9/RR-FTJUUE), not inventing gating.
+Re-estimate downward from the original XL.
 
 **Design Review Findings:** <!-- List review-response IDs, e.g., RR-xxxx -->

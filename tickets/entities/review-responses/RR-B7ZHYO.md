@@ -3,8 +3,9 @@ id: RR-B7ZHYO
 type: review-response
 title: analyze_* tools aggregate over the whole graph; schema helpers take wide store.Store and cannot accept a gated reader
 finding: analyze_unique (tools_analysis.go:171) leaks entity ids AND property values; analyze_cardinality (:108), analyze_properties (:216,:239) and analyze_schema (:337) enumerate or count the whole graph. schema.ValidateRelationProperties and schema.StoreCounter take the wide store.Store, so they cannot accept a narrowed gated read interface without change.
-severity: significant
-status: open
+severity: minor
+resolution: 'Overstated. The whole-graph analyze problem is already SOLVED in-tree by TKT-3FL2S6: analyzeService (internal/dataentry/analyze.go:53) takes a gated `reads` + gated `tracer` and every check re-loads through them, so hidden entities never enter a check and counts reflect only the visible slice. Pinned by TestACLAnalyze_* (acl_analyze_test.go) incl. the redacted-primary-title case (BUG-R9EHKV). MCP should reuse that pattern, not exclude the analyzers. The only genuinely remaining item is that schema.StoreCounter/ValidateRelationProperties take the wide store.Store and StoreCounter discards ctx (RR-OMB6ID) - that affects analyze_schema/analyze_properties specifically, not the analyzers as a class.'
+status: addressed
 ---
 
 ## Finding

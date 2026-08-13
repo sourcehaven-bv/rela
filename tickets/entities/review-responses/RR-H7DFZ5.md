@@ -3,8 +3,9 @@ id: RR-H7DFZ5
 type: review-response
 title: 'export and analyze_validations are ungated whole-graph reads; analyze_validations executes Lua on the read path despite AC #7''s Lua-free claim'
 finding: 'tools_export.go:34 dumps every entity with full properties and every relation via unfiltered ListEntities/ListRelations. tools_analysis.go:304 calls deps.Validator.CheckRule, whose candidate set is ungated AND which executes operator-authored lua_file: rules on the read path — so AC #7''s test (no lua_* in tools/list) passes while Lua still runs remotely. Deps.Validator was absent from the plan''s read inventory entirely.'
-severity: critical
-status: open
+severity: significant
+resolution: 'Split. (1) analyze_validations running Lua: NOT a problem - resolved by the ticket owner. The CLAUDE.md ''no user-supplied Lua on the read path'' rule targets unbounded per-record work on hot list views, not a bounded operator-authored validation run the caller explicitly requested. AC #7 is therefore reverted to its original, correct meaning: no lua_eval/lua_run/lua_list tools remotely. analyze_validations stays. (2) Its UNGATED candidate set is still real and stands: mcp_wiring passes svc.Validator() built over the raw store, where data-entry wires a per-principal gated EntityLister (TKT-3FL2S6). Fixed by reusing the analyzeService pattern. (3) export dumping the whole graph unfiltered also stands - must route through the gated reader.'
+status: addressed
 ---
 
 ## Finding
