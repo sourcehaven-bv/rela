@@ -39,6 +39,8 @@ the directory is served at `/_custom/<path>`, so your stylesheet can write:
 > a crude filename check, not a secrets scanner: `notes.md`, `backup.sql`,
 > `id_rsa` and editor backups like `custom.css~` are all served.
 
+---
+
 > **Read this before you start.**
 >
 > `custom.js` and `custom.css` run against rela's internal DOM. `<rela-slot>` is
