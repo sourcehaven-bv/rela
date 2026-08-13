@@ -10,6 +10,7 @@ exclude:
   - internal/entitymanager/entitymanagertest
   - internal/visibility/visibilitytest
   - internal/state/statetest
+  - internal/userstate/userstatetest
   - frontend
   - e2e
   - .claude
@@ -88,6 +89,8 @@ components:
   frontmatter:      { in: internal/frontmatter }
   filter:           { in: internal/filter }
   propmatch:        { in: internal/propmatch }
+  userstate:        { in: internal/userstate }
+  memuserstate:     { in: internal/userstate/memuserstate }
   pattern:          { in: internal/pattern }
   search:           { in: internal/search }
   bleveindex:       { in: internal/search/bleveindex }
@@ -708,6 +711,13 @@ deps:
     mayDependOn:
       - entity
       - markdown
+  # userstate is the per-user next-action state seam (snooze/mute/cooldown).
+  # Deliberately NOT dependent on store: this state is not graph content, and
+  # letting it reach the store would invite exactly the "just put it in the
+  # graph" shortcut the design rejects.
+  memuserstate:
+    mayDependOn:
+      - userstate
   # propmatch is a PURE LEAF (stdlib only) on purpose — it is imported by
   # both filter (a branch) and the store layer, so anything added to it
   # lands inside the store too. Do not give it dependencies.
