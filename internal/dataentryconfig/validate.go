@@ -35,6 +35,9 @@ var validTopLevelKeys = map[string]bool{
 	"actions":      true,
 	"navigation":   true,
 	"palette":      true,
+
+	"next_action_bands": true,
+	"next_actions":      true,
 }
 
 // Known typos with suggestions
@@ -139,6 +142,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateFeeds(cfg, meta)...)
 	errs = append(errs, validateCalDAV(cfg, meta)...)
 	errs = append(errs, validateStyles(cfg, meta)...)
+	errs = append(errs, validateNextActions(cfg, meta)...)
 	errs = append(errs, validateCrossReferences(cfg)...)
 
 	if len(errs) > 0 {
