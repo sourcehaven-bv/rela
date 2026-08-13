@@ -537,6 +537,7 @@ deps:
       - entity
       - metamodel
       - predicate
+      - predicatefns
       - principal
       - statemachine
   # Read-side ACL enforcement seam (DEC-ZBI39P): visibility wrappers over
