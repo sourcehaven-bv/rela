@@ -391,9 +391,18 @@ export interface DashboardResponse {
  * One priority tier, declared by the operator. List order IS priority order.
  * Served by /_config so the UI can label a band rather than echo a raw id.
  */
+/**
+ * How loudly a band interrupts. A closed vocabulary rather than styling
+ * knobs: the operator declares the volume, the UI decides what that looks
+ * like. Ordered by how much they interrupt.
+ */
+export type NextActionProminence = 'banner' | 'card' | 'inline' | 'whisper'
+
 export interface NextActionBand {
   id: string
   label?: string
+  /** Defaults to 'card' when unset. */
+  prominence?: NextActionProminence
 }
 
 /**

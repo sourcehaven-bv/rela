@@ -250,3 +250,53 @@ func TestValidateNextActions_CountIsValid(t *testing.T) {
 		t.Fatalf("count source reported errors: %v", errs)
 	}
 }
+
+func TestNextActionBand_ResolvedProminence(t *testing.T) {
+	tests := []struct {
+		name string
+		band NextActionBand
+		want NextActionProminence
+	}{
+		{"unset defaults to card", NextActionBand{ID: "b"}, ProminenceCard},
+		{"banner", NextActionBand{ID: "b", Prominence: ProminenceBanner}, ProminenceBanner},
+		{"inline", NextActionBand{ID: "b", Prominence: ProminenceInline}, ProminenceInline},
+		{"whisper", NextActionBand{ID: "b", Prominence: ProminenceWhisper}, ProminenceWhisper},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.band.Resolved(); got != tc.want {
+				t.Errorf("Resolved() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// An unknown prominence must be rejected, not silently defaulted: a band the
+// operator asked to be quiet would otherwise render at full volume with no
+// explanation.
+func TestValidateNextActions_RejectsUnknownProminence(t *testing.T) {
+	cfg := validNextActionConfig()
+	cfg.NextActionBands[0].Prominence = "shouty"
+
+	errs := validateNextActions(cfg, nil)
+	for _, e := range errs {
+		if strings.Contains(e, `unknown prominence "shouty"`) {
+			return
+		}
+	}
+	t.Errorf("expected an unknown-prominence error, got %v", errs)
+}
+
+func TestValidateNextActions_AcceptsEveryProminence(t *testing.T) {
+	for _, p := range []NextActionProminence{
+		"", ProminenceBanner, ProminenceCard, ProminenceInline, ProminenceWhisper,
+	} {
+		t.Run(string(p), func(t *testing.T) {
+			cfg := validNextActionConfig()
+			cfg.NextActionBands[0].Prominence = p
+			if errs := validateNextActions(cfg, nil); len(errs) > 0 {
+				t.Errorf("prominence %q rejected: %v", p, errs)
+			}
+		})
+	}
+}

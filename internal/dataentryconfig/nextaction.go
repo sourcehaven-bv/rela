@@ -44,6 +44,57 @@ type NextActionBand struct {
 	// Label is an optional human-readable name for operator-facing UI
 	// (a settings screen listing what can be muted). Empty falls back to ID.
 	Label string `yaml:"label,omitempty" json:"label,omitempty"`
+	// Prominence is how loudly this band interrupts. Empty means
+	// [ProminenceCard]. See [NextActionProminence].
+	Prominence NextActionProminence `yaml:"prominence,omitempty" json:"prominence,omitempty"`
+}
+
+// NextActionProminence is how visually invasive a band's suggestion is.
+//
+// A small CLOSED vocabulary rather than styling knobs, for the same reason
+// bands beat numeric priorities: the operator declares how loud a tier should
+// be, and the UI decides what that looks like. Exposing colors, borders and
+// placement instead would let every deployment invent its own visual language
+// and drift from the host UI — and would put the "is this urgent?" judgement
+// in a stylesheet rather than in the band list where it is reviewable.
+//
+// The levels are ordered by how much they interrupt, so a config reads as a
+// volume scale:
+//
+//	banner  — full-width, accented, at the top. For a band where someone else
+//	          is blocked; it should be hard to scroll past.
+//	card    — the default. A bounded box among the page's other content.
+//	inline  — one line, no chrome. Present but not competing.
+//	whisper — muted and small. For content and ambient sources, where being
+//	          noticed at all is optional.
+//
+// Deliberately no "modal" or "toast": both take the interaction away from the
+// user, and an advisory hint that demands dismissal before you can proceed is
+// no longer advisory.
+type NextActionProminence string
+
+const (
+	// ProminenceBanner is full-width and accented — hard to scroll past.
+	ProminenceBanner NextActionProminence = "banner"
+	// ProminenceCard is a bounded box. The DEFAULT for an unset band.
+	ProminenceCard NextActionProminence = "card"
+	// ProminenceInline is a single line with no surrounding chrome.
+	ProminenceInline NextActionProminence = "inline"
+	// ProminenceWhisper is muted and small, for ambient content.
+	ProminenceWhisper NextActionProminence = "whisper"
+)
+
+// Resolved returns the effective prominence, applying the default.
+//
+// Defaulting to card rather than the quietest level is deliberate: an operator
+// who has not thought about prominence has usually written a real suggestion,
+// and silently rendering it as a whisper would hide work they meant to
+// surface. Too loud is noticed and fixed; too quiet is not.
+func (b NextActionBand) Resolved() NextActionProminence {
+	if b.Prominence == "" {
+		return ProminenceCard
+	}
+	return b.Prominence
 }
 
 // NextActionSource is one rule producing at most one suggestion per entity.

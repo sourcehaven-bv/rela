@@ -15,20 +15,32 @@
 import { ref, computed, onMounted } from 'vue'
 import { getNextAction, sendNextActionFeedback } from '@/api'
 import { useSchemaStore } from '@/stores'
-import type { NextActionSuggestion, NextActionOffer } from '@/types'
+import type { NextActionSuggestion, NextActionOffer, NextActionProminence } from '@/types'
 
 const schemaStore = useSchemaStore()
 
 const suggestion = ref<NextActionSuggestion | null>(null)
 const busy = ref(false)
 
-/** Operator-supplied label for the suggestion's band, falling back to its id. */
-const bandLabel = computed(() => {
+/** The band definition backing the current suggestion, if declared. */
+const band = computed(() => {
   const s = suggestion.value
-  if (!s) return ''
-  const band = schemaStore.nextActionBands.find((b) => b.id === s.band)
-  return band?.label || s.band
+  if (!s) return undefined
+  return schemaStore.nextActionBands.find((b) => b.id === s.band)
 })
+
+/** Operator-supplied label for the suggestion's band, falling back to its id. */
+const bandLabel = computed(() => band.value?.label || suggestion.value?.band || '')
+
+/**
+ * How invasive this suggestion should look. Defaults to 'card' — matching the
+ * server-side default — so an operator who has not thought about prominence
+ * gets a visible suggestion rather than a hidden one.
+ */
+const prominence = computed<NextActionProminence>(() => band.value?.prominence || 'card')
+
+/** The band chip is noise on the quiet levels, where the text is the point. */
+const showBandLabel = computed(() => prominence.value === 'banner' || prominence.value === 'card')
 
 async function load() {
   try {
@@ -87,8 +99,13 @@ onMounted(load)
 </script>
 
 <template>
-  <section v-if="suggestion" class="next-action" aria-label="Suggested next action">
-    <div class="next-action__band">{{ bandLabel }}</div>
+  <section
+    v-if="suggestion"
+    class="next-action"
+    :class="`next-action--${prominence}`"
+    aria-label="Suggested next action"
+  >
+    <div v-if="showBandLabel" class="next-action__band">{{ bandLabel }}</div>
     <p class="next-action__message">{{ suggestion.message }}</p>
 
     <div class="next-action__offers">
@@ -149,12 +166,70 @@ onMounted(load)
 </template>
 
 <style scoped>
+/*
+ * Four prominence levels, differing in how much they interrupt. The shared
+ * rules hold layout; each modifier only adjusts weight, chrome and scale, so
+ * a new level means one block rather than a new component.
+ */
 .next-action {
+  margin-bottom: var(--space-4, 16px);
+}
+
+/* banner — full width, accented edge, hard to scroll past. For a band where
+   someone else is blocked. */
+.next-action--banner {
+  border: 1px solid var(--color-border);
+  border-left: 4px solid var(--color-primary, #3b82f6);
+  border-radius: var(--radius-md, 8px);
+  padding: var(--space-4, 16px);
+  background: var(--color-surface);
+}
+
+/* card — the default: a bounded box among the page's other content. */
+.next-action--card {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md, 8px);
   padding: var(--space-4, 16px);
-  margin-bottom: var(--space-4, 16px);
   background: var(--color-surface);
+}
+
+/* inline — present, not competing: one row, no surrounding chrome. */
+.next-action--inline {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3, 12px);
+  flex-wrap: wrap;
+  padding: var(--space-2, 8px) 0;
+}
+
+/* whisper — noticing it is optional. For content and ambient sources. */
+.next-action--whisper {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3, 12px);
+  flex-wrap: wrap;
+  padding: var(--space-1, 4px) 0;
+  opacity: 0.65;
+  font-size: var(--font-size-sm, 0.875rem);
+}
+
+/* Quiet levels put the message and its buttons on one line, so the message
+   takes the free space and the offers sit at the trailing edge. */
+.next-action--inline .next-action__message,
+.next-action--whisper .next-action__message {
+  margin: 0;
+  flex: 1 1 auto;
+}
+
+.next-action--inline .next-action__offers,
+.next-action--whisper .next-action__offers {
+  flex: 0 0 auto;
+}
+
+/* At whisper volume a mute button would out-shout the content it sits next
+   to; it stays reachable but drops the extra emphasis. */
+.next-action--whisper .next-action__mute {
+  margin-left: 0;
 }
 
 .next-action__band {
