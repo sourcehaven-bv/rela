@@ -51,7 +51,7 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
 </script>
 
 <template>
-  <div class="na-offers">
+  <div class="na-offers rela-na-offers">
     <template v-for="(offer, i) in actOffers" :key="i">
       <router-link
         v-if="offer.navigate"
@@ -82,7 +82,7 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
     <div ref="deferRef" class="na-defer">
       <button
         type="button"
-        class="na-defer__trigger"
+        class="na-defer__trigger rela-na-defer"
         :disabled="busy"
         aria-haspopup="menu"
         :aria-expanded="deferOpen"

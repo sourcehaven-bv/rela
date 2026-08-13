@@ -22,14 +22,27 @@ onMounted(loadOnce)
 <template>
   <section
     v-if="isPageLevel && suggestion"
-    class="na"
+    class="na rela-na"
     :class="`na--${prominence}`"
+    :data-band="suggestion.band"
+    :data-prominence="prominence"
+    :data-source="suggestion.source"
+    :data-entity-id="suggestion.entity_id"
     aria-label="Suggested next action"
   >
+    <!--
+      Tier-1 operator hook (docs/customisation.md). Inert unless custom.js
+      defines `rela-slot`; when it does, the operator owns the interior and
+      rela keeps `data-band` current so `attributeChangedCallback` can react —
+      e.g. swapping a character image per band. Placed FIRST so a definition
+      reads as a companion beside the message rather than an afterthought.
+    -->
+    <rela-slot name="companion" :data-band="suggestion.band" :data-prominence="prominence" />
+
     <!-- The band label is the "why am I seeing this?" answer, so the insistent
          tier states it and the quiet tier does not shout it. -->
-    <div v-if="prominence === 'banner'" class="na__band">{{ bandLabel }}</div>
-    <p class="na__message">{{ suggestion.message }}</p>
+    <div v-if="prominence === 'banner'" class="na__band rela-na-band">{{ bandLabel }}</div>
+    <p class="na__message rela-na-message">{{ suggestion.message }}</p>
     <NextActionOffers :offers="suggestion.actions || []" :entity-id="suggestion.entity_id" />
   </section>
 </template>
@@ -48,6 +61,15 @@ onMounted(loadOnce)
  */
 .na {
   margin-bottom: 16px;
+}
+
+/*
+ * The companion slot is inert by default: no box, no space taken, so a stock
+ * deployment renders exactly as if it were absent. An operator's custom.js
+ * gives it content and sizes it from custom.css.
+ */
+.na :deep(rela-slot) {
+  display: contents;
 }
 
 /* banner — deliberately hard to skim past. For onboarding and for work

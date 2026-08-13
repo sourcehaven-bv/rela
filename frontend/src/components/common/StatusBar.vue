@@ -84,8 +84,10 @@ async function handleSync() {
            viewports, so it never crowds the bar it lives in. -->
       <button
         v-if="naInStatusBar && naSuggestion"
-        class="status-item na-chip"
+        class="status-item na-chip rela-na-chip"
         :class="{ 'na-chip--open': naExpanded }"
+        :data-band="naSuggestion.band"
+        :data-source="naSuggestion.source"
         :title="naSuggestion.message"
         @click="naExpanded = !naExpanded"
       >
@@ -134,9 +136,18 @@ async function handleSync() {
          status bar is fixed and would clip it. -->
     <Teleport to="body">
       <div v-if="naExpanded && naSuggestion" class="na-pop-overlay" @click.self="naExpanded = false">
-        <div class="na-pop">
-          <div class="na-pop__band">{{ naBandLabel }}</div>
-          <p class="na-pop__message">{{ naSuggestion.message }}</p>
+        <div
+          class="na-pop rela-na"
+          :data-band="naSuggestion.band"
+          data-prominence="statusbar"
+          :data-source="naSuggestion.source"
+          :data-entity-id="naSuggestion.entity_id"
+        >
+          <!-- Same tier-1 hook as the page-level surface, so one custom.js
+               definition serves both without branching on where it rendered. -->
+          <rela-slot name="companion" :data-band="naSuggestion.band" data-prominence="statusbar" />
+          <div class="na-pop__band rela-na-band">{{ naBandLabel }}</div>
+          <p class="na-pop__message rela-na-message">{{ naSuggestion.message }}</p>
           <NextActionOffers
             :offers="naSuggestion.actions || []"
             :entity-id="naSuggestion.entity_id"
@@ -333,6 +344,10 @@ async function handleSync() {
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+
+.na-pop :deep(rela-slot) {
+  display: contents;
 }
 
 .na-pop__message {

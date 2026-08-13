@@ -19,6 +19,18 @@ const busy = ref(false)
 const expanded = ref(false)
 let loaded = false
 
+/**
+ * Reset the module singleton. Test-only: the state is deliberately shared
+ * across consumers for the whole session, so a suite without this would leak
+ * one test's suggestion into the next.
+ */
+export function __resetNextActionForTest() {
+  suggestion.value = null
+  busy.value = false
+  expanded.value = false
+  loaded = false
+}
+
 export function useNextAction() {
   const schemaStore = useSchemaStore()
 
