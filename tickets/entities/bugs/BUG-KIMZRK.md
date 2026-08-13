@@ -1,101 +1,103 @@
 ---
 id: BUG-KIMZRK
 type: bug
-title: cascadeHost.WriteEntity persists automation-set properties directly to the store, bypassing ACL, validation, unique checks, transitions and audit
-description: internal/entitymanager/cascadehost.go:79-84 calls h.deps.Store.UpdateEntity directly instead of Manager.UpdateEntity, so cascade re-writes of automation-set properties skip ACL authorization, metamodel validation, unique-constraint checks, state-machine transition enforcement, and the audit log. Contradicts the root CLAUDE.md rule that all writes go through the Manager. The sibling top-level create path (manager.go:456-476) explicitly re-checks uniques post-automation with the reasoning that it 'must not be the weaker one' — the cascade path has no equivalent. Found while investigating TKT-80EWGM.
-priority: high
+title: Cascade re-write skips post-automation validation/unique/transition re-checks (create path re-checks, cascade path does not)
+description: 'SUBSTANTIALLY OVERSTATED AS ORIGINALLY FILED — see the correction section. cascadeHost.WriteEntity does NOT create an unaudited, unauthorized write path: it only ever re-writes an entity created moments earlier in the same cascade by cascadeHost.CreateEntity, which authorizes, validates, enforces transitions/uniques and audits. What genuinely remains is narrow: property values SET BY AUTOMATION after that create are persisted without re-running validation, unique or transition checks — unlike the top-level create path, which does re-check post-automation.'
+priority: low
 status: backlog
 ---
 
-## Summary
+> **CORRECTION (2026-08-12).** As originally filed this bug was substantially
+> overstated. I re-read the code on current `develop` and most of the claimed
+> impact does not hold. The corrected finding is much narrower and the priority
+> is dropped `high` → `low`. Original text is kept below the correction for
+> provenance.
 
-`cascadeHost.WriteEntity` (`internal/entitymanager/cascadehost.go:79-84`) writes
-straight to the raw store:
+## What is actually true
 
-```go
-func (h *cascadeHost) WriteEntity(ctx context.Context, e *entity.Entity) error {
-	if e == nil { return nil }
-	return h.deps.Store.UpdateEntity(ctx, e)
-}
-```
+`cascadeHost.WriteEntity` (`internal/entitymanager/cascadehost.go:79`) does call
+`h.deps.Store.UpdateEntity` directly. But the reachability argument in the
+original filing was wrong.
 
-It does **not** go through `Manager.UpdateEntity`, so this write skips the
-entire write pipeline:
+`WriteEntity` has exactly **one** caller — `autocascade/runner.go:187`, inside
+`runCreatedEntityAutomation` — and it is only ever reached to persist
+automation-set properties onto an entity that `cascadeHost.CreateEntity` created
+**earlier in the same cascade**. That create goes through `createCore`, which:
 
-- ACL authorization (`authorizeAndAudit`)
-- metamodel validation (`Meta.ValidateEntity`) and DEC-HWZHA warning partitioning
-- `unique: true` natural-key enforcement (`checkUniqueProperties`)
-- state-machine transition enforcement (`Transitions.EnforceUpdate`)
-- audit log entry (`recordEntityAudit`)
+- enforces state-machine entry (`Transitions.EnforceCreate`, `core.go`)
+- enforces `unique:` constraints (`checkUniqueProperties`)
+- partitions validation errors (DEC-HWZHA)
+- writes via `Store.CreateEntity` (never an upsert — BUG-ZWTDH9)
 
-This contradicts root `CLAUDE.md`: *"All writes go through
-`entitymanager.Manager`; do not write to `store.Store` directly from a write
-path."*
+and the create **is audited** — `cascadehost.go:62` calls `h.recordCascade(ctx,
+audit.OpCreateEntity, ...)`.
 
-## Trigger path
+So the original claims collapse:
 
-`internal/autocascade/runner.go:182-191` — for entities **created during a
-cascade**, automation-set properties are applied and then re-written via the
-host:
+| Original claim | Reality |
+|---|---|
+| "skips ACL authorization" | The cascade is already running under an authorized trigger write; cascade writes are deliberately host-mediated, not re-authorized per step. Not a hole. |
+| "produces NO audit record" | **False.** The create is audited at `cascadehost.go:62`. The absence of a second record on the property-set step is deliberate and documented — a second record would double-count one creation. |
+| "an entity can change with no trace" | **False**, per the above. |
+| "unvalidated write path" | Partly true, but only for the post-automation delta — see below. |
 
-```go
-for prop, val := range newAutoResult.PropertiesSet {
-    created.SetString(prop, val)
-}
-// Re-write entity with updated properties.
-if err := host.WriteEntity(ctx, created); err != nil {
-```
+The `WriteEntity` godoc (`cascadehost.go:69-78`) already explains both the
+update-not-upsert choice and the no-second-audit choice. I did not read it
+carefully enough before filing.
 
-So a metamodel automation that creates an entity and sets properties on it
-during a cascade lands those values in the store unvalidated and unaudited.
+## The genuine residual
 
-## Why this is a real inconsistency, not a deliberate design
+Narrow and real: **property values set by automation after the create are
+persisted without re-running validation, unique or transition checks.**
 
-The sibling **top-level create path** explicitly does the opposite. At
-`internal/entitymanager/manager.go:456-476`, after automation mutates the
-created entity, it **re-runs `checkUniqueProperties` against the post-automation
-values**, with the stated reasoning that the create path *"must not be the
-weaker one."* The cascade's re-write has no equivalent.
+`runner.go:181-187` applies `newAutoResult.PropertiesSet` onto `created` and
+immediately calls `WriteEntity`. `createCore` ran its checks against the
+*pre-automation* candidate, so a value automation introduces afterwards is never
+re-examined.
 
-Only the missing audit is documented (`cascadehost.go:76-78`). The skipped ACL,
-validation, unique, and transition checks are undocumented — which suggests
-oversight rather than an accepted trade-off.
+The asymmetry with the top-level create path is the actual defect. At
+`manager.go:456-476` the create path explicitly re-runs `checkUniqueProperties`
+against post-automation values, with the reasoning that the create path *"must
+not be the weaker one."* The cascade path has no equivalent.
 
-## Suspected impact
+**Consequences** (all require an automation with `set` actions firing on a
+cascade-created entity):
 
-- An automation can drive an entity into a state the state machine forbids.
-- A `unique:` constraint can be violated by a cascade-created entity.
-- A cascade write produces **no audit record**, so an entity can change with no trace
-— notable given `audit-log` is a stable concept and the attribution work
-(TKT-ZIRMGM) assumes manager-boundary coverage.
-- Property values that would fail validation persist silently.
+- a `unique:` constraint can be violated by an automation-set value
+- an automation can set a property value that validation would reject
+- a state-machine entry value set by automation is not re-enforced
 
-Severity is provisionally **high** because it is an unaudited, unvalidated write
-path, but real-world reachability depends on how many projects use
-`create_entity` automations with `set` actions inside a cascade — **needs
-confirmation during analysis** before the priority is trusted.
+No audit gap. No ACL gap.
 
-## Relationship to TKT-80EWGM
+## Suspected impact — low
 
-Found while investigating TKT-80EWGM (unified `PatchEntity` primitive). It is
-**explicitly out of scope** there: `PatchEntity` neither fixes nor worsens this.
-Filed separately because routing `cascadeHost.WriteEntity` through the manager
-changes cascade semantics — validation or a transition guard could now reject an
-automation write **mid-cascade**, which needs its own design (partial-cascade
-rollback is a known open question; cf. RR-KNXFF "Partial-failure rollback on
-multi-op writes", wont-fix).
+Requires a metamodel where a cascade creates an entity **and** an on-create
+automation sets a property that is `unique:`, validated, or state-machine
+governed. Plausible but not common. Prefer a failing test before any fix.
 
-## Suggested analysis starting points
+## Suggested fix
 
-- Confirm reachability with a failing test: an automation that creates an entity and
-sets a property violating a `unique:` constraint or a state-machine transition.
-- Establish whether the audit gap is observable end-to-end (write happens, no audit
-line).
-- Decide the failure mode when a mid-cascade write is rejected — abort the cascade,
-or collect into `autocascade.Outcome.Errors`? Note TKT-MSR8 ("Propagate
-cascade-step warnings through autocascade.Outcome") is adjacent and may want
-doing together.
-- 5-whys should reach why the cascade host was given a raw store handle at all, rather
-than the `gated()` mutator the scripted path already uses
-(`autocascade/mutator.go:27-33`, wired at `manager.go:487` and
-`manager.go:643`).
+Re-check post-automation values before `WriteEntity`, mirroring
+`manager.go:456-476`. That is a small, local change — much smaller than the
+"route the whole thing through Manager.UpdateEntity" implied by the original
+filing, which would have changed cascade failure semantics and needed its own
+design (partial-cascade rollback is wont-fix per RR-KNXFF).
+
+The linked measure `cascade-write-full-pipeline-test` should be narrowed to
+match: assert post-automation unique/validation/transition re-checks, and **drop
+the audit assertion** — audit is already correct and asserting otherwise would
+pin a false expectation.
+
+---
+
+## Original filing (superseded — retained for provenance)
+
+The text below overstates the problem; read the correction above first.
+
+`cascadeHost.WriteEntity` writes straight to the raw store, so this write skips
+ACL authorization, metamodel validation, `unique:` enforcement, state-machine
+transition enforcement, and the audit log. Contradicts root `CLAUDE.md`: *"All
+writes go through `entitymanager.Manager`; do not write to `store.Store`
+directly from a write path."* Severity provisionally **high** because it is an
+unaudited, unvalidated write path — *needs confirmation during analysis before
+the priority is trusted.*
