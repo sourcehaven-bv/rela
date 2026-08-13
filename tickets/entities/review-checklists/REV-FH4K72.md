@@ -89,8 +89,18 @@ own change rather than riding along on a bug fix.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass
+- [x] PR URL documented below
 
-**PR:** <!-- pending -->
+All 23 code checks green: Test (`-race -shuffle=on`), Lint, E2E, Postgres
+Backend, Architecture, Frontend, Build, God-object lint, Lint Markdown,
+Vulnerability Check, Fuzz, CodeQL, Docs, Demos, and all 7 Cross-Compile
+targets.
+
+`Rela Tickets` failed while this box was unticked — correctly. It enforces
+"done review checklists cannot have unchecked items", which cannot be
+satisfied until CI has actually run. Resolved by finishing the workflow, not
+by weakening the rule.
+
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1317

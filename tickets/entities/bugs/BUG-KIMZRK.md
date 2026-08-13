@@ -11,7 +11,7 @@ why3: createCore ran its unique/transition/validation checks against the PRE-aut
 why4: The re-check was added to the top-level create path (manager.go, 'the create path must not be the weaker one') but not to the cascade path, because the two apply automation results in different places and the fix was made at only one of them.
 why5: Nothing structurally couples 'automation mutated this entity' to 'therefore re-validate before persisting'. The obligation lived in a comment on one path rather than in a shared helper both paths must pass through, so the second site was easy to miss.
 prevention: 'Regression tests pin BOTH paths, deliberately including the top-level control case — the defect was an ASYMMETRY, so a cascade-only test would miss a future change that weakened both. Both re-checks were mutation-tested (removing either makes its test fail). Longer term the real fix is structural: a single apply-automation-results helper that both paths call, which re-validates as part of applying — see the follow-up note on the ticket.'
-status: review
+status: done
 ---
 
 > **CORRECTION (2026-08-12).** As originally filed this bug was substantially
