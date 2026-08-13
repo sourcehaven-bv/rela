@@ -2,8 +2,8 @@
 id: RES-S8CH9C
 type: research
 title: 'Multi-app rela-server: serving several projects (ticketing, ISMS, …) from one process with a switcher'
-summary: 'Multi-app rela-server as a horizon, reached by independently-justified refactorings. Storage: schema-per-project (DSN is the seam preserving DB-per-tenant and (tenant,project)->shard). Cross-project is a federation feature that must work ACROSS INSTALLS, so it is not a storage-layout tradeoff. Tenancy: control-plane-as-rela-project + wire the existing VerifyAssertion claims. R1 (schema-qualify advisory locks) is a latent bug to fix first.'
-status: done
+summary: 'SUPERSEDED by RES-D54281 for the SaaS case. This doc scoped a DIFFERENT problem: N DIFFERENT projects (ticketing + ISMS) in one process with a switcher, where per-project config divergence dominated the cost. RES-D54281 scopes multi-tenant SaaS — ONE operator config, N tenants differing only in content — which deletes most of that cost. Still-valid and reused by RES-D54281: schema-per-project over a tenant column, the (tenant)->DSN invariant, the connection-ceiling analysis, and R2 (explicit DSN) as the next thing to bank. Now STALE here: R6 shipped (TKT-OJL2GN — the gate calls VerifyAssertion, so org/roles DO reach the ACL); R1 shipped.'
+status: superseded
 ---
 
 ## Problem
@@ -213,32 +213,32 @@ Ordered by independence. Each is justified without committing to multi-tenancy �
 that is the point.
 
 **R1 — Schema-qualify the advisory lock keys. ✅ DONE.** All three of pgstore's
-advisory locks used unqualified compile-time constants, but PG advisory locks are
-**database-wide**, so two schemas on one database contended on all three.
+advisory locks used unqualified compile-time constants, but PG advisory locks
+are **database-wide**, so two schemas on one database contended on all three.
 Severity varied sharply, which is why the fix arrived in two parts:
 
 - **Version sweep** — the severe one. Non-blocking `pg_try_advisory_lock` plus a
-  silent `return nil` on failure meant the losing schema's version capture was
-  **dropped with no error, warning or metric**. Fixed independently by **#1217
-  (TKT-SCXHUL)**, which surfaced it when parallel postgres e2e workers starved
-  each other. Uses the two-key form
-  `pg_try_advisory_lock(key, hashtext(current_schema()))`.
+silent `return nil` on failure meant the losing schema's version capture was
+**dropped with no error, warning or metric**. Fixed independently by **#1217
+(TKT-SCXHUL)**, which surfaced it when parallel postgres e2e workers starved
+each other. Uses the two-key form `pg_try_advisory_lock(key,
+hashtext(current_schema()))`.
 - **Migrate + write Tx** — blocking rather than lossy, so nothing forced them
-  into view. Fixed under **BUG-CA3VY0**, adopting #1217's idiom rather than a
-  competing mechanism.
+into view. Fixed under **BUG-CA3VY0**, adopting #1217's idiom rather than a
+competing mechanism.
 
 Two things worth carrying forward from doing this:
 
 1. **The low-severity instances of a defect outlive the high-severity one.** The
-   sweep variant got fixed because it lost data visibly; the identical root cause
-   in migrate and write survived that pass. When fixing a class of bug, grep for
-   the class, not the symptom.
+sweep variant got fixed because it lost data visibly; the identical root cause
+in migrate and write survived that pass. When fixing a class of bug, grep for
+the class, not the symptom.
 2. **A regression test for lock scoping is easy to write and useless.** Holding
-   the *scoped* key and asserting the other schema proceeds passes even against
-   the un-fixed code — Postgres treats one-key and two-key advisory locks as
-   disjoint spaces, so the bare-key regression takes a lock nobody holds. The
-   first draft of the tests did exactly this and passed against a deliberately
-   broken build. Only a fail-before check caught it.
+the *scoped* key and asserting the other schema proceeds passes even against the
+un-fixed code — Postgres treats one-key and two-key advisory locks as disjoint
+spaces, so the bare-key regression takes a lock nobody holds. The first draft of
+the tests did exactly this and passed against a deliberately broken build. Only
+a fail-before check caught it.
 
 This was **not** a multi-tenancy prerequisite — it was a latent bug in the
 current single-project design, since the conformance harness already runs many
