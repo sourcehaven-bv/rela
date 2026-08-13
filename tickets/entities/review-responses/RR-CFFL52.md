@@ -4,7 +4,8 @@ type: review-response
 title: MCP resources surface (rela://entity, rela://relation) is a second ungated read path, and leaks entity type
 finding: MCP resources (rela://entity/{type}/{id}, rela://relation/{from}/{type}/{to}) read raw via deps.Store at resources.go:89 and :124, bypassing the tool-level read gating entirely. resources.go:94 additionally discloses an entity's real type on mismatch, creating an existence-and-type oracle.
 severity: critical
-status: open
+resolution: 'Fixed. (1) Resources now read through Deps.Store, which the wiring site supplies as a gated reader (appbuild.Services.GatedReads) - handleReadEntity/handleReadRelation are unchanged in shape, gating is a wiring decision. Pinned by TestACL_Resources_AreGated. (2) buildStoreRelations now withholds the WHOLE edge when the far-end entity is unreadable, not just the title - dropping only the title still disclosed the neighbour id, which is itself an existence oracle. Pinned by TestACL_BuildStoreRelations_WithholdsUnreadableEdge, which was mutation-verified: reverting the fix makes it fail with ''LEAK: {ID:FEAT-SECRET Title:}''. Note the naive version of that test passed vacuously because visibility''s gated ListRelations already drops such edges upstream; the isolation test feeds a reader that yields the edge anyway so the second layer is genuinely exercised. (3) The type-disclosure branch at resources.go:94 is moot for hidden entities now - GetEntity fails before the type comparison is reached.'
+status: addressed
 ---
 
 ## Finding

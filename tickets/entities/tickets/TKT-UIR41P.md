@@ -256,10 +256,46 @@ still compiling and still returning plausible numbers.
 packages, `just arch-lint` OK, and **the goldens pass unmodified** — so none of
 this changed behavior under the stdio (`NopACL`) wiring.
 
-**Still to do in PR 2:** wire the validator's candidate set through the gated
-reader (RR-H7DFZ5), gate the analyze/export/prompt/resource surfaces by passing
-gated handles at the wiring site, and add the ACL-scoped tests. The gating
-*mechanism* is now in place; what remains is wiring and coverage.
+**Step 2 done — the gated seam is wired and pinned.**
+`appbuild.Services.GatedReads()` returns the reader / tracer / validator an
+identity-bearing consumer needs, each resolving the ctx principal per call
+(the `ScheduledLuaWriteDeps` precedent). `mcp_wiring` takes its three read
+handles from it. Under `rela mcp`'s `NopACL` they ARE the raw handles — stdio
+unchanged, goldens pass — but every read surface now reaches the graph through
+one substitutable seam instead of 34 handlers holding the store.
+
+The validator mattered as much as the reader (RR-H7DFZ5): `Services.Validator()`
+is built over the raw store, which is right for its unattended callers, so
+`GatedReads` builds a *second* one over the gated reader. `validator.New`
+already took a narrow `EntityLister` for exactly this — its godoc cites
+TKT-3FL2S6.
+
+Row reads are gated; **counts and `GetRelation` are not**, and
+`gatedGraphReader` documents why: a count is structural (how many rows of a
+declared type, never which), and a relation is addressed by two endpoint ids
+the caller must already hold. Same line `dataentry` draws for `relCounts`.
+
+**Tests: five ACL cases, built through the production seam** rather than a
+hand-composed visibility stack. One of them exists because of a near-miss worth
+recording: the obvious neighbor-leak test **passed vacuously**. `visibility`'s
+gated `ListRelations` already drops edges whose far end is hidden, so reverting
+the `buildStoreRelations` fix did not fail it — the test never exercised the
+layer it named. `TestACL_BuildStoreRelations_WithholdsUnreadableEdge` feeds a
+reader that yields the edge anyway, and was mutation-verified: with the fix
+reverted it fails with `LEAK: {ID:FEAT-SECRET Title:}` — the neighbor id
+surviving with its title stripped, which is exactly the RR-CFFL52 failure mode.
+
+Also confirmed: the go-sdk's **method-level** middleware means resource and
+prompt handlers now get a stamped principal at all. Previously they ran with
+none, so any ctx-resolving gate there would have errored or failed open.
+
+**Addressed by this step:** RR-CFFL52, RR-FTJUUE, RR-NSUN49, RR-H7DFZ5
+(+ RR-OMB6ID, RR-B7ZHYO earlier).
+
+**Remaining before PR 3:** RR-H8S10M (`verifiedPrincipal` hardcodes
+`ToolDataEntry`, so AC #4 fails and the naive fix drops roles) and RR-PQ5UN1
+(`acl.Request` sharing across a JSON-RPC batch). Both are HTTP-transport
+concerns with no stdio manifestation, so they belong with PR 3.
 
 ## Spec revision 2026-07-28 — verified findings
 

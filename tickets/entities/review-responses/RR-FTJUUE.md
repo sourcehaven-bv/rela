@@ -4,7 +4,8 @@ type: review-response
 title: trace_from/trace_to/find_path do a raw GetEntity pre-flight probe, so a gated tracer still leaks hidden-vs-absent
 finding: 'tools_trace.go:42 (and the from/to pair around :72-78) call s.deps.Store.GetEntity directly before delegating to the tracer, returning ''entity not found'' only on a store miss. Swapping Deps.Tracer for visibility.VisibleTracer does not help: the raw probe already distinguished a hidden entity from an absent one, defeating AC #3''s indistinguishability requirement.'
 severity: critical
-status: open
+resolution: Fixed. The pre-flight GetEntity probes in handleTrace and handleFindPath now run through Deps.Store, which is the gated GraphReader - so a hidden root returns the same 'entity not found' an absent one does. A comment at the probe site records WHY it must stay on the gated handle, since a raw probe there would silently defeat the gated tracer below it. Pinned by TestACL_Trace_HiddenRootIsNotAnOracle, which normalises the caller-supplied id out of both messages and asserts byte-equality - so any future divergence in wording between the hidden and absent paths fails the test.
+status: addressed
 ---
 
 ## Finding
