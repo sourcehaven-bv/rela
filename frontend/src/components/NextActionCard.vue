@@ -50,12 +50,16 @@ onMounted(loadOnce)
   margin-bottom: 16px;
 }
 
-/* banner — accented and filled, deliberately hard to skim past. For onboarding
-   and for work someone else is blocked on. The left rule carries the emphasis;
-   the tint keeps it from reading as an error. */
+/* banner — deliberately hard to skim past. For onboarding and for work
+   someone else is blocked on.
+   
+   Emphasis comes from a full accent border, NOT a left rule: in this codebase
+   a left accent bar means either a markdown blockquote or something is wrong
+   (ScriptErrorPanel, EntityDetail's inaccessible-banner). Borrowing that shape
+   would make a suggestion read as an error. The band chip carries the colour;
+   the border just says "this one matters". */
 .na--banner {
-  border: 1px solid var(--border-color);
-  border-left: 3px solid var(--accent-color);
+  border: 1px solid var(--accent-color);
   border-radius: var(--radius-lg);
   padding: 16px;
   background: var(--card-bg);
