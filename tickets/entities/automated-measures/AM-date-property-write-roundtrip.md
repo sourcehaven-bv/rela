@@ -2,7 +2,7 @@
 id: AM-date-property-write-roundtrip
 type: automated-measure
 title: A date-typed property survives a write unchanged
-description: A test that writes an entity carrying a hand-authored date-typed property without touching that property, then asserts the stored value is unchanged. Pins BUG-XV7FSJ - yaml.v3 decodes an unquoted `due: 2026-08-12` to time.Time and the write path re-serializes it as RFC3339, inventing a time component the declared type does not have.
+description: "A test that writes an entity carrying a hand-authored date-typed property without touching that property, then asserts the stored value is unchanged. Pins BUG-XV7FSJ - yaml.v3 decodes an unquoted `due: 2026-08-12` to time.Time and the write path re-serializes it as RFC3339, inventing a time component the declared type does not have."
 kind: test
 location: internal/entitymanager/ (test to be written with the fix)
 status: proposed
