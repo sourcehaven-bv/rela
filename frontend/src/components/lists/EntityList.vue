@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, shallowRef, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, shallowRef, computed, watch, onMounted, onUnmounted, type Component } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQuery, useMutation, useQueryCache } from '@pinia/colada'
 import { useSchemaStore, useUIStore } from '@/stores'
@@ -15,14 +15,16 @@ import { entityDetailHref } from '@/utils/entityRoute'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { renderMarkdown } from '@/utils/markdown'
 import { actionAllowed } from '@/utils/affordancesWarning'
-import { getCellValue, formatCellValue, isEnumPropertyDef, asArray } from '@/utils/format'
+import { getCellValue, formatCellValue } from '@/utils/format'
+import { densePropertyRoutingHint, isDenseEmpty } from '@/widgets/viewRouting'
+import { defaultRegistry } from '@/widgets/registry'
+import type { DenseRoutingHint } from '@/widgets/viewRouting'
 import type { Entity, ListMeta, ListParams, ListResponse, FilterState } from '@/types'
 import { viewHeaderMarkdown, viewFooterMarkdown } from '@/types'
 import FilterBar from './FilterBar.vue'
 import Pagination from './Pagination.vue'
 import SearchBox from './SearchBox.vue'
 import AdHocFilterMenu from './AdHocFilterMenu.vue'
-import Badge from '@/components/common/Badge.vue'
 import BackButton from '@/components/common/BackButton.vue'
 import ExportMenu from '@/components/entity/ExportMenu.vue'
 import { listExportUrl } from '@/api/transforms'
@@ -531,9 +533,92 @@ function navigateToEntity(entity: Entity) {
   router.push({ path, query })
 }
 
-function isEnumColumn(column: { property?: string }): boolean {
-  if (!column.property || !entityType.value) return false
-  return isEnumPropertyDef(entityType.value.properties[column.property])
+// Widget resolution for property cells, keyed by column property name and
+// computed ONCE per column rather than per cell (RR-UD2A -- the same reason
+// PropertyDisplay precomputes `rows`). resolve()/resolveFromHint() walk a Map
+// and can console.warn; doing that per cell would be one lookup and one
+// potential warning per row per render.
+//
+// Relation columns are absent from this map on purpose: they have no
+// PropertyDef and there is no relation widget, so they stay on the string
+// path in getFormattedCellValue.
+const columnWidgets = computed(() => {
+  const byProperty = new Map<string, { component: Component; hint: DenseRoutingHint }>()
+  const type = entityType.value
+  if (!type) return byProperty
+  for (const column of listConfig.value?.columns ?? []) {
+    if (!column.property || byProperty.has(column.property)) continue
+    const hint = densePropertyRoutingHint(type.properties[column.property], column.property)
+    byProperty.set(column.property, { component: defaultRegistry.resolveFromHint(hint), hint })
+  }
+  return byProperty
+})
+
+// The widget for a cell, or undefined when the cell should NOT render one:
+// a relation column (no PropertyDef, no relation widget) or an empty value
+// (widgets may render a "no value" placeholder that cells must not show --
+// see isDenseEmpty). Both fall through to the plain string span.
+function cellWidget(
+  entity: Entity,
+  column: { property?: string; relation?: string; direction?: 'outgoing' | 'incoming' }
+) {
+  if (!column.property) return undefined
+  const entry = columnWidgets.value.get(column.property)
+  if (!entry) return undefined
+  return isDenseEmpty(getCellValue(entity, column)) ? undefined : entry
+}
+
+interface ResolvedCell {
+  component: Component
+  propertyName: string
+  modelValue: unknown
+}
+
+// One resolved cell: the widget to render plus the value already shaped the
+// way that widget wants. Returns undefined when the cell must fall back to the
+// plain string span (relation column, or an empty value -- see cellWidget).
+//
+// Memoized per (entity, column). The template reads it four times per cell
+// (v-else-if, :is, and two bindings); without the cache each read redoes the
+// Map lookup and re-formats the value.
+//
+// Safe against staleness because entity objects are copy-on-write: both
+// optimistic paths in queries/optimisticList.ts rebuild the changed entity
+// via `data.map(e => e.id === id ? update(e) : e)`, and a refetch parses
+// fresh objects. A mutated cell therefore always arrives as a NEW identity
+// and misses the cache. If an entity ever starts being mutated in place,
+// this cache goes stale silently -- keyed on identity, it cannot detect it.
+//
+// WeakMap so a dropped row's entry is collected with the row. The inner key
+// is the column object, stable across renders because listConfig.columns is
+// the same array.
+const cellCache = new WeakMap<Entity, Map<object, ResolvedCell | undefined>>()
+
+function resolveCell(
+  entity: Entity,
+  column: { property?: string; relation?: string; direction?: 'outgoing' | 'incoming' }
+): ResolvedCell | undefined {
+  let perEntity = cellCache.get(entity)
+  if (!perEntity) {
+    perEntity = new Map()
+    cellCache.set(entity, perEntity)
+  }
+  if (perEntity.has(column)) return perEntity.get(column)
+
+  const entry = cellWidget(entity, column)
+  const resolved: ResolvedCell | undefined = entry
+    ? {
+        component: entry.component,
+        propertyName: entry.hint.propertyName,
+        // Passthrough widgets render String(value); everything else owns its
+        // display formatting and wants the stored value.
+        modelValue: entry.hint.preformatted
+          ? getFormattedCellValue(entity, column)
+          : getCellValue(entity, column),
+      }
+    : undefined
+  perEntity.set(column, resolved)
+  return resolved
 }
 
 // isCellInaccessible reports whether the cell's underlying property is
@@ -821,18 +906,15 @@ watch(searchQuery, () => {
                 class="inaccessible-cell"
                 title="inaccessible"
               >🔒</span>
-              <div
-                v-else-if="isEnumColumn(column) && asArray(getCellValue(entity, column)).length > 0"
-                class="badge-row"
-              >
-                <Badge
-                  v-for="badgeValue in asArray(getCellValue(entity, column))"
-                  :key="badgeValue"
-                  :value="badgeValue"
-                  :property="column.property"
-                  :entity-type="entityType"
-                />
-              </div>
+              <component
+                :is="resolveCell(entity, column)!.component"
+                v-else-if="resolveCell(entity, column)"
+                class="mobile-card-value"
+                :model-value="resolveCell(entity, column)!.modelValue"
+                :mode="'display'"
+                :property-name="resolveCell(entity, column)!.propertyName"
+                :entity-type="listConfig.entity"
+              />
               <span v-else class="mobile-card-value">{{ getFormattedCellValue(entity, column) }}</span>
             </div>
           </div>
@@ -919,18 +1001,14 @@ watch(searchQuery, () => {
                 class="inaccessible-cell"
                 title="inaccessible"
               >🔒</span>
-              <div
-                v-else-if="isEnumColumn(column) && asArray(getCellValue(entity, column)).length > 0"
-                class="badge-row"
-              >
-                <Badge
-                  v-for="badgeValue in asArray(getCellValue(entity, column))"
-                  :key="badgeValue"
-                  :value="badgeValue"
-                  :property="column.property"
-                  :entity-type="entityType"
-                />
-              </div>
+              <component
+                :is="resolveCell(entity, column)!.component"
+                v-else-if="resolveCell(entity, column)"
+                :model-value="resolveCell(entity, column)!.modelValue"
+                :mode="'display'"
+                :property-name="resolveCell(entity, column)!.propertyName"
+                :entity-type="listConfig.entity"
+              />
               <span v-else>
                 {{ getFormattedCellValue(entity, column) }}
               </span>
