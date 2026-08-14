@@ -5,11 +5,13 @@ package validation
 
 import (
 	"context"
+	"sync"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 )
 
 // Violation represents a custom validation rule violation.
@@ -67,6 +69,44 @@ func (r Result) HasErrors() bool {
 type Service struct {
 	deps  lua.ReadDeps
 	cache *lua.Cache
+
+	// ev is the predicate condition engine for `When:`/`Then:` rules
+	// (TKT-J4IR1G): filter clauses are transpiled + compiled once (cached
+	// in the Evaluator) and evaluated per entity. Built lazily against
+	// deps.Meta.
+	evOnce sync.Once
+	ev     *predicatefns.Evaluator
+}
+
+// evaluator returns the predicate Evaluator bound to the service's
+// metamodel, built once.
+func (s *Service) evaluator() *predicatefns.Evaluator {
+	s.evOnce.Do(func() {
+		s.ev = predicatefns.NewEvaluator(s.deps.Meta)
+	})
+	return s.ev
+}
+
+// matchFilters evaluates an ANDed set of filter clauses against an
+// entity through the predicate condition engine. If any clause is
+// untranspilable (e.g. fuzzy-with-wildcard), it falls back to the exact
+// legacy filter.MatchAll evaluation for the whole set rather than
+// erroring — a transpile error must NOT turn into a forced violation or
+// a silently-skipped rule (RR-FI4DYL). A genuine eval error is returned
+// so the caller treats it as "does not apply / does not satisfy",
+// matching the prior filter.MatchAll error contract.
+func (s *Service) matchFilters(e *entity.Entity, filters []*filter.Filter) (bool, error) {
+	prog, err := s.evaluator().CompileFilter(e.Type, filters)
+	if err != nil {
+		// Untranspilable — reproduce the legacy verdict exactly.
+		entityDef, ok := s.deps.Meta.GetEntityDef(e.Type)
+		if !ok {
+			return false, nil
+		}
+		rec := filter.Record{ID: e.ID, Type: e.Type, Properties: e.Properties}
+		return filter.MatchAll(rec, filters, entityDef, s.deps.Meta)
+	}
+	return s.evaluator().Matches(context.Background(), prog, e.Type, e.ID, e.Properties)
 }
 
 // New creates a validation service for the given metamodel.
@@ -266,25 +306,23 @@ func (s *Service) checkEntityAgainstRule(
 	whenFilters, thenFilters []*filter.Filter,
 	luaCtx *luaRuleContext,
 ) entityResult {
-	entityDef, ok := s.deps.Meta.GetEntityDef(e.Type)
-	if !ok {
+	// An unknown entity type has no rules to apply.
+	if _, ok := s.deps.Meta.GetEntityDef(e.Type); !ok {
 		return entityResult{}
 	}
 
-	rec := filter.Record{ID: e.ID, Type: e.Type, Properties: e.Properties}
-
-	// Check 'when' conditions - if they don't match, rule doesn't apply
+	// Check 'when' conditions - if they don't match, rule doesn't apply.
+	// Evaluated through the predicate condition engine (TKT-J4IR1G): the
+	// filter clauses are transpiled + compiled once and cached.
 	if len(whenFilters) > 0 {
-		matches, err := filter.MatchAll(rec, whenFilters, entityDef, s.deps.Meta)
-		if err != nil || !matches {
+		if matches, err := s.matchFilters(e, whenFilters); err != nil || !matches {
 			return entityResult{}
 		}
 	}
 
-	// Check 'then' conditions - if they don't satisfy, it's a violation
+	// Check 'then' conditions - if they don't satisfy, it's a violation.
 	if len(thenFilters) > 0 {
-		satisfies, err := filter.MatchAll(rec, thenFilters, entityDef, s.deps.Meta)
-		if err != nil || !satisfies {
+		if satisfies, err := s.matchFilters(e, thenFilters); err != nil || !satisfies {
 			return entityResult{Violations: []Violation{newViolation(rule, e, rule.Description)}}
 		}
 	}
