@@ -1062,12 +1062,46 @@ async function handleSubmit() {
   }
 }
 
+/**
+ * Whether this SPA instance has somewhere in-app to go back to.
+ *
+ * `history.state.back` is written by vue-router on a push and is the only
+ * reliable signal here: a full page load (direct URL, bookmark, refresh)
+ * leaves it null no matter how deep the browser's history already is.
+ * `window.history.length` cannot be used for this — it counts entries from
+ * before the app was ever loaded, so it reads >= 2 even on a fresh open
+ * (BUG-ZE4354).
+ */
+function hasAppHistory(): boolean {
+  return (router.options.history.state as { back?: unknown } | null)?.back != null
+}
+
+/**
+ * Cancel/Back must land somewhere inside the app.
+ *
+ * `router.back()` alone is a browser-history operation with no route target,
+ * so on a directly-opened form there is no in-app entry behind it and back
+ * walks out of the SPA entirely — which reads to the user as "the button does
+ * nothing" (BUG-ZE4354). Resolution order mirrors `useBackTarget` and the
+ * submit path, which already honours `returnTo`.
+ */
 function handleCancel() {
   if (props.embedded) {
     emit('inline-cancelled')
     return
   }
-  router.back()
+  if (returnTo.value) {
+    router.push(returnTo.value)
+    return
+  }
+  if (hasAppHistory()) {
+    router.back()
+    return
+  }
+  // Opened cold: fall back to the entity type's list, or the dashboard when
+  // no list is configured for it.
+  const listId = formConfig.value ? schemaStore.findListIdForEntityType(formConfig.value.entity) : undefined
+  router.push(listId ? `/list/${listId}` : '/')
 }
 
 function updateField(property: string, value: unknown) {
