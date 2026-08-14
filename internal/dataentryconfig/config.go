@@ -128,6 +128,18 @@ type AppConfig struct {
 	// plantuml.com server: that would silently publish private diagram source
 	// to a third party. Operators opt in by configuring a server they trust.
 	PlantUMLServerURL string `yaml:"plantuml_server_url,omitempty" json:"plantuml_server_url,omitempty"`
+	// DisableCustomInjection turns off referencing the operator's
+	// custom/custom.css and custom/custom.js from the SPA shell, guaranteeing a
+	// stock UI.
+	//
+	// Named as a *disable* flag against the opt-in direction of its
+	// neighbors because the feature is on by default: dropping custom.css into
+	// custom/ should just work, with no second step. An operator who
+	// wants to guarantee an unmodified UI (or to bisect whether a
+	// customisation is causing a bug) sets this to true. Files in custom/ remain
+	// individually fetchable under /_custom/ either way — only the shell
+	// references are suppressed.
+	DisableCustomInjection bool `yaml:"disable_custom_injection,omitempty" json:"disable_custom_injection,omitempty"`
 }
 
 // Form defines a create/edit form for an entity type.
@@ -724,6 +736,26 @@ type DashboardCard struct {
 	Columns []ListColumn `yaml:"columns,omitempty" json:"columns,omitempty"`
 	Sort    []SortSpec   `yaml:"sort,omitempty" json:"sort,omitempty"`
 	Limit   int          `yaml:"limit,omitempty" json:"limit,omitempty"`
+
+	// Permission optionally hides this card from the dashboard for principals
+	// who do not hold the named global ACL permission (TKT-53KICM). Empty —
+	// the overwhelmingly common case — means the card is always shown.
+	//
+	// This is a UX filter, NOT an access control, exactly as on
+	// [NavigationEntry.Permission]. The card's query runs through the
+	// ACL-scoped search path either way, so a principal who may read none of
+	// the matching entities already sees a card reading 0 or an empty table.
+	// Hiding it removes a useless tile; it does not conceal that the card is
+	// configured — `/api/v1/_config` still serves the whole `dashboard:` block
+	// to everyone (see "The configuration is not a secret; the data is" in the
+	// root CLAUDE.md). Only `/api/v1/_dashboard` is filtered.
+	//
+	// Behavior with no `acl.yaml`: shown. No policy configured means no
+	// restrictions. Same under `--read-only`, which restricts writes only and
+	// so has no permission model to consult — hiding there would remove read
+	// surfaces an observe-only principal can use, and would hide them from
+	// everyone rather than from non-holders.
+	Permission string `yaml:"permission,omitempty" json:"permission,omitempty"`
 }
 
 // ViewConfig defines a detailed entity view with traversal and sections.

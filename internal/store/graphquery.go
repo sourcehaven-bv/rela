@@ -8,10 +8,15 @@ import (
 )
 
 // GraphQuery describes a graph-shape question: "entities of EntityType
-// where they have a matching inbound or outbound relation." The DSL is
-// intentionally generic — no ACL or other consumer vocabulary — so
-// future consumers (ACL read filtering, analyze tools, search) can
-// compose against one stable shape.
+// whose own properties match, and which have (or lack) a matching
+// inbound or outbound relation." The DSL is intentionally generic — no
+// ACL or other consumer vocabulary — so consumers (ACL read filtering,
+// analyze tools, search, next-action sources) can compose against one
+// stable shape.
+//
+// All predicates are ANDed: an entity matches when every PropPredicate
+// holds AND both relation predicates hold. A zero-value GraphQuery
+// beyond EntityType matches every entity of that type.
 //
 // All three backends ship a default implementation that delegates to
 // [internal/store/graphquerynaive] (iterate-and-filter in Go). A
@@ -19,8 +24,49 @@ import (
 // follow-up.
 type GraphQuery struct {
 	EntityType  string
+	Props       []PropPredicate    // entity's own properties match (AND)
 	HasInbound  *RelationPredicate // entity has matching relation FROM (expanded) endpoints
 	HasOutbound *RelationPredicate // entity has matching relation TO (expanded) endpoints
+}
+
+// PropOp is the comparison a [PropPredicate] applies. Deliberately only
+// equality and its negation: ordered comparison (`due < 2026-01-01`)
+// needs the property's declared type from the metamodel to avoid
+// comparing dates lexicographically, and the store layer does not
+// consult the metamodel. Typed comparison stays above the store in
+// [internal/filter].
+type PropOp int
+
+const (
+	// PropEqual matches when the property equals Value. With an empty
+	// Value it means "is empty" — see [PropPredicate].
+	PropEqual PropOp = iota
+	// PropNotEqual is the negation. With an empty Value it means "is not
+	// empty".
+	PropNotEqual
+)
+
+// PropPredicate restricts a GraphQuery to entities whose own property
+// matches. Multiple predicates on one query are ANDed.
+//
+// Emptiness follows [internal/propmatch], the single authoritative
+// definition shared with [internal/filter] — a missing key and a
+// present-but-empty value are the SAME state, because YAML frontmatter
+// parses a valueless key to nil and an operator asking "is this field
+// filled in?" does not distinguish the two:
+//
+//	{Property: "status", Op: PropEqual, Value: "doing"}  // status=doing
+//	{Property: "billing_email", Op: PropEqual}           // is empty
+//	{Property: "billing_email", Op: PropNotEqual}        // is not empty
+//
+// Note that an EMPTY property does not satisfy a PropNotEqual against a
+// non-empty Value: an entity with no status is not in the "status is
+// something other than doing" population. Treating it as a match would
+// silently widen every exclusion filter to include unset rows.
+type PropPredicate struct {
+	Property string
+	Op       PropOp
+	Value    string
 }
 
 // RelationPredicate restricts which relations the surrounding
@@ -37,8 +83,33 @@ type GraphQuery struct {
 //     has the inbound/outbound edge. Example: ACL containment
 //     inheritance (EntityInheritThrough = ["belongs-to"]).
 type RelationPredicate struct {
+	// Endpoints restricts which entities on the far side of the relation
+	// count as a match.
+	//
+	// An EMPTY (or nil) Endpoints means "ANY endpoint": the predicate is
+	// then purely about the edge existing, which is what an absence
+	// query needs ("has no implements edge at all", with Negate). Note
+	// this is a WIDENING, not a narrowing — a caller deriving endpoints
+	// from a principal or a lookup MUST guard against accidentally
+	// passing an empty set, or the predicate silently stops constraining
+	// (see internal/acl.readQuery, which fails closed for exactly this).
+	//
+	// InheritThrough is inert when Endpoints is empty: there is nothing
+	// to expand from, so the endpoint closure is skipped entirely.
 	Endpoints []string
 	OfTypes   []string
+
+	// Negate inverts the predicate: the entity matches when NO relation
+	// satisfies it ("has no billing-contact edge"). This is a separate
+	// flag rather than an overload of a nil *RelationPredicate, because
+	// nil already means "do not constrain this direction" — the two are
+	// different questions, and conflating them would silently turn every
+	// unconstrained query into an absence query.
+	//
+	// Negation composes with both expansions: with EntityInheritThrough
+	// set, a negated predicate matches only when NO ancestor of the
+	// candidate (including itself) has the edge.
+	Negate bool
 
 	InheritThrough []string
 	Depth          int

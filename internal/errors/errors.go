@@ -11,7 +11,7 @@ var (
 	ErrInvalidID       = errors.New("invalid entity ID")
 	ErrInvalidType     = errors.New("invalid entity type")
 	ErrInvalidRelation = errors.New("invalid relation")
-	ErrNoProject       = errors.New("no project found (missing metamodel.yaml)")
+	ErrNoProject       = errors.New("no project found (missing schema.yaml)")
 	ErrValidation      = errors.New("validation error")
 )
 

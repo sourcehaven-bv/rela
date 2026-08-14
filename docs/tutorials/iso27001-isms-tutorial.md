@@ -37,7 +37,7 @@ rela init
 
 ### Create the ISMS Metamodel
 
-Replace the default `metamodel.yaml` with this ISMS-specific configuration:
+Replace the default `schema.yaml` with this ISMS-specific configuration:
 
 ```yaml
 version: "1.0"

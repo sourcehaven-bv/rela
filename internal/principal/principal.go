@@ -30,6 +30,12 @@
 // the outer limit of what belongs here. Session lifecycle, provisioning, and
 // role *expansion* remain out — they are separate concerns with their own
 // packages.
+//
+// It opened a second time (TKT-IAC8TX) on the same terms: `principalType` and
+// `scopes` earned their place by having an evaluator — internal/acl compiles
+// them into a client-attenuation ceiling. `client_id` was considered and left
+// out precisely because nothing evaluates it; it would be attribution-only
+// clutter, and the ceiling can key on it later if that changes.
 package principal
 
 import (
@@ -55,43 +61,87 @@ import (
 //
 // # Verified assertion claims
 //
-// orgID, orgSlug, and roles carry claims from a CRYPTOGRAPHICALLY VERIFIED
-// identity assertion. They are unexported on purpose: [Verified] is the only
-// way to populate them, so no composite literal anywhere in the tree can forge
-// a role. That matters because internal/acl trusts a Principal absolutely — it
-// verifies nothing itself — so a role reaching it from an unverified source
-// (a spoofable header, say) would be a complete authorization bypass. The
-// compiler enforces the trust boundary here rather than leaving it to a code
-// reviewer's memory.
+// orgID, orgSlug, roles, principalType and scopes carry claims from a
+// CRYPTOGRAPHICALLY VERIFIED identity assertion. They are unexported on
+// purpose: [VerifiedFrom] (and its [Verified] wrapper) is the only way to
+// populate them, so no composite literal anywhere in the tree can forge a role.
+// That matters because internal/acl trusts a Principal absolutely — it verifies
+// nothing itself — so a role reaching it from an unverified source (a spoofable
+// header, say) would be a complete authorization bypass. The compiler enforces
+// the trust boundary here rather than leaving it to a code reviewer's memory.
 //
-// Read them via [Principal.OrgID], [Principal.OrgSlug], [Principal.Roles].
+// Read them via [Principal.OrgID], [Principal.OrgSlug], [Principal.Roles],
+// [Principal.PrincipalType], [Principal.Scopes].
+//
+// The two attenuation claims run the OPPOSITE direction from roles: principalType
+// selects a ceiling that removes capability, and scopes re-open pieces of it
+// bounded by the acting user. So a forged one could only ever narrow — but they
+// share the constructor discipline anyway, because "this claim is safe to forge"
+// is not a property worth asking a future reader to re-derive.
 type Principal struct {
 	User    string
 	Tool    string
 	RawUser string
 
-	orgID   string
-	orgSlug string
-	roles   []string
+	orgID         string
+	orgSlug       string
+	roles         []string
+	principalType string
+	scopes        []string
 }
 
-// Verified constructs a Principal carrying claims from a verified identity
+// Claims carries the verified-assertion fields [VerifiedFrom] stamps onto a
+// Principal. It exists so the claim set can grow without re-churning every
+// call site the way a widening positional signature would: [Verified] already
+// took five arguments, and client attenuation (TKT-IAC8TX) needed two more.
+//
+// A zero Claims is valid — it produces a Principal with no verified claims,
+// which is what every non-assertion entry point wants.
+type Claims struct {
+	OrgID   string
+	OrgSlug string
+	Roles   []string
+
+	// PrincipalType selects a client-attenuation baseline in acl.yaml. Note
+	// the asymmetry with Roles: a role ADDS capability, a principal type only
+	// ever REMOVES it. That is why an unrecognized value is safe to ignore
+	// (no baseline matches → unrestricted) while an unrecognized role is
+	// dropped — both fail toward the acting user's own grants.
+	PrincipalType string
+
+	// Scopes re-open capability a baseline closed, always bounded by what the
+	// acting user holds. A scope can therefore never escalate past the user.
+	Scopes []string
+}
+
+// VerifiedFrom constructs a Principal carrying claims from a verified identity
 // assertion. Callers MUST have validated the assertion's signature before
 // calling this — see the type doc for why that is load-bearing.
 //
-// roles is defensively copied so a later mutation of the caller's slice cannot
-// retroactively change an authorization decision.
-func Verified(user, tool, orgID, orgSlug string, roles []string) Principal {
+// Slice claims are defensively copied so a later mutation of the caller's slice
+// cannot retroactively change an authorization decision.
+func VerifiedFrom(user, tool string, c Claims) Principal {
 	p := Principal{
-		User:    user,
-		Tool:    tool,
-		orgID:   orgID,
-		orgSlug: orgSlug,
+		User:          user,
+		Tool:          tool,
+		orgID:         c.OrgID,
+		orgSlug:       c.OrgSlug,
+		principalType: c.PrincipalType,
 	}
-	if len(roles) > 0 {
-		p.roles = slices.Clone(roles)
+	if len(c.Roles) > 0 {
+		p.roles = slices.Clone(c.Roles)
+	}
+	if len(c.Scopes) > 0 {
+		p.scopes = slices.Clone(c.Scopes)
 	}
 	return p
+}
+
+// Verified is the original positional constructor, retained because it reads
+// well at the many call sites that only ever carry org + roles. It delegates to
+// [VerifiedFrom]; prefer that one when setting the attenuation claims.
+func Verified(user, tool, orgID, orgSlug string, roles []string) Principal {
+	return VerifiedFrom(user, tool, Claims{OrgID: orgID, OrgSlug: orgSlug, Roles: roles})
 }
 
 // OrgID returns the verified `org_id` claim, or "" when the principal did not
@@ -123,6 +173,32 @@ func (p Principal) Roles() []string {
 	return slices.Clone(p.roles)
 }
 
+// PrincipalType returns the verified `principal_type` claim — what KIND of
+// caller this is (e.g. "user", "app", "pat", "service"). Empty for every
+// non-assertion entry point, and for a proxy that does not model it.
+//
+// This selects a client-attenuation baseline in acl.yaml (TKT-IAC8TX). Unlike
+// [Principal.Roles] it can only ever REMOVE capability, never add it, so an
+// unrecognized value is not a security event: no baseline matches and the
+// principal keeps exactly its acting user's grants.
+func (p Principal) PrincipalType() string { return p.principalType }
+
+// Scopes returns the verified `scope` claim, split on whitespace. Empty for
+// every non-assertion entry point.
+//
+// A scope re-opens capability a client baseline closed, always intersected with
+// what the acting user holds — so a scope can never grant past the user. Like
+// [Principal.Roles], these are the IdP's names, mapped through an
+// operator-authored allowlist in acl.yaml; an unknown scope grants nothing.
+//
+// The returned slice is a copy; mutating it cannot affect authorization.
+func (p Principal) Scopes() []string {
+	if len(p.scopes) == 0 {
+		return nil
+	}
+	return slices.Clone(p.scopes)
+}
+
 // IsZero reports whether p carries no identity at all. Entry points use it to
 // reject an unconfigured Principal at construction time.
 //
@@ -147,6 +223,9 @@ func (p Principal) Clone() Principal {
 	if len(p.roles) > 0 {
 		p.roles = slices.Clone(p.roles)
 	}
+	if len(p.scopes) > 0 {
+		p.scopes = slices.Clone(p.scopes)
+	}
 	return p
 }
 
@@ -161,16 +240,23 @@ func (p Principal) Clone() Principal {
 // about what "clean" means.
 func (p Principal) Sanitized(clean func(string) string) Principal {
 	out := Principal{
-		User:    clean(p.User),
-		Tool:    clean(p.Tool),
-		RawUser: clean(p.RawUser),
-		orgID:   clean(p.orgID),
-		orgSlug: clean(p.orgSlug),
+		User:          clean(p.User),
+		Tool:          clean(p.Tool),
+		RawUser:       clean(p.RawUser),
+		orgID:         clean(p.orgID),
+		orgSlug:       clean(p.orgSlug),
+		principalType: clean(p.principalType),
 	}
 	if len(p.roles) > 0 {
 		out.roles = make([]string, 0, len(p.roles))
 		for _, r := range p.roles {
 			out.roles = append(out.roles, clean(r))
+		}
+	}
+	if len(p.scopes) > 0 {
+		out.scopes = make([]string, 0, len(p.scopes))
+		for _, s := range p.scopes {
+			out.scopes = append(out.scopes, clean(s))
 		}
 	}
 	return out
@@ -185,19 +271,23 @@ func (p Principal) Equal(q Principal) bool {
 		p.RawUser == q.RawUser &&
 		p.orgID == q.orgID &&
 		p.orgSlug == q.orgSlug &&
-		slices.Equal(p.roles, q.roles)
+		p.principalType == q.principalType &&
+		slices.Equal(p.roles, q.roles) &&
+		slices.Equal(p.scopes, q.scopes)
 }
 
 // principalJSON is the wire format. It is a separate type because the assertion
 // claims live in unexported fields (see the [Principal] doc), which
 // encoding/json cannot reach in either direction.
 type principalJSON struct {
-	User    string   `json:"user"`
-	Tool    string   `json:"tool"`
-	RawUser string   `json:"raw_user,omitempty"`
-	OrgID   string   `json:"org_id,omitempty"`
-	OrgSlug string   `json:"org_slug,omitempty"`
-	Roles   []string `json:"roles,omitempty"`
+	User          string   `json:"user"`
+	Tool          string   `json:"tool"`
+	RawUser       string   `json:"raw_user,omitempty"`
+	OrgID         string   `json:"org_id,omitempty"`
+	OrgSlug       string   `json:"org_slug,omitempty"`
+	Roles         []string `json:"roles,omitempty"`
+	PrincipalType string   `json:"principal_type,omitempty"`
+	Scopes        []string `json:"scopes,omitempty"`
 }
 
 // MarshalJSON emits the assertion claims alongside the exported fields. Every
@@ -205,12 +295,14 @@ type principalJSON struct {
 // byte-identical to what previous versions wrote.
 func (p Principal) MarshalJSON() ([]byte, error) {
 	return json.Marshal(principalJSON{
-		User:    p.User,
-		Tool:    p.Tool,
-		RawUser: p.RawUser,
-		OrgID:   p.orgID,
-		OrgSlug: p.orgSlug,
-		Roles:   p.roles,
+		User:          p.User,
+		Tool:          p.Tool,
+		RawUser:       p.RawUser,
+		OrgID:         p.orgID,
+		OrgSlug:       p.orgSlug,
+		Roles:         p.roles,
+		PrincipalType: p.principalType,
+		Scopes:        p.scopes,
 	})
 }
 
@@ -227,12 +319,14 @@ func (p *Principal) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*p = Principal{
-		User:    w.User,
-		Tool:    w.Tool,
-		RawUser: w.RawUser,
-		orgID:   w.OrgID,
-		orgSlug: w.OrgSlug,
-		roles:   w.Roles,
+		User:          w.User,
+		Tool:          w.Tool,
+		RawUser:       w.RawUser,
+		orgID:         w.OrgID,
+		orgSlug:       w.OrgSlug,
+		roles:         w.Roles,
+		principalType: w.PrincipalType,
+		scopes:        w.Scopes,
 	}
 	return nil
 }

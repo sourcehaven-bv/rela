@@ -292,9 +292,16 @@ tenant a request *came from*; it does not constrain what that request
 could reach.
 
 This is a deliberate scope decision, not an oversight — ACL evaluation
-is additive (any role granting the verb allows it, and no rule can
-subtract), so a cross-cutting "deny unless org matches" needs its own
-design rather than a field check bolted onto the resolver. A test
+is additive (any role granting the verb allows it), so a cross-cutting
+"deny unless org matches" needs its own design rather than a field check
+bolted onto the resolver.
+
+Client attenuation is not a counter-example. It narrows, but it does so
+by compiling restrictions into plain allowlists at LOAD time, keyed on a
+claim whose value set the operator enumerates. Org enforcement cannot
+work that way: the comparison is between a claim and a property of the
+entity being evaluated, which is a per-row predicate — the thing the
+read path deliberately does not have. A test
 (`TestAssertedRoles_OrgIsNotEvaluated`) pins the absence of enforcement
 so it cannot be mistaken for an omission, and fails the day a partial
 org check is added.
@@ -304,6 +311,65 @@ containment edges plus `inherit_roles_through` scope roles to a subtree
 positively, and read-filtering follows for free. That works only if no
 role grants a broad wildcard read — a global `read: ["*"]` defeats any
 org scoping, in this design or any other.
+
+## Client attenuation (`client_baselines` / `scope_grants`)
+
+Client attenuation restricts a client BELOW the user it acts as (see
+GUIDE-acl-overview for the mechanics). Four properties are load-bearing.
+
+**Same trust boundary as asserted roles, and for the same reason.**
+`principal_type` and `scope` live in unexported fields on
+`principal.Principal`, populated only through `principal.Verified` /
+`VerifiedFrom` after signature verification. Never introduce a header
+trusted as a `principal_type` source.
+
+The direction of harm is inverted from a role, which is worth stating
+explicitly because it is easy to reason about backwards: forging a role
+*adds* access, while forging a `principal_type` selects a ceiling and
+therefore *removes* it. The dangerous manipulation here is not injecting
+a claim but **dropping** one — a principal whose `principal_type` is
+lost matches no baseline and is unrestricted. That is why every re-stamp
+of a Principal must carry the claims forward, and why the audit log
+records them.
+
+**A ceiling only ever narrows.** `effective = user_grants ∩ (baseline ∪
+scopes)`. Nothing an operator writes in `client_baselines` or
+`scope_grants` can grant capability the acting user lacks, so a mistake
+in one of these blocks fails toward *less* access. The one exception to
+that comfort is a ceiling that silently matches nothing — see the audit
+rules below.
+
+**This does not contradict the additive model.** Restrictions are
+compiled at LOAD time into ordinary allowlists: `redact: {person:
+[salary]}` becomes "the permitted field set for person, minus salary",
+and the runtime evaluator sees a plain allowlist exactly as before. No
+denial primitive exists at evaluation time, and none should be added —
+`ReadQuery` compiles to a `store.GraphQuery` pushed down into SQL, so a
+runtime deny would have to become a SQL predicate in every backend.
+
+**An inert ceiling is the failure mode to watch.** A wrong *grant*
+denies something and someone reports it. A wrong *restriction* just
+fails to restrict, and nobody files a bug about access they still have.
+`rela acl audit` therefore reports:
+
+- `A11-inert-client-baseline` — a baseline that narrows nothing.
+- `A13-baseline-matches-nothing` — an empty `applies_to`.
+- `A12-scope-reopens-nothing` — a scope re-opening what no baseline
+  closed (it appears to work, which is exactly the trap).
+- `B8` / `B9` — a ceiling naming an entity type or field the metamodel
+  does not declare. A typo in a *denial* is worse than in a grant: it
+  silently fails to protect.
+
+Run `rela acl map --principal <user> --as <type>` to see what a client
+actually gets, rather than inferring it from the policy file.
+
+### Not a substitute for gating the client itself
+
+stdio MCP has no authentication, so no verified claim exists to key a
+baseline on, and its read path does not yet route through the ACL read
+gate at all (TKT-G3PPD). Client attenuation makes the *policy*
+expressible; it does not by itself restrict a locally-launched
+`rela mcp`.
 
 ## Fail-loud on malformed `acl.yaml`
 
@@ -524,7 +590,7 @@ Key properties:
   `{"*": allow-all}`, so entities whose type is absent from the
   metamodel stay searchable exactly as before ACL existed. Under a
   policy, no wildcard is emitted — an off-metamodel type (removed
-  from `metamodel.yaml` while its files remain) is hidden from
+  from `schema.yaml` while its files remain) is hidden from
   search rather than leaked.
 - **The result limit applies after visibility.** `/_search` returns
   up to 1000 results; the bound counts *visible* hits. A
@@ -596,6 +662,20 @@ argued against per-principal menus still holds:
 So `permission:` on a nav entry buys tidiness, not protection. Never
 reach for it in place of a read grant, and never assume an entry's
 absence means a principal cannot get at what it points to.
+
+**Dashboard cards work the same way** (TKT-53KICM). A `permission:` on a
+`dashboard.cards[]` entry omits that card from `/api/v1/_dashboard` for
+non-holders, on exactly the reasoning above: the card's query already runs
+through the ACL-scoped search path, so a principal who may read none of the
+matching entities already sees a card reading `0`. Hiding it removes a useless
+tile and nothing more — the query remains runnable, returning precisely the
+rows it always did.
+
+The card list needs its own endpoint because `/api/v1/_config` is
+principal-independent by design and must stay that way: it keeps serving the
+whole `dashboard:` block, `permission:` values included, to everyone.
+`/api/v1/_dashboard` is the per-principal view; `_config` is the config. Do not
+collapse them.
 
 The same holds for the rest of the app's configuration.
 `/api/v1/_config` serves lists, views, kanbans, documents and

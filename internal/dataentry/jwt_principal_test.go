@@ -17,6 +17,9 @@ type stubVerifier struct {
 	orgID      string
 	orgSlug    string
 	roles      []string
+	// principalType and scopes drive client attenuation (TKT-IAC8TX).
+	principalType string
+	scopes        []string
 }
 
 func (s stubVerifier) VerifyAssertion(_ context.Context, raw string) (AssertedIdentity, error) {
@@ -24,10 +27,12 @@ func (s stubVerifier) VerifyAssertion(_ context.Context, raw string) (AssertedId
 		return AssertedIdentity{}, errors.New("invalid")
 	}
 	return AssertedIdentity{
-		Subject: s.subject,
-		OrgID:   s.orgID,
-		OrgSlug: s.orgSlug,
-		Roles:   s.roles,
+		Subject:       s.subject,
+		OrgID:         s.orgID,
+		OrgSlug:       s.orgSlug,
+		Roles:         s.roles,
+		PrincipalType: s.principalType,
+		Scopes:        s.scopes,
 	}, nil
 }
 

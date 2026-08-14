@@ -200,3 +200,60 @@ Careful with grid children: in `DynamicForm`, `.form-fields > *` and
 `.form-field` have equal specificity, so both read `var(--field-span, 12)`. A
 bare `span 12` on the first rule would win on source order and silently swallow
 every authored span — which is exactly what happened the first time.
+
+### Cascade layers: all rela CSS lives in `@layer rela`
+
+A Vite `generateBundle` plugin wraps every emitted stylesheet in `@layer rela`.
+This is what lets an operator's `custom.css` win the cascade — an unlayered
+declaration outranks a layered one regardless of source order **or**
+specificity.
+
+The split is deliberate: `relaCssLayer.ts` holds the pure `wrapCss` logic (no
+`vite` import, unit-tested by `relaCssLayer.test.ts` beside it) and
+`vite.config.ts` holds the thin plugin binding, mirroring how
+`vite.editor.config.ts` defines its plugin locally.
+
+**Both files must stay at the `frontend/` root, in the `tsconfig.node.json`
+project.** They cannot move under `src/`: `vue-tsc -b` builds project
+references, so a file owned by *both* projects fails `TS6305` ("output file has
+not been built from source file") and one imported *across* the boundary
+without being listed fails `TS6307`. Neither reproduces on a warm tree — a stale
+`node_modules/.cache/tsc-node` hides `TS6305` — so verify config moves with a
+real `rm -rf node_modules && npm ci`, which is what CI runs.
+
+It is not cosmetic. The build emits ~19 stylesheets; 18 are route chunks that
+Vite appends to `<head>` at RUNTIME, i.e. *after* the operator's injected
+`<link>`. Before layering, operator CSS lost every equal-specificity tie against
+a route view — a skin worked on the dashboard and silently died on a list view.
+
+Rules:
+
+- **`:root` token blocks stay OUTSIDE the layer.** `wrapCss` splits them out.
+  `tokens.css` is byte-identical to `internal/dataentry/apps_tokens.css`, which
+  is served to custom apps in iframes as `_rela.css` — where there is no other
+  rela CSS to layer against, so layering would merely demote the tokens beneath
+  every unlayered rule an app author writes. `TestTokensCSSNeverLayered` pins
+  both copies; `TestBuiltCSSIsLayered` pins the split in the build output.
+- **Don't hand-write `@layer` in a component `<style>` block.** The wrap is
+  applied once at build time. A competing layer declared in source would
+  establish its own ordering against `rela`.
+- **`!important` INVERTS under layers.** rela's layered `!important` beats an
+  operator's unlayered `!important`. That is a documented, permanent property
+  (see `docs/customisation.md`), not a bug to "fix" by unlayering.
+- **The wrap is build-only.** `generateBundle` does not run under `vite` dev
+  server, so `npm run dev` has NO layer and a different cascade from production.
+  Verify cascade-sensitive changes against `npm run build`. (`npm run build:e2e`
+  IS a real `vite build`, so the e2e suite does exercise the layer — don't
+  "optimise" e2e onto the dev server.)
+
+### Testing `rela-` custom elements: SFC fixtures only
+
+`isCustomElement: (tag) => tag.startsWith('rela-')` is set in **both**
+`vite.config.ts` and `vitest.config.ts`, so `<rela-slot>` and `<rela-editor>`
+are treated as native custom elements rather than unresolved Vue components.
+
+⚠ A regression test for this **must use a `.vue` SFC fixture** (see
+`src/components/__tests__/fixtures/RelaSlotHost.vue`). Runtime-compiled string
+templates never see build-time `compilerOptions`, so a string-template test
+reports "Failed to resolve component" even when the config is correct — a false
+negative that already cost one debugging cycle.

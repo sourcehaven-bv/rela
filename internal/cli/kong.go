@@ -164,9 +164,10 @@ func runKong() int {
 	var bundles *cliBundles
 	if requiresProject(ktx.Command()) {
 		var err error
-		// The postgres build reads its DSN from $RELA_DATABASE_URL inside
-		// Discover (env-only — no flag — so the credential never lands on a
-		// command line). The filesystem build ignores it.
+		// The postgres build resolves its DSN inside Discover, from
+		// $RELA_DATABASE_URL unless a caller supplies appbuild.WithDatabaseURL.
+		// Neither is a flag, so the credential never lands on a command line.
+		// The filesystem build ignores it.
 		svc, err = appbuild.Discover(projectPath, script.NewEngine())
 		if err != nil {
 			fmt.Fprintln(os.Stderr, relaerrors.WrapDiscoverError(err))

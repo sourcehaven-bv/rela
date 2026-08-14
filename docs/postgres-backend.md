@@ -19,7 +19,7 @@ deployments with **multiple server processes** sharing one database (see
 PostgreSQL backs **data only**. The project's schema and configuration
 are still read from the filesystem, exactly as in the default build:
 
-- `metamodel.yaml` — the entity/relation schema.
+- `schema.yaml` — the entity/relation schema.
 - `templates/` — optional entity/relation templates.
 - `.rela/` — the per-machine cache and audit log.
 
@@ -104,6 +104,11 @@ What you need to know to run it:
 - Each process opens **one extra connection** to receive change notifications.
   If it can't, the process still works normally; only the live cross-server
   updates are unavailable (a warning is logged).
+- That is **one connection per process, not per schema**. All processes LISTEN
+  on a single shared channel (`rela_changed`) and the writing schema travels in
+  the notification payload, so a process serving several schemas on one database
+  still needs only the one connection. Notifications from a schema a store does
+  not read are discarded on arrival.
 - Live updates cover **entity** create/update/delete. Relation and attachment
   edits are reflected on the next page load rather than pushed live.
 

@@ -173,7 +173,7 @@ func (r *Runner) runCreatedEntityAutomation(
 		return nil
 	}
 
-	newAutoResult := r.engine.Process(automation.Event{
+	newAutoResult := r.engine.Process(ctx, automation.Event{
 		Type:   automation.EventEntityCreated,
 		Entity: created,
 	})

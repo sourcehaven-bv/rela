@@ -10,7 +10,7 @@ summary: "Config-driven web UI for entity management"
 
 The data entry application provides a web-based UI for creating, editing, and browsing entities
 stored in a rela project. It is configured entirely through a `data-entry.yaml` file placed
-alongside your `metamodel.yaml`.
+alongside your `schema.yaml`.
 
 ## Overview
 
@@ -31,13 +31,13 @@ A `data-entry.yaml` file defines:
 - **User Defaults** - Per-user default values for properties and relations, configurable via Settings page
 
 The file drives the entire UI without writing any code. The server reads `data-entry.yaml` and
-your `metamodel.yaml` together, validates them, and serves a fully functional CRUD application.
+your `schema.yaml` together, validates them, and serves a fully functional CRUD application.
 
 ## Quick Start
 
 ### 1. Create data-entry.yaml
 
-Place a `data-entry.yaml` in your project root (next to `metamodel.yaml`):
+Place a `data-entry.yaml` in your project root (next to `schema.yaml`):
 
 ```yaml
 version: "1.0"
@@ -238,21 +238,27 @@ styles:
     low: green
 ```
 
-The key is the custom type name (as defined in `metamodel.yaml` under `types:`). Each value maps
+The key is the custom type name (as defined in `schema.yaml` under `types:`). Each value maps
 to a color name. These colors are applied everywhere that enum value appears: list cells, badges,
 and form select options.
 
 **Available colors:** `red`, `orange`, `yellow`, `green`, `blue`, `purple`, `gray`.
+
+For customisation beyond palette and theme — arbitrary CSS, JavaScript and
+assets against rela's own UI, from a `custom/` directory in your project — see
+[Operator customisation hooks](customisation.md). That is an explicitly
+best-effort escape hatch; the palette/theme system remains the supported path
+for ordinary branding.
 
 ## Display names
 
 Every entity's display name — the human-readable string shown in
 lists, cards, side-panel breadcrumbs, related-entity links, and
 search results — comes from the entity type's *primary property*.
-Set it with `display_property` in `metamodel.yaml`:
+Set it with `display_property` in `schema.yaml`:
 
 ```yaml
-# metamodel.yaml
+# schema.yaml
 entities:
   applicatie:
     label: Applicatie
@@ -1371,6 +1377,50 @@ dashboard:
 | `columns` | list   | Column definitions (`table` mode only, same format as list columns) |
 | `sort`    | object | Sort order (`table` mode only)                                     |
 | `limit`   | int    | Maximum rows to display (`table` mode only)                        |
+| `permission` | string | Hide this card from principals who do not hold the named ACL permission |
+
+### Hiding cards a user cannot use (`permission`)
+
+A card carrying a `permission:` is omitted from the dashboard for principals
+who do not hold it:
+
+```yaml
+dashboard:
+  cards:
+    - title: "Open Tickets"        # everyone sees this
+      query: "type:ticket status:open"
+      display: count
+
+    - title: "Audit Log"           # only holders of admin:read
+      query: "type:audit-entry"
+      display: table
+      permission: admin:read
+      columns:
+        - property: title
+```
+
+**This is a UX filter, not an access control.** Card data already flows through
+the ACL-scoped search path, so a principal who cannot read the matching
+entities already sees a card reading `0` or an empty table — `permission:`
+just stops rendering that useless tile. Hiding a card grants and revokes
+nothing: its query typed into the search page returns exactly the rows it
+always did. Nor does it conceal configuration — `/api/v1/_config` still serves
+the whole `dashboard:` block, `permission:` values included, to every
+principal. Only `/api/v1/_dashboard` is filtered.
+
+With no `acl.yaml`, and under `--read-only`, gated cards are **shown**: neither
+configures a permission model, so there is nothing to check. (`--read-only`
+restricts writes only; hiding read surfaces there would hide them from
+everyone, since the flag carries no identity.)
+
+When every card is filtered out, the dashboard renders an empty state — the
+same one shown when no cards are configured at all.
+
+> **Gotcha: permission names are not validated.** A typo like `admin:raed`
+> yields a card **nobody can see**, with no error and no warning at startup.
+> If a card has vanished, check it against the `permissions:` list on your
+> roles in `acl.yaml` first. This applies equally to `permission:` on
+> commands, documents, and navigation entries.
 
 ### Display Modes
 
@@ -2216,7 +2266,7 @@ When creating a new entity, default values are resolved in this order (highest p
 1. **Entity-type override** from user defaults (e.g., ticket-specific override)
 2. **Global user default** (e.g., `assignee: alice`)
 3. **Form-level default** (from `data-entry.yaml`, e.g., `default: medium`)
-4. **Metamodel default** (from `metamodel.yaml` type definition)
+4. **Metamodel default** (from `schema.yaml` type definition)
 
 User defaults never override values explicitly set by the user in the form.
 
@@ -3112,7 +3162,21 @@ property, or **timed** (a UTC `DTSTART` with a time-of-day) when it is a
 
 Point your calendar app at
 `http://<host>:<port>/api/v1/_feeds/<name>.ics`. The endpoint applies the
-server's ACL: a feed only ever exposes entities the request's principal may read.
+server's ACL in both dimensions: an entity the request's principal may not read
+is absent from the feed, and a property hidden from them by a `visible:` grant is
+omitted from the event it would otherwise appear in.
+
+Field redaction applies to what the event **renders**, not to which entities the
+feed selects. A `where:` clause is evaluated against the unredacted entity on
+purpose — otherwise a hidden property would read as empty inside the filter, and
+the same feed would contain different events for different readers. Which
+entities a feed selects is an operator-authored decision; what their fields say
+is the reader's business.
+
+One consequence worth knowing: if a feed is anchored on a date property that a
+reader may not see, entities have no usable date for them and drop out of that
+reader's calendar entirely. That is deliberate — an event whose date you may not
+read is not one you should be shown.
 
 On a plain localhost server there is no authentication — the feed is readable by
 anything that can reach the port, which is appropriate for a single-user local

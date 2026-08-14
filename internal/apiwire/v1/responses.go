@@ -371,6 +371,24 @@ type SidebarGroup struct {
 	Items     []SidebarItem `json:"items"`
 }
 
+// DashboardResponse contains the dashboard page config with the cards this
+// principal may see (TKT-53KICM).
+//
+// This exists as a separate endpoint from `_config` because the card list is
+// per-principal while `_config` is deliberately identical for everyone (root
+// CLAUDE.md, "The configuration is not a secret; the data is"). `_config` still
+// carries the full `dashboard:` block; only this response is filtered, and only
+// so a user is not offered a card they cannot act on.
+//
+// Cards is always a non-nil slice: a project with no `dashboard:` configured,
+// one with an empty `cards:`, and one where every card was filtered all
+// serialize as `[]`, so the SPA has a single "render what you got" path.
+type DashboardResponse struct {
+	Title       string                          `json:"title,omitempty"`
+	Description string                          `json:"description,omitempty"`
+	Cards       []dataentryconfig.DashboardCard `json:"cards"`
+}
+
 // SidebarResponse contains the sidebar data with app info and navigation.
 type SidebarResponse struct {
 	App        AppConfig      `json:"app"`

@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -83,9 +84,38 @@ func TestNoStrayWriteRequestConstruction(t *testing.T) {
 // Genuinely need the predicate elsewhere? That is the moment to stop and ask
 // whether you want an authorization check instead — and if so, to build one
 // (see authorizeCommand), not to reuse this.
+//
+// TKT-53KICM added a SECOND presentation surface (dashboard cards) and shared
+// the underlying policy as `permitsGatedUIElement`, so this guards two needles
+// with two different allow-lists rather than one widened list:
+//
+//   - `permitsNavEntry(` — still exactly one file. It is nav-specific and has no
+//     business anywhere else.
+//   - `permitsGatedUIElement(` — the shared switch, allowed in the two
+//     presentation handlers that legitimately gate on a `permission:`.
+//
+// Widening either list is a deliberate, argued exception and not routine: the
+// guard's value comes from the list being short, because the reviewer's question
+// stays "why are you calling this at all?" rather than "why is your file
+// different from the several that already do?".
 func TestNavFilterStaysPresentational(t *testing.T) {
-	const allowedFile = "views_handler.go"
-	const needle = "permitsNavEntry("
+	// Each needle maps to the set of non-test files permitted to call it.
+	guards := []struct {
+		needle  string
+		allowed map[string]bool
+		why     string
+	}{
+		{
+			needle:  "permitsNavEntry(",
+			allowed: map[string]bool{"views_handler.go": true},
+			why:     "the sidebar filter is presentation only",
+		},
+		{
+			needle:  "permitsGatedUIElement(",
+			allowed: map[string]bool{"views_handler.go": true, "dashboard_handler.go": true},
+			why:     "the shared UI-element filter is presentation only",
+		},
+	}
 
 	root, err := os.Getwd()
 	if err != nil {
@@ -103,20 +133,36 @@ func TestNavFilterStaysPresentational(t *testing.T) {
 		if !strings.HasSuffix(base, ".go") || strings.HasSuffix(base, "_test.go") {
 			return nil
 		}
-		if filepath.Dir(path) != root || base == allowedFile {
+		if filepath.Dir(path) != root {
 			return nil
 		}
 		body, readErr := os.ReadFile(path)
 		if readErr != nil {
 			return readErr
 		}
-		if strings.Contains(string(body), needle) {
-			t.Errorf("file %s calls %q — the sidebar filter is presentation only and must stay in %s; "+
-				"if you need an authorization check, build one (see authorizeCommand)", path, needle, allowedFile)
+		for _, g := range guards {
+			if g.allowed[base] {
+				continue
+			}
+			if strings.Contains(string(body), g.needle) {
+				t.Errorf("file %s calls %q — %s and must stay in %s; "+
+					"if you need an authorization check, build one (see authorizeCommand)",
+					path, g.needle, g.why, strings.Join(sortedKeys(g.allowed), " / "))
+			}
 		}
 		return nil
 	})
 	if err != nil {
 		t.Fatalf("walk: %v", err)
 	}
+}
+
+// sortedKeys returns m's keys in sorted order, for deterministic messages.
+func sortedKeys(m map[string]bool) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }

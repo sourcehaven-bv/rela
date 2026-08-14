@@ -58,7 +58,7 @@ func setupService(t *testing.T) renametypeFixture {
 	}
 	ctx := &project.Context{
 		Root:               root,
-		MetamodelPath:      metaPath,
+		SchemaPath:         metaPath,
 		EntitiesDir:        filepath.Join(root, "entities"),
 		RelationsDir:       filepath.Join(root, "relations"),
 		EntityTemplatesDir: filepath.Join(root, "templates", "entities"),
@@ -110,7 +110,7 @@ title: Second
 		t.Errorf("T-1 type not rewritten:\n%s", got)
 	}
 
-	meta, _ := f.fs.ReadFile(f.ctx.MetamodelPath)
+	meta, _ := f.fs.ReadFile(f.ctx.SchemaPath)
 	if !strings.Contains(string(meta), "issue:") {
 		t.Errorf("metamodel not updated:\n%s", meta)
 	}

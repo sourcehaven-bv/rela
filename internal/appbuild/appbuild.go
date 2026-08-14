@@ -522,6 +522,12 @@ type Option func(*options)
 
 type options struct {
 	acl acl.ACL
+
+	// databaseURL, when non-empty, supplies the DSN that [Discover] would
+	// otherwise read from the environment. Consumed by [Discover] only:
+	// [New] takes the DSN from [Config.DatabaseURL], because a caller
+	// building a Config already decides where the data lives.
+	databaseURL string
 }
 
 // WithACL overrides the auto-loaded ACL with the supplied
@@ -536,6 +542,45 @@ type options struct {
 // path directly.
 func WithACL(a acl.ACL) Option {
 	return func(o *options) { o.acl = a }
+}
+
+// WithDatabaseURL supplies the PostgreSQL DSN explicitly, instead of letting
+// [Discover] read it from $RELA_DATABASE_URL. The option always wins over the
+// environment, so a caller that knows where a project's data lives never has to
+// mutate process state to say so.
+//
+// This exists so that *which database a project uses* is an argument rather than
+// an ambient property. Two [Services] can then be constructed in one process
+// against different databases — impossible via the environment, which is global
+// and shared. `rela-desktop` already builds a fresh bundle per project switch,
+// and a future multi-tenant server resolves a DSN per tenant.
+//
+// The invariant this must not break: a DSN carries a password, so it must never
+// reach a command line. Passing one here in Go code is fine — sourcing it from a
+// flag is not. See [Config.DatabaseURL].
+//
+// Ignored by the FS and memory builds, which have no DSN.
+func WithDatabaseURL(dsn string) Option {
+	return func(o *options) { o.databaseURL = dsn }
+}
+
+// resolveDatabaseURL decides which DSN [Discover] hands to [New]: an explicit
+// [WithDatabaseURL] wins, otherwise $RELA_DATABASE_URL. getenv is injected so
+// the precedence is testable without mutating process environment — which is
+// itself the ambient-state problem this seam removes.
+//
+// Split out of Discover because on the FS and memory builds the resolved DSN is
+// never consumed, so a test could not otherwise distinguish "option honored"
+// from "option ignored" without a live PostgreSQL.
+func resolveDatabaseURL(opts []Option, getenv func(string) string) string {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
+	if o.databaseURL != "" {
+		return o.databaseURL
+	}
+	return getenv("RELA_DATABASE_URL")
 }
 
 // loadACLPolicy reads `acl.yaml` from projectRoot and returns the
@@ -655,12 +700,20 @@ type Config struct {
 	ScriptEngine *script.Engine
 	Audit        audit.Audit
 
-	// DatabaseURL is the PostgreSQL connection string, sourced from the
-	// RELA_DATABASE_URL environment variable (see [Discover]). It is
-	// deliberately env-only — never a command-line flag — so the
-	// credential-bearing DSN does not leak into process listings or shell
-	// history. Consumed only by the postgres build; empty (and ignored) in
-	// the FS/memory builds.
+	// DatabaseURL is the PostgreSQL connection string. The caller decides
+	// where it comes from: [Discover] takes it from [WithDatabaseURL] or, as a
+	// fallback, $RELA_DATABASE_URL; a caller building a Config directly (e.g.
+	// rela-desktop, or a per-tenant lookup) simply sets it.
+	//
+	// The invariant is that a DSN must **never reach a command line** — it
+	// carries a password, and a flag would put it in `ps` output and shell
+	// history. That is why no binary exposes a --database-url flag. It is NOT
+	// an invariant that the value come from the environment; passing it in Go
+	// code is fine and is what makes two differently-backed Services
+	// constructible in one process.
+	//
+	// Consumed only by the postgres build; empty (and ignored) in the
+	// FS/memory builds.
 	DatabaseURL string
 }
 
@@ -688,27 +741,33 @@ func (c Config) validate() error {
 // engine; production callers pass [script.NewEngine].
 //
 // Discover constructs a production [audit.Filesystem] under
-// .rela/audit/ and resolves the database URL (postgres build) from the
-// RELA_DATABASE_URL environment variable — env-only, so the credential
-// never appears on a command line. The entry point caller is responsible
-// for stamping [principal.Principal] onto the request context (this varies
-// per binary — cli, mcp, scheduler, data-entry server).
+// .rela/audit/ and resolves the database URL (postgres build) from
+// [WithDatabaseURL] when supplied, falling back to the RELA_DATABASE_URL
+// environment variable. Neither source is a command-line flag, which is the
+// property that matters: a DSN carries a password and must not land in `ps`
+// output or shell history. The entry point caller is responsible for stamping
+// [principal.Principal] onto the request context (this varies per binary — cli,
+// mcp, scheduler, data-entry server).
 func Discover(startDir string, scriptEngine *script.Engine, opts ...Option) (*Services, error) {
 	fs := storage.NewSafeFS(storage.NewOsFS())
 	paths, err := project.Discover(startDir, fs)
 	if err != nil {
 		return nil, fmt.Errorf("discover project: %w", err)
 	}
+	// Shared startup path for cli, mcp, scheduler and the data-entry server —
+	// warns at most once per process.
+	project.WarnIfLegacySchema(paths)
 	auditSink, auditErr := audit.NewFilesystem(filepath.Join(paths.CacheDir, "audit"))
 	if auditErr != nil {
 		return nil, fmt.Errorf("build audit sink: %w", auditErr)
 	}
+
 	return New(Config{
 		FS:           fs,
 		Paths:        paths,
 		ScriptEngine: scriptEngine,
 		Audit:        auditSink,
-		DatabaseURL:  os.Getenv("RELA_DATABASE_URL"),
+		DatabaseURL:  resolveDatabaseURL(opts, os.Getenv),
 	}, opts...)
 }
 
@@ -758,7 +817,7 @@ func prepare(cfg Config, opts []Option) (*buildBase, error) {
 		}
 	}
 
-	meta, _, err := metamodel.NewFSLoader(cfg.FS, cfg.Paths.MetamodelPath).Load(context.Background())
+	meta, _, err := metamodel.NewFSLoader(cfg.FS, cfg.Paths.SchemaPath).Load(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("load metamodel: %w", err)
 	}

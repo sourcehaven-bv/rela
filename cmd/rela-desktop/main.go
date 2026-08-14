@@ -236,7 +236,7 @@ func (d *Desktop) GetSetupInfo() map[string]any {
 		return map[string]any{"error": "No project pending setup"}
 	}
 
-	loader := metamodel.NewFSLoader(d.pendingSetupFS, d.pendingSetupPaths.MetamodelPath)
+	loader := metamodel.NewFSLoader(d.pendingSetupFS, d.pendingSetupPaths.SchemaPath)
 	meta, _, err := loader.Load(context.Background())
 	if err != nil {
 		return map[string]any{"error": fmt.Sprintf("Failed to load metamodel: %v", err)}
@@ -265,7 +265,7 @@ func (d *Desktop) GenerateDataEntryConfig(appName string) string {
 		return "No project pending setup"
 	}
 
-	meta, _, err := metamodel.NewFSLoader(fs, paths.MetamodelPath).Load(context.Background())
+	meta, _, err := metamodel.NewFSLoader(fs, paths.SchemaPath).Load(context.Background())
 	if err != nil {
 		return fmt.Sprintf("Failed to load metamodel: %v", err)
 	}
@@ -348,7 +348,7 @@ func (d *Desktop) CloneProject(repoURL, baseDir string) map[string]any {
 		return map[string]any{"error": fmt.Sprintf("Clone failed: %v", err)}
 	}
 
-	// Scan for rela projects (directories containing metamodel.yaml)
+	// Scan for rela projects (directories containing a schema file)
 	projects := scanForRelaProjects(targetDir)
 
 	if len(projects) == 0 {
@@ -420,16 +420,23 @@ func (d *Desktop) InitRelaProject(subfolder string) string {
 		}
 	}
 
-	// Create minimal metamodel.yaml
-	metamodelPath := filepath.Join(projectDir, "metamodel.yaml")
-	minimalMetamodel := `# Rela Project Configuration
+	// Refuse if a schema already exists under EITHER name — writing a default
+	// one next to an operator's real (legacy-named) schema would leave the
+	// project loading the empty default, since discovery prefers the new name.
+	if existing, _, found := project.SchemaFileAt(projectDir, storage.NewSafeFS(storage.NewOsFS())); found {
+		return fmt.Sprintf("Directory is already a rela project (%s exists)", filepath.Base(existing))
+	}
+
+	// Create minimal schema.yaml
+	schemaPath := filepath.Join(projectDir, project.SchemaFile)
+	minimalSchema := `# Rela Project Configuration
 # See https://github.com/Sourcehaven-BV/rela for documentation
 
 entity_types: {}
 relation_types: {}
 `
-	if err := os.WriteFile(metamodelPath, []byte(minimalMetamodel), 0o644); err != nil {
-		return fmt.Sprintf("Failed to create metamodel.yaml: %v", err)
+	if err := os.WriteFile(schemaPath, []byte(minimalSchema), 0o644); err != nil {
+		return fmt.Sprintf("Failed to create %s: %v", project.SchemaFile, err)
 	}
 
 	// Create entities directory
@@ -441,7 +448,7 @@ relation_types: {}
 	return d.LoadProject(projectDir)
 }
 
-// scanForRelaProjects recursively finds directories containing metamodel.yaml.
+// scanForRelaProjects recursively finds directories containing a schema file.
 func scanForRelaProjects(root string) []string {
 	var projects []string
 	_ = filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
@@ -456,8 +463,17 @@ func scanForRelaProjects(root string) []string {
 			}
 			return nil
 		}
-		if info.Name() == "metamodel.yaml" {
+		// Match the legacy name too, so pre-rename projects keep showing up in
+		// the picker. Only the new name appends when both are present,
+		// otherwise such a directory would be listed twice.
+		switch info.Name() {
+		case project.SchemaFile:
 			projects = append(projects, filepath.Dir(path))
+		case project.LegacySchemaFile:
+			dir := filepath.Dir(path)
+			if _, err := os.Stat(filepath.Join(dir, project.SchemaFile)); err != nil {
+				projects = append(projects, dir)
+			}
 		}
 		return nil
 	})
@@ -780,10 +796,11 @@ func resolveProjectDir(flagValue string, prefs *desktop.Preferences) string {
 	return ""
 }
 
-// isRelaProject checks if the directory looks like a rela project.
+// isRelaProject checks if the directory looks like a rela project, accepting
+// either schema file name.
 func isRelaProject(dir string) bool {
-	_, err := os.Stat(filepath.Join(dir, "metamodel.yaml"))
-	return err == nil
+	_, _, found := project.SchemaFileAt(dir, storage.NewSafeFS(storage.NewOsFS()))
+	return found
 }
 
 // discoverProject returns the filesystem and project context for the
@@ -798,6 +815,9 @@ func discoverProject(projectDir string) (storage.FS, *project.Context, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("discovering project: %w", err)
 	}
+	// The desktop app opens projects without going through appbuild.Discover,
+	// so it needs its own call for the notice to reach desktop-only operators.
+	project.WarnIfLegacySchema(projCtx)
 	return fs, projCtx, nil
 }
 

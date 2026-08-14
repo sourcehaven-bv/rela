@@ -35,7 +35,7 @@ func setupRenameTestEnv(t *testing.T) renameTestEnv {
 		EntitiesDir:          filepath.Join(dir, "entities"),
 		RelationsDir:         filepath.Join(dir, "relations"),
 		CacheDir:             filepath.Join(dir, ".rela"),
-		MetamodelPath:        filepath.Join(dir, "metamodel.yaml"),
+		SchemaPath:           filepath.Join(dir, "metamodel.yaml"),
 		TemplatesDir:         filepath.Join(dir, "templates"),
 		EntityTemplatesDir:   filepath.Join(dir, "templates", "entities"),
 		RelationTemplatesDir: filepath.Join(dir, "templates", "relations"),
@@ -48,7 +48,7 @@ func setupRenameTestEnv(t *testing.T) renameTestEnv {
 
 	// Write metamodel using shared helper
 	metamodelYAML := testutil.SimpleMetamodelYAML()
-	os.WriteFile(paths.MetamodelPath, []byte(metamodelYAML), 0644)
+	os.WriteFile(paths.SchemaPath, []byte(metamodelYAML), 0644)
 
 	// Load metamodel
 	meta, err := metamodel.Parse([]byte(metamodelYAML))
@@ -130,7 +130,7 @@ func TestRenameEntityCommand(t *testing.T) {
 		}
 
 		// Check metamodel was updated
-		mmData, err := os.ReadFile(env.paths.MetamodelPath)
+		mmData, err := os.ReadFile(env.paths.SchemaPath)
 		if err != nil {
 			t.Fatalf("failed to read metamodel: %v", err)
 		}
@@ -260,7 +260,7 @@ func TestRenameEntityCommand(t *testing.T) {
 		}
 
 		// Metamodel should still be updated
-		mmData, _ := os.ReadFile(env.paths.MetamodelPath)
+		mmData, _ := os.ReadFile(env.paths.SchemaPath)
 		if !strings.Contains(string(mmData), "feature:") {
 			t.Error("metamodel should contain 'feature:' key even with no entity directory")
 		}

@@ -43,7 +43,7 @@ rela init
 
 ### Create the Project Management Metamodel
 
-Replace the default `metamodel.yaml` with this project management configuration:
+Replace the default `schema.yaml` with this project management configuration:
 
 ```yaml
 version: "1.0"
@@ -509,7 +509,7 @@ relations:
     inverse: improvedBy
 ```
 
-Save this as `metamodel.yaml` in your project root.
+Save this as `schema.yaml` in your project root.
 
 ## Part 2: Setting Up Strategic Goals
 

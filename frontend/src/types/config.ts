@@ -354,6 +354,29 @@ export interface DashboardCard {
   columns?: Array<{ property?: string; relation?: string; label?: string; link?: string }>
   sort?: Array<{ property: string; direction: 'asc' | 'desc' }>
   limit?: number
+  /**
+   * Optional ACL permission gating this card's visibility (TKT-53KICM).
+   *
+   * The SPA does not act on this: the server already omits cards the principal
+   * cannot use from `/_dashboard`. It appears here only because `/_config`
+   * serves the `dashboard:` block verbatim to everyone, so the type has to
+   * describe what arrives. Never filter on it client-side — the SPA reads
+   * booleans the server computed, it does not evaluate ACL.
+   */
+  permission?: string
+}
+
+/**
+ * The per-principal dashboard payload from `/_dashboard`.
+ *
+ * Distinct from {@link DashboardConfig}, which is the verbatim config block on
+ * `/_config`. `cards` is always an array — a project with no dashboard, an
+ * empty `cards:`, and an all-filtered dashboard all arrive as `[]`.
+ */
+export interface DashboardResponse {
+  title?: string
+  description?: string
+  cards: DashboardCard[]
 }
 
 export interface AnalyzeIssue {

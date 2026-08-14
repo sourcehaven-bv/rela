@@ -71,7 +71,7 @@ func WithStore(s store.Store) Option {
 
 // WithFS overrides the default in-memory filesystem and project
 // context with caller-supplied ones. Use this when a test wants to
-// seed project files (metamodel.yaml, templates, data-entry.yaml)
+// seed project files (schema.yaml, templates, data-entry.yaml)
 // or assert on paths the fixture's default location does not match.
 //
 // Without this option, [New] supplies a default in-memory FS rooted

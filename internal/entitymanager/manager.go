@@ -518,7 +518,7 @@ func (m *Manager) CreateEntity(
 		return result, nil
 	}
 
-	autoResult := m.deps.Automations.Process(automation.Event{
+	autoResult := m.deps.Automations.Process(ctx, automation.Event{
 		Type:   automation.EventEntityCreated,
 		Entity: created,
 	})
@@ -766,7 +766,7 @@ func (m *Manager) updateCore(
 	runAutomation := m.deps.Automations != nil
 	var autoResult *automation.Result
 	if runAutomation {
-		autoResult = m.deps.Automations.Process(automation.Event{
+		autoResult = m.deps.Automations.Process(ctx, automation.Event{
 			Type:      automation.EventEntityUpdated,
 			Entity:    e,
 			OldEntity: oldEntity,

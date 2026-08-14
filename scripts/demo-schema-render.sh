@@ -25,7 +25,7 @@ say "Seeding a metamodel that hits every classification bucket"
 #   hub:      hub   → {t1,t2,t3}, targets otherwise isolated (3 isolated)
 #   legend-connected:  webber → {c1,c2,c3,c4}, targets also linked via anchor
 #   legend-many:       catch  → {any..} (≥5 targets)
-cat > "${DEMO}/metamodel.yaml" <<'YAML'
+cat > "${DEMO}/schema.yaml" <<'YAML'
 version: "1.0"
 namespace: "https://example.com/demo#"
 entities:

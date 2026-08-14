@@ -48,6 +48,28 @@
   Never substitute a no-op or sentinel implementation silently — that
   defers the failure to a downstream symptom that is much harder to
   diagnose.
+- **Restrictions compile at LOAD time; the evaluator has no denial
+  primitive.** Client attenuation (`client_baselines` / `scope_grants`,
+  TKT-IAC8TX) restricts a client below the user it acts as, but it does so
+  by compiling into plain allowlists when `acl.yaml` loads — `redact:
+  {person: [salary]}` becomes "person's permitted fields, minus salary".
+  `decideFromAttrs`, `readQuery`, `grantsPermission` and `FieldVerdicts`
+  keep seeing allowlists, so DEC-RG878's additive union semantics are
+  intact. **Do not add a runtime deny.** `ReadQuery` compiles to a
+  `store.GraphQuery` pushed into SQL, so a runtime denial would have to
+  become a SQL predicate in every backend, and every evaluation path plus
+  all of `internal/aclmap` would need re-deriving.
+
+  The clamp point is `Request.roleFor` — every evaluation path resolves
+  role names through it, so reaching into `policy.Roles[...]` directly
+  from a new path silently bypasses the ceiling. A guard test
+  (`ceilingguard_test.go`) scans the package and fails on that; it uses an
+  exemption list, so a new file must be clean or explicitly exempted.
+
+  A ceiling only ever NARROWS (`effective = user_grants ∩ (baseline ∪
+  scopes)`), so a bug fails toward less access — except in the compilation
+  step, which is why that has direct unit tests rather than only
+  end-to-end ones.
 - **Read-out paths go through visibility wrappers, base readers stay
   ungated.** Read-side ACL (entity row-gating + field-level `visible:`
   redaction) is enforced by `internal/visibility` decorators
@@ -87,7 +109,7 @@
   entity (a form save that renders every field). `ApplyEntity` is the
   whole-record replace the sync channel needs. If you are writing a *subset*,
   you want `PatchEntity`.
-- **The configuration is not a secret; the data is.** `metamodel.yaml`,
+- **The configuration is not a secret; the data is.** `schema.yaml`,
   `data-entry.yaml`, `acl.yaml`, `schedules.yaml`, `scripts/`, `actions/`,
   `templates/` are operator-authored files that live in the repo — routinely a
   public one, as in any open-source app. Their *contents are already
@@ -173,7 +195,7 @@ documentation mirrors (`docs-project/`). Anything with typed entities and
 relations fits.
 
 ```text
-metamodel.yaml → Metamodel (entity types, relations, properties)
+schema.yaml → Metamodel (entity types, relations, properties)
                      ↓
 entities/*.md  → entity.Entity  ↘
                                  store.Store → tracer.Tracer  (pure reader)
@@ -232,6 +254,34 @@ Subsystems (see each package's doc comment for details):
 | `internal/transform`  | View-export engine: markdown `Renderer` → external-tool format conversion (the `transforms:` registry) |
 
 Other packages under `internal/` are self-descriptive — ls the tree.
+
+### Condition engine: `internal/predicate` + `internal/predicatefns`
+
+`internal/predicate` is the **condition engine** — a sandboxed, typed
+boolean-expression evaluator (Lua-expression subset; no I/O at eval;
+depth/step budgets). `internal/predicatefns` is its metamodel-aware glue:
+the `ScalarType`/`EntityRecordType` type adapter, the host-fn stdlib
+(`match`/`regex`/`fuzzy`/`contains`/`len`/`today`), the `FromFilter`
+transpiler, and the `Evaluator` (compile-once, metamodel-scoped Program
+cache). New condition/`when:`-style code evaluates through `predicate`.
+
+These surfaces are on predicate: ACL affordance `when:`
+(`internal/affordances`), state-machine transition `When:`
+(`internal/statemachine`), wizard-form condition lint
+(`internal/conditionlint`), automation `on.when:`/`validate:`
+(`internal/automation`), metamodel validation `When:`/`Then:`
+(`internal/validation`), and the CLI `--filter` flag (`internal/cli/list.go`).
+
+`internal/filter` is NOT frozen — it remains the **query-filtering** DSL
+(the `--where` string syntax and metamodel legacy filter-strings). Legacy
+`--where`/`When:`/`Then:` inputs are transpiled to predicate via
+`predicatefns.FromFilter` on load (`--where` is deprecated in favor of
+`--filter`). `filter.Match` still directly backs query-filtering in
+`internal/dataentry` (SPA view/feed `where:`), `internal/lua` (script
+queries), `internal/search/searchparser`, and `internal/cli/analyze.go` —
+these were **not** migrated (they filter result sets, they don't gate
+conditions). Don't describe filter as "removed" or "frozen"; it's the
+query-filter DSL, predicate is the condition/policy engine.
 
 ### View export & transforms (`internal/transform`)
 
@@ -298,23 +348,29 @@ Rules when touching this:
   between recipes, it belongs in a shared helper. This is what keeps the three
   recipes from drifting (and where future per-backend audit/ACL variation goes).
 - **The metamodel is always read from disk**, even in the postgres build —
-  `metamodel.yaml`, `templates/`, `.rela/` stay on the filesystem; PostgreSQL
+  `schema.yaml`, `templates/`, `.rela/` stay on the filesystem; PostgreSQL
   backs entities/relations/attachments/search only. A postgres deployment
   still needs a `--project` dir.
 - **Multi-writer change feed** (TKT-WZYWM9). The postgres watcher delivers
   cross-process writes via PostgreSQL `LISTEN/NOTIFY`: each committed write does
-  `pg_notify(<schema-scoped channel>, '<origin>:<kind>:<op>:<id>')` inside its
+  `pg_notify(rela_changed, '<origin>:<schema>:<kind>:<op>:<id>')` inside its
   transaction (so the 5 single-statement writes are wrapped in a tx); a listener
   goroutine (own connection, started in `Open`, stopped in `Close`) turns remote
-  notifications into `store.Event`s on the in-process `Subscribe()` fan-out. A
-  per-store random `originID` in the payload filters self-echoes (the listener
-  skips its own writes — local writes are already emitted in-process). NOTIFY is
-  best-effort, so a `seq > watermark` catch-up (overlap window + idempotent
-  re-snapshot; runs on connect/reconnect/safety-ticker, NOT per notification)
-  recovers anything missed. The channel is schema-scoped (`rela_changed_<schema>`)
-  because LISTEN is database-global — all processes of one deployment share a
-  schema/channel. If the listener can't connect, the store degrades with a
-  warning (local events still work). Exact ordering (xid8 + `pg_snapshot_xmin`)
+  notifications into `store.Event`s on the in-process `Subscribe()` fan-out. Two
+  payload fields do the routing, both filtered on receipt: a per-store random
+  `originID` drops self-echoes (local writes are already emitted in-process), and
+  the writing `schema` drops traffic from other schemas sharing the channel.
+  NOTIFY is best-effort, so a `seq > watermark` catch-up (overlap window +
+  idempotent re-snapshot; runs on connect/reconnect/safety-ticker, NOT per
+  notification) recovers anything missed. **The channel is ONE constant
+  (`rela_changed`), not one per schema** (TKT-9TOEBH): LISTEN is database-global
+  *and* needs a dedicated session, so a per-schema name would cost one
+  permanently-held connection per schema — the term that does not shrink under
+  pooling. Isolation lives in the payload instead. What is **not** shared is the
+  catch-up: `rela_seq` is per-schema and the catch-up query is unqualified SQL,
+  so priming/catch-up stay bound to each store's own pool — do not "simplify"
+  them onto a shared connection. If the listener can't connect, the store
+  degrades with a warning (local events still work). Exact ordering (xid8 + `pg_snapshot_xmin`)
   is the documented upgrade, not built. The data-entry SSE feed consumes this
   via `App.startStoreEventBridge` (entity events only). fsstore/memstore stay
   in-process single-writer by nature.
@@ -479,7 +535,7 @@ single test.
 ## Project files
 
 ```text
-metamodel.yaml                  # Entity/relation schema
+schema.yaml                     # Entity/relation schema (was metamodel.yaml)
 schedules.yaml                  # Optional: schedules for `rela scheduler`
 entities/<type>/                # Markdown entity files by type
 relations/                      # Markdown relation files (FROM--type--TO.md)
@@ -720,11 +776,11 @@ Minor/nit findings may remain open with warnings.
 ### Automation Actions
 
 Status transitions auto-create checklists (and similar side effects) via
-automations declared in the project's `metamodel.yaml`. Action types
+automations declared in the project's `schema.yaml`. Action types
 (`set`, `create_relation`, `create_entity` with `if_exists`) and
 interpolation patterns (`{{new.property}}`, `{{entity.id}}`, `{{today}}`)
 are documented in `docs/metamodel.md` and exemplified in the live
-`metamodel.yaml`. Read those rather than relying on a copy here — a stale
+`schema.yaml`. Read those rather than relying on a copy here — a stale
 copy is worse than a pointer.
 
 Common mistake: `{{entity.title}}` is wrong; use `{{new.title}}` for a

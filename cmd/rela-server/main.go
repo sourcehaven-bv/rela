@@ -117,9 +117,11 @@ func parseFlags() *serverFlags {
 	flag.StringVar(&f.webhookAction, "webhook-action", envOr("RELA_WEBHOOK_ACTION", ""),
 		"Name of the action a verified IdP webhook dispatches to (e.g. idp-sync). The action "+
 			"receives event/user_id/org_id as params and provisions the user.")
-	// Note: there is no --database-url flag. The postgres build reads the DSN
-	// from $RELA_DATABASE_URL only, so the credential never lands in process
-	// listings or shell history. See appbuild.Config.DatabaseURL.
+	// Note: there is no --database-url flag, and must not be. The postgres
+	// build takes the DSN from $RELA_DATABASE_URL (or, for an embedding
+	// caller, appbuild.WithDatabaseURL) — never from argv, so the credential
+	// cannot land in process listings or shell history.
+	// See appbuild.Config.DatabaseURL.
 	flag.Parse()
 	if os.Getenv("RELA_READ_ONLY") == "1" {
 		f.readOnly = true
@@ -349,6 +351,11 @@ func wireWebhookReceiver(app *dataentry.App, f *serverFlags, idv *jwtauth.Verifi
 // The gate consumes VerifyAssertion (not VerifySubject) so the assertion's
 // org/roles reach the Principal it stamps; a subject-only adapter here would
 // silently strip every asserted role (TKT-OJL2GN).
+//
+// The same applies to principal_type/scope (TKT-IAC8TX), with the failure
+// running the other way: dropping a role removes access, dropping a
+// principal_type removes the CEILING and hands a restricted client its acting
+// user's full grants. Every claim this adapter forgets is a silent widening.
 type assertionVerifierAdapter struct{ v *jwtauth.Verifier }
 
 func (a assertionVerifierAdapter) VerifyAssertion(
@@ -359,10 +366,12 @@ func (a assertionVerifierAdapter) VerifyAssertion(
 		return dataentry.AssertedIdentity{}, err
 	}
 	return dataentry.AssertedIdentity{
-		Subject: c.Subject,
-		OrgID:   c.OrgID,
-		OrgSlug: c.OrgSlug,
-		Roles:   c.Roles,
+		Subject:       c.Subject,
+		OrgID:         c.OrgID,
+		OrgSlug:       c.OrgSlug,
+		Roles:         c.Roles,
+		PrincipalType: c.PrincipalType,
+		Scopes:        c.Scopes,
 	}, nil
 }
 

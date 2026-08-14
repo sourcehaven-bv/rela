@@ -15,14 +15,14 @@ import (
 var testProjectFS = storage.NewOsFS()
 
 func TestDiscover(t *testing.T) {
-	t.Run("finds project by metamodel.yaml", func(t *testing.T) {
+	t.Run("finds project by legacy metamodel.yaml", func(t *testing.T) {
 		// Create a temporary directory structure
 		tmpDir := testutil.TempDirWithCleanup(t)
 		subDir := filepath.Join(tmpDir, "subdir", "nested")
 		testutil.CreateDir(t, subDir)
 
 		// Create metamodel.yaml in root
-		metamodelPath := filepath.Join(tmpDir, MetamodelFile)
+		metamodelPath := filepath.Join(tmpDir, LegacySchemaFile)
 		testutil.CreateFile(t, metamodelPath, "version: 1.0\n")
 
 		// Discover from nested directory
@@ -48,7 +48,7 @@ func TestDiscover(t *testing.T) {
 	t.Run("uses current directory when startDir is empty", func(t *testing.T) {
 		// Create temp directory with metamodel
 		tmpDir := testutil.TempDirWithCleanup(t)
-		metamodelPath := filepath.Join(tmpDir, MetamodelFile)
+		metamodelPath := filepath.Join(tmpDir, LegacySchemaFile)
 		testutil.CreateFile(t, metamodelPath, "version: 1.0\n")
 
 		// Change to temp directory
@@ -98,7 +98,7 @@ func TestNewContext(t *testing.T) {
 		want string
 	}{
 		{"Root", ctx.Root, root},
-		{"MetamodelPath", ctx.MetamodelPath, filepath.Join(root, MetamodelFile)},
+		{"SchemaPath", ctx.SchemaPath, filepath.Join(root, SchemaFile)},
 		{"CacheDir", ctx.CacheDir, filepath.Join(root, CacheDir)},
 		{"EntitiesDir", ctx.EntitiesDir, filepath.Join(root, EntitiesDir)},
 		{"RelationsDir", ctx.RelationsDir, filepath.Join(root, RelationsDir)},
@@ -235,7 +235,7 @@ func TestContextExists(t *testing.T) {
 		ctx := newContext(tmpDir)
 
 		// Create metamodel.yaml
-		testutil.CreateFile(t, ctx.MetamodelPath, "version: 1.0\n")
+		testutil.CreateFile(t, ctx.SchemaPath, "version: 1.0\n")
 
 		if !ctx.Exists(testProjectFS) {
 			t.Error("expected Exists() to return true")

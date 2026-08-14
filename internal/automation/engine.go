@@ -1,11 +1,14 @@
 package automation
 
 import (
+	"context"
 	"slices"
+	"sync"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 )
 
 // Engine evaluates automations against entity events.
@@ -18,6 +21,28 @@ type Engine struct {
 	// Optional: nil falls back to string-only matching, preserving the
 	// pre-metamodel behavior for engines constructed via [NewEngine].
 	meta *metamodel.Metamodel
+
+	// ev is the predicate evaluator for typed `when:`/`validate:`
+	// comparisons — the condition engine (TKT-J4IR1G). Built lazily on
+	// first typed match against the current meta; rebuilt if meta changes.
+	// Guarded by evMu.
+	evMu sync.Mutex
+	ev   *predicatefns.Evaluator
+}
+
+// evaluator returns the predicate Evaluator bound to the current
+// metamodel, building it once. Returns nil when there is no metamodel
+// (the string-only fallback path handles that).
+func (e *Engine) evaluator() *predicatefns.Evaluator {
+	if e.meta == nil {
+		return nil
+	}
+	e.evMu.Lock()
+	defer e.evMu.Unlock()
+	if e.ev == nil {
+		e.ev = predicatefns.NewEvaluator(e.meta)
+	}
+	return e.ev
 }
 
 // NewEngine creates an automation engine with the given automations.
@@ -49,6 +74,9 @@ func NewEngineFromMetamodel(meta *metamodel.Metamodel, defs []metamodel.Automati
 // strings.
 func (e *Engine) SetMetamodel(meta *metamodel.Metamodel) {
 	e.meta = meta
+	e.evMu.Lock()
+	e.ev = nil // rebuild against the new meta on next use
+	e.evMu.Unlock()
 }
 
 // convertFromMetamodel converts a metamodel AutomationDef to the internal Automation type.
@@ -127,7 +155,7 @@ func (e *Engine) SetTemplateVars(vars TemplateVars) {
 }
 
 // Process evaluates all automations against an event and returns the result.
-func (e *Engine) Process(event Event) *Result {
+func (e *Engine) Process(ctx context.Context, event Event) *Result {
 	result := &Result{
 		PropertiesSet:     make(map[string]string),
 		RelationsToCreate: make([]*entity.Relation, 0),
@@ -138,7 +166,7 @@ func (e *Engine) Process(event Event) *Result {
 	}
 
 	for _, auto := range e.automations {
-		if !e.matches(auto.On, event) {
+		if !e.matches(ctx, auto.On, event) {
 			continue
 		}
 
@@ -149,7 +177,7 @@ func (e *Engine) Process(event Event) *Result {
 
 		// Evaluate validations
 		for _, validation := range auto.Validate {
-			e.evaluateValidation(validation, event, result)
+			e.evaluateValidation(ctx, validation, event, result)
 		}
 	}
 
@@ -157,7 +185,7 @@ func (e *Engine) Process(event Event) *Result {
 }
 
 // matches checks if a trigger matches an event.
-func (e *Engine) matches(trigger Trigger, event Event) bool {
+func (e *Engine) matches(ctx context.Context, trigger Trigger, event Event) bool {
 	// Check entity type constraint
 	if len(trigger.Entity) > 0 && event.Entity != nil {
 		matched := slices.Contains(trigger.Entity, event.Entity.Type)
@@ -167,7 +195,7 @@ func (e *Engine) matches(trigger Trigger, event Event) bool {
 	}
 
 	// Check when conditions (property filters on the entity)
-	if !e.matchesWhenConditions(trigger, event.Entity) {
+	if !e.matchesWhenConditions(ctx, trigger, event.Entity) {
 		return false
 	}
 
@@ -229,7 +257,7 @@ func (e *Engine) matchesPropertyChange(trigger Trigger, event Event) bool {
 
 // matchesWhenConditions checks if all when conditions are satisfied.
 // Returns true if no conditions are specified (backward compatible).
-func (e *Engine) matchesWhenConditions(trigger Trigger, entity *entity.Entity) bool {
+func (e *Engine) matchesWhenConditions(ctx context.Context, trigger Trigger, entity *entity.Entity) bool {
 	if len(trigger.When) == 0 {
 		return true
 	}
@@ -238,7 +266,7 @@ func (e *Engine) matchesWhenConditions(trigger Trigger, entity *entity.Entity) b
 	}
 
 	for _, f := range trigger.When {
-		if !e.matchProperty(entity, f) {
+		if !e.matchProperty(ctx, entity, f) {
 			return false
 		}
 	}
@@ -320,7 +348,7 @@ func (e *Engine) executeAction(action Action, event Event, result *Result, autom
 }
 
 // evaluateValidation checks a validation and adds warnings/errors to the result.
-func (e *Engine) evaluateValidation(validation Validation, event Event, result *Result) {
+func (e *Engine) evaluateValidation(ctx context.Context, validation Validation, event Event, result *Result) {
 	if event.Entity == nil {
 		return
 	}
@@ -332,7 +360,7 @@ func (e *Engine) evaluateValidation(validation Validation, event Event, result *
 		return
 	}
 
-	if !e.matchProperty(event.Entity, f) {
+	if !e.matchProperty(ctx, event.Entity, f) {
 		msg := e.interpolate(validation.Message, event)
 		if validation.GetSeverity() == "error" {
 			result.Errors = append(result.Errors, msg)
@@ -350,8 +378,8 @@ func (e *Engine) evaluateValidation(validation Validation, event Event, result *
 // the string-only [matchSimple] — preserving the pre-metamodel
 // behavior and tolerating ad-hoc/unknown properties rather than
 // rejecting them.
-func (e *Engine) matchProperty(ent *entity.Entity, f *filter.Filter) bool {
-	if matched, handled := e.matchTyped(ent, f); handled {
+func (e *Engine) matchProperty(ctx context.Context, ent *entity.Entity, f *filter.Filter) bool {
+	if matched, handled := e.matchTyped(ctx, ent, f); handled {
 		return matched
 	}
 	var val any
@@ -361,28 +389,50 @@ func (e *Engine) matchProperty(ent *entity.Entity, f *filter.Filter) bool {
 	return matchSimple(val, f)
 }
 
-// matchTyped attempts a type-aware comparison via the metamodel.
-// handled is false when there is no metamodel, no entity, or the
-// property isn't declared — in which case the caller falls back to
-// string matching.
-func (e *Engine) matchTyped(ent *entity.Entity, f *filter.Filter) (matched, handled bool) {
-	if e.meta == nil || ent == nil {
+// matchTyped attempts a type-aware comparison through the predicate
+// condition engine (TKT-J4IR1G): the filter clause is transpiled to a
+// predicate via predicatefns.FromFilter, compiled once (cached in the
+// Evaluator), and evaluated against the entity. handled is false when
+// there is no metamodel, no entity, or the property isn't declared — in
+// which case the caller falls back to string matching, preserving the
+// pre-metamodel behavior for ad-hoc properties.
+//
+// A transpile/compile error (e.g. an unsupported filter form) also
+// returns handled=false so the string fallback still runs — this keeps
+// the migration strictly no-worse than the prior filter.Match path.
+func (e *Engine) matchTyped(ctx context.Context, ent *entity.Entity, f *filter.Filter) (matched, handled bool) {
+	ev := e.evaluator()
+	if ev == nil || ent == nil {
 		return false, false
 	}
 	def, ok := e.meta.GetEntityDef(ent.Type)
 	if !ok {
 		return false, false
 	}
-	propDef, ok := def.Properties[f.Property]
-	if !ok {
+	if _, ok := def.Properties[f.Property]; !ok {
 		return false, false
 	}
-	rec := filter.Record{ID: ent.ID, Type: ent.Type, Properties: ent.Properties}
-	m, err := filter.Match(rec, f, &propDef, e.meta)
+	propDef := def.Properties[f.Property]
+	prog, err := ev.CompileFilter(ent.Type, []*filter.Filter{f})
 	if err != nil {
-		// A type/parse error (e.g. a non-numeric value on a numeric
-		// property) means the comparison can't hold — treat as no
-		// match, same as the type-aware view path.
+		// The clause is untranspilable (e.g. fuzzy-with-wildcard, or an
+		// operator/type combination FromFilter rejects). Reproduce the
+		// EXACT legacy verdict via filter.Match rather than dropping to
+		// the string matcher — the string path would accept ops
+		// filter.Match rejected (e.g. regex on an int property), flipping
+		// the verdict (RR-G9KT8H). handled=true so the caller does NOT
+		// fall back to matchSimple.
+		rec := filter.Record{ID: ent.ID, Type: ent.Type, Properties: ent.Properties}
+		m, mErr := filter.Match(rec, f, &propDef, e.meta)
+		if mErr != nil {
+			return false, true
+		}
+		return m, true
+	}
+	m, err := ev.Matches(ctx, prog, ent.Type, ent.ID, ent.Properties)
+	if err != nil {
+		// A type/parse error means the comparison can't hold — no match,
+		// same as the prior type-aware path.
 		return false, true
 	}
 	return m, true

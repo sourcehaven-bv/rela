@@ -86,6 +86,7 @@ components:
   sync:             { in: internal/sync }
   frontmatter:      { in: internal/frontmatter }
   filter:           { in: internal/filter }
+  propmatch:        { in: internal/propmatch }
   pattern:          { in: internal/pattern }
   search:           { in: internal/search }
   bleveindex:       { in: internal/search/bleveindex }
@@ -269,6 +270,8 @@ deps:
       - metamodel
       - output
       - pgstore
+      - predicate
+      - predicatefns
       - principal
       - project
       - projectsetup
@@ -535,6 +538,7 @@ deps:
       - entity
       - metamodel
       - predicate
+      - predicatefns
       - principal
       - statemachine
   # Read-side ACL enforcement seam (DEC-ZBI39P): visibility wrappers over
@@ -573,6 +577,8 @@ deps:
     mayDependOn:
       - filter
       - metamodel
+      - predicate
+      - predicatefns
   conflict:
     mayDependOn:
       - markdown
@@ -669,6 +675,8 @@ deps:
       - lua
       - markdown
       - metamodel
+      - predicate
+      - predicatefns
     canUse:
       - gopherlua
   validator:
@@ -697,10 +705,14 @@ deps:
     mayDependOn:
       - entity
       - markdown
+  # propmatch is a PURE LEAF (stdlib only) on purpose — it is imported by
+  # both filter (a branch) and the store layer, so anything added to it
+  # lands inside the store too. Do not give it dependencies.
   filter:
     mayDependOn:
       - metamodel
       - pattern
+      - propmatch
   lua:
     mayDependOn:
       - ai
@@ -769,6 +781,7 @@ deps:
   graphquerynaive:
     mayDependOn:
       - entity
+      - propmatch
       - store
   pgstore:
     mayDependOn:

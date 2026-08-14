@@ -44,6 +44,13 @@ type dimension struct {
 	ruleKind string
 }
 
+// kindHidden is the visible dimension's rule kind, used in attribution strings
+// ("affordance:hidden"). Named because three callers now pass it — the
+// role-declared `visible:` block, the historical closed-world opt-in, and the
+// client-attenuation ceiling — and a typo in any one would silently produce a
+// differently-labeled attribution.
+const kindHidden = "hidden"
+
 func newDimension() *dimension {
 	return &dimension{
 		allowed:    map[string]bool{},
@@ -63,6 +70,93 @@ func (d *dimension) allow(field string) {
 	d.allowed[field] = true
 	d.candidates[field] = true
 	delete(d.denyRole, field)
+}
+
+// restrictTo intersects the dimension with a client-attenuation ceiling
+// (TKT-IAC8TX): after it runs, a field is visible only if BOTH the roles and
+// the ceiling permit it.
+//
+// universe is the type's declared fields — needed because the dimension is a
+// sparse deny-map layered over "visible by default". When no role declared a
+// `visible:` block, `allowed` is EMPTY and yet every field is visible; seeding
+// from the universe converts that implicit state into the explicit set this can
+// intersect against. Without it a ceiling applied to an un-gated type would
+// hide everything (allowed stays empty → deny() denies the whole universe).
+//
+// This is deliberately NOT `allow` in a loop. allow() UNIONS — it adds a field
+// and clears any prior denial — which is exactly wrong for a ceiling: a ceiling
+// may only remove, so a field some role already denied must STAY denied even if
+// the ceiling names it. Intersecting keeps both constraints.
+//
+// rule attributes the resulting denials to the baseline rather than a role, so
+// a hidden field is debuggable ("this client is attenuated" vs "no role grants
+// it").
+func (d *dimension) restrictTo(keep, universe []string, rule string) {
+	if !d.optedIn {
+		// Nothing has constrained this dimension yet, so every field is
+		// implicitly visible. Make that explicit before intersecting.
+		for _, f := range universe {
+			d.allowed[f] = true
+			d.candidates[f] = true
+		}
+		// ruleKind labels the DIMENSION ("hidden"), not the individual denial —
+		// per-field attribution comes from denyRole below.
+		d.optIn(kindHidden)
+	}
+
+	allowed := make(map[string]bool, len(keep))
+	for _, f := range keep {
+		allowed[f] = true
+	}
+	// Drop anything currently allowed that the ceiling does not name, recording
+	// the ceiling as the denying rule. Fields already denied stay denied: this
+	// only ever removes from `allowed`.
+	for f := range d.allowed {
+		if !allowed[f] {
+			delete(d.allowed, f)
+			if _, seen := d.denyRole[f]; !seen {
+				d.denyRole[f] = rule
+			}
+		}
+	}
+	// Mention the ceiling's own fields as candidates so a stale ceiling entry
+	// (naming a field the metamodel no longer declares) still reports
+	// consistently rather than vanishing.
+	for f := range allowed {
+		d.candidates[f] = true
+	}
+}
+
+// redact hides exactly the named fields, leaving every other field alone — the
+// open-world sibling of [dimension.restrictTo].
+//
+// Like restrictTo it must seed from the universe when nothing has opted in yet,
+// because deny() emits nothing at all unless the dimension is closed-world. The
+// difference is what survives: here everything EXCEPT the named fields.
+func (d *dimension) redact(fields, universe []string, rule string) {
+	if len(fields) == 0 {
+		return
+	}
+	drop := make(map[string]bool, len(fields))
+	for _, f := range fields {
+		drop[f] = true
+	}
+	if !d.optedIn {
+		for _, f := range universe {
+			if !drop[f] {
+				d.allowed[f] = true
+			}
+			d.candidates[f] = true
+		}
+		d.optIn(kindHidden)
+	}
+	for _, f := range fields {
+		d.candidates[f] = true
+		delete(d.allowed, f)
+		if _, seen := d.denyRole[f]; !seen {
+			d.denyRole[f] = rule
+		}
+	}
 }
 
 // observeDeny records that role denied field (predicate failed). Only

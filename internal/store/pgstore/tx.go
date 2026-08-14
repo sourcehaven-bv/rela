@@ -78,7 +78,7 @@ func (s *Store) Tx(ctx context.Context, fn func(store.Store) error) error {
 	view := &Store{
 		db:          tx,
 		originID:    s.originID,
-		channel:     s.channel,
+		schema:      s.schema,
 		subscribers: make(map[int]chan store.Event),
 		txPending:   pending,
 	}

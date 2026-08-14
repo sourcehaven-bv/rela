@@ -33,22 +33,26 @@ func SetNotifyDisabledForTest(t *testing.T, disabled bool) {
 }
 
 // FeedPayloadForTest builds a NOTIFY payload for an entity event with the given
-// origin and id, exactly as the producer would. Test-only.
-func FeedPayloadForTest(origin string, op store.EventOp, id string) string {
-	return notifyPayload(origin, store.Event{Op: op, EntityID: id})
+// origin, schema and id, exactly as the producer would. Test-only.
+func FeedPayloadForTest(origin, schema string, op store.EventOp, id string) string {
+	return notifyPayload(origin, schema, store.Event{Op: op, EntityID: id})
 }
 
 // NotificationEmitsForTest runs the listener's handleNotification with a
-// listener bound to selfOrigin and the given payload, and reports whether an
-// event was emitted to a subscriber. This isolates the origin-filter decision
-// from feed/DB timing. Test-only.
-func NotificationEmitsForTest(t *testing.T, selfOrigin, payload string) bool {
+// listener bound to (selfOrigin, selfSchema) and the given payload, and reports
+// whether an event was emitted to a subscriber. This isolates the filter
+// decisions from feed/DB timing. Test-only.
+//
+// selfSchema is an explicit parameter rather than defaulted: with a shared
+// channel, "" == "" would make a caller that forgot it pass vacuously, which is
+// the exact failure mode the schema filter exists to prevent.
+func NotificationEmitsForTest(t *testing.T, selfOrigin, selfSchema, payload string) bool {
 	t.Helper()
 	s := &Store{subscribers: make(map[int]chan store.Event)}
 	ch, cancel := s.Subscribe(1)
 	defer cancel()
 
-	l := &listener{store: s, originID: selfOrigin}
+	l := &listener{store: s, originID: selfOrigin, schema: selfSchema}
 	l.handleNotification(&pgconn.Notification{Payload: payload})
 
 	select {
@@ -62,6 +66,12 @@ func NotificationEmitsForTest(t *testing.T, selfOrigin, payload string) bool {
 // WriteAdvisoryLockKeyForTest exposes the Tx write-serialization advisory
 // key so the stress tests can assert it never leaks in pg_locks. Test-only.
 const WriteAdvisoryLockKeyForTest = writeAdvisoryLockKey
+
+// FeedChannelForTest exposes the shared NOTIFY channel so a test can emit a
+// raw notification onto the same channel the listener LISTENs on. Referencing
+// the constant (rather than rebuilding the name) means a rename cannot leave a
+// test quietly notifying a channel nobody hears. Test-only.
+const FeedChannelForTest = feedChannel
 
 // BuildGraphQuerySQLForTest exposes the internal SQL builder so
 // explain-plan tests can render the SQL without going through a pgx
