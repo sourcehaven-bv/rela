@@ -353,18 +353,24 @@ Rules when touching this:
   still needs a `--project` dir.
 - **Multi-writer change feed** (TKT-WZYWM9). The postgres watcher delivers
   cross-process writes via PostgreSQL `LISTEN/NOTIFY`: each committed write does
-  `pg_notify(<schema-scoped channel>, '<origin>:<kind>:<op>:<id>')` inside its
+  `pg_notify(rela_changed, '<origin>:<schema>:<kind>:<op>:<id>')` inside its
   transaction (so the 5 single-statement writes are wrapped in a tx); a listener
   goroutine (own connection, started in `Open`, stopped in `Close`) turns remote
-  notifications into `store.Event`s on the in-process `Subscribe()` fan-out. A
-  per-store random `originID` in the payload filters self-echoes (the listener
-  skips its own writes — local writes are already emitted in-process). NOTIFY is
-  best-effort, so a `seq > watermark` catch-up (overlap window + idempotent
-  re-snapshot; runs on connect/reconnect/safety-ticker, NOT per notification)
-  recovers anything missed. The channel is schema-scoped (`rela_changed_<schema>`)
-  because LISTEN is database-global — all processes of one deployment share a
-  schema/channel. If the listener can't connect, the store degrades with a
-  warning (local events still work). Exact ordering (xid8 + `pg_snapshot_xmin`)
+  notifications into `store.Event`s on the in-process `Subscribe()` fan-out. Two
+  payload fields do the routing, both filtered on receipt: a per-store random
+  `originID` drops self-echoes (local writes are already emitted in-process), and
+  the writing `schema` drops traffic from other schemas sharing the channel.
+  NOTIFY is best-effort, so a `seq > watermark` catch-up (overlap window +
+  idempotent re-snapshot; runs on connect/reconnect/safety-ticker, NOT per
+  notification) recovers anything missed. **The channel is ONE constant
+  (`rela_changed`), not one per schema** (TKT-9TOEBH): LISTEN is database-global
+  *and* needs a dedicated session, so a per-schema name would cost one
+  permanently-held connection per schema — the term that does not shrink under
+  pooling. Isolation lives in the payload instead. What is **not** shared is the
+  catch-up: `rela_seq` is per-schema and the catch-up query is unqualified SQL,
+  so priming/catch-up stay bound to each store's own pool — do not "simplify"
+  them onto a shared connection. If the listener can't connect, the store
+  degrades with a warning (local events still work). Exact ordering (xid8 + `pg_snapshot_xmin`)
   is the documented upgrade, not built. The data-entry SSE feed consumes this
   via `App.startStoreEventBridge` (entity events only). fsstore/memstore stay
   in-process single-writer by nature.

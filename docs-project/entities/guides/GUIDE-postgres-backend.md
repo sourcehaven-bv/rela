@@ -110,6 +110,11 @@ What you need to know to run it:
 - Each process opens **one extra connection** to receive change notifications.
   If it can't, the process still works normally; only the live cross-server
   updates are unavailable (a warning is logged).
+- That is **one connection per process, not per schema**. All processes LISTEN
+  on a single shared channel (`rela_changed`) and the writing schema travels in
+  the notification payload, so a process serving several schemas on one database
+  still needs only the one connection. Notifications from a schema a store does
+  not read are discarded on arrival.
 - Live updates cover **entity** create/update/delete. Relation and attachment
   edits are reflected on the next page load rather than pushed live.
 
