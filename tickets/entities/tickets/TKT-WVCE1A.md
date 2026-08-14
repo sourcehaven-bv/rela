@@ -5,7 +5,7 @@ title: Ignore TypeScript major bumps until TS 7.1 lands a compiler API
 kind: chore
 priority: medium
 effort: xs
-status: review
+status: done
 ---
 
 ## Problem
