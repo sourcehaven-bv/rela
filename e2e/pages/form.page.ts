@@ -17,6 +17,17 @@ export class FormPage extends BasePage {
     this.titleInput = page.locator("#field-title");
   }
 
+  /** The app shell chrome — present whenever the SPA is mounted. */
+  get appChrome(): Locator {
+    return this.page.locator(".sidebar, nav").first();
+  }
+
+  /** Navigate to a list view (used to seed in-app history before a form). */
+  async navigateToList(listId: string) {
+    await this.navigateTo(`/list/${listId}`);
+    await this.waitForSpinnerToDisappear();
+  }
+
   async navigateToCreateForm(formId: string) {
     await this.navigateTo(`/form/${formId}`);
     await this.waitForSpinnerToDisappear();

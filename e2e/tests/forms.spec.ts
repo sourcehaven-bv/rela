@@ -185,6 +185,41 @@ test.describe('Edit Form - Default Relation Picker Save (BUG-UNEBR regression)',
   });
 });
 
+// Cancel/Back must land inside the app (BUG-ZE4354).
+//
+// `router.back()` is a browser-history operation with no route target, so on a
+// form opened COLD — the exact shape below, a direct navigation with no prior
+// in-app entry — it walked out of the SPA entirely. The existing specs never
+// caught it because they all reach forms via an in-app link, which leaves a
+// history entry to go back to.
+test.describe('Form cancel navigation', () => {
+  test('cancel on a directly-opened form stays in the app', async ({ appPage }) => {
+    const formPage = new FormPage(appPage);
+    await formPage.navigateToCreateForm('feature');
+
+    await formPage.cancel();
+
+    // The load-bearing assertions: we left the form, we are on a real in-app
+    // route, and the SPA is still mounted. Before the fix this landed on the
+    // browser's pre-app page (about:blank in a fresh context).
+    await expect(appPage).not.toHaveURL(/\/form\//);
+    await expect(appPage).toHaveURL(/\/(list\/[a-z_]+|$)/);
+    expect(appPage.url()).not.toContain('about:blank');
+    await expect(formPage.appChrome).toBeVisible();
+  });
+
+  test('cancel still goes back when there is in-app history', async ({ appPage }) => {
+    // No regression for the common path.
+    const formPage = new FormPage(appPage);
+    await formPage.navigateToList('features');
+    await formPage.navigateToCreateForm('feature');
+
+    await formPage.cancel();
+
+    await expect(appPage).toHaveURL(/\/list\/features/);
+  });
+});
+
 // Inline entity creation from a relation field (TKT-OMUD56).
 //
 // The affordance is derived, not configured: it appears for a target type when
