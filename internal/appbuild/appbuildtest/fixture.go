@@ -193,6 +193,7 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 			},
 		),
 		Transitions:     tw.Enforcer,
+		FieldGate:       entitymanager.AllowAllFieldGate{},
 		TransitionGuard: tw.Guard,
 		TransitionGraph: tw.Graph,
 	})
@@ -305,12 +306,11 @@ func buildReadDeps(st store.Store, tr tracer.Tracer, searcher search.Searcher,
 	// Test fixture: unrestricted reads (no ACL wiring here). Production
 	// identity-bearing paths use Services.luaReadDepsFor instead.
 	return lua.ReadDeps{
-		VisibleReader:  visibility.Unrestricted(st),
-		WritePrepStore: st,
-		Tracer:         tr,
-		Searcher:       searcher,
-		Meta:           meta,
-		ProjectRoot:    root,
+		VisibleReader: visibility.Unrestricted(st),
+		Tracer:        tr,
+		Searcher:      searcher,
+		Meta:          meta,
+		ProjectRoot:   root,
 	}
 }
 

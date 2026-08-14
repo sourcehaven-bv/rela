@@ -52,12 +52,54 @@ src/components/   → Reusable UI components
 | `src/api/` | Typed API client functions (entities, schema, git, settings, etc.) |
 | `src/stores/` | Pinia stores: `schema` (metamodel/config), `entities` (CRUD + cache), `ui` (toasts, sidebar), `git` (status) |
 | `src/views/` | Route-level components: Dashboard, List, Form, Entity, Kanban, Graph, Search, Settings |
-| `src/components/forms/` | Form widgets: DynamicForm, FieldRenderer, RelationPicker, MarkdownEditor, SidePanel |
+| `src/widgets/` | The property-widget library + `registry.ts` (the type→widget dispatch). One widget per property type, each rendering both `mode: 'display'` and `mode: 'edit'` |
+| `src/components/forms/` | Form scaffolding: DynamicForm, FieldRenderer (resolves via the widget registry), RelationPicker, MarkdownEditor, SidePanel |
 | `src/components/lists/` | EntityList, FilterBar, Pagination |
 | `src/components/common/` | Sidebar, StatusBar, Badge, Toast, BackButton |
 | `src/composables/` | Vue composables: useKeyboardShortcuts, useEvents (SSE), useListKeyboard, useScopeNavigation, useBackTarget |
 | `src/styles/` | Shared CSS loaded from `main.ts` (e.g. `back-button.css` for the `.scope-nav-btn` class reused across EntityDetail, CustomView, and standalone BackButton) |
 | `src/types/` | TypeScript interfaces for entities, schema, and config |
+
+### Widgets render property values everywhere, including read-only
+
+A property value is rendered by a **widget** on every surface — forms, entity
+detail, view sections, list/table cells, and kanban cards. Widgets take a
+required `mode: 'display' | 'edit'` (no default, RR-UD1I) and own their
+read-only rendering. **Do not add a per-type `v-if` to a view.** A new property
+type should need a widget plus a routing entry, never a branch per surface.
+
+There are two routing entry points, and they are not interchangeable:
+
+- `defaultRegistry.resolve(name, propertyDef)` — form side, when you hold the
+  real schema entry.
+- `defaultRegistry.resolveFromHint(hint)` — view side, when you have wire-level
+  field metadata. Build the hint with `viewFieldRoutingHint` (view sections) or
+  `densePropertyRoutingHint` (list cells, kanban cards).
+
+**Dense surfaces are not detail views.** `densePropertyRoutingHint` exists
+because a table cell and a detail row have genuinely opposite contracts, and
+reusing the detail-view routing in a cell has already caused regressions
+(TKT-S9C14S):
+
+- **Empty renders blank, never a placeholder.** MultiSelectWidget's em-dash
+  (RR-UD2C) is right for a detail row and wrong for a cell — `formatCellValue`
+  documents that "blank table cells stay visually quiet". `isDenseEmpty` gates
+  this at the cell, before the widget sees the value.
+- **`list: true` must not override the type's formatter.** `defaultWidgetFor`
+  puts list first because the *edit* side needs a tag picker whatever the type;
+  on the display side that erases the formatter (a list-valued rrule rendered as
+  an em-dash). Non-enum lists route to preformatted text.
+- **`boolean` → text and `file` → text in cells**, deliberately: booleans stay
+  Cmd-F searchable, and FileWidget's `<img>` previews would be one network
+  request per cell.
+- **Resolve per column/field, not per cell** — `resolve()` walks a Map and can
+  `console.warn`, which at 200 rows is 200 warnings per render. See
+  `PropertyDisplay.vue`'s precomputed `rows` (RR-UD2A) for the pattern.
+
+The hint carries `preformatted`: true for passthrough widgets that render
+`String(value)`, false for widgets that own their display formatting. A new
+widget defaults to false (raw value), which is correct — the reason to add a
+widget is that it renders something text cannot.
 
 ### Key Stores
 

@@ -23,6 +23,44 @@ import (
 // `go test ./...` without a database still passes; CI sets it).
 const testDBEnv = "RELA_TEST_DATABASE_URL"
 
+// requireDBEnv makes the skip above an ERROR instead. Set it in any
+// environment whose job is to prove the postgres backend actually works —
+// CI's Postgres Backend job sets it, and so should anything else that
+// treats "pgstore is green" as a merge gate.
+//
+// Why this exists (RR-0EWZQW). A skip and a pass are indistinguishable in
+// `go test` exit codes and in CI summaries, so the entire pgstore suite —
+// which is the ONLY mechanism enforcing the backend-parity rule in the root
+// CLAUDE.md — silently becomes a no-op if the DSN is ever missing: a dropped
+// env var, a renamed service container, a copied-but-not-adjusted workflow.
+// Nothing goes red, and fs/mem-vs-postgres divergence ships.
+//
+// This is not hypothetical. TKT-F4TIS6 shipped two real defects past every
+// non-DB check — a 42P18 on any-endpoint queries, and jsonb/Go disagreement
+// on list-valued properties that inverted `is empty` and broke multi-select
+// equality — both caught only by running against a live database.
+//
+// Deliberately a SEPARATE variable rather than "fail whenever CI is set":
+// forks and Dependabot PRs run the same workflow, and a contributor running
+// the suite locally without a database must still get a clean skip. Strictness
+// is opted into by the environment that promises a database, not inferred.
+const requireDBEnv = "RELA_TEST_DATABASE_REQUIRED"
+
+// missingDSN reports how to treat an absent DSN: skip (the default, so a
+// plain `go test ./...` needs no database) or fail (when requireDBEnv is
+// truthy). Returns the reason string for whichever the caller should raise.
+func missingDSN() (required bool, reason string) {
+	if v := os.Getenv(requireDBEnv); v != "" && v != "0" && !strings.EqualFold(v, "false") {
+		return true, fmt.Sprintf(
+			"%s is set, so the pgstore suite must run, but %s is empty.\n"+
+				"This suite is the backend-parity gate: skipping it silently would let "+
+				"fs/mem-vs-postgres divergence merge unnoticed.\n"+
+				"Set %s to a reachable PostgreSQL DSN, or unset %s to allow skipping.",
+			requireDBEnv, testDBEnv, testDBEnv, requireDBEnv)
+	}
+	return false, testDBEnv + " not set; skipping pgstore integration tests"
+}
+
 var (
 	adminPoolOnce sync.Once
 	adminPool     *pgxpool.Pool
@@ -45,7 +83,7 @@ type skipper interface {
 func adminConn(tb skipper) *pgxpool.Pool {
 	dsn := os.Getenv(testDBEnv)
 	if dsn == "" {
-		tb.Skipf("%s not set; skipping pgstore integration tests", testDBEnv)
+		skipOrFailWithoutDSN(tb)
 		return nil
 	}
 	adminPoolOnce.Do(func() {
@@ -119,13 +157,29 @@ func pgQuoteIdent(ident string) string {
 	return `"` + strings.ReplaceAll(ident, `"`, `""`) + `"`
 }
 
-// testDSN returns the connection string for the suite, skipping if unset.
+// testDSN returns the connection string for the suite, skipping if unset —
+// or failing when requireDBEnv demands the suite actually run.
 func testDSN(tb skipper) string {
 	dsn := os.Getenv(testDBEnv)
 	if dsn == "" {
-		tb.Skipf("%s not set; skipping pgstore integration tests", testDBEnv)
+		skipOrFailWithoutDSN(tb)
 	}
 	return dsn
+}
+
+// skipOrFailWithoutDSN raises the absent-DSN outcome chosen by [missingDSN]:
+// a skip normally, a hard failure under requireDBEnv. Every place that gives
+// up for want of a database MUST route through here — a skip site that checks
+// testDBEnv on its own silently opts out of the parity gate, which is the
+// exact failure mode this guard exists to close.
+func skipOrFailWithoutDSN(tb skipper) {
+	tb.Helper()
+	required, reason := missingDSN()
+	if required {
+		tb.Fatalf("%s", reason)
+		return
+	}
+	tb.Skipf("%s", reason)
 }
 
 // freshEmptySchema creates an isolated schema WITHOUT migrating it (unlike

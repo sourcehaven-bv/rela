@@ -425,6 +425,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	// CalDAV needs the alias service to remember client-created resources;
+	// without it the routes are not registered at all.
+	app.SetCalDAVAliases(svc.CalDAVAliases())
+
 	// Start file watcher for live-reload.
 	// The watcher goroutine is cleaned up on process exit.
 	if err := app.StartWatching(); err != nil {

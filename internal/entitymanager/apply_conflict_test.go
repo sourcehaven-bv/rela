@@ -66,7 +66,8 @@ func TestApplyEntity_CreateConflict_RejectsAndDoesNotClobber(t *testing.T) {
 
 	st := &raceCreateStore{Store: inner}
 	mgr, err := entitymanager.New(entitymanager.Deps{
-		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
+		FieldGate: entitymanager.AllowAllFieldGate{},
+		Store:     st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -114,7 +115,8 @@ func TestApplyEntity_SameTypeCreateConflict_NoClobber(t *testing.T) {
 
 	st := &raceCreateStore{Store: inner}
 	mgr, err := entitymanager.New(entitymanager.Deps{
-		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
+		FieldGate: entitymanager.AllowAllFieldGate{},
+		Store:     st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -172,7 +174,8 @@ func TestApplyEntity_UpdateVanished_RejectsWithoutCreating(t *testing.T) {
 		stored: &entity.Entity{ID: "NOTE-1", Type: "note", Properties: map[string]any{"title": "v1"}},
 	}
 	mgr, err := entitymanager.New(entitymanager.Deps{
-		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
+		FieldGate: entitymanager.AllowAllFieldGate{},
+		Store:     st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)

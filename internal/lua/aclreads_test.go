@@ -3,6 +3,7 @@ package lua_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -116,10 +117,9 @@ func newACLWorld(t *testing.T) (store.Store, lua.WriteDeps) {
 		ReadDeps: lua.ReadDeps{
 			VisibleReader: scriptReader,
 			// RAW on purpose — the read-before-write handle. See AC6.
-			WritePrepStore: st,
-			Tracer:         visTracer,
-			Meta:           aclWorldMeta(),
-			ProjectRoot:    t.TempDir(),
+			Tracer:      visTracer,
+			Meta:        aclWorldMeta(),
+			ProjectRoot: t.TempDir(),
 		},
 		EntityManager: entitymanagertest.PanicOnUse{},
 	}
@@ -238,15 +238,21 @@ rela.output("nodes=" .. table.concat(walk(rela.trace_from("TKT-1", 2), {}), ",")
 // data-destruction guard, and the single most important test in this
 // ticket.
 //
-// rela.update_entity does GetEntity → Clone → merge → save. If that read
-// went through the REDACTING reader, the clone would lack the caller's
-// hidden properties and the save would ERASE them. The write-prep handle
-// is raw precisely to prevent that.
+// The hazard: a read-modify-write whose READ is redacted produces a clone
+// missing the caller's hidden properties, and the save then ERASES them.
 //
-// This test runs the REAL binding end-to-end and asserts on the PERSISTED
-// entity, so it fails if anyone points luaUpdateEntity at VisibleReader —
-// which an earlier version of this test, asserting only on the deps
-// handles, did not (RR-KYWIMZ).
+// Since TKT-80EWGM the binding no longer performs that read at all — it
+// builds an entity.Patch naming only what the script supplied and hands it
+// to PatchEntity, which merges against the raw stored entity internally.
+// The invariant this test pins is therefore now structural rather than
+// conventional: there is no store handle on the binding to point at the
+// wrong reader.
+//
+// The test is kept (and still asserts on the PERSISTED entity) because it
+// is the end-to-end proof of the property that matters — a caller who
+// cannot READ `salary` cannot ERASE it either — independent of which
+// mechanism currently provides it. An earlier version asserting only on
+// the deps handles would not have caught a regression here (RR-KYWIMZ).
 func TestScriptReads_UpdatePreservesHiddenProperties(t *testing.T) {
 	st, deps := newACLWorld(t)
 	deps.EntityManager = &storeMutator{st: st}
@@ -277,6 +283,26 @@ func (m *storeMutator) UpdateEntity(ctx context.Context, e *entity.Entity) (*ent
 		return nil, err
 	}
 	return &entity.UpdateResult{Entity: e}, nil
+}
+
+// PatchEntity mirrors the real manager: read the STORED entity, merge the
+// patch onto it, save. The read is the raw store, which is exactly what
+// entitymanager.PatchEntity does internally — so the AC6 test still
+// exercises a genuine read-merge-save round trip and would still catch a
+// redacted write-prep read.
+func (m *storeMutator) PatchEntity(
+	ctx context.Context, id string, p entity.Patch,
+) (*entity.UpdateResult, error) {
+	stored, err := m.st.GetEntity(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("entity not found: %s", id)
+	}
+	updated := stored.Clone()
+	p.Apply(updated)
+	if err := m.st.UpdateEntity(ctx, updated); err != nil {
+		return nil, err
+	}
+	return &entity.UpdateResult{Entity: updated}, nil
 }
 
 func (m *storeMutator) CreateEntity(
@@ -343,11 +369,10 @@ func TestScriptReads_NilReaderDenies(t *testing.T) {
 	}
 	deps := lua.WriteDeps{
 		ReadDeps: lua.ReadDeps{
-			VisibleReader:  nil, // the wiring omission under test
-			WritePrepStore: st,  // present, and must NOT be used as a fallback
-			Tracer:         tracer.New(st),
-			Meta:           aclWorldMeta(),
-			ProjectRoot:    t.TempDir(),
+			VisibleReader: nil, // the wiring omission under test
+			Tracer:        tracer.New(st),
+			Meta:          aclWorldMeta(),
+			ProjectRoot:   t.TempDir(),
 		},
 		EntityManager: entitymanagertest.PanicOnUse{},
 	}

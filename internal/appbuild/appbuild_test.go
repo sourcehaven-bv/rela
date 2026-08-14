@@ -107,7 +107,7 @@ func TestDiscover_LuaDepsDerivable(t *testing.T) {
 	defer svc.Close()
 
 	read := svc.LuaReadDeps()
-	if read.VisibleReader == nil || read.WritePrepStore == nil || read.Tracer == nil || read.Meta == nil {
+	if read.VisibleReader == nil || read.Tracer == nil || read.Meta == nil {
 		t.Errorf("LuaReadDeps incomplete: %+v", read)
 	}
 	// The nil check above no longer proves the reader is wired to a store:
@@ -203,5 +203,44 @@ func TestNew_RejectsNilDeps(t *testing.T) {
 				t.Errorf("err = %v, want substring %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// TestCorruptAliasTableDoesNotBrickTheBinary: the alias table lives in the
+// gitignored cache dir, and it is built on EVERY appbuild path — `rela list`,
+// `analyze`, the MCP server, the desktop app — almost none of which serve
+// CalDAV.
+//
+// Treating a corrupt table as fatal there meant one truncated cache file killed
+// every command on a project with no `caldav:` block at all, naming a subsystem
+// the user had never enabled. Reproduced with `rela list` before this test.
+//
+// The fail-loud rule still holds where it matters: registerCalDAVRoutes refuses
+// to mount without a healthy table, so a synced client cannot re-create its
+// entries as new entities. The failure just lands on the path that can actually
+// cause that damage.
+func TestCorruptAliasTableDoesNotBrickTheBinary(t *testing.T) {
+	root := writeMinimalProject(t)
+
+	cacheDir := filepath.Join(root, ".rela", "caldav")
+	if err := os.MkdirAll(cacheDir, 0o750); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cacheDir, "aliases.json"),
+		[]byte("this is not json"), 0o600); err != nil {
+		t.Fatalf("write corrupt table: %v", err)
+	}
+
+	svc, err := appbuild.Discover(root, script.NewEngine())
+	if err != nil {
+		t.Fatalf("a corrupt CalDAV cache file must not fail project build: %v", err)
+	}
+	t.Cleanup(func() { _ = svc.Close() })
+
+	// Degraded, not silently healthy: nil is the signal registerCalDAVRoutes
+	// keys on to refuse to serve.
+	if svc.CalDAVAliases() != nil {
+		t.Error("alias service is non-nil after a corrupt load; CalDAV would " +
+			"serve from an empty table and duplicate every synced entry")
 	}
 }

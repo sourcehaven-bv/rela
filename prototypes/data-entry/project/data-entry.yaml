@@ -38,25 +38,14 @@ documents:
     title: "Status Review"
     script: docs/status_review.lua
     timeout: 10
+  # Renders through Lua, not a shell. The inline `command:` this replaced
+  # spliced {id} into a shell string (TKT-QGHNVA); `command:` is now an argv
+  # array with no shell, and a renderer that needs the entity reads the graph
+  # directly rather than shelling out to the CLI.
   ticket_summary:
     title: "Ticket Summary"
     entity_type: ticket
-    command: |
-      export PATH=".rela/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
-      TITLE=$(rela show {id} -o json | jq -r '.entity.properties.title // "Untitled"')
-      STATUS=$(rela show {id} -o json | jq -r '.entity.properties.status // "unknown"')
-      PRIORITY=$(rela show {id} -o json | jq -r '.entity.properties.priority // "medium"')
-      ASSIGNEE=$(rela show {id} -o json | jq -r '.entity.properties.assignee // "unassigned"')
-      DESC=$(rela show {id} -o json | jq -r '.entity.properties.description // ""')
-      echo "# $TITLE"
-      echo ""
-      echo "**Status:** $STATUS | **Priority:** $PRIORITY | **Assignee:** $ASSIGNEE"
-      echo ""
-      if [ -n "$DESC" ]; then
-        echo "## Description"
-        echo ""
-        echo "$DESC"
-      fi
+    script: docs/ticket_summary.lua
     timeout: 30
 forms:
   create_ticket:
@@ -590,12 +579,20 @@ kanbans:
     title: "Ticket Board"
     column_property: status
     columns:
+      # `icon:` names an icon from the shared registry; the label stays plain
+      # text. Emoji used to live inside the label string, which meant they
+      # ignored the theme, rendered differently per OS, and could not be
+      # styled — and the SPA had no way to tell an intentional emoji in a
+      # label apart from one meant as an icon.
       - value: open
-        label: "\U0001F4E5 To Do"
+        label: "To Do"
+        icon: inbox
       - value: in-progress
-        label: "\U0001F527 In Progress"
+        label: "In Progress"
+        icon: wrench
       - value: resolved
-        label: "✅ Done"
+        label: "Done"
+        icon: done
     card:
       title: title
       fields:
@@ -632,10 +629,15 @@ navigation:
     document: status_review
   - group: "Tickets"
     items:
+      # Without `icon:` all three lists get the same derived glyph, so the
+      # sidebar reads as three identical rows distinguished only by their
+      # labels. An authored icon gives each one a shape you can aim for.
       - label: "My Tickets"
         list: my_tickets
+        icon: inbox
       - label: "Open Tickets"
         list: open_tickets
+        icon: status
       - label: "All Tickets"
         list: all_tickets
       - label: "Ticket Board"

@@ -96,6 +96,7 @@ func setupAttachmentService(t *testing.T) attachmentFixture {
 		Audit:       audit.Nop{},
 		ACL:         acl.NopACL{},
 		Transitions: statemachine.EmptySet(),
+		FieldGate:   entitymanager.AllowAllFieldGate{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)

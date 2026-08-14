@@ -1,19 +1,23 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, type Component } from 'vue'
 import { useRouter } from 'vue-router'
 import { useQuery, useMutation, useQueryCache } from '@pinia/colada'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { listAllEntities, updateEntity, getErrorMessage } from '@/api'
 import { entityKeys } from '@/queries/entities'
 import { beginOptimistic, rollbackOptimistic, settleOptimistic } from '@/queries/optimisticList'
-import type { Entity, KanbanConfig, KanbanCardField } from '@/types'
+import type { Entity, KanbanConfig, KanbanCardField, KanbanColumn, KanbanSwimlane } from '@/types'
 import { viewHeaderMarkdown, viewFooterMarkdown } from '@/types'
-import Badge from '@/components/common/Badge.vue'
 import BackButton from '@/components/common/BackButton.vue'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { actionAllowed } from '@/utils/affordancesWarning'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { renderMarkdown } from '@/utils/markdown'
+import { resolveIcon } from '@/utils/icons'
+import { formatCellValue } from '@/utils/format'
+import { densePropertyRoutingHint } from '@/widgets/viewRouting'
+import { defaultRegistry } from '@/widgets/registry'
+import type { DenseRoutingHint } from '@/widgets/viewRouting'
 
 const props = defineProps<{
   id: string
@@ -125,7 +129,7 @@ const columns = computed(() => {
     const val = String(entity.properties[property] || '')
     if (val) values.add(val)
   }
-  return Array.from(values).map((v) => ({ value: v, label: v }))
+  return Array.from(values).map((v): KanbanColumn => ({ value: v, label: v }))
 })
 
 const filteredEntities = computed(() => {
@@ -175,7 +179,7 @@ const swimlanes = computed(() => {
     const val = String(entity.properties[property] || '')
     if (val) values.add(val)
   }
-  return Array.from(values).sort().map((v) => ({ value: v, label: v }))
+  return Array.from(values).sort().map((v): KanbanSwimlane => ({ value: v, label: v }))
 })
 
 const hasSwimmlanes = computed(() => swimlanes.value.length > 0)
@@ -350,13 +354,39 @@ function getCardFieldValue(entity: Entity, field: KanbanCardField): string {
       .join(', ')
   }
   if (!field.property) return ''
-  return String(entity.properties[field.property] || '')
+  // Formatted via the shared cell formatter so cards agree with list cells
+  // (dates render human-readably, booleans as Yes/No, rrules as text). This
+  // used to be a bare String(v || ''), which showed raw ISO datetimes and
+  // "true" on cards -- see TKT-S9C14S.
+  return formatCellValue(
+    entity.properties[field.property],
+    field.property,
+    entityType.value,
+    uiStore.effectiveTimezone
+  )
+}
+
+// The stored property value, unformatted. PROPERTY fields only -- a relation
+// field has no stored property and callers must use getCardFieldValue for it.
+// (An earlier version returned the joined relation string from here, which
+// made a function named "raw" hand pre-formatted text to a widget the moment
+// anyone added a relation widget.)
+function getCardFieldStoredValue(entity: Entity, field: KanbanCardField): unknown {
+  if (!field.property) return undefined
+  return entity.properties[field.property]
 }
 
 // Card fields with an unset value are dropped entirely: a dangling
 // "effort:" label next to an empty Badge pill (enum fields render a
 // styled chip even for "") is noise on every card that hasn't set the
 // property, worst on mobile where card space is scarce.
+//
+// Emptiness is decided by the FORMATTED string, matching EntityList's
+// visibleMobileColumns so the two surfaces agree. Note this is only correct
+// because formatCellValue renders `false` as "No" and `0` as "0" -- both
+// non-empty, both kept. The bug this replaced was in getCardFieldValue's old
+// `String(v || '')`, which collapsed them to '' before the predicate ever
+// ran; formatCellValue never had that flaw.
 function visibleCardFields(entity: Entity): KanbanCardField[] {
   return (kanbanConfig.value?.card.fields ?? []).filter(
     (field) => getCardFieldValue(entity, field) !== ''
@@ -368,11 +398,41 @@ function getCardFieldLabel(field: KanbanCardField): string {
   return field.relation || field.property || ''
 }
 
-// Relation fields never render as enum badges — only scalar enum properties do.
-function isEnumField(field: KanbanCardField): boolean {
-  if (field.relation || !field.property || !entityType.value) return false
-  const propDef = entityType.value.properties[field.property]
-  return propDef?.type === 'enum' || (propDef?.values?.length ?? 0) > 0
+// Widget resolution for property card-fields, computed once per configured
+// field rather than per card (RR-UD2A). Relation fields are absent on
+// purpose: they have no PropertyDef and no relation widget, so they keep the
+// joined-titles string path.
+const cardFieldWidgets = computed(() => {
+  const byProperty = new Map<string, { component: Component; hint: DenseRoutingHint }>()
+  const type = entityType.value
+  if (!type) return byProperty
+  for (const field of kanbanConfig.value?.card.fields ?? []) {
+    if (!field.property || field.relation || byProperty.has(field.property)) continue
+    const hint = densePropertyRoutingHint(type.properties[field.property], field.property)
+    byProperty.set(field.property, { component: defaultRegistry.resolveFromHint(hint), hint })
+  }
+  return byProperty
+})
+
+// One resolved card field: the widget plus the value shaped the way it wants.
+// undefined means render the plain string span (relation fields, or a
+// property with no widget entry).
+//
+// Unlike EntityList this needs no empty-value guard: visibleCardFields has
+// already dropped empty fields before the template renders, so a widget's
+// "no value" placeholder (MultiSelectWidget's em-dash, RR-UD2C) is
+// unreachable here.
+function resolveCardField(entity: Entity, field: KanbanCardField) {
+  if (field.relation || !field.property) return undefined
+  const entry = cardFieldWidgets.value.get(field.property)
+  if (!entry) return undefined
+  return {
+    component: entry.component,
+    propertyName: entry.hint.propertyName,
+    modelValue: entry.hint.preformatted
+      ? getCardFieldValue(entity, field)
+      : getCardFieldStoredValue(entity, field),
+  }
 }
 
 function onDragStart(event: DragEvent, entity: Entity) {
@@ -503,6 +563,13 @@ function createNew() {
         @drop="onDrop($event, column.value)"
       >
         <div class="column-header">
+          <component
+            :is="resolveIcon(column.icon)"
+            v-if="column.icon"
+            class="column-icon"
+            :size="16"
+            aria-hidden="true"
+          />
           <span class="column-title">{{ columnTitle(column) }}</span>
           <span class="column-count">{{ entitiesByColumn[column.value]?.length || 0 }}</span>
         </div>
@@ -526,11 +593,14 @@ function createNew() {
                 class="card-field"
               >
                 <span class="field-label">{{ getCardFieldLabel(field) }}:</span>
-                <Badge
-                  v-if="isEnumField(field)"
-                  :value="getCardFieldValue(entity, field)"
-                  :property="field.property"
-                  :entity-type="entityType"
+                <component
+                  :is="resolveCardField(entity, field)!.component"
+                  v-if="resolveCardField(entity, field)"
+                  class="field-value"
+                  :model-value="resolveCardField(entity, field)!.modelValue"
+                  :mode="'display'"
+                  :property-name="resolveCardField(entity, field)!.propertyName"
+                  :entity-type="kanbanConfig?.entity"
                 />
                 <span v-else class="field-value">{{ getCardFieldValue(entity, field) }}</span>
               </div>
@@ -554,6 +624,13 @@ function createNew() {
           :key="column.value"
           class="swimlane-column-header"
         >
+          <component
+            :is="resolveIcon(column.icon)"
+            v-if="column.icon"
+            class="column-icon"
+            :size="16"
+            aria-hidden="true"
+          />
           <span class="column-title">{{ columnTitle(column) }}</span>
         </div>
       </div>
@@ -565,6 +642,13 @@ function createNew() {
         class="swimlane-row"
       >
         <div class="swimlane-label-cell">
+          <component
+            :is="resolveIcon(swimlane.icon)"
+            v-if="swimlane.icon"
+            class="column-icon"
+            :size="16"
+            aria-hidden="true"
+          />
           <span class="swimlane-label">{{ swimlane.label || swimlane.value }}</span>
         </div>
         <div
@@ -592,11 +676,14 @@ function createNew() {
                 class="card-field"
               >
                 <span class="field-label">{{ getCardFieldLabel(field) }}:</span>
-                <Badge
-                  v-if="isEnumField(field)"
-                  :value="getCardFieldValue(entity, field)"
-                  :property="field.property"
-                  :entity-type="entityType"
+                <component
+                  :is="resolveCardField(entity, field)!.component"
+                  v-if="resolveCardField(entity, field)"
+                  class="field-value"
+                  :model-value="resolveCardField(entity, field)!.modelValue"
+                  :mode="'display'"
+                  :property-name="resolveCardField(entity, field)!.propertyName"
+                  :entity-type="kanbanConfig?.entity"
                 />
                 <span v-else class="field-value">{{ getCardFieldValue(entity, field) }}</span>
               </div>
@@ -763,6 +850,14 @@ function createNew() {
   align-items: center;
   padding: 12px 16px;
   border-bottom: 1px solid var(--border-color);
+}
+
+/* Config-authored icon beside a column or swimlane label. Inherits
+ * currentColor, so it follows the theme — the emoji it replaces could not. */
+.column-icon {
+  flex-shrink: 0;
+  margin-right: var(--space-xs);
+  vertical-align: text-bottom;
 }
 
 .column-title {

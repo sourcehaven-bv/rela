@@ -29,6 +29,7 @@ var validTopLevelKeys = map[string]bool{
 	"kanbans":      true,
 	"documents":    true,
 	"feeds":        true,
+	"caldav":       true,
 	"dashboard":    true,
 	"commands":     true,
 	"actions":      true,
@@ -136,6 +137,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateApp(cfg)...)
 	errs = append(errs, validateDocuments(cfg)...)
 	errs = append(errs, validateFeeds(cfg, meta)...)
+	errs = append(errs, validateCalDAV(cfg, meta)...)
 	errs = append(errs, validateStyles(cfg, meta)...)
 	errs = append(errs, validateCrossReferences(cfg)...)
 
@@ -195,6 +197,14 @@ func validateNavigation(cfg *Config) []string {
 func validateNavEntry(nav NavigationEntry, cfg *Config) []string {
 	var errs []string
 
+	// The name itself is checked for groups too, so a typo is reported even on
+	// an entry that will also be rejected for having an icon at all.
+	label := nav.Label
+	if label == "" {
+		label = nav.Group
+	}
+	errs = append(errs, validateIconName(nav.Icon, fmt.Sprintf("navigation %q", label))...)
+
 	if nav.List != "" {
 		if _, ok := cfg.Lists[nav.List]; !ok {
 			errs = append(errs, fmt.Sprintf(
@@ -238,6 +248,13 @@ func validateNavEntry(nav NavigationEntry, cfg *Config) []string {
 		// permission to gate, and a gated group would be ambiguous with the
 		// empty-group rule (a group disappears on its own once every child is
 		// filtered out). Rejecting is clearer than silently ignoring it.
+		// Same reasoning as permission: a group renders as a bare section
+		// title with no icon slot, so an icon here would be silently dropped.
+		if nav.Icon != "" {
+			errs = append(errs, fmt.Sprintf(
+				"navigation: group %q cannot have an icon (a group renders as a section "+
+					"title; set icon on its items instead)", nav.Group))
+		}
 		if nav.Permission != "" {
 			errs = append(errs, fmt.Sprintf(
 				"navigation: group %q cannot have a permission (set it on the items instead; "+
@@ -292,7 +309,7 @@ func validateForms(cfg *Config, meta *metamodel.Metamodel) []string {
 
 		// Flat (single-page) fields/relations.
 		for i, f := range form.Fields {
-			errs = append(errs, validateFormField(formID, "", i, f, form.EntityType, entDef, meta)...)
+			errs = append(errs, validateFormField(formID, "", i, f, form.EntityType, entDef, meta, false)...)
 		}
 		for i, r := range form.Relations {
 			errs = append(errs, validateFormRelation(formID, "", i, r, form.EntityType, meta)...)
@@ -305,7 +322,8 @@ func validateForms(cfg *Config, meta *metamodel.Metamodel) []string {
 				errs = append(errs, fmt.Sprintf("form %q: %shas no title", formID, ctx))
 			}
 			for i, f := range step.Fields {
-				errs = append(errs, validateFormField(formID, ctx, i, f, form.EntityType, entDef, meta)...)
+				errs = append(errs, validateFormField(
+					formID, ctx, i, f, form.EntityType, entDef, meta, step.VisibleWhen != "")...)
 			}
 			for i, r := range step.Relations {
 				errs = append(errs, validateFormRelation(formID, ctx, i, r, form.EntityType, meta)...)
@@ -332,9 +350,12 @@ func validateForms(cfg *Config, meta *metamodel.Metamodel) []string {
 // validateFormField checks one form field against the metamodel. ctx is an
 // optional location prefix (e.g. "step[0] ") so wizard and flat forms share
 // the rule set while keeping distinct error messages.
+// stepConditional reports whether the field's enclosing wizard step carries a
+// `visible_when`. A field on a conditional step can be hidden without a
+// `visible_when` of its own, so `clear_when_hidden` still applies to it.
 func validateFormField(
 	formID, ctx string, i int, f FormField, entityType string,
-	entDef *metamodel.EntityDef, meta *metamodel.Metamodel,
+	entDef *metamodel.EntityDef, meta *metamodel.Metamodel, stepConditional bool,
 ) []string {
 	var errs []string
 	if _, ok := entDef.Properties[f.Property]; !ok {
@@ -346,6 +367,25 @@ func validateFormField(
 		if propDef, hasProp := entDef.Properties[f.Property]; hasProp {
 			errs = append(errs, validateTransitions(formID, i, f, propDef, meta)...)
 		}
+	}
+	// clear_when_hidden is allowlist-validated: a typo must not silently
+	// resolve to a destructive default. Note YAML `no`/`yes` decode to the
+	// literal strings "no"/"yes" here (the field is typed string, and yaml.v3
+	// uses the YAML 1.2 core schema), so they land in the allowlist as
+	// written; `off`/`false` do not and are rejected.
+	if f.ClearWhenHidden != "" && !ValidClearWhenHidden[f.ClearWhenHidden] {
+		errs = append(errs, fmt.Sprintf(
+			"form %q: %sfield[%d] property %q has invalid clear_when_hidden %q (valid: %s)",
+			formID, ctx, i, f.Property, f.ClearWhenHidden,
+			strings.Join(sortedMapKeys(ValidClearWhenHidden), ", ")))
+	}
+	// A field can be hidden by its own `visible_when` OR by its enclosing
+	// wizard step's. With neither, `clear_when_hidden` could never fire — that
+	// is an author mistake worth reporting rather than a silently inert key.
+	if f.ClearWhenHidden != "" && f.VisibleWhen == "" && !stepConditional {
+		errs = append(errs, fmt.Sprintf(
+			"form %q: %sfield[%d] property %q sets clear_when_hidden but neither it nor its step has a visible_when (it would never apply)",
+			formID, ctx, i, f.Property))
 	}
 	errs = append(errs, validateSpan(f.Span, fmt.Sprintf("form %q: %sfield[%d]", formID, ctx, i))...)
 	return errs
@@ -1104,6 +1144,19 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 			}
 		}
 
+		// Icon names are checked unconditionally — deliberately NOT inside the
+		// enum guards above, which only run when column_property resolves to an
+		// enum. A bad icon name is wrong regardless, and burying it behind an
+		// unrelated error would surface it only after the first one was fixed.
+		for i, col := range kanban.Columns {
+			errs = append(errs, validateIconName(col.Icon,
+				fmt.Sprintf("kanban %q: columns[%d]", kanbanID, i))...)
+		}
+		for i, lane := range kanban.Swimlanes {
+			errs = append(errs, validateIconName(lane.Icon,
+				fmt.Sprintf("kanban %q: swimlanes[%d]", kanbanID, i))...)
+		}
+
 		// Validate swimlane_property if specified
 		if kanban.SwimlaneProperty != "" { //nolint:nestif // nested guards each check a distinct optional field of the kanban config.
 			propDef, ok := entDef.Properties[kanban.SwimlaneProperty]
@@ -1475,7 +1528,7 @@ func validateDocuments(cfg *Config) []string {
 				docID))
 		}
 
-		hasCmd := doc.Command != ""
+		hasCmd := len(doc.Command) > 0
 		hasScript := doc.Script != ""
 		switch {
 		case hasCmd && hasScript:
@@ -1484,6 +1537,22 @@ func validateDocuments(cfg *Config) []string {
 		case !hasCmd && !hasScript:
 			errs = append(errs, fmt.Sprintf(
 				"document %q: one of command or script must be set", docID))
+		}
+
+		// {id} / {id_lower} were removed in TKT-QGHNVA: they spliced a
+		// request-derived value into a shell string. Fail at config load with
+		// the replacement named, rather than silently passing the literal
+		// "{id}" through to the renderer — a silent pass would look like a
+		// working config that produces a document about the wrong thing.
+		for _, arg := range doc.Command {
+			if strings.Contains(arg, "{id}") || strings.Contains(arg, "{id_lower}") {
+				errs = append(errs, fmt.Sprintf(
+					"document %q: {id}/{id_lower} are no longer supported; "+
+						"use {in}, the entry entity's markdown file whose frontmatter carries `id:` "+
+						"(commands now run without a shell, so the id never reaches the command line)",
+					docID))
+				break
+			}
 		}
 
 		if doc.Edit != nil { //nolint:nestif // nested branches validate distinct doc.Edit sub-fields.

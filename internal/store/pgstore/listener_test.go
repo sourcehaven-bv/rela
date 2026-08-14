@@ -24,7 +24,7 @@ func dsnForSchema(t *testing.T, schema string) string {
 	t.Helper()
 	base := os.Getenv(testDBEnv)
 	if base == "" {
-		t.Skipf("%s not set; skipping multi-writer tests", testDBEnv)
+		skipOrFailWithoutDSN(t)
 	}
 	u, err := url.Parse(base)
 	require.NoError(t, err)

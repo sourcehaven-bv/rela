@@ -34,6 +34,7 @@ func BenchmarkValidateCreate(b *testing.B) {
 		Audit:       audit.Nop{},
 		ACL:         acl.NopACL{},
 		Transitions: statemachine.EmptySet(),
+		FieldGate:   entitymanager.AllowAllFieldGate{},
 	})
 	if err != nil {
 		b.Fatal(err)
@@ -80,6 +81,7 @@ func TestValidateCreate_AllocCeiling(t *testing.T) {
 		Audit:       audit.Nop{},
 		ACL:         acl.NopACL{},
 		Transitions: statemachine.EmptySet(),
+		FieldGate:   entitymanager.AllowAllFieldGate{},
 	})
 	if err != nil {
 		t.Fatal(err)

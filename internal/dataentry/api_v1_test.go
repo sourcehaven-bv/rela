@@ -3548,7 +3548,7 @@ func TestHandleV1Documents_EntityTypeMismatch(t *testing.T) {
 	app.State().Cfg.Documents = map[string]dataentryconfig.DocumentConfig{
 		"feature-notes": {
 			EntityType: "feature",
-			Command:    "echo hello",
+			Command:    []string{"echo", "hello"},
 		},
 	}
 
@@ -3581,7 +3581,7 @@ func TestHandleV1Documents_EntityTypeMatch(t *testing.T) {
 	app.State().Cfg.Documents = map[string]dataentryconfig.DocumentConfig{
 		"ticket-summary": {
 			EntityType: "ticket",
-			Command:    "echo hello",
+			Command:    []string{"echo", "hello"},
 		},
 	}
 
@@ -3632,7 +3632,7 @@ func TestHandleV1Documents_CacheInvariance(t *testing.T) {
 	app.State().Cfg.Documents = map[string]dataentryconfig.DocumentConfig{
 		"cache-test": {
 			EntityType: "ticket",
-			Command:    `echo '[Detail](/entity/ticket/TKT-001)'`,
+			Command:    []string{"echo", "[Detail](/entity/ticket/TKT-001)"},
 		},
 	}
 
@@ -3688,7 +3688,7 @@ func TestHandleV1Documents_EntityNotFound(t *testing.T) {
 	app.State().Cfg.Documents = map[string]dataentryconfig.DocumentConfig{
 		"notes": {
 			EntityType: "ticket",
-			Command:    "echo hi",
+			Command:    []string{"echo", "hi"},
 		},
 	}
 

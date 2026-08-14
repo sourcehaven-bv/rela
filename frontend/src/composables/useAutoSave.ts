@@ -533,6 +533,34 @@ export function useAutoSave(opts: AutoSaveOptions) {
     }
   }
 
+  // Drop a not-yet-sent write for `property` WITHOUT touching form state.
+  //
+  // `revertField` also restores `lastSeenServer` into the form, which is the
+  // wrong baseline when the caller already knows the exact value to restore
+  // (it can be older than an intermediate edit the user accepted). Callers
+  // that own the restore need only the cancellation half. Returns true if a
+  // pending write was dropped; false means it had already fired and the caller
+  // must re-save.
+  //
+  // Currently exercised only by tests: its consumer was the interactive
+  // clear-confirm path, deferred to the propose/commit refactor (BUG-FB0LN8).
+  // Kept because "cancel a staged write without side effects" is the primitive
+  // that refactor needs, and it is cheap and covered.
+  function cancelPendingField(property: string): boolean {
+    let cancelled = false
+    if (timers[property]) {
+      clearTimeout(timers[property])
+      delete timers[property]
+      cancelled = true
+    }
+    if (property in pending) {
+      delete pending[property]
+      pendingCount.value = Math.max(0, pendingCount.value - 1)
+      cancelled = true
+    }
+    return cancelled
+  }
+
   function revertField(property: string) {
     if (timers[property]) {
       clearTimeout(timers[property])
@@ -622,6 +650,7 @@ export function useAutoSave(opts: AutoSaveOptions) {
     scheduleRelationsChange,
     commitImmediately,
     revertField,
+    cancelPendingField,
     revertContent,
     recordServerSnapshot,
     mergeServerResponse,

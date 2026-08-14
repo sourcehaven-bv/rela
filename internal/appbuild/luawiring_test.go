@@ -110,11 +110,20 @@ func TestScheduledLuaWriteDeps_WritePrepStaysRaw(t *testing.T) {
 	defer svc.Close()
 
 	deps := svc.ScheduledLuaWriteDeps()
-	if deps.WritePrepStore == nil {
-		t.Fatal("WritePrepStore is nil — rela.update_entity would fail")
+	if deps.VisibleReader == nil {
+		t.Fatal("VisibleReader is nil — scheduled script reads would deny outright")
 	}
-	if deps.VisibleReader == lua.EntityReader(deps.WritePrepStore) {
-		t.Error("VisibleReader and WritePrepStore are the same handle under a configured " +
-			"policy — either reads are ungated, or update_entity would erase hidden properties")
+	// Pre-TKT-80EWGM this asserted VisibleReader != WritePrepStore, because a
+	// second RAW handle rode along on every writer runtime for
+	// update_entity's read-before-write. That handle is gone: the binding
+	// patches through the manager now. The surviving invariants are that
+	// reads are gated, and that the only remaining ungated path stays
+	// opt-in.
+	if deps.VisibleReader == lua.EntityReader(st) {
+		t.Error("VisibleReader IS the raw store under a configured policy — reads are ungated")
+	}
+	if deps.ElevatedReader != nil {
+		t.Error("ElevatedReader is set on a scheduled runtime — " +
+			"the ungated read path must remain opt-in to allow_acl_bypass")
 	}
 }

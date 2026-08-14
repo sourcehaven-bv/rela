@@ -79,6 +79,21 @@ export interface FormStep {
   relations?: FormFieldOrRelation[]
 }
 
+/**
+ * What happens to a field's STORED value when its `visible_when` turns false
+ * (BUG-FB0LN8). Hiding is presentation; the default does not touch data.
+ *
+ * - `no` (default) — keep the value; hide/reveal is lossless.
+ * - `yes`          — clear it when the branch hides.
+ *
+ * A third value, `confirm` (ask before clearing, undo the triggering change on
+ * decline), is deliberately absent. It needs the form to separate "proposed"
+ * from "committed" — today an edit mutates form state and arms the autosave in
+ * one step, so a decline must reconstruct state after the fact. The backend
+ * rejects `confirm` at config-validation time until that refactor lands.
+ */
+export type ClearWhenHidden = 'no' | 'yes'
+
 export interface FormField {
   property?: string
   widget?: string
@@ -92,6 +107,8 @@ export interface FormField {
   visible_when?: string
   /** Condition expression; the field is required only when it evaluates true. */
   required_when?: string
+  /** Fate of the stored value when `visible_when` turns false. Default `no`. */
+  clear_when_hidden?: ClearWhenHidden
   /**
    * Width on the 12-column form grid (TKT-5V8704). Absent means full width —
    * one field per row, the default. Same semantics as a view section field's
@@ -150,6 +167,13 @@ export interface FormFieldOrRelation {
   // Wizard conditions (see FormField / FormRelation)
   visible_when?: string
   required_when?: string
+  /**
+   * Fate of the stored value when `visible_when` turns false. Default `no`.
+   * Property fields only — a relation's hidden-branch handling is the separate
+   * `pruneWizardHiddenRelations` mechanism, and steps have no such key (a step
+   * hiding is just "all its fields hid", each honoring its own setting).
+   */
+  clear_when_hidden?: ClearWhenHidden
 }
 
 export interface ListConfig {
@@ -288,11 +312,19 @@ export interface KanbanColumn {
   value: string
   label?: string
   color?: string
+  /**
+   * Name of an icon from the shared registry (see utils/icons.ts), rendered
+   * beside the label. A NAME, never a glyph: an emoji written into `label`
+   * renders verbatim, and the SPA never parses one back out of label text.
+   */
+  icon?: string
 }
 
 export interface KanbanSwimlane {
   value: string
   label?: string
+  /** Icon name; see KanbanColumn.icon. */
+  icon?: string
 }
 
 export interface KanbanCardField {

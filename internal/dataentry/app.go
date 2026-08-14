@@ -14,6 +14,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
+	"github.com/Sourcehaven-BV/rela/internal/caldavalias"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -101,6 +102,12 @@ type App struct {
 	// sub-interface they need rather than type-asserting the store.
 	versions      store.VersionService
 	entityManager entitymanager.EntityManager
+
+	// caldavAliases links CalDAV resources to entities. Optional: nil when no
+	// alias service is wired, in which case the CalDAV routes are not served
+	// (a collection with no way to remember client-created resources would
+	// duplicate every to-do on the next sync).
+	caldavAliases *caldavalias.Service
 	searcher      search.Searcher
 	// visibleSearcher is the ACL-scoped search seam (TKT-BA8BSX):
 	// executeQuery routes free-text searches through it so /_search
@@ -316,18 +323,18 @@ func (a *App) Meta() *metamodel.Metamodel { return a.State().Meta }
 // script, an export_render override, or an MCP-invoked script sees exactly
 // the caller's view — hidden entities absent, hidden properties redacted.
 // Identity resolves per call from the ctx, so one bundle serves every
-// request. WritePrepStore stays RAW so update_entity's read-before-write
-// cannot erase hidden properties (see lua.ReadDeps.WritePrepStore).
+// request. Note there is no raw read handle here at all: update_entity
+// patches through the manager, which does its own write-prep read
+// (TKT-80EWGM), so a redacted read can no longer feed a write.
 func (a *App) luaWriteDeps() lua.WriteDeps {
 	redactor := appRedactor(a)
 	return lua.WriteDeps{
 		ReadDeps: lua.ReadDeps{
-			VisibleReader:  a.scriptReader(redactor),
-			WritePrepStore: a.store,
-			Tracer:         a.scriptTracer(redactor),
-			Searcher:       a.searcher,
-			Meta:           a.Meta(),
-			ProjectRoot:    a.paths.Root,
+			VisibleReader: a.scriptReader(redactor),
+			Tracer:        a.scriptTracer(redactor),
+			Searcher:      a.searcher,
+			Meta:          a.Meta(),
+			ProjectRoot:   a.paths.Root,
 		},
 		EntityManager: a.entityManager,
 	}
@@ -513,6 +520,10 @@ func (a *App) SetSecurityConfig(cfg SecurityConfig) error {
 // `$RELA_DATAENTRY_USER` env var overrides any incoming header and
 // the header itself overrides the default. Passing nil restores
 // [defaultPrincipalResolver] behavior.
+// SetCalDAVAliases installs the CalDAV alias service. Without it the CalDAV
+// routes are not registered.
+func (a *App) SetCalDAVAliases(s *caldavalias.Service) { a.caldavAliases = s }
+
 func (a *App) SetPrincipalResolver(r PrincipalResolver) {
 	a.principalResolver = r
 }
@@ -741,12 +752,11 @@ func NewApp(
 	// (ReadDeps.VisibleReader) both go through it.
 	gatedReader := lateGatedReader{app: app}
 	readDeps := lua.ReadDeps{
-		VisibleReader:  gatedReader,
-		WritePrepStore: st,
-		Tracer:         lateGatedTracer{app: app},
-		Searcher:       searcher,
-		Meta:           meta,
-		ProjectRoot:    paths.Root,
+		VisibleReader: gatedReader,
+		Tracer:        lateGatedTracer{app: app},
+		Searcher:      searcher,
+		Meta:          meta,
+		ProjectRoot:   paths.Root,
 	}
 	val := validator.New(gatedReader, meta, readDeps)
 	app.validator = val

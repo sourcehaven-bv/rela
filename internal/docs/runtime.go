@@ -157,10 +157,9 @@ func Build(ctx context.Context, src string, opts Options) (string, error) {
 	// build just seeded itself, and runs at the operator trust boundary
 	// (whoever builds the docs already has the project). No ACL applies.
 	readDeps := rlua.ReadDeps{
-		VisibleReader:  visibility.Unrestricted(st),
-		WritePrepStore: st,
-		Tracer:         dr.tracer,
-		Meta:           opts.Meta,
+		VisibleReader: visibility.Unrestricted(st),
+		Tracer:        dr.tracer,
+		Meta:          opts.Meta,
 	}
 	rt := rlua.NewReader(readDeps, dr.out, rlua.WithContext(ctx), rlua.WithTimeout(buildTimeout))
 	defer rt.Close()

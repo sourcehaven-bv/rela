@@ -1,5 +1,7 @@
 package entity
 
+import "maps"
+
 // This file holds the shared write-API vocabulary used by every
 // caller that mutates the graph: options, result envelopes, and the
 // soft-validation Warning struct. The types live in `entity` rather
@@ -110,4 +112,67 @@ type RelationOptions struct {
 	Properties map[string]any
 	MetaUnset  []string
 	Content    *string
+}
+
+// Patch describes a TARGETED entity write: apply exactly these
+// property changes and leave everything else alone. It is the entity-side
+// analog of [RelationOptions] on the update path, and deliberately shares
+// its vocabulary (Properties merges, MetaUnset removes, Content is a
+// pointer tri-state).
+//
+// The contract that makes it worth having: **properties not named are
+// preserved as-is, regardless of whether the caller could read them.** A
+// caller who can see 3 of an entity's 10 properties can patch those 3
+// without touching the other 7 — so forgetting a property yields a no-op,
+// not an erasure. Contrast a whole-entity save, where every property the
+// caller failed to supply is silently destroyed.
+//
+// Semantics:
+//
+//   - Properties MERGES into the stored entity's properties. An empty or
+//     nil map changes nothing; it does NOT clear existing keys.
+//   - MetaUnset removes the named keys and is applied AFTER the merge, so
+//     a patch naming the same key in both ends with it removed. Unsetting
+//     an absent key is a no-op, not an error.
+//   - Content non-nil replaces the body with *Content (including the empty
+//     string, which clears it); nil leaves the body untouched.
+//
+// The pointer-vs-string distinction on Content is the only way to express
+// "leave the body alone" vs "set the body to empty" — same rationale as
+// [RelationOptions.Content].
+type Patch struct {
+	Properties map[string]any
+	MetaUnset  []string
+	Content    *string
+}
+
+// IsEmpty reports whether the patch would change nothing: no property
+// upserts, no unsets, and no body replacement. Callers that treat a
+// no-op patch specially (skipping the write entirely) can check this
+// before dispatching.
+func (p Patch) IsEmpty() bool {
+	return len(p.Properties) == 0 && len(p.MetaUnset) == 0 && p.Content == nil
+}
+
+// Apply merges the patch into e, mutating it in place. Order is
+// upserts-then-unset (see [Patch]); the body is replaced only when
+// Content is non-nil.
+//
+// Values are assigned directly rather than through [Entity.SetString] so
+// non-string property types (lists, numbers, bools) survive the round trip
+// with their declared shape intact.
+func (p Patch) Apply(e *Entity) {
+	if e == nil {
+		return
+	}
+	if len(p.Properties) > 0 && e.Properties == nil {
+		e.Properties = make(map[string]any, len(p.Properties))
+	}
+	maps.Copy(e.Properties, p.Properties)
+	for _, k := range p.MetaUnset {
+		delete(e.Properties, k)
+	}
+	if p.Content != nil {
+		e.Content = *p.Content
+	}
 }

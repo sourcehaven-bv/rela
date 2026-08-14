@@ -147,7 +147,20 @@ func (a *App) NewRouter() http.Handler {
 	// TRIP-WIRE: if a CSP is ever applied to the SPA route, that reasoning
 	// lapses and this injection must be revisited (it would need to permit
 	// the /_custom/ paths explicitly).
-	mux.Handle("/", spaHandlerWithCustom(spaFS, custom))
+	//
+	// RFC 6764 CalDAV discovery lives at site-root paths, so it cannot go on
+	// the inner /api/ mux. It takes over "/" and delegates everything that is
+	// not a discovery probe to the SPA — which must be the customisation-aware
+	// handler, or operator custom.css would be dropped on every CalDAV-enabled
+	// deployment.
+	spa := spaHandlerWithCustom(spaFS, custom)
+	if a.caldavAliases != nil {
+		if routes := newCalDAVRoutes(a); routes != nil {
+			routes.registerWellKnown(mux, spa)
+		}
+	} else {
+		mux.Handle("/", spa)
+	}
 
 	// Apply security middlewares as the outermost wrapper so they protect
 	// every route, including the SSE handlers and static assets. The

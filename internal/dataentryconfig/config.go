@@ -7,6 +7,7 @@ package dataentryconfig
 import (
 	"fmt"
 	"net/url"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
@@ -76,6 +77,7 @@ type Config struct {
 	Kanbans     map[string]Kanban            `yaml:"kanbans"`
 	Documents   map[string]DocumentConfig    `yaml:"documents,omitempty"`
 	Feeds       map[string]Feed              `yaml:"feeds,omitempty" json:"feeds,omitempty"`
+	CalDAV      CalDAVConfig                 `yaml:"caldav,omitempty" json:"caldav,omitzero"`
 	Dashboard   *DashboardConfig             `yaml:"dashboard,omitempty"`
 	Commands    map[string]CommandConfig     `yaml:"commands,omitempty"`
 	Actions     map[string]Action            `yaml:"actions,omitempty"`
@@ -177,26 +179,54 @@ type SidePanelConfig struct {
 	Sections []ViewSection  `yaml:"sections" json:"sections"`
 }
 
+// ClearWhenHidden values. Default (empty) is ClearWhenHiddenNo: a
+// condition-hidden field KEEPS its stored value (BUG-FB0LN8).
+//
+// A third value, "confirm" (ask the user before clearing, and undo the
+// triggering change if they decline), is DELIBERATELY not accepted yet. It
+// needs the form to separate "the user proposed a change" from "the change was
+// committed" — today an edit mutates form state and arms the autosave in one
+// step, so a decline has to reconstruct state after the fact, which is where
+// several bugs lived. Rejecting the value outright is the honest interim: a
+// config that asks for it fails loudly at author time rather than silently
+// behaving like something else. See TKT-7S5735 (propose/commit refactor).
+const (
+	ClearWhenHiddenNo  = "no"
+	ClearWhenHiddenYes = "yes"
+)
+
+// ValidClearWhenHidden is the allowlist for FormField.ClearWhenHidden.
+var ValidClearWhenHidden = map[string]bool{
+	ClearWhenHiddenNo:  true,
+	ClearWhenHiddenYes: true,
+}
+
 // FormField defines a single field in a form.
 //
 // VisibleWhen / RequiredWhen are optional condition expressions (see the
 // frontend conditions engine) evaluated against earlier field values. They are
 // opaque strings to Go — the SPA parses and evaluates them; the `rela` config
-// lint checks them syntactically. VisibleWhen hides the field (and drops its
-// value from the payload) when false; RequiredWhen makes the field required
-// only when true.
+// lint checks them syntactically. VisibleWhen hides the field when false;
+// RequiredWhen makes the field required only when true. See ClearWhenHidden
+// for what happens to a hidden field's stored value.
 type FormField struct {
-	Property     string              `yaml:"property" json:"property"`
-	Label        string              `yaml:"label" json:"label,omitempty"`
-	Placeholder  string              `yaml:"placeholder" json:"placeholder,omitempty"`
-	Help         string              `yaml:"help" json:"help,omitempty"`
-	Widget       string              `yaml:"widget" json:"widget,omitempty"`
-	Required     *bool               `yaml:"required,omitempty" json:"required,omitempty"`
-	RequiredWhen string              `yaml:"required_when,omitempty" json:"required_when,omitempty"`
-	VisibleWhen  string              `yaml:"visible_when,omitempty" json:"visible_when,omitempty"`
-	Default      string              `yaml:"default" json:"default,omitempty"`
-	Hidden       bool                `yaml:"hidden" json:"hidden,omitempty"`
-	Transitions  map[string][]string `yaml:"transitions,omitempty" json:"transitions,omitempty"`
+	Property     string `yaml:"property" json:"property"`
+	Label        string `yaml:"label" json:"label,omitempty"`
+	Placeholder  string `yaml:"placeholder" json:"placeholder,omitempty"`
+	Help         string `yaml:"help" json:"help,omitempty"`
+	Widget       string `yaml:"widget" json:"widget,omitempty"`
+	Required     *bool  `yaml:"required,omitempty" json:"required,omitempty"`
+	RequiredWhen string `yaml:"required_when,omitempty" json:"required_when,omitempty"`
+	VisibleWhen  string `yaml:"visible_when,omitempty" json:"visible_when,omitempty"`
+	// ClearWhenHidden decides the fate of this field's STORED value when
+	// VisibleWhen turns false (BUG-FB0LN8). "" / "no" (default) keeps it —
+	// hiding is presentation, not a delete; "yes" clears it. Per-FIELD only:
+	// a step hiding is simply "all of its fields hid", each honoring its own
+	// setting, so there is no step-level key.
+	ClearWhenHidden string              `yaml:"clear_when_hidden,omitempty" json:"clear_when_hidden,omitempty"`
+	Default         string              `yaml:"default" json:"default,omitempty"`
+	Hidden          bool                `yaml:"hidden" json:"hidden,omitempty"`
+	Transitions     map[string][]string `yaml:"transitions,omitempty" json:"transitions,omitempty"`
 
 	// Span places the field on the 12-column layout grid; 0 means full width.
 	// Same semantics as ViewSectionField.Span — forms and view sections are
@@ -244,6 +274,49 @@ func (s *Span) UnmarshalYAML(value *yaml.Node) error {
 	}
 	*s = Span(int(f))
 	return nil
+}
+
+// ValidIconNames is the allowlist of icon names an author may reference from
+// data-entry.yaml. It MUST stay in step with the SPA's registry in
+// frontend/src/utils/icons.ts — TestIconAllowlistMatchesFrontend reads that
+// file and fails on drift, in either direction: a name the config accepts but
+// the SPA can't render silently degrades to a fallback icon, and a name the SPA
+// knows but the config rejects is a feature an author can't reach.
+//
+// Exported so the icon-name check and its test share one source.
+var ValidIconNames = map[string]bool{
+	// Navigation
+	"dashboard": true,
+	"list":      true,
+	"kanban":    true,
+	"search":    true,
+	"warning":   true,
+	"apps":      true,
+	"settings":  true,
+	"document":  true,
+	// Theme toggle
+	"sun":  true,
+	"moon": true,
+	// Workflow-ish names, useful for kanban columns
+	"inbox":  true,
+	"wrench": true,
+	"done":   true,
+	"clock":  true,
+	"status": true,
+}
+
+// validateIconName reports a config error for an unknown icon name.
+//
+// Loud at load, like validateSpan: the SPA falls back to a default icon so a
+// stale config still renders, but silently swapping an author's chosen icon for
+// a generic one with no diagnostic is the failure mode strict validation exists
+// to prevent. An empty name means "no icon" and is always valid.
+func validateIconName(icon, context string) []string {
+	if icon == "" || ValidIconNames[icon] {
+		return nil
+	}
+	return []string{fmt.Sprintf("%s: unknown icon %q (valid: %s)",
+		context, icon, strings.Join(sortedMapKeys(ValidIconNames), ", "))}
 }
 
 // validateSpan reports a config error for an out-of-range span.
@@ -483,15 +556,25 @@ type Kanban struct {
 }
 
 // KanbanColumn defines a column in the kanban board.
+// Icon names an icon from the shared registry to render beside the label
+// (see ValidIconNames). It is a NAME, never a glyph: putting an emoji in
+// Label works and is left alone, but the SPA will never parse one back out
+// of label text — that would silently rewrite what an author typed.
 type KanbanColumn struct {
 	Value string `yaml:"value" json:"value"`
 	Label string `yaml:"label,omitempty" json:"label,omitempty"`
+	Icon  string `yaml:"icon,omitempty" json:"icon,omitempty"`
 }
 
 // KanbanSwimlane defines a swimlane row in the kanban board.
+//
+// Carries Icon for the same reason KanbanColumn does: identical Value/Label
+// shape, rendered the same way, so supporting one and not the other would be
+// an arbitrary asymmetry an author would trip over.
 type KanbanSwimlane struct {
 	Value string `yaml:"value" json:"value"`
 	Label string `yaml:"label,omitempty" json:"label,omitempty"`
+	Icon  string `yaml:"icon,omitempty" json:"icon,omitempty"`
 }
 
 // KanbanCard defines how cards are displayed on the board.
@@ -534,6 +617,16 @@ type NavigationEntry struct {
 	// an entry id the sidebar has no way to supply. Enforced by
 	// validateNavEntry.
 	Document string `yaml:"document,omitempty" json:"document,omitempty"`
+
+	// Icon overrides the icon derived from the entry's kind. Without it every
+	// list entry gets the same list glyph and every board the same board one,
+	// so "My Tickets" and "Open Tickets" are visually identical — the sidebar
+	// carries no signal beyond its labels. Names come from the shared registry
+	// (see ValidIconNames); an unknown one is a load-time error.
+	//
+	// Action entries have no derived icon at all, so for those this is the
+	// only way to get one.
+	Icon string `yaml:"icon,omitempty" json:"icon,omitempty"`
 
 	// Permission optionally hides this entry from the sidebar for principals
 	// who do not hold the named global ACL permission (TKT-TXDK8U). Empty —
@@ -786,11 +879,24 @@ type DocumentConfig struct {
 	// applies IN ADDITION to the per-entity read gate (both must pass); it can
 	// never widen entity visibility.
 	Permission string `yaml:"permission,omitempty" json:"permission,omitempty"`
-	// Command is the external render command. Placeholders:
-	//   {id}       - entry ID
-	//   {id_lower} - lowercase entry ID
+	// Command is the external render command as an ARGUMENT ARRAY, e.g.
+	//   command: ["my-renderer", "{in}"]
+	// It is executed directly — there is no shell, so pipes, redirection, and
+	// variable expansion are not available and no quoting is required.
+	//
+	// The single placeholder is {in}: a temp file holding the entry entity's
+	// markdown, frontmatter included. The id is the `id:` key of that
+	// frontmatter, so a renderer that needs it reads it from the file.
+	//
+	// The former {id} / {id_lower} placeholders are GONE (TKT-QGHNVA). They
+	// spliced a request-derived value into a shell string, which made the
+	// entity id the one piece of user-controlled data reaching `sh -c`; an id
+	// leading with "-" then landed as an option flag rather than an operand.
+	// A config still using them is rejected at load time with a message naming
+	// {in}, rather than silently substituting nothing.
+	//
 	// Mutually exclusive with Script.
-	Command string `yaml:"command,omitempty" json:"command,omitempty"`
+	Command []string `yaml:"command,omitempty" json:"command,omitempty"`
 	// Script is a relative path to a Lua file under scripts/ (e.g.
 	// "docs/release_notes.lua"). The script runs in document mode with
 	// rela.mode="document", rela.document.{id,entry_id}, and captures its
@@ -883,4 +989,314 @@ type FeedSource struct {
 	// Alarm is an optional static RFC 5545 duration (e.g. "-PT9H") mapped to a
 	// VALARM reminder on every event from this source.
 	Alarm string `yaml:"alarm,omitempty" json:"alarm,omitempty"`
+}
+
+// CalDAVConfig groups the CalDAV collections by how they come into existence.
+//
+//	caldav:
+//	  static:
+//	    tasks: {entity_type: task, ...}
+//
+// Only `static:` exists today — one YAML key, one collection, at
+// /calendars/<key>/. The nesting is here because a second kind is coming
+// (TKT-JPDXMO): collections GENERATED from the graph, one per entity of some
+// driver type, where a key names a PATTERN that expands rather than a
+// collection that exists.
+//
+// # Why the level of nesting exists before its second member does
+//
+// Because adding it later is a breaking config change and adding it now is
+// free. `caldav:` has never shipped in a release, so there is exactly one
+// moment where the shape can be fixed without a migration and a deprecation
+// cycle, and this is it.
+//
+// The alternative considered was a top-level sibling (`caldav:` +
+// `caldav_dynamic:`). Rejected because it leaves the COMMON case unnamed: a
+// reader meeting a bare `caldav:` cannot tell there is another kind until they
+// happen to see the sibling, and the sibling is the rarer feature. Naming both
+// halves makes the pairing self-describing at the point of confusion.
+//
+// `dynamic:` is deliberately NOT declared yet. A config key that parses and
+// then errors with "not implemented" is worse than one that does not parse —
+// the second tells the operator the truth immediately. It slots in as a pure
+// addition when the feature lands.
+type CalDAVConfig struct {
+	// Static declares collections one-to-one with config keys: the key is the
+	// URL segment and the alias key (so it must stay stable — users paste the
+	// URL into clients), and Meta.Name is the display label.
+	Static map[string]CalDAVCollection `yaml:"static,omitempty" json:"static,omitempty"`
+}
+
+// IsZero reports whether any CalDAV collection is configured, so `omitzero`
+// keeps an unconfigured server's JSON free of an empty caldav object.
+func (c CalDAVConfig) IsZero() bool { return len(c.Static) == 0 }
+
+// CalDAVCollection declares one CalDAV collection: a single entity type
+// projected to a calendar component, and the inverse mapping applied when a
+// client writes back.
+//
+// ONE COLLECTION = ONE ENTITY TYPE = ONE SYMMETRICAL MAPPING. Unlike [Feed],
+// there is no sources list and no separate create block: the same declaration
+// serves both directions, so the create-target is simply the collection's type.
+// This diverges from `feeds:` deliberately, because the protocols differ. ICS is
+// one URL per feed and read-only, so [Feed.Sources] is its only way to combine
+// entity types into one calendar. CalDAV is one account URL enumerating N
+// collections — a client discovers every collection from a single account — so
+// an operator who wants tasks AND bugs declares two collections and the user
+// still configures the account once.
+//
+// The payoff is that the mapping is bidirectional by construction: with several
+// sources the read mapping would be a union while the write mapping is one
+// branch of it, requiring a create block purely to re-state which branch.
+//
+// Trade accepted: an interleaved mixed-type list is not expressible. Two
+// collections give the same visibility with separate colors and independent
+// toggling, which is arguably the better default.
+type CalDAVCollection struct {
+	// Meta is optional collection-level metadata (display name, color).
+	Meta FeedMeta `yaml:"meta,omitempty" json:"meta,omitzero"`
+	// Component is the calendar component this collection carries: "vtodo"
+	// (default) or "vevent". A collection advertises exactly one, because
+	// Apple's clients segregate by component set — Reminders binds only to a
+	// VTODO collection and Calendar.app creates its own separate VEVENT one, so
+	// a mixed collection is invisible to one of them.
+	Component string `yaml:"component,omitempty" json:"component,omitempty"`
+	// EntityType is the entity type this collection projects, and the type an
+	// inbound create constructs. Required; validated at load.
+	EntityType string `yaml:"entity_type" json:"entity_type"`
+	// Where is a list of filter clauses, all ANDed, in the internal/filter
+	// language. Empty selects every entity of the type.
+	Where []string `yaml:"where,omitempty" json:"where,omitempty"`
+	// Due names the date- or datetime-typed property mapped to the entry's
+	// deadline (VTODO DUE / VEVENT DTSTART). Optional: a to-do without a
+	// deadline is legal and common.
+	Due string `yaml:"due,omitempty" json:"due,omitempty"`
+	// Summary names the property mapped to SUMMARY. Optional; defaults to the
+	// entity type's display property.
+	Summary string `yaml:"summary,omitempty" json:"summary,omitempty"`
+	// Description names an optional property mapped to DESCRIPTION, or the
+	// sentinel [CalDAVDescriptionBody] to map the entity's markdown BODY.
+	//
+	// The body is usually the right target. DESCRIPTION is the one free-text,
+	// multi-line field a to-do has, and the body is where rela puts multi-line
+	// prose — a `string` property is a single-line form field everywhere else in
+	// the app, so routing a client's notes into one makes the SPA render a
+	// paragraph in a text input.
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	// Priority names an optional INTEGER property mapped straight onto the RFC
+	// 5545 PRIORITY value (0-9). Mutually exclusive with PriorityMap, which is
+	// what a project modeling priority as an enum wants instead.
+	Priority string `yaml:"priority,omitempty" json:"priority,omitempty"`
+	// PriorityMap maps PRIORITY onto a non-integer property (typically an enum)
+	// by BUCKETING the 0-9 range. See [CalDAVPriorityMap].
+	PriorityMap *CalDAVPriorityMap `yaml:"priority_map,omitempty" json:"priority_map,omitempty"`
+	// Location names an optional string property mapped to LOCATION.
+	Location string `yaml:"location,omitempty" json:"location,omitempty"`
+	// Categories names an optional property mapped to CATEGORIES. A list-typed
+	// property maps element-wise; a string property maps to a single category.
+	Categories string `yaml:"categories,omitempty" json:"categories,omitempty"`
+	// Start names an optional date- or datetime-typed property mapped to
+	// DTSTART — when work on a to-do begins, as against the DUE deadline.
+	Start string `yaml:"start,omitempty" json:"start,omitempty"`
+	// Rrule is an optional recurrence rule, in the same two forms `feeds:`
+	// accepts: a literal RFC 5545 rule ("FREQ=WEEKLY") or a bare property name
+	// whose per-entity value supplies one. Read-only — see the CalDAV docs.
+	Rrule string `yaml:"rrule,omitempty" json:"rrule,omitempty"`
+	// ReadOnly names mapped fields whose inbound value is DISCARDED: they are
+	// still projected outward, but a client's edit to one never reaches the
+	// entity. See [CalDAVReadOnlyFields] for the accepted names.
+	//
+	// This is a CONTAINMENT control, not an authorization one — the two are
+	// orthogonal and compose. ACL answers "may this principal write at all",
+	// per type and op, by refusing the request with a 403. ReadOnly answers
+	// "may a CalDAV client own this field", per mapped field, by accepting
+	// the request and dropping the field. An operator who wants clients to
+	// touch nothing should withhold the ACL grant, not populate this list.
+	//
+	// What it contains is a foreign data model. A CalDAV client is software
+	// the operator does not control: it decides what to send and reconstructs
+	// the whole VTODO on every edit, so a field it maps badly is rewritten
+	// even when the user touched something else. Observed on the wire: Apple
+	// Reminders normalizes DTSTART to match DUE on an all-day to-do, and
+	// Thunderbird's rich-text notes arrive flattened.
+	//
+	// A discarded field is not a failed write: the fields that ARE writable
+	// apply, and the response carries the entity's real values. Rejecting the
+	// whole PUT instead would discard the completion tick the user actually
+	// meant, since clients send every field on every edit.
+	//
+	// Whether the CLIENT then shows the revert is its own choice and they
+	// differ — Reminders reverts within seconds, Thunderbird has been seen
+	// keeping an optimistic copy across a restart. The guarantee here is that
+	// the value never reaches rela, not that the app looks right.
+	ReadOnly []string `yaml:"read_only,omitempty" json:"read_only,omitempty"`
+	// Completion maps the completion state in both directions. Required for a
+	// vtodo collection: without it a client could not check anything off.
+	Completion *CalDAVCompletion `yaml:"completion,omitempty" json:"completion,omitempty"`
+	// Defaults are literal property values applied when a CLIENT creates an
+	// entry. A client-created to-do carries only a summary (verified against
+	// Apple Reminders), so this is how a required property that VTODO cannot
+	// supply gets a value.
+	Defaults map[string]string `yaml:"defaults,omitempty" json:"defaults,omitempty"`
+	// OnDelete is the property mutation applied when a client DELETEs an entry.
+	// Absent means deletion is refused (403) — see the type doc.
+	OnDelete *CalDAVOnDelete `yaml:"on_delete,omitempty" json:"on_delete,omitempty"`
+}
+
+// CalDAVCompletion maps a VTODO's completion state to entity properties.
+//
+// STATUS, COMPLETED and PERCENT-COMPLETE are treated as ONE logical event, not
+// three independent property mappings: Apple writes all three together, and RFC
+// 4791 §7.8.9's canonical "pending to-dos" filter keys on COMPLETED while a UI
+// reads STATUS — so a half-set state reads as done in one client and pending in
+// another.
+type CalDAVCompletion struct {
+	// StatusProperty names the entity property holding completion state.
+	// Required.
+	StatusProperty string `yaml:"status_property" json:"status_property"`
+	// CompletedValue is the StatusProperty value meaning "done". Required, and
+	// validated against the property's enum when it has one.
+	CompletedValue string `yaml:"completed_value" json:"completed_value"`
+	// PendingValue is the value an inbound un-completion restores. Required.
+	PendingValue string `yaml:"pending_value" json:"pending_value"`
+	// CompletedAt optionally names a datetime property that receives the
+	// COMPLETED timestamp. Omit to discard it.
+	CompletedAt string `yaml:"completed_at,omitempty" json:"completed_at,omitempty"`
+}
+
+// CalDAVPriorityMap maps the RFC 5545 PRIORITY integer onto a property whose
+// values are not integers — typically an enum like low/normal/high.
+//
+// # Why buckets rather than exact values
+//
+// PRIORITY is an integer 0-9 (RFC 5545 3.8.1.9: 1-4 high, 5 normal, 6-9 low,
+// 0 undefined), but clients expose three or four labels and pick their own
+// number inside each band. Verified on the wire: Thunderbird sends 1 for its
+// "Hoog" and Apple Reminders sends 9 for its "Laag". An exact-value table would
+// therefore have to enumerate every integer a client might choose, and would
+// silently drop the ones it missed.
+//
+// So each entry claims a RANGE. Inbound, the first bucket containing the
+// received value wins. Outbound, the bucket's Value is emitted — the number a
+// client will map back to the same label.
+type CalDAVPriorityMap struct {
+	// Property names the entity property holding the priority. Required.
+	Property string `yaml:"property" json:"property"`
+	// Buckets map ranges of the 0-9 PRIORITY space onto property values.
+	// Required and non-empty; validated for range sanity and enum membership.
+	Buckets []CalDAVPriorityBucket `yaml:"buckets" json:"buckets"`
+}
+
+// CalDAVPriorityBucket is one band of the PRIORITY range.
+type CalDAVPriorityBucket struct {
+	// Value is the property value this band means, e.g. "high".
+	Value string `yaml:"value" json:"value"`
+	// From and To bound the band inclusively, within 0-9. A single-number band
+	// sets both to the same value.
+	From int `yaml:"from" json:"from"`
+	To   int `yaml:"to" json:"to"`
+	// Emit is the number rendered outbound for this value. Defaults to From,
+	// which is the strongest number in the band — a client shown "high" should
+	// see the value most likely to round-trip as high elsewhere.
+	Emit int `yaml:"emit,omitempty" json:"emit,omitempty"`
+}
+
+// EmitValue is the PRIORITY integer to render for this bucket.
+func (b CalDAVPriorityBucket) EmitValue() int {
+	if b.Emit != 0 {
+		return b.Emit
+	}
+	return b.From
+}
+
+// CalDAVOnDelete is the mutation applied when a client deletes an entry.
+//
+// A CalDAV DELETE maps to a property change rather than an entity delete,
+// because the client gesture is a swipe: rela has no soft-delete, and
+// DeleteEntity cascades to relations, so a mis-swipe would destroy a graph node
+// and its edges. Set Hard to opt into a real delete.
+type CalDAVOnDelete struct {
+	// Set is the property mutation to apply, e.g. {status: cancelled}.
+	Set map[string]string `yaml:"set,omitempty" json:"set,omitempty"`
+	// Hard opts into a real entity delete instead of a property mutation.
+	// Mutually exclusive with Set.
+	Hard bool `yaml:"hard,omitempty" json:"hard,omitempty"`
+}
+
+// CalDAV component kinds, as spelled in `component:`.
+const (
+	CalDAVComponentTodo  = "vtodo"
+	CalDAVComponentEvent = "vevent"
+)
+
+// CalDAVDescriptionBody is the sentinel `description:` value that maps
+// DESCRIPTION to the entity's markdown BODY rather than to a property.
+//
+// A reserved word rather than a separate `description_body: true` key, so the
+// mapping stays one line with one meaning. The cost is that a property genuinely
+// named "body" is not addressable this way; the config validation says so out
+// loud rather than silently preferring one reading.
+const CalDAVDescriptionBody = "body"
+
+// The field names accepted in `read_only:`. These are the MAPPING's names —
+// the YAML keys of [CalDAVCollection] — not entity property names and not
+// iCalendar property names.
+//
+// Naming the mapping is what makes the rule survive a config edit: an operator
+// who repoints `due: deadline` at another property does not have to remember to
+// update a read-only list that named `deadline`. It also means one name covers
+// both spellings of a mapping — `priority` covers `priority_map` too, and
+// `description` covers the body sentinel — because from the client's side those
+// are one field either way.
+const (
+	CalDAVFieldSummary     = "summary"
+	CalDAVFieldDescription = "description"
+	CalDAVFieldDue         = "due"
+	CalDAVFieldPriority    = "priority"
+	CalDAVFieldLocation    = "location"
+	CalDAVFieldCategories  = "categories"
+	CalDAVFieldStart       = "start"
+	CalDAVFieldCompletion  = "completion"
+)
+
+// CalDAVReadOnlyFields lists every name `read_only:` accepts, in the order the
+// config validation reports them.
+//
+// `rrule` is absent deliberately: it is already read-only in every
+// configuration, so listing it would imply the others are writable by contrast
+// and that naming it changes something. `uid` and `url` are likewise absent —
+// neither is a mapped field.
+var CalDAVReadOnlyFields = []string{
+	CalDAVFieldSummary,
+	CalDAVFieldDescription,
+	CalDAVFieldDue,
+	CalDAVFieldPriority,
+	CalDAVFieldLocation,
+	CalDAVFieldCategories,
+	CalDAVFieldStart,
+	CalDAVFieldCompletion,
+}
+
+// IsReadOnly reports whether inbound writes to a mapped field are discarded.
+//
+// Case-insensitive, matching how the rest of the config treats operator-typed
+// identifiers, so `read_only: [Summary]` behaves as written rather than
+// silently doing nothing.
+func (c CalDAVCollection) IsReadOnly(field string) bool {
+	for _, f := range c.ReadOnly {
+		if strings.EqualFold(strings.TrimSpace(f), field) {
+			return true
+		}
+	}
+	return false
+}
+
+// ComponentOrDefault returns the collection's component, defaulting to vtodo.
+// VTODO is the default because a VEVENT projection is already served read-only
+// by `feeds:`; a CalDAV collection exists primarily to make to-dos writable.
+func (c CalDAVCollection) ComponentOrDefault() string {
+	if c.Component == "" {
+		return CalDAVComponentTodo
+	}
+	return c.Component
 }

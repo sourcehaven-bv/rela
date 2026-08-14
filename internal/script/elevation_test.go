@@ -147,15 +147,20 @@ func TestRun_ElevationRequiresBothKeys(t *testing.T) {
 
 // TestRun_NoElevatedReaderWhenNoneSupplied pins that Run hands over only
 // what the WIRING SITE gave it. A runner built without a reader must not
-// synthesize one from readDeps — WritePrepStore is a raw store sitting
-// right there, and reaching for it would grant read elevation at every
-// wiring site rather than the ones that opted in.
+// synthesize one from readDeps.
+//
+// The specific temptation this guarded against is now gone: readDeps used
+// to carry an always-present raw WritePrepStore that a future refactor
+// could have reached for, granting read elevation at every wiring site
+// rather than the ones that opted in. TKT-80EWGM removed that field, so
+// there is no raw handle in readDeps left to synthesize from. The
+// assertion is kept because the RULE — elevation comes from the wiring
+// site, never from ambient deps — outlives the particular field.
 func TestRun_NoElevatedReaderWhenNoneSupplied(t *testing.T) {
 	t.Parallel()
 	exec := &depsCapturingExecutor{}
-	// NewLuaScriptRunner is the no-read-elevation constructor. WritePrepStore
-	// is deliberately populated: the temptation this test guards against.
-	r := NewLuaScriptRunner(exec, lua.ReadDeps{WritePrepStore: nil})
+	// NewLuaScriptRunner is the no-read-elevation constructor.
+	r := NewLuaScriptRunner(exec, lua.ReadDeps{})
 
 	err := r.Run(context.Background(), autocascade.ScriptAction{
 		Code:           "print('x')",
