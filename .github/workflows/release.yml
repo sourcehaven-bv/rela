@@ -27,7 +27,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: "1.26"
+          go-version: "1.26.6"
 
       # External commands (attachment scan/transform, view export) run confined
       # and FAIL CLOSED when no sandbox is available, so the runner needs
@@ -52,7 +52,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: "1.26"
+          go-version: "1.26.6"
 
       - name: Run govulncheck
         run: |
@@ -71,7 +71,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: "1.26"
+          go-version: "1.26.6"
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -180,7 +180,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: "1.26"
+          go-version: "1.26.6"
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
