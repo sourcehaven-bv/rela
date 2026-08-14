@@ -222,7 +222,16 @@
   },
   {
     "name": "get_metamodel",
-    "description": "Get the full metamodel definition (entity types, relations, properties, validations)",
+    "description": "Deprecated alias for get_schema.",
+    "inputSchema": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    }
+  },
+  {
+    "name": "get_schema",
+    "description": "Get the full schema definition (entity types, relations, properties, validations)",
     "inputSchema": {
       "properties": {},
       "required": [],
