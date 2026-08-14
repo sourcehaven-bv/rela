@@ -218,10 +218,15 @@ unmatched_principal: reject   # anonymous (default) | reject | provision
   are denied (403). Its **reads** are unaffected — it still sees what its
   asserted roles allow. Blocking reads too is a larger, separate choice and
   is not what this does.
-- **`provision`**: reserved for a future release (lazy creation of a stub
-  user entity). Accepted at load today, but currently behaves as
-  `anonymous` and logs a one-time warning, so the key's vocabulary is
-  stable.
+- **`provision`**: lazy creation of a stub user entity. On the unmatched
+  principal's **first authorized write** (never a GET), rela creates a
+  minimal `user_entity_type` entity keyed on `principal_property = sub`,
+  then the triggering write proceeds as that newly-created identity. The
+  stub carries the verified `email`, `org_id`, and `org_slug` claims *only
+  when the user type declares those properties* (otherwise they are
+  dropped). The create is performed and audited under the built-in
+  `system:provisioner` identity — see the operator-responsibility notes
+  below.
 
 Load-bearing details:
 
@@ -239,6 +244,35 @@ Load-bearing details:
   for *every* request, so every principal would look unmatched and be
   rejected). Setting `reject` without them is a **load error**, not a
   runtime foot-gun.
+- **`provision` additionally requires the `system:provisioner` grant.**
+  The stub create is ACL-authorized like any other write, so the policy
+  must grant `system:provisioner` `create` on the `user_entity_type`. The
+  `acl-provisioner-grant` migration injects exactly this grant (a
+  `create`-only role bound to `system:provisioner`) the same way the
+  scheduler grant works — run your migrations (`rela db migrate`, or the
+  migration runs on first store open) or add the grant by hand. A
+  `provision` policy **without** that grant is a **load error**, so a
+  misconfiguration fails at startup, not at the first unmatched request.
+- **The provisioned stub is bare — identity, not authority.** The
+  `system:provisioner` role is `create`-only on the user type and nothing
+  else, so provisioning gives the principal a graph *identity* but **no
+  group membership or local roles**. This is deliberate: the on-create
+  cascade authorizes as `system:provisioner`, which cannot author
+  relations, so an on-create automation that adds a `member-of` edge would
+  fail. An on-create automation that only sets *properties* runs fine.
+  Group/local-role assignment for a newly-provisioned user is your
+  responsibility — via the IdP webhook, a reconciliation job, or an admin.
+  The stub is not inert in the meantime: the principal's **asserted roles
+  still apply** (see `asserted_role_assignments`), so it is not powerless
+  while it waits for group assignment.
+- **On a filesystem/memory backend, provisioning is best-effort unique.**
+  `principal_property` uniqueness is enforced check-then-write on fs/mem,
+  not atomically, so two processes (or the IdP webhook racing a lazy
+  provision) can in principle create two stubs for one subject. In one
+  process the write mutex serializes them and the loser re-resolves the
+  existing stub. A PostgreSQL backend closes the cross-process gap with a
+  real unique constraint. If two stubs ever do collide, resolution for that
+  subject becomes ambiguous until an operator merges them.
 - **The 403 discloses only that the identity is unmatched.** Like every
   ACL denial on the data-entry write path, the body carries a
   `rule_kind`/`reason` (here, `unmatched-principal` — "verified principal
