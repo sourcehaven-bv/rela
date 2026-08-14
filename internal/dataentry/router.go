@@ -395,10 +395,19 @@ func resolvePrincipalEntity(
 		}
 		return ctx
 	}
-	// Rebuild via Verified so the assertion claims survive the substitution.
-	// A plain composite literal here would silently drop org and roles — the
-	// resolved principal would keep its identity but lose every asserted grant.
-	out := principal.Verified(id, p.Tool, p.OrgID(), p.OrgSlug(), p.Roles())
+	// Rebuild via VerifiedFrom so the assertion claims survive the substitution.
+	// A plain composite literal here would silently drop org, roles and the
+	// attenuation claims — the resolved principal would keep its identity but
+	// lose every asserted grant AND its ceiling. Losing the ceiling is the
+	// dangerous direction: it would silently WIDEN a restricted client to its
+	// acting user's full grants. Pinned by TestResolvePrincipalEntity_*.
+	out := principal.VerifiedFrom(id, p.Tool, principal.Claims{
+		OrgID:         p.OrgID(),
+		OrgSlug:       p.OrgSlug(),
+		Roles:         p.Roles(),
+		PrincipalType: p.PrincipalType(),
+		Scopes:        p.Scopes(),
+	})
 	out.RawUser = p.User
 	return principal.With(ctx, out)
 }
@@ -491,6 +500,13 @@ type AssertedIdentity struct {
 	OrgID   string
 	OrgSlug string
 	Roles   []string
+
+	// PrincipalType and Scopes drive client attenuation (TKT-IAC8TX): the
+	// former selects a ceiling in acl.yaml, the latter re-opens pieces of it.
+	// Both are absent for a proxy that doesn't model them, which means "no
+	// ceiling applies" — the principal keeps its acting user's grants.
+	PrincipalType string
+	Scopes        []string
 }
 
 // assertionVerifier verifies a signed assertion and projects the org/role
@@ -585,15 +601,39 @@ func verifiedPrincipal(id AssertedIdentity) (principal.Principal, bool) {
 	// verifier that forgets to. A role that sanitizes away is dropped rather than
 	// kept as "" — an empty role name can never match a policy mapping, so
 	// keeping it would only pad the attribution set.
-	roles := make([]string, 0, len(id.Roles))
-	for _, role := range id.Roles {
-		if s := sanitizeUser(role); s != "" {
-			roles = append(roles, s)
+	roles := sanitizeClaimList(id.Roles)
+	// Scopes get the same treatment for the same reason. A scope that sanitizes
+	// away is dropped rather than kept as "": it could never match a policy
+	// mapping, so keeping it would only re-open nothing at a cost.
+	scopes := sanitizeClaimList(id.Scopes)
+	return principal.VerifiedFrom(user, principal.ToolDataEntry, principal.Claims{
+		OrgID:   sanitizeUser(id.OrgID),
+		OrgSlug: sanitizeUser(id.OrgSlug),
+		Roles:   roles,
+		// A principal_type that sanitizes to "" matches no baseline, which means
+		// unrestricted. That is the correct failure direction: the ceiling is a
+		// restriction on top of the user's own grants, so losing it can never
+		// grant more than the acting user already had.
+		PrincipalType: sanitizeUser(id.PrincipalType),
+		Scopes:        scopes,
+	}), true
+}
+
+// sanitizeClaimList applies sanitizeUser to every element, dropping any that
+// sanitizes to empty. Shared by the roles and scopes projections: both are
+// already bounded by the verifier, and both are policy-map keys where an empty
+// string can never match anything.
+func sanitizeClaimList(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(in))
+	for _, v := range in {
+		if s := sanitizeUser(v); s != "" {
+			out = append(out, s)
 		}
 	}
-	return principal.Verified(
-		user, principal.ToolDataEntry,
-		sanitizeUser(id.OrgID), sanitizeUser(id.OrgSlug), roles), true
+	return out
 }
 
 // stripBearer trims the header value and removes an optional "Bearer" auth

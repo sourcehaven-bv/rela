@@ -349,6 +349,11 @@ func wireWebhookReceiver(app *dataentry.App, f *serverFlags, idv *jwtauth.Verifi
 // The gate consumes VerifyAssertion (not VerifySubject) so the assertion's
 // org/roles reach the Principal it stamps; a subject-only adapter here would
 // silently strip every asserted role (TKT-OJL2GN).
+//
+// The same applies to principal_type/scope (TKT-IAC8TX), with the failure
+// running the other way: dropping a role removes access, dropping a
+// principal_type removes the CEILING and hands a restricted client its acting
+// user's full grants. Every claim this adapter forgets is a silent widening.
 type assertionVerifierAdapter struct{ v *jwtauth.Verifier }
 
 func (a assertionVerifierAdapter) VerifyAssertion(
@@ -359,10 +364,12 @@ func (a assertionVerifierAdapter) VerifyAssertion(
 		return dataentry.AssertedIdentity{}, err
 	}
 	return dataentry.AssertedIdentity{
-		Subject: c.Subject,
-		OrgID:   c.OrgID,
-		OrgSlug: c.OrgSlug,
-		Roles:   c.Roles,
+		Subject:       c.Subject,
+		OrgID:         c.OrgID,
+		OrgSlug:       c.OrgSlug,
+		Roles:         c.Roles,
+		PrincipalType: c.PrincipalType,
+		Scopes:        c.Scopes,
 	}, nil
 }
 

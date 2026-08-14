@@ -113,6 +113,14 @@ type Policy struct {
 	RoleRelations       map[string]RoleRelationDef `yaml:"role_relations"`
 	InheritRolesThrough []string                   `yaml:"inherit_roles_through"`
 
+	// ClientBaselines and ScopeGrants implement client attenuation
+	// (TKT-IAC8TX): a ceiling that restricts a non-interactive client BELOW
+	// the user it acts as. Unlike every other field here, these can only
+	// REMOVE capability — see the package-level commentary in ceiling.go for
+	// the invariant and why it compiles at load time.
+	ClientBaselines map[string]ClientBaseline `yaml:"client_baselines"`
+	ScopeGrants     map[string]ScopeGrant     `yaml:"scope_grants"`
+
 	// UnmatchedPrincipal decides what happens when a verified principal's
 	// identifier resolves to no [Policy.UserEntityType] entity (the
 	// principal_property lookup found no match). It governs the data-entry
@@ -421,6 +429,8 @@ var knownPolicyKeys = map[string]bool{
 	"role_relations":            true,
 	"inherit_roles_through":     true,
 	"unmatched_principal":       true,
+	"client_baselines":          true,
+	"scope_grants":              true,
 }
 
 // LoadPolicy reads and parses `acl.yaml` at the given path.
@@ -629,8 +639,12 @@ func (p *Policy) validateUnmatchedPrincipal() error {
 
 func (p *Policy) Validate() error {
 	p.normalizeAssertedRoles()
+	p.normalizeClientAttenuation()
 
 	if err := p.validateUnmatchedPrincipal(); err != nil {
+		return err
+	}
+	if err := p.validateClientAttenuation(); err != nil {
 		return err
 	}
 
