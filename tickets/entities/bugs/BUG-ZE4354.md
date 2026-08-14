@@ -4,7 +4,41 @@ type: bug
 title: Cancel on a directly-opened create form walks out of the SPA (router.back with no history)
 description: 'On a create form opened directly (pasted URL, bookmark, new tab), Cancel appears to do nothing. handleCancel calls router.back(), a browser-history operation with no route target; with no prior SPA entry it walks out of the app entirely (measured: lands on about:blank). Works when the form is reached via an in-app link. Pre-existing on develop, not a TKT-OMUD56 regression. Fix: prefer the already-resolved returnTo (which the submit path honours but Cancel ignores), fall back to history only when an in-app entry exists, else push the type''s list view.'
 priority: medium
-status: backlog
+status: done
+why1: >-
+  Cancel called router.back() unconditionally, and on a directly-opened form
+  there was no in-app history entry behind it, so the browser navigated out of
+  the SPA instead of anywhere in the app.
+why2: >-
+  router.back() is a browser-history operation, not a route target. It was
+  written as if "go back" and "return to where this form came from" were the
+  same thing, which only holds when the form was reached by an in-app
+  navigation.
+why3: >-
+  The component already resolved a returnTo (from a validated ?return_to=) and
+  already honoured it on submit, but Cancel never consulted it. The two exits
+  from the same form were implemented independently, so they disagreed about
+  where "away" is.
+why4: >-
+  Nothing exercised the cold-open case. Every existing form test — unit and
+  e2e — reached a form via an in-app link or a mocked router, which is exactly
+  the shape where router.back() happens to work.
+why5: >-
+  The SPA had no single answer to "where does this view go back to". A helper
+  existed (useBackTarget, encoding return_to -> ?from= -> none) but was adopted
+  per-surface, so a surface that never adopted it silently kept the naive
+  browser-history behaviour.
+prevention: >-
+  Fixed in #1326 by resolving Cancel through the same precedence as the submit
+  path and useBackTarget (explicit return_to, then history only when an in-app
+  entry exists, then the type's list view). Pinned by AM-form-cancel-stays-in-spa,
+  whose load-bearing arm is an e2e test that opens a form COLD in a fresh
+  browser context — the gap that let this ship. The mutation check confirms it:
+  reverting the fix fails 4/5 unit arms and the direct-open e2e, while the
+  in-app-history arm keeps passing. Note for future navigation work:
+  window.history.length cannot answer "is there anywhere in-app to go back to"
+  (it counts pre-SPA entries and reads >= 2 on a fresh open);
+  history.state.back, which vue-router writes on a push, is the reliable signal.
 ---
 
 ## Symptom
@@ -48,7 +82,18 @@ Found while manually testing that ticket's demo.
 Applies to the edit form too — where the button is labelled **Back** — since
 both go through the same `handleCancel`.
 
-## Suggested fix
+## Resolution
+
+Fixed in **#1326** (`7b29edec` on develop). `handleCancel` now resolves through
+the same precedence as the submit path: an explicit validated `return_to`, else
+`router.back()` **only when in-app history exists**, else the entity type's
+list view (or `/` when the type has no list).
+
+`?from=` is deliberately not consulted — no caller threads it to a form today,
+so that branch would be dead code; `useBackTarget` keeps it for the surfaces
+that do.
+
+## Suggested fix (as filed)
 
 Prefer an explicit target, fall back to history, then to a sensible default. The
 pieces already exist:
