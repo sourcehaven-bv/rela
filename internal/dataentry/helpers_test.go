@@ -12,6 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
@@ -969,5 +970,120 @@ func TestCompareValues_TypeMismatch(t *testing.T) {
 func TestCompareOrdered_UnknownOperator(t *testing.T) {
 	if compareOrdered(1, 2, "bogus") {
 		t.Error("unknown operator should return false")
+	}
+}
+
+// TestSplitPushdownFilters pins which property filters may be evaluated by the
+// store and which must stay in the metamodel-aware Go pass.
+//
+// The split is a correctness boundary, not an optimisation detail:
+// store.PropPredicate compares by STRING FORM, so pushing an ordered
+// comparison down would compare dates lexicographically and a glob literally.
+// Anything unrecognized must land in `residual`, where behavior is unchanged.
+func TestSplitPushdownFilters(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		in           *filter.Filter
+		wantPushed   bool
+		wantPushedOp store.PropOp
+	}{
+		{
+			name:         "equality pushes down",
+			in:           &filter.Filter{Property: "status", Operator: filter.OpEqual, Value: "open"},
+			wantPushed:   true,
+			wantPushedOp: store.PropEqual,
+		},
+		{
+			name:         "inequality pushes down",
+			in:           &filter.Filter{Property: "status", Operator: filter.OpNotEqual, Value: "done"},
+			wantPushed:   true,
+			wantPushedOp: store.PropNotEqual,
+		},
+		{
+			// `status=in-*` rides on OpEqual but means pattern-match; pushed
+			// down it would compare against the literal string "in-*".
+			name:       "glob stays in Go despite riding on OpEqual",
+			in:         &filter.Filter{Property: "status", Operator: filter.OpEqual, Value: "in-*", IsGlob: true},
+			wantPushed: false,
+		},
+		{
+			// The store has no metamodel, so it cannot know `due` is a date;
+			// pushed down this would compare lexicographically.
+			name:       "ordered comparison stays in Go",
+			in:         &filter.Filter{Property: "due", Operator: filter.OpLess, Value: "2026-01-01"},
+			wantPushed: false,
+		},
+		{
+			name:       "greater-or-equal stays in Go",
+			in:         &filter.Filter{Property: "count", Operator: filter.OpGreaterEqual, Value: "3"},
+			wantPushed: false,
+		},
+		{
+			name:       "regex stays in Go",
+			in:         &filter.Filter{Property: "title", Operator: filter.OpRegex, Value: "^spike"},
+			wantPushed: false,
+		},
+		{
+			name:       "fuzzy stays in Go",
+			in:         &filter.Filter{Property: "title", Operator: filter.OpFuzzy, Value: "retro"},
+			wantPushed: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			pushed, residual := splitPushdownFilters([]*filter.Filter{tc.in})
+
+			if !tc.wantPushed {
+				if len(pushed) != 0 {
+					t.Errorf("expected no pushdown, got %+v", pushed)
+				}
+				if len(residual) != 1 {
+					t.Errorf("expected the filter to remain in Go, got %d residual", len(residual))
+				}
+				return
+			}
+			if len(pushed) != 1 {
+				t.Fatalf("expected one pushed predicate, got %d", len(pushed))
+			}
+			if pushed[0].Op != tc.wantPushedOp {
+				t.Errorf("op = %v, want %v", pushed[0].Op, tc.wantPushedOp)
+			}
+			if pushed[0].Property != tc.in.Property || pushed[0].Value != tc.in.Value {
+				t.Errorf("predicate = %+v, want property/value from %+v", pushed[0], tc.in)
+			}
+			if len(residual) != 0 {
+				t.Errorf("expected nothing left in Go, got %+v", residual)
+			}
+		})
+	}
+}
+
+// A mixed query must split, not fall wholly to one side: the equality is
+// pushed for the volume win while the date comparison stays where the
+// metamodel is available.
+func TestSplitPushdownFilters_Mixed(t *testing.T) {
+	t.Parallel()
+	pushed, residual := splitPushdownFilters([]*filter.Filter{
+		{Property: "status", Operator: filter.OpEqual, Value: "open"},
+		{Property: "due", Operator: filter.OpLess, Value: "2026-01-01"},
+	})
+
+	if len(pushed) != 1 || pushed[0].Property != "status" {
+		t.Errorf("expected only the equality pushed, got %+v", pushed)
+	}
+	if len(residual) != 1 || residual[0].Property != "due" {
+		t.Errorf("expected only the ordered comparison residual, got %+v", residual)
+	}
+}
+
+func TestSplitPushdownFilters_Empty(t *testing.T) {
+	t.Parallel()
+	pushed, residual := splitPushdownFilters(nil)
+	if len(pushed) != 0 || len(residual) != 0 {
+		t.Errorf("nil filters should split to nothing, got %+v / %+v", pushed, residual)
 	}
 }

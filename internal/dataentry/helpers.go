@@ -420,7 +420,14 @@ func (a *App) executeQuery(ctx context.Context, query string) ([]*entity.Entity,
 		// executeQuery never sorted by them.
 		candidates, err = a.runVisibleFreeTextSearch(ctx, svc, sq, scope)
 	} else {
-		candidates, err = visibleListByTypes(ctx, svc, sq.EntityTypes, scope)
+		// Push the equality filters into the store so it returns only
+		// matching rows instead of the whole type. Whatever cannot be pushed
+		// (ordered comparison, regex, glob, fuzzy) stays in the Go pass below,
+		// which still runs over every candidate — so the result set is
+		// identical either way, only the volume loaded changes.
+		pushed, residual := splitPushdownFilters(sq.PropertyFilters)
+		candidates, err = visibleListByTypes(ctx, svc, sq.EntityTypes, scope, pushed)
+		sq.PropertyFilters = residual
 	}
 	if err != nil {
 		return nil, err
@@ -540,13 +547,25 @@ func hiddenSearchFields(aff affordanceService) search.HiddenFieldsFunc {
 // listFromStoreByTypes (which other, ungated consumers still use and
 // which swallows iterator errors), this fails loud on both verdict
 // paths — same rationale as scopedSortedEntities.
+// visibleListByTypes loads the visible entities of the given types, applying
+// `props` in the STORE rather than after the fact.
+//
+// The predicates compose with the ACL scope rather than replacing it: an
+// AllowAll type gets a plain type+props query, and a scope-restricted type
+// gets its verdict query with the props appended. Both are ANDed by the
+// store, so narrowing by property can never widen what the gate allows.
 func visibleListByTypes(
 	ctx context.Context, svc Services, types []string, scope map[string]search.TypeScope,
+	props []store.PropPredicate,
 ) ([]*entity.Entity, error) {
 	if len(types) == 0 {
 		if _, wildcard := scope[search.WildcardType]; wildcard {
 			// Wildcard-allow (no ACL): every entity, any type — the
 			// pre-ACL listAll shape, with iterator errors surfaced.
+			// No type named and no ACL: every entity, any type. The
+			// property predicates cannot be pushed here — GraphQuery is
+			// per-type — so this one path keeps the Go-side filter, which
+			// still runs over the result below.
 			out := make([]*entity.Entity, 0)
 			for e, err := range svc.Store.ListEntities(ctx, store.EntityQuery{}) {
 				if err != nil {
@@ -571,21 +590,58 @@ func visibleListByTypes(
 		if !ok {
 			continue // denied type
 		}
-		if ts.AllowAll {
-			for e, err := range svc.Store.ListEntities(ctx, store.EntityQuery{Type: typ}) {
-				if err != nil {
-					return nil, fmt.Errorf("%w: %w", errListLoad, err)
-				}
-				out = append(out, e)
-			}
-			continue
+		got, err := visibleEntitiesOfType(ctx, svc, typ, ts, props)
+		if err != nil {
+			return nil, err
 		}
-		for e, err := range svc.Store.GraphQuery(ctx, *ts.Query) {
+		out = append(out, got...)
+	}
+	return out, nil
+}
+
+// visibleEntitiesOfType loads one type's visible entities, applying the
+// property predicates in the store.
+//
+// Three shapes, differing only in how the query is composed:
+//
+//   - AllowAll with no props: a plain type listing, byte-identical to the
+//     pre-pushdown path.
+//   - AllowAll with props: a type+props query rather than a full scan. The
+//     error class stays errListLoad — no gate is involved here.
+//   - Scope-restricted: the gate's own verdict query with the props appended,
+//     ANDed by the store, so narrowing by property can never widen what the
+//     gate allows. errACLListQuery, because a failure here IS a gate failure.
+func visibleEntitiesOfType(
+	ctx context.Context, svc Services, typ string,
+	ts search.TypeScope, props []store.PropPredicate,
+) ([]*entity.Entity, error) {
+	if ts.AllowAll && len(props) == 0 {
+		var out []*entity.Entity
+		for e, err := range svc.Store.ListEntities(ctx, store.EntityQuery{Type: typ}) {
 			if err != nil {
-				return nil, fmt.Errorf("%w: %w", errACLListQuery, err)
+				return nil, fmt.Errorf("%w: %w", errListLoad, err)
 			}
 			out = append(out, e)
 		}
+		return out, nil
+	}
+
+	q := store.GraphQuery{EntityType: typ, Props: props}
+	errClass := errListLoad
+	if !ts.AllowAll {
+		// Copy by value: TypeScope.Query is shared across calls and must not
+		// be mutated (store.GraphQueryer documents the same rule).
+		q = *ts.Query
+		q.Props = append(append([]store.PropPredicate(nil), q.Props...), props...)
+		errClass = errACLListQuery
+	}
+
+	var out []*entity.Entity
+	for e, err := range svc.Store.GraphQuery(ctx, q) {
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", errClass, err)
+		}
+		out = append(out, e)
 	}
 	return out, nil
 }
@@ -725,6 +781,47 @@ func relationDirection(d dataentryconfig.Direction) store.Direction {
 
 // matchesPropertyFilters checks whether an entity matches the given property filters.
 // Returns true if no filters are specified or all filters match.
+// splitPushdownFilters divides property filters into those the store can
+// evaluate and those that must stay in Go.
+//
+// Only plain equality and inequality push down: store.PropPredicate compares
+// by string form, deliberately, because the store layer does not consult the
+// metamodel. Everything needing a declared type or a pattern engine — ordered
+// comparison on dates and integers, regex, glob, fuzzy — would give a
+// DIFFERENT answer there (a date compared lexicographically, a glob compared
+// literally), so it is kept in the metamodel-aware Go pass.
+//
+// Fail-safe by construction: an operator this function does not recognize
+// falls into `residual` and is evaluated exactly as before. The cost of
+// misjudging one is a slower query, never a wrong result.
+//
+// Emptiness agrees across both paths because internal/propmatch is the single
+// definition backing store.PropPredicate AND internal/filter's empty handling;
+// storetest's Props_value_shapes pins that agreement per backend.
+func splitPushdownFilters(filters []*filter.Filter) (pushed []store.PropPredicate, residual []*filter.Filter) {
+	for _, f := range filters {
+		// A glob (`status=in-*`) rides on OpEqual but means pattern-match, so
+		// it must NOT become a literal string comparison in the store.
+		if f.IsGlob {
+			residual = append(residual, f)
+			continue
+		}
+		switch f.Operator {
+		case filter.OpEqual:
+			pushed = append(pushed, store.PropPredicate{
+				Property: f.Property, Op: store.PropEqual, Value: f.Value,
+			})
+		case filter.OpNotEqual:
+			pushed = append(pushed, store.PropPredicate{
+				Property: f.Property, Op: store.PropNotEqual, Value: f.Value,
+			})
+		default:
+			residual = append(residual, f)
+		}
+	}
+	return pushed, residual
+}
+
 func (a *App) matchesPropertyFilters(e *entity.Entity, filters []*filter.Filter) bool {
 	if len(filters) == 0 {
 		return true

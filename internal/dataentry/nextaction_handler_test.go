@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 
@@ -377,4 +378,67 @@ func TestNextAction_VariantRoundTrips(t *testing.T) {
 	after, _ := getNextAction(aliceCtx(), t, app)
 	require.Nil(t, after.Suggestion,
 		"echoing the full key back must actually suppress the suggestion")
+}
+
+// TestQueryPushdown_MatchesGoSideFiltering is the parity guard for the
+// property-predicate pushdown (Phase 1).
+//
+// executeQuery now asks the store to evaluate equality filters instead of
+// loading a whole type and filtering in Go. That is only safe if both paths
+// agree, so this drives a real query end-to-end through the next-action
+// surface — a suggestion appearing for the wrong entity, or not at all, is
+// exactly what a silent pushdown divergence looks like.
+func TestQueryPushdown_MatchesGoSideFiltering(t *testing.T) {
+	app := newTestAppV1(t)
+	seedEntity(app, &entity.Entity{
+		ID: "TKT-open", Type: "ticket",
+		Properties: map[string]any{"title": "Open one", "status": "open"},
+	})
+	seedEntity(app, &entity.Entity{
+		ID: "TKT-done", Type: "ticket",
+		Properties: map[string]any{"title": "Done one", "status": "done"},
+	})
+	seedEntity(app, &entity.Entity{
+		ID: "TKT-blank", Type: "ticket",
+		Properties: map[string]any{"title": "No status"},
+	})
+
+	cases := []struct {
+		name  string
+		query string
+		want  []string
+	}{
+		{"equality pushes down", "type:ticket prop:status=open", []string{"TKT-open"}},
+		{
+			// An entity with no status must NOT satisfy an exclusion filter —
+			// the asymmetry propmatch pins, and the one most likely to differ
+			// between a SQL NOT and the Go rule.
+			name:  "exclusion does not sweep in the unset row",
+			query: "type:ticket prop:status!=open",
+			want:  []string{"TKT-done"},
+		},
+		{"is-empty matches absent", "type:ticket prop:status=", []string{"TKT-blank"}},
+		{
+			// Rides on OpEqual but must stay in Go: pushed down it would
+			// compare against the literal string "op*".
+			name:  "glob still matches by pattern",
+			query: "type:ticket prop:status=op*",
+			want:  []string{"TKT-open"},
+		},
+		{"no property filter returns the type", "type:ticket", []string{"TKT-blank", "TKT-done", "TKT-open"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := app.executeQuery(aliceCtx(), tc.query)
+			require.NoError(t, err)
+
+			ids := make([]string, 0, len(got))
+			for _, e := range got {
+				ids = append(ids, e.ID)
+			}
+			sort.Strings(ids)
+			require.Equal(t, tc.want, ids)
+		})
+	}
 }
