@@ -56,7 +56,7 @@ RR-VI9XMY (addressed — seam corrected) carried from design review.
 ## Pull Request
 
 - [x] Run `/pr` command to create PR and monitor CI
-- [x] All CI checks pass (local `just ci`; remote CI monitored to green)
+- [x] All CI checks pass (local `just ci` exit 0; remote CI monitored to green)
 - [x] PR URL documented below
 
-**PR:** *to be filled after `gh pr create`.*
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1332
