@@ -149,6 +149,7 @@ func countRelations(t *testing.T, s store.Store) int {
 // Capabilities gates optional feature tests (e.g. attachments).
 func RunAll(t *testing.T, f Factory, sf SearchFactory, vsf VisibleSearchFactory, caps Capabilities) {
 	t.Run("Entity", func(t *testing.T) { RunEntityTests(t, f) })
+	t.Run("Header", func(t *testing.T) { RunHeaderTests(t, f) })
 	t.Run("Relation", func(t *testing.T) { RunRelationTests(t, f) })
 	t.Run("Query", func(t *testing.T) { RunQueryTests(t, f) })
 	t.Run("GraphQuery", func(t *testing.T) { RunGraphQueryTests(t, f) })

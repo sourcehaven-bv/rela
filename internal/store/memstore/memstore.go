@@ -217,6 +217,45 @@ func (m *MemStore) ListEntities(_ context.Context, q store.EntityQuery) iter.Seq
 	}
 }
 
+// ListEntityHeaders implements store.HeaderReader. Like ListEntities it
+// snapshots under the read lock (so the iterator never holds it), but copies
+// only the header fields — the body string is not carried into the snapshot,
+// and Properties are cloned so a caller cannot mutate stored state through a
+// header.
+//
+// The generic fallback would clone each ENTITY (bodies included) just to
+// discard the content a moment later; this keeps a whole-store scan
+// proportional to ids and properties rather than to markdown.
+func (m *MemStore) ListEntityHeaders(
+	_ context.Context, q store.EntityQuery,
+) iter.Seq2[store.EntityHeader, error] {
+	m.mu.RLock()
+	idSet := entityIDSet(q.IDs)
+
+	snapshot := make([]store.EntityHeader, 0)
+	for _, id := range m.entityOrder {
+		e := m.entities[id]
+		if !matchEntityQuery(e, q, idSet) {
+			continue
+		}
+		snapshot = append(snapshot, store.EntityHeader{
+			ID:         e.ID,
+			Type:       e.Type,
+			Properties: maps.Clone(e.Properties),
+			UpdatedAt:  e.UpdatedAt,
+		})
+	}
+	m.mu.RUnlock()
+
+	return func(yield func(store.EntityHeader, error) bool) {
+		for _, h := range snapshot {
+			if !yield(h, nil) {
+				return
+			}
+		}
+	}
+}
+
 func (m *MemStore) ListEntitiesPage(_ context.Context, q store.EntityQuery) (store.Page[*entity.Entity], error) {
 	cursorKey, err := storeutil.DecodeCursor(q.Cursor)
 	if err != nil {
