@@ -71,8 +71,13 @@ import (
 // (TKT-WAA092) takes it to 23: the alias service is constructed here and
 // consumed by cmd/rela-server when wiring the data-entry App, so it has to
 // cross the package boundary — there is no in-package caller to hide it behind.
+// GatedReads() (TKT-UIR41P) takes it to 24: it returns the ACL-bound read
+// handles an identity-bearing consumer needs, and it is deliberately ONE method
+// returning a bundle rather than three accessors — the three handles must come
+// from the same gate to stay consistent, and splitting them would both grow this
+// surface by three and let a caller mix a gated reader with a raw tracer.
 //
-//plimsoll:max-exported-methods=23
+//plimsoll:max-exported-methods=24
 type Services struct {
 	fs    storage.FS
 	paths *project.Context
