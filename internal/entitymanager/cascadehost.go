@@ -76,10 +76,46 @@ func (h *cascadeHost) CreateEntity(
 // Note: no audit record here. The earlier CreateEntity already produced
 // one audit record for this entity; emitting another for the property-set
 // step would double-count the same creation in the audit log.
+//
+// Constraints are RE-CHECKED against the post-automation values (BUG-KIMZRK).
+// createCore validated the candidate as it stood BEFORE automation ran, so a
+// value an automation introduces afterwards has never been examined. The
+// top-level create path already re-runs the same checks for exactly this
+// reason ("the create path must not be the weaker one" — see CreateEntity);
+// without them here, an automation could silently persist a duplicate of a
+// `unique:` natural key, or a value validation would reject.
+//
+// Excluding e.ID from the unique scan is what makes this an idempotent
+// re-check rather than a self-collision: the row is already persisted, so it
+// would otherwise match itself.
 func (h *cascadeHost) WriteEntity(ctx context.Context, e *entity.Entity) error {
 	if e == nil {
 		return nil
 	}
+
+	if errs := h.deps.Meta.ValidateEntity(e.ID, e.Type, e.Properties); len(errs) > 0 {
+		// DEC-HWZHA: only HARD errors abort. Soft conditions (a required
+		// property left unset, an out-of-enum value) are tolerated on every
+		// other write path and must stay tolerated here, or a cascade would
+		// be stricter than a direct edit.
+		if hard, _ := partitionValidationErrors(errs); len(hard) > 0 {
+			return newValidationError(hard)
+		}
+	}
+
+	if err := checkUniqueProperties(ctx, h.deps, e, e.ID); err != nil {
+		return err
+	}
+
+	// EnforceCreate, not EnforceUpdate: this row was created moments ago in
+	// this same cascade, so the automation's value is still an ENTRY value —
+	// it must equal the machine's declared entry, not merely be reachable
+	// from it by a legal move. Using EnforceUpdate would wrongly accept a
+	// one-hop jump the create path forbids.
+	if err := h.deps.Transitions.EnforceCreate(ctx, e); err != nil {
+		return err
+	}
+
 	return h.deps.Store.UpdateEntity(ctx, e)
 }
 
