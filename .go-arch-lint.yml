@@ -9,6 +9,7 @@ exclude:
   - internal/store/storetest
   - internal/entitymanager/entitymanagertest
   - internal/visibility/visibilitytest
+  - internal/state/statetest
   - frontend
   - e2e
   - .claude

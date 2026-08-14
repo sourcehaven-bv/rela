@@ -591,6 +591,7 @@ func NewApp(
 	aclImpl acl.ACL,
 	fieldResolver FieldVerdictResolver,
 	auditSink audit.Audit,
+	stateKV state.KV,
 ) (*App, error) {
 	// Reject nil required collaborators up front rather than letting a
 	// downstream handler panic on the first request that exercises them.
@@ -621,13 +622,18 @@ func NewApp(
 	if auditSink == nil {
 		return nil, errors.New("dataentry.NewApp: auditSink is required (pass audit.Nop{} to opt out)")
 	}
+	if stateKV == nil {
+		return nil, errors.New("dataentry.NewApp: stateKV is required (wire appbuild's Services.State())")
+	}
 	// Construct reconstructible services from the primitives.
 	cfgLoader := config.NewFSLoader(fs, paths.Root)
-	kvRoot, err := storage.NewRootedFS(fs, paths.CacheDir)
-	if err != nil {
-		return nil, fmt.Errorf("dataentry: rooted fs for state kv: %w", err)
-	}
-	kv := state.NewFSKV(kvRoot)
+	// The state store comes from the caller (appbuild's Services.State()) rather
+	// than being rebuilt here: on the postgres build it is database-backed, so
+	// the render cache, user settings and the operator logo are shared by every
+	// process serving the schema. Rebuilding an FSKV here would silently pin
+	// those back to this node's .rela/ — the bug where an uploaded logo is
+	// visible only on whichever node served the POST (TKT-VC27L3).
+	kv := stateKV
 	trc := tracer.New(st)
 	templater := templating.NewFSTemplater(fs, paths)
 	// The validator (val) is built AFTER app.affordances below — its reader is

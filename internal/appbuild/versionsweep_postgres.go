@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/pgstore"
 )
@@ -81,4 +82,36 @@ func versionServiceFor(st store.Store) store.VersionService {
 		return s.VersionStore()
 	}
 	return nil
+}
+
+// stateKVFor returns a database-backed [state.KV] sharing the store's pool, so
+// the document render cache, user settings, the operator logo and scheduler
+// bookkeeping are shared by every process serving this schema instead of living
+// in each node's own .rela/ directory (TKT-VC27L3).
+//
+// That matters for the multi-process deployment docs/postgres-backend.md already
+// documents: with an FSKV, an operator's logo upload lands on whichever node
+// served the POST and every other node keeps serving the old one, with no error
+// anywhere. It also means a schema-per-tenant deployment gets per-tenant state
+// for free — the search_path that scopes entities scopes this table.
+//
+// Returns a genuinely nil interface for a non-pgstore store so the caller's
+// nil-check falls back to the filesystem KV.
+func stateKVFor(st store.Store) state.KV {
+	s, ok := st.(*pgstore.Store)
+	if !ok {
+		return nil
+	}
+	// pgstore stores whatever key it is handed; ValidatedKV applies the key
+	// rules FSKV gets from RootedFS, so both backends accept exactly the same
+	// keys. See state.ValidatedKV.
+	kv, err := state.NewValidatedKV(s.StateStore())
+	if err != nil {
+		// Unreachable: StateStore never returns nil. Fall back rather than fail
+		// startup over an impossible case.
+		slog.Warn("appbuild: could not wrap database state store; falling back "+
+			"to the filesystem (state will be node-local)", "error", err)
+		return nil
+	}
+	return kv
 }

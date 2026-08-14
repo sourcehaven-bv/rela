@@ -348,9 +348,23 @@ Rules when touching this:
   between recipes, it belongs in a shared helper. This is what keeps the three
   recipes from drifting (and where future per-backend audit/ACL variation goes).
 - **The metamodel is always read from disk**, even in the postgres build —
-  `schema.yaml`, `templates/`, `.rela/` stay on the filesystem; PostgreSQL
-  backs entities/relations/attachments/search only. A postgres deployment
-  still needs a `--project` dir.
+  `schema.yaml` and `templates/` stay on the filesystem, as does operator-authored
+  config generally; PostgreSQL backs entities/relations/attachments/search. A
+  postgres deployment still needs a `--project` dir.
+
+  The exception is **runtime-written state** (TKT-VC27L3): on the postgres build
+  `state.KV` is database-backed (`pgstore.StateKV`, wired via `stateKVFor`), so
+  the document render cache, user settings, the operator logo/theme and the
+  CalDAV alias table live in the `state_kv` table rather than under `.rela/`.
+  That is deliberate — `docs/postgres-backend.md` documents several rela-server
+  processes against one database, and node-local state means an uploaded logo is
+  served by exactly one of them. Rows sit in the store's schema, so
+  schema-per-tenant scopes this state for free. **Key validation is the `state`
+  package's job** (`state.ValidatedKV` wraps the backend at the wiring site):
+  pgstore must not import `internal/state` (arch-lint forbids a store depending
+  on an application package), so it stores whatever key it is handed and the
+  wrapper enforces the same rules `storage.RootedFS` gives FSKV. Any new backend
+  must pass `internal/state/statetest.RunAll`.
 - **Multi-writer change feed** (TKT-WZYWM9). The postgres watcher delivers
   cross-process writes via PostgreSQL `LISTEN/NOTIFY`: each committed write does
   `pg_notify(rela_changed, '<origin>:<schema>:<kind>:<op>:<id>')` inside its

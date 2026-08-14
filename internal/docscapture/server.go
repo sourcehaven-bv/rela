@@ -99,6 +99,7 @@ func standUp(ctx context.Context, projectDir string, seed []docs.SeedOp) (*proje
 		svc.EntityManager(), svc.Searcher(), svc.VisibleSearcher(), svc.ACL(),
 		dataentry.NopFieldVerdictResolver{},
 		svc.Audit(),
+		svc.State(),
 	)
 	if err != nil {
 		svc.Close()

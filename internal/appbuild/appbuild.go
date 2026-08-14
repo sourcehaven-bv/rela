@@ -913,7 +913,7 @@ func assemble(
 	// here and threaded into the recorders and the Services bundle.
 	versions := versionServiceFor(st)
 
-	stateKV, aliases, err := buildStateAndAliases(cfg.FS, cfg.Paths)
+	stateKV, aliases, err := buildStateAndAliases(cfg.FS, cfg.Paths, stateKVFor(st))
 	if err != nil {
 		return nil, err
 	}
@@ -1079,10 +1079,23 @@ func (s *Services) Close() error {
 // not a store capability. Both are built BEFORE the entitymanager because its
 // rename/delete hooks take the alias service: only the write choke-point knows
 // old->new, so an alias rewrite has to ride along with the write.
-func buildStateAndAliases(fs storage.FS, paths *project.Context) (state.KV, *caldavalias.Service, error) {
-	stateKV, err := buildStateKV(fs, paths)
-	if err != nil {
-		return nil, nil, err
+//
+// backendKV, when non-nil, is a store-backed state store (pgstore's — see
+// stateKVFor) and wins over the filesystem. That is what makes the render
+// cache, user settings, the operator logo and the CalDAV alias table shared by
+// every process serving a schema instead of node-local (TKT-VC27L3). It is nil
+// on the fs/memory builds, where a project IS one directory on one machine and
+// the filesystem is the right home.
+func buildStateAndAliases(
+	fs storage.FS, paths *project.Context, backendKV state.KV,
+) (state.KV, *caldavalias.Service, error) {
+	stateKV := backendKV
+	if stateKV == nil {
+		var err error
+		stateKV, err = buildStateKV(fs, paths)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	aliases, err := caldavalias.New(context.Background(), stateKV)
 	if err != nil {
@@ -1100,9 +1113,16 @@ func buildStateAndAliases(fs storage.FS, paths *project.Context) (state.KV, *cal
 		// That check now lives at the serving boundary — registerCalDAVRoutes
 		// refuses to mount without a healthy table — so the failure lands on
 		// the path that can actually cause the damage.
+		// Name the right location: with a database-backed state store the
+		// aliases are a row, not a file, and pointing an operator at a path
+		// that does not exist would send them hunting for the wrong thing.
+		location := filepath.Join(paths.CacheDir, "caldav", "aliases.json")
+		if backendKV != nil {
+			location = "database state store, key caldav/aliases.json"
+		}
 		slog.Warn("caldav alias table unreadable; CalDAV will refuse to serve. "+
-			"Delete the file to start fresh (synced clients will re-create their entries).",
-			"path", filepath.Join(paths.CacheDir, "caldav", "aliases.json"),
+			"Clear it to start fresh (synced clients will re-create their entries).",
+			"location", location,
 			"error", err)
 		return stateKV, nil, nil
 	}
