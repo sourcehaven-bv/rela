@@ -92,11 +92,62 @@ type AnalysisIssue struct {
 	ScriptError *lua.ScriptError
 }
 
+// maxSectionIssues caps how many issues one analyzer section reports.
+//
+// A section with more than this many findings is not actionable as a list —
+// nobody works through 12,000 duplicate-title warnings — and rendering them
+// costs memory and wire bytes on both sides for no benefit. The cap is HARD:
+// there is no query parameter to lift it, because "let me request all
+// 200,000" is the request that reintroduces the problem.
+//
+// Detection reads one issue PAST the cap (see [capIssues]): finding a 101st
+// is how truncation is known, and that extra row is discarded rather than
+// reported.
+const maxSectionIssues = 100
+
 // AnalysisSection groups issues by analysis category.
 type AnalysisSection struct {
 	Name        string
 	Description string
 	Issues      []AnalysisIssue
+
+	// Truncated reports that the analyzer found MORE issues than it
+	// returned, so the UI can say so.
+	//
+	// Surfaced rather than silent on purpose. An operator who fixes all
+	// 100 reported issues, re-runs, and sees 100 again would otherwise
+	// conclude analyze is broken. The exact total is deliberately NOT
+	// reported: counting every issue means doing all the work the cap
+	// exists to avoid, and "100+" is as actionable as "12,431".
+	Truncated bool
+}
+
+// capIssues trims a section's issues to [maxSectionIssues], setting
+// Truncated when there were more.
+//
+// Applied by analyzers that can only know their issue count at the end
+// (grouping analyzers). Streaming analyzers stop scanning at the cap
+// instead — see [sectionFull] — which is strictly better because it also
+// stops the work.
+func capIssues(section AnalysisSection) AnalysisSection {
+	if len(section.Issues) <= maxSectionIssues {
+		return section
+	}
+	section.Issues = section.Issues[:maxSectionIssues]
+	section.Truncated = true
+	return section
+}
+
+// sectionFull reports whether a streaming analyzer has collected enough
+// issues to stop scanning.
+//
+// Returns true only once the section holds MORE than the cap, so the
+// caller has positively observed an extra issue rather than inferring
+// truncation from reaching the limit exactly. A section with exactly
+// maxSectionIssues issues is complete, not truncated — the off-by-one that
+// would mislabel it is the whole reason this is a named helper.
+func sectionFull(section *AnalysisSection) bool {
+	return len(section.Issues) > maxSectionIssues
 }
 
 // ErrorCount returns the number of error-severity issues in this section.
@@ -152,8 +203,23 @@ func (svc analyzeService) runAnalysis(ctx context.Context, meta *metamodel.Metam
 	}
 }
 
-// analysisIssueCounts returns just the total error and warning counts
-// without building the full issue details. Used by the dashboard.
+// analysisIssueCounts returns the error and warning counts of a full
+// analysis run.
+//
+// COUNTS ARE CAPPED, not totals: it sums the sections runAnalysis returns,
+// and each of those stops at [maxSectionIssues] (TKT-1ESTYJ). A project
+// with 12,000 property errors reports at most 100 from that section. The
+// name predates the cap and now overstates what it returns.
+//
+// It also does not avoid any work despite the "without building the full
+// issue details" claim it used to carry — it calls runAnalysis and discards
+// everything but two integers.
+//
+// No production caller today (only its own test). If a dashboard badge ever
+// wants these numbers, give it a real count-only path — one that counts
+// without materializing issues and without the cap — rather than reusing
+// this; a silently-capped "12,431 problems" badge reading "200" is worse
+// than no badge.
 func (svc analyzeService) analysisIssueCounts(ctx context.Context, meta *metamodel.Metamodel) (errors, warnings int) {
 	result := svc.runAnalysis(ctx, meta)
 	return result.ErrorCount, result.WarningCount
@@ -193,7 +259,7 @@ func (svc analyzeService) analyzeOrphans(ctx context.Context, meta *metamodel.Me
 		})
 	}
 
-	return section
+	return capIssues(section)
 }
 
 // analyzeDuplicates finds entities with identical normalized titles.
@@ -246,7 +312,7 @@ func (svc analyzeService) analyzeDuplicates(ctx context.Context, meta *metamodel
 		}
 	}
 
-	return section
+	return capIssues(section)
 }
 
 // analyzeGaps finds gaps in ID sequences for auto-numbered entity types.
@@ -320,7 +386,7 @@ func (svc analyzeService) analyzeGaps(ctx context.Context, meta *metamodel.Metam
 		}
 	}
 
-	return section
+	return capIssues(section)
 }
 
 // analyzeCardinality checks relation cardinality constraints.
@@ -453,7 +519,7 @@ func (svc analyzeService) analyzeCardinality(ctx context.Context, meta *metamode
 		}
 	}
 
-	return section
+	return capIssues(section)
 }
 
 // analyzeProperties validates all entity properties against the metamodel.
@@ -481,10 +547,26 @@ func (svc analyzeService) analyzeProperties(ctx context.Context, meta *metamodel
 				Severity:   "error",
 			})
 		}
+		// Abandon the scan once one issue past the cap has been seen:
+		// stopping here is what keeps a pathological project cheap rather
+		// than merely quiet.
+		//
+		// WHICH issues survive is then "the first 100 in store order",
+		// which the sort below renders in natural order. Store order is
+		// ascending by id and natural order is not (E-10 precedes E-9
+		// lexicographically but follows it naturally), so on a truncated
+		// section the reported set is not necessarily the naturally-first
+		// 100. That is acceptable — the set is a bounded sample of a list
+		// too long to act on, flagged as truncated — but it is a real
+		// difference from sorting the complete set, so do not describe
+		// truncated output as "the first N issues".
+		if sectionFull(&section) {
+			break
+		}
 	}
 	sortIssuesByEntityID(section.Issues)
 
-	return section
+	return capIssues(section)
 }
 
 // analyzeValidations runs custom validation rules from the metamodel.
@@ -547,7 +629,7 @@ func (svc analyzeService) analyzeValidations(ctx context.Context, meta *metamode
 		}
 	}
 
-	return section
+	return capIssues(section)
 }
 
 // scriptErrorSummary builds a single-line summary for the AnalysisIssue
