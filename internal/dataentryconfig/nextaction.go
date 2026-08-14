@@ -264,6 +264,58 @@ type NextActionOffer struct {
 	// Acknowledge offers "seen it" — the content-source affordance, which
 	// records the view without implying the user did anything.
 	Acknowledge bool `yaml:"acknowledge,omitempty" json:"acknowledge,omitempty"`
+
+	// PickOne offers a SHORT LIST of entities to act on, resolved by a query
+	// at render time.
+	//
+	// The one affordance that cannot be a static button list: its options are
+	// whatever the graph holds right now ("you have 40 minutes — here are
+	// three small tasks"). Everything else in this union is fixed when the
+	// operator writes the config.
+	PickOne *NextActionPickOne `yaml:"pick_one,omitempty" json:"pick_one,omitempty"`
+}
+
+// NextActionPickOne resolves a small set of entities to choose between.
+//
+// Bounded on purpose: this is a suggestion's affordance row, not a list view.
+// [DefaultPickOneLimit] applies when Limit is unset, and the engine caps it —
+// an operator asking for fifty options has misunderstood the surface, and
+// rendering fifty buttons would make the one-suggestion promise a lie.
+type NextActionPickOne struct {
+	// Query selects the options, in the same search syntax as a source's
+	// Query (e.g. "type:task prop:effort=xs prop:status=todo").
+	Query string `yaml:"query" json:"query"`
+
+	// Limit caps how many options are offered. Zero means
+	// [DefaultPickOneLimit].
+	Limit int `yaml:"limit,omitempty" json:"limit,omitempty"`
+
+	// Action names the entry in the top-level `actions:` map to run against
+	// whichever option the user picks. Required: an option list with nothing
+	// to do on selection is a list, not an affordance.
+	Action string `yaml:"action" json:"action"`
+}
+
+// DefaultPickOneLimit bounds a pick_one option list when the operator sets no
+// Limit. Three is a glance, not a menu.
+const DefaultPickOneLimit = 3
+
+// MaxPickOneLimit is the hard ceiling the engine enforces regardless of
+// configuration, for the same reason the candidate cap is engine-owned: the
+// operator cannot know the page budget, and a suggestion offering a dozen
+// choices has stopped being one suggestion.
+const MaxPickOneLimit = 5
+
+// ResolvedLimit returns the effective option count.
+func (p NextActionPickOne) ResolvedLimit() int {
+	switch {
+	case p.Limit <= 0:
+		return DefaultPickOneLimit
+	case p.Limit > MaxPickOneLimit:
+		return MaxPickOneLimit
+	default:
+		return p.Limit
+	}
 }
 
 // Kind returns which member of the union is set, or "" when none is.
@@ -282,6 +334,8 @@ func (o NextActionOffer) Kind() string {
 		return "dismiss"
 	case o.Acknowledge:
 		return "acknowledge"
+	case o.PickOne != nil:
+		return "pick_one"
 	default:
 		return ""
 	}
@@ -308,6 +362,9 @@ func (o NextActionOffer) setKinds() []string {
 	}
 	if o.Acknowledge {
 		kinds = append(kinds, "acknowledge")
+	}
+	if o.PickOne != nil {
+		kinds = append(kinds, "pick_one")
 	}
 	return kinds
 }

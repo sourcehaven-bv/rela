@@ -13,9 +13,29 @@
  */
 import { computed, onMounted, onUnmounted, ref, useTemplateRef } from 'vue'
 import { useNextAction } from '@/composables/useNextAction'
-import type { NextActionOffer } from '@/types'
+import type { NextActionOffer, NextActionPickOption } from '@/types'
 
-const props = defineProps<{ offers: NextActionOffer[]; entityId?: string }>()
+const props = defineProps<{
+  offers: NextActionOffer[]
+  entityId?: string
+  pickOptions?: Record<string, NextActionPickOption[]>
+}>()
+
+/**
+ * Offers that ACT, paired with their index so a pick_one can find its live
+ * options. The index is the key the server used, so filtering must not lose
+ * it — hence the map-then-filter rather than a plain filter.
+ */
+const actEntries = computed(() =>
+  props.offers
+    .map((offer, index) => ({ offer, index }))
+    .filter(({ offer }) => offer.navigate || offer.acknowledge || offer.pick_one),
+)
+
+/** The resolved options for one offer, or [] when the server sent none. */
+function optionsFor(index: number): NextActionPickOption[] {
+  return props.pickOptions?.[String(index)] ?? []
+}
 
 const { busy, respond, acknowledge } = useNextAction()
 
@@ -25,11 +45,6 @@ const deferRef = useTemplateRef<HTMLElement>('deferRef')
 /** Snooze durations the operator offered, flattened across offers. */
 const snoozeDurations = computed(() => props.offers.flatMap((o) => o.snooze || []))
 const hasDismiss = computed(() => props.offers.some((o) => o.dismiss))
-
-/** Affordances that ACT rather than defer — these stay as visible buttons. */
-const actOffers = computed(() =>
-  props.offers.filter((o) => o.navigate || o.acknowledge),
-)
 
 function offerLabel(offer: NextActionOffer, fallback: string): string {
   return offer.label || fallback
@@ -52,7 +67,7 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
 
 <template>
   <div class="na-offers rela-na-offers">
-    <template v-for="(offer, i) in actOffers" :key="i">
+    <template v-for="{ offer, index } in actEntries" :key="index">
       <router-link
         v-if="offer.navigate"
         class="btn btn-sm btn-primary"
@@ -69,6 +84,18 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
       >
         {{ offerLabel(offer, 'Nice') }}
       </button>
+
+      <!-- pick_one: one button per live option. Rendered only when the server
+           resolved some — an empty list means the query matched nothing, and
+           an empty option row would be worse than no affordance. -->
+      <router-link
+        v-for="opt in offer.pick_one ? optionsFor(index) : []"
+        :key="opt.entity_id"
+        class="btn btn-sm btn-secondary rela-na-pick"
+        :to="`/entity/${opt.entity_id}`"
+      >
+        {{ opt.label }}
+      </router-link>
     </template>
 
     <!--

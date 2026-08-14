@@ -2,6 +2,7 @@ package nextaction_test
 
 import (
 	"context"
+	"errors"
 	"maps"
 	"testing"
 	"time"
@@ -402,4 +403,110 @@ func TestResolve_EntitylessSource(t *testing.T) {
 	_, ok, err = eng.Resolve(ctx, testUser, base)
 	require.NoError(t, err)
 	require.False(t, ok, "an entity-less suggestion must be snoozable")
+}
+
+// pick_one is the one affordance whose options cannot be written in config:
+// they come from a query at render time.
+func TestPickOne_ResolvesOptionsForTheWinner(t *testing.T) {
+	t.Parallel()
+	cfg := twoBandConfig()
+	src := cfg.NextActions["urgent"]
+	src.Actions = []dataentryconfig.NextActionOffer{
+		{PickOne: &dataentryconfig.NextActionPickOne{
+			Query: "type:task prop:effort=xs", Action: "start-task",
+		}},
+	}
+	cfg.NextActions["urgent"] = src
+
+	fn, _ := staticCandidates(map[string][]*entity.Entity{
+		"urgent": {ent("T-1", "task", nil)},
+	})
+	eng, _ := newEngine(t, cfg, fn)
+	eng.WithOptions(func(_ context.Context, _ string, limit int) ([]nextaction.PickOption, error) {
+		require.Equal(t, dataentryconfig.DefaultPickOneLimit, limit,
+			"an unset limit must arrive as the default, not zero")
+		return []nextaction.PickOption{
+			{EntityID: "T-9", Label: "Small one"},
+			{EntityID: "T-8", Label: "Another"},
+		}, nil
+	})
+
+	got, ok, err := eng.Resolve(context.Background(), testUser, base)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Len(t, got.PickOptions[0], 2)
+	require.Equal(t, "Small one", got.PickOptions[0][0].Label)
+}
+
+// Options are resolved for the WINNER only: doing it during candidate
+// collection would run an extra query per candidate for a list only one of
+// them ever displays.
+func TestPickOne_DoesNotResolveForLosingBands(t *testing.T) {
+	t.Parallel()
+	cfg := twoBandConfig()
+	quip := cfg.NextActions["quip"]
+	quip.Actions = []dataentryconfig.NextActionOffer{
+		{PickOne: &dataentryconfig.NextActionPickOne{Query: "type:quip", Action: "ack"}},
+	}
+	cfg.NextActions["quip"] = quip
+
+	fn, _ := staticCandidates(map[string][]*entity.Entity{
+		"urgent": {ent("T-1", "task", nil)},
+		"quip":   {ent("Q-1", "quip", nil)},
+	})
+	eng, _ := newEngine(t, cfg, fn)
+
+	calls := 0
+	eng.WithOptions(func(_ context.Context, _ string, _ int) ([]nextaction.PickOption, error) {
+		calls++
+		return nil, nil
+	})
+
+	got, _, err := eng.Resolve(context.Background(), testUser, base)
+	require.NoError(t, err)
+	require.Equal(t, "urgent", got.Source)
+	require.Zero(t, calls, "the losing band's pick_one query must never run")
+}
+
+// An advisory surface must never break the page: a failed option query costs
+// one affordance, not the suggestion.
+func TestPickOne_FailureDoesNotBreakTheSuggestion(t *testing.T) {
+	t.Parallel()
+	cfg := twoBandConfig()
+	src := cfg.NextActions["urgent"]
+	src.Actions = []dataentryconfig.NextActionOffer{
+		{PickOne: &dataentryconfig.NextActionPickOne{Query: "type:task", Action: "start-task"}},
+	}
+	cfg.NextActions["urgent"] = src
+
+	fn, _ := staticCandidates(map[string][]*entity.Entity{"urgent": {ent("T-1", "task", nil)}})
+	eng, _ := newEngine(t, cfg, fn)
+	eng.WithOptions(func(_ context.Context, _ string, _ int) ([]nextaction.PickOption, error) {
+		return nil, errors.New("query exploded")
+	})
+
+	got, ok, err := eng.Resolve(context.Background(), testUser, base)
+	require.NoError(t, err, "an option failure must not fail the resolve")
+	require.True(t, ok)
+	require.Empty(t, got.PickOptions)
+	require.Equal(t, "urgent", got.Source)
+}
+
+// Not wiring the resolver is a valid deployment state, not an error.
+func TestPickOne_NoResolverIsHarmless(t *testing.T) {
+	t.Parallel()
+	cfg := twoBandConfig()
+	src := cfg.NextActions["urgent"]
+	src.Actions = []dataentryconfig.NextActionOffer{
+		{PickOne: &dataentryconfig.NextActionPickOne{Query: "type:task", Action: "start-task"}},
+	}
+	cfg.NextActions["urgent"] = src
+
+	fn, _ := staticCandidates(map[string][]*entity.Entity{"urgent": {ent("T-1", "task", nil)}})
+	eng, _ := newEngine(t, cfg, fn)
+
+	got, ok, err := eng.Resolve(context.Background(), testUser, base)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Empty(t, got.PickOptions)
 }

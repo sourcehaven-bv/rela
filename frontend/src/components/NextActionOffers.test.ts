@@ -20,9 +20,12 @@ const mockFeedback = vi.mocked(sendNextActionFeedback)
 
 const stubs = { RouterLink: { template: '<a :to="to"><slot/></a>', props: ['to'] } }
 
-function mountOffers(offers: NextActionOffer[]) {
+function mountOffers(
+  offers: NextActionOffer[],
+  pickOptions?: Record<string, Array<{ entity_id: string; label: string }>>,
+) {
   return mount(NextActionOffers, {
-    props: { offers, entityId: 'TASK-1' },
+    props: { offers, entityId: 'TASK-1', pickOptions },
     global: { stubs },
   })
 }
@@ -71,6 +74,60 @@ describe('NextActionOffers', () => {
       const w = mountOffers([{ acknowledge: true, label: 'Nice' }])
 
       expect(w.text()).toContain('Nice')
+    })
+  })
+
+  describe('pick_one', () => {
+    const pickOffer: NextActionOffer = {
+      pick_one: { query: 'type:task prop:effort=xs', action: 'start-task' },
+    }
+
+    // The options come from a query at render time — that is the whole reason
+    // this affordance exists rather than being a static button list.
+    it('renders one button per resolved option', () => {
+      const w = mountOffers([pickOffer], {
+        '0': [
+          { entity_id: 'T-9', label: 'Draft the retro' },
+          { entity_id: 'T-8', label: 'Rename the bucket' },
+        ],
+      })
+
+      const picks = w.findAll('.rela-na-pick')
+      expect(picks).toHaveLength(2)
+      expect(picks[0].text()).toBe('Draft the retro')
+    })
+
+    it('links each option to its entity', () => {
+      const w = mountOffers([pickOffer], { '0': [{ entity_id: 'T-9', label: 'One' }] })
+
+      expect(w.find('.rela-na-pick').attributes('to')).toBe('/entity/T-9')
+    })
+
+    // An empty option row is worse than no affordance: it says "choose" and
+    // offers nothing.
+    it('renders nothing when the query matched no options', () => {
+      const w = mountOffers([pickOffer], { '0': [] })
+
+      expect(w.find('.rela-na-pick').exists()).toBe(false)
+    })
+
+    it('renders nothing when the server sent no options at all', () => {
+      const w = mountOffers([pickOffer])
+
+      expect(w.find('.rela-na-pick').exists()).toBe(false)
+    })
+
+    // Options are keyed by the offer's INDEX, so an offer preceded by others
+    // must still find its own list.
+    it('matches options to the right offer by index', () => {
+      const w = mountOffers(
+        [{ acknowledge: true }, pickOffer],
+        { '1': [{ entity_id: 'T-9', label: 'Correct one' }] },
+      )
+
+      const picks = w.findAll('.rela-na-pick')
+      expect(picks).toHaveLength(1)
+      expect(picks[0].text()).toBe('Correct one')
     })
   })
 

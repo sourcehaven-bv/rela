@@ -31,6 +31,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -58,6 +59,21 @@ type Candidate struct {
 	Entity *entity.Entity
 }
 
+// PickOption is one choice in a pick_one affordance.
+type PickOption struct {
+	EntityID string
+	Label    string
+}
+
+// OptionFunc resolves a pick_one option list. Supplied by the wiring site for
+// the same reason as [CandidateFunc]: the query must go through the caller's
+// read gate, and the engine must not learn how to reach a store.
+//
+// A nil OptionFunc is not an error — the engine then renders the pick_one
+// affordance with no options, which the UI omits. That keeps a deployment
+// that has not wired it from failing every page.
+type OptionFunc func(ctx context.Context, query string, limit int) ([]PickOption, error)
+
 // CandidateFunc produces candidates for one source. Supplied by the wiring
 // site so this package depends on no store, searcher or ACL type: it is the
 // consumer-side interface that keeps the engine testable without a graph.
@@ -80,6 +96,14 @@ type Suggestion struct {
 	Message string
 	// Actions are the affordances, copied from config.
 	Actions []dataentryconfig.NextActionOffer
+	// PickOptions holds the render-time options for a pick_one affordance,
+	// keyed by the offer's index in Actions. Empty for every other kind.
+	//
+	// Resolved here rather than by the UI because the options come from a
+	// QUERY, and the query must run through the same ACL-gated path as the
+	// suggestion itself — a client-side fetch would be a second read surface
+	// to gate.
+	PickOptions map[int][]PickOption
 	// Key is the identity used for cooldown, snooze and dismissal.
 	Key userstate.Key
 }
@@ -90,7 +114,15 @@ type Engine struct {
 	cfg        *dataentryconfig.Config
 	state      userstate.Store
 	candidates CandidateFunc
+	options    OptionFunc
 	cap        int
+}
+
+// WithOptions supplies the pick_one option resolver. Optional: without it a
+// pick_one affordance simply offers nothing rather than failing the page.
+func (e *Engine) WithOptions(fn OptionFunc) *Engine {
+	e.options = fn
+	return e
 }
 
 // New builds an Engine. Every collaborator is required: a nil userstate.Store
@@ -129,12 +161,47 @@ func (e *Engine) Resolve(ctx context.Context, user string, now time.Time) (Sugge
 			return Suggestion{}, false, err
 		}
 		if ok {
+			// Options are resolved for the WINNER only, after the band is
+			// decided. Resolving during candidate collection would run an
+			// extra query per candidate for a list only one of them will ever
+			// display — the same reasoning as short-circuiting itself.
+			e.resolvePickOptions(ctx, &s)
 			// Short-circuit: a lower band cannot outrank this, so the
 			// remaining sources are not worth querying.
 			return s, true, nil
 		}
 	}
 	return Suggestion{}, false, nil
+}
+
+// resolvePickOptions fills in the render-time option lists.
+//
+// Failures are logged and dropped rather than propagated: an option list that
+// cannot be built costs the user one affordance, whereas failing the whole
+// resolve costs them the suggestion — and this is an advisory surface that
+// must never break the page it sits on.
+func (e *Engine) resolvePickOptions(ctx context.Context, s *Suggestion) {
+	if e.options == nil {
+		return
+	}
+	for i, offer := range s.Actions {
+		if offer.PickOne == nil {
+			continue
+		}
+		opts, err := e.options(ctx, offer.PickOne.Query, offer.PickOne.ResolvedLimit())
+		if err != nil {
+			slog.Warn("nextaction: pick_one options unavailable",
+				"source", s.Source, "error", err)
+			continue
+		}
+		if len(opts) == 0 {
+			continue
+		}
+		if s.PickOptions == nil {
+			s.PickOptions = make(map[int][]PickOption, 1)
+		}
+		s.PickOptions[i] = opts
+	}
 }
 
 // resolveBand collects eligible suggestions from every source in one band and

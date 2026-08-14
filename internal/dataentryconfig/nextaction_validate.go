@@ -208,10 +208,45 @@ func validateNextActionOffer(where string, i int, o NextActionOffer, cfg *Config
 		}
 	}
 
+	if o.PickOne != nil {
+		errs = append(errs, validatePickOne(at, *o.PickOne, cfg)...)
+	}
+
 	// Confirm only means something for an in-place mutation. Silently
 	// ignoring it on a navigate/snooze would teach an operator it works.
 	if o.Confirm && o.Action == "" && len(o.Set) == 0 {
 		errs = append(errs, at+": confirm only applies to action or set")
+	}
+	return errs
+}
+
+// validatePickOne checks a render-time option list.
+//
+// Both fields are required and neither can be defaulted: without a query
+// there are no options, and without an action there is nothing to do with the
+// one chosen — either omission produces an affordance that renders but cannot
+// work, which is the silent-no-op failure this validation exists to prevent.
+func validatePickOne(at string, p NextActionPickOne, cfg *Config) []string {
+	var errs []string
+	if p.Query == "" {
+		errs = append(errs, at+": pick_one needs a query (it is the option list)")
+	}
+	if p.Action == "" {
+		errs = append(errs, at+": pick_one needs an action to run on the chosen option")
+	} else if _, ok := cfg.Actions[p.Action]; !ok {
+		errs = append(errs, fmt.Sprintf(
+			"%s: pick_one references unknown action %q", at, p.Action))
+	}
+	// A negative limit is a typo, not a request for the default: silently
+	// treating it as "3" would hide the mistake.
+	if p.Limit < 0 {
+		errs = append(errs, fmt.Sprintf(
+			"%s: pick_one limit must not be negative, got %d", at, p.Limit))
+	}
+	if p.Limit > MaxPickOneLimit {
+		errs = append(errs, fmt.Sprintf(
+			"%s: pick_one limit %d exceeds the maximum of %d (a suggestion offering more "+
+				"has stopped being one suggestion)", at, p.Limit, MaxPickOneLimit))
 	}
 	return errs
 }

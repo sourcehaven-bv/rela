@@ -52,6 +52,37 @@ func (a *App) nextActionCandidates() nextaction.CandidateFunc {
 	}
 }
 
+// nextActionOptions resolves a pick_one option list through the SAME
+// ACL-gated path as candidates, so an option can never name an entity the
+// caller may not read.
+//
+// Labels come from the entity's display title, which the read gate has
+// already approved — this is why the resolution belongs here and not in the
+// SPA: a client-side fetch would be a second read surface to gate.
+func (a *App) nextActionOptions() nextaction.OptionFunc {
+	return func(ctx context.Context, query string, limit int) ([]nextaction.PickOption, error) {
+		entities, err := a.executeQuery(ctx, query)
+		if err != nil {
+			return nil, fmt.Errorf("next-action pick_one query %q: %w", query, err)
+		}
+		if len(entities) > limit {
+			entities = entities[:limit]
+		}
+		out := make([]nextaction.PickOption, 0, len(entities))
+		for _, e := range entities {
+			out = append(out, nextaction.PickOption{
+				EntityID: e.ID,
+				// safeDisplayTitle, not the raw DisplayTitle: a redacted
+				// display property would otherwise render a PARTIAL title,
+				// leaking the readable half and confirming a hidden half
+				// exists (the BUG-R9EHKV leak class).
+				Label: safeDisplayTitle(a.Meta(), e),
+			})
+		}
+		return out, nil
+	}
+}
+
 // queryCandidates runs a source's query through the ACL-gated pipeline.
 func (a *App) queryCandidates(ctx context.Context, query string) ([]nextaction.Candidate, error) {
 	entities, err := a.executeQuery(ctx, query)

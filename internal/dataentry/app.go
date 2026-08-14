@@ -91,9 +91,9 @@ const userPaletteFile = "palette.yaml"
 // a ratchet target, not a budget to spend. SetUserState took it from 98 to 99 —
 // it follows the existing SetSecurityConfig / SetJWTGate setter idiom rather
 // than becoming a 12th positional NewApp parameter — and the CalDAV alias
-// setter that landed alongside it takes the count to 100.
+// setter that landed alongside it took the count to 100, a later one to 101.
 //
-//plimsoll:max-methods=100
+//plimsoll:max-methods=101
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS

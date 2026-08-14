@@ -151,6 +151,7 @@ async function handleSync() {
           <NextActionOffers
             :offers="naSuggestion.actions || []"
             :entity-id="naSuggestion.entity_id"
+            :pick-options="naSuggestion.pick_options"
           />
         </div>
       </div>

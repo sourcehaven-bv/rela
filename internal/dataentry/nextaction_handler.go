@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
@@ -50,6 +51,20 @@ type nextActionWire struct {
 	Variant string                            `json:"variant,omitempty"`
 	Message string                            `json:"message"`
 	Actions []dataentryconfig.NextActionOffer `json:"actions,omitempty"`
+	// PickOptions carries the render-time options for any pick_one
+	// affordance, keyed by that offer's index in Actions (as a string,
+	// because JSON object keys are strings).
+	//
+	// Sent alongside the offers rather than embedded in them so the config
+	// shape stays exactly what the operator wrote — the SPA reads the offer
+	// for its kind and this map for its live contents.
+	PickOptions map[string][]pickOptionWire `json:"pick_options,omitempty"`
+}
+
+// pickOptionWire is one option in a pick_one affordance.
+type pickOptionWire struct {
+	EntityID string `json:"entity_id"`
+	Label    string `json:"label"`
 }
 
 // nextActionFeedbackRequest is the body of POST /api/v1/_next_action.
@@ -106,13 +121,32 @@ func (a *App) handleV1NextActionGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeV1JSON(w, http.StatusOK, nextActionResponse{Suggestion: &nextActionWire{
-		Source:   sug.Source,
-		Band:     sug.Band,
-		EntityID: sug.EntityID,
-		Variant:  sug.Key.Variant,
-		Message:  sug.Message,
-		Actions:  sug.Actions,
+		Source:      sug.Source,
+		Band:        sug.Band,
+		EntityID:    sug.EntityID,
+		Variant:     sug.Key.Variant,
+		Message:     sug.Message,
+		Actions:     sug.Actions,
+		PickOptions: pickOptionsWire(sug.PickOptions),
 	}})
+}
+
+// pickOptionsWire converts the engine's index-keyed options to the wire
+// shape. Nil in, nil out — the field is omitempty so a suggestion without a
+// pick_one carries nothing.
+func pickOptionsWire(in map[int][]nextaction.PickOption) map[string][]pickOptionWire {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string][]pickOptionWire, len(in))
+	for idx, opts := range in {
+		wire := make([]pickOptionWire, 0, len(opts))
+		for _, o := range opts {
+			wire = append(wire, pickOptionWire{EntityID: o.EntityID, Label: o.Label})
+		}
+		out[strconv.Itoa(idx)] = wire
+	}
+	return out
 }
 
 func (a *App) handleV1NextActionPost(w http.ResponseWriter, r *http.Request) {
@@ -233,5 +267,5 @@ func (a *App) nextActionEngine() (*nextaction.Engine, bool) {
 	if err != nil {
 		return nil, false
 	}
-	return eng, true
+	return eng.WithOptions(a.nextActionOptions()), true
 }

@@ -43,7 +43,11 @@ onMounted(loadOnce)
          tier states it and the quiet tier does not shout it. -->
     <div v-if="prominence === 'banner'" class="na__band rela-na-band">{{ bandLabel }}</div>
     <p class="na__message rela-na-message">{{ suggestion.message }}</p>
-    <NextActionOffers :offers="suggestion.actions || []" :entity-id="suggestion.entity_id" />
+    <NextActionOffers
+      :offers="suggestion.actions || []"
+      :entity-id="suggestion.entity_id"
+      :pick-options="suggestion.pick_options"
+    />
   </section>
 </template>
 

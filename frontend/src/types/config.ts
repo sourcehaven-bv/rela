@@ -416,8 +416,21 @@ export interface NextActionBand {
  * action/set/navigate/snooze/dismiss/acknowledge is set. The server validates
  * that invariant, so the UI can switch on whichever field is present.
  */
+/** One choice in a pick_one affordance, resolved server-side at render time. */
+export interface NextActionPickOption {
+  entity_id: string
+  label: string
+}
+
 export interface NextActionOffer {
   label?: string
+  /**
+   * A render-time option list. The offer carries only the operator's config;
+   * the live options arrive in the suggestion's `pick_options`, keyed by this
+   * offer's index — the server resolves them through the same ACL-gated path
+   * as the suggestion itself.
+   */
+  pick_one?: { query: string; limit?: number; action: string }
   action?: string
   set?: Record<string, string>
   confirm?: boolean
@@ -444,6 +457,8 @@ export interface NextActionSuggestion {
   variant?: string
   message: string
   actions?: NextActionOffer[]
+  /** Live pick_one options, keyed by the offer's index in `actions`. */
+  pick_options?: Record<string, NextActionPickOption[]>
 }
 
 export interface NextActionResponse {

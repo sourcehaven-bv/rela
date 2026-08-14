@@ -302,3 +302,116 @@ func TestValidateNextActions_AcceptsEveryProminence(t *testing.T) {
 		})
 	}
 }
+
+func TestValidatePickOne(t *testing.T) {
+	tests := []struct {
+		name    string
+		pick    NextActionPickOne
+		wantSub string
+	}{
+		{
+			name: "valid",
+			pick: NextActionPickOne{Query: "type:task", Action: "mark-done"},
+		},
+		{
+			// No query means no options; the affordance would render empty.
+			name:    "missing query",
+			pick:    NextActionPickOne{Action: "mark-done"},
+			wantSub: "pick_one needs a query",
+		},
+		{
+			// No action means nothing happens on selection — a list, not an
+			// affordance.
+			name:    "missing action",
+			pick:    NextActionPickOne{Query: "type:task"},
+			wantSub: "pick_one needs an action",
+		},
+		{
+			name:    "unknown action",
+			pick:    NextActionPickOne{Query: "type:task", Action: "ghost"},
+			wantSub: `pick_one references unknown action "ghost"`,
+		},
+		{
+			// A typo, not a request for the default — silently treating it as
+			// 3 would hide the mistake.
+			name:    "negative limit",
+			pick:    NextActionPickOne{Query: "type:task", Action: "mark-done", Limit: -1},
+			wantSub: "must not be negative",
+		},
+		{
+			name:    "limit over the maximum",
+			pick:    NextActionPickOne{Query: "type:task", Action: "mark-done", Limit: 50},
+			wantSub: "exceeds the maximum",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := validNextActionConfig()
+			src := cfg.NextActions["quip"]
+			pick := tc.pick
+			src.Actions = []NextActionOffer{{PickOne: &pick}}
+			cfg.NextActions["quip"] = src
+
+			errs := validateNextActions(cfg, nil)
+			if tc.wantSub == "" {
+				if len(errs) > 0 {
+					t.Fatalf("valid pick_one reported errors: %v", errs)
+				}
+				return
+			}
+			for _, e := range errs {
+				if strings.Contains(e, tc.wantSub) {
+					return
+				}
+			}
+			t.Errorf("no error contained %q; got %v", tc.wantSub, errs)
+		})
+	}
+}
+
+func TestPickOne_ResolvedLimit(t *testing.T) {
+	tests := []struct {
+		name  string
+		limit int
+		want  int
+	}{
+		{"unset takes the default", 0, DefaultPickOneLimit},
+		{"negative takes the default", -3, DefaultPickOneLimit},
+		{"in range is honored", 2, 2},
+		{"over the ceiling is capped", 99, MaxPickOneLimit},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p := NextActionPickOne{Limit: tc.limit}
+			if got := p.ResolvedLimit(); got != tc.want {
+				t.Errorf("ResolvedLimit() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// pick_one is a member of the offer union like any other: setting it
+// alongside another kind is ambiguous.
+func TestPickOne_IsPartOfTheUnion(t *testing.T) {
+	offer := NextActionOffer{PickOne: &NextActionPickOne{Query: "q", Action: "a"}}
+	if got := offer.Kind(); got != "pick_one" {
+		t.Errorf("Kind() = %q, want pick_one", got)
+	}
+
+	cfg := validNextActionConfig()
+	src := cfg.NextActions["quip"]
+	src.Actions = []NextActionOffer{{
+		Dismiss: true,
+		PickOne: &NextActionPickOne{Query: "type:task", Action: "mark-done"},
+	}}
+	cfg.NextActions["quip"] = src
+
+	errs := validateNextActions(cfg, nil)
+	for _, e := range errs {
+		if strings.Contains(e, "an affordance is exactly one") {
+			return
+		}
+	}
+	t.Errorf("expected an ambiguous-offer error, got %v", errs)
+}
