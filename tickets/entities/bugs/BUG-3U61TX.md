@@ -10,7 +10,7 @@ why2: startListener connects with the raw DSN string, which still carries pgxpoo
 why3: pgxpool.ParseConfig consumes pool_* keys into its own config; the original DSN string is never rewritten to strip them.
 why4: The listener was added later and reused the DSN as passed in, rather than deriving its connection from the already-parsed pgxpool config.
 why5: The failure is non-fatal by design (degrades with a warning), so no test covers a DSN carrying pool parameters and the regression is invisible in CI.
-status: ready
+status: backlog
 ---
 
 ## Symptom

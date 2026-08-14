@@ -5,7 +5,7 @@ title: 'Bound analyze memory: content-free entity headers, streaming analyzers, 
 kind: refactor
 priority: critical
 effort: l
-status: ready
+status: done
 ---
 
 ## Problem

@@ -5,7 +5,7 @@ title: 'collectAllIDs scans every entity with content on each create: O(n) laten
 kind: refactor
 priority: high
 effort: m
-status: ready
+status: backlog
 ---
 
 ## Problem

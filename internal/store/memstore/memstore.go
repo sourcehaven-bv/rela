@@ -48,8 +48,14 @@ import (
 // unexported core so Tx callbacks can re-enter. Interface-driven, not
 // accreted sprawl; ratchets with the interface.
 //
-//plimsoll:max-methods=42
-//plimsoll:max-exported-methods=28
+// +1 for ListEntityHeaders (TKT-1ESTYJ): the store.HeaderReader capability,
+// a content-free ListEntities. Implemented natively rather than left to the
+// generic fallback because the fallback would clone each entity — bodies
+// included — only to drop the body immediately, which is the cost the
+// capability exists to remove. Interface-driven like the Tx split above.
+//
+//plimsoll:max-methods=43
+//plimsoll:max-exported-methods=29
 type MemStore struct {
 	// txMu serializes an open Tx against ordinary writers: Tx holds it
 	// for the whole callback, every exported write method takes it

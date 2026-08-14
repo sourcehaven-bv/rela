@@ -10,7 +10,7 @@ why2: doExecuteTask returns early on error, so state.Tasks[name] is never stampe
 why3: runDueTasks treats an unstamped task as !recorded and executes it immediately, bypassing IsDue entirely — so the declared schedule is irrelevant.
 why4: State conflates 'last run' with 'last SUCCESSFUL run'; the model assumed a failed run has no side effects.
 why5: That assumption was never re-derived when Lua scripts gained write bindings. A failing task is now a writer, so retry cadence became a data-integrity concern with no test covering the error path across ticks.
-status: ready
+status: backlog
 ---
 
 ## Symptom
