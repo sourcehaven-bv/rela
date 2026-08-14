@@ -2,9 +2,9 @@
 id: AM-exact-go-patch-pin
 type: automated-measure
 title: "Exact Go patch-version pin in CI plus a matching go.mod toolchain directive"
-kind: config
+kind: ci
 location: .github/workflows/*.yml (go-version) + go.mod (toolchain)
-status: implemented
+status: active
 description: >-
   Every `go-version` entry across the workflow files pins an exact patch
   release (e.g. 1.26.6), not a floating minor (1.26), and go.mod carries a
