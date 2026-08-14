@@ -117,9 +117,11 @@ func parseFlags() *serverFlags {
 	flag.StringVar(&f.webhookAction, "webhook-action", envOr("RELA_WEBHOOK_ACTION", ""),
 		"Name of the action a verified IdP webhook dispatches to (e.g. idp-sync). The action "+
 			"receives event/user_id/org_id as params and provisions the user.")
-	// Note: there is no --database-url flag. The postgres build reads the DSN
-	// from $RELA_DATABASE_URL only, so the credential never lands in process
-	// listings or shell history. See appbuild.Config.DatabaseURL.
+	// Note: there is no --database-url flag, and must not be. The postgres
+	// build takes the DSN from $RELA_DATABASE_URL (or, for an embedding
+	// caller, appbuild.WithDatabaseURL) — never from argv, so the credential
+	// cannot land in process listings or shell history.
+	// See appbuild.Config.DatabaseURL.
 	flag.Parse()
 	if os.Getenv("RELA_READ_ONLY") == "1" {
 		f.readOnly = true
