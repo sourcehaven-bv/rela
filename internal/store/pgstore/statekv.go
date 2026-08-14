@@ -8,6 +8,8 @@ import (
 	"os"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // maxStateValueBytes caps a single state value. The two large writers are the
@@ -57,10 +59,21 @@ func NewStateKV(db DBTX) (*StateKV, error) {
 	return &StateKV{db: db}, nil
 }
 
-// StateStore returns a state store sharing this store's pool, mirroring
-// [Store.VersionStore]: an optional service derived from the store rather than
-// part of the store.Store interface, so the pool stays unexported.
-func (s *Store) StateStore() *StateKV {
+// StateStoreFor returns a state store sharing st's connection handle, or nil if
+// st is not a pgstore. The composition root calls this to obtain the service it
+// injects, so the state table is read through the same pool the store queries.
+//
+// A package-level function rather than a method on [Store] on purpose. Store
+// carries a pinned plimsoll load line and an explicit warning against adding
+// capability accessors back onto it — every one re-invites the
+// type-assert-a-capability-off-the-store pattern that the version refactor
+// removed. Taking store.Store here keeps the wiring identical for the caller
+// while leaving Store's method set untouched.
+func StateStoreFor(st store.Store) *StateKV {
+	s, ok := st.(*Store)
+	if !ok {
+		return nil
+	}
 	return &StateKV{db: s.db}
 }
 

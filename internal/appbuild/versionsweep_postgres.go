@@ -98,16 +98,16 @@ func versionServiceFor(st store.Store) store.VersionService {
 // Returns a genuinely nil interface for a non-pgstore store so the caller's
 // nil-check falls back to the filesystem KV.
 func stateKVFor(st store.Store) state.KV {
-	s, ok := st.(*pgstore.Store)
-	if !ok {
+	raw := pgstore.StateStoreFor(st)
+	if raw == nil {
 		return nil
 	}
 	// pgstore stores whatever key it is handed; ValidatedKV applies the key
 	// rules FSKV gets from RootedFS, so both backends accept exactly the same
 	// keys. See state.ValidatedKV.
-	kv, err := state.NewValidatedKV(s.StateStore())
+	kv, err := state.NewValidatedKV(raw)
 	if err != nil {
-		// Unreachable: StateStore never returns nil. Fall back rather than fail
+		// Unreachable: raw is non-nil here. Fall back rather than fail
 		// startup over an impossible case.
 		slog.Warn("appbuild: could not wrap database state store; falling back "+
 			"to the filesystem (state will be node-local)", "error", err)
