@@ -510,3 +510,80 @@ func TestPickOne_NoResolverIsHarmless(t *testing.T) {
 	require.True(t, ok)
 	require.Empty(t, got.PickOptions)
 }
+
+// Source-scoped deferral: declining the suggestion defers the SOURCE, not
+// just the candidate that happened to be on offer.
+//
+// The failing case this pins: a "here are three small tasks" suggestion keyed
+// per-candidate means snoozing it hands back the same suggestion with a
+// different task — which is precisely what the user declined.
+func TestDeferScope_SourceKeyOmitsTheEntity(t *testing.T) {
+	t.Parallel()
+	cfg := twoBandConfig()
+	src := cfg.NextActions["urgent"]
+	src.DeferScope = dataentryconfig.DeferScopeSource
+	cfg.NextActions["urgent"] = src
+
+	fn, _ := staticCandidates(map[string][]*entity.Entity{
+		"urgent": {ent("T-1", "task", nil), ent("T-2", "task", nil)},
+	})
+	eng, st := newEngine(t, cfg, fn)
+	ctx := context.Background()
+
+	got, ok, err := eng.Resolve(ctx, testUser, base)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NotEmpty(t, got.EntityID, "the UI still needs an entity to link to")
+	require.Empty(t, got.Key.EntityID, "a source-scoped key must not carry the entity")
+
+	// Snoozing it must silence the source, not just this candidate.
+	require.NoError(t, st.SetSnooze(ctx, got.Key, base.Add(24*time.Hour)))
+	after, ok, err := eng.Resolve(ctx, testUser, base)
+	require.NoError(t, err)
+	if ok {
+		require.NotEqual(t, "urgent", after.Source,
+			"a source-scoped snooze must suppress every candidate, not just the one shown")
+	}
+}
+
+// Entity scope is the default and stays per-candidate: the ISMS case, where
+// declining one task must not silence the rest.
+func TestDeferScope_EntityIsTheDefault(t *testing.T) {
+	t.Parallel()
+	fn, _ := staticCandidates(map[string][]*entity.Entity{
+		"urgent": {ent("T-1", "task", nil), ent("T-2", "task", nil)},
+	})
+	eng, st := newEngine(t, twoBandConfig(), fn)
+	ctx := context.Background()
+
+	got, _, err := eng.Resolve(ctx, testUser, base)
+	require.NoError(t, err)
+	require.Equal(t, got.EntityID, got.Key.EntityID,
+		"the default key carries the entity")
+
+	require.NoError(t, st.SetSnooze(ctx, got.Key, base.Add(24*time.Hour)))
+	after, ok, err := eng.Resolve(ctx, testUser, base)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, "urgent", after.Source, "the source must still offer its other candidate")
+	require.NotEqual(t, got.EntityID, after.EntityID)
+}
+
+// A pick_one source is about the SET, so it defaults to source scope without
+// the operator having to say so.
+func TestDeferScope_PickOneDefaultsToSource(t *testing.T) {
+	t.Parallel()
+	src := dataentryconfig.NextActionSource{
+		Band:    "blocking",
+		Query:   "type:task",
+		Suggest: "one of these",
+		Actions: []dataentryconfig.NextActionOffer{
+			{PickOne: &dataentryconfig.NextActionPickOne{Query: "type:task", Action: "start"}},
+		},
+	}
+	require.Equal(t, dataentryconfig.DeferScopeSource, src.ResolvedDeferScope())
+
+	// ...but an explicit setting still wins.
+	src.DeferScope = dataentryconfig.DeferScopeEntity
+	require.Equal(t, dataentryconfig.DeferScopeEntity, src.ResolvedDeferScope())
+}

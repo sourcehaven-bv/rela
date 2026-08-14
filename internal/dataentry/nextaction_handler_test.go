@@ -442,3 +442,61 @@ func TestQueryPushdown_MatchesGoSideFiltering(t *testing.T) {
 		})
 	}
 }
+
+// TestNextAction_SourceScopedDeferIgnoresTheEchoedEntity pins that the SERVER
+// owns the key shape.
+//
+// A client echoes back whatever the GET advertised, including entity_id — it
+// needs that id to render a link. For a source-scoped source the key omits the
+// entity, so trusting the echo verbatim stores the deferral under a key the
+// engine never checks: a 204 that silently does nothing. That is exactly how
+// this was found, walking the scenarios against a live server.
+func TestNextAction_SourceScopedDeferIgnoresTheEchoedEntity(t *testing.T) {
+	app := newTestAppV1(t)
+	seedNextActionTickets(t, app, "TKT-001", "TKT-002")
+	withNextActions(t, app,
+		[]dataentryconfig.NextActionBand{{ID: "stalled"}},
+		map[string]dataentryconfig.NextActionSource{
+			"tickets": {
+				Band:       "stalled",
+				Query:      "type:ticket",
+				Suggest:    "{id}",
+				DeferScope: dataentryconfig.DeferScopeSource,
+			},
+		})
+
+	got, _ := getNextAction(aliceCtx(), t, app)
+	require.NotNil(t, got.Suggestion)
+	require.NotEmpty(t, got.Suggestion.EntityID, "the client still needs an id to link to")
+
+	// Echo it back exactly as a client does.
+	body := `{"source":"tickets","entity_id":"` + got.Suggestion.EntityID +
+		`","kind":"snooze","duration":"7d"}`
+	require.Equal(t, http.StatusNoContent, postFeedback(aliceCtx(), t, app, body))
+
+	after, _ := getNextAction(aliceCtx(), t, app)
+	require.Nil(t, after.Suggestion,
+		"a source-scoped snooze must silence the source, not hand back its other candidate")
+}
+
+// The default stays per-entity: declining one item must not silence the rest.
+func TestNextAction_EntityScopedDeferLeavesSiblings(t *testing.T) {
+	app := newTestAppV1(t)
+	seedNextActionTickets(t, app, "TKT-001", "TKT-002")
+	withNextActions(t, app,
+		[]dataentryconfig.NextActionBand{{ID: "stalled"}},
+		map[string]dataentryconfig.NextActionSource{
+			"tickets": {Band: "stalled", Query: "type:ticket", Suggest: "{id}"},
+		})
+
+	got, _ := getNextAction(aliceCtx(), t, app)
+	require.NotNil(t, got.Suggestion)
+	first := got.Suggestion.EntityID
+
+	body := `{"source":"tickets","entity_id":"` + first + `","kind":"snooze","duration":"7d"}`
+	require.Equal(t, http.StatusNoContent, postFeedback(aliceCtx(), t, app, body))
+
+	after, _ := getNextAction(aliceCtx(), t, app)
+	require.NotNil(t, after.Suggestion, "the source must still offer its other candidate")
+	require.NotEqual(t, first, after.Suggestion.EntityID)
+}

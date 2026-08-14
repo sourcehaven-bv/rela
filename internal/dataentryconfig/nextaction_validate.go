@@ -99,6 +99,17 @@ func validateNextActionSource(
 		}
 	}
 
+	// An unknown scope is rejected rather than defaulted: silently treating
+	// it as entity-scope would give an operator who asked for source-wide
+	// deferral the exact nagging they were trying to switch off.
+	switch s.DeferScope {
+	case "", DeferScopeEntity, DeferScopeSource:
+	default:
+		errs = append(errs, fmt.Sprintf(
+			"%s: unknown defer_scope %q (want %q or %q)",
+			where, s.DeferScope, DeferScopeEntity, DeferScopeSource))
+	}
+
 	if s.Cooldown != "" {
 		if _, err := ParseNextActionDuration(s.Cooldown); err != nil {
 			errs = append(errs, fmt.Sprintf(

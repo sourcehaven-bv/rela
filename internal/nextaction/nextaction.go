@@ -366,9 +366,17 @@ func buildSuggestion(
 		Key:     userstate.Key{Source: id},
 	}
 	if c.Entity != nil {
+		// EntityID always names the candidate — the UI links to it, and the
+		// message interpolates from it.
 		s.EntityID = c.Entity.ID
-		s.Key.EntityID = c.Entity.ID
-		s.Key.Variant = variantFor(src.KeyProps, c.Entity)
+		// The KEY, though, follows the source's defer scope. Source-scoped
+		// sources leave the entity out, so declining one suggestion defers
+		// the whole source rather than handing back the same suggestion with
+		// a different entity.
+		if src.ResolvedDeferScope() != dataentryconfig.DeferScopeSource {
+			s.Key.EntityID = c.Entity.ID
+			s.Key.Variant = variantFor(src.KeyProps, c.Entity)
+		}
 	}
 	s.Message = interpolate(src.Suggest, c.Entity)
 	return s

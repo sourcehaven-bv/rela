@@ -202,6 +202,61 @@ type NextActionSource struct {
 	// one key, so an old snooze suppresses a genuinely new stall. With
 	// KeyProps: [status] the key changes and the snooze no longer matches.
 	KeyProps []string `yaml:"key_props,omitempty" json:"key_props,omitempty"`
+
+	// DeferScope decides what a snooze or dismissal covers: THIS suggestion,
+	// or the source as a whole. Empty means [DeferScopeEntity], except for a
+	// pick_one source — see [NextActionSource.ResolvedDeferScope].
+	DeferScope NextActionDeferScope `yaml:"defer_scope,omitempty" json:"defer_scope,omitempty"`
+}
+
+// NextActionDeferScope is what "not now" applies to.
+//
+// The distinction cannot be inferred from the source's shape, which is why it
+// is declared. Ask what the user was declining:
+//
+//   - An ISMS task needing attention: they declined THIS ITEM. They still
+//     want the other tasks — entity scope.
+//   - A daily joke, one entity per joke: they declined the INTERRUPTION.
+//     Which joke was on offer is incidental, and handing them another one
+//     immediately is precisely what they said no to — source scope.
+//   - A "complete your profile" nudge: they declined the TOPIC. Prompting
+//     about a different profile field a moment later is the same nag —
+//     source scope.
+//
+// All three are entity-shaped sources with interpolated messages, so neither
+// the message template nor the presence of a query separates them. Only the
+// operator knows which a source is.
+type NextActionDeferScope string
+
+const (
+	// DeferScopeEntity defers just this suggestion; other candidates from the
+	// same source still surface. The DEFAULT, because it is the least
+	// surprising for the common per-item source.
+	DeferScopeEntity NextActionDeferScope = "entity"
+
+	// DeferScopeSource defers every suggestion from this source until the
+	// snooze lapses. For sources where the interruption itself is what the
+	// user declined.
+	DeferScopeSource NextActionDeferScope = "source"
+)
+
+// ResolvedDeferScope returns the effective scope.
+//
+// A pick_one source defaults to SOURCE scope: its suggestion is about the set
+// ("one of these is small"), so keying the deferral to whichever candidate
+// happened to be picked means declining it hands back the same suggestion
+// with a different entity — the failure this default exists to prevent. An
+// operator can still override it either way.
+func (s NextActionSource) ResolvedDeferScope() NextActionDeferScope {
+	if s.DeferScope != "" {
+		return s.DeferScope
+	}
+	for _, o := range s.Actions {
+		if o.PickOne != nil {
+			return DeferScopeSource
+		}
+	}
+	return DeferScopeEntity
 }
 
 // NextActionPick selects among multiple candidates in the winning band.

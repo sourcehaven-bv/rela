@@ -170,7 +170,8 @@ func (a *App) handleV1NextActionPost(w http.ResponseWriter, r *http.Request) {
 	// string would create user-state rows keyed on nothing — unbounded growth
 	// driven by request bodies, and a mute list full of ids that name no
 	// source and so can never be surfaced for un-muting.
-	if _, known := a.Cfg().NextActions[req.Source]; !known {
+	src, known := a.Cfg().NextActions[req.Source]
+	if !known {
 		writeV1Error(w, r, http.StatusBadRequest, "unknown_source",
 			"Unknown next-action source", req.Source)
 		return
@@ -183,6 +184,16 @@ func (a *App) handleV1NextActionPost(w http.ResponseWriter, r *http.Request) {
 		Source:   req.Source,
 		EntityID: req.EntityID,
 		Variant:  req.Variant,
+	}
+	// The SERVER decides the key shape, not the client. A source-scoped
+	// source keys on the source alone, so the entity the client echoed back
+	// (which it needs for the link, and which the GET does advertise) is
+	// dropped here. Trusting the echo verbatim would store the deferral under
+	// a key the engine never checks — a 204 that silently does nothing, which
+	// is exactly how this was found.
+	if src.ResolvedDeferScope() == dataentryconfig.DeferScopeSource {
+		key.EntityID = ""
+		key.Variant = ""
 	}
 
 	if err := a.applyNextActionFeedback(ctx, state, key, req); err != nil {

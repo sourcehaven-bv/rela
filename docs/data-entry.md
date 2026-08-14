@@ -1550,6 +1550,7 @@ next_actions:
 | `actions` | The affordances offered. See below. |
 | `cooldown` | How long after being *shown* to stay quiet. Defaults to 24h. |
 | `key_props` | Properties that make a re-triggered condition count as **new** — see below. |
+| `defer_scope` | What "not now" covers: `entity` (default) or `source` — see below. |
 
 Exactly one of `query`, `context` or `count` must be set.
 
@@ -1561,6 +1562,27 @@ so a snooze from the first draft still suppresses the second one.
 
 Listing `key_props: [status]` makes the identity change with the status, so a
 genuinely new stall surfaces even though an old snooze exists.
+
+#### `defer_scope` — what "not now" covers
+
+When a user snoozes or dismisses a suggestion, what were they declining?
+
+- **`entity`** (the default) — *this item*. An ISMS task needing attention:
+  they still want the other tasks, just not this one.
+- **`source`** — *the interruption*. A daily quip, one entity per quip: which
+  quip was on offer is incidental, and handing them another immediately is
+  precisely what they said no to. Same for a "complete your profile" nudge —
+  prompting about a different field a moment later is the same nag.
+
+All three are entity-shaped sources with interpolated messages, so neither the
+message template nor the query shape separates them. Only you know which a
+source is, which is why it is declared rather than inferred.
+
+A source with a `pick_one` affordance defaults to `source` scope: its
+suggestion is about the set ("one of these is small"), so keying the deferral
+to whichever option happened to be picked would hand back the same suggestion
+with a different entity. Override it explicitly if you want per-candidate
+deferral anyway.
 
 #### `count` and the read gate
 
