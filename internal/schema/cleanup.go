@@ -37,14 +37,20 @@ func (p *CleanupPlan) IsEmpty() bool {
 // PlanCleanup creates a cleanup plan based on the analysis results.
 // Types with zero instances are removed along with all their references
 // in config files (cascade cleanup).
-func PlanCleanup(analysis *Analysis) *CleanupPlan {
+//
+// schemaFile is the BASENAME of the project's schema file, used for the
+// operator-facing Change.File labels. It is a parameter because the file is
+// named schema.yaml in current projects and metamodel.yaml in pre-rename ones;
+// a hardcoded label would tell the operator rela is editing a file that does
+// not exist in their project.
+func PlanCleanup(analysis *Analysis, schemaFile string) *CleanupPlan {
 	plan := &CleanupPlan{}
 
 	// Plan removal of unused entity types and their references
 	for _, usage := range analysis.UnusedEntityTypes {
 		if canSafelyRemove(usage) {
 			plan.MetamodelChanges = append(plan.MetamodelChanges, Change{
-				File:   "metamodel.yaml",
+				File:   schemaFile,
 				Action: "remove_entity_type",
 				Target: usage.Name,
 			})
@@ -57,7 +63,7 @@ func PlanCleanup(analysis *Analysis) *CleanupPlan {
 	for _, usage := range analysis.UnusedRelationTypes {
 		if canSafelyRemove(usage) {
 			plan.MetamodelChanges = append(plan.MetamodelChanges, Change{
-				File:   "metamodel.yaml",
+				File:   schemaFile,
 				Action: "remove_relation_type",
 				Target: usage.Name,
 			})
@@ -69,7 +75,7 @@ func PlanCleanup(analysis *Analysis) *CleanupPlan {
 	// Plan removal of unused custom types (they have no instances by definition)
 	for _, usage := range analysis.UnusedCustomTypes {
 		plan.MetamodelChanges = append(plan.MetamodelChanges, Change{
-			File:   "metamodel.yaml",
+			File:   schemaFile,
 			Action: "remove_custom_type",
 			Target: usage.Name,
 		})
@@ -161,20 +167,24 @@ func canSafelyRemove(usage TypeUsage) bool {
 }
 
 // ExecuteCleanup applies the cleanup plan to the project files.
-// projectRoot is the path to the project root directory.
+// schemaPath is the RESOLVED path to the project's schema file, and
+// projectRoot the directory holding the sibling config files.
+//
+// The schema path is passed in rather than rebuilt from projectRoot: the file
+// is named schema.yaml in current projects and metamodel.yaml in pre-rename
+// ones, so reconstructing a fixed name here would fail on one of them.
 // If dryRun is true, no files are modified.
-func ExecuteCleanup(plan *CleanupPlan, projectRoot string, dryRun bool) error {
+func ExecuteCleanup(plan *CleanupPlan, schemaPath, projectRoot string, dryRun bool) error {
 	if plan.IsEmpty() {
 		return nil
 	}
 
-	metamodelPath := filepath.Join(projectRoot, "metamodel.yaml")
 	dataEntryPath := filepath.Join(projectRoot, "data-entry.yaml")
 
 	// Apply metamodel changes
 	if len(plan.MetamodelChanges) > 0 {
-		if err := applyMetamodelChanges(metamodelPath, plan.MetamodelChanges, dryRun); err != nil {
-			return fmt.Errorf("failed to update metamodel.yaml: %w", err)
+		if err := applyMetamodelChanges(schemaPath, plan.MetamodelChanges, dryRun); err != nil {
+			return fmt.Errorf("failed to update %s: %w", filepath.Base(schemaPath), err)
 		}
 	}
 

@@ -64,7 +64,7 @@ project/
 │   └── utils/
 │       └── helpers.lua
 ├── entities/
-└── metamodel.yaml
+└── schema.yaml
 ```
 
 ## Interactive Flows
@@ -470,7 +470,7 @@ applies the same rule, from the same code — the two cannot drift on what a
 filter means.
 
 **Operator opt-in is required.** `rela.bypass_acl` only exists when the
-automation action sets `allow_acl_bypass: true` in `metamodel.yaml` (an
+automation action sets `allow_acl_bypass: true` in `schema.yaml` (an
 operator-only file). Without it the function is absent and a script cannot
 elevate:
 

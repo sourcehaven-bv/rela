@@ -19,7 +19,7 @@ say "Building rela → ${BIN}"
 (cd "${REPO}" && go build -o "${BIN}" ./cmd/rela)
 
 say "Seeding metamodel at ${DEMO}"
-cat > "${DEMO}/metamodel.yaml" <<'YAML'
+cat > "${DEMO}/schema.yaml" <<'YAML'
 version: "1.0"
 namespace: "https://example.com/demo#"
 types:

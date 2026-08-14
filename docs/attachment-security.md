@@ -45,7 +45,7 @@ user, a no-egress network policy) remains worthwhile defence in depth.
 
 ## Configuration
 
-Attachment policy lives in two places in `metamodel.yaml`: a global
+Attachment policy lives in two places in `schema.yaml`: a global
 `attachments:` block (the safety floor for every `file` property) and per-property
 overrides.
 

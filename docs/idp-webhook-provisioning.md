@@ -34,7 +34,7 @@ whose operator API is HMAC-signed. A different proxy would use a different actio
 The action upserts a `person`, so the type must exist. Minimal shape:
 
 ```yaml
-# metamodel.yaml
+# schema.yaml
 entities:
   person:
     label: Person

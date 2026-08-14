@@ -145,5 +145,5 @@ type IncludeHasRootFieldError struct {
 
 func (e *IncludeHasRootFieldError) Error() string {
 	return "included file " + e.Path + " must not contain \"" + e.Field +
-		"\" (only allowed in root metamodel.yaml)"
+		"\" (only allowed in root schema file)"
 }

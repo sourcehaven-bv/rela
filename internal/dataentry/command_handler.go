@@ -28,6 +28,9 @@ type commandHandler struct {
 	schema      func() *Schema
 	services    func() Services
 	projectRoot func() string
+	// schemaFile yields the resolved schema basename for the command stdin
+	// payload. Optional: nil falls back to the canonical name.
+	schemaFile  func() string
 	executeView func(ctx context.Context, view ViewConfig, entryID string) (*viewResult, error)
 
 	// aclImpl yields the active ACL, consulted by authorizeCommand to gate

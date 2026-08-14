@@ -77,11 +77,11 @@ func setupAttachmentService(t *testing.T) attachmentFixture {
 		t.Fatalf("parse metamodel: %v", err)
 	}
 	ctx := &project.Context{
-		Root:          root,
-		MetamodelPath: metaPath,
-		CacheDir:      filepath.Join(root, ".rela"),
-		EntitiesDir:   filepath.Join(root, "entities"),
-		RelationsDir:  filepath.Join(root, "relations"),
+		Root:         root,
+		SchemaPath:   metaPath,
+		CacheDir:     filepath.Join(root, ".rela"),
+		EntitiesDir:  filepath.Join(root, "entities"),
+		RelationsDir: filepath.Join(root, "relations"),
 	}
 	fs := storage.NewSafeFS(storage.NewOsFS())
 	factory := &app.FSFactory{FS: fs, Paths: ctx}

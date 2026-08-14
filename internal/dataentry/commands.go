@@ -23,6 +23,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -318,9 +319,18 @@ func (h *commandHandler) buildGlobalInput() *commandInput {
 }
 
 func (h *commandHandler) projectInfo() commandProjectInfo {
+	// Report the schema file this project actually has — the value is handed
+	// to external commands, which would fail opening a name that isn't there.
+	// Read from the path resolved at discovery rather than re-statting: that
+	// keeps this off the disk on a request path and off the OS filesystem,
+	// which an injected (e.g. in-memory) FS would not have been.
+	schema := project.SchemaFile
+	if h.schemaFile != nil {
+		schema = h.schemaFile()
+	}
 	return commandProjectInfo{
 		Root:      h.projectRoot(),
-		Metamodel: "metamodel.yaml",
+		Metamodel: schema,
 	}
 }
 

@@ -49,7 +49,7 @@ rela init -p /path/to/project
 
 Creates:
 
-- `metamodel.yaml` - Default configuration
+- `schema.yaml` - Default configuration
 - `entities/` - Entity storage directory
 - `relations/` - Relation storage directory
 - `.rela/` - Cache directory (added to `.gitignore` if present)
@@ -113,7 +113,7 @@ See [rela template](#rela-template) for creating templates.
 
 **ID Types:**
 
-Entity types can have either sequential or string IDs (configured in `metamodel.yaml`):
+Entity types can have either sequential or string IDs (configured in `schema.yaml`):
 
 - **Sequential** (default): IDs are auto-generated (`REQ-001`, `REQ-002`, etc.)
 - **String**: IDs must be provided with `--id` flag
@@ -1253,7 +1253,7 @@ Shows:
 | Flag          | Description                                                   |
 | ------------- | ------------------------------------------------------------- |
 | `--threshold` | Show types with instance count <= threshold (0 = only unused) |
-| `--cleanup`   | Remove unused types from metamodel.yaml                       |
+| `--cleanup`   | Remove unused types from schema.yaml                       |
 | `--dry-run`   | Preview cleanup changes without modifying files               |
 
 The cleanup operation only removes types that have no instances AND no references in
@@ -1468,15 +1468,22 @@ rela migrate [flags]
 | --------- | ------------------------------------------------------------- |
 | `--check` | Check for pending migrations without applying (useful for CI) |
 
-This command detects deprecated syntax patterns in your project files (e.g., `metamodel.yaml`) and
+This command detects deprecated syntax patterns in your project files (e.g., `schema.yaml`) and
 transforms them to the current format while preserving comments and formatting.
+
+It also renames a legacy `metamodel.yaml` to `schema.yaml`.
+
+If a project contains **both** files, `schema.yaml` is the one rela reads and the
+`metamodel.yaml` is ignored. Nothing is renamed or deleted in that case — `migrate`
+reports the ignored file so you can merge anything you still need and remove it,
+and `migrate --check` exits non-zero until you do.
 
 **When to use:**
 
 If you see an error like this when running any rela command:
 
 ```text
-metamodel.yaml uses deprecated syntax:
+schema.yaml uses deprecated syntax:
   - Rename id_type values: "sequential" → "auto", "string" → "manual"
 
 Run 'rela migrate' to update your project files.
@@ -1574,9 +1581,9 @@ rela rename entity <old-type> <new-type> [flags]
 
 This updates:
 
-- The entity key in `metamodel.yaml`
-- All relation `from`/`to` references in `metamodel.yaml`
-- All validation `entity_type` references in `metamodel.yaml`
+- The entity key in `schema.yaml`
+- All relation `from`/`to` references in `schema.yaml`
+- All validation `entity_type` references in `schema.yaml`
 - The entity directory (e.g., `entities/issues/` → `entities/tickets/`)
 - The `type` field in all entity markdown files
 - Entity templates (if they exist)
@@ -1701,7 +1708,7 @@ Validate project configuration files.
 rela validate
 ```
 
-Checks `metamodel.yaml` and `data-entry.yaml` for:
+Checks `schema.yaml` and `data-entry.yaml` for:
 
 - Unknown/misspelled keys
 - Invalid cross-references (forms, lists, views)

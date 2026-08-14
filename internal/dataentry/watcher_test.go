@@ -68,7 +68,7 @@ func setupReloadTestApp(t *testing.T) (*App, *storage.MemFS) {
 
 	ctx := &project.Context{
 		Root:                 root,
-		MetamodelPath:        root + "/metamodel.yaml",
+		SchemaPath:           root + "/metamodel.yaml",
 		CacheDir:             root + "/.rela",
 		EntitiesDir:          root + "/entities",
 		RelationsDir:         root + "/relations",
@@ -85,7 +85,7 @@ func setupReloadTestApp(t *testing.T) (*App, *storage.MemFS) {
 	_ = fs.MkdirAll(ctx.RelationTemplatesDir, 0o755)
 
 	// Write metamodel and config files
-	_ = fs.WriteFile(ctx.MetamodelPath, []byte(testReloadMetamodelYAML), 0o644)
+	_ = fs.WriteFile(ctx.SchemaPath, []byte(testReloadMetamodelYAML), 0o644)
 	_ = fs.WriteFile(root+"/data-entry.yaml", []byte(testReloadConfigYAML), 0o644)
 
 	// Write a sample entity
@@ -97,7 +97,7 @@ status: open
 ---
 `), 0o644)
 
-	meta, _, err := metamodel.NewFSLoader(fs, ctx.MetamodelPath).Load(context.Background())
+	meta, _, err := metamodel.NewFSLoader(fs, ctx.SchemaPath).Load(context.Background())
 	if err != nil {
 		t.Fatalf("failed to load metamodel: %v", err)
 	}

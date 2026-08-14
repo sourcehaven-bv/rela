@@ -87,7 +87,7 @@
   entity (a form save that renders every field). `ApplyEntity` is the
   whole-record replace the sync channel needs. If you are writing a *subset*,
   you want `PatchEntity`.
-- **The configuration is not a secret; the data is.** `metamodel.yaml`,
+- **The configuration is not a secret; the data is.** `schema.yaml`,
   `data-entry.yaml`, `acl.yaml`, `schedules.yaml`, `scripts/`, `actions/`,
   `templates/` are operator-authored files that live in the repo — routinely a
   public one, as in any open-source app. Their *contents are already
@@ -173,7 +173,7 @@ documentation mirrors (`docs-project/`). Anything with typed entities and
 relations fits.
 
 ```text
-metamodel.yaml → Metamodel (entity types, relations, properties)
+schema.yaml → Metamodel (entity types, relations, properties)
                      ↓
 entities/*.md  → entity.Entity  ↘
                                  store.Store → tracer.Tracer  (pure reader)
@@ -298,7 +298,7 @@ Rules when touching this:
   between recipes, it belongs in a shared helper. This is what keeps the three
   recipes from drifting (and where future per-backend audit/ACL variation goes).
 - **The metamodel is always read from disk**, even in the postgres build —
-  `metamodel.yaml`, `templates/`, `.rela/` stay on the filesystem; PostgreSQL
+  `schema.yaml`, `templates/`, `.rela/` stay on the filesystem; PostgreSQL
   backs entities/relations/attachments/search only. A postgres deployment
   still needs a `--project` dir.
 - **Multi-writer change feed** (TKT-WZYWM9). The postgres watcher delivers
@@ -479,7 +479,7 @@ single test.
 ## Project files
 
 ```text
-metamodel.yaml                  # Entity/relation schema
+schema.yaml                     # Entity/relation schema (was metamodel.yaml)
 schedules.yaml                  # Optional: schedules for `rela scheduler`
 entities/<type>/                # Markdown entity files by type
 relations/                      # Markdown relation files (FROM--type--TO.md)
@@ -720,11 +720,11 @@ Minor/nit findings may remain open with warnings.
 ### Automation Actions
 
 Status transitions auto-create checklists (and similar side effects) via
-automations declared in the project's `metamodel.yaml`. Action types
+automations declared in the project's `schema.yaml`. Action types
 (`set`, `create_relation`, `create_entity` with `if_exists`) and
 interpolation patterns (`{{new.property}}`, `{{entity.id}}`, `{{today}}`)
 are documented in `docs/metamodel.md` and exemplified in the live
-`metamodel.yaml`. Read those rather than relying on a copy here — a stale
+`schema.yaml`. Read those rather than relying on a copy here — a stale
 copy is worse than a pointer.
 
 Common mistake: `{{entity.title}}` is wrong; use `{{new.title}}` for a

@@ -916,6 +916,6 @@ func TestIncludeHasRootFieldError_Error(t *testing.T) {
 		Path:  "compliance.yaml",
 		Field: "version",
 	}
-	expected := `included file compliance.yaml must not contain "version" (only allowed in root metamodel.yaml)`
+	expected := `included file compliance.yaml must not contain "version" (only allowed in root schema file)`
 	assertEqual(t, err.Error(), expected)
 }

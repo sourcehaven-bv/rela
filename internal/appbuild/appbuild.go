@@ -699,6 +699,9 @@ func Discover(startDir string, scriptEngine *script.Engine, opts ...Option) (*Se
 	if err != nil {
 		return nil, fmt.Errorf("discover project: %w", err)
 	}
+	// Shared startup path for cli, mcp, scheduler and the data-entry server —
+	// warns at most once per process.
+	project.WarnIfLegacySchema(paths)
 	auditSink, auditErr := audit.NewFilesystem(filepath.Join(paths.CacheDir, "audit"))
 	if auditErr != nil {
 		return nil, fmt.Errorf("build audit sink: %w", auditErr)
@@ -758,7 +761,7 @@ func prepare(cfg Config, opts []Option) (*buildBase, error) {
 		}
 	}
 
-	meta, _, err := metamodel.NewFSLoader(cfg.FS, cfg.Paths.MetamodelPath).Load(context.Background())
+	meta, _, err := metamodel.NewFSLoader(cfg.FS, cfg.Paths.SchemaPath).Load(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("load metamodel: %w", err)
 	}

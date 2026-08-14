@@ -31,7 +31,7 @@ fi
 
 # Minimal project: just a metamodel; no entities required.
 say "Seeding minimal project at ${DEMO}"
-cat > "${DEMO}/metamodel.yaml" <<'YAML'
+cat > "${DEMO}/schema.yaml" <<'YAML'
 version: "1.0"
 namespace: "https://example.com/md-e2e#"
 entities:

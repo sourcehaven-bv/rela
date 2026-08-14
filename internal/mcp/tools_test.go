@@ -917,7 +917,7 @@ func TestHandleAnalyzeValidations_NoRules(t *testing.T) {
 func TestHandleGetMetamodel(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	result, err := s.handleGetMetamodel(context.Background(), mcp.CallToolRequest{})
+	result, err := s.handleGetSchema(context.Background(), mcp.CallToolRequest{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

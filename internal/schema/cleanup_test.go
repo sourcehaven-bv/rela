@@ -21,7 +21,7 @@ func TestPlanCleanup_SafeRemoval(t *testing.T) {
 		},
 	}
 
-	plan := PlanCleanup(analysis)
+	plan := PlanCleanup(analysis, "schema.yaml")
 
 	if len(plan.MetamodelChanges) != 3 {
 		t.Fatalf("expected 3 metamodel changes, got %d", len(plan.MetamodelChanges))
@@ -78,7 +78,7 @@ func TestPlanCleanup_CascadesReferencedTypes(t *testing.T) {
 		},
 	}
 
-	plan := PlanCleanup(analysis)
+	plan := PlanCleanup(analysis, "schema.yaml")
 
 	// Entity type should be removed from metamodel
 	var foundEntityRemoval bool
@@ -121,7 +121,7 @@ func TestPlanCleanup_CascadeMultipleReferences(t *testing.T) {
 		},
 	}
 
-	plan := PlanCleanup(analysis)
+	plan := PlanCleanup(analysis, "schema.yaml")
 
 	// Entity type should be removed
 	var foundEntityRemoval bool
@@ -161,7 +161,7 @@ func TestPlanCleanup_PreservesTypesWithInstances(t *testing.T) {
 		},
 	}
 
-	plan := PlanCleanup(analysis)
+	plan := PlanCleanup(analysis, "schema.yaml")
 
 	for _, change := range plan.MetamodelChanges {
 		if change.Target == "has-instances" {
@@ -239,21 +239,21 @@ types:
   to-remove-enum:
     values: [a, b, c]
 `
-	metamodelPath := filepath.Join(tmpDir, "metamodel.yaml")
+	metamodelPath := filepath.Join(tmpDir, "schema.yaml")
 	if err := os.WriteFile(metamodelPath, []byte(metamodelContent), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	plan := &CleanupPlan{
 		MetamodelChanges: []Change{
-			{File: "metamodel.yaml", Action: "remove_entity_type", Target: "to-remove"},
-			{File: "metamodel.yaml", Action: "remove_relation_type", Target: "to-remove-rel"},
-			{File: "metamodel.yaml", Action: "remove_custom_type", Target: "to-remove-enum"},
+			{File: "schema.yaml", Action: "remove_entity_type", Target: "to-remove"},
+			{File: "schema.yaml", Action: "remove_relation_type", Target: "to-remove-rel"},
+			{File: "schema.yaml", Action: "remove_custom_type", Target: "to-remove-enum"},
 		},
 	}
 
 	// Execute with dry run
-	if err := ExecuteCleanup(plan, tmpDir, true); err != nil {
+	if err := ExecuteCleanup(plan, metamodelPath, tmpDir, true); err != nil {
 		t.Fatalf("ExecuteCleanup dry run failed: %v", err)
 	}
 
@@ -294,21 +294,21 @@ types:
   to-remove-enum:
     values: [a, b, c]
 `
-	metamodelPath := filepath.Join(tmpDir, "metamodel.yaml")
+	metamodelPath := filepath.Join(tmpDir, "schema.yaml")
 	if err := os.WriteFile(metamodelPath, []byte(metamodelContent), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	plan := &CleanupPlan{
 		MetamodelChanges: []Change{
-			{File: "metamodel.yaml", Action: "remove_entity_type", Target: "to-remove"},
-			{File: "metamodel.yaml", Action: "remove_relation_type", Target: "to-remove-rel"},
-			{File: "metamodel.yaml", Action: "remove_custom_type", Target: "to-remove-enum"},
+			{File: "schema.yaml", Action: "remove_entity_type", Target: "to-remove"},
+			{File: "schema.yaml", Action: "remove_relation_type", Target: "to-remove-rel"},
+			{File: "schema.yaml", Action: "remove_custom_type", Target: "to-remove-enum"},
 		},
 	}
 
 	// Execute for real
-	if err := ExecuteCleanup(plan, tmpDir, false); err != nil {
+	if err := ExecuteCleanup(plan, metamodelPath, tmpDir, false); err != nil {
 		t.Fatalf("ExecuteCleanup failed: %v", err)
 	}
 
@@ -345,7 +345,7 @@ types:
 func TestExecuteCleanup_EmptyPlan(t *testing.T) {
 	// Empty plan should return early without error
 	plan := &CleanupPlan{}
-	if err := ExecuteCleanup(plan, "/nonexistent", false); err != nil {
+	if err := ExecuteCleanup(plan, "/nonexistent/schema.yaml", "/nonexistent", false); err != nil {
 		t.Errorf("empty plan should not error: %v", err)
 	}
 }
@@ -364,7 +364,7 @@ func TestExecuteCleanup_CascadeDataEntry(t *testing.T) {
       title:
         type: string
 `
-	metamodelPath := filepath.Join(tmpDir, "metamodel.yaml")
+	metamodelPath := filepath.Join(tmpDir, "schema.yaml")
 	if err := os.WriteFile(metamodelPath, []byte(metamodelContent), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -388,7 +388,7 @@ lists:
 
 	plan := &CleanupPlan{
 		MetamodelChanges: []Change{
-			{File: "metamodel.yaml", Action: "remove_entity_type", Target: "to-remove"},
+			{File: "schema.yaml", Action: "remove_entity_type", Target: "to-remove"},
 		},
 		DataEntryChanges: []Change{
 			{File: "data-entry.yaml", Action: "remove_form", Target: "to-remove-form"},
@@ -396,7 +396,7 @@ lists:
 		},
 	}
 
-	if err := ExecuteCleanup(plan, tmpDir, false); err != nil {
+	if err := ExecuteCleanup(plan, metamodelPath, tmpDir, false); err != nil {
 		t.Fatalf("ExecuteCleanup failed: %v", err)
 	}
 
