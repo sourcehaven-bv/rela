@@ -240,8 +240,10 @@ suppressed.
 - `custom.css` and `custom.js` are optional and independent. Absent means no
   reference is injected, and the URL 404s.
 - Changes are picked up without a server restart. Reload the page.
-- Served with `Cache-Control: no-cache`, so an edit is visible on reload rather
-  than stranding you on a cached copy.
+- Served with `Cache-Control: no-cache` plus an `ETag`, so a browser
+  revalidates on every request but an unchanged asset comes back as a bodiless
+  `304` — your edits appear immediately, and a large font or image is not
+  re-downloaded on every page. `Range` requests are supported.
 - Every file in `custom/` is served, including nested paths. Files **outside**
   `custom/` are never reachable through `/_custom/`, and there is no directory
   listing and no `index.html` resolution — `/_custom/fonts/` is a 404, not a
