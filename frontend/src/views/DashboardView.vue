@@ -66,52 +66,99 @@ function getCardCount(card: DashboardCard): number {
   return cardData.value.get(cardKey(card))?.count || 0
 }
 
-function getBreakdown(card: DashboardCard): Array<{ value: string; count: number; percentage: number }> {
-  const data = cardData.value.get(cardKey(card))
-  if (!data || !card.group_by) return []
+/**
+ * Breakdown and table rows, derived once per card and cached until the card
+ * list or the loaded data changes (TKT-ERHWL0).
+ *
+ * These are `computed` maps rather than plain functions because the template
+ * asks for each twice — `v-if="…length"` and then `v-for` — and both are
+ * O(N) or worse over the card's whole result set (a group-by, and a copy plus
+ * a `localeCompare` sort). As plain functions that is two full passes per
+ * card per render, over every matched entity, to show at most `card.limit`
+ * rows.
+ *
+ * Keyed by `cardKey()` for the same reason `cardData` is: the card list is
+ * per-principal, so an index would bind one card's rows to another's tile.
+ */
+type Breakdown = Array<{ value: string; count: number; percentage: number }>
 
-  const groupBy = card.group_by
-  const counts: Record<string, number> = {}
-  let total = 0
+const breakdowns = computed<Map<string, Breakdown>>(() => {
+  const out = new Map<string, Breakdown>()
 
-  for (const entity of data.entities) {
-    const value = String(entity.properties[groupBy] || 'Unknown')
-    counts[value] = (counts[value] || 0) + 1
-    total++
+  for (const card of cards.value) {
+    const key = cardKey(card)
+    const data = cardData.value.get(key)
+    if (!data || !card.group_by) {
+      out.set(key, [])
+      continue
+    }
+
+    const groupBy = card.group_by
+    const counts: Record<string, number> = {}
+    let total = 0
+
+    for (const entity of data.entities) {
+      const value = String(entity.properties[groupBy] || 'Unknown')
+      counts[value] = (counts[value] || 0) + 1
+      total++
+    }
+
+    out.set(
+      key,
+      Object.entries(counts)
+        .map(([value, count]) => ({
+          value,
+          count,
+          percentage: total > 0 ? (count / total) * 100 : 0,
+        }))
+        .sort((a, b) => b.count - a.count)
+    )
   }
 
-  return Object.entries(counts)
-    .map(([value, count]) => ({
-      value,
-      count,
-      percentage: total > 0 ? (count / total) * 100 : 0,
-    }))
-    .sort((a, b) => b.count - a.count)
+  return out
+})
+
+const tableRows = computed<Map<string, Entity[]>>(() => {
+  const out = new Map<string, Entity[]>()
+
+  for (const card of cards.value) {
+    const key = cardKey(card)
+    const data = cardData.value.get(key)
+    if (!data) {
+      out.set(key, [])
+      continue
+    }
+
+    let entities = [...data.entities]
+
+    // Apply sort
+    if (card.sort?.length) {
+      const sort = card.sort[0]
+      entities.sort((a, b) => {
+        const aVal = String(a.properties[sort.property] || '')
+        const bVal = String(b.properties[sort.property] || '')
+        const cmp = aVal.localeCompare(bVal)
+        return sort.direction === 'desc' ? -cmp : cmp
+      })
+    }
+
+    // Apply limit
+    if (card.limit) {
+      entities = entities.slice(0, card.limit)
+    }
+
+    out.set(key, entities)
+  }
+
+  return out
+})
+
+function getBreakdown(card: DashboardCard): Breakdown {
+  return breakdowns.value.get(cardKey(card)) || []
 }
 
 function getTableRows(card: DashboardCard): Entity[] {
-  const data = cardData.value.get(cardKey(card))
-  if (!data) return []
-
-  let entities = [...data.entities]
-
-  // Apply sort
-  if (card.sort?.length) {
-    const sort = card.sort[0]
-    entities.sort((a, b) => {
-      const aVal = String(a.properties[sort.property] || '')
-      const bVal = String(b.properties[sort.property] || '')
-      const cmp = aVal.localeCompare(bVal)
-      return sort.direction === 'desc' ? -cmp : cmp
-    })
-  }
-
-  // Apply limit
-  if (card.limit) {
-    entities = entities.slice(0, card.limit)
-  }
-
-  return entities
+  return tableRows.value.get(cardKey(card)) || []
 }
 
 function getColumnLabel(col: { property?: string; label?: string }): string {
