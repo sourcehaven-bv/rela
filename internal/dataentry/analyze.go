@@ -240,14 +240,25 @@ func (svc analyzeService) analyzeOrphans(ctx context.Context, meta *metamodel.Me
 	// not — svc.tracer is gated too), no hidden entity reaches the wire. Do NOT
 	// emit an issue straight from an orphan id/type without this gated re-load —
 	// that would reopen the leak this arc closed (TKT-3FL2S6).
+	//
+	// The ids are sorted BEFORE loading, and loading stops one past the cap:
+	// a project where every entity is an orphan would otherwise re-load the
+	// entire store as full entities — 20k orphans of ~100 KB was ~930 MB of
+	// live heap, the single largest remaining contributor to the analyze OOM
+	// (TKT-1ESTYJ). Sorting first keeps WHICH orphans get reported
+	// deterministic and id-ordered rather than dependent on how far the load
+	// got.
+	natsort.Strings(orphanIDs)
 	var orphans []*entity.Entity
 	st := svc.reads
 	for _, id := range orphanIDs {
+		if len(orphans) > maxSectionIssues {
+			break
+		}
 		if e, err := st.GetEntity(ctx, id); err == nil {
 			orphans = append(orphans, e)
 		}
 	}
-	sortStoreEntitiesByID(orphans)
 
 	for _, e := range orphans {
 		section.Issues = append(section.Issues, AnalysisIssue{

@@ -278,17 +278,20 @@ func clonePath(p []PathStep) []PathStep {
 }
 
 func (t *GenericTracer) FindOrphans(ctx context.Context) ([]string, error) {
+	// Headers, not entities: this scans the WHOLE store and reads nothing
+	// but e.ID, so loading markdown bodies to discard them made an orphan
+	// check cost the size of the project's content (TKT-1ESTYJ).
 	var orphans []string
-	for e, err := range t.r.ListEntities(ctx, store.EntityQuery{}) {
+	for h, err := range store.ListEntityHeaders(ctx, t.r, store.EntityQuery{}) {
 		if err != nil {
 			return nil, err
 		}
-		n, err := t.r.CountRelations(ctx, store.RelationQuery{EntityID: e.ID, Direction: store.DirectionBoth})
+		n, err := t.r.CountRelations(ctx, store.RelationQuery{EntityID: h.ID, Direction: store.DirectionBoth})
 		if err != nil {
 			return nil, err
 		}
 		if n == 0 {
-			orphans = append(orphans, e.ID)
+			orphans = append(orphans, h.ID)
 		}
 	}
 	return orphans, nil
