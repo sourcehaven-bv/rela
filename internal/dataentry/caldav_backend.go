@@ -19,6 +19,7 @@ import (
 	entitypkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
@@ -402,6 +403,62 @@ func (b *caldavBackend) CreateCalendar(context.Context, *caldav.Calendar) error 
 		errors.New("caldav: collections are declared in data-entry.yaml, not created by clients"))
 }
 
+// watermarkCTag derives the ctag from the store's entity-type watermark instead
+// of rendering the collection, when the backend supports one.
+//
+// ok=false means "no watermark available" — the caller falls back to the
+// content-derived tag. That is the fsstore path (no monotonic sequence) and it
+// stays correct, just not cheap.
+//
+// # Why a type watermark is a SOUND ctag, despite being coarser
+//
+// The contract a ctag must satisfy is one-directional: it MUST change when the
+// collection's content changes. It is explicitly allowed to change when nothing
+// a client can see changed — RFC-wise the client simply re-enumerates and finds
+// the same ETags.
+//
+// The watermark moves on any write to the entity type. Every change to this
+// collection is such a write, so the required direction holds. It also moves for
+// writes the collection filters out, for entities this principal cannot read,
+// and for other collections over the same type — all spurious re-enumerations,
+// none of them incorrect.
+//
+// The reverse trade is what makes this safe: a missed change strands a client
+// forever, a spurious one costs it a single listing.
+//
+// # What this does NOT cover
+//
+// Config changes. The watermark is over entity rows, so editing the collection's
+// `where:` clause or its property mapping does not move it, and a client keeps
+// its stale view until the next entity write. The rendered tag included the
+// mapping implicitly, so this is a real (if minor) regression: an operator who
+// edits a mapping and wants clients to see it immediately should touch an entity
+// or restart. Folding a config generation into the tag is the fix if that
+// becomes a problem.
+func (b *caldavBackend) watermarkCTag(
+	ctx context.Context, name string,
+) (ctag string, supported bool, err error) {
+	_, cfg, err := b.mapperFor(name)
+	if err != nil {
+		return "", false, err
+	}
+	wm, ok := b.app.Services().Store.(store.TypeWatermark)
+	if !ok {
+		return "", false, nil
+	}
+	seq, err := wm.EntityTypeWatermark(ctx, cfg.EntityType)
+	if err != nil {
+		return "", false, err
+	}
+	// Namespaced by collection so two collections over the same type do not
+	// share a tag: they render different content, and a client that switched
+	// between them must not see a matching tag. The seq alone would collide.
+	h := sha256.New()
+	fmt.Fprintf(h, "wm:%d:%s:%d", len(name), name, seq)
+	sum := h.Sum(nil)
+	return `"` + base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(sum[:10]) + `"`, true, nil
+}
+
 // collectionCTag returns the collection ctag: a tag over every entry a client
 // would currently receive, so it changes exactly when the collection's content
 // does. See withCTag for why this is content-derived rather than counter-derived.
@@ -411,6 +468,11 @@ func (b *caldavBackend) CreateCalendar(context.Context, *caldav.Calendar) error 
 // deletion, which drops an ETag out of the hash. Length-prefixed to avoid
 // boundary ambiguity between adjacent tags, matching calfeed.CollectionTag.
 func (b *caldavBackend) collectionCTag(ctx context.Context, name string) (string, error) {
+	if tag, ok, err := b.watermarkCTag(ctx, name); err != nil {
+		return "", err
+	} else if ok {
+		return tag, nil
+	}
 	objs, err := b.listTodos(ctx, name)
 	if err != nil {
 		return "", err

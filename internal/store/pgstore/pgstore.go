@@ -85,6 +85,16 @@ type DBTX interface {
 // not a separate service — and the whole point is the backend-native
 // projection, which cannot be delegated elsewhere.
 //
+// +1 again for EntityTypeWatermark ([store.TypeWatermark]), by the same
+// reasoning: it reads `max(seq)` over this store's OWN entities and deletions
+// rows — the same tables every other method here touches — so it is a property
+// of this store rather than a distinct concern sharing the database. Hoisting
+// it into a service would mean a second handle over the same two tables for a
+// single index lookup.
+//
+// That is now TWO row-property capabilities admitted on this reasoning. If a
+// THIRD appears, extract them together rather than raising these numbers again.
+//
 //plimsoll:max-exported-methods=34
 //plimsoll:max-methods=42
 type Store struct {

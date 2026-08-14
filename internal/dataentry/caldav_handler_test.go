@@ -16,6 +16,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // caldavTestApp builds an App with one VTODO collection over `task`, wired with
@@ -1290,5 +1291,112 @@ func TestRenderObject_AppliesRedaction(t *testing.T) {
 	b.redactor = fakeRedactor{hide: []string{"notes"}}
 	if out := render(t.Context()); strings.Contains(out, "classified") {
 		t.Errorf("a `visible:`-hidden property reached the CalDAV wire:\n%s", out)
+	}
+}
+
+// fakeWatermarkStore wraps a store with a settable entity-type watermark, so a
+// test can drive the cheap ctag path without a postgres backend.
+type fakeWatermarkStore struct {
+	store.Store
+	seq map[string]int64
+}
+
+func (f *fakeWatermarkStore) EntityTypeWatermark(_ context.Context, t string) (int64, error) {
+	return f.seq[t], nil
+}
+
+// TestCollectionCTag_UsesWatermarkWhenAvailable pins that a backend exposing
+// store.TypeWatermark takes the index-only path instead of rendering.
+//
+// The observable proof is that the tag tracks the WATERMARK: bumping the seq
+// changes it while the entities are untouched, which the content-derived tag
+// (a hash of per-entry ETags) could not do.
+func TestCollectionCTag_UsesWatermarkWhenAvailable(t *testing.T) {
+	stored := entity.New("TSK-1", "task")
+	stored.Properties = map[string]any{"title": "Buy milk", "status": "todo"}
+	app := caldavTestApp(t, stored)
+
+	fake := &fakeWatermarkStore{Store: app.Services().Store, seq: map[string]int64{"task": 1}}
+	app.store = fake
+	b := &caldavBackend{app: app, baseURL: "https://example.test"}
+
+	first, err := b.collectionCTag(t.Context(), "tasks")
+	if err != nil {
+		t.Fatalf("collectionCTag: %v", err)
+	}
+
+	// Same watermark, same entities → the tag must be stable, or every poll
+	// re-enumerates and the optimization is worthless.
+	again, err := b.collectionCTag(t.Context(), "tasks")
+	if err != nil {
+		t.Fatalf("collectionCTag: %v", err)
+	}
+	if first != again {
+		t.Errorf("ctag is unstable across polls: %q then %q", first, again)
+	}
+
+	fake.seq["task"] = 2
+	moved, err := b.collectionCTag(t.Context(), "tasks")
+	if err != nil {
+		t.Fatalf("collectionCTag: %v", err)
+	}
+	if moved == first {
+		t.Error("the ctag did not follow the watermark — a client would never " +
+			"learn the collection changed")
+	}
+}
+
+// TestCollectionCTag_FallsBackWithoutWatermark pins the fsstore path: a backend
+// with no watermark still gets a correct, content-derived tag.
+func TestCollectionCTag_FallsBackWithoutWatermark(t *testing.T) {
+	stored := entity.New("TSK-1", "task")
+	stored.Properties = map[string]any{"title": "Buy milk", "status": "todo"}
+	app := caldavTestApp(t, stored)
+	if _, ok := app.Services().Store.(store.TypeWatermark); ok {
+		t.Fatal("precondition: the test store must NOT implement TypeWatermark")
+	}
+
+	b := &caldavBackend{app: app, baseURL: "https://example.test"}
+	tag, err := b.collectionCTag(t.Context(), "tasks")
+	if err != nil {
+		t.Fatalf("collectionCTag: %v", err)
+	}
+	if tag == "" {
+		t.Error("a backend without a watermark must still produce a tag")
+	}
+}
+
+// TestCollectionCTag_DistinctPerCollection pins that two collections over the
+// SAME entity type do not share a tag.
+//
+// The watermark is per-TYPE, so the seq alone would collide. A client that
+// switched between two collections would see a matching tag and skip
+// enumerating content it has never seen.
+func TestCollectionCTag_DistinctPerCollection(t *testing.T) {
+	stored := entity.New("TSK-1", "task")
+	stored.Properties = map[string]any{"title": "Buy milk", "status": "todo"}
+	app := caldavTestApp(t, stored)
+
+	// A second collection over the same entity type.
+	cfg := app.State().Cfg
+	second := cfg.CalDAV.Static["tasks"]
+	cfg.CalDAV.Static["other"] = second
+
+	app.store = &fakeWatermarkStore{
+		Store: app.Services().Store, seq: map[string]int64{"task": 1},
+	}
+	b := &caldavBackend{app: app, baseURL: "https://example.test"}
+
+	a, err := b.collectionCTag(t.Context(), "tasks")
+	if err != nil {
+		t.Fatalf("collectionCTag(tasks): %v", err)
+	}
+	c, err := b.collectionCTag(t.Context(), "other")
+	if err != nil {
+		t.Fatalf("collectionCTag(other): %v", err)
+	}
+	if a == c {
+		t.Error("two collections over one entity type share a ctag — a client " +
+			"switching between them would skip enumerating the other")
 	}
 }
