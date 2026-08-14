@@ -597,6 +597,20 @@ So `permission:` on a nav entry buys tidiness, not protection. Never
 reach for it in place of a read grant, and never assume an entry's
 absence means a principal cannot get at what it points to.
 
+**Dashboard cards work the same way** (TKT-53KICM). A `permission:` on a
+`dashboard.cards[]` entry omits that card from `/api/v1/_dashboard` for
+non-holders, on exactly the reasoning above: the card's query already runs
+through the ACL-scoped search path, so a principal who may read none of the
+matching entities already sees a card reading `0`. Hiding it removes a useless
+tile and nothing more — the query remains runnable, returning precisely the
+rows it always did.
+
+The card list needs its own endpoint because `/api/v1/_config` is
+principal-independent by design and must stay that way: it keeps serving the
+whole `dashboard:` block, `permission:` values included, to everyone.
+`/api/v1/_dashboard` is the per-principal view; `_config` is the config. Do not
+collapse them.
+
 The same holds for the rest of the app's configuration.
 `/api/v1/_config` serves lists, views, kanbans, documents and
 navigation in full — including a document's `permission:` value. Your

@@ -8,8 +8,28 @@ const schemaStore = useSchemaStore()
 
 // State
 const loading = ref(true)
-const cardData = ref<Map<number, { entities: Entity[]; count: number }>>(new Map())
+// Keyed by cardKey(), not by array index: the card list is per-principal
+// (TKT-53KICM), so its length and contents can differ between loads. An
+// index-keyed map survives such a change and binds one card's rows to
+// another's tile — e.g. dropping the first of two cards leaves the survivor
+// rendering the dropped card's count.
+const cardData = ref<Map<string, { entities: Entity[]; count: number }>>(new Map())
 const analysisResult = ref<AnalyzeResult | null>(null)
+
+/**
+ * A stable identity for a card, derived from its content.
+ *
+ * Cards have no configured id, so this is the best available substitute:
+ * `title` alone is not guaranteed unique, and `query` alone is genuinely
+ * shared by cards that display the same data differently.
+ *
+ * JSON.stringify rather than string concatenation, so the parts cannot run
+ * together: `{title:'a b', query:'c'}` and `{title:'a', query:'b c'}` must not
+ * collide into one key.
+ */
+function cardKey(card: DashboardCard): string {
+  return JSON.stringify([card.title, card.query, card.display])
+}
 
 // Computed
 const dashboardConfig = computed(() => schemaStore.dashboard)
@@ -23,9 +43,9 @@ async function loadData() {
 
   try {
     // Load card data in parallel
-    const cardPromises = cards.value.map(async (card, index) => {
+    const cardPromises = cards.value.map(async (card) => {
       const response = await searchEntities(card.query)
-      cardData.value.set(index, {
+      cardData.value.set(cardKey(card), {
         entities: response.data,
         count: response.meta.total,
       })
@@ -42,12 +62,12 @@ async function loadData() {
   }
 }
 
-function getCardCount(index: number): number {
-  return cardData.value.get(index)?.count || 0
+function getCardCount(card: DashboardCard): number {
+  return cardData.value.get(cardKey(card))?.count || 0
 }
 
-function getBreakdown(card: DashboardCard, index: number): Array<{ value: string; count: number; percentage: number }> {
-  const data = cardData.value.get(index)
+function getBreakdown(card: DashboardCard): Array<{ value: string; count: number; percentage: number }> {
+  const data = cardData.value.get(cardKey(card))
   if (!data || !card.group_by) return []
 
   const groupBy = card.group_by
@@ -69,8 +89,8 @@ function getBreakdown(card: DashboardCard, index: number): Array<{ value: string
     .sort((a, b) => b.count - a.count)
 }
 
-function getTableRows(card: DashboardCard, index: number): Entity[] {
-  const data = cardData.value.get(index)
+function getTableRows(card: DashboardCard): Entity[] {
+  const data = cardData.value.get(cardKey(card))
   if (!data) return []
 
   let entities = [...data.entities]
@@ -111,8 +131,17 @@ function getCellLink(entity: Entity, col: { link?: string }): string | undefined
 }
 
 // Lifecycle
-onMounted(() => {
-  loadData()
+onMounted(async () => {
+  // Belt-and-braces, NOT the thing preventing the empty-state flash: App.vue
+  // renders <RouterView/> only after the store has loaded, so this view cannot
+  // normally mount with `loaded === false`. It matters only if the boot
+  // sequence changes, or when this component is mounted directly (as its unit
+  // tests do). Without a gate somewhere, "No dashboard cards to show" — which
+  // is indistinguishable from the all-filtered state — would flash on load.
+  if (!schemaStore.loaded) {
+    await schemaStore.load()
+  }
+  await loadData()
 })
 </script>
 
@@ -129,10 +158,20 @@ onMounted(() => {
     </div>
 
     <template v-else>
-      <div class="dashboard-grid">
+      <!--
+        No cards to show. Deliberately one state for three causes: no
+        `dashboard:` configured, an empty `cards:`, and every card filtered out
+        by `permission:` (TKT-53KICM). Distinguishing them would tell a user
+        about cards they cannot use, which is the opposite of the point.
+      -->
+      <p v-if="cards.length === 0" class="no-data dashboard-empty">
+        No dashboard cards to show.
+      </p>
+
+      <div v-else class="dashboard-grid">
         <div
-          v-for="(card, index) in cards"
-          :key="index"
+          v-for="card in cards"
+          :key="cardKey(card)"
           class="dashboard-card"
         >
           <div class="card-header">
@@ -148,13 +187,13 @@ onMounted(() => {
 
           <!-- Count display -->
           <div v-if="card.display === 'count'" class="card-count">
-            <span class="count-number">{{ getCardCount(index) }}</span>
+            <span class="count-number">{{ getCardCount(card) }}</span>
           </div>
 
           <!-- Breakdown display -->
           <div v-else-if="card.display === 'breakdown'" class="card-breakdown">
             <div
-              v-for="item in getBreakdown(card, index)"
+              v-for="item in getBreakdown(card)"
               :key="item.value"
               class="breakdown-row"
             >
@@ -167,14 +206,14 @@ onMounted(() => {
               </div>
               <span class="breakdown-count">{{ item.count }}</span>
             </div>
-            <div v-if="getBreakdown(card, index).length === 0" class="no-data">
+            <div v-if="getBreakdown(card).length === 0" class="no-data">
               No data
             </div>
           </div>
 
           <!-- Table display -->
           <div v-else-if="card.display === 'table'" class="card-table">
-            <table v-if="getTableRows(card, index).length > 0">
+            <table v-if="getTableRows(card).length > 0">
               <thead>
                 <tr>
                   <th v-for="col in card.columns" :key="col.property">
@@ -183,7 +222,7 @@ onMounted(() => {
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="entity in getTableRows(card, index)" :key="entity.id">
+                <tr v-for="entity in getTableRows(card)" :key="entity.id">
                   <td v-for="col in card.columns" :key="col.property">
                     <router-link
                       v-if="getCellLink(entity, col)"

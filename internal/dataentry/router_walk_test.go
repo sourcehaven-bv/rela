@@ -73,6 +73,7 @@ func TestRouterWalk_AllAPIRoutesReachHandlers(t *testing.T) {
 		{http.MethodPost, "/api/v1/_theme/import", 0},
 		{http.MethodGet, "/api/v1/_sidepanel/ticket/TKT-001", 0},
 		{http.MethodGet, "/api/v1/_sidebar", http.StatusOK},
+		{http.MethodGet, "/api/v1/_dashboard", http.StatusOK},
 		{http.MethodGet, "/api/v1/_conflicts", 0},
 		{http.MethodGet, "/api/v1/_conflicts/some-id", 0},
 		{http.MethodGet, "/api/v1/_documents/readme", 0},
