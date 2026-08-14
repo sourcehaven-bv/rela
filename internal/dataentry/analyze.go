@@ -29,9 +29,20 @@ import (
 // structural fact, not a value, so it cannot leak; under-visibility only makes
 // cardinality potentially false-positive, which is correctness (guarded by the
 // roles annotation, arc step 2), not a disclosure.
+// The whole-store scans go through ListEntityHeaders, never ListEntities:
+// no analyze check reads an entity BODY (grep this file for `.Content` —
+// there are none), so loading bodies to discard them made a scan's peak
+// memory proportional to the project's markdown. On 20k entities with
+// ~100 KB bodies that was ~2.9 GB of RSS for one request (TKT-1ESTYJ).
+// The header type has no Content field, so this property is now enforced
+// by the compiler rather than by remembering.
+//
+// The per-ID GetEntity above stays: orphans and validation violations
+// resolve a bounded set of ids (never a whole-store scan), and their
+// gated re-load is load-bearing for the leak TKT-3FL2S6 closed.
 type analyzeReader interface {
 	GetEntity(ctx context.Context, id string) (*entity.Entity, error)
-	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
+	ListEntityHeaders(ctx context.Context, q store.EntityQuery) iter.Seq2[store.EntityHeader, error]
 }
 
 // relationCounter counts relations for the cardinality check. Raw (ungated) on
@@ -192,14 +203,19 @@ func (svc analyzeService) analyzeDuplicates(ctx context.Context, meta *metamodel
 		Description: "Entities with identical titles",
 	}
 
-	titleGroups := make(map[string][]*entity.Entity)
-	for e, err := range svc.reads.ListEntities(ctx, store.EntityQuery{}) {
+	// The one analyzer that genuinely CANNOT stream: a title is not known
+	// to be duplicated until its second occurrence, which may be the last
+	// row scanned, so the grouping must see the whole set. Grouping HEADERS
+	// rather than entities is what makes that affordable — the map holds
+	// ids and properties, never bodies.
+	titleGroups := make(map[string][]store.EntityHeader)
+	for h, err := range svc.reads.ListEntityHeaders(ctx, store.EntityQuery{}) {
 		if err != nil {
 			break
 		}
-		title := normalizeTitle(safeDisplayTitle(meta, e))
+		title := normalizeTitle(safeHeaderTitle(meta, h))
 		if title != "" {
-			titleGroups[title] = append(titleGroups[title], e)
+			titleGroups[title] = append(titleGroups[title], h)
 		}
 	}
 
@@ -214,16 +230,16 @@ func (svc analyzeService) analyzeDuplicates(ctx context.Context, meta *metamodel
 
 	for _, title := range titles {
 		group := titleGroups[title]
-		sortStoreEntitiesByID(group)
+		sortHeadersByID(group)
 		ids := make([]string, len(group))
-		for i, e := range group {
-			ids[i] = e.ID
+		for i, h := range group {
+			ids[i] = h.ID
 		}
-		for _, e := range group {
+		for _, h := range group {
 			section.Issues = append(section.Issues, AnalysisIssue{
-				EntityID:   e.ID,
-				EntityType: e.Type,
-				Title:      safeDisplayTitle(meta, e),
+				EntityID:   h.ID,
+				EntityType: h.Type,
+				Title:      safeHeaderTitle(meta, h),
 				Message:    fmt.Sprintf("Duplicate title (shared by %s)", strings.Join(ids, ", ")),
 				Severity:   "warning",
 			})
@@ -257,11 +273,11 @@ func (svc analyzeService) analyzeGaps(ctx context.Context, meta *metamodel.Metam
 
 	// Group IDs by prefix
 	prefixGroups := make(map[string][]int)
-	for e, err := range svc.reads.ListEntities(ctx, store.EntityQuery{}) {
+	for h, err := range svc.reads.ListEntityHeaders(ctx, store.EntityQuery{}) {
 		if err != nil {
 			break
 		}
-		parsed, err := entity.ParseEntityID(e.ID)
+		parsed, err := entity.ParseEntityID(h.ID)
 		if err != nil || parsed.Prefix == "" {
 			continue
 		}
@@ -323,18 +339,22 @@ func (svc analyzeService) analyzeCardinality(ctx context.Context, meta *metamode
 	}
 	natsort.Strings(relNames)
 
-	// listEntities lists entities of a given type, sorted by ID. GATED: only the
+	// listEntities lists headers of a given type, sorted by ID. GATED: only the
 	// requester's visible entities are considered, so a hidden entity's title
 	// cannot reach a cardinality issue.
-	listEntities := func(t string) []*entity.Entity {
-		var out []*entity.Entity
-		for e, err := range svc.reads.ListEntities(ctx, store.EntityQuery{Type: t}) {
+	//
+	// Materializes per TYPE rather than per store — each entry is a body-free
+	// header, and the caller iterates a type's rows several times (once per
+	// bound being checked), so re-scanning would cost more than it saves.
+	listEntities := func(t string) []store.EntityHeader {
+		var out []store.EntityHeader
+		for h, err := range svc.reads.ListEntityHeaders(ctx, store.EntityQuery{Type: t}) {
 			if err != nil {
 				break
 			}
-			out = append(out, e)
+			out = append(out, h)
 		}
-		sortStoreEntitiesByID(out)
+		sortHeadersByID(out)
 		return out
 	}
 
@@ -361,7 +381,7 @@ func (svc analyzeService) analyzeCardinality(ctx context.Context, meta *metamode
 						section.Issues = append(section.Issues, AnalysisIssue{
 							EntityID:   e.ID,
 							EntityType: e.Type,
-							Title:      safeDisplayTitle(meta, e),
+							Title:      safeHeaderTitle(meta, e),
 							Message:    fmt.Sprintf("Must have at least %d '%s' relation(s), has %d", *relDef.MinOutgoing, relName, count),
 							Severity:   "error",
 						})
@@ -379,7 +399,7 @@ func (svc analyzeService) analyzeCardinality(ctx context.Context, meta *metamode
 						section.Issues = append(section.Issues, AnalysisIssue{
 							EntityID:   e.ID,
 							EntityType: e.Type,
-							Title:      safeDisplayTitle(meta, e),
+							Title:      safeHeaderTitle(meta, e),
 							Message:    fmt.Sprintf("Has more than %d '%s' relation(s): %d", *relDef.MaxOutgoing, relName, count),
 							Severity:   "error",
 						})
@@ -401,7 +421,7 @@ func (svc analyzeService) analyzeCardinality(ctx context.Context, meta *metamode
 						section.Issues = append(section.Issues, AnalysisIssue{
 							EntityID:   e.ID,
 							EntityType: e.Type,
-							Title:      safeDisplayTitle(meta, e),
+							Title:      safeHeaderTitle(meta, e),
 							Message:    fmt.Sprintf("Must have at least %d '%s' relation(s), has %d", *relDef.MinIncoming, relLabel, count),
 							Severity:   "error",
 						})
@@ -423,7 +443,7 @@ func (svc analyzeService) analyzeCardinality(ctx context.Context, meta *metamode
 						section.Issues = append(section.Issues, AnalysisIssue{
 							EntityID:   e.ID,
 							EntityType: e.Type,
-							Title:      safeDisplayTitle(meta, e),
+							Title:      safeHeaderTitle(meta, e),
 							Message:    fmt.Sprintf("Has more than %d '%s' relation(s): %d", *relDef.MaxIncoming, relLabel, count),
 							Severity:   "error",
 						})
@@ -443,27 +463,26 @@ func (svc analyzeService) analyzeProperties(ctx context.Context, meta *metamodel
 		Description: "Property validation errors (required fields, invalid values, ID patterns)",
 	}
 
-	entities := make([]*entity.Entity, 0)
-	for e, err := range svc.reads.ListEntities(ctx, store.EntityQuery{}) {
+	// Streams: an issue is emitted as its row is scanned, so peak memory is
+	// proportional to the ISSUES found, not to the entities examined. The
+	// previous shape drained every entity into a slice purely to sort it —
+	// sorting the (far smaller) issue list afterwards is equivalent, since
+	// each entity contributes a contiguous run of issues in ID order.
+	for h, err := range svc.reads.ListEntityHeaders(ctx, store.EntityQuery{}) {
 		if err != nil {
 			break
 		}
-		entities = append(entities, e)
-	}
-	sortStoreEntitiesByID(entities)
-
-	for _, e := range entities {
-		errs := meta.ValidateEntity(e.ID, e.Type, e.Properties)
-		for _, err := range errs {
+		for _, verr := range meta.ValidateEntity(h.ID, h.Type, h.Properties) {
 			section.Issues = append(section.Issues, AnalysisIssue{
-				EntityID:   e.ID,
-				EntityType: e.Type,
-				Title:      safeDisplayTitle(meta, e),
-				Message:    err.Error(),
+				EntityID:   h.ID,
+				EntityType: h.Type,
+				Title:      safeHeaderTitle(meta, h),
+				Message:    verr.Error(),
 				Severity:   "error",
 			})
 		}
 	}
+	sortIssuesByEntityID(section.Issues)
 
 	return section
 }
@@ -572,6 +591,42 @@ func safeDisplayTitle(meta *metamodel.Metamodel, e *entity.Entity) string {
 		}
 	}
 	return meta.DisplayTitle(e.ID, e.Type, e.Properties)
+}
+
+// sortHeadersByID is [sortStoreEntitiesByID] for content-free headers.
+func sortHeadersByID(headers []store.EntityHeader) {
+	sort.Slice(headers, func(i, j int) bool {
+		return natsort.Less(headers[i].ID, headers[j].ID)
+	})
+}
+
+// sortIssuesByEntityID orders issues by entity ID, naturally (so E-9 sorts
+// before E-10), preserving the relative order of issues that share an ID.
+//
+// STABLE deliberately: a streaming analyzer emits one entity's issues as a
+// contiguous run in metamodel-validation order, and a caller comparing
+// output against the pre-streaming implementation must see that run intact.
+// An unstable sort would shuffle the messages within an entity and turn a
+// pure refactor into a visible behavior change.
+func sortIssuesByEntityID(issues []AnalysisIssue) {
+	sort.SliceStable(issues, func(i, j int) bool {
+		return natsort.Less(issues[i].EntityID, issues[j].EntityID)
+	})
+}
+
+// safeHeaderTitle is [safeDisplayTitle] for a content-free header. Display
+// titles derive from ID, Type and Properties — never the body — so the two
+// agree by construction; this exists because the metamodel helpers take the
+// fields individually and a header is not an *entity.Entity.
+func safeHeaderTitle(meta *metamodel.Metamodel, h store.EntityHeader) string {
+	if def, ok := meta.GetEntityDef(h.Type); ok {
+		for _, prop := range def.DisplayProperties() {
+			if _, present := h.Properties[prop]; !present {
+				return h.ID // a display-title source was redacted → don't leak a partial title
+			}
+		}
+	}
+	return meta.DisplayTitle(h.ID, h.Type, h.Properties)
 }
 
 // normalizeTitle normalizes a title for duplicate comparison.
