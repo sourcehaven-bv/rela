@@ -153,21 +153,25 @@ type metaView interface {
 	PropertyDeclared(entityType, property string) (declared bool, ok bool)
 }
 
-// provisionCtx is the write-handler seam: given the request ctx, it runs
-// [maybeProvision] when the ACL is a *acl.Declarative (NopACL/ReadOnlyACL never
-// provision) and returns the ctx the handler must adopt. Wired as a closure
-// into every write handler so each locked entry is one call:
+// newProvisionSeam builds the write-handler provision closure for a. It is a
+// package function, not an App method, deliberately: App sits on the god-object
+// load line, so the seam lives here and is wired as a closure into every write
+// handler instead of adding a method. The returned closure, given the request
+// ctx, runs [maybeProvision] when the ACL is a *acl.Declarative (NopACL/
+// ReadOnlyACL never provision) and returns the ctx the handler must adopt:
 //
 //	ctx := h.provision(r.Context()); r = r.WithContext(ctx)
 //
 // It reads a.acl live (not captured) so a test that swaps the ACL after
 // construction is honored, matching the other closures on the write handlers.
-func (a *App) provisionCtx(ctx context.Context) context.Context {
-	d, ok := a.acl.(*acl.Declarative)
-	if !ok || d == nil {
-		return ctx
+func newProvisionSeam(a *App) func(context.Context) context.Context {
+	return func(ctx context.Context) context.Context {
+		d, ok := a.acl.(*acl.Declarative)
+		if !ok || d == nil {
+			return ctx
+		}
+		return maybeProvision(ctx, d, a.entityManager, schemaMetaView{schema: a.State})
 	}
-	return maybeProvision(ctx, d, a.entityManager, schemaMetaView{schema: a.State})
 }
 
 // schemaMetaView adapts the data-entry Schema accessor to the narrow metaView
