@@ -27,6 +27,12 @@ const (
 	// templates/, it lives on the filesystem in every storage backend and is
 	// not modeled into Context (loaded traversal-resistant where needed).
 	AppsDir = "apps"
+	// CustomDir holds the operator's data-entry customisation: custom.css and
+	// custom.js (injected into the SPA shell when present) plus any assets they
+	// reference — fonts, logos, images. Served at /_custom/<path>. Same
+	// convention as AppsDir: filesystem in every backend, loaded
+	// traversal-resistant, not modeled into Context.
+	CustomDir = "custom"
 )
 
 // Context holds the paths and state for a rela project

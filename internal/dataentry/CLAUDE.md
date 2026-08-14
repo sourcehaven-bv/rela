@@ -227,3 +227,56 @@ User-authored apps served in a sandboxed iframe. An app is a **folder**
   api-client call. Adding a capability = adding a named method, never a generic
   "fetch this path". Keep `appSDKMethods` (Go, in `apps_sdk.go`) in sync with
   `BRIDGE_METHODS` (the dispatcher).
+
+## Operator customisation (`custom/` + `/_custom/`)
+
+The operator's `custom/` project directory, served at `/_custom/<path>`.
+`custom.css` / `custom.js` there are referenced from the SPA shell; every other
+file (fonts, logos, images) is served as-is. Rules for new code:
+
+- **The SPA shell rewrite is the ONE server-side HTML rewrite in this codebase,
+  and it is deliberately scoped to rela's own shell.** The `apps/` rule below
+  ("served, not injected") still stands and is not weakened by it. The reason
+  the two differ is a *security boundary*, not ownership: an app's path-scoped
+  CSP **is** the entire boundary confining an untrusted installable app, so
+  injecting script into an app's index would require widening that CSP and
+  puncture it. The SPA shell has no CSP at all, so the rewrite crosses no
+  boundary. **TRIP-WIRE: if a CSP is ever added to the SPA route, that
+  reasoning lapses and the injection must be revisited.**
+- **Splice, don't parse.** `injectTags` does a targeted string insertion before
+  `</head>` / `</body>`. Do NOT swap in a `golang.org/x/net/html` parse+render
+  round-trip: it normalises the whole document (attribute quoting/order, entity
+  re-encoding) and would be the first `html.Render` in `internal/`. The shell is
+  our own embedded, known-shape output. x/net/html already being a dependency is
+  not a reason to use it.
+- **Four shells precomputed, existence re-checked per request.** Precomputing
+  removes the cache-population race; the per-request stat means adding
+  `custom.css` needs no restart. A file that is *served* at `/_custom/` but
+  never *referenced* in the shell is the confusing half-state this avoids.
+- **The containment boundary is `validCustomEntry` + a NESTED `os.OpenRoot`.**
+  TKT-IWMETE replaced the old two-name allowlist (which made traversal
+  impossible before touching the filesystem) with a served directory, so path
+  validation is now the primary boundary, not defence-in-depth.
+  **The nested root is security-critical**: a symlink inside `custom/` pointing
+  at `../metamodel.yaml` never leaves the project root, so a single
+  `os.OpenRoot(projectRoot)` would follow it. Only the second root scoped to
+  `custom/` refuses it — don't "simplify" it away
+  (`TestOpenCustomEntry_SymlinkInsideProject` pins this).
+- **Traversal is NEUTRALISED, not rejected.** `path.Clean` anchors
+  `../secret.txt` to `custom/secret.txt`, which may legitimately exist. Assert
+  *containment* (no file outside `custom/` is ever served), never "the request
+  errors" — a rejection-shaped test passes against a leaky implementation.
+- **The dot-segment rule is for operator accidents, not traversal.** It refuses
+  `.env`, `.git/config`, `.DS_Store`. It contributes ZERO traversal defence
+  (`path.Clean` resolves `..` before it runs) and is a filename heuristic, not a
+  secrets scanner — `notes.md` and `custom.css~` are served.
+- **`/_custom/` is PUBLIC and UNAUTHENTICATED** — not an `isAPIPath`, so outside
+  both the JWT gate and ACL, deliberately, so the shell loads before login. This
+  is a wider exposure than `apps/`, which this code otherwise copies. Every
+  failure collapses to one 404.
+- **`custom.js` is FULLY TRUSTED — the opposite posture from `apps/`.** It runs
+  same-origin in the SPA's document with no CSP, no sandbox, and unrestricted
+  API access. That is correct (the operator already controls metamodel, Lua and
+  ACL), but never reason "apps are sandboxed, therefore this is too."
+- **Token CSS must never be layered.** See `frontend/CLAUDE.md`;
+  `TestTokensCSSNeverLayered` pins both copies.
