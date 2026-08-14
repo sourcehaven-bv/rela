@@ -2,7 +2,7 @@
 id: PLAN-O8KMBQ
 type: planning-checklist
 title: 'Planning: Remote MCP: serve MCP over Streamable HTTP from rela-server, per-request principal + ACL'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->

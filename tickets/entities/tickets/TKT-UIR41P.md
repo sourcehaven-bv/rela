@@ -1,15 +1,26 @@
 ---
 id: TKT-UIR41P
 type: ticket
-title: 'Remote MCP: serve MCP over Streamable HTTP from rela-server, per-request principal + ACL'
+title: "Remote MCP part 1: migrate to go-sdk v1.7.0 and route MCP reads through an ACL-gated seam"
 kind: enhancement
 priority: high
 effort: xl
 tags:
     - needs-design
     - security
-status: planning
+status: done
 ---
+
+> **Scope note (split).** This ticket originally covered the whole arc through
+> to serving MCP over HTTP. It was split once the first two parts were done and
+> independently valuable: **this ticket is the go-sdk migration + the ACL-gated
+> read seam**, both shipped and test-pinned. Actually exposing the endpoint —
+> the HTTP mount, per-request principal and RFC 9728 discovery — is
+> **TKT-BDG8U9**, which also carries the three review-responses that only bite
+> once a network transport exists (RR-H8S10M, RR-PQ5UN1, RR-P34E8J).
+>
+> Sections below that describe the remote transport are retained as the design
+> record TKT-BDG8U9 builds on, not as work outstanding here.
 
 ## Description
 
