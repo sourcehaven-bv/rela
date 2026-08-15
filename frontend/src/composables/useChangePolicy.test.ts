@@ -29,6 +29,7 @@ function setup(opts: {
   const form = { ...opts.form }
   const retained: Record<string, unknown> = {}
   const asked: string[][] = []
+  const restored: boolean[] = []
   const generation = { value: 0 }
   const applied: Proposal[] = []
   const hiddenBatches: string[][] = []
@@ -54,10 +55,11 @@ function setup(opts: {
       return opts.approve ?? true
     },
     isEmpty: (p) => form[p] === undefined || form[p] === '' || form[p] === null,
+    restore: () => restored.push(true),
     generation: () => generation.value,
   }
 
-  return { policy: useChangePolicy(deps), form, retained, applied, hiddenBatches, asked, generation }
+  return { policy: useChangePolicy(deps), form, retained, applied, hiddenBatches, asked, generation, restored }
 }
 
 // The reporter's shape: deadlines visible only while route == 'aanbesteding'.
@@ -149,6 +151,7 @@ describe('useChangePolicy', () => {
       policyFor: () => 'no',
       askToClear: async () => true,
       isEmpty: () => false,
+      restore: () => {},
       generation: () => 0,
     })
 
@@ -316,6 +319,7 @@ describe('useChangePolicy', () => {
       policyFor: () => 'no',
       askToClear: async () => true,
       isEmpty: () => false,
+      restore: () => {},
       generation: () => 0,
     })
 

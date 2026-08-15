@@ -1129,6 +1129,11 @@ const formGeneration = ref(0)
 // cheaper and clearer than making the dialog re-entrant.
 const confirmingClear = ref(false)
 
+// Bumped to force the field widgets to re-read their values from `formData`.
+// Needed only on a DECLINED proposal: the widget already moved its own DOM,
+// and an unchanged bound value gives Vue nothing to patch back.
+const fieldsRenderKey = ref(0)
+
 const changePolicy = useChangePolicy({
   bindings: conditionBindings,
   activeNow: () => wizard.activeProperties.value,
@@ -1143,6 +1148,18 @@ const changePolicy = useChangePolicy({
   policyFor: (p) => clearWhenHiddenOf(fieldByProperty.value.get(p)),
   isEmpty: (p) => isClearedForType(formData.value[p], entityType.value?.properties?.[p]),
   generation: () => formGeneration.value,
+  restore: () => {
+    // `formData` still holds the previous value — the decline wrote nothing.
+    // Only the widget's own DOM moved, and since the bound `model-value` is
+    // unchanged, Vue has no reason to patch it back: the control would keep
+    // displaying the value the user just declined.
+    //
+    // Bumping the render key remounts the field list, so every widget
+    // re-reads its value from `formData`. Deliberately NOT done by writing a
+    // sentinel through `formData` — that would fire the visibility watcher on
+    // a value that was never real.
+    fieldsRenderKey.value++
+  },
   askToClear: async (properties) => {
     confirmingClear.value = true
     try {
@@ -1684,6 +1701,7 @@ defineExpose({
           </p>
           <div class="form-fields">
             <FormFieldList
+              :key="fieldsRenderKey"
               :fields="visibleStepFields(wizard.currentStepDef.value)"
               :entity-type="formConfig.entity"
               :entity-id="entityId"

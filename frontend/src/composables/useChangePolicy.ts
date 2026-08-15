@@ -75,6 +75,15 @@ export interface ChangePolicyDeps {
   /** True when a property currently holds nothing worth warning about. */
   isEmpty: (property: string) => boolean
   /**
+   * Re-assert a declined proposal's PREVIOUS value in the UI.
+   *
+   * Needed because the widget mutated its own DOM before the proposal was
+   * evaluated. `formData` was never written, so Vue sees no change and would
+   * leave the control showing the value the user just declined. Must not emit
+   * a write — nothing was committed.
+   */
+  restore: (proposal: Proposal) => void
+  /**
    * Monotonic counter identifying the current form incarnation. Read before
    * awaiting and compared after: if it moved (entity reloaded, form switched
    * entity), the dialog's answer is stale and the proposal is `superseded`.
@@ -150,7 +159,19 @@ export function useChangePolicy(deps: ChangePolicyDeps) {
       // that no longer exists, so applying either answer would write against
       // stale assumptions.
       if (deps.generation() !== generation) return { status: 'superseded' }
-      if (!approved) return { status: 'rejected' }
+      if (!approved) {
+        // `formData` was never written, so there is nothing to roll back —
+        // but the WIDGET wrote its own DOM when the user interacted with it,
+        // and an unchanged `model-value` gives Vue no reason to patch it back.
+        // The control would keep showing the declined value while the form
+        // holds the old one.
+        //
+        // So the reject path has to actively re-assert the previous value.
+        // This is a render concern, not a state rollback: nothing was
+        // committed, nothing queued, and no write is emitted.
+        deps.restore(proposal)
+        return { status: 'rejected' }
+      }
     }
 
     // 3. Apply — retention first, see retainBeforeChange.

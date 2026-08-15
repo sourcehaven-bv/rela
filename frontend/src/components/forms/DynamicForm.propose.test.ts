@@ -255,6 +255,26 @@ describe('DynamicForm propose/commit seam', () => {
       expect(update).not.toHaveBeenCalled()
     })
 
+    // THE FIFTH FAILURE MODE, found by writing this test.
+    //
+    // Declining leaves `formData` untouched — correct — but the widget had
+    // already moved its OWN DOM when the user interacted with it. Because the
+    // bound `model-value` never changed, Vue has nothing to patch back, so the
+    // control kept displaying the declined value while the form held the old
+    // one. The user sees 'onderhands' on a form that means 'aanbesteding':
+    // exactly the class of mismatch that killed the four earlier attempts.
+    it('snaps the widget back to the previous value on decline', async () => {
+      confirmMock.mockResolvedValue(false)
+      const { wrapper } = await mountEdit(formConfig('confirm'))
+
+      await typeInto(wrapper, 'inkooproute', 'onderhands')
+      await flushPromises()
+
+      expect(
+        (wrapper.find('#field-inkooproute').element as HTMLInputElement).value
+      ).toBe('aanbesteding')
+    })
+
     it('approving commits the change and the clear together', async () => {
       confirmMock.mockResolvedValue(true)
       const { wrapper, update } = await mountEdit(formConfig('confirm'))
