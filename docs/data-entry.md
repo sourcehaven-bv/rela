@@ -752,6 +752,7 @@ false while editing. Per-field; the default keeps the value.
 | --- | --- |
 | `no` *(default)* | Keep the value. Hiding and revealing is lossless. |
 | `yes` | Clear the value. |
+| `confirm` | Ask first. On decline, the change that triggered the hide is abandoned too. |
 
 ```yaml
 fields:
@@ -759,7 +760,7 @@ fields:
   - property: inschrijfdeadline
     visible_when: "form.inkooproute == 'aanbesteding'"
     # omit clear_when_hidden (or set `no`) to keep the date when the
-    # branch hides; set `yes` to clear it
+    # branch hides; `yes` clears it; `confirm` asks first
 ```
 
 Notes:
@@ -771,10 +772,17 @@ Notes:
   honors its own setting.
 - Setting it without a `visible_when` is a config error — it could never apply.
   A field on a conditional *step* is fine: the step can hide it.
-- An interactive `confirm` value (ask before clearing, undo the triggering
-  change on decline) is **not accepted yet** — a config using it fails
-  validation. It needs the form to distinguish "the user proposed a change"
-  from "the change was committed", which is tracked separately.
+- `confirm` is **not** simply `yes` with a prompt. Declining also abandons the
+  edit that caused the hide, leaving the form exactly as it was — the dropdown
+  snaps back. Nothing is written to the server either way until the user
+  answers, so declining is a true no-op rather than an undo.
+- `confirm` only prompts when something is at stake: a hidden field that is
+  already empty is cleared without asking, so users are not trained to dismiss
+  a dialog that never matters. One dialog names every affected field, rather
+  than one dialog per field.
+- Approving a `confirm` sends the triggering change and the clear in a **single**
+  request, so the entity is never briefly left in a state the user did not
+  approve.
 
 ## Lists
 

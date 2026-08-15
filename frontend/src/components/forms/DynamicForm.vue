@@ -405,6 +405,7 @@ async function loadEntity(force = false) {
     // The stored value is safe on the server, so dropping the cache is lossless:
     // a later reveal reads it back from `properties`.
     hiddenPolicy.releaseAll()
+    formGeneration.value++
     formData.value = { ...entity.properties }
     relations.value = entity.relations ? { ...entity.relations } : {}
     content.value = entity.content || ''
@@ -1116,6 +1117,18 @@ function handleCancel() {
 // returns 'applied' and no dialog can interleave. The seam exists so that an
 // interactive policy (`clear_when_hidden: confirm`) can return 'rejected'
 // without a single byte having changed — see useProposal.
+// Bumped whenever the form's underlying entity state is replaced wholesale, so
+// a dialog opened against the old state can be recognised as stale rather than
+// applied to the new one.
+const formGeneration = ref(0)
+
+// True while a clear-confirm dialog is open. `useConfirm` is a SINGLETON that
+// returns its in-flight promise to a concurrent caller, so a second `confirm()`
+// would receive THIS dialog's answer — the navigation guard would silently
+// inherit "yes, clear the field" as "yes, leave anyway". Guarding here is
+// cheaper and clearer than making the dialog re-entrant.
+const confirmingClear = ref(false)
+
 const changePolicy = useChangePolicy({
   bindings: conditionBindings,
   activeNow: () => wizard.activeProperties.value,
@@ -1127,10 +1140,46 @@ const changePolicy = useChangePolicy({
   onHidden: applyHidePolicy,
   // Create has no stored value to lose — RR-O4SRG's drop-on-commit owns it.
   enabled: () => isEdit.value,
+  policyFor: (p) => clearWhenHiddenOf(fieldByProperty.value.get(p)),
+  isEmpty: (p) => isClearedForType(formData.value[p], entityType.value?.properties?.[p]),
+  generation: () => formGeneration.value,
+  askToClear: async (properties) => {
+    confirmingClear.value = true
+    try {
+      return await confirm({
+        title: properties.length > 1 ? 'Clear these fields?' : 'Clear this field?',
+        message: clearConfirmMessage(properties),
+        confirmLabel: 'Clear',
+        danger: true,
+      })
+    } finally {
+      confirmingClear.value = false
+    }
+  },
 })
 
+/**
+ * Name each field and show what it currently holds, so the user can weigh the
+ * loss rather than guess at it. Values are already redaction-filtered — a
+ * property the principal cannot see is absent from `formData` entirely.
+ */
+function clearConfirmMessage(properties: string[]): string {
+  const lines = properties.map((p) => {
+    const label = fieldByProperty.value.get(p)?.label || p
+    const value = formData.value[p]
+    return `• ${label}: ${String(value)}`
+  })
+  return [
+    'This change hides the following, which will be cleared:',
+    '',
+    ...lines,
+    '',
+    'Continue?',
+  ].join('\n')
+}
+
 /** Widget edits enter here. See useChangePolicy for why this is not a write. */
-function proposeChange(property: string, value: unknown): ProposalOutcome {
+async function proposeChange(property: string, value: unknown): Promise<ProposalOutcome> {
   return changePolicy.propose(property, value, formData.value[property])
 }
 
@@ -1469,6 +1518,13 @@ onBeforeUnmount(() => {
 // discard-confirmation for the nested form.
 if (!props.embedded) {
   onBeforeRouteLeave(async () => {
+    // A clear-confirm dialog is open. `useConfirm` is a singleton that hands a
+    // concurrent caller the SAME in-flight promise, so prompting here would
+    // return that dialog's answer: the user clicking "Clear" would also be
+    // answering "Leave anyway" without ever seeing the question. Block the
+    // navigation instead and let them finish the decision in front of them.
+    if (confirmingClear.value) return false
+
     // TKT-E6094: in edit mode, flush autosave before navigating away.
     // On clean commit we proceed silently; on error or timeout we
     // prompt the user to confirm.

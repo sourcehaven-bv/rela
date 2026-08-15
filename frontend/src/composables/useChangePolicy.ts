@@ -1,4 +1,5 @@
 import type { Bindings } from '@/utils/conditions'
+import type { ClearWhenHidden } from '@/types'
 import { proposedBindings, wouldHide, type Proposal, type ProposalOutcome } from './useProposal'
 
 /**
@@ -26,13 +27,17 @@ import { proposedBindings, wouldHide, type Proposal, type ProposalOutcome } from
  * and the host has to apply the change anyway (errors, dirty tracking, autosave
  * routing all live there).
  *
- * ## Today's policies are synchronous
+ * ## The three policies
  *
- * `no` and `yes` both decide from state the caller already holds, so
- * `propose()` always returns `applied`. The seam exists so an interactive
- * policy (`clear_when_hidden: confirm`) can return `rejected` with not a single
- * byte changed. That policy is not implemented here — it needs the write queue
- * half of TKT-7S5735 — but nothing about this shape has to change to add it.
+ * `no` and `yes` decide from state the caller already holds. `confirm` awaits
+ * the user, and is the reason the ordering above is not merely tidy: because
+ * nothing is mutated and nothing queued before the decision, a decline is a
+ * true NO-OP rather than a rollback. Every earlier attempt at `confirm` had to
+ * undo a write that had already happened — and each one passed its tests and
+ * then failed in manual use.
+ *
+ * `confirm` is not `yes` with a prompt: declining also abandons the TRIGGERING
+ * change, which `yes` never does.
  */
 
 export interface ChangePolicyDeps {
@@ -57,6 +62,24 @@ export interface ChangePolicyDeps {
    * is no stored value to lose — RR-O4SRG's drop-on-commit owns that.
    */
   enabled: () => boolean
+  /** Per-property `clear_when_hidden`. */
+  policyFor: (property: string) => ClearWhenHidden
+  /**
+   * Ask the user to approve clearing `properties`. Resolves true to proceed.
+   *
+   * Only called when something is genuinely at stake — a `confirm` field whose
+   * value is non-empty. One dialog per proposal, naming every affected field,
+   * never one dialog per field.
+   */
+  askToClear: (properties: string[]) => Promise<boolean>
+  /** True when a property currently holds nothing worth warning about. */
+  isEmpty: (property: string) => boolean
+  /**
+   * Monotonic counter identifying the current form incarnation. Read before
+   * awaiting and compared after: if it moved (entity reloaded, form switched
+   * entity), the dialog's answer is stale and the proposal is `superseded`.
+   */
+  generation: () => number
 }
 
 export function useChangePolicy(deps: ChangePolicyDeps) {
@@ -93,13 +116,42 @@ export function useChangePolicy(deps: ChangePolicyDeps) {
     }
   }
 
-  function propose(property: string, value: unknown, previous: unknown): ProposalOutcome {
+  /**
+   * Fields this proposal would hide that are configured `confirm` AND actually
+   * hold something to lose. An empty field is not worth a dialog — prompting
+   * for it trains the user to dismiss without reading.
+   */
+  function needsConfirm(hiding: string[]): string[] {
+    return hiding.filter((p) => deps.policyFor(p) === 'confirm' && !deps.isEmpty(p))
+  }
+
+  async function propose(
+    property: string,
+    value: unknown,
+    previous: unknown
+  ): Promise<ProposalOutcome> {
     const proposal: Proposal = { property, value, previous }
 
-    // 1. Ask. Costs nothing, changes nothing.
+    // 1. Ask what this would hide. Costs nothing, changes nothing.
     const hiding = hidesFrom(proposal)
 
-    // 2. Decide. Synchronous today; this is where an interactive policy awaits.
+    // 2. Decide.
+    //
+    // Nothing has been mutated and nothing queued at this point, which is the
+    // whole reason the seam exists: a decline below is a true no-op, not a
+    // rollback. The four BUG-FB0LN8 attempts all had to undo a write here.
+    const atStake = needsConfirm(hiding)
+    if (atStake.length) {
+      const generation = deps.generation()
+      const approved = await deps.askToClear(atStake)
+
+      // The form moved on while the dialog was open (entity reloaded, or the
+      // form switched entity). `previous` and `hiding` both describe a state
+      // that no longer exists, so applying either answer would write against
+      // stale assumptions.
+      if (deps.generation() !== generation) return { status: 'superseded' }
+      if (!approved) return { status: 'rejected' }
+    }
 
     // 3. Apply — retention first, see retainBeforeChange.
     if (hiding.length) retainBeforeChange(hiding, proposal)
@@ -109,5 +161,5 @@ export function useChangePolicy(deps: ChangePolicyDeps) {
     return { status: 'applied' }
   }
 
-  return { propose, hidesFrom }
+  return { propose, hidesFrom, needsConfirm }
 }

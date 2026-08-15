@@ -22,6 +22,7 @@ import { useSchemaStore, useEntitiesStore } from '@/stores'
 import DynamicForm from './DynamicForm.vue'
 import type { Entity } from '@/types'
 
+
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
   useRoute: () => ({ query: {}, params: {}, path: '/form/opportunity-form' }),
@@ -71,6 +72,13 @@ const STORED = {
   inschrijfdeadline: '2026-09-15',
   vragenronde_deadline: '2026-08-20',
 }
+
+// `DynamicForm` destructures `confirm` at setup, so the module has to be
+// mocked before mount — a post-mount spyOn would never be seen.
+const confirmMock = vi.fn(async () => true)
+vi.mock('@/composables/useConfirm', () => ({
+  useConfirm: () => ({ confirm: confirmMock }),
+}))
 
 const mounted: VueWrapper[] = []
 
@@ -220,6 +228,67 @@ describe('DynamicForm propose/commit seam', () => {
     }
     expect(patch.properties?.inkooproute).toBe('onderhands')
     expect(patch.properties_unset).toContain('inschrijfdeadline')
+  })
+
+  // clear_when_hidden: confirm, through the real widget path. This is the
+  // feature four previous attempts failed to ship: each passed its unit tests
+  // and then misbehaved in a browser, because the decision happened after the
+  // write. These drive the actual dialog.
+  describe('clear_when_hidden: confirm', () => {
+    beforeEach(() => {
+      confirmMock.mockReset()
+      confirmMock.mockResolvedValue(true)
+    })
+
+    it('declining leaves the trigger AND the hidden field untouched', async () => {
+      confirmMock.mockResolvedValue(false)
+      const { wrapper, update } = await mountEdit(formConfig('confirm'))
+
+      await typeInto(wrapper, 'inkooproute', 'onderhands')
+      await flushPromises()
+
+      // The trigger never changed, so the deadlines never hid.
+      expect(rendered(wrapper, 'inschrijfdeadline')).toBe(true)
+      expect(
+        (wrapper.find('#field-inschrijfdeadline').element as HTMLInputElement).value
+      ).toBe('2026-09-15')
+      expect(update).not.toHaveBeenCalled()
+    })
+
+    it('approving commits the change and the clear together', async () => {
+      confirmMock.mockResolvedValue(true)
+      const { wrapper, update } = await mountEdit(formConfig('confirm'))
+      vi.useFakeTimers()
+
+      await typeInto(wrapper, 'inkooproute', 'onderhands')
+      await vi.advanceTimersByTimeAsync(2000)
+
+      expect(update).toHaveBeenCalledTimes(1)
+      const patch = update.mock.calls[0][2] as {
+        properties?: Record<string, unknown>
+        properties_unset?: string[]
+      }
+      expect(patch.properties?.inkooproute).toBe('onderhands')
+      expect(patch.properties_unset).toContain('inschrijfdeadline')
+    })
+
+    // The debounce must not outrun the dialog. This is the exact failure from
+    // the earlier attempt: thinking too long committed the change.
+    it('emits nothing while the dialog is open, however long it stays open', async () => {
+      const { wrapper, update } = await mountEdit(formConfig('confirm'))
+      let release!: (v: boolean) => void
+      confirmMock.mockImplementation(() => new Promise<boolean>((r) => (release = r)))
+      vi.useFakeTimers()
+
+      await typeInto(wrapper, 'inkooproute', 'onderhands')
+      await vi.advanceTimersByTimeAsync(5000) // far beyond the 800ms debounce
+
+      expect(update).not.toHaveBeenCalled() // still undecided → still nothing sent
+
+      release(false)
+      await flushPromises()
+      expect(update).not.toHaveBeenCalled()
+    })
   })
 
   // The trigger's own edit must still commit normally — the seam must not

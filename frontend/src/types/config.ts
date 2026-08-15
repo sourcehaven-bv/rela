@@ -86,13 +86,12 @@ export interface FormStep {
  * - `no` (default) — keep the value; hide/reveal is lossless.
  * - `yes`          — clear it when the branch hides.
  *
- * A third value, `confirm` (ask before clearing, undo the triggering change on
- * decline), is deliberately absent. It needs the form to separate "proposed"
- * from "committed" — today an edit mutates form state and arms the autosave in
- * one step, so a decline must reconstruct state after the fact. The backend
- * rejects `confirm` at config-validation time until that refactor lands.
+ * `confirm` asks before clearing and undoes the TRIGGERING change on decline —
+ * it is not merely `yes` with a prompt. It requires the propose/commit seam
+ * (TKT-7S5735): the decision happens before anything is applied, so a decline
+ * is a true no-op rather than a rollback.
  */
-export type ClearWhenHidden = 'no' | 'yes'
+export type ClearWhenHidden = 'no' | 'yes' | 'confirm'
 
 export interface FormField {
   property?: string

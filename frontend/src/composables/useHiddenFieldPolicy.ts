@@ -80,12 +80,18 @@ export function useHiddenFieldPolicy(opts: HiddenFieldPolicyOptions) {
 
   /**
    * Of the properties about to be hidden, which should be cleared server-side.
-   * Everything else is simply retained. Synchronous by construction: no
-   * dialog, no await, so there is no window in which the form and the server
-   * can disagree.
+   * Everything else is simply retained.
+   *
+   * `confirm` counts as a clear here because this runs only on the ACCEPTED
+   * path: `useChangePolicy` gates the dialog before anything is applied, so by
+   * the time this is called the user has already said yes. A declined proposal
+   * never reaches it — nothing is applied at all.
    */
   function clearOnHide(hidingProperties: string[]): string[] {
-    return hidingProperties.filter((p) => opts.policyFor(p) === 'yes')
+    return hidingProperties.filter((p) => {
+      const policy = opts.policyFor(p)
+      return policy === 'yes' || policy === 'confirm'
+    })
   }
 
   return {
