@@ -25,6 +25,8 @@ function setup(opts: {
   policyFor?: (property: string) => string
   /** What the confirm dialog answers. */
   approve?: boolean
+  /** Properties the principal cannot read (field-level redaction). */
+  unreadable?: string[]
 }) {
   const form = { ...opts.form }
   const retained: Record<string, unknown> = {}
@@ -55,6 +57,7 @@ function setup(opts: {
       return opts.approve ?? true
     },
     isEmpty: (p) => form[p] === undefined || form[p] === '' || form[p] === null,
+    isUnreadable: (p) => (opts.unreadable ?? []).includes(p),
     restore: () => restored.push(true),
     generation: () => generation.value,
   }
@@ -77,10 +80,23 @@ describe('useChangePolicy', () => {
     expect(applied).toHaveLength(1)
   })
 
-  it('reports the fields a proposal would hide', async () => {
+  // `onHidden` receives the DECIDED clear set, not the raw hiding list. Under
+  // the default policy nothing is cleared, so it is never called — hiding is
+  // presentation, and only an explicit policy turns it into a write.
+  it('does not ask to clear anything under the default policy', async () => {
     const { policy, hiddenBatches } = setup({
       form: { route: 'aanbesteding', deadline: '2026-09-15' },
       visibleFor: routeRule,
+    })
+    await policy.propose('route', 'onderhands', 'aanbesteding')
+    expect(hiddenBatches).toEqual([])
+  })
+
+  it('asks to clear a `yes` field that hides', async () => {
+    const { policy, hiddenBatches } = setup({
+      form: { route: 'aanbesteding', deadline: '2026-09-15' },
+      visibleFor: routeRule,
+      policyFor: (p) => (p === 'deadline' ? 'yes' : 'no'),
     })
     await policy.propose('route', 'onderhands', 'aanbesteding')
     expect(hiddenBatches).toEqual([['deadline']])
@@ -148,9 +164,10 @@ describe('useChangePolicy', () => {
       apply: () => order.push('apply'),
       onHidden: () => order.push('onHidden'),
       enabled: () => true,
-      policyFor: () => 'no',
+      policyFor: () => 'yes', // so the clear actually runs and onHidden fires
       askToClear: async () => true,
       isEmpty: () => false,
+      isUnreadable: () => false,
       restore: () => {},
       generation: () => 0,
     })
@@ -171,7 +188,7 @@ describe('useChangePolicy', () => {
     await policy.propose('route', 'onderhands', 'aanbesteding')
 
     expect(retained).toEqual({ a: 1, b: 2 })
-    expect(hiddenBatches[0].sort()).toEqual(['a', 'b']) // ONE batch, not one per field
+    expect(hiddenBatches).toEqual([]) // policy `no` → retained, never cleared
   })
 
   // The create path has no stored value to lose; RR-O4SRG's drop-on-commit
@@ -287,6 +304,58 @@ describe('useChangePolicy', () => {
       expect(form.route).toBe('aanbesteding')
     })
 
+    // C2: a redacted field is absent from form state, so it looks empty. It
+    // must NOT be cleared and must NOT be asked about — no dialog can display
+    // a value the principal cannot read, and clearing it destroys data they
+    // never saw.
+    it('never clears or asks about a field the principal cannot read', async () => {
+      const { policy, asked, hiddenBatches } = setup({
+        form: { route: 'aanbesteding' }, // `deadline` withheld by ACL
+        visibleFor: routeRule,
+        policyFor: (p) => (p === 'deadline' ? 'confirm' : 'no'),
+        unreadable: ['deadline'],
+        approve: true,
+      })
+
+      await policy.propose('route', 'onderhands', 'aanbesteding')
+
+      expect(asked).toEqual([])
+      expect(hiddenBatches).toEqual([])
+    })
+
+    // The decision must travel with the data. Re-deriving "should this be
+    // cleared?" downstream from `clear_when_hidden` is what produced the
+    // redaction hole above.
+    it('clears only what the user actually approved', async () => {
+      const { policy, hiddenBatches } = setup({
+        form: { route: 'aanbesteding', a: 'x', b: 'y' },
+        visibleFor: (f) => (f.route === 'aanbesteding' ? ['route', 'a', 'b'] : ['route']),
+        // `a` needs consent; `b` is unconditional
+        policyFor: (p) => (p === 'a' ? 'confirm' : p === 'b' ? 'yes' : 'no'),
+        approve: true,
+      })
+
+      await policy.propose('route', 'onderhands', 'aanbesteding')
+
+      expect(hiddenBatches[0].sort()).toEqual(['a', 'b'])
+    })
+
+    it('clears the unconditional field but not the declined one', async () => {
+      const { policy, hiddenBatches } = setup({
+        form: { route: 'aanbesteding', a: 'x', b: 'y' },
+        visibleFor: (f) => (f.route === 'aanbesteding' ? ['route', 'a', 'b'] : ['route']),
+        policyFor: (p) => (p === 'a' ? 'confirm' : p === 'b' ? 'yes' : 'no'),
+        approve: false, // decline
+      })
+
+      const outcome = await policy.propose('route', 'onderhands', 'aanbesteding')
+
+      // Declining abandons the WHOLE proposal, so `b` is not cleared either —
+      // the change that would have hidden it never happened.
+      expect(outcome).toEqual({ status: 'rejected' })
+      expect(hiddenBatches).toEqual([])
+    })
+
     it('names every confirm-policy field in one dialog, not one each', async () => {
       const { policy, asked } = setup({
         form: { route: 'aanbesteding', a: 'x', b: 'y' },
@@ -319,6 +388,7 @@ describe('useChangePolicy', () => {
       policyFor: () => 'no',
       askToClear: async () => true,
       isEmpty: () => false,
+      isUnreadable: () => false,
       restore: () => {},
       generation: () => 0,
     })

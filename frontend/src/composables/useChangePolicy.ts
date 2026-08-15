@@ -55,8 +55,13 @@ export interface ChangePolicyDeps {
   retain: (property: string, value: unknown) => void
   /** Commit an accepted proposal to form state + the write queue. */
   apply: (proposal: Proposal) => void
-  /** Apply `clear_when_hidden` to fields that just hid (already retained). */
-  onHidden: (hiding: string[]) => void
+  /**
+   * Clear these fields server-side. They have already been retained, and the
+   * decision to clear them has already been MADE — the callee must not
+   * re-derive intent from config. Carrying the approved set here is what stops
+   * a `confirm` field being cleared on a path where no dialog ran.
+   */
+  onHidden: (toClear: string[]) => void
   /**
    * Whether hide policy applies at all. False on the create path, where there
    * is no stored value to lose — RR-O4SRG's drop-on-commit owns that.
@@ -74,6 +79,16 @@ export interface ChangePolicyDeps {
   askToClear: (properties: string[]) => Promise<boolean>
   /** True when a property currently holds nothing worth warning about. */
   isEmpty: (property: string) => boolean
+  /**
+   * True when the principal cannot READ this property (field-level redaction).
+   *
+   * Such a value is absent from form state, so it is indistinguishable from
+   * empty by inspection — and clearing it would destroy data the user was
+   * never shown and never asked about. `confirm` therefore fails safe on it:
+   * no dialog can be shown (there is nothing to display), so nothing is
+   * cleared.
+   */
+  isUnreadable: (property: string) => boolean
   /**
    * Re-assert a declined proposal's PREVIOUS value in the UI.
    *
@@ -131,7 +146,28 @@ export function useChangePolicy(deps: ChangePolicyDeps) {
    * for it trains the user to dismiss without reading.
    */
   function needsConfirm(hiding: string[]): string[] {
-    return hiding.filter((p) => deps.policyFor(p) === 'confirm' && !deps.isEmpty(p))
+    return hiding.filter(
+      (p) => deps.policyFor(p) === 'confirm' && !deps.isUnreadable(p) && !deps.isEmpty(p)
+    )
+  }
+
+  /**
+   * Which of the hiding fields to actually clear, given the user's answer.
+   *
+   * `yes` clears unconditionally. `confirm` clears only when a dialog ran AND
+   * was approved — never when the field is unreadable (no dialog is possible)
+   * and never when the answer was no. Returning the decision rather than
+   * letting the callee re-read `clear_when_hidden` is deliberate: re-deriving
+   * intent downstream is how a redacted `confirm` field got cleared with no
+   * dialog at all.
+   */
+  function approvedClears(hiding: string[], approved: Set<string>): string[] {
+    return hiding.filter((p) => {
+      const policy = deps.policyFor(p)
+      if (policy === 'yes') return true
+      if (policy === 'confirm') return approved.has(p)
+      return false
+    })
   }
 
   async function propose(
@@ -150,16 +186,17 @@ export function useChangePolicy(deps: ChangePolicyDeps) {
     // whole reason the seam exists: a decline below is a true no-op, not a
     // rollback. The four BUG-FB0LN8 attempts all had to undo a write here.
     const atStake = needsConfirm(hiding)
+    let approved = new Set<string>()
     if (atStake.length) {
       const generation = deps.generation()
-      const approved = await deps.askToClear(atStake)
+      const accepted = await deps.askToClear(atStake)
 
       // The form moved on while the dialog was open (entity reloaded, or the
       // form switched entity). `previous` and `hiding` both describe a state
       // that no longer exists, so applying either answer would write against
       // stale assumptions.
       if (deps.generation() !== generation) return { status: 'superseded' }
-      if (!approved) {
+      if (!accepted) {
         // `formData` was never written, so there is nothing to roll back —
         // but the WIDGET wrote its own DOM when the user interacted with it,
         // and an unchanged `model-value` gives Vue no reason to patch it back.
@@ -172,15 +209,17 @@ export function useChangePolicy(deps: ChangePolicyDeps) {
         deps.restore(proposal)
         return { status: 'rejected' }
       }
+      approved = new Set(atStake)
     }
 
     // 3. Apply — retention first, see retainBeforeChange.
     if (hiding.length) retainBeforeChange(hiding, proposal)
     deps.apply(proposal)
-    if (hiding.length) deps.onHidden(hiding)
+    const toClear = approvedClears(hiding, approved)
+    if (toClear.length) deps.onHidden(toClear)
 
     return { status: 'applied' }
   }
 
-  return { propose, hidesFrom, needsConfirm }
+  return { propose, hidesFrom, needsConfirm, approvedClears }
 }

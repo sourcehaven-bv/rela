@@ -23,10 +23,13 @@ import DynamicForm from './DynamicForm.vue'
 import type { Entity } from '@/types'
 
 
+// Capture the registered leave-guard so a test can invoke it the way the
+// router would, without standing up a real router.
+const leaveGuards: Array<() => unknown> = []
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
   useRoute: () => ({ query: {}, params: {}, path: '/form/opportunity-form' }),
-  onBeforeRouteLeave: vi.fn(),
+  onBeforeRouteLeave: (fn: () => unknown) => leaveGuards.push(fn),
 }))
 
 vi.mock('@/api', async () => {
@@ -94,7 +97,10 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-async function mountEdit(cfg: object) {
+async function mountEdit(
+  cfg: object,
+  entityOpts: { properties?: Record<string, unknown>; redacted?: string[] } = {}
+) {
   const schema = useSchemaStore()
   schema.forms.set('opportunity-form', cfg as never)
   schema.entityTypes.set('opportunity', ENTITY_TYPE as never)
@@ -104,10 +110,10 @@ async function mountEdit(cfg: object) {
   const entity: Entity = {
     id: 'OPP-1',
     type: 'opportunity',
-    properties: { ...STORED },
+    properties: entityOpts.properties ?? { ...STORED },
     _actions: { update: true },
     _fields: {},
-    _redacted: [],
+    _redacted: entityOpts.redacted ?? [],
   }
   vi.spyOn(entities, 'fetchEntity').mockResolvedValue(entity)
   const update = vi
@@ -290,6 +296,68 @@ describe('DynamicForm propose/commit seam', () => {
       }
       expect(patch.properties?.inkooproute).toBe('onderhands')
       expect(patch.properties_unset).toContain('inschrijfdeadline')
+    })
+
+    // A field the principal cannot READ is absent from formData, so it is
+    // indistinguishable from empty — which meant no dialog was shown AND it
+    // was cleared anyway. BUG-FB0LN8's original symptom, resurrected through
+    // the ACL path: data destroyed that the user never saw and never approved.
+    it('never clears a redacted confirm field, and never asks about it', async () => {
+      const { wrapper, update } = await mountEdit(formConfig('confirm'), {
+        properties: { inkooproute: 'aanbesteding' }, // inschrijfdeadline withheld
+        redacted: ['inschrijfdeadline'],
+      })
+      vi.useFakeTimers()
+
+      await typeInto(wrapper, 'inkooproute', 'onderhands')
+      await flushPromises()
+      await vi.advanceTimersByTimeAsync(2000)
+
+      expect(confirmMock).not.toHaveBeenCalled() // nothing displayable to ask about
+      const unsets = update.mock.calls.flatMap(
+        (c) => (c[2] as { properties_unset?: string[] })?.properties_unset ?? []
+      )
+      expect(unsets).not.toContain('inschrijfdeadline')
+    })
+
+    // useConfirm resolves its pending promise on APP-shell unmount, not ours,
+    // so a route change with the dialog open would resume the awaited
+    // continuation on a dead component and PATCH a form the user has left.
+    it('does not write when the form unmounts while the dialog is open', async () => {
+      let release!: (v: boolean) => void
+      confirmMock.mockImplementation(() => new Promise<boolean>((r) => (release = r)))
+      const { wrapper, update } = await mountEdit(formConfig('confirm'))
+      vi.useFakeTimers()
+
+      await typeInto(wrapper, 'inkooproute', 'onderhands')
+      await flushPromises()
+      wrapper.unmount()
+      release(true) // user answers AFTER navigating away
+      await flushPromises()
+      await vi.advanceTimersByTimeAsync(2000)
+
+      expect(update).not.toHaveBeenCalled()
+    })
+
+    // RR-YWIN6T. `useConfirm` is a singleton that hands a concurrent caller
+    // the SAME in-flight promise. Without this fence the navigation guard
+    // would receive the clear-dialog's answer: clicking "Clear" would also
+    // answer "Leave anyway", navigating the user away from a decision they
+    // were still making.
+    it('blocks navigation while the clear dialog is open', async () => {
+      let release!: (v: boolean) => void
+      confirmMock.mockImplementation(() => new Promise<boolean>((r) => (release = r)))
+      leaveGuards.length = 0
+      const { wrapper } = await mountEdit(formConfig('confirm'))
+      const guard = leaveGuards[leaveGuards.length - 1]
+
+      await typeInto(wrapper, 'inkooproute', 'onderhands')
+      await flushPromises()
+
+      expect(await guard()).toBe(false) // dialog open → navigation refused
+
+      release(false)
+      await flushPromises()
     })
 
     // The debounce must not outrun the dialog. This is the exact failure from

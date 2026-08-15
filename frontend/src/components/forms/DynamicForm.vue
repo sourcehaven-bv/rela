@@ -297,10 +297,20 @@ watch(
 // Apply `clear_when_hidden` to the fields that just hid. Called by the change
 // policy AFTER it has retained their pre-change values, so a reveal is lossless
 // whatever the policy says; only the server-side clear is per-field.
-function applyHidePolicy(hiding: string[]) {
-  if (!autoSave.value) return // nothing can be written yet; retention already stands
+function applyHidePolicy(toClear: string[]) {
+  if (!autoSave.value) {
+    // No write channel yet (the brief window before onMounted wires autosave).
+    // Retention already stands, so nothing is lost — but a clear the user
+    // explicitly approved would silently not happen. Drop the retained copy so
+    // the field does not later re-appear holding a value they asked to remove.
+    for (const prop of toClear) hiddenPolicy.release(prop)
+    return
+  }
 
-  for (const prop of hiddenPolicy.clearOnHide(hiding)) {
+  // `toClear` is already the DECIDED set — the change policy resolved
+  // `clear_when_hidden` (including any dialog answer) before calling. Do not
+  // re-filter it here.
+  for (const prop of toClear) {
     delete formData.value[prop]
     hiddenPolicy.release(prop)
     autoSave.value.scheduleUnset(prop)
@@ -1147,6 +1157,7 @@ const changePolicy = useChangePolicy({
   enabled: () => isEdit.value,
   policyFor: (p) => clearWhenHiddenOf(fieldByProperty.value.get(p)),
   isEmpty: (p) => isClearedForType(formData.value[p], entityType.value?.properties?.[p]),
+  isUnreadable: (p) => isPropertyRedacted(p, redactedProps.value),
   generation: () => formGeneration.value,
   restore: () => {
     // `formData` still holds the previous value — the decline wrote nothing.
@@ -1180,11 +1191,17 @@ const changePolicy = useChangePolicy({
  * loss rather than guess at it. Values are already redaction-filtered — a
  * property the principal cannot see is absent from `formData` entirely.
  */
+/** Render a value for human eyes: arrays as a list, objects as JSON. */
+function describeValue(value: unknown): string {
+  if (Array.isArray(value)) return value.map((v) => String(v)).join(', ')
+  if (value && typeof value === 'object') return JSON.stringify(value)
+  return String(value)
+}
+
 function clearConfirmMessage(properties: string[]): string {
   const lines = properties.map((p) => {
     const label = fieldByProperty.value.get(p)?.label || p
-    const value = formData.value[p]
-    return `• ${label}: ${String(value)}`
+    return `• ${label}: ${describeValue(formData.value[p])}`
   })
   return [
     'This change hides the following, which will be cleared:',
@@ -1515,6 +1532,11 @@ onBeforeUnmount(() => {
   stagedUnmounted = true
   if (stagedDryRunTimer) clearTimeout(stagedDryRunTimer)
   stagedDryRunController?.abort()
+  // Supersede any proposal still awaiting a dialog. `useConfirm` resolves its
+  // pending promise on APP-shell unmount, not on ours, so a route change with
+  // the dialog open would otherwise resume the awaited continuation on a dead
+  // component and schedule a real PATCH against a form the user has left.
+  formGeneration.value++
 })
 
 // Returning a promise from the guard preserves the original navigation's

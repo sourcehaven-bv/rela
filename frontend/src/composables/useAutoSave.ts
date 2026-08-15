@@ -297,6 +297,12 @@ export function useAutoSave(opts: AutoSaveOptions) {
    * the user never approved (trigger changed, dependent field still populated),
    * and if the second request fails that state is what persists.
    *
+   * Scope note: this makes an approved DECISION atomic. It does not freeze the
+   * form — an unrelated field edited while a confirm dialog is open still
+   * debounces and saves on its own, because the gated proposal is not in
+   * `pending` yet (that is the whole design). That write is independent of the
+   * decision, so it is not part of the set being made atomic.
+   *
    * Per-property semantics are preserved inside the batch:
    * - **no-op suppression** is evaluated per entry while building, and a batch
    *   in which every entry is suppressed sends nothing at all (rather than an

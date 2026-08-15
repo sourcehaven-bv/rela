@@ -79,19 +79,17 @@ export function useHiddenFieldPolicy(opts: HiddenFieldPolicyOptions) {
   }
 
   /**
-   * Of the properties about to be hidden, which should be cleared server-side.
-   * Everything else is simply retained.
+   * Of the properties about to be hidden, which should be cleared server-side
+   * on POLICY alone. Everything else is simply retained.
    *
-   * `confirm` counts as a clear here because this runs only on the ACCEPTED
-   * path: `useChangePolicy` gates the dialog before anything is applied, so by
-   * the time this is called the user has already said yes. A declined proposal
-   * never reaches it — nothing is applied at all.
+   * Only `yes` qualifies. `confirm` deliberately does NOT: whether to clear it
+   * depends on an answer the user gave, and that decision travels with the
+   * caller's approved set (`useChangePolicy.approvedClears`) rather than being
+   * re-derived here. Re-deriving it is how a redacted `confirm` field — which
+   * can never show a dialog — was cleared with no consent at all.
    */
   function clearOnHide(hidingProperties: string[]): string[] {
-    return hidingProperties.filter((p) => {
-      const policy = opts.policyFor(p)
-      return policy === 'yes' || policy === 'confirm'
-    })
+    return hidingProperties.filter((p) => opts.policyFor(p) === 'yes')
   }
 
   return {
