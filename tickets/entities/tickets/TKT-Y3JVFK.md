@@ -5,7 +5,7 @@ title: 'Aggregate-over-hidden-rows documents: elevated document renders whose ou
 kind: enhancement
 priority: medium
 effort: l
-status: planning
+status: in-progress
 ---
 
 ## Problem

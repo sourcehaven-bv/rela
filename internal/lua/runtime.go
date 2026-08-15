@@ -711,9 +711,16 @@ func (r *Runtime) registerBindings(allowWrites bool) {
 	if allowWrites {
 		r.registerWriteBindings(rela)
 		// rela.bypass_acl is registered ONLY when an elevated handle was wired
-		// (an allow_acl_bypass automation action — TKT-D8T148). Absent it, the
+		// (an allow_acl_bypass automation action — TKT-D8T148). Absent BOTH, the
 		// binding does not exist and a script cannot elevate.
-		if r.deps.ElevatedManager != nil {
+		//
+		// EITHER handle suffices (TKT-Y3JVFK). A document render is granted an
+		// elevated READER and no elevated Mutator, so it can aggregate over rows
+		// its caller cannot see while remaining unable to mutate: newElevatedHandle
+		// omits the write methods when em is nil, so `admin.delete_entity` is
+		// "attempt to call a nil value" rather than a guarded call. Reads-only is
+		// structural, not a promise.
+		if r.deps.ElevatedManager != nil || r.deps.ElevatedReader != nil {
 			r.L.SetField(rela, "bypass_acl", r.L.NewFunction(r.luaBypassACL))
 		}
 	}
@@ -1791,10 +1798,14 @@ func WarningsToTable(ls *lua.LState, warnings []entity.Warning) lua.LValue {
 }
 
 // luaBypassACL implements rela.bypass_acl(fn) (TKT-D8T148). It invokes fn with
-// a single argument `admin`: a write handle whose mutations skip the ACL deny,
-// backed by the elevated Mutator wired into WriteDeps. Elevation is therefore
-// an OBJECT CAPABILITY scoped to the closure — the gated rela.* bindings are
-// never elevated; only writes made through `admin` bypass ACL.
+// a single argument `admin`: a handle whose reads and writes skip the ACL,
+// backed by the elevated Mutator and/or EntityReader wired into WriteDeps.
+// Elevation is therefore an OBJECT CAPABILITY scoped to the closure — the gated
+// rela.* bindings are never elevated; only access through `admin` bypasses ACL.
+//
+// The handle carries only the capabilities that were wired (TKT-Y3JVFK): a
+// document render gets an elevated reader and no Mutator, so `admin` has the
+// three read methods and no write methods at all. See newElevatedHandle.
 //
 // After fn returns (or raises), `admin` is INVALIDATED: its methods raise. A
 // script that squirrels `admin` into a global and calls it later gets a dead
@@ -1803,10 +1814,13 @@ func WarningsToTable(ls *lua.LState, warnings []entity.Warning) lua.LValue {
 // raise inside fn propagates too (a failed elevated write must surface).
 func (r *Runtime) luaBypassACL(ls *lua.LState) int {
 	fn := ls.CheckFunction(1)
-	if r.deps.ElevatedManager == nil {
-		// Defensive: the binding is only registered when ElevatedManager is
-		// set, but fail loud rather than silently no-op if that ever drifts.
-		ls.RaiseError("rela.bypass_acl: no elevated write handle is available")
+	if r.deps.ElevatedManager == nil && r.deps.ElevatedReader == nil {
+		// Defensive: the binding is only registered when at least one elevated
+		// handle is set, but fail loud rather than silently no-op if that ever
+		// drifts. Note this raises only when BOTH are absent — a reader-only
+		// elevation is legitimate (TKT-Y3JVFK), and a manager-only one keeps
+		// its existing behavior of raising per-method inside readGuard.
+		ls.RaiseError("rela.bypass_acl: no elevated handle is available")
 		return 0
 	}
 
@@ -1926,12 +1940,40 @@ func (r *Runtime) newElevatedHandle(
 		}
 		return true
 	}
+	// Write methods are ABSENT (not present-and-raising) when no elevated
+	// Mutator was wired — the asymmetry with `er` above is deliberate
+	// (TKT-Y3JVFK). A nil `er` means "elevation was intended but the reader is
+	// missing", i.e. a misconfiguration, so raising names the missing
+	// capability. A nil `em` on a document render means the opposite: the
+	// runtime is READ-ONLY BY CONSTRUCTION and never had writes to lose, so
+	// `admin.delete_entity == nil` is the honest contract, and a script probing
+	// `if admin.delete_entity then` correctly learns it cannot mutate. It also
+	// makes "a render cannot write" structural rather than a guarded promise.
+	if em != nil {
+		registerElevatedWrites(ls, t, em, guard, r.callerCtx)
+	}
+	registerElevatedReads(ls, t, er, readGuard, r.callerCtx, reads)
+	return t
+}
+
+// registerElevatedWrites adds the raw write methods to the `admin` table
+// (TKT-D8T148). Split out for the same reason as registerElevatedReads — the
+// function-length limit — and called only when an elevated Mutator was wired,
+// so a read-only elevation has no write methods at all (TKT-Y3JVFK).
+//
+// create_entity / update_entity remain absent by design: they marshal a full
+// entity table and were deferred with their own tests as the follow-up noted
+// in newElevatedHandle's doc.
+func registerElevatedWrites(
+	ls *lua.LState, t *lua.LTable, em Mutator, guard func(string) bool,
+	ctxFn func() context.Context,
+) {
 	ls.SetField(t, "create_relation", ls.NewFunction(func(s *lua.LState) int {
 		if !guard("create_relation") {
 			return 0
 		}
 		from, relType, to := s.CheckString(1), s.CheckString(2), s.CheckString(3)
-		if _, err := em.CreateRelation(r.callerCtx(), from, relType, to, entity.RelationOptions{}); err != nil {
+		if _, err := em.CreateRelation(ctxFn(), from, relType, to, entity.RelationOptions{}); err != nil {
 			s.RaiseError("bypass_acl create_relation error: %s", err.Error())
 			return 0
 		}
@@ -1943,7 +1985,7 @@ func (r *Runtime) newElevatedHandle(
 			return 0
 		}
 		from, relType, to := s.CheckString(1), s.CheckString(2), s.CheckString(3)
-		if err := em.DeleteRelation(r.callerCtx(), from, relType, to); err != nil {
+		if err := em.DeleteRelation(ctxFn(), from, relType, to); err != nil {
 			s.RaiseError("bypass_acl delete_relation error: %s", err.Error())
 			return 0
 		}
@@ -1956,15 +1998,13 @@ func (r *Runtime) newElevatedHandle(
 		}
 		id := s.CheckString(1)
 		cascade := s.OptBool(2, false)
-		if _, err := em.DeleteEntity(r.callerCtx(), id, cascade); err != nil {
+		if _, err := em.DeleteEntity(ctxFn(), id, cascade); err != nil {
 			s.RaiseError("bypass_acl delete_entity error: %s", err.Error())
 			return 0
 		}
 		s.Push(lua.LTrue)
 		return 1
 	}))
-	registerElevatedReads(ls, t, er, readGuard, r.callerCtx, reads)
-	return t
 }
 
 // registerElevatedReads adds the three raw read methods to the `admin` table
