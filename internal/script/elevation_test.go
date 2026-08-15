@@ -145,7 +145,7 @@ func TestRun_ElevationRequiresBothKeys(t *testing.T) {
 
 			err := r.Run(context.Background(), autocascade.ScriptAction{
 				Code:           "print('x')",
-				AllowACLBypass: tc.allowBypass,
+				AllowACLBypass: string(tc.allowBypass),
 			}, tc.mutator)
 			if err != nil {
 				t.Fatalf("Run: %v", err)
@@ -195,7 +195,7 @@ func TestRun_NoElevatedReaderWhenNoneSupplied(t *testing.T) {
 
 	err := r.Run(context.Background(), autocascade.ScriptAction{
 		Code:           "print('x')",
-		AllowACLBypass: metamodel.ACLBypassReadWrite,
+		AllowACLBypass: string(metamodel.ACLBypassReadWrite),
 	}, elevatingMutator{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)

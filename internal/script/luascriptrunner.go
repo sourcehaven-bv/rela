@@ -7,6 +7,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 // Executor is the consumer-side interface the [LuaScriptRunner] needs
@@ -157,9 +158,13 @@ func (l *LuaScriptRunner) Run(ctx context.Context, action autocascade.ScriptActi
 	// preserving the original two-key property for every automation action.
 	// A read-only surface with no Mutator at all (a document render) does not
 	// route through this runner — it wires lua.WriteDeps directly.
-	if action.AllowACLBypass.Enabled() {
+	// autocascade carries the value as a plain string (it may not import
+	// metamodel); convert once here so the read/write semantics live in
+	// exactly one place rather than being re-derived by string comparison.
+	bypass := metamodel.ACLBypass(action.AllowACLBypass)
+	if bypass.Enabled() {
 		if ep, ok := m.(autocascade.ElevatedProvider); ok {
-			if action.AllowACLBypass.AllowsWrite() {
+			if bypass.AllowsWrite() {
 				deps.ElevatedManager = ep.Elevated()
 			}
 			// elevatedReader is supplied by the wiring site (nil when that site
@@ -167,7 +172,7 @@ func (l *LuaScriptRunner) Run(ctx context.Context, action autocascade.ScriptActi
 			// handle comes from the caller's Mutator rather than being minted
 			// here. This package does not construct the capability; it only
 			// decides when to hand over one it was given.
-			if action.AllowACLBypass.AllowsRead() {
+			if bypass.AllowsRead() {
 				deps.ElevatedReader = l.elevatedReader
 			}
 			deps.ElevationRecorder = l.elevationRecorder

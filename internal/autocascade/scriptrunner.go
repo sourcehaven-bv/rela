@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 // ScriptRunner is the abstraction Runner uses to execute scripted
@@ -65,7 +64,13 @@ type ScriptAction struct {
 	// [ElevatedProvider]) for write, an elevated reader for read; when unset
 	// the binding is absent and the script cannot elevate. Operator-gated:
 	// only a schema-authored action can set it.
-	AllowACLBypass metamodel.ACLBypass
+	//
+	// Typed as a plain string rather than metamodel.ACLBypass because this
+	// package is deliberately schema-agnostic (it may not import metamodel —
+	// see .go-arch-lint.yml). The caller converts; the values are the
+	// metamodel.ACLBypass* constants and AllowsRead/AllowsWrite below mirror
+	// their semantics.
+	AllowACLBypass string
 }
 
 // NopScriptRunner is a no-op [ScriptRunner] for tests that should not
@@ -78,3 +83,12 @@ type nopScriptRunner struct{}
 func (nopScriptRunner) Run(_ context.Context, _ ScriptAction, _ Mutator) error {
 	panic("autocascade.NopScriptRunner: script execution not expected in this context")
 }
+
+// Elevation capability values carried by [ScriptAction.AllowACLBypass].
+// These MUST match the metamodel.ACLBypass* constants; the duplication is
+// what keeps this package free of a schema dependency.
+const (
+	ACLBypassRead      = "read"
+	ACLBypassWrite     = "write"
+	ACLBypassReadWrite = "read+write"
+)
