@@ -165,7 +165,16 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	// handler. Script engine can be the real one (tests that use script:
 	// configs will need to seed scripts on disk).
 	if app.scriptEngine != nil {
-		app.documents = newDocumentService(app.store, app.kv, "/", app.scriptEngine, app.luaWriteDeps)
+		// Elevation wired exactly as production does (NewApp): an elevated
+		// document test that got a nil bundle here would silently render
+		// WITHOUT bypass_acl and the test would pass for the wrong reason.
+		app.documents = newDocumentService(app.store, app.kv, "/", app.scriptEngine, app.luaWriteDeps,
+			func() documentElevation {
+				return documentElevation{
+					Reader:   visibility.Unrestricted(app.store),
+					Recorder: elevationRecorder(app.auditSink),
+				}
+			})
 	}
 	app.affordances = affordanceService{
 		acl:                func() acl.ACL { return app.acl },

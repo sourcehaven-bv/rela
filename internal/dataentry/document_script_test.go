@@ -163,7 +163,7 @@ func newTestService(t *testing.T, entities ...*entity.Entity) (*documentService,
 	// Deps are never actually read by the fake; the zero value is fine.
 	deps := func() lua.WriteDeps { return lua.WriteDeps{} }
 
-	return newDocumentService(st, kv, "/p", fake, deps), fake
+	return newDocumentService(st, kv, "/p", fake, deps, nil), fake
 }
 
 // reqEntity is a convenience factory for the tests below, all of which
@@ -435,7 +435,7 @@ print(got)
 			EntityManager: entitymanagertest.PanicOnUse{},
 		}
 	}
-	s := newDocumentService(st, kv, projectRoot, engine, deps)
+	s := newDocumentService(st, kv, projectRoot, engine, deps, nil)
 
 	cfg := documentRenderConfig{
 		ConfigID: "notes",

@@ -2142,6 +2142,14 @@ func handleV1AnchoredDocument(a *App, w http.ResponseWriter, r *http.Request, do
 		return
 	}
 
+	// An entity-anchored document may also be elevated (TKT-Y3JVFK), in which
+	// case BOTH this and the per-entity gate above must pass. The entity gate
+	// governs the entry entity; elevation governs what the script may read
+	// BEYOND it, so neither subsumes the other.
+	if !gateElevatedDocument(w, r, a.acl, docName, docCfg) {
+		return
+	}
+
 	if ent.Type != docCfg.EntityType {
 		writeV1Error(w, r, http.StatusBadRequest, "entity_type_mismatch",
 			fmt.Sprintf("document %q is for entity_type %q, but %q is a %q",
