@@ -2,6 +2,41 @@ import axios from 'axios'
 import { vi } from 'vitest'
 import { config } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+import axios from 'axios'
+
+// BUG-2OXEW0: no unit test may issue a real HTTP request.
+//
+// The failure this prevents is indirect and badly attributed. An unstubbed
+// child that fetches in `onMounted` (SidePanel, ExportMenu, ...) issues a live
+// request against happy-dom's default origin. It fails ECONNREFUSED and the
+// component logs it via console.error. If that log settles AFTER its test file
+// finishes, it races vitest's closing `onUserConsoleLog` RPC and the run dies
+// with `EnvironmentTeardownError` — exit 1, every test passing, naming a file
+// the PR author never touched. It surfaced on a docs-only PR.
+//
+// Unmounting does not help: it stops the component but does not cancel an
+// in-flight request, so the rejection still settles and still logs.
+//
+// Stub lists alone cannot fix this. They are a per-file denylist maintained by
+// whoever last read a stack trace, so they only ever cover the file that
+// happened to lose the race — the first fix for this bug stubbed SidePanel in
+// the one named file and left 15 live requests in EntityList.test.ts.
+//
+// So fail closed here instead. The adapter rejects SYNCHRONOUSLY at request
+// time, which is the point: the error is thrown at the call site, in the test
+// that caused it, instead of arriving as a nondeterministic teardown crash.
+// Note axios uses the Node http adapter under happy-dom, not XHR — patching
+// `fetch` or XMLHttpRequest catches nothing.
+//
+// To let a test make a request, mock the module it calls (`vi.mock('@/api')`)
+// or stub the component that renders it. Do not disable this guard.
+axios.defaults.adapter = (cfg) => {
+  const url = `${cfg.baseURL ?? ''}${cfg.url ?? ''}`
+  throw new Error(
+    `BUG-2OXEW0: unmocked HTTP request in a unit test: ${(cfg.method ?? 'get').toUpperCase()} ${url}\n` +
+      `Stub the component that fetches it, or vi.mock() the api module it calls.`
+  )
+}
 
 // Mock localStorage before any imports that might use it
 const localStorageMock = (() => {
