@@ -17,7 +17,14 @@ const suggestion = ref<NextActionSuggestion | null>(null)
 const busy = ref(false)
 /** Whether the status-bar popover is expanded. */
 const expanded = ref(false)
+/** The suggestion whose impression has already been reported, if any. */
+const shownKey = ref<string | null>(null)
 let loaded = false
+
+/** Identity of a suggestion for impression de-duplication. */
+function suggestionKey(s: NextActionSuggestion): string {
+  return `${s.source}\u0000${s.entity_id ?? ''}\u0000${s.variant ?? ''}`
+}
 
 /**
  * Reset the module singleton. Test-only: the state is deliberately shared
@@ -28,6 +35,7 @@ export function __resetNextActionForTest() {
   suggestion.value = null
   busy.value = false
   expanded.value = false
+  shownKey.value = null
   loaded = false
 }
 
@@ -60,21 +68,36 @@ export function useNextAction() {
     try {
       const res = await getNextAction()
       suggestion.value = res.suggestion
-      // Report the impression only once resolved: this starts the cooldown.
-      // The GET deliberately does not, so a prefetch or a discarded response
-      // cannot silently consume the suggestion.
-      if (res.suggestion) {
-        await sendNextActionFeedback({
-          source: res.suggestion.source,
-          entity_id: res.suggestion.entity_id,
-          variant: res.suggestion.variant,
-          kind: 'shown',
-        })
-      }
+      // The impression is NOT reported here. `load()` also runs after
+      // feedback, so reporting from it would mark the REPLACEMENT suggestion
+      // as shown before it had been rendered — starting a 24h cooldown for
+      // something the user never saw. `markShown()` is called by the
+      // component that actually displays it.
     } catch (err) {
       // An advisory surface must never break the page it sits on.
       console.error('next-action load failed:', err)
       suggestion.value = null
+    }
+  }
+
+  /**
+   * Report that the current suggestion was actually displayed, starting its
+   * cooldown. Idempotent per suggestion: the two surfaces share this state,
+   * and a re-render must not count twice.
+   */
+  async function markShown() {
+    const s = suggestion.value
+    if (!s || shownKey.value === suggestionKey(s)) return
+    shownKey.value = suggestionKey(s)
+    try {
+      await sendNextActionFeedback({
+        source: s.source,
+        entity_id: s.entity_id,
+        variant: s.variant,
+        kind: 'shown',
+      })
+    } catch (err) {
+      console.error('next-action impression failed:', err)
     }
   }
 
@@ -121,6 +144,7 @@ export function useNextAction() {
     isPageLevel,
     isStatusBar,
     loadOnce,
+    markShown,
     respond,
     acknowledge,
   }

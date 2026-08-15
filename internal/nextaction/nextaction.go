@@ -118,18 +118,27 @@ type Engine struct {
 	cap        int
 }
 
-// WithOptions supplies the pick_one option resolver. Optional: without it a
-// pick_one affordance simply offers nothing rather than failing the page.
-func (e *Engine) WithOptions(fn OptionFunc) *Engine {
-	e.options = fn
-	return e
+// Option configures an [Engine] at construction.
+//
+// A construction-time option rather than a builder method: a builder returning
+// a copy is silently a no-op when the caller discards it, and one mutating the
+// receiver would race, since [Engine] is documented as safe for concurrent use
+// and callers are invited to cache one. Neither mistake is available here.
+type Option func(*Engine)
+
+// WithOptions supplies the pick_one option resolver. Without it a pick_one
+// affordance simply offers nothing rather than failing the page.
+func WithOptions(fn OptionFunc) Option {
+	return func(e *Engine) { e.options = fn }
 }
 
 // New builds an Engine. Every collaborator is required: a nil userstate.Store
 // would silently stop honoring snoozes and mutes, which the user experiences
 // as the system ignoring them — precisely the deferred-failure-to-downstream-
 // symptom the project's constructor rule exists to prevent.
-func New(cfg *dataentryconfig.Config, state userstate.Store, candidates CandidateFunc) (*Engine, error) {
+func New(
+	cfg *dataentryconfig.Config, state userstate.Store, candidates CandidateFunc, opts ...Option,
+) (*Engine, error) {
 	if cfg == nil {
 		return nil, errors.New("nextaction: config must be non-nil")
 	}
@@ -139,7 +148,11 @@ func New(cfg *dataentryconfig.Config, state userstate.Store, candidates Candidat
 	if candidates == nil {
 		return nil, errors.New("nextaction: candidate func must be non-nil")
 	}
-	return &Engine{cfg: cfg, state: state, candidates: candidates, cap: DefaultCandidateCap}, nil
+	e := &Engine{cfg: cfg, state: state, candidates: candidates, cap: DefaultCandidateCap}
+	for _, opt := range opts {
+		opt(e)
+	}
+	return e, nil
 }
 
 // Resolve returns the single suggestion to show `user` now, or ok=false when

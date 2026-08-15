@@ -973,33 +973,57 @@ func TestCompareOrdered_UnknownOperator(t *testing.T) {
 	}
 }
 
-// TestSplitPushdownFilters pins which property filters may be evaluated by the
-// store and which must stay in the metamodel-aware Go pass.
+// pushdownTestMeta declares `status` as a string (push-eligible) and `count`
+// as an integer (never eligible — see stringComparableOnEveryType).
+func pushdownTestMeta() *metamodel.Metamodel {
+	return &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ticket": {Properties: map[string]metamodel.PropertyDef{
+				"status": {Type: metamodel.PropertyTypeString},
+				"title":  {Type: metamodel.PropertyTypeString},
+				"due":    {Type: metamodel.PropertyTypeDate},
+				"count":  {Type: metamodel.PropertyTypeInteger},
+			}},
+		},
+	}
+}
+
+// TestPushdownPrefilters pins which property filters may be handed to the
+// store as a PRE-FILTER.
 //
-// The split is a correctness boundary, not an optimisation detail:
-// store.PropPredicate compares by STRING FORM, so pushing an ordered
-// comparison down would compare dates lexicographically and a glob literally.
-// Anything unrecognized must land in `residual`, where behavior is unchanged.
-func TestSplitPushdownFilters(t *testing.T) {
+// The pushdown is not a replacement for the Go pass — executeQuery still runs
+// every filter through the metamodel-aware filter.MatchAll, and the store can
+// only ever remove rows that pass would also remove. That belt-and-braces is
+// what makes the result provably identical to the pre-pushdown behavior,
+// because store.PropPredicate compares by STRING FORM and disagrees with the
+// typed comparison on integers, booleans and undeclared enum values.
+func TestPushdownPrefilters(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name         string
-		in           *filter.Filter
-		wantPushed   bool
-		wantPushedOp store.PropOp
+		name       string
+		in         *filter.Filter
+		wantPushed bool
 	}{
 		{
-			name:         "equality pushes down",
-			in:           &filter.Filter{Property: "status", Operator: filter.OpEqual, Value: "open"},
-			wantPushed:   true,
-			wantPushedOp: store.PropEqual,
+			name:       "equality pushes down",
+			in:         &filter.Filter{Property: "status", Operator: filter.OpEqual, Value: "open"},
+			wantPushed: true,
 		},
 		{
-			name:         "inequality pushes down",
-			in:           &filter.Filter{Property: "status", Operator: filter.OpNotEqual, Value: "done"},
-			wantPushed:   true,
-			wantPushedOp: store.PropNotEqual,
+			name:       "is-empty pushes down",
+			in:         &filter.Filter{Property: "status", Operator: filter.OpEqual},
+			wantPushed: true,
+		},
+		{
+			// Excluded on purpose. It is the one operator where a string-form
+			// disagreement WIDENS: `flag!=yes` on a boolean errors in Go
+			// (excluding the row) but matches in the store, so as a pre-filter
+			// it admits rows the Go pass must then reject — no saving, and a
+			// bug in the pairing would leak them.
+			name:       "not-equal is excluded even though the store supports it",
+			in:         &filter.Filter{Property: "status", Operator: filter.OpNotEqual, Value: "done"},
+			wantPushed: false,
 		},
 		{
 			// `status=in-*` rides on OpEqual but means pattern-match; pushed
@@ -1009,15 +1033,8 @@ func TestSplitPushdownFilters(t *testing.T) {
 			wantPushed: false,
 		},
 		{
-			// The store has no metamodel, so it cannot know `due` is a date;
-			// pushed down this would compare lexicographically.
 			name:       "ordered comparison stays in Go",
 			in:         &filter.Filter{Property: "due", Operator: filter.OpLess, Value: "2026-01-01"},
-			wantPushed: false,
-		},
-		{
-			name:       "greater-or-equal stays in Go",
-			in:         &filter.Filter{Property: "count", Operator: filter.OpGreaterEqual, Value: "3"},
 			wantPushed: false,
 		},
 		{
@@ -1030,60 +1047,64 @@ func TestSplitPushdownFilters(t *testing.T) {
 			in:         &filter.Filter{Property: "title", Operator: filter.OpFuzzy, Value: "retro"},
 			wantPushed: false,
 		},
+		{
+			// `count=03` matches the integer 3 when typed and misses as
+			// strings, so pushing it would DROP a row that belongs in the
+			// result — the precondition a pre-filter must never break.
+			name:       "typed property is never pushed",
+			in:         &filter.Filter{Property: "count", Operator: filter.OpEqual, Value: "03"},
+			wantPushed: false,
+		},
+		{
+			// filter.matchEnum errors on an undeclared value, surfacing an
+			// operator typo. Pushed down the same typo silently matches
+			// nothing and the source goes quiet with no diagnostic.
+			name:       "undeclared property is never pushed",
+			in:         &filter.Filter{Property: "nope", Operator: filter.OpEqual, Value: "x"},
+			wantPushed: false,
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			pushed, residual := splitPushdownFilters([]*filter.Filter{tc.in})
+			pushed := pushdownPrefilters([]*filter.Filter{tc.in}, pushdownTestMeta(), []string{"ticket"})
 
 			if !tc.wantPushed {
 				if len(pushed) != 0 {
 					t.Errorf("expected no pushdown, got %+v", pushed)
-				}
-				if len(residual) != 1 {
-					t.Errorf("expected the filter to remain in Go, got %d residual", len(residual))
 				}
 				return
 			}
 			if len(pushed) != 1 {
 				t.Fatalf("expected one pushed predicate, got %d", len(pushed))
 			}
-			if pushed[0].Op != tc.wantPushedOp {
-				t.Errorf("op = %v, want %v", pushed[0].Op, tc.wantPushedOp)
+			if pushed[0].Op != store.PropEqual {
+				t.Errorf("op = %v, want PropEqual", pushed[0].Op)
 			}
 			if pushed[0].Property != tc.in.Property || pushed[0].Value != tc.in.Value {
 				t.Errorf("predicate = %+v, want property/value from %+v", pushed[0], tc.in)
-			}
-			if len(residual) != 0 {
-				t.Errorf("expected nothing left in Go, got %+v", residual)
 			}
 		})
 	}
 }
 
-// A mixed query must split, not fall wholly to one side: the equality is
-// pushed for the volume win while the date comparison stays where the
-// metamodel is available.
-func TestSplitPushdownFilters_Mixed(t *testing.T) {
+// A mixed query pushes only the equality; the rest is left for the Go pass,
+// which evaluates ALL of them regardless.
+func TestPushdownPrefilters_Mixed(t *testing.T) {
 	t.Parallel()
-	pushed, residual := splitPushdownFilters([]*filter.Filter{
+	pushed := pushdownPrefilters([]*filter.Filter{
 		{Property: "status", Operator: filter.OpEqual, Value: "open"},
 		{Property: "due", Operator: filter.OpLess, Value: "2026-01-01"},
-	})
-
+	}, pushdownTestMeta(), []string{"ticket"})
 	if len(pushed) != 1 || pushed[0].Property != "status" {
 		t.Errorf("expected only the equality pushed, got %+v", pushed)
 	}
-	if len(residual) != 1 || residual[0].Property != "due" {
-		t.Errorf("expected only the ordered comparison residual, got %+v", residual)
-	}
 }
 
-func TestSplitPushdownFilters_Empty(t *testing.T) {
+func TestPushdownPrefilters_Empty(t *testing.T) {
 	t.Parallel()
-	pushed, residual := splitPushdownFilters(nil)
-	if len(pushed) != 0 || len(residual) != 0 {
-		t.Errorf("nil filters should split to nothing, got %+v / %+v", pushed, residual)
+	if got := pushdownPrefilters(nil, pushdownTestMeta(), []string{"ticket"}); len(got) != 0 {
+		t.Errorf("nil filters should push nothing, got %+v", got)
 	}
 }

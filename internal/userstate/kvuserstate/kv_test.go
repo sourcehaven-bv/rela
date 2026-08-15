@@ -163,3 +163,35 @@ func TestSetMuted_NoDuplicates(t *testing.T) {
 
 	require.Len(t, s.snapshot().Muted["alice"], 1)
 }
+
+// Two Stores over one KV stand in for two server processes. A cached document
+// would mean the second never observed the first's writes — a user snoozing
+// on one server would keep seeing the suggestion on the other indefinitely.
+func TestCrossProcess_WritesAreVisibleToAnotherHandle(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	kv := newKV(t)
+	key := userstate.Key{User: "alice", Source: "stale", EntityID: "T-1"}
+
+	first, err := New(kv)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = first.Close() })
+	second, err := New(kv)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = second.Close() })
+
+	// Warm the second handle so a cache, if any, would already be populated.
+	_, _, err = second.SnoozedUntil(ctx, key, base)
+	require.NoError(t, err)
+
+	require.NoError(t, first.SetSnooze(ctx, key, base.Add(24*time.Hour)))
+
+	_, ok, err := second.SnoozedUntil(ctx, key, base)
+	require.NoError(t, err)
+	require.True(t, ok, "a write through one handle must be visible through the other")
+
+	require.NoError(t, first.SetMuted(ctx, "alice", "quips", true))
+	muted, err := second.Muted(ctx, "alice", "quips")
+	require.NoError(t, err)
+	require.True(t, muted, "a mute must be visible across handles too")
+}

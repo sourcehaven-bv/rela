@@ -420,14 +420,25 @@ func (a *App) executeQuery(ctx context.Context, query string) ([]*entity.Entity,
 		// executeQuery never sorted by them.
 		candidates, err = a.runVisibleFreeTextSearch(ctx, svc, sq, scope)
 	} else {
-		// Push the equality filters into the store so it returns only
-		// matching rows instead of the whole type. Whatever cannot be pushed
-		// (ordered comparison, regex, glob, fuzzy) stays in the Go pass below,
-		// which still runs over every candidate — so the result set is
-		// identical either way, only the volume loaded changes.
-		pushed, residual := splitPushdownFilters(sq.PropertyFilters)
+		// Push the equality filters into the store as a PRE-FILTER, cutting
+		// the rows loaded. The Go pass below still evaluates every filter,
+		// including the pushed ones, and remains authoritative.
+		//
+		// That belt-and-braces is deliberate rather than redundant.
+		// store.PropPredicate compares by STRING FORM; filter.MatchAll is
+		// metamodel-aware. On a typed property they disagree — `count!=03`
+		// against an integer 3 is a non-match typed and a match as strings,
+		// and an enum filter naming an undeclared value ERRORS in Go
+		// (surfacing the operator's typo) while the store silently returns
+		// nothing. Dropping a pushed filter from the Go pass would let the
+		// looser of the two decide, WIDENING results on a path /_search and
+		// scope navigation share.
+		//
+		// Keeping both makes the outcome provably identical to the
+		// pre-pushdown behavior — the store can only ever remove rows the Go
+		// pass would also have removed — while still winning the I/O.
+		pushed := pushdownPrefilters(sq.PropertyFilters, svc.Meta, sq.EntityTypes)
 		candidates, err = visibleListByTypes(ctx, svc, sq.EntityTypes, scope, pushed)
-		sq.PropertyFilters = residual
 	}
 	if err != nil {
 		return nil, err
@@ -781,45 +792,84 @@ func relationDirection(d dataentryconfig.Direction) store.Direction {
 
 // matchesPropertyFilters checks whether an entity matches the given property filters.
 // Returns true if no filters are specified or all filters match.
-// splitPushdownFilters divides property filters into those the store can
-// evaluate and those that must stay in Go.
+// pushdownPrefilters returns the store-evaluable subset of the property
+// filters, as a PRE-FILTER only — the caller must still run every filter
+// through the metamodel-aware Go pass.
 //
-// Only plain equality and inequality push down: store.PropPredicate compares
-// by string form, deliberately, because the store layer does not consult the
-// metamodel. Everything needing a declared type or a pattern engine — ordered
-// comparison on dates and integers, regex, glob, fuzzy — would give a
-// DIFFERENT answer there (a date compared lexicographically, a glob compared
-// literally), so it is kept in the metamodel-aware Go pass.
+// Only plain equality pushes down. Everything else is either unsupported by
+// store.PropPredicate (ordered comparison, regex, fuzzy) or means something
+// different there: a glob rides on OpEqual but would become a literal string
+// comparison.
 //
-// Fail-safe by construction: an operator this function does not recognize
-// falls into `residual` and is evaluated exactly as before. The cost of
-// misjudging one is a slower query, never a wrong result.
+// NOT-equal is excluded even though PropPredicate supports it: on a typed
+// property a string-form disagreement WIDENS (`flag!=yes` on a boolean errors
+// in Go, excluding the row, and matches in the store), so it would admit rows
+// the Go pass must then reject — no saving, and a bug in the pairing leaks them.
+//
+// TYPED properties are excluded entirely, in either direction. A pre-filter is
+// only sound if it can never remove a row the authoritative pass would keep,
+// and equality on a typed property breaks exactly that: `count=03` against an
+// integer 3 matches numerically but not as strings, so pushing it would drop a
+// row that belongs in the result. Only `string` and untyped-unknown properties
+// compare identically both ways.
+//
+// Multi-type queries are handled by requiring EVERY named type to declare the
+// property as string-comparable: one property name can be `string` on one type
+// and `integer` on another, and the pushdown is applied per query, not per type.
+// An unnamed-type query (no `type:`) pushes nothing, since any type could match.
 //
 // Emptiness agrees across both paths because internal/propmatch is the single
 // definition backing store.PropPredicate AND internal/filter's empty handling;
 // storetest's Props_value_shapes pins that agreement per backend.
-func splitPushdownFilters(filters []*filter.Filter) (pushed []store.PropPredicate, residual []*filter.Filter) {
+func pushdownPrefilters(
+	filters []*filter.Filter, meta *metamodel.Metamodel, types []string,
+) []store.PropPredicate {
+	if len(types) == 0 || meta == nil {
+		return nil // no declared type to check against — push nothing
+	}
+	var pushed []store.PropPredicate
 	for _, f := range filters {
 		// A glob (`status=in-*`) rides on OpEqual but means pattern-match, so
 		// it must NOT become a literal string comparison in the store.
-		if f.IsGlob {
-			residual = append(residual, f)
+		if f.IsGlob || f.Operator != filter.OpEqual {
 			continue
 		}
-		switch f.Operator {
-		case filter.OpEqual:
-			pushed = append(pushed, store.PropPredicate{
-				Property: f.Property, Op: store.PropEqual, Value: f.Value,
-			})
-		case filter.OpNotEqual:
-			pushed = append(pushed, store.PropPredicate{
-				Property: f.Property, Op: store.PropNotEqual, Value: f.Value,
-			})
-		default:
-			residual = append(residual, f)
+		if !stringComparableOnEveryType(meta, types, f.Property) {
+			continue
+		}
+		pushed = append(pushed, store.PropPredicate{
+			Property: f.Property, Op: store.PropEqual, Value: f.Value,
+		})
+	}
+	return pushed
+}
+
+// stringComparableOnEveryType reports whether `prop` compares identically as a
+// string on every named type — the precondition for pushing it down.
+//
+// Conservative by construction: an unknown type, an undeclared property, or
+// any non-string declared type all return false, so the filter simply stays in
+// the Go pass. The cost of a false negative is a slower query; the cost of a
+// false positive is a wrong result.
+func stringComparableOnEveryType(meta *metamodel.Metamodel, types []string, prop string) bool {
+	for _, typ := range types {
+		def, ok := meta.GetEntityDef(typ)
+		if !ok {
+			return false
+		}
+		pd, ok := def.Properties[prop]
+		if !ok {
+			return false
+		}
+		// Enums are excluded too: filter.matchEnum ERRORS on a value that is
+		// not declared, which surfaces an operator typo. Pushed down, the same
+		// typo silently matches nothing and the source goes quiet with no
+		// diagnostic.
+		if pd.Type != metamodel.PropertyTypeString {
+			return false
 		}
 	}
-	return pushed, residual
+	return true
 }
 
 func (a *App) matchesPropertyFilters(e *entity.Entity, filters []*filter.Filter) bool {

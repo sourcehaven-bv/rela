@@ -80,14 +80,25 @@ describe('useNextAction', () => {
   })
 
   describe('impressions', () => {
-    // The GET deliberately does not start the cooldown, so the client reports
-    // the impression once the suggestion is actually in hand.
-    it('reports the impression, echoing the full key', async () => {
+    // Resolving is NOT displaying. load() also runs after feedback, so
+    // reporting from it would start a 24h cooldown on the replacement
+    // suggestion before anyone had seen it.
+    it('does not report on load', async () => {
+      mockGet.mockResolvedValue({ suggestion: suggestion() })
+
+      await useNextAction().loadOnce()
+
+      expect(mockFeedback).not.toHaveBeenCalled()
+    })
+
+    it('reports the full key when the renderer marks it shown', async () => {
       mockGet.mockResolvedValue({
         suggestion: suggestion({ variant: 'status=open' }),
       })
+      const na = useNextAction()
+      await na.loadOnce()
 
-      await useNextAction().loadOnce()
+      await na.markShown()
 
       expect(mockFeedback).toHaveBeenCalledWith({
         source: 'stale',
@@ -97,12 +108,47 @@ describe('useNextAction', () => {
       })
     })
 
+    // Both surfaces share this state and either may re-render; the same
+    // suggestion must not be counted twice.
+    it('reports at most once per suggestion', async () => {
+      mockGet.mockResolvedValue({ suggestion: suggestion() })
+      const na = useNextAction()
+      await na.loadOnce()
+
+      await na.markShown()
+      await na.markShown()
+      await na.markShown()
+
+      expect(mockFeedback).toHaveBeenCalledTimes(1)
+    })
+
     it('reports nothing when there is no suggestion', async () => {
       mockGet.mockResolvedValue({ suggestion: null })
+      const na = useNextAction()
+      await na.loadOnce()
 
-      await useNextAction().loadOnce()
+      await na.markShown()
 
       expect(mockFeedback).not.toHaveBeenCalled()
+    })
+
+    // The replacement is a different suggestion, so it gets its own
+    // impression once something renders it.
+    it('reports again after feedback swaps the suggestion', async () => {
+      mockGet.mockResolvedValueOnce({ suggestion: suggestion() })
+      const na = useNextAction()
+      await na.loadOnce()
+      await na.markShown()
+
+      mockGet.mockResolvedValueOnce({ suggestion: suggestion({ source: 'quip' }) })
+      await na.respond('dismiss')
+      mockFeedback.mockClear()
+
+      await na.markShown()
+
+      expect(mockFeedback).toHaveBeenCalledWith(
+        expect.objectContaining({ source: 'quip', kind: 'shown' }),
+      )
     })
   })
 

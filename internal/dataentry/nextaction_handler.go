@@ -274,9 +274,10 @@ func (a *App) nextActionEngine() (*nextaction.Engine, bool) {
 	if cfg == nil || len(cfg.NextActions) == 0 || a.userState == nil {
 		return nil, false
 	}
-	eng, err := nextaction.New(cfg, a.userState, a.nextActionCandidates())
+	eng, err := nextaction.New(cfg, a.userState, a.nextActionCandidates(),
+		nextaction.WithOptions(a.nextActionOptions()))
 	if err != nil {
 		return nil, false
 	}
-	return eng.WithOptions(a.nextActionOptions()), true
+	return eng, true
 }

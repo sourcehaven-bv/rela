@@ -1635,6 +1635,96 @@ data.
 > bucket of this state — fine for a single-user deployment, surprising for a
 > shared one. Wiring any identity (JWT, header) separates it.
 
+### A worked example
+
+A small consultancy. Four sources, each a different shape, ordered so the
+loudest is the one someone else is blocked on:
+
+```yaml
+next_action_bands:
+  - id: blocking
+    label: Someone is waiting
+    prominence: banner
+  - id: stalled
+    label: In your court
+    prominence: notice
+  - id: tidying
+    label: Spare time
+    prominence: statusbar
+  - id: ambient
+    label: Nothing owed
+    prominence: statusbar
+
+next_actions:
+  # The ball is in THEIR court. Interpolates the client so the message
+  # says who you would be chasing.
+  chase-proposal:
+    band: blocking
+    query: "type:proposal prop:status=sent"
+    suggest: "The {title} proposal is out with {client}. Chase it?"
+    cooldown: 3d
+    key_props: [status]
+    actions:
+      - navigate: "/entity/{id}"
+        label: "Open it"
+      - snooze: ["1d", "7d"]
+      - dismiss: true
+
+  # Same shape, opposite ownership: this one is waiting on you. Quieter,
+  # because nobody else is blocked.
+  send-draft:
+    band: stalled
+    query: "type:proposal prop:status=draft"
+    suggest: "{title} has been in draft a while. Send it?"
+    cooldown: 3d
+    key_props: [status]
+    actions:
+      - action: mark-sent
+      - snooze: ["1d"]
+      - dismiss: true
+
+  # Nothing is wrong — there is simply an opportunity. The options come
+  # from a query at render time, so they are whatever is small right now.
+  spare-time:
+    band: tidying
+    query: "type:task prop:status=todo prop:effort=xs"
+    suggest: "Got a spare moment? One of these is small."
+    cooldown: 12h
+    actions:
+      - pick_one:
+          query: "type:task prop:status=todo prop:effort=xs"
+          limit: 3
+          action: start-task
+      - snooze: ["1d"]
+
+  # The counterweight. A configuration made only of chores is a nag however
+  # well-tuned, so the quietest band holds something that is not work.
+  daily-quip:
+    band: ambient
+    query: "type:quip"
+    suggest: "{text}"
+    actions:
+      - acknowledge: true
+```
+
+What this produces, as each suggestion is deferred:
+
+1. **banner** — "The Meridian retainer proposal is out with Meridian. Chase it?"
+2. **notice** — "Kessler SOW has been in draft a while. Send it?"
+3. **status bar** — "Got a spare moment?", offering three small tasks
+4. **status bar** — the quip
+5. nothing at all
+
+Two things worth noticing:
+
+`chase-proposal` and `send-draft` are almost identical rules. They differ in
+**band**, because who is blocked is the thing that matters — and that is a
+judgement only you can make, which is why bands are operator-declared.
+
+`spare-time` needs no `defer_scope`: a `pick_one` source defaults to `source`
+scope, so declining it means "not now" for the whole idea, not just for
+whichever task happened to be offered.
+
 ### Customising the look
 
 The next-action UI emits the operator hooks documented in

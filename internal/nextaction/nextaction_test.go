@@ -55,6 +55,18 @@ func newEngine(t *testing.T, cfg *dataentryconfig.Config, fn nextaction.Candidat
 	return eng, st
 }
 
+// newEngineWithOptions builds an engine with a pick_one option resolver.
+func newEngineWithOptions(
+	t *testing.T, cfg *dataentryconfig.Config, fn nextaction.CandidateFunc, opt nextaction.OptionFunc,
+) *nextaction.Engine {
+	t.Helper()
+	st := memuserstate.New()
+	t.Cleanup(func() { _ = st.Close() })
+	eng, err := nextaction.New(cfg, st, fn, nextaction.WithOptions(opt))
+	require.NoError(t, err)
+	return eng
+}
+
 func twoBandConfig() *dataentryconfig.Config {
 	return &dataentryconfig.Config{
 		NextActionBands: []dataentryconfig.NextActionBand{
@@ -421,8 +433,7 @@ func TestPickOne_ResolvesOptionsForTheWinner(t *testing.T) {
 	fn, _ := staticCandidates(map[string][]*entity.Entity{
 		"urgent": {ent("T-1", "task", nil)},
 	})
-	eng, _ := newEngine(t, cfg, fn)
-	eng.WithOptions(func(_ context.Context, _ string, limit int) ([]nextaction.PickOption, error) {
+	eng := newEngineWithOptions(t, cfg, fn, func(_ context.Context, _ string, limit int) ([]nextaction.PickOption, error) {
 		require.Equal(t, dataentryconfig.DefaultPickOneLimit, limit,
 			"an unset limit must arrive as the default, not zero")
 		return []nextaction.PickOption{
@@ -454,13 +465,12 @@ func TestPickOne_DoesNotResolveForLosingBands(t *testing.T) {
 		"urgent": {ent("T-1", "task", nil)},
 		"quip":   {ent("Q-1", "quip", nil)},
 	})
-	eng, _ := newEngine(t, cfg, fn)
-
 	calls := 0
-	eng.WithOptions(func(_ context.Context, _ string, _ int) ([]nextaction.PickOption, error) {
-		calls++
-		return nil, nil
-	})
+	eng := newEngineWithOptions(t, cfg, fn,
+		func(_ context.Context, _ string, _ int) ([]nextaction.PickOption, error) {
+			calls++
+			return nil, nil
+		})
 
 	got, _, err := eng.Resolve(context.Background(), testUser, base)
 	require.NoError(t, err)
@@ -480,10 +490,10 @@ func TestPickOne_FailureDoesNotBreakTheSuggestion(t *testing.T) {
 	cfg.NextActions["urgent"] = src
 
 	fn, _ := staticCandidates(map[string][]*entity.Entity{"urgent": {ent("T-1", "task", nil)}})
-	eng, _ := newEngine(t, cfg, fn)
-	eng.WithOptions(func(_ context.Context, _ string, _ int) ([]nextaction.PickOption, error) {
-		return nil, errors.New("query exploded")
-	})
+	eng := newEngineWithOptions(t, cfg, fn,
+		func(_ context.Context, _ string, _ int) ([]nextaction.PickOption, error) {
+			return nil, errors.New("query exploded")
+		})
 
 	got, ok, err := eng.Resolve(context.Background(), testUser, base)
 	require.NoError(t, err, "an option failure must not fail the resolve")

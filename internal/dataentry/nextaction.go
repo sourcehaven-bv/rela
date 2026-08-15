@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/nextaction"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/userstate"
@@ -69,14 +70,23 @@ func (a *App) nextActionOptions() nextaction.OptionFunc {
 			entities = entities[:limit]
 		}
 		out := make([]nextaction.PickOption, 0, len(entities))
+		s := a.State()
 		for _, e := range entities {
+			// Redact BEFORE safeDisplayTitle: its guard is presence-based
+			// ("is the display property missing?"), so against an unredacted
+			// entity every property is present and it happily returns the
+			// hidden value.
+			red := a.redactedForSuggestion(ctx, e)
 			out = append(out, nextaction.PickOption{
 				EntityID: e.ID,
 				// safeDisplayTitle, not the raw DisplayTitle: a redacted
 				// display property would otherwise render a PARTIAL title,
 				// leaking the readable half and confirming a hidden half
 				// exists (the BUG-R9EHKV leak class).
-				Label: safeDisplayTitle(a.Meta(), e),
+				// One snapshot for the whole loop (captured above): two
+				// State() loads can observe different metamodels if a reload
+				// lands mid-resolve.
+				Label: safeDisplayTitle(s.Meta, red),
 			})
 		}
 		return out, nil
@@ -84,6 +94,14 @@ func (a *App) nextActionOptions() nextaction.OptionFunc {
 }
 
 // queryCandidates runs a source's query through the ACL-gated pipeline.
+//
+// Candidates are FIELD-REDACTED here, not merely row-gated. executeQuery
+// returns raw entities — every other consumer redacts at serialization (see
+// forWireRelated / stripHiddenProperties), but a suggestion never passes
+// through that seam: its message interpolates `{property}` straight into
+// text. Without this an operator writing `suggest: "{title} needs a look"` on
+// a type whose title is hidden by `visible:` would put the hidden value on
+// the wire — the BUG-R9EHKV leak class, through a new door.
 func (a *App) queryCandidates(ctx context.Context, query string) ([]nextaction.Candidate, error) {
 	entities, err := a.executeQuery(ctx, query)
 	if err != nil {
@@ -91,9 +109,20 @@ func (a *App) queryCandidates(ctx context.Context, query string) ([]nextaction.C
 	}
 	out := make([]nextaction.Candidate, 0, len(entities))
 	for _, e := range entities {
-		out = append(out, nextaction.Candidate{Entity: e})
+		out = append(out, nextaction.Candidate{Entity: a.redactedForSuggestion(ctx, e)})
 	}
 	return out, nil
+}
+
+// redactedForSuggestion returns a copy of e carrying only the properties this
+// principal may see.
+//
+// A COPY, never a mutation: the entity comes from the store's iterator and may
+// be shared with a cache, so stripping in place would redact it for everyone.
+func (a *App) redactedForSuggestion(ctx context.Context, e *entityPkg.Entity) *entityPkg.Entity {
+	clone := *e
+	clone.Properties = a.affordances.copyVisibleProperties(ctx, e)
+	return &clone
 }
 
 // countCandidates answers a `<entity_type> == 0` source: it yields exactly one

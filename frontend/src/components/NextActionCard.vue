@@ -10,13 +10,24 @@
  * caught up" card. Silence is the normal condition of a well-configured
  * system, and a placeholder would turn that quiet into noise on every page.
  */
-import { onMounted } from 'vue'
+import { onMounted, watch } from 'vue'
 import { useNextAction } from '@/composables/useNextAction'
 import NextActionOffers from './NextActionOffers.vue'
 
-const { suggestion, bandLabel, prominence, isPageLevel, loadOnce } = useNextAction()
+const { suggestion, bandLabel, prominence, isPageLevel, loadOnce, markShown } = useNextAction()
 
 onMounted(loadOnce)
+
+// Report the impression when this component actually RENDERS the suggestion —
+// not when it is resolved. The status-bar tier is rendered elsewhere, and a
+// suggestion replaced by feedback must not be counted before it is seen.
+watch(
+  isPageLevel,
+  (shown) => {
+    if (shown) void markShown()
+  },
+  { immediate: true },
+)
 </script>
 
 <template>

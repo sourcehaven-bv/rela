@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useGitStore, useSchemaStore, useUIStore } from '@/stores'
 import { shortcutsModalOpen } from '@/composables/useKeyboardShortcuts'
+import { watch } from 'vue'
 import { useNextAction } from '@/composables/useNextAction'
 import NextActionOffers from '@/components/NextActionOffers.vue'
 import { renderMarkdown } from '@/utils/markdown'
@@ -25,6 +26,7 @@ const {
   suggestion: naSuggestion,
   bandLabel: naBandLabel,
   isStatusBar: naInStatusBar,
+  markShown: naMarkShown,
   expanded: naExpanded,
   loadOnce: naLoadOnce,
 } = useNextAction()
@@ -43,6 +45,12 @@ onMounted(() => {
   // page-level card share one suggestion rather than racing for two.
   void naLoadOnce()
 })
+
+// The chip IS the render for the statusbar tier, so it reports its own
+// impression — the page-level card never sees these suggestions.
+watch(naInStatusBar, (shown) => {
+  if (shown) void naMarkShown()
+}, { immediate: true })
 
 async function handleSync() {
   try {

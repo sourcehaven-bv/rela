@@ -3,6 +3,7 @@ package dataentry
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -14,6 +15,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/userstate/memuserstate"
 )
 
@@ -499,4 +501,136 @@ func TestNextAction_EntityScopedDeferLeavesSiblings(t *testing.T) {
 	after, _ := getNextAction(aliceCtx(), t, app)
 	require.NotNil(t, after.Suggestion, "the source must still offer its other candidate")
 	require.NotEqual(t, first, after.Suggestion.EntityID)
+}
+
+// TestQueryPushdown_PreservesTypedSemantics is the guard for the pushdown
+// being a PRE-FILTER rather than a replacement.
+//
+// store.PropPredicate compares by string form; filter.MatchAll is
+// metamodel-aware. On an integer property `count=03` is a MATCH against the
+// value 3 when typed and a non-match as strings. If the pushed filter were
+// dropped from the Go pass, the store's answer would decide and the result
+// would change on a path /_search and scope navigation share.
+//
+// The test drives the real metamodel, so it fails if anyone "optimizes" the
+// double evaluation away.
+func TestQueryPushdown_PreservesTypedSemantics(t *testing.T) {
+	app := newTestAppV1(t)
+
+	// Give the fixture an integer property.
+	st := app.State()
+	meta := *st.Meta
+	entities := make(map[string]metamodel.EntityDef, len(meta.Entities))
+	maps.Copy(entities, meta.Entities)
+	ticket := entities["ticket"]
+	props := make(map[string]metamodel.PropertyDef, len(ticket.Properties)+1)
+	maps.Copy(props, ticket.Properties)
+	props["count"] = metamodel.PropertyDef{Type: metamodel.PropertyTypeInteger}
+	ticket.Properties = props
+	entities["ticket"] = ticket
+	meta.Entities = entities
+	app.schema.Publish(&Schema{
+		Cfg: st.Cfg, Meta: &meta, StyleMap: st.StyleMap,
+		StyledTypes: st.StyledTypes, OpenAPIGen: st.OpenAPIGen,
+	})
+
+	seedEntity(app, &entity.Entity{
+		ID: "TKT-001", Type: "ticket",
+		Properties: map[string]any{"title": "Three", "count": 3},
+	})
+
+	// Typed comparison accepts the zero-padded form; a string comparison does
+	// not. The Go pass must remain authoritative.
+	got, err := app.executeQuery(aliceCtx(), "type:ticket prop:count=03")
+	require.NoError(t, err)
+	require.Len(t, got, 1,
+		"an integer property must compare numerically, not by string form")
+	require.Equal(t, "TKT-001", got[0].ID)
+}
+
+// TestNextAction_RedactsHiddenPropertiesInMessage pins the field-level half of
+// the next-action surface.
+//
+// executeQuery returns row-gated but UNREDACTED entities; every other consumer
+// redacts at serialization (forWireRelated / stripHiddenProperties). A
+// suggestion never passes through that seam — its message interpolates
+// `{property}` straight into text — so the redaction has to happen at the
+// candidate boundary instead. Without it, `suggest: "{title} needs a look"` on
+// a type whose title is hidden by `visible:` puts the hidden value on the
+// wire: the BUG-R9EHKV leak class through a new door.
+//
+// The placeholder is left VERBATIM rather than emptied: per the root
+// CLAUDE.md, `visible:` conceals property values, not the existence of
+// property names.
+func TestNextAction_RedactsHiddenPropertiesInMessage(t *testing.T) {
+	app := newTestAppV1(t)
+	app.fieldResolver = fakeResolver{fv: FieldVerdicts{
+		Visible: map[string]bool{"title": false},
+	}}
+	seedEntity(app, &entity.Entity{
+		ID: "TKT-001", Type: "ticket",
+		Properties: map[string]any{"title": "SECRET-TITLE", "status": "open"},
+	})
+	d := mustNewACL(t, &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
+		Assignments: map[string]string{"alice": "viewer"},
+	}, app.store)
+	app.acl = d
+
+	withNextActions(t, app,
+		[]dataentryconfig.NextActionBand{{ID: "stalled"}},
+		map[string]dataentryconfig.NextActionSource{
+			"tickets": {Band: "stalled", Query: "type:ticket", Suggest: "Look at {title}"},
+		})
+
+	got, _ := getNextAction(gateCtxFor(principalCtx("alice"), t, d), t, app)
+	require.NotNil(t, got.Suggestion)
+	require.NotContains(t, got.Suggestion.Message, "SECRET-TITLE",
+		"a visible:-hidden value must not reach the suggestion message")
+	require.Contains(t, got.Suggestion.Message, "{title}",
+		"the placeholder stays: names are not secret, values are")
+}
+
+// The same guard for pick_one option labels. safeDisplayTitle's check is
+// PRESENCE-based ("is the display property missing?"), so handed an
+// unredacted entity it finds every property present and returns the hidden
+// value — the redaction must happen before it, not instead of it.
+func TestNextAction_RedactsHiddenPropertiesInPickOptions(t *testing.T) {
+	app := newTestAppV1(t)
+	app.fieldResolver = fakeResolver{fv: FieldVerdicts{
+		Visible: map[string]bool{"title": false},
+	}}
+	seedEntity(app, &entity.Entity{
+		ID: "TKT-001", Type: "ticket",
+		Properties: map[string]any{"title": "SECRET-OPTION", "status": "open"},
+	})
+	d := mustNewACL(t, &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
+		Assignments: map[string]string{"alice": "viewer"},
+	}, app.store)
+	app.acl = d
+
+	withNextActions(t, app,
+		[]dataentryconfig.NextActionBand{{ID: "stalled"}},
+		map[string]dataentryconfig.NextActionSource{
+			"tickets": {
+				Band:    "stalled",
+				Query:   "type:ticket",
+				Suggest: "pick one",
+				Actions: []dataentryconfig.NextActionOffer{{
+					PickOne: &dataentryconfig.NextActionPickOne{
+						Query: "type:ticket", Action: "noop",
+					},
+				}},
+			},
+		})
+
+	got, _ := getNextAction(gateCtxFor(principalCtx("alice"), t, d), t, app)
+	require.NotNil(t, got.Suggestion)
+	for _, opts := range got.Suggestion.PickOptions {
+		for _, o := range opts {
+			require.NotContains(t, o.Label, "SECRET-OPTION",
+				"an option label must fall back to the id when the display property is hidden")
+		}
+	}
 }

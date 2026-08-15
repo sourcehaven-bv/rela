@@ -17,12 +17,17 @@
 // user), read on every page render, and written only on explicit user
 // feedback. Per-key entries would turn one render into N KV reads.
 //
-// The cost is that concurrent writers must serialize, which the mutex does
-// WITHIN a process. Across processes this backend is last-writer-wins: two
-// servers sharing a project directory can lose a snooze. That is acceptable
-// for disposable state and is why the postgres backend exists for the
-// multi-process deployment — it is stated here so nobody discovers it as a
-// surprise.
+// # Single-process only
+//
+// The document is re-read from the KV on every operation, so a change written
+// by another process IS observed. What is not safe is concurrent WRITES: two
+// processes can read the same document, each apply their own change, and the
+// second write clobbers the first ENTIRELY — not just the contended key.
+//
+// That is why the postgres backend exists for the multi-process deployment,
+// where each row is written independently. Stated plainly here rather than
+// left to be discovered: a deployment running two servers over one project
+// directory will silently lose snoozes with this backend.
 package kvuserstate
 
 import (
@@ -97,12 +102,14 @@ func keyString(k userstate.Key) string {
 	return k.User + "\x00" + k.Source + "\x00" + k.EntityID + "\x00" + k.Variant
 }
 
-// load returns the document, reading it from the KV on first use.
-// Caller must hold s.mu.
+// load reads the document from the KV.
+//
+// Re-read on EVERY call rather than cached: a cached copy would mean a second
+// process never observed any of the first's writes, so a user snoozing on one
+// server would keep seeing the suggestion on the other indefinitely. The read
+// is a small local file and this runs once per feedback action, not per
+// render. Caller must hold s.mu.
 func (s *Store) load(ctx context.Context) (*document, error) {
-	if s.doc != nil {
-		return s.doc, nil
-	}
 	data, err := s.kv.Get(ctx, StateKey)
 	switch {
 	case err == nil:
