@@ -75,20 +75,51 @@ func (h *writeHandler) handleV1Action(w http.ResponseWriter, r *http.Request) {
 
 	correlationID := newCorrelationID()
 
+	// Gate the caller-supplied entity_id BEFORE taking writeMu, and before it
+	// reaches the script.
+	//
+	// `entity_id` names an entity the script receives as the global `entity`
+	// (see script.Engine.ExecuteAction), so resolving it through the raw store
+	// makes this endpoint a read-side ACL bypass: any caller who may POST an
+	// action could name any id and have its full properties — `visible:`-hidden
+	// fields included — placed in script scope and echoed back through the
+	// action's own response. The gate answers for the CALLER, which is right:
+	// the caller chose the id. Pinned by TestAction_EntityIDRespectsReadGate.
+	//
+	// Ordering matters twice over. Gating before writeMu means a denied caller
+	// never acquires the process-wide write lock nor burns actionTimeout — an
+	// unauthorized POST loop would otherwise serialize every writer in the
+	// process. Same rule the document renderer follows: decide, then work.
+	var ent *entity.Entity
+	if req.EntityID != "" {
+		// Look up first, then gate on the STORED type — never on
+		// req.EntityType. Authorizing against a caller-supplied type is a
+		// cross-type escalation: name a type you may read, an id of a type you
+		// may not, and an AllowAll verdict on the claim grants the id. That is
+		// the same defect BUG-ZWTDH9 fixed on the sync channel. The lookup
+		// itself discloses nothing — the entity goes nowhere unless the gate
+		// passes.
+		stored, err := h.store.GetEntity(r.Context(), req.EntityID)
+		if err != nil {
+			// Absent id: fall through with ent nil, exactly as when no
+			// entity_id was supplied. Deliberately NOT a 404 — that would make
+			// this endpoint an existence oracle for ids the caller cannot read.
+			stored = nil
+		}
+		if stored != nil {
+			if !h.gateRead(w, r, stored.Type, req.EntityID) {
+				return
+			}
+			ent = stored
+		}
+	}
+
 	// Serialize action script execution against other mutations and
 	// against workspace reloads via writeMu. Provision under the lock (a no-op
 	// unless unmatched_principal: provision fired) so an action-triggered write
 	// by an unmatched verified principal is covered like CRUD.
 	r = h.enterWrite(r)
 	defer h.writeMu.Unlock()
-
-	// Resolve entity if provided in the request.
-	var ent *entity.Entity
-	if req.EntityID != "" {
-		if e, err := h.store.GetEntity(r.Context(), req.EntityID); err == nil {
-			ent = e
-		}
-	}
 
 	// Reuse App's long-lived engine so rela.cache state persists
 	// across action invocations. Constructing a fresh engine per
