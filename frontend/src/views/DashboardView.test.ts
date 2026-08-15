@@ -191,7 +191,20 @@ describe('DashboardView', () => {
     })
 
     it('sorts table rows once even though the template reads them twice', async () => {
-      const rows = ['c', 'a', 'b'].map((t, i) => entity(`TKT-${i}`, { title: t }))
+      // Counting reads of `title`, not just asserting the order: the order was
+      // already correct before this change, so a bare `toEqual` pins sorting
+      // and says nothing about how often the rows were derived. Deriving twice
+      // costs a second sort pass, which this count catches.
+      let reads = 0
+      const values = ['c', 'a', 'b']
+      const rows = values.map((t, i) =>
+        entity(`TKT-${i}`, {
+          get title() {
+            reads++
+            return t
+          },
+        })
+      )
       searchEntitiesMock.mockResolvedValue({
         data: rows,
         meta: { total: rows.length, page: 1, per_page: 50, has_more: false },
@@ -208,6 +221,58 @@ describe('DashboardView', () => {
 
       const cells = wrapper.findAll('tbody td').map((td) => td.text())
       expect(cells).toEqual(['a', 'b', 'c'])
+
+      // Sorting reads each row's property, then rendering reads it once per
+      // cell. Deriving a second time re-runs the sort — measured at 15 reads
+      // against the pre-TKT-ERHWL0 code, versus 9 here.
+      const derivedTwice = 15
+      expect(reads).toBeLessThan(derivedTwice)
+    })
+
+    // The collision this keying must not have. `cardKey()` covers
+    // [title, query, display] — correct for `cardData`, where two cards with
+    // one query share a fetch, but NOT sufficient to key derived data:
+    // `group_by` changes the breakdown without changing the key. Keying the
+    // derivation by cardKey rendered the second card's breakdown on both tiles.
+    it('gives two cards differing only in group_by their own breakdown', async () => {
+      searchEntitiesMock.mockResolvedValue({
+        data: [entity('TKT-1', { status: 'todo', priority: 'high' })],
+        meta: { total: 1, page: 1, per_page: 50, has_more: false },
+      })
+      seedDashboard([
+        card({ title: 'T', query: 'type:ticket', display: 'breakdown', group_by: 'status' }),
+        card({ title: 'T', query: 'type:ticket', display: 'breakdown', group_by: 'priority' }),
+      ])
+
+      const tiles = (await mountView()).findAll('.dashboard-card')
+
+      expect(tiles).toHaveLength(2)
+      expect(tiles[0].text()).toContain('todo')
+      expect(tiles[1].text()).toContain('high')
+    })
+
+    // A count card renders one number, so it must not pay to copy and sort a
+    // result set nothing displays.
+    it('does not derive table rows for a count card', async () => {
+      let reads = 0
+      const rows = ['c', 'a', 'b'].map((t, i) =>
+        entity(`TKT-${i}`, {
+          get title() {
+            reads++
+            return t
+          },
+        })
+      )
+      searchEntitiesMock.mockResolvedValue({
+        data: rows,
+        meta: { total: rows.length, page: 1, per_page: 50, has_more: false },
+      })
+      seedDashboard([card({ display: 'count', sort: [{ property: 'title', direction: 'asc' }] })])
+
+      const wrapper = await mountView()
+
+      expect(wrapper.text()).toContain('3')
+      expect(reads).toBe(0)
     })
 
     // The memo must not outlive the data it was derived from. `cardData` is a

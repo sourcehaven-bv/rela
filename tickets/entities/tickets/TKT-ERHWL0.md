@@ -40,12 +40,19 @@ in-flight optional-body work also does — so it should land after that settles.
 
 ## How
 
-Replace the two functions with a single `computed` map keyed by `cardKey(card)`,
-returning the derived breakdown/rows per card. PR #1316 (TKT-53KICM) introduces
-`cardKey()` for exactly this identity problem — reuse it rather than adding a
-second keying scheme.
+A single `cardViews` computed maps `cards.value` to one view model per card —
+`{card, key, count, breakdown, rows}` — and the template `v-for`s over that, so
+each derivation has exactly one call site structurally rather than being
+deduplicated by a cache. Derivation happens only for the card's own display
+mode, so a count card doesn't pay to copy and sort rows nothing renders.
 
-The template call sites stay as they are; they just read a memoized value.
+**Not** a `computed` Map keyed by `cardKey(card)`, which is where this started.
+`cardKey` covers `[title, query, display]` — correct for `cardData`, where two
+cards with one query legitimately share a fetch, but insufficient for derived
+data, because `group_by` / `sort` / `limit` change the derivation without
+changing the key. That version rendered a "by status" card's tile using a "by
+priority" card's breakdown: the same one-card's-data-on-another's-tile bug
+`cardKey` exists to prevent, one layer up. See RR-DBKEY1.
 
 ## Sequencing
 
