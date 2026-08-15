@@ -1,0 +1,490 @@
+[
+  {
+    "name": "analyze_cardinality",
+    "description": "Check relation cardinality constraints defined in the metamodel",
+    "inputSchema": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    }
+  },
+  {
+    "name": "analyze_orphans",
+    "description": "Find entities with no connections (orphans)",
+    "inputSchema": {
+      "properties": {
+        "type": {
+          "description": "Filter by entity type",
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    }
+  },
+  {
+    "name": "analyze_properties",
+    "description": "Validate entity property values against the metamodel schema",
+    "inputSchema": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    }
+  },
+  {
+    "name": "analyze_schema",
+    "description": "Analyze metamodel schema usage to find unused entity types, relation types, and custom types",
+    "inputSchema": {
+      "properties": {
+        "threshold": {
+          "description": "Show types with instance count \u003c= threshold (0 = only unused, default 0)",
+          "type": "number"
+        }
+      },
+      "required": [],
+      "type": "object"
+    }
+  },
+  {
+    "name": "analyze_unique",
+    "description": "Find entities that violate a `unique: true` property constraint (same-type entities sharing a value for a unique property) — e.g. pre-existing duplicates that predate the constraint",
+    "inputSchema": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    }
+  },
+  {
+    "name": "analyze_validations",
+    "description": "Run custom validation rules defined in the metamodel",
+    "inputSchema": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    }
+  },
+  {
+    "name": "create_entity",
+    "description": "Create a new entity of the specified type. The result text begins with `WARNINGS (n):` when soft validation issues occurred (required field missing, value out of enum, type mismatch, etc.). The write still succeeded; warnings are advisory. Hard errors (unknown entity type, bad ID prefix) still come back via the standard error channel.",
+    "inputSchema": {
+      "properties": {
+        "content": {
+          "description": "Markdown body content",
+          "type": "string"
+        },
+        "id": {
+          "description": "Custom entity ID (only valid when the type's id_type is manual; auto-generated otherwise)",
+          "type": "string"
+        },
+        "properties": {
+          "description": "Property map (e.g. {\"title\": \"...\", \"status\": \"draft\"})",
+          "properties": {},
+          "type": "object"
+        },
+        "type": {
+          "description": "Entity type (e.g. requirement, decision)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "properties"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "create_relation",
+    "description": "Create a relation between two entities",
+    "inputSchema": {
+      "properties": {
+        "content": {
+          "description": "Markdown content for the relation",
+          "type": "string"
+        },
+        "from": {
+          "description": "Source entity ID",
+          "type": "string"
+        },
+        "properties": {
+          "description": "Property map for the relation (e.g. {\"weight\": \"high\"})",
+          "properties": {},
+          "type": "object"
+        },
+        "to": {
+          "description": "Target entity ID",
+          "type": "string"
+        },
+        "type": {
+          "description": "Relation type (e.g. addresses, implements)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "from",
+        "type",
+        "to"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "delete_entity",
+    "description": "Delete an entity and optionally its relations",
+    "inputSchema": {
+      "properties": {
+        "cascade": {
+          "description": "Also delete all relations (default false)",
+          "type": "boolean"
+        },
+        "id": {
+          "description": "Entity ID to delete",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "delete_relation",
+    "description": "Delete a relation between two entities",
+    "inputSchema": {
+      "properties": {
+        "from": {
+          "description": "Source entity ID",
+          "type": "string"
+        },
+        "to": {
+          "description": "Target entity ID",
+          "type": "string"
+        },
+        "type": {
+          "description": "Relation type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "from",
+        "type",
+        "to"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "export",
+    "description": "Export entities and relations in JSON, YAML, or CSV format",
+    "inputSchema": {
+      "properties": {
+        "format": {
+          "description": "Output format",
+          "enum": [
+            "json",
+            "yaml",
+            "csv"
+          ],
+          "type": "string"
+        },
+        "type": {
+          "description": "Entity type to export (omit for all)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "format"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "find_path",
+    "description": "Find the shortest path between two entities",
+    "inputSchema": {
+      "properties": {
+        "from": {
+          "description": "Source entity ID",
+          "type": "string"
+        },
+        "to": {
+          "description": "Target entity ID",
+          "type": "string"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "get_metamodel",
+    "description": "Deprecated alias for get_schema.",
+    "inputSchema": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    }
+  },
+  {
+    "name": "get_schema",
+    "description": "Get the full schema definition (entity types, relations, properties, validations)",
+    "inputSchema": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    }
+  },
+  {
+    "name": "list_entities",
+    "description": "List entities, optionally filtered by type and property expressions",
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "description": "Maximum number of results to return",
+          "type": "number"
+        },
+        "offset": {
+          "description": "Number of results to skip",
+          "type": "number"
+        },
+        "type": {
+          "description": "Entity type to filter by (e.g. requirement, decision)",
+          "type": "string"
+        },
+        "where": {
+          "description": "Filter expression (e.g. status=accepted, priority!=low)",
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    }
+  },
+  {
+    "name": "list_entity_types",
+    "description": "List available entity types with their property schemas",
+    "inputSchema": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    }
+  },
+  {
+    "name": "list_relation_types",
+    "description": "List available relation types with their constraints",
+    "inputSchema": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    }
+  },
+  {
+    "name": "list_relations",
+    "description": "List relations, optionally filtered by type, source, or target",
+    "inputSchema": {
+      "properties": {
+        "from": {
+          "description": "Source entity ID",
+          "type": "string"
+        },
+        "limit": {
+          "description": "Maximum number of results to return",
+          "type": "number"
+        },
+        "offset": {
+          "description": "Number of results to skip",
+          "type": "number"
+        },
+        "to": {
+          "description": "Target entity ID",
+          "type": "string"
+        },
+        "type": {
+          "description": "Relation type to filter by",
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    }
+  },
+  {
+    "name": "lua_eval",
+    "description": "Execute Lua code against the rela graph. Use rela.output(data) to return results as JSON. Available functions: get_entity, list_entities, search, create_entity, update_entity, delete_entity, get_relations, create_relation, delete_relation, trace_from, trace_to, find_path, refresh, write_file, get_entity_types, get_relation_types. Context: rela.project_root, rela.args.",
+    "inputSchema": {
+      "properties": {
+        "code": {
+          "description": "Lua code to execute",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "lua_list",
+    "description": "List available Lua scripts in the scripts/ directory. Only scripts in this directory can be executed via lua_run.",
+    "inputSchema": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    }
+  },
+  {
+    "name": "lua_run",
+    "description": "Execute a Lua script file against the rela graph. Scripts must be located in the 'scripts/' directory. Use rela.output(data) to return results as JSON.",
+    "inputSchema": {
+      "properties": {
+        "args": {
+          "description": "Arguments to pass to the script (available as rela.args)",
+          "type": "array"
+        },
+        "path": {
+          "description": "Script filename or path within scripts/ (e.g., 'export.lua' or 'reports/summary.lua')",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "rename_entity",
+    "description": "Rename an entity's ID, updating all relations that reference it",
+    "inputSchema": {
+      "properties": {
+        "dry_run": {
+          "description": "Preview changes without applying (default false)",
+          "type": "boolean"
+        },
+        "id": {
+          "description": "Current entity ID",
+          "type": "string"
+        },
+        "new_id": {
+          "description": "New entity ID",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "new_id"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "search_entities",
+    "description": "Full-text search across entity titles and properties",
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "description": "Maximum number of results (default 20)",
+          "type": "number"
+        },
+        "query": {
+          "description": "Search query string",
+          "type": "string"
+        },
+        "type": {
+          "description": "Restrict search to entity type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "show_entity",
+    "description": "Get full entity details including properties, content, and relations",
+    "inputSchema": {
+      "properties": {
+        "id": {
+          "description": "Entity ID (e.g. REQ-001)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "trace_from",
+    "description": "Trace all dependencies from an entity (both outgoing and incoming edges)",
+    "inputSchema": {
+      "properties": {
+        "id": {
+          "description": "Entity ID to trace from",
+          "type": "string"
+        },
+        "max_depth": {
+          "description": "Maximum trace depth (0 = unlimited)",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "trace_to",
+    "description": "Trace upstream dependencies to an entity (following incoming edges)",
+    "inputSchema": {
+      "properties": {
+        "id": {
+          "description": "Entity ID to trace to",
+          "type": "string"
+        },
+        "max_depth": {
+          "description": "Maximum trace depth (0 = unlimited)",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "update_entity",
+    "description": "Update an existing entity's properties or content. Set a property to null in `properties` to remove it from the entity. Empty string is treated as no value (silently ignored — use null to delete). Clearing a required property succeeds with a warning per DEC-HWZHA. The result text begins with `WARNINGS (n):` when soft validation issues occurred (required field missing, value out of enum, type mismatch, etc.). The write still succeeded; warnings are advisory. Hard errors (unknown entity type, bad ID prefix) still come back via the standard error channel.",
+    "inputSchema": {
+      "properties": {
+        "content": {
+          "description": "New markdown body content",
+          "type": "string"
+        },
+        "id": {
+          "description": "Entity ID to update",
+          "type": "string"
+        },
+        "properties": {
+          "description": "Properties to set or update. Set a property to null to remove it from the entity. Empty string is treated as no value (silently ignored — use null to delete). Clearing a required property succeeds with a warning per DEC-HWZHA; the entity persists in a temporarily invalid state.",
+          "properties": {},
+          "type": "object"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    }
+  }
+]

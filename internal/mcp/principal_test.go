@@ -2,10 +2,10 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
-	mcpgo "github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
@@ -70,12 +70,13 @@ func TestPrincipalMiddleware_WithOption(t *testing.T) {
 	s := &Server{principal: want}
 
 	var captured principal.Principal
-	handler := s.principalMiddleware(func(ctx context.Context, _ mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-		captured = principal.From(ctx)
-		return mcpgo.NewToolResultText("ok"), nil
-	})
+	handler := s.principalMiddleware(
+		func(ctx context.Context, _ string, _ mcpgo.Request) (mcpgo.Result, error) {
+			captured = principal.From(ctx)
+			return &mcpgo.CallToolResult{}, nil
+		})
 
-	_, _ = handler(context.Background(), mcpgo.CallToolRequest{})
+	_, _ = handler(context.Background(), "tools/call", &mcpgo.CallToolRequest{})
 
 	if !captured.Equal(want) {
 		t.Errorf("Principal = %+v, want %+v", captured, want)
@@ -92,23 +93,39 @@ func TestPrincipalMiddleware_RegisteredOnEveryTool(t *testing.T) {
 	want := principal.Principal{User: "alice", Tool: principal.ToolMCP}
 	s := &Server{principal: want}
 
-	srv := server.NewMCPServer("test", "0.0.0",
-		server.WithToolCapabilities(true),
-		server.WithToolHandlerMiddleware(s.principalMiddleware),
-	)
+	srv := mcpgo.NewServer(&mcpgo.Implementation{Name: "test", Version: "0.0.0"}, nil)
+	srv.AddReceivingMiddleware(s.principalMiddleware)
 
 	var captured principal.Principal
-	srv.AddTool(mcpgo.Tool{Name: "any-write-tool"},
-		func(ctx context.Context, _ mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	srv.AddTool(
+		&mcpgo.Tool{
+			Name:        "any-write-tool",
+			InputSchema: json.RawMessage(`{"type":"object"}`),
+		},
+		func(ctx context.Context, _ *mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 			captured = principal.From(ctx)
-			return mcpgo.NewToolResultText("ok"), nil
+			return &mcpgo.CallToolResult{}, nil
 		})
 
-	result := srv.HandleMessage(context.Background(), []byte(
-		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"any-write-tool"}}`,
-	))
-	if result == nil {
-		t.Fatal("nil result")
+	// Drive a real client→server call so the middleware runs in its
+	// production position rather than being invoked directly.
+	ctx := context.Background()
+	serverTransport, clientTransport := mcpgo.NewInMemoryTransports()
+	serverSession, err := srv.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("server connect: %v", err)
+	}
+	defer func() { _ = serverSession.Close() }()
+
+	client := mcpgo.NewClient(&mcpgo.Implementation{Name: "test-client", Version: "0.0.0"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	defer func() { _ = clientSession.Close() }()
+
+	if _, err := clientSession.CallTool(ctx, &mcpgo.CallToolParams{Name: "any-write-tool"}); err != nil {
+		t.Fatalf("call tool: %v", err)
 	}
 
 	if !captured.Equal(want) {

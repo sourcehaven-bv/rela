@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 )
@@ -14,17 +14,13 @@ import (
 // luaCallToolReq builds a minimal MCP CallToolRequest carrying named
 // string args, mirroring how the real MCP harness deserialises a client
 // invocation. Used to drive handleLuaEval / handleLuaRun in tests.
-func luaCallToolReq(args map[string]any) mcp.CallToolRequest {
-	return mcp.CallToolRequest{
-		Params: mcp.CallToolParams{
-			Arguments: args,
-		},
-	}
+func luaCallToolReq(args map[string]any) *mcpgo.CallToolRequest {
+	return makeToolRequest(args)
 }
 
 // decodeScriptError extracts the JSON envelope returned by the lua tools
 // on failure. Errors out the test if anything about the shape is off.
-func decodeScriptError(t *testing.T, result *mcp.CallToolResult) *lua.ScriptError {
+func decodeScriptError(t *testing.T, result *mcpgo.CallToolResult) *lua.ScriptError {
 	t.Helper()
 	if !result.IsError {
 		t.Fatalf("expected IsError=true, got false; content=%v", result.Content)
@@ -32,7 +28,7 @@ func decodeScriptError(t *testing.T, result *mcp.CallToolResult) *lua.ScriptErro
 	if len(result.Content) == 0 {
 		t.Fatal("result has no content")
 	}
-	text, ok := result.Content[0].(mcp.TextContent)
+	text, ok := result.Content[0].(*mcpgo.TextContent)
 	if !ok {
 		t.Fatalf("content[0] is not TextContent: %T", result.Content[0])
 	}
