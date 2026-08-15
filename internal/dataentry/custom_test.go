@@ -925,3 +925,29 @@ func TestOpenCustomEntryFile_NeverEscapes(t *testing.T) {
 		})
 	}
 }
+
+// TestServeAsset_OversizeNotStreamed pins the pre-read size gate against the
+// ServeContent path specifically.
+//
+// The gate exists because /_custom/ is unauthenticated: without it, one
+// oversize file in custom/ is a read amplifier. Moving delivery to
+// ServeContent made this easy to lose — ServeContent takes a ReadSeeker and
+// will happily stream a file of any size, so the cap MUST be enforced from the
+// Stat in openCustomEntryFile, before a handle is ever returned.
+func TestServeAsset_OversizeNotStreamed(t *testing.T) {
+	root := t.TempDir()
+	writeCustom(t, root, "huge.png", strings.Repeat("x", maxCustomFileBytes+1))
+	custom := newCustomAssets(root, []byte(testShell), func() bool { return true })
+
+	rec := httptest.NewRecorder()
+	custom.serveAsset(rec, httptest.NewRequest(http.MethodGet, customURLPrefix+"huge.png", http.NoBody))
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
+	// A 404 body is a few dozen bytes; anything near the cap means the file was
+	// streamed before the gate ran.
+	if rec.Body.Len() > 1024 {
+		t.Errorf("response carried %d bytes — the oversize file was streamed", rec.Body.Len())
+	}
+}
