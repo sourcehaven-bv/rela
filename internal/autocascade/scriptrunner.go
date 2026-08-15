@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 // ScriptRunner is the abstraction Runner uses to execute scripted
@@ -58,12 +59,13 @@ type ScriptAction struct {
 	// from pre-refactor workspace behavior.
 	OldEntity *entity.Entity
 
-	// AllowACLBypass mirrors the action's `allow_acl_bypass` flag
-	// (TKT-D8T148). When true, the script runner exposes `rela.bypass_acl`
-	// backed by an elevated Mutator (from [ElevatedProvider]); when false the
-	// binding is absent and the script cannot elevate. Operator-gated: only a
-	// metamodel-authored action can set it.
-	AllowACLBypass bool
+	// AllowACLBypass mirrors the action's `allow_acl_bypass` (TKT-D8T148,
+	// TKT-Y3JVFK). When set, the script runner exposes `rela.bypass_acl`
+	// backed by the capabilities the value names — an elevated Mutator (from
+	// [ElevatedProvider]) for write, an elevated reader for read; when unset
+	// the binding is absent and the script cannot elevate. Operator-gated:
+	// only a schema-authored action can set it.
+	AllowACLBypass metamodel.ACLBypass
 }
 
 // NopScriptRunner is a no-op [ScriptRunner] for tests that should not
