@@ -14,6 +14,8 @@ import { isClearedForType } from '@/utils/formValue'
 import { useEntityIDControls } from '@/composables/useEntityIDControls'
 import { useConfirm } from '@/composables/useConfirm'
 import { useHiddenFieldPolicy, clearWhenHiddenOf } from '@/composables/useHiddenFieldPolicy'
+import { useChangePolicy } from '@/composables/useChangePolicy'
+import type { ProposalOutcome } from '@/composables/useProposal'
 import type {
   Entity,
   PropertyDef,
@@ -248,18 +250,19 @@ const stepsWithErrors = computed<Set<number>>(() => {
 
 const errorCount = computed(() => Object.keys(errors.value).length)
 
-// React to a conditional field/step becoming hidden (its `visible_when` flipped
-// false). Three effects, keyed on a property entering or leaving
-// `activeProperties`:
-//   1. Always: drop any standing validation error for a now-hidden field, so it
+// React to a conditional field/step becoming hidden or revealed. TWO effects,
+// both NON-DESTRUCTIVE:
+//   1. Hiding: drop any standing validation error for a now-hidden field, so it
 //      can't leave a phantom "N fields need attention" with no flagged,
 //      reachable step (RR-U9ERK).
-//   2. Hiding: RETAIN the value (out of formData) rather than unsetting it, then
-//      apply the field's `clear_when_hidden` policy — which defaults to keeping
-//      it. This used to unconditionally PATCH `properties_unset`, destroying
-//      stored data as a side effect of a UI visibility change (BUG-FB0LN8).
-//   3. Revealing: restore the retained value, so hide → reveal is lossless and
+//   2. Revealing: restore the retained value, so hide → reveal is lossless and
 //      needs no server round-trip.
+//
+// TKT-7S5735: the destructive effect (retain-then-`clear_when_hidden`) used to
+// live here too; it moved into `useChangePolicy`, which runs BEFORE the
+// mutation. This watcher is post-flush — it fires *because* `formData` already
+// changed — so it can observe a hide but never gate one.
+//
 // Skips the initial hydration (`loading`); only touches wizard-governed
 // (managed) fields, so a plain non-conditional field is never affected.
 watch(
@@ -278,33 +281,23 @@ watch(
       hiddenPolicy.release(prop)
     }
 
-    const hiding: string[] = []
+    // Hiding: clear standing errors only. The value's fate was already decided
+    // in `proposeChange`, before the change that got us here was applied.
     for (const prop of prevActive) {
       if (active.has(prop) || !managed.has(prop)) continue // still shown / not governed
       if (errors.value[prop]) {
         nextErrors ??= { ...errors.value }
         delete nextErrors[prop]
       }
-      hiding.push(prop)
     }
     if (nextErrors) errors.value = nextErrors
-    if (hiding.length) applyHidePolicy(hiding)
   }
 )
 
-// Apply `clear_when_hidden` to the fields that just hid.
-//
-// Retention happens unconditionally, so a reveal is lossless whatever the
-// policy says; only the server-side clear is per-field. Synchronous on purpose:
-// both policies are decided from state we already hold, so there is no window
-// in which the form and the server can disagree. (An interactive `confirm`
-// policy would introduce exactly that window — see useHiddenFieldPolicy for why
-// it waits on the propose/commit refactor.)
+// Apply `clear_when_hidden` to the fields that just hid. Called by the change
+// policy AFTER it has retained their pre-change values, so a reveal is lossless
+// whatever the policy says; only the server-side clear is per-field.
 function applyHidePolicy(hiding: string[]) {
-  for (const prop of hiding) {
-    hiddenPolicy.retain(prop, formData.value[prop])
-  }
-  if (!isEdit.value) return // create has no stored value to lose (RR-O4SRG owns that path)
   if (!autoSave.value) return // nothing can be written yet; retention already stands
 
   for (const prop of hiddenPolicy.clearOnHide(hiding)) {
@@ -1104,6 +1097,43 @@ function handleCancel() {
   router.push(listId ? `/list/${listId}` : '/')
 }
 
+// TKT-7S5735 — the propose/commit seam.
+//
+// A widget edit arrives here as a PROPOSAL, not a write. The order is fixed and
+// load-bearing:
+//
+//   1. work out what the change would hide, against hypothetical bindings
+//   2. decide (policy)
+//   3. only then mutate formData and arm the write
+//
+// Steps 1-2 happen before any mutation, which is what the old code could not
+// do: `updateField` wrote `formData` on its first line, and since visibility is
+// a pure function of `formData`, "what would hide?" was only answerable after
+// the fact. Every BUG-FB0LN8 fix tried to reconstruct the prior state from that
+// position and produced a near-miss.
+//
+// Today every policy still resolves synchronously, so `proposeChange` always
+// returns 'applied' and no dialog can interleave. The seam exists so that an
+// interactive policy (`clear_when_hidden: confirm`) can return 'rejected'
+// without a single byte having changed — see useProposal.
+const changePolicy = useChangePolicy({
+  bindings: conditionBindings,
+  activeNow: () => wizard.activeProperties.value,
+  activeFor: (b) => wizard.activePropertiesFor(b),
+  managed: () => wizard.managedProperties.value,
+  valueOf: (p) => formData.value[p],
+  retain: (p, v) => hiddenPolicy.retain(p, v),
+  apply: (proposal) => updateField(proposal.property, proposal.value),
+  onHidden: applyHidePolicy,
+  // Create has no stored value to lose — RR-O4SRG's drop-on-commit owns it.
+  enabled: () => isEdit.value,
+})
+
+/** Widget edits enter here. See useChangePolicy for why this is not a write. */
+function proposeChange(property: string, value: unknown): ProposalOutcome {
+  return changePolicy.propose(property, value, formData.value[property])
+}
+
 function updateField(property: string, value: unknown) {
   formData.value[property] = value
   // Clear a standing validation error for this field as the user edits it, so
@@ -1611,7 +1641,7 @@ defineExpose({
               :is-field-readonly="isFieldReadonly"
               :option-verdicts-for="optionVerdictsFor"
               :transitions-for="transitionsFor"
-              @update-field="updateField"
+              @update-field="proposeChange"
               @attachment-changed="onAttachmentChanged"
               @update-relation="updateRelation"
               @update-relation-types="updateRelationTypes"
