@@ -1,3 +1,4 @@
+import axios from 'axios'
 import { vi } from 'vitest'
 import { config } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
@@ -114,3 +115,32 @@ class MockEventSource {
 }
 
 vi.stubGlobal('EventSource', MockEventSource)
+
+// ---------------------------------------------------------------------------
+// Block real HTTP from the unit suite.
+//
+// Every component that mounts an ExportMenu (transitively: DynamicForm,
+// EntityDetail, list views) calls getTransforms() in onMounted. Nothing stubbed
+// the HTTP layer, so those calls left the process and tried to reach
+// localhost:3000. Locally that fails immediately with ECONNREFUSED and the
+// component's own catch swallows it; on a slower, more contended CI runner the
+// socket is torn down mid-request instead, and the rejection lands AFTER the
+// test that triggered it has finished — so no test owns it and vitest reports
+// "Unhandled Rejection: socket hang up" and exits 1 with every test passing.
+// That is the intermittent Frontend failure.
+//
+// Replacing the adapter fixes the class, not the instance: any axios call from
+// any test resolves in-process, deterministically, with no socket. A test that
+// wants a specific payload still mocks its own module (vi.mock) as before —
+// this only decides what an UNMOCKED call does, and "empty 200" keeps the
+// mount-and-assert tests that never cared about the response working unchanged.
+//
+// Deliberately NOT a rejection: several components log to console.error on a
+// failed load, which would spam every unrelated test's output.
+axios.defaults.adapter = async (config) => ({
+  data: [],
+  status: 200,
+  statusText: 'OK',
+  headers: {},
+  config,
+})
