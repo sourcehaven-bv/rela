@@ -886,19 +886,57 @@ type DocumentConfig struct {
 	// acl.yaml (the acl.PermHistoryRead / delegate-X family). Empty means any
 	// principal may render the document.
 	//
-	// This is an INTENT and UX gate, not the confidentiality boundary: a
-	// document's Lua reads already go through the ACL-gated
-	// lua.ReadDeps.VisibleReader, so a principal who may not read the
-	// underlying entities renders an empty or partial document either way.
-	// Permission exists for documents whose COMPOSITION is sensitive even
-	// though the parts are individually readable, and to keep useless entries
-	// out of a user's sidebar. Because it is not the boundary, it is optional
-	// — requiring it on every standalone document would be ceremony.
+	// WHAT THIS GUARDS DEPENDS ON AllowACLBypass (TKT-Y3JVFK) — the two
+	// meanings are different in kind, so be clear which one applies:
+	//
+	// Without elevation (the common case) it is an INTENT and UX gate, NOT a
+	// confidentiality boundary. The document's Lua reads already go through
+	// the ACL-gated lua.ReadDeps.VisibleReader, so a principal who may not
+	// read the underlying entities renders a partial document either way and
+	// nothing leaks. What Permission buys is that a report claiming a scope
+	// its reader cannot actually compute — "company-wide revenue" rendered
+	// over one manager's clients — is withheld rather than served as a
+	// smaller number that looks authoritative. That is misinformation, not
+	// disclosure. It also keeps unusable entries out of a sidebar. Because it
+	// is not the boundary, it is optional here.
+	//
+	// WITH elevation it IS the confidentiality boundary, and is REQUIRED
+	// (enforced in validateDocuments). An elevated render reads through a raw
+	// handle, so nothing downstream bounds its output; the permission is the
+	// only thing between a principal and everything the script reads. Note
+	// this grants "may read whatever this script reads", not "may view this
+	// report" — see the AllowACLBypass godoc.
 	//
 	// Honored for both document kinds. On an entity-anchored document it
 	// applies IN ADDITION to the per-entity read gate (both must pass); it can
 	// never widen entity visibility.
 	Permission string `yaml:"permission,omitempty" json:"permission,omitempty"`
+	// AllowACLBypass, when set, unlocks rela.bypass_acl inside this document's
+	// Lua script, letting it read entities the requesting principal cannot see
+	// (TKT-Y3JVFK). The motivating case is a report that must compute over
+	// hidden rows — benchmarking a sales manager against peers whose clients
+	// are invisible to them — which no acl.yaml role can express, because
+	// granting enough to compute the benchmark grants enough to enumerate the
+	// competitors.
+	//
+	// ONLY metamodel.ACLBypassRead is accepted. `write` and `read+write` are a
+	// config error: a document render is a GET, and a GET that mutates is not
+	// idempotent (browsers prefetch, users refresh, the SPA retries). It would
+	// also foreclose the render caching and dedup that an elevated,
+	// principal-independent render is uniquely suited to (TKT-OGR566,
+	// RR-P4E9GL). Writes that a report seems to want — memoizing an expensive
+	// aggregate, logging that a report was viewed — belong in an automation
+	// action or a schedule, which are event-triggered, idempotent by design,
+	// and already audited as writes.
+	//
+	// Setting this REQUIRES Permission (see above): an elevated document with
+	// no permission publishes whatever the script reads to every principal.
+	//
+	// The script is TRUSTED CODE. bypass_acl hands it a raw reader and nothing
+	// stops it printing what it reads, so review the bypass block before
+	// deploying — that review IS the mitigation, and it is why this value is
+	// declared in config where a reviewer will see it.
+	AllowACLBypass metamodel.ACLBypass `yaml:"allow_acl_bypass,omitempty" json:"allow_acl_bypass,omitempty"`
 	// Command is the external render command as an ARGUMENT ARRAY, e.g.
 	//   command: ["my-renderer", "{in}"]
 	// It is executed directly — there is no shell, so pipes, redirection, and

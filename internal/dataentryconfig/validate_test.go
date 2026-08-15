@@ -1510,6 +1510,74 @@ func TestValidateConfig_Documents(t *testing.T) {
 			doc:     DocumentConfig{Command: []string{"render.sh"}, Script: "docs/render.lua", EntityType: "ticket"},
 			wantErr: "mutually exclusive",
 		},
+		// --- allow_acl_bypass (TKT-Y3JVFK) ---
+		{
+			name: "elevated read with permission is valid",
+			doc: DocumentConfig{
+				Script:         "docs/benchmark.lua",
+				AllowACLBypass: metamodel.ACLBypassRead,
+				Permission:     "report:sales",
+			},
+			wantErr: "",
+		},
+		{
+			// Elevation is allowed on an entity-anchored document too; both
+			// gates then apply (the per-entity read gate AND the permission).
+			name: "elevated read on an entity-anchored document is valid",
+			doc: DocumentConfig{
+				Script:         "docs/benchmark.lua",
+				EntityType:     "ticket",
+				AllowACLBypass: metamodel.ACLBypassRead,
+				Permission:     "report:sales",
+			},
+			wantErr: "",
+		},
+		{
+			// The load-bearing rule: without a permission an elevated render
+			// serves everything the script reads to every principal.
+			name: "elevated without permission is an error",
+			doc: DocumentConfig{
+				Script:         "docs/benchmark.lua",
+				AllowACLBypass: metamodel.ACLBypassRead,
+			},
+			wantErr: "permission is required when allow_acl_bypass is set",
+		},
+		{
+			name: "elevated write is an error",
+			doc: DocumentConfig{
+				Script:         "docs/benchmark.lua",
+				AllowACLBypass: metamodel.ACLBypassWrite,
+				Permission:     "report:sales",
+			},
+			wantErr: "a render is a GET",
+		},
+		{
+			name: "elevated read+write is an error",
+			doc: DocumentConfig{
+				Script:         "docs/benchmark.lua",
+				AllowACLBypass: metamodel.ACLBypassReadWrite,
+				Permission:     "report:sales",
+			},
+			wantErr: "a render is a GET",
+		},
+		{
+			// A command renderer never sees the Lua bindings elevation
+			// unlocks, so declaring it names a capability that cannot apply.
+			name: "elevated command renderer is an error",
+			doc: DocumentConfig{
+				Command:        []string{"render.sh"},
+				AllowACLBypass: metamodel.ACLBypassRead,
+				Permission:     "report:sales",
+			},
+			wantErr: "applies only to a script renderer",
+		},
+		{
+			// The overwhelmingly common case must stay unaffected: no
+			// elevation means no permission requirement.
+			name:    "unelevated document needs no permission",
+			doc:     DocumentConfig{Script: "docs/render.lua", EntityType: "ticket"},
+			wantErr: "",
+		},
 		{
 			name:    "neither command nor script is an error",
 			doc:     DocumentConfig{EntityType: "ticket"},
