@@ -22,7 +22,9 @@ at 11,222 orphans over ~7 days.
 
 ## Reproduction
 
-Confirmed locally (pgstore). With `RELA_SCHEDULER_TICK=50ms`:
+Confirmed locally (pgstore), with the scheduler's 60 s `tickInterval`
+temporarily lowered to 50 ms so days of ticking compress into seconds
+(see Notes — that override was NOT kept):
 
 - **1,177 orphan `task` entities in 60 seconds**, 0 relations.
 - Error identical on every tick:
@@ -120,9 +122,19 @@ mis-evaluated.
 
 ## Notes
 
-`RELA_SCHEDULER_TICK` (env-only debug seam, default unchanged at 60 s) was added
-during investigation to compress days of ticking into seconds. Keep or drop with
-the fix, but a test-visible tick override is what makes criterion 3 practical.
+**Reproducing this needs a tick override.** The bug is only observable across
+many ticks, and `tickInterval` is a 60 s const, so a bare reproduction takes
+hours. During investigation a `RELA_SCHEDULER_TICK` env seam was added to
+compress that; it was **deliberately not kept**, because on its own it is a
+debug knob with no caller, no test, and no bug it fixes.
+
+Whoever takes this ticket should reintroduce it (or an equivalent) as part of
+the fix, where it lands with a caller and a rationale. Acceptance criterion 3
+(consecutive failures back off) is impractical to test without one.
+
+Note the scheduler already has the two seams the regression test needs —
+`Scheduler.now` for the clock and `executeTaskFunc` for execution — so only the
+tick period is missing.
 
 ## Related
 
