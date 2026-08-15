@@ -746,8 +746,44 @@ alongside the write methods, all reading raw. That keeps the privilege
 scoped to a closure and visible at the call site, and it leaves an
 `acl-bypass-read` audit row, where relaxing a role in `acl.yaml` would
 widen access for every read on every path with nothing in the log to
-show for it. It requires operator opt-in (`allow_acl_bypass: true` on
-the action) — see the Lua scripting guide.
+show for it. It requires operator opt-in (`allow_acl_bypass:` on the
+action, valued `read`, `write` or `read+write`) — see the Lua scripting
+guide.
+
+### An elevated document is trusted code
+
+A `documents:` entry may also declare `allow_acl_bypass: read`, so its
+render can compute over rows the reader cannot see — a benchmark against
+peers whose records are invisible to them. No `acl.yaml` role expresses
+that: granting enough to *compute* the benchmark grants enough to
+*enumerate* the subjects.
+
+Understand what that gate means, because it is not what it looks like:
+
+> `permission:` on an elevated document grants **"may read whatever this
+> script reads"** — not "may view this report".
+
+Once the render elevates, the ACL no longer bounds its **output**; only
+the script's own discipline does. A script that prints the rows it read,
+rather than a statistic derived from them, has published them to every
+holder of that permission. Nothing in the system prevents this, and
+nothing can: the aggregation *is* the confidentiality boundary.
+
+So the mitigation is procedural, and it must actually happen:
+
+- **Review the `bypass_acl` block before deploying.** That review is the
+  control. The `allow_acl_bypass:` key exists in config precisely so a
+  reviewer sees which scripts need it.
+- **Treat the permission as equivalent to the read grant** the script
+  performs, when deciding who holds it.
+- **Elevated reads are audited** (`acl-bypass-read`), so use is
+  answerable after the fact — but the row records *that* raw reads
+  happened, not what reached the page.
+
+An elevated document additionally requires a configured `acl.yaml`: under
+no policy the permission names a capability nothing can withhold, so the
+render is refused rather than served to everyone. Writes are refused
+outright — a render is a `GET`.
 
 ## Property-level redaction (`visible:`)
 

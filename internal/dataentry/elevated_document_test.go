@@ -2,10 +2,14 @@ package dataentry
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
@@ -153,4 +157,151 @@ func TestElevatedDocument_DeclarativeRequiresHeldPermission(t *testing.T) {
 				"on the assumption that config validation caught it")
 		}
 	})
+}
+
+// --- End-to-end HTTP behavior (AC4, AC5, AC9) ---
+
+// TestElevatedDocument_DeniedPrincipalNeverReachesRenderer pins AC9. The
+// status code alone is not enough: the point of gating BEFORE the render is
+// that an unauthorized caller cannot trigger an expensive Lua aggregation, so
+// the assertion is on the renderer call count.
+func TestElevatedDocument_DeniedPrincipalNeverReachesRenderer(t *testing.T) {
+	app := newTestAppV1(t)
+	fake := withFakeDocRenderer(t, app)
+	app.State().Cfg.Documents = map[string]dataentryconfig.DocumentConfig{
+		"benchmark": {
+			Script:         "docs/benchmark.lua",
+			AllowACLBypass: metamodel.ACLBypassRead,
+			Permission:     "report:sales",
+		},
+	}
+
+	d := mustNewACL(t, &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
+		Assignments: map[string]string{"alice": "viewer"},
+	}, app.store)
+	app.acl = d
+
+	rec := httptest.NewRecorder()
+	app.handleV1Documents(rec, standaloneDocReq(gateCtxFor(principalCtx("bob"), t, d), "benchmark"))
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("a principal without the permission must be denied: got %d; body=%s", rec.Code, rec.Body)
+	}
+	if fake.callCount() != 0 {
+		t.Errorf("the renderer ran %d times for a denied principal; an unauthorized caller must "+
+			"not be able to trigger an elevated aggregation", fake.callCount())
+	}
+}
+
+// TestElevatedDocument_PermittedPrincipalRenders pins AC4: the holder of the
+// declared permission gets the document.
+func TestElevatedDocument_PermittedPrincipalRenders(t *testing.T) {
+	app := newTestAppV1(t)
+	fake := withFakeDocRenderer(t, app)
+	app.State().Cfg.Documents = map[string]dataentryconfig.DocumentConfig{
+		"benchmark": {
+			Script:         "docs/benchmark.lua",
+			AllowACLBypass: metamodel.ACLBypassRead,
+			Permission:     "report:sales",
+		},
+	}
+
+	d := mustNewACL(t, &acl.Policy{
+		Roles: map[string]acl.RoleDef{
+			"analyst": {Read: []string{"ticket"}, Permissions: []string{"report:sales"}},
+		},
+		Assignments: map[string]string{"alice": "analyst"},
+	}, app.store)
+	app.acl = d
+
+	rec := httptest.NewRecorder()
+	app.handleV1Documents(rec, standaloneDocReq(gateCtxFor(principalCtx("alice"), t, d), "benchmark"))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the permission holder must render the document: got %d; body=%s", rec.Code, rec.Body)
+	}
+	if fake.callCount() != 1 {
+		t.Errorf("expected exactly one render, got %d", fake.callCount())
+	}
+}
+
+// TestElevatedDocument_NopACLRefusesEndToEnd is the deployment-shaped version
+// of the NopACL arm: a project with no acl.yaml must not serve an elevated
+// document, even though its permission "passes" the read gate there.
+func TestElevatedDocument_NopACLRefusesEndToEnd(t *testing.T) {
+	app := newTestAppV1(t)
+	fake := withFakeDocRenderer(t, app)
+	app.State().Cfg.Documents = map[string]dataentryconfig.DocumentConfig{
+		"benchmark": {
+			Script:         "docs/benchmark.lua",
+			AllowACLBypass: metamodel.ACLBypassRead,
+			Permission:     "report:sales",
+		},
+	}
+	app.acl = acl.NopACL{}
+
+	rec := httptest.NewRecorder()
+	app.handleV1Documents(rec, standaloneDocReq(principalCtx("anyone"), "benchmark"))
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("an elevated document must not serve without a configured policy: got %d; body=%s",
+			rec.Code, rec.Body)
+	}
+	if fake.callCount() != 0 {
+		t.Errorf("the renderer ran %d times under NopACL", fake.callCount())
+	}
+}
+
+// TestElevatedDeps_GrantsBypassBinding is the wiring test: it connects the
+// config flag to the actual runtime capability, which every other test in this
+// file stubs out.
+//
+// The gate tests above prove WHO may render; the handler tests prove a denied
+// principal never reaches the renderer. None of them prove the elevated reader
+// actually arrives, because they use a fake renderer. This builds a real
+// lua.Runtime from the deps elevatedDeps produces and asks the script itself.
+func TestElevatedDeps_GrantsBypassBinding(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		elevated bool
+		script   string
+	}{
+		{
+			name:     "elevated render has bypass_acl",
+			elevated: true,
+			script:   `if rela.bypass_acl == nil then error("bypass_acl absent") end`,
+		},
+		{
+			// The structural guarantee: a render cannot mutate even inside
+			// the closure, because the write methods do not exist on the
+			// handle at all.
+			name:     "elevated handle carries reads and no writes",
+			elevated: true,
+			script: `rela.bypass_acl(function(admin)
+				if admin.delete_entity ~= nil then error("delete_entity present") end
+				if admin.create_relation ~= nil then error("create_relation present") end
+				if admin.delete_relation ~= nil then error("delete_relation present") end
+				if admin.get_entity == nil then error("get_entity absent") end
+				if admin.list_entities == nil then error("list_entities absent") end
+				if admin.get_relations == nil then error("get_relations absent") end
+			end)`,
+		},
+		{
+			name:     "unelevated render has no bypass_acl",
+			elevated: false,
+			script:   `if rela.bypass_acl ~= nil then error("bypass_acl present") end`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newTestAppV1(t)
+			deps := app.documents.elevatedDeps(documentRenderConfig{Elevated: tc.elevated})
+			var out strings.Builder
+			r := lua.NewWriter(deps, &out)
+			defer r.Close()
+			if err := r.RunString(tc.script); err != nil {
+				t.Errorf("script assertion failed: %v", err)
+			}
+		})
+	}
 }
