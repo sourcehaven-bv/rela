@@ -44,7 +44,7 @@ func New(cfg Config, opts ...Option) (*Services, error) {
 // openBackend delegates pool construction, migration, and store+search wiring
 // to pgstore.Open — the single owner of that logic (shared with the MCP
 // wiring's postgres recipe).
-func openBackend(ctx context.Context, base *buildBase) (store.Store, search.Searcher, io.Closer, error) {
+func openBackend(ctx context.Context, base *SharedBase) (store.Store, search.Searcher, io.Closer, error) {
 	if base.cfg.DatabaseURL == "" {
 		return nil, nil, nil, errors.New(
 			"appbuild: postgres build requires a database URL (set RELA_DATABASE_URL)")

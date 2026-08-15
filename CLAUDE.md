@@ -347,6 +347,20 @@ Rules when touching this:
   A recipe may choose and order backend steps; if logic would be copy-pasted
   between recipes, it belongs in a shared helper. This is what keeps the three
   recipes from drifting (and where future per-backend audit/ACL variation goes).
+
+  `prepare`'s result is the exported **`appbuild.SharedBase`** (TKT-P938T7):
+  the tenant-independent half — validated config, options, parsed `acl.yaml`,
+  loaded metamodel — with nothing derived from a store. Build one with
+  `NewSharedBase` and call `base.Assemble(store, …)` once per store; `New`/
+  `Discover` are that path with a single store. **The split is NOT along the
+  `Services` field list**: `acl.Declarative` is built FROM the store (it needs a
+  store-backed `acl.Graph`), so the ACL *policy* is shared while the *evaluator*
+  is per-store — same for `lua.ReadDeps`. Two invariants keep reuse safe, both
+  pinned by tests in `sharedbase_test.go`: assembly must never mutate `meta` or
+  `aclPolicy` (they are pointers handed to every assembled `Services`, so a
+  write leaks across tenants), and `Services.Close` must tear down only the
+  store and search closer it was assembled with — never anything shared, or
+  evicting one tenant breaks its siblings.
 - **The metamodel is always read from disk**, even in the postgres build —
   `schema.yaml` and `templates/` stay on the filesystem, as does operator-authored
   config generally; PostgreSQL backs entities/relations/attachments/search. A

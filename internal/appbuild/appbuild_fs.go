@@ -43,7 +43,7 @@ func New(cfg Config, opts ...Option) (*Services, error) {
 //
 // A nil index is non-fatal: the store still opens and buildSearcher
 // returns an error-Searcher, so read/write paths keep working.
-func openBackend(ctx context.Context, base *buildBase) (store.Store, search.Searcher, io.Closer, error) {
+func openBackend(ctx context.Context, base *SharedBase) (store.Store, search.Searcher, io.Closer, error) {
 	idx, idxErr := bleveindex.NewMem()
 	if idxErr != nil {
 		slog.Warn("appbuild: search index unavailable", "error", idxErr)
