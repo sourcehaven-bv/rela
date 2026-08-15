@@ -202,6 +202,26 @@ describe('DynamicForm propose/commit seam', () => {
     expect(unsets).not.toContain('vragenronde_deadline')
   })
 
+  // AC2: the payoff of merging. An accepted clear decision is a set of changes
+  // the user approved TOGETHER — the trigger's new value and the unset of what
+  // it hid. Emitting them as two requests leaves a window in which the entity
+  // holds a state nobody approved, and if the second fails that state persists.
+  it('commits an accepted clear as ONE atomic patch', async () => {
+    const { wrapper, update } = await mountEdit(formConfig('yes'))
+    vi.useFakeTimers()
+
+    await typeInto(wrapper, 'inkooproute', 'onderhands')
+    await vi.advanceTimersByTimeAsync(2000)
+
+    expect(update).toHaveBeenCalledTimes(1)
+    const patch = update.mock.calls[0][2] as {
+      properties?: Record<string, unknown>
+      properties_unset?: string[]
+    }
+    expect(patch.properties?.inkooproute).toBe('onderhands')
+    expect(patch.properties_unset).toContain('inschrijfdeadline')
+  })
+
   // The trigger's own edit must still commit normally — the seam must not
   // swallow the very change the user made.
   it('commits the triggering edit itself', async () => {
