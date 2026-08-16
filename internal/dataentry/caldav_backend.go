@@ -88,7 +88,10 @@ func (b *caldavBackend) CalendarHomeSetPath(context.Context) (string, error) {
 // PROPFIND Depth:1 over the home set and discovers every collection, so an
 // operator declares a collection per entity type and the user configures the
 // account once.
-func (b *caldavBackend) ListCalendars(_ context.Context) ([]caldav.Calendar, error) {
+// Takes ctx (it previously discarded one) because DYNAMIC patterns expand from
+// the graph: the set of collections is now per-principal, since each expands to
+// one collection per driver entity THIS caller may read.
+func (b *caldavBackend) ListCalendars(ctx context.Context) ([]caldav.Calendar, error) {
 	cfg := b.app.State().Cfg
 	names := make([]string, 0, len(cfg.CalDAV.Static))
 	for name := range cfg.CalDAV.Static {
@@ -100,17 +103,81 @@ func (b *caldavBackend) ListCalendars(_ context.Context) ([]caldav.Calendar, err
 	for _, name := range names {
 		out = append(out, b.calendarFor(name, cfg.CalDAV.Static[name]))
 	}
+
+	patterns := make([]string, 0, len(cfg.CalDAV.Dynamic))
+	for name := range cfg.CalDAV.Dynamic {
+		patterns = append(patterns, name)
+	}
+	sort.Strings(patterns)
+	for _, pattern := range patterns {
+		expanded, err := b.expandPattern(ctx, pattern, cfg.CalDAV.Dynamic[pattern])
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, expanded...)
+	}
 	return out, nil
 }
 
-func (b *caldavBackend) GetCalendar(_ context.Context, p string) (*caldav.Calendar, error) {
+// expandPattern lists one collection per driver entity the caller may read.
+//
+// Drivers come from feedEntitySource.listType, the same ACL-gated source every
+// other read uses, so a driver the principal cannot see yields no collection —
+// absent from enumeration rather than present-and-forbidden, which would be an
+// existence oracle for the driver id sitting in the URL.
+//
+// The display name is the driver's title, resolved through the metamodel, so
+// renaming a project renames its list. The URL segment is built from the driver
+// ID and therefore does NOT move — a changed collection href makes a client
+// re-add the whole list as new.
+func (b *caldavBackend) expandPattern(
+	ctx context.Context, pattern string, dyn dataentryconfig.CalDAVDynamicCollection,
+) ([]caldav.Calendar, error) {
+	src := feedEntitySource{app: b.app}
+	drivers, err := src.listType(ctx, dyn.DriverType)
+	if err != nil {
+		return nil, err
+	}
+	meta := b.app.State().Meta
+	out := make([]caldav.Calendar, 0, len(drivers))
+	for _, d := range drivers {
+		cfg := dyn.CalDAVCollection
+		// meta.name on a pattern would name every expansion identically, so the
+		// driver's display title is the label. Falls back to the id.
+		cfg.Meta.Name = meta.DisplayTitle(d.ID, d.Type, d.Properties)
+		if cfg.Meta.Name == "" {
+			cfg.Meta.Name = d.ID
+		}
+		out = append(out, b.calendarFor(dynamicName(pattern, d.ID), cfg))
+	}
+	return out, nil
+}
+
+func (b *caldavBackend) GetCalendar(ctx context.Context, p string) (*caldav.Calendar, error) {
 	name, _, ok := b.splitPath(p)
 	if !ok {
 		return nil, webdav.NewHTTPError(http.StatusNotFound, errors.New("caldav: unknown collection"))
 	}
-	cfg, found := b.app.State().Cfg.CalDAV.Static[name]
-	if !found {
+	if cfg, found := b.app.State().Cfg.CalDAV.Static[name]; found {
+		cal := b.calendarFor(name, cfg)
+		return &cal, nil
+	}
+	dyn, driverID, resolved := b.resolveDynamic(ctx, name)
+	if !resolved {
+		if driverID != "" {
+			// A well-formed dynamic name whose driver is absent OR unreadable —
+			// the same answer for both, so the URL cannot probe existence.
+			return nil, notFoundHere()
+		}
 		return nil, webdav.NewHTTPError(http.StatusNotFound, errors.New("caldav: unknown collection"))
+	}
+	cfg := dyn.CalDAVCollection
+	src := feedEntitySource{app: b.app}
+	if d, visible, err := src.getEntity(ctx, dyn.DriverType, driverID); err == nil && visible {
+		cfg.Meta.Name = b.app.State().Meta.DisplayTitle(d.ID, d.Type, d.Properties)
+	}
+	if cfg.Meta.Name == "" {
+		cfg.Meta.Name = driverID
 	}
 	cal := b.calendarFor(name, cfg)
 	return &cal, nil
@@ -174,17 +241,154 @@ func (b *caldavBackend) splitPath(p string) (name, href string, ok bool) {
 	return name, href, true
 }
 
-// mapperFor resolves the mapper for a collection, or a 404.
-func (b *caldavBackend) mapperFor(name string) (*caldavMapper, dataentryconfig.CalDAVCollection, error) {
-	s := b.app.State()
-	cfg, ok := s.Cfg.CalDAV.Static[name]
-	if !ok {
-		return nil, cfg, webdav.NewHTTPError(http.StatusNotFound, errors.New("caldav: unknown collection"))
+// splitDynamicName decomposes a collection segment into its pattern key and
+// driver entity id: "project_tasks--PROJ-1" → ("project_tasks", "PROJ-1", true).
+//
+// ok=false means the segment is not a dynamic collection name — a static key, or
+// a pattern key with no driver, or a driver id that is not a legal entity id.
+// The caller then treats it as static, so an unknown segment falls through to
+// the same 404 it always got.
+//
+// # Why the id is validated here
+//
+// The driver id lands in a store lookup and in the alias key. entity.ValidateID
+// pins ids to ^[A-Za-z0-9][A-Za-z0-9_-]*$ — no slash, no dot, no percent — so
+// validating here means a hostile segment is rejected BEFORE it reaches either.
+// splitPath has already rejected path separators and traversal elements; this is
+// the narrower check that the remainder is an id at all.
+//
+// SplitN with n=2 on the FIRST separator, not the last: a pattern key cannot
+// contain "--" (config validation rejects it) and an id cannot either, so the
+// first occurrence is the only boundary. Splitting on the last would let a
+// crafted segment smuggle a different pattern name past the lookup.
+func splitDynamicName(segment string) (pattern, driverID string, ok bool) {
+	parts := strings.SplitN(segment, feedUIDSep, 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", false
 	}
+	if err := entitypkg.ValidateID(parts[1]); err != nil {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
+}
+
+// dynamicName builds the URL segment for one expanded collection. Inverse of
+// [splitDynamicName].
+func dynamicName(pattern, driverID string) string {
+	return pattern + feedUIDSep + driverID
+}
+
+// mapperFor resolves the mapper for a collection, or a 404.
+// Takes ctx because a DYNAMIC collection's existence is a graph question: the
+// driver entity must exist AND be readable by this principal. A hidden driver
+// yields the same 404 as an unknown one — the driver id is in the URL, and
+// entity existence is the thing the read gate protects (RR-NGMI).
+func (b *caldavBackend) mapperFor(
+	ctx context.Context, name string,
+) (*caldavMapper, dataentryconfig.CalDAVCollection, error) {
+	s := b.app.State()
 	link := func(entityType, id string) string {
 		return b.baseURL + "/entity/" + entityType + "/" + id
 	}
-	return newCalDAVMapper(name, cfg, s.Meta, link), cfg, nil
+	if cfg, ok := s.Cfg.CalDAV.Static[name]; ok {
+		return newCalDAVMapper(name, cfg, s.Meta, link), cfg, nil
+	}
+	if dyn, driverID, ok := b.resolveDynamic(ctx, name); ok {
+		return newCalDAVMapper(name, dyn.CalDAVCollection, s.Meta, link), dyn.CalDAVCollection, nil
+	} else if driverID != "" {
+		// A well-formed dynamic name whose driver is absent or unreadable.
+		return nil, dataentryconfig.CalDAVCollection{}, notFoundHere()
+	}
+	return nil, dataentryconfig.CalDAVCollection{},
+		webdav.NewHTTPError(http.StatusNotFound, errors.New("caldav: unknown collection"))
+}
+
+// resolveDynamic resolves a composite segment to its pattern config, if the
+// segment names a configured pattern whose driver entity this principal may
+// read.
+//
+// The second return is the parsed driver id, non-empty whenever the segment WAS
+// a well-formed dynamic name — so the caller can distinguish "not a dynamic
+// name at all" from "a dynamic name that did not resolve", and answer the
+// latter with the uniform not-found rather than a different status.
+func (b *caldavBackend) resolveDynamic(
+	ctx context.Context, name string,
+) (cfg dataentryconfig.CalDAVDynamicCollection, driverID string, ok bool) {
+	pattern, id, split := splitDynamicName(name)
+	if !split {
+		return cfg, "", false
+	}
+	dyn, found := b.app.State().Cfg.CalDAV.Dynamic[pattern]
+	if !found {
+		return cfg, "", false
+	}
+	// The driver must be readable BY THIS PRINCIPAL. getEntity returns
+	// (nil,false,nil) for both absent and denied, deliberately
+	// indistinguishable, which is exactly the answer wanted here.
+	src := feedEntitySource{app: b.app}
+	if _, visible, err := src.getEntity(ctx, dyn.DriverType, id); err != nil || !visible {
+		return cfg, id, false
+	}
+	return dyn, id, true
+}
+
+// dynamicMembers returns the ids belonging to a dynamic collection, via ONE
+// relation traversal from the driver entity.
+//
+// scoped=false means the collection is static and every entity of the type is a
+// candidate — the caller then applies no membership filter at all, rather than
+// treating an empty set as "nothing matches".
+//
+// # One traversal from the DRIVER, not one per member
+//
+// The query is anchored on the driver entity, so it costs a single
+// RelationQuery regardless of how many entities of the member type exist.
+// Walking members instead ("for each task, does it link to this project?")
+// would be O(members) traversals per poll, which is the shape that made the
+// old per-row relation filter O(N·edges) (see matchRelationFilter's doc).
+//
+// # Row visibility is applied downstream, not here
+//
+// The ids returned are unfiltered by ACL. That is safe because the caller
+// intersects them with `src.listType`, which IS ACL-scoped — an id the
+// principal cannot read is absent from that list and never reaches the output.
+// Gating here too would be a second, redundant read of every neighbor.
+func (b *caldavBackend) dynamicMembers(
+	ctx context.Context, name string,
+) (members map[string]struct{}, scoped bool, err error) {
+	dyn, driverID, ok := b.resolveDynamic(ctx, name)
+	if !ok {
+		return nil, false, nil
+	}
+	dir := store.DirectionOutgoing
+	if dyn.Direction.IsIncoming() {
+		dir = store.DirectionIncoming
+	}
+	// The edge runs member→driver by default, so from the DRIVER's side the
+	// query is the mirror of the configured direction.
+	q := store.RelationQuery{EntityID: driverID, Type: dyn.Relation, Direction: flipDirection(dir)}
+	rels, err := listRelationsCtx(ctx, b.app.Services().Store, q)
+	if err != nil {
+		return nil, false, fmt.Errorf("caldav %q: driver relations: %w", name, err)
+	}
+	members = make(map[string]struct{}, len(rels))
+	for _, r := range rels {
+		id := r.From
+		if dir == store.DirectionIncoming {
+			id = r.To
+		}
+		members[id] = struct{}{}
+	}
+	return members, true, nil
+}
+
+// flipDirection returns the mirror direction, so a member→driver edge can be
+// queried from the driver's side.
+func flipDirection(d store.Direction) store.Direction {
+	if d == store.DirectionOutgoing {
+		return store.DirectionIncoming
+	}
+	return store.DirectionOutgoing
 }
 
 // listTodos projects a collection's matching entities into to-dos, ACL-scoped.
@@ -193,7 +397,7 @@ func (b *caldavBackend) mapperFor(name string) (*caldavMapper, dataentryconfig.C
 // uses: an entity the principal cannot read is simply absent from the
 // collection, not a 403 (which would be an existence oracle).
 func (b *caldavBackend) listTodos(ctx context.Context, name string) ([]caldav.CalendarObject, error) {
-	m, cfg, err := b.mapperFor(name)
+	m, cfg, err := b.mapperFor(ctx, name)
 	if err != nil {
 		return nil, err
 	}
@@ -206,10 +410,21 @@ func (b *caldavBackend) listTodos(ctx context.Context, name string) ([]caldav.Ca
 	if err != nil {
 		return nil, fmt.Errorf("caldav %q: %w", name, err)
 	}
+	members, scoped, err := b.dynamicMembers(ctx, name)
+	if err != nil {
+		return nil, err
+	}
 	entDef, _ := b.app.State().Meta.GetEntityDef(cfg.EntityType)
 
 	out := make([]caldav.CalendarObject, 0, len(ents))
 	for _, e := range ents {
+		// Membership first: for a dynamic collection this is the cheap set
+		// lookup, and it excludes most of the type before any filter runs.
+		if scoped {
+			if _, isMember := members[e.ID]; !isMember {
+				continue
+			}
+		}
 		matched, matchErr := filter.MatchAll(entityRecord(e), filters, entDef, b.app.State().Meta)
 		if matchErr != nil {
 			return nil, fmt.Errorf("caldav %q: %w", name, matchErr)
@@ -438,7 +653,7 @@ func (b *caldavBackend) CreateCalendar(context.Context, *caldav.Calendar) error 
 func (b *caldavBackend) watermarkCTag(
 	ctx context.Context, name string,
 ) (ctag string, supported bool, err error) {
-	_, cfg, err := b.mapperFor(name)
+	_, cfg, err := b.mapperFor(ctx, name)
 	if err != nil {
 		return "", false, err
 	}

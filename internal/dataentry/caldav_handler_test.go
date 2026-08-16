@@ -1073,7 +1073,7 @@ func TestCalDAVRefusedWrite_ServesStoredStateWithoutETag(t *testing.T) {
 	app := caldavTestApp(t, stored)
 
 	b := &caldavBackend{app: app, baseURL: "https://example.test"}
-	m, _, err := b.mapperFor("tasks")
+	m, _, err := b.mapperFor(t.Context(), "tasks")
 	if err != nil {
 		t.Fatalf("mapperFor: %v", err)
 	}
@@ -1109,7 +1109,7 @@ func TestCalDAVRefusedWrite_ServesStoredStateWithoutETag(t *testing.T) {
 func TestCalDAVRefusedWrite_UnreadableEntityStillErrors(t *testing.T) {
 	app := caldavTestApp(t)
 	b := &caldavBackend{app: app, baseURL: "https://example.test"}
-	m, _, err := b.mapperFor("tasks")
+	m, _, err := b.mapperFor(t.Context(), "tasks")
 	if err != nil {
 		t.Fatalf("mapperFor: %v", err)
 	}
@@ -1263,7 +1263,7 @@ func TestRenderObject_AppliesRedaction(t *testing.T) {
 	app := caldavTestApp(t, stored)
 
 	b := &caldavBackend{app: app, baseURL: "https://example.test"}
-	m, _, err := b.mapperFor("tasks")
+	m, _, err := b.mapperFor(t.Context(), "tasks")
 	if err != nil {
 		t.Fatalf("mapperFor: %v", err)
 	}
@@ -1398,5 +1398,175 @@ func TestCollectionCTag_DistinctPerCollection(t *testing.T) {
 	if a == c {
 		t.Error("two collections over one entity type share a ctag — a client " +
 			"switching between them would skip enumerating the other")
+	}
+}
+
+// caldavDynamicAppWith builds an App with a `project_tasks` PATTERN over the
+// `project` driver type, seeded with the given entities and relations — so one
+// config key serves one collection per project.
+func caldavDynamicAppWith(t *testing.T, ents []*entity.Entity, rels []*entity.Relation) *App {
+	t.Helper()
+	base := caldavTestApp(t)
+	meta := base.State().Meta
+	meta.Entities["project"] = metamodel.EntityDef{
+		Label: "Project", IDPrefix: "PRJ-", DisplayProperty: "title",
+		Properties: map[string]metamodel.PropertyDef{
+			"title": {Type: metamodel.PropertyTypeString, Required: true},
+		},
+	}
+	cfg := base.State().Cfg
+	cfg.CalDAV.Dynamic = map[string]dataentryconfig.CalDAVDynamicCollection{
+		"project_tasks": {
+			CalDAVCollection: cfg.CalDAV.Static["tasks"],
+			DriverType:       "project",
+			Relation:         "belongs-to",
+		},
+	}
+
+	f := newFixture()
+	for _, e := range ents {
+		f.AddNode(e)
+	}
+	for _, r := range rels {
+		f.AddEdge(r)
+	}
+	app := newAppFromParts(cfg, meta, f)
+
+	root, err := storage.NewRootedFS(storage.NewMemFS(), t.TempDir())
+	if err != nil {
+		t.Fatalf("NewRootedFS: %v", err)
+	}
+	aliases, aliasErr := caldavalias.New(t.Context(), state.NewFSKV(root))
+	if aliasErr != nil {
+		t.Fatalf("caldavalias.New: %v", aliasErr)
+	}
+	app.SetCalDAVAliases(aliases)
+	return app
+}
+
+func mkProject(id, title string) *entity.Entity {
+	e := entity.New(id, "project")
+	e.Properties = map[string]any{"title": title}
+	return e
+}
+
+func mkTaskIn(id, title string) *entity.Entity {
+	e := entity.New(id, "task")
+	e.Properties = map[string]any{"title": title, "status": "todo"}
+	return e
+}
+
+// TestDynamicCollections_ExpandPerDriver pins AC1: one config key yields one
+// collection per driver entity, discoverable from the single account URL.
+func TestDynamicCollections_ExpandPerDriver(t *testing.T) {
+	app := caldavDynamicAppWith(t,
+		[]*entity.Entity{mkProject("PRJ-1", "Alpha"), mkProject("PRJ-2", "Beta")},
+		nil)
+
+	b := &caldavBackend{app: app, baseURL: "https://example.test"}
+	cals, err := b.ListCalendars(t.Context())
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+
+	got := map[string]string{}
+	for _, c := range cals {
+		got[c.Path] = c.Name
+	}
+	for _, want := range []struct{ seg, name string }{
+		{"project_tasks--PRJ-1", "Alpha"},
+		{"project_tasks--PRJ-2", "Beta"},
+	} {
+		path := b.calendarPath(want.seg)
+		if got[path] != want.name {
+			t.Errorf("collection %q: name = %q, want %q (the driver's title, so a "+
+				"rename renames the list)", want.seg, got[path], want.name)
+		}
+	}
+	if len(cals) != 3 { // the static "tasks" plus two expansions
+		t.Errorf("want 3 collections (1 static + 2 expanded), got %d", len(cals))
+	}
+}
+
+// TestDynamicCollections_MembershipFollowsTheRelation pins that a collection
+// carries exactly the entities linked to ITS driver — the whole point of the
+// feature.
+func TestDynamicCollections_MembershipFollowsTheRelation(t *testing.T) {
+	app := caldavDynamicAppWith(t,
+		[]*entity.Entity{
+			mkProject("PRJ-1", "Alpha"), mkProject("PRJ-2", "Beta"),
+			mkTaskIn("TSK-A", "alpha work"), mkTaskIn("TSK-B", "beta work"),
+			mkTaskIn("TSK-LOOSE", "unassigned"),
+		},
+		[]*entity.Relation{
+			entity.NewRelation("TSK-A", "belongs-to", "PRJ-1"),
+			entity.NewRelation("TSK-B", "belongs-to", "PRJ-2"),
+		})
+
+	b := &caldavBackend{app: app, baseURL: "https://example.test"}
+	for _, tc := range []struct {
+		collection string
+		want       string
+	}{
+		{"project_tasks--PRJ-1", "TSK-A"},
+		{"project_tasks--PRJ-2", "TSK-B"},
+	} {
+		objs, err := b.listTodos(t.Context(), tc.collection)
+		if err != nil {
+			t.Fatalf("listTodos(%s): %v", tc.collection, err)
+		}
+		if len(objs) != 1 {
+			t.Fatalf("%s: want 1 member, got %d", tc.collection, len(objs))
+		}
+		if !strings.Contains(objs[0].Path, tc.want) {
+			t.Errorf("%s: got %q, want the member linked to this driver (%s)",
+				tc.collection, objs[0].Path, tc.want)
+		}
+	}
+}
+
+// TestDynamicCollections_UnknownDriverIsNotFound pins AC5: a driver that does
+// not exist — or that this principal cannot read — gets the SAME answer as an
+// unknown collection. The driver id is in the URL, so a distinguishable status
+// would be an existence oracle for it.
+func TestDynamicCollections_UnknownDriverIsNotFound(t *testing.T) {
+	app := caldavDynamicAppWith(t, []*entity.Entity{mkProject("PRJ-1", "Alpha")}, nil)
+	b := &caldavBackend{app: app, baseURL: "https://example.test"}
+
+	if _, err := b.GetCalendar(t.Context(), b.calendarPath("project_tasks--PRJ-NOPE")); err == nil {
+		t.Error("a nonexistent driver must not resolve to a collection")
+	}
+	if _, _, err := b.mapperFor(t.Context(), "project_tasks--PRJ-NOPE"); err == nil {
+		t.Error("mapperFor must refuse an unresolvable driver")
+	}
+	// A real driver still works, so the refusal above is not blanket.
+	if _, err := b.GetCalendar(t.Context(), b.calendarPath("project_tasks--PRJ-1")); err != nil {
+		t.Errorf("a readable driver must resolve: %v", err)
+	}
+}
+
+// TestSplitDynamicName pins the segment parse, including the hostile cases.
+func TestSplitDynamicName(t *testing.T) {
+	for _, tc := range []struct {
+		in              string
+		pattern, driver string
+		ok              bool
+	}{
+		{"project_tasks--PRJ-1", "project_tasks", "PRJ-1", true},
+		{"tasks", "", "", false},                            // a static key
+		{"project_tasks--", "", "", false},                  // no driver
+		{"--PRJ-1", "", "", false},                          // no pattern
+		{"project_tasks--PRJ/1", "", "", false},             // slash in id
+		{"project_tasks--..", "", "", false},                // traversal in id
+		{"project_tasks--a--b", "project_tasks", "", false}, // separator inside id
+	} {
+		p, d, ok := splitDynamicName(tc.in)
+		if ok != tc.ok {
+			t.Errorf("splitDynamicName(%q) ok = %v, want %v", tc.in, ok, tc.ok)
+			continue
+		}
+		if ok && (p != tc.pattern || d != tc.driver) {
+			t.Errorf("splitDynamicName(%q) = (%q,%q), want (%q,%q)", tc.in, p, d, tc.pattern, tc.driver)
+		}
 	}
 }

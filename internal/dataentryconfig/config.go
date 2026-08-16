@@ -1045,11 +1045,70 @@ type CalDAVConfig struct {
 	// URL segment and the alias key (so it must stay stable — users paste the
 	// URL into clients), and Meta.Name is the display label.
 	Static map[string]CalDAVCollection `yaml:"static,omitempty" json:"static,omitempty"`
+	// Dynamic declares PATTERNS that expand: each key yields one collection per
+	// entity of its driver type, so `project_tasks` over 40 projects serves 40
+	// collections named `project_tasks--PROJ-1` … See [CalDAVDynamicCollection].
+	Dynamic map[string]CalDAVDynamicCollection `yaml:"dynamic,omitempty" json:"dynamic,omitempty"`
 }
 
 // IsZero reports whether any CalDAV collection is configured, so `omitzero`
 // keeps an unconfigured server's JSON free of an empty caldav object.
-func (c CalDAVConfig) IsZero() bool { return len(c.Static) == 0 }
+func (c CalDAVConfig) IsZero() bool { return len(c.Static) == 0 && len(c.Dynamic) == 0 }
+
+// dynamicNameSep joins a pattern key to its driver id in the URL segment
+// (`project_tasks--PRJ-1`). Mirrors internal/dataentry's feedUIDSep; duplicated
+// rather than imported because dataentryconfig must not depend on dataentry.
+const dynamicNameSep = "--"
+
+// CalDAVDynamicCollection declares a PATTERN that expands into one collection
+// per entity of a driver type — a to-do list per project, per sprint, per
+// person.
+//
+// The key names the pattern, not a collection: `project_tasks` is not
+// addressable, `project_tasks--PROJ-1` is. That is why `dynamic:` is a named
+// sibling of `static:` rather than more entries in one map — a reader can tell
+// which keys are collections and which expand.
+//
+// # The composite URL segment is FORCED, not chosen
+//
+// go-webdav classifies a resource by its DEPTH below the mount prefix (root /
+// principal / home-set / calendar / object), so `calendars/project_tasks/PROJ-1/`
+// would be read as an OBJECT, not a collection. The pattern key and the driver
+// id must therefore share one path segment.
+//
+// `--` is the separator because entity ids cannot contain it (they match
+// `^[A-Za-z0-9][A-Za-z0-9_-]*$`), so the split is unambiguous and needs no
+// escaping — which matters, because a collection URL has to stay human-typable:
+// Thunderbird does not auto-discover collections and the user pastes it by hand.
+//
+// # Why the key stays
+//
+// Deriving the segment from EntityType instead (`task--PROJ-1`) would drop the
+// key and read more cleanly, but it collides the moment two patterns share a
+// driver — tasks-per-project AND bugs-per-project both want a segment from
+// `project`. A map keyed by name makes that collision impossible by
+// construction; a list would only catch it in validation.
+type CalDAVDynamicCollection struct {
+	// CalDAVCollection carries the whole mapping — entity_type, summary, due,
+	// completion, read_only, defaults, on_delete. Embedded rather than repeated
+	// so a dynamic collection maps EXACTLY like a static one, and a mapping
+	// feature added later applies to both without a second implementation.
+	CalDAVCollection `yaml:",inline" json:",inline"`
+	// DriverType is the entity type whose instances become collections. One
+	// collection per readable entity of this type.
+	DriverType string `yaml:"driver_type" json:"driver_type"`
+	// Relation is the relation type linking a member to its driver entity.
+	//
+	// Serves BOTH directions, which is why there is no separate create block:
+	// outbound it selects members ("tasks with `belongs-to` → this project"),
+	// and inbound a client-created to-do gets exactly this edge. Without the
+	// inbound half a new to-do would land in the entity type but in NO
+	// collection, and vanish from the client on the next sync.
+	Relation string `yaml:"relation" json:"relation"`
+	// Direction is the member→driver edge direction, defaulting to outgoing
+	// (the member points AT the driver, e.g. task --belongs-to--> project).
+	Direction Direction `yaml:"direction,omitempty" json:"direction,omitempty"`
+}
 
 // CalDAVCollection declares one CalDAV collection: a single entity type
 // projected to a calendar component, and the inverse mapping applied when a

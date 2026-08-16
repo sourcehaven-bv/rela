@@ -33,7 +33,7 @@ func (b *caldavBackend) PutCalendarObject(
 	if !ok || href == "" {
 		return nil, webdav.NewHTTPError(http.StatusNotFound, errors.New("caldav: not found"))
 	}
-	m, cfg, err := b.mapperFor(name)
+	m, cfg, err := b.mapperFor(ctx, name)
 	if err != nil {
 		return nil, err
 	}
@@ -442,7 +442,7 @@ func (b *caldavBackend) DeleteCalendarObject(ctx context.Context, p string) erro
 	if !ok || href == "" {
 		return webdav.NewHTTPError(http.StatusNotFound, errors.New("caldav: not found"))
 	}
-	m, _, err := b.mapperFor(name)
+	m, _, err := b.mapperFor(ctx, name)
 	if err != nil {
 		return err
 	}
