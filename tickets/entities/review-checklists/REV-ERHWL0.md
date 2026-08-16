@@ -3,7 +3,7 @@
 id: REV-ERHWL0
 type: review-checklist
 title: 'Review: Memoize dashboard breakdown and table-row derivation'
-status: pending
+status: done
 ---
 
 ## Automated Checks
@@ -13,11 +13,15 @@ status: pending
 - [x] Coverage maintained (`just coverage-check`)
 
 Go: `just test` no failures; `just lint` 0 issues; `just coverage-check` package
-floor (50%) and total (65%) both PASS at 77.6%. The change is frontend-only, so
-Go coverage is unmoved — run to prove nothing regressed.
+floor (50%) and total (65%) both PASS at 77.7%. The change is frontend-only, so
+Go coverage is unmoved — run to prove nothing regressed. `just arch-lint` and
+`just plimsoll` clean.
 
-Frontend: 1667 tests / 105 files pass, `vue-tsc --noEmit` clean, `npm run lint`
+Frontend: 1674 tests / 106 files pass, `vue-tsc --noEmit` clean, `npm run lint`
 0 errors with no warnings in the changed files, `npm run build` clean.
+
+Re-verified after rebasing onto develop across the Pinia 3→4 major bump,
+including re-running the mutation tests.
 
 ## Code Review
 
@@ -97,12 +101,23 @@ keying schemes.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] ~~All CI checks pass~~ (N/A: every job this branch can affect passes;
+      "Rela Tickets" is red on develop for unrelated tickets — see below)
+- [x] PR URL documented below
 
-**PR:** Not yet opened. `rela validate` is blocked repo-wide by BUG-E9DYW5
-(`status: done`, no `has-review`), introduced by #1314 and unrelated to this
-ticket. Three open PRs fix it — #1328, #1330, #1335 — each also repairing the
-malformed `AM-feed-field-redaction.md` frontmatter that was masking the
-violation. This PR opens once any of them merges.
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1361
+
+All checks pass except **Rela Tickets**, which runs
+`rela validate --project tickets`. That job is red on `develop` itself: a clean
+`develop` worktree reports the same 10 errors, none from this branch —
+TKT-UIR41P missing `has-docs`/`has-review`, three open `RR-*` blocking merge,
+and three bugs missing `has-review` (one also missing a description).
+
+The 11th error was this ticket's own `has-review` gate, which fired because this
+checklist stayed `pending` until the PR existed — the PR boxes could not be
+honestly checked before then. Resolved by completing it now that #1361 is open.
+
+The earlier blocker (BUG-E9DYW5 + the malformed `AM-feed-field-redaction.md`
+frontmatter masking it) was fixed on develop by #1337, not by any of the three
+dedicated PRs — #1335 was closed, #1328 and #1330 are now redundant.
