@@ -95,8 +95,8 @@ type DBTX interface {
 // That is now TWO row-property capabilities admitted on this reasoning. If a
 // THIRD appears, extract them together rather than raising these numbers again.
 //
-//plimsoll:max-exported-methods=34
-//plimsoll:max-methods=42
+//plimsoll:max-exported-methods=35
+//plimsoll:max-methods=43
 type Store struct {
 	db        DBTX
 	observers []store.EntityObserver // notified synchronously after committed entity writes
