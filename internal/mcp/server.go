@@ -194,10 +194,23 @@ func WithPrincipal(p principal.Principal) Option {
 // read the graph too (see RR-CFFL52 / RR-NSUN49) and previously ran
 // with no principal on the ctx at all.
 //
-// NewServer guarantees s.principal is non-zero by the time this
-// middleware is registered, so there's no "no Principal" branch here.
+// **An identity already on the ctx WINS.** Under stdio there is never
+// one, so this is the stdio server's own principal in practice. Over
+// HTTP (TKT-BDG8U9) the transport hands the SDK the *http.Request ctx,
+// which the middleware chain has already stamped with the JWT-verified
+// caller — and overwriting that with a process-wide identity would
+// attribute every remote caller's writes to one principal AND hand the
+// ACL the wrong subject to gate reads against. The construction-time
+// principal is the fallback for a transport that carries no identity,
+// not an override of one that does.
+//
+// NewServer guarantees s.principal is non-zero, so the fallback is
+// never the zero Principal.
 func (s *Server) principalMiddleware(next mcpgo.MethodHandler) mcpgo.MethodHandler {
 	return func(ctx context.Context, method string, req mcpgo.Request) (mcpgo.Result, error) {
+		if _, stamped := principal.Stamped(ctx); stamped {
+			return next(ctx, method, req)
+		}
 		return next(principal.With(ctx, s.principal), method, req)
 	}
 }

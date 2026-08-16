@@ -83,6 +83,78 @@ func TestPrincipalMiddleware_WithOption(t *testing.T) {
 	}
 }
 
+// TestPrincipalMiddleware_CtxIdentityWins pins the property the remote
+// HTTP transport depends on (TKT-BDG8U9): when the ctx ALREADY carries a
+// principal, the server's construction-time one must not overwrite it.
+//
+// Over HTTP the SDK hands handlers the *http.Request ctx, which the router
+// chain has already stamped with the JWT-verified caller. Overwriting that
+// would attribute every remote caller's writes to a single process-wide
+// identity AND give the ACL the wrong subject to gate reads against — one
+// caller would see another's rows. Under stdio no principal is ever on the
+// ctx, so the fallback below still applies there.
+func TestPrincipalMiddleware_CtxIdentityWins(t *testing.T) {
+	t.Parallel()
+	serverPrincipal := principal.Principal{User: "server-identity", Tool: principal.ToolMCP}
+	s := &Server{principal: serverPrincipal}
+
+	// capture takes *testing.T so each subtest can run in parallel: the
+	// captured principal is local to the call, not shared across subtests.
+	capture := func(t *testing.T, ctx context.Context) principal.Principal {
+		t.Helper()
+		var got principal.Principal
+		h := s.principalMiddleware(
+			func(ctx context.Context, _ string, _ mcpgo.Request) (mcpgo.Result, error) {
+				got = principal.From(ctx)
+				return &mcpgo.CallToolResult{}, nil
+			})
+		_, _ = h(ctx, "tools/call", &mcpgo.CallToolRequest{})
+		return got
+	}
+
+	t.Run("a request-scoped principal is preserved", func(t *testing.T) {
+		t.Parallel()
+		caller := principal.Principal{User: "usr_alice", Tool: principal.ToolMCP}
+		got := capture(t, principal.With(context.Background(), caller))
+
+		if !got.Equal(caller) {
+			t.Errorf("Principal = %+v, want the ctx principal %+v — the "+
+				"construction-time identity must not overwrite a verified caller",
+				got, caller)
+		}
+	})
+
+	t.Run("two callers stay distinct", func(t *testing.T) {
+		t.Parallel()
+		// The multi-tenant property in miniature: whatever the middleware
+		// does, it must not collapse two callers onto one identity.
+		a := principal.Principal{User: "usr_alice", Tool: principal.ToolMCP}
+		b := principal.Principal{User: "usr_bob", Tool: principal.ToolMCP}
+
+		gotA := capture(t, principal.With(context.Background(), a))
+		gotB := capture(t, principal.With(context.Background(), b))
+
+		if gotA.Equal(gotB) {
+			t.Fatalf("both callers resolved to %+v — identities collapsed", gotA)
+		}
+		if gotA.User != "usr_alice" || gotB.User != "usr_bob" {
+			t.Errorf("got %q and %q, want usr_alice and usr_bob", gotA.User, gotB.User)
+		}
+	})
+
+	t.Run("an empty ctx still falls back to the server principal", func(t *testing.T) {
+		t.Parallel()
+		// The stdio path. Without this the change would trade one bug for
+		// another: unattributed writes instead of misattributed ones.
+		got := capture(t, context.Background())
+
+		if !got.Equal(serverPrincipal) {
+			t.Errorf("Principal = %+v, want the server's %+v when the ctx has none",
+				got, serverPrincipal)
+		}
+	})
+}
+
 // TestPrincipalMiddleware_RegisteredOnEveryTool is the regression
 // guard for the cranky-reviewer finding: handlers that don't
 // explicitly call s.principalContext (lua_eval, lua_run, future

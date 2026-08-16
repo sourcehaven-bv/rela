@@ -456,6 +456,28 @@ func From(ctx context.Context) Principal {
 	return Principal{User: "unknown", Tool: "unknown"}
 }
 
+// Stamped returns the Principal carried by ctx and whether one was actually
+// stamped. It is [From] without the unknown/unknown default, for the callers
+// that must distinguish "no identity on this ctx" from "an identity that
+// happens to be unknown".
+//
+// Use it only when the two cases lead to DIFFERENT behavior — chiefly a
+// transport deciding whether to supply a fallback identity (the MCP server's
+// principal middleware: a request-borne identity wins, a construction-time
+// one fills in when there is none). Everywhere else, [From]'s default is the
+// right answer and this function would just be a way to reintroduce nil
+// checks.
+//
+// Never use ok==false to grant access. An unstamped ctx means the identity is
+// unknown, not that the caller is privileged.
+func Stamped(ctx context.Context) (Principal, bool) {
+	v, ok := ctx.Value(principalKey{}).(Principal)
+	if !ok {
+		return Principal{}, false
+	}
+	return v.Clone(), true
+}
+
 // SystemUser returns the OS user running this process — $USER
 // trimmed, or "unknown" if $USER is unset or whitespace-only. Used by
 // entry-point wiring to populate [Principal.User].
