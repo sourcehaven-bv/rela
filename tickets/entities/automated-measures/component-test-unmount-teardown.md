@@ -1,25 +1,25 @@
 ---
 id: component-test-unmount-teardown
 type: automated-measure
-title: Unit tests fail closed on any real HTTP request
+title: Component tests stub network-calling children and unmount every mount
 description: Ensures a mounted component makes no real HTTP request and cannot keep running async work after its test finishes. An unstubbed child that fetches on mount fails ECONNREFUSED against happy-dom's default origin and logs via console.error; when that lands during vitest worker teardown it is reported as an unhandled error, failing CI with every test passing.
 kind: test
-location: frontend/src/test/setup.ts (axios adapter guard - the enforcing mechanism) plus stubs/teardown in frontend/src/components/forms/DynamicForm*.test.ts
+location: frontend/src/components/forms/DynamicForm*.test.ts (SidePanel/@api stubs + afterEach teardown); the suite-wide network guard lives in frontend/src/test/setup.ts and is pinned by AM-frontend-tests-no-network
 status: active
 ---
 
 Regression pin for BUG-2OXEW0.
 
-**The enforcing mechanism is the guard, not the stub lists.**
-`src/test/setup.ts` replaces the axios adapter with one that throws
-synchronously on any unmocked request. Synchronous matters: the failure lands
-at the call site in the test that caused it, rather than as a teardown crash
-naming an unrelated file. Axios uses the Node http adapter under happy-dom, so
-patching fetch/XMLHttpRequest would catch nothing.
+**The enforcing mechanism is the suite-wide adapter stub in
+`src/test/setup.ts`**, which BUG-762I34 landed independently on develop while
+this work was in flight. Both bugs are the same class seen from different
+files — BUG-2OXEW0 via SidePanel, BUG-762I34 via ExportMenu — and develop's
+resolving stub is authoritative. It is pinned by AM-frontend-tests-no-network;
+this measure covers the per-file hygiene that sits on top of it.
 
-Verified: full suite from 21 stray requests to 0, all 1662 tests still passing.
+Verified while diagnosing: the full suite went from 21 stray requests to 0.
 
-Two supporting invariants:
+Two invariants this measure pins:
 
 **1. No test may issue a real HTTP request.** `SidePanel` renders only when
 `isEdit && entityId` and fetches on mount, so an edit-mode `DynamicForm` test

@@ -93,7 +93,15 @@ signal from every other CI failure.
 > fetch + `console.error` shape, and `api/transforms.ts` nulls its cache on
 > rejection so every remount retries. Item 0 is what actually closes the class.
 
-**0. Fail closed on any real HTTP request (`src/test/setup.ts`).** Set
+> **Superseded in part.** BUG-762I34 (#1340) landed the suite-wide guard
+> independently while this was in flight — same class, reached via ExportMenu
+> rather than SidePanel. Develop's adapter **resolves** an unmocked call with an
+> empty 200; mine **threw**. Deliberately not a rejection on their side, because
+> several components `console.error` on a failed load and that would spam every
+> unrelated test. Theirs shipped first and is authoritative, so item 0 below is
+> now history rather than the shipped fix; items 1-3 remain.
+
+**0. ~~Fail closed on any real HTTP request~~ (`src/test/setup.ts`).** Set
 `axios.defaults.adapter` to throw **synchronously at request time** on any
 unmocked call:
 
@@ -108,8 +116,9 @@ caused it, instead of arriving as a nondeterministic teardown crash naming an
 unrelated file. Note axios uses the **Node http adapter** under happy-dom, not
 XHR, so patching `fetch`/`XMLHttpRequest` catches nothing.
 
-Result: **21 stray requests → 0** across the suite, all 1662 tests still
-passing — no test depended on making a real request. It also covers
+Result: **21 stray requests → 0** across the suite, all tests still passing —
+no test depended on making a real request. That measurement stands; only the
+mechanism changed hands. It also covers
 `EntityList.test.ts` and `EntityList.cells.test.ts` without touching them
 (neither has a `stubs` block), which is exactly the advantage over another
 per-file stub.
