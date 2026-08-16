@@ -31,6 +31,19 @@ export class CustomisationPage extends BasePage {
     return { status: res.status(), contentType: res.headers()['content-type'] ?? '', body: await res.text() };
   }
 
+  /**
+   * Fetch a /_custom/ asset with optional request headers, exposing the status
+   * and response headers a caching assertion needs.
+   */
+  async fetchCustomAssetWithHeaders(
+    serverUrl: string,
+    relPath: string,
+    headers: Record<string, string> = {},
+  ) {
+    const res = await this.page.request.get(`${serverUrl}/_custom/${relPath}`, { headers });
+    return { status: res.status(), headers: res.headers(), body: await res.text() };
+  }
+
   /** Whether the SPA shell references the operator's module script. */
   async hasCustomScript(): Promise<boolean> {
     return (await this.page.locator('script[src="/_custom/custom.js"]').count()) > 0;
