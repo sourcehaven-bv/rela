@@ -1982,13 +1982,17 @@ validations:
       - "status!=in-progress"
     severity: error
   # --- Review responses must be resolved ---
+  # Conditional on the parent work item, not unconditional. A finding raised by
+  # /design-review on a ticket still in the backlog is SUPPOSED to stay open
+  # until the ticket is picked up; failing CI for it pressures people into
+  # flipping it to a resolved status that misrepresents the state. The script
+  # allows `open` only while every parent is backlog/ready. See TKT-W76LRP.
   - name: ci-no-open-review-responses
     description: "CI: Open review responses cannot be merged - address or close them"
     entity_type: review-response
     when:
       - "status=open"
-    then:
-      - "status!=open"
+    lua_file: open-review-response-parent-started.lua
     severity: error
   # --- Risk validations ---
   - name: identified-risk-needs-description
