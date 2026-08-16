@@ -164,7 +164,6 @@ describe('AnalyzeView click discrimination', () => {
     // The em-dash character should be present.
     expect(row.text()).toContain('—')
   })
-
 })
 
 // GH#785: every warning counted in the summary badge must be visible on
@@ -254,11 +253,31 @@ describe('AnalyzeView section rendering (GH#785)', () => {
 
   it('summary badge total equals sum of visible card counts', async () => {
     const issues = [
-      makeIssue({ entityId: 'n-1', entityType: 'note', severity: 'error', checkType: 'Properties' }),
-      makeIssue({ entityId: 'n-2', entityType: 'note', severity: 'error', checkType: 'Cardinality' }),
-      makeIssue({ entityId: 'n-3', entityType: 'note', severity: 'warning', checkType: 'Validations' }),
+      makeIssue({
+        entityId: 'n-1',
+        entityType: 'note',
+        severity: 'error',
+        checkType: 'Properties',
+      }),
+      makeIssue({
+        entityId: 'n-2',
+        entityType: 'note',
+        severity: 'error',
+        checkType: 'Cardinality',
+      }),
+      makeIssue({
+        entityId: 'n-3',
+        entityType: 'note',
+        severity: 'warning',
+        checkType: 'Validations',
+      }),
       makeIssue({ entityId: 'n-4', entityType: 'note', severity: 'warning', checkType: 'Orphans' }),
-      makeIssue({ entityId: 'n-5', entityType: 'note', severity: 'warning', checkType: 'Duplicates' }),
+      makeIssue({
+        entityId: 'n-5',
+        entityType: 'note',
+        severity: 'warning',
+        checkType: 'Duplicates',
+      }),
       makeIssue({ entityId: '', entityType: '', severity: 'warning', checkType: 'ID Gaps' }),
     ]
     const wrapper = await mountWith(issues)
@@ -477,5 +496,71 @@ describe('AnalyzeView missing-header detail', () => {
     expect(wrapper.find('.message-toggle').exists()).toBe(false)
     expect(wrapper.find('.disclosure').exists()).toBe(false)
     expect(wrapper.find('.issue-detail-row').exists()).toBe(false)
+  })
+})
+
+describe('AnalyzeView truncation', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    routerPush.mockReset()
+    analyzeMock.mockReset()
+    const schema = useSchemaStore()
+    schema.entityTypes.set('note', { label: 'Note' } as never)
+  })
+
+  async function mountWithResult(result: AnalyzeResult) {
+    analyzeMock.mockResolvedValue(result)
+    const wrapper = mount(AnalyzeView, { attachTo: document.body })
+    await flushPromises()
+    return wrapper
+  }
+
+  it('marks a truncated check and suffixes its count', async () => {
+    const result = makeResult([makeIssue({ checkType: 'Properties' })])
+    result.byCheck.Properties = 100
+    result.truncatedChecks = ['Properties']
+
+    const wrapper = await mountWithResult(result)
+
+    const notice = wrapper.find('.check-truncated')
+    expect(notice.exists()).toBe(true)
+    expect(notice.text()).toContain('found')
+    // The count must read as a lower bound, not an exact total: byCheck for
+    // a truncated check is the cap.
+    expect(wrapper.text()).toContain('100+')
+  })
+
+  it('shows no truncation notice when every check reported in full', async () => {
+    const result = makeResult([makeIssue({ checkType: 'Properties' })])
+
+    const wrapper = await mountWithResult(result)
+
+    expect(wrapper.find('.check-truncated').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('1+')
+  })
+
+  // An older server omits truncatedChecks entirely; the view must not throw
+  // and must not invent truncation.
+  it('tolerates a response without truncatedChecks', async () => {
+    const result = makeResult([makeIssue({ checkType: 'Orphans' })])
+    delete result.truncatedChecks
+
+    const wrapper = await mountWithResult(result)
+
+    expect(wrapper.find('.check-truncated').exists()).toBe(false)
+  })
+
+  it('marks only the checks the server listed', async () => {
+    const result = makeResult([
+      makeIssue({ checkType: 'Properties' }),
+      makeIssue({ checkType: 'Orphans', severity: 'warning' }),
+    ])
+    result.byCheck.Properties = 100
+    result.truncatedChecks = ['Properties']
+
+    const wrapper = await mountWithResult(result)
+
+    const notices = wrapper.findAll('.check-truncated')
+    expect(notices).toHaveLength(1)
   })
 })

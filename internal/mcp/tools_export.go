@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -16,13 +16,14 @@ import (
 )
 
 func (s *Server) handleExport(
-	ctx context.Context, request mcp.CallToolRequest,
-) (*mcp.CallToolResult, error) {
-	format, err := request.RequireString("format")
+	ctx context.Context, request *mcpgo.CallToolRequest,
+) (*mcpgo.CallToolResult, error) {
+	args := newToolRequest(request)
+	format, err := args.RequireString("format")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
-	entityType := request.GetString("type", "")
+	entityType := args.GetString("type", "")
 
 	st := s.deps.Store
 	q := store.EntityQuery{}
@@ -33,7 +34,7 @@ func (s *Server) handleExport(
 	entities := make([]*entity.Entity, 0)
 	for e, err := range st.ListEntities(ctx, q) {
 		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			return errorResult(err.Error()), nil
 		}
 		entities = append(entities, e)
 	}
@@ -42,7 +43,7 @@ func (s *Server) handleExport(
 	relations := make([]*entity.Relation, 0)
 	for r, err := range st.ListRelations(ctx, store.RelationQuery{}) {
 		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			return errorResult(err.Error()), nil
 		}
 		relations = append(relations, r)
 	}
@@ -56,13 +57,13 @@ func (s *Server) handleExport(
 	case "csv":
 		return s.exportCSV(entities)
 	default:
-		return mcp.NewToolResultError("unsupported format: " + format), nil
+		return errorResult("unsupported format: " + format), nil
 	}
 }
 
 func (s *Server) exportJSON(
 	entities []*entity.Entity, relations []*entity.Relation, entityType string,
-) (*mcp.CallToolResult, error) {
+) (*mcpgo.CallToolResult, error) {
 	if entityType != "" {
 		summaries := make([]map[string]any, len(entities))
 		for i, e := range entities {
@@ -74,9 +75,9 @@ func (s *Server) exportJSON(
 		}
 		text, err := marshalJSON(summaries)
 		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			return errorResult(err.Error()), nil
 		}
-		return mcp.NewToolResultText(text), nil
+		return textResult(text), nil
 	}
 
 	exportEntities := make([]map[string]any, len(entities))
@@ -101,14 +102,14 @@ func (s *Server) exportJSON(
 		"relations": exportRelations,
 	})
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
-	return mcp.NewToolResultText(text), nil
+	return textResult(text), nil
 }
 
 func (s *Server) exportYAML(
 	entities []*entity.Entity, relations []*entity.Relation, entityType string,
-) (*mcp.CallToolResult, error) {
+) (*mcpgo.CallToolResult, error) {
 	var data any
 	if entityType != "" {
 		summaries := make([]map[string]any, len(entities))
@@ -145,14 +146,14 @@ func (s *Server) exportYAML(
 
 	out, err := yaml.Marshal(data)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("YAML encoding failed: %v", err)), nil
+		return errorResult(fmt.Sprintf("YAML encoding failed: %v", err)), nil
 	}
-	return mcp.NewToolResultText(string(out)), nil
+	return textResult(string(out)), nil
 }
 
-func (s *Server) exportCSV(entities []*entity.Entity) (*mcp.CallToolResult, error) {
+func (s *Server) exportCSV(entities []*entity.Entity) (*mcpgo.CallToolResult, error) {
 	if len(entities) == 0 {
-		return mcp.NewToolResultText(""), nil
+		return textResult(""), nil
 	}
 
 	keySet := make(map[string]bool)
@@ -186,5 +187,5 @@ func (s *Server) exportCSV(entities []*entity.Entity) (*mcp.CallToolResult, erro
 	}
 	writer.Flush()
 
-	return mcp.NewToolResultText(buf.String()), nil
+	return textResult(buf.String()), nil
 }

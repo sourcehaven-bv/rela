@@ -67,6 +67,10 @@ func NotificationEmitsForTest(t *testing.T, selfOrigin, selfSchema, payload stri
 // key so the stress tests can assert it never leaks in pg_locks. Test-only.
 const WriteAdvisoryLockKeyForTest = writeAdvisoryLockKey
 
+// MaxStateValueBytesForTest exposes the state-value ceiling so a test can build
+// an over-limit payload without restating the constant. Test-only.
+const MaxStateValueBytesForTest = maxStateValueBytes
+
 // FeedChannelForTest exposes the shared NOTIFY channel so a test can emit a
 // raw notification onto the same channel the listener LISTENs on. Referencing
 // the constant (rather than rebuilding the name) means a rename cannot leave a

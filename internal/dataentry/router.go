@@ -396,7 +396,7 @@ func resolvePrincipalEntity(
 		return ctx
 	}
 	// Rebuild via VerifiedFrom so the assertion claims survive the substitution.
-	// A plain composite literal here would silently drop org, roles and the
+	// A plain composite literal here would silently drop org, roles, email and the
 	// attenuation claims — the resolved principal would keep its identity but
 	// lose every asserted grant AND its ceiling. Losing the ceiling is the
 	// dangerous direction: it would silently WIDEN a restricted client to its
@@ -407,6 +407,7 @@ func resolvePrincipalEntity(
 		Roles:         p.Roles(),
 		PrincipalType: p.PrincipalType(),
 		Scopes:        p.Scopes(),
+		Email:         p.Email(),
 	})
 	out.RawUser = p.User
 	return principal.With(ctx, out)
@@ -507,6 +508,12 @@ type AssertedIdentity struct {
 	// ceiling applies" — the principal keeps its acting user's grants.
 	PrincipalType string
 	Scopes        []string
+
+	// Email is the verified `email` claim, when the proxy supplies one. Absent
+	// for a proxy that doesn't model it, which is not an error. Threaded onto the
+	// Principal so lazy provisioning (TKT-ANUJDS) can stamp it on a stub user
+	// entity; nothing in the ACL evaluates it.
+	Email string
 }
 
 // assertionVerifier verifies a signed assertion and projects the org/role
@@ -616,6 +623,7 @@ func verifiedPrincipal(id AssertedIdentity) (principal.Principal, bool) {
 		// grant more than the acting user already had.
 		PrincipalType: sanitizeUser(id.PrincipalType),
 		Scopes:        scopes,
+		Email:         sanitizeUser(id.Email),
 	}), true
 }
 

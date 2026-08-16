@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
 // defaultMembershipRelation is the relation type the resolver walks
@@ -161,6 +163,13 @@ func (p *Policy) effectiveUnmatchedPrincipal() string {
 		return UnmatchedAnonymous
 	}
 	return p.UnmatchedPrincipal
+}
+
+// EffectiveUnmatchedPrincipal is the exported form of
+// [Policy.effectiveUnmatchedPrincipal], for out-of-package callers (the
+// data-entry provision seam) that must branch on the resolved mode.
+func (p *Policy) EffectiveUnmatchedPrincipal() string {
+	return p.effectiveUnmatchedPrincipal()
 }
 
 // RoleList is a list of role names that accepts either a bare scalar or a
@@ -789,7 +798,46 @@ func (p *Policy) ValidateAgainstMetamodel(meta MetamodelView) error {
 				prop, userType)
 		}
 	}
+	return p.validateProvisionerGrant(userType)
+}
+
+// validateProvisionerGrant enforces that under `unmatched_principal: provision`
+// the provisioner system identity is actually granted create on the user entity
+// type (TKT-ANUJDS AC4). Without it the lazy stub create is ACL-denied and every
+// unmatched principal's first write fails at the provision step — a
+// misconfiguration this catches at LOAD rather than at the first unmatched
+// request. The `acl-provisioner-grant` migration injects the grant; this is the
+// guard that the operator ran it (or wrote an equivalent grant themselves).
+func (p *Policy) validateProvisionerGrant(userType string) error {
+	if p.effectiveUnmatchedPrincipal() != UnmatchedProvision {
+		return nil
+	}
+	// userType is guaranteed non-empty here: validateUnmatchedPrincipal (run by
+	// Validate) already rejects provision without the principal_property lookup,
+	// which requires user_entity_type.
+	if !p.principalGrantsCreate(principal.UserProvisioner, userType) {
+		return fmt.Errorf(
+			"acl: unmatched_principal: provision requires %q to be granted `create: [%s]` "+
+				"(run `rela db migrate` / the acl-provisioner-grant migration, or grant it manually); "+
+				"without it every unmatched principal's first write fails at provision",
+			principal.UserProvisioner, userType)
+	}
 	return nil
+}
+
+// principalGrantsCreate reports whether principalUser is assigned — via
+// `assignments` or `asserted_role_assignments` — a defined role that grants
+// create on target. Mirrors the resolution grantsVerb performs at write time,
+// but for the single provisioner-load check.
+func (p *Policy) principalGrantsCreate(principalUser, target string) bool {
+	roleGrants := func(roleName string) bool {
+		role, ok := p.Roles[roleName]
+		return ok && grantsVerb(role, OpCreate, target)
+	}
+	if roleName, ok := p.Assignments[principalUser]; ok && roleGrants(roleName) {
+		return true
+	}
+	return slices.ContainsFunc(p.AssertedRoles[principalUser], roleGrants)
 }
 
 func isBlank(s string) bool {

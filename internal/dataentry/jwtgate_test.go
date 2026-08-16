@@ -28,6 +28,7 @@ type gateVerifier struct {
 	subject    string
 	orgID      string
 	orgSlug    string
+	email      string
 	roles      []string
 	failWith   error
 }
@@ -38,6 +39,7 @@ func (g gateVerifier) VerifyAssertion(_ context.Context, raw string) (AssertedId
 			Subject: g.subject,
 			OrgID:   g.orgID,
 			OrgSlug: g.orgSlug,
+			Email:   g.email,
 			Roles:   g.roles,
 		}, nil
 	}

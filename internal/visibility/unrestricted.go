@@ -84,6 +84,14 @@ func (r *UnrestrictedReader) ListEntities(
 	return r.st.ListEntities(ctx, q)
 }
 
+// ListEntityHeaders implements the script read surface: straight
+// pass-through to the store's header projection (or its fallback).
+func (r *UnrestrictedReader) ListEntityHeaders(
+	ctx context.Context, q store.EntityQuery,
+) iter.Seq2[store.EntityHeader, error] {
+	return store.ListEntityHeaders(ctx, r.st, q)
+}
+
 // ListRelations implements the script read surface: straight pass-through.
 func (r *UnrestrictedReader) ListRelations(
 	ctx context.Context, q store.RelationQuery,

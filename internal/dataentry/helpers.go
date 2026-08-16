@@ -690,6 +690,19 @@ func listFromStoreByTypes(ctx context.Context, svc Services, types []string) []*
 }
 
 // listAllFromStore drains every entity from the store.
+//
+// UNBOUNDED, and the same shape that made GET /api/v1/_analyze an OOM
+// (TKT-1ESTYJ): whole entities, bodies included, retained in one slice. It
+// is currently safe only because nothing reaches it with an empty type
+// list — both listFromStoreByTypes callers pass exactly one type, and a
+// list's entity_type is required and validated at load.
+//
+// So this is left as-is rather than migrated: the analyze fix removed the
+// live O(store) retention, and rewriting a path with no reachable caller
+// would be churn. If a caller ever DOES pass an empty type list, this
+// becomes a live whole-store drain — at that point it wants
+// store.ListEntityHeaders (if the caller reads no bodies) or paging, not a
+// bigger slice.
 func listAllFromStore(ctx context.Context, svc Services) []*entity.Entity {
 	out := make([]*entity.Entity, 0)
 	for e, err := range svc.Store.ListEntities(ctx, store.EntityQuery{}) {

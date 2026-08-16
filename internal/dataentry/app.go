@@ -406,6 +406,36 @@ func (r lateGatedReader) ListEntities(ctx context.Context, q store.EntityQuery) 
 	return r.reader().ListEntities(ctx, q)
 }
 
+// ListEntityHeaders resolves the gated reader per call like the rest of this
+// type, then uses its header path when it has one.
+//
+// The type assertion is not a gate decision: every reader gatedScriptReader
+// can return (ScriptReader, UnrestrictedReader, DenyReader) implements the
+// header surface, so the fallback below is unreachable in production wiring
+// and exists only so a narrower test double stays valid. It degrades to
+// whole-entity gating — more data read, never less gating.
+func (r lateGatedReader) ListEntityHeaders(
+	ctx context.Context, q store.EntityQuery,
+) iter.Seq2[store.EntityHeader, error] {
+	reader := r.reader()
+	if hr, ok := reader.(interface {
+		ListEntityHeaders(context.Context, store.EntityQuery) iter.Seq2[store.EntityHeader, error]
+	}); ok {
+		return hr.ListEntityHeaders(ctx, q)
+	}
+	return func(yield func(store.EntityHeader, error) bool) {
+		for e, err := range reader.ListEntities(ctx, q) {
+			if err != nil {
+				yield(store.EntityHeader{}, err)
+				return
+			}
+			if !yield(store.HeaderOf(e), nil) {
+				return
+			}
+		}
+	}
+}
+
 func (r lateGatedReader) ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error] {
 	return r.reader().ListRelations(ctx, q)
 }
@@ -591,6 +621,7 @@ func NewApp(
 	aclImpl acl.ACL,
 	fieldResolver FieldVerdictResolver,
 	auditSink audit.Audit,
+	stateKV state.KV,
 ) (*App, error) {
 	// Reject nil required collaborators up front rather than letting a
 	// downstream handler panic on the first request that exercises them.
@@ -621,13 +652,18 @@ func NewApp(
 	if auditSink == nil {
 		return nil, errors.New("dataentry.NewApp: auditSink is required (pass audit.Nop{} to opt out)")
 	}
+	if stateKV == nil {
+		return nil, errors.New("dataentry.NewApp: stateKV is required (wire appbuild's Services.State())")
+	}
 	// Construct reconstructible services from the primitives.
 	cfgLoader := config.NewFSLoader(fs, paths.Root)
-	kvRoot, err := storage.NewRootedFS(fs, paths.CacheDir)
-	if err != nil {
-		return nil, fmt.Errorf("dataentry: rooted fs for state kv: %w", err)
-	}
-	kv := state.NewFSKV(kvRoot)
+	// The state store comes from the caller (appbuild's Services.State()) rather
+	// than being rebuilt here: on the postgres build it is database-backed, so
+	// the render cache, user settings and the operator logo are shared by every
+	// process serving the schema. Rebuilding an FSKV here would silently pin
+	// those back to this node's .rela/ — the bug where an uploaded logo is
+	// visible only on whichever node served the POST (TKT-VC27L3).
+	kv := stateKV
 	trc := tracer.New(st)
 	templater := templating.NewFSTemplater(fs, paths)
 	// The validator (val) is built AFTER app.affordances below — its reader is
@@ -807,6 +843,7 @@ func NewApp(
 	// are resolved once from the concrete store/manager (nil on fs/memory builds,
 	// where the sync endpoints degrade to 501).
 	app.sync = newSyncHandler(st, app.entityManager, &app.writeMu)
+	app.sync.provision = newProvisionSeam(app)
 
 	// viewsHandler owns the read-only view-assembly surface (view traversal,
 	// section building, /_views, /_sidepanel, /_sidebar). Fixed service
@@ -913,6 +950,7 @@ func NewApp(
 		fields:     func() FieldVerdictResolver { return app.fieldResolver },
 		gateRead:   app.gateReadOrNotFound,
 		writeMu:    &app.writeMu,
+		provision:  newProvisionSeam(app),
 	}
 
 	// writeHandler owns the entity/relation CRUD + clone + conflict-resolve
@@ -939,6 +977,7 @@ func NewApp(
 		fullScriptDetail:   app.allowFullScriptDetail,
 		paths:              paths,
 		writeMu:            &app.writeMu,
+		provision:          newProvisionSeam(app),
 	}
 
 	// Nudge the operator to make a conscious virus-scan choice: if the

@@ -270,6 +270,23 @@ file (fonts, logos, images) is served as-is. Rules for new code:
   `.env`, `.git/config`, `.DS_Store`. It contributes ZERO traversal defence
   (`path.Clean` resolves `..` before it runs) and is a filename heuristic, not a
   secrets scanner — `notes.md` and `custom.css~` are served.
+- **Assets are delivered by `http.ServeContent`, not `w.Write`.** That is what
+  gives conditional requests, `Range` and correct `HEAD` in one call; before it,
+  a static webfont re-transferred on every navigation and a `HEAD` returned a
+  body. Two things must survive any change here: the explicit `Content-Type`
+  (ServeContent sniffs when it cannot infer one — the exact behaviour `nosniff`
+  exists to prevent) and the pre-read size gate, since ServeContent would
+  otherwise happily stream a file of any size.
+- **The ETag is modtime+size, deliberately not a content hash.** Hashing would
+  read the whole file per request — a read amplifier on an unauthenticated
+  route, and the cost ServeContent was adopted to avoid. `http.FileServer` makes
+  the same trade. The blind spot (an edit preserving both modtime and size) is
+  bounded by `Cache-Control: no-cache`, which forces revalidation anyway.
+- **`openCustomEntryFile` duplicates the containment chain** because it must
+  return a live handle, so it cannot delegate to `openCustomEntry`. A duplicated
+  security check drifts: `TestOpenCustomEntryFile_MatchesOpenCustomEntry` pins
+  that the two agree, and `TestOpenCustomEntryFile_NeverEscapes` attacks the new
+  path independently.
 - **`/_custom/` is PUBLIC and UNAUTHENTICATED** — not an `isAPIPath`, so outside
   both the JWT gate and ACL, deliberately, so the shell loads before login. This
   is a wider exposure than `apps/`, which this code otherwise copies. Every

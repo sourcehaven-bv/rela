@@ -407,6 +407,16 @@ export interface AnalyzeResult {
   warnings: number
   issues: AnalyzeIssue[]
   byCheck: Record<string, number>
+
+  /**
+   * Names of checks that found MORE issues than they returned. Each check
+   * is capped server-side (TKT-1ESTYJ), so `byCheck` for a listed check is
+   * the cap, not the true total.
+   *
+   * Omitted by the server when nothing was truncated, so it is optional —
+   * and older servers never send it at all.
+   */
+  truncatedChecks?: string[]
 }
 
 export interface NavigationEntry {

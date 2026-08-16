@@ -161,4 +161,29 @@ test.describe('Operator customisation hooks', () => {
       );
     }
   });
+
+  test('an unchanged asset revalidates to a 304 instead of re-transferring', async ({
+    appPage,
+    testProject,
+    serverUrl,
+  }) => {
+    // The point of moving to http.ServeContent: a webfont or image is not
+    // re-downloaded on every navigation. Asserted over real HTTP because this
+    // is protocol behaviour a Go unit test can only approximate.
+    writeCustom(testProject, 'logo.svg', '<svg xmlns="http://www.w3.org/2000/svg"/>');
+
+    const custom = new CustomisationPage(appPage);
+
+    const first = await custom.fetchCustomAssetWithHeaders(serverUrl, 'logo.svg');
+    expect(first.status).toBe(200);
+    const etag = first.headers['etag'];
+    expect(etag, 'asset must carry a validator').toBeTruthy();
+    expect(first.headers['cache-control']).toContain('no-cache');
+
+    const second = await custom.fetchCustomAssetWithHeaders(serverUrl, 'logo.svg', {
+      'If-None-Match': etag,
+    });
+    expect(second.status, 'unchanged asset must revalidate to 304').toBe(304);
+    expect(second.body, '304 must carry no body').toBe('');
+  });
 });

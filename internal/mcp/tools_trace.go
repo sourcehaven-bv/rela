@@ -5,22 +5,22 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 )
 
 func (s *Server) handleTraceFrom(
-	ctx context.Context, request mcp.CallToolRequest,
-) (*mcp.CallToolResult, error) {
+	ctx context.Context, request *mcpgo.CallToolRequest,
+) (*mcpgo.CallToolResult, error) {
 	return s.handleTrace(ctx, request, func(t tracer.Tracer, id string, depth int) *tracer.TraceResult {
 		return t.TraceFrom(ctx, id, depth)
 	}, "No dependencies found")
 }
 
 func (s *Server) handleTraceTo(
-	ctx context.Context, request mcp.CallToolRequest,
-) (*mcp.CallToolResult, error) {
+	ctx context.Context, request *mcpgo.CallToolRequest,
+) (*mcpgo.CallToolResult, error) {
 	return s.handleTrace(ctx, request, func(t tracer.Tracer, id string, depth int) *tracer.TraceResult {
 		return t.TraceTo(ctx, id, depth)
 	}, "No upstream dependencies found")
@@ -28,64 +28,73 @@ func (s *Server) handleTraceTo(
 
 func (s *Server) handleTrace(
 	ctx context.Context,
-	request mcp.CallToolRequest,
+	request *mcpgo.CallToolRequest,
 	traceFn func(tracer.Tracer, string, int) *tracer.TraceResult,
 	emptyMsg string,
-) (*mcp.CallToolResult, error) {
-	id, err := request.RequireString("id")
+) (*mcpgo.CallToolResult, error) {
+	args := newToolRequest(request)
+	id, err := args.RequireString("id")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
 	id = trimID(id)
-	maxDepth := request.GetInt("max_depth", 0)
+	maxDepth := args.GetInt("max_depth", 0)
 
+	// Existence probe BEFORE traversal. This must go through deps.Store —
+	// the gated GraphReader — not a raw handle: under a networked wiring a
+	// hidden entity's GetEntity returns not-found, so "hidden" and "absent"
+	// produce the identical message and the probe is not an existence
+	// oracle (RR-FTJUUE). A raw probe here would defeat the gated tracer
+	// below, since it answers "is it in the store?" rather than "may this
+	// principal see it?".
 	if _, getErr := s.deps.Store.GetEntity(ctx, id); getErr != nil {
-		return mcp.NewToolResultError("entity not found: " + id), nil
+		return errorResult("entity not found: " + id), nil
 	}
 
 	result := traceFn(s.deps.Tracer, id, maxDepth)
 	if result == nil {
-		return mcp.NewToolResultText(emptyMsg), nil
+		return textResult(emptyMsg), nil
 	}
 
 	text, err := convertTraceResult(result)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
-	return mcp.NewToolResultText(text), nil
+	return textResult(text), nil
 }
 
 func (s *Server) handleFindPath(
-	ctx context.Context, request mcp.CallToolRequest,
-) (*mcp.CallToolResult, error) {
-	from, err := request.RequireString("from")
+	ctx context.Context, request *mcpgo.CallToolRequest,
+) (*mcpgo.CallToolResult, error) {
+	args := newToolRequest(request)
+	from, err := args.RequireString("from")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
 	from = trimID(from)
-	to, err := request.RequireString("to")
+	to, err := args.RequireString("to")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
 	to = trimID(to)
 
 	st := s.deps.Store
 	if _, fromErr := st.GetEntity(ctx, from); fromErr != nil {
-		return mcp.NewToolResultError("source entity not found: " + from), nil
+		return errorResult("source entity not found: " + from), nil
 	}
 	if _, toErr := st.GetEntity(ctx, to); toErr != nil {
-		return mcp.NewToolResultError("target entity not found: " + to), nil
+		return errorResult("target entity not found: " + to), nil
 	}
 
 	path := s.deps.Tracer.FindPath(ctx, from, to)
 	if path == nil {
-		return mcp.NewToolResultText(
+		return textResult(
 			fmt.Sprintf("No path found between %s and %s", from, to)), nil
 	}
 
 	text, err := convertPathSteps(path)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
-	return mcp.NewToolResultText(text), nil
+	return textResult(text), nil
 }

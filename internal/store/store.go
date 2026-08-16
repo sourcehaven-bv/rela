@@ -396,6 +396,97 @@ type AttachmentManager interface {
 	ListAttachments(ctx context.Context, entityID string) ([]AttachmentInfo, error)
 }
 
+// EntityHeader is an entity WITHOUT its body content.
+//
+// It exists so whole-store scans that only need identity and properties —
+// analyze checks, ID generation, list projections — never materialize
+// markdown bodies they will not read. On a 20k-entity store with ~100 KB
+// bodies that is the difference between ~2 GB and a few MB.
+//
+// A SEPARATE TYPE, not an [entity.Entity] with Content left empty, and that
+// is the whole point (TKT-1ESTYJ). A half-populated Entity satisfies every
+// interface an Entity satisfies and lies to all of them: hand one to
+// dataentry's computeEntityETag, which hashes e.Content, and it returns a
+// well-formed ETag for the wrong bytes — silently breaking conditional
+// requests and caching. There are hundreds of `.Content` reads across the
+// tree; a bool flag on [EntityQuery] would make every one of them a latent
+// bug. With a distinct type the compiler rejects the mistake instead.
+//
+// Do not add a Content field. If a caller needs the body it wants
+// [EntityReader.GetEntity] or [EntityReader.ListEntities], and the fact that
+// it must say so explicitly is the guardrail working.
+type EntityHeader struct {
+	ID         string
+	Type       string
+	Properties map[string]any
+	UpdatedAt  time.Time
+
+	// Redacted mirrors [entity.Entity.Redacted]: the properties withheld
+	// from the reading principal by field-level ACL. Carried so a gated
+	// header read reports redaction exactly like a gated entity read —
+	// a header must never look MORE complete than the entity it projects.
+	Redacted []string
+}
+
+// HeaderReader lists entities without their body content.
+//
+// OPTIONAL capability, type-asserted at the call site like [Formatter] —
+// not part of [Store]. Backends that can project the body away in the query
+// (pgstore: omit the content column) implement it; others are served by
+// [ListEntityHeaders], the generic fallback that drops content in-process.
+//
+// Callers should use [ListEntityHeaders] rather than asserting themselves,
+// so the fallback stays a detail of this package.
+type HeaderReader interface {
+	// ListEntityHeaders returns an iterator over content-free headers for
+	// entities matching the query. Ordering and error semantics match
+	// [EntityReader.ListEntities]; Cursor and Limit are likewise ignored.
+	ListEntityHeaders(ctx context.Context, q EntityQuery) iter.Seq2[EntityHeader, error]
+}
+
+// HeaderOf projects an entity onto its content-free header.
+//
+// The Properties map is shared, not cloned: every caller of this and of
+// [ListEntityHeaders] treats headers as read-only, and cloning a map per row
+// would reintroduce a per-entity allocation on the very path that exists to
+// avoid one. Do not mutate a header's Properties.
+func HeaderOf(e *entity.Entity) EntityHeader {
+	return EntityHeader{
+		ID:         e.ID,
+		Type:       e.Type,
+		Properties: e.Properties,
+		UpdatedAt:  e.UpdatedAt,
+		Redacted:   e.Redacted,
+	}
+}
+
+// ListEntityHeaders lists content-free entity headers from any reader.
+//
+// Uses the reader's native [HeaderReader] when it has one, so the body never
+// leaves the backend; otherwise falls back to [EntityReader.ListEntities] and
+// projects each row as it is yielded. The fallback bounds RETENTION (rows are
+// converted and released one at a time, never accumulated) but not transfer —
+// a backend without the capability still reads bodies off disk or the wire.
+// Do not describe the fallback as bounding I/O.
+func ListEntityHeaders(
+	ctx context.Context, r EntityReader, q EntityQuery,
+) iter.Seq2[EntityHeader, error] {
+	if hr, ok := r.(HeaderReader); ok {
+		return hr.ListEntityHeaders(ctx, q)
+	}
+	return func(yield func(EntityHeader, error) bool) {
+		for e, err := range r.ListEntities(ctx, q) {
+			if err != nil {
+				yield(EntityHeader{}, err)
+				return
+			}
+			if !yield(HeaderOf(e), nil) {
+				return
+			}
+		}
+	}
+}
+
 // Formatter checks whether an entity/relation's persisted representation
 // is up to date with its canonical format. Optionally applies the format.
 //

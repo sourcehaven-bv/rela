@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/project"
 )
@@ -172,6 +173,84 @@ func openCustomEntry(projectRoot, entry string) ([]byte, error) {
 		return nil, errCustomAssetNotFound
 	}
 	return b, nil
+}
+
+// customEntryFile is an open custom/ entry plus the metadata http.ServeContent
+// needs. Close releases the file AND the two os.Root handles that scoped it —
+// all three must outlive the response body, which is why they travel together
+// rather than being closed inside the opener.
+type customEntryFile struct {
+	File    *os.File
+	ModTime time.Time
+	Size    int64
+
+	roots []io.Closer
+}
+
+// Close releases the file and its scoping roots, innermost first.
+func (c *customEntryFile) Close() {
+	_ = c.File.Close()
+	for i := len(c.roots) - 1; i >= 0; i-- {
+		_ = c.roots[i].Close()
+	}
+}
+
+// openCustomEntryFile resolves an entry exactly as openCustomEntry does, but
+// hands back the OPEN file so http.ServeContent can stream it and honor Range
+// and conditional requests. The caller MUST Close the result.
+//
+// Same containment chain, same uniform error. Kept as a sibling of
+// openCustomEntry rather than replacing it because the shell-injection path
+// genuinely wants the bytes, and a Close-me handle is the wrong shape there.
+func openCustomEntryFile(projectRoot, entry string) (*customEntryFile, error) {
+	rel, ok := validCustomEntry(entry)
+	if !ok {
+		return nil, errCustomAssetNotFound
+	}
+
+	root, err := os.OpenRoot(projectRoot)
+	if err != nil {
+		return nil, errCustomAssetNotFound
+	}
+	customRoot, err := root.OpenRoot(project.CustomDir)
+	if err != nil {
+		_ = root.Close()
+		return nil, errCustomAssetNotFound
+	}
+	closeRoots := func() {
+		_ = customRoot.Close()
+		_ = root.Close()
+	}
+
+	f, err := customRoot.Open(rel)
+	if err != nil {
+		closeRoots()
+		return nil, errCustomAssetNotFound
+	}
+
+	info, err := f.Stat()
+	if err != nil || info.IsDir() {
+		_ = f.Close()
+		closeRoots()
+		return nil, errCustomAssetNotFound
+	}
+	// Same pre-read size gate as openCustomEntry: reject from the Stat so an
+	// oversize file cannot be used as a read amplifier on this unauthenticated
+	// route. ServeContent would otherwise happily stream 4 GiB.
+	if info.Size() > maxCustomFileBytes {
+		slog.Warn("custom asset exceeds size cap, not served",
+			"entry", rel, "max_bytes", maxCustomFileBytes)
+		_ = f.Close()
+		closeRoots()
+		return nil, errCustomAssetNotFound
+	}
+
+	return &customEntryFile{
+		File:    f,
+		ModTime: info.ModTime(),
+		Size:    info.Size(),
+		roots:   []io.Closer{root, customRoot},
+	}, nil
 }
 
 // customAssetExists reports whether an entry is present under custom/. Runs on

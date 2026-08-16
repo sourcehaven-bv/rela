@@ -372,6 +372,7 @@ func (a assertionVerifierAdapter) VerifyAssertion(
 		Roles:         c.Roles,
 		PrincipalType: c.PrincipalType,
 		Scopes:        c.Scopes,
+		Email:         c.Email,
 	}, nil
 }
 
@@ -420,6 +421,7 @@ func main() {
 		svc.EntityManager(), svc.Searcher(), svc.VisibleSearcher(), svc.ACL(),
 		fieldResolver,
 		svc.Audit(),
+		svc.State(),
 	)
 	if err != nil {
 		var configErr *dataentry.ConfigValidationError

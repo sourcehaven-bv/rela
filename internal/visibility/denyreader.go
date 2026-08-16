@@ -47,6 +47,17 @@ func (DenyReader) ListEntities(
 	}
 }
 
+// ListEntityHeaders implements the script read surface: always refuses.
+// Fail-closed like every other DenyReader method — a reader that cannot
+// gate must not hand back rows, headers included.
+func (DenyReader) ListEntityHeaders(
+	context.Context, store.EntityQuery,
+) iter.Seq2[store.EntityHeader, error] {
+	return func(yield func(store.EntityHeader, error) bool) {
+		yield(store.EntityHeader{}, ErrReaderUnavailable)
+	}
+}
+
 // ListRelations implements the script read surface: always refuses.
 func (DenyReader) ListRelations(
 	context.Context, store.RelationQuery,

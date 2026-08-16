@@ -305,8 +305,55 @@ level=INFO msg="task completed" name=daily-check duration=45.2ms
 level=INFO msg="scheduler started" tasks=1
 ```
 
-Failed tasks are logged at ERROR level with the error message. The scheduler continues
-running — a failed task does not stop other tasks from executing.
+Failed tasks are logged with the error message, at WARN for the first few
+consecutive failures and escalating to ERROR once retries are clearly not
+helping. The scheduler continues running — a failed task does not stop other
+tasks from executing.
+
+## Failure Handling and Retries
+
+When a task fails, it is retried on a fixed backoff ladder:
+
+```text
+5m → 10m → 20m → 40m → 80m → every 2h
+```
+
+Each consecutive failure moves one rung down; once the ladder reaches 2 hours it
+stays there, retrying every 2 hours until the task succeeds.
+
+**While a task is failing, the ladder replaces its schedule.** The task fires
+only on retry steps, never on its normal cadence. This means the ladder is the
+same for every schedule, but its effect differs:
+
+- A **daily** task that fails at 09:00 retries at 09:05, 09:15, 09:35, 10:15,
+  11:35, then every 2 hours — recovering from an intermittent failure without
+  waiting a full day.
+- A **`5m`** task that fails **slows down** to the same ladder instead of
+  hammering every 5 minutes while it is broken.
+
+A successful run is the only thing that resets the ladder. Elapsed scheduled
+slots do not: for a short-interval task a slot passes faster than the ladder
+climbs, so resetting on slots would prevent it from ever backing off.
+
+Note that a retry *is* the run for that period, not an extra one. A daily task
+that fails at 09:00 and succeeds on the 11:35 retry has run for that day, and
+will not run again until the next day — so a recovered run can land some hours
+after its nominal slot.
+
+Retry state is persisted in `.rela/scheduler-state.json` alongside the last-run
+timestamps, so a task mid-backoff keeps its position across a scheduler restart.
+
+```text
+level=WARN msg="task failed" name=daily-check duration=4.4ms failures=1 \
+  retry_in=5m0s retry_at=2026-08-13T23:12:04+02:00 error="..."
+level=INFO msg="retrying failed task" name=daily-check failures=1 scheduled_for=...
+level=ERROR msg="task failed" name=daily-check duration=4.1ms failures=4 \
+  retry_in=40m0s retry_at=2026-08-14T00:15:00+02:00 error="..."
+```
+
+If the scheduler finds a retry time further out than the 2-hour maximum — a
+symptom of a clock jump or a hand-edited state file — it logs a WARN and retries
+immediately rather than leaving the task stuck indefinitely.
 
 ## Examples
 

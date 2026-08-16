@@ -16,13 +16,23 @@
 //	30m, 2h      fixed interval (any Go duration)
 //	15           bare number interpreted as minutes
 //
+// A task that fails enters a backoff ladder (5m, 10m, 20m, 40m, 80m, then
+// every 2h) which REPLACES its schedule until it succeeds — while a retry is
+// pending the task fires only on ladder steps, never on its normal cadence.
+// The ladder is identical for every schedule, so it slows a failing
+// short-interval task down and speeds a failing daily one up. Only a
+// successful run resets it.
+//
 // See Config/TaskConfig for the YAML shape and Schedule.IsDue for the
 // due-time logic.
 package scheduler
 
 import (
 	"context"
+	"iter"
 	"log/slog"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
@@ -36,6 +46,35 @@ import (
 
 // tickInterval is how often the scheduler wakes to check for due tasks.
 const tickInterval = 60 * time.Second
+
+// Retry ladder for failed tasks. The delay doubles per consecutive failure
+// from baseRetryDelay (5m, 10m, 20m, 40m, 80m) and then holds at
+// maxRetryDelay, repeating until the task succeeds.
+//
+// The cap keeps a persistently broken job to roughly a dozen attempts a day
+// rather than silencing it, while still recovering an intermittent failure
+// within minutes. It is not tied to any schedule: see retryDelay.
+const (
+	baseRetryDelay = 5 * time.Minute
+	maxRetryDelay  = 2 * time.Hour
+
+	// persistentFailureThreshold is the consecutive-failure count at which
+	// "task failed" escalates from WARN to ERROR — by this point the retries
+	// are demonstrably not helping and the job needs a human.
+	persistentFailureThreshold = 4
+)
+
+// maxLadderSteps is the failure count at which doubling first reaches
+// maxRetryDelay; beyond it every retry is capped. Derived rather than written
+// as a literal so retuning baseRetryDelay or maxRetryDelay cannot silently
+// desynchronise the bound from the ladder it describes.
+var maxLadderSteps = func() int {
+	steps := 1
+	for d := baseRetryDelay; d < maxRetryDelay; d *= 2 {
+		steps++
+	}
+	return steps
+}()
 
 // WorkspaceProvider is the subset of workspace.Workspace the scheduler needs.
 type WorkspaceProvider interface {
@@ -141,6 +180,10 @@ func New(
 		ws:     ws,
 		logger: logger,
 		now:    time.Now,
+		// Initialized here, not left for loadState: recordFailure and
+		// recordSuccess write three maps unconditionally, so a nil state
+		// turns any call ordering other than Run's into a nil-map panic.
+		state: newState(),
 	}
 }
 
@@ -188,6 +231,37 @@ func (s *Scheduler) runDueTasks(ctx context.Context) {
 			return
 		}
 
+		// A failing task is driven ENTIRELY by the retry ladder: while a
+		// retry is pending, the ordinary schedule is suppressed, so the
+		// task fires exactly once per ladder step and never on its normal
+		// cadence. This is the gate that closes BUG-ZKK2UL — a failed
+		// attempt always sets NextRetry, so it can no longer fall through
+		// to the "first run" branch below and execute on every tick.
+		if retryAt, retrying := s.state.NextRetry[task.Name]; retrying {
+			// A pending retry can never legitimately be further out than
+			// the longest rung. Anything beyond that came from a clock
+			// that jumped (VM snapshot resume, NTP step, bad RTC) or a
+			// hand-edited state file, and because the file is the source
+			// of truth it would otherwise wedge the task FOREVER — silently,
+			// since this branch is the one that logs nothing.
+			if retryAt.Sub(now) > maxRetryDelay {
+				s.logger.Warn("retry time is implausibly far in the future, retrying now",
+					"name", task.Name,
+					"scheduled_for", retryAt,
+					"max_delay", maxRetryDelay)
+				retryAt = now
+				s.state.NextRetry[task.Name] = retryAt
+			}
+			if !now.Before(retryAt) {
+				s.logger.Info("retrying failed task",
+					"name", task.Name,
+					"failures", s.state.Failures[task.Name],
+					"scheduled_for", retryAt)
+				s.executeTask(ctx, task)
+			}
+			continue
+		}
+
 		lastRun, recorded := s.state.Tasks[task.Name]
 		if !recorded {
 			s.logger.Info("first run, executing immediately", "name", task.Name)
@@ -226,15 +300,97 @@ func (s *Scheduler) doExecuteTask(ctx context.Context, task TaskConfig) {
 	elapsed := s.now().Sub(start)
 
 	if err != nil {
-		s.logger.Error("task failed", "name", task.Name, "duration", elapsed, "error", err)
+		s.recordFailure(ctx, task, start, elapsed, err)
 		return
 	}
 
 	s.logger.Info("task completed", "name", task.Name, "duration", elapsed)
+	s.recordSuccess(ctx, task, start)
+}
 
-	// Record successful run — no mutex needed, single goroutine.
-	s.state.Tasks[task.Name] = s.now()
+// recordSuccess stamps a completed run and clears any retry ladder.
+//
+// It takes the run's START time rather than reading s.now(): the schedule is
+// evaluated against this stamp, so recording completion would let a task that
+// begins at 23:59 and runs past midnight land on the next day and silently
+// skip that day's execution. It also keeps interval schedules from drifting
+// forward by each run's duration.
+//
+// This is a method rather than inline bookkeeping so tests exercising the
+// scheduling loop through executeTaskFunc can call the SAME code the
+// production path uses. A hand-copied double here is what previously let a
+// reverted start-time fix pass green (RR-F6182G/RR-3BCWQ4).
+func (s *Scheduler) recordSuccess(ctx context.Context, task TaskConfig, start time.Time) {
+	// No mutex needed, single goroutine.
+	s.state.Tasks[task.Name] = start
+
+	// Success clears the ladder. This is the ONLY reset: elapsed scheduled
+	// slots must not clear it, or a short-interval task (whose slots pass
+	// faster than the ladder climbs) would never back off at all.
+	delete(s.state.Failures, task.Name)
+	delete(s.state.NextRetry, task.Name)
+
 	s.saveState(ctx)
+}
+
+// recordFailure advances the retry ladder for a failed task and persists it.
+//
+// Every failure writes state, so a failed task always has a pending retry and
+// can never be perpetually due — that omission was BUG-ZKK2UL. Note it does
+// NOT touch s.state.Tasks: the schedule is evaluated against the last
+// *successful* run, so a failure must not count as having run.
+func (s *Scheduler) recordFailure(
+	ctx context.Context,
+	task TaskConfig,
+	start time.Time,
+	elapsed time.Duration,
+	err error,
+) {
+	failures := s.state.Failures[task.Name] + 1
+	delay := retryDelay(failures)
+	retryAt := start.Add(delay)
+
+	s.state.Failures[task.Name] = failures
+	s.state.NextRetry[task.Name] = retryAt
+
+	// Escalate severity with consecutive failures: an intermittent blip that
+	// recovers on the next retry should not read like a job that has been
+	// broken for hours.
+	logAt := s.logger.Warn
+	if failures >= persistentFailureThreshold {
+		logAt = s.logger.Error
+	}
+	logAt("task failed",
+		"name", task.Name,
+		"duration", elapsed,
+		"failures", failures,
+		"retry_in", delay,
+		"retry_at", retryAt,
+		"error", err)
+
+	s.saveState(ctx)
+}
+
+// retryDelay returns the backoff for the nth consecutive failure (n >= 1):
+// 5m, 10m, 20m, 40m, 80m, then capped at maxRetryDelay and repeating.
+//
+// The ladder is identical for every schedule. It replaces the schedule while
+// a task is failing, so it deliberately slows a short-interval task down
+// (a failing 5m task stops hammering every 5m) and speeds a daily one up
+// (an intermittent failure recovers without waiting 24h).
+func retryDelay(failures int) time.Duration {
+	if failures < 1 {
+		// Only reachable from a corrupt or hand-edited state file; treat
+		// it as the first failure rather than computing a nonsense delay.
+		failures = 1
+	}
+	// maxLadderSteps is where doubling first meets the cap, so anything
+	// beyond it is the cap. Bounding the shift here also makes overflow
+	// structurally impossible for a large or wrapped failure count.
+	if failures > maxLadderSteps {
+		return maxRetryDelay
+	}
+	return min(baseRetryDelay<<(failures-1), maxRetryDelay)
 }
 
 func (s *Scheduler) loadState(ctx context.Context) {
@@ -244,6 +400,47 @@ func (s *Scheduler) loadState(ctx context.Context) {
 		return
 	}
 	s.state = parseState(data)
+	s.pruneOrphanedState()
+}
+
+// pruneOrphanedState drops entries for tasks no longer in schedules.yaml.
+//
+// Nothing else removes them: runDueTasks only ever reads state by the names in
+// the current config, so a deleted or renamed task's rows would accumulate
+// indefinitely — and with the retry ladder that is up to three entries per
+// dead task rather than one stale timestamp.
+func (s *Scheduler) pruneOrphanedState() {
+	if s.config == nil {
+		// Nothing to prune against; keep the state as loaded rather than
+		// treating every task as orphaned.
+		return
+	}
+	live := make(map[string]struct{}, len(s.config.Tasks))
+	for _, t := range s.config.Tasks {
+		live[t.Name] = struct{}{}
+	}
+	orphans := make(map[string]struct{})
+	for _, m := range []iter.Seq[string]{
+		maps.Keys(s.state.Tasks),
+		maps.Keys(s.state.Failures),
+		maps.Keys(s.state.NextRetry),
+	} {
+		for name := range m {
+			if _, ok := live[name]; !ok {
+				orphans[name] = struct{}{}
+			}
+		}
+	}
+	if len(orphans) == 0 {
+		return
+	}
+	for name := range orphans {
+		delete(s.state.Tasks, name)
+		delete(s.state.Failures, name)
+		delete(s.state.NextRetry, name)
+	}
+	dropped := slices.Sorted(maps.Keys(orphans))
+	s.logger.Info("pruned state for tasks no longer configured", "tasks", dropped)
 }
 
 func (s *Scheduler) saveState(ctx context.Context) {
