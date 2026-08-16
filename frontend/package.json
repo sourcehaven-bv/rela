@@ -28,7 +28,7 @@
     "easymde": "^2.21.0",
     "font-awesome": "^4.7.0",
     "lucide-vue-next": "^1.0.0",
-    "marked": "^18.0.6",
+    "marked": "^18.0.9",
     "mermaid": "^11.16.1",
     "pinia": "^3.0.4",
     "rrule": "^2.8.1",
