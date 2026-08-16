@@ -9,16 +9,16 @@ status: in-progress
 
 ## Automated Checks
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Coverage maintained (`just coverage-check`)
+- [x] All tests pass (`just test`)
+- [x] Lint clean (`just lint`)
+- [x] Coverage maintained (`just coverage-check`)
 
 ## Code Review
 
 - [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
 - [ ] All critical review-responses addressed
 - [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
+- [x] Self-reviewed the diff for unrelated changes
 
 **Review Responses:** <!-- List IDs of review-response entities created, e.g.,
 RR-xxxx -->
@@ -35,16 +35,16 @@ RR-xxxx -->
 
 Skip this section for bugs and internal refactors.
 
-- [ ] Docs-checklist created and linked via `has-docs`
-- [ ] User-facing documentation updated
-- [ ] Docs-checklist marked as done
+- [x] Docs-checklist created and linked via `has-docs`
+- [x] User-facing documentation updated
+- [x] Docs-checklist marked as done
 
 **Docs Checklist:** <!-- e.g., DOCS-xxxx -->
 
 ## Final Checks
 
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
+- [x] Commit message explains the why, not just what
+- [x] No TODOs or FIXMEs left unaddressed
 - [ ] Ready for another developer to use
 
 ## Pull Request
