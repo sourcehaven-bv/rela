@@ -437,6 +437,12 @@ jobs:
         with:
           go-version: '1.26.6'
 
+      # internal/cli renders documents through internal/cmdexec, which FAILS
+      # CLOSED without a sandbox — so the wiring-test step below needs
+      # bubblewrap for the same reason the `test` and `e2e` jobs do.
+      - name: Install bubblewrap (command sandbox)
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+
       # Trust auth: no password in the DSN. The DB is ephemeral and
       # runner-local, so there is no credential to keep out of the log.
       - name: Configure test database URL
