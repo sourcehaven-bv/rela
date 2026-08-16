@@ -54,6 +54,13 @@ next unrelated PR — blaming the wrong change.
   pinned to the merge that caused it.
 - `Ticket done-before-merge check` scoped to `pull_request`, since it diffs
   against a PR base that does not exist on push.
+- CI also triggers on `merge_group`, and the ticket gate validates there. This
+  is a prerequisite for enabling a merge queue on develop: queue entries are
+  tested on an ephemeral `gh-readonly-queue/...` ref, and a required check that
+  never runs there leaves the entry queued forever. The gate treats a queue
+  entry like a push (validate, but require no new ticket) — reporting a hollow
+  success at the last gate before the commit lands would make the queue's
+  guarantee worthless.
 
 **Rule correctness:**
 
