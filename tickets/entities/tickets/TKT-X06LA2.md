@@ -1,11 +1,11 @@
 ---
 id: TKT-X06LA2
 type: ticket
-title: Actions have no per-principal authorization gate (handleV1Action + webhook)
+title: 'Actions: gate entity_id on the read path, fix the writeMu DoS (permission gate deferred)'
 kind: enhancement
 priority: high
 effort: m
-status: backlog
+status: in-progress
 ---
 
 ## Problem
