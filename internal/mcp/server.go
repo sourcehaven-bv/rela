@@ -160,10 +160,16 @@ type Watcher interface {
 
 // Server wraps the MCP server with rela-specific state.
 //
-// TODO(TKT-N0IKN9): Server is over the 40-method load line (48 methods).
+// TODO(TKT-N0IKN9): Server is over the 40-method load line (49 methods).
 // Decompose; ratchet this number down as handlers move out.
 //
-//plimsoll:max-methods=48
+// 48 → 49: [Server.HTTPHandler] (TKT-BDG8U9). It belongs on Server — it
+// exposes THIS server over a second transport, the peer of [Server.Serve] —
+// and it is the only method the remote endpoint added: the stateless-transport
+// choice lives inside it, and the wiring site holds an http.Handler rather
+// than reaching for the SDK.
+//
+//plimsoll:max-methods=49
 type Server struct {
 	mcp       *mcpgo.Server
 	deps      Deps
