@@ -406,6 +406,36 @@ func (r lateGatedReader) ListEntities(ctx context.Context, q store.EntityQuery) 
 	return r.reader().ListEntities(ctx, q)
 }
 
+// ListEntityHeaders resolves the gated reader per call like the rest of this
+// type, then uses its header path when it has one.
+//
+// The type assertion is not a gate decision: every reader gatedScriptReader
+// can return (ScriptReader, UnrestrictedReader, DenyReader) implements the
+// header surface, so the fallback below is unreachable in production wiring
+// and exists only so a narrower test double stays valid. It degrades to
+// whole-entity gating — more data read, never less gating.
+func (r lateGatedReader) ListEntityHeaders(
+	ctx context.Context, q store.EntityQuery,
+) iter.Seq2[store.EntityHeader, error] {
+	reader := r.reader()
+	if hr, ok := reader.(interface {
+		ListEntityHeaders(context.Context, store.EntityQuery) iter.Seq2[store.EntityHeader, error]
+	}); ok {
+		return hr.ListEntityHeaders(ctx, q)
+	}
+	return func(yield func(store.EntityHeader, error) bool) {
+		for e, err := range reader.ListEntities(ctx, q) {
+			if err != nil {
+				yield(store.EntityHeader{}, err)
+				return
+			}
+			if !yield(store.HeaderOf(e), nil) {
+				return
+			}
+		}
+	}
+}
+
 func (r lateGatedReader) ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error] {
 	return r.reader().ListRelations(ctx, q)
 }

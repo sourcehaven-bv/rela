@@ -48,8 +48,14 @@ import (
 // unexported core so Tx callbacks can re-enter. Interface-driven, not
 // accreted sprawl; ratchets with the interface.
 //
-//plimsoll:max-methods=42
-//plimsoll:max-exported-methods=28
+// +1 for ListEntityHeaders (TKT-1ESTYJ): the store.HeaderReader capability,
+// a content-free ListEntities. Implemented natively rather than left to the
+// generic fallback because the fallback would clone each entity — bodies
+// included — only to drop the body immediately, which is the cost the
+// capability exists to remove. Interface-driven like the Tx split above.
+//
+//plimsoll:max-methods=43
+//plimsoll:max-exported-methods=29
 type MemStore struct {
 	// txMu serializes an open Tx against ordinary writers: Tx holds it
 	// for the whole callback, every exported write method takes it
@@ -211,6 +217,45 @@ func (m *MemStore) ListEntities(_ context.Context, q store.EntityQuery) iter.Seq
 	return func(yield func(*entity.Entity, error) bool) {
 		for _, e := range snapshot {
 			if !yield(e, nil) {
+				return
+			}
+		}
+	}
+}
+
+// ListEntityHeaders implements store.HeaderReader. Like ListEntities it
+// snapshots under the read lock (so the iterator never holds it), but copies
+// only the header fields — the body string is not carried into the snapshot,
+// and Properties are cloned so a caller cannot mutate stored state through a
+// header.
+//
+// The generic fallback would clone each ENTITY (bodies included) just to
+// discard the content a moment later; this keeps a whole-store scan
+// proportional to ids and properties rather than to markdown.
+func (m *MemStore) ListEntityHeaders(
+	_ context.Context, q store.EntityQuery,
+) iter.Seq2[store.EntityHeader, error] {
+	m.mu.RLock()
+	idSet := entityIDSet(q.IDs)
+
+	snapshot := make([]store.EntityHeader, 0)
+	for _, id := range m.entityOrder {
+		e := m.entities[id]
+		if !matchEntityQuery(e, q, idSet) {
+			continue
+		}
+		snapshot = append(snapshot, store.EntityHeader{
+			ID:         e.ID,
+			Type:       e.Type,
+			Properties: maps.Clone(e.Properties),
+			UpdatedAt:  e.UpdatedAt,
+		})
+	}
+	m.mu.RUnlock()
+
+	return func(yield func(store.EntityHeader, error) bool) {
+		for _, h := range snapshot {
+			if !yield(h, nil) {
 				return
 			}
 		}

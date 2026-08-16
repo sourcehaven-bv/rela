@@ -61,6 +61,41 @@ func (s *Store) ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2
 	}
 }
 
+// ListEntityHeaders implements store.HeaderReader: the same listing as
+// ListEntities with the content column left OUT of the SELECT, so entity
+// bodies are never read from disk, never cross the wire, and never land in
+// a pgx scan buffer.
+//
+// This is the point of the capability — the generic fallback in
+// store.ListEntityHeaders bounds only retention, whereas here a 20k-row
+// scan over ~2 GB of markdown transfers a few MB of ids and properties.
+func (s *Store) ListEntityHeaders(
+	ctx context.Context, q store.EntityQuery,
+) iter.Seq2[store.EntityHeader, error] {
+	sql, args := buildEntityHeaderListSQL(q, "")
+	return func(yield func(store.EntityHeader, error) bool) {
+		rows, err := s.db.Query(ctx, sql, args...)
+		if err != nil {
+			yield(store.EntityHeader{}, err)
+			return
+		}
+		defer rows.Close()
+		for rows.Next() {
+			h, err := scanEntityHeader(rows)
+			if err != nil {
+				yield(store.EntityHeader{}, err)
+				return
+			}
+			if !yield(h, nil) {
+				return
+			}
+		}
+		if err := rows.Err(); err != nil {
+			yield(store.EntityHeader{}, err)
+		}
+	}
+}
+
 // ListEntitiesPage returns a page of entities. A keyset cursor on id keeps
 // pages stable; see store.ListEntitiesPage for the contract.
 func (s *Store) ListEntitiesPage(ctx context.Context, q store.EntityQuery) (store.Page[*entity.Entity], error) {
@@ -550,12 +585,37 @@ func scanEntity(row scanner) (*entity.Entity, error) {
 	return e, nil
 }
 
+func scanEntityHeader(row scanner) (store.EntityHeader, error) {
+	var (
+		id, typ   string
+		props     []byte
+		updatedAt time.Time
+	)
+	if err := row.Scan(&id, &typ, &props, &updatedAt); err != nil {
+		return store.EntityHeader{}, err
+	}
+	h := store.EntityHeader{ID: id, Type: typ, UpdatedAt: updatedAt}
+	var err error
+	if h.Properties, err = unmarshalProps(props); err != nil {
+		return store.EntityHeader{}, err
+	}
+	return h, nil
+}
+
 // buildEntityListSQL builds the SELECT + WHERE + ORDER BY for entity listings.
 // keysetAfter, when non-empty, adds "id > $n" so pagination resumes after a
 // cursor. Ordering is ascending by id (the contract's default stable order).
 func buildEntityListSQL(q store.EntityQuery, keysetAfter string) (sql string, args []any) {
 	where, args := entityWhere(q, keysetAfter)
 	sql = `SELECT id, type, properties, content, updated_at FROM entities` + where + ` ORDER BY id ASC`
+	return sql, args
+}
+
+// buildEntityHeaderListSQL mirrors buildEntityListSQL WITHOUT the content
+// column. Column order must stay in sync with scanEntityHeader.
+func buildEntityHeaderListSQL(q store.EntityQuery, keysetAfter string) (sql string, args []any) {
+	where, args := entityWhere(q, keysetAfter)
+	sql = `SELECT id, type, properties, updated_at FROM entities` + where + ` ORDER BY id ASC`
 	return sql, args
 }
 

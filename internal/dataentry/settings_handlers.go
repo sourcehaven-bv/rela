@@ -20,6 +20,19 @@ type APIAnalysisResult struct {
 	Warnings int            `json:"warnings"`
 	Issues   []APIIssue     `json:"issues"`
 	ByCheck  map[string]int `json:"byCheck"`
+
+	// TruncatedChecks names the checks that found more issues than they
+	// returned, so the UI can mark those lists as incomplete (TKT-1ESTYJ).
+	//
+	// Per-CHECK rather than one global flag: "duplicates is truncated" is
+	// actionable where "something was truncated" is not, and the response
+	// is a flat issue list, so the section-level flag would otherwise be
+	// lost. Empty (omitted) when every check reported in full.
+	//
+	// Counts in ByCheck are counts of RETURNED issues; for a truncated
+	// check that is the cap, not the true total, which is deliberately
+	// not computed.
+	TruncatedChecks []string `json:"truncatedChecks,omitempty"`
 }
 
 // APIIssue is the JSON representation of a single analysis issue.
