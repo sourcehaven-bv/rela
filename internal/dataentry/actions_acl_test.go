@@ -164,7 +164,7 @@ func TestAction_HiddenFieldRedacted(t *testing.T) {
 		Visible: map[string]bool{"status": false},
 	}}
 
-	rec := postAction(t, app, d, aliceCtx(), "peek", `{"entity_id":"TKT-MIX"}`)
+	rec := postAction(aliceCtx(), t, app, d, "peek", `{"entity_id":"TKT-MIX"}`)
 	if strings.Contains(rec.Body.String(), "SUPERSECRET") {
 		t.Errorf("LEAK: a visible:-hidden field value reached script scope: %s", rec.Body)
 	}
@@ -196,8 +196,8 @@ func TestAction_DeniedAndAbsentAreIndistinguishable(t *testing.T) {
 	}, app.store)
 	app.acl = d
 
-	denied := postAction(t, app, d, principalCtx("mallory"), "echo", `{"entity_id":"TKT-EXISTS"}`)
-	absent := postAction(t, app, d, principalCtx("mallory"), "echo", `{"entity_id":"TKT-NOPE"}`)
+	denied := postAction(principalCtx("mallory"), t, app, d, "echo", `{"entity_id":"TKT-EXISTS"}`)
+	absent := postAction(principalCtx("mallory"), t, app, d, "echo", `{"entity_id":"TKT-NOPE"}`)
 
 	if denied.Code != absent.Code {
 		t.Errorf("existence oracle: denied id → %d, absent id → %d (must match)",
@@ -236,7 +236,7 @@ func TestAction_RunsWhenEntityDeniedButUnused(t *testing.T) {
 	}, app.store)
 	app.acl = d
 
-	rec := postAction(t, app, d, principalCtx("mallory"), "sideeffect", `{"entity_id":"TKT-HIDDEN"}`)
+	rec := postAction(principalCtx("mallory"), t, app, d, "sideeffect", `{"entity_id":"TKT-HIDDEN"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("an unreadable optional parameter must not fail the action: got %d; body=%s",
 			rec.Code, rec.Body)
@@ -273,7 +273,7 @@ func TestAction_EntityTypeIsIgnored(t *testing.T) {
 	// resolve identically, because only the stored type is consulted.
 	var bodies []string
 	for _, claim := range []string{`"ticket"`, `"feature"`, `"not-a-type"`} {
-		rec := postAction(t, app, d, aliceCtx(), "echo",
+		rec := postAction(aliceCtx(), t, app, d, "echo",
 			`{"entity_id":"TKT-OK","entity_type":`+claim+`}`)
 		bodies = append(bodies, rec.Body.String())
 	}
@@ -288,8 +288,8 @@ func TestAction_EntityTypeIsIgnored(t *testing.T) {
 }
 
 // postAction is the shared driver for these tests.
-func postAction(t *testing.T, app *App, d *acl.Declarative,
-	ctx context.Context, actionID, body string,
+func postAction(ctx context.Context, t *testing.T, app *App, d *acl.Declarative,
+	actionID, body string,
 ) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/_action/"+actionID,

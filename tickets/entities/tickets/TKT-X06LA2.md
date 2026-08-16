@@ -5,7 +5,7 @@ title: 'Actions: gate entity_id on the read path, fix the writeMu DoS (permissio
 kind: enhancement
 priority: high
 effort: m
-status: in-progress
+status: done
 ---
 
 ## Status
