@@ -10,6 +10,12 @@ on:
   # security-relevant endpoint was reviewed that way before this was caught.
   # Every PR gets CI regardless of what it targets.
   pull_request:
+  # Required for the merge queue: entries are tested on an ephemeral
+  # `gh-readonly-queue/...` ref, and a required check that never runs there
+  # leaves the entry queued forever. Every check listed as required on
+  # develop must therefore also report on merge_group.
+  merge_group:
+    branches: [main, develop]
 
 permissions:
   contents: read
@@ -563,7 +569,25 @@ jobs:
           # through — a chore branch merged a stale `ready` ticket). They are only
           # exempt from the "must reference a ticket" requirement, since a pure
           # chore may legitimately touch no ticket.
-          if [[ "$EVENT_NAME" != "pull_request" ]] \
+          if [[ "$EVENT_NAME" == "push" || "$EVENT_NAME" == "merge_group" ]]; then
+            # Post-merge safety net, and the merge-queue check.
+            #
+            # push: the PR-time gate can only see the PR's own diff, so a rule
+            # that starts failing because of what ALREADY landed (or because a
+            # rule/entity elsewhere changed) reaches develop unnoticed and then
+            # fails the next unrelated PR. Validating on push pins the blame to
+            # the merge that actually broke it.
+            #
+            # merge_group: this is the last gate before the commit lands, run
+            # against the queued combination rather than the PR in isolation —
+            # exactly where a cross-PR ticket conflict shows up. Reporting a
+            # hollow success here would make the queue's guarantee worthless.
+            #
+            # Neither has a ticket to add, so `require_new` stays false.
+            echo "applies=true" >> "$GITHUB_OUTPUT"
+            echo "require_new=false" >> "$GITHUB_OUTPUT"
+            echo "$EVENT_NAME on ${GITHUB_REF_NAME:-?}: validating tickets."
+          elif [[ "$EVENT_NAME" != "pull_request" ]] \
              || [[ "$HEAD_REF" == dependabot/* ]]; then
             echo "applies=false" >> "$GITHUB_OUTPUT"
             echo "require_new=false" >> "$GITHUB_OUTPUT"
@@ -656,6 +680,45 @@ jobs:
           echo "Found work-item entities:"
           echo "$CHANGED_ENTITIES"
 
+      - name: Entities all parse
+        if: steps.gate.outputs.applies == 'true'
+        run: |
+          set -euo pipefail
+          cd tickets
+
+          # An entity whose frontmatter does not parse is SKIPPED by the store
+          # rather than failing it: the loader logs the error and carries on, so
+          # `rela validate` then happily reports success over a graph that is
+          # quietly missing entities. That is not hypothetical — it is how the
+          # 10 violations this guard was written for reached develop (#1338
+          # logged the warning and passed). Every workflow gate is only as
+          # strong as the parser feeding it, so fail loudly on any parse error
+          # before trusting a single validation result.
+          echo "Checking every entity parses..."
+          if ! err=$(../bin/rela list 2>&1 >/dev/null); then
+            echo "$err"
+            echo ""
+            echo "ERROR: rela could not list entities."
+            exit 1
+          fi
+
+          if printf '%s' "$err" | grep -q "failed to parse frontmatter"; then
+            echo "$err"
+            echo ""
+            echo "ERROR: some entities have unparseable frontmatter."
+            echo ""
+            echo "These entities are SILENTLY SKIPPED by validation, so the"
+            echo "checks below would pass while not actually checking them."
+            echo "Fix the YAML before relying on any validation result."
+            echo ""
+            echo "Most common cause: an unquoted scalar containing ': ' or"
+            echo "starting with a character YAML treats specially. Quote it:"
+            echo "  title: 'Something: with a colon'"
+            exit 1
+          fi
+
+          echo "✓ All entities parse."
+
       - name: Run rela validate
         if: steps.gate.outputs.applies == 'true'
         run: |
@@ -668,8 +731,11 @@ jobs:
           echo ""
           echo "All rela checks passed!"
 
+      # PR-only: it diffs against the PR base to find what THIS PR touched.
+      # On push that base does not exist, and the question is meaningless
+      # anyway — the merge already happened.
       - name: Ticket done-before-merge check
-        if: steps.gate.outputs.applies == 'true'
+        if: steps.gate.outputs.applies == 'true' && github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
