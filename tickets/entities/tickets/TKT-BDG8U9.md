@@ -8,7 +8,7 @@ effort: l
 tags:
     - needs-design
     - security
-status: backlog
+status: in-progress
 ---
 
 ## Description
@@ -98,6 +98,50 @@ a network transport.
 - **Not tenant isolation.** `principal.OrgID()` is audit attribution only;
   nothing in `internal/acl` evaluates it (TKT-RP3X3Q). Docs must not imply
   otherwise.
+
+## Implementation notes (verified against the code, 2026-08-16)
+
+Read of `internal/dataentry` + the go-sdk before writing anything. Corrections
+and load-bearing facts:
+
+- **`verifiedPrincipal` has NO `tool` parameter on any branch.** An earlier note
+  claimed the threading was already done on a working branch; it is not — checked
+  both `tkt-uir41p-remote-transport` and this one. `router.go:588` hardcodes
+  `principal.ToolDataEntry` at line 609, and has exactly two callers
+  (`router.go:566`, `jwtgate.go:161`). `principal.ToolMCP` already exists
+  (`principal.go:339`) and `VerifiedFrom` already takes `tool` positionally, so
+  RR-H8S10M is a parameter-threading job, not a redesign.
+
+- **`isAPIPath` already covers `/api/v1/_mcp`** (`router.go:234`), so registering
+  on the `inner` mux inherits `stampAuditPrincipal → requireVerifiedJWT →
+  attachACLRequest` with no middleware change. The mount is genuinely a
+  registration, as designed.
+
+- **The go-sdk seam is `getServer func(*http.Request) *Server`**
+  (`streamable.go:232`). This is what makes a per-request principal possible at
+  all: the callback sees the request, so it can build a server bound to that
+  request's ctx principal and gated read handles. No SDK change needed.
+
+- **AC #6 is not optional — it is the whole safety story.** In `identityHeader`
+  mode `requireVerifiedJWT` is never wrapped (`router.go:219`) and the terminal
+  resolver returns `User: "unknown"` (`router.go:427`). Combined with the CSRF
+  exemption the endpoint needs, that is an unauthenticated remote write surface.
+  A declarative-ACL deployment fails closed (`acl.ErrUnstampedPrincipal` rejects
+  `unknown`), but a NopACL deployment does not. `validateIdentityFlags`
+  (`main.go:211`) is the precedent to copy — a pure function refusing an unsafe
+  combination at startup, with the reasoning in its doc comment.
+
+- **Do NOT reuse `newMCPServices`** (`internal/cli/mcp_wiring.go:42`): it
+  hardcodes `acl.NopACL{}`. Its justification ("the filesystem is the trust
+  boundary") inverts exactly for a remote caller, who has no filesystem access
+  and for whom the ACL is the ONLY boundary.
+
+- **RR-PQ5UN1 is real and has a cheap fix.** `acl.Request.Globals`
+  (`request.go:86`) is an unsynchronised read-modify-write of
+  `globals`/`globalsLoaded`, and `attachACLRequest` attaches ONE per HTTP
+  request while an MCP POST is many logical operations. `ForPrincipal` does no
+  graph traffic (`request.go:55`), so a per-tool-call Request is the fix rather
+  than a mutex.
 
 ## References
 
