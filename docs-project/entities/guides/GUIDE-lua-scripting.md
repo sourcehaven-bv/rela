@@ -470,9 +470,8 @@ applies the same rule, from the same code — the two cannot drift on what a
 filter means.
 
 **Operator opt-in is required.** `rela.bypass_acl` only exists when the
-automation action sets `allow_acl_bypass: true` in `schema.yaml` (an
-operator-only file). Without it the function is absent and a script cannot
-elevate:
+automation action sets `allow_acl_bypass:` in `schema.yaml` (an operator-only
+file). Without it the function is absent and a script cannot elevate:
 
 ```yaml
 automations:
@@ -480,8 +479,71 @@ automations:
     on: { entity: [ticket], created: true }
     do:
       - lua_file: stamp-author.lua
-        allow_acl_bypass: true
+        allow_acl_bypass: read+write
 ```
+
+The value selects which capabilities the `admin` handle carries:
+
+| Value | `admin` methods | Typical use |
+|---|---|---|
+| `read` | `get_entity`, `list_entities`, `get_relations` | aggregate over rows the caller cannot see |
+| `write` | `create_relation`, `delete_relation`, `delete_entity` | enforce a system invariant |
+| `read+write` | both | the general case |
+
+Methods a value does not grant are **absent from the handle**, not present and
+failing — so `admin.delete_entity` under `allow_acl_bypass: read` is `nil`, and
+"this script cannot mutate" is structural rather than a promise.
+
+The flag is a **rough guard for review, not a permission model**. Its job is to
+tell whoever deploys the script whether its bypass block needs reading
+carefully: no `allow_acl_bypass:` means the script can only do what the
+invoking principal can, so the ACL already bounds it; a value means someone
+should read that closure before it ships. The value says which *kind* of
+scrutiny — is this reading data the principal cannot see, or writing past their
+permissions? That is why it is not sliced by verb.
+
+> **Migrating from the boolean.** `allow_acl_bypass: true` used to mean reads
+> and writes. It is now **refused at load** with an error naming the
+> replacement; run `rela migrate` to rewrite it to `read+write`. The boolean is
+> not silently accepted on purpose: this field grants ACL bypass, and quietly
+> mapping a legacy value to the broadest setting is the wrong default for a
+> privilege field.
+
+### Elevated reads in a document render
+
+A `documents:` entry may declare `allow_acl_bypass: read`, which lets its
+script read entities the requesting principal cannot see. This exists for
+reports that must compute over hidden rows — benchmarking a sales manager
+against peers whose clients are invisible to them, say — which no `acl.yaml`
+role can express, because granting enough to *compute* the benchmark grants
+enough to *enumerate* the competitors.
+
+```yaml
+documents:
+  sales_review:
+    title: "Verkooprapportage"
+    script: docs/sales_review.lua
+    allow_acl_bypass: read
+    permission: report:sales   # REQUIRED when elevated
+```
+
+Three rules, all enforced at config load:
+
+- **Only `read`.** A render is a `GET`; `write` and `read+write` are a config
+  error. Mutating during a render is not idempotent (browsers prefetch, users
+  refresh, the SPA retries) and would foreclose caching a
+  principal-independent render. Elevated writes belong in an automation action
+  or a schedule.
+- **`permission:` is required.** Without it the render would serve whatever the
+  script reads to every principal. This is the one place a document's
+  `permission:` is mandatory — see `docs/data-entry.md`.
+- **`script:` only.** A `command:` renderer is an external process that never
+  receives the Lua bindings elevation unlocks.
+
+**The script is trusted code.** `bypass_acl` hands it a raw reader and nothing
+stops it printing what it reads, so `permission: report:sales` grants "may read
+whatever this script reads", not "may view this report". Review the bypass
+block before deploying — that review *is* the mitigation.
 
 **Safety properties:**
 
