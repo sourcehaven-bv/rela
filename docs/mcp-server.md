@@ -159,6 +159,30 @@ and validation results.
 
 **Arguments:** `id` (required)
 
+## Read gating (ACL)
+
+MCP reads go through the same read-side ACL path as every other read shape.
+The server does not hold a raw `store.Store`: it takes a narrow `GraphReader`
+capability, and the wiring site supplies a visibility-wrapped reader that
+resolves the principal from the call context. Row-level gating and field-level
+`visible:` redaction therefore apply to MCP tools and resources exactly as they
+do to the HTTP API — a hidden entity is absent, and a redacted property's value
+is withheld.
+
+The principal is stamped onto every tool-handler context by server middleware
+and is required: `mcp.NewServer` returns an error rather than silently
+degrading to an unauthenticated read. For `rela mcp` (stdio) the principal is
+the OS user that launched the process, with `tool: "mcp"` — the same identity
+recorded in the audit log below.
+
+Because stdio MCP runs as a local user-launched process, this gating is
+principally about consistency with the rest of the read paths rather than about
+defending a network boundary. Serving MCP over HTTP is tracked separately as
+Remote MCP part 2.
+
+See [acl-security.md](acl-security.md) for the read-path rules these wrappers
+enforce.
+
 ## Audit log
 
 Every entity / relation write performed through MCP tools (including
