@@ -5,6 +5,12 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main, develop]
+  # Required for the merge queue: entries are tested on an ephemeral
+  # `gh-readonly-queue/...` ref, and a required check that never runs there
+  # leaves the entry queued forever. Every check listed as required on
+  # develop must therefore also report on merge_group.
+  merge_group:
+    branches: [main, develop]
 
 permissions:
   contents: read
@@ -558,16 +564,24 @@ jobs:
           # through — a chore branch merged a stale `ready` ticket). They are only
           # exempt from the "must reference a ticket" requirement, since a pure
           # chore may legitimately touch no ticket.
-          if [[ "$EVENT_NAME" == "push" ]]; then
-            # Post-merge safety net. The PR-time gate can only see the PR's own
-            # diff, so a rule that starts failing because of what ALREADY landed
-            # (or because a rule/entity elsewhere changed) reaches develop
-            # unnoticed and then fails the next unrelated PR. Validating on push
-            # pins the blame to the merge that actually broke it. No
-            # `require_new` here: a push is not a PR and has no ticket to add.
+          if [[ "$EVENT_NAME" == "push" || "$EVENT_NAME" == "merge_group" ]]; then
+            # Post-merge safety net, and the merge-queue check.
+            #
+            # push: the PR-time gate can only see the PR's own diff, so a rule
+            # that starts failing because of what ALREADY landed (or because a
+            # rule/entity elsewhere changed) reaches develop unnoticed and then
+            # fails the next unrelated PR. Validating on push pins the blame to
+            # the merge that actually broke it.
+            #
+            # merge_group: this is the last gate before the commit lands, run
+            # against the queued combination rather than the PR in isolation —
+            # exactly where a cross-PR ticket conflict shows up. Reporting a
+            # hollow success here would make the queue's guarantee worthless.
+            #
+            # Neither has a ticket to add, so `require_new` stays false.
             echo "applies=true" >> "$GITHUB_OUTPUT"
             echo "require_new=false" >> "$GITHUB_OUTPUT"
-            echo "push to ${GITHUB_REF_NAME:-?}: validating tickets (post-merge safety net)."
+            echo "$EVENT_NAME on ${GITHUB_REF_NAME:-?}: validating tickets."
           elif [[ "$EVENT_NAME" != "pull_request" ]] \
              || [[ "$HEAD_REF" == dependabot/* ]]; then
             echo "applies=false" >> "$GITHUB_OUTPUT"
