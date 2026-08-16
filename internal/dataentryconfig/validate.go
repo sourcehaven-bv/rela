@@ -85,6 +85,51 @@ var validSectionDisplayModes = map[string]bool{
 	"breakdown":  true,
 }
 
+// Valid render modes for a view section and its fields (TKT-HOIX1). Empty is
+// also accepted everywhere and means "inherit", resolving to RenderDisplay.
+var validSectionRenderModes = map[string]bool{
+	RenderDisplay: true,
+	RenderInput:   true,
+}
+
+// Section display modes that actually render `fields`. `render` on any other
+// mode is inert — warned about, not rejected (RR-675AA0), so switching a
+// section's display mode mid-edit isn't a hard config-load failure.
+//
+// `content` is deliberately absent even though the server BUILDS fields for it:
+// a traverse-sourced content section shares a builder arm with `cards`
+// (`sections.go`, `case "content", "cards":`), so its rows carry resolved
+// SectionFieldData on the wire. The SPA's content-card template renders only
+// the markdown body and ignores them, so those fields are inert payload. This
+// map tracks what is RENDERED, which is what an operator setting `render:`
+// cares about — not what the builder happens to populate. Do not "fix" the
+// mismatch by adding `content` here; that would suppress a warning the
+// operator needs.
+var sectionDisplayModesRenderingFields = map[string]bool{
+	"properties": true,
+	"list":       true,
+	"cards":      true,
+}
+
+// validateSectionRender checks the section-level `render:` and each field's,
+// independently of whether the section's source resolves (RR-4ICH8M).
+func validateSectionRender(viewID string, i int, s ViewSection) []string {
+	var errs []string
+	if s.Render != "" && !validSectionRenderModes[s.Render] {
+		errs = append(errs, fmt.Sprintf(
+			"view %q: section[%d] has invalid render mode %q (valid: %s)",
+			viewID, i, s.Render, joinMapKeys(validSectionRenderModes)))
+	}
+	for j, f := range s.Fields {
+		if f.Render != "" && !validSectionRenderModes[f.Render] {
+			errs = append(errs, fmt.Sprintf(
+				"view %q: section[%d] field[%d] has invalid render mode %q (valid: %s)",
+				viewID, i, j, f.Render, joinMapKeys(validSectionRenderModes)))
+		}
+	}
+	return errs
+}
+
 // Valid display modes for dashboard cards
 var validDashboardDisplayModes = map[string]bool{
 	"count":     true,
@@ -711,6 +756,51 @@ func CollectConfigWarnings(cfg *Config, meta *metamodel.Metamodel) []string {
 	warnings = append(warnings, conflictingRelationDirectionWarnings(cfg)...)
 	warnings = append(warnings, relationPropertyNameCollisionWarnings(cfg, meta)...)
 	warnings = append(warnings, viewCommandPermissionWarnings(cfg)...)
+	warnings = append(warnings, inertSectionRenderWarnings(cfg)...)
+	return warnings
+}
+
+// inertSectionRenderWarnings flags `render:` on a section whose display mode
+// does not render fields at all (`table` uses `columns:`; `content` renders the
+// body) — the key is silently inert there (RR-675AA0). Warn rather than error,
+// for the same reason as viewCommandPermissionWarnings: the config is not
+// wrong, and switching a section's display mode should not be a hard failure.
+func inertSectionRenderWarnings(cfg *Config) []string {
+	var warnings []string
+	viewIDs := make([]string, 0, len(cfg.Views))
+	for id := range cfg.Views {
+		viewIDs = append(viewIDs, id)
+	}
+	sort.Strings(viewIDs)
+	for _, viewID := range viewIDs {
+		for i, s := range cfg.Views[viewID].Sections {
+			if sectionDisplayModesRenderingFields[s.Display] {
+				continue
+			}
+			// Name the precise origin — section-level, or the first offending
+			// field index — so the operator isn't left scanning a long
+			// `fields:` list. Matches the precision validateSectionRender's
+			// errors already set.
+			origin := ""
+			if s.Render != "" {
+				origin = fmt.Sprintf("section[%d]", i)
+			} else {
+				for j, f := range s.Fields {
+					if f.Render != "" {
+						origin = fmt.Sprintf("section[%d] field[%d]", i, j)
+						break
+					}
+				}
+			}
+			if origin == "" {
+				continue
+			}
+			warnings = append(warnings, fmt.Sprintf(
+				"view %q: %s sets render: on display mode %q, which does not render fields; "+
+					"the setting has no effect (it applies to: %s)",
+				viewID, origin, s.Display, joinMapKeys(sectionDisplayModesRenderingFields)))
+		}
+	}
 	return warnings
 }
 
@@ -991,6 +1081,13 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 				errs = append(errs, validateSpan(f.Span,
 					fmt.Sprintf("view %q: section[%d] field[%d]", viewID, i, j))...)
 			}
+
+			// Validate render modes (TKT-HOIX1). Deliberately OUTSIDE the
+			// source-resolution guards below: `render` is a closed enum needing
+			// no metamodel knowledge, so a section whose source doesn't resolve
+			// must still have it checked (RR-4ICH8M). The per-field loops below
+			// also never see the section-level value.
+			errs = append(errs, validateSectionRender(viewID, i, s)...)
 
 			// Validate fields (if source type is known)
 			if sourceType != "" { //nolint:nestif // nested guards each check a distinct optional field of the source config.

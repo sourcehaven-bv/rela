@@ -56,6 +56,10 @@ func propertyToStrings(v any) []string {
 // Span is the field's width on the 12-column layout grid, carried through from
 // the view config. 0 means full width — the default for every auto-generated
 // view, so a section with no spans authored renders as one scannable column.
+//
+// Render is the resolved render mode ("display" | "input", TKT-HOIX1) — see
+// dataentryconfig.ResolveFieldRender. Resolved server-side so the SPA never
+// reimplements the section→field inheritance rule.
 type SectionFieldData struct {
 	Property     string
 	Label        string
@@ -63,6 +67,7 @@ type SectionFieldData struct {
 	PropType     string
 	Inaccessible bool
 	Span         int
+	Render       string
 }
 
 // buildSectionFieldData resolves one configured field against an entity.
@@ -71,8 +76,12 @@ type SectionFieldData struct {
 // and the entry-source `properties` branch of buildSections (the detail page).
 // They were near-identical literals, which is exactly how a new field like Span
 // ends up wired into one and silently dropped from the other.
+//
+// sectionRender is the containing section's `render:` default; the field's own
+// `render:` overrides it (TKT-HOIX1).
 func buildSectionFieldData(
 	f ViewSectionField, e *entity.Entity, eDef *metamodel.EntityDef,
+	sectionRender string,
 ) SectionFieldData {
 	propType := ""
 	if eDef != nil {
@@ -97,7 +106,8 @@ func buildSectionFieldData(
 		// strict YAML decoding at config load. Past that boundary the value is
 		// just a number, and the wire DTO shouldn't drag a config type onto
 		// the API surface.
-		Span: int(f.Span),
+		Span:   int(f.Span),
+		Render: resolveFieldRender(sectionRender, f.Render),
 	}
 }
 
@@ -199,8 +209,12 @@ type SectionData struct {
 // Returns a value (not a pointer) so callers can layer on display-mode-
 // specific fields (e.g. `Content`/`HasContent` for the `content`/`cards`
 // branch) without sharing mutation across rows.
+//
+// sectionRender is the containing section's `render:` default; each field's
+// own `render:` overrides it (TKT-HOIX1).
 func (h *viewsHandler) buildSectionEntityData(
 	ctx context.Context, e *entity.Entity, secFields []ViewSectionField, eDef *metamodel.EntityDef,
+	sectionRender string,
 ) SectionEntityData {
 	s := h.schema()
 	sed := SectionEntityData{
@@ -212,7 +226,7 @@ func (h *viewsHandler) buildSectionEntityData(
 		FieldVerdicts: h.affordances.computeFieldAffordances(ctx, e),
 	}
 	for _, f := range secFields {
-		sed.Fields = append(sed.Fields, buildSectionFieldData(f, e, eDef))
+		sed.Fields = append(sed.Fields, buildSectionFieldData(f, e, eDef, sectionRender))
 	}
 	return sed
 }
@@ -240,7 +254,7 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 			switch sec.Display {
 			case "properties":
 				for _, f := range sec.Fields {
-					sd.Fields = append(sd.Fields, buildSectionFieldData(f, e, entDef))
+					sd.Fields = append(sd.Fields, buildSectionFieldData(f, e, entDef, sec.Render))
 				}
 			case "content":
 				sd.Content = e.Content
@@ -257,7 +271,7 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 			case "properties", "list":
 				for _, e := range entities {
 					eDef, _ := s.Meta.GetEntityDef(e.Type)
-					sed := h.buildSectionEntityData(ctx, e, sec.Fields, eDef)
+					sed := h.buildSectionEntityData(ctx, e, sec.Fields, eDef, sec.Render)
 					sd.Entities = append(sd.Entities, sed)
 				}
 			case "table":
@@ -322,7 +336,7 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 			case "content", "cards":
 				for _, e := range entities {
 					eDef, _ := s.Meta.GetEntityDef(e.Type)
-					sed := h.buildSectionEntityData(ctx, e, sec.Fields, eDef)
+					sed := h.buildSectionEntityData(ctx, e, sec.Fields, eDef, sec.Render)
 					sed.Content = e.Content
 					sed.HasContent = e.Content != ""
 					sd.Entities = append(sd.Entities, sed)
