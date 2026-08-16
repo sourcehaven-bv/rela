@@ -95,10 +95,17 @@ Two kinds, discriminated by `DocumentConfig.IsStandalone()` (empty
   elevated document has no pre-ACL behavior to preserve, so granting would only
   make the boundary inert while looking configured.
 - **Only `read` is accepted on a document; `write`/`read+write` are a config
-  error.** A render is a GET, so mutating breaks idempotence under
-  prefetch/refresh/retry and forecloses the caching an elevated,
-  principal-independent render is uniquely suited to (TKT-OGR566, RR-P4E9GL).
-  Elevated writes belong in an automation action or a schedule.
+  error.** A render is served on a GET, so elevated writes there would break
+  idempotence under prefetch/refresh/retry and foreclose the caching an
+  elevated, principal-independent render is uniquely suited to (TKT-OGR566,
+  RR-P4E9GL). Elevated writes belong in an automation action or a schedule.
+- **This does NOT mean a render cannot mutate — it can, today.** Documents
+  render on a `WriterRuntime` and `registerBindings` has no `isDocument` guard,
+  so ordinary `rela.create_entity`/`update_entity`/`delete_entity`/`write_file`
+  are callable in a document script, bounded by the caller's ACL (pre-existing;
+  TKT-PX5YL7). Withholding the elevated Mutator narrows *elevation*; it does not
+  make the surface read-only. Don't write "a render cannot write" in a comment
+  or doc — say "cannot write past the ACL", which is what is true.
 - **The elevated script is TRUSTED CODE (RR-LWD8N3, accepted).** Nothing stops
   it printing what it reads, so `permission:` grants "may read whatever this
   script reads", not "may view this report". Review of the bypass block is the

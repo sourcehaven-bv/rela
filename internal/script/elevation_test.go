@@ -211,3 +211,35 @@ func TestRun_NoElevatedReaderWhenNoneSupplied(t *testing.T) {
 		t.Error("withholding read elevation also disabled WRITE elevation")
 	}
 }
+
+// TestACLBypassConstantsMatchMetamodel pins the string mirror in autocascade
+// to the metamodel constants it duplicates.
+//
+// autocascade may not import metamodel (it is deliberately schema-agnostic —
+// see .go-arch-lint.yml), so it re-declares the three values as plain strings
+// with a comment saying they MUST match. This package imports both, so it is
+// the one place that can turn that comment into a check.
+//
+// Without it, a typo in either place silently disables elevation on the
+// cascade path: bypass.Enabled() would be false for a value the operator
+// legitimately wrote. Fail-closed, but silently, which is the worst shape for
+// a capability gate.
+func TestACLBypassConstantsMatchMetamodel(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		cascade string
+		metaVal metamodel.ACLBypass
+	}{
+		{"read", autocascade.ACLBypassRead, metamodel.ACLBypassRead},
+		{"write", autocascade.ACLBypassWrite, metamodel.ACLBypassWrite},
+		{"read+write", autocascade.ACLBypassReadWrite, metamodel.ACLBypassReadWrite},
+	} {
+		if tc.cascade != string(tc.metaVal) {
+			t.Errorf("%s: autocascade has %q, metamodel has %q — the duplicated "+
+				"constants have drifted, which silently disables elevation for that value",
+				tc.name, tc.cascade, tc.metaVal)
+		}
+	}
+}

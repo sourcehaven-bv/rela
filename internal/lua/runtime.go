@@ -1878,8 +1878,16 @@ func (r *Runtime) luaBypassACL(ls *lua.LState) int {
 // A nil `er` leaves the three read methods present but RAISING, not absent.
 // Absence would make `if admin.get_entity then` silently take the
 // no-elevation branch on a misconfigured deployment; raising names the
-// missing capability. Writes behave the same way via the outer nil check on
-// ElevatedManager.
+// missing capability.
+//
+// That reasoning fits the cascade path, where reader and mutator are wired
+// together under one check so a missing reader really is a wiring bug. The
+// document path has a THIRD state the dichotomy does not cover: a wiring site
+// may grant no elevation bundle at all, in which case neither handle is set
+// and `rela.bypass_acl` is absent outright rather than present-and-raising
+// (see documentService.elevatedDeps). All three states fail closed; they just
+// fail in different shapes, so don't read this comment as "nil reader always
+// means misconfiguration".
 // readUsage accumulates which elevated read bindings a bypass_acl closure
 // actually used, so the post-closure audit record can name them. Order is
 // first-use, and each binding appears once — the record answers "what kind
@@ -1944,11 +1952,15 @@ func (r *Runtime) newElevatedHandle(
 	// Mutator was wired — the asymmetry with `er` above is deliberate
 	// (TKT-Y3JVFK). A nil `er` means "elevation was intended but the reader is
 	// missing", i.e. a misconfiguration, so raising names the missing
-	// capability. A nil `em` on a document render means the opposite: the
-	// runtime is READ-ONLY BY CONSTRUCTION and never had writes to lose, so
-	// `admin.delete_entity == nil` is the honest contract, and a script probing
-	// `if admin.delete_entity then` correctly learns it cannot mutate. It also
-	// makes "a render cannot write" structural rather than a guarded promise.
+	// capability. A nil `em` means the caller deliberately withheld elevated
+	// writes, so `admin.delete_entity == nil` is the honest contract and a
+	// script probing `if admin.delete_entity then` correctly learns it cannot
+	// write past the ACL.
+	//
+	// Note the scope of that guarantee: it removes the ELEVATED write path,
+	// not writing as such. A document render still holds the ordinary gated
+	// rela.* write bindings (TKT-PX5YL7), so "this handle cannot bypass the
+	// ACL to write" is the claim — not "this surface cannot mutate".
 	if em != nil {
 		registerElevatedWrites(ls, t, em, guard, r.callerCtx)
 	}

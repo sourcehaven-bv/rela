@@ -2766,11 +2766,16 @@ nothing downstream bounding its output. A configured `acl.yaml` is required
 too: with no policy the permission names a capability nothing can withhold, so
 the document is refused rather than served to everyone.
 
-**Only `read` is accepted.** A render is a `GET`, so `write` and `read+write`
-are a config error. Writes during a render are not idempotent (browsers
-prefetch, users refresh, the SPA retries) and would foreclose caching an
-otherwise principal-independent render; put them in an automation action or a
-schedule instead.
+**Only `read` is accepted.** A render is served on a `GET`, so `write` and
+`read+write` are a config error: elevated writes there would not be idempotent
+(browsers prefetch, users refresh, the SPA retries) and would foreclose caching
+an otherwise principal-independent render. Put them in an automation action or
+a schedule instead.
+
+Note what this rule does and does not do. A document script *can* already write
+through the ordinary `rela.create_entity` / `update_entity` / `delete_entity`
+bindings, bounded by your own permissions — refusing `write` here prevents a
+render mutating **beyond** them, it does not make rendering read-only.
 
 **The script is trusted code.** Nothing stops it printing the rows it read
 instead of a statistic derived from them, so `permission: report:sales` really

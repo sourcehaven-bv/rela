@@ -920,14 +920,19 @@ type DocumentConfig struct {
 	// competitors.
 	//
 	// ONLY metamodel.ACLBypassRead is accepted. `write` and `read+write` are a
-	// config error: a document render is a GET, and a GET that mutates is not
-	// idempotent (browsers prefetch, users refresh, the SPA retries). It would
-	// also foreclose the render caching and dedup that an elevated,
-	// principal-independent render is uniquely suited to (TKT-OGR566,
-	// RR-P4E9GL). Writes that a report seems to want — memoizing an expensive
-	// aggregate, logging that a report was viewed — belong in an automation
-	// action or a schedule, which are event-triggered, idempotent by design,
-	// and already audited as writes.
+	// config error, because a render is served on a GET and elevated writes
+	// there would be neither idempotent (browsers prefetch, users refresh, the
+	// SPA retries) nor compatible with caching a principal-independent render
+	// (TKT-OGR566, RR-P4E9GL). Writes a report seems to want — memoizing an
+	// expensive aggregate, logging that a report was viewed — belong in an
+	// automation action or a schedule, which are event-triggered, idempotent by
+	// design, and already audited as writes.
+	//
+	// This rule REFUSES TO WIDEN an existing gap rather than closing one: a
+	// document script today still has the ordinary gated rela.* write bindings
+	// (TKT-PX5YL7), so a render can already mutate within the caller's own
+	// permissions. What this refusal prevents is a render mutating BEYOND
+	// them.
 	//
 	// Setting this REQUIRES Permission (see above): an elevated document with
 	// no permission publishes whatever the script reads to every principal.

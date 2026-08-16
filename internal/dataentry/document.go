@@ -182,9 +182,17 @@ func newDocumentService(st store.Store, kv state.KV, projectRoot string,
 // declares it, and deps unchanged otherwise (TKT-Y3JVFK).
 //
 // Only ElevatedReader and ElevationRecorder are set — never ElevatedManager —
-// so lua.newElevatedHandle omits the write methods entirely and the render is
-// structurally unable to mutate. See the DocumentConfig.AllowACLBypass godoc
-// for why a GET must not write.
+// so lua.newElevatedHandle omits the write methods entirely and the script
+// cannot write PAST THE ACL.
+//
+// That is NOT the same as "a render cannot mutate", and the difference matters.
+// A document renders on a WriterRuntime (script.runDocumentScript ->
+// NewWriterRuntime -> lua.NewWriter), and registerBindings has no isDocument
+// guard, so ordinary rela.create_entity / update_entity / delete_entity /
+// write_file ARE present and callable in a document script — bounded by the
+// caller's own ACL. That is pre-existing and tracked in TKT-PX5YL7; withholding
+// the elevated Mutator here narrows elevation, it does not make the render
+// read-only.
 //
 // The recorder travels with the reader so an elevated document read leaves the
 // same `acl-bypass-read` audit row a cascade one does. Granting the capability

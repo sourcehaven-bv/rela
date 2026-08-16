@@ -2,15 +2,24 @@ package dataentry
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	scriptpkg "github.com/Sourcehaven-BV/rela/internal/script"
+	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // stubACL is an acl.ACL implementation the switch has never been taught
@@ -253,14 +262,18 @@ func TestElevatedDocument_NopACLRefusesEndToEnd(t *testing.T) {
 	}
 }
 
-// TestElevatedDeps_GrantsBypassBinding is the wiring test: it connects the
-// config flag to the actual runtime capability, which every other test in this
-// file stubs out.
+// TestElevatedDeps_GrantsBypassBinding checks that elevatedDeps populates the
+// deps struct such that a runtime built from it exposes the right bindings.
 //
-// The gate tests above prove WHO may render; the handler tests prove a denied
-// principal never reaches the renderer. None of them prove the elevated reader
-// actually arrives, because they use a fake renderer. This builds a real
-// lua.Runtime from the deps elevatedDeps produces and asks the script itself.
+// Scope, precisely: it builds lua.NewWriter DIRECTLY, which is NOT the
+// production path (that is ExecuteStandaloneDocument -> runDocumentScript ->
+// NewWriterRuntime, with a different options chain). So this pins the
+// deps-to-bindings mapping, not the end-to-end wiring — if NewWriterRuntime
+// ever transformed deps for document mode, this would keep passing.
+//
+// TestElevatedRender_ReadsHiddenEntityAndAudits is the one that covers the
+// real path; keep both, since this one localizes a failure to elevatedDeps
+// while that one proves the feature works.
 func TestElevatedDeps_GrantsBypassBinding(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -273,9 +286,11 @@ func TestElevatedDeps_GrantsBypassBinding(t *testing.T) {
 			script:   `if rela.bypass_acl == nil then error("bypass_acl absent") end`,
 		},
 		{
-			// The structural guarantee: a render cannot mutate even inside
-			// the closure, because the write methods do not exist on the
-			// handle at all.
+			// The structural guarantee, stated precisely: the ELEVATED handle
+			// cannot mutate, because the write methods do not exist on it. The
+			// render can still write through the ordinary gated rela.*
+			// bindings (TKT-PX5YL7) — what this pins is that elevation adds no
+			// write capability, not that the surface is read-only.
 			name:     "elevated handle carries reads and no writes",
 			elevated: true,
 			script: `rela.bypass_acl(function(admin)
@@ -303,5 +318,192 @@ func TestElevatedDeps_GrantsBypassBinding(t *testing.T) {
 				t.Errorf("script assertion failed: %v", err)
 			}
 		})
+	}
+}
+
+// denyMutator satisfies lua.Mutator so NewWriter accepts the deps. Its methods
+// are never called: these tests render, they do not write.
+//
+// Its existence is itself informative — lua.NewWriter PANICS without an
+// EntityManager, which is the clearest available proof that a document render
+// is a writer runtime and not a read-only one (RR-DOCWRT, TKT-PX5YL7).
+type denyMutator struct{}
+
+func (denyMutator) CreateEntity(context.Context, *entity.Entity, entity.CreateOptions) (*entity.CreateResult, error) {
+	return nil, errors.New("writes are not expected in this test")
+}
+
+func (denyMutator) UpdateEntity(context.Context, *entity.Entity) (*entity.UpdateResult, error) {
+	return nil, errors.New("writes are not expected in this test")
+}
+
+func (denyMutator) PatchEntity(context.Context, string, entity.Patch) (*entity.UpdateResult, error) {
+	return nil, errors.New("writes are not expected in this test")
+}
+
+func (denyMutator) DeleteEntity(context.Context, string, bool) (*entity.DeleteResult, error) {
+	return nil, errors.New("writes are not expected in this test")
+}
+
+func (denyMutator) CreateRelation(
+	context.Context, string, string, string, entity.RelationOptions,
+) (*entity.Relation, error) {
+	return nil, errors.New("writes are not expected in this test")
+}
+
+func (denyMutator) DeleteRelation(context.Context, string, string, string) error {
+	return errors.New("writes are not expected in this test")
+}
+
+// --- Integration: the elevated reader actually arrives, and is audited ---
+
+// capturingAudit records every audit row for assertion.
+type capturingAudit struct {
+	mu   sync.Mutex
+	recs []audit.Record
+}
+
+func (c *capturingAudit) Record(rec audit.Record) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.recs = append(c.recs, rec)
+}
+
+func (c *capturingAudit) ops() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]string, 0, len(c.recs))
+	for _, r := range c.recs {
+		out = append(out, r.Op)
+	}
+	return out
+}
+
+// TestElevatedRender_ReadsHiddenEntityAndAudits is the integration test the
+// unit tests in this file cannot be: it runs a REAL Lua script through the
+// REAL script.Engine, so the whole production path is exercised —
+// ExecuteStandaloneDocument -> runDocumentScript -> NewWriterRuntime.
+//
+// Two properties, both of which the other tests can pass without:
+//
+//  1. The elevated reader ARRIVES. Every HTTP test here stubs the renderer via
+//     withFakeDocRenderer, whose newTestService passes a nil elevation func —
+//     so those tests render with elevation disabled and would pass identically
+//     if the wiring were broken or absent.
+//  2. The elevated read is AUDITED. document.go calls the acl-bypass-read trail
+//     "the exact gap TKT-ACSBSA closed; it must not reopen on a new surface",
+//     and nothing else in this package tests it.
+func TestElevatedRender_ReadsHiddenEntityAndAudits(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "scripts", "docs"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// The script reads through the ELEVATED handle. If the elevated reader
+	// never arrives, admin.get_entity raises and the render fails — so this
+	// script failing is itself the assertion.
+	script := `rela.bypass_acl(function(admin)
+  local e = admin.get_entity("SECRET-1")
+  print("# " .. (e and e.id or "MISSING"))
+end)`
+	if err := os.WriteFile(filepath.Join(root, "scripts", "docs", "bench.lua"), []byte(script), 0o600); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	st := memstore.New()
+	if err := st.CreateEntity(t.Context(), &entity.Entity{ID: "SECRET-1", Type: "ticket"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	sink := &capturingAudit{}
+	svc := newDocumentService(st, nil, root, scriptpkg.NewEngine(),
+		// A DENY-ALL gated reader: the ordinary rela.* reads see nothing, so
+		// only the elevated handle can reach SECRET-1. This is what makes the
+		// test prove elevation rather than merely "a read happened".
+		func() lua.WriteDeps {
+			return lua.WriteDeps{
+				ReadDeps: lua.ReadDeps{
+					VisibleReader: visibility.DenyReader{},
+					ProjectRoot:   root,
+				},
+				EntityManager: denyMutator{},
+			}
+		},
+		func() documentElevation {
+			return documentElevation{
+				Reader:   visibility.Unrestricted(st),
+				Recorder: elevationRecorder(sink),
+			}
+		})
+
+	out, err := svc.RenderStandalone(t.Context(), documentRenderConfig{
+		ConfigID: "bench",
+		Script:   "docs/bench.lua",
+		Elevated: true,
+	})
+	if err != nil {
+		t.Fatalf("elevated render failed (the elevated reader did not arrive): %v", err)
+	}
+	if !strings.Contains(out, "SECRET-1") {
+		t.Errorf("render did not read the hidden entity through the elevated handle; got %q", out)
+	}
+
+	// Exactly one row, and it is the elevated-read op.
+	ops := sink.ops()
+	var bypassReads int
+	for _, op := range ops {
+		if op == audit.OpACLBypassRead {
+			bypassReads++
+		}
+	}
+	if bypassReads != 1 {
+		t.Errorf("acl-bypass-read rows = %d, want exactly 1 (ops: %v); granting the "+
+			"capability without the audit trace is the gap TKT-ACSBSA closed", bypassReads, ops)
+	}
+}
+
+// TestUnelevatedRender_CannotReachHiddenEntity is the negative half: the same
+// script on an UNELEVATED document must fail, because rela.bypass_acl is not
+// registered at all. Without this, the test above could pass on a build that
+// elevated every render.
+func TestUnelevatedRender_CannotReachHiddenEntity(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "scripts", "docs"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	script := `rela.bypass_acl(function(admin) print(admin.get_entity("SECRET-1").id) end)`
+	if err := os.WriteFile(filepath.Join(root, "scripts", "docs", "bench.lua"), []byte(script), 0o600); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	st := memstore.New()
+	if err := st.CreateEntity(t.Context(), &entity.Entity{ID: "SECRET-1", Type: "ticket"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	sink := &capturingAudit{}
+	svc := newDocumentService(st, nil, root, scriptpkg.NewEngine(),
+		func() lua.WriteDeps {
+			return lua.WriteDeps{
+				ReadDeps: lua.ReadDeps{
+					VisibleReader: visibility.DenyReader{},
+					ProjectRoot:   root,
+				},
+				EntityManager: denyMutator{},
+			}
+		},
+		func() documentElevation {
+			return documentElevation{Reader: visibility.Unrestricted(st), Recorder: elevationRecorder(sink)}
+		})
+
+	// Elevated:false — the capability is available to the service but this
+	// document did not declare it.
+	if _, err := svc.RenderStandalone(t.Context(), documentRenderConfig{
+		ConfigID: "bench",
+		Script:   "docs/bench.lua",
+	}); err == nil {
+		t.Fatal("an unelevated render called rela.bypass_acl successfully; the binding " +
+			"must be absent unless the document declares allow_acl_bypass")
+	}
+	if n := len(sink.ops()); n != 0 {
+		t.Errorf("unelevated render produced %d audit rows, want 0 (ops: %v)", n, sink.ops())
 	}
 }

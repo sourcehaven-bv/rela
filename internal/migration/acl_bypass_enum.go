@@ -38,8 +38,18 @@ func (m *ACLBypassEnumMigration) Description() string {
 	return "Rewrite boolean allow_acl_bypass to the read/write/read+write enum"
 }
 
+// FileTypes covers BOTH files the key can appear in. The schema file is where
+// the legacy boolean actually exists (automation actions, TKT-D8T148); the
+// data-entry file is where the key is new (documents, TKT-Y3JVFK) and no
+// legacy value can exist yet.
+//
+// data-entry.yaml is listed anyway because an operator who writes
+// `allow_acl_bypass: true` there — the natural mistake, since that was the
+// spelling for the whole life of TKT-D8T148 — gets a hard config-load error
+// whose message says to run `rela migrate`. A migration that skipped the file
+// would make that instruction a lie.
 func (m *ACLBypassEnumMigration) FileTypes() []FileType {
-	return []FileType{FileTypeMetamodel}
+	return []FileType{FileTypeMetamodel, FileTypeDataEntry}
 }
 
 // legacyBools are the YAML 1.1 spellings that decode as booleans. The parser

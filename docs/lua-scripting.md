@@ -523,11 +523,13 @@ documents:
 
 Three rules, all enforced at config load:
 
-- **Only `read`.** A render is a `GET`; `write` and `read+write` are a config
-  error. Mutating during a render is not idempotent (browsers prefetch, users
-  refresh, the SPA retries) and would foreclose caching a
-  principal-independent render. Elevated writes belong in an automation action
-  or a schedule.
+- **Only `read`.** A render is served on a `GET`; `write` and `read+write` are
+  a config error. Elevated writes there would not be idempotent (browsers
+  prefetch, users refresh, the SPA retries) and would foreclose caching a
+  principal-independent render, so they belong in an automation action or a
+  schedule. This prevents a render mutating *beyond* the caller's permissions;
+  the ordinary gated `rela.*` write bindings remain available to a document
+  script.
 - **`permission:` is required.** Without it the render would serve whatever the
   script reads to every principal. This is the one place a document's
   `permission:` is mandatory — see `docs/data-entry.md`.
