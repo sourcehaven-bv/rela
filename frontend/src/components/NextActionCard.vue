@@ -26,7 +26,7 @@ watch(
   (shown) => {
     if (shown) void markShown()
   },
-  { immediate: true },
+  { immediate: true }
 )
 </script>
 

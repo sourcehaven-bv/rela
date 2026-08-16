@@ -58,7 +58,7 @@ export function useNextAction() {
 
   /** True when the suggestion belongs on the page rather than the status bar. */
   const isPageLevel = computed(
-    () => !!suggestion.value && (prominence.value === 'banner' || prominence.value === 'notice'),
+    () => !!suggestion.value && (prominence.value === 'banner' || prominence.value === 'notice')
   )
 
   /** True when the suggestion belongs in the status bar. */

@@ -29,7 +29,7 @@ const props = defineProps<{
 const actEntries = computed(() =>
   props.offers
     .map((offer, index) => ({ offer, index }))
-    .filter(({ offer }) => offer.navigate || offer.acknowledge || offer.pick_one),
+    .filter(({ offer }) => offer.navigate || offer.acknowledge || offer.pick_one)
 )
 
 /** The resolved options for one offer, or [] when the server sent none. */
@@ -121,12 +121,22 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
 
       <ul v-if="deferOpen" class="na-defer__menu" role="menu">
         <li v-for="d in snoozeDurations" :key="d" role="none">
-          <button type="button" class="na-defer__item" role="menuitem" @click.stop="defer('snooze', d)">
+          <button
+            type="button"
+            class="na-defer__item"
+            role="menuitem"
+            @click.stop="defer('snooze', d)"
+          >
             Remind me in {{ d }}
           </button>
         </li>
         <li v-if="hasDismiss" role="none">
-          <button type="button" class="na-defer__item" role="menuitem" @click.stop="defer('dismiss')">
+          <button
+            type="button"
+            class="na-defer__item"
+            role="menuitem"
+            @click.stop="defer('dismiss')"
+          >
             Not this one
           </button>
         </li>

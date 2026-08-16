@@ -147,7 +147,7 @@ describe('useNextAction', () => {
       await na.markShown()
 
       expect(mockFeedback).toHaveBeenCalledWith(
-        expect.objectContaining({ source: 'quip', kind: 'shown' }),
+        expect.objectContaining({ source: 'quip', kind: 'shown' })
       )
     })
   })

@@ -34,9 +34,7 @@ function suggestion(over: Partial<NextActionSuggestion> = {}): NextActionSuggest
 async function mountCard(prominence?: string) {
   if (prominence) {
     const schemaStore = useSchemaStore()
-    schemaStore.nextActionBands = [
-      { id: 'stalled', label: 'Stalled', prominence },
-    ] as never
+    schemaStore.nextActionBands = [{ id: 'stalled', label: 'Stalled', prominence }] as never
   }
   const w = mount(NextActionCard, { global: { stubs } })
   await vi.waitFor(() => expect(mockGet).toHaveBeenCalled())

@@ -22,7 +22,7 @@ const stubs = { RouterLink: { template: '<a :to="to"><slot/></a>', props: ['to']
 
 function mountOffers(
   offers: NextActionOffer[],
-  pickOptions?: Record<string, Array<{ entity_id: string; label: string }>>,
+  pickOptions?: Record<string, Array<{ entity_id: string; label: string }>>
 ) {
   return mount(NextActionOffers, {
     props: { offers, entityId: 'TASK-1', pickOptions },
@@ -120,10 +120,9 @@ describe('NextActionOffers', () => {
     // Options are keyed by the offer's INDEX, so an offer preceded by others
     // must still find its own list.
     it('matches options to the right offer by index', () => {
-      const w = mountOffers(
-        [{ acknowledge: true }, pickOffer],
-        { '1': [{ entity_id: 'T-9', label: 'Correct one' }] },
-      )
+      const w = mountOffers([{ acknowledge: true }, pickOffer], {
+        '1': [{ entity_id: 'T-9', label: 'Correct one' }],
+      })
 
       const picks = w.findAll('.rela-na-pick')
       expect(picks).toHaveLength(1)
@@ -160,7 +159,7 @@ describe('NextActionOffers', () => {
       await items[1].trigger('click')
 
       expect(mockFeedback).toHaveBeenCalledWith(
-        expect.objectContaining({ kind: 'snooze', duration: '7d' }),
+        expect.objectContaining({ kind: 'snooze', duration: '7d' })
       )
     })
 
