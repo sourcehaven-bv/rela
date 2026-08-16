@@ -47,6 +47,7 @@ components:
   app:              { in: internal/app }
   appbuild:         { in: internal/appbuild }
   appbuildtest:     { in: internal/appbuild/appbuildtest }
+  backendtest:      { in: internal/appbuild/backendtest }
 
   # Domain services
   analysis:         { in: internal/analysis }
@@ -466,6 +467,14 @@ deps:
       - tracer
       - validator
       - visibility
+  # backendtest supplies each build's test backend. The pgx dependency is
+  # confined to its postgres-tagged file, which the default build does not
+  # compile — the same arrangement pgstore uses.
+  backendtest:
+    mayDependOn:
+      - appbuild
+    canUse:
+      - pgx
   appbuildtest:
     mayDependOn:
       - acl

@@ -489,6 +489,26 @@ jobs:
           fi
           echo "OK: pgstore suite ran against PostgreSQL with no skips."
 
+      # The step above covers the STORE under -tags postgres. Nothing covered
+      # the WIRING: `internal/appbuild` and `internal/cli` were compiled with
+      # the tag but never run with it, so every build-agnostic composition-root
+      # test in them (Services fully populated, Close idempotent, acl.yaml
+      # loaded, corrupt CalDAV cache non-fatal) silently regressed on the
+      # postgres build and stayed invisible until someone ran the tagged suite
+      # by hand.
+      #
+      # These are not backend tests — they assert wiring that must hold on
+      # every backend — so they run against the same database rather than
+      # being excluded. backendtest gives each one a private migrated schema.
+      #
+      # Skips are tolerated here, unlike the pgstore step: a few cases
+      # deliberately assert boot failures that occur before any store opens and
+      # legitimately need no database. RELA_TEST_DATABASE_REQUIRED (job env)
+      # still turns a MISSING DSN into a hard failure, which is the regression
+      # that actually matters.
+      - name: Run composition-root wiring tests against PostgreSQL
+        run: go test -race -tags postgres ./internal/appbuild/... ./internal/cli/...
+
   # Cross-compile every (GOOS, build-tag) combination GoReleaser ships so a
   # platform-specific compile break (e.g. a unix-only syscall used without a
   # build-tagged fallback) fails here at PR time instead of silently at

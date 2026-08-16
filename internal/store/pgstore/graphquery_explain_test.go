@@ -26,7 +26,7 @@ import (
 // The assertion is index-positive (the index name appears in the
 // plan) rather than seq-scan-negative — the planner is allowed to
 // pick seq scans for the outer SELECT at small scale when its
-// selectivity estimates favour them. Only the per-iteration CTE
+// selectivity estimates favor them. Only the per-iteration CTE
 // recursion needs to be index-backed; that's where blast radius is
 // non-linear in graph size.
 //
@@ -51,7 +51,7 @@ func TestGraphQueryExplainUsesIndex(t *testing.T) {
 		id := fmt.Sprintf("TKT-%06d", i)
 		require.NoError(t, s.CreateEntity(ctx, entity.New(id, "ticket")))
 		if i%10 == 0 {
-			_, err := s.CreateRelation(ctx, "engineering", "owns", id, nil)
+			_, err = s.CreateRelation(ctx, "engineering", "owns", id, nil)
 			require.NoError(t, err)
 		}
 	}
@@ -76,9 +76,12 @@ func TestGraphQueryExplainUsesIndex(t *testing.T) {
 
 	// The recursive CTE must use the composite index for the
 	// per-iteration rel_type lookup.
-	if !strings.Contains(plan, "Index Scan using relations_type_from_idx") &&
-		!strings.Contains(plan, "Bitmap Index Scan on relations_type_from_idx") {
-		t.Errorf("composite index relations_type_from_idx is not used in the plan; the CTE will degrade per-iteration:\n%s", plan)
+	// Either access method is fine; both are index-backed.
+	indexed := strings.Contains(plan, "Index Scan using relations_type_from_idx") ||
+		strings.Contains(plan, "Bitmap Index Scan on relations_type_from_idx")
+	if !indexed {
+		t.Errorf("composite index relations_type_from_idx is not used in the plan; "+
+			"the CTE will degrade per-iteration:\n%s", plan)
 	}
 }
 
