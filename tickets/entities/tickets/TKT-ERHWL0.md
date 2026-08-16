@@ -5,7 +5,7 @@ title: Memoize dashboard breakdown and table-row derivation
 kind: refactor
 priority: medium
 effort: xs
-status: backlog
+status: done
 ---
 
 ## What
