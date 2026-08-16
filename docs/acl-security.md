@@ -833,9 +833,9 @@ side owns the grant), and redaction runs on every browser-reachable relation
 read shape — the `/relations` map, the single-relation-type GET, and both the
 outgoing and incoming direction (an incoming edge resolves its grant against
 the true source, not the entity being viewed). It also runs on relation
-history (see below). The machine-to-machine sync channel (`/api/sync/`) is the
-one deliberate exception — it is a full-fidelity replication path outside the
-`visible:` contract; see "What still leaks (deferred)". The deny universe is the edge's actual
+history (see below). The machine-to-machine sync channel inherits the **same**
+redaction by reading through `/api/v1` rather than a private channel
+(TKT-8P1TM7) — see "Sync is a client of the authorized API" below. The deny universe is the edge's actual
 meta keys, so a free-form key never declared in the metamodel is redacted
 too — a caller cannot smuggle a secret past the closed-world by using an
 undeclared property name. Relations have no display-title channel, so there
@@ -859,30 +859,80 @@ its meta unchanged (permissive default).
   neither the entity-level read gate nor `visible:` redaction; they
   return full entity bodies. The MCP server is local-only (stdio), so
   this is an accepted gap at this stage.
-- **Machine-to-machine sync (`/api/sync/`)** — the fs↔pg replication
-  channel (FEAT-NJ9FEN) returns each record's **full canonical body**
-  (all entity properties and all relation meta), gated only by the
-  **row-level** read verdict — it does not apply `visible:` field/meta
-  redaction. This is by design and cannot be closed by simply redacting
-  it: the sync GET is a read that feeds a write (the client hashes the
-  body and pushes it back under `If-Match`), so a redacted read would
-  erase the hidden fields on the authoritative store — the "never redact
-  a read that feeds a write" data-destruction bug. A deployment that puts
-  `visible:`-redacted data behind sync must therefore treat sync-channel
-  access as equivalent to unredacted read: gate `/api/sync/` behind a
-  trusted-replica boundary (network/mTLS/a dedicated sync principal), not
-  ordinary reader access. This applies to both entity fields (pre-existing)
-  and relation meta (TKT-B1F5Q1). A per-field sync-redaction that stays
-  round-trip-safe (e.g. a merge that re-reads hidden fields on push) is the
-  documented follow-up, not built here.
+- **Markdown body (`content`) is not field-redacted, on any read path.**
+  `visible:` is a **property-values** guard: it omits hidden *property* and
+  *relation-meta* values from the wire. It makes no claim over the markdown
+  **body** — there are no body-level guards anywhere in rela (the web read
+  path, the sync fetch, and history all serve the full body). A deployment
+  that duplicates a hidden property's value into the body (e.g. a rendered
+  "summary" line) discloses it to any principal who may row-read the entity.
+  Covering the body would be a new cross-path mechanism; it is deliberately
+  out of scope (RR-ATFNM1).
 
 For threat-modelling purposes today: per-entity GET, write, include,
-list, sidebar, pagination, global-search, and the SSE event stream are
-all read-gated (the SSE feed per-type, see above); `visible:` redaction
-applies to every data-entry HTTP read body; and `/_search` cannot be
-used as a hidden-field oracle. The remaining read-side gap is the MCP
-transport (TKT-G3PPD); within the data-entry server every read channel a
-browser can reach is tight.
+list, sidebar, pagination, global-search, the SSE event stream, and the
+machine-to-machine sync channel are all read-gated (the SSE feed per-type,
+see above); `visible:` property/meta redaction applies to every data-entry
+HTTP read body — and **sync inherits it by reading through `/api/v1`**
+(TKT-8P1TM7); and `/_search`
+cannot be used as a hidden-field oracle. The remaining read-side gaps are
+the MCP transport (TKT-G3PPD) and the markdown body (never field-redacted,
+by design — see above); within the data-entry server every property/meta
+read channel a browser or a replica can reach is tight.
+
+### Sync is a client of the authorized API (a "fancy browser")
+
+The machine-to-machine sync channel (`/api/sync/`, FEAT-NJ9FEN) used to be a
+**second content channel** into the store — its own record GET/PUT/DELETE with
+its own row-level gate, bypassing `visible:` field redaction on reads and the
+field-write ACL on writes. TKT-8P1TM7 retired that channel: sync now reads AND
+writes through the **same authorized `/api/v1` API** the SPA uses, so there is
+one content channel with one authorization decision. A replica is a client with
+no authority of its own — the remote is always the authoritative primary.
+
+- The **feed** (`/api/sync/manifest`) is the only sync-specific surface that
+  remains — content-free and row-gated. It lists `{id, type, op, deleted}` per
+  changed row filtered by the same read verdict, carrying no property or meta
+  values. A row a principal cannot read is omitted (the cursor still advances
+  past it, so the client never re-polls a hidden tail forever). A row the
+  principal can read but is field-redacted on **still appears** — the feed has
+  no field-level decision because it carries no fields. It stays because a plain
+  GET cannot express a tombstone (absence-from-a-list is not an explicit delete).
+- **Reads** go through `/api/v1` GET, inheriting row-gating AND `visible:`
+  redaction — the field-redaction gap closes as a consequence of there being one
+  content channel, not a bolted-on step. A single-relation `/api/v1` read
+  (RR-SYNCR1) serves the relation body + a relation-level ETag, field-meta
+  redacted and **fail-closed** (empty meta if the source is gone), mirroring
+  relation history.
+- **Reads that feed a local write are safe** because the `/api/v1` response
+  carries `_redacted` — the *names* (never values) of the properties withheld by
+  field ACL (DEC-T0XIWQ). A replica applying a pulled change patches only the
+  fields it can see: a name present in `_redacted` is **hidden, not deleted**, so
+  the replica leaves its own local copy untouched; a field in neither
+  `properties` nor `_redacted` is a genuine delete. A redacted read therefore
+  drives a faithful replica without ever erasing hidden values the replica isn't
+  entitled to.
+- **Writes** go through the `/api/v1` write path, so a push is enforced by the
+  same field-write ACL (`validateFieldWrite`) as a human edit, and a redacted
+  replica pushes a PATCH of visible fields only — it never names (and so never
+  erases) the primary's hidden fields. Ids are the primary's to mint: a
+  locally-created record is pushed under a temporary id, the primary returns the
+  real id, and the replica renames its local doc to match.
+- **Conflict detection** uses the primary's ETag as an opaque `If-Match` token —
+  the replica stores what the primary returned and echoes it back, comparing only
+  for equality to detect "the primary moved." A conflict halts the record and is
+  surfaced to the operator to resolve (`--force`), not auto-reconciled.
+
+Two residual notes for a deployment. (1) The markdown **body** is not
+field-redacted on any path (see "What still leaks" above), so sync replicates
+full bodies — the same as a web GET. (2) A principal who **loses** row access
+keeps whatever it already replicated (the row simply stops appearing and its GET
+404s — it cannot refresh, but the last copy is not recalled; "you could have made
+a copy"). A manifest-listed id that 404s on fetch (access lost between feed and
+fetch) means *skip and advance* — the replica must NOT mirror a delete from a
+bare 404, only from an explicit feed tombstone (RR-SYNCR3). Scope: this is the
+CLI replica↔remote mode; a server↔server mode is deliberately deferred (see the
+ticket).
 
 ## Version history read gating (`history:read`)
 

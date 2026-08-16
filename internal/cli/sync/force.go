@@ -23,6 +23,9 @@ var ErrForceUnknownRecord = errors.New("no such record to force")
 // This keeps the server's "no blind writes" invariant intact while letting the
 // operator deliberately win.
 func (e *Engine) ForcePush(ctx context.Context, key string) (*PushRecordResult, error) {
+	if err := e.ensureSchema(ctx); err != nil {
+		return nil, err
+	}
 	snap, _, err := SnapshotLocal(ctx, e.store)
 	if err != nil {
 		return nil, err
@@ -55,9 +58,16 @@ func (e *Engine) ForcePull(ctx context.Context, key string) (*PullRecordResult, 
 	if e.applier == nil {
 		return nil, errRemoteApplierRequired
 	}
+	if err := e.ensureSchema(ctx); err != nil {
+		return nil, err
+	}
 	kind := kindFromKey(key)
 
-	res, err := e.applyRemote(ctx, kind, key)
+	typ, err := e.forceRecordType(ctx, kind, key)
+	if err != nil {
+		return nil, err
+	}
+	res, err := e.applyRemote(ctx, kind, key, typ)
 	if err != nil {
 		if errors.Is(err, errRemoteAbsent) {
 			// Remote no longer has it → mirror the delete locally.
@@ -72,14 +82,18 @@ func (e *Engine) ForcePull(ctx context.Context, key string) (*PullRecordResult, 
 	return res, nil
 }
 
-// remoteHash reads a record's current server hash (ETag) for use as the If-Match
-// of a forced push. A 404 (absent remotely) yields an empty hash, which the
-// server treats as a first-create precondition — the correct base for pushing a
-// local record the remote does not have.
+// remoteHash reads a record's current server ETag for use as the If-Match of a
+// forced push. A 404 (absent remotely) yields an empty hash, which the server
+// treats as a first-create precondition — the correct base for pushing a local
+// record the remote does not have.
 func (e *Engine) remoteHash(ctx context.Context, kind Kind, key string) (string, error) {
 	switch kind {
 	case KindEntity:
-		fe, err := e.client.GetEntity(ctx, key)
+		plural, err := e.pluralForLocalEntity(ctx, key)
+		if err != nil {
+			return "", err
+		}
+		fe, err := e.client.GetEntity(ctx, plural, key)
 		if err != nil {
 			if isNotFound(err) {
 				return "", nil
@@ -92,7 +106,11 @@ func (e *Engine) remoteHash(ctx context.Context, kind Kind, key string) (string,
 		if !ok {
 			return "", fmt.Errorf("internal: malformed relation key %q", key)
 		}
-		fr, err := e.client.GetRelation(ctx, from, relType, to)
+		fromPlural, err := e.pluralForRelationFrom(ctx, from)
+		if err != nil {
+			return "", err
+		}
+		fr, err := e.client.GetRelation(ctx, fromPlural, from, relType, to)
 		if err != nil {
 			if isNotFound(err) {
 				return "", nil
@@ -101,4 +119,27 @@ func (e *Engine) remoteHash(ctx context.Context, kind Kind, key string) (string,
 		}
 		return fr.Hash, nil
 	}
+}
+
+// forceRecordType resolves a record's type for a force operation, where there is
+// no manifest entry to carry it. It prefers the index baseline's recorded Type,
+// falling back to a local store read (the record may exist locally but be
+// unindexed). A relation's type is its relation type. Used only to reach the
+// route plural, so a miss surfaces as a clear error rather than a bad request.
+func (e *Engine) forceRecordType(ctx context.Context, kind Kind, key string) (string, error) {
+	if base, ok := e.idx.Baseline(key); ok && base.Type != "" {
+		return base.Type, nil
+	}
+	if kind == KindEntity {
+		ent, err := e.store.GetEntity(ctx, key)
+		if err != nil {
+			return "", fmt.Errorf("resolve type of %q for force: %w", key, err)
+		}
+		return ent.Type, nil
+	}
+	_, relType, _, ok := splitRelationKey(key)
+	if !ok {
+		return "", fmt.Errorf("internal: malformed relation key %q", key)
+	}
+	return relType, nil
 }
