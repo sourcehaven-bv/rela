@@ -33,13 +33,13 @@ var base = time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
 // Named spans, so an assertion reads as the scenario it models rather than
 // as arithmetic.
 const (
-	anHour    = time.Hour
-	oneDay    = 24 * time.Hour
-	twoDays   = 2 * oneDay
-	oneWeek   = 7 * oneDay
-	oneMonth  = 30 * oneDay
-	oneYear   = 365 * oneDay
-	nearMonth = 29 * oneDay
+	oneHourSpan = time.Hour
+	oneDay      = 24 * time.Hour
+	twoDays     = 2 * oneDay
+	oneWeek     = 7 * oneDay
+	oneMonth    = 30 * oneDay
+	oneYear     = 365 * oneDay
+	nearMonth   = 29 * oneDay
 )
 
 func key(user, source, entity string) userstate.Key {
@@ -87,9 +87,9 @@ func RunSnoozeTests(t *testing.T, f Factory) {
 	t.Run("expired snooze reads as absent", func(t *testing.T) {
 		s := f(t)
 		k := key("alice", "stale", "T-1")
-		require.NoError(t, s.SetSnooze(ctx, k, base.Add(anHour)))
+		require.NoError(t, s.SetSnooze(ctx, k, base.Add(oneHourSpan)))
 
-		_, ok, err := s.SnoozedUntil(ctx, k, base.Add(2*anHour))
+		_, ok, err := s.SnoozedUntil(ctx, k, base.Add(2*oneHourSpan))
 		require.NoError(t, err)
 		require.False(t, ok)
 	})
@@ -99,7 +99,7 @@ func RunSnoozeTests(t *testing.T, f Factory) {
 	t.Run("snooze expires at the deadline, not after it", func(t *testing.T) {
 		s := f(t)
 		k := key("alice", "stale", "T-1")
-		until := base.Add(anHour)
+		until := base.Add(oneHourSpan)
 		require.NoError(t, s.SetSnooze(ctx, k, until))
 
 		_, ok, err := s.SnoozedUntil(ctx, k, until)
@@ -114,7 +114,7 @@ func RunSnoozeTests(t *testing.T, f Factory) {
 	t.Run("re-snoozing replaces rather than stacks", func(t *testing.T) {
 		s := f(t)
 		k := key("alice", "stale", "T-1")
-		require.NoError(t, s.SetSnooze(ctx, k, base.Add(anHour)))
+		require.NoError(t, s.SetSnooze(ctx, k, base.Add(oneHourSpan)))
 		require.NoError(t, s.SetSnooze(ctx, k, base.Add(oneWeek)))
 
 		got, ok, err := s.SnoozedUntil(ctx, k, base)
@@ -129,11 +129,11 @@ func RunSnoozeTests(t *testing.T, f Factory) {
 		s := f(t)
 		k := key("alice", "stale", "T-1")
 		require.NoError(t, s.SetSnooze(ctx, k, base.Add(oneWeek)))
-		require.NoError(t, s.SetSnooze(ctx, k, base.Add(anHour)))
+		require.NoError(t, s.SetSnooze(ctx, k, base.Add(oneHourSpan)))
 
 		got, _, err := s.SnoozedUntil(ctx, k, base)
 		require.NoError(t, err)
-		require.True(t, got.Equal(base.Add(anHour)), "shorter snooze must win, got %v", got)
+		require.True(t, got.Equal(base.Add(oneHourSpan)), "shorter snooze must win, got %v", got)
 	})
 
 	// Variant is what makes a reset condition surface again.
@@ -242,7 +242,7 @@ func RunShownTests(t *testing.T, f Factory) {
 		require.True(t, ok)
 		require.True(t, at.Equal(base))
 
-		later := base.Add(anHour)
+		later := base.Add(oneHourSpan)
 		require.NoError(t, s.MarkShown(ctx, k, later))
 		at, _, err = s.LastShown(ctx, k)
 		require.NoError(t, err)
@@ -260,7 +260,7 @@ func RunPruneTests(t *testing.T, f Factory) {
 		s := f(t)
 		dead := key("alice", "stale", "T-dead")
 		live := key("alice", "stale", "T-live")
-		require.NoError(t, s.SetSnooze(ctx, dead, base.Add(anHour)))
+		require.NoError(t, s.SetSnooze(ctx, dead, base.Add(oneHourSpan)))
 		require.NoError(t, s.SetSnooze(ctx, live, base.Add(twoDays)))
 
 		removed, err := s.Prune(ctx, base.Add(oneDay), oneMonth)
