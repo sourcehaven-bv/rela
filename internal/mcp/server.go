@@ -25,6 +25,7 @@ import (
 	"errors"
 	"iter"
 	"log/slog"
+	"net/http"
 
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -262,6 +263,36 @@ func NewServer(deps Deps, version string, opts ...Option) (*Server, error) {
 	s.registerPrompts()
 
 	return s, nil
+}
+
+// HTTPHandler returns an http.Handler serving this server over Streamable
+// HTTP, for mounting inside an existing router (TKT-BDG8U9). The caller owns
+// authentication, ACL and routing; this method owns only the MCP transport.
+//
+// **Stateless is required, not a tuning choice.** Protocol revision
+// 2026-07-28 is reachable ONLY on a stateless server in the go-sdk — a
+// session-bearing one negotiates down to 2025-11-25, because the newer
+// revision removes sessions entirely. Consequences the caller inherits:
+//
+//   - GET and DELETE get 405; only POST carries messages.
+//   - Server→client requests are rejected (there is no channel to answer on).
+//   - Notifications reach the client only within an in-flight request.
+//
+// That last point is why the file watcher is pointless on this transport and
+// a caller should pass a no-op [Watcher]: `resources/list_changed` has no
+// stateless equivalent. Remote clients re-read on demand and see fresh data,
+// because every read goes to the store.
+//
+// The returned handler serves THIS server for every request, so per-request
+// state must travel on the ctx rather than be baked in here. That is exactly
+// how identity works: the transport passes the *http.Request ctx through to
+// handlers, and [Server.principalMiddleware] preserves a principal already
+// stamped there in preference to the construction-time one.
+func (s *Server) HTTPHandler() http.Handler {
+	return mcpgo.NewStreamableHTTPHandler(
+		func(*http.Request) *mcpgo.Server { return s.mcp },
+		&mcpgo.StreamableHTTPOptions{Stateless: true},
+	)
 }
 
 // Serve starts the MCP server on stdio and blocks until the peer

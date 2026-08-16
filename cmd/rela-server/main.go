@@ -48,6 +48,11 @@ type serverFlags struct {
 	principalHeader   string
 	readOnly          bool
 	unconfinedCommand bool
+	// remoteMCP serves the MCP endpoint over HTTP at dataentry.MCPPath.
+	// Off by default; requires the JWT identity flags below (dataentry
+	// refuses to enable it otherwise — the endpoint is CSRF-exempt, and
+	// that is only sound while rela verifies a bearer token itself).
+	remoteMCP bool
 	// JWT identity: verify a signed-JWT assertion from an OIDC proxy against its
 	// JWKS and stamp the verified subject as the principal. Provider-agnostic
 	// (Pratique, oauth2-proxy, Pomerium, ...). All three of issuer/audience/jwks
@@ -96,6 +101,15 @@ func parseFlags() *serverFlags {
 			"commands. Accepts running third-party parsers on untrusted input "+
 			"unconfined — see docs/transforms.md. Also enabled by "+
 			"RELA_UNCONFINED_COMMANDS=1.")
+	flag.BoolVar(&f.remoteMCP, "mcp", os.Getenv("RELA_MCP") == "1",
+		"Serve the Model Context Protocol endpoint over HTTP at /api/v1/_mcp, "+
+			"so AI assistants can reach a deployed rela the same way `rela mcp` "+
+			"serves a local one. Off by default. REQUIRES the -jwt-* identity "+
+			"flags: the endpoint must be CSRF-exempt (MCP clients send no Origin), "+
+			"which is only sound while rela verifies a bearer token itself — "+
+			"startup is refused otherwise. Every tool call runs as the requesting "+
+			"principal and is ACL-gated like any other API request. Also enabled "+
+			"by RELA_MCP=1.")
 	// JWT identity flags (env fallbacks $RELA_JWT_*). Verifying a SIGNED assertion
 	// is safer than --principal-header (which merely trusts the proxy set a header).
 	flag.StringVar(&f.jwtIssuer, "jwt-issuer", os.Getenv("RELA_JWT_ISSUER"),
@@ -471,6 +485,15 @@ func main() {
 	idv := buildIdentityVerifier(context.Background(), f)
 	wirePrincipalResolvers(app, f, idv, mode)
 	wireWebhookReceiver(app, f, idv)
+
+	// After wirePrincipalResolvers: SetRemoteMCP checks that the JWT gate is
+	// installed, so it must run once identity is wired. Exit on failure — the
+	// operator asked for MCP, and booting silently without it would serve a
+	// server that lacks the feature they enabled.
+	if err := wireRemoteMCP(app, svc, f); err != nil {
+		slog.Error("failed to enable remote MCP", "error", err)
+		os.Exit(1)
+	}
 
 	srv := newHTTPServer(addr, app.NewRouter())
 

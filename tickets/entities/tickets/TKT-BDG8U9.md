@@ -8,7 +8,7 @@ effort: l
 tags:
     - needs-design
     - security
-status: in-progress
+status: review
 ---
 
 ## Description
@@ -42,15 +42,18 @@ ticket from sitting in a non-terminal state while a large migration lands.
 Everything below has **no stdio manifestation** — each only bites once there is
 a network transport.
 
-## Carried-over review findings (all still open)
+## Carried-over review findings
+
+**RR-H8S10M is now FIXED** (see "What shipped"). RR-PQ5UN1 and RR-P34E8J
+remain open and are deferred — see "Deferred (not shipped)".
 
 - **RR-H8S10M** — `verifiedPrincipal` hardcoded `principal.ToolDataEntry`, so a
   remote MCP write would be audited as `data-entry`, failing the
   audit-attribution criterion. The naive fix (a `Principal` composite literal
   with `Tool: ToolMCP`) silently drops every asserted role, because
   `VerifiedFrom` is the only constructor that populates the unexported
-  org/role/scope fields. *A tool parameter has already been threaded through
-  `verifiedPrincipal` on the working branch; it needs the MCP call site.*
+  org/role/scope fields. *FIXED: the tool is now a parameter of
+  `verifiedPrincipal`, derived from the request path.*
 - **RR-PQ5UN1** — `acl.Request` memoises `globals` without synchronisation and
   is documented as not goroutine-safe, but `attachACLRequest` attaches ONE per
   HTTP request. A JSON-RPC batch may dispatch handlers concurrently over that
@@ -142,6 +145,56 @@ and load-bearing facts:
   request while an MCP POST is many logical operations. `ForPrincipal` does no
   graph traffic (`request.go:55`), so a per-tool-call Request is the fix rather
   than a mutex.
+
+## Status against the acceptance criteria
+
+| AC | State | Where |
+| --- | --- | --- |
+| 1. Deployed server serves MCP over HTTP | done | `-mcp` flag → `wireRemoteMCP` → `Server.HTTPHandler` |
+| 2. Absent when not enabled | done | `TestRemoteMCP_AbsentUnlessEnabled` |
+| 3. Two callers see only their rows | done | `TestACL_TwoPrincipals_SeeDifferentRows` |
+| 4. Write audited as the requester with `Tool == mcp` | done | `TestRemoteMCP_AuditAttributionIsMCP` (RR-H8S10M) |
+| 5. Unauthenticated refused, no header fall-through | done | `TestRemoteMCP_UnauthenticatedIsRefused` |
+| 6. Refuse at startup without verified JWT | done | `TestSetRemoteMCP_RefusesWithoutJWTGate` |
+| 7. RFC 9728 `WWW-Authenticate` + well-known metadata | **not done** | RR-P34E8J still open |
+| 8. Concurrency within one JSON-RPC batch | **not done** | RR-PQ5UN1 still open |
+
+AC 7 and 8 are deliberately deferred rather than forgotten — see below.
+
+## Deferred (not shipped)
+
+- **RR-P34E8J / AC 7 — RFC 9728 discovery.** `jwtgate.go` emits
+  `WWW-Authenticate` only when the configured header is literally
+  `Authorization` (the default is `X-Auth-Assertion`), and never with a
+  `resource_metadata` parameter. Adding a well-known endpoint alone does not
+  satisfy the challenge. Without it a spec-compliant MCP client cannot
+  auto-discover the IdP and must be pointed at it by configuration — which
+  works, so this is a usability gap, not a security one.
+- **RR-PQ5UN1 / AC 8 — `acl.Request` concurrency.** `Request.Globals` is an
+  unsynchronised read-modify-write and `attachACLRequest` attaches ONE per
+  HTTP request, while a JSON-RPC batch is many logical operations. Not
+  triggered by what shipped here (the stateless handler does not fan a batch
+  out across goroutines today), but it is latent the moment one does.
+  `ForPrincipal` does no graph traffic, so a per-tool-call Request is the fix.
+- **The remote tool allowlist.** Every stdio tool is currently reachable
+  remotely, including `lua_eval` / `lua_run`. Those run sandboxed
+  (`SkipOpenLibs: true`) and ACL-gated, so this is not an escape hatch — but
+  "a new tool is stdio-only until someone adds it" is the safer default and
+  is the seam TKT-G3PPD needs.
+
+## What shipped
+
+- `/api/v1/_mcp` mounted on the `inner` mux, inheriting
+  `stampAuditPrincipal → requireVerifiedJWT → attachACLRequest` via `isAPIPath`.
+- `verifiedPrincipal(id, tool)` with the tool derived from the path, so a
+  remote call is attributed `Tool=mcp` **without dropping asserted roles**.
+- `App.SetRemoteMCP`, refusing at startup without a JWT gate.
+- `Server.HTTPHandler()` — stateless streamable HTTP, in `internal/mcp` (the
+  only package permitted the go-sdk import).
+- `principalMiddleware` now PRESERVES a ctx principal instead of overwriting
+  it; `principal.Stamped` distinguishes absent from unknown.
+- `-mcp` / `RELA_MCP=1` on rela-server, wired to ACL-gated reads via
+  `GatedReads()` — the inverse of the stdio wiring's deliberate NopACL.
 
 ## References
 
