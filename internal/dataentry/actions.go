@@ -76,8 +76,10 @@ func (h *writeHandler) handleV1Action(w http.ResponseWriter, r *http.Request) {
 	correlationID := newCorrelationID()
 
 	// Serialize action script execution against other mutations and
-	// against workspace reloads via writeMu.
-	h.writeMu.Lock()
+	// against workspace reloads via writeMu. Provision under the lock (a no-op
+	// unless unmatched_principal: provision fired) so an action-triggered write
+	// by an unmatched verified principal is covered like CRUD.
+	r = h.enterWrite(r)
 	defer h.writeMu.Unlock()
 
 	// Resolve entity if provided in the request.

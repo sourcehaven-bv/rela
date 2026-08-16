@@ -185,6 +185,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	// own, so sync writes serialize with the other mutation handlers just as in
 	// production.
 	app.sync = newSyncHandler(svc.Store(), svc.EntityManager(), &app.writeMu)
+	app.sync.provision = newProvisionSeam(app)
 	// viewsHandler mirrors production wiring (see NewApp): fixed service
 	// handles by value, schema/services closures, and App's shared read gate.
 	app.views = &viewsHandler{
@@ -227,6 +228,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		fields:     func() FieldVerdictResolver { return app.fieldResolver },
 		gateRead:   app.gateReadOrNotFound,
 		writeMu:    &app.writeMu,
+		provision:  newProvisionSeam(app),
 	}
 
 	// Export handler over the app's current services (mirrors NewApp).
@@ -258,6 +260,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		fullScriptDetail:   app.allowFullScriptDetail,
 		paths:              paths,
 		writeMu:            &app.writeMu,
+		provision:          newProvisionSeam(app),
 	}
 }
 

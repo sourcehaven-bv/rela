@@ -71,13 +71,20 @@ import (
 // the trust boundary here rather than leaving it to a code reviewer's memory.
 //
 // Read them via [Principal.OrgID], [Principal.OrgSlug], [Principal.Roles],
-// [Principal.PrincipalType], [Principal.Scopes].
+// [Principal.PrincipalType], [Principal.Scopes], [Principal.Email].
 //
 // The two attenuation claims run the OPPOSITE direction from roles: principalType
 // selects a ceiling that removes capability, and scopes re-open pieces of it
 // bounded by the acting user. So a forged one could only ever narrow — but they
 // share the constructor discipline anyway, because "this claim is safe to forge"
 // is not a property worth asking a future reader to re-derive.
+//
+// email carries the verified `email` claim, when the assertion supplies one. It
+// rides here for the same reason org does — so lazy provisioning (TKT-ANUJDS)
+// can stamp it onto a freshly-created stub user entity — and is populated only
+// via the verified constructors, never a composite literal, so it shares the
+// org/roles trust boundary. Attribution/enrichment only; nothing in internal/acl
+// evaluates it.
 type Principal struct {
 	User    string
 	Tool    string
@@ -88,6 +95,7 @@ type Principal struct {
 	roles         []string
 	principalType string
 	scopes        []string
+	email         string
 }
 
 // Claims carries the verified-assertion fields [VerifiedFrom] stamps onto a
@@ -112,6 +120,11 @@ type Claims struct {
 	// Scopes re-open capability a baseline closed, always bounded by what the
 	// acting user holds. A scope can therefore never escalate past the user.
 	Scopes []string
+
+	// Email is the verified `email` claim, when the assertion supplies one.
+	// Attribution/enrichment only (lazy provisioning stamps it on a stub user
+	// entity, TKT-ANUJDS); nothing in internal/acl evaluates it.
+	Email string
 }
 
 // VerifiedFrom constructs a Principal carrying claims from a verified identity
@@ -127,6 +140,7 @@ func VerifiedFrom(user, tool string, c Claims) Principal {
 		orgID:         c.OrgID,
 		orgSlug:       c.OrgSlug,
 		principalType: c.PrincipalType,
+		email:         c.Email,
 	}
 	if len(c.Roles) > 0 {
 		p.roles = slices.Clone(c.Roles)
@@ -139,10 +153,26 @@ func VerifiedFrom(user, tool string, c Claims) Principal {
 
 // Verified is the original positional constructor, retained because it reads
 // well at the many call sites that only ever carry org + roles. It delegates to
-// [VerifiedFrom]; prefer that one when setting the attenuation claims.
+// [VerifiedFrom]; prefer that one when setting the attenuation or email claims.
 func Verified(user, tool, orgID, orgSlug string, roles []string) Principal {
 	return VerifiedFrom(user, tool, Claims{OrgID: orgID, OrgSlug: orgSlug, Roles: roles})
 }
+
+// WithEmail returns a copy of p carrying the verified `email` claim. Useful when
+// a caller already holds a verified Principal and only needs to add the email
+// (the lazy-provisioning re-stamp path, TKT-ANUJDS) rather than rebuild it
+// through [VerifiedFrom]. The verified-source guarantee still holds — WithEmail
+// is only reachable from a Principal a caller already built via a verified
+// constructor.
+func (p Principal) WithEmail(email string) Principal {
+	out := p.Clone()
+	out.email = email
+	return out
+}
+
+// Email returns the verified `email` claim, or "" when absent. Same
+// attribution-only caveat as [Principal.OrgID].
+func (p Principal) Email() string { return p.email }
 
 // OrgID returns the verified `org_id` claim, or "" when the principal did not
 // arrive with a verified assertion.
@@ -246,6 +276,7 @@ func (p Principal) Sanitized(clean func(string) string) Principal {
 		orgID:         clean(p.orgID),
 		orgSlug:       clean(p.orgSlug),
 		principalType: clean(p.principalType),
+		email:         clean(p.email),
 	}
 	if len(p.roles) > 0 {
 		out.roles = make([]string, 0, len(p.roles))
@@ -272,6 +303,7 @@ func (p Principal) Equal(q Principal) bool {
 		p.orgID == q.orgID &&
 		p.orgSlug == q.orgSlug &&
 		p.principalType == q.principalType &&
+		p.email == q.email &&
 		slices.Equal(p.roles, q.roles) &&
 		slices.Equal(p.scopes, q.scopes)
 }
@@ -288,6 +320,7 @@ type principalJSON struct {
 	Roles         []string `json:"roles,omitempty"`
 	PrincipalType string   `json:"principal_type,omitempty"`
 	Scopes        []string `json:"scopes,omitempty"`
+	Email         string   `json:"email,omitempty"`
 }
 
 // MarshalJSON emits the assertion claims alongside the exported fields. Every
@@ -303,6 +336,7 @@ func (p Principal) MarshalJSON() ([]byte, error) {
 		Roles:         p.roles,
 		PrincipalType: p.principalType,
 		Scopes:        p.scopes,
+		Email:         p.email,
 	})
 }
 
@@ -327,6 +361,7 @@ func (p *Principal) UnmarshalJSON(data []byte) error {
 		roles:         w.Roles,
 		principalType: w.PrincipalType,
 		scopes:        w.Scopes,
+		email:         w.Email,
 	}
 	return nil
 }
@@ -348,6 +383,12 @@ const (
 	// distinct entry point from data-entry: the write originates from a verified
 	// server-to-server callback, not a human at the UI.
 	ToolWebhookReceiver = "webhook-receiver"
+	// ToolProvisioner attributes the stub-user create performed by lazy
+	// provisioning (`unmatched_principal: provision`, TKT-ANUJDS) when a verified
+	// principal resolves to no user entity. It is a distinct entry point so the
+	// audit log distinguishes an auto-provisioned stub from a human edit; paired
+	// with [UserProvisioner].
+	ToolProvisioner = "provisioner"
 )
 
 // UserScheduler is the default [Principal.User] for scheduled tasks that
@@ -370,6 +411,19 @@ const (
 // It grants nothing by itself (DEC-O59WM4) — privileges still come only
 // from acl.yaml. `run_as` continues to override it per task.
 const UserScheduler = "system:scheduler"
+
+// UserProvisioner is the fixed [Principal.User] under which lazy provisioning
+// creates a stub user entity for an unmatched verified principal
+// (`unmatched_principal: provision`, TKT-ANUJDS). Like [UserScheduler] it is a
+// documented, grantable constant — a migration binds it to a role granting
+// `create: [<user_entity_type>]` and NOTHING else, so the create it performs is
+// authorized and audited to this identity while it cannot author group edges or
+// touch any other type (the bare-stub containment, RR-28SCW3).
+//
+// It grants nothing by itself; the create-only privilege comes solely from the
+// acl.yaml role the provisioner migration injects. Paired with
+// [ToolProvisioner].
+const UserProvisioner = "system:provisioner"
 
 // principalKey is the unexported context.WithValue key so no other
 // package can collide with it or read/write the value outside this
