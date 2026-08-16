@@ -8,7 +8,7 @@ effort: l
 tags:
     - needs-design
     - security
-status: review
+status: done
 ---
 
 ## Description
@@ -44,8 +44,8 @@ a network transport.
 
 ## Carried-over review findings
 
-**RR-H8S10M is now FIXED** (see "What shipped"). RR-PQ5UN1 and RR-P34E8J
-remain open and are deferred — see "Deferred (not shipped)".
+**RR-H8S10M is FIXED** (see "What shipped"). RR-PQ5UN1 and RR-P34E8J are
+`deferred` with recorded reasons — unimplemented, deliberately, and visible.
 
 - **RR-H8S10M** — `verifiedPrincipal` hardcoded `principal.ToolDataEntry`, so a
   remote MCP write would be audited as `data-entry`, failing the
@@ -156,10 +156,13 @@ and load-bearing facts:
 | 4. Write audited as the requester with `Tool == mcp` | done | `TestRemoteMCP_AuditAttributionIsMCP` (RR-H8S10M) |
 | 5. Unauthenticated refused, no header fall-through | done | `TestRemoteMCP_UnauthenticatedIsRefused` |
 | 6. Refuse at startup without verified JWT | done | `TestSetRemoteMCP_RefusesWithoutJWTGate` |
-| 7. RFC 9728 `WWW-Authenticate` + well-known metadata | **not done** | RR-P34E8J still open |
-| 8. Concurrency within one JSON-RPC batch | **not done** | RR-PQ5UN1 still open |
+| 7. RFC 9728 `WWW-Authenticate` + well-known metadata | **deferred** | RR-P34E8J (`deferred`, reason recorded) |
+| 8. Concurrency within one JSON-RPC batch | **deferred** | RR-PQ5UN1 (`deferred`, reason recorded) |
 
-AC 7 and 8 are deliberately deferred rather than forgotten — see below.
+AC 7 and 8 are formally **deferred** (see the review-responses), not quietly
+dropped: neither is implemented, and both carry a written reason. The ticket
+is `done` for the six criteria it claims — the endpoint works, is opt-in, is
+authenticated, and is ACL-gated per caller — not for all eight.
 
 ## Deferred (not shipped)
 
