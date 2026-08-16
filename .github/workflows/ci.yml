@@ -437,12 +437,6 @@ jobs:
         with:
           go-version: '1.26.6'
 
-      # internal/cli renders documents through internal/cmdexec, which FAILS
-      # CLOSED without a sandbox — so the wiring-test step below needs
-      # bubblewrap for the same reason the `test` and `e2e` jobs do.
-      - name: Install bubblewrap (command sandbox)
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap
-
       # Trust auth: no password in the DSN. The DB is ephemeral and
       # runner-local, so there is no credential to keep out of the log.
       - name: Configure test database URL
@@ -512,8 +506,21 @@ jobs:
       # legitimately need no database. RELA_TEST_DATABASE_REQUIRED (job env)
       # still turns a MISSING DSN into a hard failure, which is the regression
       # that actually matters.
+      #
+      # internal/cli is scoped to its wiring tests rather than run whole. The
+      # package also holds render tests that shell out through internal/cmdexec,
+      # which fails closed without a working sandbox — and bubblewrap cannot set
+      # up its loopback device on this job's runner ("RTM_NEWADDR: Operation not
+      # permitted"), even with the package installed, unlike the `test` job.
+      # Those tests are backend-independent and already covered there; running
+      # them here would gate the postgres wiring on an unrelated sandbox
+      # capability. The `test` job remains the owner of full-package coverage.
       - name: Run composition-root wiring tests against PostgreSQL
-        run: go test -race -tags postgres ./internal/appbuild/... ./internal/cli/...
+        run: |
+          set -euo pipefail
+          go test -race -tags postgres ./internal/appbuild/...
+          go test -race -tags postgres -run 'TestNewMCPServices|TestMCPServices|TestMCPWatcher' \
+            ./internal/cli/
 
   # Cross-compile every (GOOS, build-tag) combination GoReleaser ships so a
   # platform-specific compile break (e.g. a unix-only syscall used without a
