@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures';
+import { test } from './fixtures';
 import { EntityPage } from '../pages';
 import { SEED } from './fixtures';
 
@@ -24,9 +24,7 @@ test.describe('View section render modes (TKT-HOIX1)', () => {
     // The entry properties section omits `render`, so it must NOT mount an
     // inline-edit form. Pre-TKT-HOIX1 it would have: `status`/`assignee` are
     // ordinarily writable, and writability alone used to decide this.
-    const entrySection = appPage.locator('.properties-list').first();
-    await expect(entrySection).toBeVisible();
-    await expect(entrySection.locator('.section-edit-form')).toHaveCount(0);
+    await entity.expectEntrySectionRendersDisplay();
 
     // ...while the list section below it, which opts in, does.
     await entity.expectListSectionRowMounted();
@@ -37,18 +35,13 @@ test.describe('View section render modes (TKT-HOIX1)', () => {
     await entity.navigateToEntity('task', SEED.tasks.writeUnitTests);
 
     // `status` is an enum on the entry section. Rendered as display it is
-    // plain text — no <select>, no FieldShell wrapper. Scoped to the entry
-    // section so the opted-in list section below can't satisfy this.
-    const entrySection = appPage.locator('.properties-list').first();
-    await expect(entrySection).toBeVisible();
-    await expect(entrySection.locator('select')).toHaveCount(0);
-    await expect(entrySection.locator('input')).toHaveCount(0);
-    await expect(entrySection.locator('.form-field')).toHaveCount(0);
+    // plain text — no <select>, no FieldShell wrapper.
+    await entity.expectEntrySectionHasNoFormControls();
 
     // The value is still shown — display mode hides the control, not the data.
     // (TASK-001 is seeded with status=draft, assignee=Alice.)
-    await expect(entrySection).toContainText('draft');
-    await expect(entrySection).toContainText('Alice');
+    await entity.expectEntrySectionShowsValue('draft');
+    await entity.expectEntrySectionShowsValue('Alice');
   });
 
   // Regression guard for the display-value staleness the render default makes
@@ -68,22 +61,16 @@ test.describe('View section render modes (TKT-HOIX1)', () => {
     const entity = new EntityPage(appPage);
     await entity.navigateToEntity('task', SEED.tasks.writeUnitTests);
 
-    const entrySection = appPage.locator('.properties-list').first();
-    await expect(entrySection).toBeVisible();
-    await expect(entrySection).toContainText('Bob');
-    await expect(entrySection).not.toContainText('Alice');
+    await entity.expectEntrySectionShowsValue('Bob');
+    await entity.expectEntrySectionLacksValue('Alice');
   });
 
-  test('an opted-in field is editable and autosaves', async ({ appPage }) => {
+  test('an opted-in field is editable', async ({ appPage }) => {
     const entity = new EntityPage(appPage);
     await entity.navigateToEntity('task', SEED.tasks.writeUnitTests);
 
     // The list row's SectionEditForm carries real controls, proving
     // `render: input` reaches the edit arm rather than a disabled widget.
-    const row = appPage.locator('.entity-list .list-item .section-edit-form').first();
-    await expect(row).toBeVisible();
-    const control = row.locator('select, input').first();
-    await expect(control).toBeVisible();
-    await expect(control).toBeEnabled();
+    await entity.expectListSectionRowControlEnabled();
   });
 });
