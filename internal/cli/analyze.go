@@ -667,7 +667,8 @@ func (c *AnalyzeSchemaCmd) Run(svc *readServices) error {
 		return stderrors.New("--threshold must be non-negative")
 	}
 	dataEntry := loadDataEntryConfig(svc)
-	analysisResult := schema.Analyze(svc.Meta, &schema.StoreCounter{Store: svc.Store}, dataEntry, c.Threshold)
+	counter := schema.NewStoreCounter(context.Background(), svc.Store)
+	analysisResult := schema.Analyze(svc.Meta, counter, dataEntry, c.Threshold)
 
 	if c.Cleanup {
 		return runSchemaCleanup(svc, analysisResult, c.DryRun)

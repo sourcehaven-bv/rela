@@ -156,7 +156,9 @@ vendors:
   chromedp:    { in: [github.com/chromedp/chromedp, github.com/chromedp/chromedp/**, github.com/chromedp/cdproto, github.com/chromedp/cdproto/**] }
   runewidth:   { in: github.com/mattn/go-runewidth }
   rrulego:     { in: github.com/teambition/rrule-go }
-  mcpgo:       { in: github.com/mark3labs/mcp-go/** }
+  mcpgo:
+    in:
+      - github.com/modelcontextprotocol/go-sdk/**
   wails:       { in: github.com/wailsapp/wails/** }
   tablewriter:
     in:

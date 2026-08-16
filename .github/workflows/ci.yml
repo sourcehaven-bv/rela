@@ -24,7 +24,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
+          go-version: '1.26.6'
 
       - name: Download dependencies
         run: go mod download
@@ -93,7 +93,7 @@ jobs:
         if: steps.detect.outputs.changed == 'true'
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
+          go-version: '1.26.6'
 
       - name: Run govulncheck
         if: steps.detect.outputs.changed == 'true'
@@ -110,7 +110,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
+          go-version: '1.26.6'
 
       - name: Install golangci-lint
         # Build from source against the active Go toolchain so the linter can
@@ -129,7 +129,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
+          go-version: '1.26.6'
 
       - name: Install go-arch-lint
         # Keep in sync with go_arch_lint_version in the justfile.
@@ -147,7 +147,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
+          go-version: '1.26.6'
 
       - name: Install plimsoll
         # Keep in sync with plimsoll_version in the justfile.
@@ -251,7 +251,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
+          go-version: '1.26.6'
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -334,7 +334,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
+          go-version: '1.26.6'
 
       - name: Run fuzz tests
         run: |
@@ -429,7 +429,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
+          go-version: '1.26.6'
 
       # Trust auth: no password in the DSN. The DB is ephemeral and
       # runner-local, so there is no credential to keep out of the log.
@@ -503,7 +503,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
+          go-version: '1.26.6'
 
       # CGO off matches the GoReleaser builds for rela / rela-server; this is a
       # pure cross-compile, so no per-OS C toolchain is needed.
@@ -530,7 +530,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
+          go-version: '1.26.6'
 
       # Compile-only gate. Release binaries come from GoReleaser in
       # release.yml, so there is no artifact to upload here — a per-run copy
@@ -581,7 +581,7 @@ jobs:
         if: steps.gate.outputs.applies == 'true'
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
+          go-version: '1.26.6'
 
       - name: Build rela
         if: steps.gate.outputs.applies == 'true'
@@ -723,7 +723,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
+          go-version: '1.26.6'
 
       - name: Install graphviz
         run: sudo apt-get update && sudo apt-get install -y graphviz
@@ -766,7 +766,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
+          go-version: '1.26.6'
 
       - name: Build rela
         run: go build -o bin/rela ./cmd/rela

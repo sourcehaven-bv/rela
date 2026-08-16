@@ -3,23 +3,33 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"testing"
+
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
+	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
 // These tests exercise the real registration → dispatch → argument-decode
-// surface of the mcp-go server, which the handler-level tests in
+// surface of the MCP server, which the handler-level tests in
 // tools_test.go bypass (they call s.handle* methods directly with
 // pre-decoded argument maps). A tool registered under the wrong name, a
 // handler wired to the wrong tool, or an argument schema that stops
 // decoding is only visible at this level (TKT-TLQ94B).
+//
+// Since TKT-UIR41P these run against a REAL client↔server session over
+// the go-sdk's in-memory transport pair, rather than poking the old
+// library's HandleMessage entry point directly. That is strictly closer
+// to production: the request crosses a genuine JSON-RPC connection, so
+// argument marshaling and result marshaling are both exercised.
 
 // newDispatchServer builds the server through the production NewServer
 // constructor so tool registration, the principal middleware, and the
-// mcp-go dispatch table are all real.
+// SDK dispatch table are all real.
 func newDispatchServer(t *testing.T) *Server {
 	t.Helper()
 
@@ -38,29 +48,80 @@ type rpcError struct {
 	Message string `json:"message"`
 }
 
-// dispatch sends a raw JSON-RPC request through the mcp-go message
-// handler — the same entry the stdio transport feeds — and returns the
-// decoded result or error.
+// connect runs s over one half of an in-memory transport pair and
+// returns a connected client session. Both sides are torn down when the
+// test ends.
+func connect(t *testing.T, s *Server) *mcpgo.ClientSession {
+	t.Helper()
+
+	ctx := context.Background()
+	serverTransport, clientTransport := mcpgo.NewInMemoryTransports()
+
+	serverSession, err := s.mcp.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("server connect: %v", err)
+	}
+	t.Cleanup(func() { _ = serverSession.Close() })
+
+	client := mcpgo.NewClient(&mcpgo.Implementation{Name: "test-client", Version: "0.0.0"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	t.Cleanup(func() { _ = clientSession.Close() })
+
+	return clientSession
+}
+
+// dispatch drives one request over a real session and returns the
+// decoded result or error. Only the two methods the tests below need
+// (tools/list, tools/call) are routed; anything else is a test bug.
 func dispatch(t *testing.T, s *Server, method, params string) (json.RawMessage, *rpcError) {
 	t.Helper()
 
-	raw := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":%q,"params":%s}`, method, params)
-	msg := s.mcp.HandleMessage(context.Background(), json.RawMessage(raw))
-	if msg == nil {
-		t.Fatalf("HandleMessage returned nil for %s", method)
+	cs := connect(t, s)
+	ctx := context.Background()
+
+	var (
+		result any
+		err    error
+	)
+	switch method {
+	case "tools/list":
+		result, err = cs.ListTools(ctx, &mcpgo.ListToolsParams{})
+	case "tools/call":
+		var call struct {
+			Name      string          `json:"name"`
+			Arguments json.RawMessage `json:"arguments"`
+		}
+		if uerr := json.Unmarshal([]byte(params), &call); uerr != nil {
+			t.Fatalf("decode tools/call params: %v", uerr)
+		}
+		result, err = cs.CallTool(ctx, &mcpgo.CallToolParams{
+			Name:      call.Name,
+			Arguments: call.Arguments,
+		})
+	default:
+		t.Fatalf("dispatch: unsupported method %q", method)
 	}
-	data, err := json.Marshal(msg)
+
 	if err != nil {
-		t.Fatalf("marshal response: %v", err)
+		// A transport/protocol failure. The SDK returns a *jsonrpc2.WireError
+		// for genuine JSON-RPC errors; anything else is a harness fault.
+		var wire *jsonrpc.Error
+		if errors.As(err, &wire) {
+			return nil, &rpcError{Code: int(wire.Code), Message: wire.Message}
+		}
+		t.Fatalf("%s: %v", method, err)
 	}
-	var resp struct {
-		Result json.RawMessage `json:"result"`
-		Error  *rpcError       `json:"error"`
+
+	// The SDK hands back the already-unwrapped result value, so the
+	// marshaled payload IS the result body — there is no envelope to peel.
+	data, merr := json.Marshal(result)
+	if merr != nil {
+		t.Fatalf("marshal response: %v", merr)
 	}
-	if err := json.Unmarshal(data, &resp); err != nil {
-		t.Fatalf("decode response %s: %v", data, err)
-	}
-	return resp.Result, resp.Error
+	return data, nil
 }
 
 // callTool invokes a tool via a real tools/call message with raw JSON
