@@ -833,8 +833,8 @@ side owns the grant), and redaction runs on every browser-reachable relation
 read shape — the `/relations` map, the single-relation-type GET, and both the
 outgoing and incoming direction (an incoming edge resolves its grant against
 the true source, not the entity being viewed). It also runs on relation
-history (see below). The machine-to-machine sync channel inherits the **same**
-redaction by reading through `/api/v1` rather than a private channel
+history (see below). The machine-to-machine sync channel (`/api/sync/`) applies
+the **same** redaction by reading through `/api/v1` rather than a private channel
 (TKT-8P1TM7) — see "Sync is a client of the authorized API" below. The deny universe is the edge's actual
 meta keys, so a free-form key never declared in the metamodel is redacted
 too — a caller cannot smuggle a secret past the closed-world by using an
