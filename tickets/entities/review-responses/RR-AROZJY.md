@@ -4,7 +4,8 @@ type: review-response
 title: 'Empty-string divergence: index rejects email:'''' rows the scan blesses'
 finding: 'checkUniqueProperties skips empty values; a naive index treats explicit '''' as a real value, so two email:'''' rows collide under the index but pass the scan — divergent semantics changed silently on first reconcile. Index predicate must exempt empty: WHERE type=''t'' AND properties->>''p'' <> '''' AND IS NOT NULL. Add a scan-vs-index agreement test (empty/absent/list/non-string).'
 severity: significant
-status: open
+resolution: 'The CREATE UNIQUE INDEX predicate is empty-exempt: `WHERE type=''t'' AND properties->>''p'' <> '''' AND properties->>''p'' IS NOT NULL`, matching the scan''s `v != ""` skip. Verified by TestDerivedUnique_EmptyAndAbsentExempt (two empty-email and two absent-email entities all insert successfully under the index).'
+status: addressed
 ---
 
 `checkUniqueProperties` skips empty values (`if v := e.GetString(name); v !=

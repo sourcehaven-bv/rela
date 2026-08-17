@@ -4,7 +4,8 @@ type: review-response
 title: Update path is a second 23505 source (automation-set unique props) the plan ignores
 finding: 'Manager.CreateEntity isn''t in one tx: after the committed+audited+broadcast create, automation may issue a second UpdateEntity that also raises 23505. UpdateEntity has NO isUniqueViolation handling today. Step-5 mapping must cover the UPDATE path; document the create-then-failed-automation-update outcome (row persists with pre-automation values audited as created).'
 severity: significant
-status: open
+resolution: 'pgstore CreateEntity AND UpdateEntity now both route their write error through s.mapConflict (ConstraintName discriminator). entitymanager maps store.UniquePropertyError → ValidationErrorUnique at all three write choke points: createCore, updateCore (manager.go), and persistApplyEntity create+update branches (apply.go). The create-then-failed-automation-update outcome (row persists, audited as created) is inherent to the existing non-transactional CreateEntity→automation→UpdateEntity flow and is now handled: the second write''s 23505 surfaces as a 422 to the caller.'
+status: addressed
 ---
 
 `Manager.CreateEntity` (manager.go:467) is NOT wrapped in store.Tx. Flow:

@@ -5,7 +5,7 @@ title: 'Postgres derived-schema reconciler (seam + unique rule): atomic unique:t
 kind: enhancement
 priority: medium
 effort: l
-status: in-progress
+status: review
 ---
 
 Follow-up to TKT-ANUJDS (`unmatched_principal: provision`, shipped).

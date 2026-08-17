@@ -4,7 +4,8 @@ type: review-response
 title: Property/type names are not charset-validated at metamodel load — DDL injection surface
 finding: Property/type names aren't charset-validated at metamodel load (validatePropertyDefs only checks reserved names + types). Names are interpolated into DDL string literals (properties->>'p', WHERE type='t') which can't be bind-parameterized and have no quote_literal helper. Genuine DDL injection from on-disk config. Add a strict charset validator + reconciler refusal + literal escaping.
 severity: critical
-status: open
+resolution: 'Added ValidateSchemaName to internal/metamodel/validation.go (blocklist of quote/backslash/control-chars + leading/trailing-space; dashes and internal spaces allowed since real type names like review-response use them), wired into validatePropertyDefs (property names) and the entity-type loop in loader.go. Reconciler independently re-checks via a local safeDDLName (pgstore can''t import metamodel per arch-lint) and quotes all interpolated literals with quoteLiteral (single-quote doubling). Test: TestValidateSchemaName.'
+status: addressed
 ---
 
 The plan assumes type/property names are safe because they're "known" operator

@@ -4,7 +4,8 @@ type: review-response
 title: DROP/CREATE INDEX at every boot on a large table is a lock/latency hazard
 finding: 'DROP INDEX takes ACCESS EXCLUSIVE; running convergence at every boot contends against live traffic during rolling deploys. CONCURRENTLY can''t run in the advisory-locked tx (tension). Resolve: advisory-lock-gated leader does DDL, others fast-path; skip create/drop when already converged so steady-state boots do zero DDL.'
 severity: significant
-status: open
+resolution: 'Steady-state boots do ZERO DDL: reconcile diffs desired-vs-actual and only issues CREATE/DROP for the difference (the intersection is a no-op reported as DerivedEnforced). Combined with the advisory lock (RR-QY5S4C), only the leader on an actual change touches DDL; converged boots just introspect. DROP is non-concurrent inside the lock but rare (only when a declaration is removed). Verified by TestDerivedUnique_ReconcileIdempotentAndDrop (second run = enforced/no-op).'
+status: addressed
 ---
 
 DROP INDEX takes ACCESS EXCLUSIVE on the table. Running create/drop convergence

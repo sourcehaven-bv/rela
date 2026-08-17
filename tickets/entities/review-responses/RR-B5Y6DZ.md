@@ -4,7 +4,8 @@ type: review-response
 title: Name→property registry needs a deterministic fallback for a miss
 finding: The index-name→property registry (rebuilt at store-open) can miss on reload or rolling deploy, and a one-way hash can't be parsed back. Recompute candidate hashes from the CURRENT metamodel and match the incoming ConstraintName instead of a persisted registry; define a safe fallback (generic 409/422, no property) for an unmappable rela_derived_uniq__* — never a 500 or mis-attributed property.
 severity: significant
-status: open
+resolution: 'No persisted registry: mapUniqueViolation recomputes uniqueIndexName(T,P) for every current-metamodel unique pair (published via SetUniqueSpecProvider, an atomic.Pointer swapped on reload) and matches the incoming ConstraintName. An owned-prefix index that matches no current pair (rolling deploy / peer-created) degrades to a property-less store.UniquePropertyError{} — still an ErrConflict (via its Is method), never a 500 or misattributed property. Verified by TestMapUniqueViolation ''owned but unknown degrades to property-less''.'
+status: addressed
 ---
 
 Step 3/5 rebuild an index-name→(type,property) registry at store-open to map a

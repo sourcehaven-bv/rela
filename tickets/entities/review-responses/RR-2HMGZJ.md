@@ -4,7 +4,8 @@ type: review-response
 title: Drop-extra introspection must filter by current_schema() or it cross-schema-deletes
 finding: pgstore SQL is unqualified (search_path isolation). pg_indexes shows all visible schemas, so a shared-DB multi-schema deploy would have schema A's reconciler DROP schema B's rela_derived_% indexes (owned-but-not-declared-in-A). Introspection must constrain to schemaname = current_schema().
 severity: significant
-status: open
+resolution: 'listOwnedUniqueIndexes queries `pg_indexes WHERE schemaname = current_schema() AND indexname LIKE ''rela_derived_uniq__%''`, so a store sharing a database with other schemas never sees or drops another schema''s owned indexes. Verified by TestDerivedUnique_CrossSchemaIsolation: schema A reconciling to empty drops A''s index but B''s survives and still enforces.'
+status: addressed
 ---
 
 All pgstore SQL is unqualified — isolation is purely via search_path.

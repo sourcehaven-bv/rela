@@ -4,7 +4,8 @@ type: review-response
 title: Reconcile at store-open needs a schema-scoped advisory lock (DDL-concurrency convention)
 finding: Reconcile runs at every store-open with bare CREATE/DROP INDEX IF [NOT] EXISTS and no lock. IF EXISTS doesn't prevent a create/drop race across N booting processes with differing metamodels. Take pg_advisory_xact_lock(reconcileKey, hashtext(current_schema())) — a new key — around the whole plan→apply, matching the migrate/sweep/write convention.
 severity: significant
-status: open
+resolution: Reconcile acquires pg_advisory_lock(reconcileAdvisoryLockKey=0x52454c44 'RELD', hashtext(current_schema())) on a single pooled connection for the whole plan→apply, released on return. New key distinct from migrate/write/sweep. Session-scoped (not xact) because each DDL runs in its own implicit tx so one failed CREATE doesn't abort the batch.
+status: addressed
 ---
 
 Every concurrent-DDL path in pgstore takes a schema-scoped advisory lock:

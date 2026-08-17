@@ -4,7 +4,8 @@ type: review-response
 title: unenforced{samples} risks leaking entity data (enumeration oracle)
 finding: Sampling blocking values into unenforced{samples} for db status surfaces ENTITY CONTENT (secret per CLAUDE.md); checkUniqueProperties deliberately avoids this enumeration-oracle leak. State the operator-shell-only trust boundary explicitly, keep samples off any API/health surface, default to a COUNT of blocking groups, values only behind an explicit --show-values operator flag.
 severity: significant
-status: open
+resolution: 'Trust boundary stated: db status/reconcile are operator-shell-only (no ACL, read DSN from RELA_DATABASE_URL, like db migrate) — documented in db.go DBReconcileCmd godoc and the postgres-backend guide. BlockingCount (a count of value groups) is surfaced by default; the actual blocking VALUES are only included when the operator passes --show-values (ReconcileOptions.ShowValues), and never reach any API/health surface. The 422 write error still withholds the colliding value (mapUniquePropertyConflict names only the property). pgErr.Detail (which echoes the value) is never propagated. Verified by TestDerivedUnique_PreexistingDuplicatesDegrade (SampleValues empty without ShowValues, contains dup@x.com with it).'
+status: addressed
 ---
 
 On CREATE-INDEX failure (pre-existing dupes), the plan samples "the blocking
