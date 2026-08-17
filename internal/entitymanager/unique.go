@@ -36,17 +36,20 @@ import (
 //   - Comparison is on the string value (identity keys — email, UPN — are
 //     strings). Non-string property values are compared via their string
 //     form and in practice only strings carry unique keys.
-//   - This is a check-then-write, NOT an atomic constraint. The scan and
-//     the durable write are separate operations and no lock is held
+//   - This scan is a check-then-write, NOT an atomic constraint: the scan
+//     and the durable write are separate operations with no lock held
 //     across them, so under concurrent writers (the data-entry server is
 //     one goroutine per request) two racing writes with the same value
-//     can both pass the scan and both commit — on every backend, not just
-//     pgstore. The window is small, and the ACL resolver's multi-match
-//     fallback (keep-raw) is the runtime backstop for the identity-key
-//     case. The only race-free enforcement is a store-level unique index
-//     (a partial unique index on pgstore), which surfaces a duplicate as
-//     [store.ErrConflict] on the write; operators who need atomicity add
-//     it. See docs/acl-security.md.
+//     could both pass the scan. On PostgreSQL the durable write is
+//     backstopped by a store-level partial unique index that pgstore
+//     maintains from the metamodel (TKT-3Q0GP1): the second writer's
+//     insert fails atomically and surfaces as [store.UniquePropertyError],
+//     which the write path maps to the SAME 422 this scan produces — so
+//     the scan stays the friendly primary path and the index closes the
+//     race. On fsstore/memstore there is no such index (single-writer, so
+//     the scan suffices); the ACL resolver's multi-match fallback
+//     (keep-raw) remains the runtime backstop for the identity-key case.
+//     See docs/acl-security.md and docs/postgres-backend.md.
 func checkUniqueProperties(
 	ctx context.Context, deps Deps, e *entity.Entity, excludeSelfID string,
 ) error {

@@ -141,33 +141,30 @@ Two layers keep that from happening:
    grants only what the raw string is assigned — it never silently picks
    one of the duplicates.
 
-**Enforcement rigor by backend.** The write-time uniqueness check is
-exact on the single-writer backends (fsstore, memstore). On PostgreSQL,
-concurrent writers leave a narrow time-of-check/time-of-use window
-between the check and the durable write. Operators who need race-free
-enforcement add a partial unique index — which is also the recommended
-performance index for the lookup itself:
+**Enforcement rigor by backend.** The application-level uniqueness check
+reads the existing entities of the type and then writes — two separate
+operations with no lock held across them. On the single-writer backends
+(fsstore, memstore) that is race-free enough. Under concurrent writers,
+though, two racing writes with the same value could both pass the check
+and both commit, leaving a duplicate.
 
-```sql
-CREATE UNIQUE INDEX persoon_email_unique_idx
-  ON entities ((properties->>'email'))
-  WHERE type = 'persoon';
-```
+On **PostgreSQL** this window is closed automatically: rela maintains a
+partial unique index for every `unique: true` property (see
+[Derived schema](postgres-backend.md#derived-schema-unique-constraints)
+in the PostgreSQL backend guide), so a colliding write fails atomically in
+the database and surfaces as the same conflict the write path already
+reports. You do not add this index by hand — rela creates and maintains it
+from the metamodel. (If existing rows already contain duplicate values when
+you add `unique: true`, the index cannot be built; rela warns and leaves it
+unenforced until you clean up the duplicates — run `rela db reconcile
+--dry-run` to see what is blocking it.)
 
-With the index in place a colliding write fails atomically in the
-database and surfaces as the same conflict the write path already
-reports.
-
-**The write-time check is not atomic.** It reads the existing entities
-of the type, then writes — two separate operations with no lock held
-across them. Under concurrent writers (the data-entry server runs one
-goroutine per request) two racing writes with the same value can both
-pass the check and both commit, on *any* backend, not just PostgreSQL.
-The window is small, and the resolver's multi-match fallback (keep-raw,
-above) is the runtime backstop for the identity-key case — but the only
-*race-free* enforcement is the store-level unique index. If you rely on
-uniqueness for correctness rather than as a data-quality guard, add the
-index.
+This matters most for `unmatched_principal: provision`
+([below](#unknown-verified-identities-unmatched_principal)), which creates a
+stub user keyed on `principal_property`: the database index is what
+guarantees two servers provisioning the same subject at once produce exactly
+one user rather than a permanently ambiguous pair. On fsstore/memstore, which
+have no such index, keep provisioning to a single writer.
 
 **Two operator notes for `principal_property`:**
 
