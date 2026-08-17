@@ -117,6 +117,12 @@ What you need to know to run it:
   not read are discarded on arrival.
 - Live updates cover **entity** create/update/delete. Relation and attachment
   edits are reflected on the next page load rather than pushed live.
+- **Durable UI state is shared too.** The document render cache, user settings,
+  the operator logo/theme and the CalDAV alias table live in the database on
+  this build, not in each node's `.rela/` directory. Upload a logo on one node
+  and every node serves it; a document rendered on one node is not re-rendered
+  on the next. (On the filesystem build this state stays under `.rela/`, which
+  is correct for a single-process deployment.)
 
 ### Write transactions
 

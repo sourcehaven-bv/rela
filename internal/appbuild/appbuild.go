@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -35,6 +36,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/caldavalias"
 	"github.com/Sourcehaven-BV/rela/internal/config"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -69,8 +71,13 @@ import (
 // (TKT-WAA092) takes it to 23: the alias service is constructed here and
 // consumed by cmd/rela-server when wiring the data-entry App, so it has to
 // cross the package boundary — there is no in-package caller to hide it behind.
+// GatedReads() (TKT-UIR41P) takes it to 24: it returns the ACL-bound read
+// handles an identity-bearing consumer needs, and it is deliberately ONE method
+// returning a bundle rather than three accessors — the three handles must come
+// from the same gate to stay consistent, and splitting them would both grow this
+// surface by three and let a caller mix a gated reader with a raw tracer.
 //
-//plimsoll:max-exported-methods=23
+//plimsoll:max-exported-methods=24
 type Services struct {
 	fs    storage.FS
 	paths *project.Context
@@ -355,6 +362,122 @@ func (s *Services) luaWriteDepsFor(redactor visibility.FieldRedactor) lua.WriteD
 // affordance resolver into appbuild.
 func (s *Services) ScheduledLuaWriteDeps() lua.WriteDeps {
 	return s.luaWriteDepsFor(nil)
+}
+
+// GatedReads returns the read handles bound to whatever principal is on the
+// ctx AT CALL TIME — the reader, the traversal handle, and a validator whose
+// candidate set comes from that same gated reader.
+//
+// This is the read bundle for an identity-bearing, non-HTTP consumer. The MCP
+// server is the caller: its handlers, resources, prompts, analyze and export
+// surfaces all read through the returned reader, so gating is decided once
+// here rather than per handler (DEC-ZBI39P).
+//
+// The validator matters as much as the reader. `Services.Validator()` is built
+// over the RAW store, which is right for the unattended paths that own it —
+// but a validation rule evaluated for a requester must not read rows the
+// requester cannot see, or a hidden value reaches a violation message
+// (TKT-3FL2S6). So this builds a second validator over the gated reader.
+//
+// Identity is deliberately NOT captured here: the wrapped handles resolve the
+// ctx principal per call, so ONE bundle serves every request. Under NopACL
+// (no acl.yaml) these are the raw store/tracer — byte-identical to pre-ACL
+// behavior, not a bypass. A construction failure REFUSES via
+// visibility.DenyReader / DenyTracer rather than degrading to raw reads
+// (RR-GKCZO5).
+//
+// KNOWN LIMITATION, same as [Services.ScheduledLuaWriteDeps]: appbuild has no
+// affordance resolver, so this is ROW gating only — field-level `visible:`
+// redaction does NOT apply. Row gating bounds WHICH entities are reachable,
+// which is the larger half; do not assume field policy is enforced here.
+func (s *Services) GatedReads() GatedReadBundle {
+	reader := scriptEntityReader(s.store, s.aclDeclarative, nil)
+	tr := scriptTracer(s.tracer, s.store, s.aclDeclarative, nil)
+
+	deps := s.LuaReadDeps()
+	deps.VisibleReader = reader
+	deps.Tracer = tr
+
+	return GatedReadBundle{
+		Reader:    gatedGraphReader{rows: reader, raw: s.store},
+		Tracer:    tr,
+		Validator: validator.New(reader, s.meta, deps),
+	}
+}
+
+// GatedReadBundle is the result of [Services.GatedReads]: the three read
+// handles an identity-bearing consumer needs, each ACL-bound to the ctx
+// principal at call time.
+type GatedReadBundle struct {
+	Reader    GatedGraphReader
+	Tracer    tracer.Tracer
+	Validator validator.Validator
+}
+
+// GatedGraphReader is the row-and-tally read surface returned by
+// [Services.GatedReads]. Row reads are ACL-gated; the two counts are not —
+// see [gatedGraphReader] for why.
+type GatedGraphReader interface {
+	GetEntity(ctx context.Context, id string) (*entity.Entity, error)
+	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
+	GetRelation(ctx context.Context, from, relType, to string) (*entity.Relation, error)
+	ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
+	CountEntities(ctx context.Context, q store.EntityQuery) (int, error)
+	CountRelations(ctx context.Context, q store.RelationQuery) (int, error)
+}
+
+// gatedGraphReader composes the ACL-gated row reader with the raw store for
+// the two operations the gated reader does not provide.
+//
+// The split is deliberate, and matches the line `internal/dataentry` already
+// draws (`analyzeService.relCounts` is documented "raw (ungated) on purpose"):
+//
+//   - GetEntity / ListEntities / ListRelations go through `rows`, so a hidden
+//     entity is absent and a hidden edge is not listed.
+//   - CountEntities / CountRelations go to the raw store. A count is
+//     STRUCTURAL: it says how many rows of a declared type exist, never which.
+//     Entity *existence* is the secret the row gate protects; an aggregate
+//     tally of a type the metamodel already publishes is not.
+//   - GetRelation goes to the raw store because a relation is addressed by its
+//     two endpoint ids, which the caller must already hold. Reading one
+//     therefore confirms nothing about entities the caller could not already
+//     name. Relations carry no field-level redaction today (see
+//     docs/acl-security.md), so this matches what a live relation GET exposes.
+//
+// If either judgement changes, this is the one type to fix.
+type gatedGraphReader struct {
+	rows lua.EntityReader
+	raw  store.Store
+}
+
+func (g gatedGraphReader) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
+	return g.rows.GetEntity(ctx, id)
+}
+
+func (g gatedGraphReader) ListEntities(
+	ctx context.Context, q store.EntityQuery,
+) iter.Seq2[*entity.Entity, error] {
+	return g.rows.ListEntities(ctx, q)
+}
+
+func (g gatedGraphReader) ListRelations(
+	ctx context.Context, q store.RelationQuery,
+) iter.Seq2[*entity.Relation, error] {
+	return g.rows.ListRelations(ctx, q)
+}
+
+func (g gatedGraphReader) GetRelation(
+	ctx context.Context, from, relType, to string,
+) (*entity.Relation, error) {
+	return g.raw.GetRelation(ctx, from, relType, to)
+}
+
+func (g gatedGraphReader) CountEntities(ctx context.Context, q store.EntityQuery) (int, error) {
+	return g.raw.CountEntities(ctx, q)
+}
+
+func (g gatedGraphReader) CountRelations(ctx context.Context, q store.RelationQuery) (int, error) {
+	return g.raw.CountRelations(ctx, q)
 }
 
 // Collaborators bundles the fully-built dependencies of a [Services]
@@ -771,17 +894,62 @@ func Discover(startDir string, scriptEngine *script.Engine, opts ...Option) (*Se
 	}, opts...)
 }
 
-// buildBase holds the build-agnostic inputs resolved by [prepare] and
+// SharedBase holds the build-agnostic inputs resolved by [prepare] and
 // consumed by [assemble]: the validated config, applied options, the
 // resolved ACL (+ parsed policy), and the loaded metamodel. The
 // per-scenario New recipes thread this between prepare → openBackend →
 // assemble so the shared steps are written exactly once.
-type buildBase struct {
+// SharedBase is the tenant-independent half of construction: the validated
+// config, the applied options, the parsed `acl.yaml` policy, and the loaded
+// metamodel. Nothing in it is derived from a store, so ONE base can be built
+// per process and assembled against several stores.
+//
+// Build it with [NewSharedBase]; turn it into a [Services] with
+// [SharedBase.Assemble] (which the per-backend New recipes call for you).
+//
+// # What is shared and what is not
+//
+// The split is NOT along the [Services] field list, which is the intuitive but
+// wrong reading. `acl.Declarative` is constructed from the STORE — it needs a
+// store-backed `acl.Graph` for group expansion and containment inheritance —
+// so the ACL *policy* is shared while the ACL *evaluator* is per-store. Same
+// for `lua.ReadDeps`, which closes over the store. That is precisely why ACL
+// construction is deferred out of this type and into [SharedBase.Assemble].
+//
+// # Shared values must not be mutated during assembly
+//
+// `meta` and `aclPolicy` are POINTERS handed to every assembled Services. A
+// mutation through either during assembly would be visible to every other
+// consumer of the same base — a cross-tenant defect in a multi-tenant host, and
+// a cross-project one on the desktop. Assembly only reads them (the metamodel
+// consumers derive new values: `statemachine.Compile`, `NewEngineFromMetamodel`),
+// and TestSharedBase_AssemblyDoesNotMutateSharedValues pins it.
+type SharedBase struct {
 	cfg       Config
 	opts      options
 	acl       acl.ACL
 	aclPolicy *acl.Policy
 	meta      *metamodel.Metamodel
+}
+
+// Meta returns the loaded metamodel this base was built from. Exposed so a host
+// holding one base can answer "what schema am I serving?" without assembling a
+// Services first.
+func (b *SharedBase) Meta() *metamodel.Metamodel { return b.meta }
+
+// Paths returns the project context this base was built from.
+func (b *SharedBase) Paths() *project.Context { return b.cfg.Paths }
+
+// NewSharedBase builds the tenant-independent half of construction once:
+// validate config, apply options, parse `acl.yaml`, load and validate the
+// metamodel. It opens no store and touches no database.
+//
+// Use it when one process serves several stores from one project
+// configuration — a multi-tenant host (RES-D54281), or any caller that would
+// otherwise re-read and re-validate the same metamodel per store. The
+// single-store path is [New] / [Discover], which call this internally.
+func NewSharedBase(cfg Config, opts ...Option) (*SharedBase, error) {
+	return prepare(cfg, opts)
 }
 
 // prepare runs the build-agnostic front half of construction: validate
@@ -794,7 +962,7 @@ type buildBase struct {
 // the project has no acl.yaml" — both end up NopACL, but only the
 // latter triggers the "consider adding an acl.yaml" warning an entry
 // point may render.
-func prepare(cfg Config, opts []Option) (*buildBase, error) {
+func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
@@ -822,7 +990,7 @@ func prepare(cfg Config, opts []Option) (*buildBase, error) {
 		return nil, fmt.Errorf("load metamodel: %w", err)
 	}
 
-	return &buildBase{cfg: cfg, opts: o, acl: resolvedACL, aclPolicy: aclPolicy, meta: meta}, nil
+	return &SharedBase{cfg: cfg, opts: o, acl: resolvedACL, aclPolicy: aclPolicy, meta: meta}, nil
 }
 
 // assemble runs the build-agnostic back half: it takes the opened store
@@ -845,7 +1013,7 @@ func prepare(cfg Config, opts []Option) (*buildBase, error) {
 // A missing policy yields NopACL, but an error from the Declarative
 // constructor is propagated — booting allow-all on a policy that failed to
 // parse would silently disable authorization.
-func resolveACL(base *buildBase, st store.Store) (acl.ACL, *acl.Declarative, error) {
+func resolveACL(base *SharedBase, st store.Store) (acl.ACL, *acl.Declarative, error) {
 	if base.acl == nil {
 		return buildACL(base.aclPolicy, base.meta, st)
 	}
@@ -857,8 +1025,30 @@ func resolveACL(base *buildBase, st store.Store) (acl.ACL, *acl.Declarative, err
 	return base.acl, d, nil
 }
 
+// Assemble wires this base against one opened store into a [Services].
+//
+// Call it once per store. The base is reusable: every value it holds is
+// tenant-independent, and assembly only reads them (see the type doc). The
+// per-backend New recipes call this for you after opening their store; a
+// multi-store host calls it directly, once per store.
+//
+// The caller owns closing the returned [Services] — and only that Services.
+// [Services.Close] tears down the store and search closer it was assembled
+// with, never anything belonging to the base, so evicting one assembled
+// Services leaves the base and every sibling usable.
+//
+// visible may be nil: Assemble then derives the generic
+// search.NewVisible(searcher, st) wrapper, which is correct for every
+// in-process store. The postgres recipe passes its native implementation.
+func (b *SharedBase) Assemble(
+	st store.Store, searcher search.Searcher,
+	visible search.VisibleSearcher, searchCloser io.Closer,
+) (*Services, error) {
+	return assemble(b, st, searcher, visible, searchCloser)
+}
+
 func assemble(
-	base *buildBase, st store.Store, searcher search.Searcher,
+	base *SharedBase, st store.Store, searcher search.Searcher,
 	visible search.VisibleSearcher, searchCloser io.Closer,
 ) (*Services, error) {
 	cfg := base.cfg
@@ -913,7 +1103,7 @@ func assemble(
 	// here and threaded into the recorders and the Services bundle.
 	versions := versionServiceFor(st)
 
-	stateKV, aliases, err := buildStateAndAliases(cfg.FS, cfg.Paths)
+	stateKV, aliases, err := buildStateAndAliases(cfg.FS, cfg.Paths, stateKVFor(st))
 	if err != nil {
 		return nil, err
 	}
@@ -1079,10 +1269,23 @@ func (s *Services) Close() error {
 // not a store capability. Both are built BEFORE the entitymanager because its
 // rename/delete hooks take the alias service: only the write choke-point knows
 // old->new, so an alias rewrite has to ride along with the write.
-func buildStateAndAliases(fs storage.FS, paths *project.Context) (state.KV, *caldavalias.Service, error) {
-	stateKV, err := buildStateKV(fs, paths)
-	if err != nil {
-		return nil, nil, err
+//
+// backendKV, when non-nil, is a store-backed state store (pgstore's — see
+// stateKVFor) and wins over the filesystem. That is what makes the render
+// cache, user settings, the operator logo and the CalDAV alias table shared by
+// every process serving a schema instead of node-local (TKT-VC27L3). It is nil
+// on the fs/memory builds, where a project IS one directory on one machine and
+// the filesystem is the right home.
+func buildStateAndAliases(
+	fs storage.FS, paths *project.Context, backendKV state.KV,
+) (state.KV, *caldavalias.Service, error) {
+	stateKV := backendKV
+	if stateKV == nil {
+		var err error
+		stateKV, err = buildStateKV(fs, paths)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	aliases, err := caldavalias.New(context.Background(), stateKV)
 	if err != nil {
@@ -1100,9 +1303,16 @@ func buildStateAndAliases(fs storage.FS, paths *project.Context) (state.KV, *cal
 		// That check now lives at the serving boundary — registerCalDAVRoutes
 		// refuses to mount without a healthy table — so the failure lands on
 		// the path that can actually cause the damage.
+		// Name the right location: with a database-backed state store the
+		// aliases are a row, not a file, and pointing an operator at a path
+		// that does not exist would send them hunting for the wrong thing.
+		location := filepath.Join(paths.CacheDir, "caldav", "aliases.json")
+		if backendKV != nil {
+			location = "database state store, key caldav/aliases.json"
+		}
 		slog.Warn("caldav alias table unreadable; CalDAV will refuse to serve. "+
-			"Delete the file to start fresh (synced clients will re-create their entries).",
-			"path", filepath.Join(paths.CacheDir, "caldav", "aliases.json"),
+			"Clear it to start fresh (synced clients will re-create their entries).",
+			"location", location,
 			"error", err)
 		return stateKV, nil, nil
 	}

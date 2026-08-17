@@ -195,11 +195,19 @@ func (d *Declarative) AuthorizeWrite(ctx context.Context, req WriteRequest) Deci
 				Reason:   "verified principal resolves to no user entity; writes are rejected",
 			}
 		case UnmatchedProvision:
-			// Reserved: not yet implemented (own ticket). Behave as anonymous,
-			// warning once so an operator who set it isn't silently ignored.
+			// Provision is implemented at the data-entry write seam (maybeProvision,
+			// TKT-ANUJDS): a successful provision re-stamps ctx to the resolved
+			// entity and CLEARS this flag (acl.WithMatchedVerified), so the write
+			// never reaches here still-flagged. Arriving here under provision means
+			// provisioning did NOT fire or failed — a non-data-entry transport (this
+			// gate is transport-agnostic), or a create/re-resolve error the seam
+			// logged. Fall through to normal role evaluation (the principal's
+			// asserted roles still apply, TKT-RP3X3Q); warn once so a stuck
+			// provision deployment is visible without a per-request flood.
 			d.provisionWarn.Do(func() {
-				slog.Warn("acl: unmatched_principal: provision is not yet implemented; " +
-					"an unmatched verified principal is treated as anonymous")
+				slog.Warn("acl: unmatched_principal: provision reached the write-authz gate " +
+					"still unmatched; provisioning did not fire (non-data-entry transport) or " +
+					"failed (see earlier provision warnings) — treating as anonymous")
 			})
 		}
 	}

@@ -62,7 +62,7 @@ type pathStepJSON struct {
 }
 
 // convertStoreEntity converts an entity.Entity to JSON string with optional relations from store.
-func convertStoreEntity(ctx context.Context, e *entity.Entity, st store.Store, includeRelations bool) (string, error) {
+func convertStoreEntity(ctx context.Context, e *entity.Entity, st GraphReader, includeRelations bool) (string, error) {
 	ej := entityJSON{
 		ID:         e.ID,
 		Type:       e.Type,
@@ -91,7 +91,17 @@ func convertStoreEntitySummary(e *entity.Entity) map[string]any {
 }
 
 // buildStoreRelations builds relation JSON for an entity using the store.
-func buildStoreRelations(ctx context.Context, entityID string, st store.Store) *relationsJSON {
+//
+// Neighbor visibility (RR-CFFL52): a relation is only reported when the
+// entity at its far end is READABLE through st. Listing the edge while
+// dropping only the unreadable neighbor's title would still disclose that
+// neighbor's ID — and an ID is exactly what the row-level rule protects,
+// since whether an entity EXISTS is a genuine secret. So the whole edge is
+// withheld. `st` is the gated GraphReader, so under a networked wiring
+// GetEntity on a hidden neighbor returns not-found and the edge drops;
+// under the stdio (NopACL) wiring every GetEntity succeeds and the output is
+// unchanged.
+func buildStoreRelations(ctx context.Context, entityID string, st GraphReader) *relationsJSON {
 	rels := &relationsJSON{
 		Outgoing: make(map[string][]relationTargetJSON),
 		Incoming: make(map[string][]relationTargetJSON),
@@ -102,11 +112,12 @@ func buildStoreRelations(ctx context.Context, entityID string, st store.Store) *
 		if err != nil {
 			break
 		}
-		target := relationTargetJSON{ID: r.To}
-		if e, getErr := st.GetEntity(ctx, r.To); getErr == nil {
-			target.Title = e.Title()
+		e, getErr := st.GetEntity(ctx, r.To)
+		if getErr != nil {
+			continue // neighbor hidden or absent — withhold the edge entirely
 		}
-		rels.Outgoing[r.Type] = append(rels.Outgoing[r.Type], target)
+		rels.Outgoing[r.Type] = append(rels.Outgoing[r.Type],
+			relationTargetJSON{ID: r.To, Title: e.Title()})
 	}
 
 	inQ := store.RelationQuery{EntityID: entityID, Direction: store.DirectionIncoming}
@@ -114,11 +125,12 @@ func buildStoreRelations(ctx context.Context, entityID string, st store.Store) *
 		if err != nil {
 			break
 		}
-		source := relationTargetJSON{ID: r.From}
-		if e, getErr := st.GetEntity(ctx, r.From); getErr == nil {
-			source.Title = e.Title()
+		e, getErr := st.GetEntity(ctx, r.From)
+		if getErr != nil {
+			continue // neighbor hidden or absent — withhold the edge entirely
 		}
-		rels.Incoming[r.Type] = append(rels.Incoming[r.Type], source)
+		rels.Incoming[r.Type] = append(rels.Incoming[r.Type],
+			relationTargetJSON{ID: r.From, Title: e.Title()})
 	}
 
 	if len(rels.Outgoing) == 0 {

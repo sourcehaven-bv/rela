@@ -78,8 +78,15 @@ type DBTX interface {
 // store pattern this refactor removed. Consumers reach versioning through the
 // injected store.VersionService, never by asserting a capability on the store.
 //
-//plimsoll:max-exported-methods=33
-//plimsoll:max-methods=41
+// +1 for ListEntityHeaders (TKT-1ESTYJ): the store.HeaderReader capability,
+// which omits the content column from the SELECT so entity bodies never
+// leave the database on scans that only read ids and properties. It belongs
+// on *Store — unlike versioning, it is a plain read of the entities table,
+// not a separate service — and the whole point is the backend-native
+// projection, which cannot be delegated elsewhere.
+//
+//plimsoll:max-exported-methods=34
+//plimsoll:max-methods=42
 type Store struct {
 	db        DBTX
 	observers []store.EntityObserver // notified synchronously after committed entity writes

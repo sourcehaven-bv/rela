@@ -172,6 +172,7 @@ func (d *Desktop) LoadProject(dir string) string {
 		svc.EntityManager(), svc.Searcher(), svc.VisibleSearcher(), svc.ACL(),
 		fieldResolver,
 		svc.Audit(),
+		svc.State(),
 	)
 	if err != nil {
 		return d.failLoad(err)

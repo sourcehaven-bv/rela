@@ -6,47 +6,47 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func (s *Server) registerResources() {
 	// Static resource: metamodel
 	s.mcp.AddResource(
-		mcp.NewResource(
-			"rela://metamodel",
-			"Metamodel Schema",
-			mcp.WithResourceDescription("The project's metamodel definition (entity types, relations, properties)"),
-			mcp.WithMIMEType("application/json"),
-		),
+		&mcpgo.Resource{
+			URI:         "rela://metamodel",
+			Name:        "Metamodel Schema",
+			Description: "The project's metamodel definition (entity types, relations, properties)",
+			MIMEType:    "application/json",
+		},
 		s.handleReadMetamodel,
 	)
 
 	// Dynamic resource template: entities
 	s.mcp.AddResourceTemplate(
-		mcp.NewResourceTemplate(
-			"rela://entity/{type}/{id}",
-			"Entity",
-			mcp.WithTemplateDescription("Read a specific entity with its properties, content, and relations"),
-			mcp.WithTemplateMIMEType("application/json"),
-		),
+		&mcpgo.ResourceTemplate{
+			URITemplate: "rela://entity/{type}/{id}",
+			Name:        "Entity",
+			Description: "Read a specific entity with its properties, content, and relations",
+			MIMEType:    "application/json",
+		},
 		s.handleReadEntity,
 	)
 
 	// Dynamic resource template: relations
 	s.mcp.AddResourceTemplate(
-		mcp.NewResourceTemplate(
-			"rela://relation/{from}/{type}/{to}",
-			"Relation",
-			mcp.WithTemplateDescription("Read a specific relation between two entities"),
-			mcp.WithTemplateMIMEType("application/json"),
-		),
+		&mcpgo.ResourceTemplate{
+			URITemplate: "rela://relation/{from}/{type}/{to}",
+			Name:        "Relation",
+			Description: "Read a specific relation between two entities",
+			MIMEType:    "application/json",
+		},
 		s.handleReadRelation,
 	)
 }
 
 func (s *Server) handleReadMetamodel(
-	_ context.Context, _ mcp.ReadResourceRequest,
-) ([]mcp.ResourceContents, error) {
+	_ context.Context, _ *mcpgo.ReadResourceRequest,
+) (*mcpgo.ReadResourceResult, error) {
 	meta := s.deps.Meta
 	result := map[string]any{
 		"version":   meta.GetVersion(),
@@ -64,18 +64,18 @@ func (s *Server) handleReadMetamodel(
 		return nil, fmt.Errorf("failed to marshal metamodel: %w", err)
 	}
 
-	return []mcp.ResourceContents{
-		mcp.TextResourceContents{
+	return &mcpgo.ReadResourceResult{
+		Contents: []*mcpgo.ResourceContents{{
 			URI:      "rela://metamodel",
 			MIMEType: "application/json",
 			Text:     text,
-		},
+		}},
 	}, nil
 }
 
 func (s *Server) handleReadEntity(
-	ctx context.Context, request mcp.ReadResourceRequest,
-) ([]mcp.ResourceContents, error) {
+	ctx context.Context, request *mcpgo.ReadResourceRequest,
+) (*mcpgo.ReadResourceResult, error) {
 	uri := request.Params.URI
 
 	// Parse URI: rela://entity/{type}/{id}
@@ -100,18 +100,18 @@ func (s *Server) handleReadEntity(
 		return nil, fmt.Errorf("failed to convert entity: %w", err)
 	}
 
-	return []mcp.ResourceContents{
-		mcp.TextResourceContents{
+	return &mcpgo.ReadResourceResult{
+		Contents: []*mcpgo.ResourceContents{{
 			URI:      uri,
 			MIMEType: "application/json",
 			Text:     text,
-		},
+		}},
 	}, nil
 }
 
 func (s *Server) handleReadRelation(
-	ctx context.Context, request mcp.ReadResourceRequest,
-) ([]mcp.ResourceContents, error) {
+	ctx context.Context, request *mcpgo.ReadResourceRequest,
+) (*mcpgo.ReadResourceResult, error) {
 	uri := request.Params.URI
 
 	// Parse URI: rela://relation/{from}/{type}/{to}
@@ -133,11 +133,11 @@ func (s *Server) handleReadRelation(
 		return nil, fmt.Errorf("failed to convert relation: %w", err)
 	}
 
-	return []mcp.ResourceContents{
-		mcp.TextResourceContents{
+	return &mcpgo.ReadResourceResult{
+		Contents: []*mcpgo.ResourceContents{{
 			URI:      uri,
 			MIMEType: "application/json",
 			Text:     text,
-		},
+		}},
 	}, nil
 }

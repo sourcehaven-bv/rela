@@ -1427,6 +1427,14 @@ func (a *App) handleV1Analyze(w http.ResponseWriter, r *http.Request) {
 		ByCheck: make(map[string]int),
 	}
 
+	// Carry each section's truncation flag onto the flat response, so a
+	// capped check is visibly incomplete rather than silently short.
+	for _, section := range analysisResult.Sections {
+		if section.Truncated {
+			result.TruncatedChecks = append(result.TruncatedChecks, section.Name)
+		}
+	}
+
 	// Loopback gate: same policy as action / document surfaces.
 	// Non-loopback callers get a degraded envelope on script-error
 	// issues (no source slice, no stack, no captured output).

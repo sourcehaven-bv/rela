@@ -93,7 +93,7 @@ func TestNewMCPServices_WritesReachSearchIndex(t *testing.T) {
 
 	ctx := context.Background()
 	deps := svc.Deps()
-	require.NoError(t, deps.Store.CreateEntity(ctx, &entity.Entity{
+	require.NoError(t, svc.svc.Store().CreateEntity(ctx, &entity.Entity{
 		ID:         "ITEM-1",
 		Type:       "item",
 		Properties: map[string]any{"title": "Synchronous indexing"},

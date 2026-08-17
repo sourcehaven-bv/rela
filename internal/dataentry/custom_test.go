@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"bytes"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/project"
 )
@@ -712,5 +714,240 @@ func TestOpenCustomEntry_NeverEscapes(t *testing.T) {
 				t.Errorf("LEAK: %q served %q from outside custom/", v, b)
 			}
 		})
+	}
+}
+
+// TestServeAsset_ConditionalRequests pins the payoff of moving to
+// http.ServeContent: an unchanged asset revalidates to a bodiless 304 instead
+// of re-transferring. Before this, a 200KB webfont was sent in full on every
+// navigation (RR-CR2-SERVECONTENT).
+func TestServeAsset_ConditionalRequests(t *testing.T) {
+	root := t.TempDir()
+	writeCustom(t, root, "logo.svg", "<svg/>")
+	custom := newCustomAssets(root, []byte(testShell), func() bool { return true })
+
+	// First request: full body plus a validator.
+	rec := httptest.NewRecorder()
+	custom.serveAsset(rec, httptest.NewRequest(http.MethodGet, customURLPrefix+"logo.svg", http.NoBody))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	etag := rec.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("no ETag — conditional requests cannot work without a validator")
+	}
+	if rec.Body.String() != "<svg/>" {
+		t.Fatalf("body = %q, want the asset", rec.Body.String())
+	}
+
+	// Second request with the validator: 304, no body.
+	req := httptest.NewRequest(http.MethodGet, customURLPrefix+"logo.svg", http.NoBody)
+	req.Header.Set("If-None-Match", etag)
+	rec2 := httptest.NewRecorder()
+	custom.serveAsset(rec2, req)
+
+	if rec2.Code != http.StatusNotModified {
+		t.Errorf("status = %d, want 304 for an unchanged asset", rec2.Code)
+	}
+	if rec2.Body.Len() != 0 {
+		t.Errorf("304 carried a %d-byte body; it must be empty", rec2.Body.Len())
+	}
+}
+
+// TestServeAsset_ETagChangesOnEdit is the other half: a 304 is only correct if
+// editing the file invalidates the validator. A constant ETag would serve stale
+// content forever.
+func TestServeAsset_ETagChangesOnEdit(t *testing.T) {
+	root := t.TempDir()
+	writeCustom(t, root, "custom.css", ".a{color:red}")
+	custom := newCustomAssets(root, []byte(testShell), func() bool { return true })
+
+	get := func() (string, string) {
+		rec := httptest.NewRecorder()
+		custom.serveAsset(rec, httptest.NewRequest(http.MethodGet, customURLPrefix+"custom.css", http.NoBody))
+		return rec.Header().Get("ETag"), rec.Body.String()
+	}
+
+	etag1, body1 := get()
+
+	// Rewrite with different content AND a distinct modtime — the ETag derives
+	// from modtime+size, so a same-size edit within one filesystem timestamp
+	// tick is the known blind spot (documented on customEntryETag).
+	writeCustom(t, root, "custom.css", ".a{color:blue}!!")
+	future := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(filepath.Join(root, project.CustomDir, "custom.css"), future, future); err != nil {
+		t.Fatal(err)
+	}
+
+	etag2, body2 := get()
+	if body1 == body2 {
+		t.Fatal("fixture did not change the content")
+	}
+	if etag1 == etag2 {
+		t.Error("ETag unchanged after an edit — clients would serve stale content indefinitely")
+	}
+}
+
+// TestServeAsset_RangeAndHEAD pins the other two things ServeContent brings.
+// Previously every method received a full body, including HEAD, and Range was
+// ignored.
+func TestServeAsset_RangeAndHEAD(t *testing.T) {
+	root := t.TempDir()
+	writeCustom(t, root, "fonts/brand.woff2", "0123456789")
+	custom := newCustomAssets(root, []byte(testShell), func() bool { return true })
+	const path = customURLPrefix + "fonts/brand.woff2"
+
+	t.Run("range yields 206 and the requested bytes", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, path, http.NoBody)
+		req.Header.Set("Range", "bytes=2-4")
+		rec := httptest.NewRecorder()
+		custom.serveAsset(rec, req)
+
+		if rec.Code != http.StatusPartialContent {
+			t.Errorf("status = %d, want 206", rec.Code)
+		}
+		if got := rec.Body.String(); got != "234" {
+			t.Errorf("body = %q, want %q", got, "234")
+		}
+	})
+
+	t.Run("HEAD carries headers but no body", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		custom.serveAsset(rec, httptest.NewRequest(http.MethodHead, path, http.NoBody))
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("status = %d, want 200", rec.Code)
+		}
+		if rec.Body.Len() != 0 {
+			t.Errorf("HEAD returned a %d-byte body", rec.Body.Len())
+		}
+		if ct := rec.Header().Get("Content-Type"); ct != "font/woff2" {
+			t.Errorf("Content-Type = %q, want font/woff2", ct)
+		}
+	})
+}
+
+// TestServeAsset_HeadersSurviveServeContent guards the headers this route sets
+// deliberately. ServeContent writes its own Content-Type when it can infer one,
+// so nosniff and the explicit type must still be what leaves the handler —
+// otherwise an unknown extension could be sniffed into something executable.
+func TestServeAsset_HeadersSurviveServeContent(t *testing.T) {
+	root := t.TempDir()
+	// .avif is NOT in appContentTypes, so it must come back as octet-stream
+	// rather than whatever content sniffing would guess.
+	writeCustom(t, root, "data.avif", "<html>not really avif</html>")
+	custom := newCustomAssets(root, []byte(testShell), func() bool { return true })
+
+	rec := httptest.NewRecorder()
+	custom.serveAsset(rec, httptest.NewRequest(http.MethodGet, customURLPrefix+"data.avif", http.NoBody))
+
+	if got := rec.Header().Get("Content-Type"); got != "application/octet-stream" {
+		t.Errorf("Content-Type = %q, want application/octet-stream (content must not be sniffed)", got)
+	}
+	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("X-Content-Type-Options = %q, want nosniff", got)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-cache" {
+		t.Errorf("Cache-Control = %q, want no-cache", got)
+	}
+}
+
+// TestOpenCustomEntryFile_MatchesOpenCustomEntry pins that the two openers
+// agree. They share a containment chain by construction, but a divergence would
+// mean the shell references an asset the handler refuses (or vice versa).
+func TestOpenCustomEntryFile_MatchesOpenCustomEntry(t *testing.T) {
+	root := t.TempDir()
+	writeCustom(t, root, "custom.css", ".a{}")
+	writeCustom(t, root, "fonts/b.woff2", "F")
+	writeCustom(t, root, ".env", "SECRET=1")
+	writeCustom(t, root, "big.png", strings.Repeat("x", maxCustomFileBytes+1))
+	writeProjectRoot(t, root, "outside.txt", "LEAKED")
+
+	entries := []string{
+		"custom.css", "fonts/b.woff2", ".env", "big.png",
+		"../outside.txt", "..%2Foutside.txt", "", ".", "..",
+		"fonts", "nope.css", "sub/.git/config",
+	}
+	for _, e := range entries {
+		t.Run(strconv.Quote(e), func(t *testing.T) {
+			_, byteErr := openCustomEntry(root, e)
+			fh, fileErr := openCustomEntryFile(root, e)
+			if fileErr == nil {
+				fh.Close()
+			}
+			if (byteErr == nil) != (fileErr == nil) {
+				t.Errorf("openCustomEntry err=%v but openCustomEntryFile err=%v — the two openers must agree",
+					byteErr, fileErr)
+			}
+		})
+	}
+}
+
+// TestOpenCustomEntryFile_NeverEscapes attacks the ServeContent read path
+// directly. openCustomEntryFile duplicates the containment chain (it must hand
+// back a live handle, so it cannot simply call openCustomEntry), and a
+// duplicated security check is exactly the kind that drifts. Asserts the
+// property, not the error: sensitive files outside custom/ with no decoy
+// inside, and the content must never appear.
+func TestOpenCustomEntryFile_NeverEscapes(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, project.CustomDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeProjectRoot(t, root, "outside.txt", "LEAKED-OUTSIDE")
+	writeProjectRoot(t, root, "schema.yaml", "LEAKED-SCHEMA")
+
+	// A symlink INSIDE custom/ pointing at an in-project file outside it: the
+	// case a single os.OpenRoot would follow, since the target never leaves the
+	// project root.
+	link := filepath.Join(root, project.CustomDir, "link.yaml")
+	if err := os.Symlink(filepath.Join(root, "schema.yaml"), link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	vectors := []string{
+		"../outside.txt", "../../outside.txt", "../schema.yaml", "link.yaml",
+		"sub/../../outside.txt", "/outside.txt", "....//outside.txt",
+		"a/b/../../../outside.txt", "..%2Foutside.txt",
+		"../../../../../../etc/passwd",
+	}
+	for _, v := range vectors {
+		t.Run(strconv.Quote(v), func(t *testing.T) {
+			fh, err := openCustomEntryFile(root, v)
+			if err != nil {
+				return // refused outright
+			}
+			defer fh.Close()
+			b, _ := io.ReadAll(fh.File)
+			if strings.Contains(string(b), "LEAKED") {
+				t.Errorf("LEAK: %q streamed %q from outside custom/", v, b)
+			}
+		})
+	}
+}
+
+// TestServeAsset_OversizeNotStreamed pins the pre-read size gate against the
+// ServeContent path specifically.
+//
+// The gate exists because /_custom/ is unauthenticated: without it, one
+// oversize file in custom/ is a read amplifier. Moving delivery to
+// ServeContent made this easy to lose — ServeContent takes a ReadSeeker and
+// will happily stream a file of any size, so the cap MUST be enforced from the
+// Stat in openCustomEntryFile, before a handle is ever returned.
+func TestServeAsset_OversizeNotStreamed(t *testing.T) {
+	root := t.TempDir()
+	writeCustom(t, root, "huge.png", strings.Repeat("x", maxCustomFileBytes+1))
+	custom := newCustomAssets(root, []byte(testShell), func() bool { return true })
+
+	rec := httptest.NewRecorder()
+	custom.serveAsset(rec, httptest.NewRequest(http.MethodGet, customURLPrefix+"huge.png", http.NoBody))
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
+	// A 404 body is a few dozen bytes; anything near the cap means the file was
+	// streamed before the gate ran.
+	if rec.Body.Len() > 1024 {
+		t.Errorf("response carried %d bytes — the oversize file was streamed", rec.Body.Len())
 	}
 }

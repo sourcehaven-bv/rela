@@ -86,13 +86,12 @@ export interface FormStep {
  * - `no` (default) — keep the value; hide/reveal is lossless.
  * - `yes`          — clear it when the branch hides.
  *
- * A third value, `confirm` (ask before clearing, undo the triggering change on
- * decline), is deliberately absent. It needs the form to separate "proposed"
- * from "committed" — today an edit mutates form state and arms the autosave in
- * one step, so a decline must reconstruct state after the fact. The backend
- * rejects `confirm` at config-validation time until that refactor lands.
+ * `confirm` asks before clearing and undoes the TRIGGERING change on decline —
+ * it is not merely `yes` with a prompt. It requires the propose/commit seam
+ * (TKT-7S5735): the decision happens before anything is applied, so a decline
+ * is a true no-op rather than a rollback.
  */
-export type ClearWhenHidden = 'no' | 'yes'
+export type ClearWhenHidden = 'no' | 'yes' | 'confirm'
 
 export interface FormField {
   property?: string
@@ -407,6 +406,16 @@ export interface AnalyzeResult {
   warnings: number
   issues: AnalyzeIssue[]
   byCheck: Record<string, number>
+
+  /**
+   * Names of checks that found MORE issues than they returned. Each check
+   * is capped server-side (TKT-1ESTYJ), so `byCheck` for a listed check is
+   * the cap, not the true total.
+   *
+   * Omitted by the server when nothing was truncated, so it is optional —
+   * and older servers never send it at all.
+   */
+  truncatedChecks?: string[]
 }
 
 export interface NavigationEntry {

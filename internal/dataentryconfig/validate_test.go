@@ -208,8 +208,11 @@ func TestValidateConfig_ClearWhenHiddenAllowlist(t *testing.T) {
 	}{
 		{name: "no", value: "no"},
 		{name: "yes", value: "yes"},
-		// "confirm" is deliberately NOT accepted yet — see ClearWhenHidden docs.
-		{name: "confirm is rejected until propose/commit lands", value: "confirm", wantErr: true},
+		// TKT-7S5735 landed the propose/commit seam, so "confirm" is now a
+		// real policy rather than a promise. The typo cases below still
+		// matter: "confrim" must never silently resolve to a destructive
+		// default.
+		{name: "confirm", value: "confirm"},
 		{name: "empty means default", value: ""},
 		{name: "off is rejected", value: "off", wantErr: true},
 		{name: "false is rejected", value: "false", wantErr: true},

@@ -82,12 +82,46 @@ type writeHandler struct {
 	// root (conflict-resolve is the one file-level write in the nucleus).
 	paths *project.Context
 
+	// provision implements unmatched_principal: provision (TKT-ANUJDS). Called
+	// at the top of each write handler, under the writeMu it already holds; it
+	// lazily creates a stub user entity for an unmatched verified principal and
+	// returns a ctx re-stamped to it (with a rebuilt ACL request + read gate).
+	// The handler adopts the returned ctx. A no-op on every non-provision write.
+	provision func(context.Context) context.Context
+
 	writeMu *sync.Mutex
+}
+
+// enterWrite acquires the write lock and runs the provision seam under it,
+// returning the CONTEXT the handler must thread downstream — re-stamped to a
+// freshly-provisioned entity when unmatched_principal: provision fired, else the
+// request's own context unchanged. The caller MUST `defer h.writeMu.Unlock()`
+// itself — the unlock cannot live here because it must span the whole handler
+// body. Running provision under the lock already held serializes the stub create
+// against every other mutation for free (see maybeProvision).
+//
+// It returns the re-stamped *http.Request (not just a context) on purpose: the
+// downstream read gate is consulted via helpers that take r and read
+// r.Context() internally (h.gateRead, the serializer/reader), so the rebuilt
+// ACL request + read gate must ride ON r — a bare context threaded only to the
+// manager call would leave those reads on the stale, unmatched principal and
+// redact the just-provisioned entity out of the response (RR-VI9XMY gap 2).
+//
+// contextcheck flags the resulting r.Context() reads as "non-inherited" because
+// it cannot trace the derivation through the request reassignment; that whole
+// class is excluded by path in .golangci.yml with the seam pinned by
+// TestProvisionSeam_EveryWriteHandlerUsesEnterWrite.
+func (h *writeHandler) enterWrite(r *http.Request) *http.Request {
+	h.writeMu.Lock()
+	if h.provision != nil {
+		return r.WithContext(h.provision(r.Context()))
+	}
+	return r
 }
 
 func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeName, plural string) {
 	// Need write lock for creation
-	h.writeMu.Lock()
+	r = h.enterWrite(r)
 	defer h.writeMu.Unlock()
 
 	var req struct {
@@ -309,7 +343,7 @@ func (h *writeHandler) handleV1DryRunCreate(w http.ResponseWriter, r *http.Reque
 //nolint:gocognit,funlen // update handler threads the validation-policy classes (400/422/200-with-warnings) through each field; the branches are the documented write-policy cases, not extractable shared logic.
 func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeName, plural, entityID string) {
 	// Need write lock
-	h.writeMu.Lock()
+	r = h.enterWrite(r)
 	defer h.writeMu.Unlock()
 
 	s := h.schema()
@@ -479,7 +513,7 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 
 func (h *writeHandler) handleV1DeleteEntity(w http.ResponseWriter, r *http.Request, typeName, _, entityID string) {
 	// Need write lock
-	h.writeMu.Lock()
+	r = h.enterWrite(r)
 	defer h.writeMu.Unlock()
 
 	// ACL gate (TKT-VQGN): runs BEFORE getEntity (RR-NGMI timing) AND
@@ -551,7 +585,7 @@ func (h *writeHandler) handleV1CreateRelation(
 	w http.ResponseWriter, r *http.Request, typeName, entityID, relType string,
 ) {
 	// Need write lock
-	h.writeMu.Lock()
+	r = h.enterWrite(r)
 	defer h.writeMu.Unlock()
 
 	// ACL gate (TKT-VQGN CRIT-2): runs BEFORE body parse (RR-FGUZ
@@ -618,7 +652,7 @@ func (h *writeHandler) handleV1UpdateRelation(
 	w http.ResponseWriter, r *http.Request, typeName, entityID, relType, targetID string,
 ) {
 	// Need write lock
-	h.writeMu.Lock()
+	r = h.enterWrite(r)
 	defer h.writeMu.Unlock()
 
 	// ACL gate (TKT-VQGN CRIT-2): see handleV1CreateRelation.
@@ -701,7 +735,7 @@ func (h *writeHandler) handleV1DeleteRelation(
 	w http.ResponseWriter, r *http.Request, typeName, entityID, relType, targetID string,
 ) {
 	// Need write lock
-	h.writeMu.Lock()
+	r = h.enterWrite(r)
 	defer h.writeMu.Unlock()
 
 	// ACL gate (TKT-VQGN CRIT-2): see handleV1CreateRelation.
@@ -741,7 +775,7 @@ func (h *writeHandler) handleV1DeleteRelation(
 
 func (h *writeHandler) handleV1CloneEntity(w http.ResponseWriter, r *http.Request, typeName, entityID string) {
 	// Need write lock
-	h.writeMu.Lock()
+	r = h.enterWrite(r)
 	defer h.writeMu.Unlock()
 
 	s := h.schema()
@@ -808,7 +842,7 @@ func (h *writeHandler) handleV1ConflictResolve(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	h.writeMu.Lock()
+	r = h.enterWrite(r)
 	defer h.writeMu.Unlock()
 
 	st := h.schema()

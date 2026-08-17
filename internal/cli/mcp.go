@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -39,5 +40,5 @@ func (c *McpCmd) Run() error {
 	if srvErr != nil {
 		return fmt.Errorf("mcp startup: %w", srvErr)
 	}
-	return srv.Serve()
+	return srv.Serve(context.Background())
 }

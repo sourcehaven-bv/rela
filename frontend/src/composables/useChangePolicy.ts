@@ -1,0 +1,225 @@
+import type { Bindings } from '@/utils/conditions'
+import type { ClearWhenHidden } from '@/types'
+import { proposedBindings, wouldHide, type Proposal, type ProposalOutcome } from './useProposal'
+
+/**
+ * useChangePolicy — decide the fate of a proposed field edit BEFORE it is
+ * applied (TKT-7S5735).
+ *
+ * ## The seam
+ *
+ * A widget edit arrives as a proposal, not a write:
+ *
+ *   1. work out what the change would hide (hypothetical, no mutation)
+ *   2. decide
+ *   3. only then mutate form state and arm the write
+ *
+ * Steps 1-2 happen before any mutation, which the old code could not do:
+ * `updateField` wrote `formData` on its first line, and since visibility is a
+ * pure function of `formData`, "what would hide?" was only answerable after the
+ * fact. Every BUG-FB0LN8 fix tried to reconstruct the prior state from that
+ * position, and each produced a near-miss.
+ *
+ * ## What this does NOT own
+ *
+ * `formData`. The host form applies the outcome. A policy that owned form state
+ * would just be a second god-object beside a component already past 2000 lines,
+ * and the host has to apply the change anyway (errors, dirty tracking, autosave
+ * routing all live there).
+ *
+ * ## The three policies
+ *
+ * `no` and `yes` decide from state the caller already holds. `confirm` awaits
+ * the user, and is the reason the ordering above is not merely tidy: because
+ * nothing is mutated and nothing queued before the decision, a decline is a
+ * true NO-OP rather than a rollback. Every earlier attempt at `confirm` had to
+ * undo a write that had already happened — and each one passed its tests and
+ * then failed in manual use.
+ *
+ * `confirm` is not `yes` with a prompt: declining also abandons the TRIGGERING
+ * change, which `yes` never does.
+ */
+
+export interface ChangePolicyDeps {
+  /** Live condition bindings (`form`, `entity`, `current_user`). */
+  bindings: () => Bindings
+  /** Property keys visible right now. */
+  activeNow: () => Set<string>
+  /** Property keys that would be visible for a hypothetical binding set. */
+  activeFor: (bindings: Bindings) => Set<string>
+  /** Property keys the wizard governs at all. */
+  managed: () => Set<string>
+  /** Current form value of a property (for retaining a non-trigger field). */
+  valueOf: (property: string) => unknown
+  /** Hold a field's value so a later reveal is lossless. */
+  retain: (property: string, value: unknown) => void
+  /** Commit an accepted proposal to form state + the write queue. */
+  apply: (proposal: Proposal) => void
+  /**
+   * Clear these fields server-side. They have already been retained, and the
+   * decision to clear them has already been MADE — the callee must not
+   * re-derive intent from config. Carrying the approved set here is what stops
+   * a `confirm` field being cleared on a path where no dialog ran.
+   */
+  onHidden: (toClear: string[]) => void
+  /**
+   * Whether hide policy applies at all. False on the create path, where there
+   * is no stored value to lose — RR-O4SRG's drop-on-commit owns that.
+   */
+  enabled: () => boolean
+  /** Per-property `clear_when_hidden`. */
+  policyFor: (property: string) => ClearWhenHidden
+  /**
+   * Ask the user to approve clearing `properties`. Resolves true to proceed.
+   *
+   * Only called when something is genuinely at stake — a `confirm` field whose
+   * value is non-empty. One dialog per proposal, naming every affected field,
+   * never one dialog per field.
+   */
+  askToClear: (properties: string[]) => Promise<boolean>
+  /** True when a property currently holds nothing worth warning about. */
+  isEmpty: (property: string) => boolean
+  /**
+   * True when the principal cannot READ this property (field-level redaction).
+   *
+   * Such a value is absent from form state, so it is indistinguishable from
+   * empty by inspection — and clearing it would destroy data the user was
+   * never shown and never asked about. `confirm` therefore fails safe on it:
+   * no dialog can be shown (there is nothing to display), so nothing is
+   * cleared.
+   */
+  isUnreadable: (property: string) => boolean
+  /**
+   * Re-assert a declined proposal's PREVIOUS value in the UI.
+   *
+   * Needed because the widget mutated its own DOM before the proposal was
+   * evaluated. `formData` was never written, so Vue sees no change and would
+   * leave the control showing the value the user just declined. Must not emit
+   * a write — nothing was committed.
+   */
+  restore: (proposal: Proposal) => void
+  /**
+   * Monotonic counter identifying the current form incarnation. Read before
+   * awaiting and compared after: if it moved (entity reloaded, form switched
+   * entity), the dialog's answer is stale and the proposal is `superseded`.
+   */
+  generation: () => number
+}
+
+export function useChangePolicy(deps: ChangePolicyDeps) {
+  /**
+   * Properties that are visible now but would not be if `proposal` applied.
+   * Pure: no mutation, no scheduling, safe to call as often as you like.
+   */
+  function hidesFrom(proposal: Proposal): string[] {
+    if (!deps.enabled()) return []
+    const after = deps.activeFor(proposedBindings(deps.bindings(), proposal))
+    return wouldHide(deps.activeNow(), after, deps.managed())
+  }
+
+  /**
+   * Retain the PRE-change value of every field this proposal hides.
+   *
+   * Ordering is what makes this correct: `propose` calls this BEFORE
+   * `deps.apply`, so `valueOf` still reads pre-change form state.
+   *
+   * The proposed property is read from `proposal.previous` rather than
+   * `valueOf` as belt-and-braces, not as the fix. It matters only if a field
+   * hides ITSELF — `visible_when: "form.mode == 'detail'"` on property `mode` —
+   * and only if the retain/apply order above is ever inverted. Since the
+   * ordering already protects that case, this line is unobservable today; it is
+   * kept so that reordering degrades into a redundant read rather than a silent
+   * data bug, which is the failure mode this whole ticket exists to prevent.
+   */
+  function retainBeforeChange(hiding: string[], proposal: Proposal) {
+    for (const property of hiding) {
+      deps.retain(
+        property,
+        property === proposal.property ? proposal.previous : deps.valueOf(property)
+      )
+    }
+  }
+
+  /**
+   * Fields this proposal would hide that are configured `confirm` AND actually
+   * hold something to lose. An empty field is not worth a dialog — prompting
+   * for it trains the user to dismiss without reading.
+   */
+  function needsConfirm(hiding: string[]): string[] {
+    return hiding.filter(
+      (p) => deps.policyFor(p) === 'confirm' && !deps.isUnreadable(p) && !deps.isEmpty(p)
+    )
+  }
+
+  /**
+   * Which of the hiding fields to actually clear, given the user's answer.
+   *
+   * `yes` clears unconditionally. `confirm` clears only when a dialog ran AND
+   * was approved — never when the field is unreadable (no dialog is possible)
+   * and never when the answer was no. Returning the decision rather than
+   * letting the callee re-read `clear_when_hidden` is deliberate: re-deriving
+   * intent downstream is how a redacted `confirm` field got cleared with no
+   * dialog at all.
+   */
+  function approvedClears(hiding: string[], approved: Set<string>): string[] {
+    return hiding.filter((p) => {
+      const policy = deps.policyFor(p)
+      if (policy === 'yes') return true
+      if (policy === 'confirm') return approved.has(p)
+      return false
+    })
+  }
+
+  async function propose(
+    property: string,
+    value: unknown,
+    previous: unknown
+  ): Promise<ProposalOutcome> {
+    const proposal: Proposal = { property, value, previous }
+
+    // 1. Ask what this would hide. Costs nothing, changes nothing.
+    const hiding = hidesFrom(proposal)
+
+    // 2. Decide.
+    //
+    // Nothing has been mutated and nothing queued at this point, which is the
+    // whole reason the seam exists: a decline below is a true no-op, not a
+    // rollback. The four BUG-FB0LN8 attempts all had to undo a write here.
+    const atStake = needsConfirm(hiding)
+    let approved = new Set<string>()
+    if (atStake.length) {
+      const generation = deps.generation()
+      const accepted = await deps.askToClear(atStake)
+
+      // The form moved on while the dialog was open (entity reloaded, or the
+      // form switched entity). `previous` and `hiding` both describe a state
+      // that no longer exists, so applying either answer would write against
+      // stale assumptions.
+      if (deps.generation() !== generation) return { status: 'superseded' }
+      if (!accepted) {
+        // `formData` was never written, so there is nothing to roll back —
+        // but the WIDGET wrote its own DOM when the user interacted with it,
+        // and an unchanged `model-value` gives Vue no reason to patch it back.
+        // The control would keep showing the declined value while the form
+        // holds the old one.
+        //
+        // So the reject path has to actively re-assert the previous value.
+        // This is a render concern, not a state rollback: nothing was
+        // committed, nothing queued, and no write is emitted.
+        deps.restore(proposal)
+        return { status: 'rejected' }
+      }
+      approved = new Set(atStake)
+    }
+
+    // 3. Apply — retention first, see retainBeforeChange.
+    if (hiding.length) retainBeforeChange(hiding, proposal)
+    deps.apply(proposal)
+    const toClear = approvedClears(hiding, approved)
+    if (toClear.length) deps.onHidden(toClear)
+
+    return { status: 'applied' }
+  }
+
+  return { propose, hidesFrom, needsConfirm, approvedClears }
+}

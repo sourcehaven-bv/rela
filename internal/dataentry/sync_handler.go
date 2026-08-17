@@ -50,6 +50,23 @@ type syncHandler struct {
 	manifest manifestProvider // nil unless the store is pgstore
 	applier  syncApplier      // nil unless the manager is *entitymanager.Manager
 	writeMu  *sync.Mutex
+
+	// provision implements unmatched_principal: provision (TKT-ANUJDS), set by
+	// App after construction. Called under writeMu at the top of each sync
+	// write; a no-op unless an unmatched verified principal hits a provision
+	// policy. See writeHandler.enterWrite for the shared rationale.
+	provision func(context.Context) context.Context
+}
+
+// enterWrite acquires writeMu and runs the provision seam under it, returning
+// the request the handler must use. The caller defers Unlock itself. Mirrors
+// writeHandler.enterWrite so sync writes get the same coverage.
+func (h *syncHandler) enterWrite(r *http.Request) *http.Request {
+	h.writeMu.Lock()
+	if h.provision != nil {
+		return r.WithContext(h.provision(r.Context()))
+	}
+	return r
 }
 
 // newSyncHandler wires the sync route cluster. It resolves the two optional
