@@ -25,18 +25,49 @@ import (
 // stateFileName is the sync index, stored in the project's .rela cache dir.
 const stateFileName = "sync-state.json"
 
+// Baseline is what the replica last agreed on with the primary for one record.
+// It holds TWO independent tokens because, since the replica reads and writes
+// through the authorized /api/v1 API (TKT-8P1TM7, "sync is a fancy browser"),
+// the server's conflict token and the client's own change-detector are no
+// longer the same value:
+//
+//   - Server is the OPAQUE token the primary returned (its ETag). The replica
+//     never parses it: it is echoed back as If-Match on the next write and
+//     compared only for equality to detect "the primary moved." The primary's
+//     /api/v1 ETag (computeEntityETag) is truncated + relation-folded, a
+//     different value space from canonical.HashEntity — so the replica cannot
+//     recompute it locally and must treat it as opaque.
+//   - Local is the replica's OWN canonical hash (canonical.HashEntity /
+//     HashRelation) of the working record at last sync. It is recomputed
+//     locally to answer "have I edited this since?" and is NEVER sent to the
+//     primary. It is the change-detector, not the conflict token.
+//
+// Dirty  = canonical(working) != Local.        (I edited it.)
+// Moved  = server_now_ETag    != Server.       (the primary edited it.)
+// Conflict = Dirty AND Moved.
+type Baseline struct {
+	Server string `json:"server"` // opaque primary ETag (If-Match + equality)
+	Local  string `json:"local"`  // canonical hash of the working record (mine)
+	// Type is the record's entity/relation type. It is recorded so a PUSH of a
+	// LOCAL DELETION can still resolve the /api/v1 route plural — the working
+	// record is gone by then, so its type can no longer be read from the store.
+	// For a relation it is the relation type (the FROM plural is resolved from
+	// the FROM endpoint's own baseline). Not secret (config is public).
+	Type string `json:"type,omitempty"`
+}
+
 // State is the persisted sync index. Records maps a record key (see RecordKey)
-// to the content hash the client and server last agreed on for that record.
+// to the Baseline the client and server last agreed on for that record.
 // Cursor is an opaque, server-minted manifest watermark: the client stores and
 // echoes it verbatim and never parses it (the server may change its encoding).
 type State struct {
-	Records map[string]string `json:"records"`
-	Cursor  string            `json:"cursor"`
+	Records map[string]Baseline `json:"records"`
+	Cursor  string              `json:"cursor"`
 }
 
 // newState returns an empty, ready-to-use State.
 func newState() *State {
-	return &State{Records: map[string]string{}}
+	return &State{Records: map[string]Baseline{}}
 }
 
 // EntityKey is the index/manifest key for an entity: its id.
@@ -64,12 +95,41 @@ func LoadState(fs storage.FS, cacheDir string) (*State, error) {
 		}
 		return nil, fmt.Errorf("read sync state %s: %w", path, err)
 	}
-	var s State
-	if err := json.Unmarshal(data, &s); err != nil {
+	s, err := unmarshalState(data)
+	if err != nil {
 		return nil, fmt.Errorf("parse sync state %s: %w (delete it to re-bootstrap from scratch)", path, err)
 	}
-	if s.Records == nil {
-		s.Records = map[string]string{}
+	return s, nil
+}
+
+// unmarshalState decodes the index, tolerating the LEGACY single-string format
+// (`"records": {"k": "<hash>"}`) written before TKT-8P1TM7 split the baseline
+// into {server, local}. In the legacy world the one hash was the shared
+// canonical hash. On migration we set Local to it (it IS the canonical hash of
+// the last-agreed record, so change-detection stays correct) but leave Server
+// EMPTY: the old value was never a /api/v1 ETag, so the replica must re-fetch to
+// learn the primary's real conflict token. An empty Server just means the next
+// pull re-baselines it — lossless, no spurious conflict.
+func unmarshalState(data []byte) (*State, error) {
+	// Try the current shape first.
+	var s State
+	if err := json.Unmarshal(data, &s); err == nil {
+		if s.Records == nil {
+			s.Records = map[string]Baseline{}
+		}
+		return &s, nil
+	}
+	// Fall back to the legacy single-string shape and migrate.
+	var legacy struct {
+		Records map[string]string `json:"records"`
+		Cursor  string            `json:"cursor"`
+	}
+	if err := json.Unmarshal(data, &legacy); err != nil {
+		return nil, err
+	}
+	s = State{Records: make(map[string]Baseline, len(legacy.Records)), Cursor: legacy.Cursor}
+	for k, h := range legacy.Records {
+		s.Records[k] = Baseline{Local: h} // Server left empty → re-fetch to re-baseline
 	}
 	return &s, nil
 }
@@ -97,16 +157,20 @@ func (s *State) Save(fs storage.FS, cacheDir string) error {
 	return nil
 }
 
-// Set records the agreed hash for a key. Delete removes a key (used when a
-// record is deleted on both ends). Both keep the in-memory index in step with
-// the wire so a later Save persists the converged state.
-func (s *State) Set(key, hash string) { s.Records[key] = hash }
-func (s *State) Delete(key string)    { delete(s.Records, key) }
+// Set records the agreed baseline for a key: the primary's opaque ETag
+// (server) and the replica's own canonical hash of the working record (local).
+// Delete removes a key (used when a record is deleted on both ends). Both keep
+// the in-memory index in step with the wire so a later Save persists the
+// converged state.
+func (s *State) Set(key, server, local, typ string) {
+	s.Records[key] = Baseline{Server: server, Local: local, Type: typ}
+}
+func (s *State) Delete(key string) { delete(s.Records, key) }
 
-// Hash returns the indexed hash for a key and whether it is present.
-func (s *State) Hash(key string) (string, bool) {
-	h, ok := s.Records[key]
-	return h, ok
+// Baseline returns the indexed baseline for a key and whether it is present.
+func (s *State) Baseline(key string) (Baseline, bool) {
+	b, ok := s.Records[key]
+	return b, ok
 }
 
 // Keys returns the indexed keys sorted, for deterministic iteration in reports

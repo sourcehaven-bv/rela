@@ -21,10 +21,14 @@ function makeEntity(overrides: Partial<Entity> = {}): Entity {
   } as Entity
 }
 
+// Fields opt in to inline edit (TKT-HOIX1): `render` defaults to 'display', so
+// without it these suites would exercise the display path rather than the
+// ACL-driven routing they exist to pin. The default itself is covered by the
+// dedicated `render` describe block below.
 function makeFields(): ViewSectionField[] {
   return [
-    { property: 'title', label: 'Title' },
-    { property: 'status', label: 'Status' },
+    { property: 'title', label: 'Title', render: 'input' },
+    { property: 'status', label: 'Status', render: 'input' },
   ]
 }
 
@@ -153,6 +157,99 @@ describe('sectionShouldRouteToInlineEdit', () => {
     ])
     expect(sectionShouldRouteToInlineEdit(section.fields, makeEntity(), schemaResolver)).toBe(false)
   })
+
+  // ── render: input | display (TKT-HOIX1) ──────────────────────────────
+  //
+  // AC 9 / RR-8EISWO: an all-display section must NOT mount a
+  // SectionEditForm. Mounting one would give an autosave host that can
+  // never save, and would flip heading ownership via
+  // sectionRendersOwnHeading for essentially every properties section.
+
+  it('returns false when fields omit render, even with writable verdicts (AC 1)', () => {
+    const section = makeSection([
+      { property: 'title', label: 'Title' },
+      { property: 'status', label: 'Status' },
+    ])
+    // No `_fields` at all → every verdict defaults writable. Pre-TKT-HOIX1
+    // this returned true; display-by-default is the breaking change.
+    expect(sectionShouldRouteToInlineEdit(section.fields, makeEntity(), schemaResolver)).toBe(false)
+  })
+
+  it('returns false when every field is explicitly render: display (AC 9)', () => {
+    const section = makeSection([
+      { property: 'title', label: 'Title', render: 'display' },
+      { property: 'status', label: 'Status', render: 'display' },
+    ])
+    expect(sectionShouldRouteToInlineEdit(section.fields, makeEntity(), schemaResolver)).toBe(false)
+  })
+
+  it('returns true when at least one field opts in with render: input', () => {
+    const section = makeSection([
+      { property: 'title', label: 'Title', render: 'display' },
+      { property: 'status', label: 'Status', render: 'input' },
+    ])
+    expect(sectionShouldRouteToInlineEdit(section.fields, makeEntity(), schemaResolver)).toBe(true)
+  })
+
+  it('returns false for render: input on an ACL-read-only field (AC 3)', () => {
+    // Security-critical: config downgrades editability, never upgrades it.
+    const section = makeSection([{ property: 'status', label: 'Status', render: 'input' }])
+    const entry = makeEntity({ _fields: { status: { writable: false } } })
+    expect(sectionShouldRouteToInlineEdit(section.fields, entry, schemaResolver)).toBe(false)
+  })
+
+  it('keeps the inaccessible guard ahead of render (AC 9)', () => {
+    // An inaccessible field routes to PropertyDisplay for its lock UI even
+    // when a sibling opts in to input.
+    const section = makeSection([
+      { property: 'title', label: 'Title', inaccessible: true },
+      { property: 'status', label: 'Status', render: 'input' },
+    ])
+    expect(sectionShouldRouteToInlineEdit(section.fields, makeEntity(), schemaResolver)).toBe(false)
+  })
+})
+
+describe('buildSectionEditFields — render passthrough (TKT-HOIX1)', () => {
+  it('carries the server-resolved render onto each field', () => {
+    const fields: ViewSectionField[] = [
+      { property: 'title', label: 'Title', render: 'input' },
+      { property: 'status', label: 'Status', render: 'display' },
+    ]
+    const out = buildSectionEditFields(fields, makeEntity(), schemaResolver)
+    expect(out.map((f) => f.render)).toEqual(['input', 'display'])
+  })
+
+  it('leaves render undefined when the server omitted it', () => {
+    // Undefined is not 'input', so the writable conjunct renders display —
+    // the safe direction for a legacy/shape-drift payload.
+    const out = buildSectionEditFields(
+      [{ property: 'title', label: 'Title' }],
+      makeEntity(),
+      schemaResolver,
+    )
+    expect(out[0].render).toBeUndefined()
+  })
+
+  it('carries render through the kind:"hint" branch too', () => {
+    const out = buildSectionEditFields(
+      [{ property: 'unknown_prop', label: 'Unknown', render: 'input' }],
+      makeEntity(),
+      schemaResolver,
+    )
+    expect(out[0].kind).toBe('hint')
+    expect(out[0].render).toBe('input')
+  })
+
+  it('does not fold render into verdict (RR-PGGRBD)', () => {
+    // The verdict-flip watcher compares isFieldWritable(verdict) across prop
+    // updates; a display field must not read as a revoked permission.
+    const out = buildSectionEditFields(
+      [{ property: 'title', label: 'Title', render: 'display' }],
+      makeEntity(),
+      schemaResolver,
+    )
+    expect(out[0].verdict).toBeUndefined()
+  })
 })
 
 describe('applyPropertyToEntry', () => {
@@ -198,9 +295,10 @@ function makeRow(overrides: Partial<ViewEntity> = {}): ViewEntity {
     title: 'Some Row',
     type: 'ticket',
     hasContent: false,
+    // render: 'input' for the same reason as makeFields() above (TKT-HOIX1).
     fields: [
-      { property: 'title', label: 'Title', values: ['Some Row'] },
-      { property: 'status', label: 'Status', values: ['open'] },
+      { property: 'title', label: 'Title', values: ['Some Row'], render: 'input' },
+      { property: 'status', label: 'Status', values: ['open'], render: 'input' },
     ],
     _props: { title: 'Some Row', status: 'open' },
     ...overrides,

@@ -116,6 +116,57 @@ export class EntityPage extends BasePage {
     await expect(this.page.locator('.entity-list .list-item .section-edit-form').first()).toBeVisible();
   }
 
+  /** The entry (first) properties section of a detail page. Render-mode
+   *  assertions below scope to it so an opted-in section further down the
+   *  page can't satisfy a display-mode expectation (TKT-HOIX1). */
+  private entryPropertiesSection() {
+    return this.page.locator('.properties-list').first();
+  }
+
+  /** Assert the entry properties section renders as DISPLAY values: visible,
+   *  but with no inline-edit form mounted (TKT-HOIX1 — the `render: display`
+   *  default). */
+  async expectEntrySectionRendersDisplay() {
+    const section = this.entryPropertiesSection();
+    await expect(section).toBeVisible();
+    await expect(section.locator('.section-edit-form')).toHaveCount(0);
+  }
+
+  /** Assert the entry properties section renders no form controls at all —
+   *  no select, no input, no FieldShell wrapper. Stronger than
+   *  expectEntrySectionRendersDisplay: it pins that display mode hides the
+   *  CONTROL, not merely the autosave host. */
+  async expectEntrySectionHasNoFormControls() {
+    const section = this.entryPropertiesSection();
+    await expect(section).toBeVisible();
+    await expect(section.locator('select')).toHaveCount(0);
+    await expect(section.locator('input')).toHaveCount(0);
+    await expect(section.locator('.form-field')).toHaveCount(0);
+  }
+
+  /** Assert the entry properties section shows the given text — display mode
+   *  hides the control, not the data. */
+  async expectEntrySectionShowsValue(text: string) {
+    await expect(this.entryPropertiesSection()).toContainText(text);
+  }
+
+  /** Assert the entry properties section does NOT show the given text. Used to
+   *  prove a display-rendered value tracks the current server state rather than
+   *  a stale string mirror (RR-GLK4UY). */
+  async expectEntrySectionLacksValue(text: string) {
+    await expect(this.entryPropertiesSection()).not.toContainText(text);
+  }
+
+  /** Assert the first inline-edit list row exposes an ENABLED control, proving
+   *  `render: input` reaches the edit arm rather than a disabled widget. */
+  async expectListSectionRowControlEnabled() {
+    const row = this.page.locator('.entity-list .list-item .section-edit-form').first();
+    await expect(row).toBeVisible();
+    const control = row.locator('select, input').first();
+    await expect(control).toBeVisible();
+    await expect(control).toBeEnabled();
+  }
+
   async clickRelationLink(targetId: string) {
     // Detail screens render related entities as cards / list items with a
     // data-entity-id attribute on the row root and a clickable header

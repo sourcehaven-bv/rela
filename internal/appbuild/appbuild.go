@@ -48,6 +48,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/userstate"
+	"github.com/Sourcehaven-BV/rela/internal/userstate/kvuserstate"
+	"github.com/Sourcehaven-BV/rela/internal/userstate/memuserstate"
 	"github.com/Sourcehaven-BV/rela/internal/validator"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
@@ -76,8 +79,11 @@ import (
 // returning a bundle rather than three accessors — the three handles must come
 // from the same gate to stay consistent, and splitting them would both grow this
 // surface by three and let a caller mix a gated reader with a raw tracer.
+// UserState() (TKT-CXD0A4) takes it to 25, for the same reason as the others:
+// the backend is chosen here (per build tag) and handed to the App at the
+// wiring site.
 //
-//plimsoll:max-exported-methods=24
+//plimsoll:max-exported-methods=25
 type Services struct {
 	fs    storage.FS
 	paths *project.Context
@@ -93,6 +99,7 @@ type Services struct {
 	// the generic search.NewVisible wrapper on the fs/memory builds,
 	// the pgstore-native implementation on the postgres build.
 	visibleSearcher search.VisibleSearcher
+	userState       userstate.Store
 	entityManager   entitymanager.EntityManager
 	tracer          tracer.Tracer
 	validator       validator.Validator
@@ -138,6 +145,53 @@ func (s *Services) Searcher() search.Searcher { return s.searcher }
 // generic scope-filter wrapper on the fs/memory builds, the native
 // SQL-composed implementation on the postgres build.
 func (s *Services) VisibleSearcher() search.VisibleSearcher { return s.visibleSearcher }
+
+// newUserState builds the next-action per-user state backend.
+//
+// Durable by default, over the same state.KV that already holds the
+// scheduler's last-run timestamps and the document render cache — this state
+// has exactly that character (persists between runs, not tracked source), so
+// it gets the same seam and the same `.rela/` home rather than a second
+// persistence mechanism beside it.
+//
+// Falls back to the in-memory backend if the KV is unavailable, and says so.
+// Losing a snooze across a restart is a repeated suggestion, not lost data;
+// refusing to boot over it would be the wrong trade. The warning matters
+// because the degradation is otherwise invisible — the feature keeps working
+// and just forgets.
+//
+// Still build-agnostic: a multi-process deployment wants the postgres backend
+// (this one is last-writer-wins across processes), and that becomes a
+// per-recipe choice when it lands.
+func newUserState(st store.Store, kv state.KV) userstate.Store {
+	// A store-native backend wins where one exists (postgres): it is the only
+	// one safe for the multi-process deployment, where the KV document's
+	// whole-file rewrite is last-writer-wins. Resolved by a build-tagged
+	// helper, mirroring versionServiceFor — the fs/memory builds return nil
+	// and neither know nor link the postgres implementation.
+	if s := storeUserStateFor(st); s != nil {
+		return s
+	}
+	if kv == nil {
+		slog.Warn("next-action state: no state KV; snoozes and mutes will not survive a restart")
+		return memuserstate.New()
+	}
+	s, err := kvuserstate.New(kv)
+	if err != nil {
+		slog.Warn("next-action state: falling back to in-memory", "error", err)
+		return memuserstate.New()
+	}
+	return s
+}
+
+// UserState returns the next-action per-user state backend (snooze / mute /
+// cooldown).
+//
+// Build-agnostic today: every build gets the in-memory backend, because this
+// state is disposable — losing it costs a user one repeated suggestion, not
+// data. When a durable backend lands it becomes a per-recipe choice like the
+// store, and only the recipes change; this accessor and its consumers do not.
+func (s *Services) UserState() userstate.Store { return s.userState }
 
 // EntityManager returns the production write path.
 func (s *Services) EntityManager() entitymanager.EntityManager { return s.entityManager }
@@ -606,6 +660,7 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 		store:           c.Store,
 		searcher:        c.Searcher,
 		visibleSearcher: visible,
+		userState:       newUserState(c.Store, c.StateKV),
 		entityManager:   c.EntityManager,
 		tracer:          c.Tracer,
 		validator:       c.Validator,
@@ -1144,6 +1199,7 @@ func assemble(
 		versions:        versions,
 		searcher:        searcher,
 		visibleSearcher: visible,
+		userState:       newUserState(st, stateKV),
 		entityManager:   mgr,
 		tracer:          tr,
 		validator:       val,

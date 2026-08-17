@@ -91,6 +91,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_search", a.handleV1Search)
 	mux.HandleFunc("/api/v1/_position", a.handleV1EntityPosition)
 	mux.HandleFunc("/api/v1/_analyze", a.handleV1Analyze)
+	mux.HandleFunc("/api/v1/_next_action", a.handleV1NextAction)
 	mux.HandleFunc("/api/v1/_git/status", a.handleGitStatus)
 	mux.HandleFunc("/api/v1/_git/sync", a.handleGitSync)
 	mux.HandleFunc("/api/v1/_settings", a.handleAPISettingsCRUD)
@@ -1123,6 +1124,10 @@ func (a *App) handleV1RelationTarget(
 	w http.ResponseWriter, r *http.Request, typeName, entityID, relType, targetID string,
 ) {
 	switch r.Method {
+	case http.MethodGet:
+		// Single-relation body read for sync (RR-SYNCR1): meta + content +
+		// _redacted + a relation-level ETag, dual-endpoint gated.
+		handleV1GetRelationTarget(a, w, r, typeName, entityID, relType, targetID)
 	case http.MethodPatch:
 		a.write.handleV1UpdateRelation(w, r, typeName, entityID, relType, targetID)
 	case http.MethodDelete:
@@ -1327,6 +1332,7 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 	}
 
 	config := v1.Config{
+		NextActionBands: s.Cfg.NextActionBands,
 		App: v1.AppConfig{
 			Name:              s.Cfg.App.Name,
 			Description:       s.Cfg.App.Description,

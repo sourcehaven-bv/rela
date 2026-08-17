@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useSchemaStore } from '@/stores'
+import NextActionCard from '@/components/NextActionCard.vue'
 import { searchEntities, analyze } from '@/api'
 import type { Entity, DashboardCard, AnalyzeResult } from '@/types'
 
@@ -158,6 +159,10 @@ onMounted(async () => {
     </div>
 
     <template v-else>
+      <!-- Above the cards, and independent of them: a suggestion is worth
+           showing even on a dashboard with nothing else on it. -->
+      <NextActionCard />
+
       <!--
         No cards to show. Deliberately one state for three causes: no
         `dashboard:` configured, an empty `cards:`, and every card filtered out

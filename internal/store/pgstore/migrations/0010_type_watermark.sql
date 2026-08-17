@@ -1,4 +1,4 @@
--- pgstore schema, version 9: composite (type, seq) indexes for the entity-type
+-- pgstore schema, version 10: composite (type, seq) indexes for the entity-type
 -- watermark.
 --
 -- store.TypeWatermark answers "has anything of this type changed?" with

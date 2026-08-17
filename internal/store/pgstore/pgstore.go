@@ -85,18 +85,26 @@ type DBTX interface {
 // not a separate service — and the whole point is the backend-native
 // projection, which cannot be delegated elsewhere.
 //
-// +1 again for EntityTypeWatermark ([store.TypeWatermark]), by the same
-// reasoning: it reads `max(seq)` over this store's OWN entities and deletions
-// rows — the same tables every other method here touches — so it is a property
-// of this store rather than a distinct concern sharing the database. Hoisting
-// it into a service would mean a second handle over the same two tables for a
-// single index lookup.
+// [Store.UserState] (TKT-CXD0A4) is +1 again, and is deliberately the SAME
+// shape as [Store.VersionStore]: a one-line factory handing the shared pool to
+// a separate type, called once by the composition root. The subsystem's API
+// lives on [UserStateStore]; only the factory is here, so the count grows by
+// one per subsystem rather than by its surface. Adding UserStateStore's nine
+// methods to *Store is what the paragraph above forbids.
 //
-// That is now TWO row-property capabilities admitted on this reasoning. If a
-// THIRD appears, extract them together rather than raising these numbers again.
+// EntityTypeWatermark ([store.TypeWatermark]) is +1 for the row-property
+// reason, not the factory one: it reads `max(seq)` over this store's OWN
+// entities and deletions rows — the same tables every other method here touches
+// — so hoisting it into a service would mean a second handle over those two
+// tables for a single index lookup.
 //
-//plimsoll:max-exported-methods=35
-//plimsoll:max-methods=43
+// That makes TWO capabilities admitted as row-properties (ListEntityHeaders and
+// EntityTypeWatermark). A THIRD should not raise these numbers again: extract
+// the row-property reads together, the way versioning and user-state were
+// extracted as subsystems.
+//
+//plimsoll:max-exported-methods=36
+//plimsoll:max-methods=44
 type Store struct {
 	db        DBTX
 	observers []store.EntityObserver // notified synchronously after committed entity writes
