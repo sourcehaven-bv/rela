@@ -40,6 +40,12 @@ export type SectionEditField = {
   // resolved widget. Undefined = not a machine field (or a surface without
   // `_transitions`, e.g. cards/list rows) → the ordinary widget.
   transitions?: TransitionOption[]
+  // Server-resolved config render mode (TKT-HOIX1). Deliberately a SEPARATE
+  // property from `verdict`, not folded into it: the verdict-flip watcher
+  // below compares `isFieldWritable(verdict)` across prop updates, so a
+  // config-driven display field would otherwise look like a revoked
+  // permission and fire a spurious "Permission changed" toast (RR-PGGRBD).
+  render?: 'input' | 'display'
 } & (
   | { kind: 'schema'; propertyDef: PropertyDef }
   | { kind: 'hint'; routingHint: WidgetRoutingHint }
@@ -132,6 +138,10 @@ interface WidgetRow {
   widget: Component
   writable: boolean
   optionVerdicts?: Record<string, boolean>
+  // Display-rendered long values take their own full-width row, matching
+  // PropertyDisplay's behaviour (TKT-HOIX1). Only meaningful on the display
+  // arm — an edit widget sizes itself.
+  isLong: boolean
 }
 
 const widgetRows = computed<WidgetRow[]>(() =>
@@ -143,11 +153,35 @@ const widgetRows = computed<WidgetRow[]>(() =>
     return {
       field,
       widget,
-      writable: isFieldWritable(field.verdict),
+      // Config can only DOWNGRADE editability (TKT-HOIX1): a field renders as
+      // an input when the config opts in AND the ACL permits the write. Never
+      // weaken this to an `||` or a ternary that lets config win — `render:
+      // input` on a read-only field must still render display.
+      //
+      // Applied HERE only, not in the verdict-flip watcher below, and NOT via
+      // `isFieldWritable`'s second `fieldReadonly` parameter — doing either
+      // would make a display field look like a revoked permission (RR-PGGRBD).
+      writable: field.render === 'input' && isFieldWritable(field.verdict),
       optionVerdicts: optionVerdictsFor(field.verdict),
+      isLong: isLongValue(field),
     }
   }),
 )
+
+// Shares PropertyDisplay.vue `isLong`'s 60-char threshold, so a value doesn't
+// reflow when a section switches between the two renderers — keep the two
+// thresholds equal.
+//
+// Not a full port: PropertyDisplay also short-circuits on `PropertyItem.
+// isLongText`, which nothing in the codebase ever populates (it is dead on
+// that side too), so there is no behavioural difference to mirror. If
+// isLongText is ever wired up, this needs the same arm.
+//
+// Reads `formData` (not the field's server-side string mirror) so the layout
+// tracks the post-PATCH value.
+function isLongValue(field: SectionEditField): boolean {
+  return String(formData[field.property] ?? '').length > 60
+}
 
 function onFieldUpdate(field: SectionEditField, value: unknown) {
   const def = field.kind === 'schema' ? field.propertyDef : undefined
@@ -232,11 +266,17 @@ defineExpose({
         :key="row.field.property"
         class="property-item"
         :style="fieldSpanStyle(row.field.span)"
+        :class="{ 'property-long': !row.writable && row.isLong }"
       >
         <dt>{{ row.field.label }}</dt>
         <dd>
+          <!-- A machine field flagged `render: display` falls through to the
+               display arm below rather than rendering a DISABLED StatusControl
+               (TKT-HOIX1) — status fields are the ones most likely to be
+               flagged display, and a greyed-out control is exactly the
+               disabled-input outcome this ticket exists to avoid. -->
           <StatusControl
-            v-if="row.field.transitions !== undefined"
+            v-if="row.field.transitions !== undefined && row.field.render === 'input'"
             :model-value="formData[row.field.property] == null ? '' : String(formData[row.field.property])"
             :property="row.field.property"
             :entity-type="entityType"
@@ -309,4 +349,12 @@ defineExpose({
 /* .properties-list / .property-item now live in styles/properties-list.css,
  * shared with PropertyDisplay and SidePanel. Do not redefine them here — the
  * three scoped copies drifting apart is what this ticket removed. */
+
+/* Long display-rendered values wrap rather than overflow. The full-row
+ * behaviour (`grid-column: span 12`) is owned by styles/properties-list.css;
+ * only these text rules are component-local, mirroring PropertyDisplay.vue. */
+.property-item.property-long dd {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 </style>

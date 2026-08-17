@@ -805,11 +805,27 @@ type ViewTraverse struct {
 	Where          string `yaml:"where,omitempty" json:"where,omitempty"`
 }
 
+// Render modes for view section fields (TKT-HOIX1). A field renders as a
+// view-oriented display value unless it opts in to inline editing.
+//
+// RenderInput is an opt-in to *presentation*, not a grant: the ACL verdict
+// still decides writability, so `render: input` on a read-only field renders
+// display. Config can downgrade an editable field, never upgrade a
+// read-only one.
+const (
+	RenderDisplay = "display"
+	RenderInput   = "input"
+)
+
 // ViewSection defines a section within a view.
+//
+// Render sets the default render mode for this section's fields; an
+// individual field's own Render overrides it. Empty means RenderDisplay.
 type ViewSection struct {
 	Heading      string             `yaml:"heading,omitempty" json:"heading,omitempty"`
 	Source       string             `yaml:"source" json:"source"`
 	Display      string             `yaml:"display" json:"display"`
+	Render       string             `yaml:"render,omitempty" json:"render,omitempty"`
 	Fields       []ViewSectionField `yaml:"fields,omitempty" json:"fields,omitempty"`
 	Columns      []ListColumn       `yaml:"columns,omitempty" json:"columns,omitempty"`
 	GroupBy      string             `yaml:"group_by,omitempty" json:"group_by,omitempty"`
@@ -824,10 +840,30 @@ type ViewSection struct {
 // width, so a section with no spans authored reads as one scannable column.
 // Adjacency is therefore always DECLARED: two fields share a row because an
 // author said so, never because a viewport happened to fit them.
+//
+// Render is resolved server-side against the containing section — see
+// ResolveFieldRender — so consumers receive an already-resolved value and
+// never reimplement the inheritance rule.
 type ViewSectionField struct {
 	Property string `yaml:"property" json:"property"`
 	Label    string `yaml:"label,omitempty" json:"label,omitempty"`
 	Span     Span   `yaml:"span,omitempty" json:"span,omitempty"`
+	Render   string `yaml:"render,omitempty" json:"render,omitempty"`
+}
+
+// ResolveFieldRender returns the effective render mode for a field within a
+// section: the field's own Render, else the section's, else RenderDisplay.
+//
+// Single source of truth for the inheritance rule — both section builders
+// call this so they cannot drift.
+func ResolveFieldRender(sectionRender, fieldRender string) string {
+	if fieldRender != "" {
+		return fieldRender
+	}
+	if sectionRender != "" {
+		return sectionRender
+	}
+	return RenderDisplay
 }
 
 // CommandConfig defines an executable command triggered from the UI.

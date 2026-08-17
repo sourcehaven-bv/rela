@@ -958,6 +958,7 @@ views:
       - heading: "Idea"
         source: entry
         display: properties
+        render: input
         fields:
           - property: category
           - property: status
@@ -969,11 +970,13 @@ views:
       - heading: "Notes"
         source: entry
         display: properties
+        render: input
         fields:
           - property: notes
       - heading: "Related Ideas"
         source: related
         display: cards
+        render: input
         fields:
           - property: category
           - property: status
@@ -981,6 +984,7 @@ views:
       - heading: "Inspires"
         source: inspires
         display: cards
+        render: input
         fields:
           - property: status
         empty_message: "Not linked to features or concepts"
@@ -995,6 +999,7 @@ views:
       - heading: "Promoted To"
         source: promoted
         display: cards
+        render: input
         fields:
           - property: status
         empty_message: "Not yet promoted"
@@ -1022,6 +1027,7 @@ views:
       - heading: "Future Concept"
         source: entry
         display: properties
+        render: input
         fields:
           - property: status
           - property: effort
@@ -1031,21 +1037,25 @@ views:
       - heading: "Rationale"
         source: entry
         display: properties
+        render: input
         fields:
           - property: rationale
       - heading: "Challenges"
         source: entry
         display: properties
+        render: input
         fields:
           - property: challenges
       - heading: "Prerequisites"
         source: entry
         display: properties
+        render: input
         fields:
           - property: prerequisites
       - heading: "Based On Ideas"
         source: ideas
         display: cards
+        render: input
         fields:
           - property: category
           - property: status
@@ -1053,6 +1063,7 @@ views:
       - heading: "Extends Concepts"
         source: extends
         display: list
+        render: input
         fields:
           - property: layer
           - property: status
@@ -1060,18 +1071,21 @@ views:
       - heading: "Would Enable Features"
         source: enables
         display: list
+        render: input
         fields:
           - property: status
         empty_message: "No features would be enabled"
       - heading: "Would Replace"
         source: replaces
         display: list
+        render: input
         fields:
           - property: status
         empty_message: "Does not replace anything"
       - heading: "Blocked By"
         source: blockers
         display: cards
+        render: input
         fields:
           - property: status
         empty_message: "No blockers"
@@ -1099,6 +1113,7 @@ views:
       - heading: "Feature"
         source: entry
         display: properties
+        render: input
         fields:
           - property: status
           - property: priority
@@ -1108,6 +1123,7 @@ views:
       - heading: "Required Concepts"
         source: concepts
         display: list
+        render: input
         fields:
           - property: layer
           - property: status
@@ -1134,6 +1150,7 @@ views:
       - heading: "Tests"
         source: tests
         display: list
+        render: input
         fields:
           - property: kind
           - property: status
@@ -1141,6 +1158,7 @@ views:
       - heading: "Inspired By Ideas"
         source: ideas
         display: cards
+        render: input
         fields:
           - property: category
           - property: status
@@ -1169,6 +1187,7 @@ views:
       - heading: "Concept"
         source: entry
         display: properties
+        render: input
         fields:
           - property: layer
           - property: package
@@ -1179,6 +1198,7 @@ views:
       - heading: "Governed By Decisions"
         source: decisions
         display: cards
+        render: input
         fields:
           - property: status
           - property: date
@@ -1186,6 +1206,7 @@ views:
       - heading: "Required By Features"
         source: features
         display: list
+        render: input
         fields:
           - property: status
           - property: priority
@@ -1202,6 +1223,7 @@ views:
       - heading: "Test Coverage"
         source: tests
         display: list
+        render: input
         fields:
           - property: kind
           - property: status
@@ -1209,6 +1231,7 @@ views:
       - heading: "Future Extensions"
         source: future_extensions
         display: cards
+        render: input
         fields:
           - property: status
           - property: effort

@@ -420,6 +420,26 @@ function getPropertyDef(entityType: string, propertyName: string): PropertyDef |
   return et?.properties?.[propertyName]
 }
 
+// entryDisplayValue: the entry-section analogue of `rowDisplayValue` below —
+// prefer the live `entry.properties` over the display-stringified
+// `fields[i].values` server mirror, which `handlePropertyApplied` never
+// updates (it rewrites `entry.properties` only).
+//
+// Before TKT-HOIX1 the entry display path was reachable only when the ACL
+// denied EVERY field in the section, so nothing could edit those values and
+// the mirror could not go stale. With `render` defaulting to display, a
+// display-rendered section is now the common case and can sit alongside a
+// `render: input` section editing the same property — at which point the
+// display section would show last-loadView's string forever. Same bug class
+// as RR-FC1C, same fix.
+function entryDisplayValue(field: ViewSectionField): unknown {
+  const props = entry.value?.properties
+  if (field.property && props && field.property in props) {
+    return props[field.property]
+  }
+  return field.values ?? []
+}
+
 function mapFieldsToProperties(fields: ViewSectionField[] | undefined): PropertyItem[] {
   if (!fields) return []
   // Pre-resolve PropertyDef for the entry entity once (RR-UD1H). For
@@ -437,7 +457,7 @@ function mapFieldsToProperties(fields: ViewSectionField[] | undefined): Property
     return {
       name,
       label: field.label,
-      value: field.values ?? [],
+      value: entryDisplayValue(field),
       propType: field.propType,
       propertyDef: def,
       span: field.span,

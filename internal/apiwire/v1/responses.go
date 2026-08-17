@@ -343,6 +343,12 @@ type SidePanelSection struct {
 // is git-crypt encrypted — the field is known to exist in the schema but
 // its value cannot be read.
 // Span is the field's width on the 12-column layout grid (0 = full width).
+//
+// Render is the already-resolved render mode ("display" | "input", TKT-HOIX1),
+// set server-side from the section + field config. View sections and cards/list
+// rows honor it; the side-panel renderer does not implement inline edit today
+// and ignores it.
+//
 // Field order and types must stay in lockstep with dataentry.SectionFieldData:
 // the handlers convert between them with a direct struct conversion, so the
 // compiler is what keeps the wire surface and the internal DTO from drifting.
@@ -353,6 +359,7 @@ type SectionField struct {
 	PropType     string   `json:"propType,omitempty"`
 	Inaccessible bool     `json:"inaccessible,omitempty"`
 	Span         int      `json:"span,omitempty"`
+	Render       string   `json:"render,omitempty"`
 }
 
 // SidePanelEntity represents an entity in a side panel section.
