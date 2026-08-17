@@ -38,7 +38,7 @@ below):**
 - (#13) add an explicit AC/test pinning the dual-enforcement contract: scan and index agree on empty, absent, list, and non-string values (per-type scoping already agrees).
 
 - [x] Run `/design-review` before starting implementation
-- [ ] All critical/significant findings addressed in plan — **BLOCKED on the two critical spikes (RR-5LZWX8, RR-GVXUIQ) + user go-ahead**
+- [x] All critical/significant findings addressed in plan — the two criticals were de-risked (RR-5LZWX8 ConstraintName spike passed; RR-GVXUIQ charset validator added), and the plan/implementation reflect all 9 findings.
 
 **Design Review Findings:** RR-5LZWX8, RR-GVXUIQ (critical); RR-AROZJY,
 RR-CWI8HG, RR-QY5S4C, RR-2HMGZJ, RR-FTQE3U, RR-B5Y6DZ, RR-3NB0P9 (significant);
