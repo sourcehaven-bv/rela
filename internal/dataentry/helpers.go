@@ -420,7 +420,25 @@ func (a *App) executeQuery(ctx context.Context, query string) ([]*entity.Entity,
 		// executeQuery never sorted by them.
 		candidates, err = a.runVisibleFreeTextSearch(ctx, svc, sq, scope)
 	} else {
-		candidates, err = visibleListByTypes(ctx, svc, sq.EntityTypes, scope)
+		// Push the equality filters into the store as a PRE-FILTER, cutting
+		// the rows loaded. The Go pass below still evaluates every filter,
+		// including the pushed ones, and remains authoritative.
+		//
+		// That belt-and-braces is deliberate rather than redundant.
+		// store.PropPredicate compares by STRING FORM; filter.MatchAll is
+		// metamodel-aware. On a typed property they disagree — `count!=03`
+		// against an integer 3 is a non-match typed and a match as strings,
+		// and an enum filter naming an undeclared value ERRORS in Go
+		// (surfacing the operator's typo) while the store silently returns
+		// nothing. Dropping a pushed filter from the Go pass would let the
+		// looser of the two decide, WIDENING results on a path /_search and
+		// scope navigation share.
+		//
+		// Keeping both makes the outcome provably identical to the
+		// pre-pushdown behavior — the store can only ever remove rows the Go
+		// pass would also have removed — while still winning the I/O.
+		pushed := pushdownPrefilters(sq.PropertyFilters, svc.Meta, sq.EntityTypes)
+		candidates, err = visibleListByTypes(ctx, svc, sq.EntityTypes, scope, pushed)
 	}
 	if err != nil {
 		return nil, err
@@ -540,13 +558,25 @@ func hiddenSearchFields(aff affordanceService) search.HiddenFieldsFunc {
 // listFromStoreByTypes (which other, ungated consumers still use and
 // which swallows iterator errors), this fails loud on both verdict
 // paths — same rationale as scopedSortedEntities.
+// visibleListByTypes loads the visible entities of the given types, applying
+// `props` in the STORE rather than after the fact.
+//
+// The predicates compose with the ACL scope rather than replacing it: an
+// AllowAll type gets a plain type+props query, and a scope-restricted type
+// gets its verdict query with the props appended. Both are ANDed by the
+// store, so narrowing by property can never widen what the gate allows.
 func visibleListByTypes(
 	ctx context.Context, svc Services, types []string, scope map[string]search.TypeScope,
+	props []store.PropPredicate,
 ) ([]*entity.Entity, error) {
 	if len(types) == 0 {
 		if _, wildcard := scope[search.WildcardType]; wildcard {
 			// Wildcard-allow (no ACL): every entity, any type — the
 			// pre-ACL listAll shape, with iterator errors surfaced.
+			// No type named and no ACL: every entity, any type. The
+			// property predicates cannot be pushed here — GraphQuery is
+			// per-type — so this one path keeps the Go-side filter, which
+			// still runs over the result below.
 			out := make([]*entity.Entity, 0)
 			for e, err := range svc.Store.ListEntities(ctx, store.EntityQuery{}) {
 				if err != nil {
@@ -571,21 +601,58 @@ func visibleListByTypes(
 		if !ok {
 			continue // denied type
 		}
-		if ts.AllowAll {
-			for e, err := range svc.Store.ListEntities(ctx, store.EntityQuery{Type: typ}) {
-				if err != nil {
-					return nil, fmt.Errorf("%w: %w", errListLoad, err)
-				}
-				out = append(out, e)
-			}
-			continue
+		got, err := visibleEntitiesOfType(ctx, svc, typ, ts, props)
+		if err != nil {
+			return nil, err
 		}
-		for e, err := range svc.Store.GraphQuery(ctx, *ts.Query) {
+		out = append(out, got...)
+	}
+	return out, nil
+}
+
+// visibleEntitiesOfType loads one type's visible entities, applying the
+// property predicates in the store.
+//
+// Three shapes, differing only in how the query is composed:
+//
+//   - AllowAll with no props: a plain type listing, byte-identical to the
+//     pre-pushdown path.
+//   - AllowAll with props: a type+props query rather than a full scan. The
+//     error class stays errListLoad — no gate is involved here.
+//   - Scope-restricted: the gate's own verdict query with the props appended,
+//     ANDed by the store, so narrowing by property can never widen what the
+//     gate allows. errACLListQuery, because a failure here IS a gate failure.
+func visibleEntitiesOfType(
+	ctx context.Context, svc Services, typ string,
+	ts search.TypeScope, props []store.PropPredicate,
+) ([]*entity.Entity, error) {
+	if ts.AllowAll && len(props) == 0 {
+		var out []*entity.Entity
+		for e, err := range svc.Store.ListEntities(ctx, store.EntityQuery{Type: typ}) {
 			if err != nil {
-				return nil, fmt.Errorf("%w: %w", errACLListQuery, err)
+				return nil, fmt.Errorf("%w: %w", errListLoad, err)
 			}
 			out = append(out, e)
 		}
+		return out, nil
+	}
+
+	q := store.GraphQuery{EntityType: typ, Props: props}
+	errClass := errListLoad
+	if !ts.AllowAll {
+		// Copy by value: TypeScope.Query is shared across calls and must not
+		// be mutated (store.GraphQueryer documents the same rule).
+		q = *ts.Query
+		q.Props = append(append([]store.PropPredicate(nil), q.Props...), props...)
+		errClass = errACLListQuery
+	}
+
+	var out []*entity.Entity
+	for e, err := range svc.Store.GraphQuery(ctx, q) {
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", errClass, err)
+		}
+		out = append(out, e)
 	}
 	return out, nil
 }
@@ -725,6 +792,86 @@ func relationDirection(d dataentryconfig.Direction) store.Direction {
 
 // matchesPropertyFilters checks whether an entity matches the given property filters.
 // Returns true if no filters are specified or all filters match.
+// pushdownPrefilters returns the store-evaluable subset of the property
+// filters, as a PRE-FILTER only — the caller must still run every filter
+// through the metamodel-aware Go pass.
+//
+// Only plain equality pushes down. Everything else is either unsupported by
+// store.PropPredicate (ordered comparison, regex, fuzzy) or means something
+// different there: a glob rides on OpEqual but would become a literal string
+// comparison.
+//
+// NOT-equal is excluded even though PropPredicate supports it: on a typed
+// property a string-form disagreement WIDENS (`flag!=yes` on a boolean errors
+// in Go, excluding the row, and matches in the store), so it would admit rows
+// the Go pass must then reject — no saving, and a bug in the pairing leaks them.
+//
+// TYPED properties are excluded entirely, in either direction. A pre-filter is
+// only sound if it can never remove a row the authoritative pass would keep,
+// and equality on a typed property breaks exactly that: `count=03` against an
+// integer 3 matches numerically but not as strings, so pushing it would drop a
+// row that belongs in the result. Only `string` and untyped-unknown properties
+// compare identically both ways.
+//
+// Multi-type queries are handled by requiring EVERY named type to declare the
+// property as string-comparable: one property name can be `string` on one type
+// and `integer` on another, and the pushdown is applied per query, not per type.
+// An unnamed-type query (no `type:`) pushes nothing, since any type could match.
+//
+// Emptiness agrees across both paths because internal/propmatch is the single
+// definition backing store.PropPredicate AND internal/filter's empty handling;
+// storetest's Props_value_shapes pins that agreement per backend.
+func pushdownPrefilters(
+	filters []*filter.Filter, meta *metamodel.Metamodel, types []string,
+) []store.PropPredicate {
+	if len(types) == 0 || meta == nil {
+		return nil // no declared type to check against — push nothing
+	}
+	var pushed []store.PropPredicate
+	for _, f := range filters {
+		// A glob (`status=in-*`) rides on OpEqual but means pattern-match, so
+		// it must NOT become a literal string comparison in the store.
+		if f.IsGlob || f.Operator != filter.OpEqual {
+			continue
+		}
+		if !stringComparableOnEveryType(meta, types, f.Property) {
+			continue
+		}
+		pushed = append(pushed, store.PropPredicate{
+			Property: f.Property, Op: store.PropEqual, Value: f.Value,
+		})
+	}
+	return pushed
+}
+
+// stringComparableOnEveryType reports whether `prop` compares identically as a
+// string on every named type — the precondition for pushing it down.
+//
+// Conservative by construction: an unknown type, an undeclared property, or
+// any non-string declared type all return false, so the filter simply stays in
+// the Go pass. The cost of a false negative is a slower query; the cost of a
+// false positive is a wrong result.
+func stringComparableOnEveryType(meta *metamodel.Metamodel, types []string, prop string) bool {
+	for _, typ := range types {
+		def, ok := meta.GetEntityDef(typ)
+		if !ok {
+			return false
+		}
+		pd, ok := def.Properties[prop]
+		if !ok {
+			return false
+		}
+		// Enums are excluded too: filter.matchEnum ERRORS on a value that is
+		// not declared, which surfaces an operator typo. Pushed down, the same
+		// typo silently matches nothing and the source goes quiet with no
+		// diagnostic.
+		if pd.Type != metamodel.PropertyTypeString {
+			return false
+		}
+	}
+	return true
+}
+
 func (a *App) matchesPropertyFilters(e *entity.Entity, filters []*filter.Filter) bool {
 	if len(filters) == 0 {
 		return true

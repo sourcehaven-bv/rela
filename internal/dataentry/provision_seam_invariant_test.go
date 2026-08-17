@@ -18,18 +18,21 @@ import (
 // write-handler source files, writeMu.Lock() appears ONLY inside the enterWrite
 // methods — every other mutation entry acquires the lock via enterWrite.
 //
-// This is a source check rather than a driven test because the four write
-// handler types (writeHandler, syncHandler, attachmentHandler) live in several
-// files and the action/attachment paths need heavy fixture setup to drive; the
-// CRUD and sync paths ARE driven end-to-end in provision_e2e_test.go. Together
-// they pin both that the seam works and that no path can skip it.
+// This is a source check rather than a driven test because the write handler
+// types (writeHandler, attachmentHandler) live in several files and the
+// action/attachment paths need heavy fixture setup to drive; the CRUD path IS
+// driven end-to-end in provision_e2e_test.go. Together they pin both that the
+// seam works and that no path can skip it.
+//
+// NOTE (TKT-8P1TM7): the sync record write handlers (sync_handlers.go) were
+// retired — sync now writes through the v1 CRUD path (write_handler.go), which
+// this guard already covers. syncHandler now serves only the manifest (a read),
+// so it holds no writeMu and needs no enterWrite; it is dropped from the scan.
 func TestProvisionSeam_EveryWriteHandlerUsesEnterWrite(t *testing.T) {
 	// The files that hold writeMu-taking mutation handlers.
 	files := []string{
 		"write_handler.go",
 		"actions.go",
-		"sync_handler.go",
-		"sync_handlers.go",
 		"attachment_handler.go",
 		"handlers_attachment.go",
 	}

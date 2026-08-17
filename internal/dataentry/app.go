@@ -33,6 +33,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/userstate"
 	"github.com/Sourcehaven-BV/rela/internal/validator"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
@@ -87,15 +88,21 @@ const userPaletteFile = "palette.yaml"
 // package functions, and the dead ungated server-rendered nav path (5
 // methods, #1043) was deleted (114 → 90).
 //
-// 90 → 91: [App.SetRemoteMCP] (TKT-BDG8U9). It is the public opt-in setter
-// for the remote MCP endpoint and belongs on App for the same reason
-// SetJWTGate and SetSecurityConfig do — it validates and stores
-// pre-NewRouter server configuration on the aggregate. The other half of
-// that feature is deliberately NOT a method: `registerMCPRoute` takes the
-// handler as a parameter, and `toolForPath` is a package function, so the
-// mount cost App exactly one method rather than three.
+// The directive lags the real count (TKT-N0IKN9 tracks decomposing App); it is
+// a ratchet target, not a budget to spend. SetUserState took it from 98 to 99 —
+// it follows the existing SetSecurityConfig / SetJWTGate setter idiom rather
+// than becoming a 12th positional NewApp parameter — and the CalDAV alias
+// setter that landed alongside it took the count to 100, a later one to 101,
+// and redactedForSuggestion to 102 — the field-redaction seam the next-action
+// candidate path needs, which has to reach affordanceService.
 //
-//plimsoll:max-methods=91
+// TKT-BDG8U9 adds [App.SetRemoteMCP] on the same terms — the public opt-in
+// setter for the remote MCP endpoint, matching that setter idiom. The rest of
+// that feature deliberately stays OFF App: `registerMCPRoute` takes its
+// handler as a parameter and `toolForPath` is a package function, so the
+// mount cost one method rather than three.
+//
+//plimsoll:max-methods=103
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS
@@ -125,6 +132,15 @@ type App struct {
 	// the regular searcher on fs/memory builds, pgstore-native on the
 	// postgres build.
 	visibleSearcher search.VisibleSearcher
+	// userState backs the next-action layer's per-user snooze / mute /
+	// cooldown records. NOT graph content: a snooze is a fact about one
+	// person's relationship to a suggestion, and storing it as an entity
+	// would flood the audit log and the postgres version sweep (cooldown
+	// alone writes on every render). Nil when the deployment wires no
+	// backend — the next-action endpoints then report "not configured"
+	// rather than silently forgetting what users asked to hide.
+	userState userstate.Store
+
 	// visibleReader is the ACL-bounded entity-read seam (TKT-N26KLB): the
 	// entity-read analog of visibleSearcher. Read handlers gate single-GET
 	// and include-filtering through it so the read gate is applied
@@ -856,14 +872,15 @@ func NewApp(
 	}
 	app.logo = logo
 
-	// syncHandler owns the /api/sync/ route cluster (fs-client ↔ pg-server
-	// replication). It shares App's store (reads), entityManager (deletes), and
-	// — crucially — a POINTER to App's writeMu so sync pushes/deletes serialize
-	// against every other data-entry mutation. The manifest/applier capabilities
-	// are resolved once from the concrete store/manager (nil on fs/memory builds,
-	// where the sync endpoints degrade to 501).
-	app.sync = newSyncHandler(st, app.entityManager, &app.writeMu)
-	app.sync.provision = newProvisionSeam(app)
+	// syncHandler owns the /api/sync/manifest change feed (fs-client ↔ pg-server
+	// replication). The record read/write channel was retired in TKT-8P1TM7 (the
+	// sync client now uses /api/v1), so the handler holds only App's store (to
+	// resolve a relation entry's source type for the read gate); the manifest
+	// capability is resolved from the concrete store (nil on fs/memory builds,
+	// where the endpoint degrades to 501). It has no write path, so the
+	// unmatched_principal provision seam (TKT-ANUJDS) is wired only into the v1
+	// write handler now, not here.
+	app.sync = newSyncHandler(st)
 
 	// viewsHandler owns the read-only view-assembly surface (view traversal,
 	// section building, /_views, /_sidepanel, /_sidebar). Fixed service

@@ -149,9 +149,9 @@ func TestReject_DeniesEveryWritePath(t *testing.T) {
 	}{
 		{"CRUD update", http.MethodPatch, "/api/v1/tickets/TKT-001", `{"properties":{"title":"x"}}`},
 		{"CRUD create", http.MethodPost, "/api/v1/tickets", `{"properties":{"title":"x"}}`},
-		// sync CREATE (fresh id) avoids the handler's If-Match conflict precheck,
-		// which would 412 before reaching authz.
-		{"sync write", http.MethodPut, "/api/sync/entities/TKT-NEW", `{"id":"TKT-NEW","type":"ticket","properties":{"title":"x"}}`},
+		// The sync write path was retired in TKT-8P1TM7 — sync now writes through
+		// the /api/v1 CRUD paths above, so the "CRUD create"/"CRUD update" cases
+		// already cover the authz denial a sync push would hit.
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()

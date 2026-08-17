@@ -1219,15 +1219,26 @@ views:
       - heading: "Task"
         source: entry
         display: properties
+        # Deliberately left at the display default (TKT-HOIX1) so the suite
+        # exercises BOTH render modes on one page: this entry section renders
+        # display values while the "Implements" list section below is inline-
+        # editable. A future spec asserting an editable form here must add
+        # render: input rather than assume the pre-TKT-HOIX1 default.
         fields:
           - property: status
           - property: assignee
       - heading: "Implements"
         source: implemented
         display: list
+        # render: input is REQUIRED for this section to mount a
+        # SectionEditForm — fields render as display by default (TKT-HOIX1).
+        # Without it the #997 unmount-crash guard silently stops exercising
+        # the DOM shape it exists to guard.
         fields:
           - property: status
+            render: input
           - property: priority
+            render: input
         empty_message: "No implemented features"
 
 kanbans:

@@ -5,7 +5,7 @@ title: 'Next-action layer Phase 0: engine, bands, user-state service (no store c
 kind: enhancement
 priority: medium
 effort: l
-status: backlog
+status: done
 ---
 
 ## Goal

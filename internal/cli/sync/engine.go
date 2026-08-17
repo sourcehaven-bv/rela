@@ -3,6 +3,7 @@ package sync
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -21,6 +22,11 @@ type LocalApplier interface {
 	ApplyRelation(ctx context.Context, r *entity.Relation) (*entity.Relation, error)
 	DeleteEntity(ctx context.Context, id string, cascade bool) (*entity.DeleteResult, error)
 	DeleteRelation(ctx context.Context, from, relType, to string) error
+	// RenameEntity re-keys a locally-created entity from its temporary id to the
+	// primary-minted id after a push create (TKT-8P1TM7). The manager rewrites
+	// every incident relation endpoint as part of the rename (RelationsUpdated),
+	// so the replica's reference remap is a single call, not a manual sweep.
+	RenameEntity(ctx context.Context, oldID, newID string, opts entity.RenameOptions) (*entity.RenameResult, error)
 }
 
 // Engine carries the collaborators shared by push and pull: the remote client,
@@ -33,6 +39,16 @@ type Engine struct {
 	store   store.Store
 	applier LocalApplier
 	idx     *State
+
+	// schema is the primary's type→plural map, fetched once per run by
+	// ensureSchema and reused for every /api/v1/{plural}/{id} URL. nil until the
+	// first fetch. The compatibility handshake (CheckSchemaCompatible) runs at
+	// the same point.
+	schema *RemoteSchema
+	// local is the replica's own schema view for the compatibility handshake,
+	// supplied by the CLI wiring (nil disables the check — e.g. in unit tests
+	// that stub the remote schema directly).
+	local *LocalSchema
 }
 
 // NewEngine constructs a sync engine. applier may be nil for a push-only run
@@ -52,6 +68,43 @@ func NewEngine(client *Client, st store.Store, applier LocalApplier, idx *State)
 
 // Index returns the engine's in-memory index so the caller can Save it.
 func (e *Engine) Index() *State { return e.idx }
+
+// SetLocalSchema supplies the replica's own schema view for the compatibility
+// handshake. Call before Pull/Push; nil (the default) disables the check.
+func (e *Engine) SetLocalSchema(local *LocalSchema) { e.local = local }
+
+// ensureSchema fetches the primary's schema once per run (idempotent) and, when
+// a local schema was supplied, runs the compatibility handshake — failing the
+// whole run before any record is touched if the schemas diverge.
+func (e *Engine) ensureSchema(ctx context.Context) error {
+	if e.schema != nil {
+		return nil
+	}
+	rs, err := e.client.Schema(ctx)
+	if err != nil {
+		return err
+	}
+	if e.local != nil {
+		if cerr := rs.CheckSchemaCompatible(*e.local); cerr != nil {
+			return cerr
+		}
+	}
+	e.schema = rs
+	return nil
+}
+
+// pluralFor resolves an entity type to its /api/v1 URL plural via the fetched
+// schema. An unknown type is a hard error — the replica must not guess a route.
+func (e *Engine) pluralFor(typeName string) (string, error) {
+	if e.schema == nil {
+		return "", errors.New("sync: schema not loaded (internal: ensureSchema not called)")
+	}
+	plural, ok := e.schema.Plural(typeName)
+	if !ok {
+		return "", fmt.Errorf("sync: no plural for entity type %q in the remote schema", typeName)
+	}
+	return plural, nil
+}
 
 // splitRelationKey reverses RelationKey: "from/type/to" -> (from, type, to).
 func splitRelationKey(key string) (from, relType, to string, ok bool) {

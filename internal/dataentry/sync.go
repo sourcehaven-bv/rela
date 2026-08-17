@@ -4,9 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strconv"
-	"strings"
 
-	"github.com/Sourcehaven-BV/rela/internal/entity"
 	synctypes "github.com/Sourcehaven-BV/rela/internal/sync"
 )
 
@@ -19,14 +17,6 @@ type manifestProvider interface {
 	ManifestSince(ctx context.Context, cursor int64) ([]synctypes.ManifestEntry, error)
 }
 
-// syncApplier is the id-preserving, automation-suppressed write path the sync
-// push uses. *entitymanager.Manager satisfies it; the EntityManager interface
-// deliberately omits these methods (sync is their only consumer).
-type syncApplier interface {
-	ApplyEntity(ctx context.Context, e *entity.Entity) (*entity.UpdateResult, error)
-	ApplyRelation(ctx context.Context, r *entity.Relation) (*entity.Relation, error)
-}
-
 // --- Wire DTOs ---
 
 type syncManifestResponse struct {
@@ -36,26 +26,9 @@ type syncManifestResponse struct {
 
 type syncManifestChange struct {
 	Kind    string `json:"kind"` // "e" or "r"
-	ID      string `json:"id"`   // entity id, or "from--type--to" for a relation
+	ID      string `json:"id"`   // entity id, or "from/type/to" for a relation
 	Typ     string `json:"typ,omitempty"`
 	Deleted bool   `json:"deleted"`
-}
-
-// syncEntityBody is the JSON push/fetch payload for an entity.
-type syncEntityBody struct {
-	ID         string         `json:"id"`
-	Type       string         `json:"type"`
-	Properties map[string]any `json:"properties,omitempty"`
-	Content    string         `json:"content,omitempty"`
-}
-
-// syncRelationBody is the JSON push/fetch payload for a relation.
-type syncRelationBody struct {
-	From       string         `json:"from"`
-	Type       string         `json:"type"`
-	To         string         `json:"to"`
-	Properties map[string]any `json:"properties,omitempty"`
-	Content    string         `json:"content,omitempty"`
 }
 
 // handleSyncManifest: GET /api/sync/manifest?cursor=<token>. Returns the changes
@@ -171,72 +144,7 @@ func (h *syncHandler) filterVisibleManifest(
 	return visible, nil
 }
 
-// handleSyncRecord dispatches /api/sync/<kind>/<id...> by method:
-//
-//	GET    -> fetch the record's full content
-//	PUT    -> conditional push (If-Match: <hash>); 200 / 412 / 422
-//	DELETE -> conditional delete (If-Match: <hash>); 200 / 412
-//
-// kind is "entities" or "relations". For an entity the id is the path tail; for
-// a relation the tail is "<from>/<relType>/<to>".
-func (h *syncHandler) handleSyncRecord(w http.ResponseWriter, r *http.Request) {
-	kind, rest, ok := splitSyncPath(r.URL.Path)
-	if !ok {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", "Unknown sync resource", "")
-		return
-	}
-	switch r.Method {
-	case http.MethodGet:
-		h.handleSyncGet(w, r, kind, rest)
-	case http.MethodPut:
-		h.handleSyncPut(w, r, kind, rest)
-	case http.MethodDelete:
-		h.handleSyncDelete(w, r, kind, rest)
-	default:
-		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Use GET, PUT, or DELETE", "")
-	}
-}
-
-// --- path parsing + validation ---
-
-// splitSyncPath parses /api/sync/<kind>/<rest> into (kind, rest). kind must be
-// "entities" or "relations". rest is the remaining path (an entity id, or a
-// relation's from/type/to segments).
-func splitSyncPath(path string) (kind, rest string, ok bool) {
-	tail := strings.TrimPrefix(path, "/api/sync/")
-	if tail == path {
-		return "", "", false
-	}
-	parts := strings.SplitN(tail, "/", 2)
-	if len(parts) != 2 || parts[1] == "" {
-		return "", "", false
-	}
-	if parts[0] != "entities" && parts[0] != "relations" {
-		return "", "", false
-	}
-	return parts[0], parts[1], true
-}
-
-// validIDSegment allowlists an id/key path segment: it must be non-empty and
-// contain no path-traversal or separator characters. This runs BEFORE the
-// store so a crafted id can never escape the intended key space.
-func validIDSegment(s string) bool {
-	if s == "" {
-		return false
-	}
-	if strings.ContainsAny(s, "/\\") || strings.Contains(s, "..") {
-		return false
-	}
-	// asciiSpace (0x20) is the lowest printable ASCII code point; anything
-	// below it is a C0 control character and is rejected.
-	const asciiSpace = 0x20
-	for _, c := range s {
-		if c < asciiSpace { // no control characters
-			return false
-		}
-	}
-	return true
-}
+// --- cursor + key helpers ---
 
 func parseCursor(s string) int64 {
 	if s == "" {

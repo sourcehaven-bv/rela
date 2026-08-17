@@ -12,6 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
@@ -969,5 +970,141 @@ func TestCompareValues_TypeMismatch(t *testing.T) {
 func TestCompareOrdered_UnknownOperator(t *testing.T) {
 	if compareOrdered(1, 2, "bogus") {
 		t.Error("unknown operator should return false")
+	}
+}
+
+// pushdownTestMeta declares `status` as a string (push-eligible) and `count`
+// as an integer (never eligible — see stringComparableOnEveryType).
+func pushdownTestMeta() *metamodel.Metamodel {
+	return &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ticket": {Properties: map[string]metamodel.PropertyDef{
+				"status": {Type: metamodel.PropertyTypeString},
+				"title":  {Type: metamodel.PropertyTypeString},
+				"due":    {Type: metamodel.PropertyTypeDate},
+				"count":  {Type: metamodel.PropertyTypeInteger},
+			}},
+		},
+	}
+}
+
+// TestPushdownPrefilters pins which property filters may be handed to the
+// store as a PRE-FILTER.
+//
+// The pushdown is not a replacement for the Go pass — executeQuery still runs
+// every filter through the metamodel-aware filter.MatchAll, and the store can
+// only ever remove rows that pass would also remove. That belt-and-braces is
+// what makes the result provably identical to the pre-pushdown behavior,
+// because store.PropPredicate compares by STRING FORM and disagrees with the
+// typed comparison on integers, booleans and undeclared enum values.
+func TestPushdownPrefilters(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		in         *filter.Filter
+		wantPushed bool
+	}{
+		{
+			name:       "equality pushes down",
+			in:         &filter.Filter{Property: "status", Operator: filter.OpEqual, Value: "open"},
+			wantPushed: true,
+		},
+		{
+			name:       "is-empty pushes down",
+			in:         &filter.Filter{Property: "status", Operator: filter.OpEqual},
+			wantPushed: true,
+		},
+		{
+			// Excluded on purpose. It is the one operator where a string-form
+			// disagreement WIDENS: `flag!=yes` on a boolean errors in Go
+			// (excluding the row) but matches in the store, so as a pre-filter
+			// it admits rows the Go pass must then reject — no saving, and a
+			// bug in the pairing would leak them.
+			name:       "not-equal is excluded even though the store supports it",
+			in:         &filter.Filter{Property: "status", Operator: filter.OpNotEqual, Value: "done"},
+			wantPushed: false,
+		},
+		{
+			// `status=in-*` rides on OpEqual but means pattern-match; pushed
+			// down it would compare against the literal string "in-*".
+			name:       "glob stays in Go despite riding on OpEqual",
+			in:         &filter.Filter{Property: "status", Operator: filter.OpEqual, Value: "in-*", IsGlob: true},
+			wantPushed: false,
+		},
+		{
+			name:       "ordered comparison stays in Go",
+			in:         &filter.Filter{Property: "due", Operator: filter.OpLess, Value: "2026-01-01"},
+			wantPushed: false,
+		},
+		{
+			name:       "regex stays in Go",
+			in:         &filter.Filter{Property: "title", Operator: filter.OpRegex, Value: "^spike"},
+			wantPushed: false,
+		},
+		{
+			name:       "fuzzy stays in Go",
+			in:         &filter.Filter{Property: "title", Operator: filter.OpFuzzy, Value: "retro"},
+			wantPushed: false,
+		},
+		{
+			// `count=03` matches the integer 3 when typed and misses as
+			// strings, so pushing it would DROP a row that belongs in the
+			// result — the precondition a pre-filter must never break.
+			name:       "typed property is never pushed",
+			in:         &filter.Filter{Property: "count", Operator: filter.OpEqual, Value: "03"},
+			wantPushed: false,
+		},
+		{
+			// filter.matchEnum errors on an undeclared value, surfacing an
+			// operator typo. Pushed down the same typo silently matches
+			// nothing and the source goes quiet with no diagnostic.
+			name:       "undeclared property is never pushed",
+			in:         &filter.Filter{Property: "nope", Operator: filter.OpEqual, Value: "x"},
+			wantPushed: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			pushed := pushdownPrefilters([]*filter.Filter{tc.in}, pushdownTestMeta(), []string{"ticket"})
+
+			if !tc.wantPushed {
+				if len(pushed) != 0 {
+					t.Errorf("expected no pushdown, got %+v", pushed)
+				}
+				return
+			}
+			if len(pushed) != 1 {
+				t.Fatalf("expected one pushed predicate, got %d", len(pushed))
+			}
+			if pushed[0].Op != store.PropEqual {
+				t.Errorf("op = %v, want PropEqual", pushed[0].Op)
+			}
+			if pushed[0].Property != tc.in.Property || pushed[0].Value != tc.in.Value {
+				t.Errorf("predicate = %+v, want property/value from %+v", pushed[0], tc.in)
+			}
+		})
+	}
+}
+
+// A mixed query pushes only the equality; the rest is left for the Go pass,
+// which evaluates ALL of them regardless.
+func TestPushdownPrefilters_Mixed(t *testing.T) {
+	t.Parallel()
+	pushed := pushdownPrefilters([]*filter.Filter{
+		{Property: "status", Operator: filter.OpEqual, Value: "open"},
+		{Property: "due", Operator: filter.OpLess, Value: "2026-01-01"},
+	}, pushdownTestMeta(), []string{"ticket"})
+	if len(pushed) != 1 || pushed[0].Property != "status" {
+		t.Errorf("expected only the equality pushed, got %+v", pushed)
+	}
+}
+
+func TestPushdownPrefilters_Empty(t *testing.T) {
+	t.Parallel()
+	if got := pushdownPrefilters(nil, pushdownTestMeta(), []string{"ticket"}); len(got) != 0 {
+		t.Errorf("nil filters should push nothing, got %+v", got)
 	}
 }

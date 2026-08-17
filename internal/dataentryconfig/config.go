@@ -82,6 +82,14 @@ type Config struct {
 	Commands    map[string]CommandConfig     `yaml:"commands,omitempty"`
 	Actions     map[string]Action            `yaml:"actions,omitempty"`
 	Navigation  []NavigationEntry            `yaml:"navigation"`
+
+	// NextActionBands is the operator's ordered priority vocabulary; list
+	// order IS priority order, highest first. See nextaction.go.
+	NextActionBands []NextActionBand `yaml:"next_action_bands,omitempty" json:"next_action_bands,omitempty"`
+	// NextActions are the suggestion sources, keyed by source id. The id is
+	// half the suggestion key and the unit of muting, so it is stable
+	// operator-facing vocabulary, not an implementation detail.
+	NextActions map[string]NextActionSource `yaml:"next_actions,omitempty" json:"next_actions,omitempty"`
 }
 
 // EntityViewConfig declares UX bindings for a metamodel entity type.
@@ -182,23 +190,30 @@ type SidePanelConfig struct {
 // ClearWhenHidden values. Default (empty) is ClearWhenHiddenNo: a
 // condition-hidden field KEEPS its stored value (BUG-FB0LN8).
 //
-// A third value, "confirm" (ask the user before clearing, and undo the
-// triggering change if they decline), is DELIBERATELY not accepted yet. It
-// needs the form to separate "the user proposed a change" from "the change was
-// committed" — today an edit mutates form state and arms the autosave in one
-// step, so a decline has to reconstruct state after the fact, which is where
-// several bugs lived. Rejecting the value outright is the honest interim: a
-// config that asks for it fails loudly at author time rather than silently
-// behaving like something else. See TKT-7S5735 (propose/commit refactor).
+//	no       keep the value; hide → reveal is lossless (default)
+//	yes      clear it when the branch hides
+//	confirm  ask first; on decline, undo the triggering change too
+//
+// "confirm" is not merely "yes with a prompt" — it can also UNDO the change
+// that triggered it, which "yes" never does.
+//
+// It was rejected outright until TKT-7S5735: it needs the form to separate
+// "the user proposed a change" from "the change was committed", and an edit
+// used to mutate form state and arm the autosave in one step, so a decline had
+// to reconstruct state after the fact. That is where several bugs lived. The
+// propose/commit seam now decides before anything is applied, so a decline is
+// a true no-op rather than a rollback.
 const (
-	ClearWhenHiddenNo  = "no"
-	ClearWhenHiddenYes = "yes"
+	ClearWhenHiddenNo      = "no"
+	ClearWhenHiddenYes     = "yes"
+	ClearWhenHiddenConfirm = "confirm"
 )
 
 // ValidClearWhenHidden is the allowlist for FormField.ClearWhenHidden.
 var ValidClearWhenHidden = map[string]bool{
-	ClearWhenHiddenNo:  true,
-	ClearWhenHiddenYes: true,
+	ClearWhenHiddenNo:      true,
+	ClearWhenHiddenYes:     true,
+	ClearWhenHiddenConfirm: true,
 }
 
 // FormField defines a single field in a form.
@@ -790,11 +805,27 @@ type ViewTraverse struct {
 	Where          string `yaml:"where,omitempty" json:"where,omitempty"`
 }
 
+// Render modes for view section fields (TKT-HOIX1). A field renders as a
+// view-oriented display value unless it opts in to inline editing.
+//
+// RenderInput is an opt-in to *presentation*, not a grant: the ACL verdict
+// still decides writability, so `render: input` on a read-only field renders
+// display. Config can downgrade an editable field, never upgrade a
+// read-only one.
+const (
+	RenderDisplay = "display"
+	RenderInput   = "input"
+)
+
 // ViewSection defines a section within a view.
+//
+// Render sets the default render mode for this section's fields; an
+// individual field's own Render overrides it. Empty means RenderDisplay.
 type ViewSection struct {
 	Heading      string             `yaml:"heading,omitempty" json:"heading,omitempty"`
 	Source       string             `yaml:"source" json:"source"`
 	Display      string             `yaml:"display" json:"display"`
+	Render       string             `yaml:"render,omitempty" json:"render,omitempty"`
 	Fields       []ViewSectionField `yaml:"fields,omitempty" json:"fields,omitempty"`
 	Columns      []ListColumn       `yaml:"columns,omitempty" json:"columns,omitempty"`
 	GroupBy      string             `yaml:"group_by,omitempty" json:"group_by,omitempty"`
@@ -809,10 +840,30 @@ type ViewSection struct {
 // width, so a section with no spans authored reads as one scannable column.
 // Adjacency is therefore always DECLARED: two fields share a row because an
 // author said so, never because a viewport happened to fit them.
+//
+// Render is resolved server-side against the containing section — see
+// ResolveFieldRender — so consumers receive an already-resolved value and
+// never reimplement the inheritance rule.
 type ViewSectionField struct {
 	Property string `yaml:"property" json:"property"`
 	Label    string `yaml:"label,omitempty" json:"label,omitempty"`
 	Span     Span   `yaml:"span,omitempty" json:"span,omitempty"`
+	Render   string `yaml:"render,omitempty" json:"render,omitempty"`
+}
+
+// ResolveFieldRender returns the effective render mode for a field within a
+// section: the field's own Render, else the section's, else RenderDisplay.
+//
+// Single source of truth for the inheritance rule — both section builders
+// call this so they cannot drift.
+func ResolveFieldRender(sectionRender, fieldRender string) string {
+	if fieldRender != "" {
+		return fieldRender
+	}
+	if sectionRender != "" {
+		return sectionRender
+	}
+	return RenderDisplay
 }
 
 // CommandConfig defines an executable command triggered from the UI.

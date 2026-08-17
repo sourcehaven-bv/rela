@@ -16,6 +16,14 @@ export interface ViewSectionField {
   // the view/form config. Absent or 0 means full width — the default, and what
   // every auto-generated view emits. See utils/fieldSpan.ts.
   span?: number
+  // Server-resolved render mode (TKT-HOIX1). 'display' (the default) renders a
+  // view-oriented value; 'input' opts the field into inline edit. The
+  // section→field inheritance is resolved server-side, so this is already the
+  // effective value — never re-derive it here.
+  //
+  // Opting in to 'input' does NOT grant editability: the ACL verdict in
+  // `_fields` still decides, so 'input' on a read-only field renders display.
+  render?: 'input' | 'display'
 }
 
 // Entity data for view sections.

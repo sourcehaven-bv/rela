@@ -85,8 +85,15 @@ type DBTX interface {
 // not a separate service — and the whole point is the backend-native
 // projection, which cannot be delegated elsewhere.
 //
-//plimsoll:max-exported-methods=34
-//plimsoll:max-methods=42
+// [Store.UserState] (TKT-CXD0A4) is +1 again, and is deliberately the SAME
+// shape as [Store.VersionStore]: a one-line factory handing the shared pool to
+// a separate type, called once by the composition root. The subsystem's API
+// lives on [UserStateStore]; only the factory is here, so the count grows by
+// one per subsystem rather than by its surface. Adding UserStateStore's nine
+// methods to *Store is what the paragraph above forbids.
+//
+//plimsoll:max-exported-methods=35
+//plimsoll:max-methods=43
 type Store struct {
 	db        DBTX
 	observers []store.EntityObserver // notified synchronously after committed entity writes

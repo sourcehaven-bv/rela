@@ -10,6 +10,7 @@ exclude:
   - internal/entitymanager/entitymanagertest
   - internal/visibility/visibilitytest
   - internal/state/statetest
+  - internal/userstate/userstatetest
   - frontend
   - e2e
   - .claude
@@ -88,6 +89,10 @@ components:
   frontmatter:      { in: internal/frontmatter }
   filter:           { in: internal/filter }
   propmatch:        { in: internal/propmatch }
+  userstate:        { in: internal/userstate }
+  nextaction:       { in: internal/nextaction }
+  memuserstate:     { in: internal/userstate/memuserstate }
+  kvuserstate:      { in: internal/userstate/kvuserstate }
   pattern:          { in: internal/pattern }
   search:           { in: internal/search }
   bleveindex:       { in: internal/search/bleveindex }
@@ -324,6 +329,11 @@ deps:
       - dataentryconfig
   dataentry:
     mayDependOn:
+      # The next-action engine and its per-user state. dataentry supplies the
+      # ACL-gated CandidateFunc; it does NOT choose a userstate backend —
+      # that is a wiring-site decision, like the store backend.
+      - nextaction
+      - userstate
       - acl
       - affordances
       - apiwire
@@ -433,6 +443,11 @@ deps:
   # any tag, so both backends' deps must be allow-listed here.
   appbuild:
     mayDependOn:
+      # The composition root picks the userstate backend, the same way it
+      # picks the store backend. Consumers take the userstate.Store seam.
+      - userstate
+      - memuserstate
+      - kvuserstate
       - acl
       - app
       - audit
@@ -714,6 +729,28 @@ deps:
     mayDependOn:
       - entity
       - markdown
+  # userstate is the per-user next-action state seam (snooze/mute/cooldown).
+  # Deliberately NOT dependent on store: this state is not graph content, and
+  # letting it reach the store would invite exactly the "just put it in the
+  # graph" shortcut the design rejects.
+  memuserstate:
+    mayDependOn:
+      - userstate
+  # The durable backend rides the existing per-user state seam (state.KV),
+  # the same one the scheduler and document cache use.
+  kvuserstate:
+    mayDependOn:
+      - state
+      - userstate
+  # nextaction is the resolution engine. It depends on NO store, searcher or
+  # ACL type: candidates arrive through a consumer-side CandidateFunc that the
+  # wiring site supplies already read-gated. That is what keeps the engine
+  # testable without a graph, and what stops read-path ACL leaking in here.
+  nextaction:
+    mayDependOn:
+      - dataentryconfig
+      - entity
+      - userstate
   # propmatch is a PURE LEAF (stdlib only) on purpose — it is imported by
   # both filter (a branch) and the store layer, so anything added to it
   # lands inside the store too. Do not give it dependencies.
@@ -794,6 +831,10 @@ deps:
       - store
   pgstore:
     mayDependOn:
+      # The postgres build carries its own next-action state backend: it is the
+      # only one safe for a multi-process deployment, and it rides the pool
+      # this package already owns rather than opening a second one.
+      - userstate
       - canonical
       - graphquerynaive
       - search

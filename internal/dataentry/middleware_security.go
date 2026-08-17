@@ -279,6 +279,10 @@ var nonBrowserExemptPrefixes = []string{
 	// MCPPath, not a subtree. isCSRFExempt uses HasPrefix, so this also
 	// covers any future `/api/v1/_mcp/...` sub-route.
 	MCPPath,
+	// NOTE: the sync CLI's /api/v1 data + schema routes are also non-browser
+	// exempt, but they can't be a static prefix ({plural} varies per type), so
+	// they're matched by isSyncExemptV1Path (folded into isCSRFExempt) rather
+	// than listed here (TKT-8P1TM7). Same conditioning applies.
 }
 
 // insensitivePathPrefixes carves exceptions OUT of the sensitive prefixes above.
@@ -296,6 +300,39 @@ var nonBrowserExemptPrefixes = []string{
 // the same-origin host page's MessageChannel bridge talks to the API).
 var insensitivePathPrefixes = []string{
 	"/api/v1/_apps/",
+}
+
+// isSyncExemptV1Path reports whether an /api/v1 path is one the sync CLI uses
+// (TKT-8P1TM7), so the same provably-non-browser CSRF relaxation that covers
+// /api/sync/ applies. It matches:
+//
+//   - /api/v1/_schema — the schema handshake
+//   - /api/v1/{plural}[/...] — the entity/relation data routes, where {plural}
+//     is a real entity-type plural: a first segment that does NOT start with '_'
+//
+// It deliberately does NOT match the underscore-prefixed v1 sub-surfaces
+// (/api/v1/_apps, /api/v1/_search, /api/v1/_config, /api/v1/_sidebar, …): those
+// are SPA/browser surfaces and keep the full same-origin gate. So this cannot
+// widen the exemption to anything a browser reaches — and even for the data
+// routes the exemption still requires the no-cookie/no-origin/no-Sec-Fetch shape
+// that only a non-browser client produces.
+func isSyncExemptV1Path(path string) bool {
+	const base = "/api/v1/"
+	if !strings.HasPrefix(path, base) {
+		return false
+	}
+	rest := path[len(base):]
+	if rest == "" {
+		return false
+	}
+	first, _, _ := strings.Cut(rest, "/")
+	if first == "_schema" {
+		return true
+	}
+	// A data route: {plural} is a type-name slug, never underscore-prefixed
+	// (underscore-prefixed first segments are the reserved _apps/_search/_config
+	// /… surfaces, which must stay browser-gated).
+	return first != "" && first[0] != '_'
 }
 
 func isSensitivePath(path string) bool {
@@ -340,6 +377,17 @@ func isCSRFExempt(r *http.Request) bool {
 			break
 		}
 	}
+	// The sync CLI (TKT-8P1TM7) reads and writes through the authorized /api/v1
+	// data routes and /api/v1/_schema — not a private /api/sync/ channel. Those
+	// paths can't be a static prefix ({plural} varies per entity type), so match
+	// them explicitly. The exemption is STILL conditioned on the provably-non-
+	// browser signals below (no Sec-Fetch-Site, no Cookie, no Origin), which a
+	// browser cannot forge — so a browser fetch() of a v1 data route stays
+	// same-origin gated exactly as before. This does NOT blanket-exempt /api/v1:
+	// only the specific data + schema shapes the sync client uses match.
+	if !exemptPath && isSyncExemptV1Path(r.URL.Path) {
+		exemptPath = true
+	}
 	if !exemptPath {
 		return false
 	}
@@ -349,7 +397,13 @@ func isCSRFExempt(r *http.Request) bool {
 	if len(r.Cookies()) > 0 {
 		return false // credentialed request — pre-Fetch-Metadata browser fallback
 	}
-	if _, hasOrigin := requestOrigin(r); hasOrigin {
+	// A bare CLI sends NO Origin header at all. A browser sends one on
+	// cross-origin requests — INCLUDING the literal "null" a sandboxed iframe or
+	// cross-origin form POST sends. So reject on the PRESENCE of an Origin header,
+	// not just a parseable one: `requestOrigin` maps "null" to (,false), which
+	// would otherwise let a sandboxed-iframe cross-origin POST ride the exemption.
+	// Referer is also a browser signal, so a present Referer disqualifies too.
+	if r.Header.Get("Origin") != "" || r.Header.Get("Referer") != "" {
 		return false // a browser sent an Origin/Referer — not a bare CLI request
 	}
 	return true

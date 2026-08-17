@@ -454,6 +454,14 @@ func main() {
 	// without it the routes are not registered at all.
 	app.SetCalDAVAliases(svc.CalDAVAliases())
 
+	// Next-action per-user state. The composition root picks the backend
+	// (durable over state.KV, or the store-native one on postgres); this only
+	// hands the app what it built.
+	if err := app.SetUserState(svc.UserState()); err != nil {
+		slog.Error("failed to wire next-action state", "error", err)
+		os.Exit(1)
+	}
+
 	// Start file watcher for live-reload.
 	// The watcher goroutine is cleaned up on process exit.
 	if err := app.StartWatching(); err != nil {
@@ -473,27 +481,7 @@ func main() {
 
 	// Identity sources are mutually exclusive — validate BEFORE building anything,
 	// so a conflicting config never reaches a running server.
-	mode, modeErr := validateIdentityFlags(f, os.Getenv(dataentry.EnvDataEntryUserVar))
-	if modeErr != nil {
-		slog.Error("invalid identity configuration", "error", modeErr)
-		os.Exit(1)
-	}
-
-	// Build the signed-JWT verifier once (nil when JWT identity is disabled) and
-	// share it between the identity gate and the webhook receiver so the JWKS
-	// is fetched a single time.
-	idv := buildIdentityVerifier(context.Background(), f)
-	wirePrincipalResolvers(app, f, idv, mode)
-	wireWebhookReceiver(app, f, idv)
-
-	// After wirePrincipalResolvers: SetRemoteMCP checks that the JWT gate is
-	// installed, so it must run once identity is wired. Exit on failure — the
-	// operator asked for MCP, and booting silently without it would serve a
-	// server that lacks the feature they enabled.
-	if err := wireRemoteMCP(app, svc, f); err != nil {
-		slog.Error("failed to enable remote MCP", "error", err)
-		os.Exit(1)
-	}
+	wireIdentityAndMCP(app, svc, f)
 
 	srv := newHTTPServer(addr, app.NewRouter())
 

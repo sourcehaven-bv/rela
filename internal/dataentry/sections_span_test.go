@@ -36,7 +36,7 @@ func TestSectionFieldSpan_SurvivesBothConstructionSites(t *testing.T) {
 	}
 
 	t.Run("buildSectionEntityData (cards/list rows)", func(t *testing.T) {
-		sed := app.views.buildSectionEntityData(context.Background(), e, secFields, eDef)
+		sed := app.views.buildSectionEntityData(context.Background(), e, secFields, eDef, "")
 		assertSpans(t, sed.Fields, map[string]int{"title": 0, "status": 4})
 	})
 
@@ -90,7 +90,7 @@ func TestSectionFieldSpan_ZeroMeansFullWidth(t *testing.T) {
 	eDef, _ := st.Meta.GetEntityDef(e.Type)
 
 	sed := app.views.buildSectionEntityData(
-		context.Background(), e, []ViewSectionField{{Property: "title"}}, eDef)
+		context.Background(), e, []ViewSectionField{{Property: "title"}}, eDef, "")
 
 	if len(sed.Fields) != 1 {
 		t.Fatalf("got %d fields, want 1", len(sed.Fields))
