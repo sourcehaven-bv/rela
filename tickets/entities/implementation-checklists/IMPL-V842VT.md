@@ -1,11 +1,23 @@
 ---
 id: IMPL-V842VT
 type: implementation-checklist
-title: 'Implementation: Cut MCP peak memory ~4x: scorch in-memory index + chunked bleve backfill'
+title: 'Implementation: Cut MCP peak memory 24x: persistent on-disk search index reused across restarts'
 status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
+
+> **SUPERSEDED — read this first.** This records the first implementation
+> (in-memory scorch + chunking, ~3.8x). That engine choice was abandoned:
+> in-memory scorch starts neither persister nor merger, so memory grows
+> without bound under sustained writes (5.7GB after 1500 edits, vs a flat
+> 17MB baseline) — see RR-PEZH8H.
+>
+> Shipped instead: a persistent on-disk index under `.rela/search`, reused
+> across restarts via a store-mtime watermark. Warm start 48MB (24x),
+> cold start 267MB. The chunked backfill and the `-_score,id` sort described
+> below both survived into the final change; the AC1/AC5 evidence here refers
+> to the superseded version. Current evidence is in REV-26TGG6 and the ticket.
 
 ## Development
 

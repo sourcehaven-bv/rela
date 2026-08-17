@@ -5,7 +5,7 @@ title: 'Cut MCP peak memory 24x: persistent on-disk search index reused across r
 kind: enhancement
 priority: high
 effort: s
-status: review
+status: done
 ---
 
 ## Problem

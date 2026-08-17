@@ -1,11 +1,28 @@
 ---
 id: PLAN-LDRNRP
 type: planning-checklist
-title: 'Planning: Cut MCP peak memory ~4x: scorch in-memory index + chunked bleve backfill'
+title: 'Planning: Cut MCP peak memory 24x: persistent on-disk search index reused across restarts'
 status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
+
+> **SUPERSEDED — read this first.** The plan below proposed in-memory scorch
+> plus chunking. Implementation measurement showed in-memory scorch runs
+> NEITHER scorch's persister nor its merger (`scorch.go:311` gates both on a
+> non-empty path), so per-write segments never merge and heap grows with
+> (writes x distinct docs) — 5.7GB after 1500 edits on this corpus, against a
+> flat 17MB on the existing engine. It would have made long-lived MCP
+> processes worse, which is the opposite of the goal.
+>
+> The shipped approach persists the index on disk under `.rela/search` and
+> skips the backfill when a watermark shows the store has not advanced. Warm
+> start is 48MB (24x) rather than the ~4x this plan predicted. See the ticket
+> and RR-PEZH8H for the evidence. The chunking half of this plan survived; the
+> engine half did not.
+>
+> Sections below are kept as written, because the reasoning that led to a
+> wrong conclusion is the useful part of the record.
 
 ## Understanding
 
