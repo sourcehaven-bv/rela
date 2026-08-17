@@ -1,82 +1,95 @@
 ---
 id: TKT-X06LA2
 type: ticket
-title: Actions have no per-principal authorization gate (handleV1Action + webhook)
+title: 'Actions: gate entity_id on the read path, fix the writeMu DoS (permission gate deferred)'
 kind: enhancement
 priority: high
 effort: m
-status: backlog
+status: done
 ---
 
-## Problem
+## Status
 
-`handleV1Action` (`internal/dataentry/actions.go:45`) runs a configured action —
-a Lua script, or a declarative `set:` mutation — with **no per-principal
-authorization check at all**. The handler validates the method, the id shape,
-and looks up the config; then it takes `writeMu` and calls
-`engine().ExecuteAction`. There is no `readGateFromContext`, no
-`acl.WriteRequest`, no `authorizeCommand` equivalent.
+Two of the three problems are **fixed** in this PR. The third — a `permission:`
+field gating *who may run an action* — is **deliberately deferred** to
+TKT-YH52OM; see "Why the permission gate moved" below.
 
-Contrast `commands:`, which has `Permission` on the config
-(`dataentryconfig/config.go:606`) and a real gate in `authorizeCommand`
-(`internal/dataentry/commands.go:84-120`), re-consulted at exec time. `Action`
-has no authorization field whatsoever (`dataentryconfig/config.go:100-108`).
+## Fixed: entity_id was a read-side ACL bypass
 
-## Impact
+Found while implementing this ticket, and worse than the DoS it was filed for.
 
-The enforcement that does exist is indirect and downstream: the script's writes
-go through `EntityManager` and its reads through the ACL-bound `scriptReader`,
-so under a restrictive policy the *effects* are largely denied. But:
+`handleV1Action` resolved the caller-supplied `entity_id` through the **raw
+store** and handed the result to the script as the global `entity`
+(`script.Engine.ExecuteAction` sets it) — no read gate, no field redaction. Any
+caller who could POST an action could name any id and have that entity's full
+properties, `visible:`-hidden fields included, placed in script scope and echoed
+back through the action's own response.
 
-- The action always **starts**, always burns the 5s `actionTimeout`, and always
-holds `writeMu` — a denied principal can serialize every writer in the process
-by POSTing in a loop.
-- A `set:` action's mutation and any script side effect that isn't an entity
-write are not covered by that downstream gating.
-- Under `--read-only` the action still executes; only its writes fail.
+Reproduced before fixing: a principal holding no role POSTs
+`{"entity_id":"TKT-SECRET"}` and the response contains the ticket's title.
 
-There is a **second entry point**: `dispatchWebhookAction`
-(`internal/dataentry/webhook.go:153-183`) runs actions under a synthetic
-`principal.Principal{User: "webhook:" + claims.Event}`, gated only by webhook
-token validation. Any fix has to cover both.
+The gate now consults the **stored** type, never `req.EntityType`. Authorizing
+against a caller-supplied type is a cross-type escalation — claim a type you may
+read, name an id of a type you may not, and an AllowAll verdict on the claim
+grants it. That is the defect BUG-ZWTDH9 fixed on the sync channel.
 
-## Proposal
+An absent id falls through with `ent` nil rather than 404ing, so the endpoint
+does not become an existence oracle for ids the caller cannot read.
 
-Add `Permission string` to `Action` and gate `handleV1Action` on it, mirroring
-`authorizeCommand`:
+Tests, all mutation-verified (gating on the claimed type fails the escalation
+test; removing the gate fails both leak tests):
 
-- **Closed switch over the `acl.ACL` implementation**, so a new implementation
-denies until someone adds an arm (`commands.go:72-83`).
-- **Match both value and pointer forms** — `AuthorizeWrite` has a value
-receiver, and matching only the value form once dropped `&acl.ReadOnlyACL{}`
-into the granting default arm: a silent `--read-only` bypass reachable by one
-`&`.
-- **`ReadOnlyACL` denies every action, in every context.**
-- **Do not key off the read gate alone.** `readGateFromContext` returns
-`nopReadGate` under *both* NopACL and ReadOnlyACL, and
-`nopReadGate.HoldsPermission` returns `true` — that combination was live bug
-RR-CWWJGW. The ReadOnlyACL arm must be independent and come first.
-- Decide the fail-open/fail-closed posture for an action with no `permission:`
-under a configured policy. Commands fail **closed** there
-(`commands.go:112-114`) on the grounds that a command shells out; an action runs
-Lua with write access, so the same argument applies — but it is a breaking
-change for existing configs and needs a deliberate call.
-- Cover `dispatchWebhookAction` too, or document explicitly why the webhook
-principal is exempt.
+- `TestAction_EntityIDRespectsReadGate`
+- `TestAction_EntityIDCrossTypeEscalation`
+- `TestAction_EntityIDPermittedStillWorks`
 
-## Relationship to TKT-TXDK8U
+## Fixed: the writeMu DoS
 
-TKT-TXDK8U (nav filtering) hides an `action:` entry the user cannot use, keyed
-on a `permission:` declared **on the nav entry**. That is presentation only and
-does not close this hole: the menu hides the button, but `POST
-/api/v1/_action/{id}` still executes for anyone who posts to it.
+The gate runs **before** `writeMu.Lock()`. Previously a denied caller still
+acquired the process-wide write lock and burned the full `actionTimeout`, so an
+unauthorized POST loop could serialize every writer in the process. Decide, then
+work — the same ordering the document renderer uses.
 
-If this ticket adds `Action.Permission`, TKT-TXDK8U's nav-entry `permission:`
-could later derive from it rather than being restated — see the "future: derive
-from target" note there.
+## Why the permission gate moved to TKT-YH52OM
+
+The original proposal (add `Action.Permission`, mirror `authorizeCommand`)
+treats the symptom.
+
+The real problem is not *who* may run an action — it is that **every** script,
+on every surface, unconditionally gets `http.*`, `rela.secrets`, `ai.chat` and
+`rela.write_file`. A script can read every secret and POST it anywhere, in two
+calls. Gating who may run it leaves that surface behind a permission an operator
+must remember to set, and does nothing for the other five script entry points
+(documents, standalone documents, list documents, code, file) or the scheduler
+and automation engine.
+
+This inverts the intuition the original ticket was written on. "Commands shell
+out, actions are just sandboxed Lua" is backwards: the Lua sandbox blocks
+arbitrary *code loading*, not *capability access*, while a `command:` runs under
+`cmdexec` confinement with no network. By capability, scripts are the stricter
+case.
+
+`rela.bypass_acl` already demonstrates the fix shape — registered only when an
+elevated handle is wired, so a script cannot elevate unless an operator declared
+it.
+
+TKT-YH52OM carries that work, including the refinement that `secrets` must be a
+**list of named secrets**, not a boolean: a boolean grants the whole
+`secrets.yaml`, so an action needing one Slack token would also receive the
+database DSN.
+
+Once capabilities are gated, fail-open on `permission:` becomes defensible and
+the decision is a UX/intent one rather than the only thing between a caller and
+`secrets.yaml`.
+
+## Webhook path: exempt, deliberately
+
+`dispatchWebhookAction` (`webhook.go`) is reachable only with a signed webhook
+token and runs under a synthetic `webhook:<event>` principal that holds no
+roles. A permission check there would deny every webhook and break IdP
+provisioning outright — the token *is* the authorization. It takes no
+caller-supplied `entity_id`, so the read-gate fix does not apply to it either.
 
 ## Origin
 
-Found by the code-review survey while planning TKT-TXDK8U. Split out at the
-user's direction: a missing authorization gate is a security fix, not a tail on
-a UX ticket.
+Found by the code-review survey while planning TKT-TXDK8U.
