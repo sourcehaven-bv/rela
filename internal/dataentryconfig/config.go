@@ -182,23 +182,30 @@ type SidePanelConfig struct {
 // ClearWhenHidden values. Default (empty) is ClearWhenHiddenNo: a
 // condition-hidden field KEEPS its stored value (BUG-FB0LN8).
 //
-// A third value, "confirm" (ask the user before clearing, and undo the
-// triggering change if they decline), is DELIBERATELY not accepted yet. It
-// needs the form to separate "the user proposed a change" from "the change was
-// committed" — today an edit mutates form state and arms the autosave in one
-// step, so a decline has to reconstruct state after the fact, which is where
-// several bugs lived. Rejecting the value outright is the honest interim: a
-// config that asks for it fails loudly at author time rather than silently
-// behaving like something else. See TKT-7S5735 (propose/commit refactor).
+//	no       keep the value; hide → reveal is lossless (default)
+//	yes      clear it when the branch hides
+//	confirm  ask first; on decline, undo the triggering change too
+//
+// "confirm" is not merely "yes with a prompt" — it can also UNDO the change
+// that triggered it, which "yes" never does.
+//
+// It was rejected outright until TKT-7S5735: it needs the form to separate
+// "the user proposed a change" from "the change was committed", and an edit
+// used to mutate form state and arm the autosave in one step, so a decline had
+// to reconstruct state after the fact. That is where several bugs lived. The
+// propose/commit seam now decides before anything is applied, so a decline is
+// a true no-op rather than a rollback.
 const (
-	ClearWhenHiddenNo  = "no"
-	ClearWhenHiddenYes = "yes"
+	ClearWhenHiddenNo      = "no"
+	ClearWhenHiddenYes     = "yes"
+	ClearWhenHiddenConfirm = "confirm"
 )
 
 // ValidClearWhenHidden is the allowlist for FormField.ClearWhenHidden.
 var ValidClearWhenHidden = map[string]bool{
-	ClearWhenHiddenNo:  true,
-	ClearWhenHiddenYes: true,
+	ClearWhenHiddenNo:      true,
+	ClearWhenHiddenYes:     true,
+	ClearWhenHiddenConfirm: true,
 }
 
 // FormField defines a single field in a form.
