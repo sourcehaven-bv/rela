@@ -2,7 +2,7 @@
 id: REV-KF73UD
 type: review-checklist
 title: 'Review: Aggregate-over-hidden-rows documents: elevated document renders whose output is a derived statistic'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -49,9 +49,9 @@ Skip this section for bugs and internal refactors.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass
+- [x] PR URL documented below
 
 **PR:** <!-- e.g., https://github.com/org/repo/pull/123 -->
 
@@ -107,3 +107,25 @@ permission requirement is correctly scoped to elevated documents only.
 - `just coverage-check` — 77.7%, both thresholds satisfied
 - `markdownlint` — 0 issues across 47 files
 - `just docs` — regeneration is a no-op against the committed docs
+
+## PR
+
+https://github.com/sourcehaven-bv/rela/pull/1366
+
+Opened against `develop`. The first push produced no CI run at all: the branch
+was CONFLICTING (develop had moved 10+ commits, including TKT-X06LA2 #1341
+touching the same files), and GitHub does not test an unmergeable branch — the
+green CodeQL checks made it look healthier than it was. Merged develop in
+(2 conflicts, both ticket metadata, both resolved to develop's version since
+that work had landed independently), re-ran the full local gate on the merged
+tree, and CI then ran for real.
+
+The `Rela Tickets` job failed on the first real run. Reproduced locally with the
+job's exact command (`rela validate --check cardinality --check properties
+--check validations` — not the bare `validate` I had been running, which passes
+regardless):
+
+1. `RES-XZBZXB` was missing its `summary` property — a real gap, now filled.
+2. Five foreign entity files (IMPL-8CWFBK, TKT-YH52OM and relations) had been
+swept into commit 89593597 by a careless `git add tickets/`. They belong to the
+action-gate work that has since merged to develop on its own. Removed.

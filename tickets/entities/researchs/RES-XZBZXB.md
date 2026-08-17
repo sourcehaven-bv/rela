@@ -2,6 +2,7 @@
 id: RES-XZBZXB
 type: research
 title: Decoupling read elevation from write elevation for document renders
+summary: 'Read and write elevation are already structurally separate inside internal/lua, so decoupling them is two conditions rather than a redesign; Option A (register bypass_acl when either handle is wired, omit write methods when no Mutator) was chosen over precomputing aggregates, which would push a caching concern into the domain model.'
 status: done
 ---
 
