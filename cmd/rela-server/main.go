@@ -440,6 +440,14 @@ func main() {
 	// without it the routes are not registered at all.
 	app.SetCalDAVAliases(svc.CalDAVAliases())
 
+	// Next-action per-user state. The composition root picks the backend
+	// (durable over state.KV, or the store-native one on postgres); this only
+	// hands the app what it built.
+	if err := app.SetUserState(svc.UserState()); err != nil {
+		slog.Error("failed to wire next-action state", "error", err)
+		os.Exit(1)
+	}
+
 	// Start file watcher for live-reload.
 	// The watcher goroutine is cleaned up on process exit.
 	if err := app.StartWatching(); err != nil {

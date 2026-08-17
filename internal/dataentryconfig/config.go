@@ -82,6 +82,14 @@ type Config struct {
 	Commands    map[string]CommandConfig     `yaml:"commands,omitempty"`
 	Actions     map[string]Action            `yaml:"actions,omitempty"`
 	Navigation  []NavigationEntry            `yaml:"navigation"`
+
+	// NextActionBands is the operator's ordered priority vocabulary; list
+	// order IS priority order, highest first. See nextaction.go.
+	NextActionBands []NextActionBand `yaml:"next_action_bands,omitempty" json:"next_action_bands,omitempty"`
+	// NextActions are the suggestion sources, keyed by source id. The id is
+	// half the suggestion key and the unit of muting, so it is stable
+	// operator-facing vocabulary, not an implementation detail.
+	NextActions map[string]NextActionSource `yaml:"next_actions,omitempty" json:"next_actions,omitempty"`
 }
 
 // EntityViewConfig declares UX bindings for a metamodel entity type.

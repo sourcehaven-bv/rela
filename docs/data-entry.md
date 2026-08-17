@@ -1463,6 +1463,297 @@ Multiple terms are combined with AND logic. For example,
 Every card includes a link icon that opens the same query on the search page for further
 exploration.
 
+## Next actions
+
+An optional advisory layer: operator-declared rules that derive **one**
+suggested follow-up from graph state and surface it in the UI.
+
+It is deliberately **not** a task queue:
+
+- **Advisory.** A hint, not a demand — things a user *could* do, not *should*.
+  That is what separates it from `analyze`, which has an opinion about
+  correctness.
+- **One at a time.** Never a list. The aim is a companion that does not
+  overload, and there is no "show me all 12" surface to grow into.
+- **Good, not optimal.** Surfacing one of several good next actions is the
+  goal; avoiding a bad one is the bar.
+
+### Bands
+
+Bands are your priority vocabulary. Declare them in order — **list order is
+priority order**, highest first — and every source names one:
+
+```yaml
+next_action_bands:
+  - id: blocking
+    label: "Someone is waiting"
+    prominence: banner
+  - id: stalled
+    prominence: notice
+  - id: ambient
+    label: "Nothing owed"
+    prominence: statusbar
+```
+
+Bands rather than numeric priorities because per-source numbers do not
+compose: one source returning 90 and another returning 7 on a different scale
+is arbitrary ordering wearing the costume of ranking. With bands, "why is this
+on top?" always has a one-sentence answer.
+
+The engine evaluates bands in order and **stops at the first one with
+something to say**, so a typical page runs one or two queries rather than all
+of them.
+
+#### Prominence
+
+How much a band interrupts. The levels differ in what the user must do to
+clear it, not in decoration:
+
+| Value | Behaviour | Use for |
+|-------|-----------|---------|
+| `banner` | A bordered, accented block at the top of the page. Must be dealt with. | Onboarding; work someone else is blocked on |
+| `notice` | One quiet line in the same position. Easy to read past. | Worth saying once a visit, no urgency |
+| `statusbar` | A chip in the status bar; click to expand. You must go looking. | Ongoing minor stuff — true most of the time, urgent none of it |
+
+`statusbar` is the **default**: a band that has not declared a prominence has
+not earned the top of the page.
+
+### Sources
+
+A source is one rule. Sources are independent — none knows the others exist —
+so adding a rule is adding a source, and a bad source can be deleted without
+perturbing the rest.
+
+```yaml
+next_actions:
+  # Fires only on an empty graph: the first-run case, which no
+  # entity-shaped source can express.
+  first-run:
+    band: blocking
+    count: "client == 0"
+    suggest: "Nothing here yet. Add your first client?"
+    actions:
+      - navigate: "/form/client"
+        label: "Add a client"
+
+  # The common shape: a query plus a message.
+  stale-proposal:
+    band: stalled
+    query: "type:proposal prop:status=sent"
+    suggest: "{title} has been out since {sent_on}. Chase it?"
+    cooldown: 3d
+    key_props: [status]
+    actions:
+      - snooze: ["1d", "7d"]
+      - dismiss: true
+```
+
+| Field | Meaning |
+|-------|---------|
+| `band` | **Required.** Names a declared band. |
+| `query` | Candidate entities, in the search syntax (`type:`, `prop:`, …). |
+| `context` | Instead of `query`: scopes the source to the entity being viewed. |
+| `count` | Instead of `query`: fires on `"<entity_type> == 0"` — the first-run case. |
+| `suggest` | **Required.** The message. `{property}` interpolates from the candidate; `{id}` is the entity id. |
+| `actions` | The affordances offered. See below. |
+| `cooldown` | How long after being *shown* to stay quiet. Defaults to 24h. |
+| `key_props` | Properties that make a re-triggered condition count as **new** — see below. |
+| `defer_scope` | What "not now" covers: `entity` (default) or `source` — see below. |
+
+Exactly one of `query`, `context` or `count` must be set.
+
+#### `key_props` and re-triggering
+
+A suggestion is identified by `(source, entity, key_props values)`. Without
+`key_props`, a proposal going `draft → sent → draft` keeps the same identity,
+so a snooze from the first draft still suppresses the second one.
+
+Listing `key_props: [status]` makes the identity change with the status, so a
+genuinely new stall surfaces even though an old snooze exists.
+
+#### `defer_scope` — what "not now" covers
+
+When a user snoozes or dismisses a suggestion, what were they declining?
+
+- **`entity`** (the default) — *this item*. An ISMS task needing attention:
+  they still want the other tasks, just not this one.
+- **`source`** — *the interruption*. A daily quip, one entity per quip: which
+  quip was on offer is incidental, and handing them another immediately is
+  precisely what they said no to. Same for a "complete your profile" nudge —
+  prompting about a different field a moment later is the same nag.
+
+All three are entity-shaped sources with interpolated messages, so neither the
+message template nor the query shape separates them. Only you know which a
+source is, which is why it is declared rather than inferred.
+
+A source with a `pick_one` affordance defaults to `source` scope: its
+suggestion is about the set ("one of these is small"), so keying the deferral
+to whichever option happened to be picked would hand back the same suggestion
+with a different entity. Override it explicitly if you want per-candidate
+deferral anyway.
+
+#### `count` and the read gate
+
+A `count` source is evaluated **through the caller's read gate** by default:
+it asks "do *I* have any clients?", not "does anyone?". A principal who can
+read no clients therefore sees the first-run hint.
+
+`count_ungated: true` asks the whole-graph question instead. Use it only for a
+genuinely operator-level check ("has this deployment been set up at all?") —
+it discloses that entities of a type exist to someone permitted to read none
+of them.
+
+### Actions
+
+The affordances offered alongside a suggestion. Each entry sets exactly one:
+
+```yaml
+    actions:
+      - navigate: "/entity/task/{id}"   # hand off to a destination
+        label: "Open it"
+      - action: mark-task-done          # run a configured action
+      - set: { status: done }           # inline property mutation
+        confirm: true
+      - snooze: ["1d", "7d"]            # defer, offering these durations
+      - dismiss: true                   # "not this one"
+      - acknowledge: true               # "seen it" — for content sources
+```
+
+`snooze` and `dismiss` are not decoration. Without a way to say "not now", the
+only way to clear a suggestion is to comply with it — which makes it a demand
+rather than a hint. They are also the best signal available: a source
+dismissed every time is a source to delete.
+
+**Muting is always available**, whether or not you configure it. The UI offers
+"stop suggesting this" on every suggestion, per source and per user, and it is
+reversible.
+
+### What is stored, and where
+
+Snoozes, mutes and last-shown timestamps are **per user** and live in
+`.rela/next-action-state.json` — never in the graph. A snooze is not a fact
+about an entity; it is a fact about one person's relationship to a suggestion
+at a moment, and storing it as an entity would make it visible to everyone and
+audited forever.
+
+The state is disposable: losing it costs a user a repeated suggestion, not
+data.
+
+> **Note.** With no identity source configured, every request shares one
+> bucket of this state — fine for a single-user deployment, surprising for a
+> shared one. Wiring any identity (JWT, header) separates it.
+
+### A worked example
+
+A small consultancy. Four sources, each a different shape, ordered so the
+loudest is the one someone else is blocked on:
+
+```yaml
+next_action_bands:
+  - id: blocking
+    label: Someone is waiting
+    prominence: banner
+  - id: stalled
+    label: In your court
+    prominence: notice
+  - id: tidying
+    label: Spare time
+    prominence: statusbar
+  - id: ambient
+    label: Nothing owed
+    prominence: statusbar
+
+next_actions:
+  # The ball is in THEIR court. Interpolates the client so the message
+  # says who you would be chasing.
+  chase-proposal:
+    band: blocking
+    query: "type:proposal prop:status=sent"
+    suggest: "The {title} proposal is out with {client}. Chase it?"
+    cooldown: 3d
+    key_props: [status]
+    actions:
+      - navigate: "/entity/{id}"
+        label: "Open it"
+      - snooze: ["1d", "7d"]
+      - dismiss: true
+
+  # Same shape, opposite ownership: this one is waiting on you. Quieter,
+  # because nobody else is blocked.
+  send-draft:
+    band: stalled
+    query: "type:proposal prop:status=draft"
+    suggest: "{title} has been in draft a while. Send it?"
+    cooldown: 3d
+    key_props: [status]
+    actions:
+      - action: mark-sent
+      - snooze: ["1d"]
+      - dismiss: true
+
+  # Nothing is wrong — there is simply an opportunity. The options come
+  # from a query at render time, so they are whatever is small right now.
+  spare-time:
+    band: tidying
+    query: "type:task prop:status=todo prop:effort=xs"
+    suggest: "Got a spare moment? One of these is small."
+    cooldown: 12h
+    actions:
+      - pick_one:
+          query: "type:task prop:status=todo prop:effort=xs"
+          limit: 3
+          action: start-task
+      - snooze: ["1d"]
+
+  # The counterweight. A configuration made only of chores is a nag however
+  # well-tuned, so the quietest band holds something that is not work.
+  daily-quip:
+    band: ambient
+    query: "type:quip"
+    suggest: "{text}"
+    actions:
+      - acknowledge: true
+```
+
+What this produces, as each suggestion is deferred:
+
+1. **banner** — "The Meridian retainer proposal is out with Meridian. Chase it?"
+2. **notice** — "Kessler SOW has been in draft a while. Send it?"
+3. **status bar** — "Got a spare moment?", offering three small tasks
+4. **status bar** — the quip
+5. nothing at all
+
+Two things worth noticing:
+
+`chase-proposal` and `send-draft` are almost identical rules. They differ in
+**band**, because who is blocked is the thing that matters — and that is a
+judgement only you can make, which is why bands are operator-declared.
+
+`spare-time` needs no `defer_scope`: a `pick_one` source defaults to `source`
+scope, so declining it means "not now" for the whole idea, not just for
+whichever task happened to be offered.
+
+### Customising the look
+
+The next-action UI emits the operator hooks documented in
+[customisation.md](customisation.md): a `<rela-slot name="companion">` you can
+define in `custom.js`, and `rela-na*` classes plus `data-band` /
+`data-prominence` / `data-source` attributes for `custom.css`.
+
+```js
+// custom.js — a character per band
+const FACES = { blocking: '🐉', stalled: '🦊', ambient: '🌙' }
+customElements.define('rela-slot', class extends HTMLElement {
+  static observedAttributes = ['name', 'data-band']
+  connectedCallback() { this.render() }
+  attributeChangedCallback() { this.render() }
+  render() {
+    if (this.getAttribute('name') !== 'companion') return
+    this.textContent = FACES[this.getAttribute('data-band')] || '✨'
+  }
+})
+```
+
 ## Kanbans
 
 Kanbans provide a visual board view where entities are displayed as cards grouped into columns

@@ -75,6 +75,7 @@ exclude:
     - ^internal/store/storetest # shared conformance test kit (exercised via backends)
     - ^internal/visibility/visibilitytest # shared conformance test kit (exercised via visibility + future wirings)
     - ^internal/state/statetest # shared conformance test kit (exercised via FSKV + pgstore's StateKV)
+    - ^internal/userstate/userstatetest # shared conformance test kit (exercised via mem/kv/pgstore backends)
     - ^internal/store/pgstore  # covered by the dedicated postgres CI job (needs a live DB; skipped without RELA_TEST_DATABASE_URL)
     - ^internal/entitymanager/entitymanagertest # shared test doubles (PanicOnUse etc.), exercised via consumers
     - ^internal/store/graphquerynaive # exercised through every backend's graphquery tests; cross-package coverage isn't attributed without -coverpkg, so its own number reads 0

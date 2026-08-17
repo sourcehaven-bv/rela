@@ -32,6 +32,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/userstate"
 	"github.com/Sourcehaven-BV/rela/internal/validator"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
@@ -86,7 +87,15 @@ const userPaletteFile = "palette.yaml"
 // package functions, and the dead ungated server-rendered nav path (5
 // methods, #1043) was deleted (114 → 90).
 //
-//plimsoll:max-methods=90
+// The directive lags the real count (TKT-N0IKN9 tracks decomposing App); it is
+// a ratchet target, not a budget to spend. SetUserState took it from 98 to 99 —
+// it follows the existing SetSecurityConfig / SetJWTGate setter idiom rather
+// than becoming a 12th positional NewApp parameter — and the CalDAV alias
+// setter that landed alongside it took the count to 100, a later one to 101,
+// and redactedForSuggestion to 102 — the field-redaction seam the next-action
+// candidate path needs, which has to reach affordanceService.
+//
+//plimsoll:max-methods=102
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS
@@ -116,6 +125,15 @@ type App struct {
 	// the regular searcher on fs/memory builds, pgstore-native on the
 	// postgres build.
 	visibleSearcher search.VisibleSearcher
+	// userState backs the next-action layer's per-user snooze / mute /
+	// cooldown records. NOT graph content: a snooze is a fact about one
+	// person's relationship to a suggestion, and storing it as an entity
+	// would flood the audit log and the postgres version sweep (cooldown
+	// alone writes on every render). Nil when the deployment wires no
+	// backend — the next-action endpoints then report "not configured"
+	// rather than silently forgetting what users asked to hide.
+	userState userstate.Store
+
 	// visibleReader is the ACL-bounded entity-read seam (TKT-N26KLB): the
 	// entity-read analog of visibleSearcher. Read handlers gate single-GET
 	// and include-filtering through it so the read gate is applied
