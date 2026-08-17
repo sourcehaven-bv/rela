@@ -1,6 +1,43 @@
 package metamodel
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+// unique:true is only valid on string-valued property types (the application
+// scan reads values as strings; the PostgreSQL derived index would otherwise
+// diverge from it) — TKT-3Q0GP1.
+func TestUniqueRequiresStringType(t *testing.T) {
+	base := `
+version: "1.0"
+entities:
+  thing:
+    label: Thing
+    id_prefix: "THG-"
+    id_type: sequential
+    properties:
+      key:
+        type: %s
+        unique: true
+`
+	stringTypes := []string{"string", "date", "datetime", "rrule"}
+	for _, ty := range stringTypes {
+		if _, err := Parse([]byte(strings.Replace(base, "%s", ty, 1))); err != nil {
+			t.Errorf("unique on string-valued type %q should load, got: %v", ty, err)
+		}
+	}
+
+	nonStringTypes := []string{"integer", "boolean"}
+	for _, ty := range nonStringTypes {
+		_, err := Parse([]byte(strings.Replace(base, "%s", ty, 1)))
+		if err == nil {
+			t.Errorf("unique on non-string type %q should be rejected", ty)
+		} else if !strings.Contains(err.Error(), "unique") {
+			t.Errorf("error for type %q should mention unique, got: %v", ty, err)
+		}
+	}
+}
 
 // ValidateSchemaName guards the entity-type / property names the derived-schema
 // reconciler interpolates into DDL (TKT-3Q0GP1). It is a blocklist of dangerous

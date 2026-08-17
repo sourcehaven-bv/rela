@@ -4,6 +4,7 @@ package appbuild
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -31,7 +32,14 @@ func reconcileDerivedSchemaIfSupported(ctx context.Context, st store.Store, meta
 	s.SetUniqueSpecProvider(specs)
 
 	outcomes, err := s.Reconcile(ctx, specs, store.ReconcileOptions{})
-	if err != nil {
+	switch {
+	case errors.Is(err, pgstore.ErrReconcileBusy):
+		// A peer is already converging this schema to the same desired state;
+		// its pass covers us. Not a failure — the specs are published above so
+		// violations still map to a property.
+		slog.Debug("appbuild: derived-schema reconcile skipped; a peer holds the lock")
+		return
+	case err != nil:
 		slog.Warn("appbuild: derived-schema reconcile failed; uniqueness may be "+
 			"enforced only by the application-level check until repaired", "error", err)
 		return
@@ -55,8 +63,9 @@ func reconcileDerivedSchemaIfSupported(ctx context.Context, st store.Store, meta
 }
 
 // uniqueSpecsFromMetamodel collects the (type, property) pairs the derived-schema
-// reconciler should enforce: every non-list property declared unique. Read fresh
-// from the metamodel so a reload is reflected on the next call.
+// reconciler should enforce: every non-list property declared unique. Called at
+// store-open with the boot-time metamodel; it is NOT re-invoked on a live schema
+// reload (see Store.Reconcile's boot-only note).
 func uniqueSpecsFromMetamodel(meta *metamodel.Metamodel) []store.DerivedObjectSpec {
 	if meta == nil {
 		return nil

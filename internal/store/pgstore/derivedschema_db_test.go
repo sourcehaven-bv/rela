@@ -224,3 +224,66 @@ func TestDerivedUnique_CrossSchemaIsolation(t *testing.T) {
 	err = sB.CreateEntity(ctxA, person("B-2", "b@x.com"))
 	require.ErrorIs(t, err, store.ErrConflict, "schema B's index must survive A's drop")
 }
+
+// A dry-run that would DROP an orphan index reports it without mutating.
+func TestDerivedUnique_DryRunDrop(t *testing.T) {
+	pool := newScopedPool(t)
+	s, err := pgstore.New(pool)
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	// Create the index for real.
+	_, err = s.Reconcile(ctx, personSpec, store.ReconcileOptions{})
+	require.NoError(t, err)
+
+	// Dry-run with an empty desired set: reports a would-drop, changes nothing.
+	out, err := s.Reconcile(ctx, nil, store.ReconcileOptions{DryRun: true})
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.Equal(t, store.DerivedDropped, out[0].State)
+	require.True(t, out[0].WouldChange)
+
+	// The index is still present: a live reconcile still sees it as an orphan
+	// to drop (i.e. the dry-run did not actually drop it).
+	out, err = s.Reconcile(ctx, nil, store.ReconcileOptions{})
+	require.NoError(t, err)
+	require.Equal(t, store.DerivedDropped, out[0].State)
+}
+
+// A spec whose names are unsafe for DDL is reported unenforced, never
+// interpolated (defense-in-depth over the metamodel's load-time validation).
+func TestDerivedUnique_UnsafeNameRefused(t *testing.T) {
+	pool := newScopedPool(t)
+	s, err := pgstore.New(pool)
+	require.NoError(t, err)
+
+	bad := []store.DerivedObjectSpec{
+		{Kind: store.DerivedUnique, Type: "person", Property: "ev'il"},
+	}
+	out, err := s.Reconcile(context.Background(), bad, store.ReconcileOptions{})
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.Equal(t, store.DerivedUnenforced, out[0].State)
+	require.Contains(t, out[0].Reason, "unsafe")
+}
+
+// The blocking-group count is EXACT, not capped, so an operator sees the true
+// scale of the dirty data (RR-78T6Q9).
+func TestDerivedUnique_BlockingCountExact(t *testing.T) {
+	pool := newScopedPool(t)
+	s, err := pgstore.New(pool)
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	// Seed 3 distinct duplicated values (6 rows), plus a unique one.
+	for i, v := range []string{"a@x.com", "b@x.com", "c@x.com"} {
+		require.NoError(t, s.CreateEntity(ctx, person("D"+string(rune('a'+i))+"-1", v)))
+		require.NoError(t, s.CreateEntity(ctx, person("D"+string(rune('a'+i))+"-2", v)))
+	}
+	require.NoError(t, s.CreateEntity(ctx, person("U-1", "unique@x.com")))
+
+	out, err := s.Reconcile(ctx, personSpec, store.ReconcileOptions{})
+	require.NoError(t, err)
+	require.Equal(t, store.DerivedUnenforced, out[0].State)
+	require.Equal(t, 3, out[0].BlockingCount, "exactly three blocking value groups")
+}

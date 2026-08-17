@@ -71,10 +71,14 @@ func runDBStatus() error {
 	// is INFORMATIONAL: it never changes the exit code (a config edit against
 	// dirty data must not brick a health check). The strict gate lives on
 	// `rela db reconcile --dry-run`.
-	if specs, ok := loadUniqueSpecs(); ok {
+	if specs, _, ok := loadUniqueSpecs(); ok {
 		outcomes, err := pgstore.ReconcileDSN(
 			context.Background(), resolved, specs, store.ReconcileOptions{DryRun: true})
-		if err != nil {
+		switch {
+		case errors.Is(err, pgstore.ErrReconcileBusy):
+			fmt.Println("Derived schema: a reconcile is in progress; skipped.")
+			return nil
+		case err != nil:
 			fmt.Printf("Derived schema: could not check (%v).\n", err)
 			return nil
 		}
@@ -92,13 +96,21 @@ func runDBReconcile(dryRun, showValues bool) error {
 	if err != nil {
 		return err
 	}
-	specs, ok := loadUniqueSpecs()
+	specs, schemaPath, ok := loadUniqueSpecs()
 	if !ok {
 		return errors.New("could not load the metamodel to derive unique constraints; " +
 			"run this from a project directory")
 	}
+	// Echo which schema the constraints are derived from: reconcile mutates the
+	// shared database toward THIS file, so an operator running from the wrong
+	// checkout must be able to see it (RR-0USU3N).
+	fmt.Printf("Reconciling derived schema from %s\n", schemaPath)
 	outcomes, err := pgstore.ReconcileDSN(context.Background(), resolved, specs,
 		store.ReconcileOptions{DryRun: dryRun, ShowValues: showValues})
+	if errors.Is(err, pgstore.ErrReconcileBusy) {
+		fmt.Println("Another reconcile is in progress for this schema; try again shortly.")
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -149,21 +161,22 @@ func printDerivedDrift(outcomes []store.DerivedObjectOutcome, dryRun bool) (drif
 
 // loadUniqueSpecs discovers the project at the current directory, loads the
 // metamodel, and returns its `unique: true` (type, property) pairs as reconciler
-// specs. ok is false when the project/metamodel could not be loaded (the caller
-// treats that as "cannot check").
-func loadUniqueSpecs() (specs []store.DerivedObjectSpec, ok bool) {
+// specs plus the resolved schema path (so the caller can show the operator which
+// schema is driving the reconcile). ok is false when the project/metamodel could
+// not be loaded (the caller treats that as "cannot check").
+func loadUniqueSpecs() (specs []store.DerivedObjectSpec, schemaPath string, ok bool) {
 	fs := storage.NewSafeFS(storage.NewOsFS())
 	startDir, err := os.Getwd()
 	if err != nil {
-		return nil, false
+		return nil, "", false
 	}
 	paths, err := project.Discover(startDir, fs)
 	if err != nil {
-		return nil, false
+		return nil, "", false
 	}
 	meta, _, err := metamodel.NewFSLoader(fs, paths.SchemaPath).Load(context.Background())
 	if err != nil {
-		return nil, false
+		return nil, "", false
 	}
 	for _, typeName := range meta.EntityTypes() {
 		def, defOK := meta.GetEntityDef(typeName)
@@ -178,5 +191,5 @@ func loadUniqueSpecs() (specs []store.DerivedObjectSpec, ok bool) {
 			}
 		}
 	}
-	return specs, true
+	return specs, paths.SchemaPath, true
 }

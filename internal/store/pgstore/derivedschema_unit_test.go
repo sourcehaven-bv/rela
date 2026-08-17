@@ -13,6 +13,26 @@ import (
 // These are pure-unit tests for the derived-schema name/mapping logic; they
 // need no database and so are not gated on RELA_TEST_DATABASE_URL.
 
+// safeDDLName must reject the same dangerous characters that
+// metamodel.ValidateSchemaName does (they are deliberately duplicated across the
+// arch-lint package boundary; this pins the pgstore half so it can't drift into
+// accepting an injection vector). Keep this corpus in sync with
+// metamodel.TestValidateSchemaName.
+func TestSafeDDLName(t *testing.T) {
+	safe := []string{"email", "org_id", "review-response", "some property", "with.dot", "ünïcode"}
+	for _, n := range safe {
+		if !safeDDLName(n) {
+			t.Errorf("safeDDLName(%q) = false, want true", n)
+		}
+	}
+	unsafe := []string{"", "bad'name", "back\\slash", "tab\tname", "new\nline", "nul\x00", " lead", "trail "}
+	for _, n := range unsafe {
+		if safeDDLName(n) {
+			t.Errorf("safeDDLName(%q) = true, want false", n)
+		}
+	}
+}
+
 func TestUniqueIndexName_DeterministicAndBounded(t *testing.T) {
 	// Deterministic: same inputs -> same name across calls.
 	if a, b := uniqueIndexName("persoon", "email"), uniqueIndexName("persoon", "email"); a != b {

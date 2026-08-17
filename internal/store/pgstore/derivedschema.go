@@ -42,6 +42,12 @@ func safeDDLName(name string) bool {
 // catalog (pg_indexes) is the actual set, and a name prefix marks ownership.
 // See the package/interface docs on store.DerivedSchemaReconciler.
 
+// ErrReconcileBusy is returned by Reconcile when another process already holds
+// the reconcile advisory lock for this schema. It is not a failure: reconcile is
+// idempotent and the holder is converging the same schema to the same desired
+// state, so the caller can safely treat it as "nothing to do this pass".
+var ErrReconcileBusy = errors.New("pgstore: reconcile already in progress for this schema")
+
 // reconcileAdvisoryLockKey serializes concurrent reconcilers OF THIS SCHEMA,
 // analogous to migrateAdvisoryLockKey. "RELD" (derived). Distinct from the
 // migrate/write/sweep keys so a reconcile never blocks (or is blocked by) an
@@ -73,7 +79,16 @@ func uniqueIndexName(entityType, property string) string {
 // DDL statement in its own implicit transaction — a failed CREATE must not
 // abort the successful ones). On any other handle it degrades: it returns nil
 // outcomes and no error, exactly as a store-open reconcile on an unsupported
-// backend would.
+// backend would. Returns [ErrReconcileBusy] (non-fatal) if a peer already holds
+// the lock.
+//
+// BOOT-ONLY at present: the wiring layer calls this once at store-open (see
+// appbuild.reconcileDerivedSchemaIfSupported). A live metamodel reload does NOT
+// re-run it, so a `unique: true` added without a restart is enforced by the
+// application scan but not yet by a database index; an operator applies it with
+// `rela db reconcile`. (Re-reconciling on reload is a deliberate future
+// extension — it needs its own debounce/lock policy for issuing DDL off a file
+// watcher.)
 func (s *Store) Reconcile(
 	ctx context.Context, desired []store.DerivedObjectSpec, opts store.ReconcileOptions,
 ) ([]store.DerivedObjectOutcome, error) {
@@ -91,11 +106,21 @@ func (s *Store) Reconcile(
 	// Session-scoped advisory lock: only one process reconciles this schema at a
 	// time, so concurrent booting processes cannot race a create against a drop.
 	// A dry-run takes it too — it reads the catalog and must see a stable actual
-	// set. Released explicitly (and by connection release) below.
-	if _, lockErr := conn.Exec(ctx,
-		`SELECT pg_advisory_lock($1::int, hashtext(current_schema()))`,
-		reconcileAdvisoryLockKey); lockErr != nil {
+	// set. We use the NON-blocking pg_try_advisory_lock: this runs at store-open
+	// on a background context with no deadline, and blocking here would let a
+	// peer holding the lock (a long dry-run, or a peer mid-reconcile) stall boot
+	// indefinitely — the exact multi-writer contention this feature assumes. If
+	// the lock is already held, another process is converging the same schema to
+	// the same desired state, so we skip: reconcile is idempotent and the peer's
+	// pass covers us. The caller treats a nil/empty result as "nothing to do".
+	var locked bool
+	if lockErr := conn.QueryRow(ctx,
+		`SELECT pg_try_advisory_lock($1::int, hashtext(current_schema()))`,
+		reconcileAdvisoryLockKey).Scan(&locked); lockErr != nil {
 		return nil, fmt.Errorf("pgstore: reconcile: acquire lock: %w", lockErr)
+	}
+	if !locked {
+		return nil, ErrReconcileBusy
 	}
 	defer func() {
 		_, _ = conn.Exec(ctx,
@@ -206,6 +231,12 @@ func listOwnedUniqueIndexes(ctx context.Context, conn *pgxpool.Conn) (map[string
 func createUniqueIndex(
 	ctx context.Context, conn *pgxpool.Conn, spec store.DerivedObjectSpec, name string, showValues bool,
 ) store.DerivedObjectOutcome {
+	// The empty-exempt predicate (`<> '' AND IS NOT NULL`) MUST stay in lockstep
+	// with the WHERE clause in uniqueViolators: the index defines what collides,
+	// and uniqueViolators must count exactly the rows the index would reject, or
+	// a dry-run's prediction drifts from what a create actually does. They can't
+	// share one string (this interpolates quoted literals; that binds $1/$2), so
+	// keep them identical by hand.
 	ddl := fmt.Sprintf(
 		`CREATE UNIQUE INDEX IF NOT EXISTS %s ON entities (type, (properties->>%s)) `+
 			`WHERE type = %s AND properties->>%s <> '' AND properties->>%s IS NOT NULL`,
@@ -257,46 +288,62 @@ func unenforcedFromCreateErr(
 
 // uniqueViolators counts the value groups that violate the (type, property)
 // uniqueness (>1 row sharing a non-empty value), and — only when showValues —
-// returns a bounded sample of those values. The values are entity content, so
-// they are surfaced ONLY on explicit operator opt-in and never by default.
+// returns a bounded sample of those values. The count is EXACT (not capped), so
+// the operator sees the true scale of the blocking data; only the sample values
+// are limited. The values are entity content, so they are surfaced ONLY on
+// explicit operator opt-in and never by default.
 func uniqueViolators(
 	ctx context.Context, conn *pgxpool.Conn, spec store.DerivedObjectSpec, showValues bool,
 ) (count int, samples []string, err error) {
-	const q = `
-		SELECT properties->>$2 AS val, count(*) AS n
+	// Exact, uncapped count of blocking value groups.
+	const countQ = `
+		SELECT count(*) FROM (
+			SELECT 1 FROM entities
+			WHERE type = $1 AND properties->>$2 <> '' AND properties->>$2 IS NOT NULL
+			GROUP BY properties->>$2
+			HAVING count(*) > 1
+		) g`
+	if cErr := conn.QueryRow(ctx, countQ, spec.Type, spec.Property).Scan(&count); cErr != nil {
+		return 0, nil, cErr
+	}
+
+	if !showValues || count == 0 {
+		return count, nil, nil
+	}
+
+	// A small sample of the offending values (opt-in only).
+	const sampleQ = `
+		SELECT properties->>$2 AS val
 		FROM entities
 		WHERE type = $1 AND properties->>$2 <> '' AND properties->>$2 IS NOT NULL
 		GROUP BY properties->>$2
 		HAVING count(*) > 1
-		ORDER BY n DESC
-		LIMIT 100`
-	rows, err := conn.Query(ctx, q, spec.Type, spec.Property)
+		ORDER BY count(*) DESC
+		LIMIT 5`
+	rows, err := conn.Query(ctx, sampleQ, spec.Type, spec.Property)
 	if err != nil {
-		return 0, nil, err
+		return count, nil, err
 	}
 	defer rows.Close()
 
-	const maxSamples = 5
 	for rows.Next() {
 		var val string
-		var n int
-		if err := rows.Scan(&val, &n); err != nil {
-			return 0, nil, err
+		if err := rows.Scan(&val); err != nil {
+			return count, nil, err
 		}
-		count++
-		if showValues && len(samples) < maxSamples {
-			samples = append(samples, val)
-		}
+		samples = append(samples, val)
 	}
 	return count, samples, rows.Err()
 }
 
 // SetUniqueSpecProvider records the current metamodel's unique (type, property)
 // pairs so the write path can attribute a derived-unique-index violation to a
-// property (see mapUniqueViolation). The wiring layer calls it after
-// construction and again on a metamodel reload. Passing nil clears it (a
-// violation then degrades to a property-less UniquePropertyError). It is safe to
-// call concurrently with writes: the value is published via an atomic pointer.
+// property (see mapUniqueViolation). The wiring layer calls it once at
+// store-open. It is published via an atomic pointer and is safe to call
+// concurrently with writes (a metamodel reload could re-publish here), but the
+// current wiring does NOT re-invoke it on a live schema reload — see
+// [Store.Reconcile]'s note on boot-only reconciliation. Passing nil clears it
+// (a violation then degrades to a property-less UniquePropertyError).
 func (s *Store) SetUniqueSpecProvider(specs []store.DerivedObjectSpec) {
 	if specs == nil {
 		s.uniqueSpecs.Store(nil)
