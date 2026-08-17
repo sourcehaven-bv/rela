@@ -108,3 +108,34 @@ Re-verified on `develop` at 93240281 (after #1337 landed): restoring the
 unquoted frontmatter still yields `EXIT=0` and "All validations passed" while
 logging 2 `failed to parse frontmatter` errors. The individual files were
 repaired; the behaviour that hid them was not.
+
+## Mitigated in CI, not fixed in the tool (#1363)
+
+TKT-W76LRP added an **"Entities all parse"** step to `ci.yml` that runs the
+store scan and greps stderr for `failed to parse frontmatter`, failing the job
+when it matches. That closes the merge-gate hole this ticket was filed about,
+and it is why this is no longer urgent.
+
+It does not fix the bug. Re-verified on `develop` at 4259daca, after #1363 and
+#1360 landed: a project containing one unparseable entity still makes
+
+```console
+$ rela validate --check cardinality --check properties --check validations
+All validations passed.
+EXIT=0
+```
+
+`rela validate` continues to report success over a corpus it did not fully
+read. The CI job now catches it out-of-band by pattern-matching a log line —
+which works, but means the guarantee lives in a grep in a YAML file rather than
+in the command's exit code. Anyone running `rela validate` locally, or from a
+different pipeline, still gets a green result on a partial read.
+
+The remaining work is the one-line-ish version of the fix: propagate the
+iterator error to a non-zero exit and name the offending files. The CI step can
+then become redundant rather than load-bearing.
+
+## Duplicate
+
+Filed independently as **BUG-RMCK9U** (merged in #1330's stack) while this
+ticket was open. That one is closed `wont-fix` pointing here.
