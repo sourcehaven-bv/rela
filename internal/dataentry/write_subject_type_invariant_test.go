@@ -8,7 +8,13 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // TestWriteSubjectTypeInvariant is the P4 integration invariant for
@@ -69,24 +75,6 @@ assignments:
 
 	paths := []writePath{
 		{
-			name: "sync PUT (ApplyEntity)",
-			attempt: func(t *testing.T, app *App) int {
-				t.Helper()
-				cur, exists := app.sync.currentEntityHash(context.Background(), "SECRET-1")
-				if !exists {
-					t.Fatal("seed missing")
-				}
-				body := syncEntityBody{ID: "SECRET-1", Type: "note", Properties: map[string]any{"title": "pwned"}}
-				b, _ := json.Marshal(body)
-				r := httptest.NewRequest(http.MethodPut, "/api/sync/entities/SECRET-1", bytes.NewReader(b))
-				r.Header.Set("Content-Type", "application/json")
-				r.Header.Set("If-Match", cur)
-				w := httptest.NewRecorder()
-				app.NewRouter().ServeHTTP(w, r)
-				return w.Code
-			},
-		},
-		{
 			name: "v1 PATCH (UpdateEntity)",
 			attempt: func(t *testing.T, app *App) int {
 				t.Helper()
@@ -139,4 +127,61 @@ assignments:
 			}
 		})
 	}
+}
+
+// --- helpers (moved here from the retired sync_type_confusion_test.go, which
+// tested the now-removed /api/sync record channel; the write-subject-type
+// invariant still exercises the surviving write surfaces) ---
+
+func secretNoteMeta() *metamodel.Metamodel {
+	return &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"secret": {
+				Label:  "Secret",
+				IDType: "manual",
+				Properties: map[string]metamodel.PropertyDef{
+					"title": {Type: "string"},
+				},
+			},
+			"note": {
+				Label:  "Note",
+				IDType: "manual",
+				Properties: map[string]metamodel.PropertyDef{
+					"title": {Type: "string"},
+				},
+			},
+		},
+	}
+}
+
+func buildSecretNoteApp(t *testing.T, policyYAML, user string) *App {
+	t.Helper()
+	meta := secretNoteMeta()
+	cfg := &Config{App: AppConfig{Name: "sec"}}
+	app := newAppFromParts(cfg, meta, &fixture{})
+
+	fs := storage.NewMemFS()
+	ctx := &project.Context{Root: "/project", CacheDir: "/project/.rela"}
+	_ = fs.MkdirAll(ctx.CacheDir, 0o755)
+
+	policy, err := acl.LoadPolicyBytes([]byte(policyYAML))
+	if err != nil {
+		t.Fatalf("LoadPolicyBytes: %v", err)
+	}
+
+	svc := appbuildtest.New(meta, appbuildtest.WithFS(fs, ctx))
+	d, err := acl.NewDeclarative(policy, acl.NewStoreGraph(svc.Store()), svc.Store())
+	if err != nil {
+		t.Fatalf("NewDeclarative: %v", err)
+	}
+	// Re-derive the services bundle with the Declarative ACL so the write
+	// path (entityManager) and the read gate share the same instance.
+	svc = appbuildtest.New(meta, appbuildtest.WithFS(fs, ctx), appbuildtest.WithDeclarative(d))
+	rebindApp(app, fs, ctx, svc)
+	app.broker = newEventBroker()
+	app.acl = d
+	app.SetPrincipalResolver(func(*http.Request) principal.Principal {
+		return principal.Principal{User: user, Tool: principal.ToolSync}
+	})
+	return app
 }

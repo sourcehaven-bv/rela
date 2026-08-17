@@ -117,6 +117,43 @@ func TestIsSensitivePath_AppsCarveOut(t *testing.T) {
 	}
 }
 
+// TestIsSyncExemptV1Path pins the exact scope of the sync CLI's /api/v1 CSRF
+// exemption (TKT-8P1TM7): the schema handshake + the entity/relation DATA routes
+// ({plural}/...), but NONE of the underscore-prefixed SPA sub-surfaces.
+func TestIsSyncExemptV1Path(t *testing.T) {
+	exempt := []string{
+		"/api/v1/_schema",
+		"/api/v1/tickets",                              // POST create (collection)
+		"/api/v1/tickets/TKT-1",                        // GET/PATCH/DELETE
+		"/api/v1/tickets/TKT-1/relations/blocks/TKT-2", // relation read/write
+		"/api/v1/decisions/DEC-1",
+	}
+	for _, p := range exempt {
+		if !isSyncExemptV1Path(p) {
+			t.Errorf("%q should be a sync-exempt v1 path", p)
+		}
+	}
+	// Underscore-prefixed sub-surfaces are SPA/browser routes and must NOT match —
+	// they keep the full same-origin gate. Also non-v1 paths must not match.
+	notExempt := []string{
+		"/api/v1/_search",
+		"/api/v1/_apps/dash/app.js",
+		"/api/v1/_config",
+		"/api/v1/_sidebar",
+		"/api/v1/_feeds/cal",
+		"/api/v1/", // no type segment
+		"/api/v1",  // no trailing slash
+		"/api/sync/manifest",
+		"/api/v2/tickets/TKT-1",
+		"/other/tickets",
+	}
+	for _, p := range notExempt {
+		if isSyncExemptV1Path(p) {
+			t.Errorf("%q must NOT be a sync-exempt v1 path", p)
+		}
+	}
+}
+
 func TestRequireSameOrigin_RejectsCrossOriginOnSensitivePath(t *testing.T) {
 	s := newTestSecurity(t)
 	h := s.requireSameOrigin(okHandler())
@@ -186,7 +223,11 @@ func TestRequireSameOrigin_RejectsMissingOriginAndReferer(t *testing.T) {
 	s := newTestSecurity(t)
 	h := s.requireSameOrigin(okHandler())
 
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/tickets/", http.NoBody)
+	// A sensitive, NON-sync-exempt path (a command run) with no Origin/Referer is
+	// still rejected. (A /api/v1 DATA route is now sync-exempt for the bare
+	// no-Origin CLI shape — TKT-8P1TM7 — so this uses a route that is not, to keep
+	// asserting the missing-origin rejection.)
+	r := httptest.NewRequest(http.MethodPost, "/api/command/run", http.NoBody)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	if w.Code != http.StatusForbidden {

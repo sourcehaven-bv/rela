@@ -181,11 +181,9 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	// on nil args, which the literals above cannot produce — same clean-boot
 	// swallow as the logo/palette stores.
 	app.viewReader, _ = visibility.NewPolicyReader(ctxRowGate{}, appRedactor(app), svc.Store())
-	// Rebuild the sync handler over the rebound store/manager. writeMu is App's
-	// own, so sync writes serialize with the other mutation handlers just as in
-	// production.
-	app.sync = newSyncHandler(svc.Store(), svc.EntityManager(), &app.writeMu)
-	app.sync.provision = newProvisionSeam(app)
+	// Rebuild the sync handler (manifest-only) over the rebound store. The record
+	// write path was retired in TKT-8P1TM7, so there is no writeMu/provision here.
+	app.sync = newSyncHandler(svc.Store())
 	// viewsHandler mirrors production wiring (see NewApp): fixed service
 	// handles by value, schema/services closures, and App's shared read gate.
 	app.views = &viewsHandler{
@@ -270,7 +268,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 // inject a fake manifest/apply source must call this so the handler re-resolves
 // against the swapped store.
 func rebindSyncHandler(app *App) {
-	app.sync = newSyncHandler(app.store, app.entityManager, &app.writeMu)
+	app.sync = newSyncHandler(app.store)
 }
 
 // rebindVisibleSearcher re-derives the generic visible-search wrapper
