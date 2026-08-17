@@ -2,6 +2,7 @@ package entitymanager
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -109,4 +110,39 @@ func checkUniqueProperties(
 		return newValidationError(violations)
 	}
 	return nil
+}
+
+// mapUniquePropertyConflict translates a store-level derived-unique-index
+// violation ([store.UniquePropertyError], raised atomically by a pgstore partial
+// unique index — TKT-3Q0GP1) into the SAME [ValidationError] the pre-write
+// [checkUniqueProperties] scan produces, so a client cannot tell which
+// enforcement path caught the duplicate: both yield a 422 naming the property
+// and withholding the colliding value. It returns the original error unchanged
+// when it is not an UniquePropertyError.
+//
+// This is the second-line backstop to the scan: the scan wins the common case
+// (and is the only mechanism on fs/mem), but a concurrent writer that passed
+// the scan is stopped atomically by the index and lands here. When the store
+// could not attribute the violation to a property (empty Property — e.g. a
+// rolling deploy against a peer-created index), it degrades to a generic
+// property-less unique error rather than inventing a property name.
+//
+// ok reports whether err was a UniquePropertyError (and thus mapped); when
+// false the returned error is err unchanged, so callers write
+// `if ok, v := mapUniquePropertyConflict(err); ok { return v }`.
+func mapUniquePropertyConflict(err error) (ok bool, mapped error) {
+	var up store.UniquePropertyError
+	if !errors.As(err, &up) {
+		return false, err
+	}
+	msg := "a property that must be unique already has this value"
+	if up.Property != "" {
+		msg = fmt.Sprintf(
+			"property %q must be unique; another entity already has this value", up.Property)
+	}
+	return true, newValidationError([]*metamodel.ValidationError{{
+		Type:     metamodel.ValidationErrorUnique,
+		Property: up.Property,
+		Message:  msg,
+	}})
 }

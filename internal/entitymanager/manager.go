@@ -810,6 +810,13 @@ func (m *Manager) updateCore(
 	// the row exists (else we returned ErrEntityNotFound), so this is
 	// unambiguously an update (BUG-ZWTDH9).
 	if err := m.deps.Store.UpdateEntity(ctx, e); err != nil {
+		// A derived unique-property index can reject an update whose (possibly
+		// automation-set) value duplicates another entity's, even though the
+		// scan above passed under a concurrent writer. Surface it as the same
+		// 422 the scan produces (TKT-3Q0GP1); other errors pass through.
+		if ok, mapped := mapUniquePropertyConflict(err); ok {
+			return nil, mapped
+		}
 		return nil, fmt.Errorf("write entity: %w", err)
 	}
 

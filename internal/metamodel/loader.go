@@ -300,6 +300,14 @@ func validateEntitySemantics(m *Metamodel) []string {
 	for _, name := range entityNames {
 		def := m.Entities[name]
 
+		// The entity-type name is interpolated into backend DDL by the
+		// derived-schema reconciler (`... WHERE type = '<type>'`), so it must
+		// use the safe character set for the same DDL-injection reason as
+		// property names (TKT-3Q0GP1).
+		if err := ValidateSchemaName(name); err != nil {
+			errs = append(errs, fmt.Sprintf("entity %v", err))
+		}
+
 		if def.Label == "" {
 			errs = append(errs, fmt.Sprintf("entity %q: missing 'label'", name))
 		}
@@ -662,6 +670,14 @@ func validatePropertyDefs(
 		if reserved != nil && reserved[propName] {
 			errs = append(errs, fmt.Sprintf(
 				"%s: property %q is reserved and cannot be used", schemaName, propName))
+			continue
+		}
+
+		// Check the property name's character set. Names are interpolated into
+		// backend DDL by the derived-schema reconciler, so a name outside the
+		// safe set is a DDL-injection vector; forbid it at load (TKT-3Q0GP1).
+		if err := ValidateSchemaName(propName); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: property %v", schemaName, err))
 			continue
 		}
 
