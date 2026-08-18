@@ -380,6 +380,7 @@ views:
       - heading: "Category"
         source: entry
         display: properties
+        render: input
         fields:
           - property: name
           - property: description
@@ -409,6 +410,7 @@ views:
       - heading: "Labels Used"
         source: labels
         display: list
+        render: input
         fields:
           - property: name
         empty_message: "No labels applied"
@@ -434,6 +436,7 @@ views:
       - heading: "Ticket"
         source: entry
         display: properties
+        render: input
         fields:
           # `span` places a field on the 12-column grid; omit it for full
           # width (the default). Grouping is DECLARED here, not left to
@@ -477,6 +480,7 @@ views:
       - heading: "Blocked By"
         source: blocked_by
         display: cards
+        render: input
         fields:
           - property: status
           - property: priority
@@ -486,6 +490,7 @@ views:
       - heading: "Labels"
         source: labels
         display: list
+        render: input
         fields:
           - property: name
         empty_message: "No labels"

@@ -65,3 +65,8 @@ type (
 	PaletteColors    = dataentryconfig.PaletteColors
 	ResolvedPalette  = dataentryconfig.ResolvedPalette
 )
+
+// resolveFieldRender re-exports dataentryconfig.ResolveFieldRender so the
+// section builders resolve a field's render mode (TKT-HOIX1) through the one
+// shared rule.
+var resolveFieldRender = dataentryconfig.ResolveFieldRender

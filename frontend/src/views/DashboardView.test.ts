@@ -156,4 +156,153 @@ describe('DashboardView', () => {
 
     expect(searchEntitiesMock).toHaveBeenCalledTimes(2)
   })
+
+  // TKT-ERHWL0. The template asks for a breakdown/table twice per card
+  // (`v-if="…length"` then `v-for`). Both derivations are O(N) or worse over
+  // the card's whole result set, so they must be memoized rather than
+  // recomputed per call site.
+  describe('derived card data is memoized', () => {
+    function entity(id: string, props: Record<string, unknown>): Entity {
+      return { id, type: 'ticket', properties: props } as unknown as Entity
+    }
+
+    it('derives a breakdown once even though the template reads it twice', async () => {
+      // A getter on `status` counts every read of the property. Two template
+      // call sites over 3 entities is 3 reads when memoized, 6 when not.
+      let reads = 0
+      const rows = ['todo', 'todo', 'done'].map((status, i) =>
+        entity(`TKT-${i}`, {
+          get status() {
+            reads++
+            return status
+          },
+        })
+      )
+      searchEntitiesMock.mockResolvedValue({
+        data: rows,
+        meta: { total: rows.length, page: 1, per_page: 50, has_more: false },
+      })
+      seedDashboard([card({ display: 'breakdown', group_by: 'status' })])
+
+      const wrapper = await mountView()
+
+      expect(wrapper.text()).toContain('todo')
+      expect(reads).toBe(rows.length)
+    })
+
+    it('sorts table rows once even though the template reads them twice', async () => {
+      // Counting reads of `title`, not just asserting the order: the order was
+      // already correct before this change, so a bare `toEqual` pins sorting
+      // and says nothing about how often the rows were derived. Deriving twice
+      // costs a second sort pass, which this count catches.
+      let reads = 0
+      const values = ['c', 'a', 'b']
+      const rows = values.map((t, i) =>
+        entity(`TKT-${i}`, {
+          get title() {
+            reads++
+            return t
+          },
+        })
+      )
+      searchEntitiesMock.mockResolvedValue({
+        data: rows,
+        meta: { total: rows.length, page: 1, per_page: 50, has_more: false },
+      })
+      seedDashboard([
+        card({
+          display: 'table',
+          columns: [{ property: 'title' }],
+          sort: [{ property: 'title', direction: 'asc' }],
+        }),
+      ])
+
+      const wrapper = await mountView()
+
+      const cells = wrapper.findAll('tbody td').map((td) => td.text())
+      expect(cells).toEqual(['a', 'b', 'c'])
+
+      // Sorting reads each row's property, then rendering reads it once per
+      // cell. Deriving a second time re-runs the sort — measured at 15 reads
+      // against the pre-TKT-ERHWL0 code, versus 9 here.
+      const derivedTwice = 15
+      expect(reads).toBeLessThan(derivedTwice)
+    })
+
+    // The collision this keying must not have. `cardKey()` covers
+    // [title, query, display] — correct for `cardData`, where two cards with
+    // one query share a fetch, but NOT sufficient to key derived data:
+    // `group_by` changes the breakdown without changing the key. Keying the
+    // derivation by cardKey rendered the second card's breakdown on both tiles.
+    it('gives two cards differing only in group_by their own breakdown', async () => {
+      searchEntitiesMock.mockResolvedValue({
+        data: [entity('TKT-1', { status: 'todo', priority: 'high' })],
+        meta: { total: 1, page: 1, per_page: 50, has_more: false },
+      })
+      seedDashboard([
+        card({ title: 'T', query: 'type:ticket', display: 'breakdown', group_by: 'status' }),
+        card({ title: 'T', query: 'type:ticket', display: 'breakdown', group_by: 'priority' }),
+      ])
+
+      const tiles = (await mountView()).findAll('.dashboard-card')
+
+      expect(tiles).toHaveLength(2)
+      expect(tiles[0].text()).toContain('todo')
+      expect(tiles[1].text()).toContain('high')
+    })
+
+    // A count card renders one number, so it must not pay to copy and sort a
+    // result set nothing displays.
+    it('does not derive table rows for a count card', async () => {
+      let reads = 0
+      const rows = ['c', 'a', 'b'].map((t, i) =>
+        entity(`TKT-${i}`, {
+          get title() {
+            reads++
+            return t
+          },
+        })
+      )
+      searchEntitiesMock.mockResolvedValue({
+        data: rows,
+        meta: { total: rows.length, page: 1, per_page: 50, has_more: false },
+      })
+      seedDashboard([card({ display: 'count', sort: [{ property: 'title', direction: 'asc' }] })])
+
+      const wrapper = await mountView()
+
+      expect(wrapper.text()).toContain('3')
+      expect(reads).toBe(0)
+    })
+
+    // The memo must not outlive the data it was derived from. `cardData` is a
+    // ref holding a Map mutated with `.set()`, so the computed has to track
+    // the ref itself — the arriving search response must reach the template.
+    //
+    // Note this asserts the memo invalidates *as data lands*, not on a later
+    // reload: `loadData` runs only from `onMounted`, so a card list swapped
+    // after mount does not refetch (pre-existing, unrelated to TKT-ERHWL0).
+    it('renders data that arrives after the initial render', async () => {
+      let resolveSearch!: (r: ListResponse<Entity>) => void
+      searchEntitiesMock.mockReturnValue(
+        new Promise<ListResponse<Entity>>((res) => {
+          resolveSearch = res
+        })
+      )
+      seedDashboard([card({ display: 'breakdown', group_by: 'status' })])
+
+      // Mount without awaiting the search: the breakdown is empty, and the
+      // computed has already been evaluated once in that state.
+      const wrapper = mount(DashboardView)
+      expect(wrapper.text()).not.toContain('done')
+
+      resolveSearch({
+        data: [entity('TKT-2', { status: 'done' })],
+        meta: { total: 1, page: 1, per_page: 50, has_more: false },
+      })
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('done')
+    })
+  })
 })

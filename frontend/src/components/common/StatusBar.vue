@@ -3,6 +3,9 @@ import { computed, onMounted, ref } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useGitStore, useSchemaStore, useUIStore } from '@/stores'
 import { shortcutsModalOpen } from '@/composables/useKeyboardShortcuts'
+import { watch } from 'vue'
+import { useNextAction } from '@/composables/useNextAction'
+import NextActionOffers from '@/components/NextActionOffers.vue'
 import { renderMarkdown } from '@/utils/markdown'
 
 const gitStore = useGitStore()
@@ -15,6 +18,18 @@ const router = useRouter()
 // falling back to the metamodel's top-level description on the server). The
 // button is shown only when there is a description to show (TKT-DUQBD0).
 const aboutOpen = ref(false)
+
+// The quietest prominence tier: a chip that says something exists, expanding
+// on click. Present without ever being in the way — for suggestions that are
+// true most of the time and urgent none of it.
+const {
+  suggestion: naSuggestion,
+  bandLabel: naBandLabel,
+  isStatusBar: naInStatusBar,
+  markShown: naMarkShown,
+  expanded: naExpanded,
+  loadOnce: naLoadOnce,
+} = useNextAction()
 const appName = computed(() => schemaStore.app?.name || 'rela')
 const appDescription = computed(() => schemaStore.aboutDescription?.trim() || '')
 // The description is authored as markdown (in data-entry.yaml or the metamodel);
@@ -26,7 +41,16 @@ onMounted(() => {
   gitStore.fetchStatus().catch(() => {
     // Errors are already handled by the store
   })
+  // Resolve once per session. The composable is a singleton, so this and the
+  // page-level card share one suggestion rather than racing for two.
+  void naLoadOnce()
 })
+
+// The chip IS the render for the statusbar tier, so it reports its own
+// impression — the page-level card never sees these suggestions.
+watch(naInStatusBar, (shown) => {
+  if (shown) void naMarkShown()
+}, { immediate: true })
 
 async function handleSync() {
   try {
@@ -61,8 +85,23 @@ async function handleSync() {
       </div>
     </div>
 
-    <!-- Right side: Theme, Settings, and shortcuts -->
+    <!-- Right side: next action, theme, settings, shortcuts -->
     <div class="status-right">
+      <!-- statusbar prominence: a chip, expanding into a popover. The label
+           is shown when there is room and drops to a bare dot on narrow
+           viewports, so it never crowds the bar it lives in. -->
+      <button
+        v-if="naInStatusBar && naSuggestion"
+        class="status-item na-chip rela-na-chip"
+        :class="{ 'na-chip--open': naExpanded }"
+        :data-band="naSuggestion.band"
+        :data-source="naSuggestion.source"
+        :title="naSuggestion.message"
+        @click="naExpanded = !naExpanded"
+      >
+        <span class="na-chip__dot"/>
+        <span class="na-chip__text">{{ naBandLabel || 'Suggestion' }}</span>
+      </button>
       <!--
         Hide the dark/light toggle when the project's palette is in
         Regular mode — there's only one set of colors so the toggle
@@ -100,6 +139,31 @@ async function handleSync() {
         <kbd>?</kbd> <span class="shortcuts-text">Shortcuts</span>
       </button>
     </div>
+
+    <!-- Next-action popover. Teleported for the same reason as About: the
+         status bar is fixed and would clip it. -->
+    <Teleport to="body">
+      <div v-if="naExpanded && naSuggestion" class="na-pop-overlay" @click.self="naExpanded = false">
+        <div
+          class="na-pop rela-na"
+          :data-band="naSuggestion.band"
+          data-prominence="statusbar"
+          :data-source="naSuggestion.source"
+          :data-entity-id="naSuggestion.entity_id"
+        >
+          <!-- Same tier-1 hook as the page-level surface, so one custom.js
+               definition serves both without branching on where it rendered. -->
+          <rela-slot name="companion" :data-band="naSuggestion.band" data-prominence="statusbar" />
+          <div class="na-pop__band rela-na-band">{{ naBandLabel }}</div>
+          <p class="na-pop__message rela-na-message">{{ naSuggestion.message }}</p>
+          <NextActionOffers
+            :offers="naSuggestion.actions || []"
+            :entity-id="naSuggestion.entity_id"
+            :pick-options="naSuggestion.pick_options"
+          />
+        </div>
+      </div>
+    </Teleport>
 
     <!-- About overlay: the deployment description. Teleported so it isn't
          clipped by the fixed status bar. -->
@@ -228,6 +292,78 @@ async function handleSync() {
 .about-icon {
   font-size: 13px;
   line-height: 1;
+}
+
+/*
+ * The status-bar chip inherits .status-item (the bar's own affordance style),
+ * so it sits at the same weight as Settings/About rather than inventing a
+ * competing look. Only the dot and the open state are added here.
+ */
+.na-chip__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-circle);
+  background: var(--accent-color);
+  flex-shrink: 0;
+}
+
+.na-chip--open {
+  background: var(--hover-bg);
+  opacity: 1;
+}
+
+/* The label is a nicety, not the signal: below 900px the dot alone says
+   "there is something", and the bar keeps its room for git status. */
+@media (max-width: 900px) {
+  .na-chip__text {
+    display: none;
+  }
+}
+
+/* Anchored above the chip rather than centred: a suggestion the user went
+   looking for should appear where they clicked. The overlay is transparent
+   and exists only to catch the outside click. */
+.na-pop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+}
+
+.na-pop {
+  position: absolute;
+  right: 12px;
+  bottom: 36px;
+  width: min(380px, calc(100vw - 24px));
+  padding: 14px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* Matches the app's existing uppercase-label convention (.cmdk-type). */
+.na-pop__band {
+  display: inline-block;
+  margin-bottom: 8px;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--hover-bg);
+  color: var(--muted-text);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.na-pop :deep(rela-slot) {
+  display: contents;
+}
+
+.na-pop__message {
+  margin: 0 0 12px;
+  font-size: var(--font-size-base);
+  line-height: 1.45;
+  color: var(--text-color);
 }
 
 .about-overlay {

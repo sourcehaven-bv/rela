@@ -16,9 +16,9 @@
 //      stored value.
 //   3. Both hold on the wizard path, which carries the same gate.
 
-import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
-import { mount, flushPromises } from '@vue/test-utils'
+import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { useSchemaStore, useEntitiesStore } from '@/stores'
 import DynamicForm from './DynamicForm.vue'
 import type { Entity } from '@/types'
@@ -30,6 +30,20 @@ vi.mock('vue-router', () => ({
   useRoute: () => ({ query: {}, params: {}, path: '/form/ticket-form' }),
   onBeforeRouteLeave: vi.fn(),
 }))
+
+// Defensive symmetry with the sibling create-mode suites. NOT load-bearing
+// here: `loadTemplates` runs only in the create branch (DynamicForm.vue:1321)
+// and this file mounts edit mode exclusively, so `getTemplates` is unreachable.
+// Kept so that adding a create-mode case here doesn't silently reintroduce a
+// live network call — the global guard in src/test/setup.ts would fail it, but
+// failing at the mock is a clearer signal than failing at the adapter.
+vi.mock('@/api', async () => {
+  const actual = await vi.importActual<Record<string, unknown>>('@/api')
+  return {
+    ...actual,
+    getTemplates: vi.fn().mockResolvedValue([]),
+  }
+})
 
 // `notes` is the property at the heart of the bug: declared in the metamodel,
 // listed in the form config, but absent from the stored entity because it was
@@ -102,6 +116,27 @@ function stubEntity(opts: { properties: Record<string, unknown>; redacted?: stri
   return { update }
 }
 
+// BUG-2OXEW0: every mounted component must be torn down. A leaked DynamicForm
+// keeps running its async work (loadEntity, template load, dry-run
+// affordances), and those paths log via console.warn/error. When one settles
+// AFTER the test file finishes, vitest's `onUserConsoleLog` RPC is still in
+// flight as the worker closes — reported as an EnvironmentTeardownError that
+// fails the run with every test passing, on PRs that touched no frontend code.
+const mounted: VueWrapper[] = []
+
+afterEach(() => {
+  // splice first: if one unmount throws, the rest still tear down and the
+  // array cannot leak into the next test.
+  const wrappers = mounted.splice(0)
+  wrappers.forEach((w) => {
+    try {
+      w.unmount()
+    } catch {
+      /* already torn down */
+    }
+  })
+})
+
 async function mountEdit(form: object, entityOpts: Parameters<typeof stubEntity>[0]) {
   stubStores(form)
   const { update } = stubEntity(entityOpts)
@@ -114,6 +149,17 @@ async function mountEdit(form: object, entityOpts: Parameters<typeof stubEntity>
         RelationPicker: true,
         RelationCards: true,
         AutoSaveIndicator: true,
+        // BUG-2OXEW0: SidePanel renders only when `isEdit && entityId`
+        // (DynamicForm.vue:1707) — precisely this file's configuration — and
+        // fetches `/_sidepanel/...` on mount. Unstubbed, that request hits the
+        // happy-dom default origin, fails ECONNREFUSED, and logs via
+        // console.error (SidePanel.vue:41). Unmounting does not cancel the
+        // in-flight request, so the log can land after the file finishes and
+        // race vitest's closing `onUserConsoleLog` RPC — an
+        // EnvironmentTeardownError that fails the run with every test passing.
+        // The sibling form tests are create-mode, so they never render it,
+        // which is why this file was the only one ever named in the failure.
+        SidePanel: true,
       },
       mocks: {
         $router: { push: vi.fn(), replace: vi.fn() },
@@ -121,6 +167,7 @@ async function mountEdit(form: object, entityOpts: Parameters<typeof stubEntity>
       },
     },
   })
+  mounted.push(wrapper)
   await flushPromises()
   return { wrapper, update }
 }

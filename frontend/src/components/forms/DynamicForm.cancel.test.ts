@@ -10,9 +10,9 @@
 // how deep the browser's own history is. `window.history.length` cannot be
 // used: it counts pre-SPA entries and reads >= 2 even on a fresh open.
 
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
-import { mount, flushPromises } from '@vue/test-utils'
+import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { useSchemaStore, useEntitiesStore } from '@/stores'
 import DynamicForm from './DynamicForm.vue'
 
@@ -58,6 +58,23 @@ const ENTITY_TYPE = {
 
 const FORM = { id: 'ticket-form', entity: 'ticket', fields: [{ property: 'title' }] }
 
+// BUG-2OXEW0: unmount every component, or its in-flight async work logs after
+// the file finishes and races vitest's worker teardown.
+const mounted: VueWrapper[] = []
+
+afterEach(() => {
+  // splice first: if one unmount throws, the rest still tear down and the
+  // array cannot leak into the next test.
+  const wrappers = mounted.splice(0)
+  wrappers.forEach((w) => {
+    try {
+      w.unmount()
+    } catch {
+      /* already torn down */
+    }
+  })
+})
+
 async function mountForm(opts: { list?: boolean } = {}) {
   const schema = useSchemaStore()
   schema.forms.set(FORM.id, FORM as never)
@@ -81,6 +98,7 @@ async function mountForm(opts: { list?: boolean } = {}) {
       },
     },
   })
+  mounted.push(wrapper)
   await flushPromises()
   return wrapper
 }

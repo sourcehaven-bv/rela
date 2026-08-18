@@ -264,6 +264,17 @@ type Config struct {
 	Documents        map[string]dataentryconfig.DocumentConfig   `json:"documents,omitempty"`
 	Apps             map[string]App                              `json:"apps,omitempty"`
 	Palette          *dataentryconfig.ResolvedPalette            `json:"palette,omitempty"`
+
+	// NextActionBands is the operator's ordered priority vocabulary, so the
+	// SPA can label a suggestion's band ("Someone is waiting") rather than
+	// echoing a raw id.
+	//
+	// The SOURCES are deliberately NOT here. A suggestion arrives fully
+	// resolved from /_next_action — message already interpolated, affordances
+	// attached — so the SPA never needs the rules, and shipping them would
+	// invite a client-side re-implementation of the engine. Same reasoning as
+	// "no useACL() composable": the SPA renders what the server computed.
+	NextActionBands []dataentryconfig.NextActionBand `json:"next_action_bands,omitempty"`
 }
 
 // App is the client-facing view of a custom app. It deliberately omits the
@@ -332,6 +343,12 @@ type SidePanelSection struct {
 // is git-crypt encrypted — the field is known to exist in the schema but
 // its value cannot be read.
 // Span is the field's width on the 12-column layout grid (0 = full width).
+//
+// Render is the already-resolved render mode ("display" | "input", TKT-HOIX1),
+// set server-side from the section + field config. View sections and cards/list
+// rows honor it; the side-panel renderer does not implement inline edit today
+// and ignores it.
+//
 // Field order and types must stay in lockstep with dataentry.SectionFieldData:
 // the handlers convert between them with a direct struct conversion, so the
 // compiler is what keeps the wire surface and the internal DTO from drifting.
@@ -342,6 +359,7 @@ type SectionField struct {
 	PropType     string   `json:"propType,omitempty"`
 	Inaccessible bool     `json:"inaccessible,omitempty"`
 	Span         int      `json:"span,omitempty"`
+	Render       string   `json:"render,omitempty"`
 }
 
 // SidePanelEntity represents an entity in a side panel section.

@@ -4,21 +4,26 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/canonical"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
-// AC #1: a local create/update/delete pushes to the server and both ends
-// converge (the index records the agreed hash; a re-push is a no-op).
+// AC #1: a local create/update/delete pushes through /api/v1 and both ends
+// converge. Under the fancy-browser model the PRIMARY mints the id on create,
+// so the replica creates locally under a temp id, adopts the minted id, and
+// renames its local doc (TKT-8P1TM7). The index records the agreed baseline; a
+// re-push is a no-op.
 func TestPush_CreateUpdateDelete_Converges(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 
-	// Create + push.
-	h.createLocalEntity(t, "TKT-1", map[string]any{"title": "one"})
+	// Create locally under a temp id + push → primary mints the real id.
+	h.createLocalEntity(t, "tmp-1", map[string]any{"title": "one"})
 	rep, err := h.engine.Push(ctx)
 	if err != nil {
 		t.Fatalf("push create: %v", err)
@@ -26,8 +31,17 @@ func TestPush_CreateUpdateDelete_Converges(t *testing.T) {
 	if rep.Applied != 1 || rep.Conflicts != 0 {
 		t.Fatalf("push create: applied=%d conflicts=%d, want 1/0", rep.Applied, rep.Conflicts)
 	}
-	if _, ok := h.server.entities["TKT-1"]; !ok {
-		t.Fatal("server missing TKT-1 after push")
+	// The primary minted exactly one ticket; find its id.
+	mintedID := h.onlyServerEntityID(t)
+	if _, ok := h.server.entities[mintedID]; !ok {
+		t.Fatalf("server missing minted entity %q after push", mintedID)
+	}
+	// The replica renamed its local doc to the minted id (temp id gone).
+	if _, err := h.st.GetEntity(ctx, "tmp-1"); err == nil {
+		t.Fatal("local temp id tmp-1 should be renamed away after adoption")
+	}
+	if _, err := h.st.GetEntity(ctx, mintedID); err != nil {
+		t.Fatalf("local doc not renamed to minted id %q: %v", mintedID, err)
 	}
 
 	// Re-push with no local change → nothing to do (converged).
@@ -36,32 +50,88 @@ func TestPush_CreateUpdateDelete_Converges(t *testing.T) {
 		t.Fatalf("re-push: got %d results, want 0 (converged)", len(rep.Results))
 	}
 
-	// Update + push.
-	if err := h.st.UpdateEntity(ctx, &entity.Entity{ID: "TKT-1", Type: "ticket", Properties: map[string]any{"title": "two"}}); err != nil {
+	// Update + push (now an id-stable PATCH under the minted id).
+	if err := h.st.UpdateEntity(ctx, &entity.Entity{ID: mintedID, Type: "ticket", Properties: map[string]any{"title": "two"}}); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 	rep, _ = h.engine.Push(ctx)
 	if rep.Applied != 1 {
 		t.Fatalf("push update: applied=%d, want 1", rep.Applied)
 	}
-	if got := h.server.entities["TKT-1"].Properties["title"]; got != "two" {
+	if got := h.server.entities[mintedID].Properties["title"]; got != "two" {
 		t.Fatalf("server title=%v, want two", got)
 	}
 
 	// Delete + push → mirrored remote delete.
-	if _, err := h.st.DeleteEntity(ctx, "TKT-1", false); err != nil {
+	if _, err := h.st.DeleteEntity(ctx, mintedID, false); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 	rep, _ = h.engine.Push(ctx)
 	if rep.Deleted != 1 {
 		t.Fatalf("push delete: deleted=%d, want 1", rep.Deleted)
 	}
-	if _, ok := h.server.entities["TKT-1"]; ok {
-		t.Fatal("server still has TKT-1 after delete push")
+	if _, ok := h.server.entities[mintedID]; ok {
+		t.Fatalf("server still has %q after delete push", mintedID)
 	}
-	if _, ok := h.idx.Hash("TKT-1"); ok {
-		t.Fatal("index still has TKT-1 after delete")
+	if _, ok := h.idx.Baseline(mintedID); ok {
+		t.Fatalf("index still has %q after delete", mintedID)
 	}
+}
+
+// TKT-8P1TM7 security crux, end-to-end: a redacted pull must NOT erase a hidden
+// field the replica already holds. The primary hides `salary`; a prior wider
+// pull left `salary` in the local store; a later redacted pull of a changed
+// `title` must upsert title and PRESERVE the local salary (it is named in
+// `_redacted`, so it is hidden-not-deleted).
+func TestPull_RedactedField_PreservesLocalHiddenValue(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	// Seed the primary with both fields, then mark salary redacted for reads.
+	h.server.seedEntity("TKT-R", "ticket", map[string]any{"title": "v1", "salary": 100})
+
+	// Replica already holds salary locally (as if from an earlier wider-access
+	// pull) — write it straight into the local store.
+	if err := h.st.CreateEntity(ctx, &entity.Entity{
+		ID: "TKT-R", Type: "ticket", Properties: map[string]any{"title": "v1", "salary": 100},
+	}); err != nil {
+		t.Fatalf("seed local: %v", err)
+	}
+	// Baseline the index so the replica is "in sync" before the redacted change.
+	h.idx.Set("TKT-R", "", canonicalOf(t, h, "TKT-R"), "ticket")
+
+	// Now redaction turns on and the primary edits the visible title.
+	h.server.hideField("ticket", "salary")
+	h.server.mu.Lock()
+	h.server.entities["TKT-R"].Properties["title"] = "v2"
+	h.server.recordChange("e", "TKT-R", "ticket", false)
+	h.server.mu.Unlock()
+
+	if _, err := h.engine.Pull(ctx); err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+
+	got, err := h.st.GetEntity(ctx, "TKT-R")
+	if err != nil {
+		t.Fatalf("local TKT-R missing after pull: %v", err)
+	}
+	if got.Properties["title"] != "v2" {
+		t.Fatalf("visible title not updated: %v", got.Properties["title"])
+	}
+	if got.Properties["salary"] != 100 {
+		t.Fatalf("HIDDEN salary erased/changed by a redacted pull: %v (want 100 preserved)", got.Properties["salary"])
+	}
+}
+
+// canonicalOf returns the canonical hash of a local entity, for seeding a
+// baseline Local token in a test.
+func canonicalOf(t *testing.T, h *harness, id string) string {
+	t.Helper()
+	e, err := h.st.GetEntity(context.Background(), id)
+	if err != nil {
+		t.Fatalf("hash local %s: %v", id, err)
+	}
+	return canonical.HashEntity(*e)
 }
 
 // AC #2: a server-side create/update/delete pulls back; a remote tombstone
@@ -114,20 +184,22 @@ func TestPush_Conflict_HaltsThenForceResolves(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 
-	// Establish a shared baseline: push a create so the index has its hash.
-	h.createLocalEntity(t, "TKT-9", map[string]any{"title": "base"})
+	// Establish a shared baseline: push a create so the primary mints an id and
+	// the index baselines it. Subsequent edits are id-stable PATCHes on that id.
+	h.createLocalEntity(t, "tmp-9", map[string]any{"title": "base"})
 	if _, err := h.engine.Push(ctx); err != nil {
 		t.Fatalf("baseline push: %v", err)
 	}
+	id := h.onlyServerEntityID(t)
 
 	// Remote moves underneath us (someone else pushed a change).
 	h.server.mu.Lock()
-	h.server.entities["TKT-9"].Properties["title"] = "remote-edit"
-	h.server.recordChange("e", "TKT-9", "ticket", false)
+	h.server.entities[id].Properties["title"] = "remote-edit"
+	h.server.recordChange("e", id, "ticket", false)
 	h.server.mu.Unlock()
 
 	// We also edit locally, then push → 412 conflict, halted.
-	if err := h.st.UpdateEntity(ctx, &entity.Entity{ID: "TKT-9", Type: "ticket", Properties: map[string]any{"title": "local-edit"}}); err != nil {
+	if err := h.st.UpdateEntity(ctx, &entity.Entity{ID: id, Type: "ticket", Properties: map[string]any{"title": "local-edit"}}); err != nil {
 		t.Fatalf("local edit: %v", err)
 	}
 	rep, err := h.engine.Push(ctx)
@@ -137,19 +209,19 @@ func TestPush_Conflict_HaltsThenForceResolves(t *testing.T) {
 	if rep.Conflicts != 1 || rep.Applied != 0 {
 		t.Fatalf("push conflict: conflicts=%d applied=%d, want 1/0", rep.Conflicts, rep.Applied)
 	}
-	if got := h.server.entities["TKT-9"].Properties["title"]; got != "remote-edit" {
+	if got := h.server.entities[id].Properties["title"]; got != "remote-edit" {
 		t.Fatalf("server overwritten despite conflict: title=%v", got)
 	}
 
 	// Force-push: local wins.
-	res, err := h.engine.ForcePush(ctx, "TKT-9")
+	res, err := h.engine.ForcePush(ctx, id)
 	if err != nil {
 		t.Fatalf("force push: %v", err)
 	}
 	if res.Outcome != OutcomePushed {
 		t.Fatalf("force push outcome=%v, want pushed", res.Outcome)
 	}
-	if got := h.server.entities["TKT-9"].Properties["title"]; got != "local-edit" {
+	if got := h.server.entities[id].Properties["title"]; got != "local-edit" {
 		t.Fatalf("server title=%v after force, want local-edit", got)
 	}
 	// Index re-baselined → a subsequent push is a no-op.
@@ -168,12 +240,15 @@ func TestPush_CreateConflict409_HaltsOneRecordAndRunContinues(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 
-	// Two brand-new local creates. The server will 409 the first (TKT-A) as if a
-	// peer created it concurrently; TKT-B must still be applied in the same run.
-	h.createLocalEntity(t, "TKT-A", map[string]any{"title": "a"})
-	h.createLocalEntity(t, "TKT-B", map[string]any{"title": "b"})
+	// Two brand-new local creates. The server 409s the FIRST create it receives
+	// (as if a peer created it concurrently on the multi-writer backend); the
+	// other create must still be applied in the same run. Under the minted-id
+	// model both creates carry temp ids; the 409'd one keeps its temp id (not
+	// adopted, not indexed) so a re-run replays it.
+	h.createLocalEntity(t, "tmp-a", map[string]any{"title": "a"})
+	h.createLocalEntity(t, "tmp-b", map[string]any{"title": "b"})
 	h.server.mu.Lock()
-	h.server.conflictOnceKey = "TKT-A"
+	h.server.conflictOnceKey = "*create*" // 409 the first create, once
 	h.server.mu.Unlock()
 
 	rep, err := h.engine.Push(ctx)
@@ -181,70 +256,68 @@ func TestPush_CreateConflict409_HaltsOneRecordAndRunContinues(t *testing.T) {
 		t.Fatalf("409 must halt one record, not abort the run: %v", err)
 	}
 	if rep.Conflicts != 1 {
-		t.Fatalf("conflicts=%d, want 1 (TKT-A halted on 409)", rep.Conflicts)
+		t.Fatalf("conflicts=%d, want 1 (one create halted on 409)", rep.Conflicts)
 	}
 	if rep.Applied != 1 {
-		t.Fatalf("applied=%d, want 1 (TKT-B must proceed past the halted TKT-A)", rep.Applied)
+		t.Fatalf("applied=%d, want 1 (the other create must proceed past the halted one)", rep.Applied)
 	}
 
-	// TKT-A was halted: not on the server, and NOT recorded in the index (so a
-	// re-run replays it after the conflict is resolved).
-	if _, ok := h.server.entities["TKT-A"]; ok {
-		t.Fatal("TKT-A must not be on the server after a 409 halt")
+	// Exactly one entity landed on the server (the non-conflicted create), and
+	// exactly one temp id remains local (the halted create, not yet adopted).
+	if len(h.server.entities) != 1 {
+		t.Fatalf("server entities=%d, want 1 (only the non-conflicted create)", len(h.server.entities))
 	}
-	if _, ok := h.idx.Hash("TKT-A"); ok {
-		t.Fatal("TKT-A must NOT be in the index after a 409 halt (re-run must replay it)")
+	tempsRemaining := 0
+	for _, id := range []string{"tmp-a", "tmp-b"} {
+		if _, gerr := h.st.GetEntity(ctx, id); gerr == nil {
+			tempsRemaining++
+		}
 	}
-	// TKT-B converged: on the server and in the index.
-	if _, ok := h.server.entities["TKT-B"]; !ok {
-		t.Fatal("TKT-B missing on server — the 409 on TKT-A aborted the run")
-	}
-	if _, ok := h.idx.Hash("TKT-B"); !ok {
-		t.Fatal("TKT-B missing from index after a successful push")
+	if tempsRemaining != 1 {
+		t.Fatalf("temp ids remaining=%d, want 1 (the halted create keeps its temp id)", tempsRemaining)
 	}
 
 	// The halted record carries the create-specific message (not the 412
-	// base-changed wording), and re-running now converges (server no longer 409s).
+	// base-changed wording).
 	var halted *PushRecordResult
 	for i := range rep.Results {
-		if rep.Results[i].Key == "TKT-A" {
+		if rep.Results[i].Outcome == OutcomeConflict {
 			halted = &rep.Results[i]
 		}
 	}
 	if halted == nil {
-		t.Fatal("no report entry for the halted TKT-A")
-	}
-	if halted.Outcome != OutcomeConflict {
-		t.Fatalf("TKT-A outcome=%v, want OutcomeConflict", halted.Outcome)
+		t.Fatal("no conflict report entry for the halted create")
 	}
 	if !contains(halted.Detail, "created concurrently by a peer") {
 		t.Fatalf("409 detail=%q, want the concurrent-create wording", halted.Detail)
 	}
 
+	// Re-run: the server no longer 409s, so the halted create now applies.
 	rep2, err := h.engine.Push(ctx)
 	if err != nil {
 		t.Fatalf("re-run after 409 resolved: %v", err)
 	}
 	if rep2.Applied != 1 || rep2.Conflicts != 0 {
-		t.Fatalf("re-run applied=%d conflicts=%d, want 1/0 (TKT-A now applies)", rep2.Applied, rep2.Conflicts)
+		t.Fatalf("re-run applied=%d conflicts=%d, want 1/0 (halted create now applies)", rep2.Applied, rep2.Conflicts)
 	}
-	if _, ok := h.server.entities["TKT-A"]; !ok {
-		t.Fatal("TKT-A still missing on server after the re-run")
+	if len(h.server.entities) != 2 {
+		t.Fatalf("server entities=%d after re-run, want 2 (both creates landed)", len(h.server.entities))
 	}
 }
 
-// AC #6: a relation listed BEFORE its endpoint entity in a batch is still
-// applied, because push reorders entities ahead of relations.
+// AC #6: a relation and its two locally-created endpoints push in one run —
+// entities before relations (orderForApply). Under the minted-id model the
+// endpoints adopt primary-minted ids and RenameEntity remaps the relation's
+// endpoints, so the pushed relation connects the two minted ids (RR-SYNCR2).
 func TestPush_TopologicalOrder_EntitiesBeforeRelations(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 
-	// Create a relation AND its endpoints locally. The diff order is map-random,
-	// but orderForApply must emit both entities before the relation.
-	h.createLocalEntity(t, "A", map[string]any{"title": "a"})
-	h.createLocalEntity(t, "B", map[string]any{"title": "b"})
+	// Create a relation AND its endpoints locally under temp ids.
+	h.createLocalEntity(t, "tmp-a", map[string]any{"title": "a"})
+	h.createLocalEntity(t, "tmp-b", map[string]any{"title": "b"})
 	rd := store.RelationData{Content: "link"}
-	if _, err := h.st.CreateRelation(ctx, "A", "blocks", "B", &rd); err != nil {
+	if _, err := h.st.CreateRelation(ctx, "tmp-a", "blocks", "tmp-b", &rd); err != nil {
 		t.Fatalf("create relation: %v", err)
 	}
 
@@ -255,20 +328,20 @@ func TestPush_TopologicalOrder_EntitiesBeforeRelations(t *testing.T) {
 	if rep.Applied != 3 {
 		t.Fatalf("applied=%d, want 3 (2 entities + 1 relation)", rep.Applied)
 	}
-	// Verify ordering in the result stream: both entities precede the relation.
-	relIdx, aIdx, bIdx := -1, -1, -1
-	for i, res := range rep.Results {
-		switch res.Key {
-		case "A":
-			aIdx = i
-		case "B":
-			bIdx = i
-		case "A/blocks/B":
-			relIdx = i
-		}
+	// Two entities minted; exactly one relation on the server, connecting them.
+	if len(h.server.entities) != 2 {
+		t.Fatalf("server entities=%d, want 2", len(h.server.entities))
 	}
-	if aIdx > relIdx || bIdx > relIdx {
-		t.Fatalf("relation applied before an endpoint: A=%d B=%d rel=%d", aIdx, bIdx, relIdx)
+	if len(h.server.relations) != 1 {
+		t.Fatalf("server relations=%d, want 1", len(h.server.relations))
+	}
+	for key, rel := range h.server.relations {
+		if _, ok := h.server.entities[rel.From]; !ok {
+			t.Fatalf("relation %q FROM %q is not a minted server entity", key, rel.From)
+		}
+		if _, ok := h.server.entities[rel.To]; !ok {
+			t.Fatalf("relation %q TO %q is not a minted server entity", key, rel.To)
+		}
 	}
 }
 
@@ -279,14 +352,15 @@ func TestPush_MidBatchFailure_ResumesOnRerun(t *testing.T) {
 	st := memstore.New()
 	fs := newFakeServer()
 
-	// A server that fails the SECOND entity PUT once, then recovers.
-	failOnce := map[string]bool{"TKT-B": true}
+	// A server that fails the SECOND create (POST) once with a 502, then recovers.
+	createCount := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		failPath := r.Method == http.MethodPut && failOnce["TKT-B"] && r.URL.Path == "/api/sync/entities/TKT-B"
-		if failPath {
-			failOnce["TKT-B"] = false
-			w.WriteHeader(http.StatusBadGateway)
-			return
+		if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/") && r.URL.Path != "/api/v1/_schema" {
+			createCount++
+			if createCount == 2 {
+				w.WriteHeader(http.StatusBadGateway) // transient failure, once
+				return
+			}
 		}
 		fs.handle(w, r)
 	}))
@@ -297,33 +371,38 @@ func TestPush_MidBatchFailure_ResumesOnRerun(t *testing.T) {
 	eng, _ := NewEngine(client, st, memApplier{st: st}, idx)
 	ctx := context.Background()
 
-	for _, id := range []string{"TKT-A", "TKT-B"} {
+	for _, id := range []string{"tmp-a", "tmp-b"} {
 		if err := st.CreateEntity(ctx, &entity.Entity{ID: id, Type: "ticket", Properties: map[string]any{"title": id}}); err != nil {
 			t.Fatalf("seed %s: %v", id, err)
 		}
 	}
 
-	// First run: TKT-A applies, TKT-B fails → run aborts with an error.
+	// First run: one create applies, the second fails → run aborts with an error.
 	if _, err := eng.Push(ctx); err == nil {
 		t.Fatal("expected mid-batch failure to surface as an error")
 	}
-	if _, ok := idx.Hash("TKT-A"); !ok {
-		t.Fatal("TKT-A should be durably in the index after partial run")
+	// Exactly one entity landed durably (on the server and in the index).
+	if len(fs.entities) != 1 {
+		t.Fatalf("server entities=%d after partial run, want 1", len(fs.entities))
 	}
-	if _, ok := idx.Hash("TKT-B"); ok {
-		t.Fatal("TKT-B must NOT be in the index (its push failed)")
+	indexed := 0
+	for range idx.Records {
+		indexed++
+	}
+	if indexed != 1 {
+		t.Fatalf("indexed records=%d after partial run, want 1 (the applied create)", indexed)
 	}
 
-	// Re-run: TKT-A is a no-op (already in index), TKT-B now applies → converged.
+	// Re-run: the already-applied create is a no-op; the failed one now applies.
 	rep, err := eng.Push(ctx)
 	if err != nil {
 		t.Fatalf("rerun push: %v", err)
 	}
 	if rep.Applied != 1 {
-		t.Fatalf("rerun applied=%d, want 1 (only TKT-B)", rep.Applied)
+		t.Fatalf("rerun applied=%d, want 1 (only the previously-failed create)", rep.Applied)
 	}
-	if _, ok := fs.entities["TKT-B"]; !ok {
-		t.Fatal("TKT-B missing on server after resume")
+	if len(fs.entities) != 2 {
+		t.Fatalf("server entities=%d after resume, want 2", len(fs.entities))
 	}
 }
 

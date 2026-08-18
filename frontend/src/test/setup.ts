@@ -1,7 +1,7 @@
-import axios from 'axios'
 import { vi } from 'vitest'
 import { config } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+import axios from 'axios'
 
 // Mock localStorage before any imports that might use it
 const localStorageMock = (() => {
@@ -137,6 +137,14 @@ vi.stubGlobal('EventSource', MockEventSource)
 //
 // Deliberately NOT a rejection: several components log to console.error on a
 // failed load, which would spam every unrelated test's output.
+//
+// BUG-2OXEW0 hit the same class from the other end (SidePanel, not ExportMenu)
+// and is worth recording here so the next person does not re-litigate it:
+// per-file `stubs: { ... }` lists CANNOT fix this. A stub list is a denylist
+// maintained by whoever last read a stack trace, so it only ever covers the
+// file that happened to lose the race — stubbing the one file named in a
+// traceback left 15 live requests in EntityList.test.ts. The adapter is the
+// enforcing mechanism; stubs are hygiene.
 axios.defaults.adapter = async (config) => ({
   data: [],
   status: 200,

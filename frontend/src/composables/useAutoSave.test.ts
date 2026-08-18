@@ -181,6 +181,149 @@ describe('useAutoSave', () => {
     expect(order).toEqual(['a', 'b'])
   })
 
+  // TKT-7S5735 AC4. Merging is a correctness property, not an optimization:
+  // an accepted clear_when_hidden decision is a set of changes the user
+  // approved together (the trigger's value + the unset of what it hid).
+  // Emitting them separately leaves a window holding a state nobody approved,
+  // and if the second request fails, that state persists.
+  describe('AC4: merging properties into one patch', () => {
+    it('merges two properties edited within one debounce window', async () => {
+      const h = makeHarness({ a: 'x', b: 'y' })
+      h.autoSave.scheduleFieldSave('a', 'A')
+      h.autoSave.scheduleFieldSave('b', 'B')
+      await vi.advanceTimersByTimeAsync(250)
+
+      expect(h.updateMock).toHaveBeenCalledTimes(1)
+      expect((h.updateMock.mock.calls[0][2] as { properties: object }).properties).toEqual({
+        a: 'A',
+        b: 'B',
+      })
+    })
+
+    it('merges a set and an unset of DIFFERENT properties into one patch', async () => {
+      const h = makeHarness({ route: 'aanbesteding', deadline: '2026-09-15' })
+      h.autoSave.scheduleFieldSave('route', 'onderhands')
+      h.autoSave.scheduleUnset('deadline')
+      await vi.advanceTimersByTimeAsync(250)
+
+      expect(h.updateMock).toHaveBeenCalledTimes(1)
+      const patch = h.updateMock.mock.calls[0][2] as {
+        properties?: Record<string, unknown>
+        properties_unset?: string[]
+      }
+      expect(patch.properties).toEqual({ route: 'onderhands' })
+      expect(patch.properties_unset).toEqual(['deadline'])
+    })
+
+    // AC3. `pending` is keyed by property and holds ONE entry, so the later
+    // schedule replaces the earlier — a property can never appear in both
+    // `properties` and `properties_unset` of the same patch.
+    it('resolves a set then unset of the SAME property to the unset alone', async () => {
+      const h = makeHarness({ a: 'x' })
+      h.autoSave.scheduleFieldSave('a', 'A')
+      h.autoSave.scheduleUnset('a')
+      await vi.advanceTimersByTimeAsync(250)
+
+      expect(h.updateMock).toHaveBeenCalledTimes(1)
+      const patch = h.updateMock.mock.calls[0][2] as {
+        properties?: Record<string, unknown>
+        properties_unset?: string[]
+      }
+      expect(patch.properties_unset).toEqual(['a'])
+      expect(patch.properties?.a).toBeUndefined()
+    })
+
+    it('resolves an unset then set of the SAME property to the set alone', async () => {
+      const h = makeHarness({ a: 'x' })
+      h.autoSave.scheduleUnset('a')
+      h.autoSave.scheduleFieldSave('a', 'A')
+      await vi.advanceTimersByTimeAsync(250)
+
+      expect(h.updateMock).toHaveBeenCalledTimes(1)
+      const patch = h.updateMock.mock.calls[0][2] as {
+        properties?: Record<string, unknown>
+        properties_unset?: string[]
+      }
+      expect(patch.properties).toEqual({ a: 'A' })
+      expect(patch.properties_unset).toBeUndefined()
+    })
+
+    // A batch in which every entry is a no-op must send NOTHING — not an empty
+    // {properties:{}} patch, which would be a new write where the unbatched
+    // code made none.
+    it('sends no request when every property in the batch is a no-op', async () => {
+      const h = makeHarness({ a: 'x', b: 'y' })
+      h.autoSave.recordServerSnapshot({
+        id: 'TKT-001',
+        type: 'ticket',
+        properties: { a: 'x', b: 'y' },
+      } as never)
+      h.autoSave.scheduleFieldSave('a', 'x') // same as server
+      h.autoSave.scheduleFieldSave('b', 'y') // same as server
+      await vi.advanceTimersByTimeAsync(250)
+
+      expect(h.updateMock).not.toHaveBeenCalled()
+    })
+
+    it('sends only the live property when part of a batch is a no-op', async () => {
+      const h = makeHarness({ a: 'x', b: 'y' })
+      h.autoSave.recordServerSnapshot({
+        id: 'TKT-001',
+        type: 'ticket',
+        properties: { a: 'x', b: 'y' },
+      } as never)
+      h.autoSave.scheduleFieldSave('a', 'x') // no-op
+      h.autoSave.scheduleFieldSave('b', 'CHANGED')
+      await vi.advanceTimersByTimeAsync(250)
+
+      expect(h.updateMock).toHaveBeenCalledTimes(1)
+      expect((h.updateMock.mock.calls[0][2] as { properties: object }).properties).toEqual({
+        b: 'CHANGED',
+      })
+    })
+
+    // A property still absorbing keystrokes is NOT ripe. Pulling it into an
+    // earlier batch would defeat the debounce it is waiting on.
+    it('does not pull in a property whose debounce is still running', async () => {
+      const h = makeHarness({ a: 'x', b: 'y' })
+      h.autoSave.scheduleFieldSave('a', 'A')
+      await vi.advanceTimersByTimeAsync(80) // a is nearly ripe
+      h.autoSave.scheduleFieldSave('b', 'B') // b's window just started
+      await vi.advanceTimersByTimeAsync(40) // a fires, b still has ~60ms
+
+      expect(h.updateMock).toHaveBeenCalledTimes(1)
+      expect((h.updateMock.mock.calls[0][2] as { properties: object }).properties).toEqual({
+        a: 'A',
+      })
+    })
+
+    // The accepted cost of atomicity: one failure marks every field in the
+    // batch, because the request either applied or it did not.
+    it('attributes a batch failure to every property in it', async () => {
+      const h = makeHarness({ a: 'x', b: 'y' })
+      h.updateMock.mockRejectedValueOnce(new Error('boom'))
+      h.autoSave.scheduleFieldSave('a', 'A')
+      h.autoSave.scheduleFieldSave('b', 'B')
+      await vi.advanceTimersByTimeAsync(250)
+
+      expect(h.autoSave.fieldErrors.value.a).toBeTruthy()
+      expect(h.autoSave.fieldErrors.value.b).toBeTruthy()
+    })
+
+    it('commitImmediately flushes every ripe property in one patch', async () => {
+      const h = makeHarness({ a: 'x', b: 'y' })
+      h.autoSave.scheduleFieldSave('a', 'A')
+      h.autoSave.scheduleFieldSave('b', 'B')
+      await h.autoSave.commitImmediately()
+
+      expect(h.updateMock).toHaveBeenCalledTimes(1)
+      expect((h.updateMock.mock.calls[0][2] as { properties: object }).properties).toEqual({
+        a: 'A',
+        b: 'B',
+      })
+    })
+  })
+
   it('AC-R1: scheduleRelationsChange fires a relations-only PATCH', async () => {
     const h = makeHarness({})
     h.buildRelationsBody.mockReturnValue({
