@@ -7,8 +7,11 @@ import (
 	"path/filepath"
 	"sort"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/aclaudit"
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
@@ -52,7 +55,25 @@ func (c *ACLAuditCmd) Run(svc *readServices) error {
 		return fmt.Errorf("load acl.yaml: %w", err)
 	}
 
-	findings := aclaudit.Audit(policy, &metamodelReader{m: svc.Meta})
+	// A7 (dead permission) needs to know which permissions the data-entry UI
+	// gates reference. If we cannot read them the audit still runs, but A7 is
+	// suppressed rather than reporting live config as dead (BUG-919PM6).
+	//
+	// perms is declared at INTERFACE type on purpose: assigning a nil
+	// *dataEntryPermissions to it would produce a non-nil interface holding a
+	// nil pointer, and Audit's `perms == nil` check would not fire.
+	var perms aclaudit.PermissionConsumer
+	loaded, err := loadDataEntryPermissions(svc.Paths.Root)
+	if err != nil {
+		out.WriteWarning(
+			"could not read %s (%v); skipping the dead-permission check, which cannot "+
+				"tell a dead permission from one gating a document, card, navigation entry or command.",
+			dataentryconfig.ConfigFile, err)
+	} else {
+		perms = loaded
+	}
+
+	findings := aclaudit.Audit(policy, &metamodelReader{m: svc.Meta}, perms)
 
 	if out.Format == "json" {
 		writeAuditJSON(findings)
@@ -196,4 +217,76 @@ func sortedClone(xs []string) []string {
 	out := append([]string(nil), xs...)
 	sort.Strings(out)
 	return out
+}
+
+// dataEntryPermissions adapts the project's data-entry.yaml to
+// aclaudit.PermissionConsumer. It lives here (the consumer side) rather than
+// in internal/aclaudit, for the same reason metamodelReader does: aclaudit
+// stays free of a dataentryconfig import and bounded to the one lookup the
+// audit actually uses.
+//
+// A permission named by any of these surfaces is live config. Missing one
+// makes the audit report a working grant as dead and advise removing it, so
+// every permission-bearing field in dataentryconfig.Config must be collected
+// here — see the per-surface tests.
+type dataEntryPermissions struct {
+	cfg *dataentryconfig.Config
+}
+
+// UsedPermissions returns every permission referenced by a data-entry UI gate:
+// documents, dashboard cards, navigation entries (recursively, since groups
+// nest items) and commands.
+func (d *dataEntryPermissions) UsedPermissions() []string {
+	if d == nil || d.cfg == nil {
+		return nil
+	}
+	var perms []string
+	for _, doc := range d.cfg.Documents {
+		perms = append(perms, doc.Permission)
+	}
+	for _, cmd := range d.cfg.Commands {
+		perms = append(perms, cmd.Permission)
+	}
+	if d.cfg.Dashboard != nil {
+		for _, card := range d.cfg.Dashboard.Cards {
+			perms = append(perms, card.Permission)
+		}
+	}
+	perms = append(perms, navigationPermissions(d.cfg.Navigation)...)
+	return perms
+}
+
+// navigationPermissions walks the navigation tree. Groups nest their entries
+// under Items, so a flat loop over the top level would miss every permission
+// on a grouped entry.
+func navigationPermissions(entries []dataentryconfig.NavigationEntry) []string {
+	perms := make([]string, 0, len(entries))
+	for _, e := range entries {
+		perms = append(perms, e.Permission)
+		perms = append(perms, navigationPermissions(e.Items)...)
+	}
+	return perms
+}
+
+// loadDataEntryPermissions reads and parses data-entry.yaml for the audit's
+// permission-consumer view. It deliberately does NOT validate the config: the
+// audit's subject is acl.yaml, and a project whose data-entry.yaml is invalid
+// should still get its ACL findings.
+//
+// A missing file returns a consumer over an empty config, NOT nil — "the
+// project has no data-entry.yaml" is complete information (no UI gates exist),
+// unlike "we could not look", which must suppress the dead-permission check.
+func loadDataEntryPermissions(root string) (*dataEntryPermissions, error) {
+	data, err := os.ReadFile(filepath.Join(root, dataentryconfig.ConfigFile))
+	if err != nil {
+		if stderrors.Is(err, os.ErrNotExist) {
+			return &dataEntryPermissions{cfg: &dataentryconfig.Config{}}, nil
+		}
+		return nil, err
+	}
+	var cfg dataentryconfig.Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, err
+	}
+	return &dataEntryPermissions{cfg: &cfg}, nil
 }

@@ -44,6 +44,19 @@ func (m fakeMetamodel) EnumOptions(t, field string) ([]string, bool) {
 	return opts, true
 }
 
+// allPerms is a PermissionConsumer that references nothing, so A7 runs with
+// full information and every unreferenced permission is genuinely dead. Tests
+// about rules OTHER than A7 use it simply to opt into the check running.
+type allPerms struct{}
+
+func (allPerms) UsedPermissions() []string { return nil }
+
+// usedPerms is a PermissionConsumer reporting a fixed set of permissions as
+// referenced by data-entry UI gates.
+type usedPerms []string
+
+func (u usedPerms) UsedPermissions() []string { return []string(u) }
+
 // hasRule reports whether findings contain a finding with the given rule.
 func hasRule(findings []Finding, rule string) bool {
 	return slices.ContainsFunc(findings, func(f Finding) bool { return f.Rule == rule })
@@ -69,7 +82,7 @@ func TestAudit_A1_UngatedMembership(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"editor": {Create: []string{"ticket"}, Read: []string{"ticket"}}},
 		Assignments: map[string]string{"engineering": "editor"},
 	}
-	got := Audit(p, nil)
+	got := Audit(p, nil, allPerms{})
 	if !hasRule(got, "A1-ungated-membership") {
 		t.Fatalf("expected A1, got %+v", got)
 	}
@@ -86,7 +99,7 @@ func TestAudit_A1_GatedMembership_NoFinding(t *testing.T) {
 		Assignments:   map[string]string{"engineering": "editor"},
 		RoleRelations: map[string]acl.RoleRelationDef{"member-of": {RequiresPermission: "delegate-membership"}},
 	}
-	if got := Audit(p, nil); hasRule(got, "A1-ungated-membership") {
+	if got := Audit(p, nil, allPerms{}); hasRule(got, "A1-ungated-membership") {
 		t.Errorf("gated membership must not flag A1, got %+v", got)
 	}
 }
@@ -100,7 +113,7 @@ func TestAudit_A1_ReadOnlyGroup_NoFinding(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"reader": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"engineering": "reader"},
 	}
-	if got := Audit(p, nil); hasRule(got, "A1-ungated-membership") {
+	if got := Audit(p, nil, allPerms{}); hasRule(got, "A1-ungated-membership") {
 		t.Errorf("read-only assigned role must not flag A1, got %+v", got)
 	}
 }
@@ -109,12 +122,12 @@ func TestAudit_A1b_InertMembership(t *testing.T) {
 	t.Parallel()
 	// Configured a non-default membership relation with no assignments → A1b low.
 	p := &acl.Policy{MembershipRelation: "heeft_rol"}
-	got := Audit(p, nil)
+	got := Audit(p, nil, allPerms{})
 	if !hasRule(got, "A1b-inert-membership") {
 		t.Fatalf("expected A1b, got %+v", got)
 	}
 	// Default member-of with no assignments must NOT flag A1b (common case).
-	if got := Audit(&acl.Policy{}, nil); hasRule(got, "A1b-inert-membership") {
+	if got := Audit(&acl.Policy{}, nil, allPerms{}); hasRule(got, "A1b-inert-membership") {
 		t.Errorf("default member-of with no assignments must not flag A1b, got %+v", got)
 	}
 }
@@ -126,12 +139,12 @@ func TestAudit_A2_UngatedRoleRelation(t *testing.T) {
 		Roles:         map[string]acl.RoleDef{"editor": {Update: []string{"ticket"}, Read: []string{"ticket"}}},
 		RoleRelations: map[string]acl.RoleRelationDef{"editor-of": {Confers: "editor"}},
 	}
-	if got := Audit(p, nil); !hasRule(got, "A2-ungated-role-relation") {
+	if got := Audit(p, nil, allPerms{}); !hasRule(got, "A2-ungated-role-relation") {
 		t.Fatalf("expected A2, got %+v", got)
 	}
 	// Gated → no A2.
 	p.RoleRelations["editor-of"] = acl.RoleRelationDef{Confers: "editor", RequiresPermission: "delegate-editor"}
-	if got := Audit(p, nil); hasRule(got, "A2-ungated-role-relation") {
+	if got := Audit(p, nil, allPerms{}); hasRule(got, "A2-ungated-role-relation") {
 		t.Errorf("gated role-relation must not flag A2, got %+v", got)
 	}
 }
@@ -143,7 +156,7 @@ func TestAudit_A2_NonPrivilegedRole_NoFinding(t *testing.T) {
 		Roles:         map[string]acl.RoleDef{"reader": {Read: []string{"ticket"}}},
 		RoleRelations: map[string]acl.RoleRelationDef{"reader-of": {Confers: "reader"}},
 	}
-	if got := Audit(p, nil); hasRule(got, "A2-ungated-role-relation") {
+	if got := Audit(p, nil, allPerms{}); hasRule(got, "A2-ungated-role-relation") {
 		t.Errorf("read-only role-relation must not flag A2, got %+v", got)
 	}
 }
@@ -154,7 +167,7 @@ func TestAudit_A3_EveryonePrivileged(t *testing.T) {
 	p := &acl.Policy{Roles: map[string]acl.RoleDef{
 		acl.EveryoneRole: {Update: []string{"ticket"}},
 	}}
-	got := Audit(p, nil)
+	got := Audit(p, nil, allPerms{})
 	if !hasRule(got, "A3-everyone-privileged") {
 		t.Fatalf("expected A3, got %+v", got)
 	}
@@ -169,7 +182,7 @@ func TestAudit_A3_EveryoneReadOnly_NoFinding(t *testing.T) {
 	p := &acl.Policy{Roles: map[string]acl.RoleDef{
 		acl.EveryoneRole: {Read: []string{"*"}},
 	}}
-	if got := Audit(p, nil); hasRule(got, "A3-everyone-privileged") {
+	if got := Audit(p, nil, allPerms{}); hasRule(got, "A3-everyone-privileged") {
 		t.Errorf("read-only everyone must not flag A3, got %+v", got)
 	}
 }
@@ -180,7 +193,7 @@ func TestAudit_A4_AssignmentToUnknownRole(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"editor": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "edutor"}, // typo
 	}
-	if got := Audit(p, nil); !hasRule(got, "A4-assignment-unknown-role") {
+	if got := Audit(p, nil, allPerms{}); !hasRule(got, "A4-assignment-unknown-role") {
 		t.Fatalf("expected A4, got %+v", got)
 	}
 }
@@ -191,7 +204,7 @@ func TestAudit_A5_ConfersUnknownRole(t *testing.T) {
 		Roles:         map[string]acl.RoleDef{"editor": {Read: []string{"ticket"}}},
 		RoleRelations: map[string]acl.RoleRelationDef{"editor-of": {Confers: "edutor"}},
 	}
-	if got := Audit(p, nil); !hasRule(got, "A5-confers-unknown-role") {
+	if got := Audit(p, nil, allPerms{}); !hasRule(got, "A5-confers-unknown-role") {
 		t.Fatalf("expected A5, got %+v", got)
 	}
 }
@@ -203,7 +216,7 @@ func TestAudit_A6_UngrantablePermission(t *testing.T) {
 		Roles:         map[string]acl.RoleDef{"editor": {Read: []string{"ticket"}}},
 		RoleRelations: map[string]acl.RoleRelationDef{"editor-of": {Confers: "editor", RequiresPermission: "delegate-nobody-has"}},
 	}
-	got := Audit(p, nil)
+	got := Audit(p, nil, allPerms{})
 	if !hasRule(got, "A6-ungrantable-permission") {
 		t.Fatalf("expected A6, got %+v", got)
 	}
@@ -218,7 +231,7 @@ func TestAudit_A7_DeadPermission(t *testing.T) {
 	p := &acl.Policy{Roles: map[string]acl.RoleDef{
 		"admin": {Create: []string{"*"}, Read: []string{"*"}, Permissions: []string{"delegate-unused"}},
 	}}
-	if got := Audit(p, nil); !hasRule(got, "A7-dead-permission") {
+	if got := Audit(p, nil, allPerms{}); !hasRule(got, "A7-dead-permission") {
 		t.Fatalf("expected A7, got %+v", got)
 	}
 	// Referenced permission → no A7.
@@ -226,7 +239,7 @@ func TestAudit_A7_DeadPermission(t *testing.T) {
 		Roles:         map[string]acl.RoleDef{"admin": {Create: []string{"*"}, Read: []string{"*"}, Permissions: []string{"delegate-x"}}},
 		RoleRelations: map[string]acl.RoleRelationDef{"member-of": {RequiresPermission: "delegate-x"}},
 	}
-	if got := Audit(p2, nil); hasRule(got, "A7-dead-permission") {
+	if got := Audit(p2, nil, allPerms{}); hasRule(got, "A7-dead-permission") {
 		t.Errorf("referenced permission must not flag A7, got %+v", got)
 	}
 }
@@ -251,10 +264,85 @@ func TestAudit_A7_BuiltinPermissionsAreNotDead(t *testing.T) {
 			p := &acl.Policy{Roles: map[string]acl.RoleDef{
 				"admin": {Read: []string{"persoon"}, Permissions: []string{perm}},
 			}}
-			if got := Audit(p, nil); hasRule(got, "A7-dead-permission") {
+			if got := Audit(p, nil, allPerms{}); hasRule(got, "A7-dead-permission") {
 				t.Errorf("built-in permission %q reported dead, got %+v", perm, got)
 			}
 		})
+	}
+}
+
+// AM-acl-audit-permission-consumers-complete, part 2 (the fail-safe half).
+// A nil PermissionConsumer means the caller could not determine what the UI
+// gates reference. A7 must then stay silent rather than assert config is dead
+// on information it knows is incomplete.
+func TestAudit_A7_NilConsumerSuppressesCheck(t *testing.T) {
+	t.Parallel()
+	p := &acl.Policy{Roles: map[string]acl.RoleDef{
+		"admin": {Create: []string{"*"}, Read: []string{"*"}, Permissions: []string{"report:sales"}},
+	}}
+	// Sanity: with full information this permission IS dead.
+	if got := Audit(p, nil, allPerms{}); !hasRule(got, "A7-dead-permission") {
+		t.Fatalf("precondition: expected A7 with a consumer present, got %+v", got)
+	}
+	if got := Audit(p, nil, nil); hasRule(got, "A7-dead-permission") {
+		t.Errorf("nil consumer must suppress A7, got %+v", got)
+	}
+}
+
+// A consumer that reports nothing because it holds nothing (a nil-receiver
+// implementation) must be treated as a real answer, not as "could not look".
+// Pins the distinction the CLI's typed-nil trap violated: a non-nil interface
+// wrapping a nil pointer reaches the check and must not panic.
+func TestAudit_A7_TypedNilConsumerIsAnAnswer(t *testing.T) {
+	t.Parallel()
+	p := &acl.Policy{Roles: map[string]acl.RoleDef{
+		"admin": {Create: []string{"*"}, Read: []string{"*"}, Permissions: []string{"report:sales"}},
+	}}
+	var typed *nilConsumer
+	if got := Audit(p, nil, typed); !hasRule(got, "A7-dead-permission") {
+		t.Errorf("a consumer reporting no permissions is complete information; expected A7, got %+v", got)
+	}
+}
+
+// nilConsumer implements PermissionConsumer with a nil-safe receiver.
+type nilConsumer struct{}
+
+func (*nilConsumer) UsedPermissions() []string { return nil }
+
+// AM-acl-audit-permission-consumers-complete, part 1. A permission referenced
+// only by a data-entry UI gate is live config, not dead. Table-driven over the
+// surfaces so the intent is explicit; the CLI adapter's per-surface coverage
+// (that it actually collects each one) is tested in internal/cli.
+func TestAudit_A7_UIGatedPermissionIsNotDead(t *testing.T) {
+	t.Parallel()
+	for _, surface := range []string{"document", "dashboard card", "navigation entry", "command"} {
+		t.Run(surface, func(t *testing.T) {
+			t.Parallel()
+			p := &acl.Policy{Roles: map[string]acl.RoleDef{
+				"sales": {Read: []string{"persoon"}, Permissions: []string{"report:sales"}},
+			}}
+			if got := Audit(p, nil, usedPerms{"report:sales"}); hasRule(got, "A7-dead-permission") {
+				t.Errorf("permission gating a %s reported dead, got %+v", surface, got)
+			}
+		})
+	}
+}
+
+// A UI-referenced permission must not blanket-suppress A7 for others: a typo'd
+// permission alongside a live one is still reported.
+func TestAudit_A7_UIGateDoesNotMaskRealDeadPermission(t *testing.T) {
+	t.Parallel()
+	p := &acl.Policy{Roles: map[string]acl.RoleDef{
+		"sales": {Read: []string{"persoon"}, Permissions: []string{"report:sales", "report:sales-typo"}},
+	}}
+	got := Audit(p, nil, usedPerms{"report:sales"})
+	if !hasRule(got, "A7-dead-permission") {
+		t.Fatalf("expected A7 for the typo'd permission, got %+v", got)
+	}
+	for _, f := range got {
+		if f.Rule == "A7-dead-permission" && !strings.Contains(f.Detail, "report:sales-typo") {
+			t.Errorf("A7 fired for a UI-referenced permission: %+v", f)
+		}
 	}
 }
 
@@ -269,7 +357,7 @@ func TestAudit_A7_BuiltinDoesNotMaskRealDeadPermission(t *testing.T) {
 			Permissions: []string{acl.PermHistoryRead, "delegate-typoed"},
 		},
 	}}
-	got := Audit(p, nil)
+	got := Audit(p, nil, allPerms{})
 	if !hasRule(got, "A7-dead-permission") {
 		t.Fatalf("expected A7 for the typo'd permission, got %+v", got)
 	}
@@ -286,11 +374,11 @@ func TestAudit_A9_WildcardWrite_NotRead(t *testing.T) {
 	p := &acl.Policy{Roles: map[string]acl.RoleDef{
 		"power": {Create: []string{"*"}, Read: []string{"*"}},
 	}}
-	if got := Audit(p, nil); !hasRule(got, "A9-wildcard-write") {
+	if got := Audit(p, nil, allPerms{}); !hasRule(got, "A9-wildcard-write") {
 		t.Fatalf("expected A9 for create:[*], got %+v", got)
 	}
 	readOnly := &acl.Policy{Roles: map[string]acl.RoleDef{"viewer": {Read: []string{"*"}}}}
-	if got := Audit(readOnly, nil); hasRule(got, "A9-wildcard-write") {
+	if got := Audit(readOnly, nil, allPerms{}); hasRule(got, "A9-wildcard-write") {
 		t.Errorf("read:[*] must not flag A9, got %+v", got)
 	}
 }
@@ -298,7 +386,7 @@ func TestAudit_A9_WildcardWrite_NotRead(t *testing.T) {
 func TestAudit_A10_NameWhitespace(t *testing.T) {
 	t.Parallel()
 	p := &acl.Policy{MembershipRelation: "heeft_rol ", Assignments: map[string]string{"x": "editor"}, Roles: map[string]acl.RoleDef{"editor": {Read: []string{"t"}}}}
-	if got := Audit(p, nil); !hasRule(got, "A10-name-whitespace") {
+	if got := Audit(p, nil, allPerms{}); !hasRule(got, "A10-name-whitespace") {
 		t.Fatalf("expected A10 for trailing space, got %+v", got)
 	}
 }
@@ -310,7 +398,7 @@ func TestAudit_A10_AssignmentKeyWhitespace(t *testing.T) {
 		Assignments: map[string]string{"engineering ": "editor"},
 		Roles:       map[string]acl.RoleDef{"editor": {Read: []string{"ticket"}}},
 	}
-	if got := Audit(p, nil); !hasRule(got, "A10-name-whitespace") {
+	if got := Audit(p, nil, allPerms{}); !hasRule(got, "A10-name-whitespace") {
 		t.Fatalf("expected A10 for padded assignment key, got %+v", got)
 	}
 }
@@ -323,7 +411,7 @@ func TestAudit_B1_UndeclaredType(t *testing.T) {
 	p := &acl.Policy{Roles: map[string]acl.RoleDef{
 		"editor": {Create: []string{"ticket", "tickets"}, Read: []string{"ticket"}}, // "tickets" is a typo
 	}}
-	if got := Audit(p, meta); !hasRule(got, "B1-undeclared-type") {
+	if got := Audit(p, meta, allPerms{}); !hasRule(got, "B1-undeclared-type") {
 		t.Fatalf("expected B1, got %+v", got)
 	}
 }
@@ -335,7 +423,7 @@ func TestAudit_B1_WildcardSkipped(t *testing.T) {
 	p := &acl.Policy{Roles: map[string]acl.RoleDef{
 		"admin": {Create: []string{"*"}, Update: []string{"*"}, Delete: []string{"*"}, Read: []string{"*"}},
 	}}
-	if got := Audit(p, meta); hasRule(got, "B1-undeclared-type") {
+	if got := Audit(p, meta, allPerms{}); hasRule(got, "B1-undeclared-type") {
 		t.Errorf("wildcard role must not flag B1, got %+v", got)
 	}
 }
@@ -345,7 +433,7 @@ func TestAudit_B2_UndeclaredRelation(t *testing.T) {
 	meta := fakeMetamodel{types: map[string]bool{"ticket": true}}
 	// membership_relation names a relation the schema lacks → B2.
 	p := &acl.Policy{MembershipRelation: "heeft_rol"}
-	if got := Audit(p, meta); !hasRule(got, "B2-undeclared-relation") {
+	if got := Audit(p, meta, allPerms{}); !hasRule(got, "B2-undeclared-relation") {
 		t.Fatalf("expected B2 for membership_relation, got %+v", got)
 	}
 }
@@ -358,12 +446,12 @@ func TestAudit_B3_MembershipFromMismatch(t *testing.T) {
 		relations: map[string][]string{"heeft_rol": {"persoon"}},
 	}
 	p := &acl.Policy{UserEntityType: "user", MembershipRelation: "heeft_rol"}
-	if got := Audit(p, meta); !hasRule(got, "B3-membership-from-mismatch") {
+	if got := Audit(p, meta, allPerms{}); !hasRule(got, "B3-membership-from-mismatch") {
 		t.Fatalf("expected B3, got %+v", got)
 	}
 	// Compatible from → no B3.
 	p.UserEntityType = "persoon"
-	if got := Audit(p, meta); hasRule(got, "B3-membership-from-mismatch") {
+	if got := Audit(p, meta, allPerms{}); hasRule(got, "B3-membership-from-mismatch") {
 		t.Errorf("compatible from must not flag B3, got %+v", got)
 	}
 }
@@ -379,7 +467,7 @@ func TestAudit_B4_UndeclaredField(t *testing.T) {
 			"ticket": {{Field: "stutus"}}, // typo
 		}},
 	}}
-	if got := Audit(p, meta); !hasRule(got, "B4-undeclared-field") {
+	if got := Audit(p, meta, allPerms{}); !hasRule(got, "B4-undeclared-field") {
 		t.Fatalf("expected B4, got %+v", got)
 	}
 }
@@ -395,7 +483,7 @@ func TestAudit_B5_UndeclaredOption(t *testing.T) {
 			"ticket": {{Field: "status", Option: "finished"}}, // not in enum
 		}},
 	}}
-	if got := Audit(p, meta); !hasRule(got, "B5-undeclared-option") {
+	if got := Audit(p, meta, allPerms{}); !hasRule(got, "B5-undeclared-option") {
 		t.Fatalf("expected B5, got %+v", got)
 	}
 }
@@ -413,7 +501,7 @@ func TestAudit_B5_AbsentField_ReportsUndeclaredNotNonEnum(t *testing.T) {
 			"ticket": {{Field: "stutus", Option: "open"}}, // field typo
 		}},
 	}}
-	got := Audit(p, meta)
+	got := Audit(p, meta, allPerms{})
 	if !hasRule(got, "B4-undeclared-field") {
 		t.Errorf("absent options field must report B4-undeclared-field, got %+v", got)
 	}
@@ -426,7 +514,7 @@ func TestAudit_B7_UndeclaredUserType(t *testing.T) {
 	t.Parallel()
 	meta := fakeMetamodel{types: map[string]bool{"ticket": true}}
 	p := &acl.Policy{UserEntityType: "persoon"} // not declared
-	if got := Audit(p, meta); !hasRule(got, "B7-undeclared-user-type") {
+	if got := Audit(p, meta, allPerms{}); !hasRule(got, "B7-undeclared-user-type") {
 		t.Fatalf("expected B7, got %+v", got)
 	}
 }
@@ -439,7 +527,7 @@ func TestAudit_NilMetamodel_SkipsTierB(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"editor": {Create: []string{"nonsense"}, Read: []string{"nonsense"}}},
 		Assignments: map[string]string{"g": "editor"},
 	}
-	got := Audit(p, nil)
+	got := Audit(p, nil, allPerms{})
 	for _, f := range got {
 		if f.Rule[0] == 'B' {
 			t.Errorf("nil meta must skip Tier B, got %+v", f)
@@ -467,7 +555,7 @@ func TestAudit_CleanPolicy_NoFindings(t *testing.T) {
 		Assignments:   map[string]string{"ops-team": "admin"},
 		RoleRelations: map[string]acl.RoleRelationDef{"member-of": {RequiresPermission: "delegate-membership"}},
 	}
-	if got := Audit(p, meta); len(got) != 0 {
+	if got := Audit(p, meta, allPerms{}); len(got) != 0 {
 		t.Errorf("clean policy must produce zero findings, got %+v", got)
 	}
 }
@@ -482,9 +570,9 @@ func TestAudit_DeterministicOrder(t *testing.T) {
 		},
 		Assignments: map[string]string{"g": "power"}, // A1 high (ungated member-of)
 	}
-	first := Audit(p, nil)
+	first := Audit(p, nil, allPerms{})
 	for range 20 {
-		got := Audit(p, nil)
+		got := Audit(p, nil, allPerms{})
 		if !slices.EqualFunc(got, first, func(a, b Finding) bool { return a == b }) {
 			t.Fatalf("non-deterministic order:\n first=%+v\n got  =%+v", first, got)
 		}
