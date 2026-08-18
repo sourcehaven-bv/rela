@@ -490,6 +490,27 @@ func (t lateGatedTracer) HasCycle(ctx context.Context, startID string) bool {
 	return t.tracer().HasCycle(ctx, startID)
 }
 
+// elevationRecorder adapts the audit sink onto lua.ElevationRecorder for an
+// elevated document render (TKT-Y3JVFK).
+//
+// It exists for ONE reason: the nil conversion. audit.NewElevationRecorder
+// returns *audit.ElevationRecorder, and assigning a nil one straight into
+// lua's interface-typed field yields a TYPED nil, which is != nil — lua's
+// `ElevationRecorder == nil` guard would pass and the first elevated read
+// would nil-deref. Returning the INTERFACE type makes the nil a real nil.
+// Same trap, same fix as appbuild.NewElevationAuditor (RR-5QQL1Z); duplicated
+// rather than imported because dataentry must not depend on the wiring layer.
+//
+// auditSink is required and non-nil on a constructed App (callers pass
+// audit.Nop), so the nil branch is defense against a future construction path,
+// not a live case.
+func elevationRecorder(sink audit.Audit) lua.ElevationRecorder {
+	if sink == nil {
+		return nil
+	}
+	return audit.NewElevationRecorder(sink)
+}
+
 // gatedScriptReader builds the ACL-bound read-out handle from an acl
 // implementation directly (not App.acl), so it can be wired at CONSTRUCTION
 // time — before the App receiver exists — for the validator's read deps. Under
@@ -779,7 +800,18 @@ func NewApp(
 	// documentService needs scriptEngine (for Lua renders) and a closure
 	// that yields fresh lua.WriteDeps (so metamodel reloads propagate).
 	// Constructed after app because luaWriteDeps is a method on App.
-	app.documents = newDocumentService(st, kv, paths.Root, scriptEngine, app.luaWriteDeps)
+	// The elevation bundle is resolved per render and applied ONLY to a
+	// document that declares allow_acl_bypass. visibility.Unrestricted names
+	// the ungated path so it appears in the grep that enumerates them
+	// (TKT-1WV50C), and the recorder makes elevated document reads land in
+	// the audit log exactly as cascade ones do.
+	app.documents = newDocumentService(st, kv, paths.Root, scriptEngine, app.luaWriteDeps,
+		func() documentElevation {
+			return documentElevation{
+				Reader:   visibility.Unrestricted(st),
+				Recorder: elevationRecorder(app.auditSink),
+			}
+		})
 
 	// affordanceService shares the App's acl/fieldResolver/store and takes the
 	// metamodel per-request via app.State(). The two relation-graph reads are

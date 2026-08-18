@@ -115,6 +115,22 @@ func TestNavFilterStaysPresentational(t *testing.T) {
 			allowed: map[string]bool{"views_handler.go": true, "dashboard_handler.go": true},
 			why:     "the shared UI-element filter is presentation only",
 		},
+		{
+			// Unlike the two above, this needle guards a real boundary rather
+			// than a presentation filter. toDocumentRenderConfig is the ONLY
+			// producer of documentRenderConfig.Elevated == true, i.e. the single
+			// switch that turns on raw ACL bypass for a render. Both permitted
+			// callers check gateElevatedDocument first; a third caller that
+			// forgot would compile and silently elevate.
+			needle: "toDocumentRenderConfig(",
+			allowed: map[string]bool{
+				"standalone_document_handler.go": true,
+				"api_v1.go":                      true,
+				"handlers_document.go":           true, // the definition itself
+			},
+			why: "it is the only switch that enables elevated (ACL-bypassing) reads, " +
+				"and every caller must pass gateElevatedDocument first",
+		},
 	}
 
 	root, err := os.Getwd()

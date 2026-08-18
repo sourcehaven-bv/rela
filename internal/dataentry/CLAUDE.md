@@ -74,13 +74,42 @@ Two kinds, discriminated by `DocumentConfig.IsStandalone()` (empty
   is entity-anchored, `/_documents/{name}` is standalone; each 400s on the
   other. Do not "helpfully" fall back to rendering with an empty or guessed
   entry id — that produces a document about the wrong thing, silently.
-- **`permission:` is an intent gate, NOT the confidentiality boundary.**
-  Document content is bounded by `lua.ReadDeps.VisibleReader` like every other
-  read path, so a principal who cannot read the underlying entities renders an
-  empty report regardless. That is why documents are ungated by default
+- **`permission:` is an intent gate, NOT the confidentiality boundary —
+  UNLESS the document is elevated.** Document content is bounded by
+  `lua.ReadDeps.VisibleReader` like every other read path, so a principal who
+  cannot read the underlying entities renders an empty report regardless. That
+  is why documents are ungated by default
   (`TestStandaloneDocument_UngatedByDefault` pins it) — don't "harden" it into
-  a required field. `permission:` exists for aggregates whose *composition* is
-  sensitive.
+  a required field. What it buys on an ordinary document is that a report
+  *claiming* a scope its reader cannot compute is withheld rather than served
+  as a smaller number that looks authoritative: misinformation, not disclosure.
+- **An elevated document (`allow_acl_bypass: read`) inverts that, and gets a
+  SECOND gate (TKT-Y3JVFK).** Its Lua reads through a raw handle, so nothing
+  downstream bounds the output and `permission:` becomes the whole boundary —
+  hence required at config load, and enforced by `authorizeElevatedDocument`, a
+  closed switch on the ACL IMPLEMENTATION. It must not be folded into
+  `gateDocumentPermission`: that consults the read gate, which returns
+  `nopReadGate` under NopACL *and* ReadOnlyACL with `HoldsPermission` ⇒ true, so
+  a read-gate predicate FAILS OPEN (the RR-CWWJGW shape, same as the nav filter
+  below). NopACL **denies** here, diverging from `authorizeCommand` — an
+  elevated document has no pre-ACL behavior to preserve, so granting would only
+  make the boundary inert while looking configured.
+- **Only `read` is accepted on a document; `write`/`read+write` are a config
+  error.** A render is served on a GET, so elevated writes there would break
+  idempotence under prefetch/refresh/retry and foreclose the caching an
+  elevated, principal-independent render is uniquely suited to (TKT-OGR566,
+  RR-P4E9GL). Elevated writes belong in an automation action or a schedule.
+- **This does NOT mean a render cannot mutate — it can, today.** Documents
+  render on a `WriterRuntime` and `registerBindings` has no `isDocument` guard,
+  so ordinary `rela.create_entity`/`update_entity`/`delete_entity`/`write_file`
+  are callable in a document script, bounded by the caller's ACL (pre-existing;
+  TKT-PX5YL7). Withholding the elevated Mutator narrows *elevation*; it does not
+  make the surface read-only. Don't write "a render cannot write" in a comment
+  or doc — say "cannot write past the ACL", which is what is true.
+- **The elevated script is TRUSTED CODE (RR-LWD8N3, accepted).** Nothing stops
+  it printing what it reads, so `permission:` grants "may read whatever this
+  script reads", not "may view this report". Review of the bypass block is the
+  mitigation; say so in docs rather than implying enforcement.
 - **Gate before the renderer anyway.** Content would be safe either way, but a
   denied caller must not be able to trigger an expensive Lua aggregation.
 - **Deny with a 403 that NAMES the document and permission.** Do not disguise

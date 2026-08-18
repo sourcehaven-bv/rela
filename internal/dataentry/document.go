@@ -67,6 +67,21 @@ type documentScriptEngine interface {
 // dependency as a function to avoid stale deps after reload.
 type documentDepsFunc func() lua.WriteDeps
 
+// documentElevation is the raw read capability plus its audit recorder,
+// handed to a render that declares allow_acl_bypass (TKT-Y3JVFK). It mirrors
+// script.ReadElevation, declared here at the consumer per CLAUDE.md
+// "interfaces at the call site" — documentService needs exactly these two
+// fields and must not depend on the script package's bundle type.
+type documentElevation struct {
+	Reader   lua.EntityReader
+	Recorder lua.ElevationRecorder
+}
+
+// documentElevationFunc resolves the elevation bundle per render. A func
+// rather than a value so test builders can rebind it after construction,
+// matching documentDepsFunc.
+type documentElevationFunc func() documentElevation
+
 // docCacheSubdir is the subdirectory under .rela/ for document cache files.
 const docCacheSubdir = "documents"
 
@@ -92,6 +107,19 @@ type documentRenderConfig struct {
 	// Timeout is the render timeout. Defaults to 30s. Applies to both
 	// renderers.
 	Timeout time.Duration
+	// Elevated, when true, grants this render's Lua an elevated READER, so
+	// the script may call rela.bypass_acl(fn) and read entities the request
+	// principal cannot see (TKT-Y3JVFK). Reads only: no elevated Mutator is
+	// ever supplied here, so the admin handle carries no write methods.
+	//
+	// Per-render rather than part of the shared luaDeps bundle: elevation is
+	// a property of THIS document's declaration, and putting it in the shared
+	// bundle would hand it to every render.
+	//
+	// The caller must have passed authorizeElevatedDocument first. Like
+	// `permission:`, this struct carries the decision's INPUT, not the
+	// decision — the renderer makes no ACL choice of its own.
+	Elevated bool
 }
 
 // DocumentResult holds the result of rendering a document.
@@ -126,20 +154,62 @@ type documentService struct {
 	projectRoot  string
 	scriptEngine documentScriptEngine
 	luaDeps      documentDepsFunc
-	group        singleflight.Group
+	// elevation supplies the raw read capability for documents that declare
+	// allow_acl_bypass. Nil when the wiring site granted none, in which case
+	// an elevated document renders WITHOUT bypass_acl rather than failing —
+	// lua raises per-method if the script calls it, naming the missing
+	// capability (deps.go: nil reader is a DENY, not a fallback).
+	elevation documentElevationFunc
+	group     singleflight.Group
 }
 
 // newDocumentService builds a documentService. scriptEngine and luaDeps
 // may be nil in tests that only exercise the command: path.
 func newDocumentService(st store.Store, kv state.KV, projectRoot string,
-	engine documentScriptEngine, deps documentDepsFunc) *documentService {
+	engine documentScriptEngine, deps documentDepsFunc,
+	elevation documentElevationFunc) *documentService {
 	return &documentService{
 		store:        st,
 		state:        kv,
 		projectRoot:  projectRoot,
 		scriptEngine: engine,
 		luaDeps:      deps,
+		elevation:    elevation,
 	}
+}
+
+// elevatedDeps returns deps carrying the elevated READ capability when cfg
+// declares it, and deps unchanged otherwise (TKT-Y3JVFK).
+//
+// Only ElevatedReader and ElevationRecorder are set — never ElevatedManager —
+// so lua.newElevatedHandle omits the write methods entirely and the script
+// cannot write PAST THE ACL.
+//
+// That is NOT the same as "a render cannot mutate", and the difference matters.
+// A document renders on a WriterRuntime (script.runDocumentScript ->
+// NewWriterRuntime -> lua.NewWriter), and registerBindings has no isDocument
+// guard, so ordinary rela.create_entity / update_entity / delete_entity /
+// write_file ARE present and callable in a document script — bounded by the
+// caller's own ACL. That is pre-existing and tracked in TKT-PX5YL7; withholding
+// the elevated Mutator here narrows elevation, it does not make the render
+// read-only.
+//
+// The recorder travels with the reader so an elevated document read leaves the
+// same `acl-bypass-read` audit row a cascade one does. Granting the capability
+// without the trace is the exact gap TKT-ACSBSA closed; it must not reopen on
+// a new surface.
+//
+// The ACL decision was made by the caller (authorizeElevatedDocument). This
+// applies it; it does not re-decide.
+func (s *documentService) elevatedDeps(cfg documentRenderConfig) lua.WriteDeps {
+	deps := s.luaDeps()
+	if !cfg.Elevated || s.elevation == nil {
+		return deps
+	}
+	el := s.elevation()
+	deps.ElevatedReader = el.Reader
+	deps.ElevationRecorder = el.Recorder
+	return deps
 }
 
 // GetCached returns a cached document if available and still valid.
@@ -313,7 +383,7 @@ func (s *documentService) RenderStandalone(
 	}
 
 	var buf bytes.Buffer
-	if err := s.scriptEngine.ExecuteStandaloneDocument(ctx, cfg.Script, s.luaDeps(), &buf,
+	if err := s.scriptEngine.ExecuteStandaloneDocument(ctx, cfg.Script, s.elevatedDeps(cfg), &buf,
 		cfg.ConfigID, cfg.Timeout); err != nil {
 		// Same shaping as renderScript/RenderListMarkdown: attach the output
 		// captured before the script threw, then bubble up unchanged so the
@@ -473,7 +543,7 @@ func (s *documentService) renderScript(
 		return "", errors.New("script rendering not available (engine or deps not wired)")
 	}
 	var buf bytes.Buffer
-	if err := s.scriptEngine.ExecuteDocument(ctx, cfg.Script, s.luaDeps(), &buf,
+	if err := s.scriptEngine.ExecuteDocument(ctx, cfg.Script, s.elevatedDeps(cfg), &buf,
 		cfg.ConfigID, entryID, cfg.Timeout); err != nil {
 		// On a Lua failure the engine returns *lua.ScriptError; attach
 		// the print() output we captured before it threw, then bubble

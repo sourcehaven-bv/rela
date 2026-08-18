@@ -269,12 +269,14 @@ func (r *Runner) executeScriptActions(
 
 		actionCtx := audit.WithTriggeredBy(ctx, "automation:"+action.AutomationName)
 		err := scripts.Run(actionCtx, ScriptAction{
-			Code:           action.Code,
-			FilePath:       action.FilePath,
-			Name:           action.AutomationName,
-			NewEntity:      newEntity,
-			OldEntity:      oldEntity,
-			AllowACLBypass: action.AllowACLBypass,
+			Code:      action.Code,
+			FilePath:  action.FilePath,
+			Name:      action.AutomationName,
+			NewEntity: newEntity,
+			OldEntity: oldEntity,
+			// Converted to a plain string: this package is schema-agnostic
+			// and may not import metamodel (see ScriptAction.AllowACLBypass).
+			AllowACLBypass: string(action.AllowACLBypass),
 		}, mutator)
 		if err == nil {
 			continue

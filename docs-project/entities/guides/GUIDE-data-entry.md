@@ -2932,7 +2932,8 @@ documents:
 | `command`     | string | Shell command producing markdown on stdout (exclusive with `script`) |
 | `script`      | string | Lua script under `scripts/` (exclusive with `command`)            |
 | `timeout`     | int    | Render timeout in seconds; defaults to 30                         |
-| `permission`  | string | Global named permission required to render (optional)             |
+| `permission`  | string | Global named permission required to render (optional; REQUIRED when `allow_acl_bypass` is set) |
+| `allow_acl_bypass` | string | `read` — let the script read past the caller's ACL (optional; see "Elevated documents") |
 | `edit`        | map    | Edit button config; entity-anchored documents only                |
 
 Validation is strict: exactly one of `command:` or `script:` must be non-empty.
@@ -3028,11 +3029,64 @@ config, the identical-looking `permission:` key has opposite defaults.
 `permission:` is **optional, and its absence is not an oversight.** Document
 *content* is already bounded by the ACL: a document's Lua reads go through the
 same gated reader as every other read path, so a principal who cannot read the
-underlying entities renders an empty or partial report either way. Use
-`permission:` when the *composition* is sensitive even though the parts are
-individually readable, or simply to keep reports a user cannot act on out of
-their menu. It is not the confidentiality boundary, so requiring it everywhere
-would be ceremony.
+underlying entities renders an empty or partial report either way. It is not
+the confidentiality boundary, so requiring it everywhere would be ceremony.
+
+What it *does* buy on an ordinary document is honesty about scope. A report
+titled "company-wide revenue" rendered for someone who can see a tenth of the
+rows shows a smaller number that looks just as authoritative — nothing leaked,
+but the page now asserts something untrue. Use `permission:` when a report
+makes a claim its reader may not be able to compute, when the *composition* is
+sensitive even though the parts are readable, or simply to keep reports a user
+cannot act on out of their menu.
+
+### Elevated documents (`allow_acl_bypass: read`)
+
+Some reports must compute over rows the reader is not allowed to see. Consider
+sales managers who each own a client set and cannot see the others — not just
+the figures, but the clients' *existence*. A report benchmarking a manager
+company-wide, or against the top performer, cannot be built from their own
+view, and no `acl.yaml` role fixes it: granting enough to **compute** the
+benchmark grants enough to **enumerate** the competitors.
+
+`allow_acl_bypass: read` lets that document's script read past the caller's
+ACL:
+
+```yaml
+documents:
+  sales_benchmark:
+    title: "Verkoop benchmark"
+    script: docs/benchmark.lua
+    allow_acl_bypass: read
+    permission: report:sales
+```
+
+The script uses `rela.bypass_acl(fn)` for the reads that must span the graph;
+everything outside that closure stays gated as usual. Elevated reads are
+audited (`acl-bypass-read`).
+
+**`permission:` is required here**, and this is the one case where it is the
+confidentiality boundary rather than an intent gate — an elevated render has
+nothing downstream bounding its output. A configured `acl.yaml` is required
+too: with no policy the permission names a capability nothing can withhold, so
+the document is refused rather than served to everyone.
+
+**Only `read` is accepted.** A render is served on a `GET`, so `write` and
+`read+write` are a config error: elevated writes there would not be idempotent
+(browsers prefetch, users refresh, the SPA retries) and would foreclose caching
+an otherwise principal-independent render. Put them in an automation action or
+a schedule instead.
+
+Note what this rule does and does not do. A document script *can* already write
+through the ordinary `rela.create_entity` / `update_entity` / `delete_entity`
+bindings, bounded by your own permissions — refusing `write` here prevents a
+render mutating **beyond** them, it does not make rendering read-only.
+
+**The script is trusted code.** Nothing stops it printing the rows it read
+instead of a statistic derived from them, so `permission: report:sales` really
+grants "may read whatever this script reads". Review the `bypass_acl` block
+before deploying, and treat the permission as equivalent to the read access the
+script performs.
 
 On an entity-anchored document `permission:` applies *in addition to* the
 per-entity read gate — it narrows access, and can never widen it.
