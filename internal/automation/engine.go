@@ -232,7 +232,7 @@ func (e *Engine) Process(ctx context.Context, event Event) *Result {
 	}
 
 	for _, auto := range e.automations {
-		if !e.matches(ctx, auto.On, event) {
+		if !e.matches(ctx, auto.On, event, result) {
 			continue
 		}
 
@@ -251,7 +251,7 @@ func (e *Engine) Process(ctx context.Context, event Event) *Result {
 }
 
 // matches checks if a trigger matches an event.
-func (e *Engine) matches(ctx context.Context, trigger Trigger, event Event) bool {
+func (e *Engine) matches(ctx context.Context, trigger Trigger, event Event, res *Result) bool {
 	// Check entity type constraint
 	if len(trigger.Entity) > 0 && event.Entity != nil {
 		matched := slices.Contains(trigger.Entity, event.Entity.Type)
@@ -261,7 +261,7 @@ func (e *Engine) matches(ctx context.Context, trigger Trigger, event Event) bool
 	}
 
 	// Check when conditions (property filters on the entity)
-	if !e.matchesWhenConditions(ctx, trigger, event.Entity) {
+	if !e.matchesWhenConditions(ctx, trigger, event.Entity, res) {
 		return false
 	}
 
@@ -323,7 +323,9 @@ func (e *Engine) matchesPropertyChange(trigger Trigger, event Event) bool {
 
 // matchesWhenConditions checks if all when conditions are satisfied.
 // Returns true if no conditions are specified (backward compatible).
-func (e *Engine) matchesWhenConditions(ctx context.Context, trigger Trigger, entity *entity.Entity) bool {
+func (e *Engine) matchesWhenConditions(
+	ctx context.Context, trigger Trigger, entity *entity.Entity, res *Result,
+) bool {
 	if len(trigger.When) == 0 && trigger.Condition == "" {
 		return true
 	}
@@ -336,36 +338,45 @@ func (e *Engine) matchesWhenConditions(ctx context.Context, trigger Trigger, ent
 			return false
 		}
 	}
-	return e.matchesCondition(ctx, trigger, entity)
+	matched, err := e.matchesCondition(ctx, trigger, entity)
+	if err != nil && res != nil {
+		res.Warnings = append(res.Warnings,
+			"automation condition could not be evaluated: "+err.Error())
+	}
+	return matched
 }
 
 // matchesCondition evaluates the trigger's `condition:` expression, ANDed
 // with the When clauses the caller has already checked.
 //
-// The program was compiled at load, so a failure here is an EVAL error
-// (a missing property binding, the step budget) rather than a syntax
-// mistake. Those mean no-match plus a warning — the same posture
-// matchTyped takes — because an automation must not fire on a condition
-// that could not actually be shown to hold.
-func (e *Engine) matchesCondition(ctx context.Context, trigger Trigger, ent *entity.Entity) bool {
+// The program was compiled at load, so a failure here is an EVAL error (a
+// missing property binding, the step budget) rather than a syntax
+// mistake. The automation does NOT fire — it must not act on a condition
+// that could not be shown to hold — but the error is returned rather than
+// swallowed, so [Engine.Process] can surface it as a warning. A condition
+// that silently never matches is the exact failure this whole key exists
+// to remove; reintroducing it here would defeat the point.
+func (e *Engine) matchesCondition(
+	ctx context.Context, trigger Trigger, ent *entity.Entity,
+) (bool, error) {
 	if trigger.Condition == "" {
-		return true
+		return true, nil
 	}
 	ev := e.evaluator()
 	if ev == nil {
 		// compileConditions rejects this at load; reaching it means an
-		// engine was assembled by another path. Fail closed.
-		return false
+		// engine was assembled by another path. Fail closed, and say so.
+		return false, fmt.Errorf("condition %q: no metamodel", trigger.Condition)
 	}
 	prog, err := ev.Compile(ent.Type, trigger.Condition)
 	if err != nil {
-		return false
+		return false, fmt.Errorf("condition %q: %w", trigger.Condition, err)
 	}
 	matched, err := ev.Matches(ctx, prog, ent.Type, ent.ID, ent.Properties)
 	if err != nil {
-		return false
+		return false, fmt.Errorf("condition %q: %w", trigger.Condition, err)
 	}
-	return matched
+	return matched, nil
 }
 
 // executeAction performs an action and updates the result.

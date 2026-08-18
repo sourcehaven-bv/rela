@@ -218,3 +218,38 @@ func TestEngine_NoCondition_Unchanged(t *testing.T) {
 			result.PropertiesSet)
 	}
 }
+
+// TestEngine_Condition_EvalErrorWarns pins that an eval-time failure is
+// SURFACED, not swallowed. The automation correctly does not fire — it
+// must not act on a condition that could not be shown to hold — but a
+// condition that silently never matches is the exact failure this key
+// exists to remove, so the reason has to reach the caller.
+func TestEngine_Condition_EvalErrorWarns(t *testing.T) {
+	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	meta := datePropMeta()
+
+	engine, err := NewEngineFromMetamodel(meta,
+		[]metamodel.AutomationDef{
+			condAutomation("days_between(entity.due, today()) <= 7"),
+		})
+	if err != nil {
+		t.Fatalf("build engine: %v", err)
+	}
+	pinClock(engine, meta, now)
+
+	// No `due` property: the date binds as nil and days_between fails at
+	// eval, which the compiler cannot catch.
+	ent := buildEntity(testutil.Entity("taak").With("status", "todo"))
+	result := engine.Process(context.Background(),
+		Event{Type: EventEntityCreated, Entity: ent})
+
+	if result.PropertiesSet["status"] == "due-soon" {
+		t.Error("automation fired on a condition that could not be evaluated")
+	}
+	if !result.HasWarnings() {
+		t.Fatal("eval failure produced no warning — it was swallowed")
+	}
+	if !strings.Contains(result.Warnings[0], "condition") {
+		t.Errorf("warning %q does not identify the condition", result.Warnings[0])
+	}
+}
