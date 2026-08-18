@@ -88,14 +88,6 @@ func (s *Service) evaluator() *predicatefns.Evaluator {
 	return s.ev
 }
 
-// matchFilters evaluates an ANDed set of filter clauses against an
-// entity through the predicate condition engine. If any clause is
-// untranspilable (e.g. fuzzy-with-wildcard), it falls back to the exact
-// legacy filter.MatchAll evaluation for the whole set rather than
-// erroring — a transpile error must NOT turn into a forced violation or
-// a silently-skipped rule (RR-FI4DYL). A genuine eval error is returned
-// so the caller treats it as "does not apply / does not satisfy",
-// matching the prior filter.MatchAll error contract.
 // compileRuleConditions compiles the rule's condition expressions against
 // every entity type it could apply to, returning a LoadError per failure.
 //
@@ -120,6 +112,12 @@ func (s *Service) compileRuleConditions(
 	// The env is per entity type, so compile against each type actually
 	// present in the candidate set. A rule with `entity_type:` set has
 	// one; an unscoped rule may span several.
+	//
+	// Consequence worth knowing: a rule scoped to a type with ZERO
+	// entities compiles nothing, so a malformed condition on it stays
+	// unreported until the first entity of that type exists. Accepted —
+	// the alternative is compiling against every declared type in the
+	// metamodel on every Check, which costs far more than it catches.
 	seen := make(map[string]bool, len(candidates))
 	var errs []LoadError
 	for _, e := range candidates {
@@ -152,6 +150,14 @@ func (s *Service) matchCondition(e *entity.Entity, source string) (bool, error) 
 	return s.evaluator().Matches(context.Background(), prog, e.Type, e.ID, e.Properties)
 }
 
+// matchFilters evaluates an ANDed set of filter clauses against an
+// entity through the predicate condition engine. If any clause is
+// untranspilable (e.g. fuzzy-with-wildcard), it falls back to the exact
+// legacy filter.MatchAll evaluation for the whole set rather than
+// erroring — a transpile error must NOT turn into a forced violation or
+// a silently-skipped rule (RR-FI4DYL). A genuine eval error is returned
+// so the caller treats it as "does not apply / does not satisfy",
+// matching the prior filter.MatchAll error contract.
 func (s *Service) matchFilters(e *entity.Entity, filters []*filter.Filter) (bool, error) {
 	prog, err := s.evaluator().CompileFilter(e.Type, filters)
 	if err != nil {

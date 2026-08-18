@@ -1824,6 +1824,37 @@ nothing. Choosing the key states which you meant.
 Date literals inside an expression are **strings**:
 `entity.due <= '2026-08-25'`.
 
+#### Guard optional date properties
+
+A date function applied to a property the entity does not carry is an
+**eval error**, not `false`. The automation does not fire and a warning is
+attached to the result:
+
+```yaml
+condition: "days_between(entity.due, today()) <= 7" # skips tasks with no due date
+```
+
+An entity with no `due` is skipped — which is often the opposite of what you
+want, since a task with no due date may be exactly the one to flag. Guard the
+property when it is optional:
+
+```yaml
+condition: "entity.due ~= nil and days_between(entity.due, today()) <= 7"
+```
+
+Or invert the test to catch the missing case:
+
+```yaml
+condition: "entity.due == nil or days_between(entity.due, today()) <= 7"
+```
+
+The same applies to validation rules, where the two keys fail in opposite
+directions from this identical cause: a `when_condition:` that errors means
+"entity not selected" (the rule skips it), while a `then_condition:` that
+errors means "assertion not shown to hold" (a violation). Both fail toward
+not-silently-passing, but one ignores the entity and the other flags it — so
+guard optional properties rather than relying on either.
+
 ### Automation Options
 
 | Field       | Description                                         |

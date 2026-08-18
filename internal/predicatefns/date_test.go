@@ -2,7 +2,6 @@ package predicatefns_test
 
 import (
 	"context"
-	"errors"
 	"strconv"
 	"strings"
 	"testing"
@@ -150,31 +149,83 @@ func TestDaysBetween_LocalMidnightBoundary(t *testing.T) {
 	}
 }
 
-// TestDaysBetween_DSTSpan pins that a span crossing a DST transition
-// still counts whole calendar days. Both ends are normalized to UTC
-// midnight before subtracting, so the 25-hour local day cannot round the
-// result down.
+// TestDaysBetween_DSTSpan pins that the span is counted by UTC calendar
+// day, across a DST transition.
+//
+// The endpoints are chosen so the two candidate implementations DISAGREE:
+// UTC truncation gives 5, truncating in the input's own location gives 4.
+// An earlier version of this test used midnight endpoints and got 6 under
+// both, so it pinned nothing — it would have passed a regression that
+// reintroduced local-time truncation.
+//
+//	a = 2026-11-05 23:30 EST = 2026-11-06 04:30 UTC -> UTC day Nov 6
+//	b = 2026-11-01 01:00 EDT = 2026-11-01 05:00 UTC -> UTC day Nov 1
 func TestDaysBetween_DSTSpan(t *testing.T) {
 	ny, err := time.LoadLocation("America/New_York")
 	if err != nil {
 		t.Skipf("tzdata unavailable: %v", err)
 	}
 	env, b := dateEnv(t, time.Now())
-	prog, cErr := predicate.Compile(env, "days_between(a, b) == 6")
+	prog, cErr := predicate.Compile(env, "days_between(a, b) == 5")
 	if cErr != nil {
 		t.Fatalf("compile: %v", cErr)
 	}
-	// US DST ends 2026-11-01, so this span contains a 25-hour local day.
-	setVar(t, b, "a", predicate.NewDate(
-		time.Date(2026, 11, 5, 0, 0, 0, 0, ny)))
-	setVar(t, b, "b", predicate.NewDate(
-		time.Date(2026, 10, 30, 0, 0, 0, 0, ny)))
+	setVar(t, b, "a", predicate.NewDate(time.Date(2026, 11, 5, 23, 30, 0, 0, ny)))
+	setVar(t, b, "b", predicate.NewDate(time.Date(2026, 11, 1, 1, 0, 0, 0, ny)))
 	v, evErr := prog.Eval(context.Background(), b)
 	if evErr != nil {
 		t.Fatalf("eval: %v", evErr)
 	}
 	if got := v.(predicate.Bool); !got.Bool() {
-		t.Error("DST transition skewed the day count")
+		t.Error("span not counted by UTC calendar day (local-time truncation?)")
+	}
+}
+
+// TestDaysBetween_NoInt64Saturation pins the C3 fix. Computing the span
+// via time.Duration saturates at ~292 years (int64 nanoseconds), so a
+// birthdate — or a zero-valued year-1 date — silently produced a
+// plausible-looking wrong answer: 9999-01-01 minus 1000-01-01 gave
+// 106751 days instead of 3286817.
+func TestDaysBetween_NoInt64Saturation(t *testing.T) {
+	env, b := dateEnv(t, time.Now())
+	prog, err := predicate.Compile(env, "days_between(a, b) == 3286817")
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	setVar(t, b, "a", day(t, "9999-01-01"))
+	setVar(t, b, "b", day(t, "1000-01-01"))
+	v, evErr := prog.Eval(context.Background(), b)
+	if evErr != nil {
+		t.Fatalf("eval: %v", evErr)
+	}
+	if got := v.(predicate.Bool); !got.Bool() {
+		t.Error("millennium-scale span saturated instead of computing exactly")
+	}
+}
+
+// TestDateAdd_RejectsFractionalAndHugeCounts pins the S2 fix. int(1e20)
+// saturates to maxint and AddDate then wraps the date BACKWARDS; a
+// fractional count used to truncate silently. Both now error, matching
+// this package's stated preference for refusing ambiguity over
+// normalizing it quietly.
+func TestDateAdd_RejectsFractionalAndHugeCounts(t *testing.T) {
+	for _, expr := range []string{
+		"date_add(a, 1.9, 'day')",
+		"date_add(a, -1.5, 'day')",
+		"date_add(a, 1e20, 'day')",
+		"date_add(a, -1e20, 'day')",
+	} {
+		t.Run(expr, func(t *testing.T) {
+			env, b := dateEnv(t, time.Now())
+			prog, err := predicate.Compile(env, expr+" == a")
+			if err != nil {
+				t.Fatalf("compile: %v", err)
+			}
+			setVar(t, b, "a", day(t, "2026-08-18"))
+			if _, err := prog.Eval(context.Background(), b); err == nil {
+				t.Errorf("%s: want an eval error, got none", expr)
+			}
+		})
 	}
 }
 
@@ -325,33 +376,15 @@ func TestRruleNext_Malformed(t *testing.T) {
 	}
 }
 
-// TestRruleNext_Exhausted pins that a rule with no further occurrence
-// reports ErrRruleExhausted. It cannot return nil: the engine enforces
-// declared return types (eval.go:156), and a zero Date would compare as
-// a real year-1 value no caller could tell from a genuine date.
+// TestRruleNext_ExhaustedThroughEval pins the operator-visible
+// behavior: predicate.EvalError flattens a host error into a message
+// string (errors.go:41), so no sentinel survives Eval — but the message
+// still says "exhausted", which is what distinguishes a finished
+// schedule from a typo in a log line.
 //
-// Asserted through the exported [predicatefns.RruleNext] rather than
-// through Eval, because predicate.EvalError flattens a host error into
-// a message string (errors.go:41) — nothing wrapped survives that
-// boundary. The sentinel is the contract for a Go caller.
-func TestRruleNext_Exhausted(t *testing.T) {
-	// COUNT=1 anchored at the same day: its single occurrence is not
-	// strictly after `after`, so nothing remains.
-	_, err := predicatefns.RruleNext(
-		"DTSTART:20260818T000000Z\nFREQ=DAILY;COUNT=1",
-		time.Date(2026, 8, 18, 0, 0, 0, 0, time.UTC))
-	if err == nil {
-		t.Fatal("want an error for an exhausted rule, got none")
-	}
-	if !errors.Is(err, predicatefns.ErrRruleExhausted) {
-		t.Errorf("want ErrRruleExhausted, got %v", err)
-	}
-}
-
-// TestRruleNext_ExhaustedThroughEval pins the operator-visible half:
-// through Eval the sentinel is flattened, but the message still says
-// "exhausted" so a finished schedule is distinguishable from a typo in
-// a log line.
+// The errors.Is contract for the sentinel is tested where it lives,
+// in internal/metamodel (TestNextRrule_Exhausted). Re-exporting it here
+// solely to assert it again would be API surface with no Go caller.
 func TestRruleNext_ExhaustedThroughEval(t *testing.T) {
 	env, b := dateEnv(t, time.Now())
 	prog, err := predicate.Compile(env, "rrule_next(rule, a) == a")

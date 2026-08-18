@@ -253,3 +253,43 @@ func TestEngine_Condition_EvalErrorWarns(t *testing.T) {
 		t.Errorf("warning %q does not identify the condition", result.Warnings[0])
 	}
 }
+
+// TestEngine_Condition_NilGuard pins the guarded form the docs
+// recommend for an optional date property. Unguarded, a missing `due`
+// is an eval error and the entity is skipped; guarded, the condition
+// evaluates cleanly to false with no warning.
+func TestEngine_Condition_NilGuard(t *testing.T) {
+	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	meta := datePropMeta()
+
+	engine, err := NewEngineFromMetamodel(meta,
+		[]metamodel.AutomationDef{
+			condAutomation(
+				"entity.due ~= nil and days_between(entity.due, today()) <= 7"),
+		})
+	if err != nil {
+		t.Fatalf("build engine: %v", err)
+	}
+	pinClock(engine, meta, now)
+
+	t.Run("missing due is a clean false", func(t *testing.T) {
+		ent := buildEntity(testutil.Entity("taak").With("status", "todo"))
+		res := engine.Process(context.Background(),
+			Event{Type: EventEntityCreated, Entity: ent})
+		if res.PropertiesSet["status"] == "due-soon" {
+			t.Error("fired on an entity with no due date")
+		}
+		if res.HasWarnings() {
+			t.Errorf("guarded condition still warned: %v", res.Warnings)
+		}
+	})
+
+	t.Run("present due still matches", func(t *testing.T) {
+		ent := buildEntity(testutil.Entity("taak").With("due", "2026-08-20"))
+		res := engine.Process(context.Background(),
+			Event{Type: EventEntityCreated, Entity: ent})
+		if res.PropertiesSet["status"] != "due-soon" {
+			t.Errorf("guard broke the normal path; PropertiesSet=%v", res.PropertiesSet)
+		}
+	})
+}

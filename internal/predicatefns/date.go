@@ -3,6 +3,7 @@ package predicatefns
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -52,16 +53,22 @@ const (
 // daysPerWeek converts a week count to days.
 const daysPerWeek = 7
 
-// ErrRruleExhausted re-exports [metamodel.ErrRruleExhausted] so a
-// caller of this package can tell a finished schedule from a malformed
-// rule with errors.Is, without importing metamodel for the sentinel
-// alone.
-var ErrRruleExhausted = metamodel.ErrRruleExhausted
+// maxDateAddDays bounds date_add's count. ~2700 years of days: far
+// beyond any real schedule, and small enough that the result stays
+// inside time.Time's comfortable range after the week multiplier.
+const maxDateAddDays = 1_000_000
 
-// hoursPerDay is the multiplier for converting a whole-day count to a
-// time.Duration. Safe here because every value is UTC-midnight
-// truncated, so no DST transition can shorten or lengthen the day.
-const hoursPerDay = 24
+// secondsPerDay converts a Unix-second difference to whole days. Safe
+// because both operands are UTC-midnight truncated, so the division is
+// exact and no DST transition can shorten or lengthen the day.
+//
+// Deliberately NOT computed via time.Duration: that is an int64
+// nanosecond count capping at ~292 years, and Sub SATURATES rather than
+// wrapping. A birthdate, or a zero-valued date (year 1), would silently
+// yield a plausible-looking wrong number — 9999-01-01 minus 1000-01-01
+// gave 106751 days instead of 3286817. Unix seconds cannot saturate in
+// any realistic range.
+const secondsPerDay = 24 * 60 * 60
 
 // utcDay truncates t to UTC midnight. This is the single place the
 // convention is applied, so today(), days_between and date_add cannot
@@ -101,14 +108,14 @@ func daysBetween(_ context.Context, args []predicate.Value) (predicate.Value, er
 	if err != nil {
 		return nil, err
 	}
-	delta := utcDay(a).Sub(utcDay(b))
 	// Int, not Number: a day count is a whole number, and the engine
 	// requires both sides of an ordered comparison to share a type. As
 	// Number this could not be compared against an integer-typed
 	// property — `days_between(...) <= entity.doorlooptijd` would fail
 	// to compile, which is precisely the recurring-task shape this
 	// function exists for.
-	return predicate.NewInt(int64(delta.Hours() / hoursPerDay)), nil
+	days := (utcDay(a).Unix() - utcDay(b).Unix()) / secondsPerDay
+	return predicate.NewInt(days), nil
 }
 
 // dateAdd implements date_add(d, n, unit) -> date. n may be negative to
@@ -140,7 +147,20 @@ func dateAdd(_ context.Context, args []predicate.Value) (predicate.Value, error)
 		return nil, errArg
 	}
 
-	days := int(n.Float())
+	// Reject a fractional or out-of-range count rather than truncating
+	// it. Same reasoning as the month/year restriction below: this
+	// package makes the caller state what they mean instead of silently
+	// normalizing. int(1e20) saturates to maxint and AddDate then wraps
+	// the date BACKWARDS, which is the sort of thing that looks like a
+	// working config until it doesn't.
+	f := n.Float()
+	if f != math.Trunc(f) || math.Abs(f) > maxDateAddDays {
+		return nil, fmt.Errorf(
+			"predicatefns: date_add: count %v must be a whole number within ±%d",
+			f, int64(maxDateAddDays))
+	}
+
+	days := int(f)
 	switch strings.ToLower(strings.TrimSpace(unit.String())) {
 	case unitDay:
 	case unitWeek:
@@ -192,24 +212,4 @@ func rruleNext(_ context.Context, args []predicate.Value) (predicate.Value, erro
 		return nil, fmt.Errorf("predicatefns: rrule_next: %w", err)
 	}
 	return predicate.NewDate(next), nil
-}
-
-// RruleNext returns the first occurrence of an RRULE strictly after
-// `after`, or an error wrapping [ErrRruleExhausted] when the rule has
-// none left. Exported because [predicate.Program.Eval] flattens host
-// errors into message strings, so a Go caller that needs to tell
-// "finished schedule" from "malformed rule" must call this directly.
-func RruleNext(rule string, after time.Time) (time.Time, error) {
-	v, err := rruleNext(context.Background(), []predicate.Value{
-		predicate.NewString(rule),
-		predicate.NewDate(after),
-	})
-	if err != nil {
-		return time.Time{}, err
-	}
-	d, ok := v.(predicate.Date)
-	if !ok {
-		return time.Time{}, errArg
-	}
-	return d.Time(), nil
 }
