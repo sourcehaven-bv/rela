@@ -52,6 +52,34 @@ handling**) cannot be verified without live wire capture. They are marked
 "unknown" rather than guessed. **Apple Reminders' `ALTREP` round-trip is
 likewise unverified** — see below.
 
+## Moving a to-do between collections
+
+With [graph-driven collections](caldav.md), a to-do's membership of a collection
+is a *relation*, so moving one between lists is a graph edit. Clients implement
+that move in two incompatible ways, and the difference is visible in your data.
+
+Verified on the wire (2026-08-18):
+
+| Client | Move sent as | Result in rela |
+|---|---|---|
+| **Mozilla Thunderbird** | `PUT` the **same UID** into the target, then `DELETE` from the source | One entity. Its membership moves. ✅ |
+| **Apple Reminders** | `DELETE` from the source, then `PUT` a **fresh UUID** into the target | **A duplicate.** A new entity in the target; the original survives, belonging to nothing. |
+
+**This is not something the server can fix.** A `PUT` carrying a UID rela has
+never seen is, on the wire, exactly what a genuinely new to-do looks like — that
+is the create path, and it is why a client-composed entry works at all. Treating
+it as a move would mean guessing that two unrelated resources are "the same
+to-do", which risks silently merging entries that are not.
+
+What rela does guarantee is that each half is correct in isolation: the `DELETE`
+removes only the membership (the original entity survives, unmodified), and the
+`PUT` creates a properly-linked member of the target collection. The unfortunate
+composite is the client's choice of encoding.
+
+**Practical advice.** In Reminders, prefer *assigning* a to-do to a second list
+over dragging it between lists, and delete the original afterwards if you meant
+a move. In Thunderbird, drag freely — its encoding preserves identity.
+
 ## What a client does when a write is refused
 
 Verified on the wire (2026-08-12) against a rela deployment whose ACL granted
