@@ -120,52 +120,41 @@ a load error is fatal, an eval error is not.
 
 ---
 
-## Implementation note (2026-08-18)
+## Self-review findings (2026-08-18)
 
-Branch `tkt-8gd41j-condition-expressions`, commits `f849875e` + `20db98ba`.
+Three issues found and fixed while reviewing my own work, before the formal code
+review returned. All three were the SAME bug class the ticket exists to
+eliminate — a condition that silently does nothing — reintroduced in the
+implementation.
 
-**`days_between` had to return `Int`, not `Number`.** The engine requires both
-sides of an ordered comparison to share a type, so a `Number` result could not
-be compared against an integer-typed property — breaking the exact shape this
-work exists for:
+**1. Automation eval errors were swallowed** (`8fa70c14`). `matchesCondition`
+returned a bare `false` on eval failure, and the automation engine has no
+logging at all, so a condition failing at eval (missing property, exhausted step
+budget) meant the automation silently never fired. The doc comment claimed
+"no-match plus a warning" — there was no warning. Now routed to
+`Result.Warnings` via the existing channel. `*Result` is threaded through
+`matches`/`matchesWhenConditions` rather than stashed on the Engine, which would
+race under concurrent `Process`.
 
-```text
-days_between(entity.volgende_datum, today()) <= entity.doorlooptijd
-```
+**2. Validation `when_condition:` errors were swallowed** (`719564b9`). Compiled
+per entity, so a malformed expression surfaced as "no match" — indistinguishable
+from "no entity qualified". The rule would check nothing and report clean: a
+validation rule that silently stopped validating. Conditions now compile once
+per rule before any entity is touched; a failure is a `LoadError` (the channel a
+broken `lua_file:` already uses) and the rule is abandoned. A doc comment
+claiming these were "caught at load by Validate" was also false — nothing
+validated them.
 
-A day count is a whole number, so `Int` is also the more accurate type.
-`date_add`'s count stays `Number`: literal coercion happens in comparisons, not
-in argument position, so `date_add(d, 3, 'day')` arrives as a `Number`. Caught
-by the Atlas regression test, not by reasoning — worth knowing that argument
-position and comparison position coerce differently.
+**3. Upgrade blast radius was asserted, not measured** (`188bd089`). Making an
+unparseable `when:` clause fatal is a behaviour change on a load path. Measured
+rather than assumed: `filter.Parse` rejects exactly three things — empty string,
+missing operator, empty property name. Odd-looking input (`a=b=c`, `spaces in
+prop=x`, `status = ready`) parses fine. So the change can only newly fail a
+project whose clause was ALREADY broken and silently matching nothing. Verified
+against all 70 distinct `when:`/`then:` clauses in this repo's own
+`schema.yaml`; every one still parses. Pinned by `TestWhenClauseCompatibility`.
 
-**Date literals in expressions are strings**: `entity.due <= '2026-08-25'`,
-parsed against the property's declared layout at compile time (RR-A3EZR). A bare
-`2026-08-25` is arithmetic. Documented.
-
-**Validation got two keys, not one.** Rules have both `when:` (selects) and
-`then:` (asserts), so `when_condition:` and `then_condition:` mirror them. They
-can be mixed freely with the filter keys; everything present is ANDed.
-
-**Goal reached.** `TestAtlasRecurrenceConditionIsExpressible` pins the guard at
-the top of `atlas/scripts/recurrence.lua` — ~30 lines of hand-rolled Lua over
-already-declarative properties — as a single compiling, evaluating condition.
-
-## Verification
-
-- `go test ./...` — full suite green, incl. every pre-existing automation and
-validation test against the new `error` return
-- `golangci-lint` — clean on all four changed packages
-- `just arch-lint` — clean
-- `just coverage-check` — PASS (automation 86.3%, validation 89.6%, metamodel 83.7%)
-- docs regenerated from `docs-project/` source
-
-## Follow-ups
-
-- **`{{...}}` as an expression context** for `set:`/`value:` — still filter-era
-string substitution, so a computed value (`{{rrule_next(...)}}`) is not yet
-expressible. This is the remaining gap before recurrence is fully declarative:
-conditions can now decide *whether* to fire, but an action cannot compute the
-next date.
-- Time-triggered automations (`on: {every: day}`) — the scheduler follow-up.
-- `internal/expr` extraction — TKT-SJWC7H, unchanged.
+Also verified directly: `-race` clean with 50 concurrent `Process` calls against
+a condition-bearing automation; a condition naming an unknown entity type, or a
+property absent from one of several listed types, fails at load with an error
+naming the automation, the condition and the offending type.
