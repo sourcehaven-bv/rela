@@ -582,6 +582,56 @@ type VersionWriter interface {
 	WriteVersion(ctx context.Context, in VersionInput) error
 }
 
+// TypeWatermark reports the newest change sequence for an entity type, so a
+// caller can answer "has anything of this type changed?" without reading the
+// rows.
+//
+// Optional and backend-specific, like [HistoryReader] and [VersionWriter]:
+// callers type-assert a Store to it and degrade when the assertion fails. Only
+// backends with a monotonic per-write sequence can implement it — pgstore has
+// `rela_seq`; fsstore has only wall-clock mtimes and no ordering, so it
+// deliberately does not.
+//
+// # Why this exists
+//
+// The CalDAV collection tag (`getctag`) is polled by every client on every
+// cycle, and computing it today renders the entire collection to hash the
+// per-entry ETags — the exact work the tag exists to let clients SKIP. That is
+// tolerable for a handful of configured collections and quadratic for
+// graph-driven ones (one collection per project ⇒ P renders per poll).
+//
+// A watermark answers the same question with an index-only `max(seq)`.
+//
+// # Deletions are included, and that is load-bearing
+//
+// The value MUST account for hard-deleted rows. `max(seq)` over live rows alone
+// can go DOWN when the newest row is deleted, and a tag that moves backwards
+// makes a client that already saw the higher value stop polling — it is
+// permanently stale with no way to notice. Implementations combine the live-row
+// maximum with the deletion-tombstone maximum.
+//
+// # Type scope is deliberate, and over-triggers
+//
+// The watermark is scoped by entity TYPE only, never by a collection's filter or
+// by the caller's ACL. A deletion tombstone records just (kind, id, type) — the
+// deleted row's properties and relations are gone — so a narrower scope cannot
+// be reconstructed once the row is removed.
+//
+// The consequence: any write to the type moves the watermark for every consumer
+// of that type, and a client re-enumerates to discover nothing changed. That is
+// the SAFE direction. A spurious re-sync costs one listing and self-corrects; a
+// missed change strands a client forever. Do not "optimize" this into a
+// per-collection or per-principal scope without solving the tombstone problem
+// first.
+type TypeWatermark interface {
+	// EntityTypeWatermark returns a monotonic value that changes whenever any
+	// entity of entityType is created, updated, renamed or deleted.
+	//
+	// Returns 0 when the type has never had a row — a legitimate value, not an
+	// error, and stable for as long as that stays true.
+	EntityTypeWatermark(ctx context.Context, entityType string) (int64, error)
+}
+
 // HistoryReader reads an entity's captured version history. Like Formatter it
 // is NOT part of the Store interface — content versioning is a backend-specific
 // capability (only pgstore implements it today). Callers type-assert a Store to

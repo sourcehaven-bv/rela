@@ -19,6 +19,9 @@ func caldavMetamodel() *metamodel.Metamodel {
 		Types: map[string]metamodel.CustomType{
 			"task_status": {Values: []string{"todo", "doing", "done"}, Default: "todo"},
 		},
+		Relations: map[string]metamodel.RelationDef{
+			"relates-to": {From: []string{"task"}, To: []string{"note"}},
+		},
 		Entities: map[string]metamodel.EntityDef{
 			"task": {
 				Label:           "Task",
@@ -684,4 +687,96 @@ func TestCalDAVCollection_IsReadOnly(t *testing.T) {
 	if (CalDAVCollection{}).IsReadOnly(CalDAVFieldSummary) {
 		t.Error("an empty read_only must leave every field writable")
 	}
+}
+
+func TestValidateCalDAV_Dynamic(t *testing.T) {
+	valid := func() CalDAVDynamicCollection {
+		return CalDAVDynamicCollection{
+			CalDAVCollection: validTaskCollection(),
+			DriverType:       "note",
+			Relation:         "relates-to",
+		}
+	}
+	tests := []struct {
+		name    string
+		mutate  func(*Config, *CalDAVDynamicCollection)
+		wantErr string
+	}{
+		{name: "valid pattern"},
+		{
+			name:    "driver_type is required",
+			mutate:  func(_ *Config, c *CalDAVDynamicCollection) { c.DriverType = "" },
+			wantErr: "'driver_type' is required",
+		},
+		{
+			name:    "unknown driver_type",
+			mutate:  func(_ *Config, c *CalDAVDynamicCollection) { c.DriverType = "nope" },
+			wantErr: `unknown driver_type "nope"`,
+		},
+		{
+			name:    "relation is required",
+			mutate:  func(_ *Config, c *CalDAVDynamicCollection) { c.Relation = "" },
+			wantErr: "'relation' is required",
+		},
+		{
+			name:    "unknown relation",
+			mutate:  func(_ *Config, c *CalDAVDynamicCollection) { c.Relation = "nope" },
+			wantErr: `unknown relation "nope"`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dyn := valid()
+			cfg := &Config{CalDAV: CalDAVConfig{
+				Dynamic: map[string]CalDAVDynamicCollection{"project_tasks": dyn},
+			}}
+			if tc.mutate != nil {
+				tc.mutate(cfg, &dyn)
+				cfg.CalDAV.Dynamic["project_tasks"] = dyn
+			}
+			errs := validateCalDAV(cfg, caldavMetamodel())
+			joined := strings.Join(errs, "\n")
+			if tc.wantErr == "" {
+				if len(errs) > 0 {
+					t.Errorf("expected no errors, got: %v", errs)
+				}
+				return
+			}
+			if !strings.Contains(joined, tc.wantErr) {
+				t.Errorf("expected an error containing %q, got: %v", tc.wantErr, errs)
+			}
+		})
+	}
+}
+
+// TestValidateCalDAV_DynamicKeyCollisions pins the two ways a pattern key can
+// produce an unaddressable or shadowed collection. Both are silent at runtime:
+// the URL simply resolves to something other than what the operator wrote.
+func TestValidateCalDAV_DynamicKeyCollisions(t *testing.T) {
+	dyn := CalDAVDynamicCollection{
+		CalDAVCollection: validTaskCollection(),
+		DriverType:       "note",
+		Relation:         "relates-to",
+	}
+
+	t.Run("key containing the separator", func(t *testing.T) {
+		cfg := &Config{CalDAV: CalDAVConfig{
+			Dynamic: map[string]CalDAVDynamicCollection{"a--b": dyn},
+		}}
+		errs := validateCalDAV(cfg, caldavMetamodel())
+		if !strings.Contains(strings.Join(errs, "\n"), "must not contain") {
+			t.Errorf("a key containing %q makes the URL split ambiguous; got: %v", "--", errs)
+		}
+	})
+
+	t.Run("key shadowed by a static collection", func(t *testing.T) {
+		cfg := &Config{CalDAV: CalDAVConfig{
+			Static:  map[string]CalDAVCollection{"tasks": validTaskCollection()},
+			Dynamic: map[string]CalDAVDynamicCollection{"tasks": dyn},
+		}}
+		errs := validateCalDAV(cfg, caldavMetamodel())
+		if !strings.Contains(strings.Join(errs, "\n"), "would shadow") {
+			t.Errorf("a static key with the same name shadows the pattern; got: %v", errs)
+		}
+	})
 }

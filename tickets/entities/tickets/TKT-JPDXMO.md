@@ -149,3 +149,69 @@ grouping index keeps it off O(P·T).
 9. Existing `caldav:` configs are migrated to `caldav.static:` — this ticket
 lands the nesting, so it must ship with the migration or before any release that
 exposes the old shape.
+
+## Implementation status (2026-08-17): read path landed, ticket stays open
+
+**Status stays `backlog` deliberately.** The read path is implemented in PR
+#1359, but the feature is not usable end-to-end until AC7 lands — a client that
+creates a to-do in a generated collection gets an entity in no collection, which
+is worse than the feature being absent. `in-progress` would be the honest label
+for the work, but the workflow requires a terminal status to merge and this
+ticket is not finished; `backlog` says "more to do here" without claiming the
+feature ships.
+
+The READ path is implemented in PR #1359; writes into a generated collection are
+not. Split that way deliberately: the read path is testable against real clients,
+which is how every genuine CalDAV bug in this arc was found, and the write half
+carries an unresolved atomicity question (below).
+
+### Landed
+
+- **AC1** `caldav.dynamic:` patterns expand to one collection per driver entity.
+- **AC2/AC3** The URL segment is `<pattern>--<driverID>`, built from the ID, so a
+  rename changes the display name (taken from the driver's title) without moving
+  the collection. A moved href makes a client re-add the whole list as new.
+- **AC5** Enumeration is per-principal: patterns expand only over drivers the
+  caller may read, and an absent OR hidden driver returns the same 404. The
+  driver id sits in the URL, so a distinguishable status would be an existence
+  oracle for it.
+- **AC6** Generated collections advertise their component set — inherited from
+  the embedded `CalDAVCollection`, so it cannot drift from the static path.
+- **AC8** Solved a level down, in the store rather than here.
+  `store.TypeWatermark` answers "has anything of this type changed?" with an
+  index-only `max(seq)`, replacing a full collection render on every `getctag`
+  poll. Deletion tombstones are included: `max(seq)` over live rows alone goes
+  DOWN when the newest row is hard-deleted, and a tag that moves backwards
+  strands every client that already saw the higher value. pgstore-only,
+  type-asserted; fsstore keeps the content-derived tag.
+
+Membership is ONE relation traversal anchored on the driver, not one per member
+— O(1) queries per collection rather than O(members), the shape that made the
+old per-row relation filter O(N·edges).
+
+### Deferred, with reasons
+
+- **AC7 (client-created entries)** — a to-do created in
+  `project_tasks--PRJ-1` must also receive the `belongs-to` edge, or it lands in
+  the entity type but in NO collection and vanishes from the client on the next
+  sync. The config already carries `relation:` for this (it serves both
+  directions by design), so no new config surface is needed. What is unresolved
+  is ATOMICITY: `createFromTodo` creates the entity and would then create the
+  relation, and a failure between the two strands an entity outside every
+  collection. Wants the pair in one `store.Tx`, or an explicit compensating
+  delete — decide before implementing.
+- **AC4 (driver deletion)** — deleting a driver removes a collection, and the
+  ticket requires the client behaviour be *documented, not assumed*. That needs
+  live observation against Reminders and Thunderbird; every client finding in
+  this arc came from wire capture, and guessing here would violate the AC's own
+  terms.
+- **AC9 (migration)** — moot. The `caldav.static:` nesting shipped in #1308
+  before any release exposed the flat shape, so there is nothing to migrate.
+
+### Known regression, accepted
+
+The rendered ctag covered the property mapping implicitly, so editing a
+collection's `where:` or a property mapping moved it. The watermark is over
+entity ROWS, so a config edit no longer does — a client keeps its stale view
+until the next entity write. Recorded at `watermarkCTag`; the fix, if it bites,
+is folding a config generation into the tag.

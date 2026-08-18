@@ -92,8 +92,19 @@ type DBTX interface {
 // one per subsystem rather than by its surface. Adding UserStateStore's nine
 // methods to *Store is what the paragraph above forbids.
 //
-//plimsoll:max-exported-methods=35
-//plimsoll:max-methods=43
+// EntityTypeWatermark ([store.TypeWatermark]) is +1 for the row-property
+// reason, not the factory one: it reads `max(seq)` over this store's OWN
+// entities and deletions rows — the same tables every other method here touches
+// — so hoisting it into a service would mean a second handle over those two
+// tables for a single index lookup.
+//
+// That makes TWO capabilities admitted as row-properties (ListEntityHeaders and
+// EntityTypeWatermark). A THIRD should not raise these numbers again: extract
+// the row-property reads together, the way versioning and user-state were
+// extracted as subsystems.
+//
+//plimsoll:max-exported-methods=36
+//plimsoll:max-methods=44
 type Store struct {
 	db        DBTX
 	observers []store.EntityObserver // notified synchronously after committed entity writes
