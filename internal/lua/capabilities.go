@@ -1,6 +1,9 @@
 package lua
 
-import "slices"
+import (
+	"maps"
+	"slices"
+)
 
 // Capabilities declares which ambient, non-graph capabilities a Lua runtime
 // may reach: outbound HTTP, the AI provider, named secrets, and file writes
@@ -90,9 +93,7 @@ func (c Capabilities) AllowsSecret(name string) bool {
 func (c Capabilities) filterSecrets(all map[string]string) map[string]string {
 	if c.AllSecrets {
 		out := make(map[string]string, len(all))
-		for k, v := range all {
-			out[k] = v
-		}
+		maps.Copy(out, all)
 		return out
 	}
 	out := make(map[string]string, len(c.Secrets))

@@ -352,6 +352,12 @@ func newRuntime(deps WriteDeps, stdout io.Writer, allowWrites bool, opts ...Opti
 		stdout:    stdout,
 		outputDir: defaultOutputDir,
 		timeout:   DefaultTimeout,
+		// Ambient capabilities default to whatever the deps declared
+		// (TKT-YH52OM). Seeded BEFORE options so an explicit
+		// WithCapabilities wins — deps carry the wiring-site default, the
+		// option is a per-execution override. Both default to the zero
+		// value, which grants nothing.
+		caps: deps.Capabilities,
 	}
 
 	// Apply options

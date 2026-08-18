@@ -177,7 +177,15 @@ func dispatchWebhookAction(ctx context.Context, h *writeHandler, actionID string
 	h.writeMu.Lock()
 	defer h.writeMu.Unlock()
 
-	_, err := h.engine().ExecuteAction(ctx, action.Script, h.luaDeps(),
+	// TKT-YH52OM: the webhook path resolves the SAME `actions:` entry as the
+	// HTTP endpoint, so it honours the same `capabilities:` declaration. This
+	// is the surface that most needs it to work: an IdP-sync action legitimately
+	// calls out over http with a named secret (see examples/idp-sync.lua), and
+	// it now must say so in config rather than receiving the whole secrets file
+	// by default.
+	deps := h.luaDeps()
+	deps.Capabilities = luaCapabilities(action.Capabilities)
+	_, err := h.engine().ExecuteAction(ctx, action.Script, deps,
 		nil, params, webhookActionTimeout, newCorrelationID())
 	return err
 }

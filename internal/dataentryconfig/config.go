@@ -115,6 +115,20 @@ type Action struct {
 	Key         string            `yaml:"key,omitempty" json:"key,omitempty"`
 	Confirm     bool              `yaml:"confirm,omitempty" json:"confirm,omitempty"`
 	Set         map[string]string `yaml:"set,omitempty" json:"set,omitempty"`
+
+	// Capabilities declares which ambient capabilities this action's script
+	// may reach — http, ai, write_file, and named secrets (TKT-YH52OM).
+	// Omitting it grants NONE of them.
+	//
+	// An action is invoked over HTTP by whoever may POST /_action/{id}, so it
+	// is not an operator-shell surface: the grant has to be written down by
+	// the operator who authored the action, in the same file as the script:
+	// reference. `secrets` is a LIST of key names, never a bool — an action
+	// that needs one webhook token must not also receive the database DSN.
+	//
+	// Not serialized to JSON: the SPA has no use for it, and an action's
+	// capability grant is not part of its affordance.
+	Capabilities metamodel.Capabilities `yaml:"capabilities,omitempty" json:"-"`
 }
 
 // AppConfig holds display metadata for the application.
@@ -993,6 +1007,19 @@ type DocumentConfig struct {
 	// deploying — that review IS the mitigation, and it is why this value is
 	// declared in config where a reviewer will see it.
 	AllowACLBypass metamodel.ACLBypass `yaml:"allow_acl_bypass,omitempty" json:"allow_acl_bypass,omitempty"`
+
+	// Capabilities declares which ambient capabilities this document's render
+	// script may reach — http, ai, write_file, named secrets (TKT-YH52OM).
+	// Omitting it grants none.
+	//
+	// A render is a READ surface, so the default matters more here than
+	// anywhere: before this existed a document script — which cannot mutate
+	// the graph beyond the caller's permissions — could still read every
+	// secret and POST it outbound. Most reports need nothing; a report that
+	// genuinely calls an upstream API names exactly what it needs.
+	//
+	// Not serialized to JSON: the SPA renders the output, not the grant.
+	Capabilities metamodel.Capabilities `yaml:"capabilities,omitempty" json:"-"`
 	// Command is the external render command as an ARGUMENT ARRAY, e.g.
 	//   command: ["my-renderer", "{in}"]
 	// It is executed directly — there is no shell, so pipes, redirection, and

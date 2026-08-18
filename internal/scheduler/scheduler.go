@@ -296,7 +296,18 @@ func (s *Scheduler) doExecuteTask(ctx context.Context, task TaskConfig) {
 	// The principal goes on the CTX (not into the deps bundle) because the
 	// read seam resolves identity per call — see ScheduledLuaWriteDeps.
 	taskCtx := stampTaskAuditContext(ctx, task.Name, task.RunAs)
-	err := s.engine.ExecuteFile(taskCtx, task.Script, s.ws.ScheduledLuaWriteDeps(), nil, nil)
+	// TKT-YH52OM: the task's declared capabilities are the only ambient grant.
+	// A scheduled job runs unattended inside the server process, so an
+	// undeclared capability stays absent rather than inheriting the trusted
+	// default that `rela script` gets at the operator shell.
+	deps := s.ws.ScheduledLuaWriteDeps()
+	deps.Capabilities = lua.Capabilities{
+		HTTP:      task.Capabilities.HTTP,
+		AI:        task.Capabilities.AI,
+		WriteFile: task.Capabilities.WriteFile,
+		Secrets:   task.Capabilities.Secrets,
+	}
+	err := s.engine.ExecuteFile(taskCtx, task.Script, deps, nil, nil)
 	elapsed := s.now().Sub(start)
 
 	if err != nil {
