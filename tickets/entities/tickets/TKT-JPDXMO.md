@@ -152,16 +152,11 @@ exposes the old shape.
 
 ## Implementation status (2026-08-17): read path landed, ticket stays open
 
-**Status stays `backlog` deliberately.** The read path is implemented in PR
-#1359, but the feature is not usable end-to-end until AC7 lands — a client that
-creates a to-do in a generated collection gets an entity in no collection, which
-is worse than the feature being absent. `in-progress` would be the honest label
-for the work, but the workflow requires a terminal status to merge and this
-ticket is not finished; `backlog` says "more to do here" without claiming the
-feature ships.
-
-The READ path is implemented in PR #1359; writes into a generated collection are
-not. Split that way deliberately: the read path is testable against real clients,
+**Status stays `backlog` deliberately.** Read and create both work now, but AC4
+(driver deletion) is unverified against real clients and the AC requires that it
+be observed rather than assumed. `in-progress` would be the honest label, but
+the workflow requires a terminal status to merge; `backlog` says "more to do
+here" without claiming the feature is finished. Split that way deliberately: the read path is testable against real clients,
 which is how every genuine CalDAV bug in this arc was found, and the write half
 carries an unresolved atomicity question (below).
 
@@ -189,17 +184,29 @@ Membership is ONE relation traversal anchored on the driver, not one per member
 — O(1) queries per collection rather than O(members), the shape that made the
 old per-row relation filter O(N·edges).
 
+### Landed since
+
+- **AC7 (client-created entries)** — `createFromTodo` now gives a new entry the
+  driver relation, so it is a member of the collection it was created in. The
+  config already carried `relation:` (it serves both directions by design), so
+  no new config surface was needed.
+
+  **Atomicity resolved as a compensating delete, not a transaction.**
+  `entitymanager` exposes no `Tx`, and `store.Tx` would not have helped
+  uniformly anyway: fsstore keeps writes already made (no rollback — a
+  deliberate reduced guarantee), so the same compensation would be required
+  there regardless. If the edge fails the entity is deleted, non-cascading —
+  it is seconds old and its only possible edge is the one that just failed, so
+  a cascade could only reach relations a concurrent writer added, which are not
+  ours to remove. If the compensation itself fails the orphan survives and the
+  error says so, which is the best available at this layer.
+
+  The reasoning for deleting rather than keeping: an entity in the type but in
+  no collection is invisible in every CalDAV view, so the user can neither find
+  nor fix it. A failed create is visible and retryable; an orphan is neither.
+
 ### Deferred, with reasons
 
-- **AC7 (client-created entries)** — a to-do created in
-  `project_tasks--PRJ-1` must also receive the `belongs-to` edge, or it lands in
-  the entity type but in NO collection and vanishes from the client on the next
-  sync. The config already carries `relation:` for this (it serves both
-  directions by design), so no new config surface is needed. What is unresolved
-  is ATOMICITY: `createFromTodo` creates the entity and would then create the
-  relation, and a failure between the two strands an entity outside every
-  collection. Wants the pair in one `store.Tx`, or an explicit compensating
-  delete — decide before implementing.
 - **AC4 (driver deletion)** — deleting a driver removes a collection, and the
   ticket requires the client behaviour be *documented, not assumed*. That needs
   live observation against Reminders and Thunderbird; every client finding in

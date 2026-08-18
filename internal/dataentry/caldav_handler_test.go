@@ -1408,6 +1408,12 @@ func caldavDynamicAppWith(t *testing.T, ents []*entity.Entity, rels []*entity.Re
 	t.Helper()
 	base := caldavTestApp(t)
 	meta := base.State().Meta
+	if meta.Relations == nil {
+		meta.Relations = map[string]metamodel.RelationDef{}
+	}
+	meta.Relations["belongs-to"] = metamodel.RelationDef{
+		From: []string{"task"}, To: []string{"project"},
+	}
 	meta.Entities["project"] = metamodel.EntityDef{
 		Label: "Project", IDPrefix: "PRJ-", DisplayProperty: "title",
 		Properties: map[string]metamodel.PropertyDef{
@@ -1569,4 +1575,127 @@ func TestSplitDynamicName(t *testing.T) {
 			t.Errorf("splitDynamicName(%q) = (%q,%q), want (%q,%q)", tc.in, p, d, tc.pattern, tc.driver)
 		}
 	}
+}
+
+// mustParseICal decodes an iCalendar body the way go-webdav does before handing
+// it to the backend.
+func mustParseICal(t *testing.T, body string) *ical.Calendar {
+	t.Helper()
+	cal, err := ical.NewDecoder(strings.NewReader(body)).Decode()
+	if err != nil {
+		t.Fatalf("decode iCalendar: %v", err)
+	}
+	return cal
+}
+
+// caldavDynamicBody is a client-composed VTODO — the shape Apple actually
+// sends on a create: a bare UUID, a summary, and almost nothing else.
+func caldavDynamicBody(uid, summary string) string {
+	return "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\nBEGIN:VTODO\r\n" +
+		"UID:" + uid + "\r\nSUMMARY:" + summary + "\r\nSTATUS:NEEDS-ACTION\r\n" +
+		"END:VTODO\r\nEND:VCALENDAR\r\n"
+}
+
+// TestDynamicCollections_CreateGetsTheDriverRelation pins AC7.
+//
+// Membership in a dynamic collection IS the relation, so a to-do created in
+// `project_tasks--PRJ-1` that does not get the `belongs-to` edge lands in the
+// entity type but in NO collection: it vanishes from the client on the next
+// sync and is invisible in every CalDAV view.
+func TestDynamicCollections_CreateGetsTheDriverRelation(t *testing.T) {
+	app := caldavDynamicAppWith(t, []*entity.Entity{mkProject("PRJ-1", "Alpha")}, nil)
+	b := &caldavBackend{app: app, baseURL: "https://example.test"}
+
+	obj, err := b.PutCalendarObject(t.Context(),
+		b.calendarPath("project_tasks--PRJ-1")+"NEW-1.ics",
+		mustParseICal(t, caldavDynamicBody("NEW-1", "buy milk")), nil)
+	if err != nil {
+		t.Fatalf("PutCalendarObject: %v", err)
+	}
+	if obj == nil {
+		t.Fatal("create returned no object")
+	}
+
+	// The proof that matters: the new entry is a MEMBER on the next read. A
+	// created-but-unlinked entity would be absent here while still existing.
+	objs, err := b.listTodos(t.Context(), "project_tasks--PRJ-1")
+	if err != nil {
+		t.Fatalf("listTodos: %v", err)
+	}
+	if len(objs) != 1 {
+		t.Fatalf("the created to-do is not in its own collection (got %d members) — "+
+			"it would vanish from the client on the next sync", len(objs))
+	}
+}
+
+// TestDynamicCollections_CreateInStaticNeedsNoRelation pins that the linking
+// step is a no-op for static collections, which have no driver.
+func TestDynamicCollections_CreateInStaticNeedsNoRelation(t *testing.T) {
+	app := caldavDynamicAppWith(t, nil, nil)
+	b := &caldavBackend{app: app, baseURL: "https://example.test"}
+
+	if _, err := b.PutCalendarObject(t.Context(),
+		b.calendarPath("tasks")+"NEW-2.ics",
+		mustParseICal(t, caldavDynamicBody("NEW-2", "standalone")), nil); err != nil {
+		t.Fatalf("a create in a STATIC collection must not require a driver edge: %v", err)
+	}
+	objs, err := b.listTodos(t.Context(), "tasks")
+	if err != nil {
+		t.Fatalf("listTodos: %v", err)
+	}
+	if len(objs) != 1 {
+		t.Errorf("want the created to-do in the static collection, got %d", len(objs))
+	}
+}
+
+// TestDynamicCollections_FailedLinkRemovesTheOrphan pins the compensation.
+//
+// If the driver edge cannot be created, the entity must not survive: an entity
+// in the type but in no collection is invisible in every CalDAV view, so the
+// user can neither find nor fix it. A failed create is visible and retryable;
+// an orphan is neither.
+//
+// The link is made to fail by pointing the pattern at a relation the metamodel
+// does not allow between these types — the same rejection a misconfigured or
+// concurrently-changed schema would produce.
+func TestDynamicCollections_FailedLinkRemovesTheOrphan(t *testing.T) {
+	app := caldavDynamicAppWith(t, []*entity.Entity{mkProject("PRJ-1", "Alpha")}, nil)
+
+	// A relation that exists but is not permitted from task to project.
+	meta := app.State().Meta
+	meta.Relations["wrong-way"] = metamodel.RelationDef{
+		From: []string{"project"}, To: []string{"project"},
+	}
+	dyn := app.State().Cfg.CalDAV.Dynamic["project_tasks"]
+	dyn.Relation = "wrong-way"
+	app.State().Cfg.CalDAV.Dynamic["project_tasks"] = dyn
+
+	b := &caldavBackend{app: app, baseURL: "https://example.test"}
+	before := countStoredEntities(t, app, "task")
+
+	if _, err := b.PutCalendarObject(t.Context(),
+		b.calendarPath("project_tasks--PRJ-1")+"ORPHAN.ics",
+		mustParseICal(t, caldavDynamicBody("ORPHAN", "doomed")), nil); err == nil {
+		t.Fatal("a create whose driver link fails must not report success")
+	}
+
+	if after := countStoredEntities(t, app, "task"); after != before {
+		t.Errorf("the entity survived a failed link (%d → %d tasks) — it exists in "+
+			"no collection, so the user cannot see or fix it", before, after)
+	}
+}
+
+// countStoredEntities counts stored entities of a type.
+func countStoredEntities(t *testing.T, app *App, typ string) int {
+	t.Helper()
+	n := 0
+	for e, err := range app.Services().Store.ListEntities(t.Context(), store.EntityQuery{Type: typ}) {
+		if err != nil {
+			t.Fatalf("ListEntities: %v", err)
+		}
+		if e != nil {
+			n++
+		}
+	}
+	return n
 }
