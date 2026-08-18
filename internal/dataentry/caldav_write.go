@@ -202,6 +202,13 @@ func (b *caldavBackend) createFromTodo(
 		return nil, caldavWriteError(err)
 	}
 
+	// A DYNAMIC collection is defined by a relation, so an entry created inside
+	// one is not a member until that edge exists. See linkToDriver for why a
+	// failure here deletes the entity rather than leaving it.
+	if linkErr := b.linkToDriver(ctx, collection, created.Entity.ID); linkErr != nil {
+		return nil, linkErr
+	}
+
 	obj, err := b.renderObject(ctx, collection, m, created.Entity, href, in.Todo.UID)
 	if err != nil {
 		return nil, err
@@ -214,6 +221,50 @@ func (b *caldavBackend) createFromTodo(
 		return nil, fmt.Errorf("caldav: record alias: %w", err)
 	}
 	return obj, nil
+}
+
+// linkToDriver gives a newly created entity the relation that makes it a member
+// of a dynamic collection. A no-op for static collections.
+//
+// # Why the entity is DELETED when the edge fails
+//
+// Membership in a dynamic collection IS the relation. An entity created without
+// it lands in the entity type but in no collection at all: it vanishes from the
+// client on the next sync, and it is invisible in every CalDAV view, so the user
+// has no way to find or fix it. That is worse than the create having failed —
+// a failed create is visible and retryable, an orphan is neither.
+//
+// So the create is undone. This is a compensating delete, not a transaction:
+// entitymanager exposes no Tx, and store.Tx would not help uniformly anyway —
+// fsstore keeps writes already made (no rollback, a deliberate reduced
+// guarantee), so the same compensation would be needed there regardless.
+//
+// The delete is NON-cascading: the entity is seconds old and its only possible
+// edge is the one that just failed to be created, so a cascade could only reach
+// relations some concurrent writer added — which are not ours to remove.
+//
+// If the compensation ITSELF fails, the orphan survives and the error says so.
+// Nothing better is available at this layer, and a silent success would leave
+// the user with a to-do they cannot see.
+func (b *caldavBackend) linkToDriver(ctx context.Context, collection, entityID string) error {
+	dyn, driverID, ok := b.resolveDynamic(ctx, collection)
+	if !ok {
+		return nil // static collection: membership needs no edge
+	}
+	from, to := entityID, driverID
+	if dyn.Direction.IsIncoming() {
+		from, to = driverID, entityID
+	}
+	_, err := b.app.entityManager.CreateRelation(ctx, from, dyn.Relation, to, entitypkg.RelationOptions{})
+	if err == nil {
+		return nil
+	}
+	if _, delErr := b.app.entityManager.DeleteEntity(ctx, entityID, false); delErr != nil {
+		return fmt.Errorf(
+			"caldav: linking %s to %s failed (%w), and removing the now-orphaned entity "+
+				"also failed (%v) — it exists in no collection", entityID, driverID, err, delErr)
+	}
+	return caldavWriteError(err)
 }
 
 // updateFromTodo applies a client edit to an existing entity.
