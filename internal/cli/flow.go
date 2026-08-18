@@ -48,6 +48,8 @@ func (c *FlowCmd) Run(ctx context.Context) error {
 	opts := []lua.Option{
 		lua.WithContext(ctx),
 		lua.WithCache(flowSvc.ScriptEngine().LuaCache()),
+		// Operator-shell boundary, same as `rela script` (TKT-YH52OM).
+		lua.WithCapabilities(lua.TrustedCapabilities()),
 	}
 	if c.OutputDir != "" {
 		opts = append(opts, lua.WithOutputDir(c.OutputDir))

@@ -86,6 +86,7 @@ type Runtime struct {
 	cancelTimeout context.CancelFunc
 	params        map[string]string // rela.params values (used by action scripts)
 	secrets       map[string]string // rela.secrets values (from .rela/secrets.yaml)
+	caps          Capabilities      // ambient capability grants; zero value denies all (TKT-YH52OM)
 	isAction      bool              // true when running as an action (changes rela.output behavior)
 	isDocument    bool              // document mode: rela.document populated, rela.output becomes a warning
 	documentID    string            // data-entry.yaml documents: key, exposed as rela.document.id
@@ -266,6 +267,15 @@ func WithListDocumentMode(documentID string, lrc ListRenderContext) Option {
 		r.isDocument = true
 		r.documentID = documentID
 		r.listRender = lrc
+	}
+}
+
+// WithCapabilities declares which ambient capabilities the runtime may reach
+// (TKT-YH52OM). Omitting it denies all of them — see [Capabilities] for why
+// the default is closed rather than open.
+func WithCapabilities(c Capabilities) Option {
+	return func(r *Runtime) {
+		r.caps = c
 	}
 }
 
@@ -728,12 +738,20 @@ func (r *Runtime) registerBindings(allowWrites bool) {
 
 	r.L.SetGlobal("rela", rela)
 
-	// Top-level ai.* module (always registered; functions return a
-	// typed not_configured error when no provider is wired).
-	r.registerAIModule()
-
-	// Top-level http.* module (always registered; no configuration needed).
-	r.registerHTTPModule()
+	// ai.* and http.* are registered ONLY when the capability was granted
+	// (TKT-YH52OM). Absent the grant the global does not exist at all, so a
+	// script cannot reach the provider or the network however it is written —
+	// the same structural absence rela.bypass_acl relies on above.
+	//
+	// They were previously "always registered", which meant every runtime —
+	// including read-only validation rules and document renders — could pair
+	// outbound HTTP with rela.secrets and exfiltrate the whole secrets file.
+	if r.caps.AI {
+		r.registerAIModule()
+	}
+	if r.caps.HTTP {
+		r.registerHTTPModule()
+	}
 
 	// Top-level crypto.* module — generic hashing primitives so a Lua action
 	// can sign an outbound request to an HMAC-authenticated upstream. Always
@@ -797,7 +815,11 @@ func (r *Runtime) registerWriteBindings(rela *lua.LTable) {
 	r.L.SetField(rela, "delete_entity", r.L.NewFunction(r.luaDeleteEntity))
 	r.L.SetField(rela, "create_relation", r.L.NewFunction(r.luaCreateRelation))
 	r.L.SetField(rela, "delete_relation", r.L.NewFunction(r.luaDeleteRelation))
-	r.L.SetField(rela, "write_file", r.L.NewFunction(r.luaWriteFile))
+	// write_file is additionally capability-gated (TKT-YH52OM): a writer
+	// runtime may mutate the graph without being entitled to touch the disk.
+	if r.caps.WriteFile {
+		r.L.SetField(rela, "write_file", r.L.NewFunction(r.luaWriteFile))
+	}
 }
 
 // freezeTable returns a read-only proxy over data: reads fall through to the
@@ -833,9 +855,13 @@ func (r *Runtime) registerContextBindings(rela *lua.LTable) {
 	}
 	r.L.SetField(rela, "params", paramsTable)
 
-	// Secrets table (populated from WithSecrets option, loaded from .rela/secrets.yaml)
+	// Secrets table (populated from WithSecrets option, loaded from
+	// .rela/secrets.yaml), FILTERED to the keys this runtime was granted
+	// (TKT-YH52OM). An ungranted key is absent from the table rather than
+	// present-and-empty, so a missing grant surfaces as a nil index at the use
+	// site instead of as a silently-wrong credential.
 	secretsTable := r.L.NewTable()
-	for k, v := range r.secrets {
+	for k, v := range r.caps.filterSecrets(r.secrets) {
 		r.L.SetField(secretsTable, k, lua.LString(v))
 	}
 	r.L.SetField(rela, "secrets", secretsTable)
