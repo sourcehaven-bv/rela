@@ -54,8 +54,11 @@ collections, Reminders bound to the VTODO-only one, and Calendar.app
 breaks Reminders.
    - **Collection URLs must be STABLE and human-pasteable.** A changing href
 re-adds every list as new. Use the config key (`/api/v1/_caldav/cal/<name>/`),
-not a generated id — Thunderbird does not auto-discover collections at all and
-needs a URL a human can paste.
+not a generated id — a human may need to paste it. (CORRECTION 2026-08-18:
+Thunderbird DOES auto-discover, but only when given the calendar HOME SET
+`/principal/calendars/`; pointed at a single collection URL it treats that as
+the whole calendar and never looks for siblings. The stable-URL requirement
+stands regardless: a moved href makes any client re-add the list as new.)
    - **`MKCALENDAR` must be refused (405).** Collections are operator-declared
 config; a client-minted one has no mapping and becomes an orphan. Radicale
 accepted Calendar.app's `MKCALENDAR` in the live test and got exactly that.

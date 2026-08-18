@@ -395,9 +395,23 @@ platforms, VTODO support, rich-text handling — with sources.
 
 Two things worth knowing from it. Collections must advertise
 `<C:comp name="VTODO"/>`, which rela does: **Tasks.org silently hides** a
-collection that does not, with no error message. And Thunderbird does not
-auto-discover collections the way Reminders does — point it at the collection
-URL directly.
+collection that does not, with no error message.
+
+And **give Thunderbird the calendar HOME SET, not a collection URL**:
+
+```text
+https://<host>/api/v1/_caldav/principal/calendars/
+```
+
+Pointed at the home set it walks the discovery chain (`PROPFIND` the principal,
+then the home set) and offers every collection it finds in a subscribe picker,
+already-subscribed ones greyed out. Pointed at a single collection URL it treats
+that as the whole calendar and never looks for siblings — which is why an
+account set up that way silently misses collections added later.
+
+Verified on the wire against Thunderbird 153 (2026-08-18): given the home set it
+discovered a static collection and two graph-driven ones, and subscribed to both
+new ones in a single step.
 
 Clients that support the CalendarServer `getctag` extension get a cheap
 collection poll: one property fetch tells them whether anything changed, so an

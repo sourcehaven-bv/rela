@@ -205,6 +205,50 @@ old per-row relation filter O(N·edges).
   no collection is invisible in every CalDAV view, so the user can neither find
   nor fix it. A failed create is visible and retryable; an orphan is neither.
 
+### Membership is symmetric on both write directions (added 2026-08-18)
+
+Live testing against Thunderbird surfaced two gaps that AC7 as written did not
+cover. Both come from the same mistake: treating a dynamic collection as a
+*view* rather than as *membership*.
+
+- **PUT of an EXISTING to-do into another collection was a silent no-op.**
+  `linkToDriver` ran only on create, so assigning an existing to-do to a second
+  project patched properties and never added the edge — the client showed it in
+  the new list, the next poll did not. Now the update path adds the edge too.
+
+  **Additive, never a move.** A client "move" and a "assign to a second list"
+  are indistinguishable on the wire (both PUT the same UID into another
+  collection), and Thunderbird supports move, copy AND multi-collection
+  assignment. Dropping the old edge would silently break the third; adding one
+  models all three, because membership is a relation and belonging to two
+  projects is a legal graph state. A real move sends a DELETE against the source
+  afterwards, which removes the other edge.
+
+- **DELETE applied `on_delete:` to the ENTITY.** A DELETE against
+  `project_tasks--PRJ-home/TSK-1.ics` names a MEMBERSHIP, not the entity: the
+  user removed the to-do from Home, not from existence. The old behaviour
+  cancelled it globally — in the static collection, in every other project, and
+  in the web app. **Reproduced live**: a to-do deleted from one project was
+  cancelled everywhere while still holding its `belongs-to` edge.
+
+  Now the edge is removed. The one genuinely ambiguous case — the entity's LAST
+  membership — is `on_unlink: auto|keep|delete`, defaulting to `auto`, which
+  reads the relation's own `min_outgoing`: a mandatory membership means an
+  orphan violates the operator's declared schema, so `on_delete:` applies;
+  an optional one means belonging to nothing is legal and the entity is kept.
+  Deriving it keeps the schema the single source of truth rather than a second
+  setting that can disagree with it. (Caveat recorded in the code: a cardinality
+  violation is a WARNING at write time per DEC-HWZHA, so `min_outgoing` is read
+  as intent, not as an enforced invariant.)
+
+Two bugs found while building this, both fixed and pinned:
+
+- Re-editing a to-do failed with `relation already exists`, because an ordinary
+  check-off re-asserts the membership it already has — and the compensating
+  delete then tried to destroy a long-lived entity. Now idempotent via
+  `entitymanager.ErrRelationAlreadyExists`.
+- The create-path compensation could fire on an entity that was never new.
+
 ### Deferred, with reasons
 
 - **AC4 (driver deletion)** — deleting a driver removes a collection, and the
