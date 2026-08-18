@@ -174,6 +174,13 @@ func checkUngrantablePermission(p *acl.Policy) []Finding {
 
 // A7 — a role declares a permission that no requires_permission references:
 // dead config, possibly a typo of a real gate.
+//
+// "Referenced" is not the same as "gated by a requires_permission". rela's own
+// global permissions ([acl.BuiltinPermissions]) are consumed by read paths that
+// have no relation gate at all, so treating requires_permission as the only
+// consumer reported live, shipped config as dead — and the remediation hint
+// ("reference it in a gate, or remove it") would have revoked a working grant.
+// They are seeded as used here.
 func checkDeadPermissions(p *acl.Policy) []Finding {
 	// Collect every permission referenced by a requires_permission gate.
 	used := map[string]bool{}
@@ -181,6 +188,10 @@ func checkDeadPermissions(p *acl.Policy) []Finding {
 		if def.RequiresPermission != "" {
 			used[def.RequiresPermission] = true
 		}
+	}
+	// Permissions rela itself defines and consumes are live by definition.
+	for _, perm := range acl.BuiltinPermissions() {
+		used[perm] = true
 	}
 	var f []Finding
 	for _, name := range sortedRoleNames(p) {

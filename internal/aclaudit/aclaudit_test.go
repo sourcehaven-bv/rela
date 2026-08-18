@@ -2,6 +2,7 @@ package aclaudit
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -227,6 +228,55 @@ func TestAudit_A7_DeadPermission(t *testing.T) {
 	}
 	if got := Audit(p2, nil); hasRule(got, "A7-dead-permission") {
 		t.Errorf("referenced permission must not flag A7, got %+v", got)
+	}
+}
+
+// AM-acl-builtin-permissions-audit-exempt. rela's own global permissions are
+// granted through a role's `permissions:` list but consumed by read paths, not
+// by a requires_permission gate — A7 must not call them dead. Driving the
+// exemption off acl.BuiltinPermissions() (rather than a literal list here)
+// means a newly added global constant fails this test instead of silently
+// producing a false "dead" finding in an operator's audit output.
+func TestAudit_A7_BuiltinPermissionsAreNotDead(t *testing.T) {
+	t.Parallel()
+	builtins := acl.BuiltinPermissions()
+	if len(builtins) == 0 {
+		t.Fatal("acl.BuiltinPermissions() is empty; A7 exemption would be a no-op")
+	}
+	for _, perm := range builtins {
+		t.Run(perm, func(t *testing.T) {
+			t.Parallel()
+			// The reproduction from the bug report: a role granting only a
+			// built-in, with no role_relations at all.
+			p := &acl.Policy{Roles: map[string]acl.RoleDef{
+				"admin": {Read: []string{"persoon"}, Permissions: []string{perm}},
+			}}
+			if got := Audit(p, nil); hasRule(got, "A7-dead-permission") {
+				t.Errorf("built-in permission %q reported dead, got %+v", perm, got)
+			}
+		})
+	}
+}
+
+// A built-in must not blanket-suppress A7: a genuinely dead permission granted
+// alongside one is still reported. Guards against "fixing" the false positive
+// by weakening the rule itself.
+func TestAudit_A7_BuiltinDoesNotMaskRealDeadPermission(t *testing.T) {
+	t.Parallel()
+	p := &acl.Policy{Roles: map[string]acl.RoleDef{
+		"admin": {
+			Read:        []string{"persoon"},
+			Permissions: []string{acl.PermHistoryRead, "delegate-typoed"},
+		},
+	}}
+	got := Audit(p, nil)
+	if !hasRule(got, "A7-dead-permission") {
+		t.Fatalf("expected A7 for the typo'd permission, got %+v", got)
+	}
+	for _, f := range got {
+		if f.Rule == "A7-dead-permission" && strings.Contains(f.Detail, acl.PermHistoryRead) {
+			t.Errorf("A7 fired for built-in %q: %+v", acl.PermHistoryRead, f)
+		}
 	}
 }
 
