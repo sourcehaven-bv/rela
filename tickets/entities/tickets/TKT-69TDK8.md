@@ -98,8 +98,8 @@ return entity.GenerateShortID(existingIDs, prefix, len(existingIDs), caps), nil
 
 1. `calculateIDLength(entityCount)` — birthday-paradox thresholds at
    500 / 1500 / 10000 / 50000. This needs a **count**, and only its bucket. A
-   `COUNT(*)` is an indexed aggregate; even an approximate count would do, since
-   the thresholds are order-of-magnitude heuristics.
+   `COUNT(*)` is an indexed aggregate; an approximate or slightly stale count is
+   safe (see "The precision was never required" below).
 2. A membership set for collision retry (100 attempts, lengthening periodically).
 
 Point 2 does not need a materialised set at all. `store.CreateEntity` already
@@ -112,6 +112,60 @@ membership check does not prevent collisions, it only makes them rarer.
 Target shape: generate a candidate from a cheap count, attempt the insert, and
 on `ErrConflict` regenerate (lengthening as now). This removes the scan from the
 common path entirely and closes the TOCTOU window at the same time.
+
+#### The precision was never required — say so in the signature
+
+`calculateIDLength` only picks a **starting** length; the retry loop lengthens
+on collision regardless. So the count was never load-bearing for correctness,
+only for how often the loop retries. Today's `len(existingIDs)` is exact by
+accident of implementation, not by requirement — the current signature
+over-promises a precision the algorithm does not need.
+
+That means the contract can be loosened without accommodating anything: it is
+documenting what was already true, and stands on its own even if the aggregate
+work is deferred.
+
+Loosen it on the **parameter**, not the function name:
+
+```go
+// calculateIDLength determines the ID length from an entity count, using
+// birthday-paradox thresholds to keep collision probability low.
+//
+// The count need only be accurate to its bucket (500/1500/10000/50000):
+// it selects a STARTING length and GenerateShortID lengthens on collision,
+// so an approximate or stale count is safe. Being one bucket low costs one
+// base36 character, recovered by the retry loop. Never use this count for
+// anything requiring an exact population.
+func calculateIDLength(approxEntityCount int) int
+```
+
+Renaming the *function* (e.g. `getApproxIDLength`) would put the hedge on the
+wrong side: the return value stays exact and deterministic, and no caller may
+treat it as a hint. It is the **input** whose precision is optional, so the
+parameter is where the looseness belongs — and it shows up at every call site,
+which is exactly where someone would otherwise reach for an exact count.
+
+Do this in the same commit as the signature change: once membership moves to
+retry-on-`ErrConflict`, `existingIDs` disappears and `GenerateShortID` becomes
+`GenerateShortID(prefix string, approxEntityCount int, caps string)` — the two
+callers currently pass `len(existingIDs)` as the count, so the redundant pair
+collapses.
+
+Two constraints on the loosening:
+
+- **Do not redefine `store.CountEntities`.** It already exists
+  (`store.go:255`) and is exact; `cli/rename.go` and `cli/schema.go` display its
+  result to users, where an estimate would be a regression. Either keep calling
+  the exact method (the rename alone still documents the contract) or add a
+  separate approximate capability — do not weaken the existing one in place.
+- **A wrong bucket must be safe, not merely unlikely.** Under-estimating yields
+  shorter starting ids and more collisions, which is exactly why AC7
+  (resolve collisions at the write) is a prerequisite: with retry-on-conflict a
+  bad estimate costs an extra round-trip instead of a duplicate id. Landing the
+  approximate count *before* the retry change would trade correctness for speed.
+
+The payoff is that this licenses `reltuples`-style planner estimates on pgstore,
+which are O(1) and touch no rows at all.
 
 ### Sequential IDs: an indexed aggregate, with two traps
 
@@ -145,7 +199,7 @@ types**. Scoping to one type would mint duplicates wherever a prefix is shared.
 `store.EntityHeader` / `ListEntityHeaders` removes the body bytes but keeps the
 O(n) row scan, and still fetches and unmarshals the `properties` JSONB per row
 for a function that reads only `e.ID`. It is the right generic fallback for
-backends that cannot express the aggregates, but it does not reach AC1 or AC3.
+backends that cannot express the aggregates, but it does not reach AC1 or AC5.
 
 ### Fault isolation is resolved as a side effect
 
@@ -167,6 +221,8 @@ fail-loudly semantics.
 
 - **Short-ID generation (primary)**: replace the full scan with a cheap count
 plus retry-on-`ErrConflict` at the write.
+- Loosen the count contract in the signature (`approxEntityCount`) and document
+that only the bucket matters — the precision was never required.
 - **Sequential-ID generation (secondary)**: prefix-scoped, numeric max-sequence
 store capability.
 - `EntityHeader` for the fallback read path, so no fallback fetches bodies.
@@ -182,20 +238,23 @@ store capability.
 ## Acceptance criteria
 
 1. Create latency is flat in entity count for **short-ID** types (the default):
-   creating entity #100,000 costs approximately what #100 costs.
+creating entity #100,000 costs approximately what #100 costs.
 2. The same holds for sequential-ID types.
-3. No entity body is transferred from the store during ID generation, verified by
+3. The count feeding `calculateIDLength` is named and documented as approximate
+(`approxEntityCount` or similar), and `store.CountEntities` keeps its exact
+contract for its existing display callers.
+4. No entity body is transferred from the store during ID generation, verified by
 query inspection or a store-level assertion.
-4. Uncontended create at 262k entities drops from 0.74 s to well under 50 ms.
-5. 80-way concurrent creates no longer produce multi-second latencies.
-6. **Short-ID collisions are resolved at the write, not by pre-check**: a
+5. Uncontended create at 262k entities drops from 0.74 s to well under 50 ms.
+6. 80-way concurrent creates no longer produce multi-second latencies.
+7. **Short-ID collisions are resolved at the write, not by pre-check**: a
 concurrent create that loses the race retries and succeeds rather than
 surfacing `ErrEntityAlreadyExists` to the caller.
-7. **Numeric, not lexicographic** (sequential): crossing 999 → 1000 mints
+8. **Numeric, not lexicographic** (sequential): crossing 999 → 1000 mints
 `TKT-1000` then `TKT-1001`, never a duplicate.
-8. **Prefix-scoped, not type-scoped** (sequential): two entity types sharing an
+9. **Prefix-scoped, not type-scoped** (sequential): two entity types sharing an
 `id_prefix` never receive the same generated id.
-9. A malformed entity file no longer fails creates of *other* entities when the
+10. A malformed entity file no longer fails creates of *other* entities when the
 aggregate path is available; documented, tested behaviour on the fallback path.
 
 ## Test plan
@@ -203,14 +262,17 @@ aggregate path is available; documented, tested behaviour on the fallback path.
 - **Latency benchmark** at 1k / 10k / 100k entities asserting sub-linear scaling,
 run for a **short-ID type** (the default path) — this is the test that would
 have surfaced the defect.
-- **Short-ID concurrency test** — the pin for AC6. N concurrent creates of one
+- **Short-ID concurrency test** — the pin for AC7. N concurrent creates of one
 short-ID type; assert N distinct ids and zero surfaced conflicts. Should fail
 against the current pre-check, which is racy between scan and insert.
 - **Short-ID length test**: the id length still follows the count thresholds
 (500 / 1500 / 10000 / 50000) once the count comes from an aggregate.
-- **999 → 1000 boundary test** — the pin for AC7. Seed a prefix to `TKT-0999`,
+- **Approximate-count tolerance test**: feed a deliberately off-by-N count near
+each threshold and assert creates still produce unique, valid ids — pinning that
+the estimate is allowed to be wrong without correctness loss.
+- **999 → 1000 boundary test** — the pin for AC8. Seed a prefix to `TKT-0999`,
 create, assert `TKT-1000`, then `TKT-1001`. Fails against `max(id)`.
-- **Shared-prefix test** — the pin for AC8. Two types declaring the same
+- **Shared-prefix test** — the pin for AC9. Two types declaring the same
 `id_prefix`; interleaved creates produce strictly increasing distinct ids.
 - Error-propagation test: an injected store error during ID generation fails the
 create; no ID is minted.
@@ -243,41 +305,6 @@ unaddressed, a short-ID type keeps the full scan and this ticket only half-lands
 - The `_analyze` retention fix (landed in TKT-1ESTYJ; this consumes its
 `EntityHeader` type for the fallback path).
 
-## Acceptance criteria
-
-1. Create latency is flat in entity count for sequential-ID types: creating entity
-   #100,000 costs approximately what #100 costs.
-2. No entity body is transferred from the store during ID generation, verified by
-query inspection or a store-level assertion.
-3. Uncontended create at 262k entities drops from 0.74 s to well under 50 ms.
-4. 80-way concurrent creates no longer produce multi-second latencies.
-5. Generated IDs remain collision-free — the existing "partial scan must not feed the
-generator" invariant holds on the fallback path, with a test that a store error
-during ID generation fails the create rather than minting a possibly-duplicate ID.
-6. **Numeric, not lexicographic**: crossing the 999 → 1000 boundary for a prefix
-mints `TKT-1000` then `TKT-1001`, never a duplicate of an existing id.
-7. **Prefix-scoped, not type-scoped**: two entity types sharing an `id_prefix`
-never receive the same generated id.
-8. A malformed entity file no longer fails creates of *other* entities when the
-aggregate path is available; documented, tested behaviour on the fallback path.
-
-## Test plan
-
-- **Latency benchmark** at 1k / 10k / 100k entities asserting sub-linear scaling
-(this is the test that would have surfaced the defect).
-- **999 → 1000 boundary test** — the pin for AC6. Seed a prefix up to `TKT-0999`,
-create, assert `TKT-1000`; create again, assert `TKT-1001`. This test fails
-against a `max(id)` implementation and is the reason it exists.
-- **Shared-prefix test** — the pin for AC7. Two entity types declaring the same
-`id_prefix`; interleaved creates must produce strictly increasing distinct ids.
-- Collision test: concurrent creates of the same type must not produce duplicate IDs.
-- Error-propagation test: an injected store error during ID generation fails the
-create; no ID is minted.
-- Malformed-entity test: with the aggregate available, a corrupt file does not
-block creates of other entities; on the fallback path, pin whichever behaviour
-is chosen.
-- `storetest` conformance for the new capability, plus explicit fallback coverage
-(fsstore/memstore exercise the fallback, pgstore the native path).
 
 ## Related
 
