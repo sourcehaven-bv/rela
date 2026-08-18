@@ -95,6 +95,18 @@ func (s *Service) evaluator() *predicatefns.Evaluator {
 // a silently-skipped rule (RR-FI4DYL). A genuine eval error is returned
 // so the caller treats it as "does not apply / does not satisfy",
 // matching the prior filter.MatchAll error contract.
+// matchCondition compiles and evaluates a predicate expression against
+// one entity. Unlike matchFilters there is no legacy fallback: an
+// expression has only ever had one meaning, so a compile failure is a
+// real error rather than a dialect mismatch.
+func (s *Service) matchCondition(e *entity.Entity, source string) (bool, error) {
+	prog, err := s.evaluator().Compile(e.Type, source)
+	if err != nil {
+		return false, err
+	}
+	return s.evaluator().Matches(context.Background(), prog, e.Type, e.ID, e.Properties)
+}
+
 func (s *Service) matchFilters(e *entity.Entity, filters []*filter.Filter) (bool, error) {
 	prog, err := s.evaluator().CompileFilter(e.Type, filters)
 	if err != nil {
@@ -319,10 +331,28 @@ func (s *Service) checkEntityAgainstRule(
 			return entityResult{}
 		}
 	}
+	// `when_condition:` is a predicate EXPRESSION, ANDed with the filter
+	// clauses above. It is kept as source and compiled as written —
+	// routing it through filter.Parse would silently reinterpret it as a
+	// filter on a nonexistent property and select nothing.
+	if rule.WhenCondition != "" {
+		if matches, err := s.matchCondition(e, rule.WhenCondition); err != nil || !matches {
+			return entityResult{}
+		}
+	}
 
 	// Check 'then' conditions - if they don't satisfy, it's a violation.
 	if len(thenFilters) > 0 {
 		if satisfies, err := s.matchFilters(e, thenFilters); err != nil || !satisfies {
+			return entityResult{Violations: []Violation{newViolation(rule, e, rule.Description)}}
+		}
+	}
+	if rule.ThenCondition != "" {
+		// An eval error means the assertion could not be shown to hold,
+		// so it is a violation — the same direction as a `then:` clause
+		// that fails to match. (A malformed expression is caught at load
+		// by Validate, not here.)
+		if satisfies, err := s.matchCondition(e, rule.ThenCondition); err != nil || !satisfies {
 			return entityResult{Violations: []Violation{newViolation(rule, e, rule.Description)}}
 		}
 	}

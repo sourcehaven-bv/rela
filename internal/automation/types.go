@@ -27,6 +27,17 @@ type Trigger struct {
 	RelationCreated string
 	RelationRemoved string
 	When            []*filter.Filter // Property conditions that must all match
+
+	// Condition is a predicate expression ANDed with every When clause.
+	// Kept as SOURCE, not a parsed filter: routing it through
+	// filter.Parse is exactly the bug this field exists to fix — that
+	// parser accepts an expression and silently reinterprets it as a
+	// filter on a nonexistent property, so the condition never matches
+	// and nothing reports why.
+	//
+	// Compiled once when the engine is built (the metamodel is needed for
+	// the typed env); a compile failure is a load error, never a skip.
+	Condition string
 }
 
 // Action specifies an operation to perform.

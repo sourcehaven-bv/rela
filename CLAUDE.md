@@ -272,6 +272,17 @@ These surfaces are on predicate: ACL affordance `when:`
 (`internal/automation`), metamodel validation `When:`/`Then:`
 (`internal/validation`), and the CLI `--filter` flag (`internal/cli/list.go`).
 
+Automation `on.condition:` and validation `when_condition:`/`then_condition:`
+take predicate **expressions** as written, ANDed with the filter-syntax
+`when:`/`then:` keys beside them. They are separate keys because the two
+syntaxes overlap without erroring: `filter.Parse` accepts
+`days_between(entity.due, today()) <= 7` as a filter on a property named
+`days_between(entity.due, today())`, which matches nothing, silently. Don't
+add dialect sniffing — the key IS the declaration of intent. A `condition:`
+that fails to compile is a **load error** (`NewEngineFromMetamodel` returns
+one), as is an unparseable `when:` clause: dropping a constraint widens the
+automation, so failing the load is the safe direction.
+
 `internal/filter` is NOT frozen — it remains the **query-filtering** DSL
 (the `--where` string syntax and metamodel legacy filter-strings). Legacy
 `--where`/`When:`/`Then:` inputs are transpiled to predicate via

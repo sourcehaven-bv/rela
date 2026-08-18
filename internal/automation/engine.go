@@ -2,6 +2,7 @@ package automation
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"sync"
 
@@ -59,14 +60,70 @@ func NewEngine(automations []Automation) *Engine {
 // NewEngineFromMetamodel creates an automation engine from metamodel
 // definitions, wiring the metamodel itself so `when:`/`validate:`
 // comparisons evaluate against each property's declared type.
-func NewEngineFromMetamodel(meta *metamodel.Metamodel, defs []metamodel.AutomationDef) *Engine {
+//
+// It returns an error when a definition cannot be honored as written —
+// an unparseable `when:` clause, or a `condition:` that does not
+// compile. Both used to be swallowed, which silently WIDENED the
+// automation: a dropped constraint fires on more entities than the
+// operator asked for. Failing the load is the safe direction, and the
+// operator sees the mistake at startup rather than in a diff a week
+// later.
+func NewEngineFromMetamodel(
+	meta *metamodel.Metamodel, defs []metamodel.AutomationDef,
+) (*Engine, error) {
 	automations := make([]Automation, len(defs))
 	for i, def := range defs {
-		automations[i] = convertFromMetamodel(def)
+		auto, err := convertFromMetamodel(def)
+		if err != nil {
+			return nil, err
+		}
+		automations[i] = auto
 	}
 	e := NewEngine(automations)
 	e.meta = meta
-	return e
+	if err := e.compileConditions(); err != nil {
+		return nil, err
+	}
+	return e, nil
+}
+
+// compileConditions compiles every `condition:` expression up front, so a
+// syntax error or an unknown property surfaces at load rather than on the
+// first matching write. Compiled programs are cached inside the
+// Evaluator, keyed by (entityType, source), so this also warms it.
+//
+// A condition needs a metamodel to build its typed env. An engine
+// constructed without one (NewEngine, used by tests and the memory
+// backend) therefore cannot honor a condition at all — that is an
+// error, not a silent no-op, for the same widening reason.
+func (e *Engine) compileConditions() error {
+	for _, auto := range e.automations {
+		src := auto.On.Condition
+		if src == "" {
+			continue
+		}
+		if e.meta == nil {
+			return fmt.Errorf(
+				"automation %q: condition %q requires a metamodel", auto.Name, src)
+		}
+		types := auto.On.Entity
+		if len(types) == 0 {
+			// A condition references entity properties, so it must be
+			// compiled against a concrete type's env. Without `entity:`
+			// there is nothing to compile against.
+			return fmt.Errorf(
+				"automation %q: condition requires `entity:` naming the type(s) it applies to",
+				auto.Name)
+		}
+		ev := e.evaluator()
+		for _, t := range types {
+			if _, err := ev.Compile(t, src); err != nil {
+				return fmt.Errorf("automation %q: condition %q on %q: %w",
+					auto.Name, src, t, err)
+			}
+		}
+	}
+	return nil
 }
 
 // SetMetamodel wires the metamodel used for type-aware `when:`/
@@ -79,18 +136,17 @@ func (e *Engine) SetMetamodel(meta *metamodel.Metamodel) {
 	e.evMu.Unlock()
 }
 
-// convertFromMetamodel converts a metamodel AutomationDef to the internal Automation type.
-func convertFromMetamodel(def metamodel.AutomationDef) Automation {
-	// Parse when conditions
-	// Note: Invalid filters are silently skipped. This could be improved by
-	// validating at metamodel load time (requires breaking filter/metamodel import cycle).
+// convertFromMetamodel converts a metamodel AutomationDef to the internal
+// Automation type. An unparseable `when:` clause is an ERROR, not a skip:
+// dropping a constraint makes the automation fire on MORE entities than the
+// operator wrote, so failing the load is the safe direction.
+func convertFromMetamodel(def metamodel.AutomationDef) (Automation, error) {
 	whenFilters := make([]*filter.Filter, 0, len(def.On.When))
 	for _, w := range def.On.When {
 		f, err := filter.Parse(w)
 		if err != nil {
-			// Skip invalid conditions - this automation will have fewer constraints
-			// than intended, which is safer than having no constraints at all
-			continue
+			return Automation{}, fmt.Errorf(
+				"automation %q: when clause %q: %w", def.Name, w, err)
 		}
 		whenFilters = append(whenFilters, f)
 	}
@@ -107,6 +163,7 @@ func convertFromMetamodel(def metamodel.AutomationDef) Automation {
 			RelationCreated: def.On.RelationCreated,
 			RelationRemoved: def.On.RelationRemoved,
 			When:            whenFilters,
+			Condition:       def.On.Condition,
 		},
 		Do:       make([]Action, len(def.Do)),
 		Validate: make([]Validation, len(def.Validate)),
@@ -146,7 +203,7 @@ func convertFromMetamodel(def metamodel.AutomationDef) Automation {
 		}
 	}
 
-	return auto
+	return auto, nil
 }
 
 // SetTemplateVars sets the template variables for interpolation.
@@ -258,7 +315,7 @@ func (e *Engine) matchesPropertyChange(trigger Trigger, event Event) bool {
 // matchesWhenConditions checks if all when conditions are satisfied.
 // Returns true if no conditions are specified (backward compatible).
 func (e *Engine) matchesWhenConditions(ctx context.Context, trigger Trigger, entity *entity.Entity) bool {
-	if len(trigger.When) == 0 {
+	if len(trigger.When) == 0 && trigger.Condition == "" {
 		return true
 	}
 	if entity == nil {
@@ -270,7 +327,36 @@ func (e *Engine) matchesWhenConditions(ctx context.Context, trigger Trigger, ent
 			return false
 		}
 	}
-	return true
+	return e.matchesCondition(ctx, trigger, entity)
+}
+
+// matchesCondition evaluates the trigger's `condition:` expression, ANDed
+// with the When clauses the caller has already checked.
+//
+// The program was compiled at load, so a failure here is an EVAL error
+// (a missing property binding, the step budget) rather than a syntax
+// mistake. Those mean no-match plus a warning — the same posture
+// matchTyped takes — because an automation must not fire on a condition
+// that could not actually be shown to hold.
+func (e *Engine) matchesCondition(ctx context.Context, trigger Trigger, ent *entity.Entity) bool {
+	if trigger.Condition == "" {
+		return true
+	}
+	ev := e.evaluator()
+	if ev == nil {
+		// compileConditions rejects this at load; reaching it means an
+		// engine was assembled by another path. Fail closed.
+		return false
+	}
+	prog, err := ev.Compile(ent.Type, trigger.Condition)
+	if err != nil {
+		return false
+	}
+	matched, err := ev.Matches(ctx, prog, ent.Type, ent.ID, ent.Properties)
+	if err != nil {
+		return false
+	}
+	return matched
 }
 
 // executeAction performs an action and updates the result.

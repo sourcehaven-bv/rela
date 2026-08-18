@@ -83,6 +83,19 @@ type ValidationRule struct {
 	// Multiple conditions are ANDed together
 	Then []string `yaml:"then,omitempty"`
 
+	// WhenCondition is a predicate EXPRESSION selecting which entities the
+	// rule applies to, ANDed with every When clause. Expression syntax
+	// (unlike When's filter syntax) gets boolean composition and the
+	// host-function stdlib, including date arithmetic.
+	WhenCondition string `yaml:"when_condition,omitempty"`
+
+	// ThenCondition is a predicate EXPRESSION that matching entities must
+	// satisfy, ANDed with every Then clause.
+	//
+	// A rule may use any mix: `when:` + `then_condition:` is a filter
+	// selecting entities that an expression then asserts over.
+	ThenCondition string `yaml:"then_condition,omitempty"`
+
 	// Content specifies validation rules for markdown body content
 	Content *ContentRule `yaml:"content,omitempty"`
 
@@ -632,6 +645,24 @@ type AutomationTrigger struct {
 	RelationCreated string        `yaml:"relation_created,omitempty"`
 	RelationRemoved string        `yaml:"relation_removed,omitempty"`
 	When            []string      `yaml:"when,omitempty"` // Property conditions that must match (AND logic)
+
+	// Condition is a predicate EXPRESSION that must hold for the
+	// automation to fire, ANDed with every When clause.
+	//
+	// When and Condition are separate keys because their syntaxes
+	// overlap without erroring: filter.Parse accepts
+	// "days_between(entity.due, today()) <= 7" as a filter on a property
+	// literally named "days_between(entity.due, today())", which then
+	// matches nothing, silently. Sniffing which dialect a string is
+	// written in would guess, and guess quietly — so the operator says
+	// which one they meant by choosing the key.
+	//
+	// `when:` is filter syntax (`status=todo`) transpiled to predicate on
+	// load; `condition:` is predicate source evaluated as written, so it
+	// gets boolean composition and the host-function stdlib — notably the
+	// date arithmetic (today/days_between/date_add/rrule_next) that a
+	// property filter cannot express.
+	Condition string `yaml:"condition,omitempty"`
 }
 
 // AutomationAction specifies an operation to perform.

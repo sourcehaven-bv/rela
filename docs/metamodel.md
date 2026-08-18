@@ -1232,6 +1232,8 @@ validations:
       - "status=accepted"
     then: # THEN these must be true
       - "priority!="
+    when_condition: "..." # Optional: expression, ANDed with `when`
+    then_condition: "..." # Optional: expression, ANDed with `then`
     severity: error # Optional: "error" or "warning" (default)
 ```
 
@@ -1241,6 +1243,40 @@ validations:
 2. **Apply when filter**: If `when` is specified, only entities satisfying ALL when conditions are subject to the rule
 3. **Check then conditions**: Matched entities must satisfy ALL `then` conditions
 4. **Report violations**: Entities that match `when` but don't satisfy `then` are reported
+
+### `when:` vs `when_condition:` — two dialects, on purpose
+
+`when:`/`then:` take **filter clauses** (`status=accepted`, `priority!=`) — one
+property, one operator, one value, ANDed together. `when_condition:` and
+`then_condition:` take a **predicate expression**, the same language as the
+CLI's `--filter` flag and ACL `when:` rules. Expressions add boolean
+composition, parentheses, and host functions — including date arithmetic:
+
+```yaml
+validations:
+  - name: stale-open-tasks
+    description: "an open task due within a week must have an owner"
+    entity_type: taak
+    when:
+      - "status=open"
+    when_condition: "days_between(entity.due, today()) <= 7"
+    then_condition: "entity.owner ~= nil and entity.owner ~= ''"
+    severity: error
+```
+
+Both keys are optional and independent — mix filter clauses and expressions
+freely; everything present is ANDed.
+
+Why two keys rather than one that accepts either? Because the syntaxes overlap
+**without erroring**. The filter parser reads
+`days_between(entity.due, today()) <= 7` as a filter on a property literally
+named `days_between(entity.due, today())`. No such property exists, so the rule
+silently selects nothing — no error at load, no warning at runtime. Choosing
+the key states which dialect you meant, so a mistake surfaces immediately.
+
+Note that a date literal in an expression is a **string**:
+`entity.due <= '2026-08-25'`. It is parsed against the property's declared
+format when the expression compiles.
 
 ### Example Validation Rules
 
@@ -1585,6 +1621,7 @@ Automations fire based on entity changes:
 | `relation_created` | Fires when this relation type is created  | `implements`           |
 | `relation_removed` | Fires when this relation type is removed  | `implements`           |
 | `when`             | Property conditions that must match (AND) | `["kind=enhancement"]` |
+| `condition`        | Predicate expression that must hold (AND) | `"days_between(entity.due, today()) <= 7"` |
 
 ### Conditional Triggers
 
@@ -1742,6 +1779,50 @@ automations:
       - set: started_by
         value: "{{user.name}}"
 ```
+
+### Expression Conditions (`condition:`)
+
+`when:` takes filter clauses. `condition:` takes a **predicate expression** —
+the same language as the CLI's `--filter` flag and ACL rules — which adds
+boolean composition and host functions, including date arithmetic:
+
+```yaml
+automations:
+  - name: flag-due-soon
+    description: Flag tasks coming due within a week
+    on:
+      entity: taak
+      created: true
+      when:
+        - "status=todo" # filter clause
+      condition: "days_between(entity.due, today()) <= 7" # expression
+    do:
+      - set: flag
+        value: "due-soon"
+```
+
+Both keys are optional and AND together. Available functions include
+`today()`, `days_between(a, b)`, `date_add(d, n, unit)`,
+`rrule_next(rule, after)`, plus the string matchers `match`, `regex`,
+`fuzzy`, and `contains`.
+
+`condition:` requires `entity:` naming the type(s) it applies to — the
+expression is compiled against that type's properties.
+
+**A broken `condition:` fails at load**, naming the automation. That is
+deliberate: a dropped constraint would make the automation fire on *more*
+entities than you wrote, which is invisible in production. The same now
+applies to an unparseable `when:` clause, which earlier versions skipped
+silently.
+
+Why not one key that accepts either dialect? The syntaxes overlap without
+erroring — the filter parser reads
+`days_between(entity.due, today()) <= 7` as a filter on a property literally
+named `days_between(entity.due, today())`, which matches nothing and reports
+nothing. Choosing the key states which you meant.
+
+Date literals inside an expression are **strings**:
+`entity.due <= '2026-08-25'`.
 
 ### Automation Options
 
