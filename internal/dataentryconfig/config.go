@@ -1176,6 +1176,56 @@ type CalDAVConfig struct {
 // keeps an unconfigured server's JSON free of an empty caldav object.
 func (c CalDAVConfig) IsZero() bool { return len(c.Static) == 0 && len(c.Dynamic) == 0 }
 
+// CalDAVUnlinkPolicy decides what a DELETE against a dynamic collection does
+// when it removes an entity's LAST membership.
+//
+// A DELETE addressed at `project_tasks--PRJ-home/TSK-1.ics` names a MEMBERSHIP,
+// not the entity: the user removed the to-do from Home, not from existence. So
+// the edge is always what goes. The only real question is what should happen to
+// an entity that now belongs to nothing, and that is genuinely
+// deployment-specific — hence a policy rather than a hardcoded answer.
+//
+// Removing a NON-last membership is never affected: the entity still belongs
+// somewhere, so only the edge is removed whatever the policy says.
+type CalDAVUnlinkPolicy string
+
+// Unlink policies.
+const (
+	// CalDAVUnlinkAuto derives the answer from the relation's own cardinality,
+	// and is the default.
+	//
+	// If the relation declares `min_outgoing >= 1`, an entity with no
+	// memberships violates a constraint the OPERATOR already stated in the
+	// metamodel, so the collection's `on_delete:` is applied — the schema is
+	// the single source of truth for whether membership is mandatory, rather
+	// than a second setting that can disagree with it.
+	//
+	// Otherwise the entity is kept with its edge removed: membership is
+	// optional by declaration, so an entity belonging to nothing is a legal
+	// state and destroying it would exceed what the user asked for.
+	//
+	// CAVEAT: a cardinality violation is a WARNING at write time in rela
+	// (DEC-HWZHA — a write is never blocked for one), so `min_outgoing` is read
+	// here as a statement of intent, not as an enforced invariant.
+	CalDAVUnlinkAuto CalDAVUnlinkPolicy = "auto"
+	// CalDAVUnlinkKeep always keeps the entity, removing only the edge. The
+	// entity survives outside every dynamic collection, reachable through a
+	// static collection or the web app.
+	CalDAVUnlinkKeep CalDAVUnlinkPolicy = "keep"
+	// CalDAVUnlinkDelete always applies the collection's `on_delete:` when the
+	// last membership goes — for deployments where a to-do outside every
+	// project is meaningless.
+	CalDAVUnlinkDelete CalDAVUnlinkPolicy = "delete"
+)
+
+// OrDefault returns the policy, defaulting to [CalDAVUnlinkAuto].
+func (p CalDAVUnlinkPolicy) OrDefault() CalDAVUnlinkPolicy {
+	if p == "" {
+		return CalDAVUnlinkAuto
+	}
+	return p
+}
+
 // dynamicNameSep joins a pattern key to its driver id in the URL segment
 // (`project_tasks--PRJ-1`). Mirrors internal/dataentry's feedUIDSep; duplicated
 // rather than imported because dataentryconfig must not depend on dataentry.
@@ -1229,6 +1279,9 @@ type CalDAVDynamicCollection struct {
 	// Direction is the member→driver edge direction, defaulting to outgoing
 	// (the member points AT the driver, e.g. task --belongs-to--> project).
 	Direction Direction `yaml:"direction,omitempty" json:"direction,omitempty"`
+	// OnUnlink decides what a DELETE means when it removes the entity's LAST
+	// membership. See [CalDAVUnlinkPolicy]; empty means [CalDAVUnlinkAuto].
+	OnUnlink CalDAVUnlinkPolicy `yaml:"on_unlink,omitempty" json:"on_unlink,omitempty"`
 }
 
 // CalDAVCollection declares one CalDAV collection: a single entity type

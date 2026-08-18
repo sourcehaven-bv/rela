@@ -1699,3 +1699,120 @@ func countStoredEntities(t *testing.T, app *App, typ string) int {
 	}
 	return n
 }
+
+// TestDynamicCollections_ReEditIsIdempotent pins that a NORMAL edit — a PUT
+// into the collection the to-do already belongs to — does not fail.
+//
+// The update path now adds the driver edge so an assignment works, which means
+// every ordinary check-off re-asserts an edge that already exists. If that
+// errored, editing any to-do in a dynamic collection would break.
+func TestDynamicCollections_ReEditIsIdempotent(t *testing.T) {
+	app := caldavDynamicAppWith(t,
+		[]*entity.Entity{mkProject("PRJ-1", "Alpha"), mkTaskIn("TSK-A", "work")},
+		[]*entity.Relation{entity.NewRelation("TSK-A", "belongs-to", "PRJ-1")})
+	b := &caldavBackend{app: app, baseURL: "https://example.test"}
+
+	p := b.calendarPath("project_tasks--PRJ-1") + "task--TSK-A@rela.ics"
+	for i := range 2 {
+		if _, err := b.PutCalendarObject(t.Context(), p,
+			mustParseICal(t, caldavDynamicBody("task--TSK-A@rela", "work edited")), nil); err != nil {
+			t.Fatalf("edit %d failed: %v — re-asserting an existing membership must be a no-op", i+1, err)
+		}
+	}
+	objs, err := b.listTodos(t.Context(), "project_tasks--PRJ-1")
+	if err != nil {
+		t.Fatalf("listTodos: %v", err)
+	}
+	if len(objs) != 1 {
+		t.Errorf("want 1 member after repeated edits, got %d", len(objs))
+	}
+}
+
+// TestDynamicCollections_DeleteRemovesMembershipNotEntity pins the core of the
+// unlink model: a DELETE names a MEMBERSHIP, not the entity.
+//
+// Applying on_delete: here would cancel the to-do everywhere — in the static
+// collection, in every other project, and in the web app — from a gesture that
+// meant "take it out of this list". Reproduced live before the fix.
+func TestDynamicCollections_DeleteRemovesMembershipNotEntity(t *testing.T) {
+	app := caldavDynamicAppWith(t,
+		[]*entity.Entity{
+			mkProject("PRJ-1", "Alpha"), mkProject("PRJ-2", "Beta"),
+			mkTaskIn("TSK-A", "shared"),
+		},
+		[]*entity.Relation{
+			entity.NewRelation("TSK-A", "belongs-to", "PRJ-1"),
+			entity.NewRelation("TSK-A", "belongs-to", "PRJ-2"),
+		})
+	b := &caldavBackend{app: app, baseURL: "https://example.test"}
+
+	if err := b.DeleteCalendarObject(t.Context(),
+		b.calendarPath("project_tasks--PRJ-1")+"task--TSK-A@rela.ics"); err != nil {
+		t.Fatalf("DeleteCalendarObject: %v", err)
+	}
+
+	// Gone from the collection it was removed from...
+	gone, err := b.listTodos(t.Context(), "project_tasks--PRJ-1")
+	if err != nil {
+		t.Fatalf("listTodos(PRJ-1): %v", err)
+	}
+	if len(gone) != 0 {
+		t.Errorf("the to-do is still in the collection it was deleted from (%d members)", len(gone))
+	}
+	// ...and STILL THERE in the other, un-cancelled.
+	kept, err := b.listTodos(t.Context(), "project_tasks--PRJ-2")
+	if err != nil {
+		t.Fatalf("listTodos(PRJ-2): %v", err)
+	}
+	if len(kept) != 1 {
+		t.Fatalf("removing one membership destroyed the other (%d members in PRJ-2)", len(kept))
+	}
+	e, err := app.Services().Store.GetEntity(t.Context(), "TSK-A")
+	if err != nil {
+		t.Fatalf("GetEntity: %v", err)
+	}
+	if got := e.GetString("status"); got == "cancelled" {
+		t.Error("removing ONE membership cancelled the entity globally — that is the " +
+			"data loss this model exists to prevent")
+	}
+}
+
+// TestDynamicCollections_LastMembershipFollowsCardinality pins the `auto`
+// policy: the relation's own min_outgoing decides whether an entity that now
+// belongs to nothing is kept or disposed of, so the schema is the single source
+// of truth rather than a second setting that can disagree with it.
+// oneMembershipRequired is min_outgoing=1 — membership declared mandatory.
+var oneMembershipRequired = 1
+
+func TestDynamicCollections_LastMembershipFollowsCardinality(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		minOutgoing *int
+		wantStatus  string
+	}{
+		{"optional membership keeps the entity", nil, "todo"},
+		{"mandatory membership applies on_delete", &oneMembershipRequired, "done"}, // the test collection's on_delete sets status=done
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app := caldavDynamicAppWith(t,
+				[]*entity.Entity{mkProject("PRJ-1", "Alpha"), mkTaskIn("TSK-A", "only here")},
+				[]*entity.Relation{entity.NewRelation("TSK-A", "belongs-to", "PRJ-1")})
+			rel := app.State().Meta.Relations["belongs-to"]
+			rel.MinOutgoing = tc.minOutgoing
+			app.State().Meta.Relations["belongs-to"] = rel
+
+			b := &caldavBackend{app: app, baseURL: "https://example.test"}
+			if err := b.DeleteCalendarObject(t.Context(),
+				b.calendarPath("project_tasks--PRJ-1")+"task--TSK-A@rela.ics"); err != nil {
+				t.Fatalf("DeleteCalendarObject: %v", err)
+			}
+			e, err := app.Services().Store.GetEntity(t.Context(), "TSK-A")
+			if err != nil {
+				t.Fatalf("GetEntity: %v", err)
+			}
+			if got := e.GetString("status"); got != tc.wantStatus {
+				t.Errorf("status = %q, want %q", got, tc.wantStatus)
+			}
+		})
+	}
+}
