@@ -23,6 +23,16 @@ func day(t *testing.T, s string) predicate.Date {
 	return predicate.NewDate(parsed)
 }
 
+// setVar binds a variable, failing the test on error. Collapses the
+// four-line if-err block that would otherwise repeat at every call and
+// shadow the enclosing err.
+func setVar(t *testing.T, b *predicate.Bindings, name string, v predicate.Value) {
+	t.Helper()
+	if err := b.SetVar(name, v); err != nil {
+		t.Fatalf("set %s: %v", name, err)
+	}
+}
+
 // dateEnv builds an env+bindings pair with the stdlib declared and
 // bound, plus `a`/`b` date vars and a `rule` string var, so a test can
 // compile a real expression rather than poke the Go functions directly.
@@ -70,12 +80,8 @@ func TestDaysBetween(t *testing.T) {
 			if err != nil {
 				t.Fatalf("compile: %v", err)
 			}
-			if err := b.SetVar("a", day(t, tc.a)); err != nil {
-				t.Fatalf("set a: %v", err)
-			}
-			if err := b.SetVar("b", day(t, tc.b)); err != nil {
-				t.Fatalf("set b: %v", err)
-			}
+			setVar(t, b, "a", day(t, tc.a))
+			setVar(t, b, "b", day(t, tc.b))
 			v, err := prog.Eval(context.Background(), b)
 			if err != nil {
 				t.Fatalf("eval: %v", err)
@@ -103,14 +109,10 @@ func TestDaysBetween_TimeComponentTruncated(t *testing.T) {
 	// a is 23:59 on the 19th; b is 00:00 on the 18th. Raw subtraction
 	// gives 1.999… days, which truncates to 1 only because both sides
 	// are floored to UTC midnight first.
-	if err := b.SetVar("a", predicate.NewDate(
-		time.Date(2026, 8, 19, 23, 59, 0, 0, time.UTC))); err != nil {
-		t.Fatalf("set a: %v", err)
-	}
-	if err := b.SetVar("b", predicate.NewDate(
-		time.Date(2026, 8, 18, 0, 0, 0, 0, time.UTC))); err != nil {
-		t.Fatalf("set b: %v", err)
-	}
+	setVar(t, b, "a", predicate.NewDate(
+		time.Date(2026, 8, 19, 23, 59, 0, 0, time.UTC)))
+	setVar(t, b, "b", predicate.NewDate(
+		time.Date(2026, 8, 18, 0, 0, 0, 0, time.UTC)))
 	v, err := prog.Eval(context.Background(), b)
 	if err != nil {
 		t.Fatalf("eval: %v", err)
@@ -135,14 +137,10 @@ func TestDaysBetween_LocalMidnightBoundary(t *testing.T) {
 	if cErr != nil {
 		t.Fatalf("compile: %v", cErr)
 	}
-	if err := b.SetVar("a", predicate.NewDate(
-		time.Date(2026, 8, 19, 8, 0, 0, 0, tokyo))); err != nil {
-		t.Fatalf("set a: %v", err)
-	}
-	if err := b.SetVar("b", predicate.NewDate(
-		time.Date(2026, 8, 18, 0, 0, 0, 0, time.UTC))); err != nil {
-		t.Fatalf("set b: %v", err)
-	}
+	setVar(t, b, "a", predicate.NewDate(
+		time.Date(2026, 8, 19, 8, 0, 0, 0, tokyo)))
+	setVar(t, b, "b", predicate.NewDate(
+		time.Date(2026, 8, 18, 0, 0, 0, 0, time.UTC)))
 	v, evErr := prog.Eval(context.Background(), b)
 	if evErr != nil {
 		t.Fatalf("eval: %v", evErr)
@@ -167,14 +165,10 @@ func TestDaysBetween_DSTSpan(t *testing.T) {
 		t.Fatalf("compile: %v", cErr)
 	}
 	// US DST ends 2026-11-01, so this span contains a 25-hour local day.
-	if err := b.SetVar("a", predicate.NewDate(
-		time.Date(2026, 11, 5, 0, 0, 0, 0, ny))); err != nil {
-		t.Fatalf("set a: %v", err)
-	}
-	if err := b.SetVar("b", predicate.NewDate(
-		time.Date(2026, 10, 30, 0, 0, 0, 0, ny))); err != nil {
-		t.Fatalf("set b: %v", err)
-	}
+	setVar(t, b, "a", predicate.NewDate(
+		time.Date(2026, 11, 5, 0, 0, 0, 0, ny)))
+	setVar(t, b, "b", predicate.NewDate(
+		time.Date(2026, 10, 30, 0, 0, 0, 0, ny)))
 	v, evErr := prog.Eval(context.Background(), b)
 	if evErr != nil {
 		t.Fatalf("eval: %v", evErr)
@@ -205,12 +199,8 @@ func TestDateAdd(t *testing.T) {
 			if err != nil {
 				t.Fatalf("compile: %v", err)
 			}
-			if err := b.SetVar("a", day(t, "2026-08-18")); err != nil {
-				t.Fatalf("set a: %v", err)
-			}
-			if err := b.SetVar("b", day(t, tc.want)); err != nil {
-				t.Fatalf("set b: %v", err)
-			}
+			setVar(t, b, "a", day(t, "2026-08-18"))
+			setVar(t, b, "b", day(t, tc.want))
 			v, err := prog.Eval(context.Background(), b)
 			if err != nil {
 				t.Fatalf("eval: %v", err)
@@ -234,12 +224,8 @@ func TestDateAdd_LeapDay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-	if err := b.SetVar("a", day(t, "2028-02-28")); err != nil {
-		t.Fatalf("set a: %v", err)
-	}
-	if err := b.SetVar("b", day(t, "2028-02-29")); err != nil {
-		t.Fatalf("set b: %v", err)
-	}
+	setVar(t, b, "a", day(t, "2028-02-28"))
+	setVar(t, b, "b", day(t, "2028-02-29"))
 	v, err := prog.Eval(context.Background(), b)
 	if err != nil {
 		t.Fatalf("eval: %v", err)
@@ -261,9 +247,7 @@ func TestDateAdd_RejectsUnsupportedUnit(t *testing.T) {
 			if err != nil {
 				t.Fatalf("compile: %v", err)
 			}
-			if err := b.SetVar("a", day(t, "2026-01-31")); err != nil {
-				t.Fatalf("set a: %v", err)
-			}
+			setVar(t, b, "a", day(t, "2026-01-31"))
 			_, err = prog.Eval(context.Background(), b)
 			if err == nil {
 				t.Fatalf("unit %q: want eval error, got none", unit)
@@ -303,15 +287,9 @@ func TestRruleNext(t *testing.T) {
 			if err != nil {
 				t.Fatalf("compile: %v", err)
 			}
-			if err := b.SetVar("rule", predicate.NewString(tc.rule)); err != nil {
-				t.Fatalf("set rule: %v", err)
-			}
-			if err := b.SetVar("a", day(t, tc.after)); err != nil {
-				t.Fatalf("set a: %v", err)
-			}
-			if err := b.SetVar("b", day(t, tc.want)); err != nil {
-				t.Fatalf("set b: %v", err)
-			}
+			setVar(t, b, "rule", predicate.NewString(tc.rule))
+			setVar(t, b, "a", day(t, tc.after))
+			setVar(t, b, "b", day(t, tc.want))
 			v, err := prog.Eval(context.Background(), b)
 			if err != nil {
 				t.Fatalf("eval: %v", err)
@@ -338,12 +316,8 @@ func TestRruleNext_Malformed(t *testing.T) {
 			if err != nil {
 				t.Fatalf("compile: %v", err)
 			}
-			if err := b.SetVar("rule", predicate.NewString(rule)); err != nil {
-				t.Fatalf("set rule: %v", err)
-			}
-			if err := b.SetVar("a", day(t, "2026-08-18")); err != nil {
-				t.Fatalf("set a: %v", err)
-			}
+			setVar(t, b, "rule", predicate.NewString(rule))
+			setVar(t, b, "a", day(t, "2026-08-18"))
 			if _, err := prog.Eval(context.Background(), b); err == nil {
 				t.Errorf("rule %q: want eval error, got none", rule)
 			}
@@ -384,13 +358,9 @@ func TestRruleNext_ExhaustedThroughEval(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-	if err := b.SetVar("rule", predicate.NewString(
-		"DTSTART:20260818T000000Z\nFREQ=DAILY;COUNT=1")); err != nil {
-		t.Fatalf("set rule: %v", err)
-	}
-	if err := b.SetVar("a", day(t, "2026-08-18")); err != nil {
-		t.Fatalf("set a: %v", err)
-	}
+	setVar(t, b, "rule", predicate.NewString(
+		"DTSTART:20260818T000000Z\nFREQ=DAILY;COUNT=1"))
+	setVar(t, b, "a", day(t, "2026-08-18"))
 	_, err = prog.Eval(context.Background(), b)
 	if err == nil {
 		t.Fatal("want an error for an exhausted rule, got none")

@@ -75,7 +75,7 @@ func Declare(env *predicate.Env) error {
 		{FuncToday, predicate.FuncSig{Return: predicate.DateType}},
 		{FuncDaysBetween, predicate.FuncSig{
 			Params: []predicate.Type{predicate.DateType, predicate.DateType},
-			Return: predicate.NumberType,
+			Return: predicate.IntType,
 		}},
 		{FuncDateAdd, predicate.FuncSig{
 			Params: []predicate.Type{predicate.DateType, predicate.NumberType, str},

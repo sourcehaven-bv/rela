@@ -49,6 +49,9 @@ const (
 	unitWeek = "week"
 )
 
+// daysPerWeek converts a week count to days.
+const daysPerWeek = 7
+
 // ErrRruleExhausted re-exports [metamodel.ErrRruleExhausted] so a
 // caller of this package can tell a finished schedule from a malformed
 // rule with errors.Is, without importing metamodel for the sentinel
@@ -99,7 +102,13 @@ func daysBetween(_ context.Context, args []predicate.Value) (predicate.Value, er
 		return nil, err
 	}
 	delta := utcDay(a).Sub(utcDay(b))
-	return predicate.NewNumberFromInt(int(delta.Hours() / hoursPerDay)), nil
+	// Int, not Number: a day count is a whole number, and the engine
+	// requires both sides of an ordered comparison to share a type. As
+	// Number this could not be compared against an integer-typed
+	// property — `days_between(...) <= entity.doorlooptijd` would fail
+	// to compile, which is precisely the recurring-task shape this
+	// function exists for.
+	return predicate.NewInt(int64(delta.Hours() / hoursPerDay)), nil
 }
 
 // dateAdd implements date_add(d, n, unit) -> date. n may be negative to
@@ -118,6 +127,10 @@ func dateAdd(_ context.Context, args []predicate.Value) (predicate.Value, error)
 	if !ok {
 		return nil, errArg
 	}
+	// Number, not Int: literal coercion happens only in comparisons, not
+	// in argument position, so a plain `date_add(d, 3, 'day')` arrives as
+	// a Number. days_between differs — its RESULT is compared against
+	// properties, so it returns Int.
 	n, ok := args[1].(predicate.Number)
 	if !ok {
 		return nil, errArg
@@ -131,7 +144,7 @@ func dateAdd(_ context.Context, args []predicate.Value) (predicate.Value, error)
 	switch strings.ToLower(strings.TrimSpace(unit.String())) {
 	case unitDay:
 	case unitWeek:
-		days *= 7 //nolint:mnd // days per week
+		days *= daysPerWeek
 	default:
 		return nil, fmt.Errorf(
 			"predicatefns: date_add: unsupported unit %q (use %q or %q)",
