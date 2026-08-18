@@ -78,10 +78,75 @@ collection. The key is the **id**: it becomes the URL segment and the internal
 alias key, so it must stay stable (users paste the URL into their client).
 `meta.name` is the **label**, and is free to change at any time.
 
-The nesting exists because a second kind is planned — collections generated from
-the graph, one per entity of a driver type, where a key would name a *pattern*
-that expands rather than a collection that exists. `caldav.dynamic:` is not
-implemented and does not parse yet.
+### `caldav.dynamic:` — one collection per entity
+
+The sibling block declares a **pattern** rather than a collection: each key
+expands into one collection per entity of a driver type, so a to-do list per
+project needs no config edit when a project is added.
+
+```yaml
+caldav:
+  dynamic:
+    project_tasks:              # a PATTERN, not an addressable collection
+      component: vtodo
+      entity_type: task         # what the collections carry
+      driver_type: project      # one collection per entity of this type
+      relation: belongs-to      # member --belongs-to--> driver
+      summary: title
+      completion: {...}
+```
+
+Given projects `PRJ-home` and `PRJ-work`, that serves two collections at
+`project_tasks--PRJ-home` and `project_tasks--PRJ-work`, each carrying the tasks
+linked to its project. The **display name is the driver's title**, so renaming a
+project renames the list — while the URL, built from the driver ID, does not
+move. (A changed collection href makes a client re-add the whole list as new.)
+
+Every mapping key a static collection accepts works here too, including
+`where:`, `read_only:` and `on_delete:`.
+
+#### Membership is a relation, in both directions
+
+`relation:` serves reads and writes, which is why there is no separate create
+block:
+
+- a to-do **created** in `project_tasks--PRJ-home` receives that edge, so it is
+  a member of the list it was created in;
+- a to-do **written** into a collection it does not yet belong to gains the
+  edge — additively. A client "move" and an "assign to a second list" are
+  indistinguishable on the wire, and clients support both, so rela adds rather
+  than moves: a to-do can legitimately belong to two projects and appear in
+  both;
+- a to-do **deleted** from a collection loses that edge, and *only* that edge.
+  The href names a membership, not the entity: removing a to-do from one list
+  must not destroy it everywhere.
+
+#### `on_unlink:` — the last membership
+
+Removing an entity's LAST membership is the one ambiguous case: it now belongs
+to nothing.
+
+```yaml
+      on_unlink: auto     # auto (default) | keep | delete
+```
+
+`auto` derives the answer from the relation's own cardinality. If the relation
+declares `min_outgoing >= 1`, an entity with no memberships contradicts a
+constraint the operator already stated in the metamodel, so the collection's
+`on_delete:` applies. Otherwise membership is optional by declaration, and the
+entity is kept with only its edge removed.
+
+Deriving it keeps the schema as the single source of truth, rather than a second
+setting that can drift out of agreement with it. Use `keep` or `delete` to state
+the policy explicitly.
+
+Note that a cardinality violation is a *warning* at write time in rela, never a
+blocked write — so `min_outgoing` is read here as a statement of intent, not as
+an enforced invariant.
+
+**Moving a to-do between lists behaves differently per client**, and one of them
+leaves a duplicate. See
+[client compatibility](caldav-clients.md#moving-a-to-do-between-collections).
 
 ### Field mapping
 
