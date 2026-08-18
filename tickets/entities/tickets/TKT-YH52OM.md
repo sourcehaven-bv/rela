@@ -88,15 +88,39 @@ forcing function that ever removes it". That is the same argument for
 
 ## Scope: all script surfaces, not just actions
 
-Six entry points share the runtime:
+A document script can reach `secrets` and `http` today just as an action can, so
+gating actions alone would leave the same hole one endpoint over.
 
-- `ExecuteAction` (HTTP `_action/` + webhook dispatch)
-- `ExecuteDocument`, `ExecuteStandaloneDocument`, `ExecuteListDocument`
-- `ExecuteCode`, `ExecuteFile`
+**Correction (2026-08-18): "six entry points, plus the scheduler and the
+automation engine" mis-describes the tree, and the error matters for scoping.**
+`ExecuteCode` / `ExecuteFile` are not a *CLI* surface — they have exactly three
+callers, none of them the CLI:
 
-Plus the scheduler and the automation engine. A document script can reach
-`secrets` and `http` today just as an action can, so gating actions alone would
-leave the same hole one endpoint over.
+- `script/luascriptrunner.go:184,186` — the **automation engine**
+  (`autocascade.ScriptRunner`), which runs a schema `lua:` block or `script:`
+  file on any HTTP write;
+- `scheduler/scheduler.go:299` — the scheduler.
+
+So "the automation engine" is not an additional surface alongside
+`ExecuteCode`/`ExecuteFile`; it *is* them. Treating them as CLI and exempting
+them would leave the network-triggered automation path fully ungated — the
+precise hole this ticket exists to close.
+
+The real chokepoint is **runtime construction**, and it is a shorter list than
+the Execute* methods suggest (7 sites, 3 trust tiers):
+
+| Tier | Construction site | Reachable by |
+|---|---|---|
+| Config-declared | actions, documents, automations, scheduler | HTTP / schedule |
+| Operator shell | `cli/script.go:27`, `cli/flow.go:56` | local shell |
+| Agent tooling | `mcp/tools_lua.go:68,153` | MCP client |
+| Internal | `docs/runtime.go:164`, `validation/lua.go:112` | build / validation |
+
+Gating belongs at construction (which `lua.Option`s / deps are supplied), not
+per Execute* method. The **operator-shell tier is exempt** — same trust boundary
+as `rela db migrate`, where the caller already has the shell and the secrets
+file. `mcp/tools_lua.go` is a judgement call: it is an agent-facing eval surface,
+so it should NOT inherit the CLI exemption by default.
 
 ## Proposal
 
