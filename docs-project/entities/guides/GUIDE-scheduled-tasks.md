@@ -141,11 +141,12 @@ Notes:
   principal that `acl.yaml` never assigns a role, the task's reads come back
   empty. A typo produces a silently empty job, so check the identity against
   your assignments when a task stops finding data.
-- **Field-level redaction does not apply to scheduled tasks yet.** Row-level
-  access is enforced (an entity your identity cannot read stays invisible),
-  but `visible:` field policy is *not* applied on this path — a task that may
-  read an entity type receives all of its properties. Do not rely on field
-  policy to hide values from a scheduled script.
+- **Both row- and field-level policy apply.** An entity your identity cannot
+  read stays invisible, and `visible:` field policy redacts hidden property
+  values on the entities it does return — a scheduled task sees the same
+  redacted view a person with that identity sees in the UI. (Field redaction
+  on this path landed in TKT-0XL8MF; before that, row access was enforced but
+  every property of a readable entity came through.)
 - Writes are unaffected: they go through the normal ACL, exactly as before.
 
 ### Schedule Values
