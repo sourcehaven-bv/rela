@@ -5,6 +5,7 @@ package validation
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -95,6 +96,50 @@ func (s *Service) evaluator() *predicatefns.Evaluator {
 // a silently-skipped rule (RR-FI4DYL). A genuine eval error is returned
 // so the caller treats it as "does not apply / does not satisfy",
 // matching the prior filter.MatchAll error contract.
+// compileRuleConditions compiles the rule's condition expressions against
+// every entity type it could apply to, returning a LoadError per failure.
+//
+// Compiling here (once per rule) rather than per entity is what makes a
+// malformed expression visible: per-entity it would surface as "no
+// match", which for `when_condition:` is indistinguishable from "no
+// entity qualified".
+func (s *Service) compileRuleConditions(
+	rule metamodel.ValidationRule, candidates []*entity.Entity,
+) []LoadError {
+	sources := make([]string, 0, 2)
+	if rule.WhenCondition != "" {
+		sources = append(sources, rule.WhenCondition)
+	}
+	if rule.ThenCondition != "" {
+		sources = append(sources, rule.ThenCondition)
+	}
+	if len(sources) == 0 {
+		return nil
+	}
+
+	// The env is per entity type, so compile against each type actually
+	// present in the candidate set. A rule with `entity_type:` set has
+	// one; an unscoped rule may span several.
+	seen := make(map[string]bool, len(candidates))
+	var errs []LoadError
+	for _, e := range candidates {
+		if seen[e.Type] {
+			continue
+		}
+		seen[e.Type] = true
+		for _, src := range sources {
+			if _, err := s.evaluator().Compile(e.Type, src); err != nil {
+				errs = append(errs, LoadError{
+					RuleName: rule.Name,
+					Message: fmt.Sprintf("condition %q on %q: %v",
+						src, e.Type, err),
+				})
+			}
+		}
+	}
+	return errs
+}
+
 // matchCondition compiles and evaluates a predicate expression against
 // one entity. Unlike matchFilters there is no legacy fallback: an
 // expression has only ever had one meaning, so a compile failure is a
@@ -228,6 +273,19 @@ func (s *Service) CheckRule(
 	// every entity. luaCtx is nil when the rule has no Lua at all.
 	var luaCtx *luaRuleContext
 	var result Result
+
+	// Compile the condition expressions once per rule, before touching
+	// any entity. A malformed expression is an operator mistake that must
+	// be REPORTED: `when_condition:` failing per-entity would silently
+	// select nothing, so the rule would check nothing and pass — the
+	// silent-skip this key exists to eliminate. Reported as a LoadError,
+	// the same channel a broken `lua_file:` uses, and the rule is
+	// abandoned rather than run in a half-understood state.
+	if loadErrs := s.compileRuleConditions(rule, candidates); len(loadErrs) > 0 {
+		result.LoadErrors = append(result.LoadErrors, loadErrs...)
+		return result
+	}
+
 	hasLua := rule.Lua != "" || rule.LuaFile != ""
 	if hasLua {
 		built, loadErr := s.buildLuaRuleContext(ctx, rule)
@@ -350,8 +408,8 @@ func (s *Service) checkEntityAgainstRule(
 	if rule.ThenCondition != "" {
 		// An eval error means the assertion could not be shown to hold,
 		// so it is a violation — the same direction as a `then:` clause
-		// that fails to match. (A malformed expression is caught at load
-		// by Validate, not here.)
+		// that fails to match. A malformed expression never reaches
+		// here: compileRuleConditions abandons the rule first.
 		if satisfies, err := s.matchCondition(e, rule.ThenCondition); err != nil || !satisfies {
 			return entityResult{Violations: []Violation{newViolation(rule, e, rule.Description)}}
 		}

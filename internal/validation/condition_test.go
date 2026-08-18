@@ -116,3 +116,55 @@ func TestConditionAbsent_Unchanged(t *testing.T) {
 		t.Errorf("plain when/then rule changed behavior: %+v", violations)
 	}
 }
+
+// TestMalformedConditionIsReported pins that a broken condition is
+// surfaced as a LoadError rather than silently selecting nothing.
+//
+// This matters most for when_condition:. A per-entity eval failure there
+// reads as "no entity qualified", so the rule would check nothing and
+// report clean — a validation rule that silently stopped validating.
+func TestMalformedConditionIsReported(t *testing.T) {
+	tests := []struct {
+		name string
+		rule metamodel.ValidationRule
+	}{
+		{"malformed when_condition", metamodel.ValidationRule{
+			Name:          "broken-when",
+			Description:   "unparseable selector",
+			EntityType:    "taak",
+			WhenCondition: "days_between(entity.due, today()",
+			Then:          []string{"owner!="},
+		}},
+		{"malformed then_condition", metamodel.ValidationRule{
+			Name:          "broken-then",
+			Description:   "unparseable assertion",
+			EntityType:    "taak",
+			When:          []string{"status=open"},
+			ThenCondition: "no_such_function(entity.owner)",
+		}},
+		{"unknown property in condition", metamodel.ValidationRule{
+			Name:          "unknown-prop",
+			Description:   "references a property that does not exist",
+			EntityType:    "taak",
+			WhenCondition: "entity.nonexistent == 'x'",
+			Then:          []string{"owner!="},
+		}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := New(condMeta(tc.rule), lua.ReadDeps{})
+			entities := []*entity.Entity{
+				taak("T-1", map[string]any{"status": "open"}),
+			}
+			res := svc.Check(context.Background(), entities, nil)
+			if len(res.LoadErrors) == 0 {
+				t.Fatal("malformed condition produced no LoadError — it was swallowed")
+			}
+			if res.LoadErrors[0].RuleName != tc.rule.Name {
+				t.Errorf("LoadError names %q, want %q",
+					res.LoadErrors[0].RuleName, tc.rule.Name)
+			}
+		})
+	}
+}
