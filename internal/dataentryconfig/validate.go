@@ -128,11 +128,14 @@ var sectionDisplayModesRenderingFields = map[string]bool{
 // The authority this DOES mirror is the SPA registry's supportedPropertyTypes
 // (frontend/src/widgets/registry.ts). The two are kept honest by a paired
 // fixture asserted from both languages — see widgetTableFixture in
-// widget_table_test.go and the matching Vitest test. Change one, change the
-// fixture, and both sides fail until they agree.
+// widget_table_test.go and the matching Vitest test.
 //
-// An empty type (a property the metamodel does not define) is handled by the
-// caller, not here: there is nothing to check it against.
+// This map is only the TYPE half of the rule. It is NOT sufficient on its own:
+// the SPA's defaultWidgetFor dispatches on (list, values, type) IN THAT ORDER
+// (registry.ts:19-28, an order its own comment marks load-bearing per
+// RR-0Z1P6), so a table keyed on type alone is narrower than the dispatch it
+// claims to mirror. widgetAcceptsProperty applies the higher-precedence rules
+// first; see its godoc.
 var sectionFieldWidgetTypes = map[string][]string{
 	WidgetText:        {metamodel.PropertyTypeString},
 	WidgetTextarea:    {metamodel.PropertyTypeString},
@@ -144,6 +147,69 @@ var sectionFieldWidgetTypes = map[string][]string{
 	WidgetMultiSelect: {metamodel.PropertyTypeEnum, metamodel.PropertyTypeString},
 	WidgetRrule:       {metamodel.PropertyTypeRrule},
 	WidgetFile:        {metamodel.PropertyTypeFile},
+}
+
+// widgetAcceptsProperty reports whether a widget can render a property, and if
+// not, why — the reason becomes the operator's error message.
+//
+// The order of the checks mirrors the SPA's defaultWidgetFor dispatch
+// (registry.ts:19-28), because a validator that models a narrower key than the
+// renderer will accept config the renderer then handles differently:
+//
+//  1. `list: true` → only multi-select. This is the highest-precedence rule in
+//     the SPA and the one with teeth: a list property rendered through, say,
+//     TextareaWidget goes through useStringValue, so the array is flattened to
+//     a string and the auto-save PATCHes a SCALAR over a list. That is silent
+//     data corruption authorized by a config line the server called valid.
+//  2. a value set (`values:`, or a custom type with values) → only the
+//     select-family. A free-text widget over a constrained set lets an operator
+//     type anything; the write validator would reject it later, but the config
+//     should not have promised the control in the first place.
+//  3. otherwise the plain type table above.
+//
+// Custom types are resolved by LOOKUP in meta.Types, not by excluding a
+// hardcoded list of built-ins. An earlier version negated a builtin-name list,
+// which accepted any undeclared type name as enum-like and could not tell a
+// value-less custom type from a real enum.
+func widgetAcceptsProperty(
+	widget string, pd metamodel.PropertyDef, meta *metamodel.Metamodel,
+) (ok bool, reason string) {
+	if pd.List {
+		if widget == WidgetMultiSelect {
+			return true, ""
+		}
+		return false, fmt.Sprintf(
+			"%q is a list property, which only %q can render", widget, WidgetMultiSelect)
+	}
+	if widgetPropertyHasValues(pd, meta) {
+		if widget == WidgetSelect || widget == WidgetMultiSelect {
+			return true, ""
+		}
+		return false, fmt.Sprintf(
+			"the property has a fixed value set, which only %q or %q can render",
+			WidgetSelect, WidgetMultiSelect)
+	}
+	accepted := sectionFieldWidgetTypes[widget]
+	if slices.Contains(accepted, pd.Type) {
+		return true, ""
+	}
+	return false, fmt.Sprintf("widget %q accepts: %s", widget, strings.Join(accepted, ", "))
+}
+
+// widgetPropertyHasValues reports whether a property is constrained to a fixed
+// value set — either inline (`values:`) or via a custom type declared under
+// `types:` that carries values. Mirrors ResolveWidgetFromType's own membership
+// test (schema_output.go), which likewise requires len(Values) > 0 so a
+// value-less custom type is not mistaken for an enum.
+func widgetPropertyHasValues(pd metamodel.PropertyDef, meta *metamodel.Metamodel) bool {
+	if len(pd.Values) > 0 {
+		return true
+	}
+	if meta == nil {
+		return false
+	}
+	ct, ok := meta.Types[pd.Type]
+	return ok && len(ct.Values) > 0
 }
 
 // validateSectionFieldWidget checks each field's `widget:` override: the name
@@ -161,17 +227,37 @@ var sectionFieldWidgetTypes = map[string][]string{
 // that cannot work.
 func validateSectionFieldWidget(
 	viewID string, i int, s ViewSection, eDef *metamodel.EntityDef,
+	meta *metamodel.Metamodel,
 ) []string {
 	var errs []string
 	for j, f := range s.Fields {
 		if f.Widget == "" {
 			continue
 		}
-		accepted, known := sectionFieldWidgetTypes[f.Widget]
-		if !known {
+		if _, known := sectionFieldWidgetTypes[f.Widget]; !known {
 			errs = append(errs, fmt.Sprintf(
 				"view %q: section[%d] field[%d] has invalid widget %q (valid: %s)",
-				viewID, i, j, f.Widget, joinWidgetTableKeys(sectionFieldWidgetTypes)))
+				viewID, i, j, f.Widget, strings.Join(sortedMapKeys(sectionFieldWidgetTypes), ", ")))
+			continue
+		}
+		// Property compatibility BEFORE the display-mode rule: a field can
+		// violate both, and reporting the surface rule first would send the
+		// operator to fix the display mode only to hit a second, different
+		// error on the next load.
+		var typeErr string
+		if eDef != nil {
+			if pd, ok := eDef.Properties[f.Property]; ok {
+				if accepted, reason := widgetAcceptsProperty(f.Widget, pd, meta); !accepted {
+					typeErr = fmt.Sprintf(
+						"view %q: section[%d] field[%d] sets widget %q on property %q of type %q: %s",
+						viewID, i, j, f.Widget, f.Property, pd.Type, reason)
+				}
+			}
+			// An unknown property is NOT an error here — inertWidgetWarnings
+			// reports it, since there is no type to check against.
+		}
+		if typeErr != "" {
+			errs = append(errs, typeErr)
 			continue
 		}
 		if f.Widget == WidgetFile && s.Display != "properties" {
@@ -179,57 +265,9 @@ func validateSectionFieldWidget(
 				"view %q: section[%d] field[%d] sets widget: file on display mode %q; "+
 					"the file widget is only supported on display: properties",
 				viewID, i, j, s.Display))
-			continue
-		}
-		if eDef == nil {
-			continue
-		}
-		pd, ok := eDef.Properties[f.Property]
-		if !ok {
-			continue // unknown property — inertWidgetWarnings reports it
-		}
-		if !widgetAcceptsType(accepted, pd.Type) {
-			errs = append(errs, fmt.Sprintf(
-				"view %q: section[%d] field[%d] sets widget %q on property %q of type %q "+
-					"(widget %q accepts: %s)",
-				viewID, i, j, f.Widget, f.Property, pd.Type, f.Widget,
-				strings.Join(accepted, ", ")))
 		}
 	}
 	return errs
-}
-
-// widgetAcceptsType reports whether a widget's accepted-type list covers the
-// property type. A custom enum type (one declared under `types:`) is accepted
-// wherever `enum` is, matching how the SPA treats it as a select-like value.
-func widgetAcceptsType(accepted []string, propType string) bool {
-	for _, t := range accepted {
-		if t == propType {
-			return true
-		}
-		// A custom type resolves to enum semantics; the metamodel's own
-		// resolveWidget makes the same equivalence.
-		isCustomEnumLike := t == metamodel.PropertyTypeEnum && propType != "" &&
-			propType != metamodel.PropertyTypeString &&
-			!isBuiltinPropertyType(propType)
-		if isCustomEnumLike {
-			return true
-		}
-	}
-	return false
-}
-
-// isBuiltinPropertyType reports whether the type is one of the metamodel's
-// built-ins, as opposed to an operator-declared custom (enum-like) type.
-func isBuiltinPropertyType(t string) bool {
-	switch t {
-	case metamodel.PropertyTypeString, metamodel.PropertyTypeDate,
-		metamodel.PropertyTypeDatetime, metamodel.PropertyTypeInteger,
-		metamodel.PropertyTypeBoolean, metamodel.PropertyTypeEnum,
-		metamodel.PropertyTypeFile, metamodel.PropertyTypeRrule:
-		return true
-	}
-	return false
 }
 
 // validateSectionRender checks the section-level `render:` and each field's,
@@ -976,6 +1014,19 @@ func inertWidgetWarnings(cfg *Config, meta *metamodel.Metamodel) []string {
 					continue
 				}
 				if eDef == nil {
+					// A collection whose target type cannot be determined
+					// statically (a relation with several `to:` types) is
+					// legal config — ValidateConfig does NOT error on it — so
+					// unlike an unknown collection this case has no other
+					// signal at all. The override is accepted unvalidated and
+					// works or not depending on the runtime entity type.
+					if ambiguousWidgetSource(s, collections) {
+						warnings = append(warnings, fmt.Sprintf(
+							"view %q: section[%d] field[%d] sets widget %q, but collection %q "+
+								"resolves to several entity types, so the widget cannot be "+
+								"checked against the property's type at load",
+							viewID, i, j, f.Widget, s.Source))
+					}
 					continue
 				}
 				if _, ok := eDef.Properties[f.Property]; !ok {
@@ -992,8 +1043,16 @@ func inertWidgetWarnings(cfg *Config, meta *metamodel.Metamodel) []string {
 }
 
 // widgetSectionDef resolves the entity def whose properties a section's fields
-// name, or nil when the source does not resolve (ValidateConfig already errors
-// on that separately, so the warning pass stays silent rather than guessing).
+// name, or nil when the source does not resolve.
+//
+// Three distinct situations return nil, and they are NOT equivalent:
+//   - no source at all — nothing to resolve;
+//   - an unknown collection — ValidateConfig already errors, so staying
+//     silent here avoids a duplicate report;
+//   - a known collection with no statically-determinable type (a relation with
+//     several `to:` types) — legal config that ValidateConfig does NOT error
+//     on, so it is the one case with no other signal. ambiguousWidgetSource
+//     distinguishes it and inertWidgetWarnings reports it.
 func widgetSectionDef(
 	s ViewSection, collections map[string]string, meta *metamodel.Metamodel,
 ) (def *metamodel.EntityDef, entityType string) {
@@ -1011,18 +1070,21 @@ func widgetSectionDef(
 	return d, sourceType
 }
 
-// viewCollectionTypes rebuilds the collection-name → entity-type map a view's
-// `traverse:` block defines, the same way ValidateConfig does. Needed because
-// a section's `source:` names a collection, not a type.
+// viewCollectionTypes builds the collection-name → entity-type map a view's
+// `traverse:` block defines, plus the implicit "entry" collection.
 //
-// A traversal whose relation type is unknown yields an empty target type,
-// which callers treat as unresolvable — the warning pass stays silent rather
-// than guessing, since ValidateConfig already errors on that separately.
+// ValidateConfig builds the same map inline while also reporting errors, and
+// an earlier version of this function was a hand-copy of that loop — which
+// promptly diverged by omitting "entry", silently skipping every
+// `source: entry` section. Prefer this one function; if ValidateConfig's
+// building half is ever factored out, delete this and call that instead.
+//
+// A traversal whose relation type is unknown, or whose target cannot be
+// determined statically (several `to:` types), yields an empty target type.
+// Callers must treat empty as unresolvable rather than as an error — see
+// ambiguousWidgetSource.
 func viewCollectionTypes(view ViewConfig, meta *metamodel.Metamodel) map[string]string {
 	out := make(map[string]string, len(view.Traverse)+1)
-	// "entry" is a collection name too — it refers to the view's entry entity
-	// type. ValidateConfig seeds it the same way; omitting it here silently
-	// skipped every `source: entry` section, which is the common case.
 	if view.Entry.Type != "" {
 		out["entry"] = view.Entry.Type
 	}
@@ -1030,13 +1092,28 @@ func viewCollectionTypes(view ViewConfig, meta *metamodel.Metamodel) map[string]
 		if t.CollectAs == "" {
 			continue
 		}
+		// Match ValidateConfig's precedence exactly: it assigns Follow then
+		// overwrites with FollowIncoming, so the incoming name wins when an
+		// author sets both (itself a separate error).
 		relName := t.Follow
-		if relName == "" {
+		if t.FollowIncoming != "" {
 			relName = t.FollowIncoming
 		}
 		out[t.CollectAs] = determineTargetType(t, relName, meta)
 	}
 	return out
+}
+
+// ambiguousWidgetSource reports whether a section names a collection that
+// EXISTS but whose entity type is not statically determinable. Distinguishes
+// that from an unknown collection (already a hard error) and from a section
+// with no source at all.
+func ambiguousWidgetSource(s ViewSection, collections map[string]string) bool {
+	if s.Source == "" {
+		return false
+	}
+	t, ok := collections[s.Source]
+	return ok && t == ""
 }
 
 // viewCommandPermissionWarnings flags `permission:` on a `context: view`
@@ -1334,7 +1411,7 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 					widgetDef = d
 				}
 			}
-			errs = append(errs, validateSectionFieldWidget(viewID, i, s, widgetDef)...)
+			errs = append(errs, validateSectionFieldWidget(viewID, i, s, widgetDef, meta)...)
 
 			// Validate fields (if source type is known)
 			if sourceType != "" { //nolint:nestif // nested guards each check a distinct optional field of the source config.
@@ -2048,18 +2125,6 @@ func sortedMapKeys[V any](m map[string]V) []string {
 	}
 	natsort.Strings(keys)
 	return keys
-}
-
-// joinWidgetTableKeys is joinMapKeys for the widget→types table, whose value
-// type differs. Same output contract: sorted, comma-separated, for an error
-// message that tells the operator the valid set (the config is not a secret).
-func joinWidgetTableKeys(m map[string][]string) string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	natsort.Strings(keys)
-	return strings.Join(keys, ", ")
 }
 
 func joinMapKeys(m map[string]bool) string {

@@ -24,6 +24,13 @@ import (
 // this test fails until testdata is updated; the matching Vitest test
 // (registry.widgetTable.test.ts) then fails until the SPA agrees. Neither side
 // can move alone.
+//
+// SCOPE: the fixture pins the TYPE half only. The higher-precedence rules —
+// `list: true` and a fixed value set, which the SPA's defaultWidgetFor checks
+// BEFORE the type — live in widgetAcceptsProperty and are pinned by
+// TestValidateConfig_WidgetOnListProperty / _WidgetOnInlineEnum instead. A
+// widget whose selection depends on something other than the property's type
+// therefore needs a test there, not just a fixture row here.
 const widgetTableFixture = "testdata/widget_property_types.json"
 
 func TestSectionFieldWidgetTypes_MatchesFixture(t *testing.T) {

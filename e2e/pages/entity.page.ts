@@ -177,9 +177,15 @@ export class EntityPage extends BasePage {
    *  write rather than a test that asserted too early. */
   async toggleSectionCheckbox(heading: string, property: string): Promise<boolean> {
     const box = this.sectionFieldControl(heading, property);
+    // Match the PATCH for THIS entity, not any PATCH: on a page with more
+    // than one autosaving control a broad predicate resolves on the wrong
+    // request, and the caller's reload then races the real save — the exact
+    // flake this wait exists to remove.
+    const entityId = this.page.url().split('/').pop() ?? '';
     const patched = this.page.waitForResponse(
       (r) =>
         r.url().includes('/api/v1/') &&
+        r.url().includes(entityId) &&
         r.request().method() === 'PATCH' &&
         r.status() < 400,
       { timeout: 5000 },

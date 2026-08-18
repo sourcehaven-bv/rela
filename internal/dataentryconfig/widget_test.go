@@ -3,6 +3,8 @@ package dataentryconfig
 import (
 	"strings"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 // TKT-3R7RF3: a view section field may override which registered widget
@@ -12,6 +14,16 @@ import (
 // given widget override. sourceKnown=false makes the section reference an
 // unknown collection — the RR-4ICH8M regression case, where the name check
 // must still run because it needs no metamodel knowledge.
+// widgetTestMetamodel is testMetamodel plus a `file`-typed property, which the
+// shared fixture does not declare but the file-widget rules need.
+func widgetTestMetamodel() *metamodel.Metamodel {
+	meta := testMetamodel()
+	td := meta.Entities["ticket"]
+	td.Properties["attachment"] = metamodel.PropertyDef{Type: metamodel.PropertyTypeFile}
+	meta.Entities["ticket"] = td
+	return meta
+}
+
 func widgetConfig(property, widget, display string, sourceKnown bool) *Config {
 	source := "entry"
 	if !sourceKnown {
@@ -92,15 +104,33 @@ func TestValidateConfig_SectionFieldWidget(t *testing.T) {
 		{
 			// RR-NGY84F: only the entry mount site passes :attachments, so a
 			// FileWidget in a cards/list row would render with none.
+			//
+			// Uses a genuine `file` property (not `title`, a string) so this
+			// isolates the DISPLAY-MODE rule. With a string property the field
+			// violates two rules at once and only the type error is reported —
+			// which is deliberate: the type check runs first so an operator
+			// isn't sent to fix the display mode only to hit a second, different
+			// error on the next load.
 			name:     "file widget outside a properties section is rejected",
-			property: "title", widget: WidgetFile, display: "cards", sourceKnown: true,
+			property: "attachment", widget: WidgetFile, display: "cards", sourceKnown: true,
 			wantErr: `sets widget: file on display mode "cards"`,
+		},
+		{
+			name:     "file widget on a properties section is accepted",
+			property: "attachment", widget: WidgetFile, display: "properties", sourceKnown: true,
+		},
+		{
+			// M1: a field violating BOTH rules reports the type error, not the
+			// display-mode one — one round-trip, and the more specific message.
+			name:     "type error wins over the display-mode error",
+			property: "title", widget: WidgetFile, display: "cards", sourceKnown: true,
+			wantErr: `widget "file" accepts: file`,
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := widgetConfig(tc.property, tc.widget, tc.display, tc.sourceKnown)
-			err := ValidateConfig([]byte(`version: "1.0"`), cfg, testMetamodel())
+			err := ValidateConfig([]byte(`version: "1.0"`), cfg, widgetTestMetamodel())
 			if tc.wantErr == "" {
 				if err != nil && strings.Contains(err.Error(), "widget") {
 					t.Fatalf("unexpected widget error: %v", err)
@@ -223,4 +253,169 @@ func firstWidgetWarning(t *testing.T, cfg *Config) string {
 	}
 	t.Fatal("expected a widget warning, got none")
 	return ""
+}
+
+// widgetMetamodelWithShapes extends the shared test metamodel with the two
+// property shapes whose widget rules have HIGHER precedence than the plain
+// type table: a list property and an inline enum. Both were accepted
+// unconditionally before RR-* below.
+func widgetMetamodelWithShapes() *metamodel.Metamodel {
+	meta := testMetamodel()
+	td := meta.Entities["ticket"]
+	td.Properties["tags"] = metamodel.PropertyDef{Type: "string", List: true}
+	td.Properties["inline"] = metamodel.PropertyDef{Type: "string", Values: []string{"a", "b"}}
+	meta.Entities["ticket"] = td
+	return meta
+}
+
+// A list property renders through MultiSelectWidget in the SPA, whose
+// defaultWidgetFor puts `list` FIRST — above values and type. Any other widget
+// flattens the array through useStringValue and the auto-save then PATCHes a
+// SCALAR over a list: silent data corruption on config the server called valid.
+func TestValidateConfig_WidgetOnListProperty(t *testing.T) {
+	tests := []struct {
+		name    string
+		widget  string
+		wantErr bool
+	}{
+		{name: "multi-select is the only legal widget", widget: WidgetMultiSelect},
+		{name: "textarea would flatten the list", widget: WidgetTextarea, wantErr: true},
+		{name: "text would flatten the list", widget: WidgetText, wantErr: true},
+		{name: "select is single-valued", widget: WidgetSelect, wantErr: true},
+		{name: "checkbox is nonsense on a list", widget: WidgetCheckbox, wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := widgetConfig("tags", tc.widget, "properties", true)
+			err := ValidateConfig([]byte(`version: "1.0"`), cfg, widgetMetamodelWithShapes())
+			if tc.wantErr && err == nil {
+				t.Fatalf("expected %q on a list property to be rejected", tc.widget)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("expected %q to be accepted, got: %v", tc.widget, err)
+			}
+			if tc.wantErr && !strings.Contains(err.Error(), "list property") {
+				t.Errorf("error %q should explain the list rule", err.Error())
+			}
+		})
+	}
+}
+
+// An inline enum (`type: string` + `values:`) routes to select in the SPA,
+// which checks `values` BEFORE `type`. A free-text widget over a constrained
+// set offers the operator a control that can produce invalid values.
+func TestValidateConfig_WidgetOnInlineEnum(t *testing.T) {
+	tests := []struct {
+		name    string
+		widget  string
+		wantErr bool
+	}{
+		{name: "select matches the value set", widget: WidgetSelect},
+		{name: "multi-select is allowed", widget: WidgetMultiSelect},
+		{name: "text ignores the value set", widget: WidgetText, wantErr: true},
+		{name: "textarea ignores the value set", widget: WidgetTextarea, wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := widgetConfig("inline", tc.widget, "properties", true)
+			err := ValidateConfig([]byte(`version: "1.0"`), cfg, widgetMetamodelWithShapes())
+			if tc.wantErr && err == nil {
+				t.Fatalf("expected %q on an inline enum to be rejected", tc.widget)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("expected %q to be accepted, got: %v", tc.widget, err)
+			}
+		})
+	}
+}
+
+// Custom types are resolved by LOOKUP in meta.Types, not by excluding a list of
+// built-in names. The negation approach accepted any undeclared type name as
+// enum-like and could not distinguish a value-less custom type from a real one.
+func TestWidgetAcceptsProperty_CustomTypesByLookup(t *testing.T) {
+	meta := testMetamodel()
+	meta.Types["valueless"] = metamodel.CustomType{} // declared, but no values
+
+	tests := []struct {
+		name     string
+		widget   string
+		propType string
+		want     bool
+	}{
+		{name: "declared enum type accepts select", widget: WidgetSelect, propType: "status", want: true},
+		{name: "undeclared type is NOT enum-like", widget: WidgetSelect, propType: "totally-bogus"},
+		{name: "value-less custom type is not select-able", widget: WidgetSelect, propType: "valueless"},
+		{name: "declared enum type rejects checkbox", widget: WidgetCheckbox, propType: "status"},
+		{name: "plain string accepts text", widget: WidgetText, propType: "string", want: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pd := metamodel.PropertyDef{Type: tc.propType}
+			got, reason := widgetAcceptsProperty(tc.widget, pd, meta)
+			if got != tc.want {
+				t.Errorf("widgetAcceptsProperty(%q, %q) = %v (%s), want %v",
+					tc.widget, tc.propType, got, reason, tc.want)
+			}
+		})
+	}
+}
+
+// A section sourced from a multi-type traversal is LEGAL config that
+// ValidateConfig does not error on, so an unvalidatable widget there would
+// otherwise be accepted in total silence.
+func TestCollectConfigWarnings_WidgetOnAmbiguousSource(t *testing.T) {
+	meta := testMetamodel()
+	// `blocks` goes ticket→ticket; make it multi-target so the collected type
+	// cannot be determined statically.
+	rd := meta.Relations["blocks"]
+	rd.To = []string{"ticket", "category"}
+	meta.Relations["blocks"] = rd
+
+	cfg := &Config{
+		Version: "1.0",
+		App:     AppConfig{Name: "Test App"},
+		Views: map[string]ViewConfig{
+			"v": {
+				Title:    "V",
+				Entry:    ViewEntry{Type: "ticket"},
+				Traverse: []ViewTraverse{{Follow: "blocks", CollectAs: "blocked"}},
+				Sections: []ViewSection{{
+					Heading: "Blocked",
+					Source:  "blocked",
+					Display: "list",
+					Fields:  []ViewSectionField{{Property: "title", Widget: WidgetTextarea}},
+				}},
+			},
+		},
+	}
+	var got string
+	for _, w := range CollectConfigWarnings(cfg, meta) {
+		if strings.Contains(w, "several entity types") {
+			got = w
+			break
+		}
+	}
+	if got == "" {
+		t.Fatalf("expected an ambiguous-source warning, got %v", CollectConfigWarnings(cfg, meta))
+	}
+	if !strings.Contains(got, "section[0] field[0]") {
+		t.Errorf("warning %q should name the precise origin", got)
+	}
+}
+
+// viewCollectionTypes must agree with the map ValidateConfig builds inline.
+// The "entry" collection was omitted in an earlier version, which silently
+// skipped every `source: entry` section.
+func TestViewCollectionTypes_IncludesEntry(t *testing.T) {
+	view := ViewConfig{
+		Entry:    ViewEntry{Type: "ticket"},
+		Traverse: []ViewTraverse{{Follow: "belongs-to", CollectAs: "cats"}},
+	}
+	got := viewCollectionTypes(view, testMetamodel())
+	if got["entry"] != "ticket" {
+		t.Errorf(`collections["entry"] = %q, want "ticket"`, got["entry"])
+	}
+	if got["cats"] != "category" {
+		t.Errorf(`collections["cats"] = %q, want "category"`, got["cats"])
+	}
 }

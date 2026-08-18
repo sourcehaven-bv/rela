@@ -1,84 +1,52 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { defineWidgetRegistry, defaultWidgetFor } from '../registry'
-import TextWidget from '../TextWidget.vue'
-import TextareaWidget from '../TextareaWidget.vue'
-import NumberWidget from '../NumberWidget.vue'
-import CheckboxWidget from '../CheckboxWidget.vue'
-import DateWidget from '../DateWidget.vue'
-import DatetimeWidget from '../DatetimeWidget.vue'
-import SelectWidget from '../SelectWidget.vue'
-import MultiSelectWidget from '../MultiSelectWidget.vue'
-import RruleWidget from '../RruleWidget.vue'
-import FileWidget from '../FileWidget.vue'
+import { defaultWidgetFor, defaultRegistry, WIDGET_REGISTRATIONS } from '../registry'
 import type { PropertyDef } from '@/types'
-import type { WidgetEntry } from '../types'
-
-type SupportedTypes = NonNullable<WidgetEntry['supportedPropertyTypes']>
 
 // TKT-3R7RF3 / RR-Z0GGTO: the other half of the cross-language drift guard.
 // Go's sectionFieldWidgetTypes (internal/dataentryconfig/validate.go) validates
 // a `widget:` override at config load; this registry decides what actually
 // renders. Both assert against the SAME fixture, so neither can move alone.
 //
-// If this fails, the SPA registry and the server validator disagree: either a
-// widget accepts a property type the server would reject (author writes valid
-// config, gets an error) or the reverse (server accepts config that renders a
-// widget which can't represent the value).
+// This asserts WIDGET_REGISTRATIONS — the array buildDefaultRegistry actually
+// consumes. An earlier version re-declared the registrations inside the test
+// and so asserted its own copy: mutating registry.ts left all 12 tests green,
+// which is worse than no guard because the comment claimed otherwise. If you
+// change this test, verify it still FAILS when you mutate a
+// supportedPropertyTypes entry in registry.ts.
 const FIXTURE = resolve(
   __dirname,
   '../../../../internal/dataentryconfig/testdata/widget_property_types.json',
 )
 
-// The registry's own supportedPropertyTypes, read from a freshly built
-// registry rather than hardcoded — that is the point, it must reflect the
-// real registration calls in buildDefaultRegistry.
-function registeredSupportedTypes(): Record<string, string[]> {
-  const r = defineWidgetRegistry()
-  const entries: Record<string, string[]> = {}
-  const register = (name: string, component: unknown, supported: SupportedTypes) => {
-    r.register(name, {
-      component: component as never,
-      supportedPropertyTypes: supported,
-    })
-    entries[name] = [...supported].sort()
-  }
-  // Mirrors buildDefaultRegistry exactly. Kept as its own list so a widget
-  // added there without a fixture entry fails the count assertion below.
-  register('text', TextWidget, ['string'])
-  register('textarea', TextareaWidget, ['string'])
-  register('number', NumberWidget, ['integer'])
-  register('checkbox', CheckboxWidget, ['boolean'])
-  register('date', DateWidget, ['date'])
-  register('datetime', DatetimeWidget, ['datetime'])
-  register('select', SelectWidget, ['enum', 'string'])
-  register('multi-select', MultiSelectWidget, ['enum', 'string'])
-  register('rrule', RruleWidget, ['rrule'])
-  register('file', FileWidget, ['file'])
-  return entries
+function loadFixture(): Record<string, string[]> {
+  const raw = JSON.parse(readFileSync(FIXTURE, 'utf-8')) as Record<string, string[]>
+  return Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, [...v].sort()]))
 }
 
 describe('widget/property-type table agrees with the Go validator', () => {
-  it('matches the shared fixture exactly', () => {
-    const fixture = JSON.parse(readFileSync(FIXTURE, 'utf-8')) as Record<string, string[]>
-    const sortedFixture = Object.fromEntries(
-      Object.entries(fixture).map(([k, v]) => [k, [...v].sort()]),
+  it('the REAL registrations match the shared fixture exactly', () => {
+    const actual = Object.fromEntries(
+      WIDGET_REGISTRATIONS.map((e) => [e.name, [...e.supportedPropertyTypes].sort()]),
     )
-    expect(registeredSupportedTypes()).toEqual(sortedFixture)
+    expect(actual).toEqual(loadFixture())
   })
 
-  it('every fixture widget is resolvable by name', () => {
-    const fixture = JSON.parse(readFileSync(FIXTURE, 'utf-8')) as Record<string, string[]>
-    const r = defineWidgetRegistry()
-    r.register('text', { component: TextWidget, supportedPropertyTypes: ['string'] })
-    // A name the server accepts but the registry cannot resolve would fall
-    // back to the type default at runtime — config that validates and then
-    // silently does something else. Assert the names line up.
-    for (const name of Object.keys(fixture)) {
-      expect(typeof name).toBe('string')
-      expect(name.trim()).toBe(name)
-      expect(name).toBe(name.toLowerCase())
+  it('every fixture widget resolves to a real component in the default registry', () => {
+    // The names are the contract between server and client: a name the server
+    // accepts but the registry cannot resolve would silently fall back to the
+    // type default. resolve() returns the fallback rather than throwing, so
+    // compare against a KNOWN-unregistered name to prove these are distinct.
+    const fallback = defaultRegistry.resolve('definitely-not-a-widget', {
+      type: 'string',
+    } as PropertyDef)
+    for (const name of Object.keys(loadFixture())) {
+      const component = defaultRegistry.resolve(name, undefined)
+      expect(component, `widget "${name}" did not resolve`).toBeTruthy()
+      if (name !== 'text') {
+        expect(component, `widget "${name}" resolved to the fallback`).not.toBe(fallback)
+      }
     }
   })
 })
