@@ -1,9 +1,11 @@
-<!-- @managed: claude-workflow v1 -->
 ---
-title: Implementation
+id: IMPL-CAP7YH
+type: implementation-checklist
+title: 'Implementation: Lua capability gating (http, ai, secrets, write_file)'
 status: done
 ---
 
+<!-- @managed: claude-workflow v1 -->
 ## Development
 
 - [x] Unit tests written for new code

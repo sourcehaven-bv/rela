@@ -1,9 +1,11 @@
-<!-- @managed: claude-workflow v1 -->
 ---
-title: Planning
+id: PLAN-CAP7YH
+type: planning-checklist
+title: 'Planning: Lua capability gating (http, ai, secrets, write_file)'
 status: done
 ---
 
+<!-- @managed: claude-workflow v1 -->
 ## Understanding
 
 - [x] Problem/requirements clearly understood
