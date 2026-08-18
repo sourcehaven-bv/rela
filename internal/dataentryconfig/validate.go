@@ -114,6 +114,124 @@ var sectionDisplayModesRenderingFields = map[string]bool{
 	"cards":      true,
 }
 
+// sectionFieldWidgetTypes is the widget → accepted-property-types table for a
+// view section field's `widget:` override (TKT-3R7RF3).
+//
+// This is an INDEPENDENT literal, deliberately not derived from
+// Metamodel.ResolveWidgetFromType (RR-Z0GGTO). That function is the table-cell
+// resolver and has no `file` case — deriving from it would reject
+// `widget: file` on a `file` property, which is legal here. It also predates
+// the list/values precedence the SPA applies. Its godoc calls itself the single
+// source of truth for type→widget; on the section path that is not accurate,
+// and the two have already drifted.
+//
+// The authority this DOES mirror is the SPA registry's supportedPropertyTypes
+// (frontend/src/widgets/registry.ts). The two are kept honest by a paired
+// fixture asserted from both languages — see widgetTableFixture in
+// widget_table_test.go and the matching Vitest test. Change one, change the
+// fixture, and both sides fail until they agree.
+//
+// An empty type (a property the metamodel does not define) is handled by the
+// caller, not here: there is nothing to check it against.
+var sectionFieldWidgetTypes = map[string][]string{
+	WidgetText:        {metamodel.PropertyTypeString},
+	WidgetTextarea:    {metamodel.PropertyTypeString},
+	WidgetNumber:      {metamodel.PropertyTypeInteger},
+	WidgetCheckbox:    {metamodel.PropertyTypeBoolean},
+	WidgetDate:        {metamodel.PropertyTypeDate},
+	WidgetDatetime:    {metamodel.PropertyTypeDatetime},
+	WidgetSelect:      {metamodel.PropertyTypeEnum, metamodel.PropertyTypeString},
+	WidgetMultiSelect: {metamodel.PropertyTypeEnum, metamodel.PropertyTypeString},
+	WidgetRrule:       {metamodel.PropertyTypeRrule},
+	WidgetFile:        {metamodel.PropertyTypeFile},
+}
+
+// validateSectionFieldWidget checks each field's `widget:` override: the name
+// must be registered, and it must accept the property's declared type.
+//
+// Called OUTSIDE the source-resolution guards for the name check, which needs
+// no metamodel knowledge (the RR-4ICH8M lesson). The type-compatibility half
+// necessarily needs the property's definition, so it is skipped — not failed —
+// when the property is unknown; inertWidgetWarnings reports that case instead.
+//
+// `widget: file` is additionally rejected outside a `properties` section
+// (RR-NGY84F): only the entry mount site passes `:attachments` to
+// SectionEditForm, so a FileWidget forced into a cards/list row would render
+// with no attachments at all. Failing at config load beats rendering a widget
+// that cannot work.
+func validateSectionFieldWidget(
+	viewID string, i int, s ViewSection, eDef *metamodel.EntityDef,
+) []string {
+	var errs []string
+	for j, f := range s.Fields {
+		if f.Widget == "" {
+			continue
+		}
+		accepted, known := sectionFieldWidgetTypes[f.Widget]
+		if !known {
+			errs = append(errs, fmt.Sprintf(
+				"view %q: section[%d] field[%d] has invalid widget %q (valid: %s)",
+				viewID, i, j, f.Widget, joinWidgetTableKeys(sectionFieldWidgetTypes)))
+			continue
+		}
+		if f.Widget == WidgetFile && s.Display != "properties" {
+			errs = append(errs, fmt.Sprintf(
+				"view %q: section[%d] field[%d] sets widget: file on display mode %q; "+
+					"the file widget is only supported on display: properties",
+				viewID, i, j, s.Display))
+			continue
+		}
+		if eDef == nil {
+			continue
+		}
+		pd, ok := eDef.Properties[f.Property]
+		if !ok {
+			continue // unknown property — inertWidgetWarnings reports it
+		}
+		if !widgetAcceptsType(accepted, pd.Type) {
+			errs = append(errs, fmt.Sprintf(
+				"view %q: section[%d] field[%d] sets widget %q on property %q of type %q "+
+					"(widget %q accepts: %s)",
+				viewID, i, j, f.Widget, f.Property, pd.Type, f.Widget,
+				strings.Join(accepted, ", ")))
+		}
+	}
+	return errs
+}
+
+// widgetAcceptsType reports whether a widget's accepted-type list covers the
+// property type. A custom enum type (one declared under `types:`) is accepted
+// wherever `enum` is, matching how the SPA treats it as a select-like value.
+func widgetAcceptsType(accepted []string, propType string) bool {
+	for _, t := range accepted {
+		if t == propType {
+			return true
+		}
+		// A custom type resolves to enum semantics; the metamodel's own
+		// resolveWidget makes the same equivalence.
+		isCustomEnumLike := t == metamodel.PropertyTypeEnum && propType != "" &&
+			propType != metamodel.PropertyTypeString &&
+			!isBuiltinPropertyType(propType)
+		if isCustomEnumLike {
+			return true
+		}
+	}
+	return false
+}
+
+// isBuiltinPropertyType reports whether the type is one of the metamodel's
+// built-ins, as opposed to an operator-declared custom (enum-like) type.
+func isBuiltinPropertyType(t string) bool {
+	switch t {
+	case metamodel.PropertyTypeString, metamodel.PropertyTypeDate,
+		metamodel.PropertyTypeDatetime, metamodel.PropertyTypeInteger,
+		metamodel.PropertyTypeBoolean, metamodel.PropertyTypeEnum,
+		metamodel.PropertyTypeFile, metamodel.PropertyTypeRrule:
+		return true
+	}
+	return false
+}
+
 // validateSectionRender checks the section-level `render:` and each field's,
 // independently of whether the section's source resolves (RR-4ICH8M).
 func validateSectionRender(viewID string, i int, s ViewSection) []string {
@@ -761,6 +879,7 @@ func CollectConfigWarnings(cfg *Config, meta *metamodel.Metamodel) []string {
 	warnings = append(warnings, relationPropertyNameCollisionWarnings(cfg, meta)...)
 	warnings = append(warnings, viewCommandPermissionWarnings(cfg)...)
 	warnings = append(warnings, inertSectionRenderWarnings(cfg)...)
+	warnings = append(warnings, inertWidgetWarnings(cfg, meta)...)
 	return warnings
 }
 
@@ -806,6 +925,118 @@ func inertSectionRenderWarnings(cfg *Config) []string {
 		}
 	}
 	return warnings
+}
+
+// inertWidgetWarnings flags a `widget:` override that cannot take effect
+// (TKT-3R7RF3). Two inert cases, both warned rather than errored for the same
+// reason as inertSectionRenderWarnings — the config is not wrong, just
+// ineffective, and a display-mode switch should not be a hard load failure:
+//
+//   - a display mode that renders no fields at all (`table`, `content`), the
+//     exact case sectionDisplayModesRenderingFields already describes;
+//   - a property the metamodel does not declare. Such a field renders through
+//     the SPA's routing-hint path, which resolves a widget from the value's
+//     shape and takes no override name (RR-2GBB0V). Note this is NOT because
+//     the field is read-only — an unschema'd field IS editable, since a
+//     missing ACL verdict reads as writable. It is because there is no
+//     PropertyDef to type-check the override against, so honoring it would
+//     push an unvalidated widget into a live edit control.
+//
+// A third inert case is deliberately NOT warned: a state-machine field on
+// `render: input`, where the SPA's StatusControl owns the field and ignores
+// the widget. Machine-ness is a runtime, per-entity, per-principal fact
+// (computeTransitions, gated on a TransitionResolver the config layer cannot
+// see), so the warning is unbuildable here rather than merely unwritten
+// (RR-66MT0D). It is documented in docs/data-entry.md instead. That same field
+// on `render: display` DOES honor the widget, so the interaction is two-axis.
+func inertWidgetWarnings(cfg *Config, meta *metamodel.Metamodel) []string {
+	var warnings []string
+	viewIDs := make([]string, 0, len(cfg.Views))
+	for id := range cfg.Views {
+		viewIDs = append(viewIDs, id)
+	}
+	sort.Strings(viewIDs)
+	for _, viewID := range viewIDs {
+		view := cfg.Views[viewID]
+		collections := viewCollectionTypes(view, meta)
+		for i, s := range view.Sections {
+			renders := sectionDisplayModesRenderingFields[s.Display]
+			eDef, sourceType := widgetSectionDef(s, collections, meta)
+			for j, f := range s.Fields {
+				if f.Widget == "" {
+					continue
+				}
+				if !renders {
+					warnings = append(warnings, fmt.Sprintf(
+						"view %q: section[%d] field[%d] sets widget: on display mode %q, "+
+							"which does not render fields; the setting has no effect "+
+							"(it applies to: %s)",
+						viewID, i, j, s.Display,
+						joinMapKeys(sectionDisplayModesRenderingFields)))
+					continue
+				}
+				if eDef == nil {
+					continue
+				}
+				if _, ok := eDef.Properties[f.Property]; !ok {
+					warnings = append(warnings, fmt.Sprintf(
+						"view %q: section[%d] field[%d] sets widget %q on property %q, "+
+							"which type %q does not declare; the override is ignored "+
+							"(a widget can only be applied to a declared property)",
+						viewID, i, j, f.Widget, f.Property, sourceType))
+				}
+			}
+		}
+	}
+	return warnings
+}
+
+// widgetSectionDef resolves the entity def whose properties a section's fields
+// name, or nil when the source does not resolve (ValidateConfig already errors
+// on that separately, so the warning pass stays silent rather than guessing).
+func widgetSectionDef(
+	s ViewSection, collections map[string]string, meta *metamodel.Metamodel,
+) (def *metamodel.EntityDef, entityType string) {
+	if meta == nil || s.Source == "" {
+		return nil, ""
+	}
+	sourceType, ok := collections[s.Source]
+	if !ok || sourceType == "" {
+		return nil, ""
+	}
+	d, ok := meta.GetEntityDef(sourceType)
+	if !ok {
+		return nil, ""
+	}
+	return d, sourceType
+}
+
+// viewCollectionTypes rebuilds the collection-name → entity-type map a view's
+// `traverse:` block defines, the same way ValidateConfig does. Needed because
+// a section's `source:` names a collection, not a type.
+//
+// A traversal whose relation type is unknown yields an empty target type,
+// which callers treat as unresolvable — the warning pass stays silent rather
+// than guessing, since ValidateConfig already errors on that separately.
+func viewCollectionTypes(view ViewConfig, meta *metamodel.Metamodel) map[string]string {
+	out := make(map[string]string, len(view.Traverse)+1)
+	// "entry" is a collection name too — it refers to the view's entry entity
+	// type. ValidateConfig seeds it the same way; omitting it here silently
+	// skipped every `source: entry` section, which is the common case.
+	if view.Entry.Type != "" {
+		out["entry"] = view.Entry.Type
+	}
+	for _, t := range view.Traverse {
+		if t.CollectAs == "" {
+			continue
+		}
+		relName := t.Follow
+		if relName == "" {
+			relName = t.FollowIncoming
+		}
+		out[t.CollectAs] = determineTargetType(t, relName, meta)
+	}
+	return out
 }
 
 // viewCommandPermissionWarnings flags `permission:` on a `context: view`
@@ -1092,6 +1323,18 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 			// must still have it checked (RR-4ICH8M). The per-field loops below
 			// also never see the section-level value.
 			errs = append(errs, validateSectionRender(viewID, i, s)...)
+
+			// Validate widget overrides (TKT-3R7RF3), outside the guard for the
+			// same reason: an unregistered widget name is checkable without the
+			// metamodel. The type-compatibility half needs the entity def, so
+			// it is passed when resolvable and skipped (never failed) when not.
+			var widgetDef *metamodel.EntityDef
+			if sourceType != "" {
+				if d, ok := meta.GetEntityDef(sourceType); ok {
+					widgetDef = d
+				}
+			}
+			errs = append(errs, validateSectionFieldWidget(viewID, i, s, widgetDef)...)
 
 			// Validate fields (if source type is known)
 			if sourceType != "" { //nolint:nestif // nested guards each check a distinct optional field of the source config.
@@ -1805,6 +2048,18 @@ func sortedMapKeys[V any](m map[string]V) []string {
 	}
 	natsort.Strings(keys)
 	return keys
+}
+
+// joinWidgetTableKeys is joinMapKeys for the widget→types table, whose value
+// type differs. Same output contract: sorted, comma-separated, for an error
+// message that tells the operator the valid set (the config is not a secret).
+func joinWidgetTableKeys(m map[string][]string) string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	natsort.Strings(keys)
+	return strings.Join(keys, ", ")
 }
 
 func joinMapKeys(m map[string]bool) string {

@@ -1261,11 +1261,107 @@ sections:
 | `heading`       | string | Section heading (optional; omit for no heading)         |
 | `source`        | string | `"entry"` or a traverse collection name                 |
 | `display`       | string | Display mode (see below)                                |
+| `render`        | string | `display` (default) or `input` — see Field Render Modes |
 | `fields`        | list   | Properties to show (`properties`, `content`, `cards`, `list` modes) |
 | `columns`       | list   | Column definitions (`table` mode)                       |
 | `group_by`      | string | Property to group entities by                           |
 | `empty_message` | string | Text shown when the collection is empty                 |
 | `link`          | bool   | Link entity titles to their detail pages                |
+
+Each entry under `fields:` takes:
+
+| Field      | Type   | Description                                                  |
+| ---------- | ------ | ------------------------------------------------------------ |
+| `property` | string | Property name                                                |
+| `label`    | string | Display label (defaults to the raw property name)            |
+| `span`     | int    | Width on the 12-column grid (1-12; omit for full width)      |
+| `render`   | string | `display` or `input`; overrides the section's `render`        |
+| `widget`   | string | Which widget renders this property (see Widget Overrides)    |
+
+### Field Render Modes
+
+A view section field renders as a **view-oriented display value** by default.
+Set `render: input` to opt a field into inline editing:
+
+```yaml
+sections:
+  - heading: "Properties"
+    source: entry
+    display: properties
+    render: input          # section-wide default for its fields
+    fields:
+      - property: status   # inherits `input`
+      - property: id
+        render: display    # ...but this one overrides back to display
+```
+
+| Value     | Effect                                                            |
+| --------- | ----------------------------------------------------------------- |
+| `display` | (default) A read-oriented value. Not a disabled input — no control |
+| `input`   | An editable widget that saves on change (auto-save)                |
+
+Resolution is field-first: a field's own `render:` wins, else the section's,
+else `display`. It is resolved server-side, so the value the SPA receives is
+already effective.
+
+> **Breaking change.** Before this, inline editing was implied by write
+> permission. Sections that want it must now say so with `render: input`.
+
+`render: input` **cannot grant editability.** Effective editability is
+`render: input` AND the ACL permitting the write, so `input` on a field the
+caller may not edit still renders as display. Config can only narrow.
+
+A field belonging to a state machine renders its transition control instead of
+an ordinary widget when `render: input`; on `render: display` it renders the
+plain value.
+
+### Widget Overrides
+
+By default the widget is chosen from the property's declared type — `boolean`
+gets a checkbox, `date` a date picker, an enum a dropdown. Set `widget:` to
+choose a different registered widget:
+
+```yaml
+fields:
+  - property: done
+    widget: checkbox     # the payoff case: click to tick, with render: input
+  - property: notes
+    widget: textarea     # a long string, not a single-line input
+```
+
+| Widget         | Accepts                       |
+| -------------- | ----------------------------- |
+| `text`         | string                        |
+| `textarea`     | string                        |
+| `number`       | integer                       |
+| `checkbox`     | boolean                       |
+| `date`         | date                          |
+| `datetime`     | datetime                      |
+| `select`       | enum, string, custom types    |
+| `multi-select` | enum, string (list values)    |
+| `rrule`        | rrule                         |
+| `file`         | file                          |
+
+Rules worth knowing:
+
+- **Field-level only.** There is no section-wide `widget:`, unlike `render:`.
+  A widget is inherently per-property: a section-level one would be a config
+  error on every field whose type didn't match, which the author would then
+  have to override back field by field.
+- **Omitting it changes nothing** — the type default applies exactly as before.
+- **A mismatch is a config-load error.** `widget: checkbox` on a `date`
+  property fails at startup, naming the property, its type, and what the widget
+  does accept.
+- **`widget: file` only works on `display: properties`.** Card and list rows
+  are not given attachment data, so a file widget there would have nothing to
+  show.
+- **It pairs with `render:`.** A checkbox you cannot click is just an icon, so
+  the interactive case needs `render: input` too.
+- **On a property the schema doesn't declare, the override is ignored** and a
+  warning is logged at startup. Such a field has no type to validate against.
+- **On a state-machine field with `render: input`**, the transition control
+  takes precedence and the widget is inert; with `render: display` the widget
+  is used.
 
 ### Display Modes
 
