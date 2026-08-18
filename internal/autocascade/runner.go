@@ -277,6 +277,12 @@ func (r *Runner) executeScriptActions(
 			// Converted to a plain string: this package is schema-agnostic
 			// and may not import metamodel (see ScriptAction.AllowACLBypass).
 			AllowACLBypass: string(action.AllowACLBypass),
+			Capabilities: ScriptCapabilities{
+				HTTP:      action.Capabilities.HTTP,
+				AI:        action.Capabilities.AI,
+				WriteFile: action.Capabilities.WriteFile,
+				Secrets:   action.Capabilities.Secrets,
+			},
 		}, mutator)
 		if err == nil {
 			continue

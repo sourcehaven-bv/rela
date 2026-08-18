@@ -21,7 +21,12 @@ import (
 
 // depsCapturingExecutor records the lua.WriteDeps it was called with, which
 // is exactly the elevation decision this package makes.
-type depsCapturingExecutor struct{ got lua.WriteDeps }
+// It also records the lua.Capabilities grant (TKT-YH52OM), so a test can
+// assert which ambient capabilities an action was actually handed.
+type depsCapturingExecutor struct {
+	got     lua.WriteDeps
+	gotCaps lua.Capabilities
+}
 
 func (d *depsCapturingExecutor) ExecuteCode(
 	_ context.Context, _ string, deps lua.WriteDeps, _, _ *entity.Entity,
@@ -34,6 +39,20 @@ func (d *depsCapturingExecutor) ExecuteFile(
 	_ context.Context, _ string, deps lua.WriteDeps, _, _ *entity.Entity,
 ) error {
 	d.got = deps
+	return nil
+}
+
+func (d *depsCapturingExecutor) ExecuteCodeWithCapabilities(
+	_ context.Context, _ string, deps lua.WriteDeps, _, _ *entity.Entity, caps lua.Capabilities,
+) error {
+	d.got, d.gotCaps = deps, caps
+	return nil
+}
+
+func (d *depsCapturingExecutor) ExecuteFileWithCapabilities(
+	_ context.Context, _ string, deps lua.WriteDeps, _, _ *entity.Entity, caps lua.Capabilities,
+) error {
+	d.got, d.gotCaps = deps, caps
 	return nil
 }
 

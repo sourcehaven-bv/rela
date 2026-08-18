@@ -333,6 +333,7 @@ func (e *Engine) executeAction(action Action, event Event, result *Result, autom
 			Code:           code,
 			AutomationName: automationName,
 			AllowACLBypass: action.AllowACLBypass,
+			Capabilities:   action.Capabilities,
 		})
 	}
 
@@ -343,6 +344,7 @@ func (e *Engine) executeAction(action Action, event Event, result *Result, autom
 			FilePath:       action.LuaFile,
 			AutomationName: automationName,
 			AllowACLBypass: action.AllowACLBypass,
+			Capabilities:   action.Capabilities,
 		})
 	}
 }
