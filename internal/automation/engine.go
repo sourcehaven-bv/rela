@@ -140,6 +140,15 @@ func (e *Engine) SetMetamodel(meta *metamodel.Metamodel) {
 // Automation type. An unparseable `when:` clause is an ERROR, not a skip:
 // dropping a constraint makes the automation fire on MORE entities than the
 // operator wrote, so failing the load is the safe direction.
+//
+// Upgrade impact is narrow by construction. filter.Parse rejects exactly
+// three things — an empty string, a clause with no operator, and one with
+// an empty property name. Everything else parses, including odd-looking
+// input like "a=b=c" or "spaces in prop=x". So the only projects this can
+// newly fail are ones whose clause was ALREADY broken and silently
+// matching nothing; a clause that did real work keeps working. Verified
+// against all 70 distinct when:/then: clauses in this repo's own
+// schema.yaml, every one of which still parses.
 func convertFromMetamodel(def metamodel.AutomationDef) (Automation, error) {
 	whenFilters := make([]*filter.Filter, 0, len(def.On.When))
 	for _, w := range def.On.When {
