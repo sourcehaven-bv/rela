@@ -192,6 +192,39 @@ compare numerically, dates instant-granularly). Host functions are
 available for pattern matching: `match(field, glob)`, `regex(field, re)`,
 `fuzzy(field, target)`, and `contains(list_field, value)`.
 
+Date arithmetic is available too, so a condition can be relative to the
+current day rather than to a hard-coded date:
+
+| Function | Returns | Meaning |
+| -------- | ------- | ------- |
+| `today()` | date | The current day, at UTC midnight |
+| `days_between(a, b)` | number | Whole days from `b` to `a`; positive when `a` is later |
+| `date_add(d, n, unit)` | date | `d` shifted by `n` (may be negative); `unit` is `day` or `week` |
+| `rrule_next(rule, after)` | date | The first occurrence of an RRULE strictly after `after` |
+
+```bash
+# due within a week (and anything already overdue)
+rela list taak --filter "days_between(entity.due, today()) <= 7"
+
+# strictly overdue
+rela list taak --filter "days_between(entity.due, today()) < 0"
+
+# a three-day grace period has lapsed
+rela list taak --filter "date_add(entity.due, 3, 'day') < today()"
+```
+
+Every date value is normalized to UTC midnight, so results are whole days
+and compare equal to bare `YYYY-MM-DD` literals regardless of any time
+component or timezone on the stored value.
+
+`date_add` accepts only `day` and `week`. Months and years are rejected
+rather than silently normalized — "one month after January 31" has no
+single correct answer, and a wrong guess would be invisible in a filter.
+
+`rrule_next` errors when the rule is malformed *or* when it has no
+occurrence left (a `COUNT` reached, an `UNTIL` passed); the two messages
+differ so a finished schedule is distinguishable from a typo.
+
 **`--where` (legacy, deprecated):**
 
 `--where` is transpiled to a predicate internally; prefer `--filter`. It
