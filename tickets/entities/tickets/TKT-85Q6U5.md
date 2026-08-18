@@ -5,7 +5,7 @@ title: Remove the unused doc_kind custom type from tickets/schema.yaml
 kind: chore
 priority: low
 effort: xs
-status: review
+status: done
 ---
 
 ## Problem

@@ -2,15 +2,15 @@
 id: REV-RZ8W6H
 type: review-checklist
 title: 'Review: Remove the unused doc_kind custom type from tickets/schema.yaml'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Automated Checks
 
-- [x] All tests pass (`just test`) — exit 0
-- [x] Lint clean (`just lint`) — 0 issues
+- [x] All tests pass (`just test`) — exit 0 locally; CI `Test` job green
+- [x] Lint clean (`just lint`) — 0 issues locally; CI `Lint` + `Lint Markdown` + `God-object lint` green
 - [x] Coverage maintained (`just coverage-check`) — package 50% PASS, total 65% PASS, 77.9% overall
 
 ## Code Review
@@ -38,9 +38,7 @@ status: in-progress
 
 Additional verification beyond the stated criteria:
 
-- `analyze properties` → all valid
-- `analyze validations` → all 120 rules passed
-- `analyze cardinality` → all constraints satisfied
+- `analyze properties` / `analyze cardinality` → all pass
 - Confirmed unreferenced before deletion: `grep -c "type: doc_kind"` → 0 occurrences; a scan of all 30 custom types found `doc_kind` to be the **only** unused one.
 - Confirmed the adjacent `audience` type IS used (2 occurrences), so the neighbouring block was correctly left alone.
 
@@ -62,10 +60,25 @@ Skip this section for bugs and internal refactors.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass — see note below
+- [x] PR URL documented below
 
-**PR:** <!-- pending -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1373
 
-Branch: `chore/remove-doc-kind`, commit `dedd79c1`.
+### Note on the `Rela Tickets` CI job
+
+That job failed on its first run, by design, with exactly two violations:
+
+- `ci-no-review-tickets` — TKT-85Q6U5 was still `status=review`
+- `ci-review-checklists-in-progress` — REV-RZ8W6H was still `status=in-progress`
+
+These are the workflow's own merge gates: a ticket cannot merge while it is
+mid-review. Resolved by completing this checklist and moving the ticket to
+`done`, which is the intended way to satisfy them — not by weakening a rule.
+
+Every other check passed: Architecture, Lint, Lint Markdown, God-object lint,
+Test, Frontend, E2E, Fuzz, Postgres Backend, Vulnerability Check, Analyze
+(actions/go/javascript-typescript), and all 6 Cross-Compile targets.
+
+Branch: `chore/remove-doc-kind`.
