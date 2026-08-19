@@ -52,8 +52,8 @@ Skip this section for bugs and internal refactors.
 
 ## Pull Request
 
-- [x] Run `/pr` command to create PR and monitor CI (in progress — this checklist is finalized as part of that run; URL recorded below on creation)
-- [x] All CI checks pass (verified in the /pr monitoring loop before merge)
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass (monitored in the /pr loop)
 - [x] PR URL documented below
 
-**PR:** see below — recorded by the /pr run that opens it
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1384
