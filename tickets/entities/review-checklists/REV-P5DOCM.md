@@ -2,7 +2,7 @@
 id: REV-P5DOCM
 type: review-checklist
 title: 'Review: Widget override for view section fields (`widget:` on ViewSectionField)'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -130,8 +130,8 @@ an e2e response probe) were removed — verified absent from the tree.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass
+- [x] PR URL documented below
 
-**PR:** <!-- filled by /pr -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1377
