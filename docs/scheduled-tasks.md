@@ -149,7 +149,7 @@ Notes:
 | `day`        | Once per day — runs after local midnight                   |
 | `monday`     | Once per week on Mondays (after midnight local time)       |
 | `friday`     | Once per week on Fridays                                   |
-| `week`       | Alias for `monday`                                         |
+| `week`       | Alias for `monday` — fires on Mondays, not ISO-week change |
 | `30m`        | Every 30 minutes                                           |
 | `2h`         | Every 2 hours                                              |
 | `1h30m`      | Every 90 minutes (any valid Go duration)                   |

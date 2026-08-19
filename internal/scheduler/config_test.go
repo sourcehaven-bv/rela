@@ -290,7 +290,7 @@ func TestScheduleIsDue_weekday_notISOWeekBased(t *testing.T) {
 		{
 			// ISO week unchanged (both 2026-W15), yet due: Friday occurred.
 			name:    "same ISO week, target weekday occurred",
-			lastRun: time.Date(2026, 4, 9, 18, 0, 0, 0, time.Local), // Thu
+			lastRun: time.Date(2026, 4, 6, 9, 0, 0, 0, time.Local),  // Mon
 			now:     time.Date(2026, 4, 10, 8, 0, 0, 0, time.Local), // Fri
 			want:    true,
 		},
