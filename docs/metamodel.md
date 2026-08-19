@@ -1815,6 +1815,17 @@ entities than you wrote, which is invisible in production. The same now
 applies to an unparseable `when:` clause, which earlier versions skipped
 silently.
 
+> **Upgrade note.** Making an unparseable `when:` clause fatal is a
+> behaviour change on the load path. It can only affect a clause that was
+> *already* broken — one that parsed to nothing and was silently dropped,
+> so the automation had been firing more widely than intended. The filter
+> parser rejects only three shapes: an empty string, a clause with no
+> operator (`status`), and one with no property (`=todo`). A plausible
+> way to hit this is a YAML-confusion typo like `- "status: todo"` inside
+> a `when:` list. If your project starts failing to load after upgrading,
+> the error names the automation and the offending clause — the fix is to
+> write the clause you meant, e.g. `status=todo`.
+
 Why not one key that accepts either dialect? The syntaxes overlap without
 erroring — the filter parser reads
 `days_between(entity.due, today()) <= 7` as a filter on a property literally
