@@ -512,20 +512,37 @@ jobs:
       # still turns a MISSING DSN into a hard failure, which is the regression
       # that actually matters.
       #
-      # internal/cli is scoped to its wiring tests rather than run whole. The
-      # package also holds render tests that shell out through internal/cmdexec,
-      # which fails closed without a working sandbox — and bubblewrap cannot set
-      # up its loopback device on this job's runner ("RTM_NEWADDR: Operation not
+      # internal/cli and internal/dataentry are scoped with -run rather than run
+      # whole. Both hold tests that shell out through internal/cmdexec, which
+      # fails closed without a working sandbox — and bubblewrap cannot set up its
+      # loopback device on this job's runner ("RTM_NEWADDR: Operation not
       # permitted"), even with the package installed, unlike the `test` job.
       # Those tests are backend-independent and already covered there; running
       # them here would gate the postgres wiring on an unrelated sandbox
       # capability. The `test` job remains the owner of full-package coverage.
+      #
+      # THE LIST BELOW MUST COVER EVERY PACKAGE WITH A postgres-TAGGED FILE.
+      # That is the rule this step exists to enforce: the original defect
+      # (BUG-3KQW7P) was tag coverage scoped to the package that motivated the
+      # tag (the store) rather than to everything the tag changes, so tagged code
+      # elsewhere compiled on every PR and never ran. Find the current set with:
+      #
+      #   grep -rl '^//go:build postgres' --include='*.go' internal/ cmd/ \
+      #     | xargs -n1 dirname | sort -u
+      #
+      # internal/dataentry earns its place: store_bridge_postgres_test.go holds
+      # TestStoreEventBridgeCrossProcessSSE, the ONLY end-to-end proof that a
+      # write in one process reaches another's SSE feed over LISTEN/NOTIFY —
+      # TKT-WZYWM9's headline feature, and the path TKT-9TOEBH changed the wire
+      # format of. Verified non-vacuous: with remote emission disabled it fails.
       - name: Run composition-root wiring tests against PostgreSQL
         run: |
           set -euo pipefail
           go test -race -tags postgres ./internal/appbuild/...
           go test -race -tags postgres -run 'TestNewMCPServices|TestMCPServices|TestMCPWatcher' \
             ./internal/cli/
+          go test -race -tags postgres -run 'TestStoreEventBridge' ./internal/dataentry/
+          go test -race -tags postgres ./internal/docscli/
 
   # Cross-compile every (GOOS, build-tag) combination GoReleaser ships so a
   # platform-specific compile break (e.g. a unix-only syscall used without a
