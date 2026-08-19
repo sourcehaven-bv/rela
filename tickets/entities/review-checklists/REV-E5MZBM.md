@@ -91,7 +91,7 @@ see RR-R7TFQ2 resolution)
 ## Pull Request
 
 - [x] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
+- [x] All CI checks pass — 23/24 green on PR #1375. The single red is the self-referential `Rela Tickets` gate, which fails only because this checklist item was unticked; it clears with this commit and the transition to done.
 - [x] PR URL documented below
 
 **PR:** https://github.com/sourcehaven-bv/rela/pull/1375

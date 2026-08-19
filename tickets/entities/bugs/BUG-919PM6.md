@@ -10,7 +10,8 @@ why2: checkDeadPermissions (internal/aclaudit/tier_a.go:176) builds its used-set
 why3: 'The four UI consumers live in data-entry.yaml (internal/dataentryconfig/config.go: documents :668, cards :773, navigation :896, commands :964) — a config file aclaudit is never handed.'
 why4: aclaudit is deliberately bounded to internal/acl and takes the metamodel through a narrow injected MetamodelReader; no equivalent seam was defined for permission consumers, so the data-entry config had no route in.
 why5: 'The audit''s dependency posture (inject narrow views of what you need) was applied to the metamodel but not carried to permissions, because A7 was assumed to be a pure-policy Tier-A check. It is not: it asserts a fact about the whole system''s consumers while seeing only one file.'
-status: backlog
+status: done
+prevention: 'Carry the dependency posture all the way. aclaudit already had the right pattern (a narrow injected MetamodelReader) and the bug was failing to apply it to the second thing the audit needed to know. When a check asserts a whole-system fact, enumerate its inputs explicitly and inject each one; per-surface tests then make an incomplete adapter fail loudly. Second, distinguish ''no data'' from ''no answer'': a nil consumer must suppress the check rather than run it blind, and that distinction has to be pinned at the CALL SITE — the typed-nil defect passed every callee test and was caught only by running the binary.'
 ---
 
 ## Symptom

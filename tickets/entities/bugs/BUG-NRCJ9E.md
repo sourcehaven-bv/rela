@@ -10,7 +10,8 @@ why2: checkDeadPermissions (internal/aclaudit/tier_a.go:176) seeds its `used` ma
 why3: 'The built-in globals are not write-gates at all: PermHistoryRead gates a read path (deleted-entity history), so it can never appear in a requires_permission — the one place A7 looks.'
 why4: A7 was written against the delegate-X permission family, where 'granted in permissions:' and 'consumed by requires_permission' genuinely coincide; that coincidence was encoded as a universal rule rather than a property of that one family.
 why5: The audit treats acl.Policy as the complete world of permission producers AND consumers. It is complete for producers (roles[].permissions) but not for consumers, and nothing enforces that the two sets stay symmetric — so every consumer added outside acl.yaml silently turns live config into a false 'dead' report.
-status: backlog
+status: done
+prevention: 'Registration over prose. BuiltinPermissions() replaces the implicit assumption that acl.Policy sees every permission consumer, and permguard_test.go scans package source so a new Perm* constant that is not registered fails CI at the moment it is written — the drift that caused this bug is now unavailable rather than merely discouraged. Note the first fix shipped with the guard MISSING: the original test iterated the registry, so an omitted constant was invisible to it, and only a code review caught that. The wider lesson: when a fix depends on a list staying in sync with source, test the SOURCE, not the list.'
 ---
 
 ## Symptom
