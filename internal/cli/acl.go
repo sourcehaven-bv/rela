@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	stderrors "errors"
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/aclaudit"
+	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -55,22 +57,12 @@ func (c *ACLAuditCmd) Run(svc *readServices) error {
 		return fmt.Errorf("load acl.yaml: %w", err)
 	}
 
-	// A7 (dead permission) needs to know which permissions the data-entry UI
-	// gates reference. If we cannot read them the audit still runs, but A7 is
-	// suppressed rather than reporting live config as dead (BUG-919PM6).
-	//
-	// perms is declared at INTERFACE type on purpose: assigning a nil
-	// *dataEntryPermissions to it would produce a non-nil interface holding a
-	// nil pointer, and Audit's `perms == nil` check would not fire.
-	var perms aclaudit.PermissionConsumer
-	loaded, err := loadDataEntryPermissions(svc.Paths.Root)
-	if err != nil {
+	perms, permsErr := permissionConsumerFor(svc.Config)
+	if permsErr != nil {
 		out.WriteWarning(
 			"could not read %s (%v); skipping the dead-permission check, which cannot "+
 				"tell a dead permission from one gating a document, card, navigation entry or command.",
-			dataentryconfig.ConfigFile, err)
-	} else {
-		perms = loaded
+			dataentryconfig.ConfigFile, permsErr)
 	}
 
 	findings := aclaudit.Audit(policy, &metamodelReader{m: svc.Meta}, perms)
@@ -241,15 +233,20 @@ func (d *dataEntryPermissions) UsedPermissions() []string {
 		return nil
 	}
 	var perms []string
+	add := func(perm string) {
+		if perm != "" {
+			perms = append(perms, perm)
+		}
+	}
 	for _, doc := range d.cfg.Documents {
-		perms = append(perms, doc.Permission)
+		add(doc.Permission)
 	}
 	for _, cmd := range d.cfg.Commands {
-		perms = append(perms, cmd.Permission)
+		add(cmd.Permission)
 	}
 	if d.cfg.Dashboard != nil {
 		for _, card := range d.cfg.Dashboard.Cards {
-			perms = append(perms, card.Permission)
+			add(card.Permission)
 		}
 	}
 	perms = append(perms, navigationPermissions(d.cfg.Navigation)...)
@@ -259,13 +256,38 @@ func (d *dataEntryPermissions) UsedPermissions() []string {
 // navigationPermissions walks the navigation tree. Groups nest their entries
 // under Items, so a flat loop over the top level would miss every permission
 // on a grouped entry.
+//
+// It recurses even though NavigationEntry's own doc says nested groups are not
+// supported: over-collecting a permission is harmless for an audit (it can only
+// suppress an advisory finding), while under-collecting is the bug this whole
+// consumer exists to fix.
 func navigationPermissions(entries []dataentryconfig.NavigationEntry) []string {
 	perms := make([]string, 0, len(entries))
 	for _, e := range entries {
-		perms = append(perms, e.Permission)
+		if e.Permission != "" {
+			perms = append(perms, e.Permission)
+		}
 		perms = append(perms, navigationPermissions(e.Items)...)
 	}
 	return perms
+}
+
+// permissionConsumerFor returns the audit's view of the permissions referenced
+// by data-entry UI gates, or a nil INTERFACE when the config could not be read.
+//
+// The return type is the interface, not *dataEntryPermissions, on purpose. A
+// helper returning the concrete type would force the caller to convert, and the
+// obvious conversion (`var c PermissionConsumer = loaded` after an error, or
+// assigning a nil pointer) yields a NON-nil interface wrapping a nil pointer —
+// so aclaudit.Audit's `perms == nil` check would not fire and A7 would run
+// blind, which is the exact false positive BUG-919PM6 fixed. Returning the
+// interface makes the nil case unrepresentable any other way.
+func permissionConsumerFor(cfg config.Loader) (aclaudit.PermissionConsumer, error) {
+	loaded, err := loadDataEntryPermissions(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return loaded, nil
 }
 
 // loadDataEntryPermissions reads and parses data-entry.yaml for the audit's
@@ -276,17 +298,22 @@ func navigationPermissions(entries []dataentryconfig.NavigationEntry) []string {
 // A missing file returns a consumer over an empty config, NOT nil — "the
 // project has no data-entry.yaml" is complete information (no UI gates exist),
 // unlike "we could not look", which must suppress the dead-permission check.
-func loadDataEntryPermissions(root string) (*dataEntryPermissions, error) {
-	data, err := os.ReadFile(filepath.Join(root, dataentryconfig.ConfigFile))
+//
+// It reads through the injected [config.Loader] rather than the OS filesystem:
+// that is the swap boundary for remote/embedded config backends, and reading
+// around it would make the audit silently skip A7 on any deployment whose
+// config does not live on local disk.
+func loadDataEntryPermissions(cfg config.Loader) (*dataEntryPermissions, error) {
+	data, err := cfg.Load(context.Background(), dataentryconfig.ConfigFile)
 	if err != nil {
 		if stderrors.Is(err, os.ErrNotExist) {
 			return &dataEntryPermissions{cfg: &dataentryconfig.Config{}}, nil
 		}
 		return nil, err
 	}
-	var cfg dataentryconfig.Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	var parsed dataentryconfig.Config
+	if err := yaml.Unmarshal(data, &parsed); err != nil {
 		return nil, err
 	}
-	return &dataEntryPermissions{cfg: &cfg}, nil
+	return &dataEntryPermissions{cfg: &parsed}, nil
 }

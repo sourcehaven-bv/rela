@@ -218,9 +218,11 @@ func checkDeadPermissions(p *acl.Policy, perms PermissionConsumer) []Finding {
 			}
 			f = append(f, Finding{
 				Rule: "A7-dead-permission", Severity: Low, Subject: name,
-				Detail: fmt.Sprintf("role %q grants permission %q which no role_relations.requires_permission "+
-					"references; the permission is dead", name, perm),
-				Fix: fmt.Sprintf("reference %q in a requires_permission gate, or remove it (check for a typo)", perm),
+				Detail: fmt.Sprintf("role %q grants permission %q which nothing references — no "+
+					"role_relations.requires_permission gate, no data-entry.yaml permission: key, "+
+					"and it is not one of rela's built-in permissions; the permission is dead", name, perm),
+				Fix: fmt.Sprintf("reference %q from a requires_permission gate or a data-entry.yaml "+
+					"permission: key, or remove it (check for a typo)", perm),
 			})
 		}
 	}
