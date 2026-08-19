@@ -63,8 +63,28 @@ the built binary: completes, and `git status docs/ README.md` is clean — outpu
 byte-identical. This is why `rela script` / `rela flow` / the docs runtime get
 `TrustedCapabilities()`.
 
-**Full suite**: `go test ./...` → 0 failures. `just arch-lint` → OK (the new
-`scheduler` → `metamodel` import is permitted).
+**Config-level verification.** The Go-struct tests above prove the mechanism;
+two further tests start from real YAML text, so the spelling the docs tell
+operators to write is the spelling that decodes:
+`TestCapabilities_FromRealYAML` (data-entry.yaml: actions + documents),
+`TestTaskCapabilities_FromRealYAML` (schedules.yaml), and
+`TestCapabilities_BareBoolRefusedInContext` (`capabilities: true` nested in a
+real config is refused with a message naming the mapping form). Mutation-checked
+by removing the `yaml:"capabilities"` tag — both fail.
+
+**Full gate**: `go test ./...` → 0 failures. `just arch-lint` → OK (the new
+`scheduler` → `metamodel` import is permitted). `just coverage-check` → package
+and total thresholds PASS (77.8% total). `just plimsoll` → clean (the added
+struct fields stay under the field caps).
+
+**Lint.** `just lint` is OOM-killed in this environment at its default memory
+settings — including on an unmodified tree, so it is not caused by this change.
+Re-run as `GOMEMLIMIT=12GiB GOGC=400 golangci-lint run --concurrency=2 ./...`
+it completes: **0 issues across the whole project**. That run caught two real
+defects in this ticket's own code that the earlier fallback (`go vet` + a
+line-length check) had missed — a `misspell` hit and a `strings.Builder`
+(`modernize`) hit in the rewritten memoize test. Both fixed; do not treat
+`go vet` as a substitute for the linter again.
 
 ## Quality
 
