@@ -506,7 +506,7 @@ func TestCheckCardinality_CountErrorFailsLoudly(t *testing.T) {
 	broken := &failingCountStore{Store: st, err: countErr}
 	tr := tracer.New(broken)
 	svc, err := analysis.New(analysis.Deps{Store: broken, Meta: meta, Tracer: tr,
-		LuaReadDeps: lua.ReadDeps{VisibleReader: broken, WritePrepStore: broken, Tracer: tr, Meta: meta}})
+		LuaReadDeps: lua.ReadDeps{VisibleReader: broken, Tracer: tr, Meta: meta}})
 	if err != nil {
 		t.Fatalf("analysis.New: %v", err)
 	}
