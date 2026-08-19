@@ -67,4 +67,4 @@ follow-up on BUG-8HT4XN instead of being half-built here.
 - [x] PR created and CI monitored
 - [x] PR URL documented below
 
-**PR:** (filled in on creation)
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1383
