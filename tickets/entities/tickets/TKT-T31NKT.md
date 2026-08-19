@@ -5,7 +5,7 @@ title: Gate the membership relation against ACL self-promotion
 kind: enhancement
 priority: critical
 effort: m
-status: review
+status: done
 ---
 
 Security gate for shipping content states — design doc §12.1

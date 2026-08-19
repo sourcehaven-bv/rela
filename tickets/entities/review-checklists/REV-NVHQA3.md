@@ -2,7 +2,7 @@
 id: REV-NVHQA3
 type: review-checklist
 title: 'Review: Gate the membership relation against ACL self-promotion'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -24,11 +24,10 @@ status: in-progress
 
 Code review: RR-5NIR95 (significant, addressed), RR-TVL38I (significant,
 addressed), RR-EZ0P4S (minor, deferred: audit double-report follow-up),
-RR-D3MEV0 (minor, addressed: docs wording), RR-6560A3 (minor, addressed:
-shared test const), RR-8ZOICR (minor, deferred: asserted-roles audit gap,
-flagged to architect).
-Design review (earlier): RR-62ZH2M (minor, wont-fix), RR-S7A16Q (minor,
-deferred to TKT-DN37J2 discussion).
+RR-D3MEV0 (minor, addressed: docs wording), RR-6560A3 (minor, addressed: shared
+test const), RR-8ZOICR (minor, deferred: asserted-roles audit gap, flagged to
+architect). Design review (earlier): RR-62ZH2M (minor, wont-fix), RR-S7A16Q
+(minor, deferred to TKT-DN37J2 discussion).
 
 ## Acceptance Verification
 
@@ -54,14 +53,14 @@ Skip this section for bugs and internal refactors.
 
 ## Final Checks
 
-- [ ] Commit message explains the why, not just what (pending: commit/PR timing is the architect's call)
+- [x] Commit message explains the why, not just what (`feat(acl): shared ungated-membership predicate + startup warning (TKT-T31NKT)`; PR body carries the why)
 - [x] No TODOs or FIXMEs left unaddressed
 - [x] Ready for another developer to use
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass (all code checks green on PR #1378; the Rela Tickets workflow gate clears with this final ticket-state commit)
+- [x] PR URL documented below
 
-**PR:** <!-- e.g., https://github.com/org/repo/pull/123 -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1378
