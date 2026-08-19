@@ -5,7 +5,7 @@ title: Consolidate cardinality analyzers; stop swallowing CountRelations errors
 kind: refactor
 priority: high
 effort: s
-status: review
+status: done
 ---
 
 Design doc §12.5 + §12.6 — the suggested first move; unblocks Step 5 and fixes a

@@ -2,7 +2,7 @@
 id: REV-1HTU0H
 type: review-checklist
 title: 'Review: Consolidate cardinality analyzers; stop swallowing CountRelations errors'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -23,16 +23,15 @@ status: in-progress
 **Review Responses:**
 
 RR-4JWU2I (significant, addressed: honest godoc on the validate banner),
-RR-STCCY8 (significant, addressed: CLI-boundary error tests; double-scan
-hazard documented in-code, compute-once is the follow-up), RR-5FKMKX
-(significant, addressed: relName folded into cardinalitySpec), RR-1HB83A
-(minor, addressed: direction in the count error), RR-3ZJM3P (minor,
-addressed: load-bearing comments), RR-TFUP2X (minor, addressed:
-interleaving-regression pin + import nit). Reviewer leverage notes not
-turned into findings: promote the fault-injection wrapper to storetest +
-an Nth-call failure variant (deferred — cross-package test infra, own
-change); the MCP fifth cardinality copy (already flagged to the
-architect, out of scope by recorded decision).
+RR-STCCY8 (significant, addressed: CLI-boundary error tests; double-scan hazard
+documented in-code, compute-once is the follow-up), RR-5FKMKX (significant,
+addressed: relName folded into cardinalitySpec), RR-1HB83A (minor, addressed:
+direction in the count error), RR-3ZJM3P (minor, addressed: load-bearing
+comments), RR-TFUP2X (minor, addressed: interleaving-regression pin + import
+nit). Reviewer leverage notes not turned into findings: promote the
+fault-injection wrapper to storetest + an Nth-call failure variant (deferred —
+cross-package test infra, own change); the MCP fifth cardinality copy (already
+flagged to the architect, out of scope by recorded decision).
 
 ## Acceptance Verification
 
@@ -64,8 +63,8 @@ Skip this section for bugs and internal refactors.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass (monitored to green on PR #1381; stacked on #1378)
+- [x] PR URL documented below
 
-**PR:** <!-- e.g., https://github.com/org/repo/pull/123 -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1381
