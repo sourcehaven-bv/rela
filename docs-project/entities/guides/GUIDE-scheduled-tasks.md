@@ -232,7 +232,7 @@ was missed and executes the task immediately before entering the normal schedule
 This applies to all schedule types:
 
 - **Day tasks**: missed if the day changed since the last run
-- **Week tasks**: missed if the ISO week changed since the last run
+- **Weekday tasks**: missed if the target weekday has occurred since the last run
 - **Interval tasks**: missed if more than the interval has elapsed
 
 ### First Run

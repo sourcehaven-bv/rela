@@ -272,6 +272,48 @@ func TestScheduleIsDue_weekday_friday(t *testing.T) {
 	}
 }
 
+// TestScheduleIsDue_weekday_notISOWeekBased pins the documented semantics
+// (BUG-HTR4U1): a weekday schedule is due when the target weekday has occurred
+// since lastRun — NOT when the ISO week changed. The two rows disagree with the
+// ISO-week reading in opposite directions, so both fail if it creeps back in.
+func TestScheduleIsDue_weekday_notISOWeekBased(t *testing.T) {
+	t.Parallel()
+
+	s := Schedule{kind: weekdayKind, weekday: time.Friday, set: true}
+
+	tests := []struct {
+		name    string
+		lastRun time.Time
+		now     time.Time
+		want    bool
+	}{
+		{
+			// ISO week unchanged (both 2026-W15), yet due: Friday occurred.
+			name:    "same ISO week, target weekday occurred",
+			lastRun: time.Date(2026, 4, 9, 18, 0, 0, 0, time.Local), // Thu
+			now:     time.Date(2026, 4, 10, 8, 0, 0, 0, time.Local), // Fri
+			want:    true,
+		},
+		{
+			// ISO week changed (W15 → W16), yet not due: last ran Saturday,
+			// after that week's Friday, and the next Friday hasn't come.
+			name:    "ISO week changed, target weekday not yet occurred",
+			lastRun: time.Date(2026, 4, 11, 10, 0, 0, 0, time.Local), // Sat
+			now:     time.Date(2026, 4, 13, 9, 0, 0, 0, time.Local),  // Mon
+			want:    false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := s.IsDue(tc.lastRun, tc.now); got != tc.want {
+				t.Errorf("IsDue(%v, %v) = %v, want %v", tc.lastRun, tc.now, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestScheduleIsDue_interval(t *testing.T) {
 	t.Parallel()
 
