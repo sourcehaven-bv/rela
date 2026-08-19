@@ -10,7 +10,8 @@ why2: The bullet was written as a plausible mental model ('week tasks ~ week cha
 why3: The doc section had no test or generation link to the code it describes — the guide is hand-authored prose, so nothing forced the described semantics to match mostRecentWeekday/IsDue.
 why4: Missed-run detection is not a separate mechanism at all (it's the same IsDue check running at startup), so documenting it as its own list of rules invited re-deriving — and mis-deriving — semantics that already had one canonical description elsewhere in the same guide.
 why5: Docs describing behavior have no conformance check; divergence is only caught when a reader compares prose against code, which happened here only during an unrelated bug fix (BUG-ZKK2UL).
-status: review
+prevention: 'Behavior prose must be derived from the implementation, not from config keyword names: the corrected bullet now uses the same wording as the IsDue godoc, the misleading `week` alias row states it fires on Mondays rather than ISO-week change, and TestScheduleIsDue_weekday_notISOWeekBased fails if ISO-week semantics are ever implemented or re-documented. AM-weekday-schedule-due-semantics pins the rule.'
+status: done
 ---
 
 ## Symptom
