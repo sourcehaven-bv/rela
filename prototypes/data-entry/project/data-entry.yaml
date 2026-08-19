@@ -463,6 +463,22 @@ views:
             span: 6
           - property: estimated_hours
             span: 4
+          # TKT-3R7RF3 — `widget:` overrides which widget renders a property,
+          # independently of its type.
+          #
+          # is_blocked is a boolean, so a checkbox is already its default; it
+          # is spelled out here because with `render: input` above it is the
+          # payoff case — tick it and the value saves, no form round-trip.
+          #
+          # description is a string, whose default is a single-line text
+          # input. `widget: textarea` is the case that only config can reach:
+          # nothing about the type says this field holds a paragraph.
+          - property: is_blocked
+            widget: checkbox
+            span: 4
+          - property: description
+            widget: textarea
+            span: 12
 
       # Ticket body (markdown content)
       - source: entry
