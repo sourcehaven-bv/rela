@@ -1,7 +1,7 @@
 ---
 id: RR-CAPSCH
 type: review-response
-title: 'Deps-carried capability grants were silently erased: every scheduled task's capabilities: block was a no-op'
+title: "Deps-carried capability grants were silently erased: every scheduled task's capabilities: block was a no-op"
 finding: |-
     Engine.execute passes lua.WithCapabilities UNCONDITIONALLY — plain ExecuteFile/ExecuteCode supply an empty lua.Capabilities{}. WithCapabilities assigned straight into r.caps, and options are applied AFTER the runtime is seeded from deps.Capabilities, so the empty option overwrote whatever the deps carried.
 
