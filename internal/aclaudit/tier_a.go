@@ -210,9 +210,9 @@ func checkDeadPermissions(p *acl.Policy, perms PermissionConsumer) []Finding {
 	}
 	var f []Finding
 	for _, name := range sortedRoleNames(p) {
-		perms := append([]string(nil), p.Roles[name].Permissions...)
-		sort.Strings(perms)
-		for _, perm := range perms {
+		rolePerms := append([]string(nil), p.Roles[name].Permissions...)
+		sort.Strings(rolePerms)
+		for _, perm := range rolePerms {
 			if used[perm] {
 				continue
 			}

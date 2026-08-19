@@ -4,7 +4,8 @@ type: review-response
 title: A7 finding text still names requires_permission as the only consumer, so the remediation is wrong for UI-gated permissions
 finding: 'internal/aclaudit/tier_a.go:220-224 — the whole premise of these commits is that requires_permission is NOT the only place a permission is referenced, yet the message an operator reads is unchanged: ''which no role_relations.requires_permission references; the permission is dead'' with ''fix: reference X in a requires_permission gate, or remove it''. After the fix that Detail is still literally true but is no longer the REASON the permission is dead, and the Fix is the wrong remediation for a report/command/nav permission — those are gated by `permission:` in data-entry.yaml, not by a relation gate. The original bug report called out this exact Fix string as ''actively harmful''; the false positive is fixed but the misleading remediation that made it harmful survives. docs/acl-security.md:74-78 describes A7''s scope in the same narrow terms and was not updated.'
 severity: significant
-status: open
+resolution: 'Reworded the A7 Detail and Fix in internal/aclaudit/tier_a.go to name all three consumer classes. Detail now reads ''...which nothing references — no role_relations.requires_permission gate, no data-entry.yaml permission: key, and it is not one of rela''s built-in permissions; the permission is dead''; Fix now offers both routes: ''reference X from a requires_permission gate or a data-entry.yaml permission: key, or remove it (check for a typo)''. Verified end-to-end against the built binary. Docs part of the finding does NOT apply: docs/acl-security.md:78 mentions A7 only as ''dead permissions'' in a summary list of finding categories — it never describes the check''s scope in terms of requires_permission, so it remains accurate and was left unchanged. I searched docs/ for any detailed A7 treatment and found none.'
+status: addressed
 ---
 
 ## Fix
