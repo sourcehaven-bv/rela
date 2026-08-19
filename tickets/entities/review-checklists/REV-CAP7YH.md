@@ -88,7 +88,7 @@ intended test fails, including the guard test itself.
 ## Pull Request
 
 - [x] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] All CI checks pass
+- [x] PR URL documented below
 
-**PR:** pending — see below.
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1385
