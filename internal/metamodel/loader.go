@@ -300,6 +300,14 @@ func validateEntitySemantics(m *Metamodel) []string {
 	for _, name := range entityNames {
 		def := m.Entities[name]
 
+		// The entity-type name is interpolated into backend DDL by the
+		// derived-schema reconciler (`... WHERE type = '<type>'`), so it must
+		// use the safe character set for the same DDL-injection reason as
+		// property names (TKT-3Q0GP1).
+		if err := ValidateSchemaName(name); err != nil {
+			errs = append(errs, fmt.Sprintf("entity %v", err))
+		}
+
 		if def.Label == "" {
 			errs = append(errs, fmt.Sprintf("entity %q: missing 'label'", name))
 		}
@@ -665,6 +673,14 @@ func validatePropertyDefs(
 			continue
 		}
 
+		// Check the property name's character set. Names are interpolated into
+		// backend DDL by the derived-schema reconciler, so a name outside the
+		// safe set is a DDL-injection vector; forbid it at load (TKT-3Q0GP1).
+		if err := ValidateSchemaName(propName); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: property %v", schemaName, err))
+			continue
+		}
+
 		// Check property type is specified
 		if propDef.Type == "" {
 			errs = append(errs, fmt.Sprintf(
@@ -691,10 +707,41 @@ func validatePropertyDefs(
 				"%s: property %q is type \"enum\" but has no 'values' list", schemaName, propName))
 		}
 
+		// `unique: true` is only meaningful on string-valued properties. The
+		// application uniqueness check reads values as strings (empty for a
+		// non-string), so on an integer/boolean/file property it would silently
+		// never fire — while the PostgreSQL derived index over `properties->>'p'`
+		// WOULD enforce, giving two enforcement paths that disagree. Reject the
+		// combination at load rather than ship that divergence (TKT-3Q0GP1).
+		// string/date/datetime/enum/rrule are all stored as strings and are fine.
+		if propDef.Unique && !isStringValuedType(propDef.Type) {
+			errs = append(errs, fmt.Sprintf(
+				"%s: property %q has 'unique: true' on non-string type %q; "+
+					"unique is only supported on string-valued properties",
+				schemaName, propName, propDef.Type))
+		}
+
 		errs = append(errs, validateFilePropertyOptions(schemaName, propName, propDef)...)
 	}
 
 	return errs
+}
+
+// isStringValuedType reports whether a property of this type stores its value
+// as a string (so the application uniqueness check, which reads values as
+// strings, can see it). The built-in string-ish types qualify; integer,
+// boolean, and file do not. Any non-built-in type name is a custom type
+// (enum/regex, defined in `types:`), whose values are strings, so it qualifies.
+func isStringValuedType(typeName string) bool {
+	switch typeName {
+	case PropertyTypeString, PropertyTypeDate, PropertyTypeDatetime, PropertyTypeEnum, PropertyTypeRrule:
+		return true
+	case PropertyTypeInteger, PropertyTypeBoolean, PropertyTypeFile:
+		return false
+	default:
+		// A custom type (declared in `types:`) — enum or regex-validated string.
+		return true
+	}
 }
 
 // validateFilePropertyOptions checks the attachment-only property options

@@ -9,6 +9,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -72,37 +73,64 @@ type stubRecorder struct{}
 
 func (stubRecorder) RecordElevatedRead(context.Context, []string) {}
 
-// TestRun_ElevationRequiresBothKeys is the table that pins the gate. Read
-// and write elevation are asserted TOGETHER because they must turn on and
-// off as one — a row where one is granted and the other is not would mean
-// the two capabilities had drifted apart.
+// TestRun_ElevationRequiresBothKeys is the table that pins the gate. Both
+// keys are still required for ANY elevation: the operator opt-in on the
+// action, and a Mutator that offers the capability.
+//
+// Since TKT-Y3JVFK read and write are asserted SEPARATELY, because the
+// allow_acl_bypass enum grants them independently — `read` must yield a
+// reader and no Mutator, `write` the reverse. What must NOT drift is the
+// outer gate: neither capability may appear without both keys.
 func TestRun_ElevationRequiresBothKeys(t *testing.T) {
 	t.Parallel()
 
 	elevation := ReadElevation{Reader: stubReader{}, Recorder: stubRecorder{}}
 	for _, tc := range []struct {
 		name        string
-		allowBypass bool
+		allowBypass metamodel.ACLBypass
 		mutator     autocascade.Mutator
-		wantGranted bool
+		wantWrite   bool
+		wantRead    bool
 	}{
 		{
-			name:        "both keys: elevation granted",
-			allowBypass: true,
+			name:        "read+write with elevating mutator: both granted",
+			allowBypass: metamodel.ACLBypassReadWrite,
 			mutator:     elevatingMutator{},
-			wantGranted: true,
+			wantWrite:   true,
+			wantRead:    true,
+		},
+		{
+			// The document-render posture: reads elevate, writes do not, so
+			// the surface is structurally unable to mutate.
+			name:        "read only: reader granted, no elevated mutator",
+			allowBypass: metamodel.ACLBypassRead,
+			mutator:     elevatingMutator{},
+			wantRead:    true,
+		},
+		{
+			name:        "write only: mutator granted, no elevated reader",
+			allowBypass: metamodel.ACLBypassWrite,
+			mutator:     elevatingMutator{},
+			wantWrite:   true,
 		},
 		{
 			// Operator opt-in alone is not enough: a Mutator that does not
-			// offer the capability cannot be forced to grant it.
-			name:        "flag set but mutator declines: denied",
-			allowBypass: true,
+			// offer the capability cannot be forced to grant it. This holds
+			// for READ elevation too, which is why the ElevatedProvider check
+			// still wraps both grants.
+			name:        "read+write but mutator declines: denied",
+			allowBypass: metamodel.ACLBypassReadWrite,
+			mutator:     plainMutator{},
+		},
+		{
+			name:        "read but mutator declines: denied",
+			allowBypass: metamodel.ACLBypassRead,
 			mutator:     plainMutator{},
 		},
 		{
 			// The mirror image, and the more dangerous direction: a Mutator
 			// that CAN elevate must not do so for an ordinary action.
-			name:    "mutator can elevate but flag unset: denied",
+			name:    "mutator can elevate but value unset: denied",
 			mutator: elevatingMutator{},
 		},
 		{
@@ -117,7 +145,7 @@ func TestRun_ElevationRequiresBothKeys(t *testing.T) {
 
 			err := r.Run(context.Background(), autocascade.ScriptAction{
 				Code:           "print('x')",
-				AllowACLBypass: tc.allowBypass,
+				AllowACLBypass: string(tc.allowBypass),
 			}, tc.mutator)
 			if err != nil {
 				t.Fatalf("Run: %v", err)
@@ -125,21 +153,24 @@ func TestRun_ElevationRequiresBothKeys(t *testing.T) {
 
 			gotWrite := exec.got.ElevatedManager != nil
 			gotRead := exec.got.ElevatedReader != nil
-			if gotWrite != tc.wantGranted {
-				t.Errorf("elevated WRITE granted = %v, want %v", gotWrite, tc.wantGranted)
+			if gotWrite != tc.wantWrite {
+				t.Errorf("elevated WRITE granted = %v, want %v", gotWrite, tc.wantWrite)
 			}
-			if gotRead != tc.wantGranted {
-				t.Errorf("elevated READ granted = %v, want %v -- read elevation must "+
-					"turn on and off with the same two keys as write elevation, never "+
-					"on its own", gotRead, tc.wantGranted)
+			if gotRead != tc.wantRead {
+				t.Errorf("elevated READ granted = %v, want %v -- read elevation still "+
+					"requires BOTH keys (the operator value and an offering Mutator); "+
+					"only WHICH capability it grants is now selectable", gotRead, tc.wantRead)
 			}
-			// The recorder must accompany the reader on every row. Granting
-			// the capability without the audit trace is the exact gap
-			// TKT-ACSBSA closes, and it would be invisible in behavior.
-			if gotRec := exec.got.ElevationRecorder != nil; gotRec != tc.wantGranted {
+			// The recorder must accompany the reader on every row that grants
+			// one. Granting the capability without the audit trace is the exact
+			// gap TKT-ACSBSA closes, and it would be invisible in behavior.
+			// It rides along on write-only rows too (harmless: with no reader
+			// there is nothing to record), so assert against the outer gate.
+			wantRec := tc.wantRead || tc.wantWrite
+			if gotRec := exec.got.ElevationRecorder != nil; gotRec != wantRec {
 				t.Errorf("elevation RECORDER passed = %v, want %v -- the audit sink "+
 					"must travel with the elevated reader, or elevated reads happen "+
-					"untraced", gotRec, tc.wantGranted)
+					"untraced", gotRec, wantRec)
 			}
 		})
 	}
@@ -164,7 +195,7 @@ func TestRun_NoElevatedReaderWhenNoneSupplied(t *testing.T) {
 
 	err := r.Run(context.Background(), autocascade.ScriptAction{
 		Code:           "print('x')",
-		AllowACLBypass: true,
+		AllowACLBypass: string(metamodel.ACLBypassReadWrite),
 	}, elevatingMutator{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -178,5 +209,37 @@ func TestRun_NoElevatedReaderWhenNoneSupplied(t *testing.T) {
 	// Write elevation is unaffected: the two are independent capabilities.
 	if exec.got.ElevatedManager == nil {
 		t.Error("withholding read elevation also disabled WRITE elevation")
+	}
+}
+
+// TestACLBypassConstantsMatchMetamodel pins the string mirror in autocascade
+// to the metamodel constants it duplicates.
+//
+// autocascade may not import metamodel (it is deliberately schema-agnostic —
+// see .go-arch-lint.yml), so it re-declares the three values as plain strings
+// with a comment saying they MUST match. This package imports both, so it is
+// the one place that can turn that comment into a check.
+//
+// Without it, a typo in either place silently disables elevation on the
+// cascade path: bypass.Enabled() would be false for a value the operator
+// legitimately wrote. Fail-closed, but silently, which is the worst shape for
+// a capability gate.
+func TestACLBypassConstantsMatchMetamodel(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		cascade string
+		metaVal metamodel.ACLBypass
+	}{
+		{"read", autocascade.ACLBypassRead, metamodel.ACLBypassRead},
+		{"write", autocascade.ACLBypassWrite, metamodel.ACLBypassWrite},
+		{"read+write", autocascade.ACLBypassReadWrite, metamodel.ACLBypassReadWrite},
+	} {
+		if tc.cascade != string(tc.metaVal) {
+			t.Errorf("%s: autocascade has %q, metamodel has %q — the duplicated "+
+				"constants have drifted, which silently disables elevation for that value",
+				tc.name, tc.cascade, tc.metaVal)
+		}
 	}
 }

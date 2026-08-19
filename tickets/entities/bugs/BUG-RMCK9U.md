@@ -1,12 +1,29 @@
 ---
 id: BUG-RMCK9U
 type: bug
-title: rela validate exits 0 when an entity's frontmatter cannot be parsed
+title: 'DUPLICATE of BUG-NEQRY2: rela validate exits 0 when frontmatter cannot be parsed'
 description: An entity whose YAML frontmatter fails to parse is skipped with a WARN by store.ListEntities, but rela validate still reports 'All validations passed' and exits 0. CI therefore cannot catch a malformed entity, and every automation run fails at 'collect existing IDs', silently skipping checklist creation repo-wide.
 priority: high
 effort: s
-status: backlog
+status: wont-fix
 ---
+
+
+> **Duplicate of BUG-NEQRY2 — closed in its favour.**
+>
+> The same defect was filed twice, three days apart, by two people who each
+> tripped over it while doing something else. That is itself evidence for the
+> bug: it is only ever found by accident.
+>
+> BUG-NEQRY2 is the surviving ticket. It has the fuller write-up — the causal
+> chain showing how the silent under-count hid a merged-`done` bug with no
+> review record, and the comparison against the earlier `AM-date-property-
+> write-roundtrip` occurrence that failed *loudly* and so was fixed at once.
+> That asymmetry is the argument for failing closed, and it is worth keeping.
+>
+> The reproduction below is still accurate and still reproduces; it is left in
+> place rather than deleted so anyone landing here from a search sees the
+> evidence rather than a redirect.
 
 ## Reproduction
 

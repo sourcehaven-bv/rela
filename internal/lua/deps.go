@@ -135,9 +135,13 @@ type WriteDeps struct {
 
 	// ElevatedManager, when non-nil, is a write handle whose mutations skip
 	// the ACL deny (TKT-D8T148). It is set ONLY for an allow_acl_bypass
-	// automation action; its presence is what makes the runtime register
-	// rela.bypass_acl(fn). Nil on every other runtime, so rela.bypass_acl is
-	// absent and a script cannot elevate.
+	// automation action.
+	//
+	// Since TKT-Y3JVFK it is no longer the sole key to rela.bypass_acl:
+	// EITHER this or ElevatedReader registers the binding. What each handle
+	// controls is which METHODS the `admin` table carries — with this nil the
+	// write methods are absent entirely, so a reader-only elevation cannot
+	// mutate. Both nil ⇒ no binding, and a script cannot elevate at all.
 	ElevatedManager Mutator
 
 	// ElevatedReader, when non-nil, is the RAW read handle backing the
@@ -147,11 +151,17 @@ type WriteDeps struct {
 	// be a confusing contract.
 	//
 	// This is now the ONLY raw read handle a writer runtime can carry, and
-	// it is opt-in: set at the same site, under the same two conditions, as
-	// ElevatedManager. Previously a second raw field (WritePrepStore) was
+	// it is opt-in. Previously a second raw field (WritePrepStore) was
 	// present on EVERY writer runtime for update_entity's read-before-write;
 	// removing it (TKT-80EWGM) means an ungated read path now exists only
 	// where elevation was explicitly requested.
+	//
+	// It may be set WITHOUT ElevatedManager (TKT-Y3JVFK) — a READ-ONLY
+	// elevation, which is how a document render aggregates over rows its
+	// caller cannot see while remaining structurally unable to mutate (the
+	// `admin` table simply has no write methods). On the cascade path both
+	// handles are still set together, at the same site under the same two
+	// conditions.
 	//
 	// Nil is a DENY, not a fallback: admin.get_entity raises rather than
 	// silently reading through the gated VisibleReader. Elevation that

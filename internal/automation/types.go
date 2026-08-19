@@ -6,6 +6,7 @@ package automation
 import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 // Automation defines a trigger-action rule (internal representation).
@@ -48,7 +49,9 @@ type Action struct {
 	CreateEntity   *CreateEntityAction
 	Lua            string // Inline Lua code to execute
 	LuaFile        string // Path to Lua script file in scripts/ directory
-	AllowACLBypass bool   // allow_acl_bypass: unlock rela.bypass_acl in this Lua action (TKT-D8T148)
+	// AllowACLBypass: which rela.bypass_acl capabilities this Lua action
+	// unlocks (TKT-D8T148, TKT-Y3JVFK).
+	AllowACLBypass metamodel.ACLBypass
 }
 
 // CreateRelationAction specifies parameters for creating a relation.
@@ -140,7 +143,9 @@ type LuaToExecute struct {
 	Code           string // Inline Lua code (safe values already interpolated)
 	FilePath       string // Path to script file in scripts/ directory
 	AutomationName string // Name of the originating automation
-	AllowACLBypass bool   // action's allow_acl_bypass flag (TKT-D8T148): unlocks rela.bypass_acl
+	// AllowACLBypass is the action's allow_acl_bypass (TKT-D8T148): which
+	// bypass_acl capabilities are unlocked.
+	AllowACLBypass metamodel.ACLBypass
 }
 
 // Result represents the outcome of running automations.

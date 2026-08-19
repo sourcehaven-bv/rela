@@ -41,6 +41,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -92,8 +93,19 @@ type DBTX interface {
 // one per subsystem rather than by its surface. Adding UserStateStore's nine
 // methods to *Store is what the paragraph above forbids.
 //
-//plimsoll:max-exported-methods=35
-//plimsoll:max-methods=43
+// EntityTypeWatermark ([store.TypeWatermark]) is +1 for the row-property
+// reason, not the factory one: it reads `max(seq)` over this store's OWN
+// entities and deletions rows — the same tables every other method here touches
+// — so hoisting it into a service would mean a second handle over those two
+// tables for a single index lookup.
+//
+// That makes TWO capabilities admitted as row-properties (ListEntityHeaders and
+// EntityTypeWatermark). A THIRD should not raise these numbers again: extract
+// the row-property reads together, the way versioning and user-state were
+// extracted as subsystems.
+//
+//plimsoll:max-exported-methods=38
+//plimsoll:max-methods=48
 type Store struct {
 	db        DBTX
 	observers []store.EntityObserver // notified synchronously after committed entity writes
@@ -109,6 +121,16 @@ type Store struct {
 	schema   string
 	listener *listener // nil unless a listener was started (see startListener)
 	sweep    *sweep    // nil unless a version-reconciliation sweep was started
+
+	// uniqueSpecs, when set (at wiring, via SetUniqueSpecProvider), yields the
+	// current metamodel's (type, property) unique pairs. The write path uses it
+	// to map a derived-unique-index violation (SQLSTATE 23505 on a
+	// rela_derived_uniq__* index) back to the property name — see
+	// mapUniqueViolation. nil on a New() store: violations then degrade to a
+	// property-less UniquePropertyError (still a conflict), never a panic. Stored
+	// as an atomic.Pointer so a metamodel reload can swap it without a lock and
+	// the concurrent write path never sees a torn value.
+	uniqueSpecs atomic.Pointer[[]store.DerivedObjectSpec]
 
 	mu          sync.Mutex // guards subscribers + nextSubID only
 	subscribers map[int]chan store.Event

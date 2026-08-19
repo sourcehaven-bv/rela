@@ -176,6 +176,13 @@ func (m *Manager) ApplyEntity(ctx context.Context, e *entity.Entity) (*entity.Up
 func (m *Manager) persistApplyEntity(ctx context.Context, op acl.Op, e *entity.Entity) error {
 	if op == acl.OpCreate {
 		if err := m.deps.Store.CreateEntity(ctx, e); err != nil {
+			// A derived unique-property index rejects a duplicate PROPERTY value
+			// (TKT-3Q0GP1). Check before ErrConflict (which UniquePropertyError
+			// also satisfies) so it surfaces as the property 422, not the
+			// ID-collision error.
+			if ok, mapped := mapUniquePropertyConflict(err); ok {
+				return mapped
+			}
 			if errors.Is(err, store.ErrConflict) {
 				return fmt.Errorf("%w: %s", ErrEntityAlreadyExists, e.ID)
 			}
@@ -184,6 +191,9 @@ func (m *Manager) persistApplyEntity(ctx context.Context, op acl.Op, e *entity.E
 		return nil
 	}
 	if err := m.deps.Store.UpdateEntity(ctx, e); err != nil {
+		if ok, mapped := mapUniquePropertyConflict(err); ok {
+			return mapped
+		}
 		if errors.Is(err, store.ErrNotFound) {
 			// The probe saw the entity but the row vanished before the write
 			// (a concurrent delete). Surface ErrEntityVanishedOnUpdate, which

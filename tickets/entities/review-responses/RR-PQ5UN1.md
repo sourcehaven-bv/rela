@@ -4,7 +4,18 @@ type: review-response
 title: One *acl.Request per HTTP request is not sufficient for JSON-RPC batches; the planned -race test cannot detect the race
 finding: acl.Request memoizes globals/globalsLoaded without synchronization (request.go:34-38, :56-61) and is documented as not goroutine-safe. attachACLRequest attaches one per HTTP request, but one MCP POST may carry a JSON-RPC batch whose handlers dispatch concurrently, sharing that Request. The plan's mitigation (-race with parallel calls) tests parallel HTTP requests, which each get their own Request and will pass — the race needs concurrent handlers within one request.
 severity: significant
-status: open
+status: deferred
+reason: >-
+  Deferred out of TKT-BDG8U9, not fixed. acl.Request.Globals remains an
+  unsynchronised read-modify-write and attachACLRequest still attaches one
+  Request per HTTP request. Nothing in the shipped handler fans a JSON-RPC
+  batch across goroutines, so the race is latent rather than live — but it
+  constrains how batch dispatch may be implemented, which is exactly why it
+  stays open and visible rather than being closed as "not reproducible". The
+  fix is cheap when needed (ForPrincipal does no graph traffic, so a
+  per-tool-call Request works); the test must exercise concurrency WITHIN one
+  request, since parallel HTTP requests each get their own Request and would
+  pass vacuously. Recorded in TKT-BDG8U9 and docs/server-security.md.
 ---
 
 ## Finding

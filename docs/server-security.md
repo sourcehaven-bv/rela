@@ -472,12 +472,25 @@ This is an accepted residual because:
 - Portable mitigation (file-descriptor passing through `open`/`xdg-open`/
   `explorer`) does not exist.
 
-### No authentication
+### No authentication *by default*
 
-There is intentionally no login or per-user authentication. The trust
-boundary is "anything running as the current user on this machine."
-Per-instance session tokens (defense in depth on top of the Origin
-allowlist) are tracked as a follow-up.
+In the default single-user deployment there is intentionally no login. The
+trust boundary is "anything running as the current user on this machine."
+Per-instance session tokens (defense in depth on top of the Origin allowlist)
+are tracked as a follow-up.
+
+This is a statement about the **default**, not a limit of the server. Two
+opt-in identity sources exist, and a multi-user or network-reachable
+deployment should use one:
+
+- `-jwt-issuer` / `-jwt-audience` / `-jwt-jwks-url` — verify a signed
+  assertion against the IdP's JWKS. Fail-closed: an unverified request to
+  `/api/` is refused, with no fall-through to a header.
+- `-principal-header` — trust a header set by a fronting proxy. Only as
+  trustworthy as that proxy; it is refused alongside the JWT flags precisely
+  so a JWKS outage cannot silently downgrade to it.
+
+Remote MCP (`-mcp`) requires the JWT form specifically — see above.
 
 ### Configured commands are remote-code-execution by design
 
@@ -485,6 +498,32 @@ The `commands` section of `data-entry.yaml` lets you wire up arbitrary
 shell scripts that run with your user privileges. Be careful what you put
 there. The `/api/command/` endpoint is `POST`-only and protected by the
 Origin allowlist, but the scripts themselves are still trusted code.
+
+### Remote MCP exposes every tool, with no per-transport allowlist
+
+`-mcp` (see [mcp-server.md](mcp-server.md#remote-mcp-over-http)) serves the
+full MCP tool set over HTTP, including `lua_eval` and `lua_run`. Every call is
+authenticated (the flag refuses to start without verified JWT identity),
+authorized by the same ACL as the web API, and audited as the requesting
+principal — so a remote caller can do exactly what that person could do
+through the UI, no more.
+
+What is *not* built is a per-transport allowlist: a tool added for local stdio
+use becomes remotely reachable the moment `-mcp` is on. The Lua tools run
+sandboxed (no OS libraries) and gated, so this is a defense-in-depth gap
+rather than an escape hatch, but operators enabling `-mcp` should know the
+surface is "all tools", not a curated subset.
+
+Two related gaps, both deliberate and tracked:
+
+- **No RFC 9728 discovery.** The 401 does not carry a `resource_metadata`
+  challenge unless your assertion header is literally `Authorization`, so MCP
+  clients must be pointed at the IdP by configuration rather than discovering
+  it. Usability, not confidentiality.
+- **`acl.Request` is not goroutine-safe.** One is attached per HTTP request
+  and memoises global roles without synchronisation. Nothing in the current
+  handler fans a JSON-RPC batch across goroutines, so this is latent rather
+  than live — but it constrains how batch dispatch may be implemented.
 
 ### Future WebSocket endpoints need explicit Origin checks
 

@@ -937,19 +937,62 @@ type DocumentConfig struct {
 	// acl.yaml (the acl.PermHistoryRead / delegate-X family). Empty means any
 	// principal may render the document.
 	//
-	// This is an INTENT and UX gate, not the confidentiality boundary: a
-	// document's Lua reads already go through the ACL-gated
-	// lua.ReadDeps.VisibleReader, so a principal who may not read the
-	// underlying entities renders an empty or partial document either way.
-	// Permission exists for documents whose COMPOSITION is sensitive even
-	// though the parts are individually readable, and to keep useless entries
-	// out of a user's sidebar. Because it is not the boundary, it is optional
-	// — requiring it on every standalone document would be ceremony.
+	// WHAT THIS GUARDS DEPENDS ON AllowACLBypass (TKT-Y3JVFK) — the two
+	// meanings are different in kind, so be clear which one applies:
+	//
+	// Without elevation (the common case) it is an INTENT and UX gate, NOT a
+	// confidentiality boundary. The document's Lua reads already go through
+	// the ACL-gated lua.ReadDeps.VisibleReader, so a principal who may not
+	// read the underlying entities renders a partial document either way and
+	// nothing leaks. What Permission buys is that a report claiming a scope
+	// its reader cannot actually compute — "company-wide revenue" rendered
+	// over one manager's clients — is withheld rather than served as a
+	// smaller number that looks authoritative. That is misinformation, not
+	// disclosure. It also keeps unusable entries out of a sidebar. Because it
+	// is not the boundary, it is optional here.
+	//
+	// WITH elevation it IS the confidentiality boundary, and is REQUIRED
+	// (enforced in validateDocuments). An elevated render reads through a raw
+	// handle, so nothing downstream bounds its output; the permission is the
+	// only thing between a principal and everything the script reads. Note
+	// this grants "may read whatever this script reads", not "may view this
+	// report" — see the AllowACLBypass godoc.
 	//
 	// Honored for both document kinds. On an entity-anchored document it
 	// applies IN ADDITION to the per-entity read gate (both must pass); it can
 	// never widen entity visibility.
 	Permission string `yaml:"permission,omitempty" json:"permission,omitempty"`
+	// AllowACLBypass, when set, unlocks rela.bypass_acl inside this document's
+	// Lua script, letting it read entities the requesting principal cannot see
+	// (TKT-Y3JVFK). The motivating case is a report that must compute over
+	// hidden rows — benchmarking a sales manager against peers whose clients
+	// are invisible to them — which no acl.yaml role can express, because
+	// granting enough to compute the benchmark grants enough to enumerate the
+	// competitors.
+	//
+	// ONLY metamodel.ACLBypassRead is accepted. `write` and `read+write` are a
+	// config error, because a render is served on a GET and elevated writes
+	// there would be neither idempotent (browsers prefetch, users refresh, the
+	// SPA retries) nor compatible with caching a principal-independent render
+	// (TKT-OGR566, RR-P4E9GL). Writes a report seems to want — memoizing an
+	// expensive aggregate, logging that a report was viewed — belong in an
+	// automation action or a schedule, which are event-triggered, idempotent by
+	// design, and already audited as writes.
+	//
+	// This rule REFUSES TO WIDEN an existing gap rather than closing one: a
+	// document script today still has the ordinary gated rela.* write bindings
+	// (TKT-PX5YL7), so a render can already mutate within the caller's own
+	// permissions. What this refusal prevents is a render mutating BEYOND
+	// them.
+	//
+	// Setting this REQUIRES Permission (see above): an elevated document with
+	// no permission publishes whatever the script reads to every principal.
+	//
+	// The script is TRUSTED CODE. bypass_acl hands it a raw reader and nothing
+	// stops it printing what it reads, so review the bypass block before
+	// deploying — that review IS the mitigation, and it is why this value is
+	// declared in config where a reviewer will see it.
+	AllowACLBypass metamodel.ACLBypass `yaml:"allow_acl_bypass,omitempty" json:"allow_acl_bypass,omitempty"`
 	// Command is the external render command as an ARGUMENT ARRAY, e.g.
 	//   command: ["my-renderer", "{in}"]
 	// It is executed directly — there is no shell, so pipes, redirection, and
@@ -1096,11 +1139,70 @@ type CalDAVConfig struct {
 	// URL segment and the alias key (so it must stay stable — users paste the
 	// URL into clients), and Meta.Name is the display label.
 	Static map[string]CalDAVCollection `yaml:"static,omitempty" json:"static,omitempty"`
+	// Dynamic declares PATTERNS that expand: each key yields one collection per
+	// entity of its driver type, so `project_tasks` over 40 projects serves 40
+	// collections named `project_tasks--PROJ-1` … See [CalDAVDynamicCollection].
+	Dynamic map[string]CalDAVDynamicCollection `yaml:"dynamic,omitempty" json:"dynamic,omitempty"`
 }
 
 // IsZero reports whether any CalDAV collection is configured, so `omitzero`
 // keeps an unconfigured server's JSON free of an empty caldav object.
-func (c CalDAVConfig) IsZero() bool { return len(c.Static) == 0 }
+func (c CalDAVConfig) IsZero() bool { return len(c.Static) == 0 && len(c.Dynamic) == 0 }
+
+// dynamicNameSep joins a pattern key to its driver id in the URL segment
+// (`project_tasks--PRJ-1`). Mirrors internal/dataentry's feedUIDSep; duplicated
+// rather than imported because dataentryconfig must not depend on dataentry.
+const dynamicNameSep = "--"
+
+// CalDAVDynamicCollection declares a PATTERN that expands into one collection
+// per entity of a driver type — a to-do list per project, per sprint, per
+// person.
+//
+// The key names the pattern, not a collection: `project_tasks` is not
+// addressable, `project_tasks--PROJ-1` is. That is why `dynamic:` is a named
+// sibling of `static:` rather than more entries in one map — a reader can tell
+// which keys are collections and which expand.
+//
+// # The composite URL segment is FORCED, not chosen
+//
+// go-webdav classifies a resource by its DEPTH below the mount prefix (root /
+// principal / home-set / calendar / object), so `calendars/project_tasks/PROJ-1/`
+// would be read as an OBJECT, not a collection. The pattern key and the driver
+// id must therefore share one path segment.
+//
+// `--` is the separator because entity ids cannot contain it (they match
+// `^[A-Za-z0-9][A-Za-z0-9_-]*$`), so the split is unambiguous and needs no
+// escaping — which matters, because a collection URL has to stay human-typable:
+// Thunderbird does not auto-discover collections and the user pastes it by hand.
+//
+// # Why the key stays
+//
+// Deriving the segment from EntityType instead (`task--PROJ-1`) would drop the
+// key and read more cleanly, but it collides the moment two patterns share a
+// driver — tasks-per-project AND bugs-per-project both want a segment from
+// `project`. A map keyed by name makes that collision impossible by
+// construction; a list would only catch it in validation.
+type CalDAVDynamicCollection struct {
+	// CalDAVCollection carries the whole mapping — entity_type, summary, due,
+	// completion, read_only, defaults, on_delete. Embedded rather than repeated
+	// so a dynamic collection maps EXACTLY like a static one, and a mapping
+	// feature added later applies to both without a second implementation.
+	CalDAVCollection `yaml:",inline" json:",inline"`
+	// DriverType is the entity type whose instances become collections. One
+	// collection per readable entity of this type.
+	DriverType string `yaml:"driver_type" json:"driver_type"`
+	// Relation is the relation type linking a member to its driver entity.
+	//
+	// Serves BOTH directions, which is why there is no separate create block:
+	// outbound it selects members ("tasks with `belongs-to` → this project"),
+	// and inbound a client-created to-do gets exactly this edge. Without the
+	// inbound half a new to-do would land in the entity type but in NO
+	// collection, and vanish from the client on the next sync.
+	Relation string `yaml:"relation" json:"relation"`
+	// Direction is the member→driver edge direction, defaulting to outgoing
+	// (the member points AT the driver, e.g. task --belongs-to--> project).
+	Direction Direction `yaml:"direction,omitempty" json:"direction,omitempty"`
+}
 
 // CalDAVCollection declares one CalDAV collection: a single entity type
 // projected to a calendar component, and the inverse mapping applied when a

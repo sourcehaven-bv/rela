@@ -1640,6 +1640,8 @@ func validateDocuments(cfg *Config) []string {
 				"document %q: one of command or script must be set", docID))
 		}
 
+		errs = append(errs, validateDocumentElevation(docID, doc, hasScript)...)
+
 		// {id} / {id_lower} were removed in TKT-QGHNVA: they spliced a
 		// request-derived value into a shell string. Fail at config load with
 		// the replacement named, rather than silently passing the literal
@@ -1816,4 +1818,49 @@ func joinMapKeys(m map[string]bool) string {
 	}
 	natsort.Strings(keys)
 	return strings.Join(keys, ", ")
+}
+
+// validateDocumentElevation checks the allow_acl_bypass declaration on a
+// document (TKT-Y3JVFK). Three rules, each failing at config load rather than
+// at render time so the author learns before deploying:
+//
+//  1. Only `read` is accepted. A document render is a GET; see the
+//     DocumentConfig.AllowACLBypass godoc for why writes belong in an
+//     automation action or a schedule instead.
+//  2. Elevation REQUIRES permission:. Without it the render publishes whatever
+//     the script reads to every principal. This is the one place a document's
+//     permission: is mandatory — see the DocumentConfig.Permission godoc for
+//     why it is optional otherwise.
+//  3. Elevation only means something for a script: renderer. A command:
+//     renderer is an external process that never sees the Lua bindings, so
+//     allow_acl_bypass on one would be config naming a capability that cannot
+//     apply — which "appears to work" and is worse than a missing field.
+func validateDocumentElevation(docID string, doc DocumentConfig, hasScript bool) []string {
+	if !doc.AllowACLBypass.Enabled() {
+		return nil
+	}
+
+	var errs []string
+
+	if doc.AllowACLBypass != metamodel.ACLBypassRead {
+		errs = append(errs, fmt.Sprintf(
+			"document %q: allow_acl_bypass must be %q on a document (got %q); a render is a GET, "+
+				"so it must not mutate — use an automation action or a schedule for elevated writes",
+			docID, metamodel.ACLBypassRead, doc.AllowACLBypass))
+	}
+
+	if doc.Permission == "" {
+		errs = append(errs, fmt.Sprintf(
+			"document %q: permission is required when allow_acl_bypass is set; an elevated render "+
+				"reads past the caller's ACL, so without a permission it serves that data to every principal",
+			docID))
+	}
+
+	if !hasScript {
+		errs = append(errs, fmt.Sprintf(
+			"document %q: allow_acl_bypass applies only to a script renderer; a command renderer "+
+				"is an external process and never receives the Lua bindings it unlocks", docID))
+	}
+
+	return errs
 }

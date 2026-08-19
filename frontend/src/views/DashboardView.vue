@@ -63,19 +63,25 @@ async function loadData() {
   }
 }
 
-function getCardCount(card: DashboardCard): number {
-  return cardData.value.get(cardKey(card))?.count || 0
+type Breakdown = Array<{ value: string; count: number; percentage: number }>
+
+/** One rendered tile: the card plus everything the template needs derived. */
+interface CardView {
+  card: DashboardCard
+  key: string
+  count: number
+  breakdown: Breakdown
+  rows: Entity[]
 }
 
-function getBreakdown(card: DashboardCard): Array<{ value: string; count: number; percentage: number }> {
-  const data = cardData.value.get(cardKey(card))
-  if (!data || !card.group_by) return []
+function buildBreakdown(card: DashboardCard, entities: Entity[]): Breakdown {
+  if (!card.group_by) return []
 
   const groupBy = card.group_by
   const counts: Record<string, number> = {}
   let total = 0
 
-  for (const entity of data.entities) {
+  for (const entity of entities) {
     const value = String(entity.properties[groupBy] || 'Unknown')
     counts[value] = (counts[value] || 0) + 1
     total++
@@ -90,16 +96,12 @@ function getBreakdown(card: DashboardCard): Array<{ value: string; count: number
     .sort((a, b) => b.count - a.count)
 }
 
-function getTableRows(card: DashboardCard): Entity[] {
-  const data = cardData.value.get(cardKey(card))
-  if (!data) return []
+function buildRows(card: DashboardCard, entities: Entity[]): Entity[] {
+  const sorted = [...entities]
 
-  let entities = [...data.entities]
-
-  // Apply sort
   if (card.sort?.length) {
     const sort = card.sort[0]
-    entities.sort((a, b) => {
+    sorted.sort((a, b) => {
       const aVal = String(a.properties[sort.property] || '')
       const bVal = String(b.properties[sort.property] || '')
       const cmp = aVal.localeCompare(bVal)
@@ -107,13 +109,44 @@ function getTableRows(card: DashboardCard): Entity[] {
     })
   }
 
-  // Apply limit
-  if (card.limit) {
-    entities = entities.slice(0, card.limit)
-  }
-
-  return entities
+  return card.limit ? sorted.slice(0, card.limit) : sorted
 }
+
+/**
+ * The rendered tiles, with each card's display data derived exactly once
+ * (TKT-ERHWL0).
+ *
+ * The template used to call `getBreakdown(card)` / `getTableRows(card)` twice
+ * per card — once for `v-if="…length"`, once for `v-for` — and both are O(N)
+ * or worse over the card's whole result set (a group-by; a copy plus a
+ * `localeCompare` sort). Deriving into the view model the template iterates
+ * means each derivation has exactly one call site, structurally, rather than
+ * being deduplicated by a cache.
+ *
+ * One entry per card BY POSITION, deliberately not a Map keyed by `cardKey()`.
+ * `cardKey` covers `[title, query, display]`, which is right for `cardData` —
+ * two cards with the same query legitimately share one fetch — but wrong here,
+ * because `group_by` / `sort` / `limit` change the derivation without changing
+ * the key. Keying the derived data by `cardKey` let a "by status" card render a
+ * "by priority" card's breakdown: the exact one-card's-data-on-another's-tile
+ * bug `cardKey` was introduced (TKT-53KICM) to prevent.
+ *
+ * Deriving only for the display mode that renders it also keeps a count card
+ * from paying for a table copy of a result set nothing shows.
+ */
+const cardViews = computed<CardView[]>(() =>
+  cards.value.map((card) => {
+    const key = cardKey(card)
+    const entities = cardData.value.get(key)?.entities ?? []
+    return {
+      card,
+      key,
+      count: cardData.value.get(key)?.count || 0,
+      breakdown: card.display === 'breakdown' ? buildBreakdown(card, entities) : [],
+      rows: card.display === 'table' ? buildRows(card, entities) : [],
+    }
+  })
+)
 
 function getColumnLabel(col: { property?: string; label?: string }): string {
   return col.label || col.property || ''
@@ -175,14 +208,14 @@ onMounted(async () => {
 
       <div v-else class="dashboard-grid">
         <div
-          v-for="card in cards"
-          :key="cardKey(card)"
+          v-for="view in cardViews"
+          :key="view.key"
           class="dashboard-card"
         >
           <div class="card-header">
-            <h3>{{ card.title }}</h3>
+            <h3>{{ view.card.title }}</h3>
             <router-link
-              :to="`/search?q=${encodeURIComponent(card.query)}`"
+              :to="`/search?q=${encodeURIComponent(view.card.query)}`"
               class="card-link"
               title="View in search"
             >
@@ -191,14 +224,14 @@ onMounted(async () => {
           </div>
 
           <!-- Count display -->
-          <div v-if="card.display === 'count'" class="card-count">
-            <span class="count-number">{{ getCardCount(card) }}</span>
+          <div v-if="view.card.display === 'count'" class="card-count">
+            <span class="count-number">{{ view.count }}</span>
           </div>
 
           <!-- Breakdown display -->
-          <div v-else-if="card.display === 'breakdown'" class="card-breakdown">
+          <div v-else-if="view.card.display === 'breakdown'" class="card-breakdown">
             <div
-              v-for="item in getBreakdown(card)"
+              v-for="item in view.breakdown"
               :key="item.value"
               class="breakdown-row"
             >
@@ -211,24 +244,24 @@ onMounted(async () => {
               </div>
               <span class="breakdown-count">{{ item.count }}</span>
             </div>
-            <div v-if="getBreakdown(card).length === 0" class="no-data">
+            <div v-if="view.breakdown.length === 0" class="no-data">
               No data
             </div>
           </div>
 
           <!-- Table display -->
-          <div v-else-if="card.display === 'table'" class="card-table">
-            <table v-if="getTableRows(card).length > 0">
+          <div v-else-if="view.card.display === 'table'" class="card-table">
+            <table v-if="view.rows.length > 0">
               <thead>
                 <tr>
-                  <th v-for="col in card.columns" :key="col.property">
+                  <th v-for="col in view.card.columns" :key="col.property">
                     {{ getColumnLabel(col) }}
                   </th>
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="entity in getTableRows(card)" :key="entity.id">
-                  <td v-for="col in card.columns" :key="col.property">
+                <tr v-for="entity in view.rows" :key="entity.id">
+                  <td v-for="col in view.card.columns" :key="col.property">
                     <router-link
                       v-if="getCellLink(entity, col)"
                       :to="getCellLink(entity, col)!"

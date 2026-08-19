@@ -675,11 +675,16 @@ type AutomationAction struct {
 	LuaFile        string                `yaml:"lua_file,omitempty"` // Path to Lua script in scripts/ directory
 
 	// AllowACLBypass unlocks rela.bypass_acl in this Lua action (TKT-D8T148).
-	// Operator-only (lives in metamodel.yaml). When true, the script may call
-	// rela.bypass_acl(fn) to obtain a closure-scoped elevated write handle
-	// whose writes skip the ACL deny (still audited, real principal preserved).
+	// Operator-only (lives in the schema file). When set, the script may call
+	// rela.bypass_acl(fn) to obtain a closure-scoped elevated handle whose
+	// access skips the ACL deny (still audited, real principal preserved).
 	// Ignored for non-Lua actions.
-	AllowACLBypass bool `yaml:"allow_acl_bypass,omitempty"`
+	//
+	// Since TKT-Y3JVFK this is an enum, not a bool: `read`, `write` or
+	// `read+write` select which methods the handle carries. The legacy
+	// `true` is refused at parse time with a message naming `read+write`;
+	// `rela migrate` rewrites it.
+	AllowACLBypass ACLBypass `yaml:"allow_acl_bypass,omitempty"`
 }
 
 // CreateRelationAction specifies parameters for creating a relation.

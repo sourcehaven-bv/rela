@@ -61,7 +61,19 @@ func sweepConfigFromEnv() pgstore.SweepConfig {
 		}
 		d, err := time.ParseDuration(v)
 		if err != nil {
-			slog.Warn("appbuild: ignoring invalid sweep duration", "env", env, "value", v, "error", err)
+			// G706 flags v as tainted because its analysis stops at the slog
+			// call and cannot see the handler that encodes the record. The
+			// message is a constant and v travels as a structured ATTRIBUTE,
+			// which slog's handlers quote and escape — so an injected newline
+			// cannot forge a second record. That is the same invariant
+			// internal/dataentry pins in TestSlogTextHandlerEscapesNewlines.
+			//
+			// The value is worth echoing: this is an operator debugging their
+			// own typo'd RELA_VERSION_SWEEP_* setting, and a warning that
+			// withholds the rejected value is much harder to act on.
+			//nolint:gosec // G706: constant message, user data as an escaped attribute
+			slog.Warn("appbuild: ignoring invalid sweep duration",
+				"env", env, "value", v, "error", err)
 			return 0
 		}
 		return d

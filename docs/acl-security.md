@@ -141,33 +141,30 @@ Two layers keep that from happening:
    grants only what the raw string is assigned — it never silently picks
    one of the duplicates.
 
-**Enforcement rigor by backend.** The write-time uniqueness check is
-exact on the single-writer backends (fsstore, memstore). On PostgreSQL,
-concurrent writers leave a narrow time-of-check/time-of-use window
-between the check and the durable write. Operators who need race-free
-enforcement add a partial unique index — which is also the recommended
-performance index for the lookup itself:
+**Enforcement rigor by backend.** The application-level uniqueness check
+reads the existing entities of the type and then writes — two separate
+operations with no lock held across them. On the single-writer backends
+(fsstore, memstore) that is race-free enough. Under concurrent writers,
+though, two racing writes with the same value could both pass the check
+and both commit, leaving a duplicate.
 
-```sql
-CREATE UNIQUE INDEX persoon_email_unique_idx
-  ON entities ((properties->>'email'))
-  WHERE type = 'persoon';
-```
+On **PostgreSQL** this window is closed automatically: rela maintains a
+partial unique index for every `unique: true` property (see
+[Derived schema](postgres-backend.md#derived-schema-unique-constraints)
+in the PostgreSQL backend guide), so a colliding write fails atomically in
+the database and surfaces as the same conflict the write path already
+reports. You do not add this index by hand — rela creates and maintains it
+from the metamodel. (If existing rows already contain duplicate values when
+you add `unique: true`, the index cannot be built; rela warns and leaves it
+unenforced until you clean up the duplicates — run `rela db reconcile
+--dry-run` to see what is blocking it.)
 
-With the index in place a colliding write fails atomically in the
-database and surfaces as the same conflict the write path already
-reports.
-
-**The write-time check is not atomic.** It reads the existing entities
-of the type, then writes — two separate operations with no lock held
-across them. Under concurrent writers (the data-entry server runs one
-goroutine per request) two racing writes with the same value can both
-pass the check and both commit, on *any* backend, not just PostgreSQL.
-The window is small, and the resolver's multi-match fallback (keep-raw,
-above) is the runtime backstop for the identity-key case — but the only
-*race-free* enforcement is the store-level unique index. If you rely on
-uniqueness for correctness rather than as a data-quality guard, add the
-index.
+This matters most for `unmatched_principal: provision`
+([below](#unknown-verified-identities-unmatched_principal)), which creates a
+stub user keyed on `principal_property`: the database index is what
+guarantees two servers provisioning the same subject at once produce exactly
+one user rather than a permanently ambiguous pair. On fsstore/memstore, which
+have no such index, keep provisioning to a single writer.
 
 **Two operator notes for `principal_property`:**
 
@@ -780,8 +777,44 @@ alongside the write methods, all reading raw. That keeps the privilege
 scoped to a closure and visible at the call site, and it leaves an
 `acl-bypass-read` audit row, where relaxing a role in `acl.yaml` would
 widen access for every read on every path with nothing in the log to
-show for it. It requires operator opt-in (`allow_acl_bypass: true` on
-the action) — see the Lua scripting guide.
+show for it. It requires operator opt-in (`allow_acl_bypass:` on the
+action, valued `read`, `write` or `read+write`) — see the Lua scripting
+guide.
+
+### An elevated document is trusted code
+
+A `documents:` entry may also declare `allow_acl_bypass: read`, so its
+render can compute over rows the reader cannot see — a benchmark against
+peers whose records are invisible to them. No `acl.yaml` role expresses
+that: granting enough to *compute* the benchmark grants enough to
+*enumerate* the subjects.
+
+Understand what that gate means, because it is not what it looks like:
+
+> `permission:` on an elevated document grants **"may read whatever this
+> script reads"** — not "may view this report".
+
+Once the render elevates, the ACL no longer bounds its **output**; only
+the script's own discipline does. A script that prints the rows it read,
+rather than a statistic derived from them, has published them to every
+holder of that permission. Nothing in the system prevents this, and
+nothing can: the aggregation *is* the confidentiality boundary.
+
+So the mitigation is procedural, and it must actually happen:
+
+- **Review the `bypass_acl` block before deploying.** That review is the
+  control. The `allow_acl_bypass:` key exists in config precisely so a
+  reviewer sees which scripts need it.
+- **Treat the permission as equivalent to the read grant** the script
+  performs, when deciding who holds it.
+- **Elevated reads are audited** (`acl-bypass-read`), so use is
+  answerable after the fact — but the row records *that* raw reads
+  happened, not what reached the page.
+
+An elevated document additionally requires a configured `acl.yaml`: under
+no policy the permission names a capability nothing can withhold, so the
+render is refused rather than served to everyone. Writes are refused
+outright — a render is a `GET`.
 
 ## Property-level redaction (`visible:`)
 

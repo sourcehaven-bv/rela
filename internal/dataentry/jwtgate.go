@@ -158,7 +158,7 @@ func requireVerifiedJWT(next http.Handler, cfg JWTGateConfig) http.Handler {
 		// This carries org_id/org_slug/roles onto the Principal — without it an
 		// asserted_role_assignments policy grants nothing on the production path
 		// (TKT-OJL2GN). The claims flow on to the ACL via attachACLRequest.
-		p, ok := verifiedPrincipal(id)
+		p, ok := verifiedPrincipal(id, toolForPath(r.URL.Path))
 		if !ok {
 			slog.InfoContext(r.Context(), "jwt gate: verified subject is unusable after sanitization",
 				"path", r.URL.Path, "method", r.Method, "remote_addr", r.RemoteAddr)

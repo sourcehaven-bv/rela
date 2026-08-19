@@ -68,8 +68,6 @@ types:
   measure_status:
     values: [proposed, active, deprecated]
     default: proposed
-  doc_kind:
-    values: [guide, reference, tutorial, howto, explanation, changelog]
   audience:
     values: [beginner, intermediate, advanced]
     default: beginner

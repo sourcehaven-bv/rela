@@ -94,7 +94,8 @@ func withRenderOverride(t *testing.T, app *App, typeName string, output func(ent
 
 	fake := &fakeScriptEngine{stdout: func(c fakeScriptCall) string { return output(c.entryID) }}
 	deps := func() lua.WriteDeps { return lua.WriteDeps{} }
-	app.documents = newDocumentService(app.store, app.kv, "/", fake, deps)
+	// No elevation: these export tests exercise the unelevated render path.
+	app.documents = newDocumentService(app.store, app.kv, "/", fake, deps, nil)
 	var err error
 	if app.export, err = newExportHandler(app); err != nil {
 		t.Fatalf("newExportHandler: %v", err)

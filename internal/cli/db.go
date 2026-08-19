@@ -10,8 +10,9 @@ package cli
 // (filesystem) and `memorybackend` builds they return a clear "not available"
 // error (see runDBMigrate / runDBStatus in the build-tagged db_*.go files).
 type DBCmd struct {
-	Migrate DBMigrateCmd `cmd:"" help:"Apply pending PostgreSQL schema migrations."`
-	Status  DBStatusCmd  `cmd:"" help:"Report the database schema version (read-only; non-zero exit if behind)."`
+	Migrate   DBMigrateCmd   `cmd:"" help:"Apply pending PostgreSQL schema migrations."`
+	Status    DBStatusCmd    `cmd:"" help:"Report the database schema version (read-only; non-zero exit if behind)."`
+	Reconcile DBReconcileCmd `cmd:"" help:"Converge derived-schema objects (unique indexes) with the metamodel."`
 }
 
 // DBMigrateCmd applies pending schema migrations to the database named by the
@@ -33,4 +34,27 @@ type DBStatusCmd struct{}
 // Run executes `rela db status`.
 func (c *DBStatusCmd) Run() error {
 	return runDBStatus()
+}
+
+// DBReconcileCmd converges the database's derived-schema objects — partial
+// unique indexes synthesized from the metamodel's `unique: true` properties
+// (TKT-3Q0GP1) — creating missing ones and dropping ones no longer declared.
+//
+// This is the explicit operator affordance for the same reconciliation that
+// runs automatically at store-open. Its trust boundary is the operator shell
+// (like `db migrate`): it takes no ACL and reads the DSN from RELA_DATABASE_URL.
+//
+// With --dry-run it computes and prints the plan WITHOUT changing anything, and
+// exits non-zero if the live schema differs from the metamodel — a pre-flight/CI
+// gate an operator can run before deploying a schema change. Blocking duplicate
+// values are reported as a COUNT by default; --show-values additionally prints a
+// bounded sample of the offending values (entity content, so opt-in only).
+type DBReconcileCmd struct {
+	DryRun     bool `help:"Print the plan and exit non-zero on drift, without changing the database."`
+	ShowValues bool `help:"Include sample blocking values for unenforced constraints (entity content; operator use only)."`
+}
+
+// Run executes `rela db reconcile`.
+func (c *DBReconcileCmd) Run() error {
+	return runDBReconcile(c.DryRun, c.ShowValues)
 }

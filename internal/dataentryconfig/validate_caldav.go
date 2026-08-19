@@ -24,9 +24,53 @@ import (
 // SUMMARY is a HARD config error, whereas at write time a missing required
 // property is only a warning (DEC-HWZHA).
 func validateCalDAV(cfg *Config, meta *metamodel.Metamodel) []string {
-	errs := make([]string, 0, len(cfg.CalDAV.Static))
+	errs := make([]string, 0, len(cfg.CalDAV.Static)+len(cfg.CalDAV.Dynamic))
 	for _, name := range sortedCalDAVNames(cfg.CalDAV.Static) {
 		errs = append(errs, validateCalDAVCollection(name, cfg.CalDAV.Static[name], meta)...)
+	}
+	dynNames := make([]string, 0, len(cfg.CalDAV.Dynamic))
+	for name := range cfg.CalDAV.Dynamic {
+		dynNames = append(dynNames, name)
+	}
+	sort.Strings(dynNames)
+	for _, name := range dynNames {
+		errs = append(errs, validateCalDAVDynamic(name, cfg.CalDAV.Dynamic[name], cfg, meta)...)
+	}
+	return errs
+}
+
+// validateCalDAVDynamic checks a pattern: the whole static mapping, plus the
+// driver type and relation that make it expand.
+func validateCalDAVDynamic(
+	name string, c CalDAVDynamicCollection, cfg *Config, meta *metamodel.Metamodel,
+) []string {
+	prefix := fmt.Sprintf("caldav dynamic %q", name)
+	errs := validateCalDAVCollection(name, c.CalDAVCollection, meta)
+
+	// The key becomes a URL segment as `<key>--<driverID>`, so a key containing
+	// the separator would make the split ambiguous and could address a
+	// different pattern than the operator wrote.
+	if strings.Contains(name, dynamicNameSep) {
+		errs = append(errs, fmt.Sprintf("%s: key must not contain %q — it separates the "+
+			"pattern from the driver id in the URL segment", prefix, dynamicNameSep))
+	}
+	// A static key and a pattern key cannot collide: both resolve from the same
+	// path segment, and the static lookup wins, silently shadowing the pattern.
+	if _, clash := cfg.CalDAV.Static[name]; clash {
+		errs = append(errs, fmt.Sprintf("%s: a static collection has the same key — "+
+			"the static one would shadow this pattern", prefix))
+	}
+
+	if c.DriverType == "" {
+		errs = append(errs, prefix+": 'driver_type' is required")
+	} else if _, ok := meta.GetEntityDef(c.DriverType); !ok {
+		errs = append(errs, fmt.Sprintf("%s: unknown driver_type %q", prefix, c.DriverType))
+	}
+	if c.Relation == "" {
+		errs = append(errs, prefix+": 'relation' is required — it selects a collection's "+
+			"members AND is the edge a client-created entry receives")
+	} else if _, ok := meta.Relations[c.Relation]; !ok {
+		errs = append(errs, fmt.Sprintf("%s: unknown relation %q", prefix, c.Relation))
 	}
 	return errs
 }

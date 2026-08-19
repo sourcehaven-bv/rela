@@ -7,6 +7,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 // Executor is the consumer-side interface the [LuaScriptRunner] needs
@@ -144,24 +145,36 @@ func (l *LuaScriptRunner) Run(ctx context.Context, action autocascade.ScriptActi
 		// "interfaces at the call site".
 		EntityManager: m,
 	}
-	// TKT-D8T148: when the action is allow_acl_bypass AND the mutator offers
-	// the elevated capability, expose an elevated write handle so the script
+	// TKT-D8T148: when the action declares allow_acl_bypass AND the mutator
+	// offers the elevated capability, expose the elevated handles so the script
 	// can call rela.bypass_acl(fn). Both conditions are required: operator opt-in
-	// (the flag) and a Mutator that chooses to provide elevation. A Mutator
-	// without ElevatedProvider (e.g. a restricted double) simply can't elevate.
-	if action.AllowACLBypass {
+	// (the config value) and a Mutator that chooses to provide elevation. A
+	// Mutator without ElevatedProvider (e.g. a restricted double) can't elevate.
+	//
+	// TKT-Y3JVFK: the value is an enum, so read and write are granted
+	// SEPARATELY here. `read` yields a handle with no write methods at all.
+	// Note the ElevatedProvider check still gates BOTH: on the cascade path a
+	// Mutator that declines to offer elevation withholds read elevation too,
+	// preserving the original two-key property for every automation action.
+	// A read-only surface with no Mutator at all (a document render) does not
+	// route through this runner — it wires lua.WriteDeps directly.
+	// autocascade carries the value as a plain string (it may not import
+	// metamodel); convert once here so the read/write semantics live in
+	// exactly one place rather than being re-derived by string comparison.
+	bypass := metamodel.ACLBypass(action.AllowACLBypass)
+	if bypass.Enabled() {
 		if ep, ok := m.(autocascade.ElevatedProvider); ok {
-			deps.ElevatedManager = ep.Elevated()
-			// TKT-ACSBSA: the elevated READ handle is set under the SAME two
-			// keys, inside the same branch — never on its own, so read
-			// elevation cannot outlive or precede write elevation.
-			//
+			if bypass.AllowsWrite() {
+				deps.ElevatedManager = ep.Elevated()
+			}
 			// elevatedReader is supplied by the wiring site (nil when that site
 			// chose not to grant read elevation), exactly as the elevated WRITE
 			// handle comes from the caller's Mutator rather than being minted
 			// here. This package does not construct the capability; it only
 			// decides when to hand over one it was given.
-			deps.ElevatedReader = l.elevatedReader
+			if bypass.AllowsRead() {
+				deps.ElevatedReader = l.elevatedReader
+			}
 			deps.ElevationRecorder = l.elevationRecorder
 		}
 	}
