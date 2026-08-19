@@ -145,6 +145,13 @@ type LuaToExecute struct {
 	Capabilities metamodel.Capabilities
 }
 
+// CapabilityFields exposes the grant as plain values so consumers that may not
+// import metamodel (autocascade) still read it through the single translation
+// seam rather than copying fields by hand. See metamodel.Capabilities.Fields.
+func (l LuaToExecute) CapabilityFields() (http, ai, writeFile bool, secrets []string) {
+	return l.Capabilities.Fields()
+}
+
 // Result represents the outcome of running automations.
 type Result struct {
 	// PropertiesSet contains properties that were automatically set.

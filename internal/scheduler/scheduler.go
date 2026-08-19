@@ -301,11 +301,9 @@ func (s *Scheduler) doExecuteTask(ctx context.Context, task TaskConfig) {
 	// undeclared capability stays absent rather than inheriting the trusted
 	// default that `rela script` gets at the operator shell.
 	deps := s.ws.ScheduledLuaWriteDeps()
+	http, ai, writeFile, secrets := task.Capabilities.Fields()
 	deps.Capabilities = lua.Capabilities{
-		HTTP:      task.Capabilities.HTTP,
-		AI:        task.Capabilities.AI,
-		WriteFile: task.Capabilities.WriteFile,
-		Secrets:   task.Capabilities.Secrets,
+		HTTP: http, AI: ai, WriteFile: writeFile, Secrets: secrets,
 	}
 	err := s.engine.ExecuteFile(taskCtx, task.Script, deps, nil, nil)
 	elapsed := s.now().Sub(start)

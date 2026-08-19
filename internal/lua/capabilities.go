@@ -11,10 +11,15 @@ import (
 //
 // # Fail-closed
 //
-// The zero value grants NOTHING (TKT-YH52OM). A runtime built without an
-// explicit [WithCapabilities] has no `http` global, no `ai` global, an empty
-// `rela.secrets`, and no `rela.write_file` — calling any of them raises
-// "attempt to call a nil value" rather than succeeding quietly.
+// The zero value grants NOTHING (TKT-YH52OM). A runtime built without a grant
+// from EITHER source — [ReadDeps.Capabilities] or [WithCapabilities] — has no
+// `http` global, no `ai` global, an empty `rela.secrets`, and no
+// `rela.write_file`; calling any of them raises "attempt to call a nil value"
+// rather than succeeding quietly.
+//
+// Because the zero value means "nothing", it is also treated as "no opinion":
+// an empty [WithCapabilities] does not revoke a grant carried on the deps. See
+// that function's godoc for the defect this prevents.
 //
 // This is the same shape [WriteDeps.ElevatedManager] already uses for
 // rela.bypass_acl, and the same rule ReadDeps.VisibleReader states for a nil
@@ -80,6 +85,13 @@ type Capabilities struct {
 	// config — the YAML decoder never populates it — so the broad grant can
 	// only come from a Go wiring site that names it.
 	AllSecrets bool
+}
+
+// Any reports whether this grant carries anything at all. The zero value
+// carries nothing, which is what makes it safe for [WithCapabilities] to treat
+// an empty grant as "no opinion" rather than as a revocation.
+func (c Capabilities) Any() bool {
+	return c.HTTP || c.AI || c.WriteFile || c.AllSecrets || len(c.Secrets) > 0
 }
 
 // AllowsSecret reports whether name is exposed to the runtime.

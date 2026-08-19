@@ -2,6 +2,7 @@ package lua
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -24,36 +25,48 @@ import (
 func TestCapabilityRegistrationStaysGated(t *testing.T) {
 	t.Parallel()
 
-	src, err := os.ReadFile("runtime.go")
+	// Read EVERY non-test source in the package, not just runtime.go: the
+	// functions being guarded live in ai.go and http.go, so a registration
+	// added from a new mode file (or from ai.go itself) would be invisible to
+	// a single-file grep.
+	entries, err := os.ReadDir(".")
 	if err != nil {
-		t.Fatalf("read runtime.go: %v", err)
+		t.Fatalf("readdir: %v", err)
 	}
-	text := string(src)
+	var sb strings.Builder
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		b, readErr := os.ReadFile(filepath.Clean(name))
+		if readErr != nil {
+			t.Fatalf("read %s: %v", name, readErr)
+		}
+		sb.Write(b)
+		sb.WriteString("\n")
+	}
+	text := sb.String()
 
 	tests := []struct {
-		name     string
-		needle   string   // the registration call
-		gate     string   // the guard that must appear before it
-		wantOnce bool     // registration must appear exactly once
-		absent   []string // spellings that must NOT reappear
+		name   string
+		needle string // the registration call
+		gate   string // the guard that must appear before it
 	}{
 		{
-			name:     "ai module",
-			needle:   "r.registerAIModule()",
-			gate:     "if r.caps.AI {",
-			wantOnce: true,
+			name:   "ai module",
+			needle: "r.registerAIModule()",
+			gate:   "if r.caps.AI {",
 		},
 		{
-			name:     "http module",
-			needle:   "r.registerHTTPModule()",
-			gate:     "if r.caps.HTTP {",
-			wantOnce: true,
+			name:   "http module",
+			needle: "r.registerHTTPModule()",
+			gate:   "if r.caps.HTTP {",
 		},
 		{
-			name:     "write_file binding",
-			needle:   `SetField(rela, "write_file"`,
-			gate:     "if r.caps.WriteFile {",
-			wantOnce: true,
+			name:   "write_file binding",
+			needle: `SetField(rela, "write_file"`,
+			gate:   "if r.caps.WriteFile {",
 		},
 	}
 

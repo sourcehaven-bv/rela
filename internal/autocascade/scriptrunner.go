@@ -95,6 +95,12 @@ type ScriptCapabilities struct {
 	Secrets []string
 }
 
+// Fields returns the grant as plain values, mirroring
+// metamodel.Capabilities.Fields so both ends of the hop read through one shape.
+func (c ScriptCapabilities) Fields() (http, ai, writeFile bool, secrets []string) {
+	return c.HTTP, c.AI, c.WriteFile, c.Secrets
+}
+
 // NopScriptRunner is a no-op [ScriptRunner] for tests that should not
 // trigger script execution. It panics when called, making it obvious
 // when a test unexpectedly fires a scripted automation.

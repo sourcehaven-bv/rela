@@ -48,8 +48,29 @@ type Capabilities struct {
 }
 
 // Any reports whether the block grants anything at all.
+//
+// Note this deliberately has no AllSecrets term, unlike lua.Capabilities.Any:
+// there is no "all secrets" spelling in YAML, so a config block can only grant
+// via the named list. See the AllSecrets field on lua.Capabilities.
 func (c Capabilities) Any() bool {
 	return c.HTTP || c.AI || c.WriteFile || len(c.Secrets) > 0
+}
+
+// Fields returns the grant as plain values.
+//
+// This is the SINGLE translation seam between the YAML type and every runtime
+// consumer (TKT-YH52OM). It exists because the obvious alternative — each
+// consumer copying the struct field-by-field — is what produced the defect this
+// method was added to prevent: the grant was hand-copied at five sites, and a
+// sixth path dropped it silently.
+//
+// It returns loose values rather than a lua.Capabilities because metamodel must
+// not import lua, and autocascade may import neither (see .go-arch-lint.yml).
+// Each consumer converts at its own boundary, but they all read the fields from
+// here, so adding a capability means changing this signature — a COMPILE error
+// at every consumer rather than a silent per-surface omission.
+func (c Capabilities) Fields() (http, ai, writeFile bool, secrets []string) {
+	return c.HTTP, c.AI, c.WriteFile, c.Secrets
 }
 
 // UnmarshalYAML decodes the mapping form and REFUSES a bare boolean.

@@ -89,8 +89,11 @@ type ReadDeps struct {
 	// (validation rules, document renders) had the same exposure — they cannot
 	// mutate the graph, but they could still exfiltrate.
 	//
-	// [WithCapabilities] overrides this when a caller supplies it explicitly;
-	// see Runtime.applyCapabilities for the precedence rule.
+	// Precedence: a NON-EMPTY [WithCapabilities] overrides this; an empty one
+	// leaves it alone. Engine.execute passes that option unconditionally, so
+	// treating an empty grant as a revocation silently erased this field for
+	// every plain ExecuteCode/ExecuteFile caller — which is how the scheduler
+	// runs. See the WithCapabilities godoc.
 	Capabilities Capabilities
 }
 

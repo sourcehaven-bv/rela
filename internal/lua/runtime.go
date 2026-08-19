@@ -273,8 +273,29 @@ func WithListDocumentMode(documentID string, lrc ListRenderContext) Option {
 // WithCapabilities declares which ambient capabilities the runtime may reach
 // (TKT-YH52OM). Omitting it denies all of them — see [Capabilities] for why
 // the default is closed rather than open.
+//
+// A ZERO-VALUE grant is a no-op, NOT a revocation: it leaves whatever
+// [ReadDeps.Capabilities] supplied in place. The two are alternative ways to
+// say the same thing, and "grant nothing" is already the default, so an empty
+// option carries no information worth destroying a deps-carried grant over.
+//
+// This is not a stylistic choice — it fixes a real defect. Engine.execute
+// passes this option UNCONDITIONALLY (plain ExecuteFile supplies
+// Capabilities{}), so a straight assignment made every deps-carried grant
+// vanish. The scheduler sets deps.Capabilities and calls ExecuteFile, so every
+// scheduled task's `capabilities:` block was silently a no-op. Pinned by
+// TestDepsCapabilitiesSurviveExecuteFile in internal/script.
+//
+// The failure mode this avoids is the dangerous direction: a grant that
+// silently disappears is a broken feature, but it fails CLOSED. The reverse —
+// an empty option that could not clear a grant when the caller MEANT to revoke
+// one — does not arise, because no caller revokes: a runtime is built once, per
+// execution, from a config that either named a capability or did not.
 func WithCapabilities(c Capabilities) Option {
 	return func(r *Runtime) {
+		if !c.Any() {
+			return
+		}
 		r.caps = c
 	}
 }
