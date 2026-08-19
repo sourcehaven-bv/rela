@@ -95,6 +95,9 @@ func (a *App) NewRouter() http.Handler {
 	// Sync API (FEAT-NJ9FEN) - machine-to-machine fs↔pg sync, under /api/sync/.
 	a.sync.registerSyncRoutes(inner)
 
+	// Remote MCP (TKT-BDG8U9) — opt-in, absent unless SetRemoteMCP enabled it.
+	registerMCPRoute(inner, a.mcpHandler)
+
 	// noCacheMiddleware sets no-cache headers on API responses so that
 	// browsers always fetch fresh data after file changes trigger a reload.
 	mux.Handle("/api/", a.noCacheMiddleware(inner))
@@ -570,7 +573,7 @@ func JWTPrincipalResolver(v assertionVerifier, headerName string) PrincipalResol
 		if err != nil {
 			return principal.Principal{}
 		}
-		p, ok := verifiedPrincipal(id)
+		p, ok := verifiedPrincipal(id, principal.ToolDataEntry)
 		if !ok {
 			return principal.Principal{}
 		}
@@ -592,7 +595,16 @@ func JWTPrincipalResolver(v assertionVerifier, headerName string) PrincipalResol
 // from a record this process already wrote and verified). A role reaching the
 // ACL from an unverified source would be a complete authorization bypass, so
 // this must be called ONLY on the output of a completed signature verification.
-func verifiedPrincipal(id AssertedIdentity) (principal.Principal, bool) {
+//
+// tool is the audit attribution for the surface the request arrived on —
+// [principal.ToolDataEntry] for the SPA/API, [principal.ToolMCP] for the
+// remote MCP endpoint. It is a parameter rather than a constant because
+// [principal.VerifiedFrom] is the ONLY constructor that populates the
+// unexported org/role/scope fields: a caller needing a different Tool cannot
+// just build a `principal.Principal{Tool: ...}` composite literal without
+// silently dropping every asserted role, so the Tool has to enter here
+// (RR-H8S10M).
+func verifiedPrincipal(id AssertedIdentity, tool string) (principal.Principal, bool) {
 	if id.Subject == "" {
 		return principal.Principal{}, false
 	}
@@ -613,7 +625,7 @@ func verifiedPrincipal(id AssertedIdentity) (principal.Principal, bool) {
 	// away is dropped rather than kept as "": it could never match a policy
 	// mapping, so keeping it would only re-open nothing at a cost.
 	scopes := sanitizeClaimList(id.Scopes)
-	return principal.VerifiedFrom(user, principal.ToolDataEntry, principal.Claims{
+	return principal.VerifiedFrom(user, tool, principal.Claims{
 		OrgID:   sanitizeUser(id.OrgID),
 		OrgSlug: sanitizeUser(id.OrgSlug),
 		Roles:   roles,

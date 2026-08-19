@@ -23,6 +23,43 @@ func TestWithPrincipal_RoundTrip(t *testing.T) {
 	}
 }
 
+// Stamped distinguishes "no identity on this ctx" from "an identity that
+// happens to be unknown" — a distinction From deliberately erases. The MCP
+// server's principal middleware depends on it to decide whether to supply a
+// fallback identity, so an unstamped ctx and a literally-unknown one must not
+// look the same.
+func TestStamped_DistinguishesAbsentFromUnknown(t *testing.T) {
+	t.Run("absent", func(t *testing.T) {
+		got, ok := principal.Stamped(context.Background())
+		if ok {
+			t.Errorf("ok = true for an unstamped ctx, want false (got %+v)", got)
+		}
+	})
+
+	t.Run("an explicitly unknown principal IS stamped", func(t *testing.T) {
+		// The case that makes From insufficient: this is indistinguishable
+		// from absent under From, but a caller was genuinely stamped here.
+		p := principal.Principal{User: "unknown", Tool: "unknown"}
+		got, ok := principal.Stamped(principal.With(context.Background(), p))
+
+		if !ok {
+			t.Fatal("ok = false, want true — the principal was stamped, even " +
+				"though its value is unknown/unknown")
+		}
+		if !got.Equal(p) {
+			t.Errorf("got %+v, want %+v", got, p)
+		}
+	})
+
+	t.Run("round-trips a real principal", func(t *testing.T) {
+		p := principal.Principal{User: "alice", Tool: principal.ToolMCP}
+		got, ok := principal.Stamped(principal.With(context.Background(), p))
+		if !ok || !got.Equal(p) {
+			t.Errorf("got (%+v, %v), want (%+v, true)", got, ok, p)
+		}
+	})
+}
+
 func TestSystemUser(t *testing.T) {
 	tests := []struct {
 		name string

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
+	"net/http"
 	"path/filepath"
 	"sync"
 
@@ -95,7 +96,13 @@ const userPaletteFile = "palette.yaml"
 // and redactedForSuggestion to 102 — the field-redaction seam the next-action
 // candidate path needs, which has to reach affordanceService.
 //
-//plimsoll:max-methods=102
+// TKT-BDG8U9 adds [App.SetRemoteMCP] on the same terms — the public opt-in
+// setter for the remote MCP endpoint, matching that setter idiom. The rest of
+// that feature deliberately stays OFF App: `registerMCPRoute` takes its
+// handler as a parameter and `toolForPath` is a package function, so the
+// mount cost one method rather than three.
+//
+//plimsoll:max-methods=103
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS
@@ -267,6 +274,17 @@ type App struct {
 	// with a header/env principal chain — cmd/rela-server refuses to start
 	// with both, so a JWT failure can never downgrade to a spoofable header.
 	jwtGate *JWTGateConfig
+
+	// mcpHandler, when non-nil, serves the remote MCP endpoint at
+	// [MCPPath]. Built once by SetRemoteMCP (before NewRouter) from an
+	// [MCPHandlerFactory]; nil means the route is not registered at
+	// all, so an upgraded server serves no MCP until an operator opts
+	// in. SetRemoteMCP refuses to enable it without jwtGate — see its
+	// doc comment for why.
+	//
+	// It is a plain http.Handler because `internal/mcp` is the only
+	// component allowed to import the MCP go-sdk (arch-lint).
+	mcpHandler http.Handler
 
 	// principalHeader is the name of the HTTP header that carries the
 	// principal identity (the --principal-header flag value), or ""

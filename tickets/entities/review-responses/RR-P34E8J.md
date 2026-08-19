@@ -4,7 +4,18 @@ type: review-response
 title: 'RFC 9728 challenge (AC #9) is unsatisfiable as planned: JWT gate only emits WWW-Authenticate when header is literally Authorization'
 finding: 'jwtgate.go:228 emits WWW-Authenticate: Bearer only when cfg.HeaderName == "Authorization", but the default is X-Auth-Assertion (cmd/rela-server/main.go:108). MCP clients send Authorization and RFC 9728 requires the challenge carry resource_metadata=. Adding a well-known endpoint alone does not satisfy AC #9.'
 severity: significant
-status: open
+status: deferred
+reason: >-
+  Deferred out of TKT-BDG8U9, not fixed. The endpoint ships without RFC 9728
+  Protected Resource Metadata, so an MCP client cannot auto-discover the IdP
+  and must be pointed at it by configuration — which works, making this a
+  usability gap rather than a security one. Fixing it properly means changing
+  when jwtgate.go emits WWW-Authenticate (today: only when the configured
+  header is literally Authorization, while the default is X-Auth-Assertion)
+  and adding the resource_metadata parameter plus a well-known endpoint. That
+  touches the shared JWT gate for every API caller, not just MCP, so it wants
+  its own change and its own review rather than riding along here. Recorded in
+  TKT-BDG8U9 under "Deferred (not shipped)" and in docs/server-security.md.
 ---
 
 ## Finding

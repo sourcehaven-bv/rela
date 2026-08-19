@@ -3,8 +3,13 @@ name: CI
 on:
   push:
     branches: [main, develop]
+  # No `branches:` filter on pull_request, deliberately. The filter matches the
+  # TARGET branch, so a stacked PR (one opened against another feature branch
+  # rather than develop) matched nothing and ran ZERO checks — while the PR page
+  # showed no failures, which reads identically to "everything passed". A
+  # security-relevant endpoint was reviewed that way before this was caught.
+  # Every PR gets CI regardless of what it targets.
   pull_request:
-    branches: [main, develop]
   # Required for the merge queue: entries are tested on an ephemeral
   # `gh-readonly-queue/...` ref, and a required check that never runs there
   # leaves the entry queued forever. Every check listed as required on

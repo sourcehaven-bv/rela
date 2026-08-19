@@ -25,6 +25,7 @@ import (
 	"errors"
 	"iter"
 	"log/slog"
+	"net/http"
 
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -159,10 +160,16 @@ type Watcher interface {
 
 // Server wraps the MCP server with rela-specific state.
 //
-// TODO(TKT-N0IKN9): Server is over the 40-method load line (48 methods).
+// TODO(TKT-N0IKN9): Server is over the 40-method load line (49 methods).
 // Decompose; ratchet this number down as handlers move out.
 //
-//plimsoll:max-methods=48
+// 48 → 49: [Server.HTTPHandler] (TKT-BDG8U9). It belongs on Server — it
+// exposes THIS server over a second transport, the peer of [Server.Serve] —
+// and it is the only method the remote endpoint added: the stateless-transport
+// choice lives inside it, and the wiring site holds an http.Handler rather
+// than reaching for the SDK.
+//
+//plimsoll:max-methods=49
 type Server struct {
 	mcp       *mcpgo.Server
 	deps      Deps
@@ -194,10 +201,23 @@ func WithPrincipal(p principal.Principal) Option {
 // read the graph too (see RR-CFFL52 / RR-NSUN49) and previously ran
 // with no principal on the ctx at all.
 //
-// NewServer guarantees s.principal is non-zero by the time this
-// middleware is registered, so there's no "no Principal" branch here.
+// **An identity already on the ctx WINS.** Under stdio there is never
+// one, so this is the stdio server's own principal in practice. Over
+// HTTP (TKT-BDG8U9) the transport hands the SDK the *http.Request ctx,
+// which the middleware chain has already stamped with the JWT-verified
+// caller — and overwriting that with a process-wide identity would
+// attribute every remote caller's writes to one principal AND hand the
+// ACL the wrong subject to gate reads against. The construction-time
+// principal is the fallback for a transport that carries no identity,
+// not an override of one that does.
+//
+// NewServer guarantees s.principal is non-zero, so the fallback is
+// never the zero Principal.
 func (s *Server) principalMiddleware(next mcpgo.MethodHandler) mcpgo.MethodHandler {
 	return func(ctx context.Context, method string, req mcpgo.Request) (mcpgo.Result, error) {
+		if _, stamped := principal.Stamped(ctx); stamped {
+			return next(ctx, method, req)
+		}
 		return next(principal.With(ctx, s.principal), method, req)
 	}
 }
@@ -249,6 +269,36 @@ func NewServer(deps Deps, version string, opts ...Option) (*Server, error) {
 	s.registerPrompts()
 
 	return s, nil
+}
+
+// HTTPHandler returns an http.Handler serving this server over Streamable
+// HTTP, for mounting inside an existing router (TKT-BDG8U9). The caller owns
+// authentication, ACL and routing; this method owns only the MCP transport.
+//
+// **Stateless is required, not a tuning choice.** Protocol revision
+// 2026-07-28 is reachable ONLY on a stateless server in the go-sdk — a
+// session-bearing one negotiates down to 2025-11-25, because the newer
+// revision removes sessions entirely. Consequences the caller inherits:
+//
+//   - GET and DELETE get 405; only POST carries messages.
+//   - Server→client requests are rejected (there is no channel to answer on).
+//   - Notifications reach the client only within an in-flight request.
+//
+// That last point is why the file watcher is pointless on this transport and
+// a caller should pass a no-op [Watcher]: `resources/list_changed` has no
+// stateless equivalent. Remote clients re-read on demand and see fresh data,
+// because every read goes to the store.
+//
+// The returned handler serves THIS server for every request, so per-request
+// state must travel on the ctx rather than be baked in here. That is exactly
+// how identity works: the transport passes the *http.Request ctx through to
+// handlers, and [Server.principalMiddleware] preserves a principal already
+// stamped there in preference to the construction-time one.
+func (s *Server) HTTPHandler() http.Handler {
+	return mcpgo.NewStreamableHTTPHandler(
+		func(*http.Request) *mcpgo.Server { return s.mcp },
+		&mcpgo.StreamableHTTPOptions{Stateless: true},
+	)
 }
 
 // Serve starts the MCP server on stdio and blocks until the peer

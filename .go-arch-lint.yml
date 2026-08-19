@@ -217,6 +217,11 @@ deps:
       - script
     canUse:
       - kong
+  # cmdServer is a composition root, so it may name both the transport
+  # (dataentry) and the protocol server it mounts inside it (mcp) — the same
+  # pairing `cli` already has for the stdio transport. Keeping the MCP wiring
+  # here is what lets `dataentry` take a plain http.Handler and stay off the
+  # go-sdk (TKT-BDG8U9).
   cmdServer:
     mayDependOn:
       - acl
@@ -225,6 +230,7 @@ deps:
       - cmdexec
       - dataentry
       - jwtauth
+      - mcp
       - principal
       - scheduler
       - script

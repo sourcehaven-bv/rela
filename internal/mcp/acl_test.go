@@ -154,6 +154,60 @@ func TestACL_ShowEntity_HiddenIsIndistinguishableFromAbsent(t *testing.T) {
 	}
 }
 
+// TestACL_TwoPrincipals_SeeDifferentRows is AC #3 for the remote transport
+// (TKT-BDG8U9): ONE server, two callers, each seeing only what their own
+// grants permit.
+//
+// This is the property that makes a shared HTTP endpoint safe, and it is
+// stronger than the single-principal tests around it: those would all still
+// pass if the server resolved the ACL once at construction and reused that
+// verdict for everyone. Here the same *Server answers both callers, so the
+// gate must resolve per call from the ctx principal — which is exactly what
+// the HTTP transport relies on, since it hands handlers the request ctx.
+//
+// bob has no assignment in the policy, so he is not merely differently
+// privileged — he is unprivileged, and must not see alice's ticket.
+func TestACL_TwoPrincipals_SeeDifferentRows(t *testing.T) {
+	t.Parallel()
+	s, aliceCtx := gatedServer(t)
+
+	// Same server, a different caller on the ctx.
+	bobCtx := principal.With(context.Background(),
+		principal.Principal{User: "bob", Tool: principal.ToolMCP})
+
+	aliceRes, err := s.handleListEntities(aliceCtx, makeToolRequest(map[string]any{}))
+	if err != nil {
+		t.Fatalf("list_entities(alice): %v", err)
+	}
+	bobRes, err := s.handleListEntities(bobCtx, makeToolRequest(map[string]any{}))
+	if err != nil {
+		t.Fatalf("list_entities(bob): %v", err)
+	}
+
+	aliceText, bobText := getResultText(t, aliceRes), getResultText(t, bobRes)
+
+	// alice is a viewer of tickets, so she sees the visible one.
+	if !strings.Contains(aliceText, visibleID) {
+		t.Errorf("alice cannot see %s, but her role grants read on tickets: %s",
+			visibleID, aliceText)
+	}
+	// bob has no grants at all.
+	if strings.Contains(bobText, visibleID) {
+		t.Errorf("LEAK: bob has no policy assignment yet sees %s — the ACL was "+
+			"resolved once for the server rather than per caller: %s", visibleID, bobText)
+	}
+	// Neither may see the hidden feature; alice's role covers tickets only.
+	if strings.Contains(aliceText, hiddenTitle) || strings.Contains(bobText, hiddenTitle) {
+		t.Errorf("LEAK: hidden title visible.\n alice: %s\n bob: %s", aliceText, bobText)
+	}
+	// The two responses must actually differ, or the test proves nothing
+	// about per-caller resolution.
+	if aliceText == bobText {
+		t.Errorf("both callers got identical results (%s) — identities are not "+
+			"being distinguished", aliceText)
+	}
+}
+
 // TestACL_ListEntities_OmitsHidden pins the list surface.
 func TestACL_ListEntities_OmitsHidden(t *testing.T) {
 	t.Parallel()
