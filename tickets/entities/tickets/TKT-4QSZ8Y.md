@@ -5,7 +5,7 @@ title: Wire read-side ACL into the MCP server
 kind: enhancement
 priority: critical
 effort: l
-status: ready
+status: backlog
 ---
 
 Security gate for shipping content states — design doc §12.2.

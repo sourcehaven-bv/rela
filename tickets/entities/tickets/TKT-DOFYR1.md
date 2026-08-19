@@ -5,7 +5,7 @@ title: Typed state references and the store contract (Step 1)
 kind: enhancement
 priority: high
 effort: xl
-status: ready
+status: backlog
 ---
 
 Design doc §2, §3, §6. The highest-engineering-risk piece: schema + contract

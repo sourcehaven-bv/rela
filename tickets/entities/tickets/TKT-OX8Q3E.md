@@ -5,7 +5,7 @@ title: pgstore rename should emit EntityRenamed, not delete+put
 kind: refactor
 priority: medium
 effort: s
-status: ready
+status: backlog
 ---
 
 Design doc §12.4. pgstore rename emits `notifyDelete(oldID)` +

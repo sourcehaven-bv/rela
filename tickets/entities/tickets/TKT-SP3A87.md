@@ -5,7 +5,7 @@ title: Document the authenticated-everyone public-read scoping (anonymous deferr
 kind: docs
 priority: medium
 effort: xs
-status: ready
+status: backlog
 ---
 
 Design doc §12.3, re-scoped per DEC-PEYCJZ (2026-08-19): the headline scenario

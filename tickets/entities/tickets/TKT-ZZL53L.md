@@ -5,7 +5,7 @@ title: Drop or use entities_search_tsv_idx
 kind: chore
 priority: low
 effort: xs
-status: ready
+status: backlog
 ---
 
 Design doc §12.8. The index is created but never queried — no `to_tsvector`/`@@`
