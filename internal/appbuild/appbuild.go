@@ -611,6 +611,7 @@ func buildACL(policy *acl.Policy, meta *metamodel.Metamodel, st store.Store) (ac
 	if err := policy.ValidateAgainstMetamodel(metamodelView{meta}); err != nil {
 		return nil, nil, fmt.Errorf("appbuild: validate acl policy against metamodel: %w", err)
 	}
+	warnUngatedMembership(policy)
 	// `st` is passed twice: once via NewStoreGraph (the Graph
 	// adapter the resolver uses for member-of / ancestor walks), and
 	// once as the GraphQueryer (executes store.MatchingIDs for
@@ -629,6 +630,37 @@ func buildACL(policy *acl.Policy, meta *metamodel.Metamodel, st store.Store) (ac
 		return nil, nil, fmt.Errorf("appbuild: build acl.Declarative: %w", err)
 	}
 	return d, d, nil
+}
+
+// warnUngatedMembership logs a prominent startup warning when the loaded
+// policy leaves the membership-relation self-promotion path open: a group
+// named in `assignments:` confers a privileged role, but writes to the
+// membership relation carry no `requires_permission` gate, so anyone who can
+// write that edge can grant themselves the role (RR-7O6Q, TKT-T31NKT).
+//
+// **Warning, not a refusal.** The hole is pre-existing and the shape is a
+// reasonable one inside a trusted team, where the trust boundary is who can
+// write to the project at all. Hard-failing the boot would break those
+// deployments on upgrade for a risk they have already accepted. The refusal
+// is scoped to the case that genuinely changes the stakes — a policy that
+// also grants read on a non-default world, where the same hole becomes a
+// mechanism for leaking unpublished content — and lands with the world grant
+// syntax it needs to be evaluated (TKT-DN37J2).
+//
+// The condition comes from [acl.Policy.MembershipSelfPromotionOpen], the same
+// predicate behind the `rela acl audit` A1-ungated-membership finding, so the
+// boot warning and the linter can never disagree.
+func warnUngatedMembership(policy *acl.Policy) {
+	if !policy.MembershipSelfPromotionOpen() {
+		return
+	}
+	rel := policy.EffectiveMembershipRelation()
+	slog.Warn("appbuild: ACL membership relation is NOT gated — self-promotion is possible; "+
+		"any principal who can write this relation can grant themselves an assigned privileged role",
+		"relation", rel,
+		"fix", fmt.Sprintf("set role_relations.%s.requires_permission and grant that permission only to admins", rel),
+		"docs", "docs/acl-security.md",
+		"audit", "rela acl audit")
 }
 
 // Config carries the inputs every build of [New] needs, plus

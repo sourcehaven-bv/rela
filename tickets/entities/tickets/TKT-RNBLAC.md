@@ -1,0 +1,27 @@
+---
+id: TKT-RNBLAC
+type: ticket
+title: Consolidate cardinality analyzers; stop swallowing CountRelations errors
+kind: refactor
+priority: high
+effort: s
+status: ready
+---
+
+Design doc §12.5 + §12.6 — the suggested first move; unblocks Step 5 and fixes a
+real user-facing bug.
+
+`checkMinOutgoing`/`checkMaxOutgoing`/`checkMinIncoming`/`checkMaxIncoming`
+(`analysis.go:344-451`) are four near-identical ~25-line functions, each
+independently calling `collectEntities` (one relation with one source type scans
+the same entities four times). Collapse to one `checkCardinality(ctx, rule,
+scope)` parameterised over direction/type-source/bound/comparison; fold
+`countOutgoingByType`/`countIncomingByType` into one `countRelations`.
+
+Fix `n, _ := s.deps.Store.CountRelations(...)` (`analysis.go:454,464`): a
+backend failure reads as count 0, which for `min_outgoing` manufactures a
+violation out of an outage.
+
+Prerequisite, not cosmetics: world-awareness changes the subject population,
+counting scope, and violation identity — four copies is four chances to diverge
+into false violations.

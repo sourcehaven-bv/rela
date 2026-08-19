@@ -55,6 +55,42 @@ The `rela acl audit` linter (below) flags an un-gated membership
 relation — default or configured — as a high-severity finding, so run
 it after editing `acl.yaml`.
 
+You do not have to remember to run it, though: whenever rela loads a
+policy whose `assignments` confer a **privileged** role while the
+membership relation is un-gated — at server startup, and equally when a
+CLI command builds the full service bundle — it logs a prominent
+warning naming the relation and the fix. (Surfaces that inject their
+own ACL instead of loading the policy, such as the server's read-only
+mode, do not evaluate it and stay silent.) The server still boots — the
+gap is pre-existing, and in a single-team deployment where everyone who
+can write to the project is already trusted, it may be an acceptable
+risk you have consciously taken. The warning exists so it is a choice
+rather than an oversight.
+
+A group assigned a **read-only** role does not trigger the warning (or
+the audit finding): granting yourself read access to something you were
+going to be shown anyway is a visibility decision, not an escalation
+path. Both the warning and the linter evaluate the same predicate, so
+they never disagree.
+
+### This becomes a hard requirement with content states
+
+The tolerance above holds only while the worst case is over-granting
+inside a trusted group. It stops holding the moment the same policy
+also grants read on a **non-default world** — the content-states
+feature, where an entity has separate draft/review/published faces.
+There, an un-gated membership relation is no longer just a
+role-management weakness: it is a working mechanism for reading
+unpublished content, because self-assigning a role that can read the
+draft world is one relation write away.
+
+When world-shaped read grants ship, a policy that combines them with an
+un-gated membership relation will be **refused at load** with an error
+naming the fix, rather than booting with a warning. Deployments that do
+not use worlds are unaffected and keep today's behaviour. Gating the
+membership relation now costs one `requires_permission` line and means
+that change is a no-op for you.
+
 The companion section in `docs/server-security.md` carries the same
 guidance with more context on the broader threat model.
 

@@ -180,6 +180,43 @@ func (p *Policy) EffectiveMembershipRelation() string {
 	return defaultMembershipRelation
 }
 
+// MembershipSelfPromotionOpen reports whether this policy leaves the
+// membership-relation self-promotion path open: at least one entry in
+// [Policy.Assignments] targets a declared, PRIVILEGED role while writes
+// to the effective membership relation carry no `requires_permission`
+// gate. When true, any principal who can write an edge of that relation
+// type can grant themselves the assigned role (RR-7O6Q) — see the
+// escalation-risk note on [RoleRelationDef].
+//
+// This is the single implementation of the "is membership gated?"
+// question. The aclaudit linter's A1-ungated-membership finding and the
+// boot-time startup warning both call it, so the advisory and the
+// enforcement view can never drift apart (TKT-T31NKT). It lives here,
+// beside [Policy.EffectiveMembershipRelation], for the same reason that
+// accessor does: a second hand-maintained copy of this predicate is a
+// silent over- or under-report waiting to happen.
+//
+// Privilege-gated deliberately, and symmetric with the linter's A2
+// check: a group assigned a READ-ONLY role is a visibility choice, not
+// an escalation path (RR-LXI3NW / RR-UR0LJU / RR-EG5D3E). Widening this
+// to "any assignment" would fire on read-only groups — the exact false
+// positive the audit design fought.
+//
+// An assignment naming an UNDECLARED role confers nothing and is
+// likewise not an escalation path; the linter reports that separately
+// as A4-assignment-unknown-role.
+func (p *Policy) MembershipSelfPromotionOpen() bool {
+	if p.RoleRelations[p.EffectiveMembershipRelation()].RequiresPermission != "" {
+		return false // gated — the delegate-X pattern is in place
+	}
+	for _, roleName := range p.Assignments {
+		if role, ok := p.Roles[roleName]; ok && role.IsPrivileged() {
+			return true
+		}
+	}
+	return false
+}
+
 // RoleDef is the capability bundle for a single role. The per-verb
 // mutation grants (Create / Update / Delete), Permissions, and the
 // affordance grants are honored by the write path and the affordances
@@ -229,6 +266,18 @@ type RoleDef struct {
 	Visible   map[string][]FieldGrant    `yaml:"visible"`
 	Options   map[string][]OptionGrant   `yaml:"options"`
 	Relations map[string][]RelationGrant `yaml:"relations"`
+}
+
+// IsPrivileged reports whether the role confers escalation-relevant
+// power: it grants any write verb (Create/Update/Delete, including the
+// "*" wildcard) or holds any permission.
+//
+// Read grants are NOT privilege — a read-everything role is a
+// visibility choice, not an escalation path (RR-LXI3NW, RR-UR0LJU).
+// Exported so the aclaudit linter shares this definition rather than
+// keeping its own copy; its A2/A3 checks reference the same notion.
+func (r RoleDef) IsPrivileged() bool {
+	return len(r.Create) > 0 || len(r.Update) > 0 || len(r.Delete) > 0 || len(r.Permissions) > 0
 }
 
 // grantsVerb reports whether the role may perform op on entity type

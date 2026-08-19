@@ -176,13 +176,13 @@ func HasAtLeast(findings []Finding, threshold Severity) bool {
 
 // ---- Shared policy predicates ------------------------------------------
 
-// isPrivileged reports whether a role confers escalation-relevant power:
-// it grants any write verb (Create/Update/Delete, including the "*"
-// wildcard) OR holds any permission. Read grants are NOT privilege — a
-// read-everything role is a visibility choice, not an escalation path
-// (RR-LXI3NW, RR-UR0LJU). This is the single definition A2/A3 reference.
+// isPrivileged reports whether a role confers escalation-relevant power.
+// Delegates to [acl.RoleDef.IsPrivileged] so A2/A3 and the shared
+// membership predicate ([acl.Policy.MembershipSelfPromotionOpen], which A1
+// calls) agree on what "privileged" means — one definition, not two
+// (TKT-T31NKT). Kept as a local function so the call sites read unchanged.
 func isPrivileged(r acl.RoleDef) bool {
-	return len(r.Create) > 0 || len(r.Update) > 0 || len(r.Delete) > 0 || len(r.Permissions) > 0
+	return r.IsPrivileged()
 }
 
 // roleDeclared reports whether the policy declares a role by this name.
@@ -199,12 +199,6 @@ func permissionGranted(p *acl.Policy, perm string) bool {
 		}
 	}
 	return false
-}
-
-// requiresPermissionFor returns the requires_permission gate on the given
-// relation type, "" if the relation isn't a role-relation or has no gate.
-func requiresPermissionFor(p *acl.Policy, rel string) string {
-	return p.RoleRelations[rel].RequiresPermission
 }
 
 // verbLists returns the four grant lists of a role for iteration.
