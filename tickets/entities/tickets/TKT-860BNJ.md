@@ -5,7 +5,7 @@ title: 'Form relation direction: infer from schema, require it when self-referen
 kind: enhancement
 priority: high
 effort: m
-status: review
+status: done
 ---
 
 ## Description

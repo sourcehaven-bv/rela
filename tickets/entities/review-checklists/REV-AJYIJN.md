@@ -2,7 +2,7 @@
 id: REV-AJYIJN
 type: review-checklist
 title: 'Review: Form relation direction: infer from schema, require it when self-referencing (drop the implicit outgoing default)'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -87,14 +87,12 @@ seeded FEAT-001→FEAT-002 edge; the extracted fixture now validates clean.
 
 ## Pull Request
 
-- [x] ~~Run `/pr` command to create PR and monitor CI~~ (N/A yet: nothing has
-been committed — the working tree holds the change and the user has not asked
-for a commit or PR)
-- [x] ~~All CI checks pass~~ (N/A yet: no PR; local equivalents all pass — see
-Automated Checks above)
-- [x] ~~PR URL documented below~~ (N/A yet: no PR)
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass
+- [x] PR URL documented below
 
-**PR:** not created. This checklist stays `in-progress` and the ticket stays in
-`review` until the change is committed and a PR is opened — the workflow's
-"cannot be merged" gate is doing its job here, since there is genuinely nothing
-merged yet.
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1376
+
+CI on the PR covered the two gaps that could not be closed locally: **Frontend**
+passed (vitest is not installed in this checkout) and **E2E** exercised the
+`e2e/tests/fixtures.ts` `tagged` binding fix against a real server boot.
