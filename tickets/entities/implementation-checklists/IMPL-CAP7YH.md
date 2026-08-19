@@ -63,6 +63,15 @@ the built binary: completes, and `git status docs/ README.md` is clean — outpu
 byte-identical. This is why `rela script` / `rela flow` / the docs runtime get
 `TrustedCapabilities()`.
 
+**Source-level guard.** `TestCapabilityRegistrationStaysGated` (`internal/lua`)
+asserts each of the four bindings is registered exactly ONCE and sits inside its
+`if r.caps.*` gate, and that the secrets table is still built through
+`filterSecrets`. This covers a hole the behavioral tests structurally cannot: they
+assert what `NewReader`/`NewWriter` expose, so a future SECOND registration path
+(a new mode, a convenience constructor) could reintroduce an ungated binding
+without failing any of them. Mutation-checked both ways — adding a stray
+`r.registerHTTPModule()` and reverting to `range r.secrets` each fail it.
+
 **Config-level verification.** The Go-struct tests above prove the mechanism;
 two further tests start from real YAML text, so the spelling the docs tell
 operators to write is the spelling that decodes:
