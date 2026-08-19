@@ -199,7 +199,7 @@ current day rather than to a hard-coded date:
 | -------- | ------- | ------- |
 | `today()` | date | The current day, at UTC midnight |
 | `days_between(a, b)` | number | Whole days from `b` to `a`; positive when `a` is later |
-| `date_add(d, n, unit)` | date | `d` shifted by `n` (may be negative); `unit` is `day` or `week` |
+| `date_add(d, n, unit)` | date | `d` shifted by `n` (may be negative); `unit` is `day`, `week`, `month` or `year` |
 | `rrule_next(rule, after)` | date | The first occurrence of an RRULE strictly after `after` |
 
 ```bash
@@ -217,9 +217,25 @@ Every date value is normalized to UTC midnight, so results are whole days
 and compare equal to bare `YYYY-MM-DD` literals regardless of any time
 component or timezone on the stored value.
 
-`date_add` accepts only `day` and `week`. Months and years are rejected
-rather than silently normalized — "one month after January 31" has no
-single correct answer, and a wrong guess would be invisible in a filter.
+`date_add` accepts `day`, `week`, `month` and `year`. Month and year
+arithmetic **clamps to the last valid day** of the target month rather than
+spilling into the next one:
+
+| Expression | Result |
+| ---------- | ------ |
+| `date_add('2026-01-31', 1, 'month')` | `2026-02-28` |
+| `date_add('2028-01-31', 1, 'month')` | `2028-02-29` (leap year) |
+| `date_add('2026-03-31', -1, 'month')` | `2026-02-28` |
+| `date_add('2028-02-29', 1, 'year')` | `2029-02-28` |
+
+Clamping is stated rather than inherited: Go's own `AddDate` would normalize
+January 31 + 1 month to **March 3**, silently turning "the last of every
+month" into "the 3rd of every other month".
+
+Note that clamping is lossy — chaining month steps from a month-end date does
+not recover the original day (`Jan 31 → Feb 28 → Mar 28`). For a true
+"last day of every month" schedule use `rrule_next` with an RRULE, which
+models that directly.
 
 `rrule_next` errors when the rule is malformed *or* when it has no
 occurrence left (a `COUNT` reached, an `UNTIL` passed); the two messages

@@ -286,11 +286,88 @@ func TestDateAdd_LeapDay(t *testing.T) {
 	}
 }
 
-// TestDateAdd_RejectsUnsupportedUnit pins the v1 restriction. month/year
-// are refused rather than delegated to AddDate's silent end-of-month
-// normalization.
+// TestDateAdd_Months pins the CLAMPING rule for month arithmetic:
+// the result is pinned to the last valid day of the target month rather
+// than spilling into the next one.
+//
+// time.AddDate would normalize 2026-01-31 + 1 month to 2026-03-03 (it
+// builds February 31st and lets the calendar carry). For a schedule that
+// is wrong — "the last of every month" silently becomes "the 3rd of
+// every other month".
+func TestDateAdd_Months(t *testing.T) {
+	tests := []struct {
+		name string
+		from string
+		expr string
+		want string
+	}{
+		{"mid-month is unremarkable", "2026-08-18", "date_add(a, 1, 'month')", "2026-09-18"},
+		{"Jan 31 clamps to Feb 28", "2026-01-31", "date_add(a, 1, 'month')", "2026-02-28"},
+		{"Jan 31 clamps to Feb 29 in a leap year", "2028-01-31", "date_add(a, 1, 'month')", "2028-02-29"},
+		{"Mar 31 clamps going backwards", "2026-03-31", "date_add(a, -1, 'month')", "2026-02-28"},
+		{"May 31 clamps to Apr 30", "2026-05-31", "date_add(a, -1, 'month')", "2026-04-30"},
+		{"crosses a year boundary", "2026-11-30", "date_add(a, 2, 'month')", "2027-01-30"},
+		{"backwards across a year boundary", "2026-01-15", "date_add(a, -2, 'month')", "2025-11-15"},
+		{"twelve months is a year", "2026-08-18", "date_add(a, 12, 'month')", "2027-08-18"},
+		{"zero is identity", "2026-01-31", "date_add(a, 0, 'month')", "2026-01-31"},
+		{"a year", "2026-08-18", "date_add(a, 1, 'year')", "2027-08-18"},
+		{"leap day clamps on a year shift", "2028-02-29", "date_add(a, 1, 'year')", "2029-02-28"},
+		{"leap day survives a four-year shift", "2028-02-29", "date_add(a, 4, 'year')", "2032-02-29"},
+		{"a year backwards", "2026-08-18", "date_add(a, -1, 'year')", "2025-08-18"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			env, b := dateEnv(t, time.Now())
+			prog, err := predicate.Compile(env, tc.expr+" == b")
+			if err != nil {
+				t.Fatalf("compile: %v", err)
+			}
+			setVar(t, b, "a", day(t, tc.from))
+			setVar(t, b, "b", day(t, tc.want))
+			v, evErr := prog.Eval(context.Background(), b)
+			if evErr != nil {
+				t.Fatalf("eval: %v", evErr)
+			}
+			got, ok := v.(predicate.Bool)
+			if !ok {
+				t.Fatalf("want Bool, got %T", v)
+			}
+			if !got.Bool() {
+				t.Errorf("%s from %s != %s", tc.expr, tc.from, tc.want)
+			}
+		})
+	}
+}
+
+// TestDateAdd_MonthEndIsStable pins the property that makes clamping the
+// right rule for schedules: stepping month by month from a month-end
+// date stays on month-ends instead of drifting earlier, which is what
+// normalization would cause.
+func TestDateAdd_MonthEndIsStable(t *testing.T) {
+	env, b := dateEnv(t, time.Now())
+	prog, err := predicate.Compile(env,
+		"date_add(date_add(a, 1, 'month'), 1, 'month') == b")
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	// Jan 31 -> Feb 28 -> Mar 28. Clamping is lossy by design: once a
+	// step lands on a short month the day-of-month does not recover.
+	// Documented, and why rrule_next exists for true month-end schedules.
+	setVar(t, b, "a", day(t, "2026-01-31"))
+	setVar(t, b, "b", day(t, "2026-03-28"))
+	v, evErr := prog.Eval(context.Background(), b)
+	if evErr != nil {
+		t.Fatalf("eval: %v", evErr)
+	}
+	if got := v.(predicate.Bool); !got.Bool() {
+		t.Error("chained month arithmetic did not clamp as documented")
+	}
+}
+
+// TestDateAdd_RejectsUnsupportedUnit pins that an unrecognized unit is a
+// clear error rather than a silent no-op.
 func TestDateAdd_RejectsUnsupportedUnit(t *testing.T) {
-	for _, unit := range []string{"month", "year", "fortnight", ""} {
+	for _, unit := range []string{"fortnight", "decade", "hour", ""} {
 		t.Run("unit="+unit, func(t *testing.T) {
 			env, b := dateEnv(t, time.Now())
 			prog, err := predicate.Compile(env,

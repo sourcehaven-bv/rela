@@ -46,12 +46,17 @@ const (
 // Units accepted by date_add. Deliberately day/week only for v1 —
 // see the unitDays doc.
 const (
-	unitDay  = "day"
-	unitWeek = "week"
+	unitDay   = "day"
+	unitWeek  = "week"
+	unitMonth = "month"
+	unitYear  = "year"
 )
 
 // daysPerWeek converts a week count to days.
 const daysPerWeek = 7
+
+// monthsPerYear converts a year count to months for addMonths.
+const monthsPerYear = 12
 
 // maxDateAddDays bounds date_add's count. ~2700 years of days: far
 // beyond any real schedule, and small enough that the result stays
@@ -148,11 +153,10 @@ func dateAdd(_ context.Context, args []predicate.Value) (predicate.Value, error)
 	}
 
 	// Reject a fractional or out-of-range count rather than truncating
-	// it. Same reasoning as the month/year restriction below: this
-	// package makes the caller state what they mean instead of silently
-	// normalizing. int(1e20) saturates to maxint and AddDate then wraps
-	// the date BACKWARDS, which is the sort of thing that looks like a
-	// working config until it doesn't.
+	// it: this package makes the caller state what they mean instead of
+	// silently normalizing. int(1e20) saturates to maxint and AddDate
+	// then wraps the date BACKWARDS, which is the sort of thing that
+	// looks like a working config until it doesn't.
 	f := n.Float()
 	if f != math.Trunc(f) || math.Abs(f) > maxDateAddDays {
 		return nil, fmt.Errorf(
@@ -160,18 +164,60 @@ func dateAdd(_ context.Context, args []predicate.Value) (predicate.Value, error)
 			f, int64(maxDateAddDays))
 	}
 
-	days := int(f)
+	n32 := int(f)
+	base := utcDay(d.Time())
 	switch strings.ToLower(strings.TrimSpace(unit.String())) {
 	case unitDay:
+		return predicate.NewDate(base.AddDate(0, 0, n32)), nil
 	case unitWeek:
-		days *= daysPerWeek
+		return predicate.NewDate(base.AddDate(0, 0, n32*daysPerWeek)), nil
+	case unitMonth:
+		return predicate.NewDate(addMonths(base, n32)), nil
+	case unitYear:
+		// A year is 12 months, so leap-day clamping comes free:
+		// 2028-02-29 + 1 year clamps to 2029-02-28 rather than rolling
+		// into March.
+		return predicate.NewDate(addMonths(base, n32*monthsPerYear)), nil
 	default:
 		return nil, fmt.Errorf(
-			"predicatefns: date_add: unsupported unit %q (use %q or %q)",
-			unit.String(), unitDay, unitWeek)
+			"predicatefns: date_add: unsupported unit %q (use %q, %q, %q or %q)",
+			unit.String(), unitDay, unitWeek, unitMonth, unitYear)
 	}
+}
 
-	return predicate.NewDate(utcDay(d.Time()).AddDate(0, 0, days)), nil
+// addMonths shifts t by n months, CLAMPING to the last valid day of the
+// target month rather than spilling into the next one.
+//
+//	2026-01-31 + 1 month -> 2026-02-28   (not 2026-03-03)
+//	2028-01-31 + 1 month -> 2028-02-29   (leap year)
+//	2026-03-31 - 1 month -> 2026-02-28
+//
+// time.AddDate normalizes instead: it builds February 31st and lets the
+// calendar carry it into March. That is defensible for a general date
+// library and wrong for a schedule — "the last of every month" is the
+// canonical recurring shape, and normalization silently turns it into
+// "the 3rd of every other month".
+//
+// Clamping is the rule stated in the docs; it is not a guess the caller
+// has to reverse-engineer, which is why month/year can be offered at all
+// (they were withheld in v1 precisely because AddDate's behavior was
+// unstated).
+func addMonths(t time.Time, n int) time.Time {
+	y, m, d := t.Date()
+	// Normalize to the first of the month, shift, then re-apply the day
+	// clamped to that month's length. Going via day 1 avoids AddDate's
+	// overflow entirely.
+	shifted := time.Date(y, m, 1, 0, 0, 0, 0, time.UTC).AddDate(0, n, 0)
+	if last := daysInMonth(shifted.Year(), shifted.Month()); d > last {
+		d = last
+	}
+	return time.Date(shifted.Year(), shifted.Month(), d, 0, 0, 0, 0, time.UTC)
+}
+
+// daysInMonth returns the number of days in the given month, leap years
+// included. Day 0 of the following month IS the last day of this one.
+func daysInMonth(year int, month time.Month) int {
+	return time.Date(year, month+1, 0, 0, 0, 0, 0, time.UTC).Day()
 }
 
 // rruleNext implements rrule_next(rule, after) -> date: the first
