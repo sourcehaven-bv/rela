@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Sourcehaven-BV/rela/internal/appbuild/backendtest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	relaerrors "github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/search"
@@ -40,6 +41,25 @@ relations: {}
 	return root
 }
 
+// mcpServicesForTest is newMCPServices with a backend the current build can
+// actually open.
+//
+// newMCPServices calls appbuild.Discover, which resolves its DSN from the
+// process environment, so unlike the appbuild tests this cannot pass an option
+// — backendtest.Env supplies the variables instead and t.Setenv unwinds them.
+// On fs/memory the map is empty and this is exactly newMCPServices.
+//
+// The tests below assert MCP wiring (deps populated, writes reach the search
+// index, Close is idempotent), none of which is backend-specific; they simply
+// need a store to exist.
+func mcpServicesForTest(t *testing.T, root string) (*mcpServices, error) {
+	t.Helper()
+	for k, v := range backendtest.Env(t) {
+		t.Setenv(k, v)
+	}
+	return newMCPServices(root)
+}
+
 func TestNewMCPServices_NoProject(t *testing.T) {
 	dir := t.TempDir() // empty — no metamodel.yaml
 
@@ -67,7 +87,7 @@ func TestNewMCPServices_BadMetamodel(t *testing.T) {
 func TestNewMCPServices_Succeeds(t *testing.T) {
 	root := seedProject(t)
 
-	svc, err := newMCPServices(root)
+	svc, err := mcpServicesForTest(t, root)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = svc.Close() })
 
@@ -87,7 +107,7 @@ func TestNewMCPServices_Succeeds(t *testing.T) {
 func TestNewMCPServices_WritesReachSearchIndex(t *testing.T) {
 	root := seedProject(t)
 
-	svc, err := newMCPServices(root)
+	svc, err := mcpServicesForTest(t, root)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = svc.Close() })
 
@@ -110,7 +130,7 @@ func TestNewMCPServices_WritesReachSearchIndex(t *testing.T) {
 func TestMCPServices_CloseIdempotent(t *testing.T) {
 	root := seedProject(t)
 
-	svc, err := newMCPServices(root)
+	svc, err := mcpServicesForTest(t, root)
 	require.NoError(t, err)
 
 	// First close releases the backend + store.

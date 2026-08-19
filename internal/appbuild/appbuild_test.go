@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild/backendtest"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 )
@@ -51,11 +52,35 @@ func writeMinimalProject(t *testing.T) string {
 	return root
 }
 
+// discover is appbuild.Discover with whatever the current build needs to reach
+// a store. The tests below assert build-agnostic composition-root behavior, so
+// they must not hard-code a backend; on the postgres build backendtest supplies
+// a private migrated schema (and skips when no database is configured).
+func discover(t *testing.T, root string) (*appbuild.Services, error) {
+	t.Helper()
+	return appbuild.Discover(root, script.NewEngine(), backendtest.Options(t)...)
+}
+
+// discoverer returns a discover func pinned to ONE backend, for a test that
+// builds twice over the same project and needs the second build to observe what
+// the first wrote.
+//
+// Calling discover twice would not do that on postgres: backendtest hands out a
+// fresh schema per call, so the second build would come up empty and the test
+// would assert against state it never planted.
+func discoverer(t *testing.T) func(string) (*appbuild.Services, error) {
+	t.Helper()
+	backend := backendtest.Options(t)
+	return func(root string) (*appbuild.Services, error) {
+		return appbuild.Discover(root, script.NewEngine(), backend...)
+	}
+}
+
 // TestDiscover_BuildsAllServices verifies that appbuild.Discover
 // returns a Services with every field populated.
 func TestDiscover_BuildsAllServices(t *testing.T) {
 	root := writeMinimalProject(t)
-	svc, err := appbuild.Discover(root, script.NewEngine())
+	svc, err := discover(t, root)
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
@@ -100,7 +125,7 @@ func TestDiscover_BuildsAllServices(t *testing.T) {
 // produce non-empty bundles from the focused services.
 func TestDiscover_LuaDepsDerivable(t *testing.T) {
 	root := writeMinimalProject(t)
-	svc, err := appbuild.Discover(root, script.NewEngine())
+	svc, err := discover(t, root)
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
@@ -142,7 +167,7 @@ func TestDiscover_MissingProject(t *testing.T) {
 // invocations are no-ops.
 func TestClose_Idempotent(t *testing.T) {
 	root := writeMinimalProject(t)
-	svc, err := appbuild.Discover(root, script.NewEngine())
+	svc, err := discover(t, root)
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
@@ -161,7 +186,7 @@ func TestClose_Idempotent(t *testing.T) {
 // TestNew_RejectsNilDeps pins the constructor's nil-rejection.
 func TestNew_RejectsNilDeps(t *testing.T) {
 	root := writeMinimalProject(t)
-	svc, err := appbuild.Discover(root, script.NewEngine())
+	svc, err := discover(t, root)
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -219,21 +244,36 @@ func TestNew_RejectsNilDeps(t *testing.T) {
 // to mount without a healthy table, so a synced client cannot re-create its
 // entries as new entities. The failure just lands on the path that can actually
 // cause that damage.
+// The table is corrupted through the state.KV rather than by writing the file
+// directly. Where it LIVES is backend-specific — a file under .rela/caldav/ on
+// the fs build, a state_kv row on postgres (TKT-VC27L3) — but the key is the
+// same on both, so going through the KV asserts the degrade-don't-die behavior
+// on whichever backend is compiled in. Writing the file instead made this a
+// filesystem test wearing a wiring test's name: under -tags postgres it
+// corrupted a file nothing reads, the alias table loaded clean, and the
+// assertion failed.
 func TestCorruptAliasTableDoesNotBrickTheBinary(t *testing.T) {
 	root := writeMinimalProject(t)
+	build := discoverer(t) // both builds must share one backend
 
-	cacheDir := filepath.Join(root, ".rela", "caldav")
-	if err := os.MkdirAll(cacheDir, 0o750); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(cacheDir, "aliases.json"),
-		[]byte("this is not json"), 0o600); err != nil {
-		t.Fatalf("write corrupt table: %v", err)
-	}
-
-	svc, err := appbuild.Discover(root, script.NewEngine())
+	// First build: obtain the state store this project resolves to, and plant
+	// the corrupt table in it.
+	seed, err := build(root)
 	if err != nil {
-		t.Fatalf("a corrupt CalDAV cache file must not fail project build: %v", err)
+		t.Fatalf("seed build: %v", err)
+	}
+	const aliasKey = "caldav/aliases.json" // caldavalias.stateKey
+	if err = seed.State().Put(t.Context(), aliasKey, []byte("this is not json")); err != nil {
+		t.Fatalf("plant corrupt table: %v", err)
+	}
+	if err = seed.Close(); err != nil {
+		t.Fatalf("close seed: %v", err)
+	}
+
+	// Second build over the same project now reads the corrupt table.
+	svc, err := build(root)
+	if err != nil {
+		t.Fatalf("a corrupt CalDAV alias table must not fail project build: %v", err)
 	}
 	t.Cleanup(func() { _ = svc.Close() })
 
