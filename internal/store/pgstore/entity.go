@@ -284,12 +284,12 @@ func (s *Store) CreateEntity(ctx context.Context, e *entity.Entity) error {
 	// clash on the case-folded identity index (entities_id_lower_key, e.g.
 	// creating "ABC" when "abc" exists) surfaces as a unique violation instead
 	// — it is the same "already exists" outcome, so it maps to ErrConflict
-	// rather than leaking a driver error (BUG-3RCWNS).
-	if isUniqueViolation(err) {
-		return store.ErrConflict
-	}
+	// rather than leaking a driver error (BUG-3RCWNS). A clash on a derived
+	// unique index (rela_derived_uniq__*, TKT-3Q0GP1) instead maps to
+	// store.UniquePropertyError naming the property; mapConflict discriminates by
+	// constraint name and passes non-23505 errors through unchanged.
 	if err != nil {
-		return err
+		return s.mapConflict(err)
 	}
 
 	ev := store.Event{Op: store.EventEntityCreated, EntityType: e.Type, EntityID: e.ID}
@@ -334,7 +334,11 @@ func (s *Store) UpdateEntity(ctx context.Context, e *entity.Entity) error {
 		return store.ErrNotFound
 	}
 	if err != nil {
-		return err
+		// An update can violate a derived unique index too — e.g. an automation
+		// sets a unique property to a value another entity already holds
+		// (TKT-3Q0GP1). mapConflict names the property for a rela_derived_uniq__*
+		// clash and passes other errors through unchanged.
+		return s.mapConflict(err)
 	}
 
 	ev := store.Event{Op: store.EventEntityUpdated, EntityType: e.Type, EntityID: e.ID}

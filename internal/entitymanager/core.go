@@ -119,6 +119,14 @@ func createCore(
 	// create-XOR-update by resolved intent; there is no create-then-
 	// update-on-conflict fallback anywhere (BUG-ZWTDH9).
 	if err := deps.Store.CreateEntity(ctx, e); err != nil {
+		// A derived unique-property index (pgstore, TKT-3Q0GP1) rejects a
+		// duplicate PROPERTY value; surface it as the same 422 the pre-write
+		// scan does. Check this BEFORE the ErrConflict branch: UniquePropertyError
+		// satisfies errors.Is(_, ErrConflict) too, and the ID-collision message
+		// would be wrong for a property duplicate.
+		if ok, mapped := mapUniquePropertyConflict(err); ok {
+			return nil, nil, mapped
+		}
 		if errors.Is(err, store.ErrConflict) {
 			return nil, nil, fmt.Errorf("%w: %s", ErrEntityAlreadyExists, e.ID)
 		}

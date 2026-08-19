@@ -1,6 +1,7 @@
 package metamodel
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"regexp"
@@ -16,6 +17,42 @@ import (
 // checked separately below so the non-dash case gets a more targeted
 // error message.
 var validIDPrefixBase = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// unsafeSchemaNameChar matches any character that must NOT appear in an
+// entity-type or property name because these names are interpolated into
+// backend DDL by the derived-schema reconciler (a partial unique index over
+// `properties->>'<name>'` per `type = '<type>'`, TKT-3Q0GP1). The reconciler
+// escapes them as SQL string LITERALS (there is no bind parameter for a DDL
+// identifier or JSON key), so the only characters that can break out are the
+// single-quote and backslash; control characters (newlines, tabs, NUL) are
+// forbidden defensively — they have no legitimate use in a name and each is a
+// classic escaping-bypass vector. Everything else a YAML metamodel legitimately
+// uses — letters (incl. non-ASCII), digits, underscore, dash, internal spaces,
+// dots — is permitted, matching the metamodel's existing lenient naming.
+var unsafeSchemaNameChar = regexp.MustCompile(`['\\\x00-\x1f\x7f]`)
+
+// ValidateSchemaName reports whether name is safe to interpolate into
+// reconciler DDL (see [unsafeSchemaNameChar]). It is intentionally a blocklist
+// of dangerous characters rather than an allowlist, because entity-type and
+// property names in shipped metamodels legitimately use dashes and internal
+// spaces (e.g. "review-response", "some property"); an allowlist would reject
+// existing valid schemas. It also rejects a leading/trailing space, which is a
+// likely typo and confuses the DDL literal. Exported so the reconciler can
+// re-check as defense-in-depth before emitting DDL rather than trusting that
+// load-time validation ran.
+func ValidateSchemaName(name string) error {
+	if name == "" {
+		return errors.New("name must not be empty")
+	}
+	if loc := unsafeSchemaNameChar.FindStringIndex(name); loc != nil {
+		return fmt.Errorf("name %q contains an unsafe character at position %d "+
+			"(quotes, backslashes, and control characters are not allowed)", name, loc[0])
+	}
+	if strings.TrimSpace(name) != name {
+		return fmt.Errorf("name %q must not have leading or trailing whitespace", name)
+	}
+	return nil
+}
 
 // ValidateIDPrefix rejects id_prefix values whose generated IDs would
 // fail entity ID validation (BUG-RHFHTH). Generated short/sequential

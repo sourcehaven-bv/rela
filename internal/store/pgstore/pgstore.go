@@ -41,6 +41,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -103,8 +104,8 @@ type DBTX interface {
 // the row-property reads together, the way versioning and user-state were
 // extracted as subsystems.
 //
-//plimsoll:max-exported-methods=36
-//plimsoll:max-methods=44
+//plimsoll:max-exported-methods=38
+//plimsoll:max-methods=48
 type Store struct {
 	db        DBTX
 	observers []store.EntityObserver // notified synchronously after committed entity writes
@@ -120,6 +121,16 @@ type Store struct {
 	schema   string
 	listener *listener // nil unless a listener was started (see startListener)
 	sweep    *sweep    // nil unless a version-reconciliation sweep was started
+
+	// uniqueSpecs, when set (at wiring, via SetUniqueSpecProvider), yields the
+	// current metamodel's (type, property) unique pairs. The write path uses it
+	// to map a derived-unique-index violation (SQLSTATE 23505 on a
+	// rela_derived_uniq__* index) back to the property name — see
+	// mapUniqueViolation. nil on a New() store: violations then degrade to a
+	// property-less UniquePropertyError (still a conflict), never a panic. Stored
+	// as an atomic.Pointer so a metamodel reload can swap it without a lock and
+	// the concurrent write path never sees a torn value.
+	uniqueSpecs atomic.Pointer[[]store.DerivedObjectSpec]
 
 	mu          sync.Mutex // guards subscribers + nextSubID only
 	subscribers map[int]chan store.Event

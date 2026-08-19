@@ -96,3 +96,24 @@ func StatusDSN(ctx context.Context, dsn string) (current, target int, err error)
 	defer pool.Close()
 	return Status(ctx, pool)
 }
+
+// ReconcileDSN opens a short-lived pool over dsn and reconciles the derived
+// schema (partial unique indexes, TKT-3Q0GP1) for the given desired specs,
+// returning the per-object outcomes. Entry point for `rela db reconcile` and
+// the derived-schema section of `rela db status` (with opts.DryRun). Keeping
+// pool construction here confines the pgx dependency to this package. The caller
+// derives the specs from the metamodel (which lives on disk, not in the DB).
+func ReconcileDSN(
+	ctx context.Context, dsn string, desired []store.DerivedObjectSpec, opts store.ReconcileOptions,
+) ([]store.DerivedObjectOutcome, error) {
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		return nil, fmt.Errorf("connect to database: %w", err)
+	}
+	defer pool.Close()
+	s, err := New(pool)
+	if err != nil {
+		return nil, err
+	}
+	return s.Reconcile(ctx, desired, opts)
+}
