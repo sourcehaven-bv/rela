@@ -230,9 +230,18 @@ func TestDirection_UnmarshalYAML(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name: "empty defaults to outgoing",
+			// A written-but-empty value must stay empty, NOT collapse to
+			// outgoing: empty means "infer from the metamodel", and collapsing
+			// it here would let `direction: ""` bypass the ambiguity check on
+			// a self-referencing relation.
+			name: "empty stays empty so inference owns the decision",
 			yaml: `direction: ""`,
-			want: DirectionOutgoing,
+			want: "",
+		},
+		{
+			name: "bare key stays empty",
+			yaml: `direction:`,
+			want: "",
 		},
 		{
 			name: "outgoing",

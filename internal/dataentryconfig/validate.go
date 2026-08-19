@@ -460,11 +460,29 @@ func validateFormRelation(
 	relDef, ok := meta.GetRelationDef(r.Relation)
 	switch {
 	case ok:
+		// An absent `direction:` is inferred from the metamodel when the form's
+		// entity type sits on exactly one side. When it sits on BOTH (a
+		// self-referencing relation like `depends-on`), outgoing and incoming
+		// are both meaningful and mean opposite things, so the author must say
+		// which — there is no safe default to fall back on.
+		_, res := InferDirection(entityType, r.Relation, meta)
+		ambiguous := r.Direction == "" && res == DirectionAmbiguous
+		if ambiguous {
+			errs = append(errs, fmt.Sprintf(
+				"form %q: %srelation[%d] needs an explicit `direction:` — entity type %q is both a from "+
+					"and a to of relation %q, so outgoing and incoming are both valid and mean "+
+					"opposite things (set `direction: outgoing` or `direction: incoming`)",
+				formID, ctx, i, entityType, r.Relation))
+		}
 		// Canonical name resolved — check that the form's entity type is on
 		// the correct side of the edge for the chosen direction. Wrong-side
 		// configs are silently broken otherwise: the widget searches the wrong
-		// target type and never shows existing edges.
-		errs = append(errs, validateFormRelationSide(formID, i, entityType, r, relDef)...)
+		// target type and never shows existing edges. Skipped when ambiguous:
+		// without a direction there is no side to check against, and the error
+		// above is the actionable one.
+		if !ambiguous {
+			errs = append(errs, validateFormRelationSide(formID, i, entityType, r, relDef, meta)...)
+		}
 	default:
 		if canonical, isInverse := meta.InverseOwner(r.Relation); isInverse {
 			errs = append(errs, fmt.Sprintf(
@@ -495,20 +513,33 @@ func validateFormRelation(
 // validateFormRelationSide checks that the form's entity type sits on
 // the side of the relation that matches the chosen direction. An
 // outgoing relation must be authored from a `From:` type; an incoming
-// one must be authored from a `To:` type. Mismatch returns an error;
-// when the entity is on the opposite side the message hints at
-// flipping the direction.
+// one must be authored from a `To:` type.
+//
+// The direction it checks against comes from InferDirection — the single
+// shared rule — so an absent key resolves the same way here as it does in the
+// server's config handler and the migration. Do not re-derive the side test
+// locally: a second copy that drifts silently binds the wrong side, which is
+// the exact bug class this file exists to prevent.
+//
+// When the author wrote an explicit direction and picked the wrong one, the
+// message hints at flipping it. (For an ABSENT direction no hint is possible:
+// inference already resolved it to whichever side the entity type is on, so a
+// wrong-side error there means the type is on neither side and flipping would
+// not help.)
 func validateFormRelationSide(
-	formID string, i int, entityType string, r FormRelation, relDef *metamodel.RelationDef,
+	formID string, i int, entityType string, r FormRelation, relDef *metamodel.RelationDef, meta *metamodel.Metamodel,
 ) []string {
 	if entityType == "" {
 		return nil
 	}
-	incoming := r.Direction.IsIncoming()
+	dir := r.Direction
+	if dir == "" {
+		dir, _ = InferDirection(entityType, r.Relation, meta)
+	}
 	expected, opposite := relDef.From, relDef.To
 	expectedSide, oppositeSide := "from", "to"
 	flipDir := DirectionIncoming
-	if incoming {
+	if dir.IsIncoming() {
 		expected, opposite = relDef.To, relDef.From
 		expectedSide, oppositeSide = "to", "from"
 		flipDir = DirectionOutgoing
@@ -517,7 +548,7 @@ func validateFormRelationSide(
 		return nil
 	}
 	hint := ""
-	if r.Direction == "" && slices.Contains(opposite, entityType) {
+	if r.Direction != "" && slices.Contains(opposite, entityType) {
 		hint = fmt.Sprintf(" (set `direction: %s` to bind the %s side of %q)", flipDir, oppositeSide, r.Relation)
 	}
 	return []string{fmt.Sprintf(

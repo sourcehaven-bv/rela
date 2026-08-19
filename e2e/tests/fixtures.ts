@@ -988,6 +988,7 @@ forms:
         widget: textarea
     relations:
       - relation: tagged
+        direction: outgoing
         widget: cards
         properties:
           - property: added_by
