@@ -5,7 +5,7 @@ title: 'Lua capability gating: http, ai, secrets, write_file are unconditional o
 kind: enhancement
 priority: high
 effort: l
-status: review
+status: done
 ---
 
 ## Problem
