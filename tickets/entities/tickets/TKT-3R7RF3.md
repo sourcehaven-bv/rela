@@ -5,7 +5,7 @@ title: Widget override for view section fields (`widget:` on ViewSectionField)
 kind: enhancement
 priority: medium
 effort: m
-status: in-progress
+status: review
 ---
 
 ## Goal
