@@ -243,7 +243,7 @@ not recover the original day (`Jan 31 → Feb 28 → Mar 28`). For a true
 "last day of every month" schedule use `rrule_next` with an RRULE, which
 models that directly.
 
-`rrule_next` errors when the rule is malformed *or* when it has no
+`rrule_next` errors when the rule is malformed _or_ when it has no
 occurrence left (a `COUNT` reached, an `UNTIL` passed); the two messages
 differ so a finished schedule is distinguishable from a typo.
 
