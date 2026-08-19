@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -244,5 +245,129 @@ func TestGatedReads_RedactsOnListPath(t *testing.T) {
 	}
 	if seen != 1 {
 		t.Errorf("listed %d entities, want 1 — the row gate dropped a readable row", seen)
+	}
+}
+
+// cascadeLeakMetamodel fires an automation on ticket update whose Lua action
+// reads the person entity and copies the salary onto the ticket — laundering a
+// hidden value onto a field with no `visible:` restriction. If the cascade's
+// read is redacted the copy lands as the NO_SALARY marker; if it is not, the
+// hidden value itself is written where anyone may read it.
+const cascadeLeakMetamodel = `version: "1.0"
+entities:
+  person:
+    label: Person
+    plural: people
+    id_prefix: "PERS-"
+    id_type: sequential
+    properties:
+      name:
+        type: string
+      salary:
+        type: string
+  ticket:
+    label: Ticket
+    plural: tickets
+    id_prefix: "TKT-"
+    id_type: sequential
+    properties:
+      title:
+        type: string
+      leaked:
+        type: string
+relations: {}
+automations:
+  - name: leak-salary
+    on:
+      entity: [ticket]
+      property: title
+    do:
+      - lua: |
+          local p = rela.get_entity("PERS-1")
+          local v = "NO_ENTITY"
+          if p ~= nil then
+            v = "NO_SALARY"
+            if p.properties ~= nil and p.properties.salary ~= nil and p.properties.salary ~= "" then
+              v = p.properties.salary
+            end
+          end
+          rela.update_entity("TKT-1", {leaked = v})
+`
+
+// TestCascadeReadDeps_RedactsHiddenField covers the THIRD read path that passed
+// a nil redactor: the static lua.ReadDeps backing automation cascades.
+//
+// It carried no KNOWN LIMITATION note, which is why the first pass at this work
+// missed it — but it is identity-bearing by exactly the definition that
+// justified fixing the other two. A cascade fires on the acting user's ctx and
+// reads their view (DEC-O59WM4, RR-XC0URX), and a Lua action can send what it
+// reads onward just as a scheduled job can.
+//
+// End-to-end on purpose: it drives a real PatchEntity, a real automation
+// trigger, and a real Lua action, then re-reads the STORE (the cascade writes
+// after the returned snapshot is taken). Against a nil redactor `leaked` comes
+// back "99000".
+func TestCascadeReadDeps_RedactsHiddenField(t *testing.T) {
+	root := t.TempDir()
+	writeMetamodelBody(t, root, cascadeLeakMetamodel)
+	writePolicy(t, root, `roles:
+  viewer:
+    read: ["*"]
+    update: ["*"]
+    visible:
+      person:
+        - field: name
+assignments:
+  bob: viewer
+`)
+
+	people := filepath.Join(root, "entities", "people")
+	if err := os.MkdirAll(people, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	person := "---\nid: PERS-1\ntype: person\nname: Alice\nsalary: \"99000\"\n---\n"
+	if err := os.WriteFile(filepath.Join(people, "PERS-1.md"), []byte(person), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tickets := filepath.Join(root, "entities", "tickets")
+	if err := os.MkdirAll(tickets, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ticket := "---\nid: TKT-1\ntype: ticket\ntitle: Old\n---\n"
+	if err := os.WriteFile(filepath.Join(tickets, "TKT-1.md"), []byte(ticket), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	svc, err := appbuildOnDisk(t, root)
+	if err != nil {
+		t.Fatalf("appbuild.New: %v", err)
+	}
+	defer svc.Close()
+
+	ctx := bobCtx(principal.ToolDataEntry)
+	res, err := svc.EntityManager().PatchEntity(ctx, "TKT-1", entity.Patch{
+		Properties: map[string]any{"title": "New"},
+	})
+	if err != nil {
+		t.Fatalf("PatchEntity: %v", err)
+	}
+	if len(res.AutomationErrors) != 0 {
+		t.Fatalf("automation errors: %v", res.AutomationErrors)
+	}
+
+	// Re-read the store: the cascade's write lands after the returned snapshot.
+	after, err := svc.Store().GetEntity(ctx, "TKT-1")
+	if err != nil {
+		t.Fatalf("re-read: %v", err)
+	}
+	got := after.GetString("leaked")
+	if got == "NO_ENTITY" {
+		t.Fatalf("leaked = %q — the cascade could not read the entity at all; "+
+			"this test must exercise a real read, not a row-gate denial", got)
+	}
+	if got != "NO_SALARY" {
+		t.Errorf("leaked = %q, want \"NO_SALARY\" — an automation cascade read a "+
+			"`visible:`-hidden value and copied it onto a readable field; cascade "+
+			"reads are ACL-bound to the acting user (DEC-O59WM4)", got)
 	}
 }
