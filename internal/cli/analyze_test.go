@@ -7,9 +7,12 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/analysis"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
+	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
@@ -167,4 +170,77 @@ func TestAnalyzeGaps(t *testing.T) {
 	if result.Count != 1 {
 		t.Errorf("Expected count %d, got %d", 1, result.Count)
 	}
+}
+
+// failingCountStore wraps a store.Store and fails every CountRelations
+// call, simulating a backend outage during the cardinality scan.
+type failingCountStore struct {
+	store.Store
+	err error
+}
+
+func (f *failingCountStore) CountRelations(context.Context, store.RelationQuery) (int, error) {
+	return 0, f.err
+}
+
+// TestAnalyzeCmds_CountErrorAborts pins the TKT-RNBLAC error policy at
+// the CLI boundary for both cardinality surfaces: a store error must
+// abort the command with the error and WITHOUT writing any output —
+// especially no fabricated count-0 min violations, and no partial JSON.
+func TestAnalyzeCmds_CountErrorAborts(t *testing.T) {
+	one := 1
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"requirement": {
+				Label:      "Requirement",
+				IDPrefix:   "REQ-",
+				Properties: map[string]metamodel.PropertyDef{},
+			},
+		},
+		Relations: map[string]metamodel.RelationDef{
+			"refines": {
+				From: []string{"requirement"}, To: []string{"requirement"},
+				MinOutgoing: &one,
+			},
+		},
+	}
+	countErr := stderrors.New("backend down")
+	newBrokenBundles := func(t *testing.T) *cliBundles {
+		t.Helper()
+		st := memstore.New()
+		if err := st.CreateEntity(context.Background(),
+			testutil.EntityFor(meta, "requirement").ID("REQ-001").Build()); err != nil {
+			t.Fatalf("seed entity: %v", err)
+		}
+		broken := &failingCountStore{Store: st, err: countErr}
+		b, err := newCLIBundles(appbuildtest.New(meta, appbuildtest.WithStore(broken)))
+		if err != nil {
+			t.Fatalf("newCLIBundles: %v", err)
+		}
+		return b
+	}
+
+	t.Run("analyze cardinality", func(t *testing.T) {
+		b := newBrokenBundles(t)
+		buf := withOutput(t, output.FormatJSON)
+		err := (&AnalyzeCardinalityCmd{}).Run(context.Background(), b.analysis)
+		if !stderrors.Is(err, countErr) {
+			t.Fatalf("want wrapped count error, got %v", err)
+		}
+		if buf.Len() != 0 {
+			t.Errorf("expected no output before the error, got: %s", buf.String())
+		}
+	})
+
+	t.Run("analyze all", func(t *testing.T) {
+		b := newBrokenBundles(t)
+		buf := withOutput(t, output.FormatJSON)
+		err := (&AnalyzeAllCmd{}).Run(context.Background(), b.read, b.analysis)
+		if !stderrors.Is(err, countErr) {
+			t.Fatalf("want wrapped count error, got %v", err)
+		}
+		if buf.Len() != 0 {
+			t.Errorf("expected no output before the error, got: %s", buf.String())
+		}
+	})
 }
