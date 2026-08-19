@@ -178,7 +178,7 @@ func dispatchWebhookAction(ctx context.Context, h *writeHandler, actionID string
 	defer h.writeMu.Unlock()
 
 	// TKT-YH52OM: the webhook path resolves the SAME `actions:` entry as the
-	// HTTP endpoint, so it honours the same `capabilities:` declaration. This
+	// HTTP endpoint, so it honors the same `capabilities:` declaration. This
 	// is the surface that most needs it to work: an IdP-sync action legitimately
 	// calls out over http with a named secret (see examples/idp-sync.lua), and
 	// it now must say so in config rather than receiving the whole secrets file

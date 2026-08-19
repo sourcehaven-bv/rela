@@ -448,17 +448,17 @@ print(got)
 		Timeout:  5 * time.Second,
 	}
 
-	var combined string
+	var combined strings.Builder
 	for i := range 2 {
 		out, renderErr := s.Render(context.Background(), "REQ-001", cfg)
 		if renderErr != nil {
 			t.Fatalf("render %d: %v", i, renderErr)
 		}
-		combined += out.HTML
+		combined.WriteString(out.HTML)
 	}
 
 	// The marker must appear exactly once across BOTH renders' output.
-	if n := strings.Count(combined, "RAN-MARKER"); n != 1 {
-		t.Errorf("expected RAN-MARKER once (memoize ran once), got %d in: %q", n, combined)
+	if n := strings.Count(combined.String(), "RAN-MARKER"); n != 1 {
+		t.Errorf("expected RAN-MARKER once (memoize ran once), got %d in: %q", n, combined.String())
 	}
 }
