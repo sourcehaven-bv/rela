@@ -5,7 +5,7 @@ title: Extract internal/expr from internal/predicate (general typed expression e
 kind: refactor
 priority: medium
 effort: m
-status: in-progress
+status: ready
 ---
 
 ## Problem

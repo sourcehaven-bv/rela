@@ -5,7 +5,7 @@ title: Automation and validation conditions accept a predicate expression
 kind: enhancement
 priority: medium
 effort: m
-status: review
+status: done
 ---
 
 ## Problem

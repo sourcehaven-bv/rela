@@ -2,7 +2,7 @@
 id: REV-LFLBR8
 type: review-checklist
 title: 'Review: Automation and validation conditions accept a predicate expression'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -104,10 +104,12 @@ Each commit states the defect and the reasoning, not just the edit — e.g. why
 
 ## Pull Request
 
-- [ ] ~~Run `/pr` command to create PR and monitor CI~~ (not run: pushing is
-the user's call; the branch is local and unpushed)
-- [ ] ~~All CI checks pass~~ (CI not yet run — the local equivalents all pass:
-`go test ./...`, `golangci-lint`, `just arch-lint`, `just coverage-check`)
-- [ ] ~~PR URL documented below~~ (no PR yet)
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass
+- [x] PR URL documented below
 
-**PR:** none — `tkt-8gd41j-condition-expressions` is local and unpushed.
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1380
+
+Single PR covering both stacked tickets (TKT-HQONQE then TKT-8GD41J): the
+condition work builds directly on the date functions, and the second is
+untestable without the first.

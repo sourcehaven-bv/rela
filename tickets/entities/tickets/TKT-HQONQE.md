@@ -5,7 +5,7 @@ title: 'Date arithmetic for condition expressions: days_between, date_add, rrule
 kind: enhancement
 priority: medium
 effort: s
-status: review
+status: done
 ---
 
 ## Problem

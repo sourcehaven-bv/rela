@@ -2,6 +2,7 @@
 id: BUG-K3T3SR
 type: bug
 title: Data race on Engine.meta between evaluator and SetMetamodel
+description: evaluator() reads e.meta before taking evMu while SetMetamodel writes it outside the lock; confirmed by the race detector. Latent because SetMetamodel has no production callers — but evaluator() became load-bearing on the write path when automation conditions moved onto the predicate engine. Wiring metamodel hot-reload would make it live.
 priority: low
 status: backlog
 ---

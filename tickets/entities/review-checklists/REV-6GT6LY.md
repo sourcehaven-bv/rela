@@ -2,7 +2,7 @@
 id: REV-6GT6LY
 type: review-checklist
 title: 'Review: Date arithmetic for condition expressions: days_between, date_add, rrule_next'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -94,10 +94,12 @@ rationale, and the malformed-vs-exhausted distinction for `rrule_next`.
 
 ## Pull Request
 
-- [ ] ~~Run `/pr` command to create PR and monitor CI~~ (not run: pushing is
-the user's call; branch is local and unpushed)
-- [ ] ~~All CI checks pass~~ (CI not yet run; local equivalents all pass)
-- [ ] ~~PR URL documented below~~ (no PR yet)
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass
+- [x] PR URL documented below
 
-**PR:** none — `tkt-hqonqe-date-arithmetic` is local and unpushed. Note
-TKT-8GD41J stacks on top of it, so the two should land together or in order.
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1380
+
+Single PR covering both stacked tickets (TKT-HQONQE then TKT-8GD41J): the
+condition work builds directly on the date functions, and the second is
+untestable without the first.
