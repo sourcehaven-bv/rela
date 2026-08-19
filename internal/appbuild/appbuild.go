@@ -451,11 +451,18 @@ func (s *Services) ScheduledLuaWriteDeps() lua.WriteDeps {
 // visibility.DenyReader / DenyTracer rather than degrading to raw reads
 // (RR-GKCZO5).
 //
-// Gating is BOTH row-level and field-level (TKT-0XL8MF): the reader prunes
-// entities the principal may not see, and redacts `visible:`-hidden property
-// values on the ones it returns. The validator is built over that same reader,
-// so a violation message cannot quote a value the requester cannot read
+// Gating is BOTH row-level and field-level (TKT-425426): the reader prunes
+// entities the principal may not see, and redacts `visible:`-hidden ENTITY
+// PROPERTY values on the ones it returns. The validator is built over that same
+// reader, so a violation message cannot quote a value the requester cannot read
 // (the field-level half of TKT-3FL2S6).
+//
+// SCOPE: field redaction covers entity properties only. Relation meta is NOT
+// redacted here — [gatedGraphReader.GetRelation] reads raw, and relation-level
+// `visible:` grants (acl.RelationGrant.Visible, honored on the dataentry wire
+// via affordances.RelationFieldVerdicts) are not consulted. Relations are gated
+// at the ROW level on both endpoints; their properties are not. Do not read the
+// paragraph above as covering them.
 func (s *Services) GatedReads() GatedReadBundle {
 	reader := scriptEntityReader(s.store, s.aclDeclarative, s.fieldRedactor)
 	tr := scriptTracer(s.tracer, s.store, s.aclDeclarative, s.fieldRedactor)
@@ -1248,9 +1255,13 @@ func assemble(
 	// an explicit allow_acl_bypass to elevate. Escalating reads is
 	// deliberately NOT a config default; it is TKT-ACSBSA (an admin-handle
 	// extension), so a cascade that needs more must ask for it in the open.
+	// Field-level `visible:` redaction applies here too (TKT-425426). A cascade
+	// runs on the acting user's ctx and reads their view, so it must not see
+	// property values the same principal has redacted everywhere else — a Lua
+	// action can send what it reads onward exactly as a scheduled job can.
 	readDeps := lua.ReadDeps{
-		VisibleReader: scriptEntityReader(st, aclDeclarative, nil),
-		Tracer:        scriptTracer(tr, st, aclDeclarative, nil),
+		VisibleReader: scriptEntityReader(st, aclDeclarative, fieldRedactor),
+		Tracer:        scriptTracer(tr, st, aclDeclarative, fieldRedactor),
 		Searcher:      searcher,
 		Meta:          base.meta,
 		ProjectRoot:   cfg.Paths.Root,

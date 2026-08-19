@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // redactionMetamodel declares a type with a property a policy can hide.
@@ -208,5 +209,40 @@ assignments:
 	if got.GetString("salary") != "99000" {
 		t.Errorf("salary = %q, want \"99000\" — a policy with no `visible:` grants "+
 			"must not redact anything", got.GetString("salary"))
+	}
+}
+
+// TestGatedReads_RedactsOnListPath pins the LIST surface, which is separate
+// code from GetEntity (internal/visibility/luareader.go has its own batching
+// path with a per-surviving-row redaction step). It is also the higher-volume
+// leak: a script calling list_entities is how bulk hidden data would escape,
+// not a single GetEntity.
+func TestGatedReads_RedactsOnListPath(t *testing.T) {
+	root := writeRedactionProject(t)
+	svc, err := appbuildOnDisk(t, root)
+	if err != nil {
+		t.Fatalf("appbuild.New: %v", err)
+	}
+	defer svc.Close()
+
+	seen := 0
+	for e, err := range svc.GatedReads().Reader.ListEntities(
+		bobCtx(principal.ToolMCP), store.EntityQuery{Type: "person"},
+	) {
+		if err != nil {
+			t.Fatalf("ListEntities: %v", err)
+		}
+		seen++
+		if e.GetString("name") != "Alice" {
+			t.Errorf("name = %q, want \"Alice\" — a permitted field was redacted on the list path",
+				e.GetString("name"))
+		}
+		if v := e.GetString("salary"); v != "" {
+			t.Errorf("salary = %q, want redacted to empty — a `visible:`-hidden value "+
+				"escaped via the LIST path even though GetEntity redacts it", v)
+		}
+	}
+	if seen != 1 {
+		t.Errorf("listed %d entities, want 1 — the row gate dropped a readable row", seen)
 	}
 }
