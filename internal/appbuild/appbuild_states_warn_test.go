@@ -1,3 +1,10 @@
+// The fixtures are hand-written ENTITY FILES, which only the fs-backed
+// build loads — under `-tags postgres` entities live in the database
+// and the on-disk files are never read, so the probe counts zero and
+// the warning legitimately stays silent. The warning logic itself is
+// backend-agnostic (two CountEntities calls); the fs build covers it.
+//go:build !postgres && !memorybackend
+
 package appbuild_test
 
 import (
