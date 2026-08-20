@@ -25,6 +25,7 @@ var validTopLevelKeys = map[string]bool{
 	"includes":    true,
 	"attachments": true,
 	"transforms":  true,
+	"worlds":      true,
 }
 
 // knownTypos maps common misspellings to the correct key name.
@@ -242,6 +243,8 @@ func validate(m *Metamodel) error {
 	validationErrors = append(validationErrors, validateRelationOrderable(m)...)
 	validationErrors = append(validationErrors, validateRelationScope(m)...)
 	validationErrors = append(validationErrors, validateTransforms(m)...)
+	validationErrors = append(validationErrors, validatePointers(m)...)
+	validationErrors = append(validationErrors, validateWorlds(m)...)
 
 	if len(validationErrors) > 0 {
 		return &SchemaValidationError{Errors: validationErrors}
@@ -660,6 +663,137 @@ func validateRelationScope(m *Metamodel) []string {
 		}
 	}
 	return errs
+}
+
+// validatePointers checks the per-type `pointers:` declarations
+// (TKT-WAV8XP, design doc §4.1): at most one `default: true` per type.
+//
+// The pointer NAME grammar is deliberately NOT checked here. It belongs
+// to [github.com/Sourcehaven-BV/rela/internal/entity].ParsePointer, and
+// this package must not import entity (arch-lint keeps entity a leaf);
+// internal/worlds applies it when compiling. See that package's Compile.
+func validatePointers(m *Metamodel) []string {
+	var errs []string
+	for _, typeName := range sortedKeys(m.Entities) {
+		def := m.Entities[typeName]
+		var defaults []string
+		for _, ptr := range sortedKeys(def.Pointers) {
+			if def.Pointers[ptr].Default {
+				defaults = append(defaults, ptr)
+			}
+		}
+		if len(defaults) > 1 {
+			errs = append(errs, fmt.Sprintf(
+				"entity %q: %d pointers marked `default: true` (%s) — at most one may be, "+
+					"since the default state is the single row stored under the zero pointer",
+				typeName, len(defaults), strings.Join(defaults, ", ")))
+		}
+	}
+	return errs
+}
+
+// validateWorlds checks the `worlds:` declarations (TKT-WAV8XP, design
+// doc §4.1). Every check here is a LOAD-TIME refusal, not a warning:
+// a world that resolves wrongly shows the wrong face of a document, and
+// the whole feature exists to make that impossible.
+//
+// The load-bearing one is the mandatory `otherwise:` — a silent fallback
+// is exactly the leak this feature prevents (a `published` world quietly
+// showing a draft face), so the absent value is rejected rather than
+// defaulted in either direction.
+func validateWorlds(m *Metamodel) []string {
+	var errs []string
+	for _, worldName := range sortedKeys(m.Worlds) {
+		world := m.Worlds[worldName]
+		if worldName == DefaultWorldName {
+			errs = append(errs, fmt.Sprintf(
+				"world %q: the name is reserved — the default world is implicit and total "+
+					"(every entity contributes its default state) and cannot be redeclared",
+				worldName))
+		}
+		if !world.Otherwise.IsValid() {
+			errs = append(errs, fmt.Sprintf(
+				"world %q: `otherwise:` is required and must be %q or %q (got %q) — it decides what "+
+					"happens to an entity whose type declares pointers the world does not select, and "+
+					"defaulting it silently is how a published world ends up showing a draft",
+				worldName, OtherwiseExclude, OtherwiseDefault, string(world.Otherwise)))
+		}
+		errs = append(errs, validateWorldChains(m, worldName, world)...)
+		errs = append(errs, validateWorldEdits(m, worldName, world)...)
+	}
+	return errs
+}
+
+// validateWorldChains checks that every coordinate a world selects — in
+// its global chain or a per-type override — is declared by the types it
+// can apply to, and that override keys name real entity types.
+//
+// A world's global `select` naming a coordinate some types do not declare
+// is NORMAL, not an error: that is resolution rule 3, which `otherwise:`
+// exists to answer. The error is a chain no type at all could satisfy
+// (certainly a typo), and an OVERRIDE naming a coordinate its own type
+// does not declare (unambiguously a mistake — the override names one type).
+func validateWorldChains(m *Metamodel, worldName string, world WorldDef) []string {
+	var errs []string
+	for _, ptr := range world.Select {
+		if !anyTypeDeclaresPointer(m, ptr) {
+			errs = append(errs, fmt.Sprintf(
+				"world %q: `select:` names pointer %q, which no entity type declares",
+				worldName, ptr))
+		}
+	}
+	for _, typeName := range sortedKeys(world.Overrides) {
+		def, ok := m.Entities[typeName]
+		if !ok {
+			errs = append(errs, fmt.Sprintf(
+				"world %q: `overrides:` names unknown entity type %q", worldName, typeName))
+			continue
+		}
+		if len(def.Pointers) == 0 {
+			errs = append(errs, fmt.Sprintf(
+				"world %q: `overrides:` names entity type %q, which declares no pointers — "+
+					"a type without content states contributes its only state to every world, "+
+					"so there is nothing to override",
+				worldName, typeName))
+			continue
+		}
+		for _, ptr := range world.Overrides[typeName] {
+			if _, declared := def.Pointers[ptr]; !declared {
+				errs = append(errs, fmt.Sprintf(
+					"world %q: `overrides:` selects pointer %q for entity type %q, which declares "+
+						"only: %s",
+					worldName, ptr, typeName, strings.Join(sortedKeys(def.Pointers), ", ")))
+			}
+		}
+	}
+	return errs
+}
+
+// validateWorldEdits checks the `edits:` target names a declared pointer.
+//
+// Step 2 does not USE this field — the copy kernel is Step 4 — but it is
+// validated now so a typo surfaces against the schema that introduced it
+// rather than a release later.
+func validateWorldEdits(m *Metamodel, worldName string, world WorldDef) []string {
+	if world.Edits == "" {
+		return nil
+	}
+	if anyTypeDeclaresPointer(m, world.Edits) {
+		return nil
+	}
+	return []string{fmt.Sprintf(
+		"world %q: `edits:` names pointer %q, which no entity type declares",
+		worldName, world.Edits)}
+}
+
+// anyTypeDeclaresPointer reports whether any entity type declares ptr.
+func anyTypeDeclaresPointer(m *Metamodel, ptr string) bool {
+	for _, def := range m.Entities {
+		if _, ok := def.Pointers[ptr]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // sortedKeys returns the keys of a map sorted alphabetically.

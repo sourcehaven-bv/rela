@@ -888,11 +888,19 @@ func buildACL(policy *acl.Policy, meta *metamodel.Metamodel, st store.Store) (ac
 // predicate behind the `rela acl audit` A1-ungated-membership finding, so the
 // boot warning and the linter can never disagree.
 // warnUndeclaredPointers logs a startup warning when the store holds
-// content-state rows (TKT-DOFYR1): in Step 1 no metamodel declaration
-// can account for a pointer, so any state row is data a schema change
-// (or hand edit) stranded. Warning, never a refusal — a schema edit
-// must not brick the project; `rela analyze states` lists the rows and
-// the data-migration system (FEAT-T3EF5A) is the remedy.
+// content-state rows that no metamodel declaration can account for: data
+// a schema change (or hand edit) stranded. Warning, never a refusal — a
+// schema edit must not brick the project; `rela analyze states` lists the
+// rows and the data-migration system (FEAT-T3EF5A) is the remedy.
+//
+// SCOPE (TKT-WAV8XP): the probe only runs for a project where NO entity
+// type declares pointers. Under TKT-DOFYR1 that was every project, so the
+// probe was unconditional; now a project that declares content states has
+// legitimate state rows, and counting them would warn about perfectly
+// declared drafts on every boot. Warning fatigue on a boot diagnostic is
+// how the genuinely stranded case stops being noticed, so the coarse
+// probe steps aside for the precise one: `analyze states` subtracts the
+// declared set PER TYPE and is authoritative for those projects.
 //
 // The probe is two COUNTs, not a scan — and therefore NOT a snapshot:
 // on a live multi-writer store (the pg listener starts in Open, before
@@ -901,7 +909,10 @@ func buildACL(policy *acl.Policy, meta *metamodel.Metamodel, st store.Store) (ac
 // ADVISORY; the authoritative report is `rela analyze states`. A store
 // error only skips the warning (boot diagnostics must not fail the
 // boot) with a Debug trace so the absence is explainable.
-func warnUndeclaredPointers(st store.Store, projectRoot string) {
+func warnUndeclaredPointers(st store.Store, meta *metamodel.Metamodel, projectRoot string) {
+	if declaresPointers(meta) {
+		return
+	}
 	ctx := context.Background()
 	all, err := st.CountEntities(ctx, store.EntityQuery{AllStates: true})
 	if err != nil {
@@ -920,6 +931,21 @@ func warnUndeclaredPointers(st store.Store, projectRoot string) {
 			"detail", "rela analyze states",
 			"remedy", "detection only in this version; the data-migration system is the remedy")
 	}
+}
+
+// declaresPointers reports whether any entity type declares content
+// states, i.e. whether the coarse two-COUNT probe above would produce
+// false positives for this project.
+func declaresPointers(meta *metamodel.Metamodel) bool {
+	if meta == nil {
+		return false
+	}
+	for _, def := range meta.Entities {
+		if len(def.Pointers) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func warnUngatedMembership(policy *acl.Policy) {
@@ -1189,7 +1215,7 @@ func assemble(
 		visible = v
 	}
 
-	warnUndeclaredPointers(st, base.cfg.Paths.Root)
+	warnUndeclaredPointers(st, base.meta, base.cfg.Paths.Root)
 	resolvedACL, aclDeclarative, err := resolveACL(base, st)
 	if err != nil {
 		return nil, err

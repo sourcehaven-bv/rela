@@ -14,11 +14,13 @@ import (
 type StateFinding struct {
 	// Code is the finding class:
 	//   - "undeclared-pointer": rows exist in a state no metamodel
-	//     declaration accounts for. Step 1 has no pointer declarations
-	//     at all, so EVERY stored pointer reports here; when the
-	//     metamodel gains `pointers:` (Step 2, TKT-WAV8XP) this check
-	//     subtracts the declared set. Remedy is the future data
-	//     migration system (FEAT-T3EF5A, DEC-0VGTF3) — detection only.
+	//     declaration accounts for. The declared set is consulted PER
+	//     ENTITY TYPE (`entities.<type>.pointers`, TKT-WAV8XP), never
+	//     flattened: a row stored under `draft` on a type that declares
+	//     no pointers is exactly the stranded data this reports, even
+	//     when some OTHER type declares `draft`. Remedy is the future
+	//     data migration system (FEAT-T3EF5A, DEC-0VGTF3) — detection
+	//     only.
 	//   - "headless-family": states exist with no default row (the
 	//     write path rejects this; the load path tolerates it on disk).
 	//   - "state-type-mismatch": a state's type diverges from its
@@ -89,6 +91,33 @@ func (s *Service) collectStateFamilies(
 	return families, order, nil
 }
 
+// pointerDeclared reports whether entityType declares the pointer p in
+// the metamodel (TKT-WAV8XP).
+//
+// It reads the METAMODEL directly, not a compiled world scope. The
+// undeclared-pointer check is about DECLARATIONS, not about worlds, so it
+// must keep working on a project whose `worlds:` block is malformed —
+// coupling it to world compilation would make the stranded-data report
+// disappear exactly when the schema is broken.
+//
+// The default state is never "undeclared": every entity has one by
+// construction (the bare id addresses it), so a zero pointer is declared
+// for every type. Only non-default states reach this in practice, but the
+// guard keeps the predicate total.
+func (s *Service) pointerDeclared(entityType string, p entity.Pointer) bool {
+	if p.IsDefault() {
+		return true
+	}
+	def, ok := s.deps.Meta.Entities[entityType]
+	if !ok {
+		// A state of a type the metamodel does not define declares
+		// nothing. Reporting it is right: the row is unreachable.
+		return false
+	}
+	_, declared := def.Pointers[p.String()]
+	return declared
+}
+
 // CheckStates scans RAW storage truth (EntityQuery.AllStates) for
 // content-state integrity findings, filtered by scope on the bare id.
 //
@@ -117,15 +146,23 @@ func (s *Service) CheckStates(ctx context.Context, opts Options) ([]StateFinding
 		}
 		var mismatched []string
 		for _, st := range f.states {
-			agg := byPointer[st.pointer]
-			if agg == nil {
-				agg = &ptrAgg{}
-				byPointer[st.pointer] = agg
-				pointers = append(pointers, st.pointer)
-			}
-			agg.count++
-			if len(agg.examples) < maxStateExamples {
-				agg.examples = append(agg.examples, entity.FormatStateRef(id, st.pointer))
+			// Subtract the DECLARED set, per entity type. A pointer
+			// declared by type A but stored on type B is undeclared for
+			// B and still reports — flattening the sets would hide the
+			// worst case, since a type declaring no pointers contributes
+			// its default state to every world, making such a row
+			// reachable through no world at all.
+			if !s.pointerDeclared(st.typ, st.pointer) {
+				agg := byPointer[st.pointer]
+				if agg == nil {
+					agg = &ptrAgg{}
+					byPointer[st.pointer] = agg
+					pointers = append(pointers, st.pointer)
+				}
+				agg.count++
+				if len(agg.examples) < maxStateExamples {
+					agg.examples = append(agg.examples, entity.FormatStateRef(id, st.pointer))
+				}
 			}
 			if f.hasDefault && st.typ != f.defaultType {
 				mismatched = append(mismatched, entity.FormatStateRef(id, st.pointer))

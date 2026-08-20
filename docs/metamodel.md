@@ -934,6 +934,94 @@ relations:
     symmetric: true
 ```
 
+## Content States and Worlds
+
+An entity type can declare **content states** — several faces of the same
+entity, addressed by a *pointer* (`draft`, `published`). A **world** is a
+named rule for choosing which face to show.
+
+This is opt-in. A schema with no `pointers:` and no `worlds:` behaves
+exactly as it always has, and mixing pointered and pointerless types in one
+project needs no special handling.
+
+### Declaring states
+
+```yaml
+entities:
+  page:
+    label: Page
+    pointers:
+      draft: {default: true}   # stored as the entity itself
+      published: {}
+  ticket:
+    label: Ticket              # no pointers: one face, present everywhere
+```
+
+The state marked `default: true` is the one the bare ID addresses — an
+existing entity already *is* its own default state, so adding `pointers:`
+to a type migrates nothing. At most one state per type may be the default.
+
+### Declaring worlds
+
+```yaml
+worlds:
+  published:
+    select: published
+    otherwise: exclude
+  editorial:
+    select: [review, published]   # first existing wins
+    overrides:
+      page: draft                 # per-type exception
+    otherwise: default
+    edits: review
+```
+
+| Key | Meaning |
+| --- | --- |
+| `select` | The state to show, or an ordered list — the first one that **exists** wins. A single name and a one-element list mean the same thing. |
+| `overrides` | Replaces `select` for the named entity types. It *replaces*, it does not extend. |
+| `otherwise` | **Required.** What to do with an entity whose type declares states but none this world selects: `exclude` (the entity is not in this world at all) or `default` (fall back to its default state). |
+| `edits` | Where edits made from this world land. Accepted and validated now; used by a later release. |
+
+A world resolves each entity to **at most one** face. Three rules, in order:
+
+1. The type declares no states → the entity appears in every world.
+2. The world selects a state the entity **has** → that face is shown.
+3. Otherwise → whatever `otherwise:` says.
+
+Rule 2 is why publishing works: if `PAGE-1` has no `published` state, it
+simply does not exist in `world: published`. Absence *is* the publication
+bit.
+
+### Why `otherwise:` is required
+
+There is no default for `otherwise:`, and a world without it fails to
+load. Either answer is reasonable and they are opposites: a public world
+wants `exclude`, an internal one often wants `default`. Guessing wrong
+means a `published` world quietly serving a draft — the exact failure this
+feature exists to prevent — so the schema has to say which it means.
+
+### The default world
+
+Every project has an implicit world in which every entity shows its
+default state. It needs no declaration, it always exists, and the name
+`default` is reserved so nothing can shadow it.
+
+### Pointer names
+
+Lowercase alphanumeric runs joined by single hyphens: `draft`,
+`published`, `in-review`. No uppercase, no underscores, no leading digit,
+no doubled hyphens, and `+` is reserved. Invalid names are reported at
+startup.
+
+### Checking stored states
+
+`rela analyze states` reports state rows the schema does not account for —
+for example, states left behind after a `pointers:` entry was renamed or
+removed. A pointer is checked against **its own entity type**: a `draft`
+row on a type that declares no states is reported even if another type
+declares `draft`. This is detection only; the rows are left untouched.
+
 ## Default Metamodel
 
 When you run `rela init`, this default metamodel is created:

@@ -3,6 +3,8 @@ package metamodel
 import (
 	"regexp"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Metamodel represents the full metamodel configuration
@@ -42,6 +44,16 @@ type Metamodel struct {
 	// in the metamodel (not data-entry config) so the CLI can reach it too. See
 	// internal/transform.
 	Transforms map[string]TransformDef `yaml:"transforms,omitempty"`
+
+	// Worlds declares named resolution functions over content states
+	// (TKT-WAV8XP, design doc §4). Keyed by world name.
+	//
+	// ABSENT means the project has exactly the implicit DEFAULT world —
+	// every entity contributes its default state — which is today's
+	// graph, byte-identically. The name "default" is reserved
+	// ([DefaultWorldName]) because that world is implicit and total, so
+	// a declaration under that name could only shadow or contradict it.
+	Worlds map[string]WorldDef `yaml:"worlds,omitempty"`
 
 	// Computed lookups (not from YAML)
 	aliasMap      map[string]string // alias -> canonical name
@@ -254,6 +266,161 @@ type EntityDef struct {
 	// Validated at metamodel-load time: must reference a defined
 	// property and must not have leading/trailing whitespace.
 	DisplayProperty string `yaml:"display_property,omitempty"`
+
+	// Pointers declares this type's content states (TKT-WAV8XP, design
+	// doc §4.1). The map key is the pointer coordinate ("draft",
+	// "published"); exactly one entry may set `default: true`, naming
+	// the state stored under the zero pointer.
+	//
+	// ABSENT (the common case) means the type has no content states: it
+	// contributes its single default state to EVERY world, needing no
+	// per-type resolution. That is resolution rule 1, and it is why a
+	// mixed graph (tickets without pointers beside pages with them)
+	// needs no special handling — and why a project that never writes
+	// this key behaves byte-identically to the pre-worlds system.
+	Pointers map[string]PointerDef `yaml:"pointers,omitempty"`
+}
+
+// PointerDef declares one content state of an entity type.
+//
+// Deliberately near-empty in v1: a state is identified by its coordinate
+// and nothing else. Per-state knobs (labels, ACL hints, retention) are
+// NOT added speculatively — the design doc's §4.5 "no template language"
+// discipline applies to declarations too.
+type PointerDef struct {
+	// Default marks the state stored under the ZERO pointer. At most one
+	// per type (validated at load). A type declaring pointers without a
+	// default still has a default STATE — every entity has one, since the
+	// bare id addresses it (§2.1) — this flag only names which declared
+	// coordinate that state answers to.
+	Default bool `yaml:"default,omitempty"`
+}
+
+// Otherwise is a world's policy for an entity whose type declares
+// pointers but none that the world selects (resolution rule 3).
+//
+// MANDATORY on every declared world, validated at load. A silent
+// fallback here is precisely the leak content states exist to prevent —
+// a `published` world quietly showing a draft face — so there is
+// deliberately NO zero value that means "pick something sensible": the
+// empty string is invalid and rejected.
+type Otherwise string
+
+const (
+	// OtherwiseUnset is the invalid zero value; see [Otherwise].
+	OtherwiseUnset Otherwise = ""
+	// OtherwiseExclude contributes nothing. Public worlds say this.
+	OtherwiseExclude Otherwise = "exclude"
+	// OtherwiseDefault falls back to the type's default state. Internal
+	// worlds may say this.
+	OtherwiseDefault Otherwise = "default"
+)
+
+// IsValid reports whether the value is one of the two declared policies.
+// The zero value is NOT valid — that is the point (see [Otherwise]).
+func (o Otherwise) IsValid() bool {
+	return o == OtherwiseExclude || o == OtherwiseDefault
+}
+
+// WorldDef declares one world: a resolution function mapping each entity
+// to AT MOST ONE of its content states, the "prime" (design doc §4.1).
+//
+// The DEFAULT world is distinguished and needs no declaration — every
+// entity contributes its default state, it is total by construction, and
+// a metamodel with no `worlds:` block has exactly this world. All
+// backward compatibility hangs on that.
+type WorldDef struct {
+	// Select is the ordered candidate chain; the first coordinate that
+	// EXISTS for an entity is its prime. A bare string is accepted as a
+	// one-element chain (see UnmarshalYAML).
+	//
+	// Order is the whole point: `[review, published]` means "the site as
+	// it will look once pending reviews land". Chains keep resolution a
+	// FUNCTION — they are how the single answer is computed, never a way
+	// for one world to contain two faces of an entity.
+	Select []string `yaml:"select,omitempty"`
+
+	// Overrides replaces Select for named entity types. Keyed by entity
+	// type; the value is that type's chain, same one-or-many spelling.
+	Overrides map[string][]string `yaml:"overrides,omitempty"`
+
+	// Otherwise is the mandatory rule-3 policy; see [Otherwise].
+	Otherwise Otherwise `yaml:"otherwise,omitempty"`
+
+	// Edits names the state that edits made from this world land in
+	// (design doc §9.3, copy-on-write). PARSED BUT UNUSED in Step 2 —
+	// the copy kernel is Step 4. Declared here so a project's schema
+	// does not need rewriting when Step 4 lands, and validated as a
+	// declared pointer so a typo surfaces now rather than then.
+	Edits string `yaml:"edits,omitempty"`
+}
+
+// DefaultWorldName is reserved: the default world is implicit and total,
+// so a declaration under this name could only shadow or contradict it.
+const DefaultWorldName = "default"
+
+// UnmarshalYAML accepts `select: published` as well as
+// `select: [review, published]`.
+//
+// The one-element spelling is the overwhelmingly common case, and
+// requiring a list for it is the kind of friction that gets worked
+// around with copy-paste. This is sugar over the SAME type — not a
+// second representation — so everything downstream sees a chain.
+func (w *WorldDef) UnmarshalYAML(node *yaml.Node) error {
+	// A shadow type without the method, so decoding does not recurse.
+	type worldDefYAML struct {
+		Select    oneOrMany            `yaml:"select,omitempty"`
+		Overrides map[string]oneOrMany `yaml:"overrides,omitempty"`
+		Otherwise Otherwise            `yaml:"otherwise,omitempty"`
+		Edits     string               `yaml:"edits,omitempty"`
+	}
+	var raw worldDefYAML
+	if err := node.Decode(&raw); err != nil {
+		return err
+	}
+	w.Select = raw.Select
+	w.Otherwise = raw.Otherwise
+	w.Edits = raw.Edits
+	if len(raw.Overrides) > 0 {
+		w.Overrides = make(map[string][]string, len(raw.Overrides))
+		for typ, chain := range raw.Overrides {
+			w.Overrides[typ] = chain
+		}
+	}
+	return nil
+}
+
+// oneOrMany decodes either a scalar or a sequence into a string slice.
+type oneOrMany []string
+
+func (o *oneOrMany) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		var one string
+		if err := node.Decode(&one); err != nil {
+			return err
+		}
+		*o = []string{one}
+		return nil
+	}
+	var many []string
+	if err := node.Decode(&many); err != nil {
+		return err
+	}
+	*o = many
+	return nil
+}
+
+// ChainFor returns the candidate chain this world applies to entityType:
+// the per-type override when one is declared, else the world's Select.
+//
+// The second result distinguishes "no chain applies" (rule 3, take
+// Otherwise) from an empty-but-declared one — callers must not treat a
+// nil chain as "select nothing" without consulting it.
+func (w WorldDef) ChainFor(entityType string) (chain []string, ok bool) {
+	if override, found := w.Overrides[entityType]; found {
+		return override, len(override) > 0
+	}
+	return w.Select, len(w.Select) > 0
 }
 
 // PropertyDefs implements PropertySchema for EntityDef.

@@ -174,3 +174,108 @@ func TestCheckStates_ToleratedDiskShapes(t *testing.T) {
 		t.Errorf("state-type-mismatch findings = %+v, want PAGE-8", tm)
 	}
 }
+
+// TestCheckStates_SubtractsDeclaredPointersPerType pins AC5 (TKT-WAV8XP):
+// the declared set is consulted PER ENTITY TYPE, never flattened.
+//
+// The negative case is the load-bearing one. A pointer declared by type A
+// but stored on type B must STILL report for B: a type declaring no
+// pointers contributes its default state to every world, so such a row is
+// reachable through no world at all — exactly the stranded data this
+// finding exists to surface. Flattening the sets would hide it.
+func TestCheckStates_SubtractsDeclaredPointersPerType(t *testing.T) {
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"page": {
+				Label:      "Page",
+				IDPrefixes: []string{"PAGE-"},
+				Pointers: map[string]metamodel.PointerDef{
+					"draft":     {Default: true},
+					"published": {},
+				},
+			},
+			// policy declares NO pointers on purpose.
+			"policy": {Label: "Policy", IDPrefixes: []string{"POL-"}},
+		},
+	}
+
+	seedState := func(s store.Store, id, typ, ptr string) {
+		e := entity.New(id, typ)
+		e.Pointer = entity.Pointer(ptr)
+		if err := s.CreateEntity(context.Background(), e); err != nil {
+			t.Fatalf("seed %s@%s: %v", id, ptr, err)
+		}
+	}
+
+	svc := newServiceWith(t, meta, func(s store.Store) {
+		addEntity(s, "PAGE-1", "page", map[string]any{"title": "default"})
+		seedState(s, "PAGE-1", "page", "published") // declared for page
+		seedState(s, "PAGE-1", "page", "legacy")    // declared by nobody
+
+		addEntity(s, "POL-1", "policy", map[string]any{"title": "default"})
+		// `draft` IS declared — but by `page`, not by `policy`.
+		seedState(s, "POL-1", "policy", "draft")
+	})
+
+	findings, err := svc.CheckStates(context.Background(), analysis.Options{})
+	if err != nil {
+		t.Fatalf("CheckStates: %v", err)
+	}
+
+	undeclared := map[string]int{}
+	for _, f := range findings {
+		if f.Code == "undeclared-pointer" {
+			undeclared[f.Subject] = f.Count
+		}
+	}
+
+	if _, reported := undeclared["published"]; reported {
+		t.Error("`published` is declared for page and must NOT report")
+	}
+	if got := undeclared["legacy"]; got != 1 {
+		t.Errorf("`legacy` is declared by nobody: count = %d, want 1", got)
+	}
+	if got := undeclared["draft"]; got != 1 {
+		t.Errorf("`draft` is declared by page but STORED ON policy, so it must "+
+			"report for policy: count = %d, want 1", got)
+	}
+}
+
+// TestCheckStates_FullyDeclaredProjectIsSilent pins that a project whose
+// stored states are all declared produces no undeclared-pointer findings —
+// the adopter's steady state.
+func TestCheckStates_FullyDeclaredProjectIsSilent(t *testing.T) {
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"page": {
+				Label:      "Page",
+				IDPrefixes: []string{"PAGE-"},
+				Pointers: map[string]metamodel.PointerDef{
+					"draft":     {Default: true},
+					"published": {},
+				},
+			},
+		},
+	}
+
+	svc := newServiceWith(t, meta, func(s store.Store) {
+		addEntity(s, "PAGE-1", "page", map[string]any{"title": "default"})
+		for _, ptr := range []string{"draft", "published"} {
+			e := entity.New("PAGE-1", "page")
+			e.Pointer = entity.Pointer(ptr)
+			if err := s.CreateEntity(context.Background(), e); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+
+	findings, err := svc.CheckStates(context.Background(), analysis.Options{})
+	if err != nil {
+		t.Fatalf("CheckStates: %v", err)
+	}
+	for _, f := range findings {
+		if f.Code == "undeclared-pointer" {
+			t.Errorf("unexpected finding for a fully declared project: %+v", f)
+		}
+	}
+}

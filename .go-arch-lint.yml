@@ -84,6 +84,10 @@ components:
   scheduler:        { in: internal/scheduler }
   script:           { in: internal/script }
   metamodel:        { in: internal/metamodel }
+  # Compiles the metamodel's `worlds:` into metamodel-FREE store.WorldScope
+  # values. The one place that knows both vocabularies, so that stores and
+  # visibility (neither of which may import metamodel) can hold the result.
+  worlds:           { in: internal/worlds }
   migration:        { in: internal/migration }
   markdown:         { in: internal/markdown }
   canonical:        { in: internal/canonical }
@@ -742,6 +746,11 @@ deps:
       - storage
     canUse:
       - rrulego
+  worlds:
+    mayDependOn:
+      - entity
+      - metamodel
+      - store
   migration:
     mayDependOn:
       - storage
