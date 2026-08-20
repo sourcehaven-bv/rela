@@ -76,6 +76,21 @@ const (
 	// (that would defeat the purge); this record is the surviving forensic trail
 	// showing who purged what and why. Isolate with `op == "purge-version"`.
 	OpPurgeVersion = "purge-version"
+
+	// OpDataMigration records one applied data-migration file (TKT-0C57FS):
+	// a bulk store-level rewrite that deliberately bypasses the
+	// entitymanager (so no per-entity audit records exist for it). Summary
+	// carries the file name, the from→to shape hashes and per-step counts;
+	// migrated CONTENT is never recorded. Isolate with
+	// `op == "data-migration"`.
+	OpDataMigration = "data-migration"
+
+	// OpDataGC records one garbage-collection pass (TKT-0C57FS) that
+	// deleted schema-orphaned data after the drift grace period — deleted
+	// property values, entities or relations of types the schema no longer
+	// declares. Summary carries the ledger keys and counts, never content.
+	// Isolate with `op == "data-gc"`.
+	OpDataGC = "data-gc"
 )
 
 // Subject identifies what an op acted on. Exactly one of {Type, ID}
