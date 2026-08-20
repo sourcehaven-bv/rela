@@ -26,11 +26,18 @@ import (
 func (s *Store) ManifestSince(ctx context.Context, cursor int64) ([]synctypes.ManifestEntry, error) {
 	const q = `
 		SELECT kind, a, b, c, typ, deleted, seq FROM (
-			SELECT 'e' AS kind, id AS a, '' AS b, '' AS c, type AS typ, false AS deleted, seq FROM entities
+			SELECT 'e' AS kind, id AS a, '' AS b, '' AS c, type AS typ, false AS deleted, seq
+			FROM entities WHERE pointer = ''
 			UNION ALL
-			SELECT 'r', from_id, rel_type, to_id, '', false, seq FROM relations
+			SELECT 'r', from_id, rel_type, to_id, '', false, seq
+			FROM relations WHERE from_pointer = ''
 			UNION ALL
+			-- id_a carrying '@' is a state tombstone (the id grammar forbids
+			-- '@'); sync is a DEFAULT-WORLD protocol in Step 1 (TKT-DOFYR1) —
+			-- an id-keyed peer cannot apply or delete a state, so state rows
+			-- and tombstones stay out of the manifest entirely.
 			SELECT kind, id_a, id_b, id_c, typ, true, seq FROM deletions
+			WHERE strpos(id_a, '@') = 0
 		) t
 		WHERE seq > $1
 		ORDER BY seq`

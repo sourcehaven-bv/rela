@@ -457,8 +457,14 @@ type AttachmentManager interface {
 // [EntityReader.GetEntity] or [EntityReader.ListEntities], and the fact that
 // it must say so explicitly is the guardrail working.
 type EntityHeader struct {
-	ID         string
-	Type       string
+	ID   string
+	Type string
+
+	// Pointer identifies the content state this header describes; zero =
+	// default state (TKT-DOFYR1). Populated so AllStates header scans can
+	// tell a family's rows apart.
+	Pointer entity.Pointer
+
 	Properties map[string]any
 	UpdatedAt  time.Time
 
@@ -495,6 +501,7 @@ func HeaderOf(e *entity.Entity) EntityHeader {
 	return EntityHeader{
 		ID:         e.ID,
 		Type:       e.Type,
+		Pointer:    e.Pointer,
 		Properties: e.Properties,
 		UpdatedAt:  e.UpdatedAt,
 		Redacted:   e.Redacted,

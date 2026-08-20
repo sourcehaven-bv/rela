@@ -31,14 +31,6 @@ type Capabilities struct {
 	// AttachmentManager. When false, attachment-related conformance
 	// tests are skipped.
 	Attachments bool
-
-	// States gates the content-states conformance suite (TKT-DOFYR1).
-	// TRANSITIONAL, one commit window only: it exists so the contract
-	// cases land BEFORE pgstore implements states without breaking its
-	// conformance run.
-	// TODO(TKT-DOFYR1-PR-B): remove this flag — every backend must run
-	// RunStateTests unconditionally once pgstore implements.
-	States bool
 }
 
 func ctx() context.Context { return context.Background() }
@@ -171,9 +163,7 @@ func RunAll(t *testing.T, f Factory, sf SearchFactory, vsf VisibleSearchFactory,
 	if caps.Attachments {
 		t.Run("Attachment", func(t *testing.T) { RunAttachmentTests(t, f) })
 	}
-	if caps.States {
-		t.Run("States", func(t *testing.T) { RunStateTests(t, f) })
-	}
+	t.Run("States", func(t *testing.T) { RunStateTests(t, f) })
 	t.Run("Watcher", func(t *testing.T) { RunWatcherTests(t, f) })
 	t.Run("Validation", func(t *testing.T) { RunValidationTests(t, f) })
 	t.Run("Tx", func(t *testing.T) { RunTxTests(t, f) })

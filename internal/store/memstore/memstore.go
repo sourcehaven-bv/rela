@@ -281,6 +281,7 @@ func (m *MemStore) ListEntityHeaders(
 		snapshot = append(snapshot, store.EntityHeader{
 			ID:         e.ID,
 			Type:       e.Type,
+			Pointer:    e.Pointer,
 			Properties: maps.Clone(e.Properties),
 			UpdatedAt:  e.UpdatedAt,
 		})
@@ -452,12 +453,10 @@ func (m *MemStore) createEntity(_ context.Context, e *entity.Entity) error {
 		// states, and one type per family — same choke point as fsstore.
 		def, ok := m.entities[e.ID]
 		if !ok {
-			return fmt.Errorf("%w: entity %s has no default state; a state row cannot exist headless",
-				store.ErrNotFound, e.ID)
+			return storeutil.HeadlessStateError(e.ID)
 		}
 		if def.Type != e.Type {
-			return fmt.Errorf("state %s@%s type %q does not match the entity's type %q",
-				e.ID, e.Pointer, e.Type, def.Type)
+			return storeutil.StateTypeMismatchError(e.ID, e.Pointer, e.Type, def.Type)
 		}
 		if _, exists := m.entities[key]; exists {
 			return store.ErrConflict
@@ -492,8 +491,7 @@ func (m *MemStore) updateEntity(_ context.Context, e *entity.Entity) error {
 	// Row-family invariant: a non-default state cannot be re-typed away
 	// from its family (TKT-DOFYR1, design doc §6).
 	if !e.Pointer.IsDefault() && e.Type != existing.Type {
-		return fmt.Errorf("state %s@%s type %q does not match the entity's type %q",
-			e.ID, e.Pointer, e.Type, existing.Type)
+		return storeutil.StateTypeMismatchError(e.ID, e.Pointer, e.Type, existing.Type)
 	}
 
 	stored := e.Clone()

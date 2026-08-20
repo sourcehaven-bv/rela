@@ -179,9 +179,12 @@ func (v *VersionStore) relationLineageIDs(ctx context.Context, headID int64) ([]
 // rel_record_id whose latest row still carries this (from,type,to). Returns
 // (0, ErrNotFound) when the key has no live row and no history.
 func (v *VersionStore) recordIDForKey(ctx context.Context, from, relType, to string) (int64, error) {
-	// Live row first.
+	// Live row first. from_pointer = '': relation versioning captures the
+	// DEFAULT world in Step 1 (TKT-DOFYR1) — a state-tailed sibling of the
+	// triple is a different edge with its own rel_record_id and no history
+	// yet.
 	const live = `SELECT rel_record_id FROM relations
-	              WHERE from_id = $1 AND rel_type = $2 AND to_id = $3`
+	              WHERE from_id = $1 AND rel_type = $2 AND to_id = $3 AND from_pointer = ''`
 	var id int64
 	err := v.db.QueryRow(ctx, live, from, relType, to).Scan(&id)
 	if err == nil {
@@ -456,7 +459,7 @@ func (v *VersionStore) ListRelationLifetimes(
 // or 0 if the relation is not currently live.
 func (v *VersionStore) liveRecordID(ctx context.Context, from, relType, to string) (int64, error) {
 	const q = `SELECT rel_record_id FROM relations
-	           WHERE from_id = $1 AND rel_type = $2 AND to_id = $3`
+	           WHERE from_id = $1 AND rel_type = $2 AND to_id = $3 AND from_pointer = ''`
 	var id int64
 	err := v.db.QueryRow(ctx, q, from, relType, to).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {

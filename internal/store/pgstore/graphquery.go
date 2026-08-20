@@ -56,7 +56,8 @@ func (s *Store) GraphCount(ctx context.Context, q store.GraphQuery) (matched, to
 	if err = s.db.QueryRow(ctx, matchedSQL, matchedArgs...).Scan(&matched); err != nil {
 		return 0, 0, fmt.Errorf("pgstore: graph count (matched): %w", err)
 	}
-	if err = s.db.QueryRow(ctx, `SELECT count(*) FROM entities WHERE type = $1`, q.EntityType).Scan(&total); err != nil {
+	if err = s.db.QueryRow(ctx,
+		`SELECT count(*) FROM entities WHERE type = $1 AND pointer = ''`, q.EntityType).Scan(&total); err != nil {
 		return 0, 0, fmt.Errorf("pgstore: graph count (total): %w", err)
 	}
 	return matched, total, nil
@@ -110,7 +111,10 @@ func buildMatchingIDsSQL(q store.GraphQuery, ids []string) (sqlText string, args
 		sb.WriteString(strings.Join(withParts, ",\n"))
 		sb.WriteByte('\n')
 	}
-	sb.WriteString("SELECT e.id FROM entities e WHERE e.type = " + typeArg)
+	// e.pointer = '': graph queries evaluate the default world
+	// (TKT-DOFYR1); relation traversal stays tail-unscoped to match
+	// graphquerynaive over ListRelations.
+	sb.WriteString("SELECT e.id FROM entities e WHERE e.pointer = '' AND e.type = " + typeArg)
 	sb.WriteString(" AND e.id = ANY(" + idsArg + ")")
 	for _, c := range condParts {
 		sb.WriteString(" AND " + c)
@@ -243,7 +247,7 @@ func buildGraphQuerySQL(q store.GraphQuery, countOnly bool) (sqlText string, arg
 	// fetching and ordering; row queries return the standard entity
 	// columns and stable id-ascending order. The rest of the query
 	// (WITH, FROM, WHERE, EXISTS chain) is identical.
-	selectList := "e.id, e.type, e.properties, e.content, e.updated_at"
+	selectList := "e.id, e.type, e.pointer, e.properties, e.content, e.updated_at"
 	orderBy := " ORDER BY e.id"
 	if countOnly {
 		selectList = "count(*)"
@@ -256,7 +260,7 @@ func buildGraphQuerySQL(q store.GraphQuery, countOnly bool) (sqlText string, arg
 		sb.WriteString(strings.Join(withParts, ",\n"))
 		sb.WriteByte('\n')
 	}
-	sb.WriteString("SELECT " + selectList + " FROM entities e WHERE e.type = " + typeArg)
+	sb.WriteString("SELECT " + selectList + " FROM entities e WHERE e.pointer = '' AND e.type = " + typeArg)
 	for _, c := range condParts {
 		sb.WriteString(" AND " + c)
 	}
@@ -319,7 +323,7 @@ func buildPredicateSQL(
 		entityDepthArg := b.arg(cappedDepth(p.EntityDepth))
 		cteName := prefix + "_entity_closure"
 		with = append(with, fmt.Sprintf(`%s(id, root, depth) AS (
-    SELECT e0.id, e0.id, 0 FROM entities e0 WHERE e0.type = %s
+    SELECT e0.id, e0.id, 0 FROM entities e0 WHERE e0.pointer = '' AND e0.type = %s
     UNION
     SELECT r.to_id, c.root, c.depth + 1
     FROM relations r

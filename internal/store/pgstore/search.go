@@ -59,7 +59,10 @@ func (b *SearchBackend) Search(text string, limit int) ([]string, error) {
 	// search_text is already lowercased by the store, so a plain LIKE with the
 	// lowercased needle is case-insensitive without per-row lower() calls.
 	// '%' and '_' in the needle are escaped so they match literally.
-	sql := `SELECT id FROM entities WHERE search_text LIKE '%' || $1 || '%' ESCAPE '\'`
+	// pointer = '': search serves the default world until per-world
+	// indexing lands (Step 5, TKT-9KZGJO) — a draft state must not
+	// surface in results (TKT-DOFYR1).
+	sql := `SELECT id FROM entities WHERE search_text LIKE '%' || $1 || '%' ESCAPE '\' AND pointer = ''`
 	args := []any{escapeLike(needle)}
 
 	if needle == "" {

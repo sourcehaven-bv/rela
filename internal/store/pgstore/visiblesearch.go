@@ -236,7 +236,9 @@ func buildVisibleSearchSQL(
 		sb.WriteString(strings.Join(withParts, ",\n"))
 		sb.WriteByte('\n')
 	}
-	sb.WriteString("SELECT e.id, e.type, e.properties, e.content, e.updated_at FROM entities e WHERE TRUE")
+	// e.pointer = '': ACL-scoped search is a default-world read until
+	// per-world indexing lands (Step 5) — TKT-DOFYR1.
+	sb.WriteString("SELECT e.id, e.type, e.pointer, e.properties, e.content, e.updated_at FROM entities e WHERE e.pointer = ''")
 
 	// Text match + ordering mirror SearchBackend.Search exactly:
 	// escaped needle for LIKE, raw lowercased needle for similarity,

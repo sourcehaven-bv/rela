@@ -302,7 +302,8 @@ func (v *VersionStore) entityLineageIDsForPurge(ctx context.Context, q DBTX, id 
 
 func (v *VersionStore) liveEntityHash(ctx context.Context, q DBTX, id string) (hash string, exists bool, err error) {
 	e, gErr := scanEntity(q.QueryRow(ctx,
-		`SELECT id, type, properties, content, updated_at FROM entities WHERE id = $1`, id))
+		`SELECT id, type, pointer, properties, content, updated_at
+		 FROM entities WHERE id = $1 AND pointer = ''`, id))
 	if errors.Is(gErr, pgx.ErrNoRows) {
 		return "", false, nil
 	}
@@ -318,8 +319,8 @@ func (v *VersionStore) liveRelationHash(
 	ctx context.Context, q DBTX, from, relType, to string,
 ) (hash string, exists bool, err error) {
 	r, gErr := scanRelation(q.QueryRow(ctx,
-		`SELECT from_id, rel_type, to_id, properties, content, updated_at
-		 FROM relations WHERE from_id=$1 AND rel_type=$2 AND to_id=$3`, from, relType, to))
+		`SELECT from_id, from_pointer, rel_type, to_id, properties, content, updated_at
+		 FROM relations WHERE from_id=$1 AND rel_type=$2 AND to_id=$3 AND from_pointer=''`, from, relType, to))
 	if errors.Is(gErr, pgx.ErrNoRows) {
 		return "", false, nil
 	}

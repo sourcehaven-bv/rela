@@ -237,9 +237,13 @@ func createUniqueIndex(
 	// a dry-run's prediction drifts from what a create actually does. They can't
 	// share one string (this interpolates quoted literals; that binds $1/$2), so
 	// keep them identical by hand.
+	// pointer = '': `unique: true` is a natural-key rule over the DEFAULT
+	// world (TKT-DOFYR1) — a copied state sharing its family's value must
+	// not violate it. Migration 0011 dropped the pointer-unaware
+	// predecessors so this predicate always applies.
 	ddl := fmt.Sprintf(
 		`CREATE UNIQUE INDEX IF NOT EXISTS %s ON entities (type, (properties->>%s)) `+
-			`WHERE type = %s AND properties->>%s <> '' AND properties->>%s IS NOT NULL`,
+			`WHERE type = %s AND properties->>%s <> '' AND properties->>%s IS NOT NULL AND pointer = ''`,
 		quoteIdent(name),
 		quoteLiteral(spec.Property),
 		quoteLiteral(spec.Type),
@@ -299,7 +303,7 @@ func uniqueViolators(
 	const countQ = `
 		SELECT count(*) FROM (
 			SELECT 1 FROM entities
-			WHERE type = $1 AND properties->>$2 <> '' AND properties->>$2 IS NOT NULL
+			WHERE type = $1 AND properties->>$2 <> '' AND properties->>$2 IS NOT NULL AND pointer = ''
 			GROUP BY properties->>$2
 			HAVING count(*) > 1
 		) g`
@@ -315,7 +319,7 @@ func uniqueViolators(
 	const sampleQ = `
 		SELECT properties->>$2 AS val
 		FROM entities
-		WHERE type = $1 AND properties->>$2 <> '' AND properties->>$2 IS NOT NULL
+		WHERE type = $1 AND properties->>$2 <> '' AND properties->>$2 IS NOT NULL AND pointer = ''
 		GROUP BY properties->>$2
 		HAVING count(*) > 1
 		ORDER BY count(*) DESC

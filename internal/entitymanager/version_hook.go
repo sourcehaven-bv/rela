@@ -55,6 +55,14 @@ func (m *Manager) recordEntityVersion(ctx context.Context, op store.VersionOp, e
 	if m.deps.VersionRecorder == nil {
 		return
 	}
+	// Default-world versioning in Step 1 (TKT-DOFYR1): entity_versions
+	// keys (entity_id, vseq), so a state capture would interleave the
+	// family's faces in one lineage. The manager only writes default
+	// states today — this is the defensive mirror of the sweep's
+	// pointer = '' scope.
+	if !e.Pointer.IsDefault() {
+		return
+	}
 	proj := m.deps.Meta.RenderProjection()
 	projJSON, err := proj.JSON()
 	if err != nil {
@@ -122,6 +130,15 @@ func (m *Manager) recordRelationVersion(
 	ctx context.Context, op store.VersionOp, r *entity.Relation, prevFrom, prevTo, triggeredBy string,
 ) {
 	if m.deps.RelationVersionRecorder == nil {
+		return
+	}
+	// Content versioning captures the DEFAULT world in Step 1
+	// (TKT-DOFYR1): a state-tailed edge has its own rel_record_id and no
+	// history yet; capturing it here would fail the default-tail record
+	// lookup and, once per-state history is designed, would pre-commit
+	// its shape. One skip for every capture path (cascade delete, rename
+	// stitch, explicit delete).
+	if !r.FromPointer.IsDefault() {
 		return
 	}
 	proj := m.deps.Meta.RenderProjection()

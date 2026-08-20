@@ -17,10 +17,12 @@ import (
 
 // --- RelationReader ---
 
-// GetRelation returns a relation by its three-part key, or store.ErrNotFound.
+// GetRelation returns a relation by its three-part key, or
+// store.ErrNotFound. It addresses the DEFAULT-tail edge of the triple
+// (TKT-DOFYR1) — see store.RelationData.FromPointer.
 func (s *Store) GetRelation(ctx context.Context, from, relType, to string) (*entity.Relation, error) {
-	const q = `SELECT from_id, rel_type, to_id, properties, content, updated_at
-	           FROM relations WHERE from_id = $1 AND rel_type = $2 AND to_id = $3`
+	const q = `SELECT from_id, from_pointer, rel_type, to_id, properties, content, updated_at
+	           FROM relations WHERE from_id = $1 AND rel_type = $2 AND to_id = $3 AND from_pointer = ''`
 	r, err := scanRelation(s.db.QueryRow(ctx, q, from, relType, to))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
@@ -128,13 +130,11 @@ func (s *Store) CreateRelation(
 	if err := storeutil.ValidateRelationType(relType); err != nil {
 		return nil, err
 	}
-	if data != nil && !data.FromPointer.IsDefault() {
-		return nil, errStatesNotSupported("CreateRelation")
-	}
-
+	var fp entity.Pointer
 	var props map[string]any
 	content := ""
 	if data != nil {
+		fp = data.FromPointer
 		content = data.Content
 		props = data.Properties
 	}
@@ -151,12 +151,12 @@ func (s *Store) CreateRelation(
 
 	editorUser, editorTool := attributionValues(ctx)
 	const q = `
-		INSERT INTO relations (from_id, rel_type, to_id, properties, content, updated_at,
+		INSERT INTO relations (from_id, from_pointer, rel_type, to_id, properties, content, updated_at,
 		                       last_edited_by_user, last_edited_by_tool)
-		VALUES ($1, $2, $3, $4, $5, now(), $6, $7)
-		ON CONFLICT (from_id, rel_type, to_id) DO NOTHING
-		RETURNING from_id, rel_type, to_id, properties, content, updated_at`
-	r, err := scanRelation(tx.QueryRow(ctx, q, from, relType, to, rawProps, content,
+		VALUES ($1, $2, $3, $4, $5, $6, now(), $7, $8)
+		ON CONFLICT (from_id, from_pointer, rel_type, to_id) DO NOTHING
+		RETURNING from_id, from_pointer, rel_type, to_id, properties, content, updated_at`
+	r, err := scanRelation(tx.QueryRow(ctx, q, from, fp, relType, to, rawProps, content,
 		editorUser, editorTool))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrConflict
@@ -165,7 +165,7 @@ func (s *Store) CreateRelation(
 		return nil, err
 	}
 
-	ev := store.Event{Op: store.EventRelationCreated, RelationType: relType, From: from, To: to}
+	ev := store.Event{Op: store.EventRelationCreated, RelationType: relType, From: from, To: to, Pointer: fp}
 	s.notify(ctx, tx, ev)
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
@@ -191,12 +191,14 @@ func (s *Store) UpdateRelation(
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
 
 	editorUser, editorTool := attributionValues(ctx)
+	// Default-tail addressing in Step 1 (TKT-DOFYR1) — see
+	// store.RelationData.FromPointer.
 	const q = `
 		UPDATE relations
 		SET properties = $4, content = $5, updated_at = now(), seq = nextval('rela_seq'),
 		    last_edited_by_user = $6, last_edited_by_tool = $7
-		WHERE from_id = $1 AND rel_type = $2 AND to_id = $3
-		RETURNING from_id, rel_type, to_id, properties, content, updated_at`
+		WHERE from_id = $1 AND rel_type = $2 AND to_id = $3 AND from_pointer = ''
+		RETURNING from_id, from_pointer, rel_type, to_id, properties, content, updated_at`
 	r, err := scanRelation(tx.QueryRow(ctx, q, from, relType, to, rawProps, data.Content,
 		editorUser, editorTool))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -223,7 +225,9 @@ func (s *Store) DeleteRelation(ctx context.Context, from, relType, to string) er
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
 
-	const q = `DELETE FROM relations WHERE from_id = $1 AND rel_type = $2 AND to_id = $3`
+	// Default-tail addressing in Step 1 (TKT-DOFYR1); state-tailed edges
+	// are removed via the entity cascades.
+	const q = `DELETE FROM relations WHERE from_id = $1 AND rel_type = $2 AND to_id = $3 AND from_pointer = ''`
 	tag, err := tx.Exec(ctx, q, from, relType, to)
 	if err != nil {
 		return err
@@ -234,7 +238,7 @@ func (s *Store) DeleteRelation(ctx context.Context, from, relType, to string) er
 
 	// Record a tombstone in the same tx so the durable manifest can report the
 	// removal after the live row is gone (FEAT-NJ9FEN).
-	if err := s.writeRelationTombstone(ctx, tx, from, relType, to); err != nil {
+	if err := s.writeRelationTombstone(ctx, tx, from, "", relType, to); err != nil {
 		return err
 	}
 
@@ -249,20 +253,17 @@ func (s *Store) DeleteRelation(ctx context.Context, from, relType, to string) er
 
 // --- row scanning + query building ---
 
-// TODO(TKT-DOFYR1-PR-B): populate Relation.FromPointer here when the
-// from_pointer column lands — a forgotten scan would read every edge as
-// default-tailed while the DB says otherwise, and MatchRelation's
-// equality filter would silently return wrong rows.
 func scanRelation(row scanner) (*entity.Relation, error) {
 	var (
-		from, relType, to, content string
-		props                      []byte
-		updatedAt                  time.Time
+		from, fp, relType, to, content string
+		props                          []byte
+		updatedAt                      time.Time
 	)
-	if err := row.Scan(&from, &relType, &to, &props, &content, &updatedAt); err != nil {
+	if err := row.Scan(&from, &fp, &relType, &to, &props, &content, &updatedAt); err != nil {
 		return nil, err
 	}
 	r := entity.NewRelation(from, relType, to)
+	r.FromPointer = entity.Pointer(fp)
 	r.Content = content
 	r.UpdatedAt = updatedAt
 	var err error
@@ -297,8 +298,8 @@ func scanRelations(ctx context.Context, db DBTX, sql string, args ...any) ([]*en
 // a decoded cursor key.
 func buildRelationListSQL(q store.RelationQuery, keysetAfter string) (sql string, args []any) {
 	where, args := relationWhere(q, keysetAfter)
-	sql = `SELECT from_id, rel_type, to_id, properties, content, updated_at FROM relations` +
-		where + ` ORDER BY from_id ASC, rel_type ASC, to_id ASC`
+	sql = `SELECT from_id, from_pointer, rel_type, to_id, properties, content, updated_at FROM relations` +
+		where + ` ORDER BY from_id ASC, from_pointer ASC, rel_type ASC, to_id ASC`
 	return sql, args
 }
 
@@ -308,14 +309,13 @@ func relationWhere(q store.RelationQuery, keysetAfter string) (where string, arg
 		args = append(args, val)
 		conds = append(conds, fmt.Sprintf(cond, len(args)))
 	}
-	// Transitional (TKT-DOFYR1, until PR-B's from_pointer column): every
-	// stored edge has the default tail, so a nil or zero filter is a
-	// no-op and a non-zero filter can match nothing. FALSE carries no
-	// placeholder, so its position relative to the numbered add() args
-	// is irrelevant.
-	// TODO(TKT-DOFYR1-PR-B): replace with a real from_pointer predicate.
-	if q.FromPointer != nil && !q.FromPointer.IsDefault() {
-		conds = append(conds, "FALSE")
+	// nil = unfiltered (all tails — today's behavior for pointerless
+	// projects); non-nil matches the tail by equality, the zero pointer
+	// selecting default-tail edges only. Mirrors storeutil.MatchRelation
+	// — the storetest States suite keeps the two implementations from
+	// drifting (TKT-DOFYR1).
+	if q.FromPointer != nil {
+		add("from_pointer = $%d", string(*q.FromPointer))
 	}
 	if q.Type != "" {
 		add("rel_type = $%d", q.Type)
@@ -338,11 +338,16 @@ func relationWhere(q store.RelationQuery, keysetAfter string) (where string, arg
 		}
 	}
 	if keysetAfter != "" {
-		from, relType, to := splitRelationKey(keysetAfter)
-		args = append(args, from, relType, to)
-		n := len(args)
-		// Row-value comparison gives a correct keyset over the composite key.
-		conds = append(conds, fmt.Sprintf("(from_id, rel_type, to_id) > ($%d, $%d, $%d)", n-2, n-1, n))
+		// An unparseable cursor genuinely RESTARTS (condition omitted):
+		// comparing against garbage would silently skip rows — see the
+		// matching note in entityWhere.
+		if from, fp, relType, to, ok := splitRelationKey(keysetAfter); ok {
+			args = append(args, from, string(fp), relType, to)
+			n := len(args)
+			// Row-value comparison gives a correct keyset over the composite key.
+			conds = append(conds, fmt.Sprintf("(from_id, from_pointer, rel_type, to_id) > ($%d, $%d, $%d, $%d)",
+				n-3, n-2, n-1, n))
+		}
 	}
 	if len(conds) == 0 {
 		return "", args
@@ -350,17 +355,25 @@ func relationWhere(q store.RelationQuery, keysetAfter string) (where string, arg
 	return " WHERE " + strings.Join(conds, " AND "), args
 }
 
-// splitRelationKey reverses entity.Relation.Key() ("from--type--to"). The
-// store rejects IDs and relation types containing "--", so the split is
-// unambiguous: exactly two "--" separators.
-func splitRelationKey(key string) (from, relType, to string) {
+// splitRelationKey reverses entity.Relation.Key()
+// ("from[@pointer]--type--to"). The store rejects IDs, pointers, and
+// relation types containing "--", so the split is unambiguous; the FROM
+// slot parses through the codec to recover the tail pointer
+// (TKT-DOFYR1). ok=false for a key whose FROM slot the codec rejects —
+// the caller omits the keyset and restarts the page.
+func splitRelationKey(key string) (from string, fp entity.Pointer, relType, to string, ok bool) {
 	parts := strings.SplitN(key, "--", 3)
+	id, p, err := entity.ParseStateRef(parts[0])
+	if err != nil {
+		return "", "", "", "", false
+	}
+	from, fp = id, p
 	switch len(parts) {
 	case 3:
-		return parts[0], parts[1], parts[2]
+		return from, fp, parts[1], parts[2], true
 	case 2:
-		return parts[0], parts[1], ""
+		return from, fp, parts[1], "", true
 	default:
-		return parts[0], "", ""
+		return from, fp, "", "", true
 	}
 }

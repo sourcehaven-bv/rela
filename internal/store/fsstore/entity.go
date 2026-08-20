@@ -259,12 +259,10 @@ func (s *FSStore) createEntity(_ context.Context, e *entity.Entity) error {
 		// path deliberately tolerates violations found on disk.
 		def, ok := s.entities[e.ID]
 		if !ok {
-			return fmt.Errorf("%w: entity %s has no default state; a state row cannot exist headless",
-				store.ErrNotFound, e.ID)
+			return storeutil.HeadlessStateError(e.ID)
 		}
 		if def.Type != e.Type {
-			return fmt.Errorf("state %s@%s type %q does not match the entity's type %q",
-				e.ID, e.Pointer, e.Type, def.Type)
+			return storeutil.StateTypeMismatchError(e.ID, e.Pointer, e.Type, def.Type)
 		}
 		if _, exists := s.entities[key]; exists {
 			return store.ErrConflict
@@ -307,8 +305,7 @@ func (s *FSStore) updateEntity(_ context.Context, e *entity.Entity) error {
 	// Row-family invariant: a non-default state cannot be re-typed away
 	// from its family (TKT-DOFYR1, design doc §6).
 	if !e.Pointer.IsDefault() && e.Type != meta.Type {
-		return fmt.Errorf("state %s@%s type %q does not match the entity's type %q",
-			e.ID, e.Pointer, e.Type, meta.Type)
+		return storeutil.StateTypeMismatchError(e.ID, e.Pointer, e.Type, meta.Type)
 	}
 
 	// Load old entity for prop cache diff.

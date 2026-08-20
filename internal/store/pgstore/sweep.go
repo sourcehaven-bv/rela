@@ -276,6 +276,11 @@ func (s *sweep) selectCandidates(ctx context.Context, conn *pgxpool.Conn) ([]swe
 	//     against. Deduping against a pre-delete version would wrongly skip
 	//     re-creating an entity with identical bytes, leaving its timeline
 	//     ending in `delete` while it is live.
+	// e.pointer = '': content versioning captures the DEFAULT world in
+	// Step 1 (TKT-DOFYR1). entity_versions keys (entity_id, vseq), so
+	// sweeping a state row would interleave a family's faces in one
+	// lineage and defeat the content-hash dedup; per-state history is a
+	// later-step design that lands with its consumer (the copy kernel).
 	const q = `
 		SELECT e.id, e.type, e.content, e.properties,
 		       e.last_edited_by_user, e.last_edited_by_tool,
@@ -294,7 +299,8 @@ func (s *sweep) selectCandidates(ctx context.Context, conn *pgxpool.Conn) ([]swe
 		           WHERE d.entity_id = e.id AND d.op = 'delete'), 0)
 		    ORDER BY ev.vseq DESC LIMIT 1
 		) lvc ON true
-		WHERE (e.updated_at < now() - make_interval(secs => $1)
+		WHERE e.pointer = ''
+		  AND (e.updated_at < now() - make_interval(secs => $1)
 		       OR (lv.vseq IS NOT NULL AND lv.created_at < now() - make_interval(secs => $2)))
 		ORDER BY e.updated_at ASC
 		LIMIT $3`
@@ -421,7 +427,8 @@ func (s *sweep) selectRelationCandidates(
 		    SELECT vseq, content_hash, created_at FROM relation_versions rv
 		    WHERE rv.rel_record_id = r.rel_record_id ORDER BY rv.vseq DESC LIMIT 1
 		) lv ON true
-		WHERE (r.updated_at < now() - make_interval(secs => $1)
+		WHERE r.from_pointer = ''
+		  AND (r.updated_at < now() - make_interval(secs => $1)
 		       OR (lv.vseq IS NOT NULL AND lv.created_at < now() - make_interval(secs => $2)))
 		ORDER BY r.updated_at ASC
 		LIMIT $3`

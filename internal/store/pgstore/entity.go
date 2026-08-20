@@ -21,10 +21,19 @@ import (
 
 // --- EntityReader ---
 
-// GetEntity returns a single entity by ID, or store.ErrNotFound.
+// GetEntity returns a single entity by ID, or store.ErrNotFound. The
+// bare id addresses the DEFAULT state (TKT-DOFYR1).
 func (s *Store) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
-	const q = `SELECT id, type, properties, content, updated_at FROM entities WHERE id = $1`
-	e, err := scanEntity(s.db.QueryRow(ctx, q, id))
+	return s.GetEntityState(ctx, id, "")
+}
+
+// GetEntityState returns the content state addressed by (id, p); the
+// zero pointer is the default state. ErrNotFound covers a missing state
+// even when sibling states exist.
+func (s *Store) GetEntityState(ctx context.Context, id string, p entity.Pointer) (*entity.Entity, error) {
+	const q = `SELECT id, type, pointer, properties, content, updated_at
+	           FROM entities WHERE id = $1 AND pointer = $2`
+	e, err := scanEntity(s.db.QueryRow(ctx, q, id, p))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -37,9 +46,6 @@ func (s *Store) GetEntity(ctx context.Context, id string) (*entity.Entity, error
 // ListEntities streams entities matching q in ascending-ID order. Cursor and
 // Limit are ignored (per the EntityReader contract).
 func (s *Store) ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error] {
-	if err := rejectStateQuery("ListEntities", q); err != nil {
-		return func(yield func(*entity.Entity, error) bool) { yield(nil, err) }
-	}
 	sql, args := buildEntityListSQL(q, "")
 	return func(yield func(*entity.Entity, error) bool) {
 		rows, err := s.db.Query(ctx, sql, args...)
@@ -75,9 +81,6 @@ func (s *Store) ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2
 func (s *Store) ListEntityHeaders(
 	ctx context.Context, q store.EntityQuery,
 ) iter.Seq2[store.EntityHeader, error] {
-	if err := rejectStateQuery("ListEntityHeaders", q); err != nil {
-		return func(yield func(store.EntityHeader, error) bool) { yield(store.EntityHeader{}, err) }
-	}
 	sql, args := buildEntityHeaderListSQL(q, "")
 	return func(yield func(store.EntityHeader, error) bool) {
 		rows, err := s.db.Query(ctx, sql, args...)
@@ -105,9 +108,6 @@ func (s *Store) ListEntityHeaders(
 // ListEntitiesPage returns a page of entities. A keyset cursor on id keeps
 // pages stable; see store.ListEntitiesPage for the contract.
 func (s *Store) ListEntitiesPage(ctx context.Context, q store.EntityQuery) (store.Page[*entity.Entity], error) {
-	if err := rejectStateQuery("ListEntitiesPage", q); err != nil {
-		return store.Page[*entity.Entity]{}, err
-	}
 	cursorKey, err := storeutil.DecodeCursor(q.Cursor)
 	if err != nil {
 		return store.Page[*entity.Entity]{}, err
@@ -145,16 +145,16 @@ func (s *Store) ListEntitiesPage(ctx context.Context, q store.EntityQuery) (stor
 	if q.Limit > 0 && len(items) > q.Limit {
 		last := items[q.Limit-1]
 		items = items[:q.Limit]
-		next = storeutil.EncodeCursor(last.ID)
+		// The cursor is the STATE key so AllStates pagination resumes
+		// mid-family; for default-only queries it degenerates to the
+		// historical bare id.
+		next = storeutil.EncodeCursor(entity.FormatStateRef(last.ID, last.Pointer))
 	}
 	return store.Page[*entity.Entity]{Items: items, NextCursor: next}, nil
 }
 
 // CountEntities counts entities matching q.
 func (s *Store) CountEntities(ctx context.Context, q store.EntityQuery) (int, error) {
-	if err := rejectStateQuery("CountEntities", q); err != nil {
-		return 0, err
-	}
 	where, args := entityWhere(q, "")
 	sql := "SELECT count(*) FROM entities" + where
 	var n int
@@ -170,7 +170,8 @@ func (s *Store) CountEntities(ctx context.Context, q store.EntityQuery) (int, er
 // Sscanf("%d") semantics identical across backends.
 func (s *Store) HighestID(ctx context.Context, prefix string) (int, error) {
 	pfx := prefix + "-"
-	const q = `SELECT id FROM entities WHERE id LIKE $1`
+	// pointer = '': states share their family's number (TKT-DOFYR1).
+	const q = `SELECT id FROM entities WHERE id LIKE $1 AND pointer = ''`
 	rows, err := s.db.Query(ctx, q, pfx+"%")
 	if err != nil {
 		return 0, err
@@ -198,7 +199,9 @@ func (s *Store) HighestID(ctx context.Context, prefix string) (int, error) {
 // frequency (desc), then value (asc) for stable ties. Values are stringified
 // to match memstore's fmt.Sprintf("%v") behavior; empty strings are skipped.
 func (s *Store) PropertyValues(ctx context.Context, property string, limit int) ([]string, error) {
-	const q = `SELECT properties -> $1 AS v FROM entities WHERE properties ? $1`
+	// pointer = '': suggestion counts are a default-world aggregate
+	// (TKT-DOFYR1) — a state row must not inflate its family's values.
+	const q = `SELECT properties -> $1 AS v FROM entities WHERE properties ? $1 AND pointer = ''`
 	rows, err := s.db.Query(ctx, q, property)
 	if err != nil {
 		return nil, err
@@ -267,9 +270,6 @@ func (s *Store) CreateEntity(ctx context.Context, e *entity.Entity) error {
 	if err := validateID(e.ID); err != nil {
 		return err
 	}
-	if err := rejectPointeredEntity("CreateEntity", e); err != nil {
-		return err
-	}
 
 	props, err := marshalProps(e.Properties)
 	if err != nil {
@@ -282,15 +282,38 @@ func (s *Store) CreateEntity(ctx context.Context, e *entity.Entity) error {
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
 
+	if !e.Pointer.IsDefault() {
+		// Row-family invariants (TKT-DOFYR1, design doc §6): a
+		// non-default state requires its default row (no headless
+		// states) and shares the family's type. FOR SHARE is the
+		// load-bearing part: under READ COMMITTED a plain probe leaves a
+		// check-then-act window in which a concurrent family delete
+		// commits between probe and insert, materializing a headless
+		// state. The share lock on the default row blocks that delete
+		// until this insert commits.
+		var defType string
+		probeErr := tx.QueryRow(ctx,
+			`SELECT type FROM entities WHERE id = $1 AND pointer = '' FOR SHARE`, e.ID).Scan(&defType)
+		if errors.Is(probeErr, pgx.ErrNoRows) {
+			return storeutil.HeadlessStateError(e.ID)
+		}
+		if probeErr != nil {
+			return probeErr
+		}
+		if defType != e.Type {
+			return storeutil.StateTypeMismatchError(e.ID, e.Pointer, e.Type, defType)
+		}
+	}
+
 	editorUser, editorTool := attributionValues(ctx)
 	const q = `
-		INSERT INTO entities (id, type, properties, content, search_text, updated_at,
+		INSERT INTO entities (id, pointer, type, properties, content, search_text, updated_at,
 		                      last_edited_by_user, last_edited_by_tool)
-		VALUES ($1, $2, $3, $4, $5, now(), $6, $7)
-		ON CONFLICT (id) DO NOTHING
+		VALUES ($1, $2, $3, $4, $5, $6, now(), $7, $8)
+		ON CONFLICT (id, pointer) DO NOTHING
 		RETURNING updated_at`
 	var updatedAt time.Time
-	err = tx.QueryRow(ctx, q, e.ID, e.Type, props, e.Content, entitySearchText(e),
+	err = tx.QueryRow(ctx, q, e.ID, e.Pointer, e.Type, props, e.Content, entitySearchText(e),
 		editorUser, editorTool).Scan(&updatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return store.ErrConflict
@@ -307,7 +330,7 @@ func (s *Store) CreateEntity(ctx context.Context, e *entity.Entity) error {
 		return s.mapConflict(err)
 	}
 
-	ev := store.Event{Op: store.EventEntityCreated, EntityType: e.Type, EntityID: e.ID}
+	ev := store.Event{Op: store.EventEntityCreated, EntityType: e.Type, EntityID: e.ID, Pointer: e.Pointer}
 	s.notify(ctx, tx, ev) // cross-process NOTIFY, atomic with the write
 	if err := tx.Commit(ctx); err != nil {
 		return err
@@ -323,9 +346,6 @@ func (s *Store) CreateEntity(ctx context.Context, e *entity.Entity) error {
 // UpdateEntity overwrites an existing entity. Returns store.ErrNotFound if the
 // entity does not exist.
 func (s *Store) UpdateEntity(ctx context.Context, e *entity.Entity) error {
-	if err := rejectPointeredEntity("UpdateEntity", e); err != nil {
-		return err
-	}
 	props, err := marshalProps(e.Properties)
 	if err != nil {
 		return err
@@ -337,16 +357,33 @@ func (s *Store) UpdateEntity(ctx context.Context, e *entity.Entity) error {
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
 
+	if !e.Pointer.IsDefault() {
+		// Row-family invariant: a non-default state cannot be re-typed
+		// away from its family (TKT-DOFYR1, design doc §6).
+		var curType string
+		probeErr := tx.QueryRow(ctx,
+			`SELECT type FROM entities WHERE id = $1 AND pointer = $2`, e.ID, e.Pointer).Scan(&curType)
+		if errors.Is(probeErr, pgx.ErrNoRows) {
+			return store.ErrNotFound
+		}
+		if probeErr != nil {
+			return probeErr
+		}
+		if curType != e.Type {
+			return storeutil.StateTypeMismatchError(e.ID, e.Pointer, e.Type, curType)
+		}
+	}
+
 	editorUser, editorTool := attributionValues(ctx)
 	const q = `
 		UPDATE entities
-		SET type = $2, properties = $3, content = $4, search_text = $5,
+		SET type = $3, properties = $4, content = $5, search_text = $6,
 		    updated_at = now(), seq = nextval('rela_seq'),
-		    last_edited_by_user = $6, last_edited_by_tool = $7
-		WHERE id = $1
+		    last_edited_by_user = $7, last_edited_by_tool = $8
+		WHERE id = $1 AND pointer = $2
 		RETURNING updated_at`
 	var updatedAt time.Time
-	err = tx.QueryRow(ctx, q, e.ID, e.Type, props, e.Content, entitySearchText(e),
+	err = tx.QueryRow(ctx, q, e.ID, e.Pointer, e.Type, props, e.Content, entitySearchText(e),
 		editorUser, editorTool).Scan(&updatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return store.ErrNotFound
@@ -359,7 +396,7 @@ func (s *Store) UpdateEntity(ctx context.Context, e *entity.Entity) error {
 		return s.mapConflict(err)
 	}
 
-	ev := store.Event{Op: store.EventEntityUpdated, EntityType: e.Type, EntityID: e.ID}
+	ev := store.Event{Op: store.EventEntityUpdated, EntityType: e.Type, EntityID: e.ID, Pointer: e.Pointer}
 	s.notify(ctx, tx, ev)
 	if err := tx.Commit(ctx); err != nil {
 		return err
@@ -382,19 +419,23 @@ func (s *Store) DeleteEntity(ctx context.Context, id string, cascade bool) (*sto
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
 
-	e, err := scanEntity(tx.QueryRow(ctx,
-		`SELECT id, type, properties, content, updated_at FROM entities WHERE id = $1`, id))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, store.ErrNotFound
-	}
+	// Delete addresses the whole state FAMILY of the bare id
+	// (TKT-DOFYR1): the WHERE id = $1 statements below sweep every
+	// state row, and the bare From/To match sweeps every relation tail.
+	family, err := scanEntities(ctx, tx,
+		`SELECT id, type, pointer, properties, content, updated_at
+		 FROM entities WHERE id = $1 ORDER BY pointer ASC`, id)
 	if err != nil {
 		return nil, err
 	}
+	if len(family) == 0 {
+		return nil, store.ErrNotFound
+	}
 
 	related, err := scanRelations(ctx, tx,
-		`SELECT from_id, rel_type, to_id, properties, content, updated_at
+		`SELECT from_id, from_pointer, rel_type, to_id, properties, content, updated_at
 		 FROM relations WHERE from_id = $1 OR to_id = $1
-		 ORDER BY from_id, rel_type, to_id`, id)
+		 ORDER BY from_id, from_pointer, rel_type, to_id`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -414,10 +455,16 @@ func (s *Store) DeleteEntity(ctx context.Context, id string, cascade bool) (*sto
 
 	// Build the events and NOTIFY for each inside the tx (atomic with the
 	// deletes), then commit, then fan out to in-process subscribers.
-	evs := []store.Event{{Op: store.EventEntityDeleted, EntityType: e.Type, EntityID: id}}
+	evs := make([]store.Event, 0, len(family)+len(related))
+	for _, fe := range family {
+		evs = append(evs, store.Event{
+			Op: store.EventEntityDeleted, EntityType: fe.Type, EntityID: id, Pointer: fe.Pointer,
+		})
+	}
 	for _, r := range related {
 		evs = append(evs, store.Event{
 			Op: store.EventRelationDeleted, RelationType: r.Type, From: r.From, To: r.To,
+			Pointer: r.FromPointer,
 		})
 	}
 	// Record a tombstone for each deletion in the same tx, so the durable
@@ -433,10 +480,62 @@ func (s *Store) DeleteEntity(ctx context.Context, id string, cascade bool) (*sto
 		return nil, err
 	}
 
+	// One notifyDelete for an N-state family: observers are bare-id
+	// keyed (see notifyPut), so a single delete covers every face; the
+	// N tombstones above serve the seq-keyed feed instead.
 	s.notifyDelete(id)
 	s.emitAll(evs)
 
-	return &store.DeleteResult{DeletedEntities: []*entity.Entity{e}, DeletedRelations: related}, nil
+	return &store.DeleteResult{DeletedEntities: family, DeletedRelations: related}, nil
+}
+
+// scanEntities drains a multi-row entity query.
+func scanEntities(ctx context.Context, db DBTX, sql string, args ...any) ([]*entity.Entity, error) {
+	rows, err := db.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*entity.Entity
+	for rows.Next() {
+		e, err := scanEntity(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// rekeyStateFamily re-keys every state row of oldID onto newID in place
+// (TKT-DOFYR1): WHERE id = $1 sweeps the family, RETURNING hands back
+// each renamed state, and search_text is recomputed PER STATE from that
+// state's own content — one writer for the column (see
+// entitySearchText); splicing the new ID over the old prefix in SQL
+// risks a mixed-case prefix and assumes lower() preserves byte length,
+// which is not true for all Unicode the store permits. renamed is the
+// default face for observers, nil for a headless family.
+func rekeyStateFamily(
+	ctx context.Context, tx pgx.Tx, oldID, newID string,
+) (states []*entity.Entity, renamed *entity.Entity, err error) {
+	states, err = scanEntities(ctx, tx,
+		`UPDATE entities SET id = $2, updated_at = now(), seq = nextval('rela_seq')
+		 WHERE id = $1
+		 RETURNING id, type, pointer, properties, content, updated_at`, oldID, newID)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, st := range states {
+		if _, err = tx.Exec(ctx,
+			`UPDATE entities SET search_text = $3 WHERE id = $1 AND pointer = $2`,
+			newID, st.Pointer, entitySearchText(st)); err != nil {
+			return nil, nil, err
+		}
+		if st.Pointer.IsDefault() {
+			renamed = st
+		}
+	}
+	return states, renamed, nil
 }
 
 // RenameEntity changes an entity's ID, rewriting every relation endpoint and
@@ -475,26 +574,17 @@ func (s *Store) RenameEntity(ctx context.Context, oldID, newID string) (*store.R
 		return nil, err
 	}
 
-	// Update the ID and recompute search_text from the row itself. search_text
-	// is the lowercased "id\ncontent\n<string props>" the search backend matches
-	// against (see entitySearchText); only the ID part changes on rename.
-	// Recomputing via entitySearchText keeps a SINGLE writer of that column —
-	// splicing the new ID over the old prefix in SQL risks a mixed-case prefix
-	// (renamed entity unfindable by its new ID) and assumes lower() preserves
-	// byte length, which is not true for all Unicode the store permits.
-	renamed, err := scanEntity(tx.QueryRow(ctx,
-		`UPDATE entities SET id = $2, updated_at = now(), seq = nextval('rela_seq')
-		 WHERE id = $1
-		 RETURNING id, type, properties, content, updated_at`, oldID, newID))
+	renamedStates, renamed, err := rekeyStateFamily(ctx, tx, oldID, newID)
 	if err != nil {
 		return nil, err
 	}
-	if _, err = tx.Exec(ctx,
-		`UPDATE entities SET search_text = $2 WHERE id = $1`,
-		newID, entitySearchText(renamed)); err != nil {
-		return nil, err
+	if len(renamedStates) == 0 {
+		// The family vanished between the existence probe and the
+		// UPDATE (concurrent delete under READ COMMITTED): not-found,
+		// never an index panic.
+		return nil, store.ErrNotFound
 	}
-	newType := renamed.Type
+	newType := renamedStates[0].Type
 
 	// Capture the relation triples that reference oldID BEFORE re-keying them.
 	// A rename changes a relation's primary key (from_id/to_id), so to an
@@ -502,9 +592,9 @@ func (s *Store) RenameEntity(ctx context.Context, oldID, newID string) (*store.R
 	// We tombstone the old triples below so the manifest reports the removal —
 	// otherwise the client keeps a ghost edge forever (FEAT-NJ9FEN).
 	oldTriples, err := scanRelations(ctx, tx,
-		`SELECT from_id, rel_type, to_id, properties, content, updated_at
+		`SELECT from_id, from_pointer, rel_type, to_id, properties, content, updated_at
 		 FROM relations WHERE from_id = $1 OR to_id = $1
-		 ORDER BY from_id, rel_type, to_id`, oldID)
+		 ORDER BY from_id, from_pointer, rel_type, to_id`, oldID)
 	if err != nil {
 		return nil, err
 	}
@@ -532,19 +622,29 @@ func (s *Store) RenameEntity(ctx context.Context, oldID, newID string) (*store.R
 	// triple) in the same tx, so the durable manifest reports a rename as the
 	// removal of oldID that it is, from an id-keyed client's view. The re-keyed
 	// rows already carry the new ids with fresh seqs (the "create" half).
-	if err := s.writeEntityTombstone(ctx, tx, oldID, newType); err != nil {
-		return nil, err
+	for _, st := range renamedStates {
+		if err := s.writeEntityTombstone(ctx, tx, oldID, st.Pointer, newType); err != nil {
+			return nil, err
+		}
 	}
 	for _, r := range oldTriples {
-		if err := s.writeRelationTombstone(ctx, tx, r.From, r.Type, r.To); err != nil {
+		if err := s.writeRelationTombstone(ctx, tx, r.From, r.FromPointer, r.Type, r.To); err != nil {
 			return nil, err
 		}
 	}
 
 	// A rename presents to other processes as "the new entity changed" (they
-	// re-snapshot). NOTIFY inside the tx; commit; then fan out in-process.
-	ev := store.Event{Op: store.EventEntityUpdated, EntityType: newType, EntityID: newID}
-	s.notify(ctx, tx, ev)
+	// re-snapshot). NOTIFY inside the tx; commit; then fan out in-process —
+	// one event per state, like every write (TKT-DOFYR1).
+	evs := make([]store.Event, 0, len(renamedStates))
+	for _, st := range renamedStates {
+		evs = append(evs, store.Event{
+			Op: store.EventEntityUpdated, EntityType: newType, EntityID: newID, Pointer: st.Pointer,
+		})
+	}
+	for _, ev := range evs {
+		s.notify(ctx, tx, ev)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
@@ -552,16 +652,28 @@ func (s *Store) RenameEntity(ctx context.Context, oldID, newID string) (*store.R
 	// Notify with the value captured in-tx (RETURNING) rather than re-reading:
 	// a post-commit GetEntity could miss the put if the row is concurrently
 	// deleted or the query transiently fails, leaving the search index stale.
+	// A headless family (renamed == nil) has no default face for observers —
+	// same skip as fs/mem (TKT-DOFYR1).
 	s.notifyDelete(oldID)
-	s.notifyPut(renamed) // renamed carries updated_at from the RETURNING clause
-	s.emit(ev)
+	if renamed != nil {
+		s.notifyPut(renamed) // renamed carries updated_at from the RETURNING clause
+	}
+	s.emitAll(evs)
 
 	return &store.RenameResult{RelationsUpdated: int(updated)}, nil
 }
 
 // --- observers ---
 
+// Observers receive DEFAULT-STATE writes only in Step 1 (TKT-DOFYR1):
+// the search indexers key documents by bare id, so a state event would
+// overwrite the default face in the index. Same skip as fsstore and
+// memstore — three backends, one rule; Subscribe() events are NOT
+// filtered and fire per state.
 func (s *Store) notifyPut(e *entity.Entity) {
+	if !e.Pointer.IsDefault() {
+		return
+	}
 	if s.txPending != nil { // inside Tx: deliver after the outer commit (tx.go)
 		s.txPending.add(func(p *Store) { p.notifyPut(e) })
 		return
@@ -590,14 +702,15 @@ type scanner interface {
 
 func scanEntity(row scanner) (*entity.Entity, error) {
 	var (
-		id, typ, content string
-		props            []byte
-		updatedAt        time.Time
+		id, typ, content, ptr string
+		props                 []byte
+		updatedAt             time.Time
 	)
-	if err := row.Scan(&id, &typ, &props, &content, &updatedAt); err != nil {
+	if err := row.Scan(&id, &typ, &ptr, &props, &content, &updatedAt); err != nil {
 		return nil, err
 	}
 	e := entity.New(id, typ)
+	e.Pointer = entity.Pointer(ptr)
 	e.Content = content
 	e.UpdatedAt = updatedAt
 	var err error
@@ -609,14 +722,14 @@ func scanEntity(row scanner) (*entity.Entity, error) {
 
 func scanEntityHeader(row scanner) (store.EntityHeader, error) {
 	var (
-		id, typ   string
-		props     []byte
-		updatedAt time.Time
+		id, typ, ptr string
+		props        []byte
+		updatedAt    time.Time
 	)
-	if err := row.Scan(&id, &typ, &props, &updatedAt); err != nil {
+	if err := row.Scan(&id, &typ, &ptr, &props, &updatedAt); err != nil {
 		return store.EntityHeader{}, err
 	}
-	h := store.EntityHeader{ID: id, Type: typ, UpdatedAt: updatedAt}
+	h := store.EntityHeader{ID: id, Type: typ, Pointer: entity.Pointer(ptr), UpdatedAt: updatedAt}
 	var err error
 	if h.Properties, err = unmarshalProps(props); err != nil {
 		return store.EntityHeader{}, err
@@ -624,12 +737,16 @@ func scanEntityHeader(row scanner) (store.EntityHeader, error) {
 	return h, nil
 }
 
-// buildEntityListSQL builds the SELECT + WHERE + ORDER BY for entity listings.
-// keysetAfter, when non-empty, adds "id > $n" so pagination resumes after a
-// cursor. Ordering is ascending by id (the contract's default stable order).
+// buildEntityListSQL builds the SELECT + WHERE + ORDER BY for entity
+// listings. keysetAfter, when non-empty, resumes pagination after a
+// cursor. Ordering is ascending (id, pointer): for the default-only
+// zero-value query that is exactly the contract's historical
+// ascending-id order (the pointer column is constant ”); under
+// AllStates the states of an id sort immediately after its default row.
 func buildEntityListSQL(q store.EntityQuery, keysetAfter string) (sql string, args []any) {
 	where, args := entityWhere(q, keysetAfter)
-	sql = `SELECT id, type, properties, content, updated_at FROM entities` + where + ` ORDER BY id ASC`
+	sql = `SELECT id, type, pointer, properties, content, updated_at FROM entities` +
+		where + ` ORDER BY id ASC, pointer ASC`
 	return sql, args
 }
 
@@ -637,12 +754,19 @@ func buildEntityListSQL(q store.EntityQuery, keysetAfter string) (sql string, ar
 // column. Column order must stay in sync with scanEntityHeader.
 func buildEntityHeaderListSQL(q store.EntityQuery, keysetAfter string) (sql string, args []any) {
 	where, args := entityWhere(q, keysetAfter)
-	sql = `SELECT id, type, properties, updated_at FROM entities` + where + ` ORDER BY id ASC`
+	sql = `SELECT id, type, pointer, properties, updated_at FROM entities` +
+		where + ` ORDER BY id ASC, pointer ASC`
 	return sql, args
 }
 
 func entityWhere(q store.EntityQuery, keysetAfter string) (where string, args []any) {
 	var conds []string
+	// Default-world scope: the zero-value query returns default states
+	// only — byte-identical behavior for pointerless projects. AllStates
+	// is the raw storage-truth escape hatch (see store.EntityQuery).
+	if !q.AllStates {
+		conds = append(conds, "pointer = ''")
+	}
 	if q.Type != "" {
 		args = append(args, q.Type)
 		conds = append(conds, fmt.Sprintf("type = $%d", len(args)))
@@ -652,8 +776,19 @@ func entityWhere(q store.EntityQuery, keysetAfter string) (where string, args []
 		conds = append(conds, fmt.Sprintf("id = ANY($%d)", len(args)))
 	}
 	if keysetAfter != "" {
-		args = append(args, keysetAfter)
-		conds = append(conds, fmt.Sprintf("id > $%d", len(args)))
+		// The cursor encodes the state key ("id" or "id@pointer"); a
+		// pre-upgrade cursor parses as a bare id with the zero pointer,
+		// so it keeps resuming correctly. Row-wise comparison matches
+		// the (id, pointer) ordering. An unparseable cursor genuinely
+		// RESTARTS (the keyset condition is omitted) — comparing against
+		// the garbage string would silently skip every row sorting below
+		// it, which a paging caller cannot tell from end-of-results.
+		if cursorID, cursorPtr, err := entity.ParseStateRef(keysetAfter); err == nil {
+			args = append(args, cursorID)
+			idArg := len(args)
+			args = append(args, string(cursorPtr))
+			conds = append(conds, fmt.Sprintf("(id, pointer) > ($%d, $%d)", idArg, len(args)))
+		}
 	}
 	if len(conds) == 0 {
 		return "", args

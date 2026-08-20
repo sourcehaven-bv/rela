@@ -196,6 +196,20 @@ func SortedRemove(s []string, key string) []string {
 	return slices.Delete(s, i, i+1)
 }
 
+// HeadlessStateError is the shared rejection for creating a non-default
+// state with no default row (TKT-DOFYR1, design doc §6). One string
+// across all backends so the contract cannot drift per backend.
+func HeadlessStateError(id string) error {
+	return fmt.Errorf("%w: entity %s has no default state; a state row cannot exist headless",
+		store.ErrNotFound, id)
+}
+
+// StateTypeMismatchError is the shared rejection for a state whose type
+// diverges from its family's (TKT-DOFYR1, design doc §6).
+func StateTypeMismatchError(id string, p entity.Pointer, got, want string) error {
+	return fmt.Errorf("state %s@%s type %q does not match the entity's type %q", id, p, got, want)
+}
+
 // MatchRelation returns true if a relation matches the given query.
 //
 // The tail-pointer filter is nil-permissive (TKT-DOFYR1): a nil
