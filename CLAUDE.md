@@ -546,6 +546,34 @@ is the mandated `store.Store` interface, so its directive is a documented
 "required interface" exception rather than a ratchet target. Prefer splitting the
 type over raising the number.
 
+**Comment discipline** (`just comment-lint`, CI job "Comment lint").
+[commentlint](https://github.com/sourcehaven-bv/commentlint) checks comments
+against the scope they are attached to. Only `commented-code` is a gate; the
+rest are advisory (`just comment-report`) with a backlog being worked down:
+
+- **`duplication`** — the same fact explained in two or more comments. The
+  signal we act on: a fact stored three times gets corrected in one place and
+  goes stale in two. Remedy is to hoist it to the type or package they cite.
+- **`nil-contract`** — nil behaviour as ad-hoc prose. Go cannot express this
+  in a type, so the convention is `Nil: rejected|accepted|never returned —
+  <why>`. Fixing one removes it permanently (the rule skips tagged comments).
+- **`doclink`** — a `[Bracketed.Reference]` that resolves to nothing. Go
+  degrades these silently (pkg.go.dev renders the literal brackets) and no
+  other linter catches them — `go vet`, `staticcheck` and `godoclint` all
+  report zero on a broken link. Most are a bare `[Method]` where Go needs
+  `[Recv.Method]`; the finding names the qualified form.
+- **`param-contract`** — a precondition asserted about a bare `string`/`int`
+  parameter ("MUST already have passed containedPath"). Usually a missing
+  type; this repo already does it where it matters most, e.g.
+  `principal.Principal` keeps `roles` unexported so they can only enter
+  through a verifying constructor.
+- `too-long` and `scope-reach` are **off** — see `.commentlint.yml` for why.
+
+False positives are expected (every rule is a heuristic over prose). Suppress
+with `//commentlint:ignore <rule>  <reason>` on the declaration line, or via
+`.commentlint.yml` when the same prose recurs across many sites. A reason is
+required either way.
+
 ## Security
 
 `govulncheck` runs on every PR touching `go.mod` / `go.sum` (the `vulncheck`

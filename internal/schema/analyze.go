@@ -132,7 +132,6 @@ func (a *Analysis) HasIssues() bool {
 	return a.TotalUnused() > 0 || a.TotalLowUsage() > 0
 }
 
-// findEntityTypeReferences finds all references to an entity type.
 func findEntityTypeReferences(
 	entityType string,
 	meta *metamodel.Metamodel,
@@ -239,7 +238,6 @@ func findEntityTypeInDataEntry(entityType string, cfg *dataentryconfig.Config) [
 	return refs
 }
 
-// findRelationTypeReferences finds all references to a relation type.
 func findRelationTypeReferences(
 	relationType string,
 	meta *metamodel.Metamodel,

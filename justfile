@@ -248,8 +248,21 @@ vet:
 
 # ── CI & Checks ──
 
+# Comment discipline. The gate (commented-code) is clean and enforced in CI;
+# the report surfaces the advisory rules whose backlog is still being worked
+# down. Keep commentlint_version in sync with .github/workflows/ci.yml.
+commentlint_version := "v0.2.0"
+comment-lint:
+    @echo "==> commentlint (gate)"
+    go run github.com/sourcehaven-bv/commentlint@{{commentlint_version}} -rules commented-code ./internal ./cmd
+
+# Advisory comment findings, worst-first. Never fails; this is a worklist.
+comment-report rule="":
+    @go run github.com/sourcehaven-bv/commentlint@{{commentlint_version}} -rank -top 40 \
+        {{ if rule != "" { "-rules " + rule } else { "" } }} ./internal ./cmd
+
 # Run all checks (lint + arch-lint + lint-md + test)
-check: lint arch-lint plimsoll lint-md test
+check: lint arch-lint plimsoll comment-lint lint-md test
 
 # Generate docs from rela entities via mdcomp
 docs: build-cli
