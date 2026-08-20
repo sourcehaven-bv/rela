@@ -58,5 +58,5 @@ batching, GC gate interlock, goroutine lifecycle, fsstore relocation fix.
 
 ## Verification
 
-- [x] PR: (created after this checklist — see ticket)
+- [x] PR: https://github.com/sourcehaven-bv/rela/pull/1387
 - [x] All review-responses resolved (17 total: 8 design + 9 code; zero open critical/significant)
