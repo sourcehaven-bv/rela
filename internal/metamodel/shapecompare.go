@@ -209,18 +209,17 @@ func compareEndpointList(r *ShapeReport, subject, side string, from, to []string
 		fmt.Sprintf("%s %s endpoints widened %v → %v", subject, side, from, to))
 }
 
-// compareCardinality classifies a min/max bound change. Loosening (higher
-// max, lower min, bound removed) is additive; tightening means existing data
+// compareCardinality classifies a min/max bound change using EFFECTIVE
+// values: an absent min bound means 0, an absent max bound means unbounded.
+// Loosening (higher max, lower min) is additive; a no-op like
+// `min: unset -> 0` produces no delta at all; tightening means existing data
 // may violate the bound.
 func compareCardinality(r *ShapeReport, subject, bound string, from, to *int, isMax bool) {
-	if from == nil && to == nil {
+	fromEff, toEff := effectiveBound(from, isMax), effectiveBound(to, isMax)
+	if fromEff == toEff {
 		return
 	}
-	if from != nil && to != nil && *from == *to {
-		return
-	}
-	loosened := to == nil || // bound removed
-		(from != nil && ((isMax && *to > *from) || (!isMax && *to < *from)))
+	loosened := (isMax && toEff > fromEff) || (!isMax && toEff < fromEff)
 	if loosened {
 		r.add(TierAdditive, "relation_cardinality_loosened", subject,
 			fmt.Sprintf("%s %s loosened %s → %s", subject, bound, fmtIntPtr(from), fmtIntPtr(to)))
@@ -228,6 +227,18 @@ func compareCardinality(r *ShapeReport, subject, bound string, from, to *int, is
 	}
 	r.add(TierMigration, "relation_cardinality_tightened", subject,
 		fmt.Sprintf("%s %s tightened %s → %s: existing relations may violate the bound", subject, bound, fmtIntPtr(from), fmtIntPtr(to)))
+}
+
+// effectiveBound maps an absent bound to its semantic value: no minimum is 0,
+// no maximum is unbounded.
+func effectiveBound(p *int, isMax bool) int {
+	if p != nil {
+		return *p
+	}
+	if isMax {
+		return int(^uint(0) >> 1) // effectively unbounded
+	}
+	return 0
 }
 
 func fmtIntPtr(p *int) string {

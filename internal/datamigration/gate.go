@@ -33,6 +33,10 @@ const (
 // Verdict is one published gate evaluation. The GC engine reads the LATEST
 // verdict each tick and skips entirely while Status is needs-migration —
 // GC must never delete data a pending migration would transform.
+//
+// A published Verdict is IMMUTABLE: it is shared across goroutines by
+// pointer (atomic publication), so readers must never mutate Report.Deltas
+// or any other field — copy first.
 type Verdict struct {
 	Status      GateStatus
 	StoreHash   string // marker hash before evaluation ("" when bootstrapping)

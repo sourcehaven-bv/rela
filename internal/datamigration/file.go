@@ -149,8 +149,11 @@ func projectionToYAML(p metamodel.ShapeProjection) (map[string]any, error) {
 func LoadDir(fsys fs.FS) ([]*File, error) {
 	entries, err := fs.ReadDir(fsys, MigrationsDir)
 	if err != nil {
-		var pathErr *fs.PathError
-		if errors.As(err, &pathErr) {
+		// Only a MISSING directory is an empty chain. Anything else
+		// (permissions, not-a-directory) must surface: silently treating an
+		// unreadable migrations/ as "nothing to migrate" would let the gate
+		// report an unresolvable state while real files sit unread.
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("datamigration: read %s/: %w", MigrationsDir, err)

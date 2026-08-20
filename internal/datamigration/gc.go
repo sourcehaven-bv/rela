@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -190,7 +191,13 @@ func (g *GC) collect(ctx context.Context, key, kind string, apply bool) (int, er
 		}
 		sr, err = dropRelationProperty(ctx, x, owner, prop)
 	default:
-		return 0, fmt.Errorf("unknown ledger kind %q", kind)
+		// A kind this build cannot process (a legacy or future entry) must
+		// not wedge the sweep forever: one poisoned entry would abort every
+		// tick before any legitimate GC runs. Drop it — the ledger is
+		// rebuildable bookkeeping (`rela migrate gc --scan`), never source
+		// data.
+		slog.Warn("datamigration.gc_unknown_ledger_kind_dropped", "key", key, "kind", kind)
+		return 0, nil
 	}
 	return sr.Affected, err
 }
@@ -276,39 +283,11 @@ func (g *GC) Scan(ctx context.Context) (added []string, err error) {
 		ledger.Entries[key] = LedgerEntry{Kind: kind, FirstSeen: now}
 		added = append(added, key)
 	}
-
-	for e, lerr := range g.deps.Store.ListEntities(ctx, store.EntityQuery{}) {
-		if lerr != nil {
-			return nil, lerr
-		}
-		es, known := live.Entities[e.Type]
-		if !known {
-			record(e.Type, "entity_type")
-			continue
-		}
-		for prop := range e.Properties {
-			if _, ok := es.Properties[prop]; !ok {
-				record(e.Type+"."+prop, "property")
-			}
-		}
+	if err := scanEntities(ctx, g.deps.Store, live, record); err != nil {
+		return nil, err
 	}
-	for r, lerr := range g.deps.Store.ListRelations(ctx, store.RelationQuery{}) {
-		if lerr != nil {
-			return nil, lerr
-		}
-		rs, known := live.Relations[r.Type]
-		if !known {
-			record("rel:"+r.Type, "relation_type")
-			continue
-		}
-		for prop := range r.Properties {
-			if prop == metamodel.OrderPropertyOut || prop == metamodel.OrderPropertyIn {
-				continue // reserved order properties are managed, not schema-declared
-			}
-			if _, ok := rs.Properties[prop]; !ok {
-				record("rel:"+r.Type+"."+prop, "relation_property")
-			}
-		}
+	if err := scanRelations(ctx, g.deps.Store, live, record); err != nil {
+		return nil, err
 	}
 
 	if len(added) > 0 {
@@ -317,4 +296,54 @@ func (g *GC) Scan(ctx context.Context) (added []string, err error) {
 		}
 	}
 	return added, nil
+}
+
+func scanEntities(
+	ctx context.Context, st store.Store, live metamodel.ShapeProjection, record func(key, kind string),
+) error {
+	for e, err := range st.ListEntities(ctx, store.EntityQuery{}) {
+		if err != nil {
+			return err
+		}
+		es, known := live.Entities[e.Type]
+		if !known {
+			record(e.Type, "entity_type")
+			continue
+		}
+		for prop := range e.Properties {
+			if strings.HasPrefix(prop, "_") {
+				continue // rela-managed namespace, never schema-declared
+			}
+			if _, ok := es.Properties[prop]; !ok {
+				record(e.Type+"."+prop, "property")
+			}
+		}
+	}
+	return nil
+}
+
+func scanRelations(
+	ctx context.Context, st store.Store, live metamodel.ShapeProjection, record func(key, kind string),
+) error {
+	for r, err := range st.ListRelations(ctx, store.RelationQuery{}) {
+		if err != nil {
+			return err
+		}
+		rs, known := live.Relations[r.Type]
+		if !known {
+			record("rel:"+r.Type, "relation_type")
+			continue
+		}
+		for prop := range r.Properties {
+			// The underscore namespace is rela-managed (e.g. the relation
+			// order properties) and never schema-declared — not an orphan.
+			if strings.HasPrefix(prop, "_") {
+				continue
+			}
+			if _, ok := rs.Properties[prop]; !ok {
+				record("rel:"+r.Type+"."+prop, "relation_property")
+			}
+		}
+	}
+	return nil
 }

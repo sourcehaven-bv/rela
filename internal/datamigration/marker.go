@@ -68,9 +68,15 @@ func LoadMarker(ctx context.Context, kv state.KV) (*Marker, error) {
 	return &m, nil
 }
 
-// SaveMarker writes the applied-state marker. Callers serialize writes via
-// the migration lock where one exists (state.KV has no compare-and-swap);
-// adoption races are benign because racers write identical content.
+// SaveMarker writes the applied-state marker. state.KV has no
+// compare-and-swap, so concurrent writers are last-write-wins. The two
+// writers are the gate (adoption) and the migration runner; racing gates
+// write identical content, and a gate racing a RUNNER can at worst clobber
+// the runner's just-appended Applied entry with a stale list — recovered on
+// the next `migrate data`, where Resolve skips a file whose `to` shape is
+// already reached and every step is idempotent. A cross-process lock is the
+// documented upgrade if multi-writer postgres deployments migrate under
+// live traffic routinely.
 func SaveMarker(ctx context.Context, kv state.KV, m *Marker) error {
 	data, err := json.Marshal(m)
 	if err != nil {

@@ -84,6 +84,8 @@ func parseStep(node *yaml.Node) (Step, error) {
 }
 
 // decodeStrict decodes a YAML node into dst rejecting unknown fields.
+// yaml.Node.Decode does not honor KnownFields, so the node is re-encoded and
+// decoded through a Decoder — the only strictness hook yaml.v3 offers.
 func decodeStrict(node *yaml.Node, dst any) error {
 	var buf strings.Builder
 	enc := yaml.NewEncoder(&buf)
@@ -144,12 +146,14 @@ func (s *renamePropertyStep) Run(ctx context.Context, x *Exec) (StepResult, erro
 			return false, nil
 		}
 		if _, taken := e.Properties[s.To]; taken {
-			// Both keys present: the target wins; renaming over it would
-			// destroy the newer value. Idempotent (second run: no From key).
-			res.Notes = append(res.Notes, fmt.Sprintf("%s: both %q and %q set — kept %q, dropped the old key",
-				e.ID, s.From, s.To, s.To))
-			delete(e.Properties, s.From)
-			return true, nil
+			// Both keys present: a rename in either direction would destroy
+			// one of the two values, so touch NOTHING and surface the
+			// conflict — the old key stays visible (and eventually GC-able
+			// as orphaned drift) until a human decides. Idempotent: every
+			// re-run reports the same conflict.
+			res.Notes = append(res.Notes, fmt.Sprintf(
+				"%s: both %q and %q are set — left untouched, resolve by hand", e.ID, s.From, s.To))
+			return false, nil
 		}
 		e.Properties[s.To] = v
 		delete(e.Properties, s.From)
@@ -241,7 +245,9 @@ func (s *renameRelationTypeStep) Run(ctx context.Context, x *Exec) (StepResult, 
 			}
 			// Already created by a prior (crashed) run — fall through to delete.
 		}
-		x.captureRelationDelete(ctx, r)
+		if err := x.captureRelationDelete(ctx, r); err != nil {
+			return res, err
+		}
 		if err := x.Store.DeleteRelation(ctx, r.From, s.From, r.To); err != nil && !errors.Is(err, store.ErrNotFound) {
 			return res, fmt.Errorf("delete %s--%s--%s: %w", r.From, s.From, r.To, err)
 		}
@@ -608,7 +614,9 @@ func (s *dropEntitiesStep) Run(ctx context.Context, x *Exec) (StepResult, error)
 			}
 			return res, err
 		}
-		x.captureEntityDelete(ctx, e)
+		if capErr := x.captureEntityDelete(ctx, e); capErr != nil {
+			return res, capErr
+		}
 		del, err := x.Store.DeleteEntity(ctx, id, true)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
@@ -617,7 +625,12 @@ func (s *dropEntitiesStep) Run(ctx context.Context, x *Exec) (StepResult, error)
 			return res, err
 		}
 		for _, r := range del.DeletedRelations {
-			x.captureRelationDelete(ctx, r)
+			// The relation is already gone (the store cascade-deleted it);
+			// capture is best-effort here, logged inside the capturer's
+			// error path via the returned error.
+			if cerr := x.captureRelationDelete(ctx, r); cerr != nil {
+				res.Notes = append(res.Notes, cerr.Error())
+			}
 		}
 	}
 	return res, nil
@@ -653,9 +666,12 @@ func (s *dropRelationsStep) Run(ctx context.Context, x *Exec) (StepResult, error
 		return res, nil
 	}
 	for _, r := range rels {
-		x.captureRelationDelete(ctx, r)
-		if err := x.Store.DeleteRelation(ctx, r.From, r.Type, r.To); err != nil && !errors.Is(err, store.ErrNotFound) {
-			return res, err
+		if capErr := x.captureRelationDelete(ctx, r); capErr != nil {
+			return res, capErr
+		}
+		delErr := x.Store.DeleteRelation(ctx, r.From, r.Type, r.To)
+		if delErr != nil && !errors.Is(delErr, store.ErrNotFound) {
+			return res, delErr
 		}
 	}
 	return res, nil

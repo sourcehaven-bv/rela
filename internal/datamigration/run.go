@@ -232,21 +232,25 @@ func (x *Exec) forEachEntity(
 }
 
 // captureEntityDelete records a synchronous pre-delete version (A1); no-op
-// without a versioning service. Best-effort like the entitymanager hook:
-// a capture failure is logged, never fails the migration.
-func (x *Exec) captureEntityDelete(ctx context.Context, e *entity.Entity) {
+// without a versioning service. Unlike the entitymanager's best-effort hook,
+// a FAILED capture here is a hard error: these deletes are bulk and (on the
+// GC path) unattended, so "delete anyway" would destroy the only copy with
+// no history row. The caller aborts; the operator retries once versioning is
+// healthy — the steps are idempotent.
+func (x *Exec) captureEntityDelete(ctx context.Context, e *entity.Entity) error {
 	if x.capture == nil {
-		return
+		return nil
 	}
-	x.capture.entityDelete(ctx, e)
+	return x.capture.entityDelete(ctx, e)
 }
 
-// captureRelationDelete records a synchronous pre-delete relation version.
-func (x *Exec) captureRelationDelete(ctx context.Context, rel *entity.Relation) {
+// captureRelationDelete records a synchronous pre-delete relation version;
+// same hard-error contract as captureEntityDelete.
+func (x *Exec) captureRelationDelete(ctx context.Context, rel *entity.Relation) error {
 	if x.capture == nil {
-		return
+		return nil
 	}
-	x.capture.relationDelete(ctx, rel)
+	return x.capture.relationDelete(ctx, rel)
 }
 
 // capturer performs the synchronous version captures, carrying the render
@@ -281,7 +285,7 @@ func (r *Runner) newCapturer(fileName string) *capturer {
 	}
 }
 
-func (c *capturer) entityDelete(ctx context.Context, e *entity.Entity) {
+func (c *capturer) entityDelete(ctx context.Context, e *entity.Entity) error {
 	err := c.w.WriteVersion(ctx, store.VersionInput{
 		EntityID:      e.ID,
 		Op:            store.VersionOpDelete,
@@ -295,11 +299,12 @@ func (c *capturer) entityDelete(ctx context.Context, e *entity.Entity) {
 		TriggeredBy:   c.triggeredBy,
 	})
 	if err != nil {
-		slog.Error("datamigration.version_capture_failed", "id", e.ID, "error", err)
+		return fmt.Errorf("pre-delete version capture for %s: %w", e.ID, err)
 	}
+	return nil
 }
 
-func (c *capturer) relationDelete(ctx context.Context, rel *entity.Relation) {
+func (c *capturer) relationDelete(ctx context.Context, rel *entity.Relation) error {
 	err := c.w.WriteRelationVersion(ctx, store.RelationVersionInput{
 		From:          rel.From,
 		Type:          rel.Type,
@@ -314,7 +319,7 @@ func (c *capturer) relationDelete(ctx context.Context, rel *entity.Relation) {
 		TriggeredBy:   c.triggeredBy,
 	})
 	if err != nil {
-		slog.Error("datamigration.relation_version_capture_failed",
-			"from", rel.From, "type", rel.Type, "to", rel.To, "error", err)
+		return fmt.Errorf("pre-delete version capture for %s--%s--%s: %w", rel.From, rel.Type, rel.To, err)
 	}
+	return nil
 }

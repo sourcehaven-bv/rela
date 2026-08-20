@@ -45,7 +45,13 @@ func startDataMigration(
 		slog.Info("datamigration: " + v.Describe())
 	}
 
-	if os.Getenv("RELA_DATA_GC") == "off" {
+	// Kill switch fails SAFE: only unset or an explicit enable value keeps
+	// the (data-deleting) sweep running — a typo'd "of"/"false"/"0" must
+	// disable, not silently enable.
+	switch os.Getenv("RELA_DATA_GC") {
+	case "", "on", "1", "true":
+	default:
+		slog.Info("datamigration: gc sweep disabled via RELA_DATA_GC")
 		return func() {}
 	}
 	var capture datamigration.VersionCapture
@@ -66,6 +72,11 @@ func startDataMigration(
 		return func() {}
 	}
 
+	// The first tick fires after one full interval, DELIBERATELY: services
+	// are also assembled by short-lived CLI commands, and an immediate tick
+	// would make every `rela list` implicitly delete expired drift. A
+	// deployment whose server never lives a full interval runs
+	// `rela migrate gc` explicitly (or via a scheduler task).
 	interval := envDuration("RELA_DATA_GC_INTERVAL", time.Hour)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})

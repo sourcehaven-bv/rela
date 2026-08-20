@@ -67,6 +67,10 @@ func (s *luaStep) Run(ctx context.Context, x *Exec) (StepResult, error) {
 
 	ls := newSandboxedState()
 	defer ls.Close()
+	// Bind the VM to the run context: a runaway script (accidental infinite
+	// loop) is interruptible via Ctrl-C / ctx cancellation instead of
+	// wedging the migration with the marker still un-advanced.
+	ls.SetContext(ctx)
 	if loadErr := ls.DoString(string(src)); loadErr != nil {
 		return res, fmt.Errorf("load script: %w", loadErr)
 	}

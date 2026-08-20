@@ -23,6 +23,14 @@ import (
 // list, or when its `to` shape is where the walk already stands. After the
 // last file, the remaining gap to the live schema must itself be compatible
 // or Resolve fails, naming the deltas that still need a migration.
+//
+// Taking a free edge REBASES the walk onto the file's projections: any
+// compatible divergence the store carried (an adopted-but-unmigrated
+// additive property, dropped drift) is not represented in the marker the
+// runner writes afterwards. That is safe by construction — the divergence
+// was compatible, so the next gate evaluation re-classifies it against the
+// live schema and re-adopts (additive) or re-ledgers (drift; the GC grace
+// clock restarts, which fails toward retention, never toward deletion).
 func Resolve(
 	current metamodel.ShapeProjection, applied []string,
 	live metamodel.ShapeProjection, files []*File,

@@ -215,7 +215,7 @@ func printRunResult(res *datamigration.RunResult, applied bool) {
 		verb = "changed"
 	}
 	for _, f := range res.Files {
-		fmt.Printf("%s (%s → %s):\n", f.Name, f.From[:12], f.To[:12])
+		fmt.Printf("%s (%.12s → %.12s):\n", f.Name, f.From, f.To)
 		for _, s := range f.Steps {
 			fmt.Printf("  %-22s %-40s %s %d record(s)\n", s.Kind, s.Target, verb, s.Affected)
 			for _, n := range s.Notes {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -29,12 +30,11 @@ type Ledger struct {
 // LedgerEntry is one orphaned schema name awaiting GC.
 type LedgerEntry struct {
 	// Kind classifies the orphan: "property" (key = "type.prop"),
-	// "entity_type" (key = "type"), "relation_type" (key = "rel:type"),
-	// "relation_property" (key = "rel:type.prop"), or
-	// "enum_values" (key = "type.prop" or "type:name", values listed).
-	Kind string `json:"kind"`
-	// Values holds the orphaned enum values for Kind "enum_values".
-	Values    []string  `json:"values,omitempty"`
+	// "entity_type" (key = "type"), "relation_type" (key = "rel:type"), or
+	// "relation_property" (key = "rel:type.prop"). Enum VALUES are
+	// deliberately never ledgered: stale values inside a still-declared
+	// property are map_values territory, not orphan cleanup.
+	Kind      string    `json:"kind"`
 	FirstSeen time.Time `json:"first_seen"`
 }
 
@@ -86,17 +86,20 @@ func (l *Ledger) RecordDrift(report metamodel.ShapeReport, now time.Time) {
 		switch d.Kind {
 		case "property_removed":
 			kind = "property"
-			if len(d.Subject) > 4 && d.Subject[:4] == "rel:" {
+			if strings.HasPrefix(d.Subject, "rel:") {
 				kind = "relation_property"
 			}
 		case "entity_type_removed":
 			kind = "entity_type"
 		case "relation_type_removed":
 			kind = "relation_type"
-		case "enum_values_removed":
-			kind = "enum_values"
 		default:
-			continue // other drift (new required property, rename hints) is not GC-able
+			// Everything else — new required properties, rename hints, and
+			// notably REMOVED ENUM VALUES — is not GC-able drift. Enum
+			// values especially: the property still exists, so "cleanup"
+			// would mean erasing live-looking values; that is a map_values
+			// migration decision, never a sweep's.
+			continue
 		}
 		if _, exists := l.Entries[d.Subject]; exists {
 			continue
@@ -163,18 +166,13 @@ func subjectInShape(key, kind string, live metamodel.ShapeProjection) bool {
 		}
 		_, ok = rs.Properties[prop]
 		return ok
-	case "enum_values":
-		// Value-level restoration is not tracked per value; the entry stays
-		// until GC remaps/clears or a migration handles it. (Restoring the
-		// exact removed values would show up as a fresh shape change anyway.)
-		return false
 	}
 	return false
 }
 
 func trimRelPrefix(s string) string {
-	if len(s) > 4 && s[:4] == "rel:" {
-		return s[4:]
+	if rest, ok := strings.CutPrefix(s, "rel:"); ok {
+		return rest
 	}
 	return s
 }
