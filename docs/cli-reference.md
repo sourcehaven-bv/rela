@@ -1554,6 +1554,7 @@ rela migrate gc --scan --apply   # full-scan for orphans, then delete expired on
 | `data`  | `--apply` | Execute (default is a dry-run preview with per-step counts) |
 | `gc`    | `--apply` | Delete expired orphaned data (default is a dry-run preview) |
 | `gc`    | `--scan`  | Full-scan the store for orphans not yet in the drift ledger |
+| `gc`    | `--grace` | Override the grace period orphaned data must age before deletion (default 720h) |
 
 Unlike bare `rela migrate` (config files, service-free), these subcommands
 need the project services and a store. Compatible schema changes (new types,

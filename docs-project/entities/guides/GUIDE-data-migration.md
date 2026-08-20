@@ -1,6 +1,12 @@
-<!-- This file is auto-generated from docs-project/entities/. Do not edit directly. -->
-
-# Data Migration
+---
+audience: advanced
+id: GUIDE-data-migration
+order: 25
+status: published
+summary: Detect schema shape changes and migrate stored content with generated, reviewable migrations
+title: Data Migration
+type: guide
+---
 
 When `schema.yaml` changes shape — a property renamed, a type changed, enum
 values remapped — the entities and relations already stored no longer match
