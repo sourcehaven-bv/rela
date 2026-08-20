@@ -240,6 +240,7 @@ func validate(m *Metamodel) error {
 	validationErrors = append(validationErrors, validateRelationProperties(m)...)
 	validationErrors = append(validationErrors, validateRelationInverses(m)...)
 	validationErrors = append(validationErrors, validateRelationOrderable(m)...)
+	validationErrors = append(validationErrors, validateRelationScope(m)...)
 	validationErrors = append(validationErrors, validateTransforms(m)...)
 
 	if len(validationErrors) > 0 {
@@ -642,6 +643,22 @@ func validateRelationOrderable(m *Metamodel) []string {
 		}
 	}
 
+	return errs
+}
+
+// validateRelationScope rejects unknown `scope:` values on relation
+// types (TKT-DOFYR1). Absent means identity — the safe default that
+// keeps a pointerless project byte-identical.
+func validateRelationScope(m *Metamodel) []string {
+	var errs []string
+	for _, name := range sortedKeys(m.Relations) {
+		rel := m.Relations[name]
+		if !rel.Scope.IsValid() {
+			errs = append(errs, fmt.Sprintf(
+				"relation %q: invalid scope value %q (allowed: identity, content)",
+				name, string(rel.Scope)))
+		}
+	}
 	return errs
 }
 

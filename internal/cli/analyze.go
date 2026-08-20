@@ -30,6 +30,7 @@ type AnalyzeCmd struct {
 	RelationOrder AnalyzeRelationOrderCmd `cmd:"" name:"relation-order" help:"Find duplicate or missing values on managed relation order properties."`
 	Properties    AnalyzePropertiesCmd    `cmd:"" help:"Validate entity property values against metamodel."`
 	Validations   AnalyzeValidationsCmd   `cmd:"" help:"Run custom validation rules from metamodel."`
+	States        AnalyzeStatesCmd        `cmd:"" help:"Find content-state integrity issues (undeclared pointers, headless families)."`
 	All           AnalyzeAllCmd           `cmd:"" help:"Run all analyses."`
 	Schema        AnalyzeSchemaCmd        `cmd:"" help:"Analyze metamodel schema usage."`
 }
@@ -225,6 +226,44 @@ func (c *AnalyzeCardinalityCmd) Run(ctx context.Context, analyzer *analysis.Serv
 		out.WriteSuccess("All cardinality constraints satisfied")
 	} else {
 		out.WriteWarning("Found %d cardinality violations", len(violations))
+	}
+	return nil
+}
+
+// AnalyzeStatesCmd reports content-state integrity findings
+// (TKT-DOFYR1): rows stored under pointers no metamodel declaration
+// accounts for (in Step 1 that is every state row — declarations arrive
+// with worlds), headless families, and type-mismatched states. The
+// remedy is the future data-migration system; this surface detects
+// only.
+type AnalyzeStatesCmd struct{}
+
+// Run dispatches `rela analyze states`.
+func (c *AnalyzeStatesCmd) Run(ctx context.Context, analyzer *analysis.Service) error {
+	opts, err := resolveAnalyzeOpts()
+	if err != nil {
+		return err
+	}
+	findings, err := analyzer.CheckStates(ctx, *opts)
+	if err != nil {
+		return err
+	}
+	statesMsg := "No content-state findings"
+	if writeAnalysisJSON(len(findings), findings, statesMsg, "Found %d content-state findings") {
+		return nil
+	}
+	for _, f := range findings {
+		examples := strings.Join(f.Examples, ", ")
+		if len(f.Examples) < f.Count {
+			examples += ", …"
+		}
+		out.WriteWarning("[%s] %s: %d row(s) — %s (e.g. %s)",
+			f.Code, f.Subject, f.Count, f.Detail, examples)
+	}
+	if len(findings) == 0 {
+		out.WriteSuccess("%s", statesMsg)
+	} else {
+		out.WriteWarning("Found %d content-state findings", len(findings))
 	}
 	return nil
 }
@@ -544,6 +583,7 @@ func (c *AnalyzeAllCmd) Run(ctx context.Context, svc *readServices, analyzer *an
 type allAnalysisSummary struct {
 	Orphans                int `json:"orphans"`
 	Cardinality            int `json:"cardinality"`
+	States                 int `json:"states"`
 	Duplicates             int `json:"duplicates"`
 	UniqueViolations       int `json:"unique_violations"`
 	Gaps                   int `json:"gaps"`
@@ -558,6 +598,7 @@ func writeAnalyzeAllJSON(summary *analysis.Summary) error {
 	jsonSummary := allAnalysisSummary{
 		Orphans:                summary.Orphans,
 		Cardinality:            summary.Cardinality,
+		States:                 summary.States,
 		Duplicates:             summary.Duplicates,
 		UniqueViolations:       summary.UniqueViolations,
 		Gaps:                   summary.Gaps,
@@ -568,7 +609,7 @@ func writeAnalyzeAllJSON(summary *analysis.Summary) error {
 		ValidationLoadErrors:   summary.ValidationLoadErrors,
 	}
 	validationFailures := summary.ValidationScriptErrors + summary.ValidationLoadErrors
-	totalIssues := summary.Orphans + summary.Cardinality + summary.Duplicates +
+	totalIssues := summary.Orphans + summary.Cardinality + summary.States + summary.Duplicates +
 		summary.UniqueViolations + summary.Gaps + summary.PropertyErrors +
 		summary.ValidationErrors + validationFailures
 	status := "success"
@@ -592,6 +633,7 @@ func writeAnalyzeAllSummary(svc *readServices, summary *analysis.Summary) {
 	summaryItems := []string{
 		fmt.Sprintf("Orphans: %d", summary.Orphans),
 		fmt.Sprintf("Cardinality: %d", summary.Cardinality),
+		fmt.Sprintf("States: %d", summary.States),
 		fmt.Sprintf("Duplicates: %d", summary.Duplicates),
 		fmt.Sprintf("Unique Violations: %d", summary.UniqueViolations),
 		fmt.Sprintf("Gaps: %d", summary.Gaps),
@@ -636,6 +678,14 @@ func runAnalyzeAllSections(
 	out.WriteSectionHeader("ID Gap Analysis")
 	if err := (&AnalyzeGapsCmd{}).Run(ctx, analyzer); err != nil {
 		errs = append(errs, fmt.Errorf("gap analysis: %w", err))
+	}
+	out.WriteMessage("")
+	out.WriteSectionHeader("Content States")
+	// Second full states scan (the summary above already ran one) — the
+	// same pre-existing compute-once follow-up as the cardinality note
+	// below.
+	if err := (&AnalyzeStatesCmd{}).Run(ctx, analyzer); err != nil {
+		errs = append(errs, fmt.Errorf("content-state analysis: %w", err))
 	}
 	out.WriteMessage("")
 	out.WriteSectionHeader("Cardinality Analysis")

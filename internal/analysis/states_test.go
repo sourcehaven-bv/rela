@@ -1,0 +1,176 @@
+package analysis_test
+
+import (
+	"context"
+	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/analysis"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
+	"github.com/Sourcehaven-BV/rela/internal/tracer"
+)
+
+func mustPointer(t *testing.T, v string) entity.Pointer {
+	t.Helper()
+	p, err := entity.ParsePointer(v)
+	if err != nil {
+		t.Fatalf("ParsePointer(%q): %v", v, err)
+	}
+	return p
+}
+
+// TestCheckStates pins the content-state integrity findings
+// (TKT-DOFYR1): undeclared pointers (count + example refs per pointer —
+// in Step 1 NO pointer is declarable, so every state reports),
+// headless families, and type-mismatched states. The latter two shapes
+// are write-path-rejected, so the test seeds them through memstore
+// internals-equivalent means: a valid family for the pointer finding
+// and direct store writes for the tolerated-on-disk shapes.
+func TestCheckStates(t *testing.T) {
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"page": {Label: "Page", IDPrefixes: []string{"PAGE-"}},
+		},
+	}
+
+	svc := newServiceWith(t, meta, func(s store.Store) {
+		addEntity(s, "PAGE-1", "page", map[string]any{"title": "default"})
+		draft := entity.New("PAGE-1", "page")
+		draft.Pointer = mustPointer(t, "draft")
+		if err := s.CreateEntity(context.Background(), draft); err != nil {
+			t.Fatal(err)
+		}
+		review := entity.New("PAGE-1", "page")
+		review.Pointer = mustPointer(t, "review")
+		if err := s.CreateEntity(context.Background(), review); err != nil {
+			t.Fatal(err)
+		}
+		addEntity(s, "PAGE-2", "page", map[string]any{"title": "plain"})
+	})
+
+	findings, err := svc.CheckStates(context.Background(), analysis.Options{})
+	if err != nil {
+		t.Fatalf("CheckStates: %v", err)
+	}
+
+	// Two undeclared pointers, sorted, each with count + example refs.
+	if len(findings) != 2 {
+		t.Fatalf("got %d findings, want 2: %+v", len(findings), findings)
+	}
+	first := findings[0]
+	if first.Code != "undeclared-pointer" || first.Subject != "draft" ||
+		first.Count != 1 || first.Examples[0] != "PAGE-1@draft" {
+
+		t.Errorf("finding[0] = %+v", first)
+	}
+	if findings[1].Subject != "review" {
+		t.Errorf("finding[1] = %+v", findings[1])
+	}
+
+	t.Run("scope filters on the bare id", func(t *testing.T) {
+		scoped, err := svc.CheckStates(context.Background(), analysis.Options{
+			Scope: map[string]bool{"PAGE-2": true},
+		})
+		if err != nil {
+			t.Fatalf("CheckStates: %v", err)
+		}
+		if len(scoped) != 0 {
+			t.Errorf("got %d findings for a stateless scope, want 0: %+v", len(scoped), scoped)
+		}
+	})
+
+	t.Run("pointerless project is silent", func(t *testing.T) {
+		plain := newServiceWith(t, meta, func(s store.Store) {
+			addEntity(s, "PAGE-9", "page", nil)
+		})
+		findings, err := plain.CheckStates(context.Background(), analysis.Options{})
+		if err != nil {
+			t.Fatalf("CheckStates: %v", err)
+		}
+		if len(findings) != 0 {
+			t.Errorf("got %d findings, want 0: %+v", len(findings), findings)
+		}
+	})
+}
+
+// TestCheckStates_ToleratedDiskShapes covers the two findings the write
+// path rejects but the fs load path tolerates (design doc §6): a
+// headless family and a type-mismatched state, seeded as hand-written
+// files.
+func TestCheckStates_ToleratedDiskShapes(t *testing.T) {
+	fs := storage.NewMemFS()
+	write := func(path, content string) {
+		t.Helper()
+		if err := fs.MkdirAll("/entities/pages", 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := fs.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Headless: a state with no default row.
+	write("/entities/pages/PAGE-7@draft.md", "---\nid: PAGE-7\ntype: page\n---\n")
+	// Type mismatch: default is page, state claims ticket. The state
+	// file lives in the pages dir (the dir maps the type at scan time),
+	// so the mismatch is seeded via a second type's dir.
+	write("/entities/pages/PAGE-8.md", "---\nid: PAGE-8\ntype: page\n---\n")
+	if err := fs.MkdirAll("/entities/tickets", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.WriteFile("/entities/tickets/PAGE-8@review.md",
+		[]byte("---\nid: PAGE-8\ntype: ticket\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rooted, err := storage.NewRootedFS(fs, "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := fsstore.New(fsstore.Config{
+		FS: fs, Rooted: rooted,
+		EntitiesKey: "entities", RelationsKey: "relations",
+		AttachmentsKey: "attachments", CacheKey: ".rela",
+		Schemas: map[string]store.EntityTypeSchema{
+			"page":   {Plural: "pages"},
+			"ticket": {Plural: "tickets"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	meta := &metamodel.Metamodel{Entities: map[string]metamodel.EntityDef{
+		"page":   {Label: "Page"},
+		"ticket": {Label: "Ticket"},
+	}}
+	tr := tracer.New(st)
+	svc, err := analysis.New(analysis.Deps{Store: st, Meta: meta, Tracer: tr,
+		LuaReadDeps: lua.ReadDeps{VisibleReader: st, Tracer: tr, Meta: meta}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	findings, err := svc.CheckStates(context.Background(), analysis.Options{})
+	if err != nil {
+		t.Fatalf("CheckStates: %v", err)
+	}
+
+	byCode := map[string][]analysis.StateFinding{}
+	for _, f := range findings {
+		byCode[f.Code] = append(byCode[f.Code], f)
+	}
+	if len(byCode["undeclared-pointer"]) != 2 {
+		t.Errorf("undeclared-pointer findings = %+v, want draft + review", byCode["undeclared-pointer"])
+	}
+	if hf := byCode["headless-family"]; len(hf) != 1 || hf[0].Subject != "PAGE-7" {
+		t.Errorf("headless-family findings = %+v, want PAGE-7", hf)
+	}
+	if tm := byCode["state-type-mismatch"]; len(tm) != 1 || tm[0].Subject != "PAGE-8" {
+		t.Errorf("state-type-mismatch findings = %+v, want PAGE-8", tm)
+	}
+}

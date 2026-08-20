@@ -89,6 +89,7 @@ type Summary struct {
 	UniqueViolations       int
 	Gaps                   int
 	Cardinality            int
+	States                 int
 	PropertyErrors         int
 	ValidationErrors       int
 	ValidationWarnings     int
@@ -543,12 +544,17 @@ func (s *Service) AnalyzeAll(ctx context.Context, opts Options) (*Summary, error
 	if err != nil {
 		return nil, err
 	}
+	states, err := s.CheckStates(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
 	summary := &Summary{
 		Orphans:          len(s.FindOrphansWithScope(ctx, opts)),
 		Duplicates:       len(s.FindDuplicates(ctx, opts)),
 		UniqueViolations: len(s.FindUniqueViolations(ctx, opts)),
 		Gaps:             len(s.FindGaps(ctx, opts)),
 		Cardinality:      len(cardinality),
+		States:           len(states),
 	}
 
 	for _, pe := range schema.ValidateEntityProperties(ctx, s.deps.Store, s.deps.Meta) {

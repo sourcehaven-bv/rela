@@ -887,6 +887,41 @@ func buildACL(policy *acl.Policy, meta *metamodel.Metamodel, st store.Store) (ac
 // The condition comes from [acl.Policy.MembershipSelfPromotionOpen], the same
 // predicate behind the `rela acl audit` A1-ungated-membership finding, so the
 // boot warning and the linter can never disagree.
+// warnUndeclaredPointers logs a startup warning when the store holds
+// content-state rows (TKT-DOFYR1): in Step 1 no metamodel declaration
+// can account for a pointer, so any state row is data a schema change
+// (or hand edit) stranded. Warning, never a refusal — a schema edit
+// must not brick the project; `rela analyze states` lists the rows and
+// the data-migration system (FEAT-T3EF5A) is the remedy.
+//
+// The probe is two COUNTs, not a scan — and therefore NOT a snapshot:
+// on a live multi-writer store (the pg listener starts in Open, before
+// assemble) a write between the counts can skew the number either way,
+// including suppressing the warning on a busy boot. The count is
+// ADVISORY; the authoritative report is `rela analyze states`. A store
+// error only skips the warning (boot diagnostics must not fail the
+// boot) with a Debug trace so the absence is explainable.
+func warnUndeclaredPointers(st store.Store, projectRoot string) {
+	ctx := context.Background()
+	all, err := st.CountEntities(ctx, store.EntityQuery{AllStates: true})
+	if err != nil {
+		slog.Debug("appbuild: content-state probe failed; skipping warning", "error", err)
+		return
+	}
+	defaults, err := st.CountEntities(ctx, store.EntityQuery{})
+	if err != nil {
+		slog.Debug("appbuild: content-state probe failed; skipping warning", "error", err)
+		return
+	}
+	if states := all - defaults; states > 0 {
+		slog.Warn("appbuild: store holds content-state rows that no metamodel declaration accounts for",
+			"project", projectRoot,
+			"state_rows", states,
+			"detail", "rela analyze states",
+			"remedy", "detection only in this version; the data-migration system is the remedy")
+	}
+}
+
 func warnUngatedMembership(policy *acl.Policy) {
 	if !policy.MembershipSelfPromotionOpen() {
 		return
@@ -1154,6 +1189,7 @@ func assemble(
 		visible = v
 	}
 
+	warnUndeclaredPointers(st, base.cfg.Paths.Root)
 	resolvedACL, aclDeclarative, err := resolveACL(base, st)
 	if err != nil {
 		return nil, err

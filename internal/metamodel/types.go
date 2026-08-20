@@ -451,6 +451,56 @@ var ReservedPropertyNames = map[string]bool{
 	"type": true, // Entity.Type
 }
 
+// RelationScope declares what a relation type attaches to under content
+// states (TKT-DOFYR1, design doc §2.2).
+//
+//   - identity: the edge attaches to the entity's bare id and is shared
+//     by all its states. Ownership, containment, membership — a draft
+//     does not get a different owner than its published face by
+//     accident. The DEFAULT, so a project without pointers behaves
+//     identically either way.
+//   - content: the edge attaches to a specific state on its TAIL side
+//     (Relation.FromPointer); a draft may cite different targets than
+//     the published face. Heads stay entity-level (§2.3).
+//
+// DECLARATIVE-ONLY in Step 1: entity delete cascades every edge and
+// rename re-keys bare ids regardless of scope, so no store behavior
+// branches on it yet. Its consumers land with later steps — role
+// conferral (worlds/ACL), cardinality subjects, and the copy kernel's
+// per-relation-type merge semantics all read this one declaration.
+type RelationScope string
+
+const (
+	// ScopeIdentity is the zero/default scope; see RelationScope.
+	ScopeIdentity RelationScope = ""
+	// ScopeIdentityExplicit is the spelled-out identity scope.
+	ScopeIdentityExplicit RelationScope = "identity"
+	// ScopeContent marks state-tailed edges; see RelationScope.
+	ScopeContent RelationScope = "content"
+)
+
+// IsValid reports whether the scope is a declared value.
+func (s RelationScope) IsValid() bool {
+	switch s {
+	case ScopeIdentity, ScopeIdentityExplicit, ScopeContent:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsContent reports whether edges of this type attach to a specific
+// state on their tail side.
+func (s RelationScope) IsContent() bool { return s == ScopeContent }
+
+// IsIdentity reports whether edges of this type attach to the entity's
+// bare id. ALWAYS branch through IsIdentity/IsContent, never by
+// comparing against [ScopeIdentity]: the identity scope has two
+// spellings ("" and "identity"), so `scope == ScopeIdentity` is wrong
+// for any metamodel that writes it out — and passes every test written
+// against one that doesn't.
+func (s RelationScope) IsIdentity() bool { return !s.IsContent() }
+
 // OrderableMode controls which side(s) of a relation type are user-orderable.
 type OrderableMode string
 
@@ -523,12 +573,21 @@ type RelationDef struct {
 	MinIncoming *int        `yaml:"min_incoming,omitempty"`
 	MaxIncoming *int        `yaml:"max_incoming,omitempty"`
 
+	// Scope declares whether edges of this type attach to the entity
+	// (identity, the default) or to a specific content state on the
+	// tail side (content). See RelationScope. Unrelated to the Content
+	// field below, which is about markdown bodies — the shared word is
+	// an unfortunate collision, not a connection.
+	Scope RelationScope `yaml:"scope,omitempty"`
+
 	// Properties defines typed properties that can be attached to relations of this type.
 	// Uses the same PropertyDef structure as entity properties.
 	Properties map[string]PropertyDef `yaml:"properties,omitempty"`
 
 	// Content indicates whether relations of this type support markdown body content.
 	// When true, the data-entry UI will show a content editor for the relation.
+	// Unrelated to Scope's "content" value above (state-tailed edges) —
+	// same word, different concern.
 	Content bool `yaml:"content,omitempty"`
 
 	// Orderable declares which side(s) of this relation type are user-orderable.

@@ -789,6 +789,32 @@ Relations define how entity types can be connected:
 | `max_outgoing` | Maximum outgoing relations per from-side entity |
 | `min_incoming` | Minimum incoming relations per to-side entity   |
 | `max_incoming` | Maximum incoming relations per to-side entity   |
+| `scope`        | `identity` (default) or `content` — what the relation attaches to under content states (see below) |
+
+### Relation scope (`scope:`)
+
+With content states (an entity holding several faces such as `draft` and
+`published`), every relation type declares what its edges attach to:
+
+```yaml
+relations:
+  owned-by:    { scope: identity }   # attaches to the entity; shared by all states
+  references:  { scope: content }    # attaches to a specific state (its tail side)
+```
+
+- **`identity`** (the default): the edge belongs to the entity as a
+  whole. Ownership, containment, and membership are identity facts — a
+  draft does not get a different owner than its published face by
+  accident. A project that never uses content states behaves identically
+  with or without the declaration.
+- **`content`**: the edge belongs to one state on its **source** side; a
+  draft may reference different targets than the published face. Targets
+  are always entity-level — a relation can never point *at* a specific
+  state of its target.
+
+Unknown values are a load error. In this version the declaration is
+recorded and validated; the machinery that consumes it (worlds, copy)
+arrives with the content-states feature steps.
 
 ### Example Relation
 
