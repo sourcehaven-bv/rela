@@ -72,17 +72,43 @@ type Config struct {
 	Observers []store.EntityObserver
 }
 
-// entityMeta is the lightweight in-memory representation of an entity.
+// entityMeta is the lightweight in-memory representation of an entity
+// state. The index key for a meta is stateKey(ID, Pointer) — the bare
+// ID for the default state, the "ID@pointer" serialization otherwise —
+// which is also the filename stem.
 type entityMeta struct {
-	ID   string
-	Type string
+	ID      string
+	Type    string
+	Pointer entity.Pointer // zero = default state
 }
 
 // relationMeta is the lightweight in-memory representation of a relation.
+// FromPointer is the state-specific tail (zero = default); it is part of
+// the relation's identity and therefore of its index key and filename
+// (relKey) — two edges on the same triple with different tails are two
+// relations (TKT-DOFYR1).
 type relationMeta struct {
-	From string
-	Type string
-	To   string
+	From        string
+	Type        string
+	To          string
+	FromPointer entity.Pointer
+}
+
+// stateKey is the index key and filename stem for an entity state:
+// the bare id for the default state, the codec serialization otherwise.
+func stateKey(id string, p entity.Pointer) string {
+	return entity.FormatStateRef(id, p)
+}
+
+// relKey is the index key and filename stem for a relation. The FROM
+// slot carries the tail pointer via the codec serialization; the
+// pointer grammar forbids "--", so the key stays unambiguous.
+func relKey(from string, fp entity.Pointer, relType, to string) string {
+	return entity.FormatStateRef(from, fp) + "--" + relType + "--" + to
+}
+
+func (rm relationMeta) key() string {
+	return relKey(rm.From, rm.FromPointer, rm.Type, rm.To)
 }
 
 // attachMeta tracks attachment metadata in memory.
@@ -106,8 +132,15 @@ type attachMeta struct {
 // the interface size as the non-interface public methods
 // (FormatEntity/Relation, Start/StopWatching) move to composed helpers.
 //
-//plimsoll:max-methods=95
-//plimsoll:max-exported-methods=33
+// (95 → 102 / 33 → 34 with content states, TKT-DOFYR1: GetEntityState
+// joined the mandated store.Store interface, and the state-family
+// helpers — loadEntityMeta/loadRelationMeta/relationFileKeyMeta/
+// stateFamily/emitFamilyDeleted/rewriteRelationFiles — serve that
+// contract change. Interface growth, not internal sprawl; keep
+// ratcheting the pre-existing surplus down per TKT-N0IKN9.)
+//
+//plimsoll:max-methods=102
+//plimsoll:max-exported-methods=34
 type FSStore struct {
 	// rooted is the validated-key I/O surface. Every read, write,
 	// directory op, and remove that operates on files under the
@@ -340,7 +373,15 @@ func (s *FSStore) LastModified(_ context.Context) (time.Time, error) {
 }
 
 // notifyPut notifies all observers that an entity was created or updated.
+// Observers receive DEFAULT-STATE writes only in Step 1 (TKT-DOFYR1):
+// the search indexers key documents by bare id, so a state event would
+// overwrite the default face in the index. Until per-world indexing
+// (Step 5) the skip lives here — one place — rather than in every
+// observer; Subscribe() events are NOT filtered and fire per state.
 func (s *FSStore) notifyPut(e *entity.Entity) {
+	if !e.Pointer.IsDefault() {
+		return
+	}
 	for _, o := range s.observers {
 		_ = o.EntityPut(e)
 	}
@@ -372,8 +413,16 @@ func (s *FSStore) entityFileKey(entityType, id string) string {
 	return path.Join(s.entitiesKey, plural, id+".md")
 }
 
+// relationFileKey returns the key for a relation file with a
+// default-state tail.
 func (s *FSStore) relationFileKey(from, relType, to string) string {
 	return path.Join(s.relationsKey, from+"--"+relType+"--"+to+".md")
+}
+
+// relationFileKeyMeta returns the key for the relation an index meta
+// describes; the FROM slot carries the tail pointer (relKey).
+func (s *FSStore) relationFileKeyMeta(m relationMeta) string {
+	return path.Join(s.relationsKey, m.key()+".md")
 }
 
 // propertyOrder returns the property order for an entity type, if configured.

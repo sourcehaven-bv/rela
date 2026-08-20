@@ -40,11 +40,31 @@ func removeEntityFromCache(cache map[string]map[string]int, e *entity.Entity) {
 }
 
 // loadEntity reads a single entity from disk.
-func (s *FSStore) loadEntity(id, entityType string) (*entity.Entity, error) {
-	return s.readEntityFile(s.entityFileKey(entityType, id), id, entityType)
+// loadEntityMeta reads the state an index meta describes. The pointer is
+// filename/index-authoritative — entity frontmatter carries no pointer
+// key — so it is stamped here after the read (TKT-DOFYR1).
+func (s *FSStore) loadEntityMeta(m entityMeta) (*entity.Entity, error) {
+	key := s.entityFileKey(m.Type, stateKey(m.ID, m.Pointer))
+	e, err := s.readEntityFile(key, m.ID, m.Type)
+	if err != nil {
+		return nil, err
+	}
+	e.Pointer = m.Pointer
+	return e, nil
 }
 
 // loadRelation reads a single relation from disk.
 func (s *FSStore) loadRelation(from, relType, to string) (*entity.Relation, error) {
 	return s.readRelationFile(s.relationFileKey(from, relType, to), from, relType, to)
+}
+
+// loadRelationMeta reads the relation an index meta describes, stamping
+// the identity-bearing tail pointer from the index.
+func (s *FSStore) loadRelationMeta(m relationMeta) (*entity.Relation, error) {
+	r, err := s.readRelationFile(s.relationFileKeyMeta(m), m.From, m.Type, m.To)
+	if err != nil {
+		return nil, err
+	}
+	r.FromPointer = m.FromPointer
+	return r, nil
 }

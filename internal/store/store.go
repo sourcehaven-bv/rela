@@ -232,7 +232,16 @@ type Freshness interface {
 type EntityReader interface {
 	// GetEntity returns a single entity by ID.
 	// Returns ErrNotFound if the entity does not exist.
+	//
+	// With content states (TKT-DOFYR1) the bare id addresses the DEFAULT
+	// state; GetEntity(id) ≡ GetEntityState(id, zero Pointer).
 	GetEntity(ctx context.Context, id string) (*entity.Entity, error)
+
+	// GetEntityState returns the entity's content state addressed by
+	// (id, p); the zero Pointer addresses the default state, making this
+	// a strict generalization of GetEntity. Returns ErrNotFound if that
+	// state does not exist — including when other states of the id do.
+	GetEntityState(ctx context.Context, id string, p entity.Pointer) (*entity.Entity, error)
 
 	// ListEntities returns an iterator over entities matching the query.
 	// If an error is yielded, the iterator terminates. Cursor and Limit
@@ -270,6 +279,19 @@ type EntityQuery struct {
 	IDs    []string // filter to specific IDs (empty = all)
 	Cursor string   // pagination cursor from a previous page (empty = start); ignored by ListEntities
 	Limit  int      // max entities per page (0 = no limit); ignored by ListEntities
+
+	// AllStates widens the query to every content state row, as RAW
+	// storage truth (TKT-DOFYR1). The zero value (false) returns only
+	// default-state rows — exactly today's semantics, so every existing
+	// construction site keeps its behavior unchanged.
+	//
+	// This is NOT world resolution and never will be. Worlds arrive in
+	// Step 2 (TKT-WAV8XP) as a separate compiled predicate; AllStates is
+	// the storage-inspection escape hatch for infrastructure that must
+	// see rows exactly as they are stored — undeclared-pointer
+	// detection, observer backfill (TKT-9OJ3S0) — not for read paths
+	// choosing which face of an entity to show.
+	AllStates bool
 }
 
 // Page holds a single page of results from a paginated list call.
@@ -342,6 +364,15 @@ type RelationQuery struct {
 	Direction Direction // outgoing, incoming, or both
 	Cursor    string    // pagination cursor from a previous page (empty = start); ignored by ListRelations
 	Limit     int       // max relations per page (0 = no limit); ignored by ListRelations
+
+	// FromPointer filters on the state-specific tail of an edge
+	// (TKT-DOFYR1). nil — the zero value — leaves the tail UNFILTERED:
+	// edges from every state plus identity edges all match, which is
+	// exactly today's behavior for pointerless projects and the compat
+	// story for every existing query site. Non-nil matches the tail
+	// pointer by equality (the zero Pointer matches default-tail edges
+	// only). Stores compare, never inspect — see entity.Pointer.
+	FromPointer *entity.Pointer
 }
 
 // Direction constrains relation queries to a specific direction.
@@ -372,6 +403,16 @@ type RelationWriter interface {
 type RelationData struct {
 	Properties map[string]any
 	Content    string
+
+	// FromPointer sets the state-specific TAIL of the created edge
+	// (TKT-DOFYR1; zero = default state / identity edge). Consumed by
+	// CreateRelation only. UpdateRelation and DeleteRelation address the
+	// DEFAULT-tail edge of their triple in Step 1 — individual update/
+	// delete of a state-tailed edge has no consumer before the Step-3
+	// copy kernel and is added then, mirroring the no-per-state-entity-
+	// delete decision; state-tailed edges are removed today via the
+	// entity delete/rename cascades.
+	FromPointer entity.Pointer
 }
 
 // AttachmentInfo describes a file attached to an entity.
@@ -952,6 +993,14 @@ type Event struct {
 	RelationType string
 	From         string
 	To           string
+
+	// Pointer identifies which content state the event is about; zero =
+	// the default state (TKT-DOFYR1). Events fire per state like any
+	// write. NOTE for observers: the search indexers deliberately SKIP
+	// events with a non-zero Pointer until per-world indexing lands
+	// (Step 5) — documents are keyed by bare id, so indexing a state
+	// event would overwrite the default face.
+	Pointer entity.Pointer
 }
 
 // EventOp identifies the kind of change.

@@ -37,6 +37,9 @@ func (s *Store) GetEntity(ctx context.Context, id string) (*entity.Entity, error
 // ListEntities streams entities matching q in ascending-ID order. Cursor and
 // Limit are ignored (per the EntityReader contract).
 func (s *Store) ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error] {
+	if err := rejectStateQuery("ListEntities", q); err != nil {
+		return func(yield func(*entity.Entity, error) bool) { yield(nil, err) }
+	}
 	sql, args := buildEntityListSQL(q, "")
 	return func(yield func(*entity.Entity, error) bool) {
 		rows, err := s.db.Query(ctx, sql, args...)
@@ -72,6 +75,9 @@ func (s *Store) ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2
 func (s *Store) ListEntityHeaders(
 	ctx context.Context, q store.EntityQuery,
 ) iter.Seq2[store.EntityHeader, error] {
+	if err := rejectStateQuery("ListEntityHeaders", q); err != nil {
+		return func(yield func(store.EntityHeader, error) bool) { yield(store.EntityHeader{}, err) }
+	}
 	sql, args := buildEntityHeaderListSQL(q, "")
 	return func(yield func(store.EntityHeader, error) bool) {
 		rows, err := s.db.Query(ctx, sql, args...)
@@ -99,6 +105,9 @@ func (s *Store) ListEntityHeaders(
 // ListEntitiesPage returns a page of entities. A keyset cursor on id keeps
 // pages stable; see store.ListEntitiesPage for the contract.
 func (s *Store) ListEntitiesPage(ctx context.Context, q store.EntityQuery) (store.Page[*entity.Entity], error) {
+	if err := rejectStateQuery("ListEntitiesPage", q); err != nil {
+		return store.Page[*entity.Entity]{}, err
+	}
 	cursorKey, err := storeutil.DecodeCursor(q.Cursor)
 	if err != nil {
 		return store.Page[*entity.Entity]{}, err
@@ -143,6 +152,9 @@ func (s *Store) ListEntitiesPage(ctx context.Context, q store.EntityQuery) (stor
 
 // CountEntities counts entities matching q.
 func (s *Store) CountEntities(ctx context.Context, q store.EntityQuery) (int, error) {
+	if err := rejectStateQuery("CountEntities", q); err != nil {
+		return 0, err
+	}
 	where, args := entityWhere(q, "")
 	sql := "SELECT count(*) FROM entities" + where
 	var n int
@@ -255,6 +267,9 @@ func (s *Store) CreateEntity(ctx context.Context, e *entity.Entity) error {
 	if err := validateID(e.ID); err != nil {
 		return err
 	}
+	if err := rejectPointeredEntity("CreateEntity", e); err != nil {
+		return err
+	}
 
 	props, err := marshalProps(e.Properties)
 	if err != nil {
@@ -308,6 +323,9 @@ func (s *Store) CreateEntity(ctx context.Context, e *entity.Entity) error {
 // UpdateEntity overwrites an existing entity. Returns store.ErrNotFound if the
 // entity does not exist.
 func (s *Store) UpdateEntity(ctx context.Context, e *entity.Entity) error {
+	if err := rejectPointeredEntity("UpdateEntity", e); err != nil {
+		return err
+	}
 	props, err := marshalProps(e.Properties)
 	if err != nil {
 		return err

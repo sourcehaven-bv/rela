@@ -2,11 +2,14 @@ package fsstore
 
 import (
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
 const indexFile = "fsstore-index.json"
@@ -27,14 +30,16 @@ type persistedIndex struct {
 }
 
 type indexedEntity struct {
-	ID   string `json:"id"`
-	Type string `json:"type"`
+	ID      string         `json:"id"`
+	Type    string         `json:"type"`
+	Pointer entity.Pointer `json:"pointer,omitempty"`
 }
 
 type indexedRelation struct {
-	From string `json:"from"`
-	Type string `json:"type"`
-	To   string `json:"to"`
+	From        string         `json:"from"`
+	Type        string         `json:"type"`
+	To          string         `json:"to"`
+	FromPointer entity.Pointer `json:"from_pointer,omitempty"`
 }
 
 // loadPersistedIndex reads the index from disk. Returns nil if missing or corrupt.
@@ -70,8 +75,8 @@ func (s *FSStore) savePersistedIndex() error {
 		PropCache:         s.propCache,
 	}
 
-	for id, meta := range s.entities {
-		idx.Entities[id] = indexedEntity{ID: id, Type: meta.Type}
+	for key, meta := range s.entities {
+		idx.Entities[key] = indexedEntity(meta)
 	}
 	for key, meta := range s.relations {
 		idx.Relations[key] = indexedRelation(meta)
@@ -115,9 +120,9 @@ func (s *FSStore) syncEntities(cached *persistedIndex) error {
 	currentMtime := s.entitiesDirMtime()
 
 	if cached != nil && cached.Entities != nil && currentMtime.Equal(cached.EntitiesDirMtime) {
-		for id, ie := range cached.Entities {
-			s.entities[id] = entityMeta(ie)
-			s.entityOrder = append(s.entityOrder, id)
+		for key, ie := range cached.Entities {
+			s.entities[key] = entityMeta(ie)
+			s.entityOrder = append(s.entityOrder, key)
 		}
 		sortStrings(s.entityOrder)
 		return nil
@@ -146,10 +151,18 @@ func (s *FSStore) syncRelations(cached *persistedIndex) error {
 
 // rebuildPropCache reads every entity file to repopulate the property cache.
 // Called when the cached cache is stale (newer entity files exist on disk).
+//
+// DEFAULT states only, matching addEntityToCache/removeEntityFromCache's
+// call-site guards: counting a state row here would double-count its
+// family on every reopen while deletes decrement once — a permanent
+// ghost in the suggestion counts (TKT-DOFYR1 review).
 func (s *FSStore) rebuildPropCache() error {
 	s.propCache = make(map[string]map[string]int)
 	for _, meta := range s.entities {
-		e, err := s.loadEntity(meta.ID, meta.Type)
+		if !meta.Pointer.IsDefault() {
+			continue
+		}
+		e, err := s.loadEntityMeta(meta)
 		if err != nil {
 			continue
 		}
@@ -203,8 +216,18 @@ func (s *FSStore) scanEntityDirs() error {
 				if f.IsDir() || !strings.HasSuffix(f.Name(), ".md") {
 					continue
 				}
-				id := strings.TrimSuffix(f.Name(), ".md")
-				entries = append(entries, entityMeta{ID: id, Type: entityType})
+				stem := strings.TrimSuffix(f.Name(), ".md")
+				// The stem is the state key: bare id, or "id@pointer"
+				// (TKT-DOFYR1). A stem the codec rejects is skipped
+				// with a warning, never a hard error — the load path
+				// tolerates hand-edited layouts; analyze surfaces them.
+				id, ptr, refErr := entity.ParseStateRef(stem)
+				if refErr != nil {
+					slog.Warn("fsstore: skipping entity file with invalid name",
+						"file", f.Name(), "dir", dirName, "error", refErr)
+					continue
+				}
+				entries = append(entries, entityMeta{ID: id, Type: entityType, Pointer: ptr})
 			}
 			results[idx] = result{entries: entries}
 		}(i, typeDir.Name())
@@ -214,8 +237,9 @@ func (s *FSStore) scanEntityDirs() error {
 	// Merge results into the index.
 	for _, r := range results {
 		for _, meta := range r.entries {
-			s.entities[meta.ID] = meta
-			s.entityOrder = append(s.entityOrder, meta.ID)
+			key := stateKey(meta.ID, meta.Pointer)
+			s.entities[key] = meta
+			s.entityOrder = append(s.entityOrder, key)
 		}
 	}
 
@@ -239,12 +263,22 @@ func (s *FSStore) scanRelationDir() error {
 			continue
 		}
 		name := strings.TrimSuffix(f.Name(), ".md")
-		from, relType, to := parseRelationFilename(name)
-		if from == "" || relType == "" || to == "" {
+		fromSlot, relType, to := parseRelationFilename(name)
+		if fromSlot == "" || relType == "" || to == "" {
 			continue
 		}
-		key := from + "--" + relType + "--" + to
-		s.relations[key] = relationMeta{From: from, Type: relType, To: to}
+		// The FROM slot may carry a tail pointer ("id@pointer",
+		// TKT-DOFYR1). An unparseable slot is skipped with a warning —
+		// load tolerance, like the entity scan.
+		from, fp, refErr := entity.ParseStateRef(fromSlot)
+		if refErr != nil {
+			slog.Warn("fsstore: skipping relation file with invalid FROM slot",
+				"file", f.Name(), "error", refErr)
+			continue
+		}
+		rm := relationMeta{From: from, Type: relType, To: to, FromPointer: fp}
+		key := rm.key()
+		s.relations[key] = rm
 		s.relationOrder = append(s.relationOrder, key)
 	}
 
@@ -304,7 +338,7 @@ func (s *FSStore) resolveEntityType(dirName string, pluralToType map[string]stri
 func (s *FSStore) newestEntityFileMtime() time.Time {
 	var newest time.Time
 	for _, meta := range s.entities {
-		key := s.entityFileKey(meta.Type, meta.ID)
+		key := s.entityFileKey(meta.Type, stateKey(meta.ID, meta.Pointer))
 		if info, err := s.rooted.Stat(key); err == nil {
 			if info.ModTime().After(newest) {
 				newest = info.ModTime()
@@ -319,7 +353,7 @@ func (s *FSStore) newestEntityFileMtime() time.Time {
 func (s *FSStore) newestRelationFileMtime() time.Time {
 	var newest time.Time
 	for _, meta := range s.relations {
-		key := s.relationFileKey(meta.From, meta.Type, meta.To)
+		key := s.relationFileKeyMeta(meta)
 		if info, err := s.rooted.Stat(key); err == nil {
 			if info.ModTime().After(newest) {
 				newest = info.ModTime()

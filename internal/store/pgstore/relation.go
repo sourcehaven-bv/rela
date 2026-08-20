@@ -128,6 +128,9 @@ func (s *Store) CreateRelation(
 	if err := storeutil.ValidateRelationType(relType); err != nil {
 		return nil, err
 	}
+	if data != nil && !data.FromPointer.IsDefault() {
+		return nil, errStatesNotSupported("CreateRelation")
+	}
 
 	var props map[string]any
 	content := ""
@@ -246,6 +249,10 @@ func (s *Store) DeleteRelation(ctx context.Context, from, relType, to string) er
 
 // --- row scanning + query building ---
 
+// TODO(TKT-DOFYR1-PR-B): populate Relation.FromPointer here when the
+// from_pointer column lands — a forgotten scan would read every edge as
+// default-tailed while the DB says otherwise, and MatchRelation's
+// equality filter would silently return wrong rows.
 func scanRelation(row scanner) (*entity.Relation, error) {
 	var (
 		from, relType, to, content string
@@ -300,6 +307,15 @@ func relationWhere(q store.RelationQuery, keysetAfter string) (where string, arg
 	add := func(cond string, val any) {
 		args = append(args, val)
 		conds = append(conds, fmt.Sprintf(cond, len(args)))
+	}
+	// Transitional (TKT-DOFYR1, until PR-B's from_pointer column): every
+	// stored edge has the default tail, so a nil or zero filter is a
+	// no-op and a non-zero filter can match nothing. FALSE carries no
+	// placeholder, so its position relative to the numbered add() args
+	// is irrelevant.
+	// TODO(TKT-DOFYR1-PR-B): replace with a real from_pointer predicate.
+	if q.FromPointer != nil && !q.FromPointer.IsDefault() {
+		conds = append(conds, "FALSE")
 	}
 	if q.Type != "" {
 		add("rel_type = $%d", q.Type)

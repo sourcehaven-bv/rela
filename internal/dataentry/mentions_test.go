@@ -418,6 +418,10 @@ func (f *flakyStore) GetEntity(_ context.Context, id string) (*entity.Entity, er
 	return nil, f.err
 }
 
+func (f *flakyStore) GetEntityState(ctx context.Context, id string, _ entity.Pointer) (*entity.Entity, error) {
+	return f.GetEntity(ctx, id)
+}
+
 func (f *flakyStore) ListEntities(_ context.Context, _ store.EntityQuery) iter.Seq2[*entity.Entity, error] {
 	panic("flakyStore: ListEntities not implemented")
 }

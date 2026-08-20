@@ -197,11 +197,19 @@ func SortedRemove(s []string, key string) []string {
 }
 
 // MatchRelation returns true if a relation matches the given query.
+//
+// The tail-pointer filter is nil-permissive (TKT-DOFYR1): a nil
+// q.FromPointer matches every tail — identity edges and all states —
+// which is today's behavior for pointerless projects; non-nil matches
+// by equality only (the store never inspects pointer contents).
 func MatchRelation(r *entity.Relation, q store.RelationQuery) bool {
 	if q.Type != "" && r.Type != q.Type {
 		return false
 	}
 	if q.From != "" && r.From != q.From {
+		return false
+	}
+	if q.FromPointer != nil && r.FromPointer != *q.FromPointer {
 		return false
 	}
 	if q.To != "" && r.To != q.To {

@@ -194,28 +194,36 @@ func (s *FSStore) reconcileEntityPath(path string) {
 	if err != nil {
 		return
 	}
+	// The filename stem is authoritative for the pointer (TKT-DOFYR1):
+	// a state file's frontmatter carries only the bare id.
+	if _, ptr, _, ok := s.entityIdentityFromPath(path); ok {
+		e.Pointer = ptr
+	}
 
 	s.echoes.Recorded(path, rawData)
 
-	existing, known := s.entities[e.ID]
-	if known {
-		removed, loadErr := s.loadEntity(existing.ID, existing.Type)
+	key := stateKey(e.ID, e.Pointer)
+	existing, known := s.entities[key]
+	if known && existing.Pointer.IsDefault() {
+		removed, loadErr := s.loadEntityMeta(existing)
 		if loadErr == nil {
 			removeEntityFromCache(s.propCache, removed)
 		}
 	}
-	s.entities[e.ID] = entityMeta{ID: e.ID, Type: e.Type}
+	s.entities[key] = entityMeta{ID: e.ID, Type: e.Type, Pointer: e.Pointer}
 	if !known {
-		s.entityOrder = storeutil.SortedInsert(s.entityOrder, e.ID)
+		s.entityOrder = storeutil.SortedInsert(s.entityOrder, key)
 	}
-	addEntityToCache(s.propCache, e)
+	if e.Pointer.IsDefault() {
+		addEntityToCache(s.propCache, e)
+	}
 	s.notifyPut(e)
 
 	op := store.EventEntityUpdated
 	if !known {
 		op = store.EventEntityCreated
 	}
-	s.emit(store.Event{Op: op, EntityType: e.Type, EntityID: e.ID})
+	s.emit(store.Event{Op: op, EntityType: e.Type, EntityID: e.ID, Pointer: e.Pointer})
 }
 
 // handleEntityRemoval handles the disappearance of an entity file.
@@ -223,27 +231,36 @@ func (s *FSStore) reconcileEntityPath(path string) {
 func (s *FSStore) handleEntityRemoval(path string) {
 	s.echoes.Forget(path)
 
-	id, ok := s.entityIDFromPath(path)
+	stem, ok := s.entityStemFromPath(path)
 	if !ok {
 		return
 	}
-	meta, known := s.entities[id]
+	// The stem IS the state key ("id" or "id@pointer").
+	meta, known := s.entities[stem]
 	if !known {
 		return
 	}
 
-	if e, err := s.loadEntity(meta.ID, meta.Type); err == nil {
-		removeEntityFromCache(s.propCache, e)
+	if meta.Pointer.IsDefault() {
+		if e, err := s.loadEntityMeta(meta); err == nil {
+			removeEntityFromCache(s.propCache, e)
+		}
 	}
-	delete(s.entities, id)
-	s.entityOrder = storeutil.SortedRemove(s.entityOrder, id)
-	s.notifyDelete(id)
-	s.emit(store.Event{Op: store.EventEntityDeleted, EntityType: meta.Type, EntityID: id})
+	delete(s.entities, stem)
+	s.entityOrder = storeutil.SortedRemove(s.entityOrder, stem)
+	if meta.Pointer.IsDefault() {
+		// Observer deletions are bare-id keyed; a state removal must
+		// not evict the default face from the search index (Step-1
+		// observer skip, TKT-DOFYR1).
+		s.notifyDelete(meta.ID)
+	}
+	s.emit(store.Event{Op: store.EventEntityDeleted, EntityType: meta.Type, EntityID: meta.ID, Pointer: meta.Pointer})
 }
 
-// entityIDFromPath extracts the entity ID from a file path under the
-// entities directory: entitiesDir/<plural>/<id>.md.
-func (s *FSStore) entityIDFromPath(path string) (string, bool) {
+// entityStemFromPath extracts the filename stem — the STATE KEY, "id"
+// or "id@pointer" — from a file path under the entities directory:
+// entitiesDir/<plural>/<stem>.md.
+func (s *FSStore) entityStemFromPath(path string) (string, bool) {
 	base := filepath.Base(path)
 	if !strings.HasSuffix(base, ".md") {
 		return "", false
@@ -251,26 +268,31 @@ func (s *FSStore) entityIDFromPath(path string) (string, bool) {
 	return strings.TrimSuffix(base, ".md"), true
 }
 
-// entityIdentityFromPath extracts both the entity ID and entity type
-// from a file path under entitiesDir/<plural>/<id>.md. The plural
-// directory name is mapped back to the entity type via the configured
-// schemas. Returns ok=false if the path doesn't have the expected shape
-// or the plural directory doesn't map to a known type.
-func (s *FSStore) entityIdentityFromPath(path string) (id, entityType string, ok bool) {
-	id, ok = s.entityIDFromPath(path)
+// entityIdentityFromPath extracts the bare entity ID, the state
+// pointer, and the entity type from a file path under
+// entitiesDir/<plural>/<stem>.md. The plural directory name is mapped
+// back to the entity type via the configured schemas. Returns ok=false
+// if the path doesn't have the expected shape, the stem doesn't parse
+// as a state reference, or the plural doesn't map to a known type.
+func (s *FSStore) entityIdentityFromPath(path string) (id string, ptr entity.Pointer, entityType string, ok bool) {
+	stem, ok := s.entityStemFromPath(path)
 	if !ok {
-		return "", "", false
+		return "", "", "", false
+	}
+	id, ptr, err := entity.ParseStateRef(stem)
+	if err != nil {
+		return "", "", "", false
 	}
 	parent := filepath.Base(filepath.Dir(path))
 	if parent == "" {
-		return "", "", false
+		return "", "", "", false
 	}
 	pluralToType := s.buildPluralToTypeMap()
 	entityType = s.resolveEntityType(parent, pluralToType)
 	if entityType == "" {
-		return "", "", false
+		return "", "", "", false
 	}
-	return id, entityType, true
+	return id, ptr, entityType, true
 }
 
 // reconcileRelationPath handles a change event for a relation file. Must
@@ -280,15 +302,21 @@ func (s *FSStore) reconcileRelationPath(path string) {
 	if !strings.HasSuffix(base, ".md") {
 		return
 	}
-	from, relType, to := parseRelationFilename(strings.TrimSuffix(base, ".md"))
-	if from == "" || relType == "" || to == "" {
+	fromSlot, relType, to := parseRelationFilename(strings.TrimSuffix(base, ".md"))
+	if fromSlot == "" || relType == "" || to == "" {
 		return
 	}
-	key := from + "--" + relType + "--" + to
+	// The FROM slot may carry a tail pointer ("id@pointer", TKT-DOFYR1).
+	from, fp, refErr := entity.ParseStateRef(fromSlot)
+	if refErr != nil {
+		return
+	}
+	rm := relationMeta{From: from, Type: relType, To: to, FromPointer: fp}
+	key := rm.key()
 
 	data, readErr := s.rawReader.ReadFile(path)
 	if readErr != nil {
-		s.handleRelationRemoval(path, key, from, relType, to)
+		s.handleRelationRemoval(path, key, rm)
 		return
 	}
 
@@ -302,7 +330,7 @@ func (s *FSStore) reconcileRelationPath(path string) {
 
 	_, known := s.relations[key]
 	if !known {
-		s.relations[key] = relationMeta{From: from, Type: relType, To: to}
+		s.relations[key] = rm
 		s.relationOrder = storeutil.SortedInsert(s.relationOrder, key)
 	}
 
@@ -310,12 +338,12 @@ func (s *FSStore) reconcileRelationPath(path string) {
 	if !known {
 		op = store.EventRelationCreated
 	}
-	s.emit(store.Event{Op: op, RelationType: relType, From: from, To: to})
+	s.emit(store.Event{Op: op, RelationType: relType, From: from, To: to, Pointer: fp})
 }
 
 // handleRelationRemoval handles the disappearance of a relation file.
 // Must be called under mu.Lock.
-func (s *FSStore) handleRelationRemoval(path, key, from, relType, to string) {
+func (s *FSStore) handleRelationRemoval(path, key string, rm relationMeta) {
 	s.echoes.Forget(path)
 
 	if _, known := s.relations[key]; !known {
@@ -323,7 +351,10 @@ func (s *FSStore) handleRelationRemoval(path, key, from, relType, to string) {
 	}
 	delete(s.relations, key)
 	s.relationOrder = storeutil.SortedRemove(s.relationOrder, key)
-	s.emit(store.Event{Op: store.EventRelationDeleted, RelationType: relType, From: from, To: to})
+	s.emit(store.Event{
+		Op: store.EventRelationDeleted, RelationType: rm.Type,
+		From: rm.From, To: rm.To, Pointer: rm.FromPointer,
+	})
 }
 
 // parseEntityFromPath parses raw bytes from a watcher event into an
@@ -333,12 +364,14 @@ func (s *FSStore) handleRelationRemoval(path, key, from, relType, to string) {
 // git-crypt directly.
 func (s *FSStore) parseEntityFromPath(data []byte, path string) (*entity.Entity, error) {
 	if isGitCryptEncrypted(data) {
-		id, entityType, ok := s.entityIdentityFromPath(path)
+		id, ptr, entityType, ok := s.entityIdentityFromPath(path)
 		if !ok {
 			return nil, errors.New("encrypted entity file: cannot derive id/type from path")
 		}
-		key := s.entityFileKey(entityType, id)
-		return s.buildInaccessibleEntity(key, id, entityType, entity.InaccessibleReasonGitCrypt), nil
+		key := s.entityFileKey(entityType, stateKey(id, ptr))
+		shell := s.buildInaccessibleEntity(key, id, entityType, entity.InaccessibleReasonGitCrypt)
+		shell.Pointer = ptr
+		return shell, nil
 	}
 	doc, err := parseDocument(string(data))
 	if err != nil {

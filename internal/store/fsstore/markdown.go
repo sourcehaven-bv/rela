@@ -278,9 +278,12 @@ func formatEntity(e *entity.Entity, propertyOrder []string) (string, error) {
 	return formatDocumentOrdered(fm, content, keyOrder)
 }
 
-// writeEntityFile writes an entity to a markdown file using temp-file + rename.
+// writeEntityFile writes an entity to a markdown file using temp-file +
+// rename. The filename stem is the state key ("id" or "id@pointer");
+// the pointer lives ONLY in the filename — entity frontmatter carries
+// no pointer key, so there is a single source of truth (TKT-DOFYR1).
 func (s *FSStore) writeEntityFile(e *entity.Entity) error {
-	key := s.entityFileKey(e.Type, e.ID)
+	key := s.entityFileKey(e.Type, stateKey(e.ID, e.Pointer))
 	order := s.propertyOrder(e.Type)
 	content, err := formatEntity(e, order)
 	if err != nil {
@@ -316,6 +319,12 @@ func (s *FSStore) readRelationFile(key, from, relType, to string) (*entity.Relat
 		doc.getString("relation"),
 		doc.getString("to"),
 	)
+	// from_pointer frontmatter is WRITE-ONLY human documentation: the
+	// filename (and hence the index meta, stamped by loadRelationMeta)
+	// is the single authority for the tail pointer, mirroring entities
+	// where the pointer lives only in the filename. Parsing it here
+	// would create a second source of truth that a hand-edit could
+	// desynchronize (TKT-DOFYR1 review).
 	r.Content = doc.content
 
 	if info, err := s.rooted.Stat(key); err == nil {
@@ -353,15 +362,21 @@ func (s *FSStore) buildInaccessibleRelation(
 }
 
 // formatRelation formats a relation as markdown with YAML frontmatter.
+// from_pointer is written only for a non-default tail (TKT-DOFYR1): the
+// key never appears for pointerless projects, and the codec never emits
+// an empty pointer.
 func formatRelation(r *entity.Relation) (string, error) {
 	fm := map[string]any{
 		"from":     r.From,
 		"relation": r.Type,
 		"to":       r.To,
 	}
+	if !r.FromPointer.IsDefault() {
+		fm["from_pointer"] = string(r.FromPointer)
+	}
 	maps.Copy(fm, r.Properties)
 
-	keyOrder := []string{"from", "relation", "to"}
+	keyOrder := []string{"from", "from_pointer", "relation", "to"}
 
 	content := r.Content
 	if content != "" {
@@ -371,9 +386,12 @@ func formatRelation(r *entity.Relation) (string, error) {
 	return formatDocumentOrdered(fm, content, keyOrder)
 }
 
-// writeRelationFile writes a relation to a markdown file using temp-file + rename.
+// writeRelationFile writes a relation to a markdown file using temp-file +
+// rename. The FROM slot of the filename carries the tail pointer.
 func (s *FSStore) writeRelationFile(r *entity.Relation) error {
-	key := s.relationFileKey(r.From, r.Type, r.To)
+	key := s.relationFileKeyMeta(relationMeta{
+		From: r.From, Type: r.Type, To: r.To, FromPointer: r.FromPointer,
+	})
 	content, err := formatRelation(r)
 	if err != nil {
 		return err

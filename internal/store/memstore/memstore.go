@@ -54,8 +54,12 @@ import (
 // included — only to drop the body immediately, which is the cost the
 // capability exists to remove. Interface-driven like the Tx split above.
 //
-//plimsoll:max-methods=43
-//plimsoll:max-exported-methods=29
+// (43 → 45 / 29 → 30 with content states, TKT-DOFYR1: GetEntityState
+// joined the mandated store.Store interface; rekeyFamily serves the
+// family-wide rename that contract requires.)
+//
+//plimsoll:max-methods=45
+//plimsoll:max-exported-methods=30
 type MemStore struct {
 	// txMu serializes an open Tx against ordinary writers: Tx holds it
 	// for the whole callback, every exported write method takes it
@@ -130,7 +134,15 @@ func (m *MemStore) LastModified(_ context.Context) (time.Time, error) {
 	return newest, nil
 }
 
+// Observers receive DEFAULT-STATE writes only in Step 1 (TKT-DOFYR1):
+// the search indexers key documents by bare id, so a state event would
+// overwrite the default face in the index. Same skip as fsstore — one
+// place per backend, not per observer; Subscribe() events are NOT
+// filtered and fire per state.
 func (m *MemStore) notifyPut(e *entity.Entity) {
+	if !e.Pointer.IsDefault() {
+		return
+	}
 	for _, o := range m.observers {
 		_ = o.EntityPut(e)
 	}
@@ -174,26 +186,48 @@ var (
 // Callers must hold m.mu.
 // A free function rather than a method — MemStore is at its plimsoll
 // max-methods line, and this needs no receiver state beyond the index.
+// idTaken folds on the BARE entity id: any state of an entity claims
+// the whole identity (TKT-DOFYR1). except is a BARE id matched
+// case-folded — it skips that entire family, not one exact key (wider
+// than the historical exact-key skip on purpose; a renaming family and
+// its states must not self-collide).
 func idTaken(index map[string]*entity.Entity, id, except string) bool {
 	folded := storeutil.FoldID(id)
-	for existing := range index {
-		if existing == except {
+	exceptFolded := ""
+	if except != "" {
+		exceptFolded = storeutil.FoldID(except)
+	}
+	for _, e := range index {
+		if exceptFolded != "" && storeutil.FoldID(e.ID) == exceptFolded {
 			continue
 		}
-		if storeutil.FoldID(existing) == folded {
+		if storeutil.FoldID(e.ID) == folded {
 			return true
 		}
 	}
 	return false
 }
 
+// famEntry pairs a state's index key with the stored entity during a
+// family-wide delete or rename (TKT-DOFYR1).
+type famEntry struct {
+	key string
+	e   *entity.Entity
+}
+
 // --- EntityReader ---
 
-func (m *MemStore) GetEntity(_ context.Context, id string) (*entity.Entity, error) {
+func (m *MemStore) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
+	// The bare id IS the default state's key (entity.FormatStateRef with
+	// the zero pointer).
+	return m.GetEntityState(ctx, id, "")
+}
+
+func (m *MemStore) GetEntityState(_ context.Context, id string, p entity.Pointer) (*entity.Entity, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	e, ok := m.entities[id]
+	e, ok := m.entities[entity.FormatStateRef(id, p)]
 	if !ok {
 		return nil, store.ErrNotFound
 	}
@@ -298,10 +332,15 @@ func entityIDSet(ids []string) map[string]bool {
 	return set
 }
 
-// matchEntityQuery reports whether e satisfies q's Type and IDs filters.
-// idSet must be pre-computed from q.IDs (see entityIDSet).
+// matchEntityQuery reports whether e satisfies q's Type, IDs, and
+// AllStates filters. idSet must be pre-computed from q.IDs (see
+// entityIDSet) and matches the BARE id, so IDs+AllStates selects every
+// state of the listed entities.
 func matchEntityQuery(e *entity.Entity, q store.EntityQuery, idSet map[string]bool) bool {
 	if e == nil {
+		return false
+	}
+	if !q.AllStates && !e.Pointer.IsDefault() {
 		return false
 	}
 	if q.Type != "" && e.Type != q.Type {
@@ -317,20 +356,13 @@ func (m *MemStore) CountEntities(_ context.Context, q store.EntityQuery) (int, e
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	idSet := make(map[string]bool, len(q.IDs))
-	for _, id := range q.IDs {
-		idSet[id] = true
-	}
+	idSet := entityIDSet(q.IDs)
 
 	count := 0
 	for _, e := range m.entities {
-		if q.Type != "" && e.Type != q.Type {
-			continue
+		if matchEntityQuery(e, q, idSet) {
+			count++
 		}
-		if len(idSet) > 0 && !idSet[e.ID] {
-			continue
-		}
-		count++
 	}
 	return count, nil
 }
@@ -341,7 +373,11 @@ func (m *MemStore) HighestID(_ context.Context, prefix string) (int, error) {
 
 	highest := 0
 	pfx := prefix + "-"
-	for id := range m.entities {
+	for _, e := range m.entities {
+		if !e.Pointer.IsDefault() {
+			continue // states share the base id's number
+		}
+		id := e.ID
 		if !strings.HasPrefix(id, pfx) {
 			continue
 		}
@@ -360,6 +396,9 @@ func (m *MemStore) PropertyValues(_ context.Context, property string, limit int)
 
 	counts := make(map[string]int)
 	for _, e := range m.entities {
+		if !e.Pointer.IsDefault() {
+			continue // suggestion counts stay default-world (TKT-DOFYR1)
+		}
 		if v, ok := e.Properties[property]; ok {
 			s := fmt.Sprintf("%v", v)
 			if s != "" {
@@ -400,23 +439,43 @@ func (m *MemStore) createEntity(_ context.Context, e *entity.Entity) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Case-folded so "ABC" conflicts with an existing "abc" — on fsstore they
-	// are one file, and the backends must agree on identity (BUG-3RCWNS).
-	if idTaken(m.entities, e.ID, "") {
-		return store.ErrConflict
+	key := entity.FormatStateRef(e.ID, e.Pointer)
+	if e.Pointer.IsDefault() {
+		// Case-folded so "ABC" conflicts with an existing "abc" — on fsstore
+		// they are one file, and the backends must agree on identity
+		// (BUG-3RCWNS).
+		if idTaken(m.entities, e.ID, "") {
+			return store.ErrConflict
+		}
+	} else {
+		// Row-family invariants (TKT-DOFYR1, design doc §6): no headless
+		// states, and one type per family — same choke point as fsstore.
+		def, ok := m.entities[e.ID]
+		if !ok {
+			return fmt.Errorf("%w: entity %s has no default state; a state row cannot exist headless",
+				store.ErrNotFound, e.ID)
+		}
+		if def.Type != e.Type {
+			return fmt.Errorf("state %s@%s type %q does not match the entity's type %q",
+				e.ID, e.Pointer, e.Type, def.Type)
+		}
+		if _, exists := m.entities[key]; exists {
+			return store.ErrConflict
+		}
 	}
 
 	stored := e.Clone()
 	stored.Redacted = nil // per-reader ACL artifact, never content (RR-KBWJPV)
 	stored.UpdatedAt = time.Now()
-	m.entities[e.ID] = stored
-	m.entityOrder = sortedInsert(m.entityOrder, e.ID)
+	m.entities[key] = stored
+	m.entityOrder = sortedInsert(m.entityOrder, key)
 	m.notifyPut(stored)
 
 	m.emit(store.Event{
 		Op:         store.EventEntityCreated,
 		EntityType: e.Type,
 		EntityID:   e.ID,
+		Pointer:    e.Pointer,
 	})
 	return nil
 }
@@ -425,20 +484,29 @@ func (m *MemStore) updateEntity(_ context.Context, e *entity.Entity) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if _, exists := m.entities[e.ID]; !exists {
+	key := entity.FormatStateRef(e.ID, e.Pointer)
+	existing, exists := m.entities[key]
+	if !exists {
 		return store.ErrNotFound
+	}
+	// Row-family invariant: a non-default state cannot be re-typed away
+	// from its family (TKT-DOFYR1, design doc §6).
+	if !e.Pointer.IsDefault() && e.Type != existing.Type {
+		return fmt.Errorf("state %s@%s type %q does not match the entity's type %q",
+			e.ID, e.Pointer, e.Type, existing.Type)
 	}
 
 	stored := e.Clone()
 	stored.Redacted = nil // per-reader ACL artifact, never content (RR-KBWJPV)
 	stored.UpdatedAt = time.Now()
-	m.entities[e.ID] = stored
+	m.entities[key] = stored
 	m.notifyPut(stored)
 
 	m.emit(store.Event{
 		Op:         store.EventEntityUpdated,
 		EntityType: e.Type,
 		EntityID:   e.ID,
+		Pointer:    e.Pointer,
 	})
 	return nil
 }
@@ -447,12 +515,21 @@ func (m *MemStore) deleteEntity(_ context.Context, id string, cascade bool) (*st
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	e, ok := m.entities[id]
-	if !ok {
+	// Delete addresses the whole state FAMILY of the bare id
+	// (TKT-DOFYR1); the scan is defensive so a headless family still
+	// deletes cleanly.
+	var family []famEntry
+	for key, e := range m.entities {
+		if e.ID == id {
+			family = append(family, famEntry{key, e})
+		}
+	}
+	if len(family) == 0 {
 		return nil, store.ErrNotFound
 	}
+	sort.Slice(family, func(i, j int) bool { return family[i].e.Pointer < family[j].e.Pointer })
 
-	// Find related relations
+	// Find related relations; the bare From/To match sweeps every tail.
 	var related []*entity.Relation
 	for _, r := range m.relations {
 		if r.From == id || r.To == id {
@@ -464,12 +541,12 @@ func (m *MemStore) deleteEntity(_ context.Context, id string, cascade bool) (*st
 		return nil, fmt.Errorf("%w: entity %s has %d relation(s)", store.ErrHasRelations, id, len(related))
 	}
 
-	result := &store.DeleteResult{
-		DeletedEntities: []*entity.Entity{e.Clone()},
+	result := &store.DeleteResult{}
+	for _, fe := range family {
+		result.DeletedEntities = append(result.DeletedEntities, fe.e.Clone())
+		delete(m.entities, fe.key)
+		m.entityOrder = sortedRemove(m.entityOrder, fe.key)
 	}
-
-	delete(m.entities, id)
-	m.entityOrder = sortedRemove(m.entityOrder, id)
 	m.notifyDelete(id)
 
 	// Cascade attachments — 1:1 ownership.
@@ -486,21 +563,46 @@ func (m *MemStore) deleteEntity(_ context.Context, id string, cascade bool) (*st
 		m.relationOrder = sortedRemove(m.relationOrder, key)
 	}
 
-	m.emit(store.Event{
-		Op:         store.EventEntityDeleted,
-		EntityType: e.Type,
-		EntityID:   id,
-	})
+	for _, fe := range family {
+		// Per-state type: the load path tolerates a mistyped state, so
+		// one family-wide type would misreport it.
+		m.emit(store.Event{
+			Op:         store.EventEntityDeleted,
+			EntityType: fe.e.Type,
+			EntityID:   id,
+			Pointer:    fe.e.Pointer,
+		})
+	}
 	for _, r := range related {
 		m.emit(store.Event{
 			Op:           store.EventRelationDeleted,
 			RelationType: r.Type,
 			From:         r.From,
 			To:           r.To,
+			Pointer:      r.FromPointer,
 		})
 	}
 
 	return result, nil
+}
+
+// rekeyFamily moves every state of a family onto newID — clones to
+// avoid mutating stored objects — and returns the renamed states in
+// family order. Callers must hold m.mu.
+func (m *MemStore) rekeyFamily(family []famEntry, newID string) []*entity.Entity {
+	renamed := make([]*entity.Entity, 0, len(family))
+	for _, fe := range family {
+		r := fe.e.Clone()
+		r.ID = newID
+		r.UpdatedAt = time.Now()
+		newKey := entity.FormatStateRef(newID, r.Pointer)
+		m.entities[newKey] = r
+		delete(m.entities, fe.key)
+		m.entityOrder = sortedRemove(m.entityOrder, fe.key)
+		m.entityOrder = sortedInsert(m.entityOrder, newKey)
+		renamed = append(renamed, r)
+	}
+	return renamed
 }
 
 func (m *MemStore) renameEntity(_ context.Context, oldID, newID string) (*store.RenameResult, error) {
@@ -511,25 +613,39 @@ func (m *MemStore) renameEntity(_ context.Context, oldID, newID string) (*store.
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	e, ok := m.entities[oldID]
-	if !ok {
+	// Rename addresses the whole state FAMILY of the bare id
+	// (TKT-DOFYR1); defensive scan so a headless family still renames.
+	var family []famEntry
+	for key, e := range m.entities {
+		if e.ID == oldID {
+			family = append(family, famEntry{key, e})
+		}
+	}
+	if len(family) == 0 {
 		return nil, store.ErrNotFound
 	}
+	sort.Slice(family, func(i, j int) bool { return family[i].e.Pointer < family[j].e.Pointer })
+
 	// except=oldID: renaming an entity to a different casing of its own ID
-	// (abc -> ABC) is legitimate and must not self-collide.
+	// (abc -> ABC) is legitimate and must not self-collide. idTaken folds
+	// on the bare id, so any state of another entity conflicts.
 	if idTaken(m.entities, newID, oldID) {
 		return nil, store.ErrConflict
 	}
 
-	// Update entity — clone to avoid mutating stored object
-	renamed := e.Clone()
-	renamed.ID = newID
-	renamed.UpdatedAt = time.Now()
-	m.entities[newID] = renamed
-	delete(m.entities, oldID)
-	m.entityOrder = sortedRemove(m.entityOrder, oldID)
-	m.entityOrder = sortedInsert(m.entityOrder, newID)
-	m.notifyRenamed(oldID, renamed)
+	renamedStates := m.rekeyFamily(family, newID)
+	var renamedDefault *entity.Entity
+	for _, r := range renamedStates {
+		if r.Pointer.IsDefault() {
+			renamedDefault = r
+		}
+	}
+	// Observers key documents by bare id: a headless family has no
+	// default face, and handing them a state would overwrite the
+	// bare-id document — same skip as notifyPut (TKT-DOFYR1 review).
+	if renamedDefault != nil {
+		m.notifyRenamed(oldID, renamedDefault)
+	}
 
 	// Update relations — clone each affected relation
 	relationsUpdated := 0
@@ -572,22 +688,33 @@ func (m *MemStore) renameEntity(_ context.Context, oldID, newID string) (*store.
 	}
 	maps.Copy(m.attachments, reKey)
 
-	m.emit(store.Event{
-		Op:         store.EventEntityUpdated,
-		EntityType: renamed.Type,
-		EntityID:   newID,
-	})
+	for _, renamed := range renamedStates {
+		m.emit(store.Event{
+			Op:         store.EventEntityUpdated,
+			EntityType: renamed.Type,
+			EntityID:   newID,
+			Pointer:    renamed.Pointer,
+		})
+	}
 
 	return &store.RenameResult{RelationsUpdated: relationsUpdated}, nil
 }
 
 // --- RelationReader ---
 
+// defaultTailKey addresses the DEFAULT-tail edge of a triple. Get,
+// update, and delete are default-tail-only in Step 1 (TKT-DOFYR1) —
+// see store.RelationData.FromPointer; state-tailed edges are removed
+// via the entity cascades.
+func defaultTailKey(from, relType, to string) string {
+	return (&entity.Relation{From: from, Type: relType, To: to}).Key()
+}
+
 func (m *MemStore) GetRelation(_ context.Context, from, relType, to string) (*entity.Relation, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	key := from + "--" + relType + "--" + to
+	key := defaultTailKey(from, relType, to)
 	r, ok := m.relations[key]
 	if !ok {
 		return nil, store.ErrNotFound
@@ -673,6 +800,7 @@ func (m *MemStore) createRelation(
 	r := entity.NewRelation(from, relType, to)
 	r.UpdatedAt = time.Now()
 	if data != nil {
+		r.FromPointer = data.FromPointer // tail pointer is identity (TKT-DOFYR1)
 		r.Content = data.Content
 		if data.Properties != nil {
 			r.Properties = make(map[string]any, len(data.Properties))
@@ -695,6 +823,7 @@ func (m *MemStore) createRelation(
 		RelationType: relType,
 		From:         from,
 		To:           to,
+		Pointer:      r.FromPointer,
 	})
 	return r.Clone(), nil
 }
@@ -705,7 +834,7 @@ func (m *MemStore) updateRelation(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	key := from + "--" + relType + "--" + to
+	key := defaultTailKey(from, relType, to)
 	r, ok := m.relations[key]
 	if !ok {
 		return nil, store.ErrNotFound
@@ -737,7 +866,7 @@ func (m *MemStore) deleteRelation(_ context.Context, from, relType, to string) e
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	key := from + "--" + relType + "--" + to
+	key := defaultTailKey(from, relType, to)
 	if _, ok := m.relations[key]; !ok {
 		return store.ErrNotFound
 	}

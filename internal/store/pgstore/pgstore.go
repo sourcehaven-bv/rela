@@ -104,8 +104,11 @@ type DBTX interface {
 // the row-property reads together, the way versioning and user-state were
 // extracted as subsystems.
 //
-//plimsoll:max-exported-methods=38
-//plimsoll:max-methods=48
+// +1 (38→39, TKT-DOFYR1): GetEntityState joined the mandated store.Store
+// interface — the required-interface exception, not internal sprawl.
+//
+//plimsoll:max-exported-methods=39
+//plimsoll:max-methods=49
 type Store struct {
 	db        DBTX
 	observers []store.EntityObserver // notified synchronously after committed entity writes

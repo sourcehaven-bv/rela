@@ -52,8 +52,16 @@ type InaccessibleField struct {
 
 // Entity represents any architecture entity (requirement, decision, etc.).
 type Entity struct {
-	ID           string              `json:"id"`
-	Type         string              `json:"type"`
+	ID   string `json:"id"`
+	Type string `json:"type"`
+
+	// Pointer addresses the content state this record is (TKT-DOFYR1).
+	// Zero value = the default state / a pointerless entity, so a
+	// project without pointers never sees the field (omitempty). See
+	// [Pointer] for the two load-bearing rules (codec-only construction;
+	// stores equality-match, never inspect).
+	Pointer Pointer `json:"pointer,omitempty"`
+
 	Properties   map[string]any      `json:"properties,omitempty"`
 	Content      string              `json:"content,omitempty"`
 	UpdatedAt    time.Time           `json:"updated_at,omitzero"`
@@ -203,6 +211,7 @@ func (e *Entity) Clone() *Entity {
 	clone := &Entity{
 		ID:         e.ID,
 		Type:       e.Type,
+		Pointer:    e.Pointer,
 		Content:    e.Content,
 		UpdatedAt:  e.UpdatedAt,
 		Properties: make(map[string]any, len(e.Properties)),
@@ -246,7 +255,16 @@ func CloneValue(v any) any {
 
 // Relation represents a directed relationship between two entities.
 type Relation struct {
-	From         string              `json:"from"`
+	From string `json:"from"`
+
+	// FromPointer is the state-specific TAIL of a content-scoped edge
+	// (design doc §2.3): the edge attaches to (From, FromPointer). Zero
+	// value = the tail is the default state / an identity-scoped edge.
+	// Heads are entity-level by construction — there is deliberately NO
+	// ToPointer, which is what makes cross-world dangling references
+	// inexpressible.
+	FromPointer Pointer `json:"from_pointer,omitempty"`
+
 	Type         string              `json:"relation"`
 	To           string              `json:"to"`
 	Properties   map[string]any      `json:"properties,omitempty"`
@@ -282,17 +300,23 @@ func NewRelation(from, relationType, to string) *Relation {
 
 // Key returns a unique key for this relation.
 func (r *Relation) Key() string {
-	return r.From + "--" + r.Type + "--" + r.To
+	// The FROM slot carries the tail pointer via the codec serialization
+	// (TKT-DOFYR1) — two edges on the same triple with different tails
+	// are two relations, so the pointer is part of the key. The pointer
+	// grammar forbids "--", keeping the key unambiguous; a default-tail
+	// key is byte-identical to the historical form.
+	return FormatStateRef(r.From, r.FromPointer) + "--" + r.Type + "--" + r.To
 }
 
 // CloneRelation returns a deep copy of the relation.
 func (r *Relation) Clone() *Relation {
 	clone := &Relation{
-		From:      r.From,
-		Type:      r.Type,
-		To:        r.To,
-		Content:   r.Content,
-		UpdatedAt: r.UpdatedAt,
+		From:        r.From,
+		FromPointer: r.FromPointer,
+		Type:        r.Type,
+		To:          r.To,
+		Content:     r.Content,
+		UpdatedAt:   r.UpdatedAt,
 	}
 	if r.Properties != nil {
 		clone.Properties = make(map[string]any, len(r.Properties))

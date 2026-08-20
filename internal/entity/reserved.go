@@ -26,10 +26,12 @@ func IsEntityPropertyKey(key string) bool {
 }
 
 // IsReservedRelationKey reports whether key names an identity field of a
-// [Relation] ("from", "relation", "to") rather than a property. Note the
-// type of a relation is keyed "relation", not "type", in frontmatter.
+// [Relation] ("from", "from_pointer", "relation", "to") rather than a
+// property. Note the type of a relation is keyed "relation", not "type",
+// in frontmatter. "from_pointer" is the state-specific tail
+// (TKT-DOFYR1); it maps to [Relation.FromPointer], never to Properties.
 func IsReservedRelationKey(key string) bool {
-	return key == "from" || key == "relation" || key == "to"
+	return key == "from" || key == "from_pointer" || key == "relation" || key == "to"
 }
 
 // IsRelationPropertyKey reports whether key names a property of a [Relation];
