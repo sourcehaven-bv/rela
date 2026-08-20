@@ -5,7 +5,7 @@ title: 'Data migration system: shape hash, compatibility classifier, declarative
 kind: enhancement
 priority: medium
 effort: l
-status: review
+status: done
 ---
 
 ## Problem
