@@ -276,11 +276,15 @@ func (s *sweep) selectCandidates(ctx context.Context, conn *pgxpool.Conn) ([]swe
 	//     against. Deduping against a pre-delete version would wrongly skip
 	//     re-creating an entity with identical bytes, leaving its timeline
 	//     ending in `delete` while it is live.
-	// e.pointer = '': content versioning captures the DEFAULT world in
-	// Step 1 (TKT-DOFYR1). entity_versions keys (entity_id, vseq), so
-	// sweeping a state row would interleave a family's faces in one
-	// lineage and defeat the content-hash dedup; per-state history is a
-	// later-step design that lands with its consumer (the copy kernel).
+	// e.pointer = '' — DELIBERATE SKIP (2026-08-20, TKT-DOFYR1):
+	// content versioning captures the DEFAULT world only. entity_versions
+	// keys (entity_id, vseq), so sweeping a state row would interleave a
+	// family's faces in ONE lineage — actively corrupt history that
+	// purge would then have to fence — and capturing now would freeze
+	// per-state purge rules, rename stitching, and history addressing
+	// before any consumer exists. Per-state history is designed WITH its
+	// consumer, the Step-4 copy kernel: TKT-C1XUA8 owns that design
+	// (same pattern as the Step-1 search-observer skip → Step 5).
 	const q = `
 		SELECT e.id, e.type, e.content, e.properties,
 		       e.last_edited_by_user, e.last_edited_by_tool,
@@ -417,6 +421,13 @@ type relationSweepCandidate struct {
 func (s *sweep) selectRelationCandidates(
 	ctx context.Context, conn *pgxpool.Conn,
 ) ([]relationSweepCandidate, error) {
+	// r.from_pointer = '' — DELIBERATE SKIP (2026-08-20, TKT-DOFYR1),
+	// symmetric with the entity scan above: state-tailed edges mint no
+	// relation versions in Step 1. Their rel_record_ids are distinct so
+	// lineages could not MERGE, but versioning edges whose entity faces
+	// have no history is an asymmetry nobody designed. TKT-C1XUA8 (the
+	// Step-4 copy kernel) owns per-state history, including the doc's
+	// copy-vs-sweep dedup check.
 	const q = `
 		SELECT r.rel_record_id, r.from_id, r.rel_type, r.to_id, r.content, r.properties,
 		       r.last_edited_by_user, r.last_edited_by_tool,

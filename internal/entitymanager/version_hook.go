@@ -55,11 +55,12 @@ func (m *Manager) recordEntityVersion(ctx context.Context, op store.VersionOp, e
 	if m.deps.VersionRecorder == nil {
 		return
 	}
-	// Default-world versioning in Step 1 (TKT-DOFYR1): entity_versions
-	// keys (entity_id, vseq), so a state capture would interleave the
-	// family's faces in one lineage. The manager only writes default
-	// states today — this is the defensive mirror of the sweep's
-	// pointer = '' scope.
+	// DELIBERATE SKIP (2026-08-20, TKT-DOFYR1): default-world versioning
+	// in Step 1 — entity_versions keys (entity_id, vseq), so a state
+	// capture would interleave the family's faces in one lineage. The
+	// manager only writes default states today; this is the defensive
+	// mirror of the sweep's pointer = '' scope. TKT-C1XUA8 (Step-4 copy
+	// kernel) owns per-state history.
 	if !e.Pointer.IsDefault() {
 		return
 	}
@@ -132,12 +133,14 @@ func (m *Manager) recordRelationVersion(
 	if m.deps.RelationVersionRecorder == nil {
 		return
 	}
-	// Content versioning captures the DEFAULT world in Step 1
-	// (TKT-DOFYR1): a state-tailed edge has its own rel_record_id and no
-	// history yet; capturing it here would fail the default-tail record
-	// lookup and, once per-state history is designed, would pre-commit
-	// its shape. One skip for every capture path (cascade delete, rename
-	// stitch, explicit delete).
+	// DELIBERATE SKIP (2026-08-20, TKT-DOFYR1): content versioning
+	// captures the DEFAULT world in Step 1; a state-tailed edge has its
+	// own rel_record_id and no history yet, and capturing it here would
+	// fail the default-tail record lookup and pre-commit per-state
+	// history's shape. One skip for every capture path (cascade delete,
+	// rename stitch, explicit delete); the entitymanager cannot write
+	// state-tailed edges today, so this is defensive against future
+	// direct callers. TKT-C1XUA8 (Step-4 copy kernel) owns the design.
 	if !r.FromPointer.IsDefault() {
 		return
 	}

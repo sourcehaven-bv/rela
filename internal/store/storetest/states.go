@@ -229,6 +229,30 @@ func RunStateTests(t *testing.T, f Factory) {
 		assert.Equal(t, 1, n)
 	})
 
+	t.Run("HyphenBearingIDsWithPointerTails", func(t *testing.T) {
+		// Base ids may contain single hyphens freely; what keeps the
+		// relation key/filename parse unambiguous is that BOTH grammars
+		// forbid "--" (ValidateID's no-consecutive-hyphens rule and the
+		// pointer grammar's single-hyphen-runs rule). A hyphenated id
+		// with a hyphenated pointer must round-trip through the FROM
+		// slot serialization intact.
+		s := f(t)
+		mustCreate(t, s, newState(t, "MY-PAGE-1", "page", "", "default"))
+		mustCreate(t, s, newState(t, "MY-PAGE-1", "page", "draft-nl", "state"))
+		mustCreate(t, s, newState(t, "OTHER-DOC-2", "page", "", "target"))
+
+		fp := ptr(t, "draft-nl")
+		_, err := s.CreateRelation(ctx(), "MY-PAGE-1", "refers-to", "OTHER-DOC-2",
+			&store.RelationData{FromPointer: fp})
+		require.NoError(t, err)
+
+		got := collectRelations(t, s, store.RelationQuery{From: "MY-PAGE-1", FromPointer: &fp})
+		require.Len(t, got, 1)
+		assert.Equal(t, "MY-PAGE-1", got[0].From)
+		assert.Equal(t, fp, got[0].FromPointer)
+		assert.Equal(t, "OTHER-DOC-2", got[0].To)
+	})
+
 	t.Run("DeleteCascadesTheFamily", func(t *testing.T) {
 		s := f(t)
 		mustCreate(t, s, newState(t, "PAGE-11", "page", "", "default"))
