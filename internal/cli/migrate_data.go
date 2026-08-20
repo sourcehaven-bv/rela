@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/datamigration"
 	relaerrors "github.com/Sourcehaven-BV/rela/internal/errors"
@@ -230,8 +231,9 @@ func printRunResult(res *datamigration.RunResult, applied bool) {
 // default; --apply deletes expired drift; --scan reconciles the ledger from
 // a full content read first (legacy orphans that never crossed the gate).
 type MigrateGCCmd struct {
-	Apply bool `help:"Delete expired orphaned data (default is a dry-run preview)."`
-	Scan  bool `help:"Full-scan the store for orphans not yet in the drift ledger."`
+	Apply bool          `help:"Delete expired orphaned data (default is a dry-run preview)."`
+	Scan  bool          `help:"Full-scan the store for orphans not yet in the drift ledger."`
+	Grace time.Duration `help:"Override the grace period orphaned data must age before deletion (default 720h)." default:"0"`
 }
 
 // Run executes `rela migrate gc [--scan] [--apply]`.
@@ -247,6 +249,7 @@ func (c *MigrateGCCmd) Run(ctx context.Context, svc *writeServices) error {
 		Audit:    svc.Audit,
 		Verdicts: gate,
 		Versions: versionCaptureFor(svc),
+		Grace:    c.Grace,
 	})
 	if err != nil {
 		return err
