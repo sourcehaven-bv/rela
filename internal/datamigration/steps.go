@@ -47,7 +47,7 @@ type StepResult struct {
 // the body decodes strictly (unknown fields are errors).
 func parseStep(node *yaml.Node) (Step, error) {
 	if node.Kind != yaml.MappingNode || len(node.Content) != 2 {
-		return nil, fmt.Errorf("a step must be a single-key mapping like `rename_property: {...}`")
+		return nil, errors.New("a step must be a single-key mapping like `rename_property: {...}`")
 	}
 	kind := node.Content[0].Value
 	body := node.Content[1]
@@ -125,7 +125,7 @@ func (s *renamePropertyStep) Target() string { return s.Entity + "." + s.From + 
 
 func (s *renamePropertyStep) Validate(from, to metamodel.ShapeProjection) error {
 	if s.Entity == "" || s.From == "" || s.To == "" {
-		return fmt.Errorf("entity, from and to are required")
+		return errors.New("entity, from and to are required")
 	}
 	if !entityPropInShape(from, s.Entity, s.From) {
 		return fmt.Errorf("property %s.%s is not in the from-schema", s.Entity, s.From)
@@ -170,7 +170,7 @@ func (s *renameEntityTypeStep) Target() string { return s.From + " → " + s.To 
 
 func (s *renameEntityTypeStep) Validate(from, to metamodel.ShapeProjection) error {
 	if s.From == "" || s.To == "" {
-		return fmt.Errorf("from and to are required")
+		return errors.New("from and to are required")
 	}
 	if !entityInShape(from, s.From) {
 		return fmt.Errorf("entity type %q is not in the from-schema", s.From)
@@ -207,7 +207,7 @@ func (s *renameRelationTypeStep) Target() string { return s.From + " → " + s.T
 
 func (s *renameRelationTypeStep) Validate(from, to metamodel.ShapeProjection) error {
 	if s.From == "" || s.To == "" {
-		return fmt.Errorf("from and to are required")
+		return errors.New("from and to are required")
 	}
 	if _, ok := from.Relations[s.From]; !ok {
 		return fmt.Errorf("relation type %q is not in the from-schema", s.From)
@@ -260,9 +260,9 @@ type mapValuesStep struct {
 func (s *mapValuesStep) Kind() string   { return "map_values" }
 func (s *mapValuesStep) Target() string { return s.Entity + "." + s.Property }
 
-func (s *mapValuesStep) Validate(from, to metamodel.ShapeProjection) error {
+func (s *mapValuesStep) Validate(_, to metamodel.ShapeProjection) error {
 	if s.Entity == "" || s.Property == "" || len(s.Mapping) == 0 {
-		return fmt.Errorf("entity, property and a non-empty mapping are required")
+		return errors.New("entity, property and a non-empty mapping are required")
 	}
 	// The property must exist in the to-schema (values are being mapped
 	// INTO the new value set); it may be absent from the from-schema when
@@ -325,9 +325,9 @@ func (s *setDefaultStep) Target() string { return s.Entity + "." + s.Property }
 
 func (s *setDefaultStep) onlyMissing() bool { return s.OnlyMissing == nil || *s.OnlyMissing }
 
-func (s *setDefaultStep) Validate(from, to metamodel.ShapeProjection) error {
+func (s *setDefaultStep) Validate(_, to metamodel.ShapeProjection) error {
 	if s.Entity == "" || s.Property == "" || s.Value == "" {
-		return fmt.Errorf("entity, property and value are required")
+		return errors.New("entity, property and value are required")
 	}
 	if !entityPropInShape(to, s.Entity, s.Property) {
 		return fmt.Errorf("property %s.%s is not in the to-schema", s.Entity, s.Property)
@@ -369,12 +369,14 @@ type convertStep struct {
 	toList bool
 }
 
-func (s *convertStep) Kind() string   { return "convert" }
-func (s *convertStep) Target() string { return fmt.Sprintf("%s.%s → %s", s.Entity, s.Property, s.ToType) }
+func (s *convertStep) Kind() string { return "convert" }
+func (s *convertStep) Target() string {
+	return fmt.Sprintf("%s.%s → %s", s.Entity, s.Property, s.ToType)
+}
 
-func (s *convertStep) Validate(from, to metamodel.ShapeProjection) error {
+func (s *convertStep) Validate(_, to metamodel.ShapeProjection) error {
 	if s.Entity == "" || s.Property == "" || s.ToType == "" {
-		return fmt.Errorf("entity, property and to_type are required")
+		return errors.New("entity, property and to_type are required")
 	}
 	es, ok := to.Entities[s.Entity]
 	if !ok {
@@ -465,55 +467,72 @@ func coerceScalar(v any, toType, fromFormat, toFormat string) (any, bool) {
 			return fmt.Sprintf("%v", val), true
 		}
 	case "integer":
-		switch val := v.(type) {
-		case int:
-			return val, true
-		case int64:
-			return int(val), true
-		case float64:
-			if val == float64(int(val)) {
-				return int(val), true
-			}
-		case string:
-			if n, err := strconv.Atoi(strings.TrimSpace(val)); err == nil {
-				return n, true
-			}
-		}
+		return coerceInteger(v)
 	case "boolean":
-		switch val := v.(type) {
-		case bool:
-			return val, true
-		case string:
-			switch strings.ToLower(strings.TrimSpace(val)) {
-			case "true", "yes", "1":
-				return true, true
-			case "false", "no", "0":
-				return false, true
-			}
-		}
+		return coerceBoolean(v)
 	case "date", "datetime":
-		str, ok := v.(string)
-		if !ok {
-			return nil, false
+		return coerceDate(v, toType, fromFormat, toFormat)
+	}
+	return nil, false
+}
+
+func coerceInteger(v any) (any, bool) {
+	switch val := v.(type) {
+	case int:
+		return val, true
+	case int64:
+		return int(val), true
+	case float64:
+		if val == float64(int(val)) {
+			return int(val), true
 		}
-		str = strings.TrimSpace(str)
-		layouts := commonDateLayouts
-		if fromFormat != "" {
-			layouts = []string{fromFormat}
+	case string:
+		if n, err := strconv.Atoi(strings.TrimSpace(val)); err == nil {
+			return n, true
 		}
-		for _, layout := range layouts {
-			if t, err := time.Parse(layout, str); err == nil {
-				out := toFormat
-				if out == "" {
-					if toType == "datetime" {
-						out = metamodel.DefaultDatetimeFormat
-					} else {
-						out = metamodel.DefaultDateFormat
-					}
-				}
-				return t.Format(out), true
+	}
+	return nil, false
+}
+
+func coerceBoolean(v any) (any, bool) {
+	switch val := v.(type) {
+	case bool:
+		return val, true
+	case string:
+		switch strings.ToLower(strings.TrimSpace(val)) {
+		case "true", "yes", "1":
+			return true, true
+		case "false", "no", "0":
+			return false, true
+		}
+	}
+	return nil, false
+}
+
+func coerceDate(v any, toType, fromFormat, toFormat string) (any, bool) {
+	str, ok := v.(string)
+	if !ok {
+		return nil, false
+	}
+	str = strings.TrimSpace(str)
+	layouts := commonDateLayouts
+	if fromFormat != "" {
+		layouts = []string{fromFormat}
+	}
+	for _, layout := range layouts {
+		t, err := time.Parse(layout, str)
+		if err != nil {
+			continue
+		}
+		out := toFormat
+		if out == "" {
+			if toType == "datetime" {
+				out = metamodel.DefaultDatetimeFormat
+			} else {
+				out = metamodel.DefaultDateFormat
 			}
 		}
+		return t.Format(out), true
 	}
 	return nil, false
 }
@@ -528,9 +547,9 @@ type dropPropertyStep struct {
 func (s *dropPropertyStep) Kind() string   { return "drop_property" }
 func (s *dropPropertyStep) Target() string { return s.Entity + "." + s.Property }
 
-func (s *dropPropertyStep) Validate(from, to metamodel.ShapeProjection) error {
+func (s *dropPropertyStep) Validate(_, to metamodel.ShapeProjection) error {
 	if s.Entity == "" || s.Property == "" {
-		return fmt.Errorf("entity and property are required")
+		return errors.New("entity and property are required")
 	}
 	if entityPropInShape(to, s.Entity, s.Property) {
 		return fmt.Errorf("property %s.%s still exists in the to-schema — dropping it would erase live data", s.Entity, s.Property)
@@ -559,9 +578,9 @@ type dropEntitiesStep struct {
 func (s *dropEntitiesStep) Kind() string   { return "drop_entities" }
 func (s *dropEntitiesStep) Target() string { return s.Type }
 
-func (s *dropEntitiesStep) Validate(from, to metamodel.ShapeProjection) error {
+func (s *dropEntitiesStep) Validate(_, to metamodel.ShapeProjection) error {
 	if s.Type == "" {
-		return fmt.Errorf("type is required")
+		return errors.New("type is required")
 	}
 	if entityInShape(to, s.Type) {
 		return fmt.Errorf("entity type %q still exists in the to-schema — only types unknown to the new schema may be dropped", s.Type)
@@ -613,9 +632,9 @@ type dropRelationsStep struct {
 func (s *dropRelationsStep) Kind() string   { return "drop_relations" }
 func (s *dropRelationsStep) Target() string { return s.Type }
 
-func (s *dropRelationsStep) Validate(from, to metamodel.ShapeProjection) error {
+func (s *dropRelationsStep) Validate(_, to metamodel.ShapeProjection) error {
 	if s.Type == "" {
-		return fmt.Errorf("type is required")
+		return errors.New("type is required")
 	}
 	if _, ok := to.Relations[s.Type]; ok {
 		return fmt.Errorf("relation type %q still exists in the to-schema — only types unknown to the new schema may be dropped", s.Type)

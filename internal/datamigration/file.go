@@ -2,6 +2,7 @@ package datamigration
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"path"
@@ -119,7 +120,7 @@ func ParseFile(name string, data []byte) (*File, error) {
 // ShapeProjection via its JSON form.
 func projectionFromYAML(m map[string]any) (metamodel.ShapeProjection, error) {
 	if len(m) == 0 {
-		return metamodel.ShapeProjection{}, fmt.Errorf("missing (a migration file must embed the projection — regenerate with `rela migrate gen`)")
+		return metamodel.ShapeProjection{}, errors.New("missing (a migration file must embed the projection — regenerate with `rela migrate gen`)")
 	}
 	data, err := json.Marshal(m)
 	if err != nil {
@@ -148,7 +149,8 @@ func projectionToYAML(p metamodel.ShapeProjection) (map[string]any, error) {
 func LoadDir(fsys fs.FS) ([]*File, error) {
 	entries, err := fs.ReadDir(fsys, MigrationsDir)
 	if err != nil {
-		if _, ok := err.(*fs.PathError); ok {
+		var pathErr *fs.PathError
+		if errors.As(err, &pathErr) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("datamigration: read %s/: %w", MigrationsDir, err)

@@ -30,11 +30,10 @@ type Draft struct {
 func Generate(current, live metamodel.ShapeProjection, existing []*File, description string) (*Draft, error) {
 	report := metamodel.CompareShapes(current, live)
 	if len(report.Deltas) == 0 {
-		return nil, nil
+		return nil, nil //nolint:nilnil // nil draft = shapes identical, nothing to generate (documented)
 	}
-	hasContent := report.Tier() >= metamodel.TierDrift
-	if !hasContent {
-		return nil, nil
+	if report.Tier() < metamodel.TierDrift {
+		return nil, nil //nolint:nilnil // nil draft = purely additive change, nothing worth a file (documented)
 	}
 
 	var b strings.Builder
@@ -50,10 +49,7 @@ func Generate(current, live metamodel.ShapeProjection, existing []*File, descrip
 	fmt.Fprintf(&b, "description: %s\n", quoteYAML(description))
 	b.WriteString("steps:\n")
 
-	steps, comments, err := draftSteps(report, live)
-	if err != nil {
-		return nil, err
-	}
+	steps, comments := draftSteps(report, live)
 	if steps == "" && comments == "" {
 		b.WriteString("  []\n")
 	} else {
@@ -86,90 +82,108 @@ func Generate(current, live metamodel.ShapeProjection, existing []*File, descrip
 }
 
 // draftSteps renders the active steps and the commented optional cleanups.
-func draftSteps(report metamodel.ShapeReport, live metamodel.ShapeProjection) (string, string, error) {
-	var active, commented strings.Builder
+func draftSteps(report metamodel.ShapeReport, live metamodel.ShapeProjection) (active, commented string) {
 	// Subjects consumed by a rename guess must not ALSO get a drop comment.
 	renamed := map[string]bool{}
-
 	for _, d := range report.Deltas {
-		switch d.Kind {
-		case "possible_property_rename":
-			owner, newProp, ok := splitPropertyKey(d.Subject)
-			_, oldProp, ok2 := splitPropertyKey(d.Counterpart)
-			if !ok || !ok2 || strings.HasPrefix(d.Subject, "rel:") {
-				continue // relation property renames: lua territory in v1
-			}
+		if d.Kind == "possible_property_rename" || d.Kind == "possible_entity_type_rename" {
 			renamed[d.Counterpart] = true
-			fmt.Fprintf(&active, "  # GUESS — confirm this is a rename, not an unrelated remove+add\n")
-			fmt.Fprintf(&active, "  - rename_property: {entity: %s, from: %s, to: %s}\n", owner, oldProp, newProp)
-		case "possible_entity_type_rename":
-			renamed[d.Counterpart] = true
-			fmt.Fprintf(&active, "  # GUESS — confirm this is a rename, not an unrelated remove+add\n")
-			fmt.Fprintf(&active, "  - rename_entity_type: {from: %s, to: %s}\n", d.Counterpart, d.Subject)
-		case "enum_values_replaced":
-			for _, target := range enumTargets(d.Subject, live) {
-				fmt.Fprintf(&active, "  # TODO — map each removed value to its replacement\n")
-				fmt.Fprintf(&active, "  - map_values:\n      entity: %s\n      property: %s\n      mapping:\n",
-					target.entity, target.property)
-				for i, removedVal := range d.Removed {
-					guess := "CHANGEME"
-					if i < len(d.Added) {
-						guess = d.Added[i]
-					}
-					fmt.Fprintf(&active, "        %s: %s\n", quoteYAML(removedVal), quoteYAML(guess))
-				}
-			}
-		case "property_type_changed", "property_format_changed", "property_list_changed":
-			owner, prop, ok := splitPropertyKey(d.Subject)
-			if !ok || strings.HasPrefix(d.Subject, "rel:") {
-				continue
-			}
-			ps, found := live.Entities[owner].Properties[prop]
-			if !found {
-				continue
-			}
-			if isCoercible(ps.Type) {
-				fmt.Fprintf(&active, "  # GUESS — verify the coercion handles your stored values\n")
-				fmt.Fprintf(&active, "  - convert: {entity: %s, property: %s, to_type: %s}\n", owner, prop, ps.Type)
-			} else {
-				fmt.Fprintf(&active, "  # TODO — no built-in coercion to %q: write migrations/%s-%s.lua\n", ps.Type, owner, prop)
-				fmt.Fprintf(&active, "  # - lua: {entity: %s, script: migrations/%s-%s.lua}\n", owner, owner, prop)
-			}
-		case "property_removed":
-			if renamed[d.Subject] || strings.HasPrefix(d.Subject, "rel:") {
-				continue
-			}
-			owner, prop, ok := splitPropertyKey(d.Subject)
-			if !ok {
-				continue
-			}
-			fmt.Fprintf(&commented, "  # optional cleanup — uncomment to DELETE the orphaned values now (otherwise GC removes them after the grace period)\n")
-			fmt.Fprintf(&commented, "  # - drop_property: {entity: %s, property: %s}\n", owner, prop)
-		case "entity_type_removed":
-			if renamed[d.Subject] {
-				continue
-			}
-			fmt.Fprintf(&commented, "  # optional cleanup — uncomment to DELETE all %q entities now\n", d.Subject)
-			fmt.Fprintf(&commented, "  # - drop_entities: {type: %s}\n", d.Subject)
-		case "relation_type_removed":
-			fmt.Fprintf(&commented, "  # optional cleanup — uncomment to DELETE all %q relations now\n", trimRelPrefix(d.Subject))
-			fmt.Fprintf(&commented, "  # - drop_relations: {type: %s}\n", trimRelPrefix(d.Subject))
-		case "required_property_added":
-			owner, prop, ok := splitPropertyKey(d.Subject)
-			if !ok || strings.HasPrefix(d.Subject, "rel:") {
-				continue
-			}
-			def := live.Entities[owner].Properties[prop].Default
-			if def == "" {
-				def = "CHANGEME"
-			}
-			fmt.Fprintf(&commented, "  # optional backfill for the new required property\n")
-			fmt.Fprintf(&commented, "  # - set_default: {entity: %s, property: %s, value: %s}\n", owner, prop, quoteYAML(def))
-		case "relation_endpoint_narrowed", "relation_cardinality_tightened", "relation_symmetry_changed":
-			fmt.Fprintf(&active, "  # TODO — %s: no declarative step can fix this; write a lua step or adjust the data by hand\n", d.Detail)
 		}
 	}
-	return active.String(), commented.String(), nil
+	var act, com strings.Builder
+	for _, d := range report.Deltas {
+		draftActiveStep(&act, d, live)
+		draftCleanupComment(&com, d, live, renamed)
+	}
+	return act.String(), com.String()
+}
+
+// draftActiveStep emits the uncommented (GUESS/TODO) step for one delta,
+// if its kind produces one.
+func draftActiveStep(w *strings.Builder, d metamodel.ShapeDelta, live metamodel.ShapeProjection) {
+	switch d.Kind {
+	case "possible_property_rename":
+		owner, newProp, ok := splitPropertyKey(d.Subject)
+		_, oldProp, ok2 := splitPropertyKey(d.Counterpart)
+		if !ok || !ok2 || strings.HasPrefix(d.Subject, "rel:") {
+			return // relation property renames: lua territory in v1
+		}
+		fmt.Fprintf(w, "  # GUESS — confirm this is a rename, not an unrelated remove+add\n")
+		fmt.Fprintf(w, "  - rename_property: {entity: %s, from: %s, to: %s}\n", owner, oldProp, newProp)
+	case "possible_entity_type_rename":
+		fmt.Fprintf(w, "  # GUESS — confirm this is a rename, not an unrelated remove+add\n")
+		fmt.Fprintf(w, "  - rename_entity_type: {from: %s, to: %s}\n", d.Counterpart, d.Subject)
+	case "enum_values_replaced":
+		for _, target := range enumTargets(d.Subject, live) {
+			fmt.Fprintf(w, "  # TODO — map each removed value to its replacement\n")
+			fmt.Fprintf(w, "  - map_values:\n      entity: %s\n      property: %s\n      mapping:\n",
+				target.entity, target.property)
+			for i, removedVal := range d.Removed {
+				guess := "CHANGEME"
+				if i < len(d.Added) {
+					guess = d.Added[i]
+				}
+				fmt.Fprintf(w, "        %s: %s\n", quoteYAML(removedVal), quoteYAML(guess))
+			}
+		}
+	case "property_type_changed", "property_format_changed", "property_list_changed":
+		owner, prop, ok := splitPropertyKey(d.Subject)
+		if !ok || strings.HasPrefix(d.Subject, "rel:") {
+			return
+		}
+		ps, found := live.Entities[owner].Properties[prop]
+		if !found {
+			return
+		}
+		if isCoercible(ps.Type) {
+			fmt.Fprintf(w, "  # GUESS — verify the coercion handles your stored values\n")
+			fmt.Fprintf(w, "  - convert: {entity: %s, property: %s, to_type: %s}\n", owner, prop, ps.Type)
+		} else {
+			fmt.Fprintf(w, "  # TODO — no built-in coercion to %q: write migrations/%s-%s.lua\n", ps.Type, owner, prop)
+			fmt.Fprintf(w, "  # - lua: {entity: %s, script: migrations/%s-%s.lua}\n", owner, owner, prop)
+		}
+	case "relation_endpoint_narrowed", "relation_cardinality_tightened", "relation_symmetry_changed":
+		fmt.Fprintf(w, "  # TODO — %s: no declarative step can fix this; write a lua step or adjust the data by hand\n", d.Detail)
+	}
+}
+
+// draftCleanupComment emits the commented-out optional cleanup for one
+// deletion delta. Deletions are NEVER emitted live — the operator uncomments.
+func draftCleanupComment(
+	w *strings.Builder, d metamodel.ShapeDelta, live metamodel.ShapeProjection, renamed map[string]bool,
+) {
+	switch d.Kind {
+	case "property_removed":
+		if renamed[d.Subject] || strings.HasPrefix(d.Subject, "rel:") {
+			return
+		}
+		owner, prop, ok := splitPropertyKey(d.Subject)
+		if !ok {
+			return
+		}
+		fmt.Fprintf(w, "  # optional cleanup — uncomment to DELETE the orphaned values now (otherwise GC removes them after the grace period)\n")
+		fmt.Fprintf(w, "  # - drop_property: {entity: %s, property: %s}\n", owner, prop)
+	case "entity_type_removed":
+		if renamed[d.Subject] {
+			return
+		}
+		fmt.Fprintf(w, "  # optional cleanup — uncomment to DELETE all %q entities now\n", d.Subject)
+		fmt.Fprintf(w, "  # - drop_entities: {type: %s}\n", d.Subject)
+	case "relation_type_removed":
+		fmt.Fprintf(w, "  # optional cleanup — uncomment to DELETE all %q relations now\n", trimRelPrefix(d.Subject))
+		fmt.Fprintf(w, "  # - drop_relations: {type: %s}\n", trimRelPrefix(d.Subject))
+	case "required_property_added":
+		owner, prop, ok := splitPropertyKey(d.Subject)
+		if !ok || strings.HasPrefix(d.Subject, "rel:") {
+			return
+		}
+		def := live.Entities[owner].Properties[prop].Default
+		if def == "" {
+			def = "CHANGEME"
+		}
+		fmt.Fprintf(w, "  # optional backfill for the new required property\n")
+		fmt.Fprintf(w, "  # - set_default: {entity: %s, property: %s, value: %s}\n", owner, prop, quoteYAML(def))
+	}
 }
 
 // enumTarget is one (entity, property) pair affected by an enum value change.

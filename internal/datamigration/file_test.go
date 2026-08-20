@@ -45,8 +45,11 @@ func TestParseFile_Rejections(t *testing.T) {
 			wantErr: "field form not found",
 		},
 		{
-			name:    "bad from hash",
-			mutate:  func(s string) string { return "from: nothex\n" + s[strings.Index(s, "to:"):] },
+			name: "bad from hash",
+			mutate: func(s string) string {
+				idx := strings.Index(s, "to:")
+				return "from: nothex\n" + s[idx:]
+			},
 			wantErr: "`from` is not a shape hash",
 		},
 		{

@@ -12,7 +12,10 @@ import (
 // candidate: group the type/relation/property lookups behind focused accessors
 // (the attachment-scan accessors moved behind [AttachmentPolicy] this way).
 //
-//plimsoll:max-exported-methods=31
+// 32nd exported method is ShapeProjection (TKT-0C57FS), the data-shape
+// sibling of RenderProjection.
+//
+//plimsoll:max-exported-methods=32
 type Metamodel struct {
 	Version   string `yaml:"version"`
 	Namespace string `yaml:"namespace"`

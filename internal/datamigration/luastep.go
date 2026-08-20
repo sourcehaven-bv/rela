@@ -2,6 +2,7 @@ package datamigration
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"path"
@@ -43,7 +44,7 @@ func (s *luaStep) Target() string { return s.Entity + " ← " + s.Script }
 
 func (s *luaStep) Validate(from, to metamodel.ShapeProjection) error {
 	if s.Entity == "" || s.Script == "" {
-		return fmt.Errorf("entity and script are required")
+		return errors.New("entity and script are required")
 	}
 	if s.Entity != "*" && !entityInShape(from, s.Entity) && !entityInShape(to, s.Entity) {
 		return fmt.Errorf("entity type %q is in neither the from- nor the to-schema", s.Entity)
@@ -66,22 +67,22 @@ func (s *luaStep) Run(ctx context.Context, x *Exec) (StepResult, error) {
 
 	ls := newSandboxedState()
 	defer ls.Close()
-	if err := ls.DoString(string(src)); err != nil {
-		return res, fmt.Errorf("load script: %w", err)
+	if loadErr := ls.DoString(string(src)); loadErr != nil {
+		return res, fmt.Errorf("load script: %w", loadErr)
 	}
 	migrateFn := ls.GetGlobal("migrate")
 	if migrateFn.Type() != lua.LTFunction {
-		return res, fmt.Errorf("script must define `function migrate(entity)`")
+		return res, errors.New("script must define `function migrate(entity)`")
 	}
 
 	err = x.forEachEntity(ctx, s.Entity, func(e *entity.Entity) (bool, error) {
-		if err := ctx.Err(); err != nil {
-			return false, err
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return false, ctxErr
 		}
 		ls.Push(migrateFn)
 		ls.Push(entityToTable(ls, e))
-		if err := ls.PCall(1, 1, nil); err != nil {
-			return false, fmt.Errorf("migrate(): %w", err)
+		if callErr := ls.PCall(1, 1, nil); callErr != nil {
+			return false, fmt.Errorf("migrate(): %w", callErr)
 		}
 		ret := ls.Get(-1)
 		ls.Pop(1)
@@ -180,20 +181,23 @@ func applyLuaPatch(e *entity.Entity, ret lua.LValue) (bool, error) {
 		if !lua.LVAsBool(ret) {
 			return false, nil
 		}
-		return false, fmt.Errorf("migrate() returned true — return a patch table or nil")
+		return false, errors.New("migrate() returned true — return a patch table or nil")
 	case lua.LTTable:
 	default:
 		return false, fmt.Errorf("migrate() returned %s — return a patch table or nil", ret.Type())
 	}
-	patch := ret.(*lua.LTable)
+	patch, ok := ret.(*lua.LTable)
+	if !ok {
+		return false, errors.New("migrate() returned a non-table value")
+	}
 	changed := false
 
-	if propsVal := patch.RawGetString("properties"); propsVal.Type() == lua.LTTable {
+	if propsTable, isTable := patch.RawGetString("properties").(*lua.LTable); isTable {
 		var iterErr error
-		propsVal.(*lua.LTable).ForEach(func(k, v lua.LValue) {
+		propsTable.ForEach(func(k, v lua.LValue) {
 			key, ok := k.(lua.LString)
 			if !ok {
-				iterErr = fmt.Errorf("patch properties keys must be strings")
+				iterErr = errors.New("patch properties keys must be strings")
 				return
 			}
 			if e.Properties == nil {
@@ -205,33 +209,33 @@ func applyLuaPatch(e *entity.Entity, ret lua.LValue) (bool, error) {
 		if iterErr != nil {
 			return false, iterErr
 		}
-	} else if propsVal.Type() != lua.LTNil {
-		return false, fmt.Errorf("patch `properties` must be a table")
+	} else if patch.RawGetString("properties").Type() != lua.LTNil {
+		return false, errors.New("patch `properties` must be a table")
 	}
 
-	if unsetVal := patch.RawGetString("unset"); unsetVal.Type() == lua.LTTable {
-		t := unsetVal.(*lua.LTable)
+	if unsetTable, isTable := patch.RawGetString("unset").(*lua.LTable); isTable {
+		t := unsetTable
 		for i := 1; i <= t.Len(); i++ {
 			name, ok := t.RawGetInt(i).(lua.LString)
 			if !ok {
-				return false, fmt.Errorf("patch `unset` must list property names")
+				return false, errors.New("patch `unset` must list property names")
 			}
 			if _, has := e.Properties[string(name)]; has {
 				delete(e.Properties, string(name))
 				changed = true
 			}
 		}
-	} else if unsetVal.Type() != lua.LTNil {
-		return false, fmt.Errorf("patch `unset` must be a list of property names")
+	} else if patch.RawGetString("unset").Type() != lua.LTNil {
+		return false, errors.New("patch `unset` must be a list of property names")
 	}
 
-	if contentVal := patch.RawGetString("content"); contentVal.Type() == lua.LTString {
-		if newContent := string(contentVal.(lua.LString)); newContent != e.Content {
+	if contentStr, isStr := patch.RawGetString("content").(lua.LString); isStr {
+		if newContent := string(contentStr); newContent != e.Content {
 			e.Content = newContent
 			changed = true
 		}
-	} else if contentVal.Type() != lua.LTNil {
-		return false, fmt.Errorf("patch `content` must be a string")
+	} else if patch.RawGetString("content").Type() != lua.LTNil {
+		return false, errors.New("patch `content` must be a string")
 	}
 
 	return changed, nil

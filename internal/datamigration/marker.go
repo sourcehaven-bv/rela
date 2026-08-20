@@ -52,18 +52,18 @@ func LoadMarker(ctx context.Context, kv state.KV) (*Marker, error) {
 	data, err := kv.Get(ctx, markerKey)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, nil
+			return nil, nil //nolint:nilnil // absent marker = un-bootstrapped store, a normal state the gate handles
 		}
 		return nil, fmt.Errorf("datamigration: read marker: %w", err)
 	}
 	var m Marker
 	if err := json.Unmarshal(data, &m); err != nil {
 		slog.Warn("datamigration.marker_corrupt", "key", markerKey, "error", err)
-		return nil, nil
+		return nil, nil //nolint:nilnil // corrupt marker is treated as absent (re-bootstrap), never a startup failure
 	}
 	if m.ShapeHash == "" || len(m.Projection) == 0 {
 		slog.Warn("datamigration.marker_incomplete", "key", markerKey)
-		return nil, nil
+		return nil, nil //nolint:nilnil // incomplete marker is treated as absent (re-bootstrap)
 	}
 	return &m, nil
 }

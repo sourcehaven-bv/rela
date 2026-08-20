@@ -173,7 +173,7 @@ func (g *GC) collect(ctx context.Context, key, kind string, apply bool) (int, er
 	case "property":
 		owner, prop, ok := splitPropertyKey(key)
 		if !ok {
-			return 0, fmt.Errorf("malformed ledger key")
+			return 0, errors.New("malformed ledger key")
 		}
 		step := &dropPropertyStep{Entity: owner, Property: prop}
 		sr, err = step.Run(ctx, x)
@@ -186,7 +186,7 @@ func (g *GC) collect(ctx context.Context, key, kind string, apply bool) (int, er
 	case "relation_property":
 		owner, prop, ok := splitPropertyKey(trimRelPrefix(key))
 		if !ok {
-			return 0, fmt.Errorf("malformed ledger key")
+			return 0, errors.New("malformed ledger key")
 		}
 		sr, err = dropRelationProperty(ctx, x, owner, prop)
 	default:
@@ -242,7 +242,7 @@ func (g *GC) newCapturer() *capturer {
 }
 
 func (g *GC) auditTick(ctx context.Context, res *GCResult) {
-	var parts []string
+	parts := make([]string, 0, len(res.Deleted))
 	total := 0
 	for _, d := range res.Deleted {
 		parts = append(parts, fmt.Sprintf("%s (%d)", d.Key, d.Affected))

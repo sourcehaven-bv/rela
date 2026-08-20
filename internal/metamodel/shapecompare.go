@@ -3,6 +3,7 @@ package metamodel
 import (
 	"fmt"
 	"slices"
+	"strconv"
 )
 
 // ShapeTier classifies one schema-shape delta by its impact on stored data.
@@ -233,7 +234,7 @@ func fmtIntPtr(p *int) string {
 	if p == nil {
 		return "unset"
 	}
-	return fmt.Sprintf("%d", *p)
+	return strconv.Itoa(*p)
 }
 
 // compareProperties diffs one property map. owner is the entity or relation
@@ -339,7 +340,7 @@ func compareValueList(r *ShapeReport, subject string, from, to []string) {
 	switch {
 	case len(removedVals) == 0 && len(addedVals) == 0:
 		// Pure reorder: value identity unchanged, stored data unaffected.
-		addValueDelta(TierAdditive, "enum_values_reordered", fmt.Sprintf("%s enum values reordered", subject))
+		addValueDelta(TierAdditive, "enum_values_reordered", subject+" enum values reordered")
 	case len(removedVals) == 0:
 		addValueDelta(TierAdditive, "enum_values_added", fmt.Sprintf("%s enum values added: %v", subject, addedVals))
 	case len(addedVals) == 0:

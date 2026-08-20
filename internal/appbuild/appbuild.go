@@ -115,6 +115,9 @@ type Services struct {
 	aclDeclarative *acl.Declarative
 	aclPolicy      *acl.Policy
 	audit          audit.Audit
+	// gcStop terminates this store's data-migration GC sweep goroutine
+	// (TKT-0C57FS). Per-assembled, torn down in Close like searchCloser.
+	gcStop func()
 
 	closeOnce sync.Once
 	closeErr  error
@@ -1198,7 +1201,14 @@ func assemble(
 	// Failures degrade to warnings — a derived-schema problem never fails boot.
 	reconcileDerivedSchemaIfSupported(context.Background(), st, base.meta)
 
+	// Evaluate the data-migration gate (adopt compatible schema-shape
+	// changes, warn on incompatible ones) and start the drift GC sweep
+	// (TKT-0C57FS). Never fails boot; the stop func is torn down in Close —
+	// per-assembled, like the search closer.
+	gcStop := startDataMigration(stateKV, base.meta, st, cfg.Audit, versions)
+
 	return &Services{
+		gcStop:          gcStop,
 		fs:              cfg.FS,
 		paths:           cfg.Paths,
 		meta:            base.meta,
@@ -1310,6 +1320,10 @@ func relationVersionRecorderFor(vs store.VersionService) entitymanager.RelationV
 // failures are slog.Warn'd).
 func (s *Services) Close() error {
 	s.closeOnce.Do(func() {
+		if s.gcStop != nil {
+			s.gcStop()
+			s.gcStop = nil
+		}
 		if s.store != nil {
 			if lc, ok := s.store.(store.Lifecycle); ok {
 				if err := lc.Close(); err != nil {

@@ -190,9 +190,12 @@ func (v *Verdict) Describe() string {
 	return string(v.Status)
 }
 
+// shortHashLen is how much of a shape hash human-facing output shows.
+const shortHashLen = 12
+
 func short(hash string) string {
-	if len(hash) > 12 {
-		return hash[:12]
+	if len(hash) > shortHashLen {
+		return hash[:shortHashLen]
 	}
 	if hash == "" {
 		return "(none)"
