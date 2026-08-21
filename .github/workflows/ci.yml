@@ -180,7 +180,7 @@ jobs:
 
       - name: Install commentlint
         # Keep in sync with commentlint_version in the justfile.
-        run: go install github.com/sourcehaven-bv/commentlint@v0.2.0
+        run: go install github.com/sourcehaven-bv/commentlint@v0.2.1
 
       # Gate: clean today, so a regression fails the build. Rules are promoted
       # here from the advisory step once their backlog reaches zero.
@@ -189,9 +189,19 @@ jobs:
 
       # Advisory: real findings with a backlog being worked down. Visible in
       # the log, never red — see .commentlint.yml for why each rule is here.
+      #
+      # One invocation PER RULE, deliberately: the cross-comment rules
+      # (duplication, nil-contract, doclink, param-contract) each have their
+      # own output shape and replace the per-comment output rather than adding
+      # to it, so a single run would silently report only one of them.
       - name: Comment report (advisory)
         continue-on-error: true
-        run: commentlint -rank -top 30 ./internal ./cmd
+        run: |
+          for rule in restatement param-contract doclink nil-contract duplication; do
+            echo "::group::commentlint $rule"
+            commentlint -rules "$rule" -rank -top 30 ./internal ./cmd || true
+            echo "::endgroup::"
+          done
 
   lint-markdown:
     name: Lint Markdown
