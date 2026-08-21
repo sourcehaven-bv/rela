@@ -491,6 +491,22 @@ Rules when touching this:
   echoing purged content. `schema_versions` is projection-only + FK-shared, so
   purge never deletes it. Purge is necessary-not-sufficient for erasure (live
   row / PITR backups survive) — see the postgres-backend guide.
+- **Data migration** (TKT-0C57FS, `internal/datamigration`,
+  `docs/data-migration.md`). When schema.yaml's DATA SHAPE changes, the gate
+  (evaluated per process start in `appbuild.assemble`) compares the store's
+  `state.KV` marker against `metamodel.ShapeProjection().Hash()` and adopts
+  compatible changes; incompatible ones need operator-authored `migrations/`
+  files (`rela migrate gen|data`). **Two schema hashes coexist on purpose**:
+  `RenderProjection` (version rendering, `schema_versions` dedup — stability
+  load-bearing, do not extend) vs `ShapeProjection` (migration identity —
+  includes relations + defaults, excludes id prefixes). Migration/GC writes
+  are the third sanctioned raw-store exception (after `db migrate` and
+  `history-purge`): operator-shell trust, no ACL, explicit audit records
+  (`data-migration`/`data-gc`), `store.WithAttribution`, and synchronous
+  pre-delete version capture on pg (the sweep cannot reconstruct deleted
+  rows). Migration steps must stay idempotent — re-run IS the crash
+  recovery. The Lua step is a pure transform (patch in, patch out, engine
+  applies); never hand it a write handle.
 - DSN is read from the `RELA_DATABASE_URL` env var **only** — there is no
   `--database-url` flag, so the credential never lands in `ps`/shell history.
   `appbuild.Discover` reads the env into `appbuild.Config.DatabaseURL`; the

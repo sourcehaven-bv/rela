@@ -1090,6 +1090,14 @@ rela tui
 
 Note: Existing entities remain valid. The metamodel only affects creation and validation of new entities and relations.
 
+**Schema evolution:** additive changes (new types, new optional properties,
+new enum values) are adopted automatically. Changes that leave stored data
+mismatched — a renamed property, a changed property type, remapped enum
+values — are detected at startup and handled by the data-migration system:
+`rela migrate status` shows where the data stands, `rela migrate gen` drafts
+a migration, `rela migrate data` runs it. See the
+[data-migration guide](data-migration.md).
+
 ## Filtering Entities
 
 Filter entities by property values using the `--where` flag:

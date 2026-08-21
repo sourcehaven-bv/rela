@@ -1578,6 +1578,39 @@ Add to your CI pipeline to ensure project files are up-to-date:
 
 This will exit with code 1 if migrations are needed.
 
+### rela migrate status / gen / data / gc
+
+Operate the **data-migration** system: when `schema.yaml` changes shape
+(property renamed, type changed, enum values remapped), these commands
+detect it, draft a migration, and transform the stored content. See the
+[data-migration guide](data-migration.md) for the full model.
+
+```bash
+rela migrate status              # where does the data stand vs the live schema?
+rela migrate gen                 # draft migrations/000N-schema-change.yaml from the diff
+rela migrate data                # dry-run the pending migration chain
+rela migrate data --apply        # execute it
+rela migrate gc                  # dry-run the orphaned-data garbage collector
+rela migrate gc --scan --apply   # full-scan for orphans, then delete expired ones
+```
+
+**Flags:**
+
+| Command | Flag | Description |
+| ------- | ---- | ----------- |
+| `gen`   | `--description` | One-line description embedded in the migration file |
+| `gen`   | `--stdout` | Print the draft instead of writing `migrations/<name>` |
+| `data`  | `--apply` | Execute (default is a dry-run preview with per-step counts) |
+| `gc`    | `--apply` | Delete expired orphaned data (default is a dry-run preview) |
+| `gc`    | `--scan`  | Full-scan the store for orphans not yet in the drift ledger |
+| `gc`    | `--grace` | Override the grace period orphaned data must age before deletion (default 720h) |
+
+Unlike bare `rela migrate` (config files, service-free), these subcommands
+need the project services and a store. Compatible schema changes (new types,
+new optional properties, new enum values) never need any of this — they are
+adopted automatically at startup. `status` exits 1 while an incompatible
+change is unmigrated, so it doubles as a CI check.
+
 ---
 
 ### rela normalize
