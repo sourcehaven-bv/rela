@@ -71,7 +71,6 @@ var validFilterOperators = map[string]bool{
 	"in": true, // comma-separated list, matches any
 }
 
-// Valid sort directions
 var validSortDirections = map[string]bool{
 	"":     true, // default (asc)
 	"asc":  true,
@@ -296,7 +295,6 @@ var validDashboardDisplayModes = map[string]bool{
 	"breakdown": true,
 }
 
-// Valid command contexts
 var validCommandContexts = map[string]bool{
 	"entity": true,
 	"list":   true,
@@ -304,14 +302,12 @@ var validCommandContexts = map[string]bool{
 	"global": true,
 }
 
-// Valid relation directions
 var validRelationDirections = map[Direction]bool{
 	"":                true, // default (outgoing)
 	DirectionOutgoing: true,
 	DirectionIncoming: true,
 }
 
-// Valid relation widgets
 var validRelationWidgets = map[string]bool{
 	"":                true, // default (auto-detect from cardinality)
 	WidgetSelect:      true,
