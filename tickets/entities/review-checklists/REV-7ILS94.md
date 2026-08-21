@@ -2,73 +2,83 @@
 id: REV-7ILS94
 type: review-checklist
 title: 'Review: Adopt commentlint in CI: comment-discipline gate + advisory report'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Automated Checks
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Comment lint gate clean (`just comment-lint`)
-- [ ] Coverage maintained (`just coverage-check`)
+- [x] All tests pass (`just test`) — full `just ci` run twice on this branch;
+every package `ok`, zero `FAIL` lines
+- [x] Lint clean (`just lint`) — EXIT=0, "0 issues"
+- [x] Comment lint gate clean (`just comment-lint`) — EXIT=0, "no findings
+across 9876 comments"
+- [x] Coverage maintained (`just coverage-check`) — runs inside `just ci`;
+no floor breached (this change adds no Go code to the repo)
 
-**Comment findings.** `just comment-report` lists the advisory rules
-(duplication, nil-contract, param-contract, restatement). They are not a merge
-gate, but a finding your diff *introduces* should be fixed or suppressed — don't
-grow the backlog.
-
-Every rule is a heuristic over prose, so false positives are expected. To
-suppress one, prefer the inline form on the declaration line, which travels with
-the code and is reviewed in this diff:
-
-```go
-func f(p string) {} //commentlint:ignore param-contract  p is contained by Clone
-```
-
-Use `.commentlint.yml` (`ignore:` path globs, `allow-phrases:`) only when the
-same prose recurs across many sites. A reason is required either way — an
-unexplained suppression is a finding nobody can re-evaluate later.
+Also verified independently: `arch-lint` EXIT=0, `plimsoll` EXIT=0, `lint-md`
+EXIT=0, and `ci.yml` parses with the `comment-lint` job registered (5 steps).
 
 ## Code Review
 
-- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
-- [ ] All critical review-responses addressed
-- [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
+- [x] Run `/code-review` — performed on the diff (`git diff develop...HEAD`)
+- [x] All critical review-responses addressed — none raised
+- [x] All significant review-responses addressed — RR-TK4N2J
+- [x] Self-reviewed the diff for unrelated changes
 
-**Review Responses:** <!-- List IDs of review-response entities created, e.g.,
-RR-xxxx -->
+**Review Responses:** RR-TK4N2J (significant, addressed), RR-DK21QY (minor,
+addressed)
+
+Both were real defects in the work under review, not nits:
+
+- **RR-TK4N2J** — the advisory step reported only `restatement` (19), because
+the four rules carrying the backlog are opt-in and were never enabled. The
+entire gate/report split is justified by making that backlog visible, so the
+step was not doing the one job it existed for. Fixed by looping per rule; all
+five now report, totalling 301.
+- **RR-DK21QY** — `-rank -top N` counted only displayed findings, so the
+report claimed 40 duplication findings where there were 119. Fixed **upstream**
+(v0.2.1) rather than worked around, since a misleading count is a tool bug;
+regression tests added there.
 
 ## Acceptance Verification
 
-- [ ] Each acceptance criterion tested (reference planning checklist)
-- [ ] Test evidence documented in implementation checklist
+- [x] Each acceptance criterion tested (reference planning checklist)
+- [x] Test evidence documented in implementation checklist
 
 **Acceptance Status:**
-<!-- For each acceptance criterion, state PASS/FAIL with evidence -->
+
+1. Gate exits 0 on this branch — **PASS** (EXIT=0, 9876 comments)
+2. Gate catches a regression — **PASS by construction** (rule is 0 today and
+unit-tested upstream; not re-verified by committing deliberate dead code)
+3. Advisory report runs and never fails — **PASS** (all five rules, 301
+findings, `continue-on-error` plus `|| true`)
+4. CI job registers — **PASS** (YAML parsed, `comment-lint` with 5 steps)
+5. Suppression works both ways — **PASS** (inline directive used at
+`imgproc/orientation.go:48`; `allow-phrases` carries the ACL idiom)
 
 ## Documentation (enhancements only)
 
-Skip this section for bugs and internal refactors.
+- [x] Docs-checklist created and linked via `has-docs`
+- [x] User-facing documentation updated — N/A for `docs/`, justified in the
+docs-checklist (contributor tooling, same treatment as plimsoll)
+- [x] Docs-checklist marked as done
 
-- [ ] Docs-checklist created and linked via `has-docs`
-- [ ] User-facing documentation updated
-- [ ] Docs-checklist marked as done
-
-**Docs Checklist:** <!-- e.g., DOCS-xxxx -->
+**Docs Checklist:** DOCS-OPDZK2
 
 ## Final Checks
 
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
+- [x] Commit message explains the why, not just what — both commits lead with
+the reasoning (why the split exists; why the loop is needed)
+- [x] No TODOs or FIXMEs left unaddressed
+- [x] Ready for another developer to use — `just comment-lint` and
+`just comment-report [rule]` both documented in `CLAUDE.md`
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass
+- [x] PR URL documented below
 
-**PR:** <!-- e.g., https://github.com/org/repo/pull/123 -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1390

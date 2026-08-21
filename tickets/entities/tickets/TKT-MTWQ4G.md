@@ -5,7 +5,7 @@ title: 'Adopt commentlint in CI: comment-discipline gate + advisory report'
 kind: enhancement
 priority: medium
 effort: s
-status: review
+status: done
 ---
 
 ## Problem
