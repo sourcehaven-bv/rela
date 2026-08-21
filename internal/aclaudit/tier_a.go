@@ -47,11 +47,13 @@ func checkUngatedMembership(p *acl.Policy) []Finding {
 	}
 
 	// A1 — the membership relation can confer a PRIVILEGED assigned role but
-	// writes to it are not gated. Gated on isPrivileged (symmetric with A2):
-	// granting yourself a read-only role is a visibility choice, not an
-	// escalation path (RR-LXI3NW / RR-UR0LJU / RR-EG5D3E), so a read-only
-	// group does not trip A1.
-	if assignsAnyPrivilegedRole(p) && requiresPermissionFor(p, rel) == "" {
+	// writes to it are not gated. The predicate lives on acl.Policy so this
+	// finding and the boot-time startup warning can never disagree about
+	// whether membership is gated (TKT-T31NKT); its privilege gate keeps A1
+	// symmetric with A2 — granting yourself a read-only role is a visibility
+	// choice, not an escalation path (RR-LXI3NW / RR-UR0LJU / RR-EG5D3E), so
+	// a read-only group does not trip A1.
+	if p.MembershipSelfPromotionOpen() {
 		f = append(f, Finding{
 			Rule: "A1-ungated-membership", Severity: High, Subject: rel,
 			Detail: fmt.Sprintf("membership relation %q confers a privileged group role via assignments "+
@@ -62,18 +64,6 @@ func checkUngatedMembership(p *acl.Policy) []Finding {
 		})
 	}
 	return f
-}
-
-// assignsAnyPrivilegedRole reports whether at least one assignment targets a
-// declared, privileged role — i.e. the membership walk can confer escalation-
-// relevant power. Mirrors A2's isPrivileged gate.
-func assignsAnyPrivilegedRole(p *acl.Policy) bool {
-	for _, roleName := range p.Assignments {
-		if role, ok := p.Roles[roleName]; ok && isPrivileged(role) {
-			return true
-		}
-	}
-	return false
 }
 
 // A2 — a role-relation confers a privileged role but is not gated by
