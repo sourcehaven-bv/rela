@@ -192,6 +192,55 @@ compare numerically, dates instant-granularly). Host functions are
 available for pattern matching: `match(field, glob)`, `regex(field, re)`,
 `fuzzy(field, target)`, and `contains(list_field, value)`.
 
+Date arithmetic is available too, so a condition can be relative to the
+current day rather than to a hard-coded date:
+
+| Function | Returns | Meaning |
+| -------- | ------- | ------- |
+| `today()` | date | The current day, at UTC midnight |
+| `days_between(a, b)` | number | Whole days from `b` to `a`; positive when `a` is later |
+| `date_add(d, n, unit)` | date | `d` shifted by `n` (may be negative); `unit` is `day`, `week`, `month` or `year` |
+| `rrule_next(rule, after)` | date | The first occurrence of an RRULE strictly after `after` |
+
+```bash
+# due within a week (and anything already overdue)
+rela list taak --filter "days_between(entity.due, today()) <= 7"
+
+# strictly overdue
+rela list taak --filter "days_between(entity.due, today()) < 0"
+
+# a three-day grace period has lapsed
+rela list taak --filter "date_add(entity.due, 3, 'day') < today()"
+```
+
+Every date value is normalized to UTC midnight, so results are whole days
+and compare equal to bare `YYYY-MM-DD` literals regardless of any time
+component or timezone on the stored value.
+
+`date_add` accepts `day`, `week`, `month` and `year`. Month and year
+arithmetic **clamps to the last valid day** of the target month rather than
+spilling into the next one:
+
+| Expression | Result |
+| ---------- | ------ |
+| `date_add('2026-01-31', 1, 'month')` | `2026-02-28` |
+| `date_add('2028-01-31', 1, 'month')` | `2028-02-29` (leap year) |
+| `date_add('2026-03-31', -1, 'month')` | `2026-02-28` |
+| `date_add('2028-02-29', 1, 'year')` | `2029-02-28` |
+
+Clamping is stated rather than inherited: Go's own `AddDate` would normalize
+January 31 + 1 month to **March 3**, silently turning "the last of every
+month" into "the 3rd of every other month".
+
+Note that clamping is lossy — chaining month steps from a month-end date does
+not recover the original day (`Jan 31 → Feb 28 → Mar 28`). For a true
+"last day of every month" schedule use `rrule_next` with an RRULE, which
+models that directly.
+
+`rrule_next` errors when the rule is malformed _or_ when it has no
+occurrence left (a `COUNT` reached, an `UNTIL` passed); the two messages
+differ so a finished schedule is distinguishable from a typo.
+
 **`--where` (legacy, deprecated):**
 
 `--where` is transpiled to a predicate internally; prefer `--filter`. It
