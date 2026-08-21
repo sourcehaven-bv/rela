@@ -1272,16 +1272,47 @@ func (a *App) handleV1SchemaRoutes(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// resolveRelationWidgets returns a copy of rels with any empty Widget set to
-// "cards" when the relation type has edge properties/content. Shared by the
-// flat and wizard-step relation lists in handleV1Config.
-func resolveRelationWidgets(s *Schema, rels []dataentryconfig.FormRelation) []dataentryconfig.FormRelation {
+// resolveFormRelations returns a copy of rels with server-derived defaults
+// filled in, for both the flat and wizard-step relation lists in handleV1Config.
+//
+// Widget: an empty Widget becomes "cards" when the relation type has edge
+// properties/content.
+//
+// Direction: an absent `direction:` is inferred from the metamodel — the SPA
+// widgets test `direction === 'incoming'` literally (RelationCards.vue,
+// RelationPicker.vue), so the inference MUST happen here rather than in the
+// browser, or a to-side binding would validate clean on the server and still
+// render the wrong side. Resolving once on the way out keeps the two consumers
+// agreeing by construction. The ambiguous case (entity type on both sides) is
+// rejected by ValidateConfig at load, so it cannot reach this point.
+func resolveFormRelations(
+	s *Schema, entityType string, rels []dataentryconfig.FormRelation,
+) []dataentryconfig.FormRelation {
 	resolved := make([]dataentryconfig.FormRelation, len(rels))
 	copy(resolved, rels)
 	for i := range resolved {
 		if resolved[i].Widget == "" {
 			if def, ok := s.Meta.GetRelationDef(resolved[i].Relation); ok && def.HasAdvancedFeatures() {
 				resolved[i].Widget = WidgetCards
+			}
+		}
+		if resolved[i].Direction == "" {
+			dir, res := dataentryconfig.InferDirection(entityType, resolved[i].Relation, s.Meta)
+			switch res {
+			case dataentryconfig.DirectionResolved:
+				resolved[i].Direction = dir
+			case dataentryconfig.DirectionAmbiguous:
+				// ValidateConfig rejects an ambiguous binding at load, so the
+				// app should not have started. Reaching here means that gate
+				// was bypassed; say so rather than silently picking a side.
+				slog.Warn("form relation direction is ambiguous but reached the config handler; "+
+					"serving outgoing", "form_entity_type", entityType, "relation", resolved[i].Relation)
+				resolved[i].Direction = dataentryconfig.DirectionOutgoing
+			case dataentryconfig.DirectionNoSide, dataentryconfig.DirectionUnknown:
+				// A wrong-side or unreadable binding — both already reported by
+				// validation. Serve the historical reading rather than inventing
+				// one; the SPA needs a non-empty value either way.
+				resolved[i].Direction = dataentryconfig.DirectionOutgoing
 			}
 		}
 	}
@@ -1319,12 +1350,12 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 	forms := make(map[string]dataentryconfig.Form, len(s.Cfg.Forms))
 	for id, form := range s.Cfg.Forms {
 		f := form
-		f.Relations = resolveRelationWidgets(s, f.Relations)
+		f.Relations = resolveFormRelations(s, form.EntityType, f.Relations)
 		if len(f.Steps) > 0 {
 			steps := make([]dataentryconfig.FormStep, len(f.Steps))
 			copy(steps, f.Steps)
 			for i := range steps {
-				steps[i].Relations = resolveRelationWidgets(s, steps[i].Relations)
+				steps[i].Relations = resolveFormRelations(s, form.EntityType, steps[i].Relations)
 			}
 			f.Steps = steps
 		}

@@ -493,7 +493,7 @@ Each entry in `relations:` configures a relation picker:
 | Field          | Type   | Description                                                    |
 | -------------- | ------ | -------------------------------------------------------------- |
 | `relation`     | string | Relation type name from the metamodel                          |
-| `direction`    | string | `"outgoing"` or `"incoming"`                                   |
+| `direction`    | string | `"outgoing"` or `"incoming"` — inferred when omitted; required for self-referencing relations (see below) |
 | `target_type`  | string | Entity type of the related entity                              |
 | `label`        | string | Display label                                                  |
 | `required`     | bool   | At least one relation must be selected                         |
@@ -543,6 +543,25 @@ Two details worth knowing:
 > them. If a `+ New` button disappeared after upgrading, the target type has no registered form.
 
 ### Reverse (incoming) Relations
+
+#### How `direction` is resolved
+
+`direction` may be omitted when the form's entity type sits on exactly **one**
+side of the relation — there is only one sensible reading, so rela infers it:
+
+- entity type is the relation's `from` → `outgoing`
+- entity type is the relation's `to` → `incoming`
+
+It must be written explicitly when the form's entity type is on **both** sides —
+a self-referencing relation such as `depends-on` from `ticket` to `ticket`. There
+`outgoing` and `incoming` are both valid and mean opposite things, so rela
+refuses to guess and reports the form and relation by name.
+
+> **Upgrading.** `direction` used to default to `outgoing` whenever it was
+> absent, which silently bound the wrong side of a `to`-side relation. Run
+> `rela migrate` to write explicit directions for the unambiguous bindings; it
+> deliberately leaves self-referencing ones alone, and `rela validate` lists
+> those for you to decide.
 
 Relation types are directional in the metamodel: `implements` goes from `task` to `feature`.
 Often you want to show the *inbound* side on the opposite entity's form — on the feature form,

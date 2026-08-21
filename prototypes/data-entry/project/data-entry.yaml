@@ -84,8 +84,10 @@ forms:
         hidden: true
     relations:
       - relation: belongs-to
+        direction: outgoing
         required: true
       - relation: tagged
+        direction: outgoing
         widget: multi-select
   edit_ticket:
     entity_type: ticket
@@ -125,8 +127,10 @@ forms:
       - property: is_blocked
     relations:
       - relation: belongs-to
+        direction: outgoing
         required: true
       - relation: tagged
+        direction: outgoing
         widget: cards
         properties:
           - property: added_by

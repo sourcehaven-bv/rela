@@ -48,7 +48,15 @@ func (d *Direction) UnmarshalYAML(value *yaml.Node) error {
 		return err
 	}
 	switch s {
-	case "", "outgoing":
+	case "":
+		// A written-but-empty `direction: ""` (or a bare `direction:`) is NOT
+		// the same as an absent key. Absent means "infer from the metamodel";
+		// collapsing an empty value to outgoing here would let a config walk
+		// straight past the ambiguity check that makes a self-referencing
+		// relation an error. Leave it empty so the single inference rule in
+		// InferDirection owns the decision.
+		*d = ""
+	case "outgoing":
 		*d = DirectionOutgoing
 	case "incoming":
 		*d = DirectionIncoming
