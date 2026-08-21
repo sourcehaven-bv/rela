@@ -10,18 +10,18 @@ import (
 // tierA runs the pure-policy checks: escalation foot-guns and dead/inert
 // config that need no metamodel. Order within the slice doesn't matter —
 // Audit sorts the combined result.
-func tierA(p *acl.Policy) []Finding {
+func tierA(p *acl.Policy, perms PermissionConsumer) []Finding {
 	f := make([]Finding, 0, 8)
-	f = append(f, checkUngatedMembership(p)...)     // A1 / A1b
-	f = append(f, checkUngatedRoleRelations(p)...)  // A2
-	f = append(f, checkEveryonePrivileged(p)...)    // A3
-	f = append(f, checkAssignmentsToUnknown(p)...)  // A4
-	f = append(f, checkConfersUnknown(p)...)        // A5
-	f = append(f, checkUngrantablePermission(p)...) // A6
-	f = append(f, checkDeadPermissions(p)...)       // A7
-	f = append(f, checkWildcardWriteSprawl(p)...)   // A9
-	f = append(f, checkNameWhitespace(p)...)        // A10
-	f = append(f, checkCeilings(p)...)              // A11 / A12 / A13
+	f = append(f, checkUngatedMembership(p)...)      // A1 / A1b
+	f = append(f, checkUngatedRoleRelations(p)...)   // A2
+	f = append(f, checkEveryonePrivileged(p)...)     // A3
+	f = append(f, checkAssignmentsToUnknown(p)...)   // A4
+	f = append(f, checkConfersUnknown(p)...)         // A5
+	f = append(f, checkUngrantablePermission(p)...)  // A6
+	f = append(f, checkDeadPermissions(p, perms)...) // A7
+	f = append(f, checkWildcardWriteSprawl(p)...)    // A9
+	f = append(f, checkNameWhitespace(p)...)         // A10
+	f = append(f, checkCeilings(p)...)               // A11 / A12 / A13
 	return f
 }
 
@@ -174,7 +174,23 @@ func checkUngrantablePermission(p *acl.Policy) []Finding {
 
 // A7 — a role declares a permission that no requires_permission references:
 // dead config, possibly a typo of a real gate.
-func checkDeadPermissions(p *acl.Policy) []Finding {
+//
+// "Referenced" is not the same as "gated by a requires_permission". rela's own
+// global permissions ([acl.BuiltinPermissions]) are consumed by read paths that
+// have no relation gate at all, so treating requires_permission as the only
+// consumer reported live, shipped config as dead — and the remediation hint
+// ("reference it in a gate, or remove it") would have revoked a working grant.
+// They are seeded as used here.
+//
+// The same reasoning extends to permissions gating a data-entry UI surface,
+// which the policy cannot see at all. Those arrive through the caller-supplied
+// [PermissionConsumer] — and when none is supplied the check does not run,
+// because "nobody told me what the UI references" is not evidence that nothing
+// does.
+func checkDeadPermissions(p *acl.Policy, perms PermissionConsumer) []Finding {
+	if perms == nil {
+		return nil
+	}
 	// Collect every permission referenced by a requires_permission gate.
 	used := map[string]bool{}
 	for _, def := range p.RoleRelations {
@@ -182,19 +198,31 @@ func checkDeadPermissions(p *acl.Policy) []Finding {
 			used[def.RequiresPermission] = true
 		}
 	}
+	// Permissions rela itself defines and consumes are live by definition.
+	for _, perm := range acl.BuiltinPermissions() {
+		used[perm] = true
+	}
+	// Permissions referenced outside acl.yaml (data-entry UI gates).
+	for _, perm := range perms.UsedPermissions() {
+		if perm != "" {
+			used[perm] = true
+		}
+	}
 	var f []Finding
 	for _, name := range sortedRoleNames(p) {
-		perms := append([]string(nil), p.Roles[name].Permissions...)
-		sort.Strings(perms)
-		for _, perm := range perms {
+		rolePerms := append([]string(nil), p.Roles[name].Permissions...)
+		sort.Strings(rolePerms)
+		for _, perm := range rolePerms {
 			if used[perm] {
 				continue
 			}
 			f = append(f, Finding{
 				Rule: "A7-dead-permission", Severity: Low, Subject: name,
-				Detail: fmt.Sprintf("role %q grants permission %q which no role_relations.requires_permission "+
-					"references; the permission is dead", name, perm),
-				Fix: fmt.Sprintf("reference %q in a requires_permission gate, or remove it (check for a typo)", perm),
+				Detail: fmt.Sprintf("role %q grants permission %q which nothing references — no "+
+					"role_relations.requires_permission gate, no data-entry.yaml permission: key, "+
+					"and it is not one of rela's built-in permissions; the permission is dead", name, perm),
+				Fix: fmt.Sprintf("reference %q from a requires_permission gate or a data-entry.yaml "+
+					"permission: key, or remove it (check for a typo)", perm),
 			})
 		}
 	}

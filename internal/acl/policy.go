@@ -57,6 +57,21 @@ const PermHistoryRead = "history:read"
 // documented in docs/acl-security.md alongside it.
 const PermHistoryReadRedacted = "history:read-redacted"
 
+// BuiltinPermissions returns every global named permission rela itself ships
+// and consumes. These are granted through a role's `permissions:` list exactly
+// like the operator-defined delegate-X permissions, but — unlike those — they
+// are consumed by rela's own read paths, never by a
+// `role_relations.requires_permission` gate.
+//
+// It exists so consumers that reason about which permissions are *referenced*
+// (notably the `rela acl audit` dead-permission check) can tell a live
+// built-in from an operator's typo. A new global permission constant MUST be
+// added here; the alternative — each consumer hardcoding its own list — is
+// what let history:read be reported as dead config while it was in use.
+func BuiltinPermissions() []string {
+	return []string{PermHistoryRead, PermHistoryReadRedacted}
+}
+
 // Policy is the declarative ACL configuration parsed from `acl.yaml`
 // at the project root.
 //
