@@ -1,0 +1,9 @@
+---
+id: RR-2GBB0V
+type: review-response
+title: 'Hint-arm rationale is false: unschema''d fields ARE editable'
+finding: 'PLAN-DMQFRJ Research §3 justifies ignoring `widget:` on the discriminated-union hint arm with the claim that an unknown field has ''nothing to read, nowhere to save'' and is ''display-only by construction''. The code contradicts this. isFieldWritable (frontend/src/utils/affordances.ts:12-18) returns `verdict?.writable !== false`, so a MISSING verdict returns true -- deliberately and documented. SectionEditForm.vue:164 computes `writable` with no inspection of `field.kind`, and the edit branch at :288 (`v-else-if="row.writable"`) likewise ignores kind. So a hint-arm field on `render: input` with no _fields verdict renders an EDITABLE widget and PATCHes via onFieldUpdate. What the template actually does on the hint arm is pass `:property-def="undefined"` (:298, :314) -- ''no PropertyDef to hand the widget'', which is NOT the same as ''not editable''. The plan conflated the two. The decision (ignore + warn) survives, but on a different and stronger argument: with no PropertyDef the server cannot type-check the widget, so AC4''s compatibility rule is unenforceable on that arm, and honouring `widget:` there would ship an unvalidated widget into a live edit control (e.g. checkbox PATCHing a boolean into a string property).'
+severity: critical
+resolution: Verified affordances.ts:12-18 and SectionEditForm.vue:164,288 -- confirmed. Kept the ignore+warn decision, replaced the rationale in PLAN-DMQFRJ Research §3 with the unvalidatable-without-PropertyDef argument. Added a hint-arm negative test to the Test Plan asserting the override is provably dropped, guarding against a future refactor plumbing `widget` into the shared half of the union where both arms would see it.
+status: addressed
+---

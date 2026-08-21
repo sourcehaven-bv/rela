@@ -24,6 +24,16 @@ export interface ViewSectionField {
   // Opting in to 'input' does NOT grant editability: the ACL verdict in
   // `_fields` still decides, so 'input' on a read-only field renders display.
   render?: 'input' | 'display'
+  // Config's widget override (TKT-3R7RF3): the registered widget name to use
+  // instead of the type-derived default. Absent means "use the default",
+  // i.e. defaultWidgetFor's dispatch — the server does NOT resolve it.
+  //
+  // Honoured only when the property is in the schema (the 'schema' arm of
+  // SectionEditField). A field the metamodel doesn't declare routes through
+  // resolveFromHint, which takes no name, and the server could not have
+  // type-checked the override for it either (RR-2GBB0V) — config load emits a
+  // warning for that case rather than silently doing nothing.
+  widget?: string
 }
 
 // Entity data for view sections.

@@ -46,6 +46,11 @@ export type SectionEditField = {
   // config-driven display field would otherwise look like a revoked
   // permission and fire a spurious "Permission changed" toast (RR-PGGRBD).
   render?: 'input' | 'display'
+  // Config's widget override (TKT-3R7RF3). Applied on the 'schema' arm only —
+  // see widgetRows. Carried on the shared half of the union rather than inside
+  // the 'schema' variant so buildSectionEditFields can assign it uniformly;
+  // the ARM decides whether it is honoured, not the presence of the field.
+  widget?: string
 } & (
   | { kind: 'schema'; propertyDef: PropertyDef }
   | { kind: 'hint'; routingHint: WidgetRoutingHint }
@@ -146,9 +151,16 @@ interface WidgetRow {
 
 const widgetRows = computed<WidgetRow[]>(() =>
   props.fields.map((field) => {
+    // The config override applies ONLY on the schema arm. The hint arm fires
+    // for a property the metamodel does not declare, so there is no
+    // PropertyDef the server could have type-checked the widget against
+    // (RR-2GBB0V) — honouring it here would push an unvalidated widget into a
+    // live edit control, since an unschema'd field is editable (a missing
+    // verdict reads as writable), not read-only. Config load warns instead.
+    // resolve() already falls back to the type default on an unknown name.
     const widget =
       field.kind === 'schema'
-        ? defaultRegistry.resolve(undefined, field.propertyDef)
+        ? defaultRegistry.resolve(field.widget, field.propertyDef)
         : defaultRegistry.resolveFromHint(field.routingHint)
     return {
       field,

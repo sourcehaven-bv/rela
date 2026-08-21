@@ -123,6 +123,78 @@ export class EntityPage extends BasePage {
     return this.page.locator('.properties-list').first();
   }
 
+  /** A detail-page section located by its heading, rather than by position.
+   *  The entry-section helpers above use `.first()`, which cannot address a
+   *  second properties section on the same page (TKT-3R7RF3 adds one). */
+  private sectionByHeading(heading: string) {
+    return this.page
+      .locator('.view-section', { has: this.page.getByRole('heading', { name: heading }) })
+      .first();
+  }
+
+  /** The edit control SectionEditForm renders for a property. Its id is
+   *  assigned by the form (`section-edit-<property>`), so this addresses the
+   *  widget's own element rather than a wrapper. */
+  private sectionFieldControl(heading: string, property: string) {
+    return this.sectionByHeading(heading).locator(`#section-edit-${property}`);
+  }
+
+  /** Assert a property renders as a TEXTAREA — the load-bearing widget-override
+   *  case (TKT-3R7RF3). A string property's type default is TextWidget's
+   *  `<input>`, so a textarea here can only come from `widget: textarea`. */
+  async expectSectionFieldIsTextarea(heading: string, property: string) {
+    const control = this.sectionFieldControl(heading, property);
+    await expect(control).toBeVisible();
+    await expect(control).toHaveJSProperty('tagName', 'TEXTAREA');
+  }
+
+  /** Assert a property renders as an ENABLED checkbox, i.e. the override
+   *  reached the EDIT arm rather than a display span or a disabled control. */
+  async expectSectionCheckboxEnabled(heading: string, property: string) {
+    const box = this.sectionFieldControl(heading, property);
+    await expect(box).toBeVisible();
+    await expect(box).toHaveAttribute('type', 'checkbox');
+    await expect(box).toBeEnabled();
+  }
+
+  /** Assert an overridden checkbox is checked (or not). Separate from the
+   *  enabled-assertion so a spec can prove a toggle SURVIVED a reload, which
+   *  is what distinguishes a real inline edit from a local DOM change. */
+  async expectSectionCheckboxChecked(heading: string, property: string, checked = true) {
+    const box = this.sectionFieldControl(heading, property);
+    if (checked) {
+      await expect(box).toBeChecked();
+    } else {
+      await expect(box).not.toBeChecked();
+    }
+  }
+
+  /** Click a checkbox rendered by a widget override and return its new state.
+   *
+   *  Waits for the autosave PATCH to land before returning. SectionEditForm
+   *  debounces saves by 800ms, so a caller that reloads immediately races the
+   *  timer and sees the pre-edit value — which looks exactly like a dropped
+   *  write rather than a test that asserted too early. */
+  async toggleSectionCheckbox(heading: string, property: string): Promise<boolean> {
+    const box = this.sectionFieldControl(heading, property);
+    // Match the PATCH for THIS entity, not any PATCH: on a page with more
+    // than one autosaving control a broad predicate resolves on the wrong
+    // request, and the caller's reload then races the real save — the exact
+    // flake this wait exists to remove.
+    const entityId = this.page.url().split('/').pop() ?? '';
+    const patched = this.page.waitForResponse(
+      (r) =>
+        r.url().includes('/api/v1/') &&
+        r.url().includes(entityId) &&
+        r.request().method() === 'PATCH' &&
+        r.status() < 400,
+      { timeout: 5000 },
+    );
+    await box.click();
+    await patched;
+    return box.isChecked();
+  }
+
   /** Assert the entry properties section renders as DISPLAY values: visible,
    *  but with no inline-edit form mounted (TKT-HOIX1 — the `render: display`
    *  default). */

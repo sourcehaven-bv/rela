@@ -15,7 +15,11 @@
 --       entity_type: ticket
 --       script: docs/ticket_summary.lua
 
-local id = rela.entity_id
+-- `rela.document.entry_id`, NOT `rela.entity_id` — the latter is not bound by
+-- the Lua runtime, so it was silently nil and every render of this document
+-- failed with "bad argument #1 to get_entity (string expected, got nil)".
+-- The sibling category_report.lua already used the documented name.
+local id = rela.document.entry_id
 local e = rela.get_entity(id)
 
 if not e then

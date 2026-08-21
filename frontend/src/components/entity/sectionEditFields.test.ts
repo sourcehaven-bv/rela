@@ -433,3 +433,52 @@ describe('rowShouldRouteToInlineEdit (TKT-IHC7C cap behaviour)', () => {
     expect(rowShouldRouteToInlineEdit(row, 1, CAP, schemaResolver)).toBe(false)
   })
 })
+
+// TKT-3R7RF3: the `widget:` override is carried from the wire onto
+// SectionEditField, on BOTH union arms. Which arm honours it is
+// SectionEditForm's decision (widgetRows), not this builder's — carrying it
+// uniformly is what keeps that decision in one place.
+describe('widget override plumbing (TKT-3R7RF3)', () => {
+  it('carries widget onto a schema-arm field', () => {
+    const fields = buildSectionEditFields(
+      [{ property: 'status', label: 'Status', widget: 'textarea' }],
+      { type: 'ticket' },
+      () => ({ type: 'enum', values: ['a'] }) as PropertyDef,
+    )
+    expect(fields[0].kind).toBe('schema')
+    expect(fields[0].widget).toBe('textarea')
+  })
+
+  it('carries widget onto a hint-arm field too (dropped later, not here)', () => {
+    const fields = buildSectionEditFields(
+      [{ property: 'mystery', label: 'Mystery', widget: 'textarea' }],
+      { type: 'ticket' },
+      () => undefined,
+    )
+    expect(fields[0].kind).toBe('hint')
+    // Carried, so the drop stays a single decision in widgetRows rather than
+    // being spread across the builder as well (RR-2GBB0V).
+    expect(fields[0].widget).toBe('textarea')
+  })
+
+  it('leaves widget undefined when the config omits it', () => {
+    const fields = buildSectionEditFields(
+      [{ property: 'status', label: 'Status' }],
+      { type: 'ticket' },
+      () => ({ type: 'enum', values: ['a'] }) as PropertyDef,
+    )
+    expect(fields[0].widget).toBeUndefined()
+  })
+
+  // The widget axis must not disturb the render/ACL routing decision.
+  it('does not affect inline-edit routing', () => {
+    const withWidget = sectionShouldRouteToInlineEdit(
+      [{ property: 'status', label: 'Status', render: 'display', widget: 'textarea' }],
+      { type: 'ticket', _fields: { status: { writable: true } } },
+      () => ({ type: 'enum', values: ['a'] }) as PropertyDef,
+    )
+    // render: display still wins — a widget override is presentation, not
+    // permission, and cannot promote a display field into an edit host.
+    expect(withWidget).toBe(false)
+  })
+})
