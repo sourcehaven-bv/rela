@@ -17,6 +17,8 @@ export interface Config {
   lists: Record<string, ListConfig>
   views: Record<string, ViewConfig>
   kanbans: Record<string, KanbanConfig>
+  /** Optional: the Go side omits the key entirely when no calendar is configured. */
+  calendars?: Record<string, CalendarConfig>
   dashboard?: DashboardConfig
   actions?: Record<string, ActionConfig>
   navigation: NavigationEntry[]
@@ -341,6 +343,70 @@ export interface KanbanCardField {
   label?: string
 }
 
+/**
+ * CalendarConfig is a month/week grid over date-bearing entities.
+ *
+ * Unlike a kanban it takes a LIST of sources: several entity types on one grid
+ * is the point of a calendar, whereas a board groups one type by one property.
+ *
+ * Defaults (default_view, week_start, day_start, day_end, max_events_per_day,
+ * and each source's max_span) are filled in server-side at config load, so the
+ * SPA never has to re-implement them and the wire value is never empty.
+ */
+export interface CalendarConfig {
+  title?: string
+  /** Markdown rendered above the grid. */
+  header?: string
+  /** Markdown rendered below the grid. */
+  footer?: string
+  default_view: CalendarViewKind
+  week_start: CalendarWeekStart
+  sources: CalendarSourceConfig[]
+  /** Extra fields on an event chip. Absent means title only. */
+  event?: CalendarEventConfig
+  /** Bounds of the week-view hour axis, "HH:MM". */
+  day_start: string
+  day_end: string
+  /** Chips per month-view day cell before collapsing into "+N more". */
+  max_events_per_day: number
+  edit_form?: string
+  create_form?: string
+  filter_controls?: FilterControl[]
+}
+
+export type CalendarViewKind = 'month' | 'week'
+export type CalendarWeekStart = 'monday' | 'sunday'
+
+/** A named palette token; the theme owns what the colour actually is. */
+export type CalendarColor = 'blue' | 'green' | 'amber' | 'red' | 'violet' | 'slate'
+
+/**
+ * CalendarSourceConfig projects one entity type onto the grid.
+ *
+ * Field names match a feed source so a single YAML anchor can serve both a
+ * calendar and an ICS feed; `entity` carries the same yaml/json asymmetry as
+ * lists and kanbans (yaml `entity_type`, json `entity`).
+ */
+export interface CalendarSourceConfig {
+  entity: string
+  where?: string[]
+  /** Date- or datetime-typed property placing the event on the grid. */
+  date: string
+  /** Optional end property; always the same kind as `date`. */
+  end_date?: string
+  summary?: string
+  description?: string
+  color?: CalendarColor
+  /** Days to look back for events starting before the window (with end_date). */
+  max_span: number
+}
+
+/** CalendarEventConfig is the kanban `card:` analogue for an event chip. It has
+ * no title field: the source's `summary` already names the title property. */
+export interface CalendarEventConfig {
+  fields?: KanbanCardField[]
+}
+
 export interface KanbanCard {
   title: string
   subtitle?: string
@@ -513,6 +579,7 @@ export interface NavigationEntry {
   list?: string
   dashboard?: boolean
   kanban?: string
+  calendar?: string
   search?: boolean
   settings?: boolean
   action?: string
