@@ -724,15 +724,19 @@ The `create_entity` automation with `if_exists: skip` ensures no duplicates.
    - If enhancement or docs ticket, manually create `docs-checklist`
    - Complete all checks before marking done
 
-4. **Create PR** (before `done`)
-   - Run `/pr` to create PR and monitor CI until all checks pass
-   - Fixes any CI failures (lint, test, coverage) automatically
-   - Document PR URL in review-checklist
-
-5. **Complete** (status: `done`)
+4. **Complete** (status: `done`)
    - All linked checklists must have `status=done`
    - All checklist items must be checked or skipped with reason
-   - PR merged or ready to merge
+
+5. **Create PR** (after `done`)
+   - Run `/pr` to create PR and monitor CI until all checks pass
+   - Fixes any CI failures (lint, test, coverage) automatically
+   - The PR URL and CI status are NOT recorded in the review-checklist.
+     They post-date it — `/pr` gates on the ticket already being `done` and
+     validating clean, and a `done` checklist may have no unchecked items, so
+     an item asking for the PR URL could only be satisfied by a PR that does
+     not exist yet (TKT-UFV01M). GitHub records both; the branch and commit
+     messages carry the ticket ID.
 
 **Bug Workflow Automations:**
 
