@@ -5,14 +5,14 @@ title: 'Mail foundation: Sender interface (SMTP + in-memory), best-effort outbox
 kind: enhancement
 priority: medium
 effort: m
-status: ready
+status: planning
 ---
 
 ## Description
 
 First of three. Ships the send path end-to-end with SMTP, plus an in-memory
 sender for local dev and tests. No declarative config (TKT-U2R7GU) and no Lua
-(TKT-LUA).
+(TKT-DS1CR6).
 
 `internal/mail` (Sender interface, SMTP + memory transports, config, best-effort
 outbox) and `internal/mailrender` (markdown → sanitized, CSS-inlined, branded
@@ -87,7 +87,7 @@ rather than a second theme mechanism.
 
 ## Scope: IS NOT
 
-- No HTTP-API transport and no Lua script transport — TKT-LUA. `Sender` must not
+- No HTTP-API transport and no Lua script transport — TKT-DS1CR6. `Sender` must not
 acquire anything that presumes an in-process transport, or that ticket has to
 reshape it.
 - No `mail_templates:` config, scheduler/automation triggers, recipient resolution, or
@@ -121,7 +121,7 @@ documenting best-effort, so the limit is pinned rather than discovered.
 - **Mail lost on restart** — accepted and documented; retired by IDEA-WIJ2H1.
 - **`Sender` shaped around SMTP** — the memory impl gives a second shape immediately,
 but neither is remote-API-shaped. Sanity-check the interface against the
-HTTP/script transport sketch in TKT-LUA before finalising, so that ticket is not
+HTTP/script transport sketch in TKT-DS1CR6 before finalising, so that ticket is not
 forced to reshape it.
 - **Rendering regressions** across mail clients — mitigated by golden files; a full
 client matrix is out of scope.
