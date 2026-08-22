@@ -103,4 +103,12 @@ waved through as "N/A".
 - [x] All CI checks pass
 - [x] PR URL documented below
 
-**PR:** see ticket — opened from branch `fix/checkbox-widget-styling-cbstyle`.
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1405
+
+**Local `just test` note.** The full race-enabled Go suite fails locally on
+`TestAnalyzeProperties_StopsScanningAtCap` (`internal/dataentry`) — a 10-minute
+`testing` timeout after the test ran 8m20s, not an assertion failure. This
+branch changes **zero Go files** (`git diff --stat develop...HEAD -- '*.go'` is
+empty), so it cannot be the cause; the test dates to #1337 and is being
+reproduced on a clean `develop` worktree to confirm. CI is the independent
+verdict and is authoritative here.
