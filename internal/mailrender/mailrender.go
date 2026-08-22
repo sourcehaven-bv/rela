@@ -53,7 +53,7 @@
 // Palette tokens sit in between — operator-supplied, but they land in CSS, so
 // they are validated as colors and rejected otherwise (see [ValidatePalette]).
 //
-// Nil: [Render] rejects a nil Message; [New] rejects a nil Options.
+// Nil: [Renderer.Render] rejects a nil Message; [New] rejects a nil Options.
 package mailrender
 
 import (

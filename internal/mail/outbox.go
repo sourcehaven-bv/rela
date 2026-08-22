@@ -105,6 +105,9 @@ type Outbox struct {
 	// could observe a nil cancel while a worker is running, take the
 	// "never started" path, and leave the goroutine alive for the life of the
 	// process. Constructing here removes the shared write entirely.
+	//nolint:containedctx // deliberate: see the field comment above. This is a
+	// worker LIFETIME context owned by the Outbox, not a per-call context
+	// smuggled through a struct — Stop is the only thing that cancels it.
 	ctx    context.Context
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -131,7 +134,9 @@ func NewOutbox(sender Sender, cfg OutboxConfig) (*Outbox, error) {
 	// A detached lifetime context, deliberately not derived from any request
 	// ctx: the worker outlives the operation that enqueued a message, and
 	// tying it to a request would cancel delivery when that request finished.
-	ctx, cancel := context.WithCancel(context.Background())
+	// The cancel func is stored on the Outbox and invoked by Stop, which is
+	// nil-safe and idempotent; it is not dropped.
+	ctx, cancel := context.WithCancel(context.Background()) //nolint:gosec // G118: cancel is called by Stop
 
 	return &Outbox{
 		sender: sender,
@@ -183,7 +188,7 @@ func (o *Outbox) Len() int { return len(o.ch) }
 // cannot kill it.
 //
 // This stays an edge case only because [Sender] requires implementations to
-// honour ctx — a transport that ignores cancellation makes it the norm, and in
+// honor ctx — a transport that ignores cancellation makes it the norm, and in
 // multi-tenant deployments, where Close runs on every tenant eviction against a
 // shared provider, those abandoned connections accumulate. Hanging shutdown
 // instead would be worse, so the bound stays and the cost is written down.

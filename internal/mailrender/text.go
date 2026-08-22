@@ -222,7 +222,7 @@ func (r *Renderer) walkBlocks(b *strings.Builder, n ast.Node, src []byte, depth 
 			// as blocks loses the row structure; render each row's cells on
 			// one line instead. Anything else falls back to its inline text
 			// rather than being dropped silently.
-			r.writeExtensionBlock(b, c, src, depth)
+			r.writeExtensionBlock(b, c, src)
 		}
 	}
 }
@@ -233,7 +233,7 @@ func (r *Renderer) walkBlocks(b *strings.Builder, n ast.Node, src []byte, depth 
 // A table's rows are block nodes whose children are inline cells. Recursing
 // through walkBlocks would emit each cell as its own paragraph and lose the
 // row; joining a row's cells with a separator keeps it legible.
-func (r *Renderer) writeExtensionBlock(b *strings.Builder, n ast.Node, src []byte, depth int) {
+func (r *Renderer) writeExtensionBlock(b *strings.Builder, n ast.Node, src []byte) {
 	if n.Type() != ast.TypeBlock {
 		b.WriteString(r.inlineText(n, src))
 		return
@@ -251,7 +251,7 @@ func (r *Renderer) writeExtensionBlock(b *strings.Builder, n ast.Node, src []byt
 	}
 
 	for c := n.FirstChild(); c != nil; c = c.NextSibling() {
-		r.writeExtensionBlock(b, c, src, depth)
+		r.writeExtensionBlock(b, c, src)
 	}
 	if n.Parent() != nil && n.Parent().Type() == ast.TypeDocument {
 		b.WriteString("\n")
