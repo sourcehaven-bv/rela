@@ -23,10 +23,16 @@ func loadDataMigrations(svc *writeServices) ([]*datamigration.File, error) {
 	return datamigration.LoadDir(os.DirFS(svc.Paths.Root))
 }
 
+// migrationLock builds the per-store lock the same way appbuild does, so
+// CLI runs and server-side gate/GC writers exclude each other.
+func migrationLock(svc *writeServices) datamigration.MigrationLock {
+	return datamigration.LockFor(svc.Store, svc.Paths.CacheDir)
+}
+
 // currentShape loads the marker (bootstrapping it via the gate when absent)
 // and returns the shape the data conforms to plus the gate for reuse.
 func evaluateGate(ctx context.Context, svc *writeServices) (*datamigration.Gate, *datamigration.Verdict, error) {
-	gate, err := datamigration.NewGate(svc.State)
+	gate, err := datamigration.NewGate(svc.State, migrationLock(svc))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -186,6 +192,7 @@ func (c *MigrateDataCmd) Run(ctx context.Context, svc *writeServices) error {
 		Audit:    svc.Audit,
 		ScriptFS: os.DirFS(svc.Paths.Root),
 		Versions: versionCaptureFor(svc),
+		Lock:     migrationLock(svc),
 	})
 	if err != nil {
 		return err
@@ -250,6 +257,7 @@ func (c *MigrateGCCmd) Run(ctx context.Context, svc *writeServices) error {
 		Verdicts: gate,
 		Versions: versionCaptureFor(svc),
 		Grace:    c.Grace,
+		Lock:     migrationLock(svc),
 	})
 	if err != nil {
 		return err

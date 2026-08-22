@@ -1240,7 +1240,7 @@ func assemble(
 	// changes, warn on incompatible ones) and start the drift GC sweep
 	// (TKT-0C57FS). Never fails boot; the stop func is torn down in Close —
 	// per-assembled, like the search closer.
-	gcStop := startDataMigration(stateKV, base.meta, st, cfg.Audit, versions)
+	gcStop := startDataMigration(stateKV, base.meta, st, cfg.Audit, versions, cfg.Paths.CacheDir)
 
 	return &Services{
 		gcStop:          gcStop,

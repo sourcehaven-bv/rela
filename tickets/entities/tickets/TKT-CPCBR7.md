@@ -3,9 +3,9 @@ id: TKT-CPCBR7
 type: ticket
 title: Migration lock as a pluggable mini-service (postgres advisory lock, fs lock file)
 kind: enhancement
-priority: low
+priority: medium
 effort: m
-status: backlog
+status: in-progress
 ---
 
 ## Problem
