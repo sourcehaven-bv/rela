@@ -34,6 +34,11 @@ type fakeSMTP struct {
 	// can assert the client REFUSES rather than downgrading to plaintext.
 	offerSTARTTLS bool
 
+	// echoAuthOnFailure makes AUTH fail with a 535 that quotes the credential
+	// line back — what a real server does, and the only way to exercise
+	// redaction against an error that genuinely carries the secret.
+	echoAuthOnFailure bool
+
 	mu       sync.Mutex
 	messages []fakeMessage
 	authUser string
@@ -203,6 +208,12 @@ func (s *fakeSMTP) handle(conn net.Conn) {
 
 		case "AUTH":
 			s.recordAuth(rest)
+			if s.echoAuthOnFailure {
+				if write("535 5.7.8 authentication failed for credentials: "+rest) != nil {
+					return
+				}
+				continue
+			}
 			if write("235 ok") != nil {
 				return
 			}

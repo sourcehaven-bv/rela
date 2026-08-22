@@ -2,6 +2,7 @@ package mail_test
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"os"
 	"path/filepath"
@@ -302,6 +303,47 @@ func TestSMTP_CredentialNeverInError(t *testing.T) {
 	})
 	require.Error(t, err)
 	require.NotContains(t, err.Error(), secret)
+}
+
+// TestSMTP_RedactsCredentialEchoedByServer covers the case the
+// connection-refused test cannot: a server that quotes the AUTH exchange back
+// in its rejection.
+//
+// TestSMTP_CredentialNeverInError would pass with redact deleted, because a
+// refused connection never contains the credential in any form. This one fails
+// without it, in both the plaintext and base64 shapes a real server uses.
+func TestSMTP_RedactsCredentialEchoedByServer(t *testing.T) {
+	// No t.Parallel: t.Setenv.
+	const secret = "hunter2-very-secret"
+	t.Setenv("RELA_TEST_ECHO_PASSWORD", secret)
+
+	fake, pool := newFakeSMTP(t, true)
+	fake.echoAuthOnFailure = true
+
+	sender, err := mail.NewSMTPSender(&mail.Config{
+		Transport:   mail.TransportSMTP,
+		Host:        fake.host(),
+		Port:        fake.port(),
+		Username:    "relay",
+		PasswordEnv: "RELA_TEST_ECHO_PASSWORD",
+		From:        "rela@example.com",
+	}, mail.WithRootCAs(pool))
+	require.NoError(t, err)
+
+	err = sender.Send(context.Background(), mail.Message{
+		To:      []mail.Address{{Email: "to@example.com"}},
+		Subject: "Hello",
+		Text:    []byte("hi"),
+	})
+	require.Error(t, err)
+
+	msg := err.Error()
+	require.NotContains(t, msg, secret, "plaintext credential leaked into the error")
+	require.NotContains(t, msg, base64.StdEncoding.EncodeToString([]byte(secret)),
+		"base64 credential leaked into the error")
+	require.NotContains(t, msg, base64.StdEncoding.EncodeToString([]byte("\x00"+secret)),
+		"AUTH PLAIN payload leaked into the error")
+	require.Contains(t, msg, "<REDACTED>", "redaction did not fire")
 }
 
 func TestNewSMTPSender_Rejects(t *testing.T) {

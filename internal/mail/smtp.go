@@ -107,22 +107,28 @@ func (s *SMTPSender) Send(ctx context.Context, m Message) error {
 
 	client, err := gomail.NewClient(s.cfg.Host, opts...)
 	if err != nil {
-		return s.wrap("build smtp client", err, password)
+		return sanitizedErr("build smtp client", err, password)
 	}
 
 	if err := client.DialAndSendWithContext(ctx, msg); err != nil {
-		return s.wrap("send", err, password)
+		return sanitizedErr("send", err, password)
 	}
 	return nil
 }
 
-// wrap annotates an error, scrubbing the credential.
+// sanitizedErr builds an error whose text cannot carry the credential.
 //
 // An SMTP server's rejection can echo parts of the exchange, and these errors
-// travel into logs and, via `rela validate`, onto a terminal. The structure of
-// the code already keeps the password out of most paths; this is the backstop
-// for the ones it does not.
-func (s *SMTPSender) wrap(op string, err error, password string) error {
+// travel into logs and — via the outbox's retry logging — into any log sink the
+// operator has configured. Redaction happens HERE, at the boundary where the
+// password is still in scope, and the returned error wraps only the scrubbed
+// string: the original error is deliberately NOT wrapped with %w, because
+// errors.Unwrap would then hand a caller the unredacted text back.
+//
+// A free function rather than a method so it is obvious from the signature that
+// nothing but these three values is involved, and so no receiver field can
+// reintroduce the credential later.
+func sanitizedErr(op string, err error, password string) error {
 	return fmt.Errorf("mail: %s: %s", op, redact(err.Error(), password))
 }
 

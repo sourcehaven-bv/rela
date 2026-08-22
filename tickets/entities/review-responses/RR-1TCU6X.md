@@ -1,0 +1,9 @@
+---
+id: RR-1TCU6X
+type: review-response
+title: 'CodeQL: SMTP password flows from PasswordEnv into outbox retry logging (2 high-severity alerts)'
+finding: 'CodeQL flagged go/clear-text-logging at internal/mail/outbox.go:252 and :257 — ''Sensitive data returned by an access to PasswordEnv flows to a logging call.'' The taint path is real: os.Getenv(PasswordEnv) reaches SMTPSender.Send, the error from a failed send propagates to the outbox, and the outbox logs err on both the retry and give-up branches. Runtime behaviour was already safe because redact() scrubbed the error text before it escaped, so this was a false positive about actual leakage — but a legitimate observation about design: correctness rested on a single strings.ReplaceAll in a helper someone could later delete, and the existing test (TestSMTP_CredentialNeverInError) used a connection-refused error that never contains the credential in any form, so it would have passed with redact() removed entirely.'
+severity: significant
+resolution: 'Strengthened the guarantee rather than suppressing the alert. redact now scrubs the ENCODED forms a server can echo — base64 of the password (AUTH LOGIN) and of the AUTH PLAIN payload — not just the plaintext, which a substring match would have sailed past; forms are replaced longest-first so a shorter one cannot corrupt a longer. The wrap helper became the free function sanitizedErr, documented as deliberately NOT wrapping with %w so errors.Unwrap cannot hand a caller the unredacted text back. Added TestSMTP_RedactsCredentialEchoedByServer, driven by a fake that returns a 535 quoting the AUTH line — the case the old test could not reach — and mutation-tested it: with redaction disabled it fails with ''AUTH PLAIN payload leaked into the error'', so it catches a real leak rather than passing vacuously.'
+status: addressed
+---

@@ -38,8 +38,10 @@ package mail
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -200,7 +202,33 @@ func redact(s string, secrets ...string) string {
 		if sec == "" {
 			continue
 		}
-		s = strings.ReplaceAll(s, sec, "<REDACTED>")
+		// The plaintext, plus the encodings a server can echo back. AUTH PLAIN
+		// and AUTH LOGIN put base64 on the wire, so a 535 response quoting the
+		// offending line contains the credential in that form and a plaintext
+		// substring match would sail straight past it.
+		for _, form := range encodedForms(sec) {
+			s = strings.ReplaceAll(s, form, redactedPlaceholder)
+		}
 	}
 	return s
+}
+
+// redactedPlaceholder is what replaces a credential in any string bound for a
+// log or an error.
+const redactedPlaceholder = "<REDACTED>"
+
+// encodedForms returns the representations of sec that could appear in an SMTP
+// server's response: the plaintext, its base64 encoding (AUTH LOGIN sends the
+// password alone), and the AUTH PLAIN payload's encoding of it.
+//
+// Longest first, so replacing a shorter form cannot corrupt a longer one that
+// contains it.
+func encodedForms(sec string) []string {
+	forms := []string{
+		base64.StdEncoding.EncodeToString([]byte("\x00" + sec)),
+		base64.StdEncoding.EncodeToString([]byte(sec)),
+		sec,
+	}
+	sort.Slice(forms, func(i, j int) bool { return len(forms[i]) > len(forms[j]) })
+	return forms
 }
