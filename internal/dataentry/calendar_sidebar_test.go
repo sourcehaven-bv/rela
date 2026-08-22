@@ -63,7 +63,7 @@ func sidebarItemsByLabel(ctx context.Context, t *testing.T, app *App) map[string
 // icon are minted server-side, and — unlike a list or kanban — no count is
 // attached.
 //
-// The absent count is the behaviour under test, not an oversight. A list counts
+// The absent count is the behavior under test, not an oversight. A list counts
 // the set it displays; a calendar displays one period, so a total over all time
 // could never agree with what is on screen and would never change as the user
 // navigates. The sibling list entry is asserted to still carry a count, so a

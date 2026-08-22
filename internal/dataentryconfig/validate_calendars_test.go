@@ -3,12 +3,14 @@ package dataentryconfig
 import (
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 // calendarMetamodel extends the feed fixture with the shapes a calendar has to
 // reject: a multi-valued date, a custom-format date, and a second entity type
-// so multi-source behaviour can be exercised.
+// so multi-source behavior can be exercised.
 func calendarMetamodel() *metamodel.Metamodel {
 	meta := feedMetamodel()
 	task := meta.Entities["task"]
@@ -311,6 +313,7 @@ func TestNormalizeCalendars(t *testing.T) {
 	if got := authored.Calendars["cal"]; got.DefaultView != "week" || got.WeekStart != "sunday" ||
 		got.DayStart != "06:00" || got.DayEnd != "22:00" || got.MaxEventsPerDay != 9 ||
 		got.Sources[0].MaxSpan != 7 {
+
 		t.Errorf("normalization overwrote authored values: %+v", got)
 	}
 }
@@ -321,6 +324,7 @@ func TestParseClockMinutes(t *testing.T) {
 		want   int
 		wantOK bool
 	}{
+
 		{"00:00", 0, true},
 		{"08:00", 480, true},
 		{"23:59", 1439, true},
@@ -338,5 +342,78 @@ func TestParseClockMinutes(t *testing.T) {
 				t.Errorf("parseClockMinutes(%q) = %d,%v want %d,%v", tt.in, got, ok, tt.want, tt.wantOK)
 			}
 		})
+	}
+}
+
+// TestCheckUnknownKeys_AnchorHolder covers the key that makes the documented
+// calendar/feed reuse pattern work.
+//
+// YAML resolves anchors at parse time, so a shared source list has to be
+// DEFINED somewhere in the document — and every real top-level key is already
+// claimed by a config section. Strict key checking (which is what makes a
+// config typo loud) would otherwise reject the only place an author can put
+// one. An underscore prefix marks the intent explicitly rather than the
+// validator trying to infer which unknown keys are "probably anchors".
+func TestCheckUnknownKeys_AnchorHolder(t *testing.T) {
+	shared := []byte(`
+_task_events: &task_events
+  - entity_type: task
+    date: due_date
+feeds:
+  tasks:
+    sources: *task_events
+calendars:
+  schedule:
+    sources: *task_events
+`)
+	if errs := checkUnknownKeys(shared); len(errs) > 0 {
+		t.Errorf("an underscore-prefixed anchor holder must be accepted, got: %v", errs)
+	}
+
+	// A genuine typo must still be caught: the escape hatch is opt-in, not a
+	// hole in the check.
+	if errs := checkUnknownKeys([]byte("kanban:\n  board: {}\n")); len(errs) == 0 {
+		t.Error("a mistyped top-level key must still be rejected")
+	}
+	if errs := checkUnknownKeys([]byte("nonsense:\n  x: 1\n")); len(errs) == 0 {
+		t.Error("an unknown top-level key must still be rejected")
+	}
+}
+
+// TestCalendarFeedAnchorSharing pins the reuse mechanism end to end: one
+// anchored source list parses into BOTH a feed source and a calendar source,
+// including when it carries a key the other side does not know.
+func TestCalendarFeedAnchorSharing(t *testing.T) {
+	var cfg Config
+	yamlSrc := []byte(`
+_events: &events
+  - entity_type: task
+    where: ["status != done"]
+    date: due_date
+    summary: title
+    color: blue
+feeds:
+  tasks:
+    sources: *events
+calendars:
+  schedule:
+    sources: *events
+`)
+	if err := yaml.Unmarshal(yamlSrc, &cfg); err != nil {
+		t.Fatalf("shared anchor failed to parse: %v", err)
+	}
+
+	feedSrc := cfg.Feeds["tasks"].Sources
+	if len(feedSrc) != 1 || feedSrc[0].EntityType != "task" || feedSrc[0].Date != "due_date" {
+		t.Errorf("feed source did not take the anchor: %+v", feedSrc)
+	}
+	calSrc := cfg.Calendars["schedule"].Sources
+	if len(calSrc) != 1 || calSrc[0].EntityType != "task" || calSrc[0].Date != "due_date" {
+		t.Errorf("calendar source did not take the anchor: %+v", calSrc)
+	}
+	// `color` is calendar-only; the feed ignores it rather than failing, which
+	// is what lets the two structs diverge without breaking shared anchors.
+	if calSrc[0].Color != "blue" {
+		t.Errorf("calendar-only key lost: %+v", calSrc[0])
 	}
 }

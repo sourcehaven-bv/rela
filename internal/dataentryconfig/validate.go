@@ -364,6 +364,15 @@ func checkUnknownKeys(data []byte) []string {
 		if validTopLevelKeys[key] {
 			continue
 		}
+		// An underscore-prefixed key holds a YAML anchor and is not config.
+		// Strict key checking is what makes config typos loud, but it also
+		// rejects the only place an author can PUT a shared anchor: YAML
+		// resolves anchors at parse time, so the definition has to live
+		// somewhere in the document, and every real key is already claimed.
+		// The underscore marks intent explicitly rather than inferring it.
+		if strings.HasPrefix(key, "_") {
+			continue
+		}
 		if suggestion, ok := knownTypos[key]; ok {
 			errs = append(errs, fmt.Sprintf("unknown key %q (did you mean %q?)", key, suggestion))
 		} else {

@@ -33,7 +33,7 @@ const (
 // can write back when an event is dragged.
 //
 // This is narrower than what the metamodel accepts, deliberately. `format:` is
-// a Go time layout, and honouring an arbitrary one in the browser would mean
+// a Go time layout, and honoring an arbitrary one in the browser would mean
 // shipping a Go-layout interpreter in TypeScript — a whole subsystem with its
 // own bug surface. Rejecting the unsupported case at load is honest about what
 // drag-to-reschedule can do; a calendar over a custom-format property is a
@@ -99,7 +99,7 @@ func validateCalendarShell(cfg *Config, calID string, cal Calendar) []string {
 	}
 
 	if cal.MaxEventsPerDay < 0 {
-		errs = append(errs, fmt.Sprintf("%s: max_events_per_day must not be negative", prefix))
+		errs = append(errs, prefix+": max_events_per_day must not be negative")
 	}
 
 	if cal.EditForm != "" {
@@ -116,8 +116,6 @@ func validateCalendarShell(cfg *Config, calID string, cal Calendar) []string {
 }
 
 // validateCalendarSource checks one source against the metamodel.
-//
-//nolint:gocognit // linear validation dispatcher: one independent config-vs-metamodel check per branch; splitting would scatter the rule set without lowering real complexity.
 func validateCalendarSource(calID string, i int, src CalendarSource, meta *metamodel.Metamodel) []string {
 	var errs []string
 	prefix := fmt.Sprintf("calendar %q: source[%d]", calID, i)
@@ -197,7 +195,7 @@ func validateCalendarSource(calID string, i int, src CalendarSource, meta *metam
 	errs = append(errs, validateCalendarColor(src.Color, prefix)...)
 
 	if src.MaxSpan < 0 {
-		errs = append(errs, fmt.Sprintf("%s: max_span must not be negative", prefix))
+		errs = append(errs, prefix+": max_span must not be negative")
 	}
 
 	return errs

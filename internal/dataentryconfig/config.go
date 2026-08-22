@@ -679,7 +679,7 @@ type Calendar struct {
 	// Events from every source merge into one grid.
 	Sources []CalendarSource `yaml:"sources" json:"sources"`
 	// Event configures what an event chip displays beyond its title. It is the
-	// [KanbanCard] analogue. Omitted, a chip shows the source's summary alone.
+	// [KanbanCard] analog. Omitted, a chip shows the source's summary alone.
 	Event CalendarEvent `yaml:"event,omitempty" json:"event,omitzero"`
 	// DayStart and DayEnd bound the hour axis in week view (defaults "08:00"
 	// and "20:00"). A grid rendering all 24 hours at readable density is far

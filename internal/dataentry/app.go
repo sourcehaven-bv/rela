@@ -754,7 +754,7 @@ func NewApp(
 
 	// Fill in calendar defaults. AFTER validation, deliberately: normalizing
 	// first would replace an author's invalid default_view with "month" and
-	// report nothing, turning a typo into silently different behaviour.
+	// report nothing, turning a typo into silently different behavior.
 	dataentryconfig.NormalizeCalendars(&cfg)
 
 	// Non-fatal configuration warnings (e.g. a relation filter control whose

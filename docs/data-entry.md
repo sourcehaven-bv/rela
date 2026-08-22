@@ -2398,6 +2398,166 @@ The following keys are reserved for built-in list navigation and cannot be used 
 - `script` paths must end in `.lua` and be local paths (no `..` or absolute paths)
 - Keys must be unique within a list (no two actions on the same list can share a key)
 
+## Calendars
+
+A calendar lays date-bearing entities out in a **month** or **week** grid, with
+drag-to-reschedule writing a new date back to the entity.
+
+```yaml
+calendars:
+  schedule:
+    title: "Schedule"
+    default_view: month          # month | week (default: month)
+    week_start: monday           # monday | sunday (default: monday)
+    sources:
+      - entity_type: task
+        where: ["status != done"]
+        date: due_date
+        summary: title
+        color: blue
+    edit_form: edit_task
+    create_form: create_task
+```
+
+Reach it from the sidebar with a `calendar:` navigation entry:
+
+```yaml
+navigation:
+  - label: "Schedule"
+    calendar: schedule
+```
+
+### Calendar fields
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `title` | string | Heading above the grid (default: the config key) |
+| `header` | string | Markdown rendered above the grid |
+| `footer` | string | Markdown rendered below the grid |
+| `default_view` | string | `month` or `week` — the period shown on first load |
+| `week_start` | string | `monday` or `sunday` |
+| `sources` | list | Entity-to-event projections; at least one required |
+| `event` | object | Extra fields shown on an event chip |
+| `day_start` / `day_end` | string | `HH:MM` bounds of the week-view hour axis (defaults `08:00` / `20:00`) |
+| `max_events_per_day` | int | Chips per month-view day cell before `+N more` (default 4) |
+| `edit_form` | string | Form opened when an event is clicked |
+| `create_form` | string | Form opened by the "New" button |
+| `filter_controls` | list | Interactive filters, as on lists and kanbans |
+
+### Source fields
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `entity_type` | yes | The entity type to project |
+| `where` | no | Filter clauses, all ANDed. No OR — use a second source |
+| `date` | yes | A `date`- or `datetime`-typed property placing the event. A `date` yields an all-day event, a `datetime` a timed one. Entities without a value are skipped |
+| `end_date` | no | Property ending a multi-day event. Must be the **same kind** as `date` |
+| `summary` | no | Property used as the event title (default: the type's display property) |
+| `description` | no | Property shown in the event detail |
+| `color` | no | Palette token: `blue`, `green`, `amber`, `red`, `violet`, `slate` |
+| `max_span` | no | Days to look back for events starting before the visible period (default 31). Only meaningful with `end_date` |
+
+Several sources merge into one grid, so a calendar can mix `task` and `meeting`
+entities, each mapped its own way. Multiple sources are also how you express
+**OR**, since a single source's `where` clauses are ANDed.
+
+### Event chips
+
+By default a chip shows the event's title. `event.fields` adds more, using the
+same shape as kanban card fields:
+
+```yaml
+    event:
+      fields:
+        - property: status
+        - property: assignee
+```
+
+A field naming a property that one source's entity type lacks is simply not
+rendered for that source's events — sources are heterogeneous by design, so a
+field only has to make sense for the types that have it. A field that matches
+**no** source is a config error.
+
+### Drag to reschedule
+
+Dragging an event to another day patches its date property. Two things are
+worth knowing:
+
+- **Drag is day-granular.** It changes the day and preserves the time of day.
+  Dropping a 09:00 meeting on the next day leaves it at 09:00 — including
+  across a daylight-saving boundary, where the underlying instant shifts but
+  the wall clock does not.
+- **`end_date` moves with `date`.** Both shift by the same whole-day delta in a
+  single write, so a three-day event stays three days long.
+
+A user without update permission on an entity cannot drag it.
+
+### Timezones
+
+A `date` property is a calendar date: `2026-03-01` is 1 March everywhere. A
+`datetime` is an instant, so which day it occupies depends on the display
+timezone set in Settings — `2026-03-01T00:30:00Z` sits on 1 March in UTC and on
+28 February in New York. The grid, the event's printed time and a drag all use
+that same display timezone, so they never disagree.
+
+### Sharing a source list with a feed
+
+`calendars:` and `feeds:` (see [Feeds](#feeds)) use the same source field names,
+so a YAML anchor can declare a projection once and serve both an in-app
+calendar and a subscribable ICS feed:
+
+```yaml
+_task_events: &task_events
+  - entity_type: task
+    where: ["status != done"]
+    date: due_date
+    summary: title
+
+feeds:
+  tasks:
+    sources: *task_events
+calendars:
+  schedule:
+    sources: *task_events
+```
+
+The anchor holder must start with an **underscore** (`_task_events`). Unknown
+top-level keys are rejected so a config typo is loud, and the underscore is how
+you say "this is an anchor, not a section" — YAML resolves anchors at parse
+time, so the definition has to live somewhere in the document.
+
+The two config blocks are otherwise independent: a calendar has no `alarm:` or
+`rrule:` (export concerns), and a feed has no `event:` or `default_view:` (view
+concerns). Extra keys on the other side are ignored, so an anchor carrying
+`color:` still parses as a feed source. Keeping them separate means either can
+change without the other having to follow.
+
+### Validation
+
+A calendar fails config load — rather than breaking on first use — when:
+
+- a source names an unknown entity type, or a `date`/`summary`/`description`
+  property the type does not have
+- `date` or `end_date` is not `date`- or `datetime`-typed, or is a `list`
+  property (an event needs one date, and a drag would not know which to move)
+- `date` and `end_date` are different kinds (one all-day, one timed)
+- `date` uses a custom `format:`. Drag writes the property back, and only the
+  default `2006-01-02` layout is supported today
+- `default_view`, `week_start`, or a `color` token is not a known value
+- `day_start` is not before `day_end`
+- `edit_form` or `create_form` names a form that does not exist
+- an `event.fields` entry matches no source's entity type
+
+### Limits
+
+- Only **month** and **week** views exist today; day and year are not built.
+- Recurrence is not expanded — an entity with an `rrule` property renders on its
+  base date only. `rrule:` remains a feed-export concern.
+- Dragging changes the day, not the time, and events cannot be resized.
+- The sidebar shows **no count** for a calendar. A list counts what it displays;
+  a calendar displays one period, so a total over all time would never agree
+  with the grid and would never change as you navigate.
+
 ## Commands
 
 Commands let you define shell scripts in `data-entry.yaml` that users can trigger from the UI.
