@@ -135,7 +135,9 @@ func containedPath(base, path string) (string, error) {
 	return abs, nil
 }
 
-// credentialFileMode is the file permissions for credential files.
+// credentialFileMode is owner-only: the credentials file holds the access token
+// in cleartext (git's store helper has no other format), so any group/other read
+// bit would hand the token to every local user.
 const credentialFileMode = 0o600
 
 // storeCredentials stores credentials for future git operations.

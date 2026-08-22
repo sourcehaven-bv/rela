@@ -8,7 +8,25 @@ status: pending
 
 - [ ] All tests pass (`just test`)
 - [ ] Lint clean (`just lint`)
+- [ ] Comment lint gate clean (`just comment-lint`)
 - [ ] Coverage maintained (`just coverage-check`)
+
+**Comment findings.** `just comment-report` lists the advisory rules
+(duplication, nil-contract, param-contract, restatement). They are not a
+merge gate, but a finding your diff *introduces* should be fixed or
+suppressed — don't grow the backlog.
+
+Every rule is a heuristic over prose, so false positives are expected. To
+suppress one, prefer the inline form on the declaration line, which travels
+with the code and is reviewed in this diff:
+
+```go
+func f(p string) {} //commentlint:ignore param-contract  p is contained by Clone
+```
+
+Use `.commentlint.yml` (`ignore:` path globs, `allow-phrases:`) only when the
+same prose recurs across many sites. A reason is required either way — an
+unexplained suppression is a finding nobody can re-evaluate later.
 
 ## Code Review
 

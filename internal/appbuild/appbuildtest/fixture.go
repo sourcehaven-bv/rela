@@ -318,7 +318,10 @@ func buildAutomation(meta *metamodel.Metamodel) (*automation.Engine, *autocascad
 	if len(meta.Automations) == 0 {
 		return nil, nil
 	}
-	autoEngine := automation.NewEngineFromMetamodel(meta, meta.Automations)
+	autoEngine, err := automation.NewEngineFromMetamodel(meta, meta.Automations)
+	if err != nil {
+		panic(fmt.Sprintf("appbuildtest.New: build automation engine: %v", err))
+	}
 	r, err := autocascade.New(autocascade.Deps{Engine: autoEngine})
 	if err != nil {
 		panic(fmt.Sprintf("appbuildtest.New: build autocascade runner: %v", err))

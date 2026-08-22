@@ -334,7 +334,9 @@ forms:
 			expect: true,
 		},
 		{
-			name: "detects redundant direction when unambiguous",
+			// direction is never stripped now (it is not re-derivable —
+			// see the migration doc comment), so it alone is not a trigger.
+			name: "does not detect direction alone",
 			yaml: `
 forms:
   create_ticket:
@@ -343,7 +345,7 @@ forms:
       - relation: belongs-to
         direction: outgoing
 `,
-			expect: true,
+			expect: false,
 		},
 		{
 			name: "detects redundant target_type when single target",
@@ -605,7 +607,7 @@ forms:
 			wantKeep:   []string{"property: priority"},
 		},
 		{
-			name: "removes redundant direction and target_type",
+			name: "removes redundant target_type but keeps direction",
 			input: `
 forms:
   create_ticket:
@@ -616,8 +618,8 @@ forms:
         target_type: category
         required: true
 `,
-			wantAbsent: []string{"direction: outgoing", "target_type: category"},
-			wantKeep:   []string{"relation: belongs-to", "required: true"},
+			wantAbsent: []string{"target_type: category"},
+			wantKeep:   []string{"relation: belongs-to", "required: true", "direction: outgoing"},
 		},
 		{
 			name: "removes redundant relation label",
@@ -856,5 +858,60 @@ func TestResolveWidgetFromType(t *testing.T) {
 				t.Errorf("ResolveWidgetFromType(%q) = %q, want %q", tt.propType, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestDataEntryCleanupMigration_PreservesIncomingDirection pins the fix for the
+// migrate/validate contradiction: the cleanup migration used to strip
+// `direction: incoming` from a form whose entity type sits only on the relation's
+// `to` side, reasoning that it was inferable. Nothing infers it back — an absent
+// direction parses as `outgoing` — so the migration rewrote a valid config into
+// one that ValidateConfig rejects, and re-running migrate reported "No migrations
+// needed" rather than repairing it.
+func TestDataEntryCleanupMigration_PreservesIncomingDirection(t *testing.T) {
+	meta := &mockMetamodel{
+		entities: map[string]mockEntityDef{
+			"category": {properties: map[string]mockPropertyDef{
+				"title": {propType: "string"},
+			}},
+		},
+		relations: map[string]mockRelationDef{
+			// A category is only ever the TO side of belongs-to.
+			"belongs-to": {label: "belongs to", from: []string{"ticket"}, to: []string{"category"}},
+		},
+	}
+
+	input := `
+forms:
+  edit_category:
+    entity_type: category
+    relations:
+      - relation: belongs-to
+        direction: incoming
+        widget: cards
+`
+
+	m := &DataEntryCleanupMigration{}
+	m.SetMetamodel(meta)
+
+	var doc yaml.Node
+	if err := yaml.Unmarshal([]byte(input), &doc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if m.Detect(&doc) {
+		t.Error("Detect() = true, want false: direction: incoming is not redundant")
+	}
+
+	if err := m.Apply(&doc); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	out, err := yaml.Marshal(&doc)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(out), "direction: incoming") {
+		t.Errorf("migration stripped direction: incoming; the form would bind the wrong side "+
+			"and the config would no longer validate.\ngot:\n%s", out)
 	}
 }

@@ -5,7 +5,13 @@ title: Docs describe weekday schedules as ISO-week-change; code fires on target-
 description: docs/scheduled-tasks.md 'Missed Run Detection' says week tasks are missed if the ISO week changed since the last run. Schedule.IsDue actually fires when the most recent occurrence of the target weekday is after lastRun. The two disagree in BOTH directions, so the doc misleads rather than merely simplifying.
 priority: low
 effort: xs
-status: backlog
+why1: The 'Missed Run Detection' bullet in the scheduled-tasks guide describes weekday schedules as ISO-week-change, while Schedule.IsDue fires when the most recent occurrence of the target weekday is after lastRun — wrong in both directions.
+why2: The bullet was written as a plausible mental model ('week tasks ~ week changed') without being derived from the IsDue implementation; ISOWeek is never computed anywhere in internal/scheduler.
+why3: The doc section had no test or generation link to the code it describes — the guide is hand-authored prose, so nothing forced the described semantics to match mostRecentWeekday/IsDue.
+why4: Missed-run detection is not a separate mechanism at all (it's the same IsDue check running at startup), so documenting it as its own list of rules invited re-deriving — and mis-deriving — semantics that already had one canonical description elsewhere in the same guide.
+why5: Docs describing behavior have no conformance check; divergence is only caught when a reader compares prose against code, which happened here only during an unrelated bug fix (BUG-ZKK2UL).
+prevention: 'Behavior prose must be derived from the implementation, not from config keyword names: the corrected bullet now uses the same wording as the IsDue godoc, the misleading `week` alias row states it fires on Mondays rather than ISO-week change, and TestScheduleIsDue_weekday_notISOWeekBased fails if ISO-week semantics are ever implemented or re-documented. AM-weekday-schedule-due-semantics pins the rule.'
+status: done
 ---
 
 ## Symptom

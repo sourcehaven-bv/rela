@@ -10,7 +10,9 @@ why2: doExecuteTask returns early on error, so state.Tasks[name] is never stampe
 why3: runDueTasks treats an unstamped task as !recorded and executes it immediately, bypassing IsDue entirely — so the declared schedule is irrelevant.
 why4: State conflates 'last run' with 'last SUCCESSFUL run'; the model assumed a failed run has no side effects.
 why5: That assumption was never re-derived when Lua scripts gained write bindings. A failing task is now a writer, so retry cadence became a data-integrity concern with no test covering the error path across ticks.
-status: backlog
+status: wont-fix
+reason: "Duplicate of BUG-ZKK2UL, which was independently filed and fixed in #1319 (2af4f266) while this investigation was in flight. Verified fixed on develop, including this ticket's broader finding that the amplification was never daily-specific."
+resolution: "No code change needed. #1319 added a retry ladder (NextRetry/Failures) whose gate precedes the schedule check in runDueTasks, making the !recorded fall-through unreachable for a failing task. Verified across daily and interval schedules: 2 executions per 9 minutes of 1-minute ticks, not 9."
 ---
 
 ## Symptom
@@ -142,3 +144,53 @@ tick period is missing.
 this leak into a host-level outage.
 - `entitymanager.collectAllIDs` full-content scan per create — each leaked entity
 cost a full-table scan, so the leak also degraded write latency as it grew.
+
+## Resolution — duplicate, already fixed
+
+Closed `wont-fix` as a **duplicate of BUG-ZKK2UL**, which was filed and fixed
+independently in **#1319** (`2af4f266`, "fix(scheduler): back off failed tasks
+instead of retrying every tick") while this OOM investigation was still running.
+Both tickets describe the same defect from different directions: ZKK2UL from
+reading the scheduler, this one from the production leak it caused.
+
+### Verified on develop
+
+`recordFailure` now always writes `NextRetry`, and `runDueTasks` checks that
+ladder **before** reaching the `!recorded` branch:
+
+```go
+if retryAt, retrying := s.state.NextRetry[task.Name]; retrying {
+    if !now.Before(retryAt) { s.executeTask(ctx, task) }
+    continue                     // never falls through to "first run"
+}
+```
+
+The `!recorded` branch this ticket blamed still exists verbatim — but it is now
+**unreachable for a failing task**, because a failure can no longer leave state
+untouched. `recordFailure` also deliberately does not touch `s.state.Tasks`, so
+the schedule still evaluates against the last *successful* run.
+
+Backoff is a 5m → 2h doubling ladder, cleared only by success — with an explicit
+comment that elapsed scheduled slots must not clear it, or a short-interval task
+would never back off at all. That is a sharper reading than this ticket's
+"add exponential backoff" and covers acceptance criteria 1-5.
+
+### This ticket's one distinct claim, checked
+
+This ticket argued the amplification was **not** `dayKind`-specific (the original
+reporter's hypothesis) because `IsDue` was bypassed entirely. That is correct,
+and the fix is correspondingly kind-independent: the `NextRetry` gate precedes
+any schedule evaluation. Confirmed empirically with a throwaway probe across
+`daily`, `interval 2h` and `interval 5m` — **2 executions per 9 minutes of
+1-minute ticks in every case**, versus 9 pre-fix.
+
+`TestRunDueTasks_failingTaskDoesNotHotLoop` pins this for `daily` only. A
+table-driven variant across kinds would document kind-independence, but it
+cannot fail independently — the gate returns before the schedule is consulted —
+so it was not added. Noting the option rather than padding the suite.
+
+### Left in place
+
+The `RELA_SCHEDULER_TICK` note under Notes is now moot; #1319's tests use an
+injected clock plus `executeTaskFunc`, which is the seam this ticket predicted
+would be needed.

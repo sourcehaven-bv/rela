@@ -86,6 +86,46 @@ func TestPersistence_EntitiesSurviveReopen(t *testing.T) {
 	assert.Equal(t, 1, count)
 }
 
+// A type change relocates the entity file; the file at the old type's path
+// must be removed or it resurrects the stale record on reopen (TKT-0C57FS
+// amendment A3 — the data-migration rename_entity_type step relies on this).
+func TestPersistence_TypeChangeLeavesNoOrphanFile(t *testing.T) {
+	fs := storage.NewMemFS()
+	ctx := context.Background()
+
+	s1 := openStore(t, fs)
+	e := entity.New("REQ-1", "requirement")
+	e.Properties["title"] = "moves type"
+	require.NoError(t, s1.CreateEntity(ctx, e))
+
+	moved := entity.New("REQ-1", "artifact")
+	moved.Properties["title"] = "moves type"
+	require.NoError(t, s1.UpdateEntity(ctx, moved))
+	require.NoError(t, s1.Close())
+
+	// The discriminating assertion is the file layout itself: which record
+	// wins a reload depends on directory scan order (and on a real
+	// filesystem the STALE one can win), so the orphan must not exist at
+	// all.
+	if _, err := fs.Stat("/entities/requirements/REQ-1.md"); err == nil {
+		t.Fatalf("old file entities/requirements/REQ-1.md still exists after type change — it would resurrect the stale record on reload")
+	}
+	if _, err := fs.Stat("/entities/artifacts/REQ-1.md"); err != nil {
+		t.Fatalf("entity file missing at the new type's path: %v", err)
+	}
+
+	s2 := openStore(t, fs)
+	defer s2.Close()
+
+	got, err := s2.GetEntity(ctx, "REQ-1")
+	require.NoError(t, err)
+	assert.Equal(t, "artifact", got.Type, "type change lost on reopen")
+
+	count, err := s2.CountEntities(ctx, store.EntityQuery{})
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
+}
+
 func TestPersistence_RelationsSurviveReopen(t *testing.T) {
 	fs := storage.NewMemFS()
 	ctx := context.Background()

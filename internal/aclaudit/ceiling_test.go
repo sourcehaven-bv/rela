@@ -43,7 +43,7 @@ client_baselines:
     applies_to: [app]
     description: "locked down"
 `)
-	f := Audit(p, personMeta)
+	f := Audit(p, personMeta, allPerms{})
 	if !hasRule(f, "A11-inert-client-baseline") {
 		t.Fatal("a baseline with no restriction produced no finding")
 	}
@@ -62,7 +62,7 @@ client_baselines:
     redact:
       person: [salary]
 `)
-	if f := Audit(p, personMeta); hasRule(f, "A11-inert-client-baseline") {
+	if f := Audit(p, personMeta, allPerms{}); hasRule(f, "A11-inert-client-baseline") {
 		t.Error("a baseline with a redact block was reported inert")
 	}
 }
@@ -76,7 +76,7 @@ client_baselines:
     applies_to: []
     deny_write: ["*"]
 `)
-	f := Audit(p, personMeta)
+	f := Audit(p, personMeta, allPerms{})
 	if !hasRule(f, "A13-baseline-matches-nothing") {
 		t.Fatal("a baseline with empty applies_to produced no finding")
 	}
@@ -98,7 +98,7 @@ scope_grants:
   rela.tickets.write:
     update: [ticket]
 `)
-	f := Audit(p, personMeta)
+	f := Audit(p, personMeta, allPerms{})
 	if !hasRule(f, "A12-scope-reopens-nothing") {
 		t.Fatal("a scope re-opening a capability no baseline closes produced no finding")
 	}
@@ -125,7 +125,7 @@ scope_grants:
   rela.tickets.write:
     update: [ticket]
 `)
-	if f := Audit(p, personMeta); hasRule(f, "A12-scope-reopens-nothing") {
+	if f := Audit(p, personMeta, allPerms{}); hasRule(f, "A12-scope-reopens-nothing") {
 		t.Error("a scope carving out of deny_write was reported unreachable")
 	}
 }
@@ -148,7 +148,7 @@ scope_grants:
     visible:
       person: [salary]
 `)
-		if f := Audit(p, personMeta); hasRule(f, "A12-scope-reopens-nothing") {
+		if f := Audit(p, personMeta, allPerms{}); hasRule(f, "A12-scope-reopens-nothing") {
 			t.Error("a scope re-opening a redacted field was reported unreachable")
 		}
 	})
@@ -166,7 +166,7 @@ scope_grants:
     visible:
       person: [salary]
 `)
-		if f := Audit(p, personMeta); hasRule(f, "A12-scope-reopens-nothing") {
+		if f := Audit(p, personMeta, allPerms{}); hasRule(f, "A12-scope-reopens-nothing") {
 			t.Error("a `visible:` block omitting salary does close it; the scope is reachable")
 		}
 	})
@@ -183,7 +183,7 @@ scope_grants:
     visible:
       person: [salary]
 `)
-		if f := Audit(p, personMeta); !hasRule(f, "A12-scope-reopens-nothing") {
+		if f := Audit(p, personMeta, allPerms{}); !hasRule(f, "A12-scope-reopens-nothing") {
 			t.Error("no baseline constrains person fields; the scope re-opens nothing")
 		}
 	})
@@ -199,7 +199,7 @@ client_baselines:
     applies_to: [app]
     deny_read: [persno]
 `)
-	f := Audit(p, personMeta)
+	f := Audit(p, personMeta, allPerms{})
 	if !hasRule(f, "B8-ceiling-undeclared-type") {
 		t.Fatal("a deny_read on an undeclared type produced no finding")
 	}
@@ -217,7 +217,7 @@ client_baselines:
     redact:
       persno: [salary]
 `)
-	if f := Audit(p, personMeta); !hasRule(f, "B8-ceiling-undeclared-type") {
+	if f := Audit(p, personMeta, allPerms{}); !hasRule(f, "B8-ceiling-undeclared-type") {
 		t.Error("a redact block keyed on an undeclared type produced no finding")
 	}
 }
@@ -232,7 +232,7 @@ client_baselines:
     redact:
       person: [salaryy]
 `)
-	f := Audit(p, personMeta)
+	f := Audit(p, personMeta, allPerms{})
 	if !hasRule(f, "B9-ceiling-undeclared-field") {
 		t.Fatal("a redact naming an undeclared field produced no finding")
 	}
@@ -249,7 +249,7 @@ client_baselines:
     visible:
       ticket: [title]
 `)
-	f := Audit(p, personMeta)
+	f := Audit(p, personMeta, allPerms{})
 	if hasRule(f, "B9-ceiling-undeclared-field") || hasRule(f, "B8-ceiling-undeclared-type") {
 		t.Error("a correct ceiling produced a drift finding")
 	}
@@ -274,7 +274,7 @@ assignments:
 		"B8-ceiling-undeclared-type",
 		"B9-ceiling-undeclared-field",
 	} {
-		if hasRule(Audit(p, personMeta), rule) {
+		if hasRule(Audit(p, personMeta, allPerms{}), rule) {
 			t.Errorf("policy with no attenuation config produced %s", rule)
 		}
 	}

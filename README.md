@@ -96,6 +96,7 @@ go build -o rela ./cmd/rela
 | [Generated documentation: the rela docs language](docs/rela-docs.md) | Author a deployment manual in Markdown with embedded Lua islands that pull reference fragments (field tables, enum meanings, mermaid lifecycles, relation graphs, role matrices) straight from the schema. |
 | [CalDAV: syncing to-dos with Apple Reminders and other clients](docs/caldav.md) | Sync to-do collections two-way with Apple Reminders and other CalDAV clients |
 | [CalDAV to-do (VTODO) client compatibility](docs/caldav-clients.md) | Which task apps speak VTODO, and what each does with formatted descriptions |
+| [Data Migration](docs/data-migration.md) | Detect schema shape changes and migrate stored content with generated, reviewable migrations |
 
 ### Tutorials
 

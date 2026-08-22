@@ -360,6 +360,7 @@ type SectionField struct {
 	Inaccessible bool     `json:"inaccessible,omitempty"`
 	Span         int      `json:"span,omitempty"`
 	Render       string   `json:"render,omitempty"`
+	Widget       string   `json:"widget,omitempty"`
 }
 
 // SidePanelEntity represents an entity in a side panel section.

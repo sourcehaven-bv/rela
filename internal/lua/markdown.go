@@ -1168,7 +1168,6 @@ func (r *Runtime) extractCodeBlockContent(fcb *ast.FencedCodeBlock, source []byt
 	return strings.TrimSuffix(sb.String(), "\n")
 }
 
-// extractLinesContent extracts content from a node with Lines().
 func (r *Runtime) extractLinesContent(n ast.Node, source []byte) string {
 	var sb strings.Builder
 	if ln, ok := n.(interface{ Lines() *text.Segments }); ok {
@@ -1447,7 +1446,6 @@ func (r *Runtime) deepCopyTable(tbl *lua.LTable) *lua.LTable {
 	return newTbl
 }
 
-// renderNodes renders AST nodes to markdown.
 func renderNodes(sb *strings.Builder, nodes *lua.LTable) {
 	// Use sequential access to preserve document order
 	for i := 1; i <= nodes.Len(); i++ {
@@ -1463,7 +1461,6 @@ func renderNodes(sb *strings.Builder, nodes *lua.LTable) {
 	}
 }
 
-// renderNode renders a single AST node to markdown.
 func renderNode(sb *strings.Builder, node *lua.LTable) {
 	switch blockKindOf(node) {
 	case nodeTypeHeading:
@@ -1508,13 +1505,11 @@ func renderHeading(sb *strings.Builder, node *lua.LTable) {
 	sb.WriteByte('\n')
 }
 
-// renderParagraph renders a paragraph node.
 func renderParagraph(sb *strings.Builder, node *lua.LTable) {
 	writeInlinesOrFallback(sb, node, renderInlines)
 	sb.WriteByte('\n')
 }
 
-// renderCodeBlock renders a code block node.
 func renderCodeBlock(sb *strings.Builder, node *lua.LTable) {
 	language := ""
 	if l, ok := node.RawGetString("language").(lua.LString); ok {
@@ -1683,7 +1678,6 @@ func prefixLines(sb *strings.Builder, prefix, s string) {
 	}
 }
 
-// renderRaw renders a raw node.
 func renderRaw(sb *strings.Builder, node *lua.LTable) {
 	content := ""
 	if c, ok := node.RawGetString("content").(lua.LString); ok {

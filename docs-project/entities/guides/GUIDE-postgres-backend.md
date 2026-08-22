@@ -366,6 +366,27 @@ the primary database; a value may still survive in your PITR/base backups and WA
 until their retention expires — accounting for the backup lifecycle is the
 operator's separate responsibility.
 
+## Data migration (schema shape changes)
+
+Each schema (tenant) tracks the shape of the metamodel its DATA conforms to
+in its own `state_kv` rows, so tenants at different points migrate
+independently: `rela migrate data` resolves each store's own chain (see the
+[data-migration guide](data-migration.md)). Postgres-specific behavior:
+
+- Migrated content lands in the version history: create/update rewrites are
+  captured by the version sweep (attributed to the operator with the
+  `data-migration` tool via `store.WithAttribution`), and destructive steps
+  (`drop_entities`, `drop_relations`, `rename_relation_type`, GC deletions)
+  capture pre-delete snapshots **synchronously** — the sweep cannot
+  reconstruct a row that is already gone.
+- `rename_relation_type` recreates relations under the new type, so relation
+  history starts a fresh lifetime (`rel_record_id`); the old lifetime is
+  closed with a delete capture.
+- The drift GC sweep runs in each process that assembles services, one
+  goroutine per store; runs are serialized against writers through the
+  store's transaction contract. `RELA_DATA_GC=off` disables it (e.g. on
+  read-mostly replicas where one designated process should own GC).
+
 ## Other scope notes
 
 - The desktop app (`rela-desktop`) is filesystem-only; there is no PostgreSQL

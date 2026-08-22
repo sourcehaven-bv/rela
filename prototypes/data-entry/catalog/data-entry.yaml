@@ -39,9 +39,11 @@ forms:
       - property: featured
     relations:
       - relation: made-by
+        direction: outgoing
         label: "Brand"
         required: true
       - relation: tagged
+        direction: outgoing
         label: "Tags"
         widget: multi-select
   edit_product:
@@ -65,9 +67,11 @@ forms:
       - property: featured
     relations:
       - relation: made-by
+        direction: outgoing
         label: "Brand"
         required: true
       - relation: tagged
+        direction: outgoing
         label: "Tags"
         widget: multi-select
       - relation: accessory-for

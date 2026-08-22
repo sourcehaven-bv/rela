@@ -149,7 +149,7 @@ Notes:
 | `day`        | Once per day — runs after local midnight                   |
 | `monday`     | Once per week on Mondays (after midnight local time)       |
 | `friday`     | Once per week on Fridays                                   |
-| `week`       | Alias for `monday`                                         |
+| `week`       | Alias for `monday` — fires on Mondays, not ISO-week change |
 | `30m`        | Every 30 minutes                                           |
 | `2h`         | Every 2 hours                                              |
 | `1h30m`      | Every 90 minutes (any valid Go duration)                   |
@@ -226,7 +226,7 @@ was missed and executes the task immediately before entering the normal schedule
 This applies to all schedule types:
 
 - **Day tasks**: missed if the day changed since the last run
-- **Week tasks**: missed if the ISO week changed since the last run
+- **Weekday tasks**: missed if the target weekday has occurred since the last run
 - **Interval tasks**: missed if more than the interval has elapsed
 
 ### First Run

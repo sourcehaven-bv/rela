@@ -29,7 +29,13 @@ const (
 	WidgetDate        = "date"
 	WidgetDatetime    = "datetime"
 	WidgetRrule       = "rrule"
-	WidgetCards       = "cards" // card-based UI for relations with properties
+	// WidgetFile is registered by the SPA (frontend/src/widgets/registry.ts)
+	// but had no Go constant until TKT-3R7RF3 needed to name it in the section
+	// field widget table. Note Metamodel.ResolveWidgetFromType has no `file`
+	// case and resolves a file property to "text" — a real divergence from the
+	// SPA's defaultWidgetFor, documented at sectionFieldWidgetTypes.
+	WidgetFile  = "file"
+	WidgetCards = "cards" // card-based UI for relations with properties
 )
 
 // Direction represents the edge direction for relation columns and form relations.
@@ -48,7 +54,15 @@ func (d *Direction) UnmarshalYAML(value *yaml.Node) error {
 		return err
 	}
 	switch s {
-	case "", "outgoing":
+	case "":
+		// A written-but-empty `direction: ""` (or a bare `direction:`) is NOT
+		// the same as an absent key. Absent means "infer from the metamodel";
+		// collapsing an empty value to outgoing here would let a config walk
+		// straight past the ambiguity check that makes a self-referencing
+		// relation an error. Leave it empty so the single inference rule in
+		// InferDirection owns the decision.
+		*d = ""
+	case "outgoing":
 		*d = DirectionOutgoing
 	case "incoming":
 		*d = DirectionIncoming
@@ -844,11 +858,24 @@ type ViewSection struct {
 // Render is resolved server-side against the containing section — see
 // ResolveFieldRender — so consumers receive an already-resolved value and
 // never reimplement the inheritance rule.
+//
+// Widget overrides which registered widget renders this property, instead of
+// the type-derived default (TKT-3R7RF3). Empty means "use the default", which
+// is the SPA's defaultWidgetFor dispatch — NOT a value this package resolves.
+//
+// Deliberately field-level only, with no section-level counterpart, which is
+// the one structural difference from Render. Render can inherit because BOTH
+// of its values are valid for every field; a section-level widget would be a
+// config-load error on every field whose type does not match it, turning one
+// authored line into N errors the operator must override back field by field.
+// Validating one would also need each field's property type — exactly the
+// metamodel-dependent context RR-4ICH8M moved the field-level check out of.
 type ViewSectionField struct {
 	Property string `yaml:"property" json:"property"`
 	Label    string `yaml:"label,omitempty" json:"label,omitempty"`
 	Span     Span   `yaml:"span,omitempty" json:"span,omitempty"`
 	Render   string `yaml:"render,omitempty" json:"render,omitempty"`
+	Widget   string `yaml:"widget,omitempty" json:"widget,omitempty"`
 }
 
 // ResolveFieldRender returns the effective render mode for a field within a

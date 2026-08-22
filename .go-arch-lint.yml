@@ -59,6 +59,7 @@ components:
   calfeed:          { in: internal/calfeed }
   caldavalias:      { in: internal/caldavalias }
   conflict:         { in: internal/conflict }
+  datamigration:    { in: internal/datamigration }
   entitymanager:    { in: internal/entitymanager }
   imgproc:          { in: internal/imgproc }
   importer:         { in: internal/importer }
@@ -275,6 +276,7 @@ deps:
       - cmdexec
       - config
       - dataentryconfig
+      - datamigration
       - entitymanager
       - filter
       - importer
@@ -449,6 +451,7 @@ deps:
       - userstate
       - memuserstate
       - kvuserstate
+      - datamigration
       - acl
       - app
       - audit
@@ -654,6 +657,19 @@ deps:
       - docscapture
       - metamodel
       - project
+  datamigration:
+    mayDependOn:
+      - audit
+      - entity
+      - metamodel
+      - principal
+      - schema
+      - state
+      - store
+    canUse:
+      # The lua: migration step runs a sandboxed pure transform on a bare
+      # gopher-lua state (no rela.* bindings) — see luastep.go.
+      - gopherlua
   entitymanager:
     mayDependOn:
       - acl

@@ -8,15 +8,29 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/projectsetup"
 )
 
-// MigrateCmd migrates project files (schema.yaml, etc.) to current
+// MigrateCmd groups the migration commands. The default subcommand (bare
+// `rela migrate`) migrates project CONFIG files and deliberately runs
+// without project services — it must work on a project too broken to boot.
+// The data subcommands (status/gen/data/gc) migrate stored CONTENT after a
+// schema shape change (TKT-0C57FS) and need the full service bundle; see
+// requiresProject in kong.go, which distinguishes them by full command path.
+type MigrateCmd struct {
+	Config MigrateConfigCmd `cmd:"" default:"withargs" help:"Migrate project config files to current syntax (default)."`
+	Status MigrateStatusCmd `cmd:"" help:"Show the data-schema migration status."`
+	Gen    MigrateGenCmd    `cmd:"" help:"Draft a data migration from the schema shape diff."`
+	Data   MigrateDataCmd   `cmd:"" help:"Run pending data migrations (dry-run by default)."`
+	Gc     MigrateGCCmd     `cmd:"" name:"gc" help:"Garbage-collect schema-orphaned data (dry-run by default)."`
+}
+
+// MigrateConfigCmd migrates project files (schema.yaml, etc.) to current
 // schema, and renames a legacy metamodel.yaml. Self-discovers the
 // project root.
-type MigrateCmd struct {
+type MigrateConfigCmd struct {
 	Check bool `help:"Check for pending migrations without applying (for CI)."`
 }
 
 // Run executes `rela migrate [--check]`.
-func (c *MigrateCmd) Run() error {
+func (c *MigrateConfigCmd) Run() error {
 	startDir := projectPath
 	if startDir == "" {
 		startDir = os.Getenv("RELA_PROJECT")

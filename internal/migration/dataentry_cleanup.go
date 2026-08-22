@@ -16,7 +16,6 @@ func init() {
 //   - widget matching the type→widget mapping
 //   - required matching metamodel property
 //   - default matching metamodel/type default
-//   - direction when unambiguous from metamodel
 //   - target_type when single target in metamodel
 //   - relation label matching the metamodel relation label
 //
@@ -28,6 +27,15 @@ func init() {
 // convention-grounded removal depending on a client re-implementing an English
 // title-casing transform, which silently downgraded labels to raw identifiers.
 // See DEC-6C1NAA: a label is authored, never derived.
+//
+// It likewise does NOT remove `direction`, even when the form's entity type sits
+// on only one side of the relation. That removal looked metamodel-grounded but
+// failed the re-derivation test: nothing infers direction back. An absent
+// `direction` is parsed as `outgoing` (Direction.UnmarshalYAML maps "" and
+// "outgoing" to the same value) and the SPA widgets test `direction === 'incoming'`
+// literally. So stripping `direction: incoming` from a to-side binding both flips
+// the widget to the wrong side and makes ValidateConfig reject the file the
+// migration just wrote — leaving a project that no longer starts.
 type DataEntryCleanupMigration struct {
 	meta MetamodelProvider
 }
@@ -128,7 +136,6 @@ func (m *DataEntryCleanupMigration) isRedundantField(node *yaml.Node, entityType
 func (m *DataEntryCleanupMigration) isRedundantRelation(node *yaml.Node, entityType string) bool {
 	return m.isRedundantRelationWidget(node) ||
 		m.isRedundantRelationLabel(node) ||
-		m.isRedundantDirection(node, entityType) ||
 		m.isRedundantTargetType(node, entityType)
 }
 
@@ -225,38 +232,6 @@ func (m *DataEntryCleanupMigration) isRedundantRelationLabel(node *yaml.Node) bo
 
 	relLabel := m.meta.GetRelationLabel(rel)
 	return relLabel != "" && label == relLabel
-}
-
-// isRedundantDirection checks if direction can be inferred from metamodel.
-func (m *DataEntryCleanupMigration) isRedundantDirection(node *yaml.Node, entityType string) bool {
-	if m.meta == nil || entityType == "" {
-		return false
-	}
-
-	rel := getScalarValue(node, "relation")
-	direction := getScalarValue(node, "direction")
-	if rel == "" || direction == "" {
-		return false
-	}
-
-	fromTypes := m.meta.GetRelationFrom(rel)
-	toTypes := m.meta.GetRelationTo(rel)
-	if len(fromTypes) == 0 && len(toTypes) == 0 {
-		return false
-	}
-
-	inFrom := containsStr(fromTypes, entityType)
-	inTo := containsStr(toTypes, entityType)
-
-	// Direction is redundant if it can be unambiguously inferred
-	if inFrom && !inTo && direction == "outgoing" {
-		return true
-	}
-	if inTo && !inFrom && direction == "incoming" {
-		return true
-	}
-
-	return false
 }
 
 // isRedundantTargetType checks if target_type can be inferred from metamodel.
@@ -364,9 +339,6 @@ func (m *DataEntryCleanupMigration) cleanupFormRelations(formDef *yaml.Node, ent
 		}
 		if m.isRedundantRelationLabel(rel) {
 			DeleteMapKey(rel, "label")
-		}
-		if m.isRedundantDirection(rel, entityType) {
-			DeleteMapKey(rel, "direction")
 		}
 		if m.isRedundantTargetType(rel, entityType) {
 			DeleteMapKey(rel, "target_type")

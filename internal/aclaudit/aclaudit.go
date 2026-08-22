@@ -135,18 +135,46 @@ type MetamodelReader interface {
 	EnumOptions(t, field string) ([]string, bool)
 }
 
+// PermissionConsumer reports permissions referenced OUTSIDE acl.yaml. The
+// policy knows every place a permission is *granted* (a role's `permissions:`
+// list) but only one place it is *consumed*
+// (`role_relations.requires_permission`), so a permission gating a data-entry
+// UI surface — a document, a dashboard card, a navigation entry, a command —
+// is invisible to the audit. Reporting those as dead config, with a hint to
+// remove them, is exactly the false positive this interface exists to prevent.
+//
+// Like [MetamodelReader], the concrete implementation is supplied by the
+// caller, so aclaudit stays free of a dataentryconfig import and bounded to
+// the one lookup it needs.
+//
+// Unlike [MetamodelReader], a nil PermissionConsumer is NOT simply "run fewer
+// checks": see [Audit] for why it must suppress the dead-permission finding
+// rather than let it run blind.
+type PermissionConsumer interface {
+	// UsedPermissions returns every permission name referenced by a
+	// non-policy surface. Order and duplicates don't matter.
+	UsedPermissions() []string
+}
+
 // Audit runs every v1 check against the policy and returns the findings
 // sorted deterministically (severity, then rule, then subject). A clean,
 // well-gated policy returns an empty slice.
 //
 // meta may be nil — Tier-B (metamodel cross-check) findings are then skipped
 // and only Tier-A pure-policy findings are returned.
-func Audit(p *acl.Policy, meta MetamodelReader) []Finding {
+//
+// perms may be nil, but nil is NOT equivalent to "no permissions are used
+// elsewhere". A nil consumer means the caller could not tell us what the UI
+// gates reference, so A7 (dead permission) is SKIPPED entirely rather than
+// asserting config is dead on incomplete information. This deliberately
+// differs from meta's nil handling, where a missing metamodel can only make a
+// check unformable, never wrong.
+func Audit(p *acl.Policy, meta MetamodelReader, perms PermissionConsumer) []Finding {
 	if p == nil {
 		return nil
 	}
 	var f []Finding
-	f = append(f, tierA(p)...)
+	f = append(f, tierA(p, perms)...)
 	if meta != nil {
 		f = append(f, tierB(p, meta)...)
 	}
@@ -176,13 +204,13 @@ func HasAtLeast(findings []Finding, threshold Severity) bool {
 
 // ---- Shared policy predicates ------------------------------------------
 
-// isPrivileged reports whether a role confers escalation-relevant power:
-// it grants any write verb (Create/Update/Delete, including the "*"
-// wildcard) OR holds any permission. Read grants are NOT privilege — a
-// read-everything role is a visibility choice, not an escalation path
-// (RR-LXI3NW, RR-UR0LJU). This is the single definition A2/A3 reference.
+// isPrivileged reports whether a role confers escalation-relevant power.
+// Delegates to [acl.RoleDef.IsPrivileged] so A2/A3 and the shared
+// membership predicate ([acl.Policy.MembershipSelfPromotionOpen], which A1
+// calls) agree on what "privileged" means — one definition, not two
+// (TKT-T31NKT). Kept as a local function so the call sites read unchanged.
 func isPrivileged(r acl.RoleDef) bool {
-	return len(r.Create) > 0 || len(r.Update) > 0 || len(r.Delete) > 0 || len(r.Permissions) > 0
+	return r.IsPrivileged()
 }
 
 // roleDeclared reports whether the policy declares a role by this name.
@@ -199,12 +227,6 @@ func permissionGranted(p *acl.Policy, perm string) bool {
 		}
 	}
 	return false
-}
-
-// requiresPermissionFor returns the requires_permission gate on the given
-// relation type, "" if the relation isn't a role-relation or has no gate.
-func requiresPermissionFor(p *acl.Policy, rel string) string {
-	return p.RoleRelations[rel].RequiresPermission
 }
 
 // verbLists returns the four grant lists of a role for iteration.

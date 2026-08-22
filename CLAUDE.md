@@ -272,6 +272,17 @@ These surfaces are on predicate: ACL affordance `when:`
 (`internal/automation`), metamodel validation `When:`/`Then:`
 (`internal/validation`), and the CLI `--filter` flag (`internal/cli/list.go`).
 
+Automation `on.condition:` and validation `when_condition:`/`then_condition:`
+take predicate **expressions** as written, ANDed with the filter-syntax
+`when:`/`then:` keys beside them. They are separate keys because the two
+syntaxes overlap without erroring: `filter.Parse` accepts
+`days_between(entity.due, today()) <= 7` as a filter on a property named
+`days_between(entity.due, today())`, which matches nothing, silently. Don't
+add dialect sniffing — the key IS the declaration of intent. A `condition:`
+that fails to compile is a **load error** (`NewEngineFromMetamodel` returns
+one), as is an unparseable `when:` clause: dropping a constraint widens the
+automation, so failing the load is the safe direction.
+
 `internal/filter` is NOT frozen — it remains the **query-filtering** DSL
 (the `--where` string syntax and metamodel legacy filter-strings). Legacy
 `--where`/`When:`/`Then:` inputs are transpiled to predicate via
@@ -480,6 +491,22 @@ Rules when touching this:
   echoing purged content. `schema_versions` is projection-only + FK-shared, so
   purge never deletes it. Purge is necessary-not-sufficient for erasure (live
   row / PITR backups survive) — see the postgres-backend guide.
+- **Data migration** (TKT-0C57FS, `internal/datamigration`,
+  `docs/data-migration.md`). When schema.yaml's DATA SHAPE changes, the gate
+  (evaluated per process start in `appbuild.assemble`) compares the store's
+  `state.KV` marker against `metamodel.ShapeProjection().Hash()` and adopts
+  compatible changes; incompatible ones need operator-authored `migrations/`
+  files (`rela migrate gen|data`). **Two schema hashes coexist on purpose**:
+  `RenderProjection` (version rendering, `schema_versions` dedup — stability
+  load-bearing, do not extend) vs `ShapeProjection` (migration identity —
+  includes relations + defaults, excludes id prefixes). Migration/GC writes
+  are the third sanctioned raw-store exception (after `db migrate` and
+  `history-purge`): operator-shell trust, no ACL, explicit audit records
+  (`data-migration`/`data-gc`), `store.WithAttribution`, and synchronous
+  pre-delete version capture on pg (the sweep cannot reconstruct deleted
+  rows). Migration steps must stay idempotent — re-run IS the crash
+  recovery. The Lua step is a pure transform (patch in, patch out, engine
+  applies); never hand it a write handle.
 - DSN is read from the `RELA_DATABASE_URL` env var **only** — there is no
   `--database-url` flag, so the credential never lands in `ps`/shell history.
   `appbuild.Discover` reads the env into `appbuild.Config.DatabaseURL`; the
@@ -545,6 +572,34 @@ those down as you decompose (TKT-N0IKN9). A store-implementation's exported coun
 is the mandated `store.Store` interface, so its directive is a documented
 "required interface" exception rather than a ratchet target. Prefer splitting the
 type over raising the number.
+
+**Comment discipline** (`just comment-lint`, CI job "Comment lint").
+[commentlint](https://github.com/sourcehaven-bv/commentlint) checks comments
+against the scope they are attached to. Only `commented-code` is a gate; the
+rest are advisory (`just comment-report`) with a backlog being worked down:
+
+- **`duplication`** — the same fact explained in two or more comments. The
+  signal we act on: a fact stored three times gets corrected in one place and
+  goes stale in two. Remedy is to hoist it to the type or package they cite.
+- **`nil-contract`** — nil behaviour as ad-hoc prose. Go cannot express this
+  in a type, so the convention is `Nil: rejected|accepted|never returned —
+  <why>`. Fixing one removes it permanently (the rule skips tagged comments).
+- **`doclink`** — a `[Bracketed.Reference]` that resolves to nothing. Go
+  degrades these silently (pkg.go.dev renders the literal brackets) and no
+  other linter catches them — `go vet`, `staticcheck` and `godoclint` all
+  report zero on a broken link. Most are a bare `[Method]` where Go needs
+  `[Recv.Method]`; the finding names the qualified form.
+- **`param-contract`** — a precondition asserted about a bare `string`/`int`
+  parameter ("MUST already have passed containedPath"). Usually a missing
+  type; this repo already does it where it matters most, e.g.
+  `principal.Principal` keeps `roles` unexported so they can only enter
+  through a verifying constructor.
+- `too-long` and `scope-reach` are **off** — see `.commentlint.yml` for why.
+
+False positives are expected (every rule is a heuristic over prose). Suppress
+with `//commentlint:ignore <rule>  <reason>` on the declaration line, or via
+`.commentlint.yml` when the same prose recurs across many sites. A reason is
+required either way.
 
 ## Security
 
