@@ -2,7 +2,6 @@ package pgstore
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"iter"
 	"strings"
@@ -20,16 +19,10 @@ import (
 // SELECT by type; when only one of HasInbound / HasOutbound is set,
 // only that EXISTS clause is emitted. Both nil → degenerate
 // "everything of this type" answer (covered by the conformance suite).
-// checkGraphQueryScope mirrors checkQueryScope for the graph shape: the
-// world must reach BOTH query types or the list path and the ACL
-// pushdown path diverge (TKT-WAV8XP F1/F5). Removed in PR-C with its
-// EntityQuery twin.
-func checkGraphQueryScope(q store.GraphQuery) error {
-	if !q.World.IsDefaultWorld() {
-		return errors.New(
-			"pgstore: world-scoped graph queries are not implemented yet (TKT-WAV8XP PR-C); " +
-				"the SQL pushdown lands there and this refusal is removed with it")
-	}
+// checkGraphQueryScope is retained as the single place a future graph
+// query restriction would live. World scoping is implemented in SQL as of
+// PR-C, so it currently accepts everything.
+func checkGraphQueryScope(_ store.GraphQuery) error {
 	return nil
 }
 
@@ -76,11 +69,29 @@ func (s *Store) GraphCount(ctx context.Context, q store.GraphQuery) (matched, to
 	if err = s.db.QueryRow(ctx, matchedSQL, matchedArgs...).Scan(&matched); err != nil {
 		return 0, 0, fmt.Errorf("pgstore: graph count (matched): %w", err)
 	}
-	if err = s.db.QueryRow(ctx,
-		`SELECT count(*) FROM entities WHERE type = $1 AND pointer = ''`, q.EntityType).Scan(&total); err != nil {
+	totalSQL, totalArgs := buildGraphTotalSQL(q)
+	if err = s.db.QueryRow(ctx, totalSQL, totalArgs...).Scan(&total); err != nil {
 		return 0, 0, fmt.Errorf("pgstore: graph count (total): %w", err)
 	}
 	return matched, total, nil
+}
+
+// buildGraphTotalSQL counts the entities of the type that are IN SCOPE,
+// which is the denominator GraphCount reports beside the matched count.
+//
+// It must be world-scoped for the same reason the matched count is
+// (RR-EHER1V): existence in a world is the publication bit, so an
+// unscoped denominator tells a published-world surface how many
+// unpublished drafts exist — the exact leak worlds are meant to close.
+func buildGraphTotalSQL(q store.GraphQuery) (sqlText string, args []any) {
+	b := &sqlBuilder{}
+	typeArg := b.arg(q.EntityType)
+	scope, _, _ := graphWorldScope(b, q.World)
+	agg := "count(*)"
+	if !q.World.IsDefaultWorld() {
+		agg = "count(DISTINCT e.id)"
+	}
+	return "SELECT " + agg + " FROM entities e WHERE e.type = " + typeArg + " AND " + scope, b.args
 }
 
 // MatchingIDs runs the predicate query restricted to the candidate id
@@ -134,14 +145,16 @@ func buildMatchingIDsSQL(q store.GraphQuery, ids []string) (sqlText string, args
 		sb.WriteString(strings.Join(withParts, ",\n"))
 		sb.WriteByte('\n')
 	}
-	// e.pointer = '': graph queries evaluate the default world
-	// (TKT-DOFYR1); relation traversal stays tail-unscoped to match
-	// graphquerynaive over ListRelations.
-	sb.WriteString("SELECT e.id FROM entities e WHERE e.pointer = '' AND e.type = " + typeArg)
+	// World-scoped RESULT rows (TKT-WAV8XP PR-C); relation traversal
+	// stays tail-unscoped to match graphquerynaive over ListRelations,
+	// and the recursive CTE seeds stay un-worlded on purpose (Q5).
+	scope, distinctOn, rankOrder := graphWorldScope(b, q.World)
+	sb.WriteString("SELECT " + distinctOn + "e.id FROM entities e WHERE " + scope + " AND e.type = " + typeArg)
 	sb.WriteString(" AND e.id = ANY(" + idsArg + ")")
 	for _, c := range condParts {
 		sb.WriteString(" AND " + c)
 	}
+	sb.WriteString(rankOrder)
 	return sb.String(), b.args
 }
 
@@ -273,7 +286,29 @@ func buildGraphQuerySQL(q store.GraphQuery, countOnly bool) (sqlText string, arg
 	selectList := "e.id, e.type, e.pointer, e.properties, e.content, e.updated_at"
 	orderBy := " ORDER BY e.id"
 	if countOnly {
+		// A world-scoped count must count PRIMES: DISTINCT ON cannot be
+		// combined with an aggregate, and count(*) over the widened
+		// candidate set would over-count every family holding several
+		// coordinates. count(DISTINCT e.id) is exact here because the
+		// world admits at most one prime per id.
 		selectList = "count(*)"
+		if !q.World.IsDefaultWorld() {
+			selectList = "count(DISTINCT e.id)"
+		}
+		orderBy = ""
+	}
+
+	// World-scoped RESULT rows (TKT-WAV8XP PR-C). Relation predicates
+	// and their recursive CTEs stay un-worlded on purpose (Q5): identity
+	// structure must not depend on the reader's world.
+	scope, distinctOn, rankOrder := graphWorldScope(b, q.World)
+	if countOnly {
+		// The aggregate replaces DISTINCT ON / rank ordering entirely.
+		distinctOn, rankOrder = "", ""
+	} else if rankOrder != "" {
+		// DISTINCT ON requires its expression to lead ORDER BY, so the
+		// world's ranking ordering REPLACES the plain id ordering (it
+		// still orders by e.id first, so the contract is preserved).
 		orderBy = ""
 	}
 
@@ -283,11 +318,12 @@ func buildGraphQuerySQL(q store.GraphQuery, countOnly bool) (sqlText string, arg
 		sb.WriteString(strings.Join(withParts, ",\n"))
 		sb.WriteByte('\n')
 	}
-	sb.WriteString("SELECT " + selectList + " FROM entities e WHERE e.pointer = '' AND e.type = " + typeArg)
+	sb.WriteString("SELECT " + distinctOn + selectList + " FROM entities e WHERE " + scope + " AND e.type = " + typeArg)
 	for _, c := range condParts {
 		sb.WriteString(" AND " + c)
 	}
 	sb.WriteString(orderBy)
+	sb.WriteString(rankOrder)
 
 	return sb.String(), b.args
 }
@@ -346,6 +382,12 @@ func buildPredicateSQL(
 		entityDepthArg := b.arg(cappedDepth(p.EntityDepth))
 		cteName := prefix + "_entity_closure"
 		with = append(with, fmt.Sprintf(`%s(id, root, depth) AS (
+    -- e0.pointer = '': IDENTITY ANCHOR (TKT-WAV8XP Q5). The CTE seed
+    -- stays UN-WORLDED on purpose: role/containment climbing is
+    -- world-insensitive, so who an entity inherits from must not change
+    -- with the reader's world. Widest blast radius in this file — shared
+    -- between the graph-query and visible-search paths via
+    -- buildPredicateSQL, so a world arm here would leak into search too.
     SELECT e0.id, e0.id, 0 FROM entities e0 WHERE e0.pointer = '' AND e0.type = %s
     UNION
     SELECT r.to_id, c.root, c.depth + 1
@@ -404,6 +446,28 @@ func cappedDepth(d int) int {
 // the string) keeps every value parameterised — never interpolated
 // into SQL text, never a SQL-injection surface even when callers
 // pass arbitrary strings.
+// graphWorldScope returns the WHERE fragment scoping a graph query's
+// RESULT rows to the world, plus the DISTINCT ON / ORDER BY pieces the
+// caller needs to pick one prime per family (TKT-WAV8XP PR-C).
+//
+// Scope applies to the entities the query RETURNS. Relation predicates
+// and their CTEs walk the graph's IDENTITY structure and are deliberately
+// NOT world-resolved (Q5): who an entity is related to, and what it
+// inherits through a containment or role chain, must not depend on the
+// reader's world. That is why the recursive CTE seeds keep a bare
+// `e0.pointer = ”` — see the annotation there.
+//
+// For the default world this is the historical `e.pointer = ”`, costing
+// exactly what it did before worlds existed.
+func graphWorldScope(b *sqlBuilder, w store.WorldScope) (where, distinctOn, rankOrder string) {
+	if w.IsDefaultWorld() {
+		return "e.pointer = ''", "", ""
+	}
+	// "e" is the alias the graph queries give the entities table.
+	rank, candidate := worldSQL(w, "e", &b.args)
+	return candidate, "DISTINCT ON (e.id) ", " ORDER BY e.id ASC, (" + rank + ") ASC, e.pointer ASC"
+}
+
 type sqlBuilder struct {
 	args []any
 }

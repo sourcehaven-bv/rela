@@ -236,8 +236,24 @@ func buildVisibleSearchSQL(
 		sb.WriteString(strings.Join(withParts, ",\n"))
 		sb.WriteByte('\n')
 	}
-	// e.pointer = '': ACL-scoped search is a default-world read until
-	// per-world indexing lands (Step 5) — TKT-DOFYR1.
+	// e.pointer = '' — DEFAULT WORLD, and structurally pinned to it
+	// (TKT-WAV8XP PR-C, RULING 3). buildVisibleSearchSQL takes a
+	// search.Query and an ACL scope map; neither carries a WorldScope,
+	// so this path cannot serve a non-default world and cannot detect
+	// being asked to. The constraint is therefore enforced at the
+	// WIRING site — PR-D must not construct a world-bound surface over
+	// a searcher that cannot honor its world (the DEC-ZBI39P stance:
+	// structurally incapable, not "defaults to safe") — rather than by
+	// a runtime check that has no world to check.
+	//
+	// Note the ACL row gate cannot cover for this: guard rule 1 makes
+	// the row gate world-INDEPENDENT, so a draft leaking here would not
+	// be caught downstream.
+	//
+	// LOCKSTEP with pgstore/search.go's SearchBackend.Search: the gated
+	// and ungated streams are held to an ordered-subsequence conformance
+	// contract, so these two scopes must change together or the contract
+	// breaks. Per-world indexing is Step 5 (TKT-9KZGJO).
 	sb.WriteString("SELECT e.id, e.type, e.pointer, e.properties, e.content, e.updated_at FROM entities e WHERE e.pointer = ''")
 
 	// Text match + ordering mirror SearchBackend.Search exactly:

@@ -274,6 +274,21 @@ func (l *listener) catchUp(ctx context.Context, watermark int64) int64 {
 	// already canonical, so no other form can be produced.
 	const q = `
 		SELECT kind, a, b, c, typ, deleted, seq FROM (
+			-- TRAP (TKT-WAV8XP PR-C, RULING 4): the pointer tests below have
+			-- INVERTED POLARITY versus every other pointer literal in this
+			-- package. They are NOT a read scope and NOT a default-world
+			-- filter: this scan is deliberately UNFILTERED (note the absence
+			-- of any WHERE pointer clause), and the CASE expressions are
+			-- pointer-aware SERIALIZATION — they rebuild the state ref
+			-- (bare id when the pointer is empty, id@pointer otherwise) so
+			-- catch-up rows match the shape tombstones were written in.
+			--
+			-- Mislabeling these "default world" and adding a world arm
+			-- BREAKS THE CHANGE FEED: the catch-up would stop reporting
+			-- non-default states, so a cross-process writer's state edits
+			-- would silently never reach other processes' subscribers, and
+			-- the watermark would advance past them so the miss is
+			-- unrecoverable rather than merely delayed.
 			SELECT 'e' AS kind,
 			       id || CASE WHEN pointer = '' THEN '' ELSE '@' || pointer END AS a,
 			       '' AS b, '' AS c, type AS typ, false AS deleted, seq FROM entities

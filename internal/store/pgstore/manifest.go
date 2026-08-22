@@ -26,6 +26,12 @@ import (
 func (s *Store) ManifestSince(ctx context.Context, cursor int64) ([]synctypes.ManifestEntry, error) {
 	const q = `
 		SELECT kind, a, b, c, typ, deleted, seq FROM (
+			-- pointer = '' / from_pointer = '': FAMILY-SCOPED. Sync is a
+			-- DEFAULT-WORLD protocol (TKT-DOFYR1) and stays one; it is not
+			-- a world scope and gains no world arm (TKT-WAV8XP PR-C).
+			-- LOCKSTEP with the deletions arm below, whose equivalent test
+			-- is spelled as an @-absence test via strpos, and is therefore
+			-- INVISIBLE to a pointer grep — change one, change all three.
 			SELECT 'e' AS kind, id AS a, '' AS b, '' AS c, type AS typ, false AS deleted, seq
 			FROM entities WHERE pointer = ''
 			UNION ALL
@@ -36,6 +42,15 @@ func (s *Store) ManifestSince(ctx context.Context, cursor int64) ([]synctypes.Ma
 			-- '@'); sync is a DEFAULT-WORLD protocol in Step 1 (TKT-DOFYR1) —
 			-- an id-keyed peer cannot apply or delete a state, so state rows
 			-- and tombstones stay out of the manifest entirely.
+			--
+			-- TRAP (TKT-WAV8XP PR-C, RULING 4): this is the SAME
+			-- default-pointer test as the two arms above, expressed as
+			-- '@'-ABSENCE over a codec'd state ref rather than as
+			-- an equality test. A regex sweep for pointer MISSES IT
+			-- SILENTLY. It is family-scoped, not a world scope, and must
+			-- stay in lockstep with lines 30/33 — a sweep that worlds
+			-- those two and skips this one would put state tombstones
+			-- into an id-keyed sync stream.
 			SELECT kind, id_a, id_b, id_c, typ, true, seq FROM deletions
 			WHERE strpos(id_a, '@') = 0
 		) t

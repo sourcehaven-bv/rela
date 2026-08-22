@@ -237,10 +237,21 @@ func createUniqueIndex(
 	// a dry-run's prediction drifts from what a create actually does. They can't
 	// share one string (this interpolates quoted literals; that binds $1/$2), so
 	// keep them identical by hand.
-	// pointer = '': `unique: true` is a natural-key rule over the DEFAULT
-	// world (TKT-DOFYR1) — a copied state sharing its family's value must
-	// not violate it. Migration 0011 dropped the pointer-unaware
-	// predecessors so this predicate always applies.
+	// pointer = '': FAMILY-SCOPED. `unique: true` is a natural-key rule
+	// over the DEFAULT world (TKT-DOFYR1) — a copied state sharing its
+	// family's value must not violate it. Migration 0011 dropped the
+	// pointer-unaware predecessors so this predicate always applies.
+	//
+	// TRAP (TKT-WAV8XP PR-C, RULING 4): this one STRUCTURALLY CANNOT be
+	// worlded, which is a stronger statement than "we chose not to".
+	// It is a PARTIAL INDEX predicate baked into the index definition at
+	// CREATE time; a partial index cannot reference a runtime parameter,
+	// so there is no expression here that could take a per-query
+	// WorldScope even in principle. A world-aware uniqueness rule would
+	// need a different mechanism entirely (one index per world, or a
+	// deferred constraint trigger) — not an edit to this predicate.
+	// Stated explicitly because it is the question a reader re-opens
+	// every time they sweep this file.
 	ddl := fmt.Sprintf(
 		`CREATE UNIQUE INDEX IF NOT EXISTS %s ON entities (type, (properties->>%s)) `+
 			`WHERE type = %s AND properties->>%s <> '' AND properties->>%s IS NOT NULL AND pointer = ''`,

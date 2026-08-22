@@ -59,9 +59,20 @@ func (b *SearchBackend) Search(text string, limit int) ([]string, error) {
 	// search_text is already lowercased by the store, so a plain LIKE with the
 	// lowercased needle is case-insensitive without per-row lower() calls.
 	// '%' and '_' in the needle are escaped so they match literally.
-	// pointer = '': search serves the default world until per-world
-	// indexing lands (Step 5, TKT-9KZGJO) — a draft state must not
-	// surface in results (TKT-DOFYR1).
+	// pointer = '' — DEFAULT WORLD, and structurally pinned to it
+	// (TKT-WAV8XP PR-C, RULING 3). This backend takes plain text and a
+	// limit: it has NO WorldScope parameter and no way to acquire one,
+	// so it cannot serve a non-default world and cannot detect being
+	// asked to. There is nothing here to branch on — the constraint is
+	// enforced where a world-bound surface is CONSTRUCTED (PR-D wiring
+	// must not pair a world-bound reader with a searcher that cannot
+	// honor its world), not by a check in this function.
+	//
+	// Lockstep with visiblesearch.go's buildVisibleSearchSQL: the gated
+	// and ungated streams are held to an ordered-subsequence conformance
+	// contract, so a scope change here without the matching change there
+	// breaks it. Per-world INDEXING is Step 5 (TKT-9KZGJO); a draft state
+	// must not surface in results meanwhile (TKT-DOFYR1).
 	sql := `SELECT id FROM entities WHERE search_text LIKE '%' || $1 || '%' ESCAPE '\' AND pointer = ''`
 	args := []any{escapeLike(needle)}
 

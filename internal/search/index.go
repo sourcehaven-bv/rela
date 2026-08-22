@@ -2,6 +2,35 @@
 // satisfied by a [Backend] (today: [bleveindex.Index]). The [Service]
 // type combines a [store.EntityReader] with a [Backend] to produce a
 // [Searcher] implementation that callers consume.
+//
+// # This package is world-agnostic BY CONSTRUCTION
+//
+// Content states and worlds (TKT-WAV8XP) do not appear here, and that is
+// deliberate rather than an omission. No type in this package carries a
+// [store.WorldScope]: [Query] is text plus filters, and the [Searcher]
+// interface has no world parameter. The package therefore serves whatever
+// scope its BACKEND applies — today every backend serves the default
+// world (pgstore pins `pointer = ”` at both of its search sites; the
+// bleve index only ever receives default-face documents).
+//
+// Two consequences worth stating, because the alternative was considered
+// and rejected (RULING 3, 2026-08-22):
+//
+//   - There is no world-refusal seam here, and one must not be added. A
+//     refusal in a package that cannot represent the thing it refuses
+//     would be either dead code or a new concept introduced solely to
+//     reject itself — and it would read as protection while protecting
+//     nothing, which is the failure mode this area keeps hitting.
+//   - The fail-closed property lives at the WIRING site instead: a
+//     world-bound surface must not be constructible over a searcher that
+//     cannot honor its world (the DEC-ZBI39P stance — structurally
+//     incapable, not "defaults to safe").
+//
+// A future world-aware search backend adds the scope AT THE BACKEND, and
+// would need per-world indexing (Step 5, TKT-9KZGJO) to do it. Note the
+// ACL row gate cannot compensate in the meantime: guard rule 1 makes the
+// row gate world-independent, so a draft surfacing through search would
+// not be caught downstream.
 package search
 
 import (
