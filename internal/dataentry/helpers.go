@@ -68,26 +68,63 @@ func resolveFilterVariablesInList(value string) string {
 	return strings.Join(parts, ",")
 }
 
+// temporalLayouts are the layouts a filter value may use, tried in order.
+// A bare date is listed first so it keeps winning for date-typed properties;
+// the datetime layouts exist because a `datetime` property stores RFC3339 and
+// comparing it against a window bound previously fell through to lexicographic
+// string comparison (or errored against a bare-date bound), which silently
+// excluded every entity — see TKT-IG54YO.
+var temporalLayouts = []string{
+	"2006-01-02",
+	time.RFC3339,
+	"2006-01-02T15:04:05Z",
+	"2006-01-02T15:04:05",
+	"2006-01-02T15:04",
+}
+
+// parseTemporal parses value as a date or datetime, returning the instant it
+// denotes. A bare date denotes midnight UTC, so a bare-date bound compared
+// against a datetime is a start-of-day bound — callers wanting an inclusive
+// upper bound should use a half-open range against the next day rather than
+// relying on end-of-day semantics.
+//
+// Nil: never returns a nil time — ok=false means the value is not temporal.
+func parseTemporal(value string) (t time.Time, ok bool) {
+	for _, layout := range temporalLayouts {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed, true
+		}
+	}
+	return time.Time{}, false
+}
+
 // compareValues compares two values using the given comparison operator
 // (lt, lte, gt, gte). It uses strict same-type comparison: if both sides
-// parse as dates, dates are compared; if both parse as numbers, numbers
-// are compared; otherwise strings are compared lexicographically.
+// parse as temporal values (date or datetime), they are compared as instants;
+// if both parse as numbers, numbers are compared; otherwise strings are
+// compared lexicographically.
 //
-// On a type mismatch (e.g. left is a date string, right is not), the
+// Date and datetime interoperate deliberately: a bare-date bound against an
+// RFC3339 property value is a legitimate comparison (midnight on that day), and
+// treating it as a type mismatch is what made date-windowed queries over
+// datetime properties return nothing. Mixed offsets compare correctly because
+// both sides are normalized to an instant rather than compared as strings.
+//
+// On a type mismatch (e.g. left is a temporal string, right is not), the
 // comparison returns false and a non-nil error so callers can decide
 // whether to log/reject. This prevents the silent lexicographic-fallback
 // trap where "2026-04-07" < "tomorrow" returned true.
 func compareValues(left, right, operator string) (match bool, err error) {
-	// Both sides parse as dates → compare as dates
-	lt, lDateErr := time.Parse("2006-01-02", left)
-	rt, rDateErr := time.Parse("2006-01-02", right)
+	// Both sides parse as dates/datetimes → compare as instants
+	lt, lIsTime := parseTemporal(left)
+	rt, rIsTime := parseTemporal(right)
 	switch {
-	case lDateErr == nil && rDateErr == nil:
-		return compareOrdered(lt.Unix(), rt.Unix(), operator), nil
-	case lDateErr == nil || rDateErr == nil:
-		// One side is a date, the other isn't — refuse to guess.
+	case lIsTime && rIsTime:
+		return compareOrdered(lt.UnixNano(), rt.UnixNano(), operator), nil
+	case lIsTime || rIsTime:
+		// One side is temporal, the other isn't — refuse to guess.
 		return false, fmt.Errorf("cannot compare date %q with non-date %q",
-			pickDate(left, right, lDateErr == nil), pickNonDate(left, right, lDateErr == nil))
+			pickDate(left, right, lIsTime), pickNonDate(left, right, lIsTime))
 	}
 
 	// Both sides parse as numbers → compare as numbers
