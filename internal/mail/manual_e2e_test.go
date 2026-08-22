@@ -62,7 +62,7 @@ func TestManual_EndToEnd(t *testing.T) {
 		Host:        fake.host(),
 		Port:        fake.port(),
 		Username:    "relay",
-		PasswordEnv: "RELA_MANUAL_SMTP_PASSWORD",
+		PasswordVar: "RELA_MANUAL_SMTP_PASSWORD",
 		From:        "rela@example.com",
 		FromName:    "Rela",
 	}, mail.WithRootCAs(pool))

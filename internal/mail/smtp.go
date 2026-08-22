@@ -81,7 +81,7 @@ func (s *SMTPSender) Send(ctx context.Context, m Message) error {
 		// the relay may lock the account out — 30s of noise and a possible
 		// lockout for what is a one-line configuration mistake.
 		return fmt.Errorf("mail: username %q is set but %s is empty or unset",
-			s.cfg.Username, s.cfg.PasswordEnv)
+			s.cfg.Username, s.cfg.PasswordVar)
 	}
 
 	return s.dial(ctx, msg)

@@ -230,7 +230,7 @@ func TestSMTP_DeliversOverSTARTTLS(t *testing.T) {
 		Host:        fake.host(),
 		Port:        fake.port(),
 		Username:    "relay",
-		PasswordEnv: "RELA_TEST_SMTP_PASSWORD",
+		PasswordVar: "RELA_TEST_SMTP_PASSWORD",
 		From:        "rela@example.com",
 		FromName:    "rela",
 	}, mail.WithRootCAs(pool))
@@ -291,7 +291,7 @@ func TestSMTP_CredentialNeverInError(t *testing.T) {
 		Host:        "127.0.0.1",
 		Port:        1,
 		Username:    "relay",
-		PasswordEnv: "RELA_TEST_SMTP_PASSWORD",
+		PasswordVar: "RELA_TEST_SMTP_PASSWORD",
 		From:        "rela@example.com",
 	})
 	require.NoError(t, err)
@@ -325,7 +325,7 @@ func TestSMTP_RedactsCredentialEchoedByServer(t *testing.T) {
 		Host:        fake.host(),
 		Port:        fake.port(),
 		Username:    "relay",
-		PasswordEnv: "RELA_TEST_ECHO_PASSWORD",
+		PasswordVar: "RELA_TEST_ECHO_PASSWORD",
 		From:        "rela@example.com",
 	}, mail.WithRootCAs(pool))
 	require.NoError(t, err)
@@ -506,7 +506,7 @@ func TestSMTP_FailsFastOnEmptyPassword(t *testing.T) {
 		Transport:   mail.TransportSMTP,
 		Host:        "smtp.example.com",
 		Username:    "relay",
-		PasswordEnv: "RELA_TEST_EMPTY_PASSWORD",
+		PasswordVar: "RELA_TEST_EMPTY_PASSWORD",
 		From:        "f@e.com",
 	})
 	require.NoError(t, err)
