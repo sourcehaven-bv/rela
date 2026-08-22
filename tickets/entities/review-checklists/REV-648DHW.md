@@ -107,13 +107,15 @@ location, and by a guard test in `internal/entity` protecting the unwritten
 
 ## Pull Request
 
-- [x] ~~Run `/pr` command to create PR and monitor CI~~ (deferred: committed to
-  the branch `tkt-9pcl7d-reserved-system-principals`; opening the PR is the
-  user's call, since pushing is an outward-facing action they have not asked
-  for. Run `/pr` to open it.)
-- [x] ~~All CI checks pass~~ (N/A until the PR exists; the full local
-  equivalent — `go test ./...`, `just lint`, `just arch-lint`, `just plimsoll`,
-  `just coverage-check` — is green, see Automated Checks above)
-- [x] ~~PR URL documented below~~ (N/A until the PR exists)
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass
+- [x] PR URL documented below
 
-**PR:** not yet opened — branch `tkt-9pcl7d-reserved-system-principals`
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1396
+
+Ticket gate cleared before opening: TKT-9PCL7D was already `status=done` and
+`rela validate --project tickets` (cardinality + properties + validations)
+exited 0. Pre-flight `just ci` — which runs lint, arch-lint, plimsoll, lint-md,
+test, coverage, build and **docs-check** — passed with exit code 0; docs-check
+regenerates from `docs-project/` and requires a clean `git diff`, confirming the
+committed `docs/` match their source.
