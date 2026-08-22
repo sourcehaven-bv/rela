@@ -5,7 +5,7 @@ title: Remove sidebar entity counts (badges, ACL-scoped counting path, docs)
 kind: chore
 priority: low
 effort: s
-status: review
+status: done
 ---
 
 ## Problem
