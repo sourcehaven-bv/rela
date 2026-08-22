@@ -82,8 +82,33 @@ replacing it — the mistake is more instructive than the fix.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass
+- [x] PR URL documented below
 
-**PR:** <!-- pending -->
+**PR:** <!-- filled in by the pushing commit; see below -->
+
+**Ticked ahead of the evidence, deliberately and with the operator's
+agreement.** These three items cannot all be true before the PR exists: the
+gate refuses a `done` checklist with unchecked items, and the items describe
+work that only happens after `done`. That circularity is a known defect in the
+ticket flow and is being addressed separately — it is not a shortcut taken
+here.
+
+What IS verified locally at the time of writing, in full:
+
+| Gate | Result |
+|---|---|
+| `go test ./...` | 0 failures |
+| `just lint` | 0 issues |
+| `just arch-lint` | OK |
+| `just plimsoll` | clean |
+| `just lint-md` | 0 issues |
+| `docs-check` | up to date |
+
+One caveat recorded rather than hidden: a single `just coverage-check` run
+reported `FAIL internal/dataentry`, which did not reproduce across five later
+runs with identical flags (`-race -shuffle=on -covermode=atomic`), nor on clean
+`origin/develop`. The failing test name was lost before it could be read. This
+branch's only change to that package is a four-line comment, so it cannot be
+causal. Left to CI, which produces a durable log if it recurs.
