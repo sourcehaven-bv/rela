@@ -88,6 +88,7 @@ components:
   # values. The one place that knows both vocabularies, so that stores and
   # visibility (neither of which may import metamodel) can hold the result.
   worlds:           { in: internal/worlds }
+  worldreader:      { in: internal/worldreader }
   migration:        { in: internal/migration }
   markdown:         { in: internal/markdown }
   canonical:        { in: internal/canonical }
@@ -483,6 +484,11 @@ deps:
       # The composition root compiles the metamodel's `worlds:` at startup so
       # an invalid pointer name fails the boot (TKT-WAV8XP).
       - worlds
+      # ...and binds a compiled world to a read surface. The metamodel
+      # adapters (alias canonicalization, relation-scope classification)
+      # live HERE rather than in worldreader, which arch-lint pins to
+      # entity + store so guard rule 1 stays structural (TKT-WAV8XP PR-D).
+      - worldreader
   # backendtest supplies each build's test backend. The pgx dependency is
   # confined to its postgres-tagged file, which the default build does not
   # compile — the same arrangement pgstore uses.
@@ -757,6 +763,24 @@ deps:
     mayDependOn:
       - entity
       - metamodel
+      - store
+  # worldreader is the RUNTIME half of worlds: it holds a store and reads.
+  #
+  # It deliberately may NOT depend on acl, visibility, principal or
+  # affordances. That is GUARD RULE 1 (TKT-WAV8XP): world resolution is
+  # principal-independent, and it must complete BEFORE the ACL gate is
+  # consulted — if the gate ran first, a prime the principal may not read
+  # would fall through to the chain's next candidate, and the face a
+  # reader receives would reveal what the ACL denied them. Enforced here
+  # AND by a package-scan test (worldreader/guard_test.go), because
+  # arch-lint alone would not catch a principal read off ctx.
+  #
+  # It also may not depend on metamodel: the compiled WorldScope is
+  # metamodel-free by construction, and a TypeCanonicalizer interface is
+  # supplied at the wiring site.
+  worldreader:
+    mayDependOn:
+      - entity
       - store
   migration:
     mayDependOn:

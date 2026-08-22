@@ -90,6 +90,11 @@ type Services struct {
 	paths *project.Context
 	meta  *metamodel.Metamodel
 	store store.Store
+	// worlds is the compiled world set, carried so a caller can build a
+	// world-bound read surface (WorldSurface). Tenant-independent and
+	// metamodel-derived, like meta — it is copied from the SharedBase
+	// rather than recompiled per assembly.
+	worlds worlds.Compiled
 	// versions is the content-versioning service (history reads, version writes,
 	// purge), a separate concern injected by the backend recipe — nil on builds
 	// without versioning (fs/mem; fsstore uses git). Consumers bind the narrow
@@ -657,10 +662,19 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 		}
 		visible = v
 	}
+	// Compile worlds from the supplied metamodel so this construction path
+	// offers the same world surface as the base-assembly path. A failure
+	// here is a metamodel error and must surface, not silently yield a
+	// Services whose WorldSurface always 404s.
+	compiledWorlds, err := worlds.Compile(c.Meta)
+	if err != nil {
+		return nil, fmt.Errorf("appbuild.NewFromCollaborators: compile worlds: %w", err)
+	}
 	return &Services{
 		fs:              c.FS,
 		paths:           c.Paths,
 		meta:            c.Meta,
+		worlds:          compiledWorlds,
 		store:           c.Store,
 		searcher:        c.Searcher,
 		visibleSearcher: visible,
@@ -1091,10 +1105,12 @@ type SharedBase struct {
 // Worlds returns the compiled world scopes this base was built from.
 //
 // Compiled once here because compilation is metamodel-derived and therefore
-// tenant-independent — the same reason `meta` lives on the base. Nothing
-// consumes it yet; the store contract lands in PR-B and the read decorator in
-// PR-D (TKT-WAV8XP). It is compiled from PR-A regardless so that an invalid
-// pointer name fails the boot instead of waiting for a consumer.
+// tenant-independent — the same reason `meta` lives on the base. It is
+// compiled at boot so an invalid pointer name fails startup rather than the
+// first request that needs a world.
+//
+// Consumed by [Services.WorldSurface], which resolves a world by name and
+// binds it to a read surface (TKT-WAV8XP PR-D).
 func (b *SharedBase) Worlds() worlds.Compiled { return b.worlds }
 
 // Meta returns the loaded metamodel this base was built from. Exposed so a host
@@ -1332,6 +1348,7 @@ func assemble(
 		fs:              cfg.FS,
 		paths:           cfg.Paths,
 		meta:            base.meta,
+		worlds:          base.worlds,
 		store:           st,
 		versions:        versions,
 		searcher:        searcher,

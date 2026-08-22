@@ -1020,6 +1020,28 @@ Lowercase alphanumeric runs joined by single hyphens: `draft`,
 no doubled hyphens, and `+` is reserved. Invalid names are reported at
 startup.
 
+### What worlds do NOT do yet
+
+Two limits are deliberate, and you will meet both if you try to use a
+world today.
+
+**There is no way to ask for a world per request.** No `?world=` query
+parameter, no `--world` flag. A surface is *built* over its world and
+cannot be asked to serve a different one. Request-level selection needs
+its own permission check — letting any caller name a world would make
+"which faces may I see?" a client decision — so it ships together with
+that check rather than before it.
+
+**A world-bound surface cannot have search.** Search results are not
+world-scoped yet: the index holds default-state documents, so a search
+box on a `published` surface would return drafts. Rather than serve
+wrong results quietly, constructing a world-bound surface *with* a
+searcher fails outright. Access control cannot paper over this — the
+permission gate is deliberately world-independent, so nothing downstream
+would catch a draft that leaked in through search.
+
+Both lift when per-world indexing and request-level selection land.
+
 ### Checking stored states
 
 `rela analyze states` reports state rows the schema does not account for —

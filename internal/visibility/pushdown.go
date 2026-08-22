@@ -92,7 +92,29 @@ func listPushdown(
 		// acl.PermitsReadMany, which errors here.
 		return nil, false
 	}
-	return redactingSeq(ctx, gq.GraphQuery(ctx, *rqr.Query), redact), true
+	// Carry the WORLD from the EntityQuery onto the composed GraphQuery
+	// (TKT-WAV8XP PR-D). This is the seam the whole two-mechanism design
+	// turns on: pushdown reaches PAST every decorator to the raw store,
+	// so a world that rides only on the decorator silently degrades to
+	// the default world exactly here — and exactly for ACL-gated
+	// principals, since AllowAll takes the EntityQuery branch above.
+	//
+	// That is not hypothetical: it is the fail-open PR-B's review found
+	// (RR-GQWRLD), where `otherwise: exclude` stopped excluding and a
+	// published world served drafts. `internal/acl` cannot set this
+	// itself — arch-lint forbids it importing metamodel, so it cannot
+	// compile a WorldScope — which is why the copy happens at this
+	// wiring seam instead. Pinned by the decorator/pushdown parity test.
+	// COPY the composed query before stamping the world. The ACL layer
+	// may cache or reuse the ReadQueryResult per principal, so mutating
+	// *rqr.Query in place would leak one request's world into the next
+	// caller's — a cross-request scope bleed. The copy is shallow, which
+	// is exactly right here: World is a value field, so assigning it
+	// touches only this copy, while the predicate pointers it shares
+	// (HasInbound/HasOutbound/Props) are read-only downstream.
+	worldQuery := *rqr.Query
+	worldQuery.World = q.World
+	return redactingSeq(ctx, gq.GraphQuery(ctx, worldQuery), redact), true
 }
 
 // redactingSeq applies the field redactor to every row of src.

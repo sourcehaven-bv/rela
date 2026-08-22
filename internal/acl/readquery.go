@@ -73,20 +73,23 @@ func (r *Request) readQuery(ctx context.Context, entityType string) ReadQueryRes
 		return ReadQueryResult{DenyAll: true}
 	}
 
-	// World is deliberately left ZERO here, which means the DEFAULT world
-	// (store.WorldScope's zero value). This is NOT an assertion that the
-	// ACL path is world-safe: a world-scoped read must have its scope
-	// INJECTED from above by the world-resolved reader (internal/worldreader,
-	// TKT-WAV8XP PR-D), which is the layer that owns a compiled WorldScope.
+	// World is deliberately left ZERO here, and that is CORRECT rather
+	// than a gap: the world is stamped onto this query by the caller,
+	// at internal/visibility's listPushdown seam, which copies it from
+	// the EntityQuery it was given (TKT-WAV8XP PR-D).
 	//
-	// internal/acl structurally cannot resolve one itself — arch-lint
+	// internal/acl structurally cannot resolve a world itself — arch-lint
 	// forbids it from importing internal/metamodel, and a WorldScope is
-	// compiled from the metamodel. So the seam belongs above this package,
-	// not in it. Until PR-D wires that injection, store.GraphQuery.World is
-	// honored by the backends (PR-B) but never set on this path.
+	// compiled from the metamodel. So the scope belongs to the layer
+	// above, which is why this composer emits a world-free query and the
+	// wiring seam stamps it.
 	//
-	// Do NOT "fix" this by giving internal/acl a metamodel dependency: that
-	// breaks the boundary that keeps ACL evaluable without a schema.
+	// Do NOT "fix" this by giving internal/acl a metamodel dependency:
+	// that breaks the boundary keeping ACL evaluable without a schema.
+	// And do NOT drop the copy at listPushdown — pushdown reaches past
+	// every decorator to the raw store, so without it a world-scoped
+	// list silently degrades to the default world for exactly the
+	// ACL-gated principals (RR-GQWRLD).
 	q := &store.GraphQuery{
 		EntityType: entityType,
 		HasInbound: &store.RelationPredicate{
