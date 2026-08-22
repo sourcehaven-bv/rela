@@ -107,8 +107,12 @@ defineEmits<{
   min-width: 0;
 }
 
-.calendar-grid--week .calendar-day {
-  min-height: 320px;
+/* A week grid is a header row plus ONE day row, so the day row needs an
+   explicit height: min-height on a grid item does not open a row that has
+   nothing else holding it, which leaves a seven-column strip above dead space.
+   The header row stays auto so it is not stretched with the days. */
+.calendar-grid--week {
+  grid-template-rows: auto minmax(420px, auto);
 }
 
 .calendar-day--outside {
