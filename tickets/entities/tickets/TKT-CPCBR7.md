@@ -5,7 +5,7 @@ title: Migration lock as a pluggable mini-service (postgres advisory lock, fs lo
 kind: enhancement
 priority: medium
 effort: m
-status: in-progress
+status: review
 ---
 
 ## Problem

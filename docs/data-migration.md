@@ -155,6 +155,13 @@ advisory lock, so tenants sharing a database never block each other; on the
 filesystem backend it is a lock file under `.rela/` (single machine, with
 stale-lock detection after a crash). Dry-runs never take the lock.
 
+One caveat on crash recovery: staleness is judged by whether the recorded
+process id is still alive on this machine, never by age (a long migration
+is not a crash). If a crashed run's pid has been recycled by an unrelated
+process, the lock stays honored — the remedy is simply removing
+`.rela/migration.lock` by hand once you have confirmed no migration is
+running.
+
 `data` resolves the chain from the store's current hash to the live schema.
 Migrations run in file-name order; compatible gaps between them (additive
 changes that were adopted without a migration) are bridged automatically, so

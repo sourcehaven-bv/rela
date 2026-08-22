@@ -2,6 +2,7 @@ package appbuild
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"time"
@@ -96,6 +97,8 @@ func startDataMigration(
 			case <-ticker.C:
 				res, err := gc.Tick(ctx, true)
 				switch {
+				case errors.Is(err, context.Canceled):
+					// Shutdown raced a tick; not a failure worth a warning.
 				case err != nil:
 					slog.Warn("datamigration: gc tick failed", "error", err)
 				case res.Skipped != "":

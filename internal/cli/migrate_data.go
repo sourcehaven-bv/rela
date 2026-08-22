@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,15 +25,19 @@ func loadDataMigrations(svc *writeServices) ([]*datamigration.File, error) {
 }
 
 // migrationLock builds the per-store lock the same way appbuild does, so
-// CLI runs and server-side gate/GC writers exclude each other.
+// CLI runs and server-side gate/GC writers exclude each other. Each command
+// invocation builds ONE lock value and threads it everywhere — for the fs
+// implementation the embedded in-process mutex only spans one value.
 func migrationLock(svc *writeServices) datamigration.MigrationLock {
 	return datamigration.LockFor(svc.Store, svc.Paths.CacheDir)
 }
 
 // currentShape loads the marker (bootstrapping it via the gate when absent)
 // and returns the shape the data conforms to plus the gate for reuse.
-func evaluateGate(ctx context.Context, svc *writeServices) (*datamigration.Gate, *datamigration.Verdict, error) {
-	gate, err := datamigration.NewGate(svc.State, migrationLock(svc))
+func evaluateGate(
+	ctx context.Context, svc *writeServices, lock datamigration.MigrationLock,
+) (*datamigration.Gate, *datamigration.Verdict, error) {
+	gate, err := datamigration.NewGate(svc.State, lock)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -49,7 +54,7 @@ type MigrateStatusCmd struct{}
 
 // Run executes `rela migrate status`.
 func (c *MigrateStatusCmd) Run(ctx context.Context, svc *writeServices) error {
-	_, v, err := evaluateGate(ctx, svc)
+	_, v, err := evaluateGate(ctx, svc, migrationLock(svc))
 	if err != nil {
 		return err
 	}
@@ -101,7 +106,7 @@ func (c *MigrateGenCmd) Run(ctx context.Context, svc *writeServices) error {
 	if marker == nil {
 		// No marker: nothing recorded to diff against. Evaluate the gate
 		// (bootstraps the baseline) and tell the operator why gen is a no-op.
-		if _, _, gErr := evaluateGate(ctx, svc); gErr != nil {
+		if _, _, gErr := evaluateGate(ctx, svc, migrationLock(svc)); gErr != nil {
 			return gErr
 		}
 		fmt.Println("no recorded data shape yet — baseline adopted; edit schema.yaml first, then re-run `rela migrate gen`")
@@ -151,12 +156,13 @@ type MigrateDataCmd struct {
 
 // Run executes `rela migrate data [--apply]`.
 func (c *MigrateDataCmd) Run(ctx context.Context, svc *writeServices) error {
+	lock := migrationLock(svc)
 	marker, err := datamigration.LoadMarker(ctx, svc.State)
 	if err != nil {
 		return err
 	}
 	if marker == nil {
-		if _, _, gErr := evaluateGate(ctx, svc); gErr != nil {
+		if _, _, gErr := evaluateGate(ctx, svc, lock); gErr != nil {
 			return gErr
 		}
 		fmt.Println("no recorded data shape yet — baseline adopted; nothing to migrate")
@@ -177,7 +183,7 @@ func (c *MigrateDataCmd) Run(ctx context.Context, svc *writeServices) error {
 	}
 	if len(plan) == 0 {
 		// Nothing to run; let the gate adopt any compatible remainder.
-		_, v, gErr := evaluateGate(ctx, svc)
+		_, v, gErr := evaluateGate(ctx, svc, lock)
 		if gErr != nil {
 			return gErr
 		}
@@ -192,7 +198,7 @@ func (c *MigrateDataCmd) Run(ctx context.Context, svc *writeServices) error {
 		Audit:    svc.Audit,
 		ScriptFS: os.DirFS(svc.Paths.Root),
 		Versions: versionCaptureFor(svc),
-		Lock:     migrationLock(svc),
+		Lock:     lock,
 	})
 	if err != nil {
 		return err
@@ -204,7 +210,7 @@ func (c *MigrateDataCmd) Run(ctx context.Context, svc *writeServices) error {
 	}
 	if c.Apply {
 		// Let the gate adopt any compatible tail gap and publish in-sync.
-		if _, v, gerr := evaluateGate(ctx, svc); gerr == nil && v != nil {
+		if _, v, gerr := evaluateGate(ctx, svc, lock); gerr == nil && v != nil {
 			fmt.Println(v.Describe())
 		}
 	} else {
@@ -245,7 +251,8 @@ type MigrateGCCmd struct {
 
 // Run executes `rela migrate gc [--scan] [--apply]`.
 func (c *MigrateGCCmd) Run(ctx context.Context, svc *writeServices) error {
-	gate, _, err := evaluateGate(ctx, svc)
+	lock := migrationLock(svc)
+	gate, _, err := evaluateGate(ctx, svc, lock)
 	if err != nil {
 		return err
 	}
@@ -257,19 +264,26 @@ func (c *MigrateGCCmd) Run(ctx context.Context, svc *writeServices) error {
 		Verdicts: gate,
 		Versions: versionCaptureFor(svc),
 		Grace:    c.Grace,
-		Lock:     migrationLock(svc),
+		Lock:     lock,
 	})
 	if err != nil {
 		return err
 	}
 	if c.Scan {
 		added, sErr := gc.Scan(ctx)
-		if sErr != nil {
+		switch {
+		case errors.Is(sErr, datamigration.ErrLockHeld):
+			// A concurrent run (e.g. the server's hourly sweep) holds the
+			// lock; the scan is additive bookkeeping, so report and carry on
+			// to the tick preview rather than failing the whole command.
+			fmt.Println("scan skipped: another migration or GC run is active — re-run later")
+		case sErr != nil:
 			return sErr
-		}
-		fmt.Printf("scan added %d orphan(s) to the drift ledger\n", len(added))
-		for _, key := range added {
-			fmt.Printf("  %s\n", key)
+		default:
+			fmt.Printf("scan added %d orphan(s) to the drift ledger\n", len(added))
+			for _, key := range added {
+				fmt.Printf("  %s\n", key)
+			}
 		}
 	}
 	res, err := gc.Tick(ctx, c.Apply)

@@ -1,6 +1,7 @@
 package datamigration
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -46,10 +47,13 @@ type storeLocker interface {
 
 // LockFor selects the migration lock for a store: a store-provided
 // cross-process lock when the backend has one (pgstore's schema-scoped
-// advisory lock), else a lock file under cacheDir (fsstore — single-machine
-// by nature), else a process-local lock (memory backend, tests). Mirrors how
-// the state.KV backend is chosen: backend capability wins, filesystem
-// fallback.
+// advisory lock), else a lock file under cacheDir, else a process-local
+// lock (tests, cacheDir-less contexts). The cacheDir branch applies to the
+// memory backend too, ON PURPOSE: what the lock guards is the marker/ledger
+// in state.KV, and for every non-postgres backend that state lives under
+// `.rela/` (FSKV) — shared across processes — so the lock must be a file
+// beside it. Mirrors how the state.KV backend itself is chosen: backend
+// capability wins, filesystem fallback.
 func LockFor(st store.Store, cacheDir string) MigrationLock {
 	if sl, ok := st.(storeLocker); ok {
 		return &storeLock{sl: sl}
@@ -78,12 +82,17 @@ func (l *storeLock) TryAcquire(ctx context.Context) (func(), error) {
 // ---- process-local ----
 
 // ProcessLock is the in-process implementation: mutual exclusion between
-// goroutines of one process only (memory backend, tests). It is also
-// embedded in the fs lock so two goroutines in one process cannot both pass
-// the pid-file check (their shared pid reads as "held by a live process —
-// me" for both).
+// goroutines of one process only (tests, contexts with no cache dir). It is
+// also embedded in the fs lock so two goroutines sharing one fsLock VALUE
+// cannot both pass the pid-file check (their shared pid reads as "held by a
+// live process — me" for both).
+//
+// Releases are generation-guarded, not just idempotent: a stale release
+// func kept from an earlier acquisition can never unlock a later holder.
 type ProcessLock struct {
-	mu sync.Mutex
+	mu   sync.Mutex
+	held bool
+	gen  uint64
 }
 
 // NewProcessLock returns a process-local MigrationLock.
@@ -91,10 +100,21 @@ func NewProcessLock() *ProcessLock { return &ProcessLock{} }
 
 // TryAcquire implements [MigrationLock].
 func (l *ProcessLock) TryAcquire(context.Context) (func(), error) {
-	if !l.mu.TryLock() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.held {
 		return nil, ErrLockHeld
 	}
-	return once(l.mu.Unlock), nil
+	l.held = true
+	l.gen++
+	mine := l.gen
+	return func() {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		if l.held && l.gen == mine {
+			l.held = false
+		}
+	}, nil
 }
 
 // ---- filesystem lock file ----
@@ -128,32 +148,33 @@ func newFSLock(cacheDir string) *fsLock {
 
 // TryAcquire implements [MigrationLock]. A lock file whose recorded pid is
 // no longer alive (crashed run) is broken with a warning and acquisition is
-// retried once.
+// retried once. Nil: never returns a nil release on nil error.
 func (l *fsLock) TryAcquire(ctx context.Context) (func(), error) {
-	if !l.local.mu.TryLock() {
-		return nil, ErrLockHeld
+	releaseLocal, err := l.local.TryAcquire(ctx)
+	if err != nil {
+		return nil, err
 	}
 	releaseFile, err := l.acquireFile(ctx)
 	if err != nil {
-		l.local.mu.Unlock()
+		releaseLocal()
 		return nil, err
 	}
 	return once(func() {
 		releaseFile()
-		l.local.mu.Unlock()
+		releaseLocal()
 	}), nil
 }
 
 func (l *fsLock) acquireFile(ctx context.Context) (func(), error) {
+	if err := os.MkdirAll(filepath.Dir(l.path), 0o755); err != nil {
+		return nil, fmt.Errorf("datamigration: create lock dir: %w", err)
+	}
 	// One stale-break retry, never more: a second failure means a live
 	// holder raced us to re-create the file, which is contention, not
 	// staleness.
 	for range 2 {
 		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		if err := os.MkdirAll(filepath.Dir(l.path), 0o755); err != nil {
-			return nil, fmt.Errorf("datamigration: create lock dir: %w", err)
+			return nil, fmt.Errorf("datamigration: acquire migration lock: %w", err)
 		}
 		payload, _ := json.Marshal(lockFilePayload{PID: os.Getpid(), AcquiredAt: time.Now().UTC()})
 		f, err := os.OpenFile(l.path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
@@ -161,10 +182,14 @@ func (l *fsLock) acquireFile(ctx context.Context) (func(), error) {
 			_, werr := f.Write(payload)
 			cerr := f.Close()
 			if werr != nil || cerr != nil {
-				_ = os.Remove(l.path)
+				l.removeIfOurs(payload)
 				return nil, fmt.Errorf("datamigration: write lock file: %w", errors.Join(werr, cerr))
 			}
-			return func() { _ = os.Remove(l.path) }, nil
+			// Release removes the file ONLY while it still holds our own
+			// payload: if an operator hand-removed the lock and another
+			// process acquired meanwhile, an unconditional remove would
+			// delete the new holder's lock.
+			return func() { l.removeIfOurs(payload) }, nil
 		}
 		if !errors.Is(err, os.ErrExist) {
 			return nil, fmt.Errorf("datamigration: create lock file: %w", err)
@@ -176,30 +201,83 @@ func (l *fsLock) acquireFile(ctx context.Context) (func(), error) {
 	return nil, ErrLockHeld
 }
 
+// removeIfOurs deletes the lock file only when its content is exactly the
+// payload this acquisition wrote.
+func (l *fsLock) removeIfOurs(payload []byte) {
+	current, err := os.ReadFile(l.path)
+	if err == nil && bytes.Equal(current, payload) {
+		_ = os.Remove(l.path)
+	}
+}
+
+// breakPath is the break-mutex file: the exclusive right to REMOVE a stale
+// lock file. Without it, two processes that both judged the file stale could
+// interleave so that the second os.Remove deletes the first's freshly
+// re-created lock — the classic read-decide-remove TOCTOU. Only the process
+// that O_EXCL-creates the break file may remove the lock, and it re-verifies
+// staleness while holding it, so a fresh lock can never be removed.
+func (l *fsLock) breakPath() string { return l.path + ".break" }
+
+// breakStaleWindow is how old an abandoned break file must be before it is
+// itself removed. Legitimate holds last microseconds; a breaker that crashed
+// mid-break is the only way one persists.
+const breakStaleWindow = 30 * time.Second
+
 // breakIfStale removes the lock file when its holder is provably gone on
 // this host, returning true when a retry is worthwhile. A file naming a
 // LIVE pid is always honored — staleness can only be concluded from a dead
 // or unattributable holder, never from age alone (a long migration is not a
-// crash).
+// crash). KNOWN LIMIT: a crashed holder's pid recycled by an unrelated
+// process reads as alive and wedges the lock; the operator remedy is
+// removing .rela/migration.lock by hand (documented in the guide).
 func (l *fsLock) breakIfStale() bool {
+	if !l.isStale() {
+		return false
+	}
+	// Take the break mutex; the loser reports held and lets the winner
+	// finish (its own retry will find either a fresh lock or no file).
+	bf, err := os.OpenFile(l.breakPath(), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			l.clearAbandonedBreak()
+		}
+		return false
+	}
+	_ = bf.Close()
+	defer os.Remove(l.breakPath())
+	// Re-verify UNDER the break mutex: between our first read and now,
+	// another breaker may have removed the stale file and a new holder may
+	// have created a fresh one.
+	if !l.isStale() {
+		return false
+	}
+	slog.Warn("datamigration: breaking stale migration lock", "path", l.path)
+	_ = os.Remove(l.path)
+	return true
+}
+
+// isStale reports whether the lock file exists and its holder is provably
+// gone (dead pid) or unattributable (unparseable). A missing file counts as
+// stale too: the retry's O_EXCL create decides ownership either way.
+func (l *fsLock) isStale() bool {
 	data, err := os.ReadFile(l.path)
 	if err != nil {
-		// Raced with the holder's release: the file is already gone.
 		return errors.Is(err, os.ErrNotExist)
 	}
 	var p lockFilePayload
 	if err := json.Unmarshal(data, &p); err != nil || p.PID <= 0 {
-		slog.Warn("datamigration: breaking unparseable migration lock file", "path", l.path)
-		_ = os.Remove(l.path)
 		return true
 	}
-	if pidAlive(p.PID) {
-		return false
+	return !pidAlive(p.PID)
+}
+
+// clearAbandonedBreak removes a break file left behind by a crashed breaker.
+func (l *fsLock) clearAbandonedBreak() {
+	info, err := os.Stat(l.breakPath())
+	if err == nil && time.Since(info.ModTime()) > breakStaleWindow {
+		slog.Warn("datamigration: removing abandoned lock-break marker", "path", l.breakPath())
+		_ = os.Remove(l.breakPath())
 	}
-	slog.Warn("datamigration: breaking stale migration lock from dead process",
-		"path", l.path, "pid", p.PID, "acquired_at", p.AcquiredAt)
-	_ = os.Remove(l.path)
-	return true
 }
 
 // pidAlive reports whether a process with the given pid exists on this

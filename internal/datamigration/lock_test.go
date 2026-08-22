@@ -1,6 +1,7 @@
 package datamigration
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -307,5 +308,111 @@ func TestConstructors_RejectNilLock(t *testing.T) {
 		Audit: audit.NewMemory(), Verdicts: fixedVerdict{},
 	}); err == nil {
 		t.Fatalf("NewGC accepted nil Lock")
+	}
+}
+
+// RR: the stale-break must not let two processes both acquire (the
+// read-decide-remove TOCTOU). Two independent fsLock values (separate
+// process mutexes, like two processes) race to break a pre-seeded dead-pid
+// lock; exactly one may win.
+func TestFSLock_ConcurrentStaleBreakSingleWinner(t *testing.T) {
+	for range 20 { // the race window is narrow; hammer it
+		dir := t.TempDir()
+		data, _ := json.Marshal(lockFilePayload{PID: deadPID(t), AcquiredAt: time.Now().UTC()})
+		if err := os.WriteFile(filepath.Join(dir, lockFileName), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		locks := []*fsLock{newFSLock(dir), newFSLock(dir)}
+		type outcome struct {
+			release func()
+			err     error
+		}
+		results := make(chan outcome, len(locks))
+		for _, l := range locks {
+			go func(l *fsLock) {
+				release, err := l.TryAcquire(t.Context())
+				results <- outcome{release, err}
+			}(l)
+		}
+		var wins int
+		var releases []func()
+		for range locks {
+			o := <-results
+			if o.err == nil {
+				wins++
+				releases = append(releases, o.release)
+			} else if !errors.Is(o.err, ErrLockHeld) {
+				t.Fatalf("unexpected error: %v", o.err)
+			}
+		}
+		if wins != 1 {
+			t.Fatalf("stale-break race: %d winners, want exactly 1", wins)
+		}
+		releases[0]()
+	}
+}
+
+// RR: a gate adoption's LEDGER write must sit under the same lock
+// acquisition as the marker write — a contended gate skips BOTH, so it can
+// never interleave a ledger write into a GC apply that holds the lock.
+func TestGate_ContendedAdoptionSkipsLedgerToo(t *testing.T) {
+	kv := newFakeKV()
+	lock := NewProcessLock()
+	g, err := NewGate(kv, lock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, evalErr := g.Evaluate(t.Context(), metaV1()); evalErr != nil {
+		t.Fatal(evalErr)
+	}
+	markerBefore, _ := kv.Get(t.Context(), markerKey)
+
+	release, err := lock.TryAcquire(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+
+	// Drift change (deleted property) under contention: no marker move, no
+	// ledger entry.
+	m2 := metaV1()
+	delete(m2.Entities["task"].Properties, "tags")
+	if _, err := g.Evaluate(t.Context(), m2); err != nil {
+		t.Fatalf("contended drift evaluation must not fail: %v", err)
+	}
+	markerAfter, _ := kv.Get(t.Context(), markerKey)
+	if !bytes.Equal(markerBefore, markerAfter) {
+		t.Fatalf("contended adoption moved the marker")
+	}
+	ledger, _ := LoadLedger(t.Context(), kv)
+	if len(ledger.Entries) != 0 {
+		t.Fatalf("contended adoption wrote the ledger: %+v", ledger.Entries)
+	}
+}
+
+// RR: a release func kept from an earlier fs acquisition must not remove a
+// later holder's lock file (guarded release).
+func TestFSLock_StaleReleaseDoesNotRemoveNewHoldersFile(t *testing.T) {
+	dir := t.TempDir()
+	a := newFSLock(dir)
+	releaseA, err := a.TryAcquire(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate an operator hand-removing the lock, then another process
+	// acquiring.
+	if rmErr := os.Remove(filepath.Join(dir, lockFileName)); rmErr != nil {
+		t.Fatal(rmErr)
+	}
+	b := newFSLock(dir)
+	releaseB, err := b.TryAcquire(t.Context())
+	if err != nil {
+		t.Fatalf("second acquire after manual removal: %v", err)
+	}
+	defer releaseB()
+
+	releaseA() // must NOT delete b's file
+	if _, err := os.Stat(filepath.Join(dir, lockFileName)); err != nil {
+		t.Fatalf("stale release removed the new holder's lock file: %v", err)
 	}
 }

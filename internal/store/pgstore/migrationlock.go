@@ -41,6 +41,14 @@ func (s *Store) TryMigrationLock(ctx context.Context) (release func(), ok bool, 
 		// the store-backed lock and must not fall back to nothing silently.
 		return nil, false, errors.New("pgstore: migration lock requires a pgxpool-backed store")
 	}
+	if pool.Config().MaxConns < 2 {
+		// The lock pins one connection for the whole run while the
+		// migration's own Tx batches acquire more from the same pool — at
+		// pool_max_conns=1 that is a guaranteed self-deadlock, so refuse up
+		// front with the remedy in the message.
+		return nil, false, errors.New(
+			"pgstore: migration lock needs pool_max_conns >= 2 (the lock pins one connection while migration writes use others)")
+	}
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
 		return nil, false, err
