@@ -28,7 +28,9 @@ type Sender interface {
 }
 ```
 
-- **`transport: smtp`** — `net/smtp`, STARTTLS required, explicit timeouts. Must be Go;
+- **`transport: smtp`** — via `github.com/wneessen/go-mail` (NOT `net/smtp`, which is
+frozen and would leave RFC 5322 message assembly to us). STARTTLS mandatory,
+explicit timeouts. Must be Go;
 the Lua sandbox has no socket access by design. Verified against
 `send.simplemailservice.eu:587`, but nothing provider-specific is compiled in —
 it is ordinary authenticated SMTP.
@@ -54,7 +56,10 @@ credentials-in-URL, and a `redactKey` safety net. Credential is `password_env:`
 - Enqueue appends to an in-process buffer; a worker goroutine delivers with capped
 exponential backoff. Writes never block on SMTP; a down mail server degrades
 rather than failing saves.
-- Idempotency key so a *retry within the process* cannot double-send.
+- Enqueue returns `ErrOutboxFull` at capacity rather than dropping silently — a
+full buffer means the mail server is down and the backlog is building.
+- **No idempotency key**: one sequential worker with no persistence makes dedup
+true by construction. It belongs with the durable backend (IDEA-WIJ2H1).
 - **This is a delivery buffer, not a durable queue.** A crash or restart with
 undelivered mail loses it. Accepted for this ticket, not an oversight — a real
 queue seam with swappable backends (memory/postgres/redis) is IDEA-WIJ2H1, and
@@ -62,9 +67,10 @@ this outbox becomes its first consumer when it lands.
 
 State it plainly in the package doc and operator docs: **a notification can be
 silently lost on restart.** Mail is notification, never a system of record;
-nothing may be built on an assumed delivery guarantee. Write down which of the
-two you mean, so the next person does not build on a durability property that
-was never real.
+nothing may be built on an assumed delivery guarantee. Be specific in the docs:
+in `rela-server` there is no signal handler, so `Services.Close` never runs and
+**every pending message is lost on restart with no drain at all** — the drain
+path is real only for CLI, desktop and tenant eviction.
 - Consequently **no `state.KV` persistence here.** Keep the buffer behind a narrow
 internal interface (enqueue / claim / mark-done) so a queue backend can be
 substituted without touching mail code.
@@ -74,15 +80,24 @@ contract: pure model → bytes, no store/metamodel imports (arch-lint forbids
 `transform` importing `dataentry`, and the existing goldmark converter is
 unexported in `dataentry` and uses `WithUnsafe()`).
 
-- goldmark (vendored, FEAT-010) → HTML → **bluemonday** sanitize (already in go.sum).
+- goldmark → **bluemonday sanitize (the untrusted CONTENT ONLY)** → embed in the
+trusted template → **douceur inline LAST**. The order is load-bearing, verified:
+bluemonday strips `style` attributes, so sanitizing the assembled page ships
+unstyled mail and also strips `cellpadding`/`border`/`role` and `cid:` sources.
+And douceur does zero CSS validation, so nothing may sanitize after it.
 Entity content is untrusted; `WithUnsafe()` must NOT be reused here.
+- Palette colour tokens are validated against an allowlist and **rejected** if not
+colours — they flow into CSS, and douceur would materialize
+`url('javascript:…')` into a `style` attribute verbatim.
 - Table-based 600px layout with `<!--[if mso]>` fallbacks, CSS inlined via douceur
 (already in go.sum). This is MJML's *compiled output* hand-ported once into Go
 templates — same client compatibility, zero runtime dependency, cannot fail for
 a missing Node toolchain.
 - `multipart/alternative` with a generated `text/plain` alternative (deliverability).
-- **Operator branding**: accent colour + logo, reusing the existing operator logo/theme
-rather than a second theme mechanism.
+- **Operator branding**: accent colour + logo, reusing the existing operator
+logo/theme rather than a second theme mechanism. The logo is **CID-embedded**
+(it sits behind the auth gate, so a mail client cannot fetch it) and **raster
+only** — SVG is script-capable and unsupported in mail, so it is skipped.
 - Golden-file tests pin the HTML so layout regressions surface in review.
 
 ## Scope: IS NOT
@@ -106,10 +121,22 @@ exposes recipients, subject, and both rendered parts.
 4. Both transports satisfy one shared conformance suite (the storetest pattern).
 5. Markdown with headers, links, bold and a table renders to sanitized inlined-CSS
 HTML; golden-file pinned.
-6. `<script>` / `onerror=` in entity content is stripped from the HTML part.
+6. `<script>`, `onerror=`, `javascript:` hrefs and `style="…url(javascript:…)"` in
+entity content are stripped from the HTML part.
+6a. The rendered HTML **has** inline `style=` attributes — catches an ordering
+inversion that criterion 6 alone would pass.
+6b. `<!--[if mso]>` conditional comments survive to the final output.
+6c. **Post-inline**, no `style=` attribute contains `javascript:`, `behavior:` or
+`expression(`.
+6d. A palette token of `url('javascript:alert(1)')` is rejected at the renderer
+boundary, not escaped or silently defaulted.
 7. Every message carries a non-empty `text/plain` alternative.
 8. Enqueue returns without dialing; delivery happens on the worker.
 9. A transport failure retries with backoff and does not duplicate the message.
+9a. CR/LF in a **subject** is rejected at enqueue (go-mail does not reject it;
+only incidental encoded-word escaping neutralizes it today).
+9b. `stop()` returns within a bounded drain timeout even when a send is blocked
+against an unresponsive server.
 10. Restart with a non-empty buffer loses the mail **and says so** — an explicit test
 documenting best-effort, so the limit is pinned rather than discovered.
 11. Credential never appears in logs, errors, or `/api/v1/_config`.
