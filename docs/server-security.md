@@ -197,6 +197,54 @@ Header values are sanitized at the middleware (trim, 256-rune cap,
 control-char strip) as defense-in-depth against header-injection
 corrupting the JSONL stream.
 
+### Reserved `system:` identities
+
+rela reserves the whole **`system:`** username namespace for its own
+in-process entry points. `system:scheduler` (scheduled tasks) and
+`system:provisioner` (lazy user provisioning) live there today.
+
+These are ordinary *grantable* identities in `acl.yaml` — `rela migrate`
+gives `system:scheduler` a `read: ["*"]` role so existing scheduled jobs
+keep working — and the ACL resolves a principal by matching the raw
+username against its assignments. It has no way to tell where a principal
+came from, so without a boundary check any caller who could influence the
+acting username would inherit the scheduler's grants.
+
+So a `system:`-prefixed username arriving from a **request** is refused:
+
+| Source | Result |
+| --- | --- |
+| `--principal-header` value | **403** on `/api/`, logged |
+| `$RELA_DATAENTRY_USER` | **403** on `/api/`, logged |
+| Verified JWT `sub` (incl. remote MCP) | **denied**, logged |
+
+A valid signature proves your IdP *issued* the subject; it does not prove
+the subject is not one of rela's internal names, so the verified path is
+checked too. The asymmetry in that table is not about the reserved check:
+the JWT gate answers **401** uniformly for every failed assertion, so a
+reserved subject is indistinguishable from an expired or unsigned one. The
+distinction is in the log, not the response.
+
+Outside `/api/` (the SPA shell, static assets) the request is served with
+the identity stripped to `unknown` rather than erroring — a misconfigured
+proxy stamping a reserved name must not lock you out of the UI you need in
+order to fix it. Nothing on those paths uses the principal for
+authorization.
+
+The match is **case-sensitive** and tests the prefix only: `system:`,
+`system:scheduler`, `system:anything` are reserved; `System:Scheduler`,
+`systemscheduler` and `my-system:scheduler` are ordinary usernames (none
+of which matches an assignment key either).
+
+> **Upgrade note.** If your IdP issues subjects that begin with `system:`,
+> those users can no longer authenticate. Look for
+> `rejected reserved principal` in the server log. Remap the affected
+> subjects in your IdP or proxy.
+
+`run_as:` in `schedules.yaml` is **not** affected — it is operator-authored
+config read in-process, inside the trust boundary, and may name any
+`system:` identity.
+
 ### Verified JWT identity (`--jwt-*`)
 
 A third, **stronger** attribution source: a signed identity assertion

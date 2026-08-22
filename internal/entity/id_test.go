@@ -561,3 +561,36 @@ func TestValidateID(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateID_RejectsReservedPrincipalSeparator pins a property that
+// internal/dataentry's reserved-principal guard (TKT-9PCL7D) silently depends
+// on: an entity ID can never contain ':'.
+//
+// The dependency is indirect, which is exactly why it needs a test here. When
+// acl.yaml sets `principal_property`, resolvePrincipalEntity SUBSTITUTES the
+// acting Principal.User with the resolved entity's ID — after the boundary
+// check that rejects `system:`-prefixed names has already run. So the ID
+// becomes an acting identity that no longer passes through that guard.
+//
+// Today that is safe only because this grammar forbids ':', making it
+// impossible to author an entity whose ID is `system:scheduler`. If the pattern
+// were ever widened to admit ':', such an entity would be stamped as the acting
+// principal and inherit whatever acl.yaml grants that name — which, after the
+// DEC-O59WM4 migration, is `read: ["*"]`.
+//
+// Widening the grammar is not forbidden; doing so without revisiting
+// internal/dataentry/router.go's resolvePrincipalEntity is.
+func TestValidateID_RejectsReservedPrincipalSeparator(t *testing.T) {
+	for _, id := range []string{
+		"system:scheduler",
+		"system:provisioner",
+		"PERS-1:2",
+		"a:b",
+	} {
+		if err := ValidateID(id); err == nil {
+			t.Errorf("ValidateID(%q) = nil, want an error — an ID containing ':' "+
+				"could be substituted as an acting principal and collide with a "+
+				"reserved system: identity (TKT-9PCL7D)", id)
+		}
+	}
+}

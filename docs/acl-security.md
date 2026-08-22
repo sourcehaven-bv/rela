@@ -244,6 +244,16 @@ Load-bearing details:
   migration runs on first store open) or add the grant by hand. A
   `provision` policy **without** that grant is a **load error**, so a
   misconfiguration fails at startup, not at the first unmatched request.
+- **`system:` identities cannot be asserted from a request.** Both
+  `system:provisioner` and `system:scheduler` are grantable assignment
+  keys, and the ACL matches a principal by raw username with no notion of
+  where it came from. The boundary check lives at the API instead: a
+  `system:`-prefixed username arriving via `--principal-header`,
+  `$RELA_DATAENTRY_USER`, or a *validly signed* JWT `sub` is refused and
+  logged, so neither grant can be borrowed by a web or MCP caller. See
+  "Reserved `system:` identities" in [GUIDE-server-security]. This is also
+  why a forged subject can never be provisioned into a stub's
+  `principal_property`.
 - **The provisioned stub is bare — identity, not authority.** The
   `system:provisioner` role is `create`-only on the user type and nothing
   else, so provisioning gives the principal a graph *identity* but **no
