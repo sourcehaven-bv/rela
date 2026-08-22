@@ -1,64 +1,52 @@
 ---
 id: TKT-0XL8MF
 type: ticket
-title: 'Re-home affordance-resolver construction so appbuild can supply one: unblocks the field write gate and two read-side limitations'
+title: 'Wire a policy-backed FieldWriteGate so MCP and Lua callers cannot write fields their policy hides'
 kind: enhancement
 priority: medium
-effort: l
+effort: m
 status: backlog
 ---
 
-Originally scoped as "wire a policy-backed `FieldWriteGate`" (follow-up to
-TKT-80EWGM). **Widened**: the blocker that stopped that ticket — `appbuild`
-cannot construct an affordance resolver — has since been named as a KNOWN
-LIMITATION at two further sites. The deliverable is the layering fix; the write
-gate is one of its three consumers.
+Follow-up to TKT-80EWGM, which introduced `entitymanager.FieldWriteGate` as a
+required injected capability but wires `AllowAllFieldGate{}` at **every**
+production site, leaving it inert.
 
-## The one missing capability, three symptoms
+The blocker that deferred it — `appbuild` could not construct an affordance
+resolver — **is now resolved**. [[TKT-BUYEW1]] added the `appbuild ->
+affordances` arch-lint edge and `buildFieldRedactor`, which builds a fully
+initialized resolver once during assembly. This ticket consumes that.
 
-`appbuild` may not import `internal/affordances` under arch-lint (only
-`dataentry` and `visibility` may), and the resolver is constructed inside
-`internal/dataentry` (`affordances_stub.go:47`, `ResolverFromProfile`). Three
-surfaces are degraded by exactly that:
+## Scope
 
-| Site | Symptom |
-|---|---|
-| `entitymanager.FieldWriteGate` (`manager.go:220`) | Wired `AllowAllFieldGate{}` at both production sites — inert. MCP/Lua/CLI never field-gated. |
-| `Services.ScheduledLuaWriteDeps` (`appbuild.go:349`, RR-7408F5) | Scheduled jobs get ROW gating only; `visible:` redaction does not apply. |
-| `Services.GatedReads` (`appbuild.go:389`, TKT-UIR41P) | MCP read surfaces get ROW gating only; same gap. |
+This is the **write** half. The read half (field-level `visible:` redaction on
+`ScheduledLuaWriteDeps`, `GatedReads`, and the automation cascade read deps)
+shipped in [[TKT-BUYEW1]].
 
-Fixing the layering once addresses all three. Fixing only the write gate leaves
-two documented holes and a second future ticket to re-derive the same move.
+## Not a regression
 
-Related: TKT-3FL2S6 (done) gated the analyze reader — the row-level half of the
-same story. Its accepted residue is this field-level half.
+`AllowAllFieldGate` preserves today's exact behaviour. Field-level write gating
+has only ever existed on the dataentry HTTP path, which calls
+`validateFieldWrite` directly and is unchanged. MCP, CLI and Lua were never
+field-gated. Nothing got weaker; the seam simply is not yet load-bearing.
 
 ## What to do
 
-1. **Re-home construction.** Move the `affordances.New(...)` +
-`statemachine.Compile` + `WithMachines` sequence out of `dataentry` into a
-package both `appbuild` and `dataentry` may import — most likely a constructor
-in `internal/affordances` itself, since it already owns `New`. `dataentry`
-keeps `policyResolver` (its wire-shape adapter) and the
-`AffordanceProfile` env handling, which are genuinely presentation concerns.
-2. **Move `storeRelationLookup`** (`affordances_policy.go:88`) alongside it —
-it is a pure `store.Store` → `RelationLookup` adapter with nothing
-dataentry-specific in it, and every consumer needs one.
-3. **Decide the arch-lint edge**: either add `affordances` to `appbuild`'s
-`mayDependOn`, or introduce the shared constructor in a lower package so the
-edge is unnecessary. Prefer whichever keeps `dataentry → affordances` intact
-without widening `appbuild`'s 24-entry dep list more than needed.
-4. **Implement `FieldWriteGate`** over `FieldVerdicts`, preserving denial
-classification verbatim — **rule names are a wire contract**
+1. Implement `FieldWriteGate` over `affordances.FieldVerdicts`, preserving the
+denial classification verbatim — **rule names are a wire contract**
 (`affordances.go:264-272`), and the unknown-field → `RuleFieldHidden` mapping
 closes the F8 side channel.
-5. **Wire the read sites**: supply the resolver to `ScheduledLuaWriteDeps` and
-`GatedReads`, and delete both KNOWN LIMITATION notes. Do not delete a note
-without the corresponding test.
-6. **CLI keeps `AllowAllFieldGate`** — the operator has full filesystem access
+2. Wire it in `appbuild` for request-scoped surfaces. `buildFieldRedactor`
+currently discards the `*affordances.PolicyResolver` after wrapping it in a
+`visibility.PolicyRedactor`; the gate needs the resolver itself, so hold it
+alongside rather than building a second one (`WithMachines` makes a second
+construction a concurrency hazard as well as waste).
+3. **CLI keeps `AllowAllFieldGate`** — the operator has full filesystem access
 to the data, so gating there buys nothing (settled in TKT-80EWGM).
-7. Consider migrating dataentry's PATCH onto `PatchEntity` at the same time, so
-the gate has one implementation and one call site.
+4. Consider migrating dataentry's PATCH onto `PatchEntity` at the same time, so
+the gate has exactly one implementation and one call site. That would also let
+`dataentry` drop its own `affordances.New` call in favour of the shared one,
+and retire the duplicated `storeRelationLookup` (see below).
 
 ## Constraints inherited from TKT-80EWGM (do not re-litigate)
 
@@ -72,38 +60,33 @@ Pinned by `TestPatchEntity_ElevationSkipsFieldGate`.
 caller-authored changes only. Pinned by
 `TestPatchEntity_AutomationNotFieldGated`.
 
-## Constraints discovered while widening
+## Constraints carried over from the resolver work
 
 - **`WithMachines` is not concurrency-safe** (`resolver.go:171`). It is the one
-mutator on an otherwise-immutable resolver and is safe today only because its
-sole call site is synchronous wiring before the resolver escapes. Sharing one
-resolver across more consumers must preserve that: construct fully, then
-publish. Do not call it after the resolver is reachable from a request path.
+mutator on an otherwise-immutable resolver, safe only because its call site is
+synchronous wiring before the resolver escapes. Construct fully, then publish.
 - **`declarative.Policy()` is the single source for the policy** (RR-WTLD).
-Reading the policy through any other channel invites mismatched-pair bugs.
-- **Nil-declarative and no-affordance-grants must still select the Nop
-resolver.** Both are normal configurations (NopACL, no `acl.yaml`), not errors.
-- **`New` rejects nil arguments**; a construction failure must REFUSE, not
-degrade to a permissive resolver — matching `GatedReads`' existing
-`visibility.DenyReader` behaviour (RR-GKCZO5).
+- **Nil-declarative and no-affordance-grants must select the permissive path** —
+both are normal configurations, not errors.
+- **A construction failure must REFUSE, not degrade** to a permissive gate.
 
-## This is not a regression fix
+## Known debt this ticket can retire
 
-`AllowAllFieldGate` preserves today's exact behaviour; the two read sites are
-documented as row-gated. Nothing is getting weaker — the seams simply are not
-yet load-bearing. Treat this as closing three disclosed gaps, not fixing a live
-vulnerability.
+`storeRelationLookup` exists twice — `internal/dataentry/affordances_policy.go`
+and `internal/appbuild/relationlookup.go` — because appbuild cannot import
+dataentry. Both feed affordance `when:` predicates, so a bug fixed in one and
+missed in the other makes two surfaces disagree about who may see what. Each
+copy cross-references the other; hoisting into `internal/affordances` is the
+real fix. Note both swallow store iteration errors and return "no edge", which
+is fail-OPEN for a `when: not has_relation(...)` predicate — worth addressing
+while consolidating.
 
 ## Acceptance
 
 - A request-scoped caller cannot set or unset a property their policy hides,
 via MCP or Lua, not just via the dataentry HTTP path.
-- Scheduled Lua jobs and MCP reads receive `visible:`-redacted properties; both
-KNOWN LIMITATION notes are deleted, each with a test that fails without the fix.
 - CLI can still patch any property.
 - dataentry denial responses (rule names, status codes) are byte-identical to
 today — existing affordance tests are the regression net.
-- Exactly one resolver-construction path remains; `dataentry` no longer calls
-`affordances.New` directly.
-- The three TKT-80EWGM constraint tests pass unmodified.
+- The three constraint tests above pass unmodified.
 - `just arch-lint` passes.
