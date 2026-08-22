@@ -1151,18 +1151,64 @@ func (b *SharedBase) Assemble(
 	return assemble(b, st, searcher, visible, searchCloser)
 }
 
+// resolveVisibleSearcher derives an ACL-scoped searcher when the caller did not
+// supply one. A recipe may pass its own (the postgres build has a DB-backed
+// implementation); everything else gets the generic decorator.
+func resolveVisibleSearcher(
+	visible search.VisibleSearcher, searcher search.Searcher, st store.Store,
+) (search.VisibleSearcher, error) {
+	if visible != nil {
+		return visible, nil
+	}
+	v, err := search.NewVisible(searcher, st)
+	if err != nil {
+		return nil, fmt.Errorf("appbuild: derive VisibleSearcher: %w", err)
+	}
+	return v, nil
+}
+
+// backgroundServices holds the optional per-assembled subsystems and the stop
+// functions Services.Close tears down. Grouped so assemble stays readable as
+// more optional services are added — each is independently nil-able and none
+// may fail boot.
+type backgroundServices struct {
+	gcStop     func()
+	mailOutbox *mail.Outbox
+	mailStop   func()
+}
+
+// startBackgroundServices launches the optional per-store subsystems: the
+// data-migration gate and GC sweep, and the mail outbox worker.
+//
+// Neither may fail boot. Each returns a stop function that is always safe to
+// call, so Close needs no nil checks beyond the ones it already has.
+func startBackgroundServices(
+	base *SharedBase, st store.Store, stateKV state.KV, versions store.VersionService,
+) backgroundServices {
+	cfg := base.cfg
+
+	gcStop := startDataMigration(stateKV, base.meta, st, cfg.Audit, versions)
+
+	// Mail is optional and never fails boot; a nil outbox means "not
+	// configured" (see startMail).
+	mailOutbox, mailStop := startMail(cfg.Paths)
+
+	return backgroundServices{
+		gcStop:     gcStop,
+		mailOutbox: mailOutbox,
+		mailStop:   mailStop,
+	}
+}
+
 func assemble(
 	base *SharedBase, st store.Store, searcher search.Searcher,
 	visible search.VisibleSearcher, searchCloser io.Closer,
 ) (*Services, error) {
 	cfg := base.cfg
 
-	if visible == nil {
-		v, err := search.NewVisible(searcher, st)
-		if err != nil {
-			return nil, fmt.Errorf("appbuild: derive VisibleSearcher: %w", err)
-		}
-		visible = v
+	visible, err := resolveVisibleSearcher(visible, searcher, st)
+	if err != nil {
+		return nil, err
 	}
 
 	resolvedACL, aclDeclarative, err := resolveACL(base, st)
@@ -1251,16 +1297,12 @@ func assemble(
 	// changes, warn on incompatible ones) and start the drift GC sweep
 	// (TKT-0C57FS). Never fails boot; the stop func is torn down in Close —
 	// per-assembled, like the search closer.
-	gcStop := startDataMigration(stateKV, base.meta, st, cfg.Audit, versions)
-
-	// Mail is optional and never fails boot; a nil outbox means "not
-	// configured" (see startMail).
-	mailOutbox, mailStop := startMail(cfg.Paths)
+	background := startBackgroundServices(base, st, stateKV, versions)
 
 	return &Services{
-		gcStop:          gcStop,
-		mailOutbox:      mailOutbox,
-		mailStop:        mailStop,
+		gcStop:          background.gcStop,
+		mailOutbox:      background.mailOutbox,
+		mailStop:        background.mailStop,
 		fs:              cfg.FS,
 		paths:           cfg.Paths,
 		meta:            base.meta,

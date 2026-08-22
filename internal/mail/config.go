@@ -107,7 +107,7 @@ func (c *Config) EffectivePort() int {
 // Nil: never returns a nil Config with a nil error.
 func LoadConfig(relaDir string) (*Config, error) {
 	path := filepath.Join(relaDir, ConfigFile)
-	data, err := os.ReadFile(path) //nolint:gosec // G304: operator-owned path under the project's .rela dir
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, ErrConfigNotFound
@@ -176,8 +176,8 @@ func (c *Config) validateCommon() error {
 	if c.TimeoutSeconds < 0 {
 		return fmt.Errorf("timeout_seconds must not be negative, got %d", c.TimeoutSeconds)
 	}
-	if c.BaseURL != "" &&
-		!strings.HasPrefix(c.BaseURL, "http://") && !strings.HasPrefix(c.BaseURL, "https://") {
+	hasScheme := strings.HasPrefix(c.BaseURL, "http://") || strings.HasPrefix(c.BaseURL, "https://")
+	if c.BaseURL != "" && !hasScheme {
 		return fmt.Errorf("base_url must start with http:// or https://, got %q", c.BaseURL)
 	}
 	return nil

@@ -82,7 +82,7 @@ func messageFromWire(fm fakeMessage) mail.Message {
 	// Bodies are quoted-printable inside MIME parts; the conformance suite only
 	// needs to see the distinctive text, so decode softly rather than fully.
 	body := decodeQuotedPrintableish(fm.Data)
-	if i := strings.Index(body, "<h1>Distinct HTML</h1>"); i >= 0 {
+	if strings.Contains(body, "<h1>Distinct HTML</h1>") {
 		m.HTML = []byte("<h1>Distinct HTML</h1>")
 	} else if strings.Contains(body, "<p>hello</p>") {
 		m.HTML = []byte("<p>hello</p>")
@@ -279,7 +279,7 @@ func TestSMTP_CredentialNeverInError(t *testing.T) {
 	t.Setenv("RELA_TEST_SMTP_PASSWORD", secret)
 
 	// Port 1 is reserved and refuses connections, so the send fails and the
-	// error text is the interesting artefact.
+	// error text is the interesting artifact.
 	sender, err := mail.NewSMTPSender(&mail.Config{
 		Transport:   mail.TransportSMTP,
 		Host:        "127.0.0.1",
@@ -428,14 +428,14 @@ func TestMessage_Validate(t *testing.T) {
 // blockingSender fails a configurable number of times, then succeeds.
 type blockingSender struct {
 	mu       sync.Mutex
-	attempts int32
-	failFor  int32
+	attempts atomic.Int32
+	failFor  atomic.Int32
 	sent     []mail.Message
 	block    chan struct{}
 }
 
 func (b *blockingSender) Send(ctx context.Context, m mail.Message) error {
-	n := atomic.AddInt32(&b.attempts, 1)
+	n := b.attempts.Add(1)
 
 	if b.block != nil {
 		select {
@@ -445,7 +445,7 @@ func (b *blockingSender) Send(ctx context.Context, m mail.Message) error {
 		}
 	}
 
-	if n <= atomic.LoadInt32(&b.failFor) {
+	if n <= b.failFor.Load() {
 		return errors.New("transient failure")
 	}
 
@@ -461,6 +461,18 @@ func (b *blockingSender) delivered() []mail.Message {
 	out := make([]mail.Message, len(b.sent))
 	copy(out, b.sent)
 	return out
+}
+
+// newBlockingSender fails the first n attempts, then succeeds.
+func newBlockingSender(failFor int32) *blockingSender {
+	b := &blockingSender{}
+	b.failFor.Store(failFor)
+	return b
+}
+
+// newBlockingSenderBlocked blocks every send until its channel is closed.
+func newBlockingSenderBlocked() *blockingSender {
+	return &blockingSender{block: make(chan struct{})}
 }
 
 func testMessage() mail.Message {
@@ -483,7 +495,7 @@ func TestNewOutbox_RejectsNilSender(t *testing.T) {
 func TestOutbox_EnqueueDoesNotDial(t *testing.T) {
 	t.Parallel()
 
-	blocked := &blockingSender{block: make(chan struct{})}
+	blocked := newBlockingSenderBlocked()
 	ob, err := mail.NewOutbox(blocked, mail.OutboxConfig{})
 	require.NoError(t, err)
 	ob.Start()
@@ -520,7 +532,7 @@ func TestOutbox_DeliversAsync(t *testing.T) {
 func TestOutbox_RetriesWithoutDuplicating(t *testing.T) {
 	t.Parallel()
 
-	s := &blockingSender{failFor: 2}
+	s := newBlockingSender(2)
 	ob, err := mail.NewOutbox(s, mail.OutboxConfig{
 		InitialBackoff: 10 * time.Millisecond,
 		MaxBackoff:     20 * time.Millisecond,
@@ -534,7 +546,7 @@ func TestOutbox_RetriesWithoutDuplicating(t *testing.T) {
 	require.Eventually(t, func() bool { return len(s.delivered()) == 1 },
 		5*time.Second, 10*time.Millisecond)
 
-	require.Equal(t, int32(3), atomic.LoadInt32(&s.attempts), "two failures then one success")
+	require.Equal(t, int32(3), s.attempts.Load(), "two failures then one success")
 	require.Len(t, s.delivered(), 1, "a retried message must be delivered exactly once")
 }
 
@@ -543,7 +555,7 @@ func TestOutbox_RetriesWithoutDuplicating(t *testing.T) {
 func TestOutbox_GivesUpAfterMaxAttempts(t *testing.T) {
 	t.Parallel()
 
-	s := &blockingSender{failFor: 1000}
+	s := newBlockingSender(1000)
 	ob, err := mail.NewOutbox(s, mail.OutboxConfig{
 		MaxAttempts:    3,
 		InitialBackoff: 5 * time.Millisecond,
@@ -555,23 +567,23 @@ func TestOutbox_GivesUpAfterMaxAttempts(t *testing.T) {
 
 	require.NoError(t, ob.Enqueue(testMessage()))
 
-	require.Eventually(t, func() bool { return atomic.LoadInt32(&s.attempts) == 3 },
+	require.Eventually(t, func() bool { return s.attempts.Load() == 3 },
 		5*time.Second, 10*time.Millisecond)
 
 	// A later message still gets through: one poison message must not wedge
 	// the queue.
 	require.NoError(t, ob.Enqueue(testMessage()))
-	require.Eventually(t, func() bool { return atomic.LoadInt32(&s.attempts) > 3 },
+	require.Eventually(t, func() bool { return s.attempts.Load() > 3 },
 		5*time.Second, 10*time.Millisecond)
 }
 
-// TestOutbox_FullReturnsError pins that a backlog is SIGNALLED, not dropped:
+// TestOutbox_FullReturnsError pins that a backlog is SIGNALED, not dropped:
 // a full buffer means the mail server is unreachable, which the caller may
 // want to act on.
 func TestOutbox_FullReturnsError(t *testing.T) {
 	t.Parallel()
 
-	blocked := &blockingSender{block: make(chan struct{})}
+	blocked := newBlockingSenderBlocked()
 	ob, err := mail.NewOutbox(blocked, mail.OutboxConfig{Capacity: 2})
 	require.NoError(t, err)
 	// Not started: nothing drains, so the buffer fills deterministically.
@@ -607,7 +619,7 @@ func TestOutbox_EnqueueValidates(t *testing.T) {
 func TestOutbox_LosesPendingOnStop(t *testing.T) {
 	t.Parallel()
 
-	blocked := &blockingSender{block: make(chan struct{})}
+	blocked := newBlockingSenderBlocked()
 	ob, err := mail.NewOutbox(blocked, mail.OutboxConfig{
 		Capacity:     8,
 		DrainTimeout: 100 * time.Millisecond,
@@ -625,7 +637,7 @@ func TestOutbox_LosesPendingOnStop(t *testing.T) {
 	close(blocked.block)
 
 	require.Empty(t, blocked.delivered(),
-		"best-effort: pending mail is lost on stop, and this is the documented behaviour")
+		"best-effort: pending mail is lost on stop, and this is the documented behavior")
 }
 
 // TestOutbox_StopIsBoundedAndIdempotent covers AC 9b. Stop is usually called
@@ -633,7 +645,7 @@ func TestOutbox_LosesPendingOnStop(t *testing.T) {
 func TestOutbox_StopIsBoundedAndIdempotent(t *testing.T) {
 	t.Parallel()
 
-	blocked := &blockingSender{block: make(chan struct{})}
+	blocked := newBlockingSenderBlocked()
 	ob, err := mail.NewOutbox(blocked, mail.OutboxConfig{DrainTimeout: 150 * time.Millisecond})
 	require.NoError(t, err)
 	ob.Start()
@@ -675,11 +687,7 @@ func TestOutbox_ConcurrentEnqueue(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for range 32 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			_ = ob.Enqueue(testMessage())
-		}()
+		wg.Go(func() { _ = ob.Enqueue(testMessage()) })
 	}
 	wg.Wait()
 

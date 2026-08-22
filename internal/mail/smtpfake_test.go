@@ -25,7 +25,7 @@ import (
 // having the client skip verification. That distinction is the point: if the
 // test disabled certificate checking, "STARTTLS mandatory" would be verified
 // against a client configured to accept anything, and the guarantee would be
-// theatre. Here the client validates against a CA pool holding this cert.
+// theater. Here the client validates against a CA pool holding this cert.
 type fakeSMTP struct {
 	ln        net.Listener
 	tlsConfig *tls.Config
@@ -356,16 +356,17 @@ func headerValue(data, name string) string {
 		if !strings.HasPrefix(strings.ToLower(l), prefix) {
 			continue
 		}
-		v := strings.TrimSpace(l[len(prefix):])
+		var v strings.Builder
+		v.WriteString(strings.TrimSpace(l[len(prefix):]))
 		// Unfold: continuation lines start with whitespace.
 		for j := i + 1; j < len(lines); j++ {
 			next := lines[j]
 			if next == "" || (next[0] != ' ' && next[0] != '\t') {
 				break
 			}
-			v += strings.TrimRight(strings.TrimLeft(next, " \t"), "\r")
+			v.WriteString(strings.TrimRight(strings.TrimLeft(next, " \t"), "\r"))
 		}
-		return strings.TrimRight(v, "\r")
+		return strings.TrimRight(v.String(), "\r")
 	}
 	return ""
 }

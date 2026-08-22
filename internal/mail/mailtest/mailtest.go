@@ -18,6 +18,13 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/mail"
 )
 
+// Bounds for the concurrency clause.
+const (
+	concurrentSenders = 16
+	subjectVariants   = 4
+	concurrentTimeout = 30 * time.Second
+)
+
 // Factory returns a fresh sender plus a Sent function reporting what that
 // sender received. A transport that cannot observe its own deliveries (a real
 // SMTP client against a live server) is not conformance-testable; wire it
@@ -60,6 +67,7 @@ func validMessage() mail.Message {
 }
 
 func testDeliversMessage(t *testing.T, newSender Factory) {
+	t.Helper()
 	t.Parallel()
 	s, sent := newSender(t)
 
@@ -75,6 +83,7 @@ func testDeliversMessage(t *testing.T, newSender Factory) {
 // handed. Rendering happens upstream precisely so two transports cannot
 // disagree about content; a transport that regenerated a part would break that.
 func testPreservesBothParts(t *testing.T, newSender Factory) {
+	t.Helper()
 	t.Parallel()
 	s, sent := newSender(t)
 
@@ -90,6 +99,7 @@ func testPreservesBothParts(t *testing.T, newSender Factory) {
 }
 
 func testMultipleRecipients(t *testing.T, newSender Factory) {
+	t.Helper()
 	t.Parallel()
 	s, sent := newSender(t)
 
@@ -111,6 +121,7 @@ func testMultipleRecipients(t *testing.T, newSender Factory) {
 // consumed or rewrote it would make attempt two send something different from
 // attempt one — the kind of bug that only shows up under a flaky mail server.
 func testDoesNotMutateMessage(t *testing.T, newSender Factory) {
+	t.Helper()
 	t.Parallel()
 	s, _ := newSender(t)
 
@@ -133,6 +144,7 @@ func testDoesNotMutateMessage(t *testing.T, newSender Factory) {
 }
 
 func testRejectsNoRecipients(t *testing.T, newSender Factory) {
+	t.Helper()
 	t.Parallel()
 	s, sent := newSender(t)
 
@@ -143,6 +155,7 @@ func testRejectsNoRecipients(t *testing.T, newSender Factory) {
 }
 
 func testRejectsEmptyBody(t *testing.T, newSender Factory) {
+	t.Helper()
 	t.Parallel()
 	s, sent := newSender(t)
 
@@ -161,6 +174,7 @@ func testRejectsEmptyBody(t *testing.T, newSender Factory) {
 // the escaping would still be there — until a value took a different encoding
 // path. Only asserting that Send REFUSES catches the removal.
 func testRejectsCRLFInSubject(t *testing.T, newSender Factory) {
+	t.Helper()
 	t.Parallel()
 
 	for _, bad := range []string{
@@ -180,6 +194,7 @@ func testRejectsCRLFInSubject(t *testing.T, newSender Factory) {
 }
 
 func testRejectsCRLFInRecipient(t *testing.T, newSender Factory) {
+	t.Helper()
 	t.Parallel()
 	s, sent := newSender(t)
 
@@ -194,6 +209,7 @@ func testRejectsCRLFInRecipient(t *testing.T, newSender Factory) {
 // outbox cancels its workers at shutdown and relies on this to stop promptly
 // rather than after a full network timeout.
 func testHonoursContextCancel(t *testing.T, newSender Factory) {
+	t.Helper()
 	t.Parallel()
 	s, _ := newSender(t)
 
@@ -207,6 +223,7 @@ func testHonoursContextCancel(t *testing.T, newSender Factory) {
 // encoded-words is the case a hand-rolled MIME implementation gets wrong, and
 // it must survive to the transport intact.
 func testUnicodeSubject(t *testing.T, newSender Factory) {
+	t.Helper()
 	t.Parallel()
 	s, sent := newSender(t)
 
@@ -222,20 +239,21 @@ func testUnicodeSubject(t *testing.T, newSender Factory) {
 // testConcurrentSends pins the documented "safe for concurrent use" contract.
 // Run under -race this catches unsynchronized state in a transport.
 func testConcurrentSends(t *testing.T, newSender Factory) {
+	t.Helper()
 	t.Parallel()
 	s, sent := newSender(t)
 
-	const n = 16
+	const n = concurrentSenders
 	errs := make(chan error, n)
 	for i := range n {
 		go func(i int) {
 			m := validMessage()
-			m.Subject = "concurrent " + strings.Repeat("x", i%4)
+			m.Subject = "concurrent " + strings.Repeat("x", i%subjectVariants)
 			errs <- s.Send(context.Background(), m)
 		}(i)
 	}
 
-	deadline := time.After(30 * time.Second)
+	deadline := time.After(concurrentTimeout)
 	for range n {
 		select {
 		case err := <-errs:

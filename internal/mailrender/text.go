@@ -216,8 +216,12 @@ func (r *Renderer) unlink(s string) string {
 // stretched by multi-byte characters.
 func displayWidth(s string) int {
 	n := utf8.RuneCountInString(s)
-	if n > 72 {
-		return 72
+	if n > maxUnderlineWidth {
+		return maxUnderlineWidth
 	}
 	return n
 }
+
+// maxUnderlineWidth caps a heading underline so a very long title does not
+// produce a rule that wraps in a narrow terminal.
+const maxUnderlineWidth = 72

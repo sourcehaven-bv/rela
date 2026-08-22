@@ -80,7 +80,7 @@ func TestRender_KeepsInlineStyles(t *testing.T) {
 	require.Contains(t, html, `style="`, "no inline styles: CSS inlining did not run, or a sanitizer ran after it")
 	require.NotContains(t, html, "<style", "the <style> block should have been inlined away")
 
-	// The accent colour reaches the output, so the palette is genuinely wired
+	// The accent color reaches the output, so the palette is genuinely wired
 	// through rather than the template merely carrying static markup.
 	require.Contains(t, strings.ToLower(html), "#4772fb")
 }
@@ -127,7 +127,7 @@ func TestRender_NoDangerousCSSReachesStyleAttributes(t *testing.T) {
 }
 
 // TestValidatePalette covers AC 6d: a palette token is interpolated into CSS,
-// so a non-colour must be rejected at the boundary rather than escaped or
+// so a non-color must be rejected at the boundary rather than escaped or
 // silently defaulted.
 func TestValidatePalette(t *testing.T) {
 	t.Parallel()
@@ -176,7 +176,7 @@ func TestNew_RejectsBadPalette(t *testing.T) {
 		Palette: map[string]string{"--accent-color": "url('javascript:alert(1)')"},
 	})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "not a colour")
+	require.Contains(t, err.Error(), "not a color")
 }
 
 // TestNew_RejectsNilOptions covers the house rule that constructors reject nil
@@ -343,7 +343,7 @@ func TestRender_UnicodeSubjectAndBody(t *testing.T) {
 
 	lines := strings.Split(strings.TrimSpace(text), "\n")
 	require.GreaterOrEqual(t, len(lines), 2)
-	require.Equal(t, len([]rune(lines[0])), len([]rune(lines[1])),
+	require.Len(t, []rune(lines[1]), len([]rune(lines[0])),
 		"underline should match the heading's rune width")
 }
 

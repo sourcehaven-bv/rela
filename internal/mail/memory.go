@@ -49,7 +49,7 @@ func NewMemorySender(capacity int) *MemorySender {
 
 // Send records m.
 //
-// It honours ctx cancellation and applies the same [Message.Validate] checks a
+// It honors ctx cancellation and applies the same [Message.Validate] checks a
 // wire transport does, so the two transports agree on what a valid message is —
 // the property the mailtest conformance suite exists to hold.
 func (s *MemorySender) Send(ctx context.Context, m Message) error {

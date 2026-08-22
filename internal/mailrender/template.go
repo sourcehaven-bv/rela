@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// defaultPalette holds the colour tokens the stylesheet reads. Keys match the
+// defaultPalette holds the color tokens the stylesheet reads. Keys match the
 // SPA's CSS custom properties (see dataentryconfig.ResolvePalette) so an
 // operator palette drops in unchanged; --accent-color's default is the SPA's.
 var defaultPalette = map[string]string{
@@ -43,17 +43,21 @@ const contentWidth = "600"
 //     pre-sanitized .Intro/.Sections/.Footer fields, which are typed
 //     template.HTML because they have already been through bluemonday.
 //   - Values interpolated into the <style> block come from the palette and are
-//     colour-validated first. Do not interpolate anything else into CSS.
+//     color-validated first. Do not interpolate anything else into CSS.
 //
 // The <style> block is what douceur inlines; presentation attributes and the mso
 // conditionals survive inlining untouched (verified).
 //
 // The mso conditionals arrive as .MSOOpen/.MSOClose rather than as literal
 // comments in this text, because html/template STRIPS HTML comments at parse
-// time — a documented behaviour that silently deleted the Outlook fallbacks
+// time — a documented behavior that silently deleted the Outlook fallbacks
 // when they were written inline here. Switching to text/template would fix it
 // too, but at the cost of contextual escaping for every interpolated value,
 // which is not a trade worth making for two constant strings.
+// columns would split single rules across lines and make the stylesheet harder
+// to read than the long lines it replaces.
+//
+//nolint:lll // the <style> block holds CSS declarations; wrapping them at 120
 var docTemplate = template.Must(template.New("mail").Parse(`<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml">
 <head>
@@ -176,7 +180,7 @@ func (r *Renderer) buildDocument(m *Message) (string, error) {
 		Width:    contentWidth,
 		MSOOpen:  msoOpen,
 		MSOClose: msoClose,
-		C:        r.colours(),
+		C:        r.colors(),
 	}
 
 	var buf strings.Builder
@@ -186,9 +190,9 @@ func (r *Renderer) buildDocument(m *Message) (string, error) {
 	return buf.String(), nil
 }
 
-// colours maps palette keys to the short names the template uses, so the
+// colors maps palette keys to the short names the template uses, so the
 // stylesheet stays readable and the CSS-variable spelling lives in one place.
-func (r *Renderer) colours() map[string]string {
+func (r *Renderer) colors() map[string]string {
 	return map[string]string{
 		"accent":  r.palette["--accent-color"],
 		"text":    r.palette["--text-color"],

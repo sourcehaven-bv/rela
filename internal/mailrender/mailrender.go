@@ -13,7 +13,7 @@
 //
 //	markdown -> goldmark -> bluemonday(CONTENT ONLY) -> trusted template -> douceur inline
 //
-// Two verified library behaviours force it (TKT-332QZY design review):
+// Two verified library behaviors force it (TKT-332QZY design review):
 //
 //   - bluemonday strips style attributes unconditionally, and AllowStyling does
 //     not restore them. Sanitizing after inlining therefore deletes every
@@ -38,7 +38,7 @@
 // Content passed in is UNTRUSTED: it originates from entity bodies and
 // properties. The template and its stylesheet are TRUSTED: they ship with rela.
 // Palette tokens sit in between — operator-supplied, but they land in CSS, so
-// they are validated as colours and rejected otherwise (see [ValidatePalette]).
+// they are validated as colors and rejected otherwise (see [ValidatePalette]).
 //
 // Nil: [Render] rejects a nil Message; [New] rejects a nil Options.
 package mailrender
@@ -99,8 +99,8 @@ type Message struct {
 // Options configures a Renderer. The zero value is usable: it renders with
 // rela's default palette and no logo.
 type Options struct {
-	// Palette maps CSS custom-property names (e.g. "--accent-color") to colour
-	// values. Values MUST be colours; see [ValidatePalette]. Keys absent from
+	// Palette maps CSS custom-property names (e.g. "--accent-color") to color
+	// values. Values MUST be colors; see [ValidatePalette]. Keys absent from
 	// the map fall back to the built-in defaults.
 	Palette map[string]string
 
@@ -131,9 +131,9 @@ type Renderer struct {
 // ErrNilMessage is returned by Render when handed a nil message.
 var ErrNilMessage = errors.New("mailrender: nil message")
 
-// colourRe matches the colour forms permitted in a palette value: #rgb, #rgba,
+// colorRe matches the color forms permitted in a palette value: #rgb, #rgba,
 // #rrggbb, #rrggbbaa. Deliberately narrow — see ValidatePalette.
-var colourRe = regexp.MustCompile(`^#[0-9a-fA-F]{3,8}$`)
+var colorRe = regexp.MustCompile(`^#[0-9a-fA-F]{3,8}$`)
 
 // namedColours are the few keywords worth accepting beside hex. Kept short on
 // purpose: every entry is a value that will be interpolated into CSS.
@@ -141,7 +141,7 @@ var namedColours = map[string]bool{
 	"transparent": true, "black": true, "white": true, "inherit": true,
 }
 
-// ValidatePalette checks that every value is a colour, and returns an error
+// ValidatePalette checks that every value is a color, and returns an error
 // naming the first key that is not.
 //
 // This is not defensive tidiness. Palette values are interpolated into the
@@ -150,14 +150,14 @@ var namedColours = map[string]bool{
 // url('javascript:alert(1)') reaches the recipient's mail client verbatim. So
 // values are checked against an ALLOWLIST and REJECTED; they are never escaped
 // or silently replaced with a default, because a caller that supplied a bad
-// colour has a bug worth surfacing.
+// color has a bug worth surfacing.
 func ValidatePalette(p map[string]string) error {
 	for k, v := range p {
 		val := strings.TrimSpace(strings.ToLower(v))
-		if colourRe.MatchString(val) || namedColours[val] {
+		if colorRe.MatchString(val) || namedColours[val] {
 			continue
 		}
-		return fmt.Errorf("mailrender: palette %q: %q is not a colour "+
+		return fmt.Errorf("mailrender: palette %q: %q is not a color "+
 			"(want #rgb/#rrggbb or one of transparent/black/white/inherit)", k, v)
 	}
 	return nil
