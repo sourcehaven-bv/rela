@@ -26,7 +26,7 @@ func (r *Renderer) renderText(m *Message) []byte {
 		b.WriteString("\n\n")
 	}
 
-	if s := plainMarkdown(m.Intro); s != "" {
+	if s := r.plainMarkdown(m.Intro); s != "" {
 		b.WriteString(s)
 		b.WriteString("\n\n")
 	}
@@ -35,7 +35,7 @@ func (r *Renderer) renderText(m *Message) []byte {
 		r.writeTextSection(&b, &m.Sections[i])
 	}
 
-	if s := plainMarkdown(m.Footer); s != "" {
+	if s := r.plainMarkdown(m.Footer); s != "" {
 		b.WriteString("--\n")
 		b.WriteString(s)
 		b.WriteString("\n")
@@ -51,7 +51,7 @@ func (r *Renderer) writeTextSection(b *strings.Builder, s *Section) {
 		b.WriteString(strings.Repeat("-", displayWidth(s.Title)))
 		b.WriteString("\n")
 	}
-	if body := plainMarkdown(s.Body); body != "" {
+	if body := r.plainMarkdown(s.Body); body != "" {
 		b.WriteString(body)
 		b.WriteString("\n")
 	}
@@ -127,7 +127,7 @@ var scriptStyleRe = regexp.MustCompile(`(?is)` +
 // as noise in a terminal, strips any HTML the markdown carried, and leaves
 // everything else alone. It is NOT a markdown parser and does not need to be —
 // the text part's job is to be legible, not to round-trip.
-func plainMarkdown(src string) string {
+func (r *Renderer) plainMarkdown(src string) string {
 	s := stripHTML(strings.TrimSpace(src))
 	if strings.TrimSpace(s) == "" {
 		return ""
@@ -147,7 +147,7 @@ func plainMarkdown(src string) string {
 			l = "- " + strings.TrimSpace(trimmed[2:])
 		}
 
-		out = append(out, unlink(stripEmphasis(l)))
+		out = append(out, r.unlink(stripEmphasis(l)))
 	}
 	return strings.TrimSpace(strings.Join(out, "\n"))
 }
@@ -170,8 +170,13 @@ func stripEmphasis(s string) string {
 	}, s)
 }
 
-// unlink rewrites [text](href) as "text (href)", and bare <href> as href.
-func unlink(s string) string {
+// unlink rewrites [text](href) as "text (href)".
+//
+// The href goes through safeHref, so a relative link is resolved against
+// BaseURL and an unsafe scheme is dropped — the same treatment the HTML part
+// gives it. Without this the text alternative would carry "/board", which is
+// meaningless in a mail client.
+func (r *Renderer) unlink(s string) string {
 	for {
 		open := strings.Index(s, "](")
 		if open == -1 {
@@ -189,6 +194,14 @@ func unlink(s string) string {
 
 		text := s[start+1 : open]
 		href := s[open+2 : end]
+
+		// Resolve exactly as the HTML part does, so a relative link is not
+		// left dead in the text alternative — mail is read outside the app.
+		if resolved, ok := r.safeHref(href); ok {
+			href = resolved
+		} else {
+			href = ""
+		}
 
 		repl := text
 		if href != "" && href != text {

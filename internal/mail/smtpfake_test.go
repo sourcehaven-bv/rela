@@ -38,6 +38,20 @@ type fakeSMTP struct {
 	messages []fakeMessage
 	authUser string
 	authPass string
+
+	// conns tracks accepted connections so Cleanup can close them.
+	//
+	// Closing only the listener is not enough: a client that drops a
+	// connection without QUIT (go-mail does this on some error paths, and the
+	// conformance suite deliberately triggers several) leaves handle() parked
+	// in a blocking Read. goleak then fails the whole package — intermittently,
+	// depending on scheduling, which is the worst kind of CI failure.
+	conns  []net.Conn
+	closed bool
+
+	// wg tracks handler goroutines so Cleanup can wait for them to exit
+	// rather than racing goleak's snapshot.
+	wg sync.WaitGroup
 }
 
 type fakeMessage struct {
@@ -64,7 +78,7 @@ func newFakeSMTP(t *testing.T, offerSTARTTLS bool) (*fakeSMTP, *x509.CertPool) {
 		tlsConfig:     &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12},
 	}
 	go s.serve()
-	t.Cleanup(func() { _ = ln.Close() })
+	t.Cleanup(s.close)
 
 	return s, pool
 }
@@ -92,8 +106,42 @@ func (s *fakeSMTP) serve() {
 		if err != nil {
 			return
 		}
-		go s.handle(conn)
+
+		s.mu.Lock()
+		if s.closed {
+			s.mu.Unlock()
+			_ = conn.Close()
+			return
+		}
+		s.conns = append(s.conns, conn)
+		s.wg.Add(1)
+		s.mu.Unlock()
+
+		go func() {
+			defer s.wg.Done()
+			s.handle(conn)
+		}()
 	}
+}
+
+// close shuts the listener, drops every live connection, and waits for the
+// handlers to exit. Registered via t.Cleanup so no goroutine outlives the test.
+func (s *fakeSMTP) close() {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return
+	}
+	s.closed = true
+	conns := s.conns
+	s.conns = nil
+	s.mu.Unlock()
+
+	_ = s.ln.Close()
+	for _, c := range conns {
+		_ = c.Close()
+	}
+	s.wg.Wait()
 }
 
 func (s *fakeSMTP) handle(conn net.Conn) {

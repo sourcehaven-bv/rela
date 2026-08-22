@@ -290,6 +290,25 @@ func TestRender_LinkSafety(t *testing.T) {
 	}
 }
 
+// TestRender_TextPartResolvesLinks pins that the text alternative gets the same
+// link treatment the HTML does. A relative href left as "/board" is meaningless
+// in a mail client, and an unsafe scheme must be dropped from both parts.
+func TestRender_TextPartResolvesLinks(t *testing.T) {
+	t.Parallel()
+
+	r := newRenderer(t, &mailrender.Options{BaseURL: "https://app.example"})
+	_, text := render(t, r, &mailrender.Message{
+		Subject: "S",
+		Intro:   "See [the board](/board) and [docs](https://docs.example).",
+		Footer:  "Bad [link](javascript:alert(1)).",
+	})
+
+	require.Contains(t, text, "https://app.example/board", "relative link must resolve against BaseURL")
+	require.Contains(t, text, "https://docs.example", "absolute link survives")
+	require.NotContains(t, text, "(/board)", "no bare relative link may remain")
+	require.NotContains(t, text, "javascript:", "unsafe scheme is dropped from the text part too")
+}
+
 // TestRender_EmptySectionRendersNote pins that a section matching nothing reads
 // as "nothing to show" rather than a header-only table, which looks broken.
 func TestRender_EmptySectionRendersNote(t *testing.T) {
