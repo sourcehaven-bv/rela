@@ -840,32 +840,81 @@ func (m *Manager) updateCore(
 	return result, nil
 }
 
-// DeleteEntity removes an entity and its incident relations.
-// **No automation, no cascade.** When cascade is false and the
-// entity has any incident relations, returns [ErrHasRelations]
-// without deleting anything.
-func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*entity.DeleteResult, error) {
-	current, err := m.deps.Store.GetEntity(ctx, id)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, id)
-	}
-	// ACL check happens after the lookup so the request carries the
-	// real entity type; a deny on a non-existent entity would be more
-	// confusing than the ErrEntityNotFound returned above.
-	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
-		Op:      acl.OpDelete,
-		Subject: acl.EntitySubject{Type: current.Type, ID: id},
-	}); aclErr != nil {
-		return nil, aclErr
+// authorizeCascadeRelations checks the principal may delete every relation
+// type a cascade will destroy, and returns the first denial.
+//
+// Deduplicated by (relation type, source entity type): the decision is a pure
+// function of those two plus the op, so a hub entity with thousands of edges
+// across a handful of types costs a handful of checks. Without the dedup a
+// denied cascade on a 5,000-edge entity would also write 5,000 denied-write
+// audit rows for ONE refused operation, burying the signal it exists to give.
+//
+// Note the asymmetry with the live write path: DeleteRelation authorizes
+// against the SOURCE entity's type, so an incoming edge is checked against its
+// own source, not against the entity being deleted. That is the same subject
+// the principal would face deleting the edge directly, which is the property
+// that makes this gate meaningful rather than merely stricter.
+func (m *Manager) authorizeCascadeRelations(
+	ctx context.Context, id string, incoming, outgoing []*entity.Relation,
+) error {
+	type subject struct{ relType, fromType string }
+	seen := make(map[subject]bool)
+
+	check := func(rel *entity.Relation) error {
+		if rel == nil {
+			return nil
+		}
+		// Best-effort, exactly as the live relation-write path resolves it: an
+		// unresolvable source yields an empty FromType, which fails closed.
+		var fromType string
+		if from, err := m.deps.Store.GetEntity(ctx, rel.From); err == nil {
+			fromType = from.Type
+		}
+		key := subject{relType: rel.Type, fromType: fromType}
+		if seen[key] {
+			return nil
+		}
+		seen[key] = true
+
+		return m.authorizeAndAudit(ctx, acl.WriteRequest{
+			Op: acl.OpDelete,
+			Subject: acl.RelationSubject{
+				Type:     rel.Type,
+				FromType: fromType,
+				FromID:   rel.From,
+			},
+		})
 	}
 
-	incoming, err := collectIncidentRelations(ctx, m.deps.Store, id, store.DirectionIncoming)
-	if err != nil {
-		return nil, fmt.Errorf("collect incoming relations for %q: %w", id, err)
+	for _, rel := range append(append([]*entity.Relation{}, incoming...), outgoing...) {
+		if err := check(rel); err != nil {
+			// Name the entity the operator asked to delete: a bare "no role
+			// grants delete on relations from type X" is baffling when the
+			// request was "delete this entity".
+			return fmt.Errorf("cannot delete %s: its %s relation to %s: %w",
+				id, rel.Type, rel.To, err)
+		}
 	}
-	outgoing, err := collectIncidentRelations(ctx, m.deps.Store, id, store.DirectionOutgoing)
-	if err != nil {
-		return nil, fmt.Errorf("collect outgoing relations for %q: %w", id, err)
+	return nil
+}
+
+// deleteEntityInTx is DeleteEntity's critical section, run inside the store
+// transaction: collect the incident relations, authorize every one a cascade
+// would destroy, capture versions, then delete.
+//
+// Extracted from DeleteEntity so the transaction body has a name and the
+// caller stays readable — the sequencing here is load-bearing (see the Tx
+// comment at the call site) and deserves to be read on its own.
+func (m *Manager) deleteEntityInTx(
+	ctx context.Context, tx store.Store, current *entity.Entity, id string, cascade bool,
+) (*store.DeleteResult, error) {
+	incoming, cErr := collectIncidentRelations(ctx, tx, id, store.DirectionIncoming)
+	if cErr != nil {
+		return nil, fmt.Errorf("collect incoming relations for %q: %w", id, cErr)
+	}
+	outgoing, cErr := collectIncidentRelations(ctx, tx, id, store.DirectionOutgoing)
+	if cErr != nil {
+		return nil, fmt.Errorf("collect outgoing relations for %q: %w", id, cErr)
 	}
 	totalRelations := len(incoming) + len(outgoing)
 
@@ -873,11 +922,21 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 		return nil, ErrHasRelations
 	}
 
+	// A cascade destroys these edges, so the principal must be allowed to
+	// delete each one — otherwise deleting an entity is a back door to
+	// removing relation types you hold no delete grant on. Denials fail
+	// the WHOLE delete: nothing has been written yet, so there is nothing
+	// to unwind.
+	if cascade && totalRelations > 0 {
+		if aErr := m.authorizeCascadeRelations(ctx, id, incoming, outgoing); aErr != nil {
+			return nil, aErr
+		}
+	}
+
 	// Capture the final pre-delete version BEFORE the store delete. The row is
 	// hard-deleted below, so a version taken after the delete would be
 	// unrecoverable if the process died in between — order-before closes that
-	// permanent-loss window (the store delete is still not transactional with
-	// this capture; strict atomicity is a future hardening).
+	// permanent-loss window.
 	m.recordEntityVersion(ctx, store.VersionOpDelete, current, "")
 
 	// Tell id-keyed subscribers the entity is gone. They decide what to do:
@@ -905,13 +964,57 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 	// Delegate the actual deletion to the store's cascade, which removes
 	// the relation files and the entity file under a single lock and aborts
 	// fail-secure if any relation file cannot be removed — so the entity is
-	// never deleted while a relation is left behind (issue #888). A real
-	// error surfaces to the caller rather than being swallowed; previously
-	// the Manager looped per-relation and `continue`d past I/O failures,
-	// deleting the entity anyway and leaving orphans untraced.
-	res, delErr := m.deps.Store.DeleteEntity(ctx, id, cascade)
+	// never deleted while a relation is left behind (issue #888).
+	res, delErr := tx.DeleteEntity(ctx, id, cascade)
 	if delErr != nil {
 		return nil, fmt.Errorf("delete entity: %w", delErr)
+	}
+	return res, nil
+}
+
+// DeleteEntity removes an entity and its incident relations.
+// **No automation, no cascade.** When cascade is false and the
+// entity has any incident relations, returns [ErrHasRelations]
+// without deleting anything.
+func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*entity.DeleteResult, error) {
+	current, err := m.deps.Store.GetEntity(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, id)
+	}
+	// ACL check happens after the lookup so the request carries the
+	// real entity type; a deny on a non-existent entity would be more
+	// confusing than the ErrEntityNotFound returned above.
+	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
+		Op:      acl.OpDelete,
+		Subject: acl.EntitySubject{Type: current.Type, ID: id},
+	}); aclErr != nil {
+		return nil, aclErr
+	}
+
+	// Everything from here to the store delete runs inside ONE Tx.
+	//
+	// The incident-relation set must be collected, authorized and deleted
+	// under a single serialization: both stores RE-DERIVE the set inside
+	// their own lock/tx (fsstore rebuilds from its live index, pgstore
+	// re-reads inside the transaction) and delete THAT set — not the one
+	// handed to them. Authorizing a snapshot taken outside the lock would
+	// leave a window in which a concurrent writer adds an edge that is then
+	// deleted with no authorization at all, which is exactly the "back door
+	// to destroying edge types you cannot delete directly" this gate exists
+	// to close.
+	//
+	// Reads inside the callback go through the OUTER handle (that is what
+	// acl.StoreGraph holds). fsstore's readers never take txMu, so this does
+	// not deadlock — pinned by TestTx_ReadsViaOuterHandleDoNotDeadlock.
+	// Writes must use the tx view, per the Tx contract.
+	var res *store.DeleteResult
+	txErr := m.deps.Store.Tx(ctx, func(tx store.Store) error {
+		var dErr error
+		res, dErr = m.deleteEntityInTx(ctx, tx, current, id, cascade)
+		return dErr
+	})
+	if txErr != nil {
+		return nil, txErr
 	}
 
 	// Audit exactly what the store reports deleting. Cascade-deleted

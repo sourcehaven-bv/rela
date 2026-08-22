@@ -3,7 +3,7 @@ id: TKT-8HDPQW
 type: ticket
 title: 'ACL increment 3: cascade delete authorizes incident relations under Store.Tx (B1)'
 kind: enhancement
-status: ready
+status: in-progress
 priority: high
 effort: m
 ---
@@ -116,3 +116,96 @@ asked to delete an entity — say *"cannot delete <id>: its <relType> relation t
 
 `internal/entitymanager/manager.go`, `internal/entitymanager/manager_test.go`,
 `docs/acl-security.md`.
+
+---
+
+## Implementation notes (2026-08-22)
+
+### The blocking spike PASSED
+
+The design depended on "does the ACL evaluator's graph read re-enter the store
+and deadlock under `Tx`?" Answer: **no**.
+
+- `fsstore.go:134-138` states it outright — *"Readers never take it [txMu]"*.
+  `txMu` serializes an open Tx against **writers** only.
+- `acl.StoreGraph` (`storegraph.go:38,53`) only ever calls `GetRelation` and
+  `ListRelations` — pure reads.
+- Pinned empirically by a new **`TestTx_ReadsViaOuterHandleDoNotDeadlock`**
+  (`internal/store/fsstore/txreentrancy_internal_test.go`), which reads via the
+  OUTER handle inside a Tx and writes via the view. The package documented this
+  property but nothing asserted it; a future change giving readers `txMu` would
+  have hung the server rather than failed an obvious test.
+
+### What landed
+
+`DeleteEntity` now runs collect → authorize → delete inside one
+`m.deps.Store.Tx`. `authorizeCascadeRelations` checks every incident relation
+and returns the first denial; nothing is written before the check, and a denial
+fails the whole delete.
+
+**Dedup by `(relType, fromType)`** (DR-21): the decision is a pure function of
+those plus the op, so a 5,000-edge hub costs a handful of checks — and a denial
+writes one audit row per distinct relation type instead of 5,000 for one
+refused operation.
+
+**Directional error text.** Each relation is authorized against ITS OWN source
+type, which is the same subject the principal would face deleting that edge
+directly. For an *incoming* edge the deleted entity is the `To` side, so the
+message says "its incoming X relation from Y" rather than naming the wrong end.
+
+### A real seam question the tests exposed
+
+Two existing test fakes (`failingDeleteStore`, `listRelationsErrStore`) embed
+`store.Store` and override one method. Moving the delete under `Tx` broke both:
+the embedded `Tx` hands the callback the **inner** store, so the override became
+invisible inside a transaction and the fakes silently stopped modeling the
+failures they exist to model.
+
+Fixed by giving each fake a `Tx` that passes ITSELF to the callback. Worth
+recording as a general property: **any decorator over `store.Store` must
+override `Tx` or it is bypassed inside one.** Production is unaffected — the
+store handed to entitymanager is the concrete backend, with no decorators — but
+this is a trap for any future wrapping store.
+
+### Backend semantics confirmed
+
+- **pgstore**: `Tx` takes `pg_advisory_xact_lock` for the whole transaction
+  (`tx.go:60-93`), serializing write transactions deployment-wide, and
+  `tx.DeleteEntity` joins the open transaction. So no concurrent writer can add
+  an edge between the authorize and the delete.
+- **fsstore/memstore**: `txMu` gives mutual exclusion for the same window.
+
+Note the ACL's reads still go through the outer handle (that is what
+`acl.StoreGraph` holds, bound at construction). On pgstore that is a different
+connection, so those reads see a pre-transaction snapshot — but the advisory
+lock means **no writer can change the relation set during the callback**, so the
+window is closed by the lock rather than by read isolation. Re-pointing the ACL
+at a tx view per call is not possible without threading a store through
+`acl.Request`, and is not needed for this guarantee.
+
+### Note on mutation testing this gate
+
+An automated security scanner flagged `if false { ... authorizeCascadeRelations }`
+as a CRITICAL fail-open authorization bypass mid-session. **It was correct to
+flag it** — that was a deliberate, temporary mutation to prove the new tests
+detect a disabled gate, and it should never reach a commit.
+
+Two process lessons, both worth keeping:
+
+1. **Mutate a COPY, never the working tree.** In-tree mutate/restore is unsafe
+   when the test run can be interrupted (it was, twice, by unrelated `go test`
+   contention) — the tree is then left with authorization disabled. Subsequent
+   runs used `cp -R` to `/tmp` so the real tree is never modified.
+2. A scanner watching the working tree is a genuine safety net for exactly this
+   mistake, and the right response is to restore immediately and verify, not to
+   explain the intent and move on.
+
+The committed code has the gate unconditional; `grep -c 'if false'` in
+`manager.go` is 0.
+
+### Refactor forced by the linter
+
+Extracting the Tx body into `deleteEntityInTx` was not cosmetic: inlining the
+critical section pushed `DeleteEntity` to cognitive complexity 32 (limit 30).
+The named method also gives the load-bearing sequencing — collect, authorize,
+version, delete, all under one transaction — a place to be read on its own.

@@ -240,6 +240,32 @@ endpoints are. An independent read grant would let someone see that an edge
 exists — and therefore that an entity they cannot read exists. `read:` is
 rejected at load. To hide edges, hide an endpoint.
 
+### Cascade delete needs the relation grants too
+
+Deleting an entity with `cascade` destroys its incident edges, so the principal
+must be allowed to delete each of them — otherwise deleting an entity would be a
+back door to removing edge types you hold no `delete` grant on.
+
+A single denial fails the **whole** delete; nothing is written:
+
+```console
+$ rela delete REQ-1 --cascade
+cannot delete REQ-1: its incoming addresses relation from DEC-1:
+forbidden: no role grants delete on relations from type "decision"
+```
+
+Two consequences worth knowing:
+
+- An entity delete can now fail on a *relation* grant. If a cascade that used to
+  work starts failing, the fix is a `delete:` grant (or a `relation_grants:`
+  entry) for the relation type named in the error — not a broader entity grant.
+- Each relation is checked against **its own source type**, the same subject you
+  would face deleting that edge directly. An incoming edge is therefore checked
+  against the type at the *other* end, not against the entity being deleted.
+
+The check runs inside the store transaction that performs the delete, so an edge
+created concurrently cannot slip past it.
+
 ### Checking it
 
 Ask the gate directly:
