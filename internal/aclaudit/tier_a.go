@@ -2,6 +2,8 @@ package aclaudit
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -12,16 +14,17 @@ import (
 // Audit sorts the combined result.
 func tierA(p *acl.Policy) []Finding {
 	f := make([]Finding, 0, 8)
-	f = append(f, checkUngatedMembership(p)...)     // A1 / A1b
-	f = append(f, checkUngatedRoleRelations(p)...)  // A2
-	f = append(f, checkEveryonePrivileged(p)...)    // A3
-	f = append(f, checkAssignmentsToUnknown(p)...)  // A4
-	f = append(f, checkConfersUnknown(p)...)        // A5
-	f = append(f, checkUngrantablePermission(p)...) // A6
-	f = append(f, checkDeadPermissions(p)...)       // A7
-	f = append(f, checkWildcardWriteSprawl(p)...)   // A9
-	f = append(f, checkNameWhitespace(p)...)        // A10
-	f = append(f, checkCeilings(p)...)              // A11 / A12 / A13
+	f = append(f, checkUngatedMembership(p)...)       // A1 / A1b
+	f = append(f, checkUngatedRoleRelations(p)...)    // A2
+	f = append(f, checkEveryonePrivileged(p)...)      // A3
+	f = append(f, checkAssignmentsToUnknown(p)...)    // A4
+	f = append(f, checkConfersUnknown(p)...)          // A5
+	f = append(f, checkUngrantablePermission(p)...)   // A6
+	f = append(f, checkUngrantedRelationGrants(p)...) // A6b
+	f = append(f, checkDeadPermissions(p)...)         // A7
+	f = append(f, checkWildcardWriteSprawl(p)...)     // A9
+	f = append(f, checkNameWhitespace(p)...)          // A10
+	f = append(f, checkCeilings(p)...)                // A11 / A12 / A13
 	return f
 }
 
@@ -172,14 +175,67 @@ func checkUngrantablePermission(p *acl.Policy) []Finding {
 	return f
 }
 
+// A6b — a relation_grants entry names a permission no role grants, so the
+// grant is INERT: every relation write still falls back to the source type's
+// verb grant, exactly as before the block was written.
+//
+// This is the operator-facing half of the relation_grants safety net. The
+// block's whole purpose is to be verifiable ahead of a write, and the failure
+// it must catch is the one that caused TKT-XZEY's outage in the first place:
+// config that reads as a grant and grants nothing. Medium rather than A6's
+// Low, because A6's silent state is a lockdown (fails closed and denies) while
+// this one is a no-op an operator may have relaxed an entity grant against.
+func checkUngrantedRelationGrants(p *acl.Policy) []Finding {
+	var f []Finding
+	for _, rel := range slices.Sorted(maps.Keys(p.RelationWriteGrants)) {
+		g := p.RelationWriteGrants[rel]
+		for _, perm := range slices.Sorted(maps.Keys(relationGrantPermissions(g))) {
+			if permissionGranted(p, perm) {
+				continue
+			}
+			f = append(f, Finding{
+				Rule: "A6b-inert-relation-grant", Severity: Medium, Subject: rel,
+				Detail: fmt.Sprintf("relation_grants.%s names permission %q which no role grants, so "+
+					"the grant is inert — %s writes still require the verb grant on the source "+
+					"entity's type", rel, perm, rel),
+				Fix: fmt.Sprintf("add %q to the permissions: of the role that should write %s edges, "+
+					"or remove the entry", perm, rel),
+			})
+		}
+	}
+	return f
+}
+
+// relationGrantPermissions is the set of permission names one grant names,
+// deduplicated — the shorthand names the same permission for three verbs and
+// should be reported once.
+func relationGrantPermissions(g acl.RelationWriteGrant) map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, perm := range []string{g.Permission, g.Create, g.Update, g.Delete} {
+		if perm != "" {
+			out[perm] = struct{}{}
+		}
+	}
+	return out
+}
+
 // A7 — a role declares a permission that no requires_permission references:
 // dead config, possibly a typo of a real gate.
 func checkDeadPermissions(p *acl.Policy) []Finding {
-	// Collect every permission referenced by a requires_permission gate.
+	// Collect every permission a gate references. There are TWO consumers,
+	// not one: a requires_permission delegate gate, and a relation_grants
+	// entry. Counting only the first would report every correctly-configured
+	// relation grant as dead — a false finding on exactly the config this
+	// check is supposed to make trustworthy.
 	used := map[string]bool{}
 	for _, def := range p.RoleRelations {
 		if def.RequiresPermission != "" {
 			used[def.RequiresPermission] = true
+		}
+	}
+	for _, g := range p.RelationWriteGrants {
+		for perm := range relationGrantPermissions(g) {
+			used[perm] = true
 		}
 	}
 	var f []Finding
@@ -192,9 +248,10 @@ func checkDeadPermissions(p *acl.Policy) []Finding {
 			}
 			f = append(f, Finding{
 				Rule: "A7-dead-permission", Severity: Low, Subject: name,
-				Detail: fmt.Sprintf("role %q grants permission %q which no role_relations.requires_permission "+
-					"references; the permission is dead", name, perm),
-				Fix: fmt.Sprintf("reference %q in a requires_permission gate, or remove it (check for a typo)", perm),
+				Detail: fmt.Sprintf("role %q grants permission %q which no requires_permission gate or "+
+					"relation_grants entry references; the permission is dead", name, perm),
+				Fix: fmt.Sprintf("reference %q in a requires_permission gate or a relation_grants entry, "+
+					"or remove it (check for a typo)", perm),
 			})
 		}
 	}

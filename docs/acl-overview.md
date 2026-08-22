@@ -242,14 +242,40 @@ rejected at load. To hide edges, hide an endpoint.
 
 ### Checking it
 
-`relation_grants:` names permissions but does not grant them — a block that no
-role backs is inert. Two things to check:
+Ask the gate directly:
 
-- `rela acl audit` reports a permission no role grants;
-- the load log confirms the block is active:
-  `acl: relation_grants active relation_types=[spawnt]`. That line matters
-  because an older binary does not know the key and silently ignores it, so
-  "no log line" is your signal that the grants are **not** being enforced.
+```console
+$ rela acl can-relation system:scheduler create spawnt --from TERUG-1
+ALLOW: system:scheduler can create a spawnt edge from TERUG-1 (terugkerend).
+      via relation_grants — permission "create-spawnt"
+```
+
+A deny names the gate that refused and quotes its reason, which matters because
+each one needs a different fix:
+
+```console
+$ rela acl can-relation system:scheduler create spawnt --from TERUG-1
+DENY: system:scheduler cannot create a spawnt edge from TERUG-1 (terugkerend).
+      no role grants create on relations from type "terugkerend"
+      (rule_kind=role-grant rule_id=-)
+```
+
+| `rule_kind` | What refused | Fix |
+| --- | --- | --- |
+| `delegate-permission` | the `requires_permission` gate on a role-relation | grant that permission |
+| `client-ceiling` | a `client_baselines:` attenuation | widen the baseline, or use a scope |
+| `role-grant` | no source-type verb grant, and no relation permission held | grant the permission named in the reason |
+
+It exits non-zero on deny, so it works as a CI gate. There is no `read` verb —
+relation visibility is derived from both endpoints.
+
+`relation_grants:` names permissions but does not grant them, so a block no role
+backs is **inert**: writes silently fall back to the source-type verb grant.
+`rela acl audit` reports that as `A6b-inert-relation-grant`.
+
+One caveat when upgrading: an older binary does not know the `relation_grants:`
+key and warn-and-ignores it. `rela acl can-relation` is the reliable check that
+the grants are actually being enforced by the binary you are running.
 
 ## Resolving the principal to a user entity
 

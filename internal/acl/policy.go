@@ -486,6 +486,22 @@ func (g RelationWriteGrant) permissionFor(op Op) (string, bool) {
 	return perm, perm != ""
 }
 
+// RelationWriteGrantTypes lists the relation types covered by
+// `relation_grants:`, sorted. Empty when the block is absent.
+//
+// Exists so the WIRING site can log a positive confirmation that the block is
+// active: an older binary does not know the key and warn-and-ignores it, so
+// silence at load is otherwise indistinguishable from "loaded and enforcing" —
+// and an operator who believes the block is live might relax an entity-type
+// grant on the strength of it. Logging inside LoadPolicy would fire for every
+// read-only reporting command too, which trains operators to ignore it.
+func (p *Policy) RelationWriteGrantTypes() []string {
+	if len(p.RelationWriteGrants) == 0 {
+		return nil
+	}
+	return slices.Sorted(maps.Keys(p.RelationWriteGrants))
+}
+
 // relationPermissionFor reports the permission that may satisfy op on relation
 // type relType, if the policy declares one.
 func (p *Policy) relationPermissionFor(relType string, op Op) (string, bool) {
@@ -621,16 +637,6 @@ func LoadPolicy(path string) (*Policy, error) {
 	}
 	if vErr := policy.Validate(); vErr != nil {
 		return nil, fmt.Errorf("acl: validate %s: %w", path, vErr)
-	}
-	// Positive confirmation that relation_grants: is ACTIVE. An older binary
-	// does not know the key and warn-and-ignores it (see above), so silence is
-	// otherwise indistinguishable from "loaded and enforcing" — an operator who
-	// believes the block is live might relax an entity-type grant on the
-	// strength of it.
-	if len(policy.RelationWriteGrants) > 0 {
-		slog.Info("acl: relation_grants active",
-			"path", path,
-			"relation_types", slices.Sorted(maps.Keys(policy.RelationWriteGrants)))
 	}
 	return &policy, nil
 }

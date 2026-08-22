@@ -786,6 +786,13 @@ func loadACLPolicy(projectRoot string) (*acl.Policy, error) {
 		}
 		return nil, fmt.Errorf("appbuild: load acl.yaml: %w", err)
 	}
+	// Debug, not Info: this is wiring shared by every CLI command, and an
+	// INFO line on each `rela list` trains operators to filter the logger —
+	// which would defeat the point. `rela acl audit` is the surface that
+	// reports the block at operator-facing volume.
+	if types := policy.RelationWriteGrantTypes(); len(types) > 0 {
+		slog.Debug("acl: relation_grants active", "relation_types", types)
+	}
 	return policy, nil
 }
 
