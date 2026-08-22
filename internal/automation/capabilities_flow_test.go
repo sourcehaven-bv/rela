@@ -32,7 +32,10 @@ func TestCapabilitiesSurviveActionConversion(t *testing.T) {
 		}},
 	}
 
-	got := convertFromMetamodel(def)
+	got, err := convertFromMetamodel(def)
+	if err != nil {
+		t.Fatalf("convertFromMetamodel: %v", err)
+	}
 	if len(got.Do) != 1 {
 		t.Fatalf("expected 1 action, got %d", len(got.Do))
 	}
