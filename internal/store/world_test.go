@@ -80,6 +80,45 @@ func TestNewWorldScope_CopiesInput(t *testing.T) {
 	assert.False(t, ok, "a type added to the source map after construction must not appear")
 }
 
+// TestNewWorldScope_CopiesChains pins the DEEP half of the copy. Copying
+// only the map leaves each TypeResolution.Chain sharing the caller's
+// backing array, so mutating one element re-scopes the world in place —
+// and one compiled scope is handed to every tenant, so that is not a
+// local mistake. Mutating a chain can turn `select: published` into
+// `select: draft`, which is the leak the feature exists to prevent.
+func TestNewWorldScope_CopiesChains(t *testing.T) {
+	t.Run("mutating the caller's chain does not re-scope", func(t *testing.T) {
+		chain := []entity.Pointer{"published", "review"}
+		scope := store.NewWorldScope(map[string]store.TypeResolution{
+			"page": {Chain: chain},
+		})
+
+		chain[0] = entity.Pointer("draft")
+
+		res, ok := scope.For("page")
+		require.True(t, ok)
+		assert.Equal(t, []entity.Pointer{"published", "review"}, res.Chain,
+			"the scope must not share the caller's backing array")
+	})
+
+	t.Run("mutating a For result does not re-scope", func(t *testing.T) {
+		scope := store.NewWorldScope(map[string]store.TypeResolution{
+			"page": {Chain: []entity.Pointer{"published", "review"}},
+		})
+
+		// A backend filtering or reordering the chain in place is the
+		// plausible consumer bug; For must hand out an owned copy.
+		first, ok := scope.For("page")
+		require.True(t, ok)
+		first.Chain[0] = entity.Pointer("draft")
+
+		second, ok := scope.For("page")
+		require.True(t, ok)
+		assert.Equal(t, []entity.Pointer{"published", "review"}, second.Chain,
+			"For must return a copy the caller owns")
+	})
+}
+
 func TestWorldScope_Types(t *testing.T) {
 	scope := store.NewWorldScope(map[string]store.TypeResolution{
 		"page":   {Chain: []entity.Pointer{"published"}},

@@ -413,9 +413,12 @@ func (o *oneOrMany) UnmarshalYAML(node *yaml.Node) error {
 // ChainFor returns the candidate chain this world applies to entityType:
 // the per-type override when one is declared, else the world's Select.
 //
-// The second result distinguishes "no chain applies" (rule 3, take
-// Otherwise) from an empty-but-declared one — callers must not treat a
-// nil chain as "select nothing" without consulting it.
+// The second result reports whether a non-empty chain applies. The two
+// branches coincide today — an empty chain and no chain both mean rule 3,
+// take Otherwise — so the compiler discards it, and the loader separately
+// rejects an explicitly empty `select:` or override chain. It is returned
+// because a caller that must tell "declared but empty" from "not
+// declared" cannot recover the difference from the chain alone.
 func (w WorldDef) ChainFor(entityType string) (chain []string, ok bool) {
 	if override, found := w.Overrides[entityType]; found {
 		return override, len(override) > 0

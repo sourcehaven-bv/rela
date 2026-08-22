@@ -525,6 +525,10 @@ deps:
       - migration
       - project
       - storage
+      # `rela validate` must check the pointer grammar too. The loader
+      # checks world structure; grammar lives in the compiler because
+      # metamodel may not import entity (TKT-WAV8XP).
+      - worlds
 
   # Domain services
   analysis:

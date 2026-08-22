@@ -317,6 +317,51 @@ entities:
 	assert.Contains(t, err.Error(), "BAD")
 }
 
+// TestCompile_GrammarErrorYieldsNoUsableScope pins the fail-open guard:
+// Compile bails on grammar errors BEFORE compiling any world, so a failed
+// compile hands back nothing usable.
+//
+// The regression this catches is silent. A type whose pointer names all
+// failed the grammar has an EMPTY entry in the declared-pointer map, and
+// compileWorld reads an empty entry as rule 1 — "declares no pointers,
+// contributes its default state in every world" — the exact opposite of
+// what a type declaring content states means. A best-effort compile that
+// returned its partial scope alongside the error would therefore serve
+// drafts in `world: published`. Every other grammar test discards the
+// Compiled return, so without this one the guard can be reverted and the
+// suite stays green.
+func TestCompile_GrammarErrorYieldsNoUsableScope(t *testing.T) {
+	m := parseSchema(t, `version: "1.0"
+namespace: https://example.org/test#
+entities:
+  page:
+    label: Page
+    id_prefix: PAGE
+    properties: {title: {type: string}}
+    pointers:
+      Draft: {default: true}
+      published: {}
+worlds:
+  pub:
+    select: published
+    otherwise: exclude
+`)
+	compiled, err := worlds.Compile(m)
+	require.Error(t, err)
+
+	assert.Empty(t, compiled.Names(), "a failed compile must not hand back usable worlds")
+	_, ok := compiled.Lookup("pub")
+	assert.False(t, ok, "a world compiled from grammar-invalid pointers must be unreachable")
+
+	// The dangerous shape stated positively: `page` must never be
+	// reachable as a rule-1 type (absent => default state) in a scope
+	// built from a schema whose pointer names did not parse.
+	scope, ok := compiled.Lookup(metamodel.DefaultWorldName)
+	require.True(t, ok, "the default world is implicit and always resolves")
+	assert.True(t, scope.IsDefaultWorld(),
+		"the only reachable scope after a failed compile is the untouched default world")
+}
+
 // TestDefault is the trivial-but-load-bearing accessor pin.
 func TestDefault(t *testing.T) {
 	assert.True(t, worlds.Default().IsDefaultWorld())

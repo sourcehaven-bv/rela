@@ -30,9 +30,9 @@
 package worlds
 
 import (
+	"errors"
 	"fmt"
 	"sort"
-	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -153,6 +153,10 @@ func compileWorld(
 	def metamodel.WorldDef,
 	pointers map[string]map[string]entity.Pointer,
 ) store.WorldScope {
+	// Anything that is not an explicit `otherwise: default` compiles to
+	// exclusion, deliberately: the loader rejects an unrecognized value, so
+	// this branch is unreachable for a loaded schema, and if it ever became
+	// reachable the fail-closed direction is the one to land in.
 	fallback := store.FallbackExclude
 	if def.Otherwise == metamodel.OtherwiseDefault {
 		fallback = store.FallbackDefaultState
@@ -249,9 +253,8 @@ func joinErrors(errs []error) error {
 	case 1:
 		return fmt.Errorf("worlds: %w", errs[0])
 	}
-	parts := make([]string, 0, len(errs))
-	for _, err := range errs {
-		parts = append(parts, err.Error())
-	}
-	return fmt.Errorf("worlds: %d problems: %s", len(errs), strings.Join(parts, "; "))
+	// errors.Join, not a string join: flattening to text would make
+	// errors.Is/As work for one problem and stop working for two, which is
+	// the kind of asymmetry that surprises a caller much later.
+	return fmt.Errorf("worlds: %d problems: %w", len(errs), errors.Join(errs...))
 }

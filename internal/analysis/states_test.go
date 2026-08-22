@@ -241,6 +241,55 @@ func TestCheckStates_SubtractsDeclaredPointersPerType(t *testing.T) {
 	}
 }
 
+// TestCheckStates_SubtractionResolvesAliases pins that the declared-set
+// subtraction resolves entity-type ALIASES.
+//
+// The write path does not canonicalize an entity's type, so a stored row
+// legitimately carries an alias. Indexing Meta.Entities directly (rather
+// than going through GetEntityDef, as the rest of the codebase does)
+// makes every state of an alias-typed entity look like stranded data —
+// a false undeclared-pointer finding that an operator cannot act on,
+// because the pointer IS declared.
+func TestCheckStates_SubtractionResolvesAliases(t *testing.T) {
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"page": {
+				Label:      "Page",
+				IDPrefixes: []string{"PAGE-"},
+				Aliases:    []string{"webpage"},
+				Pointers: map[string]metamodel.PointerDef{
+					"draft":     {Default: true},
+					"published": {},
+				},
+			},
+		},
+	}
+	// Alias resolution runs off an unexported map that Parse builds; a
+	// hand-built Metamodel must ask for it explicitly.
+	meta.InitAliases()
+
+	svc := newServiceWith(t, meta, func(s store.Store) {
+		addEntity(s, "PAGE-1", "webpage", map[string]any{"title": "default"})
+		e := entity.New("PAGE-1", "webpage")
+		e.Pointer = entity.Pointer("published")
+		if err := s.CreateEntity(context.Background(), e); err != nil {
+			t.Fatalf("seed alias-typed state: %v", err)
+		}
+	})
+
+	findings, err := svc.CheckStates(context.Background(), analysis.Options{})
+	if err != nil {
+		t.Fatalf("CheckStates: %v", err)
+	}
+
+	for _, f := range findings {
+		if f.Code == "undeclared-pointer" && f.Subject == "published" {
+			t.Errorf("`published` is declared by page, and `webpage` is an alias of page, "+
+				"so an alias-typed row must NOT report: count = %d", f.Count)
+		}
+	}
+}
+
 // TestCheckStates_FullyDeclaredProjectIsSilent pins that a project whose
 // stored states are all declared produces no undeclared-pointer findings —
 // the adopter's steady state.

@@ -108,7 +108,11 @@ func (s *Service) pointerDeclared(entityType string, p entity.Pointer) bool {
 	if p.IsDefault() {
 		return true
 	}
-	def, ok := s.deps.Meta.Entities[entityType]
+	// GetEntityDef, not a raw map index: the write path does not
+	// canonicalize e.Type, so a stored row legitimately carries an alias.
+	// Indexing Entities directly would report every state of an
+	// alias-typed entity as undeclared — a false stranded-data finding.
+	def, ok := s.deps.Meta.GetEntityDef(entityType)
 	if !ok {
 		// A state of a type the metamodel does not define declares
 		// nothing. Reporting it is right: the row is unreachable.

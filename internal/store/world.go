@@ -3,7 +3,7 @@ package store
 import (
 	"errors"
 	"fmt"
-	"maps"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
@@ -99,6 +99,17 @@ type TypeResolution struct {
 //
 // Stores only ever EQUALITY-MATCH the coordinates in a chain; they never
 // parse or inspect one (see [entity.Pointer]).
+//
+// # Type keys are CANONICAL
+//
+// The compiler keys this map on canonical entity-type names only, never
+// on aliases. A store cannot resolve an alias — it holds no metamodel —
+// so a caller querying by a type name it took from user input or from a
+// stored row must canonicalize (metamodel.GetEntityDef / ResolveAlias)
+// BEFORE calling [WorldScope.For]. Skipping that is fail-open, not
+// fail-closed: an alias reaches For as an unknown type, which is ok=false,
+// which is rule 1 — the default state served in a world that meant to
+// exclude it.
 type WorldScope struct {
 	byType map[string]TypeResolution
 }
@@ -106,14 +117,22 @@ type WorldScope struct {
 // NewWorldScope compiles a per-type resolution map into a WorldScope.
 // Passing an empty or nil map yields the default world.
 //
-// The map is copied, so the caller may reuse or mutate its input: a
-// WorldScope is handed to every backend and must not change underfoot.
+// The map and every Chain in it are copied, so the caller may reuse or
+// mutate its input: a WorldScope is handed to every backend and must not
+// change underfoot. The copy must be DEEP — a shallow map copy leaves
+// each TypeResolution.Chain sharing the caller's backing array, and one
+// assembled Compiled is handed to every tenant, so a consumer sorting or
+// truncating a chain in place would silently re-scope every reader's
+// world. That is the unbounded direction: it can turn `select: published`
+// into `select: draft`.
 func NewWorldScope(byType map[string]TypeResolution) WorldScope {
 	if len(byType) == 0 {
 		return WorldScope{}
 	}
 	cp := make(map[string]TypeResolution, len(byType))
-	maps.Copy(cp, byType)
+	for typ, res := range byType {
+		cp[typ] = TypeResolution{Chain: slices.Clone(res.Chain), Fallback: res.Fallback}
+	}
 	return WorldScope{byType: cp}
 }
 
@@ -135,9 +154,15 @@ func (w WorldScope) IsDefaultWorld() bool { return len(w.byType) == 0 }
 // contributes its default state (rule 1) — it does NOT mean "exclude".
 // Callers must branch on ok; see the type doc for why this is not a
 // plain map lookup.
+//
+// The returned Chain is a copy: the caller owns it and may sort, filter
+// or truncate it in place without re-scoping the shared WorldScope.
 func (w WorldScope) For(entityType string) (res TypeResolution, ok bool) {
 	res, ok = w.byType[entityType]
-	return res, ok
+	if !ok {
+		return TypeResolution{}, false
+	}
+	return TypeResolution{Chain: slices.Clone(res.Chain), Fallback: res.Fallback}, true
 }
 
 // Types returns the entity types w declares a resolution for. The order
