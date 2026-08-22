@@ -23,6 +23,7 @@ import (
 	"log/slog"
 	"os"
 	"path"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +31,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
 )
 
 // recentHashCapacity bounds how many recently-written file hashes are
@@ -459,6 +461,25 @@ func (s *FSStore) cleanupTempFiles() {
 			_ = s.rooted.Remove(p)
 		}
 	}
+}
+
+// sortStateKeys sorts entity state keys ("id" or "id@pointer") by the
+// (bare id, pointer) tuple, the ordering every entityOrder mutation
+// uses (storeutil.SortedInsertFunc / SortedRemoveFunc with
+// storeutil.CompareStateKeys).
+//
+// The index CONSTRUCTION paths must use the same comparator as the
+// mutation paths or the slice is sorted one way and binary-searched
+// another: SortedRemoveFunc then misses a key that is present and
+// panics, on the ordinary default-world delete path after any process
+// restart. Plain sortStrings is wrong here because '@' (0x40) sorts
+// after the digits (0x30-0x39), so PAGE-10's family lands inside
+// PAGE-1's. See storeutil.CompareStateKeys.
+//
+// relationOrder is NOT sorted with this — relations carry no pointer,
+// so plain string order is correct there.
+func sortStateKeys(keys []string) {
+	slices.SortFunc(keys, storeutil.CompareStateKeys)
 }
 
 // sortStrings sorts a string slice in place.

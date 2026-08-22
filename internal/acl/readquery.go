@@ -73,6 +73,20 @@ func (r *Request) readQuery(ctx context.Context, entityType string) ReadQueryRes
 		return ReadQueryResult{DenyAll: true}
 	}
 
+	// World is deliberately left ZERO here, which means the DEFAULT world
+	// (store.WorldScope's zero value). This is NOT an assertion that the
+	// ACL path is world-safe: a world-scoped read must have its scope
+	// INJECTED from above by the world-resolved reader (internal/worldreader,
+	// TKT-WAV8XP PR-D), which is the layer that owns a compiled WorldScope.
+	//
+	// internal/acl structurally cannot resolve one itself — arch-lint
+	// forbids it from importing internal/metamodel, and a WorldScope is
+	// compiled from the metamodel. So the seam belongs above this package,
+	// not in it. Until PR-D wires that injection, store.GraphQuery.World is
+	// honored by the backends (PR-B) but never set on this path.
+	//
+	// Do NOT "fix" this by giving internal/acl a metamodel dependency: that
+	// breaks the boundary that keeps ACL evaluable without a schema.
 	q := &store.GraphQuery{
 		EntityType: entityType,
 		HasInbound: &store.RelationPredicate{

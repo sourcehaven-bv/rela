@@ -174,6 +174,39 @@ var (
 	sortedRemove     = storeutil.SortedRemove
 )
 
+// The ENTITY order is keyed by state key ("id" or "id@pointer") and must
+// sort as the tuple (bare id, pointer) so an entity's states stay
+// contiguous — see storeutil.CompareStateKeys for why plain string order
+// splits a family. Relations keep plain string order; their keys are not
+// state keys.
+func entityInsert(s []string, key string) []string {
+	return storeutil.SortedInsertFunc(s, key, storeutil.CompareStateKeys)
+}
+
+func entityRemove(s []string, key string) []string {
+	return storeutil.SortedRemoveFunc(s, key, storeutil.CompareStateKeys)
+}
+
+// worldKeep resolves a world over matched entities, returning only each
+// entity's prime. A no-op for the default world (TKT-WAV8XP).
+func worldKeep(w store.WorldScope, matched []*entity.Entity) []*entity.Entity {
+	if w.IsDefaultWorld() || len(matched) == 0 {
+		return matched
+	}
+	cands := make([]storeutil.WorldCandidate, len(matched))
+	for i, e := range matched {
+		cands[i] = storeutil.WorldCandidate{ID: e.ID, Type: e.Type, Pointer: e.Pointer}
+	}
+	primes := storeutil.WorldPrimes(w, cands)
+	kept := make([]*entity.Entity, 0, len(primes))
+	for _, e := range matched {
+		if p, ok := primes[e.ID]; ok && p == e.Pointer {
+			kept = append(kept, e)
+		}
+	}
+	return kept
+}
+
 // idTaken reports whether any key of index case-folds to the same identity as
 // id. except is skipped so a rename can ask "does any OTHER entity claim this
 // identity?" without self-colliding.
@@ -235,6 +268,9 @@ func (m *MemStore) GetEntityState(_ context.Context, id string, p entity.Pointer
 }
 
 func (m *MemStore) ListEntities(_ context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error] {
+	if err := storeutil.ValidateEntityQuery(q); err != nil {
+		return func(yield func(*entity.Entity, error) bool) { yield(nil, err) }
+	}
 	m.mu.RLock()
 	idSet := entityIDSet(q.IDs)
 
@@ -247,6 +283,8 @@ func (m *MemStore) ListEntities(_ context.Context, q store.EntityQuery) iter.Seq
 		snapshot = append(snapshot, e.Clone())
 	}
 	m.mu.RUnlock()
+
+	snapshot = worldKeep(q.World, snapshot)
 
 	return func(yield func(*entity.Entity, error) bool) {
 		for _, e := range snapshot {
@@ -269,15 +307,26 @@ func (m *MemStore) ListEntities(_ context.Context, q store.EntityQuery) iter.Seq
 func (m *MemStore) ListEntityHeaders(
 	_ context.Context, q store.EntityQuery,
 ) iter.Seq2[store.EntityHeader, error] {
+	if err := storeutil.ValidateEntityQuery(q); err != nil {
+		return func(yield func(store.EntityHeader, error) bool) { yield(store.EntityHeader{}, err) }
+	}
 	m.mu.RLock()
 	idSet := entityIDSet(q.IDs)
 
-	snapshot := make([]store.EntityHeader, 0)
+	matched := make([]*entity.Entity, 0)
 	for _, id := range m.entityOrder {
 		e := m.entities[id]
 		if !matchEntityQuery(e, q, idSet) {
 			continue
 		}
+		matched = append(matched, e)
+	}
+	// Resolve BEFORE projecting: the world picks whole rows, and a
+	// header carries the pointer that identifies which face it is.
+	matched = worldKeep(q.World, matched)
+
+	snapshot := make([]store.EntityHeader, 0, len(matched))
+	for _, e := range matched {
 		snapshot = append(snapshot, store.EntityHeader{
 			ID:         e.ID,
 			Type:       e.Type,
@@ -298,6 +347,9 @@ func (m *MemStore) ListEntityHeaders(
 }
 
 func (m *MemStore) ListEntitiesPage(_ context.Context, q store.EntityQuery) (store.Page[*entity.Entity], error) {
+	if err := storeutil.ValidateEntityQuery(q); err != nil {
+		return store.Page[*entity.Entity]{}, err
+	}
 	cursorKey, err := storeutil.DecodeCursor(q.Cursor)
 	if err != nil {
 		return store.Page[*entity.Entity]{}, err
@@ -307,9 +359,25 @@ func (m *MemStore) ListEntitiesPage(_ context.Context, q store.EntityQuery) (sto
 	defer m.mu.RUnlock()
 
 	idSet := entityIDSet(q.IDs)
-	keys := storeutil.PaginateSortedKeys(m.entityOrder, cursorKey, q.Limit, func(id string) bool {
-		return matchEntityQuery(m.entities[id], q, idSet)
-	})
+	matches := func(id string) bool { return matchEntityQuery(m.entities[id], q, idSet) }
+
+	var keys storeutil.PageKeys
+	if q.World.IsDefaultWorld() {
+		keys = storeutil.PaginateSortedKeysFunc(
+			m.entityOrder, cursorKey, q.Limit, matches, storeutil.CompareStateKeys)
+	} else {
+		// The world path buffers ONE family at a time and counts PRIMES
+		// against the limit — see storeutil.PaginateWorldPrimes.
+		keys = storeutil.PaginateWorldPrimes(
+			m.entityOrder, cursorKey, q.Limit, q.World, matches,
+			func(key string) (storeutil.WorldCandidate, bool) {
+				e, ok := m.entities[key]
+				if !ok {
+					return storeutil.WorldCandidate{}, false
+				}
+				return storeutil.WorldCandidate{ID: e.ID, Type: e.Type, Pointer: e.Pointer}, true
+			})
+	}
 
 	items := make([]*entity.Entity, 0, len(keys.Keys))
 	for _, id := range keys.Keys {
@@ -333,39 +401,49 @@ func entityIDSet(ids []string) map[string]bool {
 	return set
 }
 
-// matchEntityQuery reports whether e satisfies q's Type, IDs, and
-// AllStates filters. idSet must be pre-computed from q.IDs (see
-// entityIDSet) and matches the BARE id, so IDs+AllStates selects every
-// state of the listed entities.
+// matchEntityQuery adapts a stored entity to the shared rule in
+// storeutil. The rule itself must not live here: fsstore applies the
+// identical filter, and the two byte-similar copies this replaced are
+// exactly the drift storetest exists to catch. The nil guard stays
+// local — it is this backend's map-miss, not part of the rule.
 func matchEntityQuery(e *entity.Entity, q store.EntityQuery, idSet map[string]bool) bool {
 	if e == nil {
 		return false
 	}
-	if !q.AllStates && !e.Pointer.IsDefault() {
-		return false
-	}
-	if q.Type != "" && e.Type != q.Type {
-		return false
-	}
-	if len(idSet) > 0 && !idSet[e.ID] {
-		return false
-	}
-	return true
+	return storeutil.MatchEntityQuery(e.Type, e.ID, e.Pointer, q, idSet)
 }
 
 func (m *MemStore) CountEntities(_ context.Context, q store.EntityQuery) (int, error) {
+	if err := storeutil.ValidateEntityQuery(q); err != nil {
+		return 0, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	idSet := entityIDSet(q.IDs)
 
-	count := 0
+	// The default world resolves every row to itself, so counting needs
+	// no buffer — and this is the common path for a project that never
+	// declares a pointer, which must stay allocation-free.
+	if q.World.IsDefaultWorld() {
+		n := 0
+		for _, e := range m.entities {
+			if matchEntityQuery(e, q, idSet) {
+				n++
+			}
+		}
+		return n, nil
+	}
+
+	matched := make([]*entity.Entity, 0)
 	for _, e := range m.entities {
 		if matchEntityQuery(e, q, idSet) {
-			count++
+			matched = append(matched, e)
 		}
 	}
-	return count, nil
+	// Counts must be world-scoped, not raw: an unscoped tally tells a
+	// published-world surface how many unpublished drafts exist.
+	return len(worldKeep(q.World, matched)), nil
 }
 
 func (m *MemStore) HighestID(_ context.Context, prefix string) (int, error) {
@@ -467,7 +545,7 @@ func (m *MemStore) createEntity(_ context.Context, e *entity.Entity) error {
 	stored.Redacted = nil // per-reader ACL artifact, never content (RR-KBWJPV)
 	stored.UpdatedAt = time.Now()
 	m.entities[key] = stored
-	m.entityOrder = sortedInsert(m.entityOrder, key)
+	m.entityOrder = entityInsert(m.entityOrder, key)
 	m.notifyPut(stored)
 
 	m.emit(store.Event{
@@ -543,7 +621,7 @@ func (m *MemStore) deleteEntity(_ context.Context, id string, cascade bool) (*st
 	for _, fe := range family {
 		result.DeletedEntities = append(result.DeletedEntities, fe.e.Clone())
 		delete(m.entities, fe.key)
-		m.entityOrder = sortedRemove(m.entityOrder, fe.key)
+		m.entityOrder = entityRemove(m.entityOrder, fe.key)
 	}
 	m.notifyDelete(id)
 
@@ -596,8 +674,8 @@ func (m *MemStore) rekeyFamily(family []famEntry, newID string) []*entity.Entity
 		newKey := entity.FormatStateRef(newID, r.Pointer)
 		m.entities[newKey] = r
 		delete(m.entities, fe.key)
-		m.entityOrder = sortedRemove(m.entityOrder, fe.key)
-		m.entityOrder = sortedInsert(m.entityOrder, newKey)
+		m.entityOrder = entityRemove(m.entityOrder, fe.key)
+		m.entityOrder = entityInsert(m.entityOrder, newKey)
 		renamed = append(renamed, r)
 	}
 	return renamed

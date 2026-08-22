@@ -124,7 +124,7 @@ func (s *FSStore) syncEntities(cached *persistedIndex) error {
 			s.entities[key] = entityMeta(ie)
 			s.entityOrder = append(s.entityOrder, key)
 		}
-		sortStrings(s.entityOrder)
+		sortStateKeys(s.entityOrder)
 		return nil
 	}
 
@@ -243,7 +243,7 @@ func (s *FSStore) scanEntityDirs() error {
 		}
 	}
 
-	sortStrings(s.entityOrder)
+	sortStateKeys(s.entityOrder)
 	return nil
 }
 

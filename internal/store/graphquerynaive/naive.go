@@ -48,7 +48,7 @@ const depthCap = DepthCap
 // the iterator.
 func Run(ctx context.Context, r Reader, q store.GraphQuery) iter.Seq2[*entity.Entity, error] {
 	return func(yield func(*entity.Entity, error) bool) {
-		candidates, err := collectByType(ctx, r, q.EntityType)
+		candidates, err := collectByType(ctx, r, q.EntityType, q.World)
 		if err != nil {
 			yield(nil, err)
 			return
@@ -72,7 +72,7 @@ func Run(ctx context.Context, r Reader, q store.GraphQuery) iter.Seq2[*entity.En
 
 // Count returns (matched, total) for q against r.
 func Count(ctx context.Context, r Reader, q store.GraphQuery) (matched, total int, err error) {
-	candidates, err := collectByType(ctx, r, q.EntityType)
+	candidates, err := collectByType(ctx, r, q.EntityType, q.World)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -101,7 +101,7 @@ func MatchingIDs(ctx context.Context, r Reader, q store.GraphQuery, ids []string
 	if len(out) == 0 {
 		return out, nil
 	}
-	for e, err := range r.ListEntities(ctx, store.EntityQuery{Type: q.EntityType}) {
+	for e, err := range r.ListEntities(ctx, store.EntityQuery{Type: q.EntityType, World: q.World}) {
 		if err != nil {
 			return nil, err
 		}
@@ -117,9 +117,20 @@ func MatchingIDs(ctx context.Context, r Reader, q store.GraphQuery, ids []string
 	return out, nil
 }
 
-func collectByType(ctx context.Context, r Reader, typ string) ([]*entity.Entity, error) {
+// collectByType seeds the candidate set: the entities the query may
+// RETURN, so it carries the world (store.GraphQuery.World). The relation
+// walks in matches() deliberately do NOT — who an entity is related to
+// must not depend on the reader's world.
+//
+// Passing the world here is load-bearing rather than cosmetic. The ACL
+// read path swaps an EntityQuery for a GraphQuery as soon as a policy
+// query exists (internal/visibility/pushdown.go), so dropping it would
+// make a world-scoped list silently degrade to unscoped for exactly the
+// gated principals: under `otherwise: exclude` the entities the world
+// meant to hide become visible, and a published world serves drafts.
+func collectByType(ctx context.Context, r Reader, typ string, w store.WorldScope) ([]*entity.Entity, error) {
 	var out []*entity.Entity
-	for e, err := range r.ListEntities(ctx, store.EntityQuery{Type: typ}) {
+	for e, err := range r.ListEntities(ctx, store.EntityQuery{Type: typ, World: w}) {
 		if err != nil {
 			return nil, err
 		}

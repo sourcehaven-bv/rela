@@ -34,6 +34,9 @@ func (s *FSStore) GetEntityState(_ context.Context, id string, p entity.Pointer)
 }
 
 func (s *FSStore) ListEntities(_ context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error] {
+	if err := storeutil.ValidateEntityQuery(q); err != nil {
+		return func(yield func(*entity.Entity, error) bool) { yield(nil, err) }
+	}
 	s.mu.RLock()
 	idSet := entityIDSet(q.IDs)
 
@@ -46,6 +49,8 @@ func (s *FSStore) ListEntities(_ context.Context, q store.EntityQuery) iter.Seq2
 		matches = append(matches, s.entities[key])
 	}
 	s.mu.RUnlock()
+
+	matches = keepPrimes(q.World, matches)
 
 	return func(yield func(*entity.Entity, error) bool) {
 		for _, m := range matches {
@@ -64,6 +69,9 @@ func (s *FSStore) ListEntities(_ context.Context, q store.EntityQuery) iter.Seq2
 }
 
 func (s *FSStore) ListEntitiesPage(_ context.Context, q store.EntityQuery) (store.Page[*entity.Entity], error) {
+	if err := storeutil.ValidateEntityQuery(q); err != nil {
+		return store.Page[*entity.Entity]{}, err
+	}
 	cursorKey, err := storeutil.DecodeCursor(q.Cursor)
 	if err != nil {
 		return store.Page[*entity.Entity]{}, err
@@ -71,9 +79,25 @@ func (s *FSStore) ListEntitiesPage(_ context.Context, q store.EntityQuery) (stor
 
 	s.mu.RLock()
 	idSet := entityIDSet(q.IDs)
-	keys := storeutil.PaginateSortedKeys(s.entityOrder, cursorKey, q.Limit, func(id string) bool {
-		return matchEntityQuery(s.entities[id], q, idSet)
-	})
+	matches := func(id string) bool { return matchEntityQuery(s.entities[id], q, idSet) }
+
+	var keys storeutil.PageKeys
+	if q.World.IsDefaultWorld() {
+		keys = storeutil.PaginateSortedKeysFunc(
+			s.entityOrder, cursorKey, q.Limit, matches, storeutil.CompareStateKeys)
+	} else {
+		// The world path buffers ONE family at a time and counts PRIMES
+		// against the limit — see storeutil.PaginateWorldPrimes.
+		keys = storeutil.PaginateWorldPrimes(
+			s.entityOrder, cursorKey, q.Limit, q.World, matches,
+			func(key string) (storeutil.WorldCandidate, bool) {
+				m, ok := s.entities[key]
+				if !ok {
+					return storeutil.WorldCandidate{}, false
+				}
+				return storeutil.WorldCandidate{ID: m.ID, Type: m.Type, Pointer: m.Pointer}, true
+			})
+	}
 
 	// Capture metas while still holding the lock — loading needs the
 	// type and pointer and we must not do I/O under the lock.
@@ -109,36 +133,65 @@ func entityIDSet(ids []string) map[string]bool {
 	return set
 }
 
-// matchEntityQuery reports whether an indexed entity satisfies q's
-// Type, IDs, and AllStates filters. idSet must be pre-computed from
-// q.IDs and matches the BARE id, so IDs+AllStates selects every state
-// of the listed entities.
+// matchEntityQuery adapts this backend's index metadata to the shared
+// rule in storeutil. The rule itself must not live here: memstore
+// applies the identical filter, and the two byte-similar copies this
+// replaced are exactly the drift storetest exists to catch.
 func matchEntityQuery(m entityMeta, q store.EntityQuery, idSet map[string]bool) bool {
-	if !q.AllStates && !m.Pointer.IsDefault() {
-		return false
-	}
-	if q.Type != "" && m.Type != q.Type {
-		return false
-	}
-	if len(idSet) > 0 && !idSet[m.ID] {
-		return false
-	}
-	return true
+	return storeutil.MatchEntityQuery(m.Type, m.ID, m.Pointer, q, idSet)
 }
 
 func (s *FSStore) CountEntities(_ context.Context, q store.EntityQuery) (int, error) {
+	if err := storeutil.ValidateEntityQuery(q); err != nil {
+		return 0, err
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	idSet := entityIDSet(q.IDs)
 
-	count := 0
+	// The default world resolves every row to itself, so counting needs
+	// no buffer — and this is the common path for a project that never
+	// declares a pointer, which must stay allocation-free.
+	if q.World.IsDefaultWorld() {
+		n := 0
+		for _, meta := range s.entities {
+			if matchEntityQuery(meta, q, idSet) {
+				n++
+			}
+		}
+		return n, nil
+	}
+
+	matches := make([]entityMeta, 0)
 	for _, meta := range s.entities {
 		if matchEntityQuery(meta, q, idSet) {
-			count++
+			matches = append(matches, meta)
 		}
 	}
-	return count, nil
+	// Counts must be world-scoped, not raw: an unscoped tally tells a
+	// published-world surface how many unpublished drafts exist.
+	return len(keepPrimes(q.World, matches)), nil
+}
+
+// keepPrimes resolves a world over matched index metadata, returning
+// only each entity's prime. A no-op for the default world.
+func keepPrimes(w store.WorldScope, metas []entityMeta) []entityMeta {
+	if w.IsDefaultWorld() || len(metas) == 0 {
+		return metas
+	}
+	cands := make([]storeutil.WorldCandidate, len(metas))
+	for i, m := range metas {
+		cands[i] = storeutil.WorldCandidate{ID: m.ID, Type: m.Type, Pointer: m.Pointer}
+	}
+	primes := storeutil.WorldPrimes(w, cands)
+	kept := make([]entityMeta, 0, len(primes))
+	for _, m := range metas {
+		if p, ok := primes[m.ID]; ok && p == m.Pointer {
+			kept = append(kept, m)
+		}
+	}
+	return kept
 }
 
 func (s *FSStore) HighestID(_ context.Context, prefix string) (int, error) {
@@ -278,7 +331,7 @@ func (s *FSStore) createEntity(_ context.Context, e *entity.Entity) error {
 
 	// Update index
 	s.entities[key] = entityMeta{ID: e.ID, Type: e.Type, Pointer: e.Pointer}
-	s.entityOrder = storeutil.SortedInsert(s.entityOrder, key)
+	s.entityOrder = storeutil.SortedInsertFunc(s.entityOrder, key, storeutil.CompareStateKeys)
 	if stored.Pointer.IsDefault() {
 		addEntityToCache(s.propCache, stored)
 	}
@@ -437,7 +490,7 @@ func (s *FSStore) deleteEntity(_ context.Context, id string, cascade bool) (*sto
 	for i, meta := range family {
 		key := stateKey(meta.ID, meta.Pointer)
 		delete(s.entities, key)
-		s.entityOrder = storeutil.SortedRemove(s.entityOrder, key)
+		s.entityOrder = storeutil.SortedRemoveFunc(s.entityOrder, key, storeutil.CompareStateKeys)
 		if meta.Pointer.IsDefault() {
 			removeEntityFromCache(s.propCache, states[i])
 		}
@@ -572,10 +625,10 @@ func (s *FSStore) renameEntity(_ context.Context, oldID, newID string) (*store.R
 	for _, meta := range family {
 		oldKey := stateKey(meta.ID, meta.Pointer)
 		delete(s.entities, oldKey)
-		s.entityOrder = storeutil.SortedRemove(s.entityOrder, oldKey)
+		s.entityOrder = storeutil.SortedRemoveFunc(s.entityOrder, oldKey, storeutil.CompareStateKeys)
 		newKey := stateKey(newID, meta.Pointer)
 		s.entities[newKey] = entityMeta{ID: newID, Type: meta.Type, Pointer: meta.Pointer}
-		s.entityOrder = storeutil.SortedInsert(s.entityOrder, newKey)
+		s.entityOrder = storeutil.SortedInsertFunc(s.entityOrder, newKey, storeutil.CompareStateKeys)
 	}
 	// Observers key documents by bare id: a headless family (tolerated
 	// from disk) has NO default face to rename in the index, and handing

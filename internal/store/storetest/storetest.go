@@ -31,6 +31,21 @@ type Capabilities struct {
 	// AttachmentManager. When false, attachment-related conformance
 	// tests are skipped.
 	Attachments bool
+
+	// Worlds indicates whether the store resolves EntityQuery.World.
+	//
+	// TODO(TKT-WAV8XP-PR-C): remove this field and run RunWorldTests
+	// unconditionally. It exists for exactly one commit window: fs and
+	// mem implement world resolution in PR-B, pgstore's SQL pushdown
+	// lands in PR-C, and until then pgstore REFUSES a non-default World
+	// loudly (asserted by a pg-specific test, not here). Without the
+	// gate the one shared suite would have to accept two contradictory
+	// outcomes — correct rows for fs/mem, a refusal for pg — which is
+	// precisely what a conformance suite exists to prevent.
+	//
+	// A transitional flag that outlives its window becomes a permanent
+	// conformance opt-out, so PR-C deletes it rather than setting it.
+	Worlds bool
 }
 
 func ctx() context.Context { return context.Background() }
@@ -164,6 +179,9 @@ func RunAll(t *testing.T, f Factory, sf SearchFactory, vsf VisibleSearchFactory,
 		t.Run("Attachment", func(t *testing.T) { RunAttachmentTests(t, f) })
 	}
 	t.Run("States", func(t *testing.T) { RunStateTests(t, f) })
+	if caps.Worlds {
+		t.Run("Worlds", func(t *testing.T) { RunWorldTests(t, f) })
+	}
 	t.Run("Watcher", func(t *testing.T) { RunWatcherTests(t, f) })
 	t.Run("Validation", func(t *testing.T) { RunValidationTests(t, f) })
 	t.Run("Tx", func(t *testing.T) { RunTxTests(t, f) })

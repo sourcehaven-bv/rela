@@ -292,6 +292,20 @@ type EntityQuery struct {
 	// detection, observer backfill (TKT-9OJ3S0) — not for read paths
 	// choosing which face of an entity to show.
 	AllStates bool
+
+	// World resolves each entity to at most one of its content states —
+	// the "prime" — per the compiled per-type ranked chain and fallback
+	// verdict (TKT-WAV8XP). The ZERO VALUE is the default world: every
+	// entity contributes its default state, byte-identical to the
+	// pre-worlds behavior, which is what keeps every existing
+	// construction site unchanged and costs a pointerless project
+	// nothing.
+	//
+	// World and AllStates are MUTUALLY EXCLUSIVE: AllStates is raw
+	// storage truth and world resolution is its opposite, so a query
+	// setting both is rejected with [ErrInvalidQuery] rather than
+	// silently resolved by a precedence rule nobody would remember.
+	World WorldScope
 }
 
 // Page holds a single page of results from a paginated list call.

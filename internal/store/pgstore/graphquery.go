@@ -2,6 +2,7 @@ package pgstore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"iter"
 	"strings"
@@ -19,7 +20,23 @@ import (
 // SELECT by type; when only one of HasInbound / HasOutbound is set,
 // only that EXISTS clause is emitted. Both nil → degenerate
 // "everything of this type" answer (covered by the conformance suite).
+// checkGraphQueryScope mirrors checkQueryScope for the graph shape: the
+// world must reach BOTH query types or the list path and the ACL
+// pushdown path diverge (TKT-WAV8XP F1/F5). Removed in PR-C with its
+// EntityQuery twin.
+func checkGraphQueryScope(q store.GraphQuery) error {
+	if !q.World.IsDefaultWorld() {
+		return errors.New(
+			"pgstore: world-scoped graph queries are not implemented yet (TKT-WAV8XP PR-C); " +
+				"the SQL pushdown lands there and this refusal is removed with it")
+	}
+	return nil
+}
+
 func (s *Store) GraphQuery(ctx context.Context, q store.GraphQuery) iter.Seq2[*entity.Entity, error] {
+	if err := checkGraphQueryScope(q); err != nil {
+		return func(yield func(*entity.Entity, error) bool) { yield(nil, err) }
+	}
 	sqlText, args := buildGraphQuerySQL(q, false)
 	return func(yield func(*entity.Entity, error) bool) {
 		rows, err := s.db.Query(ctx, sqlText, args...)
@@ -52,6 +69,9 @@ func (s *Store) GraphQuery(ctx context.Context, q store.GraphQuery) iter.Seq2[*e
 // recursive CTE shape — duplicating the WITH RECURSIVE inside a
 // single FILTER expression saves nothing.
 func (s *Store) GraphCount(ctx context.Context, q store.GraphQuery) (matched, total int, err error) {
+	if scopeErr := checkGraphQueryScope(q); scopeErr != nil {
+		return 0, 0, scopeErr
+	}
 	matchedSQL, matchedArgs := buildGraphQuerySQL(q, true)
 	if err = s.db.QueryRow(ctx, matchedSQL, matchedArgs...).Scan(&matched); err != nil {
 		return 0, 0, fmt.Errorf("pgstore: graph count (matched): %w", err)
@@ -68,6 +88,9 @@ func (s *Store) GraphCount(ctx context.Context, q store.GraphQuery) (matched, to
 // (true = matched, false = no-match). Push-down: a single SQL round
 // trip regardless of |ids|.
 func (s *Store) MatchingIDs(ctx context.Context, q store.GraphQuery, ids []string) (map[string]bool, error) {
+	if err := checkGraphQueryScope(q); err != nil {
+		return nil, err
+	}
 	out := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		out[id] = false

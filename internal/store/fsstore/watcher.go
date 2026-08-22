@@ -212,7 +212,7 @@ func (s *FSStore) reconcileEntityPath(path string) {
 	}
 	s.entities[key] = entityMeta{ID: e.ID, Type: e.Type, Pointer: e.Pointer}
 	if !known {
-		s.entityOrder = storeutil.SortedInsert(s.entityOrder, key)
+		s.entityOrder = storeutil.SortedInsertFunc(s.entityOrder, key, storeutil.CompareStateKeys)
 	}
 	if e.Pointer.IsDefault() {
 		addEntityToCache(s.propCache, e)
@@ -247,7 +247,7 @@ func (s *FSStore) handleEntityRemoval(path string) {
 		}
 	}
 	delete(s.entities, stem)
-	s.entityOrder = storeutil.SortedRemove(s.entityOrder, stem)
+	s.entityOrder = storeutil.SortedRemoveFunc(s.entityOrder, stem, storeutil.CompareStateKeys)
 	if meta.Pointer.IsDefault() {
 		// Observer deletions are bare-id keyed; a state removal must
 		// not evict the default face from the search index (Step-1

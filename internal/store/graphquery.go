@@ -27,6 +27,24 @@ type GraphQuery struct {
 	Props       []PropPredicate    // entity's own properties match (AND)
 	HasInbound  *RelationPredicate // entity has matching relation FROM (expanded) endpoints
 	HasOutbound *RelationPredicate // entity has matching relation TO (expanded) endpoints
+
+	// World scopes the RESULT to each entity's prime under the compiled
+	// world, exactly as [EntityQuery.World] does. The zero value is the
+	// default world.
+	//
+	// It must live here as well as on EntityQuery, not only there: the
+	// ACL read path swaps an EntityQuery for a GraphQuery the moment a
+	// policy query exists (internal/visibility/pushdown.go), and the
+	// AllowAll principal takes the EntityQuery branch. A world carried
+	// on only one of the two would make the list path and the
+	// single-entity path disagree — and would do so precisely for the
+	// privileged principal.
+	//
+	// Scoping applies to the entities the query RETURNS. Relation
+	// predicates walk the graph's identity structure and are NOT
+	// world-resolved: who an entity is related to must not depend on the
+	// reader's world.
+	World WorldScope
 }
 
 // PropOp is the comparison a [PropPredicate] applies. Deliberately only

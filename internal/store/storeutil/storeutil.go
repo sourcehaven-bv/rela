@@ -114,6 +114,54 @@ func SortedInsert(s []string, key string) []string {
 	return slices.Insert(s, i, key)
 }
 
+// CompareStateKeys orders two entity state keys ("id" or "id@pointer")
+// as the TUPLE (bare id, pointer), which is what pgstore's
+// `ORDER BY id ASC, pointer ASC` does. One ordering contract across all
+// three backends (TKT-WAV8XP).
+//
+// Plain string comparison on the joined key is NOT equivalent, and the
+// difference is a correctness bug rather than a cosmetic one. The
+// separator '@' is 0x40 and the digits are 0x30-0x39, so '@' sorts AFTER
+// any digit and a numerically-prefixed sibling lands INSIDE the family:
+//
+//	string order: PAGE-1  PAGE-10  PAGE-10@draft  PAGE-1@draft  PAGE-2
+//	tuple order:  PAGE-1  PAGE-1@draft  PAGE-10  PAGE-10@draft  PAGE-2
+//
+// World resolution buffers one family and decides at end-of-family, and
+// the fallback verdict is a decision about ABSENCE — so a family split
+// across a page boundary yields a WRONG prime, not a slow one (an entity
+// dropped under `otherwise: exclude`, or its default face served when a
+// published row exists further down). With `id_type: sequential` that
+// starts at ten entities.
+//
+// A comparator rather than a lower-sorting separator on purpose: a
+// separator encodes the invariant into an ASCII accident that a future
+// id-grammar change would break silently.
+func CompareStateKeys(a, b string) int {
+	aID, aPtr, _ := strings.Cut(a, entity.StateRefSeparator)
+	bID, bPtr, _ := strings.Cut(b, entity.StateRefSeparator)
+	if c := strings.Compare(aID, bID); c != 0 {
+		return c
+	}
+	return strings.Compare(aPtr, bPtr)
+}
+
+// SortedInsertFunc adds key to a slice sorted by cmp.
+func SortedInsertFunc(s []string, key string, cmp func(a, b string) int) []string {
+	i, _ := slices.BinarySearchFunc(s, key, cmp)
+	return slices.Insert(s, i, key)
+}
+
+// SortedRemoveFunc removes key from a slice sorted by cmp. The key must
+// exist — callers should only call this after confirming presence.
+func SortedRemoveFunc(s []string, key string, cmp func(a, b string) int) []string {
+	i, found := slices.BinarySearchFunc(s, key, cmp)
+	if !found {
+		panic("storeutil: SortedRemoveFunc called with missing key: " + key)
+	}
+	return slices.Delete(s, i, i+1)
+}
+
 // EncodeCursor turns a sort key into an opaque pagination cursor.
 // Callers MUST NOT parse cursors — round-trip only via DecodeCursor.
 func EncodeCursor(key string) string {
@@ -186,6 +234,49 @@ func PaginateSortedKeys(
 	return page
 }
 
+// PaginateSortedKeysFunc is [PaginateSortedKeys] over a slice sorted by
+// cmp rather than by plain string order (TKT-WAV8XP; see
+// [CompareStateKeys]).
+//
+// A cursor issued before the ordering changed is a MISMATCHED cursor,
+// which [store.EntityReader.ListEntitiesPage] documents as
+// implementation-defined — cursors are opaque and valid only for the
+// same query on the same store. It restarts from the beginning rather
+// than resuming at a binary-search position derived under the old
+// ordering, because that position would silently SKIP rows, which a
+// paging caller cannot distinguish from end-of-results. Same reasoning
+// as the unparseable-cursor restart (TKT-DOFYR1 PR-B).
+func PaginateSortedKeysFunc(
+	sortedKeys []string,
+	cursorKey string,
+	limit int,
+	match func(key string) bool,
+	cmp func(a, b string) int,
+) PageKeys {
+	start := 0
+	if cursorKey != "" {
+		i, found := slices.BinarySearchFunc(sortedKeys, cursorKey, cmp)
+		start = i
+		if found {
+			start = i + 1
+		}
+	}
+
+	page := PageKeys{}
+	for i := start; i < len(sortedKeys); i++ {
+		key := sortedKeys[i]
+		if !match(key) {
+			continue
+		}
+		if limit > 0 && len(page.Keys) == limit {
+			page.NextCursor = EncodeCursor(page.Keys[len(page.Keys)-1])
+			return page
+		}
+		page.Keys = append(page.Keys, key)
+	}
+	return page
+}
+
 // SortedRemove removes key from a sorted slice.
 // The key must exist — callers should only call this after confirming presence.
 func SortedRemove(s []string, key string) []string {
@@ -246,6 +337,261 @@ func MatchRelation(r *entity.Relation, q store.RelationQuery) bool {
 		}
 	}
 	return true
+}
+
+// ValidateEntityQuery rejects a query whose fields contradict each
+// other. Today that is AllStates together with a non-default World
+// (TKT-WAV8XP): AllStates is raw storage truth and world resolution is
+// its opposite, so honoring both is impossible and honoring one
+// silently is a precedence rule nobody remembers.
+//
+// It lives here rather than in each backend so every implementation
+// inherits the same refusal — a backend that forgot the check would
+// answer a contradictory query with a plausible-looking result, which
+// is worse than an error. Pinned by the shared conformance suite.
+func ValidateEntityQuery(q store.EntityQuery) error {
+	if q.AllStates && !q.World.IsDefaultWorld() {
+		return fmt.Errorf(
+			"%w: AllStates and World are mutually exclusive — AllStates is raw storage "+
+				"truth, a World resolves each entity to one state", store.ErrInvalidQuery)
+	}
+	return nil
+}
+
+// MatchEntityQuery reports whether an entity with the given type,
+// bare id and pointer satisfies q's Type, IDs and AllStates filters.
+// idSet must be pre-computed from q.IDs (see the backends' entityIDSet)
+// and matches the BARE id, so IDs+AllStates selects every state of the
+// listed entities.
+//
+// It takes the three fields rather than an *entity.Entity because
+// fsstore matches against its in-memory index metadata, which
+// deliberately holds no loaded entity — the previous byte-similar
+// copies in fsstore and memstore had diverged in signature only.
+//
+// This is NOT world resolution and cannot be: a world picks at most one
+// state per entity, which is a per-FAMILY ranked choice, so no
+// per-row predicate can express it. World-scoped listing resolves
+// primes separately, after matching.
+//
+// Under a non-default World the pointer filter is WIDENED rather than
+// applied: every state of a family is a candidate, and resolution
+// chooses among them afterwards. Keeping the default-only filter here
+// would discard the very rows the chain selects, leaving a world able
+// to return only default states — the failure would look like "the
+// world does nothing" rather than an error.
+func MatchEntityQuery(entityType, id string, p entity.Pointer, q store.EntityQuery, idSet map[string]bool) bool {
+	if !q.AllStates && q.World.IsDefaultWorld() && !p.IsDefault() {
+		return false
+	}
+	if q.Type != "" && entityType != q.Type {
+		return false
+	}
+	if len(idSet) > 0 && !idSet[id] {
+		return false
+	}
+	return true
+}
+
+// WorldCandidate is one stored state row offered to [WorldPrimes]: the
+// bare id, its type, and its pointer. Backends pass their index metadata
+// rather than a loaded entity, so resolution costs no I/O.
+type WorldCandidate struct {
+	ID      string
+	Type    string
+	Pointer entity.Pointer
+}
+
+// WorldPrimes selects, per bare id, the single state row that world w
+// resolves to — the "prime" (TKT-WAV8XP, design doc §4.1). It returns
+// the winning pointer per id; an id absent from the result contributes
+// nothing to the world.
+//
+// Candidates must be the rows of WHOLE families: the fallback verdict is
+// a decision about ABSENCE, so an id whose candidates are only partly
+// present can resolve to the wrong prime rather than merely a stale one.
+// That is why the fs/mem index sorts by [CompareStateKeys] and callers
+// buffer a family before deciding.
+//
+// The three resolution rules:
+//
+//   - rule 1: the type has no resolution in w (absent from the scope) —
+//     the DEFAULT state, matching the pre-worlds behavior. Absence is NOT
+//     the zero TypeResolution, which excludes; see [store.WorldScope].
+//   - rule 2: the first coordinate in the chain that EXISTS for this id.
+//   - rule 3: no chain coordinate exists — the chain's Fallback decides,
+//     either the default state or nothing at all.
+//
+// Decisions are made AFTER the whole candidate set is seen, never
+// streaming per row: no backend documents an iteration order strong
+// enough to conclude "this coordinate is absent" mid-family, and the
+// same hazard already bit analysis.CheckStates.
+func WorldPrimes(w store.WorldScope, candidates []WorldCandidate) map[string]entity.Pointer {
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	// Per id: the best rank seen so far (lower wins), whether a default
+	// row exists, and the id's type. Buffered, then decided below.
+	type family struct {
+		typ         string
+		bestRank    int
+		bestPtr     entity.Pointer
+		haveBest    bool
+		haveDefault bool
+	}
+	// The family's type comes from whichever row arrives first. Every
+	// backend rejects a state whose type differs from its family's on
+	// write (StateTypeMismatchError), so a family is single-typed and
+	// the choice is arbitrary-but-equal. It is recorded rather than
+	// re-derived because fsstore builds its index from directory
+	// structure alone, without reading files: a hand-edited tree could
+	// present a mixed-type family, and the answer should not then depend
+	// on map iteration order upstream.
+	fams := make(map[string]*family, len(candidates))
+	for _, c := range candidates {
+		f, ok := fams[c.ID]
+		if !ok {
+			f = &family{typ: c.Type}
+			fams[c.ID] = f
+		}
+		if c.Pointer.IsDefault() {
+			f.haveDefault = true
+			// The default row is the family's identity row everywhere
+			// else in the codebase; prefer its type so a (write-rejected,
+			// hand-edited-tree-only) mixed-type family still resolves the
+			// same way regardless of candidate order.
+			f.typ = c.Type
+		}
+		res, scoped := w.For(c.Type)
+		if !scoped {
+			continue // rule 1: decided below from haveDefault
+		}
+		for rank, coord := range res.Chain {
+			if coord != c.Pointer {
+				continue
+			}
+			if !f.haveBest || rank < f.bestRank {
+				f.bestRank, f.bestPtr, f.haveBest = rank, coord, true
+			}
+			break
+		}
+	}
+
+	out := make(map[string]entity.Pointer, len(fams))
+	for id, f := range fams {
+		res, scoped := w.For(f.typ)
+		switch {
+		case !scoped:
+			// Rule 1: the world says nothing about this type.
+			if f.haveDefault {
+				out[id] = entity.Pointer("")
+			}
+		case f.haveBest:
+			// Rule 2.
+			out[id] = f.bestPtr
+		case res.Fallback == store.FallbackDefaultState && f.haveDefault:
+			// Rule 3, `otherwise: default`.
+			out[id] = entity.Pointer("")
+		default:
+			// Rule 3, `otherwise: exclude` — absence IS the publication
+			// bit, so the id contributes nothing.
+		}
+	}
+	return out
+}
+
+// PaginateWorldPrimes walks a contiguously-ordered key slice and returns
+// up to limit PRIMES, plus the cursor to resume after the last family it
+// emitted (TKT-WAV8XP).
+//
+// The limit counts primes, not candidate rows: an entity holding three
+// faces consumes one slot of a page, not three. Memory is bounded by ONE
+// FAMILY, not by the result set — which is the whole reason the index
+// sorts by [CompareStateKeys]. Buffering everything and cutting
+// afterwards would be correct but O(all matching rows) per page, and a
+// page-at-a-time scan that decided mid-family would produce a WRONG
+// prime, since the fallback verdict is a decision about absence.
+//
+// load maps a key to its candidate; a key that is absent (concurrently
+// deleted) is skipped.
+//
+// match MUST be family-constant — it may only test properties shared by
+// every row of a family (type, bare id), never a per-row property. Rows
+// it rejects never reach [WorldPrimes], and resolution decides on
+// ABSENCE: filtering away the published row makes the chain look
+// unsatisfied, so the fallback fires and the default face is served in a
+// world that meant to replace or exclude it. [MatchEntityQuery] is
+// family-constant today (Type and IDs only). A per-row predicate pushed
+// in here — a property filter, an updated-at bound, a pointer fast path
+// — silently breaks world resolution in the serve-the-wrong-face
+// direction; resolve the family first and filter the primes afterwards.
+func PaginateWorldPrimes(
+	sortedKeys []string,
+	cursorKey string,
+	limit int,
+	w store.WorldScope,
+	match func(key string) bool,
+	load func(key string) (WorldCandidate, bool),
+) PageKeys {
+	start := 0
+	if cursorKey != "" {
+		i, found := slices.BinarySearchFunc(sortedKeys, cursorKey, CompareStateKeys)
+		start = i
+		if found {
+			start = i + 1
+		}
+	}
+
+	page := PageKeys{}
+	var famKeys []string
+	var famCands []WorldCandidate
+
+	// flush resolves one buffered family and appends its prime, if any.
+	// Returns false when the page is full and a further prime exists.
+	flush := func() bool {
+		if len(famCands) == 0 {
+			return true
+		}
+		primes := WorldPrimes(w, famCands)
+		defer func() { famKeys, famCands = famKeys[:0], famCands[:0] }()
+		for i, c := range famCands {
+			p, ok := primes[c.ID]
+			if !ok || p != c.Pointer {
+				continue
+			}
+			if limit > 0 && len(page.Keys) == limit {
+				page.NextCursor = EncodeCursor(page.Keys[len(page.Keys)-1])
+				return false
+			}
+			page.Keys = append(page.Keys, famKeys[i])
+		}
+		return true
+	}
+
+	curID := ""
+	for i := start; i < len(sortedKeys); i++ {
+		key := sortedKeys[i]
+		c, ok := load(key)
+		if !ok {
+			continue
+		}
+		// A family boundary: everything about the previous id has been
+		// seen, so it is safe to decide its prime.
+		if c.ID != curID {
+			if !flush() {
+				return page
+			}
+			curID = c.ID
+		}
+		if !match(key) {
+			continue
+		}
+		famKeys = append(famKeys, key)
+		famCands = append(famCands, c)
+	}
+	flush()
+	return page
 }
 
 // LimitAttachmentReader wraps r so reads fail with

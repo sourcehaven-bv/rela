@@ -19,6 +19,33 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
 )
 
+// checkQueryScope rejects a query this backend cannot answer.
+//
+// It applies the shared AllStates+World contradiction rule, and then —
+// until PR-C lands the SQL pushdown — REFUSES a non-default World
+// outright (TKT-WAV8XP, decision Q8).
+//
+// The refusal is deliberate and must stay loud. The alternative, a
+// naive path that resolves primes by filtering rows in Go, would be an
+// unnoticed per-row scan in the one backend that has scale, and it
+// would silently pass the conformance suite while doing the thing the
+// design forbids. An error names the gap; a slow correct answer hides
+// it. Removed in PR-C, together with storetest.Capabilities.Worlds.
+func checkQueryScope(q store.EntityQuery) error {
+	if err := storeutil.ValidateEntityQuery(q); err != nil {
+		return err
+	}
+	if !q.World.IsDefaultWorld() {
+		// A plain error, not a new sentinel: this refusal is deleted in
+		// PR-C, and a sentinel would invite a caller to branch on a
+		// condition designed to stop existing.
+		return errors.New(
+			"pgstore: world-scoped queries are not implemented yet (TKT-WAV8XP PR-C); " +
+				"the SQL pushdown lands there and this refusal is removed with it")
+	}
+	return nil
+}
+
 // --- EntityReader ---
 
 // GetEntity returns a single entity by ID, or store.ErrNotFound. The
@@ -46,6 +73,9 @@ func (s *Store) GetEntityState(ctx context.Context, id string, p entity.Pointer)
 // ListEntities streams entities matching q in ascending-ID order. Cursor and
 // Limit are ignored (per the EntityReader contract).
 func (s *Store) ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error] {
+	if err := checkQueryScope(q); err != nil {
+		return func(yield func(*entity.Entity, error) bool) { yield(nil, err) }
+	}
 	sql, args := buildEntityListSQL(q, "")
 	return func(yield func(*entity.Entity, error) bool) {
 		rows, err := s.db.Query(ctx, sql, args...)
@@ -81,6 +111,9 @@ func (s *Store) ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2
 func (s *Store) ListEntityHeaders(
 	ctx context.Context, q store.EntityQuery,
 ) iter.Seq2[store.EntityHeader, error] {
+	if err := checkQueryScope(q); err != nil {
+		return func(yield func(store.EntityHeader, error) bool) { yield(store.EntityHeader{}, err) }
+	}
 	sql, args := buildEntityHeaderListSQL(q, "")
 	return func(yield func(store.EntityHeader, error) bool) {
 		rows, err := s.db.Query(ctx, sql, args...)
@@ -108,6 +141,9 @@ func (s *Store) ListEntityHeaders(
 // ListEntitiesPage returns a page of entities. A keyset cursor on id keeps
 // pages stable; see store.ListEntitiesPage for the contract.
 func (s *Store) ListEntitiesPage(ctx context.Context, q store.EntityQuery) (store.Page[*entity.Entity], error) {
+	if err := checkQueryScope(q); err != nil {
+		return store.Page[*entity.Entity]{}, err
+	}
 	cursorKey, err := storeutil.DecodeCursor(q.Cursor)
 	if err != nil {
 		return store.Page[*entity.Entity]{}, err
@@ -155,6 +191,9 @@ func (s *Store) ListEntitiesPage(ctx context.Context, q store.EntityQuery) (stor
 
 // CountEntities counts entities matching q.
 func (s *Store) CountEntities(ctx context.Context, q store.EntityQuery) (int, error) {
+	if err := checkQueryScope(q); err != nil {
+		return 0, err
+	}
 	where, args := entityWhere(q, "")
 	sql := "SELECT count(*) FROM entities" + where
 	var n int
@@ -743,6 +782,15 @@ func scanEntityHeader(row scanner) (store.EntityHeader, error) {
 // zero-value query that is exactly the contract's historical
 // ascending-id order (the pointer column is constant ”); under
 // AllStates the states of an id sort immediately after its default row.
+//
+// That contiguity is a SHARED contract, not a pgstore detail: fs/mem
+// match it via storeutil.CompareStateKeys, which orders their index by
+// the same (bare id, pointer) tuple. It is load-bearing for world
+// resolution, which buffers one family and decides at end-of-family
+// (TKT-WAV8XP). Note fs/mem need an explicit comparator to get here —
+// they key on the JOINED "id@pointer" string, and '@' (0x40) sorts after
+// the digits (0x30-0x39), so plain string order puts PAGE-10's family
+// inside PAGE-1's. Changing either side's ordering breaks the other.
 func buildEntityListSQL(q store.EntityQuery, keysetAfter string) (sql string, args []any) {
 	where, args := entityWhere(q, keysetAfter)
 	sql = `SELECT id, type, pointer, properties, content, updated_at FROM entities` +
