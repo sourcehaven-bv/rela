@@ -465,6 +465,15 @@ func (h *viewsHandler) navEntryToSidebarItem(
 			count := counts.kanbanCount(ctx, entry.Kanban, kanban)
 			item.Count = &count
 		}
+	case entry.Calendar != "":
+		item.Href = "/calendar/" + entry.Calendar
+		item.Icon = "calendar"
+		// Deliberately no count. A list or board counts the set it displays; a
+		// calendar displays one period, so an unwindowed total ("847" beside a
+		// grid showing 12) is true, unactionable, and never changes as the user
+		// navigates. A period-scoped count is not available either — the
+		// sidebar is rendered server-side and does not know which month is on
+		// screen. SidebarItem.Count is a *int, so absent needs no wire change.
 	case entry.Dashboard:
 		item.Href = "/"
 		item.Icon = "dashboard"

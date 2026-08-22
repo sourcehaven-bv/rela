@@ -258,6 +258,7 @@ type Config struct {
 	Views            map[string]dataentryconfig.ViewConfig       `json:"views"`
 	EntityViews      map[string]dataentryconfig.EntityViewConfig `json:"entity_views,omitempty"`
 	Kanbans          map[string]dataentryconfig.Kanban           `json:"kanbans"`
+	Calendars        map[string]dataentryconfig.Calendar         `json:"calendars,omitempty"`
 	Dashboard        *dataentryconfig.DashboardConfig            `json:"dashboard,omitempty"`
 	Actions          map[string]dataentryconfig.Action           `json:"actions,omitempty"`
 	Navigation       []dataentryconfig.NavigationEntry           `json:"navigation"`

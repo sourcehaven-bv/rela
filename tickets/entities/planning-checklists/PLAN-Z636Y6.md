@@ -32,37 +32,21 @@ overlapping-event layout.
 
 **Acceptance criteria — three corrected during planning (see Approach §7).**
 
-1. A `calendars:` entry renders at `/calendar/:id`, reachable from a sidebar
-`calendar:` nav entry.
-2. Month view renders a full month grid (leading/trailing days of adjacent
-months shown but visually de-emphasised); week view renders 7 days. Both mark
-today and support next/prev/today.
+1. A `calendars:` entry renders at `/calendar/:id`, reachable from a sidebar `calendar:` nav entry.
+2. Month view renders a full month grid (leading/trailing days of adjacent months shown but visually de-emphasised); week view renders 7 days. Both mark today and support next/prev/today.
 3. Multiple `sources:` merge into one calendar.
-4. `date`-typed sources render as all-day; `datetime`-typed as timed.
-`date` and `end_date` must be the same kind (feed rule, reused).
+4. `date`-typed sources render as all-day; `datetime`-typed as timed. `date` and `end_date` must be the same kind (feed rule, reused).
 5. Clicking an event opens the entity, or `edit_form` if set.
-6. Dragging an event patches the date property. Drag is **day-granular**: it
-changes the day and preserves the time-of-day. When `end_date` is set both move
-by the same whole-day delta, **preserving wall-clock start and end** (not
-elapsed duration — they differ across a DST boundary).
-7. An entity the principal may not update is not draggable
-(`actionAllowed(entity,'update')`, the gate KanbanView.vue:44-46 uses).
-8. **CORRECTED:** config load fails when `date`/`end_date` name a property that
-does not exist on the type, is not date/datetime-typed, is `list: true`, or
-mismatches kinds. (The original criterion said "non-writable" — there is no such
-concept; see Approach §7.)
+6. Dragging an event patches the date property. Drag is **day-granular**: it changes the day and preserves the time-of-day. When `end_date` is set both move by the same whole-day delta, **preserving wall-clock start and end** (not elapsed duration — they differ across a DST boundary).
+7. An entity the principal may not update is not draggable (`actionAllowed(entity,'update')`, the gate KanbanView.vue:44-46 uses).
+8. **CORRECTED:** config load fails when `date`/`end_date` name a property that does not exist on the type, is not date/datetime-typed, is `list: true`, or mismatches kinds. (The original criterion said "non-writable" — there is no such concept; see Approach §7.)
 9. Entities hidden by the read-side ACL never appear as events.
-10. **CORRECTED:** `permission:` on the *navigation entry* gates the calendar
-(config.go:682). It is not a field on the calendar itself.
-11. Source `where:` filters select the same set for a redacted and an
-unredacted principal (see the ordering discussion in §5).
-12. A `datetime` source renders events at all — the single highest-value test
-in this ticket, guarding the `compareValues` defect (§5).
+10. **CORRECTED:** `permission:` on the *navigation entry* gates the calendar (config.go:682). It is not a field on the calendar itself.
+11. Source `where:` filters select the same set for a redacted and an unredacted principal (see the ordering discussion in §5).
+12. A `datetime` source renders events at all — the single highest-value test in this ticket, guarding the `compareValues` defect (§5).
 13. A timed event on the **last day** of the visible window renders.
-14. The same instant renders in different cells under different display
-timezones, per the day-assignment invariant (§7).
-15. Navigating month → next → previous serves correct data for each period
-(guards query-key aliasing, §6).
+14. The same instant renders in different cells under different display timezones, per the day-assignment invariant (§7).
+15. Navigating month → next → previous serves correct data for each period (guards query-key aliasing, §6).
 
 ## Research
 
@@ -662,9 +646,9 @@ IS modified — see §6.
 **Input Sources & Validation:**
 - *`data-entry.yaml` calendars block* — operator-authored, trusted-ish but
 validated at load against the metamodel (allowlist: property must exist and be
-of an accepted type). Invalid → config load fails with a message naming calendar
-+ source index. Per CLAUDE.md, config names are **not** secret, so errors may
-name them.
+of an accepted type). Invalid → config load fails with a message naming the
+calendar and the source index. Per CLAUDE.md config names are **not** secret,
+so errors may name them.
 - *Date-range query params* — client-supplied; parsed as dates server-side by the
 existing filter pipeline. Malformed → existing `errBadFilter` 400 path.
 - *Calendar id in the URL* — used to look up a config key; unknown → 404. No

@@ -1376,6 +1376,7 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 		Views:            s.Cfg.Views,
 		EntityViews:      s.Cfg.EntityViews,
 		Kanbans:          s.Cfg.Kanbans,
+		Calendars:        s.Cfg.Calendars,
 		Dashboard:        s.Cfg.Dashboard,
 		Actions:          s.Cfg.Actions,
 		Navigation:       s.Cfg.Navigation,

@@ -24,6 +24,7 @@ func (r *Runtime) registerURLModule(rela *glua.LTable) {
 	r.L.SetField(tbl, "list", r.L.NewFunction(r.luaURLList))
 	r.L.SetField(tbl, "view", r.L.NewFunction(r.luaURLView))
 	r.L.SetField(tbl, "kanban", r.L.NewFunction(r.luaURLKanban))
+	r.L.SetField(tbl, "calendar", r.L.NewFunction(r.luaURLCalendar))
 	r.L.SetField(tbl, "document", r.L.NewFunction(r.luaURLDocument))
 	// Singleton routes — no params, optional query.
 	r.L.SetField(tbl, "home", r.L.NewFunction(r.luaURLHome))
@@ -165,6 +166,16 @@ func (r *Runtime) luaURLKanban(ls *glua.LState) int {
 		return 0
 	}
 	return r.emitURL(ls, "/kanban/"+name, optionalTable(ls, 2))
+}
+
+// luaURLCalendar implements rela.url.calendar(name, query?).
+func (r *Runtime) luaURLCalendar(ls *glua.LState) int {
+	name := ls.CheckString(1)
+	if name == "" {
+		ls.RaiseError("rela.url.calendar: calendar name cannot be empty")
+		return 0
+	}
+	return r.emitURL(ls, "/calendar/"+name, optionalTable(ls, 2))
 }
 
 // luaURLDocument implements rela.url.document(name, entity).
