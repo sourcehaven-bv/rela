@@ -1212,6 +1212,52 @@ func (b *SharedBase) Assemble(
 	return assemble(b, st, searcher, visible, searchCloser)
 }
 
+// resolveACLAndRedactor resolves the ACL and derives the field redactor that
+// depends on it. They are returned together because the redactor is a function
+// of the resolved Declarative: splitting them invites a caller that has one
+// without the other, which is precisely the state that left three read paths
+// ungated (TKT-BUYEW1).
+func resolveACLAndRedactor(
+	base *SharedBase, st store.Store,
+) (acl.ACL, *acl.Declarative, visibility.FieldRedactor, error) {
+	resolvedACL, aclDeclarative, err := resolveACL(base, st)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	fieldRedactor, err := buildFieldRedactor(base.meta, st, aclDeclarative)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return resolvedACL, aclDeclarative, fieldRedactor, nil
+}
+
+// cascadeReadDeps builds the static lua.ReadDeps backing automation cascades.
+//
+// Cascade reads are ACL-BOUND to the ACTING USER (DEC-O59WM4, RR-XC0URX): an
+// automation fires in response to someone's write and runs on that person's
+// ctx, so it reads their view — symmetric with its write path, which already
+// gates through entitymanager and needs an explicit allow_acl_bypass to
+// elevate. Escalating reads is deliberately NOT a config default; it is
+// TKT-ACSBSA (an admin-handle extension), so a cascade that needs more must ask
+// for it in the open.
+//
+// Field-level `visible:` redaction applies here too (TKT-BUYEW1) — a Lua action
+// can send what it reads onward exactly as a scheduled job can, so it must not
+// see property values the same principal has redacted everywhere else.
+func cascadeReadDeps(
+	st store.Store, tr tracer.Tracer, searcher search.Searcher,
+	meta *metamodel.Metamodel, projectRoot string,
+	d *acl.Declarative, redactor visibility.FieldRedactor,
+) lua.ReadDeps {
+	return lua.ReadDeps{
+		VisibleReader: scriptEntityReader(st, d, redactor),
+		Tracer:        scriptTracer(tr, st, d, redactor),
+		Searcher:      searcher,
+		Meta:          meta,
+		ProjectRoot:   projectRoot,
+	}
+}
+
 func assemble(
 	base *SharedBase, st store.Store, searcher search.Searcher,
 	visible search.VisibleSearcher, searchCloser io.Closer,
@@ -1226,12 +1272,7 @@ func assemble(
 		visible = v
 	}
 
-	resolvedACL, aclDeclarative, err := resolveACL(base, st)
-	if err != nil {
-		return nil, err
-	}
-
-	fieldRedactor, err := buildFieldRedactor(base.meta, st, aclDeclarative)
+	resolvedACL, aclDeclarative, fieldRedactor, err := resolveACLAndRedactor(base, st)
 	if err != nil {
 		return nil, err
 	}
@@ -1247,25 +1288,8 @@ func assemble(
 
 	// Build the static lua read deps once — the ScriptRunner (automation
 	// cascades) is constructed with these.
-	//
-	// Cascade reads are ACL-BOUND to the ACTING USER (DEC-O59WM4,
-	// RR-XC0URX): an automation fires in response to someone's write and
-	// runs on that person's ctx, so it reads their view — symmetric with
-	// its write path, which already gates through entitymanager and needs
-	// an explicit allow_acl_bypass to elevate. Escalating reads is
-	// deliberately NOT a config default; it is TKT-ACSBSA (an admin-handle
-	// extension), so a cascade that needs more must ask for it in the open.
-	// Field-level `visible:` redaction applies here too (TKT-425426). A cascade
-	// runs on the acting user's ctx and reads their view, so it must not see
-	// property values the same principal has redacted everywhere else — a Lua
-	// action can send what it reads onward exactly as a scheduled job can.
-	readDeps := lua.ReadDeps{
-		VisibleReader: scriptEntityReader(st, aclDeclarative, fieldRedactor),
-		Tracer:        scriptTracer(tr, st, aclDeclarative, fieldRedactor),
-		Searcher:      searcher,
-		Meta:          base.meta,
-		ProjectRoot:   cfg.Paths.Root,
-	}
+	readDeps := cascadeReadDeps(st, tr, searcher, base.meta, cfg.Paths.Root,
+		aclDeclarative, fieldRedactor)
 
 	tw, err := CompileTransitions(base.meta, st, resolvedACL)
 	if err != nil {
