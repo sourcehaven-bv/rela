@@ -56,6 +56,9 @@ export function buildSectionEditFields(
     // Server-resolved (section → field inheritance already applied); carried
     // through as its own property, never folded into `verdict` (RR-PGGRBD).
     const render = f.render
+    // Widget override (TKT-3R7RF3), carried verbatim. Honoured only on the
+    // schema arm below; SectionEditForm's widgetRows enforces that.
+    const widget = f.widget
     if (def) {
       out.push({
         property: f.property,
@@ -64,6 +67,7 @@ export function buildSectionEditFields(
         transitions,
         span: f.span,
         render,
+        widget,
         kind: 'schema',
         propertyDef: def,
       })
@@ -75,6 +79,7 @@ export function buildSectionEditFields(
         transitions,
         span: f.span,
         render,
+        widget,
         kind: 'hint',
         routingHint: viewFieldRoutingHint(f),
       })

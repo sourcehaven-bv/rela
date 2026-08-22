@@ -73,6 +73,18 @@ func Declare(env *predicate.Env) error {
 		{FuncContains, predicate.FuncSig{Params: []predicate.Type{strList, str}, Return: predicate.BoolType}},
 		{FuncLen, predicate.FuncSig{Params: []predicate.Type{strList}, Return: predicate.NumberType}},
 		{FuncToday, predicate.FuncSig{Return: predicate.DateType}},
+		{FuncDaysBetween, predicate.FuncSig{
+			Params: []predicate.Type{predicate.DateType, predicate.DateType},
+			Return: predicate.IntType,
+		}},
+		{FuncDateAdd, predicate.FuncSig{
+			Params: []predicate.Type{predicate.DateType, predicate.NumberType, str},
+			Return: predicate.DateType,
+		}},
+		{FuncRruleNext, predicate.FuncSig{
+			Params: []predicate.Type{str, predicate.DateType},
+			Return: predicate.DateType,
+		}},
 	}
 	for _, d := range decls {
 		if err := env.DeclareFunc(d.name, d.sig); err != nil {
@@ -107,6 +119,9 @@ func Bind(b *predicate.Bindings, now time.Time) error {
 		{FuncToday, func(context.Context, []predicate.Value) (predicate.Value, error) {
 			return predicate.NewDate(day), nil
 		}},
+		{FuncDaysBetween, daysBetween},
+		{FuncDateAdd, dateAdd},
+		{FuncRruleNext, rruleNext},
 	}
 	for _, bd := range binds {
 		if err := b.SetFunc(bd.name, bd.fn); err != nil {

@@ -162,7 +162,6 @@ func retagPropstatStatus(resp, marker string) string {
 	return resp[:at] + seg + resp[end:]
 }
 
-// firstElementText returns the text of the first <name>...</name> element.
 func firstElementText(s, name string) (string, bool) {
 	open := "<" + name + ">"
 	i := strings.Index(s, open)

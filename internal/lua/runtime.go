@@ -2521,7 +2521,9 @@ func luaValueToSortable(v lua.LValue) (str string, num float64, isNum bool) {
 	}
 }
 
-// hoursPerDay is the number of hours in a day.
+// hoursPerDay converts the elapsed-hours difference luaDaysSince measures into
+// whole days. This is absolute elapsed time, not calendar days, so a DST
+// transition shifts the boundary by an hour — acceptable for a day counter.
 const hoursPerDay = 24
 
 // luaDaysSince implements rela.days_since(date_string) -> number

@@ -988,6 +988,7 @@ forms:
         widget: textarea
     relations:
       - relation: tagged
+        direction: outgoing
         widget: cards
         properties:
           - property: added_by
@@ -1227,6 +1228,22 @@ views:
         fields:
           - property: status
           - property: assignee
+      # TKT-3R7RF3: a section whose fields opt into inline edit AND override
+      # which widget renders them. The done property is a boolean, so its type
+      # default is already checkbox; title is the load-bearing case — a string
+      # would default to TextWidget, and only a widget override makes it a
+      # textarea. Keeps the override honest: if the plumbing silently dropped,
+      # the textarea assertion fails even though the checkbox one would pass.
+      # (No backticks in this comment: it lives inside a TS template literal.)
+      - heading: "Progress"
+        source: entry
+        display: properties
+        render: input
+        fields:
+          - property: done
+            widget: checkbox
+          - property: title
+            widget: textarea
       - heading: "Implements"
         source: implemented
         display: list
@@ -1498,6 +1515,7 @@ type: task
 title: Write unit tests
 status: draft
 assignee: Alice
+done: false
 ---
 
 Write unit tests for auth module.

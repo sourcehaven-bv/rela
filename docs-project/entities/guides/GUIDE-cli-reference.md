@@ -198,6 +198,55 @@ compare numerically, dates instant-granularly). Host functions are
 available for pattern matching: `match(field, glob)`, `regex(field, re)`,
 `fuzzy(field, target)`, and `contains(list_field, value)`.
 
+Date arithmetic is available too, so a condition can be relative to the
+current day rather than to a hard-coded date:
+
+| Function | Returns | Meaning |
+| -------- | ------- | ------- |
+| `today()` | date | The current day, at UTC midnight |
+| `days_between(a, b)` | number | Whole days from `b` to `a`; positive when `a` is later |
+| `date_add(d, n, unit)` | date | `d` shifted by `n` (may be negative); `unit` is `day`, `week`, `month` or `year` |
+| `rrule_next(rule, after)` | date | The first occurrence of an RRULE strictly after `after` |
+
+```bash
+# due within a week (and anything already overdue)
+rela list taak --filter "days_between(entity.due, today()) <= 7"
+
+# strictly overdue
+rela list taak --filter "days_between(entity.due, today()) < 0"
+
+# a three-day grace period has lapsed
+rela list taak --filter "date_add(entity.due, 3, 'day') < today()"
+```
+
+Every date value is normalized to UTC midnight, so results are whole days
+and compare equal to bare `YYYY-MM-DD` literals regardless of any time
+component or timezone on the stored value.
+
+`date_add` accepts `day`, `week`, `month` and `year`. Month and year
+arithmetic **clamps to the last valid day** of the target month rather than
+spilling into the next one:
+
+| Expression | Result |
+| ---------- | ------ |
+| `date_add('2026-01-31', 1, 'month')` | `2026-02-28` |
+| `date_add('2028-01-31', 1, 'month')` | `2028-02-29` (leap year) |
+| `date_add('2026-03-31', -1, 'month')` | `2026-02-28` |
+| `date_add('2028-02-29', 1, 'year')` | `2029-02-28` |
+
+Clamping is stated rather than inherited: Go's own `AddDate` would normalize
+January 31 + 1 month to **March 3**, silently turning "the last of every
+month" into "the 3rd of every other month".
+
+Note that clamping is lossy — chaining month steps from a month-end date does
+not recover the original day (`Jan 31 → Feb 28 → Mar 28`). For a true
+"last day of every month" schedule use `rrule_next` with an RRULE, which
+models that directly.
+
+`rrule_next` errors when the rule is malformed _or_ when it has no
+occurrence left (a `COUNT` reached, an `UNTIL` passed); the two messages
+differ so a finished schedule is distinguishable from a typo.
+
 **`--where` (legacy, deprecated):**
 
 `--where` is transpiled to a predicate internally; prefer `--filter`. It
@@ -1534,6 +1583,39 @@ Add to your CI pipeline to ensure project files are up-to-date:
 ```
 
 This will exit with code 1 if migrations are needed.
+
+### rela migrate status / gen / data / gc
+
+Operate the **data-migration** system: when `schema.yaml` changes shape
+(property renamed, type changed, enum values remapped), these commands
+detect it, draft a migration, and transform the stored content. See the
+[data-migration guide](data-migration.md) for the full model.
+
+```bash
+rela migrate status              # where does the data stand vs the live schema?
+rela migrate gen                 # draft migrations/000N-schema-change.yaml from the diff
+rela migrate data                # dry-run the pending migration chain
+rela migrate data --apply        # execute it
+rela migrate gc                  # dry-run the orphaned-data garbage collector
+rela migrate gc --scan --apply   # full-scan for orphans, then delete expired ones
+```
+
+**Flags:**
+
+| Command | Flag | Description |
+| ------- | ---- | ----------- |
+| `gen`   | `--description` | One-line description embedded in the migration file |
+| `gen`   | `--stdout` | Print the draft instead of writing `migrations/<name>` |
+| `data`  | `--apply` | Execute (default is a dry-run preview with per-step counts) |
+| `gc`    | `--apply` | Delete expired orphaned data (default is a dry-run preview) |
+| `gc`    | `--scan`  | Full-scan the store for orphans not yet in the drift ledger |
+| `gc`    | `--grace` | Override the grace period orphaned data must age before deletion (default 720h) |
+
+Unlike bare `rela migrate` (config files, service-free), these subcommands
+need the project services and a store. Compatible schema changes (new types,
+new optional properties, new enum values) never need any of this — they are
+adopted automatically at startup. `status` exits 1 while an incompatible
+change is unmigrated, so it doubles as a CI check.
 
 ---
 
