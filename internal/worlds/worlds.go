@@ -41,6 +41,10 @@ import (
 
 // Compiled is the result of compiling a metamodel's worlds: every
 // declared world by name, plus the implicit default world.
+//
+// The ZERO VALUE is usable and means "no declared worlds": [Compiled.Lookup]
+// still answers the default world, and [Compiled.Names] is empty. That is
+// also what Compile returns for a nil metamodel or one with no `worlds:`.
 type Compiled struct {
 	byName map[string]store.WorldScope
 }
@@ -88,19 +92,26 @@ func Compile(m *metamodel.Metamodel) (Compiled, error) {
 		return Compiled{}, nil
 	}
 	pointers, errs := declaredPointers(m)
+	// Bail BEFORE compiling anything. A type whose pointer names all failed
+	// the grammar has an empty entry in `pointers`, which compileWorld would
+	// read as rule 1 — "declares no pointers, contributes its default state
+	// in every world" — the exact opposite of what a type declaring content
+	// states means. Today that scope is discarded, so the fail-open is only
+	// latent; returning here keeps it unreachable even if a future caller
+	// wants a best-effort compile.
+	if err := joinErrors(errs); err != nil {
+		return Compiled{}, err
+	}
 	if len(m.Worlds) == 0 {
 		// No worlds declared: nothing to compile, but the pointer
 		// grammar still had to hold — a project may declare states
 		// before it declares any world that selects them.
-		return Compiled{}, joinErrors(errs)
+		return Compiled{}, nil
 	}
 
 	byName := make(map[string]store.WorldScope, len(m.Worlds))
 	for _, name := range sortedWorldNames(m) {
 		byName[name] = compileWorld(m, m.Worlds[name], pointers)
-	}
-	if err := joinErrors(errs); err != nil {
-		return Compiled{}, err
 	}
 	return Compiled{byName: byName}, nil
 }

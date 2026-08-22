@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"fmt"
 	"maps"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -35,6 +36,22 @@ const (
 	// FallbackDefaultState resolves to the entity's default state.
 	FallbackDefaultState
 )
+
+// String names the verdict. Worth having early: this is an int enum whose
+// zero means EXCLUDE while the adjacent [WorldScope] zero means "include
+// everything via the default state", so a bare `fallback=0` in a log line
+// or a test failure is exactly the confusion these types are documented
+// against.
+func (f Fallback) String() string {
+	switch f {
+	case FallbackExclude:
+		return "exclude"
+	case FallbackDefaultState:
+		return "default-state"
+	default:
+		return fmt.Sprintf("Fallback(%d)", int(f))
+	}
+}
 
 // TypeResolution is one entity type's resolution under one world: an
 // ordered candidate chain plus the verdict when none of it exists.

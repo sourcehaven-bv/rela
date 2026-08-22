@@ -120,8 +120,8 @@ func TestCompile_ChainsAndFallback(t *testing.T) {
 		require.True(t, ok)
 		assert.Equal(t, []entity.Pointer{ptr(t, "review"), ptr(t, "published")}, res.Chain)
 
-		// page declares neither review nor... it declares published, but
-		// the per-type override replaces the chain entirely.
+		// page declares published, which the world's global chain selects —
+		// but the per-type override replaces that chain entirely.
 		res, ok = scope.For("page")
 		require.True(t, ok)
 		assert.Equal(t, []entity.Pointer{ptr(t, "draft")}, res.Chain,
@@ -140,6 +140,61 @@ func TestCompile_ChainsAndFallback(t *testing.T) {
 		res, ok = ed.For("policy")
 		require.True(t, ok)
 		assert.Equal(t, store.FallbackDefaultState, res.Fallback)
+	})
+
+	t.Run("rule 3: a type the chain cannot satisfy compiles to an EMPTY chain", func(t *testing.T) {
+		// The subtest above asserts the fallback FIELD is populated, but
+		// `policy` declares review and published so its chain is non-empty
+		// in both worlds — rule 3 is never the operative rule there. Rule 3
+		// is the empty chain: a type declares pointers, the world selects
+		// none of them, so `otherwise:` is the only answer left.
+		m := parseSchema(t, `version: "1.0"
+namespace: https://example.org/test#
+entities:
+  memo:
+    label: Memo
+    id_prefix: MEMO
+    properties: {title: {type: string}}
+    pointers:
+      draft: {default: true}
+      archived: {}
+  note:
+    label: Note
+    id_prefix: NOTE
+    properties: {title: {type: string}}
+    pointers:
+      draft: {default: true}
+      published: {}
+worlds:
+  published:
+    select: published
+    otherwise: exclude
+  lenient:
+    select: published
+    otherwise: default
+`)
+		// `note` declares `published` so the world is declarable, while
+		// `memo` declares only draft/archived — so memo's chain is EMPTY
+		// and `otherwise:` is the only thing that can resolve it.
+		compiled, err := worlds.Compile(m)
+		require.NoError(t, err)
+
+		for _, tc := range []struct {
+			world string
+			want  store.Fallback
+		}{
+			{"published", store.FallbackExclude},
+			{"lenient", store.FallbackDefaultState},
+		} {
+			scope, ok := compiled.Lookup(tc.world)
+			require.True(t, ok)
+			res, ok := scope.For("memo")
+			require.True(t, ok, "memo declares pointers, so it must have a resolution")
+			assert.Empty(t, res.Chain,
+				"memo declares no coordinate this world selects: rule 3, empty chain")
+			assert.Equal(t, tc.want, res.Fallback,
+				"with an empty chain every memo resolves via otherwise: %s (world %q)", tc.want, tc.world)
+		}
 	})
 
 	t.Run("a chain coordinate the type lacks is dropped, not an error", func(t *testing.T) {

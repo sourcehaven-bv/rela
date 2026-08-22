@@ -53,6 +53,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/userstate/memuserstate"
 	"github.com/Sourcehaven-BV/rela/internal/validator"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
+	"github.com/Sourcehaven-BV/rela/internal/worlds"
 )
 
 // Services exposes the focused collaborators a project entry point
@@ -1084,7 +1085,17 @@ type SharedBase struct {
 	acl       acl.ACL
 	aclPolicy *acl.Policy
 	meta      *metamodel.Metamodel
+	worlds    worlds.Compiled
 }
+
+// Worlds returns the compiled world scopes this base was built from.
+//
+// Compiled once here because compilation is metamodel-derived and therefore
+// tenant-independent — the same reason `meta` lives on the base. Nothing
+// consumes it yet; the store contract lands in PR-B and the read decorator in
+// PR-D (TKT-WAV8XP). It is compiled from PR-A regardless so that an invalid
+// pointer name fails the boot instead of waiting for a consumer.
+func (b *SharedBase) Worlds() worlds.Compiled { return b.worlds }
 
 // Meta returns the loaded metamodel this base was built from. Exposed so a host
 // holding one base can answer "what schema am I serving?" without assembling a
@@ -1144,7 +1155,19 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 		return nil, fmt.Errorf("load metamodel: %w", err)
 	}
 
-	return &SharedBase{cfg: cfg, opts: o, acl: resolvedACL, aclPolicy: aclPolicy, meta: meta}, nil
+	// Compile the declared worlds here, at assembly, so a bad pointer name is
+	// a startup failure rather than a lurking runtime one. The loader checks
+	// world STRUCTURE; the pointer GRAMMAR is checked here because metamodel
+	// may not import entity under arch-lint (TKT-WAV8XP, internal/worlds).
+	compiledWorlds, err := worlds.Compile(meta)
+	if err != nil {
+		return nil, fmt.Errorf("compile worlds: %w", err)
+	}
+
+	return &SharedBase{
+		cfg: cfg, opts: o, acl: resolvedACL, aclPolicy: aclPolicy,
+		meta: meta, worlds: compiledWorlds,
+	}, nil
 }
 
 // assemble runs the build-agnostic back half: it takes the opened store

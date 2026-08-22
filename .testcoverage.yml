@@ -26,6 +26,12 @@ override:
   - path: ^internal/visibility$
     threshold: 85
 
+  # Security-adjacent for the same reason: the sole compiler for the world
+  # resolution that decides which face of an entity is published, and the only
+  # place the pointer grammar is enforced (TKT-WAV8XP).
+  - path: ^internal/worlds$
+    threshold: 85
+
   # Below the default floor — explicit lower floors so the gap is
   # visible. Raise these as tests are added; don't lower without reason.
   - path: ^internal/git$

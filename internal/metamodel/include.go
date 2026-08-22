@@ -20,9 +20,10 @@ type partialMetamodel struct {
 	Includes    []string               `yaml:"includes"`
 
 	// Fields that are not allowed in included files
-	Version     string `yaml:"version"`
-	Namespace   string `yaml:"namespace"`
-	Description string `yaml:"description"`
+	Version     string              `yaml:"version"`
+	Namespace   string              `yaml:"namespace"`
+	Description string              `yaml:"description"`
+	Worlds      map[string]WorldDef `yaml:"worlds"`
 }
 
 // includeState tracks file processing state during recursive include resolution.
@@ -136,6 +137,13 @@ func resolveIncludes(
 	}
 	if partial.Description != "" {
 		return nil, &IncludeHasRootFieldError{Path: includePath, Field: "description"}
+	}
+	// `worlds:` is root-only. An included file MAY declare `entities:` with
+	// `pointers:`, and that half merges — so silently dropping its `worlds:`
+	// would leave a project with states but no world and no diagnostic
+	// explaining where the world went (TKT-WAV8XP).
+	if len(partial.Worlds) > 0 {
+		return nil, &IncludeHasRootFieldError{Path: includePath, Field: "worlds"}
 	}
 
 	// Push onto stack for circular detection

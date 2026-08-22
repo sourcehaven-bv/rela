@@ -155,6 +155,59 @@ func TestWorlds_ValidationRejects(t *testing.T) {
 			wantSubstr: []string{`world "default"`, "reserved", "implicit and total"},
 		},
 		{
+			// A world named `Default` is not the reserved lowercase one, but
+			// letting both exist is a confusion with no upside.
+			name: "world named Default differs only in case",
+			schema: worldsSchema(`worlds:
+  Default:
+    select: published
+    otherwise: exclude
+`),
+			wantSubstr: []string{`world "Default"`, "reserved", "implicit and total"},
+		},
+		{
+			// Forgetting `select:` (or slipping its indentation) resolves
+			// every pointered entity through `otherwise:` alone — a world
+			// that shows nothing, failing safe but with no diagnostic.
+			name: "world selects nothing at all",
+			schema: worldsSchema(`worlds:
+  oops:
+    otherwise: exclude
+`),
+			wantSubstr: []string{`world "oops"`, "neither `select:` nor `overrides:`", "shows nothing"},
+		},
+		{
+			name: "select is an explicitly empty list",
+			schema: worldsSchema(`worlds:
+  oops:
+    select: []
+    otherwise: exclude
+`),
+			wantSubstr: []string{`world "oops"`, "neither `select:` nor `overrides:`"},
+		},
+		{
+			name: "override chain is empty",
+			schema: worldsSchema(`worlds:
+  published:
+    select: published
+    overrides:
+      page: []
+    otherwise: exclude
+`),
+			wantSubstr: []string{`world "published"`, `"page"`, "empty chain"},
+		},
+		{
+			// An empty world name would make a lookup with an unpopulated
+			// name succeed and return a real, non-default world.
+			name: "world name is empty",
+			schema: worldsSchema(`worlds:
+  "":
+    select: published
+    otherwise: exclude
+`),
+			wantSubstr: []string{"invalid name", "must not be empty"},
+		},
+		{
 			name: "select names an undeclared pointer",
 			schema: worldsSchema(`worlds:
   ghost:

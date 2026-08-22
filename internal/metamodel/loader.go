@@ -705,10 +705,32 @@ func validateWorlds(m *Metamodel) []string {
 	var errs []string
 	for _, worldName := range sortedKeys(m.Worlds) {
 		world := m.Worlds[worldName]
-		if worldName == DefaultWorldName {
+		if strings.EqualFold(worldName, DefaultWorldName) {
+			// Case-folded: YAML keys are case-sensitive but humans are not,
+			// and a `Default:` world that silently coexists with the implicit
+			// one is a confusion with no upside.
 			errs = append(errs, fmt.Sprintf(
 				"world %q: the name is reserved — the default world is implicit and total "+
 					"(every entity contributes its default state) and cannot be redeclared",
+				worldName))
+		}
+		if err := ValidateSchemaName(worldName); err != nil {
+			// A world name reaches URLs, acl.yaml and CLI flags in later
+			// steps. The empty name is the dangerous one: it would make a
+			// lookup with an unpopulated name succeed and return a real,
+			// non-default world — the inverse of the fail-closed rule.
+			errs = append(errs, fmt.Sprintf("world %q: invalid name: %v", worldName, err))
+		}
+		if len(world.Select) == 0 && len(world.Overrides) == 0 {
+			// Forgetting `select:` (or slipping its indentation) is a likelier
+			// typo than a bad pointer name, and it resolves EVERY pointered
+			// entity through `otherwise:` alone — a world that shows nothing.
+			// It fails safe but silently, so it is rejected rather than left
+			// to be diagnosed as "the published site is empty".
+			errs = append(errs, fmt.Sprintf(
+				"world %q: declares neither `select:` nor `overrides:` — every entity whose type "+
+					"declares pointers would resolve through `otherwise:` alone, which is a world "+
+					"that shows nothing. Name the state(s) this world selects",
 				worldName))
 		}
 		if !world.Otherwise.IsValid() {
@@ -755,6 +777,14 @@ func validateWorldChains(m *Metamodel, worldName string, world WorldDef) []strin
 					"a type without content states contributes its only state to every world, "+
 					"so there is nothing to override",
 				worldName, typeName))
+			continue
+		}
+		if len(world.Overrides[typeName]) == 0 {
+			errs = append(errs, fmt.Sprintf(
+				"world %q: `overrides:` gives entity type %q an empty chain — that resolves every "+
+					"%s through `otherwise:` alone. Name the state(s), or drop the override to let "+
+					"the world's `select:` apply",
+				worldName, typeName, typeName))
 			continue
 		}
 		for _, ptr := range world.Overrides[typeName] {

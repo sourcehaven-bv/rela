@@ -919,3 +919,44 @@ func TestIncludeHasRootFieldError_Error(t *testing.T) {
 	expected := `included file compliance.yaml must not contain "version" (only allowed in root schema file)`
 	assertEqual(t, err.Error(), expected)
 }
+
+// TestLoadWithIncludes_IncludeHasWorlds pins that `worlds:` is root-only
+// (TKT-WAV8XP). An included file MAY declare `entities:` with `pointers:`,
+// and that half merges — so a silently dropped `worlds:` would leave a
+// project holding content states with no world and no diagnostic.
+func TestLoadWithIncludes_IncludeHasWorlds(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	createFile(t, filepath.Join(tmpDir, "metamodel.yaml"), `
+version: "1.0"
+includes:
+  - pages.yaml
+`)
+
+	createFile(t, filepath.Join(tmpDir, "pages.yaml"), `
+entities:
+  page:
+    label: Page
+    id_prefix: "PAGE-"
+    id_type: sequential
+    properties:
+      title:
+        type: string
+    pointers:
+      draft: {default: true}
+      published: {}
+worlds:
+  published:
+    select: published
+    otherwise: exclude
+`)
+
+	_, _, err := Load(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
+	assertError(t, err)
+
+	var rootFieldErr *IncludeHasRootFieldError
+	if !errors.As(err, &rootFieldErr) {
+		t.Fatalf("expected IncludeHasRootFieldError, got %T: %v", err, err)
+	}
+	assertEqual(t, rootFieldErr.Field, "worlds")
+}

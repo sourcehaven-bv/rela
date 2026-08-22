@@ -480,6 +480,9 @@ deps:
       - tracer
       - validator
       - visibility
+      # The composition root compiles the metamodel's `worlds:` at startup so
+      # an invalid pointer name fails the boot (TKT-WAV8XP).
+      - worlds
   # backendtest supplies each build's test backend. The pgx dependency is
   # confined to its postgres-tagged file, which the default build does not
   # compile — the same arrangement pgstore uses.
