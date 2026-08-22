@@ -1,3 +1,5 @@
+//go:build !postgres && !memorybackend
+
 package appbuild_test
 
 import (
