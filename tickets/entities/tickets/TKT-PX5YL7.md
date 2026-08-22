@@ -4,7 +4,7 @@ type: ticket
 title: Document render scripts hold the full write surface on an HTTP GET
 kind: refactor
 priority: low
-effort: s
+effort: m
 status: backlog
 ---
 
@@ -14,67 +14,114 @@ A document render is a GET that renders markdown. Its Lua script nonetheless has
 the **full write surface**: `rela.create_entity`, `update_entity`,
 `delete_entity`, `create_relation`, `delete_relation`, `write_file`.
 
-`documentService` renders via `App.luaWriteDeps()` (`app.go:321`), which sets
-`EntityManager`, and `runDocumentScript` (`list_document.go:85`) calls
-`NewWriterRuntime` -> `lua.NewWriter` -> `newRuntime(allowWrites=true)`.
-`registerWriteBindings` (`runtime.go:787`) has no `isDocument` guard —
-`isDocument` gates only `print`, `rela.mode` / `rela.document.*`, and an
+`documentService` renders via `App.luaWriteDeps()`, and `runDocumentScript`
+(`list_document.go:85`) calls `NewWriterRuntime` -> `lua.NewWriter` ->
+`newRuntime(allowWrites=true)`. `registerWriteBindings` has no `isDocument`
+guard — `isDocument` gates only `print`, `rela.mode` / `rela.document.*`, and an
 `rela.output()` warning.
 
 This is **not a privilege escalation**: those writes go through
 `entitymanager.Manager`, so they are ACL-checked against the request principal
-and audited like any other write. Nothing bypasses the ACL today.
+and audited like any other write. Nothing bypasses the ACL.
 
 It is a **shape problem**:
 
-- A GET that mutates is not idempotent. Anything that legitimately re-issues a
-render — a retry, a refresh, a prefetch, a double-click — re-runs the writes.
-- It breaks caching. RR-1DV8RY (on TKT-Y3JVFK) notes elevated renders are
-principal-independent and therefore uniquely cacheable; a render with side
-effects cannot be cached or deduplicated safely. TKT-OGR566 (bound concurrent
-Lua document renders) and RR-P4E9GL (no dedup / no concurrency cap) both assume
-renders are pure, and are harder to reason about while they are not.
-- It contradicts the capability-bundle rule in CLAUDE.md — "split by read vs.
-write so read-only code can't accidentally mutate state". A renderer is
-read-only code that currently holds a write capability.
-- `lua.NewReader` (`runtime.go:307`) already exists, so the read-only posture is
-a first-class thing document renders simply do not use.
+- A GET that mutates is not idempotent. A retry, refresh, prefetch or
+double-click re-runs the writes.
+- It blocks caching. RR-1DV8RY notes elevated renders are principal-independent
+and therefore uniquely cacheable; a render with side effects cannot be cached or
+deduplicated safely. TKT-OGR566 and RR-P4E9GL both assume renders are pure.
+- It contradicts the capability-bundle rule in the root CLAUDE.md — "split by
+read vs. write so read-only code can't accidentally mutate state."
 
-## Proposal
+It also undercuts a claim TKT-Y3JVFK now makes carefully. That ticket had to
+weaken five comments from "a render cannot mutate" to "cannot write past the
+ACL" (RR-DOCWRT, critical) precisely because of this gap. Closing it would let
+the stronger statement be true.
 
-Decide whether document mode should drop write bindings, and if so how:
+## The trap: `bypass_acl` is registered inside the `allowWrites` branch
 
-1. **Build the render runtime from `ReadDeps` via `lua.NewReader`.** Cleanest —
-the capability is absent, not merely unused. Requires `runDocumentScript` and
-`documentService` to stop threading `WriteDeps`.
-2. **Keep `NewWriter` but skip `registerWriteBindings` when `isDocument`.**
-Smaller diff; the handle still exists on the deps struct, so the guarantee is a
-code path rather than a missing capability.
+**Read this before starting.** `registerBindings` (`internal/lua/runtime.go`)
+registers `rela.bypass_acl` INSIDE `if allowWrites { ... }`:
 
-Option 1 is preferred on the same reasoning as TKT-Y3JVFK's read-only elevated
-handle: make the restriction structural. A script calling `rela.create_entity`
-in a document then fails with "attempt to call a nil value" rather than silently
-mutating on a GET.
+```go
+if allowWrites {
+    r.registerWriteBindings(rela)
+    if r.deps.ElevatedManager != nil || r.deps.ElevatedReader != nil {
+        r.L.SetField(rela, "bypass_acl", ...)
+    }
+}
+```
+
+So any change that makes a document render non-writing ALSO removes
+`rela.bypass_acl`, silently killing the elevated documents shipped in
+TKT-Y3JVFK (#1366). There is no compile error.
+
+Compounding it: `lua.NewReader(d ReadDeps, ...)` takes only `ReadDeps`, while
+`ElevatedReader` lives on `WriteDeps` — so a reader runtime **structurally
+cannot carry** the elevated handle at all.
+
+Verified by simulation: forcing `allowWrites = false` when `isDocument` makes
+`TestElevatedRender_ReadsHiddenEntityAndAudits` fail with "the elevated reader
+did not arrive". That test is the safety net; do not weaken it.
+
+## Proposal: two ordered steps
+
+**Step 1 — decouple `bypass_acl` registration from `allowWrites`.**
+Move the registration out of the writes branch, keyed only on the elevated
+handles, which is already its real condition. Worth doing on its own merits:
+registration currently depends on a flag it has no logical relationship to.
+Small, safe, no behaviour change (today `allowWrites` is true wherever an
+elevated handle exists).
+
+**Step 2 — suppress the write bindings for document mode.**
+Only after step 1. Two shapes:
+
+1. `lua.NewReader` / a `ReadDeps` render path. Cleanest in principle, but
+requires elevation to reach a reader runtime — i.e. `ElevatedReader` must move
+to `ReadDeps`, or `NewReader` must grow a variant. Larger than it looks.
+2. Skip `registerWriteBindings` when `isDocument`. Smaller, and keeps the
+`WriteDeps` shape elevation depends on. The guarantee is comparable: the
+bindings genuinely do not exist on the `rela` table either way, so a script
+calling `rela.create_entity` gets "attempt to call a nil value".
+
+Option 2 is now preferred, reversing this ticket's original preference. The
+"structural vs. code path" argument for option 1 is weaker than it sounded once
+`NewReader`'s inability to carry elevation is accounted for.
+
+## Scope
+
+`runDocumentScript` is shared by THREE entry points, so any change hits all of
+them — verify each:
+
+- `Engine.ExecuteDocument` (entity-anchored documents)
+- `Engine.ExecuteStandaloneDocument` (standalone documents, TKT-M1AX6P)
+- `Engine.ExecuteListDocument` (list renders, which feed `export_render`)
+
+The list/export path is the one most likely to have a legitimate reason to
+write, and is the least covered by this ticket's reasoning. Check it explicitly
+before assuming the change is uniform.
 
 ## Compatibility
 
-No in-tree document script writes: the repo has no `documents:` configured in
-`tickets/data-entry.yaml`, and the three scripts that do call write bindings
-(`tickets/scripts/stale-review.lua`, `examples/idp-sync.lua`,
-`scripts/generate-docs.lua`) are an automation, a sync job and a docs generator
-— none are document renderers.
+No in-tree document script writes. The repo's only document configs are in
+`prototypes/data-entry/project/data-entry.yaml`, and both their scripts
+(`docs/category_report.lua`, `docs/status_review.lua`) make zero write calls.
+The three scripts that DO write (`tickets/scripts/stale-review.lua`,
+`examples/idp-sync.lua`, `scripts/generate-docs.lua`) are an automation, a sync
+job and a docs generator — none are renderers.
 
 This is still a **behaviour change for downstream deployments**: a document
 script that writes today would break. Needs a deliberate call on whether that is
-a bug fix (writes on GET were never intended) or a breaking change warranting a
-deprecation path. The godoc on `ExecuteDocument` describes the script's output
-as the rendered markdown and says nothing about mutation, which supports reading
-it as a bug.
+a bug fix (writes on GET were never intended — `ExecuteDocument`'s godoc
+describes the script's output as the rendered markdown and says nothing about
+mutation) or a breaking change warranting a deprecation path.
 
-Note `export_render` and list-document renders share `runDocumentScript`, so any
-change here applies to them too — verify none of those paths rely on writes.
+`rela.write_file` deserves separate thought: a render writing a side file is the
+most plausible legitimate use, and it is not a graph mutation.
 
 ## Non-goals
 
-- Changing the ACL treatment of document reads (that is TKT-Y3JVFK).
-- Removing `write_file` from non-document script surfaces.
+- Changing the ACL treatment of document reads (TKT-Y3JVFK, shipped).
+- Removing write bindings from non-document script surfaces.
+- Implementing render caching (RR-1DV8RY / TKT-OGR566) — this unblocks it.
