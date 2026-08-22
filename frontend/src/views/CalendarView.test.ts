@@ -1,0 +1,309 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mount, flushPromises } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
+import { PiniaColada } from '@pinia/colada'
+import { ref } from 'vue'
+import CalendarView from './CalendarView.vue'
+import { useSchemaStore } from '@/stores/schema'
+import { useUIStore } from '@/stores/ui'
+import { _setEntityPluralForTest } from '@/api/entities'
+import type { Entity, ListResponse } from '@/types'
+
+const listAllEntitiesMock = vi.fn()
+const updateEntityMock = vi.fn()
+vi.mock('@/api', async (orig) => ({
+  ...(await orig<typeof import('@/api')>()),
+  listAllEntities: (...args: unknown[]) => listAllEntitiesMock(...args),
+  updateEntity: (...args: unknown[]) => updateEntityMock(...args),
+}))
+
+const routerPush = vi.fn()
+const routerReplace = vi.fn()
+const routeQuery = ref<Record<string, string>>({})
+vi.mock('vue-router', () => ({
+  useRouter: () => ({
+    push: routerPush,
+    replace: routerReplace,
+    currentRoute: { value: { query: routeQuery.value, path: '/calendar/schedule' } },
+  }),
+  useRoute: () => ({ query: routeQuery.value, path: '/calendar/schedule' }),
+}))
+
+const CAL_ID = 'schedule'
+
+function listResponse(data: Entity[], hasMore = false): ListResponse<Entity> {
+  return {
+    data,
+    meta: { page: 1, per_page: data.length, total: data.length, has_more: hasMore },
+  } as ListResponse<Entity>
+}
+
+/** A task with an all-day `due` date. */
+function task(id: string, due: string, extra: Record<string, unknown> = {}): Entity {
+  return { id, type: 'task', properties: { title: `Task ${id}`, due, ...extra }, relations: {} }
+}
+
+/** A meeting with a timed `starts_at`. */
+function meeting(id: string, startsAt: string, extra: Record<string, unknown> = {}): Entity {
+  return {
+    id,
+    type: 'meeting',
+    properties: { name: `Meeting ${id}`, starts_at: startsAt, ...extra },
+    relations: {},
+  }
+}
+
+interface SetupOptions {
+  sources?: unknown[]
+  responses?: Record<string, Entity[]>
+  timezone?: string
+  query?: Record<string, string>
+  event?: unknown
+  maxEventsPerDay?: number
+  editForm?: string
+  truncated?: boolean
+}
+
+function setup(opts: SetupOptions = {}) {
+  const pinia = createPinia()
+  setActivePinia(pinia)
+
+  routeQuery.value = { date: '2026-08-22', ...(opts.query ?? {}) }
+
+  const schemaStore = useSchemaStore()
+  schemaStore.entityTypes.set('task', {
+    label: 'Task',
+    properties: {
+      title: { type: 'string' },
+      due: { type: 'date' },
+      due_end: { type: 'date' },
+      status: { type: 'enum', values: ['todo', 'done'] },
+    },
+  } as never)
+  schemaStore.entityTypes.set('meeting', {
+    label: 'Meeting',
+    properties: {
+      name: { type: 'string' },
+      starts_at: { type: 'datetime' },
+      room: { type: 'string' },
+    },
+  } as never)
+
+  schemaStore.calendars.set(CAL_ID, {
+    title: 'Schedule',
+    default_view: 'month',
+    week_start: 'monday',
+    day_start: '08:00',
+    day_end: '20:00',
+    max_events_per_day: opts.maxEventsPerDay ?? 4,
+    edit_form: opts.editForm,
+    event: opts.event,
+    sources: opts.sources ?? [
+      { entity: 'task', date: 'due', summary: 'title', max_span: 31 },
+    ],
+  } as never)
+
+  _setEntityPluralForTest('task', 'tasks')
+  _setEntityPluralForTest('meeting', 'meetings')
+
+  const uiStore = useUIStore()
+  uiStore.setDatetimeTimezone(opts.timezone ?? 'UTC')
+
+  listAllEntitiesMock.mockImplementation((type: string) =>
+    Promise.resolve(listResponse(opts.responses?.[type] ?? [], opts.truncated ?? false))
+  )
+
+  return mount(CalendarView, {
+    props: { id: CAL_ID },
+    global: { plugins: [pinia, PiniaColada] },
+    attachTo: document.body,
+  })
+}
+
+beforeEach(() => {
+  listAllEntitiesMock.mockReset()
+  updateEntityMock.mockReset()
+  routerPush.mockReset()
+  routerReplace.mockReset()
+})
+
+afterEach(() => {
+  document.body.innerHTML = ''
+})
+
+describe('CalendarView rendering', () => {
+  it('renders a month grid with a weekday header and every day of the month', async () => {
+    const wrapper = setup({ responses: { task: [] } })
+    await flushPromises()
+
+    expect(wrapper.findAll('.calendar-weekday')).toHaveLength(7)
+    // August 2026 needs six rows starting Monday 27 July.
+    const cells = wrapper.findAll('.calendar-day')
+    expect(cells.length % 7).toBe(0)
+    expect(cells.length).toBeGreaterThanOrEqual(28)
+  })
+
+  it('renders an all-day event on its date', async () => {
+    const wrapper = setup({ responses: { task: [task('T-1', '2026-08-22')] } })
+    await flushPromises()
+
+    const chips = wrapper.findAll('.calendar-chip')
+    expect(chips).toHaveLength(1)
+    expect(chips[0].text()).toContain('Task T-1')
+  })
+
+  /**
+   * The regression guard for the defect this ticket fixed in compareValues:
+   * a datetime source used to render nothing at all, because the date window
+   * bound could not be compared against an RFC3339 value.
+   */
+  it('renders events from a datetime source', async () => {
+    const wrapper = setup({
+      sources: [{ entity: 'meeting', date: 'starts_at', summary: 'name', max_span: 31 }],
+      responses: { meeting: [meeting('M-1', '2026-08-22T14:30:00Z')] },
+    })
+    await flushPromises()
+
+    const chips = wrapper.findAll('.calendar-chip')
+    expect(chips).toHaveLength(1)
+    expect(chips[0].text()).toContain('Meeting M-1')
+    // A timed event shows its time; an all-day one does not.
+    expect(chips[0].text()).toContain('14:30')
+  })
+
+  it('merges multiple sources of different types onto one grid', async () => {
+    const wrapper = setup({
+      sources: [
+        { entity: 'task', date: 'due', summary: 'title', max_span: 31 },
+        { entity: 'meeting', date: 'starts_at', summary: 'name', max_span: 31 },
+      ],
+      responses: {
+        task: [task('T-1', '2026-08-22')],
+        meeting: [meeting('M-1', '2026-08-22T09:00:00Z')],
+      },
+    })
+    await flushPromises()
+
+    const text = wrapper.text()
+    expect(text).toContain('Task T-1')
+    expect(text).toContain('Meeting M-1')
+  })
+
+  it('shows an empty message rather than a spinner when nothing is in range', async () => {
+    const wrapper = setup({ responses: { task: [] } })
+    await flushPromises()
+
+    expect(wrapper.find('.calendar-empty').exists()).toBe(true)
+    expect(wrapper.find('.loading-state').exists()).toBe(false)
+  })
+
+  it('warns when a source hit the page cap instead of looking merely quiet', async () => {
+    const wrapper = setup({ responses: { task: [task('T-1', '2026-08-22')] }, truncated: true })
+    await flushPromises()
+
+    expect(wrapper.find('.truncation-banner').exists()).toBe(true)
+  })
+})
+
+describe('CalendarView timezone handling', () => {
+  /**
+   * The day-assignment invariant: a timed event's cell is its date in the
+   * DISPLAY timezone. The same instant lands on different days at the extremes
+   * of the offset range, and the chip must follow the display zone rather than
+   * the browser's.
+   */
+  it.each([
+    ['Pacific/Kiritimati', '23'], // +14 → 23 Aug
+    ['Pacific/Niue', '22'], // −11 → 22 Aug
+  ])('places the same instant by display timezone (%s)', async (tz, expectedDay) => {
+    const wrapper = setup({
+      sources: [{ entity: 'meeting', date: 'starts_at', summary: 'name', max_span: 31 }],
+      responses: { meeting: [meeting('M-1', '2026-08-22T12:00:00Z')] },
+      timezone: tz,
+    })
+    await flushPromises()
+
+    const cellWithChip = wrapper
+      .findAll('.calendar-day')
+      .find((c) => c.find('.calendar-chip').exists())
+    expect(cellWithChip).toBeDefined()
+    expect(cellWithChip!.find('.calendar-day-number').text()).toBe(expectedDay)
+  })
+})
+
+describe('CalendarView navigation', () => {
+  it('requests a window and moves it when navigating periods', async () => {
+    const wrapper = setup({ responses: { task: [] } })
+    await flushPromises()
+
+    const firstParams = listAllEntitiesMock.mock.calls[0][1] as Record<string, string>
+    expect(firstParams['filter[due][gte]']).toBe('2026-07-27T00:00:00.000Z')
+    // Half-open: the bound is midnight AFTER the last visible day, so a late
+    // event on that day is still inside the window.
+    expect(firstParams['filter[due][lt]']).toBe('2026-09-07T00:00:00.000Z')
+
+    await wrapper.findAll('.calendar-nav button')[2].trigger('click') // next
+    await flushPromises()
+
+    expect(routerReplace).toHaveBeenCalled()
+    const calls = routerReplace.mock.calls
+    const q = calls[calls.length - 1][0].query as Record<string, string>
+    expect(q.date).toBe('2026-09-22')
+  })
+
+  it('switches to week view and requests a seven-day window', async () => {
+    const wrapper = setup({ responses: { task: [] }, query: { view: 'week' } })
+    await flushPromises()
+
+    expect(wrapper.findAll('.calendar-day')).toHaveLength(7)
+    const params = listAllEntitiesMock.mock.calls[0][1] as Record<string, string>
+    expect(params['filter[due][gte]']).toBe('2026-08-17T00:00:00.000Z')
+    expect(params['filter[due][lt]']).toBe('2026-08-24T00:00:00.000Z')
+  })
+
+  it('widens the lower bound only for a source that declares an end date', async () => {
+    setup({
+      sources: [{ entity: 'task', date: 'due', end_date: 'due_end', summary: 'title', max_span: 31 }],
+      responses: { task: [] },
+      query: { view: 'week' },
+    })
+    await flushPromises()
+
+    const params = listAllEntitiesMock.mock.calls[0][1] as Record<string, string>
+    // 31 days before Monday 17 August.
+    expect(params['filter[due][gte]']).toBe('2026-07-17T00:00:00.000Z')
+    expect(params['filter[due][lt]']).toBe('2026-08-24T00:00:00.000Z')
+  })
+})
+
+describe('CalendarView overflow', () => {
+  it('caps chips per day and expands in place on demand', async () => {
+    const many = Array.from({ length: 7 }, (_, i) => task(`T-${i}`, '2026-08-22'))
+    const wrapper = setup({ responses: { task: many }, maxEventsPerDay: 3 })
+    await flushPromises()
+
+    expect(wrapper.findAll('.calendar-chip')).toHaveLength(3)
+    const more = wrapper.find('.calendar-more')
+    expect(more.text()).toContain('+4 more')
+
+    await more.trigger('click')
+    expect(wrapper.findAll('.calendar-chip')).toHaveLength(7)
+  })
+})
+
+describe('CalendarView chip fields', () => {
+  it('renders configured fields and drops empty ones', async () => {
+    const wrapper = setup({
+      event: { fields: [{ property: 'status' }] },
+      responses: {
+        task: [task('T-1', '2026-08-22', { status: 'todo' }), task('T-2', '2026-08-23')],
+      },
+    })
+    await flushPromises()
+
+    const chips = wrapper.findAll('.calendar-chip')
+    expect(chips[0].find('.calendar-chip-fields').exists()).toBe(true)
+    // T-2 has no status: a dense surface renders nothing, not a placeholder.
+    expect(chips[1].find('.calendar-chip-fields').exists()).toBe(false)
+  })
+})
