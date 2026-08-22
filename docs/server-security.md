@@ -337,7 +337,7 @@ project root (alongside `schema.yaml`). Three modes:
 |---|---|---|
 | **Open** (default) | No `acl.yaml` present | Every authenticated request can write. Reads have no filtering. Suitable for single-user local projects. |
 | **Read-only** | `rela-server --read-only` or `RELA_READ_ONLY=1` | Every write returns HTTP 403; reads unaffected. Useful for demos, maintenance, observe-only deployments. Wins over `acl.yaml` — explicit flag overrides policy. |
-| **Policy** | `acl.yaml` present | Writes are gated by role assignments and delegate permissions. Reads are filtered on the data-entry HTTP surface: per-entity GETs 404 like not-found for hidden entities; lists / sidebar counts / pagination / `?include=` / `/_position` / `/_search` return only the visible subset; and `visible:`-denied properties are redacted from every response body. MCP read surfaces are not yet filtered. See [GUIDE-acl-security]. |
+| **Policy** | `acl.yaml` present | Writes are gated by role assignments and delegate permissions. Reads are filtered on the data-entry HTTP surface: per-entity GETs 404 like not-found for hidden entities; lists / pagination / `?include=` / `/_position` / `/_search` return only the visible subset; and `visible:`-denied properties are redacted from every response body. MCP read surfaces are not yet filtered. See [GUIDE-acl-security]. |
 
 A startup warning fires when the server binds **beyond loopback**
 (`--bind` non-loopback) **without** `acl.yaml` AND **without**
@@ -369,8 +369,8 @@ defense** in the server threat model.
   with optional `when:` predicates. See [GUIDE-acl-security].
 - ✅ **Entity-level read filtering** on the data-entry HTTP surface.
   Per-entity GETs 404 like not-found for hidden entities; lists,
-  sidebar counts, pagination, `?include=` neighbours, `/_position`,
-  and `/_search` return only the visible subset. See [GUIDE-acl-security].
+  pagination, `?include=` neighbours, `/_position`, and `/_search`
+  return only the visible subset. See [GUIDE-acl-security].
 - ✅ **Property-level redaction** (`visible:` grants) on every
   data-entry HTTP read. A field denied by `visible:` is omitted from
   the response `properties` map on per-entity GET, list rows,

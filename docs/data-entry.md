@@ -2200,9 +2200,6 @@ will reject it with a clear error message.
 The first navigable entry is the default landing page — the first direct item, or the first item
 inside the first group. Order matters; items appear in the sidebar in the order listed.
 
-List and kanban entries show an entity count badge next to the label (based on their filters).
-Dashboard, search and settings entries do not show a count.
-
 ### Hiding entries a user cannot act on (`permission:`)
 
 An entry with a `permission:` is omitted from the sidebar for principals who do

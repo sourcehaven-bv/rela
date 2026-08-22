@@ -57,7 +57,7 @@ func TestNavEntryIcon(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			item := app.views.navEntryToSidebarItem(t.Context(), tc.entry, sidebarCounts{})
+			item := app.views.navEntryToSidebarItem(tc.entry)
 			if item.Icon != tc.want {
 				t.Errorf("Icon = %q, want %q", item.Icon, tc.want)
 			}
