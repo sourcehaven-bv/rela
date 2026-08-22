@@ -214,7 +214,7 @@ func (h *viewsHandler) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 				if !permitsNavEntry(r.Context(), aclImpl, item) {
 					continue
 				}
-				sidebarItem := h.navEntryToSidebarItem(item)
+				sidebarItem := navEntryToSidebarItem(item)
 				group.Items = append(group.Items, sidebarItem)
 			}
 			// A group whose every item was filtered out is dropped rather than
@@ -230,7 +230,7 @@ func (h *viewsHandler) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 			if !permitsNavEntry(r.Context(), aclImpl, entry) {
 				continue
 			}
-			item := h.navEntryToSidebarItem(entry)
+			item := navEntryToSidebarItem(entry)
 			navigation = append(navigation, v1.SidebarGroup{
 				Items: []v1.SidebarItem{item},
 			})
@@ -344,7 +344,7 @@ func permitsGatedUIElement(ctx context.Context, aclImpl acl.ACL, permission stri
 }
 
 // navEntryToSidebarItem converts a navigation entry to a sidebar item.
-func (h *viewsHandler) navEntryToSidebarItem(entry dataentryconfig.NavigationEntry) v1.SidebarItem {
+func navEntryToSidebarItem(entry dataentryconfig.NavigationEntry) v1.SidebarItem {
 	item := v1.SidebarItem{
 		Label: entry.Label,
 	}

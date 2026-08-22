@@ -1095,9 +1095,7 @@ func checkExportRenderScripts(cfg Config, root string) error {
 // (activeListForEntityType, activeListFromReferer, resolveActiveList) are
 // deleted: nothing outside their own tests called them since the SPA took
 // over navigation, and enrichNavEntry counted entities from the RAW store
-// — leaking existence counts of ACL-hidden entities (#1043). The live
-// sidebar (viewsHandler.handleV1Sidebar) serves no counts at all, so that
-// leak surface is gone entirely.
+// — leaking existence counts of ACL-hidden entities (#1043).
 
 // coverage-ignore: requires running workspace, tested via e2e
 
