@@ -132,8 +132,35 @@ and **nothing from `internal/`**. Deliberately takes `map[string]string` rather 
 `filter`/`git`/`metamodel` — taking the map keeps the leaf genuinely dependency-free
 and satisfies AC 12 with the fewest new arch-lint edges.
 
-Pipeline: markdown → goldmark → **bluemonday sanitize** → inject into a table-based
-600px Go template with `<!--[if mso]>` fallbacks → `douceur/inliner` → HTML part.
+*Pipeline — the ordering is LOAD-BEARING, not incidental (RR-7BYA4X).*
+
+```
+untrusted entity markdown
+  → goldmark
+  → bluemonday.Sanitize   ← STEP 1: the CONTENT ONLY, never the whole page
+  → embed in trusted Go template (600px tables, <!--[if mso]> fallbacks)
+  → douceur/inliner        ← STEP 3: LAST. Nothing may strip style after this.
+  → HTML part
+```
+
+Verified empirically against bluemonday v1.0.27 and douceur v0.2.0 (not assumed):
+
+- **bluemonday's `UGCPolicy` strips `style` attributes outright**, and
+  `AllowStyling()` does **not** restore them. So sanitizing *after* inlining would
+  destroy every inlined style and ship unstyled mail.
+- Sanitizing the *assembled page* would also strip `cellpadding` / `cellspacing` /
+  `border` / `role` from our own trusted template — the exact attributes email
+  clients need — and would drop `cid:` image sources, breaking the embedded logo.
+- Confirmed the safe order works end to end: `<script>`, `onerror=`,
+  `javascript:` hrefs and `style="background:url(javascript:…)"` are all removed
+  from content, while template styles inline correctly and `<!--[if mso]>`
+  conditional comments survive the inliner intact.
+
+Therefore: **sanitize untrusted content, then template, then inline. Never sanitize
+the assembled page.** State this in the package doc — reversing it is a silent
+downgrade (mail still sends, just unstyled or unsafe), so a comment is the only
+thing standing between a future edit and the bug.
+
 The `text/plain` part is generated from the same model, not from the HTML.
 `html.WithUnsafe()` must NOT be used: unlike the existing `simpleMarkdownToHTML`
 (dataentry/helpers.go:324-331) whose input is operator-authored schema prose, mail
@@ -224,9 +251,15 @@ Modified:
   is applied at every error-construction site. AC 11 tests this.
   Note `rela validate` prints validator errors verbatim (cli/validate.go:410), so a
   mail validator must never embed the env **value** in its message.
-- **Header injection** — the classic SMTP hole. CR/LF in any address, subject or
-  header value is rejected at enqueue rather than sanitized, so a malformed value
-  cannot smuggle extra headers.
+- **Header injection** — the classic SMTP hole, and **our** job, not the library's
+  (RR-CC6VEW). Verified against go-mail v0.8.1: `From()`/`To()` *do* reject embedded
+  CRLF with a parse error, but `Subject("Hi\r\nBcc: evil@x.com")` **succeeds** and is
+  neutralized only incidentally, by RFC 2047 encoded-word escaping (`=0D=0A`). That
+  is an encoding side effect, not a validation guarantee — it is not safe to depend
+  on across versions, nor for header values the library does not encode.
+  So: CR/LF (and bare CR, bare LF, NUL) is **rejected at enqueue** on every
+  caller-supplied header value, uniformly. go-mail's address checking is defence in
+  depth, not the control.
 - **TLS** — STARTTLS required; downgrade refused.
 - **HTML sanitization** — mail is an *exfiltration and injection* surface: content
   leaves the ACL perimeter into an inbox. Sanitizing is not optional.
@@ -249,7 +282,9 @@ Modified:
 | 3 memory records | send → assert recipients/subject/both parts; assert no dial occurred |
 | 4 conformance | `mailtest.RunAll(t, factory)` — both transports registered from external test packages (`mail_test`), storetest style |
 | 5 render golden | markdown with h1/h2, link, bold, GFM table → `.golden.html`; `UPDATE_GOLDEN=1` to regenerate; boundary/Message-ID/Date normalized at capture |
-| 6 sanitize | `<script>alert(1)</script>` and `<img onerror=...>` in content → absent from HTML part |
+| 6 sanitize | `<script>alert(1)</script>`, `<img onerror=…>`, `<a href="javascript:…">` and `style="background:url(javascript:…)"` in content → all absent from HTML part |
+| 6a ordering (RR-7BYA4X) | the rendered HTML **has** inline `style=` attributes — a regression that sanitizes the assembled page would strip them, so this test catches the ordering inversion that AC 6 alone would pass |
+| 6b mso survives | `<!--[if mso]>` conditional comments present in the final output |
 | 7 text alternative | every rendered message has non-empty text/plain; a table degrades to readable text |
 | 8 enqueue non-blocking | enqueue against a transport that blocks forever returns immediately (with timeout) |
 | 9 retry no-dup | transport fails twice then succeeds → exactly one delivery recorded; assert backoff grew |
@@ -274,7 +309,12 @@ Modified:
 - `password:` literal in YAML → load error telling the operator to use `password_env`.
 - `password_env` naming an unset variable → send fails with a typed error; **startup
   still succeeds** (the ai precedent).
-- CR/LF injected into a recipient or subject → rejected at enqueue.
+- CR/LF injected into a **recipient** → rejected at enqueue.
+- CR/LF injected into a **subject** → rejected at enqueue (RR-CC6VEW). Must assert
+  rejection *at the boundary*, not merely that the emitted header looks escaped —
+  the latter passes today by accident of encoded-word escaping and would keep
+  passing if the validation were deleted.
+- Bare CR, bare LF, and NUL in any header value → rejected.
 - SMTP server rejecting AUTH → typed auth error, no credential in the message.
 - Golden mismatch → fails with the "review the diff, never regenerate to make it
   green" guidance.
