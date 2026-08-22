@@ -53,5 +53,5 @@ lock file cleaned up.
 
 ## Verification
 
-- [x] PR: (recorded on the ticket once opened)
+- [x] PR: https://github.com/sourcehaven-bv/rela/pull/1397
 - [x] All review-responses resolved (7 code-review RRs; zero open critical/significant; 3 planning-phase design findings resolved inside PLAN-34E1YZ)
