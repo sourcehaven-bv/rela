@@ -27,6 +27,7 @@ var validTopLevelKeys = map[string]bool{
 	"views":        true,
 	"entity_views": true,
 	"kanbans":      true,
+	"calendars":    true,
 	"documents":    true,
 	"feeds":        true,
 	"caldav":       true,
@@ -46,6 +47,7 @@ var knownTypos = map[string]string{
 	"list":        "lists",
 	"view":        "views",
 	"kanban":      "kanbans",
+	"calendar":    "calendars",
 	"command":     "commands",
 	"style":       "styles",
 	"nav":         "navigation",
@@ -331,6 +333,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateViews(cfg, meta)...)
 	errs = append(errs, validateEntityViews(cfg, meta)...)
 	errs = append(errs, validateKanbans(cfg, meta)...)
+	errs = append(errs, validateCalendars(cfg, meta)...)
 	errs = append(errs, validateDashboard(cfg, meta)...)
 	errs = append(errs, validateCommands(cfg, meta)...)
 	errs = append(errs, validateActions(cfg, meta)...)
@@ -417,6 +420,12 @@ func validateNavEntry(nav NavigationEntry, cfg *Config) []string {
 		if _, ok := cfg.Kanbans[nav.Kanban]; !ok {
 			errs = append(errs, fmt.Sprintf(
 				"navigation: references unknown kanban %q", nav.Kanban))
+		}
+	}
+	if nav.Calendar != "" {
+		if _, ok := cfg.Calendars[nav.Calendar]; !ok {
+			errs = append(errs, fmt.Sprintf(
+				"navigation: references unknown calendar %q", nav.Calendar))
 		}
 	}
 

@@ -752,6 +752,11 @@ func NewApp(
 		return nil, fmt.Errorf("invalid %s: %w", ConfigFile, validationErr)
 	}
 
+	// Fill in calendar defaults. AFTER validation, deliberately: normalizing
+	// first would replace an author's invalid default_view with "month" and
+	// report nothing, turning a typo into silently different behaviour.
+	dataentryconfig.NormalizeCalendars(&cfg)
+
 	// Non-fatal configuration warnings (e.g. a relation filter control whose
 	// incoming direction targets a type the relation never points to). Logged,
 	// not fatal — the app still serves, the filter just returns no rows.
