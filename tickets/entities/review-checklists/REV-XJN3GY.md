@@ -86,7 +86,7 @@ replacing it — the mistake is more instructive than the fix.
 - [x] All CI checks pass
 - [x] PR URL documented below
 
-**PR:** <!-- filled in by the pushing commit; see below -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1400
 
 **Ticked ahead of the evidence, deliberately and with the operator's
 agreement.** These three items cannot all be true before the PR exists: the
