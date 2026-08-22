@@ -104,6 +104,15 @@ func validateDataEntry(path string, mm *metamodel.Metamodel, fs storage.FS) erro
 	if issues := conditionlint.Lint(&cfg, mm); len(issues) > 0 {
 		return fmt.Errorf("condition errors:\n  %s", strings.Join(issues, "\n  "))
 	}
+
+	// Next-action `condition:` expressions are compiled here for real — they
+	// are evaluated server-side by the same Env, so this is authoritative
+	// rather than a sanity check. Failing at validate/startup is the point: a
+	// condition that does not compile would otherwise suppress its suggestion
+	// forever with no diagnostic.
+	if _, issues := conditionlint.CompileNextActions(&cfg, mm); len(issues) > 0 {
+		return fmt.Errorf("next-action condition errors:\n  %s", strings.Join(issues, "\n  "))
+	}
 	return nil
 }
 
