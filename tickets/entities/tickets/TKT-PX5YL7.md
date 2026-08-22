@@ -99,8 +99,35 @@ them — verify each:
 - `Engine.ExecuteListDocument` (list renders, which feed `export_render`)
 
 The list/export path is the one most likely to have a legitimate reason to
-write, and is the least covered by this ticket's reasoning. Check it explicitly
-before assuming the change is uniform.
+write, and is the least covered by this ticket's reasoning.
+
+Partly resolved during design review (RR-PXLIST): the export endpoints ARE
+GETs (`export_list.go:33`, `export.go:103`/`:126` all reject non-GET), so the
+idempotence argument carries there unchanged. What remains open is whether
+`export_render` has a legitimate reason to write — stamping "last exported at",
+or recording an export-audit entity, is the most plausible legitimate render
+write in the codebase, and is exactly what this change would break. Decide it
+before implementation, not while making the diff uniform.
+
+## Design review findings
+
+- **RR-PXWF (significant)** — `write_file` is categorically different from the
+five graph mutations: it is filesystem-only, confined to `output/`, path
+validated, produces no audit row, and does not make a render non-idempotent
+*with respect to the graph*. The caching rationale does not transfer. Scope it
+out with a reason, or argue its removal on its own terms — do not let an
+implementer delete all six because they share a function.
+- **RR-PXLIST (significant)** — see above.
+- **RR-PXSTEP1 (minor)** — step 1 is safe only because `allowWrites` is
+currently true wherever an elevated handle exists, a property step 2
+deliberately removes. Say so, and pin `bypass_acl` registration with a test
+against a runtime built WITHOUT writes, so step 1 cannot be landed alone months
+later with the reasoning lost.
+- **RR-PXAC (minor)** — no acceptance criteria, for a change whose main risk is
+silent breakage. Name the canary that must stay green
+(`TestElevatedRender_ReadsHiddenEntityAndAudits`), the positive assertion to add
+(`rela.create_entity` absent in a document runtime), and coverage for all three
+entry points.
 
 ## Compatibility
 
