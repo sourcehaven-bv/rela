@@ -517,7 +517,12 @@ func TestSMTP_FailsFastOnEmptyPassword(t *testing.T) {
 		Text:    []byte("b"),
 	})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "RELA_TEST_EMPTY_PASSWORD")
+	// Names the CONFIG KEY, not the variable. The variable name is not secret,
+	// but reading it out of a password-shaped field and into an error creates a
+	// flow into the outbox's logging that static analysis flags; the operator
+	// has the name in their mail.yaml either way.
+	require.Contains(t, err.Error(), "password_env")
+	require.NotContains(t, err.Error(), "RELA_TEST_EMPTY_PASSWORD")
 }
 
 // --- outbox ----------------------------------------------------------------

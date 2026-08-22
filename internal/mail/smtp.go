@@ -80,8 +80,15 @@ func (s *SMTPSender) Send(ctx context.Context, m Message) error {
 		// server rejects it, the outbox retries five times with backoff, and
 		// the relay may lock the account out — 30s of noise and a possible
 		// lockout for what is a one-line configuration mistake.
-		return fmt.Errorf("mail: username %q is set but %s is empty or unset",
-			s.cfg.Username, s.cfg.PasswordVar)
+		// The variable NAME is deliberately not interpolated here. It is not
+		// secret, but it is read out of a password-shaped config field, so
+		// putting it in an error creates a data flow from that field into the
+		// outbox's retry logging — which static analysis flags, correctly in
+		// shape even though the value is harmless. The operator has the name
+		// in front of them in .rela/mail.yaml; naming the KEY is just as
+		// actionable and keeps the flow clean.
+		return errors.New("mail: username is set but the environment variable " +
+			"named by password_env is empty or unset")
 	}
 
 	return s.dial(ctx, msg)
