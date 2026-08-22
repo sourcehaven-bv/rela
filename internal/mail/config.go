@@ -187,6 +187,16 @@ func (c *Config) validateCommon() error {
 	return nil
 }
 
+// hasPassword reports whether the configured password environment variable
+// holds a value.
+//
+// Separate from resolvePassword so a caller can check for the misconfiguration
+// without the plaintext entering its scope — which is what keeps the credential
+// confined to SMTPSender.dial.
+func (c *Config) hasPassword() bool {
+	return c.PasswordEnv != "" && os.Getenv(c.PasswordEnv) != ""
+}
+
 // resolvePassword reads the configured password environment variable.
 //
 // Read at SEND time, not at load: a process that never sends mail must start

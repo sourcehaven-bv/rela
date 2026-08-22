@@ -75,14 +75,37 @@ func (s *SMTPSender) Send(ctx context.Context, m Message) error {
 		return err
 	}
 
-	password := s.cfg.resolvePassword()
-	if s.cfg.Username != "" && password == "" {
+	if s.cfg.Username != "" && !s.cfg.hasPassword() {
 		// Fail fast rather than authenticating with an empty password: the
 		// server rejects it, the outbox retries five times with backoff, and
 		// the relay may lock the account out — 30s of noise and a possible
 		// lockout for what is a one-line configuration mistake.
 		return fmt.Errorf("mail: username %q is set but %s is empty or unset",
 			s.cfg.Username, s.cfg.PasswordEnv)
+	}
+
+	return s.dial(ctx, msg)
+}
+
+// dial performs the authenticated send, CONFINING the credential to this
+// function.
+//
+// The password is read here and every error leaves through sanitize, which
+// closes over it. Nothing that escapes dial has seen the plaintext: the caller
+// receives a string that redaction has already been applied to.
+//
+// Structured this way deliberately. An earlier version passed the password as a
+// parameter alongside the error, which worked but left a data-flow path from
+// the environment variable to the outbox's retry logging — a path static
+// analysis is right to flag, and one whose safety rested entirely on a single
+// helper nobody would notice removing. Confinement makes the property
+// structural rather than conventional.
+func (s *SMTPSender) dial(ctx context.Context, msg *gomail.Msg) error {
+	password := s.cfg.resolvePassword()
+
+	// sanitize is the ONLY way an error leaves this function.
+	sanitize := func(op string, err error) error {
+		return fmt.Errorf("mail: %s: %s", op, redact(err.Error(), password))
 	}
 
 	opts := []gomail.Option{
@@ -107,29 +130,12 @@ func (s *SMTPSender) Send(ctx context.Context, m Message) error {
 
 	client, err := gomail.NewClient(s.cfg.Host, opts...)
 	if err != nil {
-		return sanitizedErr("build smtp client", err, password)
+		return sanitize("build smtp client", err)
 	}
-
 	if err := client.DialAndSendWithContext(ctx, msg); err != nil {
-		return sanitizedErr("send", err, password)
+		return sanitize("send", err)
 	}
 	return nil
-}
-
-// sanitizedErr builds an error whose text cannot carry the credential.
-//
-// An SMTP server's rejection can echo parts of the exchange, and these errors
-// travel into logs and — via the outbox's retry logging — into any log sink the
-// operator has configured. Redaction happens HERE, at the boundary where the
-// password is still in scope, and the returned error wraps only the scrubbed
-// string: the original error is deliberately NOT wrapped with %w, because
-// errors.Unwrap would then hand a caller the unredacted text back.
-//
-// A free function rather than a method so it is obvious from the signature that
-// nothing but these three values is involved, and so no receiver field can
-// reintroduce the credential later.
-func sanitizedErr(op string, err error, password string) error {
-	return fmt.Errorf("mail: %s: %s", op, redact(err.Error(), password))
 }
 
 // buildMessage converts a Message into a go-mail message.
