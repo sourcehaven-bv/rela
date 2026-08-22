@@ -20,7 +20,7 @@ func directionTestMetamodel() *mockMetamodel {
 
 func applyDirectionMigration(t *testing.T, input string) (string, bool) {
 	t.Helper()
-	m := &FormRelationDirectionMigration{}
+	m := &RelationDirectionMigration{}
 	m.SetMetamodel(directionTestMetamodel())
 
 	var doc yaml.Node
@@ -38,7 +38,7 @@ func applyDirectionMigration(t *testing.T, input string) (string, bool) {
 	return string(out), detected
 }
 
-func TestFormRelationDirectionMigration(t *testing.T) {
+func TestRelationDirectionMigration(t *testing.T) {
 	tests := []struct {
 		name         string
 		input        string
@@ -111,6 +111,107 @@ forms:
 			wantContains: []string{"direction: outgoing"},
 		},
 		{
+			name: "list relation column gains a direction",
+			input: `
+lists:
+  projects:
+    entity_type: project
+    columns:
+      - relation: belongs-to
+`,
+			wantDetect:   true,
+			wantContains: []string{"direction: incoming"},
+		},
+		{
+			name: "list filter control gains a direction",
+			input: `
+lists:
+  tasks:
+    entity_type: task
+    filter_controls:
+      - relation: belongs-to
+`,
+			wantDetect:   true,
+			wantContains: []string{"direction: outgoing"},
+		},
+		{
+			name: "kanban card field gains a direction",
+			input: `
+kanbans:
+  board:
+    entity_type: project
+    card:
+      fields:
+        - relation: belongs-to
+`,
+			wantDetect:   true,
+			wantContains: []string{"direction: incoming"},
+		},
+		{
+			name: "kanban filter control gains a direction",
+			input: `
+kanbans:
+  board:
+    entity_type: task
+    filter_controls:
+      - relation: belongs-to
+`,
+			wantDetect:   true,
+			wantContains: []string{"direction: outgoing"},
+		},
+		{
+			// The edge runs member→driver, so entity_type (the member) anchors
+			// the inference — NOT driver_type.
+			name: "caldav dynamic collection gains a direction",
+			input: `
+caldav:
+  dynamic:
+    tasks-per-project:
+      entity_type: task
+      driver_type: project
+      relation: belongs-to
+`,
+			wantDetect:   true,
+			wantContains: []string{"direction: outgoing"},
+		},
+		{
+			name: "self-referencing list column is left for the author",
+			input: `
+lists:
+  tasks:
+    entity_type: task
+    columns:
+      - relation: depends-on
+`,
+			wantDetect: false,
+			wantAbsent: []string{"direction:"},
+		},
+		{
+			name: "self-referencing caldav collection is left for the author",
+			input: `
+caldav:
+  dynamic:
+    blockers:
+      entity_type: task
+      driver_type: task
+      relation: depends-on
+`,
+			wantDetect: false,
+			wantAbsent: []string{"direction:"},
+		},
+		{
+			name: "property-only list column is untouched",
+			input: `
+lists:
+  tasks:
+    entity_type: task
+    columns:
+      - property: title
+`,
+			wantDetect: false,
+			wantAbsent: []string{"direction:"},
+		},
+		{
 			name: "unknown relation is left alone",
 			input: `
 forms:
@@ -157,8 +258,8 @@ forms:
 
 // Without a metamodel nothing is inferable, so the migration must be inert
 // rather than guessing.
-func TestFormRelationDirectionMigration_NoMetamodel(t *testing.T) {
-	m := &FormRelationDirectionMigration{}
+func TestRelationDirectionMigration_NoMetamodel(t *testing.T) {
+	m := &RelationDirectionMigration{}
 	var doc yaml.Node
 	if err := yaml.Unmarshal([]byte(`
 forms:

@@ -552,16 +552,26 @@ Two details worth knowing:
 
 #### How `direction` is resolved
 
-`direction` may be omitted when the form's entity type sits on exactly **one**
-side of the relation — there is only one sensible reading, so rela infers it:
+`direction` may be omitted when the binding's entity type sits on exactly
+**one** side of the relation — there is only one sensible reading, so rela
+infers it:
 
 - entity type is the relation's `from` → `outgoing`
 - entity type is the relation's `to` → `incoming`
 
-It must be written explicitly when the form's entity type is on **both** sides —
-a self-referencing relation such as `depends-on` from `ticket` to `ticket`. There
+It must be written explicitly when the entity type is on **both** sides — a
+self-referencing relation such as `depends-on` from `ticket` to `ticket`. There
 `outgoing` and `incoming` are both valid and mean opposite things, so rela
-refuses to guess and reports the form and relation by name.
+refuses to guess and names the offending binding.
+
+The same rule applies to **every** surface that takes a `direction:`:
+
+| Surface | Anchored to |
+| --- | --- |
+| form relations (including wizard steps) | the form's `entity_type` |
+| list columns and `filter_controls` | the list's `entity_type` |
+| kanban `card.fields` and `filter_controls` | the kanban's `entity_type` |
+| `caldav.dynamic.<name>` | the collection's `entity_type` (the **member**, not `driver_type` — the edge runs member→driver) |
 
 > **Upgrading.** `direction` used to default to `outgoing` whenever it was
 > absent, which silently bound the wrong side of a `to`-side relation. Run
@@ -910,7 +920,7 @@ entities — set exactly one of `property` or `relation`.
 | ----------- | ------ | --------------------------------------------------------------------------- |
 | `property`  | string | Property name to display                                                    |
 | `relation`  | string | Relation type whose targets are shown comma-separated                       |
-| `direction` | string | Relation columns only: `"outgoing"` (default) or `"incoming"` for reverse   |
+| `direction` | string | Relation columns only: `"outgoing"` or `"incoming"`; inferred when omitted   |
 | `label`     | string | Column header (defaults to property / relation name)                        |
 | `sortable`  | bool   | Column can be sorted by clicking the header                                 |
 | `link`      | bool   | Cell value links to the entity's detail page                                |
@@ -1013,7 +1023,7 @@ filter_controls:
 | ----------- | ------ | -------------------------------------------------------------- |
 | `property`  | string | Property to filter on                                          |
 | `relation`  | string | Relation to filter on (mutually exclusive with `property`)     |
-| `direction` | string | For `relation`: `"outgoing"` (default) or `"incoming"`         |
+| `direction` | string | For `relation`: `"outgoing"` or `"incoming"`; inferred when omitted |
 | `widget`    | string | For `property`: `"select"`, `"multi-select"`, or `"search"`    |
 | `label`     | string | Optional display label override                                |
 
