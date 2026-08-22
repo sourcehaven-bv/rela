@@ -3,7 +3,7 @@ id: TKT-8HDPQW
 type: ticket
 title: 'ACL increment 3: cascade delete authorizes incident relations under Store.Tx (B1)'
 kind: enhancement
-status: in-progress
+status: review
 priority: high
 effort: m
 ---
@@ -183,6 +183,28 @@ window is closed by the lock rather than by read isolation. Re-pointing the ACL
 at a tx view per call is not possible without threading a store through
 `acl.Request`, and is not needed for this guarantee.
 
+### Mutation verification (result)
+
+Disabling the gate (`if false`) in an isolated copy **kills two tests**:
+
+```
+--- FAIL: TestCascadeDelete_DeniedWhenRelationNotDeletable
+    cascade succeeded; alice holds delete on requirement but not on decision,
+    the source of the incident addresses edge
+--- FAIL: TestCascadeDelete_DeniedLeavesEverythingIntact
+```
+
+The unmutated binary PASSes. So the tests genuinely detect a regression that
+disables cascade authorization — they are not vacuous.
+
+Note which tests did NOT fail, because it is informative rather than a gap:
+`AllowedWhenEveryRelationIsDeletable` and `NoRelationsNeedsNoRelationGrant` are
+allow-path tests (removing a gate cannot break an allow), and
+`ConcurrentRelationIsNotDeletedUnauthorized` asserts an invariant that still
+holds when the injected edge happens to be collected before the delete. The
+race test guards the Tx *placement*, not the gate's existence — a different
+mutation (moving the work back outside Tx) is what would exercise it.
+
 ### Note on mutation testing this gate
 
 An automated security scanner flagged `if false { ... authorizeCascadeRelations }`
@@ -201,7 +223,7 @@ Two process lessons, both worth keeping:
    explain the intent and move on.
 
 The committed code has the gate unconditional; `grep -c 'if false'` in
-`manager.go` is 0.
+`manager.go` is 0, verified against `git show HEAD:`.
 
 ### Refactor forced by the linter
 
