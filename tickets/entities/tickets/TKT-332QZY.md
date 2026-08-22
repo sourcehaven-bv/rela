@@ -5,7 +5,7 @@ title: 'Mail foundation: Sender interface (SMTP + in-memory), best-effort outbox
 kind: enhancement
 priority: medium
 effort: m
-status: planning
+status: in-progress
 ---
 
 ## Description
@@ -30,10 +30,9 @@ type Sender interface {
 
 - **`transport: smtp`** — via `github.com/wneessen/go-mail` (NOT `net/smtp`, which is
 frozen and would leave RFC 5322 message assembly to us). STARTTLS mandatory,
-explicit timeouts. Must be Go;
-the Lua sandbox has no socket access by design. Verified against
-`send.simplemailservice.eu:587`, but nothing provider-specific is compiled in —
-it is ordinary authenticated SMTP.
+explicit timeouts. Must be Go; the Lua sandbox has no socket access by design.
+Verified against `send.simplemailservice.eu:587`, but nothing provider-specific
+is compiled in — it is ordinary authenticated SMTP.
 - **`transport: memory`** — records messages in a bounded ring buffer instead of
 sending. Two real uses, not a test double bolted on:
   - **Local dev**: `just dev` exercises digests and notifications with no mail server
@@ -84,8 +83,8 @@ unexported in `dataentry` and uses `WithUnsafe()`).
 trusted template → **douceur inline LAST**. The order is load-bearing, verified:
 bluemonday strips `style` attributes, so sanitizing the assembled page ships
 unstyled mail and also strips `cellpadding`/`border`/`role` and `cid:` sources.
-And douceur does zero CSS validation, so nothing may sanitize after it.
-Entity content is untrusted; `WithUnsafe()` must NOT be reused here.
+And douceur does zero CSS validation, so nothing may sanitize after it. Entity
+content is untrusted; `WithUnsafe()` must NOT be reused here.
 - Palette colour tokens are validated against an allowlist and **rejected** if not
 colours — they flow into CSS, and douceur would materialize
 `url('javascript:…')` into a `style` attribute verbatim.
@@ -122,21 +121,20 @@ exposes recipients, subject, and both rendered parts.
 5. Markdown with headers, links, bold and a table renders to sanitized inlined-CSS
 HTML; golden-file pinned.
 6. `<script>`, `onerror=`, `javascript:` hrefs and `style="…url(javascript:…)"` in
-entity content are stripped from the HTML part.
-6a. The rendered HTML **has** inline `style=` attributes — catches an ordering
-inversion that criterion 6 alone would pass.
-6b. `<!--[if mso]>` conditional comments survive to the final output.
-6c. **Post-inline**, no `style=` attribute contains `javascript:`, `behavior:` or
-`expression(`.
-6d. A palette token of `url('javascript:alert(1)')` is rejected at the renderer
-boundary, not escaped or silently defaulted.
+entity content are stripped from the HTML part. 6a. The rendered HTML **has**
+inline `style=` attributes — catches an ordering inversion that criterion 6
+alone would pass. 6b. `<!--[if mso]>` conditional comments survive to the final
+output. 6c. **Post-inline**, no `style=` attribute contains `javascript:`,
+`behavior:` or `expression(`. 6d. A palette token of
+`url('javascript:alert(1)')` is rejected at the renderer boundary, not escaped
+or silently defaulted.
 7. Every message carries a non-empty `text/plain` alternative.
 8. Enqueue returns without dialing; delivery happens on the worker.
 9. A transport failure retries with backoff and does not duplicate the message.
 9a. CR/LF in a **subject** is rejected at enqueue (go-mail does not reject it;
-only incidental encoded-word escaping neutralizes it today).
-9b. `stop()` returns within a bounded drain timeout even when a send is blocked
-against an unresponsive server.
+only incidental encoded-word escaping neutralizes it today). 9b. `stop()`
+returns within a bounded drain timeout even when a send is blocked against an
+unresponsive server.
 10. Restart with a non-empty buffer loses the mail **and says so** — an explicit test
 documenting best-effort, so the limit is pinned rather than discovered.
 11. Credential never appears in logs, errors, or `/api/v1/_config`.
@@ -148,7 +146,7 @@ documenting best-effort, so the limit is pinned rather than discovered.
 - **Mail lost on restart** — accepted and documented; retired by IDEA-WIJ2H1.
 - **`Sender` shaped around SMTP** — the memory impl gives a second shape immediately,
 but neither is remote-API-shaped. Sanity-check the interface against the
-HTTP/script transport sketch in TKT-DS1CR6 before finalising, so that ticket is not
-forced to reshape it.
+HTTP/script transport sketch in TKT-DS1CR6 before finalising, so that ticket is
+not forced to reshape it.
 - **Rendering regressions** across mail clients — mitigated by golden files; a full
 client matrix is out of scope.

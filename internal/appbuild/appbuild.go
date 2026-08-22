@@ -39,6 +39,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/mail"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/script"
@@ -115,6 +116,16 @@ type Services struct {
 	aclDeclarative *acl.Declarative
 	aclPolicy      *acl.Policy
 	audit          audit.Audit
+	// mailOutbox is this store's outbound-mail queue, or nil when mail is not
+	// configured. Nil is the honest representation of "mail is off": a
+	// no-op Sender would make a wiring mistake indistinguishable from mail
+	// that silently vanishes.
+	mailOutbox *mail.Outbox
+
+	// mailStop drains and stops the mail worker. Per-assembled like gcStop,
+	// and bounded by the outbox's drain timeout so it cannot hang shutdown.
+	mailStop func()
+
 	// gcStop terminates this store's data-migration GC sweep goroutine
 	// (TKT-0C57FS). Per-assembled, torn down in Close like searchCloser.
 	gcStop func()
@@ -1242,8 +1253,14 @@ func assemble(
 	// per-assembled, like the search closer.
 	gcStop := startDataMigration(stateKV, base.meta, st, cfg.Audit, versions)
 
+	// Mail is optional and never fails boot; a nil outbox means "not
+	// configured" (see startMail).
+	mailOutbox, mailStop := startMail(cfg.Paths)
+
 	return &Services{
 		gcStop:          gcStop,
+		mailOutbox:      mailOutbox,
+		mailStop:        mailStop,
 		fs:              cfg.FS,
 		paths:           cfg.Paths,
 		meta:            base.meta,
@@ -1355,6 +1372,13 @@ func relationVersionRecorderFor(vs store.VersionService) entitymanager.RelationV
 // failures are slog.Warn'd).
 func (s *Services) Close() error {
 	s.closeOnce.Do(func() {
+		// Mail first: the worker may still be delivering, and its drain is
+		// bounded, so stopping it before the store closes gives in-flight
+		// sends their best chance without risking a hung shutdown.
+		if s.mailStop != nil {
+			s.mailStop()
+			s.mailStop = nil
+		}
 		if s.gcStop != nil {
 			s.gcStop()
 			s.gcStop = nil
