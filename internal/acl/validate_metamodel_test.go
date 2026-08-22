@@ -1,6 +1,7 @@
 package acl_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -10,7 +11,12 @@ import (
 // fakeMeta is a minimal acl.MetamodelView for validation tests. types maps
 // entity type → property name → its PropertyInfo.
 type fakeMeta struct {
-	types map[string]map[string]acl.PropertyInfo
+	types     map[string]map[string]acl.PropertyInfo
+	relations []string
+}
+
+func (m fakeMeta) HasRelationType(t string) bool {
+	return slices.Contains(m.relations, t)
 }
 
 func (m fakeMeta) HasEntityType(t string) bool {

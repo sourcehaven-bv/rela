@@ -818,6 +818,11 @@ func (v metamodelView) HasEntityType(entityType string) bool {
 	return v.m.HasEntityType(entityType)
 }
 
+func (v metamodelView) HasRelationType(relationType string) bool {
+	_, ok := v.m.Relations[relationType]
+	return ok
+}
+
 func (v metamodelView) PropertyInfo(entityType, property string) acl.PropertyInfo {
 	def, ok := v.m.GetEntityDef(entityType)
 	if !ok {
