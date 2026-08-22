@@ -76,6 +76,14 @@ func (s *SMTPSender) Send(ctx context.Context, m Message) error {
 	}
 
 	password := s.cfg.resolvePassword()
+	if s.cfg.Username != "" && password == "" {
+		// Fail fast rather than authenticating with an empty password: the
+		// server rejects it, the outbox retries five times with backoff, and
+		// the relay may lock the account out — 30s of noise and a possible
+		// lockout for what is a one-line configuration mistake.
+		return fmt.Errorf("mail: username %q is set but %s is empty or unset",
+			s.cfg.Username, s.cfg.PasswordEnv)
+	}
 
 	opts := []gomail.Option{
 		gomail.WithPort(s.cfg.EffectivePort()),

@@ -5,7 +5,7 @@ title: 'Mail foundation: Sender interface (SMTP + in-memory), best-effort outbox
 kind: enhancement
 priority: medium
 effort: m
-status: in-progress
+status: review
 ---
 
 ## Description

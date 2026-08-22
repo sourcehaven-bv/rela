@@ -59,6 +59,132 @@ func TestRender_SanitizesUntrustedContent(t *testing.T) {
 	}
 }
 
+// TestRender_TextPartStripsEncodedMarkup covers the sanitizer bypass found in
+// code review: the text part decoded entities AFTER stripping tags, so
+// "&lt;script&gt;" in an entity property was re-materialized as a live tag in
+// the delivered body.
+//
+// The double-encoded case matters too — a single decode/strip pass leaves it
+// one decode away from the same outcome.
+func TestRender_TextPartStripsEncodedMarkup(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   string
+	}{
+		{"entity encoded", "&lt;script&gt;alert(1)&lt;/script&gt;"},
+		{"double encoded", "&amp;lt;script&amp;gt;alert(1)&amp;lt;/script&amp;gt;"},
+		{"numeric entities", "&#60;script&#62;alert(1)&#60;/script&#62;"},
+		{"encoded anchor", `&lt;a href=&quot;https://evil.example&quot;&gt;click&lt;/a&gt;`},
+		{"raw tag", "<script>alert(1)</script>"},
+	}
+
+	r := newRenderer(t, &mailrender.Options{})
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, text := render(t, r, &mailrender.Message{
+				Subject: tc.in,
+				Sections: []mailrender.Section{{
+					Title:   tc.in,
+					Columns: []string{"C"},
+					Rows:    [][]string{{tc.in}},
+				}},
+			})
+			require.NotContains(t, text, "<script", "live tag reached the text part")
+			require.NotContains(t, text, "<a href", "live anchor reached the text part")
+		})
+	}
+}
+
+// TestNew_RejectsHostileBaseURL covers the scheme-allowlist bypass found in
+// code review: safeHref rejected a "javascript:" LINK, then concatenated it
+// onto an unvalidated BaseURL, so every relative link became a script URL.
+func TestNew_RejectsHostileBaseURL(t *testing.T) {
+	t.Parallel()
+
+	for _, bad := range []string{
+		"javascript:alert(1)//",
+		"data:text/html,x",
+		"app.example.com",
+		"//evil.example",
+	} {
+		_, err := mailrender.New(&mailrender.Options{BaseURL: bad})
+		require.Error(t, err, "BaseURL %q must be refused", bad)
+	}
+
+	for _, ok := range []string{"", "https://app.example", "http://localhost:8080"} {
+		_, err := mailrender.New(&mailrender.Options{BaseURL: ok})
+		require.NoError(t, err, "BaseURL %q must be accepted", ok)
+	}
+}
+
+// TestRender_LinkWithParensInURL covers the link-parsing bug found in code
+// review: taking the first ")" as the terminator truncated any URL containing
+// parens and left stray text in the body.
+func TestRender_LinkWithParensInURL(t *testing.T) {
+	t.Parallel()
+
+	r := newRenderer(t, &mailrender.Options{BaseURL: "https://app.example"})
+	_, text := render(t, r, &mailrender.Message{
+		Subject: "S",
+		Intro:   "see [w](https://en.wikipedia.org/wiki/Foo_(bar)) end",
+	})
+
+	require.Contains(t, text, "https://en.wikipedia.org/wiki/Foo_(bar)")
+	require.Contains(t, text, "end", "text after the link must survive")
+	require.NotContains(t, text, "w)", "no stray paren residue")
+}
+
+// TestRender_PartsAgreeOnEmphasis pins that the two alternatives render the
+// same content. The text part walks goldmark's AST rather than pattern-matching
+// markers, so what it treats as emphasis is exactly what the HTML part does —
+// including CommonMark's rule that "5*3*2" IS emphasis and "2 * 3 * 4" is not.
+func TestRender_PartsAgreeOnEmphasis(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		in           string
+		wantHTMLEmph bool
+		wantText     string
+	}{
+		{"cost is 5*3*2 dollars", true, "cost is 532 dollars"},
+		{"2 * 3 * 4", false, "2 * 3 * 4"},
+		{"a_b_c stays", false, "a_b_c stays"},
+		{"**bold** words", true, "bold words"},
+	}
+
+	r := newRenderer(t, &mailrender.Options{})
+	for _, tc := range tests {
+		t.Run(tc.in, func(t *testing.T) {
+			t.Parallel()
+			html, text := render(t, r, &mailrender.Message{Subject: "S", Intro: tc.in})
+
+			gotEmph := strings.Contains(html, "<em>") || strings.Contains(html, "<strong>")
+			require.Equal(t, tc.wantHTMLEmph, gotEmph, "HTML emphasis")
+			require.Contains(t, text, tc.wantText, "text part must match what HTML renders")
+		})
+	}
+}
+
+// TestRender_MarkdownStructures exercises the AST walk across block types that
+// a real digest body carries.
+func TestRender_MarkdownStructures(t *testing.T) {
+	t.Parallel()
+
+	r := newRenderer(t, &mailrender.Options{BaseURL: "https://app.example"})
+	_, text := render(t, r, &mailrender.Message{
+		Subject: "S",
+		Intro: "## Heading\n\n- one\n- two\n\n> quoted\n\n" +
+			"| a | b |\n|---|---|\n| 1 | 2 |\n\n`code span` and\n\n```\nblock\n```",
+	})
+
+	for _, want := range []string{"Heading", "- one", "- two", "> quoted", "a | b", "1 | 2", "code span", "block"} {
+		require.Contains(t, text, want)
+	}
+}
+
 // TestRender_KeepsInlineStyles covers AC 6a — the regression guard for the
 // pipeline-ordering inversion.
 //

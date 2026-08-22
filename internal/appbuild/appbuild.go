@@ -39,7 +39,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
-	"github.com/Sourcehaven-BV/rela/internal/mail"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/script"
@@ -116,12 +115,6 @@ type Services struct {
 	aclDeclarative *acl.Declarative
 	aclPolicy      *acl.Policy
 	audit          audit.Audit
-	// mailOutbox is this store's outbound-mail queue, or nil when mail is not
-	// configured. Nil is the honest representation of "mail is off": a
-	// no-op Sender would make a wiring mistake indistinguishable from mail
-	// that silently vanishes.
-	mailOutbox *mail.Outbox
-
 	// mailStop drains and stops the mail worker. Per-assembled like gcStop,
 	// and bounded by the outbox's drain timeout so it cannot hang shutdown.
 	mailStop func()
@@ -1172,9 +1165,8 @@ func resolveVisibleSearcher(
 // more optional services are added — each is independently nil-able and none
 // may fail boot.
 type backgroundServices struct {
-	gcStop     func()
-	mailOutbox *mail.Outbox
-	mailStop   func()
+	gcStop   func()
+	mailStop func()
 }
 
 // startBackgroundServices launches the optional per-store subsystems: the
@@ -1189,14 +1181,15 @@ func startBackgroundServices(
 
 	gcStop := startDataMigration(stateKV, base.meta, st, cfg.Audit, versions)
 
-	// Mail is optional and never fails boot; a nil outbox means "not
-	// configured" (see startMail).
-	mailOutbox, mailStop := startMail(cfg.Paths)
+	// Mail is optional and never fails boot. The outbox itself is discarded
+	// here: nothing can enqueue until the declarative layer (TKT-U2R7GU)
+	// lands, and storing a handle no code reads would look wired when it is
+	// not. Only the stop function is retained, because Close genuinely uses it.
+	_, mailStop := startMail(cfg.Paths)
 
 	return backgroundServices{
-		gcStop:     gcStop,
-		mailOutbox: mailOutbox,
-		mailStop:   mailStop,
+		gcStop:   gcStop,
+		mailStop: mailStop,
 	}
 }
 
@@ -1301,7 +1294,6 @@ func assemble(
 
 	return &Services{
 		gcStop:          background.gcStop,
-		mailOutbox:      background.mailOutbox,
 		mailStop:        background.mailStop,
 		fs:              cfg.FS,
 		paths:           cfg.Paths,

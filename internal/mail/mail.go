@@ -109,6 +109,20 @@ type InlineImage struct {
 	Data []byte
 }
 
+// allowedInlineTypes is the raster allowlist for embedded images.
+//
+// An allowlist rather than an SVG denylist: the question is which formats mail
+// clients render safely, and that set is small and stable, while the set of
+// active-content formats is not.
+var allowedInlineTypes = map[string]bool{
+	"image/png":  true,
+	"image/jpeg": true,
+	"image/gif":  true,
+	"image/webp": true,
+}
+
+const allowedInlineTypeList = "image/png, image/jpeg, image/gif, image/webp"
+
 // ErrOutboxFull is returned by Enqueue when the buffer is at capacity.
 //
 // Returned rather than dropped silently: a full buffer means the mail server is
@@ -145,6 +159,13 @@ func (m *Message) Validate() error {
 		}
 		if err := validateHeaderValue("inline image CID", img.CID); err != nil {
 			return err
+		}
+		if !allowedInlineTypes[strings.ToLower(strings.TrimSpace(img.ContentType))] {
+			// Enforced, not merely documented. SVG in particular is
+			// script-capable and unsupported by mail clients, so embedding an
+			// operator-uploaded one would ship active content into inboxes.
+			return fmt.Errorf("mail: inline image %q has content type %q; "+
+				"only %s are allowed", img.CID, img.ContentType, allowedInlineTypeList)
 		}
 	}
 	return nil

@@ -163,6 +163,11 @@ func TestLoadConfig(t *testing.T) {
 			wantErr: "out of range",
 		},
 		{
+			name:    "username without password_env",
+			yaml:    "transport: smtp\nhost: h\nfrom: f@e.com\nusername: relay\n",
+			wantErr: "password_env is required",
+		},
+		{
 			name:    "negative timeout",
 			yaml:    "transport: memory\nfrom: f@e.com\ntimeout_seconds: -1\n",
 			wantErr: "must not be negative",
@@ -423,6 +428,56 @@ func TestMessage_Validate(t *testing.T) {
 	}
 }
 
+// TestMessage_RejectsNonRasterInlineImage covers the raster-only rule. SVG is
+// script-capable and unsupported by mail clients, so it must be refused in code
+// rather than only discouraged in a doc comment.
+func TestMessage_RejectsNonRasterInlineImage(t *testing.T) {
+	t.Parallel()
+
+	base := func(ct string) mail.Message {
+		return mail.Message{
+			To:           []mail.Address{{Email: "to@example.com"}},
+			Subject:      "s",
+			Text:         []byte("b"),
+			InlineImages: []mail.InlineImage{{CID: "logo", ContentType: ct, Data: []byte{1}}},
+		}
+	}
+
+	for _, ok := range []string{"image/png", "image/jpeg", "image/gif", "image/webp", "IMAGE/PNG"} {
+		m := base(ok)
+		require.NoError(t, m.Validate(), "content type %q should be allowed", ok)
+	}
+	for _, bad := range []string{"image/svg+xml", "text/html", "application/pdf", ""} {
+		m := base(bad)
+		require.Error(t, m.Validate(), "content type %q must be refused", bad)
+	}
+}
+
+// TestSMTP_FailsFastOnEmptyPassword pins that a configured-but-unset password
+// env var is a clear error, not five authentication attempts with an empty
+// string (which burns 30s of backoff and can trip a relay's lockout).
+func TestSMTP_FailsFastOnEmptyPassword(t *testing.T) {
+	// No t.Parallel: t.Setenv.
+	t.Setenv("RELA_TEST_EMPTY_PASSWORD", "")
+
+	sender, err := mail.NewSMTPSender(&mail.Config{
+		Transport:   mail.TransportSMTP,
+		Host:        "smtp.example.com",
+		Username:    "relay",
+		PasswordEnv: "RELA_TEST_EMPTY_PASSWORD",
+		From:        "f@e.com",
+	})
+	require.NoError(t, err)
+
+	err = sender.Send(context.Background(), mail.Message{
+		To:      []mail.Address{{Email: "to@example.com"}},
+		Subject: "s",
+		Text:    []byte("b"),
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "RELA_TEST_EMPTY_PASSWORD")
+}
+
 // --- outbox ----------------------------------------------------------------
 
 // blockingSender fails a configurable number of times, then succeeds.
@@ -660,6 +715,50 @@ func TestOutbox_StopIsBoundedAndIdempotent(t *testing.T) {
 	ob.Stop()
 
 	close(blocked.block)
+}
+
+// TestOutbox_StartStopRace pins that Start and Stop may race.
+//
+// They shared a field before (Start wrote o.cancel, Stop read it) with two
+// different sync.Once values providing no happens-before — the detector fired,
+// and worse, Stop could see a nil cancel while a worker was running, take the
+// "never started" path, and leak the goroutine for the process lifetime.
+// Ordering is currently safe at the one call site; this pins it for the next
+// one. Run under -race to be meaningful.
+func TestOutbox_StartStopRace(t *testing.T) {
+	t.Parallel()
+
+	for range 50 {
+		ob, err := mail.NewOutbox(mail.NewMemorySender(0), mail.OutboxConfig{})
+		require.NoError(t, err)
+
+		done := make(chan struct{})
+		go func() {
+			ob.Start()
+			close(done)
+		}()
+		ob.Stop()
+		<-done
+		ob.Stop() // still idempotent after the race
+	}
+}
+
+// TestOutbox_StopBeforeStartPreventsWork pins that a Stop landing before Start
+// leaves the worker inert rather than running unsupervised: the cancel is
+// unconditional, so a later Start hands the worker an already-cancelled ctx.
+func TestOutbox_StopBeforeStartPreventsWork(t *testing.T) {
+	t.Parallel()
+
+	s := mail.NewMemorySender(0)
+	ob, err := mail.NewOutbox(s, mail.OutboxConfig{})
+	require.NoError(t, err)
+
+	require.NoError(t, ob.Enqueue(testMessage()))
+	ob.Stop()
+	ob.Start()
+
+	require.Never(t, func() bool { return s.Count() > 0 }, 300*time.Millisecond, 20*time.Millisecond,
+		"a stopped outbox must not deliver after a late Start")
 }
 
 // TestOutbox_StopWithoutStart pins the nil-safe/never-started path, so Close

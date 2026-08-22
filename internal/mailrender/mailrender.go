@@ -33,6 +33,19 @@
 // or unsafe — which is why this is written down rather than left to be
 // rediscovered.
 //
+// # The logo is embedded, and raster only
+//
+// The operator logo is referenced as cid:<LogoCID> and travels with the message
+// as an attached part, never as a URL: rela serves it from an authenticated
+// endpoint, so a mail client could not fetch it.
+//
+// Callers must supply raster bytes (PNG/JPEG/WebP) and must NOT pass an SVG.
+// SVG has near-zero support across mail clients — Gmail, Outlook and Apple Mail
+// strip or fail it — and it is an active-content format that can carry a script
+// element, so embedding operator-uploaded SVG would ship script-capable bytes
+// into inboxes for no rendering benefit. A message renders without a logo
+// rather than with an unsafe one.
+//
 // # Trust
 //
 // Content passed in is UNTRUSTED: it originates from entity bodies and
@@ -106,8 +119,9 @@ type Options struct {
 
 	// LogoCID, when non-empty, is the Content-ID of a logo part the caller has
 	// attached to the message. The template references it as cid:<LogoCID>.
-	// Callers must only set this for raster images — see the package docs on
-	// why SVG is refused.
+	//
+	// Raster only. See "The logo is embedded, and raster only" in the package
+	// doc for why an SVG must never be passed here.
 	LogoCID string
 
 	// LogoAlt is the logo's alt text. Defaults to "logo".
@@ -163,6 +177,33 @@ func ValidatePalette(p map[string]string) error {
 	return nil
 }
 
+// validateBaseURL applies the same scheme allowlist safeHref uses.
+//
+// Without this the allowlist is defeated by the one input it does not check:
+// safeHref rejects a "javascript:" LINK, then concatenates it onto an unchecked
+// BaseURL, so a BaseURL of "javascript:alert(1)//" turns every relative link in
+// the message into a live script URL. Checking here closes it once, for every
+// caller, rather than relying on each one to have validated first.
+func validateBaseURL(u string) error {
+	if u == "" {
+		return nil
+	}
+	l := strings.ToLower(strings.TrimSpace(u))
+	if !strings.HasPrefix(l, "http://") && !strings.HasPrefix(l, "https://") {
+		return fmt.Errorf("mailrender: base URL must start with http:// or https://, got %q", u)
+	}
+	return nil
+}
+
+// validateHeaderish rejects control characters in a value that lands in a
+// header-like position (a Content-ID reference).
+func validateHeaderish(field, v string) error {
+	if strings.ContainsAny(v, "\r\n\x00") {
+		return fmt.Errorf("mailrender: %s contains a control character", field)
+	}
+	return nil
+}
+
 // New returns a Renderer.
 //
 // Nil: rejected — pass a zero Options rather than nil, so "defaults" is a
@@ -172,6 +213,12 @@ func New(opts *Options) (*Renderer, error) {
 		return nil, errors.New("mailrender: nil options")
 	}
 	if err := ValidatePalette(opts.Palette); err != nil {
+		return nil, err
+	}
+	if err := validateBaseURL(opts.BaseURL); err != nil {
+		return nil, err
+	}
+	if err := validateHeaderish("logo CID", opts.LogoCID); err != nil {
 		return nil, err
 	}
 

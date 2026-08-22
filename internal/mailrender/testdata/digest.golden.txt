@@ -23,9 +23,8 @@ Heading
 - one
 - two
 
-| a | b |
-|---|---|
-| 1 | 2 |
+a | b
+1 | 2
 
 Empty
 -----

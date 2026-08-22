@@ -155,6 +155,10 @@ func (c *Config) Validate() error {
 		if c.Port < 0 || c.Port > 65535 {
 			return fmt.Errorf("port %d out of range", c.Port)
 		}
+		if c.Username != "" && c.PasswordEnv == "" {
+			return errors.New("password_env is required when username is set " +
+				"(omit username for a relay that accepts unauthenticated submission)")
+		}
 		return c.validateCommon()
 	case "":
 		return errors.New("transport is required (smtp or memory)")

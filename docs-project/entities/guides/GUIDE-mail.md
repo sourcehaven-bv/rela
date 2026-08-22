@@ -89,9 +89,16 @@ matter:
   abandoned.
 - A failed send is retried with exponential backoff, up to 5 attempts, and then
   given up on with an error in the log.
+- **One bad message delays the good ones.** Delivery is sequential, so an
+  undeliverable message — a typo'd address, most likely — holds up everything
+  behind it for the length of its retry ladder, about 30 seconds. A batch of bad
+  addresses adds up.
 - If the queue fills (128 messages), further sends are **rejected with an error**
-  rather than silently dropped. A full queue means the mail server is unreachable and
-  a backlog is building.
+  rather than silently dropped. A full queue means the mail server is unreachable
+  and a backlog is building — or that a stalled message is holding the line.
+- If a shutdown drain times out (10s), the send in flight is left to finish on its
+  own and its connection is not returned. On a server hosting many projects, where
+  eviction happens routinely, those connections accumulate against your provider.
 
 So: **mail here is notification, never a system of record.** Do not build anything
 that assumes a message arrived. If you need delivery guarantees, send to a real queue

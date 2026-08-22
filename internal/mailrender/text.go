@@ -5,6 +5,9 @@ import (
 	"regexp"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/text"
 )
 
 // renderText produces the text/plain alternative.
@@ -16,13 +19,30 @@ import (
 //
 // Every message carries this part. It is what plain-text clients show, and its
 // absence is a well-known spam signal.
+//
+// # Markdown is parsed, not pattern-matched
+//
+// Prose goes through goldmark and this file walks the resulting AST. An earlier
+// version hand-rolled the string work — regex tag-stripping, ReplaceAll on
+// emphasis markers, index arithmetic for links — and every one of those was
+// wrong in a way the first round of tests missed:
+//
+//   - Unescaping AFTER tag-stripping re-materialized entity-encoded markup, so
+//     "&lt;script&gt;" in an entity property arrived as a live tag in the body.
+//   - ReplaceAll("**", "") turned "5*3*2" into "532" and "__init__" into "init".
+//   - Taking the first ")" as a link terminator truncated any URL containing
+//     parens and left stray text in the body.
+//
+// The parser already knows what is emphasis, what is a link, and what is
+// literal text. Asking it is both correct and less code than approximating it.
 func (r *Renderer) renderText(m *Message) []byte {
 	var b strings.Builder
 
 	if m.Subject != "" {
-		b.WriteString(m.Subject)
+		s := plainText(m.Subject)
+		b.WriteString(s)
 		b.WriteString("\n")
-		b.WriteString(strings.Repeat("=", displayWidth(m.Subject)))
+		b.WriteString(strings.Repeat("=", displayWidth(s)))
 		b.WriteString("\n\n")
 	}
 
@@ -46,9 +66,10 @@ func (r *Renderer) renderText(m *Message) []byte {
 
 func (r *Renderer) writeTextSection(b *strings.Builder, s *Section) {
 	if s.Title != "" {
-		b.WriteString(s.Title)
+		t := plainText(s.Title)
+		b.WriteString(t)
 		b.WriteString("\n")
-		b.WriteString(strings.Repeat("-", displayWidth(s.Title)))
+		b.WriteString(strings.Repeat("-", displayWidth(t)))
 		b.WriteString("\n")
 	}
 	if body := r.plainMarkdown(s.Body); body != "" {
@@ -74,10 +95,10 @@ func (r *Renderer) writeTextSection(b *strings.Builder, s *Section) {
 				label = s.Columns[j]
 			}
 			if label != "" {
-				b.WriteString(label)
+				b.WriteString(plainText(label))
 				b.WriteString(": ")
 			}
-			b.WriteString(stripHTML(cell))
+			b.WriteString(plainText(cell))
 			b.WriteString("\n")
 		}
 		if i < len(s.Links) && s.Links[i] != "" {
@@ -90,30 +111,12 @@ func (r *Renderer) writeTextSection(b *strings.Builder, s *Section) {
 	}
 }
 
-// tagRe matches an HTML tag. Used to STRIP markup from the text part.
+// tagRe matches an HTML tag.
 var tagRe = regexp.MustCompile(`(?s)<[^>]*>`)
 
-// stripHTML removes tags and decodes entities.
-//
-// The text part is NOT exempt from sanitization. Content here is the same
-// untrusted entity markdown the HTML part carries, and markdown permits inline
-// HTML, so raw <script> and onerror= reach this function. They must not reach
-// the recipient: a text/plain body is still rendered by a mail client, some of
-// which will happily interpret markup, and a body echoing an attacker's script
-// tag is a phishing surface even where it is inert.
-//
-// Tags are dropped whole rather than escaped, because the goal is legibility:
-// a reader wants the words, not the markup.
-func stripHTML(s string) string {
-	// Drop script/style CONTENT as well as their tags — leaving the body text
-	// of a <script> behind would put "alert(1)" in the mail.
-	s = scriptStyleRe.ReplaceAllString(s, "")
-	return html.UnescapeString(tagRe.ReplaceAllString(s, ""))
-}
-
 // scriptStyleRe matches a script/style/iframe/object/embed element together
-// with its content. Written as explicit alternations rather than a
-// backreference, which RE2 does not support.
+// with its content. Explicit alternations rather than a backreference, which
+// RE2 does not support.
 var scriptStyleRe = regexp.MustCompile(`(?is)` +
 	`<script\b[^>]*>.*?</script\s*>|<script\b[^>]*>|` +
 	`<style\b[^>]*>.*?</style\s*>|<style\b[^>]*>|` +
@@ -121,95 +124,237 @@ var scriptStyleRe = regexp.MustCompile(`(?is)` +
 	`<object\b[^>]*>.*?</object\s*>|<object\b[^>]*>|` +
 	`<embed\b[^>]*>.*?</embed\s*>|<embed\b[^>]*>`)
 
-// plainMarkdown reduces markdown to readable plain text.
+// maxUnescapePasses bounds the decode/strip loop in stripMarkup.
+const maxUnescapePasses = 4
+
+// plainText neutralizes a bare string that is NOT markdown — a subject, a
+// column label, a table cell.
 //
-// Deliberately small: it unwraps the inline emphasis and link syntax that reads
-// as noise in a terminal, strips any HTML the markdown carried, and leaves
-// everything else alone. It is NOT a markdown parser and does not need to be —
-// the text part's job is to be legible, not to round-trip.
+// These are values, not documents, so they are not parsed as markdown. They are
+// still UNTRUSTED, and the text part is not exempt from that: markup echoed
+// into a mail body is a phishing surface even where a client renders it inert.
+func plainText(s string) string {
+	return stripMarkup(s)
+}
+
+// stripMarkup removes HTML from an untrusted value.
+//
+// Decoding happens BEFORE stripping, and the pair repeats to a fixed point.
+// Both details are load-bearing: stripping first and decoding after simply
+// re-materializes whatever was entity-encoded ("&lt;script&gt;" becomes a live
+// tag), and a single pass leaves double-encoded input ("&amp;lt;script&amp;gt;")
+// one decode away from the same outcome. The loop is bounded so a pathological
+// value cannot spin.
+func stripMarkup(s string) string {
+	for range maxUnescapePasses {
+		decoded := html.UnescapeString(s)
+		stripped := tagRe.ReplaceAllString(scriptStyleRe.ReplaceAllString(decoded, ""), "")
+		if stripped == s {
+			return stripped
+		}
+		s = stripped
+	}
+	return s
+}
+
+// plainMarkdown renders markdown prose as readable plain text by walking the
+// parsed AST.
 func (r *Renderer) plainMarkdown(src string) string {
-	s := stripHTML(strings.TrimSpace(src))
-	if strings.TrimSpace(s) == "" {
+	if strings.TrimSpace(src) == "" {
 		return ""
 	}
 
-	out := make([]string, 0, 8)
-	for line := range strings.SplitSeq(s, "\n") {
-		l := strings.TrimRight(line, " \t")
-		trimmed := strings.TrimLeft(l, " \t")
+	source := []byte(src)
+	doc := r.md.Parser().Parse(text.NewReader(source))
 
-		// ATX headings: drop the marker, keep the text.
-		if h := strings.TrimLeft(trimmed, "#"); h != trimmed {
-			l = strings.TrimSpace(h)
-		}
-		// Bullets: normalize -/*/+ to a single dash.
-		if len(trimmed) > 1 && (trimmed[0] == '-' || trimmed[0] == '*' || trimmed[0] == '+') && trimmed[1] == ' ' {
-			l = "- " + strings.TrimSpace(trimmed[2:])
-		}
+	var b strings.Builder
+	r.walkBlocks(&b, doc, source, 0)
 
-		out = append(out, r.unlink(stripEmphasis(l)))
-	}
-	return strings.TrimSpace(strings.Join(out, "\n"))
+	return strings.TrimSpace(b.String())
 }
 
-// emphasisRe matches *single* or _single_ emphasis around non-space text. Run
-// after the ** and __ pairs so a bold marker is not half-consumed.
-var emphasisRe = regexp.MustCompile(`(?:\*([^*\n]+)\*)|(?:\b_([^_\n]+)_\b)`)
+// walkBlocks renders block-level nodes. depth tracks list nesting for indent.
+func (r *Renderer) walkBlocks(b *strings.Builder, n ast.Node, src []byte, depth int) {
+	for c := n.FirstChild(); c != nil; c = c.NextSibling() {
+		switch node := c.(type) {
+		case *ast.Heading, *ast.Paragraph, *ast.TextBlock:
+			b.WriteString(r.inlineText(c, src))
+			b.WriteString("\n\n")
 
-// stripEmphasis removes ** __ * _ and backtick markers, leaving the words.
-func stripEmphasis(s string) string {
-	for _, m := range []string{"**", "__"} {
-		s = strings.ReplaceAll(s, m, "")
-	}
-	s = emphasisRe.ReplaceAllString(s, "$1$2")
-	return strings.Map(func(r rune) rune {
-		if r == '`' {
-			return -1
+		case *ast.List:
+			r.walkBlocks(b, node, src, depth)
+			b.WriteString("\n")
+
+		case *ast.ListItem:
+			// A list item wraps blocks; flatten them so the bullet and its
+			// text stay on one line.
+			var inner strings.Builder
+			r.walkBlocks(&inner, node, src, depth+1)
+			b.WriteString(strings.Repeat("  ", depth))
+			b.WriteString("- ")
+			b.WriteString(strings.TrimSpace(inner.String()))
+			b.WriteString("\n")
+
+		case *ast.FencedCodeBlock, *ast.CodeBlock:
+			b.WriteString(rawLines(c, src))
+			b.WriteString("\n\n")
+
+		case *ast.Blockquote:
+			var inner strings.Builder
+			r.walkBlocks(&inner, node, src, depth)
+			for line := range strings.SplitSeq(strings.TrimSpace(inner.String()), "\n") {
+				b.WriteString("> ")
+				b.WriteString(line)
+				b.WriteString("\n")
+			}
+			b.WriteString("\n")
+
+		case *ast.ThematicBreak:
+			b.WriteString("---\n\n")
+
+		case *ast.HTMLBlock:
+			// Raw HTML in markdown is DROPPED, never echoed — the text-part
+			// counterpart of bluemonday on the HTML side.
+
+		default:
+			// An extension node — a GFM table is the one that matters here.
+			// Its rows are block children holding inline cells, so recursing
+			// as blocks loses the row structure; render each row's cells on
+			// one line instead. Anything else falls back to its inline text
+			// rather than being dropped silently.
+			r.writeExtensionBlock(b, c, src, depth)
 		}
-		return r
-	}, s)
+	}
 }
 
-// unlink rewrites [text](href) as "text (href)".
+// writeExtensionBlock renders a node goldmark's core does not define — in
+// practice a GFM table.
 //
-// The href goes through safeHref, so a relative link is resolved against
-// BaseURL and an unsafe scheme is dropped — the same treatment the HTML part
-// gives it. Without this the text alternative would carry "/board", which is
-// meaningless in a mail client.
-func (r *Renderer) unlink(s string) string {
-	for {
-		open := strings.Index(s, "](")
-		if open == -1 {
-			break
-		}
-		start := strings.LastIndex(s[:open], "[")
-		if start == -1 {
-			break
-		}
-		end := strings.Index(s[open:], ")")
-		if end == -1 {
-			break
-		}
-		end += open
-
-		text := s[start+1 : open]
-		href := s[open+2 : end]
-
-		// Resolve exactly as the HTML part does, so a relative link is not
-		// left dead in the text alternative — mail is read outside the app.
-		if resolved, ok := r.safeHref(href); ok {
-			href = resolved
-		} else {
-			href = ""
-		}
-
-		repl := text
-		if href != "" && href != text {
-			repl = text + " (" + href + ")"
-		}
-		s = s[:start] + repl + s[end+1:]
+// A table's rows are block nodes whose children are inline cells. Recursing
+// through walkBlocks would emit each cell as its own paragraph and lose the
+// row; joining a row's cells with a separator keeps it legible.
+func (r *Renderer) writeExtensionBlock(b *strings.Builder, n ast.Node, src []byte, depth int) {
+	if n.Type() != ast.TypeBlock {
+		b.WriteString(r.inlineText(n, src))
+		return
 	}
-	return s
+
+	// A row-like node: every child is a cell holding inline content.
+	if isRowLike(n) {
+		cells := make([]string, 0, n.ChildCount())
+		for c := n.FirstChild(); c != nil; c = c.NextSibling() {
+			cells = append(cells, r.inlineText(c, src))
+		}
+		b.WriteString(strings.Join(cells, " | "))
+		b.WriteString("\n")
+		return
+	}
+
+	for c := n.FirstChild(); c != nil; c = c.NextSibling() {
+		r.writeExtensionBlock(b, c, src, depth)
+	}
+	if n.Parent() != nil && n.Parent().Type() == ast.TypeDocument {
+		b.WriteString("\n")
+	}
+}
+
+// isRowLike reports whether every child of n is an inline-bearing cell, which
+// is how a GFM table row is shaped.
+func isRowLike(n ast.Node) bool {
+	if n.ChildCount() == 0 {
+		return false
+	}
+	for c := n.FirstChild(); c != nil; c = c.NextSibling() {
+		if c.Type() != ast.TypeBlock || c.ChildCount() == 0 {
+			return false
+		}
+		if c.FirstChild().Type() != ast.TypeInline {
+			return false
+		}
+	}
+	return true
+}
+
+// inlineText flattens inline nodes to plain text.
+//
+// Emphasis markers vanish because the PARSER identified them as emphasis, which
+// is exactly why "5*3*2" and "__init__" survive intact: goldmark does not treat
+// those as emphasis, so there is nothing to remove.
+func (r *Renderer) inlineText(n ast.Node, src []byte) string {
+	var b strings.Builder
+	r.writeInline(&b, n, src)
+	return strings.TrimSpace(b.String())
+}
+
+func (r *Renderer) writeInline(b *strings.Builder, n ast.Node, src []byte) {
+	for c := n.FirstChild(); c != nil; c = c.NextSibling() {
+		switch node := c.(type) {
+		case *ast.Text:
+			b.Write(node.Segment.Value(src))
+			if node.SoftLineBreak() || node.HardLineBreak() {
+				b.WriteString(" ")
+			}
+
+		case *ast.String:
+			b.Write(node.Value)
+
+		case *ast.Link:
+			label := inlineOnly(node, src)
+			b.WriteString(label)
+			// The parser hands over the whole destination, so a URL containing
+			// parens survives — the case the old index arithmetic truncated.
+			if href, ok := r.safeHref(string(node.Destination)); ok && href != label {
+				b.WriteString(" (")
+				b.WriteString(href)
+				b.WriteString(")")
+			}
+
+		case *ast.AutoLink:
+			if href, ok := r.safeHref(string(node.URL(src))); ok {
+				b.WriteString(href)
+			}
+
+		case *ast.Image:
+			// An image has no plain-text equivalent beyond its alt text.
+			b.WriteString(inlineOnly(node, src))
+
+		case *ast.RawHTML:
+			// Dropped, as above.
+
+		default:
+			// CodeSpan, Emphasis and anything else: keep the words, drop the
+			// markers.
+			r.writeInline(b, c, src)
+		}
+	}
+}
+
+// inlineOnly renders a node's children without following links, used for link
+// and image labels.
+func inlineOnly(n ast.Node, src []byte) string {
+	var b strings.Builder
+	for c := n.FirstChild(); c != nil; c = c.NextSibling() {
+		switch node := c.(type) {
+		case *ast.Text:
+			b.Write(node.Segment.Value(src))
+		case *ast.String:
+			b.Write(node.Value)
+		default:
+			b.WriteString(inlineOnly(c, src))
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// rawLines returns a code block's literal content.
+func rawLines(n ast.Node, src []byte) string {
+	var b strings.Builder
+	lines := n.Lines()
+	for i := range lines.Len() {
+		seg := lines.At(i)
+		b.Write(seg.Value(src))
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // displayWidth counts runes, so an underline under a non-ASCII heading is not

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -75,14 +76,42 @@ func (c OutboxConfig) withDefaults() OutboxConfig {
 //
 // Delivery is BEST-EFFORT and messages are held only in memory — see the
 // package doc for exactly what that costs on restart.
+//
+// # One consumer, so a bad message delays the good ones
+//
+// The worker is a single goroutine and a retry sleeps that goroutine, so an
+// undeliverable message blocks everything behind it for the length of its
+// backoff ladder — roughly 30 seconds at the defaults below, and N x 30s for a
+// burst of them. A typo'd recipient address in an entity property is enough to
+// do it, and a long enough stall fills the buffer so [ErrOutboxFull] starts
+// rejecting messages that would have delivered fine.
+//
+// Fixing it properly means classifying permanent failures (5xx, invalid
+// recipient) separately from transient ones, or requeueing with a deadline
+// instead of sleeping the consumer. Both are queue semantics that belong with
+// the durable backend (IDEA-WIJ2H1) rather than bolted onto an in-memory
+// buffer; until then this is a known cost, not an oversight.
 type Outbox struct {
 	sender Sender
 	cfg    OutboxConfig
 
 	ch chan Message
 
+	// ctx/cancel are created in NewOutbox, NOT in Start.
+	//
+	// Creating them in Start would mean Stop reads a field Start writes, and
+	// two different sync.Once values establish no happens-before between each
+	// other — a genuine data race (the detector fires on it), and worse, Stop
+	// could observe a nil cancel while a worker is running, take the
+	// "never started" path, and leave the goroutine alive for the life of the
+	// process. Constructing here removes the shared write entirely.
+	ctx    context.Context
 	cancel context.CancelFunc
 	done   chan struct{}
+
+	// started records whether Start ever ran, so Stop can distinguish "no
+	// worker to wait for" from "worker running" without racing on cancel.
+	started atomic.Bool
 
 	startOnce sync.Once
 	stopOnce  sync.Once
@@ -98,24 +127,27 @@ func NewOutbox(sender Sender, cfg OutboxConfig) (*Outbox, error) {
 		return nil, errors.New("mail: nil sender")
 	}
 	c := cfg.withDefaults()
+
+	// A detached lifetime context, deliberately not derived from any request
+	// ctx: the worker outlives the operation that enqueued a message, and
+	// tying it to a request would cancel delivery when that request finished.
+	ctx, cancel := context.WithCancel(context.Background())
+
 	return &Outbox{
 		sender: sender,
 		cfg:    c,
 		ch:     make(chan Message, c.Capacity),
+		ctx:    ctx,
+		cancel: cancel,
 		done:   make(chan struct{}),
 	}, nil
 }
 
-// Start launches the worker. Idempotent.
-//
-// The worker runs on a DETACHED lifetime context, deliberately not derived from
-// any request context: it outlives the operation that enqueued a message, and
-// tying it to a request would cancel delivery the moment that request finished.
+// Start launches the worker. Idempotent, and safe to race against Stop.
 func (o *Outbox) Start() {
 	o.startOnce.Do(func() {
-		ctx, cancel := context.WithCancel(context.Background())
-		o.cancel = cancel
-		go o.run(ctx)
+		o.started.Store(true)
+		go o.run(o.ctx)
 	})
 }
 
@@ -144,18 +176,31 @@ func (o *Outbox) Len() int { return len(o.ch) }
 // Idempotent and nil-safe, so Close can call it unconditionally on an Outbox
 // that was never started.
 //
-// On timeout it returns having abandoned in-flight work — the messages are
-// lost, which is what best-effort means. Better that than hanging a shutdown.
+// On timeout it returns having abandoned in-flight work. Be precise about what
+// that costs: the queued messages are lost (which is what best-effort means),
+// AND the worker goroutine is still running, holding whatever connection its
+// current send opened, until that send returns on its own. Stop does not and
+// cannot kill it.
+//
+// This stays an edge case only because [Sender] requires implementations to
+// honour ctx — a transport that ignores cancellation makes it the norm, and in
+// multi-tenant deployments, where Close runs on every tenant eviction against a
+// shared provider, those abandoned connections accumulate. Hanging shutdown
+// instead would be worse, so the bound stays and the cost is written down.
 func (o *Outbox) Stop() {
 	if o == nil {
 		return
 	}
 	o.stopOnce.Do(func() {
-		if o.cancel == nil {
-			// Never started: nothing to wait for.
+		// Cancel unconditionally: it is safe on a never-started outbox and
+		// makes a Start racing with Stop a no-op rather than a leak (the
+		// worker sees an already-cancelled context and exits immediately).
+		o.cancel()
+
+		if !o.started.Load() {
+			// No worker was ever launched, so there is nothing to wait for.
 			return
 		}
-		o.cancel()
 		select {
 		case <-o.done:
 		case <-time.After(o.cfg.DrainTimeout):
