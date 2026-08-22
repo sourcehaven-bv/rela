@@ -10,9 +10,13 @@ status: backlog
 
 ## Problem
 
-A document render is a GET that renders markdown. Its Lua script nonetheless has
-the **full write surface**: `rela.create_entity`, `update_entity`,
-`delete_entity`, `create_relation`, `delete_relation`, `write_file`.
+A document render is a GET that renders markdown. Its Lua script nonetheless
+holds the **graph-write surface**: `rela.create_entity`, `update_entity`,
+`delete_entity`, `create_relation`, `delete_relation`.
+
+(`rela.write_file` was a sixth binding here until PR #1385 / TKT-YH52OM gated it
+behind a declared `capabilities:` block, defaulting to off for documents. It is
+now OUT of this ticket's scope — see RR-PXWF.)
 
 `documentService` renders via `App.luaWriteDeps()`, and `runDocumentScript`
 (`list_document.go:85`) calls `NewWriterRuntime` -> `lua.NewWriter` ->
@@ -111,12 +115,10 @@ before implementation, not while making the diff uniform.
 
 ## Design review findings
 
-- **RR-PXWF (significant)** — `write_file` is categorically different from the
-five graph mutations: it is filesystem-only, confined to `output/`, path
-validated, produces no audit row, and does not make a render non-idempotent
-*with respect to the graph*. The caching rationale does not transfer. Scope it
-out with a reason, or argue its removal on its own terms — do not let an
-implementer delete all six because they share a function.
+- **RR-PXWF (addressed)** — `write_file` is categorically different from the
+five graph mutations, and PR #1385 (TKT-YH52OM) has now scoped it out
+independently: it is capability-gated and off by default for documents. This
+ticket covers the five graph bindings only.
 - **RR-PXLIST (significant)** — see above.
 - **RR-PXSTEP1 (minor)** — step 1 is safe only because `allowWrites` is
 currently true wherever an elevated handle exists, a property step 2
@@ -144,8 +146,17 @@ a bug fix (writes on GET were never intended — `ExecuteDocument`'s godoc
 describes the script's output as the rendered markdown and says nothing about
 mutation) or a breaking change warranting a deprecation path.
 
-`rela.write_file` deserves separate thought: a render writing a side file is the
-most plausible legitimate use, and it is not a graph mutation.
+**`write_file` is no longer this ticket's problem.** PR #1385 (TKT-YH52OM) moved
+it behind `if r.caps.WriteFile` inside `registerWriteBindings` and gave
+`DocumentConfig` a `capabilities:` block that grants nothing by default. A
+document render therefore already cannot write a file unless the operator asked
+for it. Depend on that; do not re-decide it here.
+
+That PR also sharpens this ticket's premise from another direction: it documents
+that a plain `lua.NewReader` held `http`, `ai` and `secrets`, so a document
+render was an exfiltration surface with no graph writes involved at all. Orthogonal
+to the gap here, but it means "a render is a read surface" is now an enforced
+posture rather than an aspiration.
 
 ## Non-goals
 
