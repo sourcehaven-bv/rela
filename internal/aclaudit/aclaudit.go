@@ -133,6 +133,13 @@ type MetamodelReader interface {
 	// EnumOptions returns the allowed values for an enum field on type t, and
 	// false if the field is absent or not an enum.
 	EnumOptions(t, field string) ([]string, bool)
+	// HasWorld reports whether name is a DECLARED world. The implicit
+	// default world is not declared and reports false; callers that accept
+	// it must say so themselves (see checkUndeclaredWorlds).
+	HasWorld(name string) bool
+	// HasPointer reports whether entity type t declares the content state
+	// named pointer.
+	HasPointer(t, pointer string) bool
 }
 
 // PermissionConsumer reports permissions referenced OUTSIDE acl.yaml. The
@@ -169,6 +176,14 @@ type PermissionConsumer interface {
 // asserting config is dead on incomplete information. This deliberately
 // differs from meta's nil handling, where a missing metamodel can only make a
 // check unformable, never wrong.
+// PRECONDITION: p must have passed [acl.Policy.Validate] (which
+// [acl.LoadPolicy] runs). World grants are read from RoleDef.Worlds, which
+// only the validating load populates by splitting `read: [world:X]` out of
+// Read — so on an unvalidated policy B10 would examine nothing and B1 would
+// instead report the world token as an undeclared ENTITY TYPE, which is
+// misleading advice at High severity. checkUndeclaredWorlds re-scans Read
+// for a residual world prefix so that mistake is diagnosed correctly rather
+// than merely undetected, but callers should validate first regardless.
 func Audit(p *acl.Policy, meta MetamodelReader, perms PermissionConsumer) []Finding {
 	if p == nil {
 		return nil
@@ -238,8 +253,22 @@ func permissionGranted(p *acl.Policy, perm string) bool {
 // keeps its own narrow view of the policy — but the two must agree, which
 // is what TestGrantEntityType_MatchesACLSplit pins.
 func grantEntityType(entry string) string {
-	typeName, _, _ := strings.Cut(entry, "@")
+	typeName, _, _ := splitStateGrant(entry)
 	return typeName
+}
+
+// splitStateGrant splits a `type@pointer` write grant into its parts,
+// reporting isState=false for a plain type grant.
+//
+// Mirrors internal/acl's parseStateGrant, minus the grammar validation —
+// acl rejects a malformed pointer at policy load, so by the time the audit
+// runs the only question left is whether the metamodel declares it.
+func splitStateGrant(entry string) (typeName, pointer string, isState bool) {
+	typeName, pointer, isState = strings.Cut(entry, "@")
+	if !isState {
+		return entry, "", false
+	}
+	return typeName, pointer, true
 }
 
 // verbLists returns the four grant lists of a role for iteration.

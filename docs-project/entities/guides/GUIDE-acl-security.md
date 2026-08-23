@@ -144,6 +144,11 @@ The audit reports severity-ranked findings across two tiers:
 - **Metamodel cross-check** — grants, `membership_relation`,
   `role_relations`, `inherit_roles_through`, `user_entity_type`, field,
   and option references that the schema doesn't declare (silent drift).
+  This includes the content-state grant forms: a `read: [world:X]` grant
+  naming a world no `worlds:` block declares, and a `type@pointer` write
+  grant naming a content state the type doesn't declare. Both fail
+  *closed* at runtime — the grant simply matches nothing — so without
+  the audit the only symptom is a denial nobody can explain.
 
 ```console
 $ rela acl audit

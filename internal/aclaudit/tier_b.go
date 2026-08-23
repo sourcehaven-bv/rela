@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 )
@@ -20,6 +21,154 @@ func tierB(p *acl.Policy, m MetamodelReader) []Finding {
 	f = append(f, checkUndeclaredOptions(p, m)...)        // B5
 	f = append(f, checkUserEntityTypeDeclared(p, m)...)   // B7
 	f = append(f, checkCeilingsAgainstMetamodel(p, m)...) // B8 / B9
+	f = append(f, checkUndeclaredWorlds(p, m)...)         // B10
+	f = append(f, checkUndeclaredPointers(p, m)...)       // B11
+	return f
+}
+
+// B10 — a `read: [world:X]` grant names a world the metamodel does not
+// declare, so it grants access to nothing.
+//
+// This is the cross-file half of the world grant syntax. internal/acl
+// validates the SPELLING at load (non-empty, no glob) but structurally
+// cannot check EXISTENCE — arch-lint forbids it a metamodel dependency, so
+// a world name is just a string there. The runtime is already fail-closed
+// on an unknown world (worlds.Compiled.Lookup returns ok=false), which
+// means the failure mode is a silent denial rather than a leak: exactly the
+// shape an operator needs a linter to explain.
+//
+// The implicit DEFAULT world is accepted without being declared — it is
+// total, always exists, and `read: [world:default]` is a legal way to spell
+// what a bare read grant already means.
+func checkUndeclaredWorlds(p *acl.Policy, m MetamodelReader) []Finding {
+	var f []Finding
+	for _, name := range sortedRoleNames(p) {
+		role := p.Roles[name]
+		seen := map[string]bool{}
+		// Worlds is populated only by the validating load. A caller that
+		// skipped Validate still has its world tokens inline in Read, where
+		// B1 would report them as undeclared ENTITY TYPES — misleading
+		// advice at High severity. Scanning both means the diagnosis is
+		// right either way. Audit's godoc still states the precondition.
+		worlds := role.Worlds
+		for _, entry := range role.Read {
+			if w, found := strings.CutPrefix(entry, acl.WorldGrantPrefix); found {
+				worlds = append(worlds, strings.TrimSpace(w))
+			}
+		}
+		for _, world := range worlds {
+			if world == acl.DefaultWorldName || m.HasWorld(world) || seen[world] {
+				continue
+			}
+			seen[world] = true
+			if f2, isCaseVariant := defaultWorldCaseVariant(name, world); isCaseVariant {
+				f = append(f, f2)
+				continue
+			}
+			f = append(f, Finding{
+				Rule: "B10-undeclared-world", Severity: High, Subject: name,
+				Detail: fmt.Sprintf("role %q grants read on world %q which the metamodel does not "+
+					"declare; the grant matches nothing and every read in that world is denied",
+					name, world),
+				Fix: fmt.Sprintf("declare world %q under `worlds:` in schema.yaml, or fix the "+
+					"`read: [world:%s]` grant (check for a typo)", world, world),
+			})
+		}
+	}
+	return f
+}
+
+// defaultWorldCaseVariant reports a world grant that spells the default
+// world with the wrong casing, and returns the finding that explains it.
+//
+// This case needs its own message because the ordinary B10 remedy is
+// IMPOSSIBLE to follow: the metamodel loader rejects any world whose name
+// case-folds to "default" as reserved, so telling the operator to declare
+// `Default` sends them to a schema that will refuse to load. The grant is
+// genuinely dead — roleGrantsWorldRead compares case-sensitively — so
+// flagging it is right; only the fix differs.
+func defaultWorldCaseVariant(role, world string) (Finding, bool) {
+	if world == acl.DefaultWorldName || !strings.EqualFold(world, acl.DefaultWorldName) {
+		return Finding{}, false
+	}
+	return Finding{
+		Rule: "B10-undeclared-world", Severity: High, Subject: role,
+		Detail: fmt.Sprintf("role %q grants read on world %q; the default world is spelled %q "+
+			"in lowercase and cannot be redeclared under any other casing (the schema "+
+			"loader rejects the name as reserved), so this grant matches nothing",
+			role, world, acl.DefaultWorldName),
+		Fix: fmt.Sprintf("write `read: [world:%s]` in lowercase, or drop the grant entirely "+
+			"— an ordinary read grant already covers the default world",
+			acl.DefaultWorldName),
+	}, true
+}
+
+// B11 — a `type@pointer` write grant names a content state the type does
+// not declare, so it grants write access to nothing.
+//
+// Same division of labor as B10: internal/acl parses the pointer NAME
+// against the codec grammar at load, but only the metamodel knows which
+// pointers a type actually declares. A grant on an undeclared state is
+// fail-closed at runtime (no state row will ever match it), so again the
+// symptom is a denial nobody can explain without this finding.
+//
+// Skips a type the metamodel does not declare at all — B1 reports that, and
+// reporting both would give one mistake two findings with different fixes.
+func checkUndeclaredPointers(p *acl.Policy, m MetamodelReader) []Finding {
+	var f []Finding
+	for _, name := range sortedRoleNames(p) {
+		role := p.Roles[name]
+		seen := map[string]bool{}
+		for _, verb := range []string{"create", "update", "delete"} {
+			for _, entry := range verbLists(role)[verb] {
+				typeName, pointer, isState := splitStateGrant(entry)
+				if !isState || seen[entry] {
+					continue
+				}
+				// The type WILDCARD cannot carry a state. `*` ranges over
+				// types and grants each one's DEFAULT state
+				// (acl.GrantsVerbOnState honors it only for the zero
+				// pointer), so `*@draft` matches an entity whose type is
+				// literally named "*" and nothing else. It grants nothing,
+				// loads clean, and would otherwise be reported by NOTHING:
+				// B1 skips "*" as a wildcard and the HasEntityType gate
+				// below skips it as undeclared.
+				if typeName == "*" {
+					seen[entry] = true
+					f = append(f, Finding{
+						Rule: "B11-undeclared-pointer", Severity: High, Subject: name,
+						Detail: fmt.Sprintf("role %q grants %s on %q, but %q ranges over entity "+
+							"TYPES and only ever grants each type's default state; it never "+
+							"addresses a named content state, so this grant matches nothing",
+							name, verb, entry, "*"),
+						Fix: fmt.Sprintf("name each type explicitly (e.g. `page@%s`), or drop "+
+							"the `@%s` to grant the default state of every type",
+							pointer, pointer),
+					})
+					continue
+				}
+				if !m.HasEntityType(typeName) {
+					continue
+				}
+				if m.HasPointer(typeName, pointer) {
+					continue
+				}
+				seen[entry] = true
+				f = append(f, Finding{
+					Rule: "B11-undeclared-pointer", Severity: High, Subject: name,
+					Detail: fmt.Sprintf("role %q grants %s on %q but entity type %q declares no "+
+						"content state %q; the grant matches nothing",
+						name, verb, entry, typeName, pointer),
+					Fix: fmt.Sprintf("fix the %s grant (check for a typo), or declare %q under "+
+						"the `pointers:` block of entity type %q in schema.yaml — note that "+
+						"adding a `pointers:` block to a type that has none makes every entity "+
+						"of that type subject to world resolution, so a plain `%s: [%s]` grant "+
+						"is the likelier fix",
+						verb, pointer, typeName, verb, typeName),
+				})
+			}
+		}
+	}
 	return f
 }
 
@@ -32,6 +181,14 @@ func checkUndeclaredEntityTypes(p *acl.Policy, m MetamodelReader) []Finding {
 		role := p.Roles[name]
 		seen := map[string]bool{}
 		flag := func(verb, entry string) {
+			// A world token is never an entity type. It should already have
+			// been split out of Read by the validating load; if the caller
+			// skipped Validate it is still here, and reporting it as an
+			// undeclared TYPE would send the operator to declare
+			// `world:published` in `entities:`. B10 diagnoses it properly.
+			if strings.HasPrefix(entry, acl.WorldGrantPrefix) {
+				return
+			}
 			// Check the TYPE half. A write grant may be state-shaped
 			// (`page@draft`, TKT-DN37J2); the type is what the metamodel
 			// declares, and reporting the joined string as an undeclared

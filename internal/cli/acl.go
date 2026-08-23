@@ -167,6 +167,42 @@ func (r *metamodelReader) GetRelation(name string) (aclaudit.RelationView, bool)
 	return aclaudit.RelationView{From: def.From}, true
 }
 
+// HasWorld reports whether the metamodel declares a world by this name.
+//
+// The implicit DEFAULT world is NOT declared and therefore reports false —
+// the audit special-cases that name itself, which keeps "did the operator
+// write this world in schema.yaml" a different question from "is this world
+// usable". Case-sensitive, like every other name lookup; the loader rejects
+// a declared world named "default" case-INSENSITIVELY, so no declared world
+// can shadow the implicit one under any spelling.
+//
+// Reads the exported map rather than going through a Metamodel method: this
+// adapter is the only consumer, and *Metamodel is already at its plimsoll
+// exported-method cap.
+func (r *metamodelReader) HasWorld(name string) bool {
+	if r.m == nil {
+		return false
+	}
+	_, ok := r.m.Worlds[name]
+	return ok
+}
+
+// HasPointer reports whether entity type t declares the content state named
+// pointer. Resolves aliases via GetEntityDef, so a grant written against a
+// type alias answers about the canonical type. A type with no `pointers:`
+// block declares none, including the empty one.
+func (r *metamodelReader) HasPointer(t, pointer string) bool {
+	if r.m == nil {
+		return false
+	}
+	def, ok := r.m.GetEntityDef(t)
+	if !ok {
+		return false
+	}
+	_, declared := def.Pointers[pointer]
+	return declared
+}
+
 func (r *metamodelReader) HasField(t, field string) bool {
 	if r.m == nil {
 		return false
