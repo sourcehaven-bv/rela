@@ -281,6 +281,67 @@ the ENGINE refreshes the set before honouring a pending retry, because it will
 not act on stale liveness. The retry mechanism does not consult the producer, and
 the producer never learns that a retry is why it was called.
 
+### One run per occurrence: the idempotency key
+
+A daily task must produce **at most one run per day**, and a retry must be an
+attempt at *that day's* run rather than an extra one. Nothing in the current
+model states this, and the gap becomes visible precisely because of the bounded
+retry above.
+
+**The hole.** `IsDue` for `dayKind` is
+`truncateToDay(now) != truncateToDay(lastRun)` (`config.go:67-69`), and
+`Tasks[name]` is stamped **only on success** (`scheduler.go:325`). A task that
+fails all Monday never stamps, so at midnight it is due again — correctly, as a
+fresh run for Tuesday. But its ladder is still live, so two things now want to
+fire: the 2h-rung retry of *Monday's* digest and *Tuesday's* scheduled run. Two
+mails.
+
+Today this is masked: a pending `NextRetry` suppresses the ordinary schedule
+entirely (`:234-240`), so the retry wins and Tuesday is silently skipped — one
+mail, for the wrong day. Once giving up clears the ladder, the suppression goes
+and the overlap is exposed.
+
+**The fix is to key runs by OCCURRENCE, not to tune the ladder.** The occurrence
+is the natural idempotency key:
+
+```
+daily-digest#PERS-JV@2026-08-23
+```
+
+"Has this already run?" becomes a state lookup instead of an inference from
+timestamps, and the retry semantics fall out for free: a retry targets the SAME
+occurrence key, so it cannot produce a second send. It also settles the give-up
+case — yesterday's occurrence is abandoned, and there is no mechanism by which it
+could run today, because today is a different key.
+
+Two open questions collapse into this:
+
+- **New members** (was open question 2). "Fire immediately or wait?" becomes
+  "does today's occurrence exist for this user?" A user added at 14:00 has no
+  `@2026-08-23` record, so they get today's digest once and the normal cadence
+  after. The double-send disappears without a special case.
+- **Restart mid-pass.** A restart currently loses the in-flight pass; with
+  occurrence keys the users already completed today are recorded and are not
+  re-sent.
+
+**Retain the last occurrence, not the history.** Keeping every occurrence would
+grow state without bound — 200 users x 365 days is 73k entries in a JSON file
+rewritten on every `saveState`. Only the most recent occurrence per `TaskID` is
+needed to answer "is this occurrence done?", so state stays at one entry per
+user, exactly as today.
+
+That makes this a change of MEANING to an existing field rather than a new table:
+`Tasks[id]` stores the last completed **occurrence** rather than a bare
+timestamp. Which in turn means it is a state-format change, subject to the same
+compatibility constraint as `TaskID` (criterion 9) — an old file's timestamp must
+map onto an occurrence without resetting anything.
+
+**Interval schedules need a defined occurrence.** `dayKind` and `weekdayKind`
+have obvious boundaries; `every: 30m` does not. Either derive the occurrence from
+the schedule's slot boundary, or treat interval tasks as having no idempotency
+key and keep today's behaviour for them. Decide it rather than letting
+`truncateToDay` imply an answer for a schedule it was never meant to describe.
+
 ### The producer does not know about retries
 
 Retry is **engine state**, not producer state. The producer answers exactly one
@@ -396,11 +457,11 @@ fields.
    minutes. Both are bounded and proportionate, but the query cost should be
    logged so an operator can see it.
 3. **New members run immediately.** A user with no `Tasks` entry hits the "first
-   run, executing immediately" branch (`:264-268`). Someone added at 14:00 gets a
-   digest at 14:00 and another at the normal hour. Acceptable for a digest, wrong
-   for a task with side effects — a derived task's first occurrence should
-   probably inherit the declared schedule instead of firing on sight. Decide it,
-   do not inherit it.
+   run, executing immediately" branch (`:264-268`), so someone added at 14:00
+   would get a digest at 14:00 and another at the normal hour. Resolved by the
+   occurrence key: they have no record for today's occurrence, so they get it
+   once. Listed here because the fix is the occurrence key, not a special case in
+   the expansion.
 4. **Identity encoding.** A derived `TaskID` must encode stably (same user →
    same key across restarts, or state is lost) and must not collide with a
    declared key. `TaskID` makes the distinction structural; the encoding is the
@@ -430,8 +491,10 @@ wall-clock budget is more honest for a scheduler (the thing that actually breaks
 is the schedule, not the count), but it makes which users get skipped depend on
 timing.
 
-2. **First run of a newly-matching user** — fire immediately (current
-"unrecorded task" behaviour) or wait for the declared schedule? See cost 2 above.
+2. **Occurrence for interval schedules.** `every: 30m` has no natural
+occurrence boundary — derive one from the slot, or exempt interval tasks from the
+idempotency key. (The newly-matching-user question is resolved by the occurrence
+key; see above.)
 
 **Not in scope — a missing email address.** Earlier listed here as
 "unresolvable users". It does not belong to this ticket at all: `for_each`
@@ -498,6 +561,11 @@ naming the task.
 15. A task that gave up still runs at its next scheduled occurrence — giving up
 ends the ladder, never the task. Pinned by a test: fail past the bound, advance
 the clock to the next occurrence, assert it runs.
+16. A given occurrence runs at most once: a retry targets the same occurrence and
+cannot produce a second execution, and a task whose ladder is still live when the
+next occurrence arrives does not run both.
+17. A user added to the selection mid-day receives that day's occurrence once,
+not twice, and is on the ordinary cadence thereafter.
 
 ## Risks
 
@@ -520,6 +588,10 @@ JSON risks resetting every in-flight ladder on upgrade; criterion 9.
 - **Bounded retry read as "task disabled"** — if giving up were taken to mean
 abandoning the task, a two-hour outage would permanently kill a daily digest.
 Criterion 15 exists to prevent that reading from being implemented.
+- **Duplicate daily mail** — clearing the ladder on give-up removes the
+suppression that currently hides the retry/next-occurrence overlap. Criterion 16
+is what replaces it; landing bounded retry WITHOUT the occurrence key would
+introduce the double-send.
 - **Cross-producer pruning** — a shared live set would let one producer delete
 another's entries; criterion 10.
 - **Mass re-send after a store blip** — a producer error misread as "no tasks"
