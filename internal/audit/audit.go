@@ -77,6 +77,19 @@ const (
 	// showing who purged what and why. Isolate with `op == "purge-version"`.
 	OpPurgeVersion = "purge-version"
 
+	// OpCopyState records one invocation of a declared COPY DEFINITION —
+	// a mapped write of one entity content state (face) into another
+	// (TKT-C1XUA8). Subject names the TARGET face; Summary carries the
+	// definition name, the source and target faces, and whether the target
+	// was created.
+	//
+	// Shaped after OpPurgeVersion: it records WHAT was done to WHICH
+	// subject and never the copied content. Unlike purge, it does NOT
+	// bypass the Manager — a copy IS an entity write, so it goes through
+	// the same audit hook that reads attribution from ctx and cannot be
+	// forged by a caller.
+	OpCopyState = "copy-state"
+
 	// OpDataMigration records one applied data-migration file (TKT-0C57FS):
 	// a bulk store-level rewrite that deliberately bypasses the
 	// entitymanager (so no per-entity audit records exist for it). Summary

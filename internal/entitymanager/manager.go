@@ -223,6 +223,34 @@ type Deps struct {
 	// gate is the "forgotten wiring must not become an ACL bypass" failure
 	// (RR-X9NVHI), and it matches how ACL and Audit are already handled.
 	FieldGate FieldWriteGate
+
+	// CopyVisibility is the CALLER'S read gate, used only by CROSS-ENTITY
+	// copies (TKT-C1XUA8, design doc §9.2). Nil disables the gating, which is
+	// correct for a deployment with no ACL — every other read there is raw
+	// too — and is what the CLI passes.
+	//
+	// Deliberately NOT used by same-entity copies: those run elevated,
+	// because hidden fields travel with the entity and the same policy
+	// governs them on the target face. Routing them through this gate would
+	// be the redacted-read-feeds-a-write bug, which destroys the fields the
+	// principal could not see.
+	CopyVisibility CopyReader
+
+	// CopyGuard evaluates a copy definition's `guard:` permission against the
+	// SOURCE entity, so "the owner of THIS doc may publish it" works without
+	// a global grant. Nil makes a GUARDED copy fail closed, matching the
+	// statemachine's nil-guard rule; an unguarded copy is unaffected.
+	CopyGuard CopyGuard
+
+	// CopyReadGate answers "may this principal READ the copy's source at
+	// all", before either half of the elevation split runs (TKT-C1XUA8).
+	//
+	// Required in spirit and nil-tolerant in practice for the same reason
+	// every other gate here is: a deployment with no acl.yaml has no gate to
+	// consult, and every other read on it is ungated too. What it must never
+	// be is absent on a deployment that HAS a policy — elevation decides
+	// which fields travel, not whether the principal may touch the entity.
+	CopyReadGate CopyReadGate
 }
 
 // FieldWriteGate answers whether the ctx principal may write the named
@@ -273,6 +301,33 @@ func (AllowAllFieldGate) CheckFieldWrite(
 // compiled state machines: enforce an update (old→new) and a create's entry
 // value. Defined at the call site (CLAUDE.md consumer-side interfaces);
 // [*statemachine.Set] satisfies it.
+// CopyReader is the caller-scoped read a CROSS-ENTITY copy sees. Narrow by
+// design: the copy needs one lookup, and taking the whole visibility.Reader
+// would bind this package to methods it never calls.
+//
+// Get returns (nil, false, nil) indistinguishably for denied, missing and
+// type-mismatched — whether an entity exists is a genuine secret.
+type CopyReader interface {
+	Get(ctx context.Context, entityType, id string) (*entity.Entity, bool, error)
+}
+
+// CopyGuard answers a copy definition's `guard:` permission for one subject.
+//
+// The same shape as statemachine.Guard, and satisfied by the same wiring —
+// the point of reusing the vocabulary is that the two cannot drift into
+// asking different questions. Subject is the bare entity id, matching the
+// conferral model: identity-scoped roles confer on the entity in every
+// world, and the face-granularity already lives in the write grant.
+// CopyReadGate is the row-level read verdict for a copy's SOURCE. Narrow by
+// design; satisfied by the same acl.Request the rest of the read path uses.
+type CopyReadGate interface {
+	PermitsRead(ctx context.Context, entityType, entityID string) (bool, error)
+}
+
+type CopyGuard interface {
+	HoldsPermission(ctx context.Context, entityID, permission string) bool
+}
+
 type TransitionEnforcer interface {
 	EnforceUpdate(
 		ctx context.Context, old, updated *entity.Entity,

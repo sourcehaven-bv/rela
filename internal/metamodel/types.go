@@ -1,6 +1,8 @@
 package metamodel
 
 import (
+	"errors"
+	"fmt"
 	"regexp"
 	"time"
 
@@ -54,6 +56,11 @@ type Metamodel struct {
 	// ([DefaultWorldName]) because that world is implicit and total, so
 	// a declaration under that name could only shadow or contradict it.
 	Worlds map[string]WorldDef `yaml:"worlds,omitempty"`
+
+	// Copies declares named copy definitions — mapped writes of one content
+	// state into another (TKT-C1XUA8). See [CopyDef]; a request invokes one
+	// BY NAME and can never submit its own mapping.
+	Copies map[string]CopyDef `yaml:"copies,omitempty"`
 
 	// Computed lookups (not from YAML)
 	aliasMap      map[string]string // alias -> canonical name
@@ -570,6 +577,106 @@ func (t TransformStep) Kind() string {
 //
 // The mirror of this in internal/transform is transform.Def; the metamodel keeps
 // its own YAML-tagged type so internal/transform need not be imported here.
+// CopyDef declares one named COPY DEFINITION: a mapped write of one entity
+// content state (face) into another (design doc §9.1, TKT-C1XUA8).
+//
+// A request may only invoke a definition BY NAME — never submit an ad-hoc
+// mapping. That is the transforms-registry precedent and it is what keeps
+// the guard system meaningful: if a caller could describe an arbitrary copy,
+// every guard would be advisory.
+//
+// Two shapes, and the difference is a security boundary (§9.2):
+//
+//   - SAME-ENTITY (`from: page@draft`, `to: page@published`) — promote and
+//     revise. Runs ELEVATED: hidden fields travel with the entity, the
+//     principal never sees them, and the same policy governs them on the
+//     target face. Identity preserved, so policy follows.
+//   - CROSS-ENTITY (`from: ticket`, `to: new ticket`) — spawn-a-follow-up.
+//     Reads through the CALLER'S visibility gate, so only fields they may
+//     read carry. An elevated cross-entity copy would launder unreadable
+//     fields into an entity with a different audience.
+type CopyDef struct {
+	// From and To address a face as `type` or `type@pointer`. A bare type on
+	// both sides with `to` prefixed `new ` is the cross-entity form.
+	From string `yaml:"from"`
+	To   string `yaml:"to"`
+
+	// Fields maps target property -> source expression. The literal string
+	// "all" in AllFields copies every declared property; the two are
+	// mutually exclusive.
+	//
+	// Deliberately dumb (§9.1): field selection, rename, and the existing
+	// {{...}} interpolation grammar. No expressions, no conditionals — the
+	// same slippery slope world templates refused, with the same answer.
+	Fields map[string]string `yaml:"fields,omitempty"`
+
+	// AllFields is `fields: all` — the full-replace promote case. Rejected
+	// at load on a CROSS-ENTITY copy: that copy reads through the caller's
+	// gate, so a whole-entity replace would write a REDACTED entity, which
+	// is the read-modify-write failure the codebase forbids everywhere.
+	AllFields bool `yaml:"-"`
+
+	// Relations maps a relation type to `merge` (add missing) or `replace`
+	// (swap the target face's edges of that type). An omitted type is not
+	// copied — the safe default, since copying a role-conferring edge grants
+	// roles on the target.
+	Relations map[string]string `yaml:"relations,omitempty"`
+
+	// Guard gates the copy. Reuses the STATEMACHINE's vocabulary — the
+	// `guard:` permission (subject-aware, via HoldsPermissionForEntity) and
+	// a `when:` predicate — rather than acl.yaml's `requires_permission`,
+	// which is the delegate-X gate on role-relation writes and is checked
+	// globally. "The owner of THIS doc may publish it" needs the former.
+	Guard CopyGuard `yaml:"guard,omitempty"`
+}
+
+// CopyGuard is a copy definition's authorization, sharing the statemachine's
+// declaration vocabulary (§9.1: shared guard machinery, separate declaration
+// — a copy is not a property change).
+type CopyGuard struct {
+	// Permission is an ACL permission name checked against the SOURCE entity
+	// via HoldsPermissionForEntity, so a role conferred by an ownership
+	// relation satisfies it without a global grant.
+	Permission string `yaml:"permission,omitempty"`
+
+	// When is an internal/predicate expression evaluated against the source
+	// face. False refuses the copy (422), matching a transition precondition.
+	When string `yaml:"when,omitempty"`
+}
+
+// UnmarshalYAML accepts `fields: all` as a scalar alongside the mapping form.
+func (c *CopyDef) UnmarshalYAML(unmarshal func(any) error) error {
+	// Alias avoids infinite recursion into this method.
+	type raw struct {
+		From      string            `yaml:"from"`
+		To        string            `yaml:"to"`
+		Fields    any               `yaml:"fields,omitempty"`
+		Relations map[string]string `yaml:"relations,omitempty"`
+		Guard     CopyGuard         `yaml:"guard,omitempty"`
+	}
+	var r raw
+	if err := unmarshal(&r); err != nil {
+		return err
+	}
+	c.From, c.To, c.Relations, c.Guard = r.From, r.To, r.Relations, r.Guard
+	switch f := r.Fields.(type) {
+	case nil:
+	case string:
+		if f != "all" {
+			return fmt.Errorf("copy: fields: %q is not valid — use a mapping, or the literal \"all\"", f)
+		}
+		c.AllFields = true
+	case map[string]any:
+		c.Fields = make(map[string]string, len(f))
+		for k, v := range f {
+			c.Fields[k] = fmt.Sprint(v)
+		}
+	default:
+		return errors.New("copy: fields: want a mapping or the literal \"all\"")
+	}
+	return nil
+}
+
 type TransformDef struct {
 	From     string   `yaml:"from"`
 	Command  []string `yaml:"command"`
