@@ -21,6 +21,10 @@ func caldavMetamodel() *metamodel.Metamodel {
 		},
 		Relations: map[string]metamodel.RelationDef{
 			"relates-to": {From: []string{"task"}, To: []string{"note"}},
+			// task is only ever the FROM; note only ever the TO.
+			"belongs-to": {From: []string{"task"}, To: []string{"note"}},
+			// Self-referencing: task is on BOTH sides.
+			"depends-on": {From: []string{"task"}, To: []string{"task"}},
 		},
 		Entities: map[string]metamodel.EntityDef{
 			"task": {
@@ -777,6 +781,52 @@ func TestValidateCalDAV_DynamicKeyCollisions(t *testing.T) {
 		errs := validateCalDAV(cfg, caldavMetamodel())
 		if !strings.Contains(strings.Join(errs, "\n"), "would shadow") {
 			t.Errorf("a static key with the same name shadows the pattern; got: %v", errs)
+		}
+	})
+}
+
+// TestValidateCalDAV_DynamicDirection covers direction inference on a dynamic
+// collection. The edge runs member→driver, so the MEMBER type (entity_type)
+// decides the direction — not driver_type. A wrong direction here is a write
+// bug: dynamicMembers queries the mirror side, so a client-created entry would
+// land in the entity type but in no collection.
+func TestValidateCalDAV_DynamicDirection(t *testing.T) {
+	meta := caldavMetamodel()
+
+	dyn := func(relation string, dir Direction, driver string) *Config {
+		c := CalDAVDynamicCollection{
+			CalDAVCollection: validTaskCollection(),
+			DriverType:       driver,
+			Relation:         relation,
+			Direction:        dir,
+		}
+		return &Config{CalDAV: CalDAVConfig{Dynamic: map[string]CalDAVDynamicCollection{"per-driver": c}}}
+	}
+
+	t.Run("unambiguous relation needs no direction", func(t *testing.T) {
+		if errs := validateCalDAV(dyn("belongs-to", "", "note"), meta); len(errs) > 0 {
+			t.Errorf("expected no errors for an inferable direction, got: %v", errs)
+		}
+	})
+
+	t.Run("self-referencing relation requires a direction", func(t *testing.T) {
+		errs := validateCalDAV(dyn("depends-on", "", "task"), meta)
+		if len(errs) == 0 {
+			t.Fatal("expected an ambiguity error for a self-referencing relation")
+		}
+		joined := strings.Join(errs, "\n")
+		for _, want := range []string{"depends-on", "task", "direction"} {
+			if !strings.Contains(joined, want) {
+				t.Errorf("expected error to mention %q, got: %s", want, joined)
+			}
+		}
+	})
+
+	t.Run("explicit direction resolves the ambiguity", func(t *testing.T) {
+		for _, d := range []Direction{DirectionOutgoing, DirectionIncoming} {
+			if errs := validateCalDAV(dyn("depends-on", d, "task"), meta); len(errs) > 0 {
+				t.Errorf("explicit direction %q should validate, got: %v", d, errs)
+			}
 		}
 	})
 }

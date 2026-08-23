@@ -1,6 +1,7 @@
 package dataentryconfig
 
 import (
+	"fmt"
 	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -11,8 +12,8 @@ import (
 type DirectionResolution int
 
 const (
-	// DirectionResolved means the form's entity type sits on exactly one side
-	// of the relation, so the direction has a single correct answer.
+	// DirectionResolved means the binding's entity type sits on exactly one
+	// side of the relation, so the direction has a single correct answer.
 	DirectionResolved DirectionResolution = iota
 	// DirectionAmbiguous means the entity type sits on BOTH sides (a
 	// self-referencing relation such as `depends-on` from ticket to ticket).
@@ -42,8 +43,12 @@ const (
 // so making the author write it adds nothing) and DirectionAmbiguous surfaces
 // the second as an error rather than a guess.
 //
-// entityType is the form's entity type. A caller that does not know it (a
-// metamodel-less migration pass) cannot infer and should not try.
+// entityType is the type the binding is anchored to, which differs per
+// surface: the form's or view's entity type for a form relation, list column,
+// filter control or kanban card field; the MEMBER type (`entity_type`, not
+// `driver_type`) for a CalDAV dynamic collection, whose edge runs
+// member→driver. A caller that does not know it (a metamodel-less migration
+// pass) cannot infer and should not try.
 //
 // NOTE: internal/migration mirrors this truth table in
 // FormRelationDirectionMigration.inferDirection. It cannot call this function —
@@ -72,4 +77,41 @@ func InferDirection(
 	default:
 		return DirectionOutgoing, DirectionNoSide
 	}
+}
+
+// AmbiguousDirectionError builds the "you must say which direction" message for
+// a relation binding whose entity type sits on both sides of the relation.
+//
+// One builder rather than one message per surface: forms, list columns, filter
+// controls, kanban card fields and CalDAV collections all hit the same
+// condition for the same reason, and five hand-written copies of this
+// explanation drift. site is the caller's own location prefix (e.g.
+// `form "edit_task": relation[2]`), which is the only part that genuinely
+// differs.
+func AmbiguousDirectionError(site, entityType, relation string) string {
+	return fmt.Sprintf(
+		"%s needs an explicit `direction:` — entity type %q is both a from and a to of relation %q, "+
+			"so outgoing and incoming are both valid and mean opposite things "+
+			"(set `direction: outgoing` or `direction: incoming`)",
+		site, entityType, relation)
+}
+
+// CheckAmbiguousDirection returns a one-element slice holding the ambiguity
+// error when a relation binding omits `direction:` and its entity type sits on
+// both sides of the relation, or nil when there is nothing to report.
+//
+// This is the shared entry point for every surface that carries a
+// `direction:`. Call it with the surface's own site prefix; it handles the
+// "explicit direction wins" and "not ambiguous" cases so a caller never
+// re-derives the condition.
+func CheckAmbiguousDirection(
+	site, entityType, relation string, dir Direction, meta *metamodel.Metamodel,
+) []string {
+	if dir != "" || relation == "" {
+		return nil
+	}
+	if _, res := InferDirection(entityType, relation, meta); res == DirectionAmbiguous {
+		return []string{AmbiguousDirectionError(site, entityType, relation)}
+	}
+	return nil
 }
