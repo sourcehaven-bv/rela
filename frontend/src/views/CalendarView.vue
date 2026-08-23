@@ -135,8 +135,27 @@ const fetched = ref<SourceResult[]>([])
 const loading = ref(true)
 const loadError = ref('')
 
+/**
+ * Sequence number of the newest refetch.
+ *
+ * Navigating months quickly starts overlapping fetches, and without this the
+ * LAST ONE TO RESOLVE wins — which may be the older window. Clicking "next"
+ * twice would then settle on the wrong month's events, with no error and a
+ * period label that disagrees with the grid. The in-flight request is also
+ * aborted, so a superseded window stops paging rather than finishing work
+ * whose result is discarded.
+ */
+let refetchGeneration = 0
+let inFlight: AbortController | null = null
+
 async function refetchGrid() {
   const queries = sourceQueries.value
+  const generation = ++refetchGeneration
+
+  inFlight?.abort()
+  const controller = new AbortController()
+  inFlight = controller
+
   if (!queries.length) {
     fetched.value = []
     loading.value = false
@@ -147,7 +166,7 @@ async function refetchGrid() {
   try {
     const results = await Promise.all(
       queries.map(async ({ source, params }): Promise<SourceResult> => {
-        const res = await listAllEntities(source.entity, params)
+        const res = await listAllEntities(source.entity, params, controller.signal)
         // Publish into the cache entry the optimistic write and SSE
         // invalidation target, so a drag updates the grid immediately.
         queryCache.setQueryData([...entityKeys.listParams(source.entity, params)], res)
@@ -158,11 +177,15 @@ async function refetchGrid() {
         }
       })
     )
+    // A superseded fetch must not publish: its window is no longer on screen.
+    if (generation !== refetchGeneration) return
     fetched.value = results
   } catch (err) {
+    // An abort is this component superseding itself, not a failure to report.
+    if (generation !== refetchGeneration || controller.signal.aborted) return
     loadError.value = getErrorMessage(err, 'Failed to load calendar')
   } finally {
-    loading.value = false
+    if (generation === refetchGeneration) loading.value = false
   }
 }
 

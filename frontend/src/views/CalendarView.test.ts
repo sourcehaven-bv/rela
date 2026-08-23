@@ -19,13 +19,21 @@ vi.mock('@/api', async (orig) => ({
 }))
 
 const routerPush = vi.fn()
-const routerReplace = vi.fn()
 const routeQuery = ref<Record<string, string>>({})
+// replace() must actually update the query, like a real router: the view keeps
+// its view/date in the URL, so a mock that swallows the write would leave the
+// component frozen on its initial period and quietly pass navigation tests.
+const routerReplace = vi.fn((to: { query?: Record<string, string> }) => {
+  if (to?.query) routeQuery.value = { ...to.query }
+  return Promise.resolve()
+})
 vi.mock('vue-router', () => ({
   useRouter: () => ({
     push: routerPush,
-    replace: routerReplace,
-    currentRoute: { value: { query: routeQuery.value, path: '/calendar/schedule' } },
+    replace: (to: { query?: Record<string, string> }) => routerReplace(to),
+    get currentRoute() {
+      return { value: { query: routeQuery.value, path: '/calendar/schedule' } }
+    },
   }),
   useRoute: () => ({ query: routeQuery.value, path: '/calendar/schedule' }),
 }))
@@ -363,6 +371,71 @@ describe('CalendarView cache keys', () => {
     for (const entry of entries) {
       expect(entry.key.slice(0, 3)).toEqual(['entities', 'task', 'list'])
     }
+
+    wrapper.unmount()
+  })
+})
+
+/**
+ * Overlapping refetches must settle on the NEWEST window.
+ *
+ * Navigating quickly starts several fetches at once. Without a generation
+ * guard, whichever resolves last wins — so clicking "next" twice can settle on
+ * the first month's events while the period label reads the second. There is
+ * no error and nothing in the UI admits the mismatch, which is what makes it
+ * worth a test rather than a comment.
+ */
+describe('CalendarView refetch races', () => {
+  it('ignores a slow earlier window that resolves after a newer one', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    routeQuery.value = { date: '2026-08-22' }
+
+    const schemaStore = useSchemaStore()
+    schemaStore.entityTypes.set('task', {
+      label: 'Task',
+      properties: { title: { type: 'string' }, due: { type: 'date' } },
+    } as never)
+    schemaStore.calendars.set(CAL_ID, {
+      title: 'Schedule',
+      default_view: 'month',
+      week_start: 'monday',
+      day_start: '08:00',
+      day_end: '20:00',
+      max_events_per_day: 4,
+      sources: [{ entity: 'task', date: 'due', summary: 'title', max_span: 31 }],
+    } as never)
+    _setEntityPluralForTest('task', 'tasks')
+    useUIStore().setDatetimeTimezone('UTC')
+
+    // First call (August) hangs until we release it; the second (September)
+    // resolves immediately. The August result therefore lands LAST.
+    let releaseAugust!: (v: ListResponse<Entity>) => void
+    const august = new Promise<ListResponse<Entity>>((resolve) => {
+      releaseAugust = resolve
+    })
+    listAllEntitiesMock
+      .mockImplementationOnce(() => august)
+      .mockImplementation(() => Promise.resolve(listResponse([task('SEP-1', '2026-09-10')])))
+
+    const wrapper = mount(CalendarView, {
+      props: { id: CAL_ID },
+      global: { plugins: [pinia, PiniaColada] },
+      attachTo: document.body,
+    })
+    await flushPromises()
+
+    // Navigate to September while August is still in flight.
+    await wrapper.findAll('.calendar-nav button')[2].trigger('click')
+    await flushPromises()
+
+    // Now let the stale August response arrive.
+    releaseAugust(listResponse([task('AUG-1', '2026-08-22')]))
+    await flushPromises()
+
+    const text = wrapper.text()
+    expect(text).toContain('Task SEP-1')
+    expect(text).not.toContain('Task AUG-1')
 
     wrapper.unmount()
   })
