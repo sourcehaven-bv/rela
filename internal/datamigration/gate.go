@@ -57,16 +57,22 @@ type Verdict struct {
 // RUNNER is the path that needs real locking and takes it itself.
 type Gate struct {
 	kv      state.KV
+	lock    MigrationLock
 	verdict atomic.Pointer[Verdict]
 	now     func() time.Time
 }
 
-// NewGate builds a gate over the store's state KV.
-func NewGate(kv state.KV) (*Gate, error) {
+// NewGate builds a gate over the store's state KV. lock is OPTIONAL (nil =
+// unserialized adoption): gate-vs-gate races write identical content, so the
+// lock only matters against a concurrently-running migration/GC — and on
+// contention the gate SKIPS persisting rather than blocking or failing
+// startup (the holder is actively moving the marker; the next evaluation
+// re-adopts). Pass the lock from [LockFor] wherever one is wired.
+func NewGate(kv state.KV, lock MigrationLock) (*Gate, error) {
 	if kv == nil {
 		return nil, errors.New("datamigration: NewGate: state KV is required")
 	}
-	return &Gate{kv: kv, now: time.Now}, nil
+	return &Gate{kv: kv, lock: lock, now: time.Now}, nil
 }
 
 // Verdict returns the most recently published evaluation, or nil before the
@@ -142,8 +148,37 @@ func (g *Gate) Evaluate(ctx context.Context, meta *metamodel.Metamodel) (*Verdic
 	return v, nil
 }
 
+// withLock runs one persist section (marker and/or ledger writes) under the
+// migration lock when one is wired. With a contended lock the section is
+// SKIPPED (logged): the holder — a migration or GC run — owns that state
+// right now, and this evaluation's verdict is still published from what was
+// read. The whole section runs under ONE acquisition so the gate can never
+// interleave a ledger write into a GC run that holds the lock.
+func (g *Gate) withLock(ctx context.Context, fn func() error) error {
+	if g.lock != nil {
+		release, err := g.lock.TryAcquire(ctx)
+		if errors.Is(err, ErrLockHeld) {
+			slog.Info("datamigration: adoption skipped — another migration or GC run holds the lock")
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		defer release()
+	}
+	return fn()
+}
+
 // adopt moves the marker to the live shape, carrying the applied list over.
 func (g *Gate) adopt(ctx context.Context, live metamodel.ShapeProjection, applied []string, now time.Time) error {
+	return g.withLock(ctx, func() error {
+		return g.writeMarker(ctx, live, applied, now)
+	})
+}
+
+func (g *Gate) writeMarker(
+	ctx context.Context, live metamodel.ShapeProjection, applied []string, now time.Time,
+) error {
 	m, err := NewMarker(live, applied, now)
 	if err != nil {
 		return err
@@ -152,27 +187,31 @@ func (g *Gate) adopt(ctx context.Context, live metamodel.ShapeProjection, applie
 }
 
 // adoptWithDrift adopts AND records the transition's deletion drift in the
-// GC ledger, pruning entries the live schema resurrects. Ledger persistence
-// failing must not block adoption (GC bookkeeping is rebuildable via
-// `rela migrate gc --scan`); it is logged instead.
+// GC ledger, pruning entries the live schema resurrects — marker and ledger
+// under a single lock acquisition (the ledger is exactly the state a
+// concurrent GC apply is rewriting). Ledger persistence failing must not
+// block adoption (GC bookkeeping is rebuildable via `rela migrate gc
+// --scan`); it is logged instead.
 func (g *Gate) adoptWithDrift(
 	ctx context.Context, live metamodel.ShapeProjection, applied []string,
 	report metamodel.ShapeReport, now time.Time,
 ) error {
-	if err := g.adopt(ctx, live, applied, now); err != nil {
-		return err
-	}
-	ledger, err := LoadLedger(ctx, g.kv)
-	if err != nil {
-		slog.Warn("datamigration.ledger_load_failed", "error", err)
+	return g.withLock(ctx, func() error {
+		if err := g.writeMarker(ctx, live, applied, now); err != nil {
+			return err
+		}
+		ledger, err := LoadLedger(ctx, g.kv)
+		if err != nil {
+			slog.Warn("datamigration.ledger_load_failed", "error", err)
+			return nil
+		}
+		ledger.RecordDrift(report, now)
+		ledger.PruneAgainst(live)
+		if err := SaveLedger(ctx, g.kv, ledger); err != nil {
+			slog.Warn("datamigration.ledger_save_failed", "error", err)
+		}
 		return nil
-	}
-	ledger.RecordDrift(report, now)
-	ledger.PruneAgainst(live)
-	if err := SaveLedger(ctx, g.kv, ledger); err != nil {
-		slog.Warn("datamigration.ledger_save_failed", "error", err)
-	}
-	return nil
+	})
 }
 
 // Describe renders a verdict as a short human-readable summary for the
