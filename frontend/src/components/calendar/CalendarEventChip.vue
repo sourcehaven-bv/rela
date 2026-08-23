@@ -9,14 +9,63 @@
  * — resolving per event would walk the registry (and possibly warn) once per
  * event per render.
  */
+import { computed } from 'vue'
 import type { CalendarEvent } from '@/composables/useCalendarEvents'
 import CardFieldList from '@/components/common/CardFieldList.vue'
+import { compareDays, sameDay, type CalendarDay } from '@/utils/calendarGrid'
 
-defineProps<{
+const props = defineProps<{
   event: CalendarEvent
+  /** The grid day this chip is being rendered in. A multi-day event renders
+   * once per day it spans, and the chip has to know WHICH day to show the
+   * right continuation marker. */
+  day: CalendarDay
   /** Whether this event may be dragged (the ACL affordance, not a style). */
   draggable: boolean
 }>()
+
+/**
+ * Which segment of a multi-day event this chip is.
+ *
+ * A spanning event is drawn as one chip per day, so without a marker three
+ * consecutive identical chips read as three separate events — the thing that
+ * makes a conference indistinguishable from a daily standup. The arrows say
+ * "this continues": `→` it runs on, `←` it began earlier, `↔` both.
+ */
+const span = computed<'single' | 'start' | 'middle' | 'end'>(() => {
+  const { startDay, endDay } = props.event
+  if (compareDays(startDay, endDay) === 0) return 'single'
+  if (sameDay(props.day, startDay)) return 'start'
+  if (sameDay(props.day, endDay)) return 'end'
+  return 'middle'
+})
+
+const spanMarker = computed(() => {
+  switch (span.value) {
+    case 'start':
+      return '→'
+    case 'end':
+      return '←'
+    case 'middle':
+      return '↔'
+    default:
+      return ''
+  }
+})
+
+/** Spoken by screen readers in place of the arrow, which is decorative. */
+const spanDescription = computed(() => {
+  switch (span.value) {
+    case 'start':
+      return 'Continues on following days'
+    case 'end':
+      return 'Continued from earlier days'
+    case 'middle':
+      return 'Continues before and after this day'
+    default:
+      return ''
+  }
+})
 
 defineEmits<{
   (e: 'open', event: CalendarEvent): void
@@ -39,6 +88,13 @@ defineEmits<{
     <span class="calendar-chip-headline">
       <span v-if="event.timeLabel" class="calendar-chip-time">{{ event.timeLabel }}</span>
       <span class="calendar-chip-title">{{ event.summary }}</span>
+      <span
+        v-if="spanMarker"
+        class="calendar-chip-span"
+        :title="spanDescription"
+        :aria-label="spanDescription"
+        >{{ spanMarker }}</span
+      >
     </span>
     <CardFieldList :fields="event.fields" :entity-type="event.entityType" />
   </button>
@@ -97,6 +153,17 @@ defineEmits<{
   flex: none;
   color: var(--muted-text);
   font-variant-numeric: tabular-nums;
+}
+
+/* Sits at the far edge so the eye can scan a column of chips for continuations
+   without reading each title. */
+.calendar-chip-span {
+  flex: none;
+  margin-left: auto;
+  padding-left: var(--space-xs);
+  color: var(--muted-text);
+  font-size: var(--font-size-sm);
+  line-height: 1;
 }
 
 /* Source colours map onto the EXISTING badge palette rather than a private set

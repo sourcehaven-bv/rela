@@ -2514,6 +2514,22 @@ omitted rather than showing an empty label.
 derived labels — and render through the same component, so the two surfaces
 cannot drift.
 
+### Multi-day events
+
+An event with an `end_date` is drawn once per day it covers, with an arrow at
+the chip's edge saying how it continues:
+
+| Marker | Meaning |
+| --- | --- |
+| `→` | The event starts on this day |
+| `↔` | It runs through this day, having started earlier and continuing after |
+| `←` | It ends on this day |
+
+Without them, five consecutive identical chips read as five separate events
+rather than one five-day event. An event whose real start falls before the
+visible period still shows a continuation marker on the first visible day,
+rather than appearing to begin there.
+
 ### Toggling sources
 
 A calendar with more than one source shows a **legend** above the grid naming

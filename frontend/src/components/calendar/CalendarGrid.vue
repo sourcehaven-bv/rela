@@ -58,6 +58,7 @@ defineEmits<{
             v-for="ev in eventsForDay(day)"
             :key="ev.id"
             :event="ev"
+            :day="day"
             :draggable="canUpdate(ev.entity)"
             @open="(e) => $emit('open', e)"
             @dragstart="(p) => $emit('dragstart', p)"
