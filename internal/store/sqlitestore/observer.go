@@ -37,12 +37,24 @@ type Option func(*Store)
 // the write is already durable. An observer that can fail meaningfully must
 // surface that itself.
 func (s *Store) notifyPut(e *entity.Entity) {
+	if s.txPending != nil {
+		// Deferred for the same reason events are: an observer that fires
+		// inside a transaction that later rolls back leaves the search index
+		// holding an entity the store does not have. RunTxRollbackTests did
+		// not catch this — it asserts on events and rows, never on observers.
+		s.txPending.add(func(root *Store) { root.notifyPut(e) })
+		return
+	}
 	for _, o := range s.root().observers {
 		_ = o.EntityPut(e)
 	}
 }
 
 func (s *Store) notifyDelete(id string) {
+	if s.txPending != nil {
+		s.txPending.add(func(root *Store) { root.notifyDelete(id) })
+		return
+	}
 	for _, o := range s.root().observers {
 		_ = o.EntityDelete(id)
 	}
@@ -53,6 +65,10 @@ func (s *Store) notifyDelete(id string) {
 // old key and indexes the new content atomically in its EntityRenamed body;
 // splitting it would leave a window where the entity is in no index at all.
 func (s *Store) notifyRenamed(oldID string, renamed *entity.Entity) {
+	if s.txPending != nil {
+		s.txPending.add(func(root *Store) { root.notifyRenamed(oldID, renamed) })
+		return
+	}
 	for _, o := range s.root().observers {
 		_ = o.EntityRenamed(oldID, renamed)
 	}

@@ -51,9 +51,7 @@ func (s *Store) root() *Store {
 // contend on — the contract forbids emitting under a store lock.
 func (s *Store) emit(ev store.Event) {
 	if s.txPending != nil {
-		s.txPending.mu.Lock()
-		s.txPending.events = append(s.txPending.events, ev)
-		s.txPending.mu.Unlock()
+		s.txPending.add(func(root *Store) { root.publish(ev) })
 		return
 	}
 	s.publish(ev)

@@ -34,6 +34,15 @@ func (s *Store) HighestID(ctx context.Context, prefix string) (int, error) {
 		if err := rows.Scan(&id); err != nil {
 			return 0, fmt.Errorf("sqlitestore: highest id for %q: %w", prefix, err)
 		}
+		// SQLite's LIKE is case-INSENSITIVE for ASCII by default, so the scan
+		// above also matches "feat-9" for prefix "FEAT-". Folding is the right
+		// answer here — IDs are case-insensitive identities (see the
+		// entities_id_lower_key index) — but it must be deliberate rather than
+		// LIKE's default doing it silently, and the guard also stops a
+		// non-length-preserving fold from slicing at the wrong offset.
+		if !strings.EqualFold(id[:min(len(pfx), len(id))], pfx) {
+			continue
+		}
 		n, err := strconv.Atoi(id[len(pfx):])
 		if err != nil {
 			continue // not a sequential id in this series

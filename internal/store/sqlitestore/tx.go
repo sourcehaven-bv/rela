@@ -36,7 +36,26 @@ func (s *Store) Tx(ctx context.Context, fn func(store.Store) error) error {
 	if err != nil {
 		return fmt.Errorf("sqlitestore: acquire connection: %w", err)
 	}
-	defer conn.Close()
+
+	// The deferred ROLLBACK is not belt-and-braces; without it a panic in fn
+	// PERMANENTLY BRICKS THE STORE. conn.Close() returns the driver connection
+	// to the pool with BEGIN IMMEDIATE still open, and database/sql then hands
+	// that connection out again: every later transaction fails with "cannot
+	// start a transaction within a transaction", and the uncommitted write
+	// becomes durable and visible. Measured: 10/10 subsequent connections
+	// poisoned, leaked row readable.
+	//
+	// So a panic in an automation, validator or observer inside fn would both
+	// commit data reported as rolled back AND take the store down until the
+	// process restarts. It runs on WithoutCancel for the same reason the
+	// explicit rollback below does.
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = conn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
+		}
+		_ = conn.Close()
+	}()
 
 	// database/sql exposes no BEGIN IMMEDIATE option, so issue it directly on
 	// the pinned connection. Deferred would take the write lock lazily, and a
@@ -65,23 +84,37 @@ func (s *Store) Tx(ctx context.Context, fn func(store.Store) error) error {
 		}
 		return err // returned unchanged, per the contract
 	}
-	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+
+	// COMMIT also runs on WithoutCancel. A request cancelled between the last
+	// write and the commit — a closed browser tab, mid-save — would otherwise
+	// fail here and return WITHOUT rolling back, poisoning the pool exactly as
+	// a panic does. A transaction that has reached this point is complete;
+	// abandoning it because the caller went away helps no one.
+	if _, err := conn.ExecContext(context.WithoutCancel(ctx), "COMMIT"); err != nil {
 		return fmt.Errorf("sqlitestore: commit: %w", err)
 	}
+	committed = true
 
-	// Replay only after the commit succeeded: a subscriber must never observe
-	// a write that was rolled back.
-	for _, ev := range pending.drain() {
-		s.publish(ev)
+	// Replay only after the commit succeeded: neither a subscriber nor an
+	// observer may witness a write that was rolled back.
+	for _, note := range pending.drain() {
+		note(s)
 	}
 	return nil
 }
 
-// drain returns the buffered events and empties the buffer.
-func (p *pendingEvents) drain() []store.Event {
+// add buffers a callback to run after the transaction commits.
+func (p *pendingEvents) add(note func(*Store)) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	events := p.events
-	p.events = nil
-	return events
+	p.notes = append(p.notes, note)
+}
+
+// drain returns the buffered callbacks and empties the buffer.
+func (p *pendingEvents) drain() []func(*Store) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	notes := p.notes
+	p.notes = nil
+	return notes
 }

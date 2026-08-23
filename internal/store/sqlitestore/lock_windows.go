@@ -20,6 +20,9 @@ var errLockHeld = errors.New("lock is held by another process")
 // LOCK_NB path: Open must refuse a second process, not wait for the first to
 // exit.
 func lockFile(f *os.File) error {
+	// A fresh zero Overlapped is safe ONLY because this call is synchronous and
+	// fails immediately. If a blocking or retrying path is ever added, each
+	// call needs its own properly-initialized Overlapped with an event handle.
 	ol := new(windows.Overlapped)
 	err := windows.LockFileEx(
 		windows.Handle(f.Fd()),
@@ -31,7 +34,12 @@ func lockFile(f *os.File) error {
 		ol,
 	)
 	if err != nil {
-		if errors.Is(err, windows.ERROR_LOCK_VIOLATION) {
+		// A contended lock surfaces as ERROR_LOCK_VIOLATION on some paths and
+		// ERROR_IO_PENDING on others, because LockFileEx is an overlapped-I/O
+		// call. Handling only the first would leave errLockHeld dead code on
+		// Windows and make "lock held" indistinguishable from "the lock
+		// syscall is broken".
+		if errors.Is(err, windows.ERROR_LOCK_VIOLATION) || errors.Is(err, windows.ERROR_IO_PENDING) {
 			return errLockHeld
 		}
 		return err

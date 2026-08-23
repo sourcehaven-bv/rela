@@ -139,9 +139,16 @@ type Store struct {
 	parent *Store
 }
 
+// pendingEvents buffers post-commit work raised inside a transaction.
+//
+// It holds CALLBACKS rather than events because observers must be deferred
+// too, not just the event fan-out: an observer that fires inside a rolled-back
+// transaction leaves the search index holding a phantom entity, and nothing
+// self-heals until a full reindex. One buffer keeps events and observer
+// callbacks in the order they were raised.
 type pendingEvents struct {
-	mu     sync.Mutex
-	events []store.Event
+	mu    sync.Mutex
+	notes []func(*Store)
 }
 
 // Open opens (creating if absent) the SQLite database at opts.Path.

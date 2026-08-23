@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"modernc.org/sqlite"
+
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
@@ -229,18 +231,32 @@ func scanRelation(sc scanner) (*entity.Relation, error) {
 }
 
 // isUniqueViolation reports whether err is a SQLite PRIMARY KEY / UNIQUE
-// constraint failure.
+// constraint failure, so it can be mapped to store.ErrConflict.
 //
-// Matching on the message rather than the driver's error struct keeps the
-// spike from depending on modernc's internal error types — a real backend
-// would type-assert *sqlite.Error and check the extended result code
-// (SQLITE_CONSTRAINT_PRIMARYKEY = 1555, SQLITE_CONSTRAINT_UNIQUE = 2067).
-// Noted as an implementation-ticket refinement, not a spike concern.
+// Checks the driver's extended result code rather than the message text: the
+// stress test tolerates ErrConflict and nothing else from a racing create, so
+// a reworded message upstream would turn a normal conflict into a hard failure.
+// The string check remains as a fallback for any path that surfaces an error
+// the type assertion cannot see.
 func isUniqueViolation(err error) bool {
 	if err == nil {
 		return false
+	}
+	var se *sqlite.Error
+	if errors.As(err, &se) {
+		switch se.Code() {
+		case sqliteConstraintPrimaryKey, sqliteConstraintUnique:
+			return true
+		}
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "unique constraint failed") ||
 		strings.Contains(msg, "primary key must be unique")
 }
+
+// SQLite extended result codes for the two constraint failures that mean
+// "this key is taken". Not exported by the driver as named constants.
+const (
+	sqliteConstraintPrimaryKey = 1555
+	sqliteConstraintUnique     = 2067
+)

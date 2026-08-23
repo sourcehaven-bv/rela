@@ -157,7 +157,38 @@ func (s *Store) UpdateEntity(ctx context.Context, e *entity.Entity) error {
 // DeleteEntity refuses an entity with relations unless cascade is set. The
 // stress test tolerates ErrNotFound and ErrHasRelations here and nothing
 // else, so both must be reported precisely.
+// DeleteEntity removes an entity, its attachments, and (with cascade) its
+// relations.
+//
+// Wrapped in a transaction like RenameEntity: it issues four statements, so
+// without one a failure between them leaves relations gone but the entity
+// present, or the entity gone with orphaned attachment rows. The Tx also closes
+// a check-then-act race — relCount is read and then acted on, and a plain
+// CreateRelation could otherwise slip in between, so a non-cascade delete would
+// silently remove an entity that had just gained an edge.
+//
+// Nesting is safe: a call from inside an existing Tx joins it rather than
+// opening a second one.
 func (s *Store) DeleteEntity(ctx context.Context, id string, cascade bool) (*store.DeleteResult, error) {
+	var result *store.DeleteResult
+	err := s.Tx(ctx, func(tx store.Store) error {
+		view, ok := tx.(*Store)
+		if !ok { // unreachable: Tx always hands back our own view type
+			return errors.New("sqlitestore: unexpected transaction view type")
+		}
+		var derr error
+		result, derr = view.deleteEntityLocked(ctx, id, cascade)
+		return derr
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (s *Store) deleteEntityLocked(
+	ctx context.Context, id string, cascade bool,
+) (*store.DeleteResult, error) {
 	existing, err := s.GetEntity(ctx, id)
 	if err != nil {
 		return nil, err

@@ -65,6 +65,23 @@ func TestConformance(t *testing.T) {
 	})
 }
 
+// TestTxAbnormalExit covers what RunTxRollbackTests cannot see: a panic in fn
+// and a context cancelled at commit. Both abandoned an open transaction on a
+// pooled connection before the fix, which poisoned every later transaction AND
+// made the uncommitted write durable.
+func TestTxAbnormalExit(t *testing.T) {
+	storetest.RunTxAbnormalExitTests(t, factory)
+}
+
+// TestTxObserverIsolation asserts observers never witness a rolled-back write.
+// Without it a rollback leaves the search index holding a phantom entity.
+func TestTxObserverIsolation(t *testing.T) {
+	storetest.RunTxObserverIsolationTests(t, func(t *testing.T, o store.EntityObserver) store.Store {
+		t.Helper()
+		return open(t, sqlitestore.WithObserver(o))
+	})
+}
+
 // TestTxStress is the mixed-workload soak with a deadlock watchdog. It is the
 // test that justified the whole spike: modernc's locking under sustained
 // multi-connection contention was the one thing that could not be established
