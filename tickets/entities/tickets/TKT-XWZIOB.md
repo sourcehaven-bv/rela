@@ -268,14 +268,73 @@ by the `#` separator) updated when a group pass completes. Without it, every tic
 must expand just to discover it had nothing to do, which is the cost this section
 exists to avoid.
 
-**A pending retry must still be re-checked against a fresh set.**
-`pruneOrphanedState` is already a degenerate liveness check, but it derives its
-set from config and runs **once, in `loadState` (`:403`)**. Sound when membership
-changes only on a config edit plus restart; not sound for a query producer. The
-failure is concrete: a user is deactivated at 09:00 holding a `NextRetry` entry;
-nothing re-prunes, so the scheduler retries a task for a non-matching user on the
-2h rung indefinitely. Case 1 above is what closes that — the retry path expands,
-so it always sees a current set.
+**A pending retry must still be re-checked against a fresh set — but the
+producer is not what asks.** `pruneOrphanedState` is already a degenerate
+liveness check, except it derives its set from config and runs **once, in
+`loadState` (`:403`)**. Sound when membership changes only on a config edit plus
+restart; not sound for a query producer. The failure is concrete: a user is
+deactivated at 09:00 holding a `NextRetry` entry; nothing re-prunes, so the
+scheduler retries a task for a non-matching user on the 2h rung indefinitely.
+
+Case 1 closes that, but the dependency direction matters (see the next section):
+the ENGINE refreshes the set before honouring a pending retry, because it will
+not act on stale liveness. The retry mechanism does not consult the producer, and
+the producer never learns that a retry is why it was called.
+
+### The producer does not know about retries
+
+Retry is **engine state**, not producer state. The producer answers exactly one
+question — *what tasks exist right now* — as a pure function of the world. It has
+no notion of failure, backoff, or attempt count, and nothing in its interface
+mentions them.
+
+The engine owns `Failures`/`NextRetry`, decides when to run, and reconciles its
+own state against whatever set the producer last returned. So liveness is not a
+question the retry path *asks*; it is a property the engine checks against a set
+it already holds.
+
+This is why the dependency runs **engine → producer** and never
+**producer ← retry**. A producer that had to be told "this is a retry" would be
+one that could behave differently on a retry, which is exactly the coupling that
+makes a scheduler hard to reason about.
+
+The one thing that cannot be decoupled: detecting a retry pending for a task that
+no longer exists requires comparing engine state to a FRESH producer result. That
+is the engine refusing to act on stale liveness — same store query, dependency
+pointing the right way.
+
+### Retry policy belongs on the task
+
+`retryDelay` is package-level (`scheduler.go:373`) with `baseRetryDelay` /
+`maxRetryDelay` as consts, so every task shares one ladder. The package doc
+already names this as a wart: the ladder *"is identical for every schedule, so it
+slows a failing short-interval task down and speeds a failing daily one up"*
+(`:21-23`).
+
+Per-task retry properties fix that, and they belong on **`TaskConfig`** — emitted
+by the producer as ordinary task data, exactly like `Script` or `Every`:
+
+```yaml
+    retry:
+      base: 5m
+      max: 2h
+      attempts: 6      # give up rather than retry forever
+```
+
+That placement is what keeps the separation above intact: the producer emits a
+task that *describes* its retry policy; the engine *implements* it. A `for_each`
+derived task inherits the declared task's props, so N users share one policy
+without the producer knowing an attempt count exists.
+
+`attempts:` is the genuinely new capability — today a permanently failing task
+retries at the 2h rung forever (`:51-52`), which for a 200-user expansion is 200
+tasks doing so.
+
+**Scope note.** This is orthogonal to `for_each` and useful on its own, so it may
+deserve its own ticket. It is recorded here because per-user expansion makes the
+single global ladder visibly wrong — 5m rungs multiplied by N users — and because
+`TaskConfig` is being touched anyway. Split it out if it grows beyond a few
+fields.
 
 ### What the factory model costs
 
@@ -388,6 +447,11 @@ in-flight ladder.
 removes another producer's state.
 11. Audit records distinguish per-user runs of the same declared task; the user
 comes from the principal, not from a second encoding in `triggered_by`.
+12. The `TaskProducer` interface mentions nothing about retries, failures or
+attempts, and a producer cannot observe that a call was prompted by a pending
+retry.
+13. Per-task `retry:` props override the global ladder; a task without them
+behaves exactly as today.
 
 ## Risks
 
