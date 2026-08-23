@@ -89,6 +89,7 @@ go build -o rela ./cmd/rela
 | [Audit Log](docs/audit-log.md) | Forensic JSONL log of every entity / relation write |
 | [PostgreSQL Backend](docs/postgres-backend.md) | Run rela-server and the CLI against PostgreSQL instead of markdown files |
 | [Attachment Security: Scanning, MIME Allowlist & Transforms](docs/attachment-security.md) | Virus scanning, a sniffed MIME allowlist, and byte transforms for uploaded attachments |
+| [SQLite Backend](docs/sqlite-backend.md) | Run rela against an embedded SQLite database — one file, no server, single process |
 | [Sync](docs/sync.md) | Two-way sync between a local fsstore project and a remote pgstore rela-server |
 | [Security model for rela-server](docs/server-security.md) | Threat model, HTTP defenses, audit attribution, and residual risks for the rela-server data-entry app; how its read-side ACL coverage stands today. |
 | [ACL: Authorization Overview](docs/acl-overview.md) | How rela's role-based authorization works end-to-end: from acl.yaml + the graph to a write decision and its audit attribution |
