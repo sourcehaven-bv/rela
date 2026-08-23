@@ -56,9 +56,14 @@ vi.mock('vue-router', () => ({
 
 const CAL_ID = 'schedule'
 
-function listResponse(data: Entity[], hasMore = false): ListResponse<Entity> {
+function listResponse(
+  data: Entity[],
+  hasMore = false,
+  included: Record<string, unknown> = {}
+): ListResponse<Entity> {
   return {
     data,
+    included,
     meta: { page: 1, per_page: data.length, total: data.length, has_more: hasMore },
   } as ListResponse<Entity>
 }
@@ -87,6 +92,8 @@ interface SetupOptions {
   maxEventsPerDay?: number
   editForm?: string
   truncated?: boolean
+  /** Entities the server embedded via ?include=*, keyed by id. */
+  included?: Record<string, unknown>
 }
 
 // Every mounted view is torn down after its test. Without this each one stays
@@ -141,7 +148,9 @@ function setup(opts: SetupOptions = {}) {
   uiStore.setDatetimeTimezone(opts.timezone ?? 'UTC')
 
   listAllEntitiesMock.mockImplementation((type: string) =>
-    Promise.resolve(listResponse(opts.responses?.[type] ?? [], opts.truncated ?? false))
+    Promise.resolve(
+      listResponse(opts.responses?.[type] ?? [], opts.truncated ?? false, opts.included ?? {})
+    )
   )
 
   const wrapper = mount(CalendarView, {
@@ -651,5 +660,75 @@ describe('CalendarView event click', () => {
 
     expect(document.querySelector('.entity-preview')).toBeNull()
     expect(routerPush).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * Chip fields are the answer to "a calendar of bare titles doesn't tell me
+ * much". A field may name a property or a RELATION, whose targets resolve to
+ * their display titles — the relation half was declared in the config type but
+ * silently skipped until it was implemented, so it is pinned here.
+ */
+describe('CalendarView chip detail', () => {
+  it('renders property and relation fields together', async () => {
+    const wrapper = setup({
+      event: {
+        fields: [{ property: 'assignee' }, { property: 'status' }, { relation: 'belongs-to' }],
+      },
+      responses: {
+        task: [
+          {
+            id: 'T-1',
+            type: 'task',
+            properties: { title: 'Task T-1', due: '2026-08-22', assignee: 'Alex', status: 'todo' },
+            relations: { 'belongs-to': ['PRJ-1'] },
+          } as never,
+        ],
+      },
+      // `_title` is the server-computed display title entityDisplayTitle reads;
+      // it is not the `title` property (a type's display property may be `name`).
+      included: { 'PRJ-1': { id: 'PRJ-1', type: 'project', _title: 'Apollo', properties: {} } },
+    })
+    await flushPromises()
+
+    const chip = wrapper.find('.calendar-chip')
+    expect(chip.text()).toContain('Task T-1')
+    expect(chip.text()).toContain('Alex')
+    // The relation resolves to the target's display title, not its raw id.
+    expect(chip.text()).toContain('Apollo')
+    expect(chip.text()).not.toContain('PRJ-1')
+  })
+
+  it('asks the server to embed related entities only when a relation field is configured', async () => {
+    listAllEntitiesMock.mockClear()
+    setup({ event: { fields: [{ property: 'status' }] }, responses: { task: [] } })
+    await flushPromises()
+    expect((listAllEntitiesMock.mock.calls[0][1] as Record<string, string>).include).toBeUndefined()
+
+    listAllEntitiesMock.mockClear()
+    setup({ event: { fields: [{ relation: 'belongs-to' }] }, responses: { task: [] } })
+    await flushPromises()
+    expect((listAllEntitiesMock.mock.calls[0][1] as Record<string, string>).include).toBe('*')
+  })
+
+  it('falls back to the raw id when a relation target was not embedded', async () => {
+    const wrapper = setup({
+      event: { fields: [{ relation: 'belongs-to' }] },
+      responses: {
+        task: [
+          {
+            id: 'T-1',
+            type: 'task',
+            properties: { title: 'Task T-1', due: '2026-08-22' },
+            relations: { 'belongs-to': ['PRJ-9'] },
+          } as never,
+        ],
+      },
+    })
+    await flushPromises()
+
+    // Degrades visibly rather than rendering a blank field. This leaks nothing:
+    // the server strips ACL-hidden neighbour ids before they reach the SPA.
+    expect(wrapper.find('.calendar-chip').text()).toContain('PRJ-9')
   })
 })

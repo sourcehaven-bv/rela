@@ -2415,9 +2415,19 @@ calendars:
         date: due_date
         summary: title
         color: blue
+    event:                       # extra detail on each chip
+      fields:
+        - property: assignee
+        - property: priority
+        - relation: belongs-to
+          label: "Project"
     edit_form: edit_task
     create_form: create_task
 ```
+
+Without an `event:` block a chip shows the event's title alone. Adding fields
+is usually worth it — a calendar of bare titles rarely answers the question the
+reader opened it with.
 
 Reach it from the sidebar with a `calendar:` navigation entry:
 
