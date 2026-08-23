@@ -318,7 +318,7 @@ by the producer as ordinary task data, exactly like `Script` or `Every`:
     retry:
       base: 5m
       max: 2h
-      attempts: 6      # give up rather than retry forever
+      attempts: 6      # bounded: the ladder gives up, it does not retry forever
 ```
 
 That placement is what keeps the separation above intact: the producer emits a
@@ -326,9 +326,50 @@ task that *describes* its retry policy; the engine *implements* it. A `for_each`
 derived task inherits the declared task's props, so N users share one policy
 without the producer knowing an attempt count exists.
 
-`attempts:` is the genuinely new capability — today a permanently failing task
-retries at the 2h rung forever (`:51-52`), which for a 200-user expansion is 200
-tasks doing so.
+#### Retries are always bounded
+
+A task **always** gives up after a set number of attempts. Retrying indefinitely
+has no value: if the ladder has run its length, the fault is not the transient
+blip retry exists to absorb.
+
+This overturns a stated decision, so it should be overturned explicitly. The
+current comment (`:53-56`) argues the cap *"keeps a persistently broken job to
+roughly a dozen attempts a day rather than silencing it"* — the fear being that a
+bounded retry means a silently dead job. That fear is answered by what "gives up"
+means, below, not by retrying forever. Meanwhile the cost is real: at the 2h rung
+a 200-user expansion is 200 tasks retrying forever, ~2,400 failing executions a
+day, and the ERROR log that was supposed to summon a human becomes noise.
+
+**Giving up ends the LADDER, not the task.** This distinction is the whole
+design, and the other reading is dangerous:
+
+- *Wrong:* the task is abandoned permanently. A daily digest that fails 6 times
+  during a two-hour mail outage would then be dead until someone restarts the
+  process — a transient fault silently promoted to a permanent one. Strictly
+  worse than today.
+- *Right:* on exhausting attempts, clear `NextRetry`/`Failures` and log at ERROR.
+  The task returns to its ORDINARY schedule; tomorrow's digest runs normally.
+
+So: bounded attempts, transient faults still self-heal at the next occurrence,
+and nothing is silenced — `persistentFailureThreshold` (4, `:64`) still escalates
+to ERROR *before* the give-up point, so a human is summoned either way.
+
+Consequences to hold on to:
+
+- **"Gives up" bounds the ladder, not lifetime attempts.** An `every: 30m` task
+  that is permanently broken returns to its own cadence and still fails ~48
+  times a day — at the schedule the operator declared, rather than at the
+  ladder's. That is the right answer (the schedule is the declared expectation),
+  but it means this does not cap total executions.
+- **Default `attempts: 6`.** `maxLadderSteps` (`:71-78`) is the count at which
+  doubling first reaches `maxRetryDelay` — 5m, 10m, 20m, 40m, 80m, 2h. Ending
+  the ladder there is the natural boundary: beyond it every retry is identical,
+  which is precisely where continuing stops adding information. Derive it from
+  `maxLadderSteps` rather than writing `6`, for the reason that variable already
+  exists.
+- **This changes behaviour for every existing task**, not just `for_each` ones —
+  a permanently failing task stops retrying every 2h and reverts to its schedule.
+  Changelog, same as the redaction change.
 
 **Scope note.** This is orthogonal to `for_each` and useful on its own, so it may
 deserve its own ticket. It is recorded here because per-user expansion makes the
@@ -450,8 +491,13 @@ comes from the principal, not from a second encoding in `triggered_by`.
 12. The `TaskProducer` interface mentions nothing about retries, failures or
 attempts, and a producer cannot observe that a call was prompted by a pending
 retry.
-13. Per-task `retry:` props override the global ladder; a task without them
-behaves exactly as today.
+13. Per-task `retry:` props override the global ladder.
+14. Retries are bounded for every task: after `attempts` consecutive failures the
+ladder is abandoned, `NextRetry`/`Failures` are cleared, and an ERROR is logged
+naming the task.
+15. A task that gave up still runs at its next scheduled occurrence — giving up
+ends the ladder, never the task. Pinned by a test: fail past the bound, advance
+the clock to the next occurrence, assert it runs.
 
 ## Risks
 
@@ -471,6 +517,9 @@ regression to pin with a test rather than a design problem to solve.
 changes; criteria 4d/4e.
 - **State-key format change** — encoding `TaskID` into the existing string-keyed
 JSON risks resetting every in-flight ladder on upgrade; criterion 9.
+- **Bounded retry read as "task disabled"** — if giving up were taken to mean
+abandoning the task, a two-hour outage would permanently kill a daily digest.
+Criterion 15 exists to prevent that reading from being implemented.
 - **Cross-producer pruning** — a shared live set would let one producer delete
 another's entries; criterion 10.
 - **Mass re-send after a store blip** — a producer error misread as "no tasks"
