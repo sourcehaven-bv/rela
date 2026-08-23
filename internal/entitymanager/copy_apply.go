@@ -54,6 +54,11 @@ func applyCopyEdges(ctx context.Context, view store.Store, plan *copyPlan) error
 			continue
 		}
 		replaced[e.relType] = true
+		// COLLECT FIRST, then delete. Mutating the store while ranging its
+		// own iterator is backend-dependent: pgstore holds a pgx.Rows cursor
+		// on one pooled connection while the delete takes a second, which
+		// under pool pressure is a deadlock candidate.
+		var doomed []*entity.Relation
 		for rel, err := range view.ListRelations(ctx, store.RelationQuery{
 			From: plan.targetID, Type: e.relType, FromPointer: &tail,
 		}) {
@@ -61,7 +66,16 @@ func applyCopyEdges(ctx context.Context, view store.Store, plan *copyPlan) error
 				return fmt.Errorf("entitymanager: copy %q: list target edges: %w",
 					plan.name, err)
 			}
-			derr := view.DeleteRelation(ctx, rel.From, rel.Type, rel.To)
+			doomed = append(doomed, rel)
+		}
+		for _, rel := range doomed {
+			// Addressed BY TAIL. Dropping it here (as this did before
+			// TKT-C1XUA8 PR-D) does not delete "approximately the right
+			// edge": the tail is part of a relation's identity, so
+			// DeleteRelation deletes the DEFAULT face's edge on the same
+			// triple — a face this copy has no business touching — and
+			// reports success, while the edge being replaced survives.
+			derr := view.DeleteRelationState(ctx, rel.From, rel.FromPointer, rel.Type, rel.To)
 			if derr != nil && !errors.Is(derr, store.ErrNotFound) {
 				return fmt.Errorf("entitymanager: copy %q: replace edges: %w",
 					plan.name, derr)

@@ -218,17 +218,27 @@ func (s *Store) UpdateRelation(
 }
 
 // DeleteRelation removes a relation. Returns store.ErrNotFound if absent.
+//
+// Addresses the DEFAULT-tail edge; DeleteRelationState is the general form.
 func (s *Store) DeleteRelation(ctx context.Context, from, relType, to string) error {
+	return s.DeleteRelationState(ctx, from, "", relType, to)
+}
+
+// DeleteRelationState removes the edge with EXACTLY this tail. The tail is
+// part of a relation's identity, so addressing the wrong one deletes a
+// different edge rather than failing (TKT-C1XUA8).
+func (s *Store) DeleteRelationState(
+	ctx context.Context, from string, p entity.Pointer, relType, to string,
+) error {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
 
-	// Default-tail addressing in Step 1 (TKT-DOFYR1); state-tailed edges
-	// are removed via the entity cascades.
-	const q = `DELETE FROM relations WHERE from_id = $1 AND rel_type = $2 AND to_id = $3 AND from_pointer = ''`
-	tag, err := tx.Exec(ctx, q, from, relType, to)
+	const q = `DELETE FROM relations
+	           WHERE from_id = $1 AND rel_type = $2 AND to_id = $3 AND from_pointer = $4`
+	tag, err := tx.Exec(ctx, q, from, relType, to, string(p))
 	if err != nil {
 		return err
 	}
@@ -238,11 +248,14 @@ func (s *Store) DeleteRelation(ctx context.Context, from, relType, to string) er
 
 	// Record a tombstone in the same tx so the durable manifest can report the
 	// removal after the live row is gone (FEAT-NJ9FEN).
-	if err := s.writeRelationTombstone(ctx, tx, from, "", relType, to); err != nil {
+	if err := s.writeRelationTombstone(ctx, tx, from, p, relType, to); err != nil {
 		return err
 	}
 
-	ev := store.Event{Op: store.EventRelationDeleted, RelationType: relType, From: from, To: to}
+	ev := store.Event{
+		Op: store.EventRelationDeleted, RelationType: relType,
+		From: from, To: to, Pointer: p,
+	}
 	s.notify(ctx, tx, ev)
 	if err := tx.Commit(ctx); err != nil {
 		return err

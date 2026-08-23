@@ -64,6 +64,15 @@ func (s *FSStore) DeleteEntity(ctx context.Context, id string, cascade bool) (*s
 	return s.deleteEntity(ctx, id, cascade)
 }
 
+// DeleteEntityState implements store.EntityWriter.
+// Returns store.ErrNotFound if that face does not exist.
+func (s *FSStore) DeleteEntityState(
+	ctx context.Context, id string, p entity.Pointer,
+) (*store.DeleteResult, error) {
+	defer s.lockTx()()
+	return s.deleteEntityState(ctx, id, p)
+}
+
 // RenameEntity implements store.EntityWriter.
 // Returns store.ErrNotFound if oldID is absent, store.ErrConflict if
 // newID exists.
@@ -92,6 +101,14 @@ func (s *FSStore) UpdateRelation(
 func (s *FSStore) DeleteRelation(ctx context.Context, from, relType, to string) error {
 	defer s.lockTx()()
 	return s.deleteRelation(ctx, from, relType, to)
+}
+
+// DeleteRelationState implements store.RelationWriter.
+func (s *FSStore) DeleteRelationState(
+	ctx context.Context, from string, p entity.Pointer, relType, to string,
+) error {
+	defer s.lockTx()()
+	return s.deleteRelationState(ctx, from, p, relType, to)
 }
 
 // AttachFile implements store.AttachmentManager.
@@ -129,6 +146,12 @@ func (t txStore) DeleteEntity(ctx context.Context, id string, cascade bool) (*st
 	return t.deleteEntity(ctx, id, cascade)
 }
 
+func (t txStore) DeleteEntityState(
+	ctx context.Context, id string, p entity.Pointer,
+) (*store.DeleteResult, error) {
+	return t.deleteEntityState(ctx, id, p)
+}
+
 func (t txStore) RenameEntity(ctx context.Context, oldID, newID string) (*store.RenameResult, error) {
 	return t.renameEntity(ctx, oldID, newID)
 }
@@ -147,6 +170,12 @@ func (t txStore) UpdateRelation(
 
 func (t txStore) DeleteRelation(ctx context.Context, from, relType, to string) error {
 	return t.deleteRelation(ctx, from, relType, to)
+}
+
+func (t txStore) DeleteRelationState(
+	ctx context.Context, from string, p entity.Pointer, relType, to string,
+) error {
+	return t.deleteRelationState(ctx, from, p, relType, to)
 }
 
 func (t txStore) AttachFile(ctx context.Context, entityID, property, fileName string, r io.Reader) error {

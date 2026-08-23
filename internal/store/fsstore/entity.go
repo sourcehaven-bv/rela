@@ -511,6 +511,128 @@ func (s *FSStore) deleteEntity(_ context.Context, id string, cascade bool) (*sto
 	return result, nil
 }
 
+// deleteEntityState removes ONE face and only the edges belonging to it
+// (TKT-C1XUA8). Contrast deleteEntity above, which sweeps the whole family
+// and every incident edge on both sides.
+//
+// Keeps that function's fail-secure file ordering: relation files first,
+// then the entity file, with a real removal error aborting before the
+// in-memory index is touched.
+func (s *FSStore) deleteEntityState(
+	_ context.Context, id string, p entity.Pointer,
+) (*store.DeleteResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key := stateKey(id, p)
+	meta, ok := s.entities[key]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+
+	// Refuse to orphan the family: a family with no default row has no
+	// defined meaning and world fallback resolves against it. Deleting the
+	// LAST face is fine — nothing is left to orphan.
+	if p.IsDefault() {
+		if n := s.familySize(id); n > 1 {
+			return nil, fmt.Errorf(
+				"%w: cannot delete the default face of %s while %d other state(s) remain",
+				store.ErrInvalidQuery, id, n-1)
+		}
+	}
+
+	e, err := s.loadEntityMeta(meta)
+	if err != nil {
+		return nil, err
+	}
+
+	// OUTGOING edges on this tail go with the face. INCOMING edges do NOT:
+	// heads are entity-level (§2.3), so an inbound edge points at the entity
+	// and survives its faces.
+	var owned []relationMeta
+	for _, rm := range s.relations {
+		if rm.From == id && rm.FromPointer == p {
+			owned = append(owned, rm)
+		}
+	}
+	sort.Slice(owned, func(i, j int) bool { return owned[i].key() < owned[j].key() })
+
+	deletedRelations := make([]*entity.Relation, 0, len(owned))
+	for _, rm := range owned {
+		r, loadErr := s.loadRelationMeta(rm)
+		if loadErr != nil {
+			r = entity.NewRelation(rm.From, rm.Type, rm.To)
+			r.FromPointer = rm.FromPointer
+		}
+		deletedRelations = append(deletedRelations, r)
+	}
+
+	for _, rm := range owned {
+		fileKey := s.relationFileKeyMeta(rm)
+		if rerr := s.rooted.Remove(fileKey); rerr != nil && !os.IsNotExist(rerr) {
+			return nil, fmt.Errorf("delete relation file %s: %w", rm.key(), rerr)
+		}
+		s.echoes.Forget(s.absPath(fileKey))
+	}
+	entKey := s.entityFileKey(meta.Type, key)
+	if rerr := s.rooted.Remove(entKey); rerr != nil && !os.IsNotExist(rerr) {
+		return nil, rerr
+	}
+	s.echoes.Forget(s.absPath(entKey))
+
+	// The attachment directory is owned 1:1 by the ENTITY, not by a face, so
+	// it only goes when the last face does — a discarded draft must not
+	// destroy attachments the surviving faces serve.
+	//
+	// This runs BEFORE the index mutations below, matching deleteEntity's
+	// fail-secure ordering: every fallible filesystem operation completes
+	// first, so an error returns with the in-memory index still matching what
+	// is on disk. Removing it afterwards would leave a caller who saw an
+	// error with the entity already gutted from the index — a divergence
+	// nothing reconciles until restart.
+	lastFace := s.familySize(id) == 1
+	if lastFace {
+		if aerr := s.removeAttachmentDir(id); aerr != nil {
+			return nil, aerr
+		}
+	}
+
+	delete(s.entities, key)
+	s.entityOrder = storeutil.SortedRemoveFunc(s.entityOrder, key, storeutil.CompareStateKeys)
+	if p.IsDefault() {
+		removeEntityFromCache(s.propCache, e)
+	}
+	for _, rm := range owned {
+		rk := rm.key()
+		delete(s.relations, rk)
+		s.relationOrder = storeutil.SortedRemove(s.relationOrder, rk)
+	}
+
+	// Observers are bare-id keyed, so notifying on a per-face delete would
+	// de-index an entity that still exists.
+	if lastFace {
+		s.notifyDelete(id)
+	}
+
+	s.emitFamilyDeleted([]entityMeta{meta}, owned)
+	return &store.DeleteResult{
+		DeletedEntities:  []*entity.Entity{e},
+		DeletedRelations: deletedRelations,
+	}, nil
+}
+
+// familySize counts the indexed state rows of a bare id. Callers must hold
+// s.mu.
+func (s *FSStore) familySize(id string) int {
+	n := 0
+	for _, meta := range s.entities {
+		if meta.ID == id {
+			n++
+		}
+	}
+	return n
+}
+
 // emitFamilyDeleted emits per-state entity-deleted events and per-edge
 // relation-deleted events for a cascaded family delete. Each event
 // carries its own state's type — the load path tolerates a mistyped

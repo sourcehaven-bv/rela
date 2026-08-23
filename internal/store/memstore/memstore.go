@@ -58,8 +58,13 @@ import (
 // joined the mandated store.Store interface; rekeyFamily serves the
 // family-wide rename that contract requires.)
 //
-//plimsoll:max-methods=45
-//plimsoll:max-exported-methods=30
+// (+2 methods / +2 exported with per-face delete, TKT-C1XUA8:
+// DeleteEntityState and DeleteRelationState joined the mandated
+// store.Store interface. Required-interface exception, not accreted
+// API — the counts ratchet only if store.Store itself narrows.)
+//
+//plimsoll:max-methods=49
+//plimsoll:max-exported-methods=32
 type MemStore struct {
 	// txMu serializes an open Tx against ordinary writers: Tx holds it
 	// for the whole callback, every exported write method takes it
@@ -662,6 +667,97 @@ func (m *MemStore) deleteEntity(_ context.Context, id string, cascade bool) (*st
 	return result, nil
 }
 
+// deleteEntityState removes ONE face and only the edges that belong to it
+// (TKT-C1XUA8). Contrast deleteEntity above, which sweeps the whole family
+// and every incident edge on both sides — reusing that here would make
+// discarding a draft destroy the published face and its inbound links.
+func (m *MemStore) deleteEntityState(
+	_ context.Context, id string, p entity.Pointer,
+) (*store.DeleteResult, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	key := entity.FormatStateRef(id, p)
+	target, ok := m.entities[key]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+
+	// Refuse to orphan the family: a family with no default row has no
+	// defined meaning and world fallback resolves against it. Deleting the
+	// LAST face is fine — nothing is left to orphan.
+	// One scan, matching fsstore's shape: the two implementations are
+	// deliberately parallel and a gratuitous difference here is noise.
+	if p.IsDefault() {
+		if n := familySize(m.entities, id); n > 1 {
+			return nil, fmt.Errorf(
+				"%w: cannot delete the default face of %s while %d other state(s) remain",
+				store.ErrInvalidQuery, id, n-1)
+		}
+	}
+
+	// OUTGOING edges on this tail go with the face. INCOMING edges do NOT:
+	// heads are entity-level (§2.3), so an inbound edge points at the entity
+	// and survives its faces.
+	var owned []*entity.Relation
+	for _, r := range m.relations {
+		if r.From == id && r.FromPointer == p {
+			owned = append(owned, r)
+		}
+	}
+	sort.Slice(owned, func(i, j int) bool { return owned[i].Key() < owned[j].Key() })
+
+	result := &store.DeleteResult{DeletedEntities: []*entity.Entity{target.Clone()}}
+	delete(m.entities, key)
+	m.entityOrder = entityRemove(m.entityOrder, key)
+
+	// Attachments are keyed to the bare id, so they belong to the ENTITY.
+	// Only sweep them when this was the last face standing.
+	if familySize(m.entities, id) == 0 {
+		for k, a := range m.attachments {
+			if a.entityID == id {
+				delete(m.attachments, k)
+			}
+		}
+		m.notifyDelete(id)
+	}
+
+	for _, r := range owned {
+		result.DeletedRelations = append(result.DeletedRelations, r.Clone())
+		rk := r.Key()
+		delete(m.relations, rk)
+		m.relationOrder = sortedRemove(m.relationOrder, rk)
+	}
+
+	m.emit(store.Event{
+		Op:         store.EventEntityDeleted,
+		EntityType: target.Type,
+		EntityID:   id,
+		Pointer:    p,
+	})
+	for _, r := range owned {
+		m.emit(store.Event{
+			Op:           store.EventRelationDeleted,
+			RelationType: r.Type,
+			From:         r.From,
+			To:           r.To,
+			Pointer:      r.FromPointer,
+		})
+	}
+	return result, nil
+}
+
+// familySize counts the state rows of a bare id.
+func familySize(entities map[string]*entity.Entity, id string) int {
+	n := 0
+	for _, e := range entities {
+		if e.ID == id {
+			n++
+		}
+	}
+	return n
+}
+
 // rekeyFamily moves every state of a family onto newID — clones to
 // avoid mutating stored objects — and returns the renamed states in
 // family order. Callers must hold m.mu.
@@ -778,12 +874,19 @@ func (m *MemStore) renameEntity(_ context.Context, oldID, newID string) (*store.
 
 // --- RelationReader ---
 
-// defaultTailKey addresses the DEFAULT-tail edge of a triple. Get,
-// update, and delete are default-tail-only in Step 1 (TKT-DOFYR1) —
-// see store.RelationData.FromPointer; state-tailed edges are removed
-// via the entity cascades.
+// tailKey addresses the edge of a triple carrying EXACTLY tail p. The tail
+// is part of a relation's identity, so this is an address and not a filter:
+// two tails on one triple are two relations (TKT-C1XUA8).
+func tailKey(from string, p entity.Pointer, relType, to string) string {
+	return (&entity.Relation{From: from, FromPointer: p, Type: relType, To: to}).Key()
+}
+
+// defaultTailKey addresses the DEFAULT-tail edge of a triple. Get and
+// update are default-tail-only (TKT-DOFYR1) — see
+// store.RelationData.FromPointer. Delete has the general form
+// deleteRelationState since TKT-C1XUA8.
 func defaultTailKey(from, relType, to string) string {
-	return (&entity.Relation{From: from, Type: relType, To: to}).Key()
+	return tailKey(from, "", relType, to)
 }
 
 func (m *MemStore) GetRelation(_ context.Context, from, relType, to string) (*entity.Relation, error) {
@@ -938,11 +1041,20 @@ func (m *MemStore) updateRelation(
 	return updated.Clone(), nil
 }
 
-func (m *MemStore) deleteRelation(_ context.Context, from, relType, to string) error {
+func (m *MemStore) deleteRelation(ctx context.Context, from, relType, to string) error {
+	return m.deleteRelationState(ctx, from, "", relType, to)
+}
+
+// deleteRelationState removes the edge with EXACTLY this tail. The tail is
+// part of a relation's identity, so addressing the wrong one deletes a
+// different edge rather than failing (TKT-C1XUA8).
+func (m *MemStore) deleteRelationState(
+	_ context.Context, from string, p entity.Pointer, relType, to string,
+) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	key := defaultTailKey(from, relType, to)
+	key := tailKey(from, p, relType, to)
 	if _, ok := m.relations[key]; !ok {
 		return store.ErrNotFound
 	}

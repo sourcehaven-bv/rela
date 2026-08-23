@@ -533,6 +533,118 @@ func (s *Store) DeleteEntity(ctx context.Context, id string, cascade bool) (*sto
 	return &store.DeleteResult{DeletedEntities: family, DeletedRelations: related}, nil
 }
 
+// DeleteEntityState removes ONE content state (face) and only the edges
+// belonging to it (TKT-C1XUA8).
+//
+// Contrast DeleteEntity above, whose three statements are all `WHERE id =
+// $1` / `from_id = $1 OR to_id = $1` and sweep the entire family plus every
+// incident edge on both sides. Reusing that shape here would make
+// discarding a draft destroy the published face and cut every inbound link
+// unrelated entities hold on it — so this deletes by (id, pointer) and only
+// outgoing edges on the matching tail.
+func (s *Store) DeleteEntityState(
+	ctx context.Context, id string, p entity.Pointer,
+) (*store.DeleteResult, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
+
+	face, err := scanEntities(ctx, tx,
+		`SELECT id, type, pointer, properties, content, updated_at
+		 FROM entities WHERE id = $1 AND pointer = $2`, id, string(p))
+	if err != nil {
+		return nil, err
+	}
+	if len(face) == 0 {
+		return nil, store.ErrNotFound
+	}
+
+	// Refuse to orphan the family: a family with no default row has no
+	// defined meaning and world fallback resolves against it. Deleting the
+	// LAST face is fine — nothing is left to orphan.
+	if p.IsDefault() {
+		var siblings int
+		if serr := tx.QueryRow(ctx,
+			`SELECT count(*) FROM entities WHERE id = $1 AND pointer <> ''`, id,
+		).Scan(&siblings); serr != nil {
+			return nil, serr
+		}
+		if siblings > 0 {
+			return nil, fmt.Errorf(
+				"%w: cannot delete the default face of %s while %d other state(s) remain",
+				store.ErrInvalidQuery, id, siblings)
+		}
+	}
+
+	// OUTGOING edges on this tail only. INCOMING edges are deliberately NOT
+	// matched: heads are entity-level (§2.3), so an inbound edge points at
+	// the entity and survives its faces.
+	owned, err := scanRelations(ctx, tx,
+		`SELECT from_id, from_pointer, rel_type, to_id, properties, content, updated_at
+		 FROM relations WHERE from_id = $1 AND from_pointer = $2
+		 ORDER BY rel_type, to_id`, id, string(p))
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM relations WHERE from_id = $1 AND from_pointer = $2`,
+		id, string(p)); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM entities WHERE id = $1 AND pointer = $2`, id, string(p)); err != nil {
+		return nil, err
+	}
+
+	// Attachments are keyed to the bare id, so they belong to the ENTITY, not
+	// to a face: only sweep them once the last face is gone. A discarded
+	// draft must not destroy attachments the surviving faces serve.
+	var left int
+	if cerr := tx.QueryRow(ctx,
+		`SELECT count(*) FROM entities WHERE id = $1`, id).Scan(&left); cerr != nil {
+		return nil, cerr
+	}
+	if left == 0 {
+		if _, err := tx.Exec(ctx,
+			`DELETE FROM attachments WHERE entity_id = $1`, id); err != nil {
+			return nil, err
+		}
+	}
+
+	evs := make([]store.Event, 0, len(owned)+1)
+	evs = append(evs, store.Event{
+		Op: store.EventEntityDeleted, EntityType: face[0].Type, EntityID: id, Pointer: p,
+	})
+	for _, r := range owned {
+		evs = append(evs, store.Event{
+			Op: store.EventRelationDeleted, RelationType: r.Type, From: r.From, To: r.To,
+			Pointer: r.FromPointer,
+		})
+	}
+	if err := s.writeTombstonesForEvents(ctx, tx, evs); err != nil {
+		return nil, err
+	}
+	for _, ev := range evs {
+		s.notify(ctx, tx, ev)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+
+	// Observers are bare-id keyed (see notifyPut), so a per-face delete must
+	// NOT notify them while other faces remain — that would de-index an
+	// entity that still exists.
+	if left == 0 {
+		s.notifyDelete(id)
+	}
+	s.emitAll(evs)
+
+	return &store.DeleteResult{DeletedEntities: face, DeletedRelations: owned}, nil
+}
+
 // scanEntities drains a multi-row entity query.
 func scanEntities(ctx context.Context, db DBTX, sql string, args ...any) ([]*entity.Entity, error) {
 	rows, err := db.Query(ctx, sql, args...)

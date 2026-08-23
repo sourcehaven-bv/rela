@@ -217,17 +217,27 @@ func (s *FSStore) updateRelation(
 	return r.Clone(), nil
 }
 
-func (s *FSStore) deleteRelation(_ context.Context, from, relType, to string) error {
+func (s *FSStore) deleteRelation(ctx context.Context, from, relType, to string) error {
+	return s.deleteRelationState(ctx, from, "", relType, to)
+}
+
+// deleteRelationState removes the edge with EXACTLY this tail. The tail is
+// part of a relation's identity, so addressing the wrong one deletes a
+// different edge rather than failing (TKT-C1XUA8).
+func (s *FSStore) deleteRelationState(
+	_ context.Context, from string, p entity.Pointer, relType, to string,
+) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	key := from + "--" + relType + "--" + to
-	if _, ok := s.relations[key]; !ok {
+	key := relKey(from, p, relType, to)
+	rm, ok := s.relations[key]
+	if !ok {
 		return store.ErrNotFound
 	}
 
 	// Delete file.
-	fileKey := s.relationFileKey(from, relType, to)
+	fileKey := s.relationFileKeyMeta(rm)
 	if err := s.rooted.Remove(fileKey); err != nil {
 		return err
 	}
@@ -242,6 +252,7 @@ func (s *FSStore) deleteRelation(_ context.Context, from, relType, to string) er
 		RelationType: relType,
 		From:         from,
 		To:           to,
+		Pointer:      p,
 	})
 	return nil
 }

@@ -329,6 +329,33 @@ type EntityWriter interface {
 	// Returns ErrNotFound if the entity does not exist.
 	DeleteEntity(ctx context.Context, id string, cascade bool) (*DeleteResult, error)
 
+	// DeleteEntityState removes ONE content state (face) of an entity,
+	// leaving the rest of the family standing (TKT-C1XUA8).
+	//
+	// This is NOT a narrower DeleteEntity, and the difference is the whole
+	// point: DeleteEntity addresses the bare id and sweeps the entire state
+	// family plus every incident relation on BOTH sides. Deleting a face
+	// removes one row and only the edges that belong to that face.
+	//
+	// Which edges belong to a face:
+	//
+	//   - OUTGOING edges whose tail is this face's pointer go WITH it. They
+	//     were written against this face and nothing else can own them.
+	//   - INCOMING edges SURVIVE. Heads are entity-level (design doc §2.3),
+	//     so an inbound edge points at the ENTITY, not at one of its faces —
+	//     deleting them would let removing a draft silently cut links that
+	//     unrelated entities hold on the published face.
+	//
+	// Refuses (ErrInvalidQuery) to delete the DEFAULT face while non-default
+	// faces remain: a family with no default row has no defined meaning, and
+	// world fallback (`otherwise: default`) resolves against it. Delete the
+	// whole entity, or discard the non-default faces first.
+	//
+	// Returns ErrNotFound if that face does not exist. Deleting the only
+	// remaining face is allowed and leaves no entity behind — it is
+	// equivalent to DeleteEntity for a single-face entity.
+	DeleteEntityState(ctx context.Context, id string, p entity.Pointer) (*DeleteResult, error)
+
 	// RenameEntity changes an entity's ID. All relations referencing the
 	// old ID are updated atomically.
 	// Returns ErrNotFound if the entity does not exist.
@@ -410,7 +437,26 @@ type RelationWriter interface {
 
 	// DeleteRelation removes a relation.
 	// Returns ErrNotFound if the relation does not exist.
+	//
+	// Addresses the DEFAULT-tail edge of the triple. A triple can carry one
+	// edge per state tail (see RelationData.FromPointer), so this is an
+	// address, not a wildcard — use DeleteRelationState for a state-tailed
+	// edge.
 	DeleteRelation(ctx context.Context, from, relType, to string) error
+
+	// DeleteRelationState removes the edge of this triple whose tail is p
+	// (TKT-C1XUA8). The zero pointer addresses the default-tail edge, making
+	// this the general form of DeleteRelation.
+	//
+	// Separate from DeleteRelation because the tail is part of a relation's
+	// IDENTITY, not a filter: two edges on the same triple with different
+	// tails are two relations. A caller that holds a state-tailed edge and
+	// drops the tail does not delete "the edge, approximately" — it deletes a
+	// DIFFERENT edge, the default face's, and reports success. That is the
+	// bug this method exists to make unavailable.
+	//
+	// Returns ErrNotFound if no edge with that exact tail exists.
+	DeleteRelationState(ctx context.Context, from string, p entity.Pointer, relType, to string) error
 }
 
 // RelationData holds optional properties and content for a relation.

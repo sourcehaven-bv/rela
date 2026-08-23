@@ -141,8 +141,13 @@ type attachMeta struct {
 // contract change. Interface growth, not internal sprawl; keep
 // ratcheting the pre-existing surplus down per TKT-N0IKN9.)
 //
-//plimsoll:max-methods=102
-//plimsoll:max-exported-methods=34
+// (+2 methods / +2 exported with per-face delete, TKT-C1XUA8:
+// DeleteEntityState and DeleteRelationState joined the mandated
+// store.Store interface. Required-interface exception, not accreted
+// API — the counts ratchet only if store.Store itself narrows.)
+//
+//plimsoll:max-methods=106
+//plimsoll:max-exported-methods=36
 type FSStore struct {
 	// rooted is the validated-key I/O surface. Every read, write,
 	// directory op, and remove that operates on files under the
