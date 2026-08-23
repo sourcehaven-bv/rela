@@ -85,6 +85,10 @@ func (p *policyResolver) EntryValues(entityType string) map[string]string {
 // the resolver itself snapshots once per call by virtue of being
 // invoked once per per-entity GET (the App captures appState.Load() at
 // the top of each handler).
+// NOTE: internal/appbuild/relationlookup.go holds a deliberate copy of this
+// adapter (appbuild cannot import dataentry). The two are behaviourally
+// identical and both feed affordance `when:` predicates — fix bugs in BOTH or
+// the two surfaces will disagree about who may see what.
 type storeRelationLookup struct {
 	st store.Store
 }
