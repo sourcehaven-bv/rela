@@ -50,6 +50,7 @@ import {
 import type { AutoSaveErrorInfo } from '@/composables/useAutoSave'
 import { useConfirm, withConfirmError } from '@/composables/useConfirm'
 import { useDelayedPending } from '@/composables/useDelayedPending'
+import { beginRouteLoad } from '@/composables/useNavigationPending'
 import { PENDING_TIMINGS } from '@/composables/pendingTimings'
 
 const props = defineProps<{
@@ -358,6 +359,24 @@ function runCommand(cmd: Command) {
 async function loadView() {
   loading.value = true
   error.value = null
+  // Report EVERY load to the global activity bar, including the ones where
+  // previous content stays on screen.
+  //
+  // Holding the old entity is what stops the page collapsing, but it also
+  // means a prev/next step looks like NOTHING happened until the new data
+  // lands — the click reads as ignored. Stale content with no indicator is
+  // the failure mode; the bar is what distinguishes "showing you the
+  // previous one while the next loads" from "frozen".
+  //
+  // A bar is the right shape for that precisely because it does not
+  // contradict the content: it is peripheral and additive, where a spinner
+  // replacing the article would assert there is nothing to see.
+  //
+  // The route itself settles in ~99ms while this fetch runs ~2s, so without
+  // reporting here the bar would never cover the part that actually takes
+  // time. The 250ms gate still suppresses it entirely when the fetch is
+  // quick.
+  const settleRouteLoad = beginRouteLoad()
   try {
     viewData.value = await fetchView(props.entityType, props.entityId)
     if (viewData.value?.entry) {
@@ -373,6 +392,7 @@ async function loadView() {
     console.error('Failed to load entity view:', err)
   } finally {
     loading.value = false
+    settleRouteLoad?.()
   }
 }
 

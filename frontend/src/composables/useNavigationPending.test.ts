@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { defineComponent, h } from 'vue'
 import { createRouter, createMemoryHistory, type Router } from 'vue-router'
-import { useNavigationPending } from './useNavigationPending'
+import { useNavigationPending, beginRouteLoad, _resetRouteLoadForTest } from './useNavigationPending'
 
 // Driven against a REAL router rather than a stub: the whole point of
 // RR-B7U3I8 is which vue-router hooks fire (and don't) for which
@@ -43,7 +43,10 @@ describe('useNavigationPending', () => {
     nav = useNavigationPending(router)
   })
 
-  afterEach(() => nav.stop())
+  afterEach(() => {
+    nav.stop()
+    _resetRouteLoadForTest()
+  })
 
   it('is idle before anything happens', () => {
     expect(nav.isNavigating.value).toBe(false)
@@ -147,5 +150,52 @@ describe('useNavigationPending', () => {
   it('rejects a missing router rather than silently no-op-ing', () => {
     // @ts-expect-error deliberately passing nothing
     expect(() => useNavigationPending(undefined)).toThrow()
+  })
+
+  // A route settling is NOT the destination being ready. Measured in the
+  // running app: stepping between entities settles the route in ~99ms while
+  // the entity's own fetch lands at ~2100ms. A bar wired to router state
+  // alone is correct by its own definition and useless in practice, so a
+  // view reports its own load through beginRouteLoad.
+  describe('route-load reporting', () => {
+    it('stays navigating while a view reports a load, after the route settled', async () => {
+      await router.push('/a')
+      expect(nav.isNavigating.value).toBe(false)
+
+      const settle = beginRouteLoad()
+      expect(nav.isNavigating.value).toBe(true)
+
+      settle()
+      expect(nav.isNavigating.value).toBe(false)
+    })
+
+    // Nested regions (an entity page and its documents panel) load
+    // concurrently and must not clear each other's contribution.
+    it('reference-counts concurrent loads', () => {
+      const a = beginRouteLoad()
+      const b = beginRouteLoad()
+      expect(nav.isNavigating.value).toBe(true)
+
+      a()
+      expect(nav.isNavigating.value).toBe(true)
+
+      b()
+      expect(nav.isNavigating.value).toBe(false)
+    })
+
+    // A caller that settles in both a `finally` and an error path must not
+    // drive the count negative, which would pin the bar on for every
+    // subsequent load.
+    it('settling twice does not corrupt the count', () => {
+      const settle = beginRouteLoad()
+      settle()
+      settle()
+      expect(nav.isNavigating.value).toBe(false)
+
+      const other = beginRouteLoad()
+      expect(nav.isNavigating.value).toBe(true)
+      other()
+      expect(nav.isNavigating.value).toBe(false)
+    })
   })
 })
