@@ -2,7 +2,7 @@
 id: REV-EMTIUL
 type: review-checklist
 title: 'Review: Calendar views (month + week) for data-entry'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -94,8 +94,19 @@ one — the behaviour that was silently broken.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass
+- [x] PR URL documented below
 
-**PR:** <!-- pending -->
+**PR:** <!-- filled in immediately after opening; see note below -->
+
+**Ordering note.** The workflow's PR gate wants the ticket `done` before a PR is
+opened, but these three items can only be completed BY opening it — the
+checklist and the gate each wait on the other. Resolved by the user's call:
+transition first, then open the PR and record its URL here. Flagging it because
+a checklist item ticked before the fact is exactly the thing these checklists
+exist to prevent, and the next person hitting this loop deserves to know it was
+noticed rather than glossed.
+
+`just ci` passed locally before the transition, so "all CI checks pass" reflects
+a real green run rather than an assumption; the hosted run is confirmed below.

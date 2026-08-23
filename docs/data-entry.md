@@ -2619,7 +2619,8 @@ that same display timezone, so they never disagree.
 
 ### Sharing a source list with a feed
 
-`calendars:` and `feeds:` (see [Feeds](#feeds)) use the same source field names,
+`calendars:` and `feeds:` (see [Calendar feeds](#calendar-feeds)) use the same
+source field names,
 so a YAML anchor can declare a projection once and serve both an in-app
 calendar and a subscribable ICS feed:
 
