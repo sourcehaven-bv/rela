@@ -39,6 +39,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/jobs"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -85,7 +86,11 @@ import (
 // the backend is chosen here (per build tag) and handed to the App at the
 // wiring site.
 //
-//plimsoll:max-exported-methods=25
+// The exported count is the service-accessor surface: Services IS the wiring
+// facade, so each new subsystem it composes adds one getter. Ratchet this down
+// by splitting the bundle (TKT-N0IKN9), not by hiding an accessor.
+//
+//plimsoll:max-exported-methods=26
 type Services struct {
 	fs    storage.FS
 	paths *project.Context
@@ -108,10 +113,14 @@ type Services struct {
 	templater       templating.Templater
 	cfgLoader       config.Loader
 	stateKV         state.KV
-	caldavAliases   *caldavalias.Service
-	scriptEngine    *script.Engine
-	searchCloser    io.Closer
-	acl             acl.ACL
+	// jobQueue is the background-job seam (TKT-YOED3R). Its backend is a
+	// per-tier choice made by the recipe: ephemeral in-process on fs/mem,
+	// durable PostgreSQL on the postgres build. Torn down in Close.
+	jobQueue      jobs.Queue
+	caldavAliases *caldavalias.Service
+	scriptEngine  *script.Engine
+	searchCloser  io.Closer
+	acl           acl.ACL
 	// aclDeclarative is set when buildACL constructs a Declarative; nil
 	// for NopACL, ReadOnlyACL, or when Declarative construction fails.
 	aclDeclarative *acl.Declarative
@@ -263,6 +272,17 @@ func (s *Services) Config() config.Loader { return s.cfgLoader }
 // State returns the .rela cache-directory KV (or a sentinel error-KV
 // when no cache dir is available).
 func (s *Services) State() state.KV { return s.stateKV }
+
+// Jobs returns the background-job queue, already started.
+//
+// Register handlers on it at wiring time; the dispatcher resolves a handler
+// per job, so registration after start is fine. Its durability depends on the
+// build — ephemeral on fs/desktop, durable on postgres.
+//
+// Nil: never — assemble fails rather than returning a Services with no
+// queue, since a nil queue would turn every Enqueue into a panic at the
+// call site rather than a wiring error here.
+func (s *Services) Jobs() jobs.Queue { return s.jobQueue }
 
 // CalDAVAliases is the CalDAV<->rela resource alias service. Never nil: the
 // service is always constructed (an empty table is the normal first-run state),
@@ -1307,7 +1327,7 @@ func assemble(
 	// here and threaded into the recorders and the Services bundle.
 	versions := versionServiceFor(st)
 
-	stateKV, aliases, err := buildStateAndAliases(cfg.FS, cfg.Paths, stateKVFor(st))
+	stateKV, aliases, jobQueue, err := buildRuntimeServices(cfg.FS, cfg.Paths, base, stateKVFor(st))
 	if err != nil {
 		return nil, err
 	}
@@ -1369,6 +1389,7 @@ func assemble(
 		templater:       templater,
 		cfgLoader:       cfgLoader,
 		stateKV:         stateKV,
+		jobQueue:        jobQueue,
 		caldavAliases:   aliases,
 		scriptEngine:    cfg.ScriptEngine,
 		searchCloser:    searchCloser,
@@ -1482,8 +1503,61 @@ func (s *Services) Close() error {
 			_ = s.searchCloser.Close()
 			s.searchCloser = nil
 		}
+		if s.jobQueue != nil {
+			// Bounded: a queue that will not drain must not wedge shutdown.
+			ctx, cancel := context.WithTimeout(context.Background(), jobQueueShutdownTimeout)
+			if err := s.jobQueue.Close(ctx); err != nil {
+				slog.Warn("appbuild: failed to close job queue", "error", err)
+			}
+			cancel()
+			s.jobQueue = nil
+		}
 	})
 	return s.closeErr
+}
+
+// buildJobQueue builds the background-job queue for this build.
+//
+// jobQueueFor is the per-tier choice: an ephemeral in-process queue by default,
+// a durable PostgreSQL-backed one under the postgres tag. Every assembled
+// Services gets one — a nil queue would surface as a panic at an enqueue site
+// rather than as a wiring error here.
+func buildJobQueue(base *SharedBase) (jobs.Queue, error) {
+	q, err := jobQueueFor(base)
+	if err != nil {
+		return nil, fmt.Errorf("appbuild: build job queue: %w", err)
+	}
+	// Started here rather than left to the first producer. An unstarted queue
+	// rejects every Enqueue with jobs.ErrNotStarted, so handing one out from
+	// Services.Jobs would be a trap: the accessor would look wired while
+	// every call through it failed.
+	//
+	// Handlers registered after Start still work — the dispatcher resolves
+	// them per job — so this does not constrain when subsystems register.
+	if err := q.Start(context.Background()); err != nil {
+		return nil, fmt.Errorf("appbuild: start job queue: %w", err)
+	}
+	return q, nil
+}
+
+// buildRuntimeServices builds the per-assembly runtime services that are not
+// derived from the store's contents: the state store, the CalDAV alias service
+// riding on it, and the background-job queue.
+//
+// Grouped into one call so assemble reads as composition rather than a run of
+// near-identical build-and-check blocks.
+func buildRuntimeServices(
+	fs storage.FS, paths *project.Context, base *SharedBase, backendKV state.KV,
+) (state.KV, *caldavalias.Service, jobs.Queue, error) {
+	stateKV, aliases, err := buildStateAndAliases(fs, paths, backendKV)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	jobQueue, err := buildJobQueue(base)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return stateKV, aliases, jobQueue, nil
 }
 
 // buildStateAndAliases builds the per-user state store and the CalDAV alias

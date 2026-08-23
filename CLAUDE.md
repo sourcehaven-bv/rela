@@ -109,6 +109,32 @@
   entity (a form save that renders every field). `ApplyEntity` is the
   whole-record replace the sync channel needs. If you are writing a *subset*,
   you want `PatchEntity`.
+- **Background jobs: the queue knows nothing about schedules, and never
+  runs before a transaction closes.** External side effects (mail, HTTP, AI)
+  belong on `jobs.Queue` rather than inline on a write path. Two rules keep
+  the seam usable:
+
+  *Retry is a flat enum* (`RetryNever` / `RetryBounded` / `RetryPersistent`)
+  plus an optional deadline — nothing else. The enum names INTENT; mechanism
+  (attempt counts, backoff, the `RetryPersistent` outer bound) lives in
+  `internal/jobs/retry.go` and is meant to be retuned there for everyone.
+  Do NOT widen it into a policy struct or add per-call knobs: a call site
+  needing different mechanics is evidence for a new intent value. A caller
+  with a cadence (the scheduler) expresses it by passing its own next run as
+  the deadline — `Schedule.NextRun` — so the queue never learns what a
+  schedule is.
+
+  *A job enqueued inside `store.Store.Tx` must not become runnable until that
+  transaction commits.* Otherwise a worker reads it on another connection
+  that cannot see the uncommitted writes and acts on the pre-write world — a
+  race that passes tests and fails under load. `jobs.WithDeferral` collects
+  enqueues; the transaction seam calls `Flush` on commit or `Discard` on
+  rollback, mirroring pgstore's `txPending`. Pinned by `jobstest`.
+
+  The fs/desktop tier is EPHEMERAL on purpose — jobs vanish on exit, because
+  an unsent mail from an ended session is not worth resurrecting. Don't
+  "fix" it to persist; that is what the postgres tier is for.
+
 - **The configuration is not a secret; the data is.** `schema.yaml`,
   `data-entry.yaml`, `acl.yaml`, `schedules.yaml`, `scripts/`, `actions/`,
   `templates/` are operator-authored files that live in the repo — routinely a
@@ -230,6 +256,7 @@ Domain and storage:
 | `internal/visibility`    | Read-side ACL wrappers: row-gate + field-redact readers, tracer decorator (DEC-ZBI39P) |
 | `internal/entitymanager` | Write path: automations, validation, audit, policy        |
 | `internal/audit`         | Append-only JSONL audit log of every successful write     |
+| `internal/jobs`          | Background-job seam: ephemeral (fs/desktop) or durable (postgres) |
 | `internal/principal`     | Identity attribution (`Principal{User, Tool}`) on ctx     |
 | `internal/validator`     | Validation engine invoked by entitymanager                |
 | `internal/markdown`      | Parse/write entity and relation markdown                  |
