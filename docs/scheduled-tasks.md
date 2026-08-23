@@ -131,6 +131,14 @@ have.
 
 Notes:
 
+- **`system:` identities cannot be asserted over the API.** The grant above
+  is reachable only by the scheduler process itself. rela reserves the whole
+  `system:` namespace at the HTTP boundary: a proxy header, a
+  `RELA_DATAENTRY_USER` value, or even a validly signed identity assertion
+  naming `system:scheduler` is refused with a 403 and logged, so a wide
+  `read: ["*"]` grant here cannot be borrowed by a web or MCP caller. `run_as`
+  in this file is unaffected — it is operator-authored config, read
+  in-process, and may name any `system:` identity you like.
 - **An identity with no assignment reads nothing.** If `run_as` names a
   principal that `acl.yaml` never assigns a role, the task's reads come back
   empty. A typo produces a silently empty job, so check the identity against
