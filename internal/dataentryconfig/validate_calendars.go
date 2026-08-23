@@ -43,13 +43,13 @@ var supportedCalendarDateFormats = map[string]bool{
 	"2006-01-02": true,
 }
 
-// validateCalendars checks each calendar against the metamodel: every source
-// must name a known entity type, its date/summary/description properties must
-// exist and be of usable types, each where clause must parse, and the view /
-// week-start / color tokens must be known values.
+// validateCalendars checks each calendar against the metamodel. The individual
+// rules live on [validateCalendarShell] and [validateCalendarSource].
 //
-// Errors are reported per calendar and source index so an author can pinpoint
-// the problem, and surface at config load rather than on first render.
+// Errors name the calendar and source index so an author can pinpoint the
+// problem, and surface at config load rather than on first render — a calendar
+// whose date property is unusable would otherwise fail on the user's first
+// drag, far from the config line that caused it.
 func validateCalendars(cfg *Config, meta *metamodel.Metamodel) []string {
 	var errs []string
 
