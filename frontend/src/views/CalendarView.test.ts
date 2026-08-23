@@ -12,10 +12,26 @@ import type { Entity, ListResponse } from '@/types'
 
 const listAllEntitiesMock = vi.fn()
 const updateEntityMock = vi.fn()
+// fetchView is what EntityDetail loads its content from. Without it stubbed the
+// component mounts but renders no header at all, which would make the
+// "no toolbar in the preview" assertion below vacuously true.
+const fetchViewMock = vi.fn(() =>
+  Promise.resolve({
+    entry: {
+      id: 'T-1',
+      type: 'task',
+      properties: { title: 'Task T-1', due: '2026-08-22' },
+      relations: {},
+    },
+    sections: [],
+  })
+)
 vi.mock('@/api', async (orig) => ({
   ...(await orig<typeof import('@/api')>()),
   listAllEntities: (...args: unknown[]) => listAllEntitiesMock(...args),
   updateEntity: (...args: unknown[]) => updateEntityMock(...args),
+  fetchView: (...args: unknown[]) => fetchViewMock(...(args as [])),
+  getCommands: () => Promise.resolve([]),
 }))
 
 const routerPush = vi.fn()
@@ -580,6 +596,45 @@ describe('CalendarView event click', () => {
     // No navigation: the user stays on the calendar, keeping their period.
     expect(routerPush).not.toHaveBeenCalled()
     expect(document.querySelector('.entity-preview')).not.toBeNull()
+  })
+
+  it('shows no edit, history or delete toolbar in the preview', async () => {
+    // A preview is a read surface. EntityDetail brings its own toolbar, which
+    // would put a destructive Delete one click from a calendar chip and a
+    // second Edit next to the footer's. It is rendered with `hide-actions`;
+    // this asserts that stays true.
+    const wrapper = setup({
+      responses: { task: [task('T-1', '2026-08-22')] },
+      editForm: 'edit_task',
+    })
+    await flushPromises()
+
+    await wrapper.find('.calendar-chip').trigger('click')
+    await flushPromises()
+
+    const modal = document.querySelector('.entity-preview') as HTMLElement
+    expect(modal).not.toBeNull()
+    expect(modal.querySelector('.header-actions')).toBeNull()
+
+    // The footer still offers exactly one Edit.
+    const footerButtons = [...modal.querySelectorAll('.modal-actions button')].map((b) =>
+      b.textContent?.trim()
+    )
+    expect(footerButtons).toEqual(['Open full page', 'Edit'])
+  })
+
+  it('omits Edit when the calendar configures no edit form', async () => {
+    const wrapper = setup({ responses: { task: [task('T-1', '2026-08-22')] } })
+    await flushPromises()
+
+    await wrapper.find('.calendar-chip').trigger('click')
+    await flushPromises()
+
+    const modal = document.querySelector('.entity-preview') as HTMLElement
+    const footerButtons = [...modal.querySelectorAll('.modal-actions button')].map((b) =>
+      b.textContent?.trim()
+    )
+    expect(footerButtons).toEqual(['Open full page'])
   })
 
   it('closes the preview without navigating away', async () => {

@@ -2494,10 +2494,11 @@ the entity page uses, in a modal — rather than jumping straight into an edit
 form. The usual sequence is "see more, then maybe edit", and a small chip is a
 poor basis for deciding to change something.
 
-The preview carries the entity's own Edit, History and Delete actions (each
-subject to the same permissions as elsewhere), plus **Open full page** to leave
-the calendar. Escape or a click outside closes it, returning you to the period
-you were looking at.
+The preview is a read surface: it shows the entity's properties and content
+without the entity page's Edit / History / Delete toolbar. Its two actions are
+**Edit** (opening the calendar's `edit_form`, when one is configured) and
+**Open full page**, where the full toolbar lives. Escape or a click outside
+closes it, returning you to the period you were looking at.
 
 ### Drag to reschedule
 

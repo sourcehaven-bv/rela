@@ -50,10 +50,26 @@ import {
 import type { AutoSaveErrorInfo } from '@/composables/useAutoSave'
 import { useConfirm, withConfirmError } from '@/composables/useConfirm'
 
-const props = defineProps<{
-  entityType: string
-  entityId: string
-}>()
+const props = withDefaults(
+  defineProps<{
+    entityType: string
+    entityId: string
+    /**
+     * Hide the header action toolbar (commands, Edit, History, Delete).
+     *
+     * For embedding this component as a READ surface — the calendar's preview
+     * modal — where the host supplies its own actions. Without it the modal
+     * shows two Edit buttons and a destructive Delete one click from a
+     * calendar chip, which is not what a preview is for.
+     *
+     * Suppresses the buttons only. Permission checks, keyboard handlers and
+     * every other behaviour are untouched, so this cannot widen what a
+     * principal may do.
+     */
+    hideActions?: boolean
+  }>(),
+  { hideActions: false }
+)
 
 const router = useRouter()
 const schemaStore = useSchemaStore()
@@ -739,7 +755,7 @@ watch(
           <h1 class="text-wrap-anywhere">{{ entryTitle }}</h1>
         </div>
         <!-- Desktop actions -->
-        <div class="header-actions desktop-actions">
+        <div v-if="!props.hideActions" class="header-actions desktop-actions">
           <button
             v-for="cmd in commands"
             :key="cmd.id"
@@ -763,7 +779,7 @@ watch(
         </div>
 
         <!-- Mobile actions: Edit primary, delete icon, overflow menu for commands -->
-        <div class="header-actions mobile-actions">
+        <div v-if="!props.hideActions" class="header-actions mobile-actions">
           <button
             v-if="editFormId && !isInaccessible && canUpdate"
             class="btn btn-secondary"

@@ -570,6 +570,7 @@ function onDragEnd() {
       :open="!!preview"
       :entity-type="preview.type"
       :entity-id="preview.id"
+      :edit-form="config?.edit_form"
       @close="closePreview"
     />
   </div>

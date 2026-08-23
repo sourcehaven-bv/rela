@@ -20,11 +20,14 @@
  * open (it checks isAnyModalOpen), so its handlers do not fight the calendar's
  * while this is up.
  *
- * It also renders its OWN Edit / History / Delete toolbar, each ACL-gated. This
- * wrapper therefore adds no Edit button of its own: two Edits meaning slightly
- * different things (one honouring the calendar's `edit_form`, one the entity's
- * default) is worse than one that is always right. The only action here is the
- * escape hatch to the full page.
+ * EntityDetail is rendered with `hide-actions`, so its own Edit / History /
+ * Delete toolbar is suppressed and this wrapper owns the actions instead. A
+ * preview is for reading: a destructive Delete one click from a calendar chip
+ * is a bigger gesture than the click that opened it, and History belongs on
+ * the full page where there is room for it.
+ *
+ * What remains is the two things a reader actually wants next — edit this, or
+ * go see it properly.
  */
 import { computed, nextTick, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -35,6 +38,8 @@ const props = defineProps<{
   open: boolean
   entityType: string
   entityId: string
+  /** Form opened by Edit; without one, Edit is not offered. */
+  editForm?: string
 }>()
 
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -76,6 +81,12 @@ function openFullPage() {
   void router.push(`/entity/${props.entityType}/${props.entityId}`)
 }
 
+function openEditForm() {
+  if (!props.editForm) return
+  close()
+  void router.push(`/form/${props.editForm}/${props.entityId}`)
+}
+
 </script>
 
 <template>
@@ -103,11 +114,15 @@ function openFullPage() {
             :key="`${entityType}/${entityId}`"
             :entity-type="entityType"
             :entity-id="entityId"
+            hide-actions
           />
         </div>
 
         <footer class="modal-actions">
           <button type="button" class="btn" @click="openFullPage">Open full page</button>
+          <button v-if="editForm" type="button" class="btn btn-primary" @click="openEditForm">
+            Edit
+          </button>
         </footer>
       </div>
     </div>
