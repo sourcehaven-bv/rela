@@ -50,6 +50,15 @@ type readGate interface {
 	// permission (e.g. acl.PermHistoryRead). Used to gate deleted-entity
 	// history reads, which have no per-entity verdict to evaluate.
 	HoldsPermission(ctx context.Context, perm string) bool
+	// PermitsWorld reports whether the principal may READ the named world
+	// (TKT-DN37J2). Checked at `?world=` selection, BEFORE a world-resolved
+	// reader is constructed; the per-entity gates above still run after, on
+	// whatever the resolved world contains.
+	//
+	// The error is an INFRASTRUCTURE failure, not a denial — the two must
+	// stay distinguishable, because a denial renders as an empty result
+	// while an outage must not (RR-4TFZNL).
+	PermitsWorld(ctx context.Context, world string) (bool, error)
 }
 
 // aclReadGate is the production implementation of readGate. Wraps a
@@ -85,6 +94,10 @@ func (g aclReadGate) ReadQuery(ctx context.Context, entityType string) acl.ReadQ
 
 func (g aclReadGate) HoldsPermission(ctx context.Context, perm string) bool {
 	return g.req.HoldsPermission(ctx, perm)
+}
+
+func (g aclReadGate) PermitsWorld(ctx context.Context, world string) (bool, error) {
+	return g.req.PermitsWorld(ctx, world)
 }
 
 // SearchScope maps per-type ReadQuery verdicts onto the
@@ -133,6 +146,12 @@ func (nopReadGate) ReadQuery(context.Context, string) acl.ReadQueryResult {
 // nop gate's allow-all posture (no policy configured ⇒ no restrictions), so
 // deleted-entity history is readable exactly as it would be pre-ACL.
 func (nopReadGate) HoldsPermission(context.Context, string) bool { return true }
+
+// PermitsWorld under no ACL permits every world, matching every other
+// method here: the nop gate is the "no policy loaded" case, where the
+// operator has not asked for any gating at all. A world's CONTENTS are
+// still whatever the world resolves to; this only decides selection.
+func (nopReadGate) PermitsWorld(context.Context, string) (bool, error) { return true, nil }
 
 // SearchScope under no ACL is the wildcard-allow scope — NOT one
 // AllowAll entry per metamodel type. The difference is entities whose

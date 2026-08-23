@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	entitypkg "github.com/Sourcehaven-BV/rela/internal/entity"
@@ -55,6 +56,11 @@ func newVisibleReader(s store.Store) visibleReader {
 // getEntity pair: callers translate (nil,false,nil) into the same not-found
 // wire response a genuinely-missing entity produces.
 func (vr visibleReader) getVisible(ctx context.Context, entityType, id string) (*entitypkg.Entity, bool, error) {
+	if worldFromContext(ctx).blocksAllReads() {
+		// Same not-found a genuine miss produces — the caller cannot tell a
+		// denied world from an entity with no face in this one.
+		return nil, false, nil
+	}
 	ok, err := readGateFromContext(ctx).PermitsRead(ctx, entityType, id)
 	if err != nil {
 		return nil, false, err
@@ -62,7 +68,18 @@ func (vr visibleReader) getVisible(ctx context.Context, entityType, id string) (
 	if !ok {
 		return nil, false, nil
 	}
-	e, gerr := vr.store.GetEntity(ctx, id)
+	e, gerr := vr.getWorldEntity(ctx, id)
+	if gerr != nil && !errors.Is(gerr, errWorldEntityAbsent) &&
+		!worldScopeFrom(ctx).IsDefaultWorld() {
+		// On the WORLD path the underlying read is a ListEntities iterator,
+		// whose error is always an infrastructure failure — a genuine miss
+		// is errWorldEntityAbsent. Folding it into not-found would render a
+		// backend outage as "this entity has no published face", which is
+		// the same mistake resolveWorld refuses to make one file over
+		// (RR-4TFZNL). The default-world branch keeps GetEntity's inherited
+		// miss-is-not-found contract unchanged.
+		return nil, false, gerr
+	}
 	if gerr != nil {
 		// A store miss is treated as not-found, matching the former
 		// App.getEntity contract (err -> not found). The store error is
@@ -73,6 +90,44 @@ func (vr visibleReader) getVisible(ctx context.Context, entityType, id string) (
 	}
 	return e, true, nil
 }
+
+// getWorldEntity fetches the entity's face in the request's world.
+//
+// For the DEFAULT world this is exactly the previous GetEntity call — the
+// zero WorldScope is the default world, so a pointerless project and every
+// existing caller are byte-identical.
+//
+// For a non-default world it goes through a one-id ListEntities query
+// carrying the world scope, so the BACKEND resolves the chain and the
+// fallback verdict. That keeps ONE resolution site: reimplementing the walk
+// here would be a second implementation of the semantics that decide which
+// face a reader sees, free to drift from the store's. It also means an
+// entity the world EXCLUDES is simply absent from the result, which the
+// caller already renders as the same not-found a genuine miss produces.
+func (vr visibleReader) getWorldEntity(
+	ctx context.Context, id string,
+) (*entitypkg.Entity, error) {
+	scope := worldScopeFrom(ctx)
+	if scope.IsDefaultWorld() {
+		return vr.store.GetEntity(ctx, id)
+	}
+	for e, err := range vr.store.ListEntities(ctx, store.EntityQuery{
+		IDs:   []string{id},
+		World: scope,
+	}) {
+		if err != nil {
+			return nil, err
+		}
+		return e, nil
+	}
+	return nil, errWorldEntityAbsent
+}
+
+// errWorldEntityAbsent means the world resolved the id to no face — either
+// no state matched the chain under `otherwise: exclude`, or the entity does
+// not exist. The caller cannot tell the two apart, which is the point:
+// existence in a world IS the publication bit (§4.1).
+var errWorldEntityAbsent = errors.New("entity has no face in this world")
 
 // filterVisible drops every candidate the principal cannot read, batching the
 // gate probe by entity type — one PermitsReadMany per distinct type, turning a

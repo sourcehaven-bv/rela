@@ -102,7 +102,12 @@ const userPaletteFile = "palette.yaml"
 // handler as a parameter and `toolForPath` is a package function, so the
 // mount cost one method rather than three.
 //
-//plimsoll:max-methods=103
+// TKT-DN37J2 adds [App.SetWorlds] on the same terms, and the same discipline
+// held for the rest: `resolveWorld`, `attachWorld`, `worldCapablePath` and
+// `worldRefusesSearch` are all package functions taking what they need, so
+// request-level world selection cost ONE method rather than five.
+//
+//plimsoll:max-methods=104
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS
@@ -124,7 +129,12 @@ type App struct {
 	// (a collection with no way to remember client-created resources would
 	// duplicate every to-do on the next sync).
 	caldavAliases *caldavalias.Service
-	searcher      search.Searcher
+
+	// worlds resolves a `?world=` name to its compiled scope. Nil until
+	// [App.SetWorlds] is called, in which case the App serves the default
+	// world only and refuses any other `?world=` — see world.go.
+	worlds   WorldLookup
+	searcher search.Searcher
 	// visibleSearcher is the ACL-scoped search seam (TKT-BA8BSX):
 	// executeQuery routes free-text searches through it so /_search
 	// and the _position search scope only ever see hits the request

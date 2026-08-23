@@ -7,6 +7,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/worldreader"
+	"github.com/Sourcehaven-BV/rela/internal/worlds"
 )
 
 // metamodelCanon adapts the metamodel to worldreader.TypeCanonicalizer.
@@ -44,6 +45,24 @@ func (c metamodelScopes) IsContentScoped(relType string) bool {
 		return false
 	}
 	return def.Scope.IsContent()
+}
+
+// CompiledWorlds returns svc's compiled world map, for surfaces that offer
+// request-level world selection (TKT-DN37J2).
+//
+// The returned value satisfies a consumer-side lookup interface by having a
+// Lookup(name) (store.WorldScope, bool) method, so a consumer that may not
+// import internal/worlds (internal/dataentry, per arch-lint) can still
+// resolve a world NAME to its metamodel-free compiled scope.
+//
+// A package-level function rather than a Services method for the same reason
+// [WorldSurface] is one: Services sits at its plimsoll exported-method cap,
+// and that cap is a ratchet to narrow rather than raise.
+func CompiledWorlds(svc *Services) worlds.Compiled {
+	if svc == nil {
+		return worlds.Compiled{}
+	}
+	return svc.worlds
 }
 
 // WorldSurface builds a read surface bound to the named world.

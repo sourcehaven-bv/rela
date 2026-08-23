@@ -289,6 +289,11 @@ func (a *App) scopedSortedEntities(
 	typeName string,
 	query map[string][]string,
 ) ([]*entityPkg.Entity, error) {
+	// A denied world yields nothing, via the SAME empty-result path a
+	// genuinely-empty world takes — so the two are identical on the wire.
+	if worldFromContext(ctx).blocksAllReads() {
+		return []*entityPkg.Entity{}, nil
+	}
 	rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
 
 	var entities []*entityPkg.Entity
@@ -299,7 +304,15 @@ func (a *App) scopedSortedEntities(
 		// Inline iteration rather than listFromStoreByTypes: that
 		// helper swallows iterator errors into a partial slice, and
 		// the list pipeline must fail loud on both verdict paths.
-		for e, err := range a.Services().Store.ListEntities(ctx, store.EntityQuery{Type: typeName}) {
+		// World scope on BOTH verdict branches. Carrying it on only one is
+		// the RR-GQWRLD fail-open: AllowAll takes this EntityQuery branch
+		// and every ACL-gated principal takes the GraphQuery branch below,
+		// so a world stamped on one silently degrades to the default world
+		// for exactly one of the two populations.
+		for e, err := range a.Services().Store.ListEntities(ctx, store.EntityQuery{
+			Type:  typeName,
+			World: worldScopeFrom(ctx),
+		}) {
 			if err != nil {
 				return nil, fmt.Errorf("%w: %w", errListLoad, err)
 			}
@@ -310,7 +323,13 @@ func (a *App) scopedSortedEntities(
 		// AllowAll. Fail loud instead of silently widening the list.
 		return nil, fmt.Errorf("%w: zero ReadQueryResult for type %q", errACLListQuery, typeName)
 	default:
-		for e, err := range a.Services().Store.GraphQuery(ctx, *rqr.Query) {
+		// COPY before stamping: the ACL layer may cache or reuse a
+		// ReadQueryResult per principal, so mutating *rqr.Query in place
+		// would leak one request's world into the next caller's — the same
+		// cross-request scope bleed visibility.listPushdown guards against.
+		wq := *rqr.Query
+		wq.World = worldScopeFrom(ctx)
+		for e, err := range a.Services().Store.GraphQuery(ctx, wq) {
 			if err != nil {
 				return nil, fmt.Errorf("%w: %w", errACLListQuery, err)
 			}
@@ -614,7 +633,14 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 	outgoingByRow := make([][]*entityPkg.Relation, len(entities))
 	incomingByRow := make([][]*entityPkg.Relation, len(entities))
 	var pageNeighborIDs []string
+	// Same rule as the single-entity GET: these edges are default-world, so a
+	// world-bound list carries none rather than pairing published rows with
+	// draft neighbors.
+	worldBound := !worldScopeFrom(r.Context()).IsDefaultWorld()
 	for i, e := range entities {
+		if worldBound {
+			continue
+		}
 		outgoingByRow[i] = a.reader.outgoingRelations(r.Context(), e.ID)
 		incomingByRow[i] = a.reader.incomingRelations(r.Context(), e.ID)
 		pageNeighborIDs = append(pageNeighborIDs, neighborIDsOf(outgoingByRow[i], incomingByRow[i])...)
@@ -761,7 +787,15 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 
 	// Single per-entity serialization: strips hidden + attaches
 	// `_fields` / `_relations` per docs/data-entry/api-reference.md.
-	result := a.serializer.forWire(ctx, entity, a.reader.outgoingRelations(ctx, entity.ID), a.Meta(), plural)
+	// Relations come from the ungated, DEFAULT-world reader, so a world-bound
+	// response must not carry them: a published entity wrapped in draft edges
+	// is the mixed-face response that reads as correct. Under the default
+	// world this is the previous behavior verbatim.
+	var outgoing []*entityPkg.Relation
+	if worldScopeFrom(ctx).IsDefaultWorld() {
+		outgoing = a.reader.outgoingRelations(ctx, entity.ID)
+	}
+	result := a.serializer.forWire(ctx, entity, outgoing, a.Meta(), plural)
 
 	// Handle includes for related entities
 	if includes := query.Get("include"); includes != "" {
@@ -1531,6 +1565,14 @@ func flattenIssues(sections []AnalysisSection) []visibleIssue {
 // --- Helper Functions ---
 
 func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, includes string) map[string]v1.Entity {
+	// Neighbor resolution reads through the ungated, DEFAULT-world reader,
+	// so it cannot answer for a non-default world. attachWorld already
+	// refuses `?include=` there, making this unreachable — but a defense
+	// that lives only in the middleware is one route registration away from
+	// being bypassed, so it is restated at the site that does the reading.
+	if !worldScopeFrom(ctx).IsDefaultWorld() {
+		return nil
+	}
 	s := a.State()
 	included := make(map[string]v1.Entity)
 
@@ -1884,10 +1926,24 @@ func (a *App) computeEntityETag(ctx context.Context, e *entityPkg.Entity) string
 		_, _ = fmt.Fprintf(h, "=%v;", e.Properties[k])
 	}
 
+	// Fold the WORLD into the hash first. Two worlds resolve the same id to
+	// different faces, so a shared ETag would let a published-world GET
+	// answer 304 against a draft-derived validator — a cross-world cache
+	// poisoning, and the same class of bug as an unkeyed render cache.
+	world := worldFromContext(ctx)
+	_, _ = h.Write([]byte("w:" + world.name + ";"))
+
 	// Fold outgoing relations into the hash so PATCHes that only change
 	// edges also change the ETag — otherwise If-Match / If-None-Match
 	// round-trips poison client caches.
-	edges := a.reader.outgoingRelations(ctx, e.ID)
+	//
+	// World-bound responses carry NO relations (they would be default-world
+	// edges on a resolved entity), so there is nothing to fold and reading
+	// them would put draft state into a published validator.
+	var edges []*entityPkg.Relation
+	if world.isDefault() {
+		edges = a.reader.outgoingRelations(ctx, e.ID)
+	}
 	edgeKeys := make([]string, 0, len(edges))
 	for _, edge := range edges {
 		edgeKeys = append(edgeKeys, edge.Type+"|"+edge.To)

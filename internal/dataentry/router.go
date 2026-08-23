@@ -189,6 +189,21 @@ func (a *App) NewRouter() http.Handler {
 	// `acl_unstamped_principal` when ACL is configured, because the
 	// principal is still the unstamped default at the time
 	// ForPrincipal is called.
+	// World selection must run AFTER the read gate is on the context, because
+	// its grant check consults readGateFromContext. Per the wrap-order note
+	// above, LAST wrap is OUTERMOST — so attachWorld is wrapped FIRST, making
+	// it the INNERMOST of the two and therefore the LATER to run.
+	//
+	// Getting this backwards is not a loud failure: the world gate would see
+	// nopReadGate, whose PermitsWorld returns true, and every world would be
+	// permitted regardless of policy. Pinned by
+	// TestAttachWorld_GrantCheckRunsAfterACLGate.
+	//
+	// Placing it in middleware rather than in each handler is what makes "the
+	// grant check happens before a resolver is constructed" STRUCTURAL: a
+	// handler cannot observe a non-default world on its context without the
+	// check having already passed, and cannot opt out of it.
+	handler = attachWorld(handler, a)
 	if d, ok := a.acl.(*acl.Declarative); ok && d != nil {
 		// jwtVerified tells attachACLRequest that identity is a verified-JWT
 		// assertion (the gate is installed), so an unmatched principal can be

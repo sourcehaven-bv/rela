@@ -454,6 +454,11 @@ func main() {
 	// without it the routes are not registered at all.
 	app.SetCalDAVAliases(svc.CalDAVAliases())
 
+	// Request-level world selection (`?world=`). Without this the app serves
+	// the default world only and refuses any other `?world=`, which is the
+	// right posture for a surface whose wiring never opted in.
+	app.SetWorlds(appbuild.CompiledWorlds(svc))
+
 	// Next-action per-user state. The composition root picks the backend
 	// (durable over state.KV, or the store-native one on postgres); this only
 	// hands the app what it built.

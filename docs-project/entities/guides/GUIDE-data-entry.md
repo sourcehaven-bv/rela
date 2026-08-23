@@ -3841,6 +3841,62 @@ any registered Lua action via `rela.action`. Treat an app folder with the
 live as files in `apps/`, versioned in git, and should go through the same
 review as any other code.
 
+## Reading a world (`?world=`)
+
+If your schema declares content states and worlds (see the metamodel guide),
+the read API can serve a specific world:
+
+```http
+GET /api/v1/pages?world=published
+GET /api/v1/pages/PAGE-1?world=published
+```
+
+Omitting the parameter — or passing `?world=default` — serves the default
+world, which is exactly what the API served before worlds existed. A project
+that declares no worlds is unaffected.
+
+**You must be granted the world.** Reading a non-default world requires a
+role holding `read: [world:published]` in `acl.yaml`; an ordinary
+`read: [page]` grant covers the default world only. A principal without the
+grant sees an **empty result**, deliberately indistinguishable from a world
+that happens to hold nothing they may read — whether an entity exists in a
+world is exactly what publication controls, so it is not something the API
+will confirm.
+
+An **undeclared** world name is a plain `400` that names it. World names come
+from `schema.yaml` and are not secret, so saying which one is missing is more
+useful than a uniform silence.
+
+### What `?world=` does not cover yet
+
+Only the collection list and the single-entity GET serve a non-default world.
+Every other endpoint **refuses** it with a `422` rather than quietly serving
+default-world data:
+
+- Free-text search (`?q=`, `/_search`, `_position`) — the search index has no
+  per-world scoping yet, so a hit could return a draft under a published-world
+  request, and nothing downstream would catch it.
+- Sub-resources of an entity (relations, attachments, export) and the
+  aggregate endpoints (views, documents, analyze, feeds, history, sync).
+- `?include=` — neighbor resolution is not world-scoped, so a world-bound
+  response with includes would be a published entity wrapped in **draft**
+  neighbors.
+
+For the same reason, a world-bound entity response carries **no `relations`
+map**: those edges are read unresolved, and pairing a published entity with
+draft edges is a mixed-face response that reads as correct. Use the default
+world if you need relations.
+
+**Worlds are read-only.** `?world=` on a `POST`/`PATCH`/`PUT`/`DELETE` is a
+`422`, never silently ignored — writes always address the default state, and
+a request that appeared to edit "the published copy" while editing the draft
+would be the worst kind of success.
+
+A `422` here means "this endpoint cannot answer that question", not "you may
+not ask". Omit `?world=` to use the default world. These are honest
+limitations rather than permanent ones — each endpoint joins the list once its
+whole read path is world-scoped and tested.
+
 ## Best Practices
 
 1. **Start with navigation** - Decide which entity types users will work with most, and create
