@@ -324,7 +324,23 @@ func filterTypes(roleTypes []string, v verbCeiling) []string {
 			out = append(out, t)
 			continue
 		}
-		if v.permits(t) {
+		// Match on the TYPE half. A ceiling names entity TYPES, so it
+		// clamps at type granularity and leaves the face to
+		// [GrantsVerbOnState]; comparing the whole literal would drop a
+		// state grant entirely, because "page@draft" never equals "page".
+		//
+		// That failure had an inversion in it worth remembering: the
+		// wildcard branch above returns early, so `update: ["*"]` KEPT the
+		// state grant while the narrower `update: ["page"]` destroyed it —
+		// a grant surviving the broad ceiling and dying under the specific
+		// one. And the resulting denial named the ROLE, not the ceiling,
+		// so an operator reading the audit log was sent to inspect an
+		// acl.yaml whose grant was plainly present.
+		//
+		// Still fail-closed: a DENIAL reaches every face regardless,
+		// because permitsVerb runs before the role loop against the
+		// subject's bare type.
+		if v.permits(grantTypeOf(t)) {
 			out = append(out, t)
 		}
 	}

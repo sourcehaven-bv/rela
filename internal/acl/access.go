@@ -179,8 +179,21 @@ func grantForRole(role RoleDef, verb Verb, entityType string) EveryoneGrant {
 // runtime exactly — no false negatives:
 //
 //   - Write verbs (create/update/delete): an attribution's role grants
-//     the verb via the same grantsVerb the write path uses. The write
-//     path IS this attribution set, so equivalence is by construction.
+//     the verb via grantsVerb, the TYPE-granular predicate.
+//
+//     Equivalence with the runtime is no longer by construction, and the
+//     divergence is deliberate: since TKT-C1XUA8 the write path is
+//     face-granular (decideFromAttrs → GrantsVerbOnState), while this
+//     report has no face in hand — "who can update page?" is a question
+//     about a type. So a role holding ONLY a face-specific grant
+//     (`update: ["page@draft"]`) is not credited here, and this answer is
+//     a LOWER BOUND on write access rather than an exact one.
+//
+//     That is the safe direction for an attestation tool — a false
+//     negative, never a false all-clear — but it is a real limitation, not
+//     a guarantee. A report that names a face is the fix if operators need
+//     one; it needs a pointer threaded through AccessRoutes.
+//
 //   - Read: gated by [Request.PermitsRead] — the actual runtime read
 //     decision. If PermitsRead is false the result is empty; if true,
 //     the returned attributions are those whose role grants read
@@ -214,9 +227,10 @@ func (r *Request) AccessRoutes(
 
 // grantingAttributions filters the per-entity attribution set to those
 // whose role grants verb on entityType, excluding the everyone role.
-// The verb→predicate mapping is the same one the runtime uses
-// (roleGrantsRead / grantsVerb), so the routes it credits are the real
-// reasons access was granted.
+// The verb→predicate mapping matches the runtime for reads; for writes it is
+// the TYPE-granular grantsVerb, so a face-specific grant is not credited.
+// Every route it credits is a real reason access was granted; it may omit a
+// face-specific one. See [Request.AccessRoutes] for why.
 //
 // Create is intentionally computed with the concrete entityID, same as
 // every other write verb — NOT globals-only. This mirrors the production

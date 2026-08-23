@@ -390,22 +390,23 @@ func (r RoleDef) IsPrivileged() bool {
 // routes through Update (it is a modification). Read is handled
 // separately via roleGrantsRead. An unknown op grants nothing.
 //
-// STATE GRANTS GRANT NOTHING HERE, deliberately, and this is the
-// fail-closed half of a two-part change.
+// STATE GRANTS GRANT NOTHING HERE, deliberately.
 //
-// This function IS the live write-authorization path (decideFromAttrs in
-// authz_write.go, which knows the entity type but not yet which FACE is
-// being written). [GrantsVerbOnState] is the face-granular check, and it
-// has no production caller until the write path learns to pass a pointer.
+// This is the TYPE-granular question — "may this role write this type at
+// all" — and its remaining callers ask exactly that: the provisioner
+// create-check ([Policy.principalGrantsCreate]) and the who-can reporting
+// in access.go, both of which report per type and have no face in hand.
 //
-// So if a state-shaped entry matched here on its type half, `update:
-// ["page@draft"]` — the NARROWEST grant the new syntax offers — would
-// authorize writing page's DEFAULT face, which is more authority than the
-// operator wrote and more than they had before. A grant must never widen
-// by being made more specific. Until the write path is face-aware, a
-// state-shaped grant authorizes nothing at all; that direction costs an
-// operator a denied write they must then ask about, rather than a silent
-// over-permit nobody notices.
+// It is NO LONGER the write-authorization path. Since TKT-C1XUA8,
+// decideFromAttrs calls [GrantsVerbOnState] with the subject's pointer, so
+// the live path is face-granular and a state grant authorizes exactly the
+// face it names.
+//
+// A state-shaped entry is skipped rather than matched on its type half,
+// because matching would answer "yes" to a question about the DEFAULT face
+// on the strength of a grant that names only `page@draft` — a grant
+// widening by being made more specific. Skipping keeps this function's
+// answer a lower bound: everything it grants is genuinely granted.
 func grantsVerb(role RoleDef, op Op, target string) bool {
 	var list []string
 	switch op {
@@ -987,8 +988,10 @@ func (p *Policy) validateProvisionerGrant(userType string) error {
 
 // principalGrantsCreate reports whether principalUser is assigned — via
 // `assignments` or `asserted_role_assignments` — a defined role that grants
-// create on target. Mirrors the resolution grantsVerb performs at write time,
-// but for the single provisioner-load check.
+// create on target. Type-granular, which is the right question here: the
+// provisioner creates DEFAULT-face user entities, and a face-specific grant
+// would not be one it could act on. (The write path itself became
+// face-granular in TKT-C1XUA8; this deliberately did not.)
 func (p *Policy) principalGrantsCreate(principalUser, target string) bool {
 	roleGrants := func(roleName string) bool {
 		role, ok := p.Roles[roleName]
