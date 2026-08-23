@@ -5,7 +5,7 @@ title: 'storetest: cover Freshness.LastModified and declare the Tx tier in Capab
 kind: test
 priority: medium
 effort: s
-status: in-progress
+status: done
 ---
 
 ## Description
