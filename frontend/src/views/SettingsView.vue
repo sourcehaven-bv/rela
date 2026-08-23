@@ -12,6 +12,7 @@ import type {
   PaletteConfig,
 } from '@/api/settings'
 import TagSelect from '@/components/ui/TagSelect.vue'
+import PendingButton from '@/components/common/PendingButton.vue'
 import {
   parsePalette,
   parseRelaPalette,
@@ -1293,14 +1294,13 @@ onMounted(() => {
         </div>
 
         <div class="palette-actions">
-          <button
-            type="button"
+          <PendingButton
             class="btn btn-primary btn-sm"
-            :disabled="savingPalette"
+            :pending="savingPalette"
+            label="Save Palette"
+            pending-label="Saving…"
             @click="handleSavePalette"
-          >
-            {{ savingPalette ? 'Saving...' : 'Save Palette' }}
-          </button>
+          />
           <button
             type="button"
             class="btn btn-secondary btn-sm"
@@ -1364,12 +1364,14 @@ onMounted(() => {
               :disabled="uploadingLogo || removingLogo"
               @click="logoFileInput?.click()"
             >Choose image</button>
-            <button
-              type="button"
+            <PendingButton
               class="btn btn-primary btn-sm"
-              :disabled="!stagedLogo || uploadingLogo"
+              :pending="uploadingLogo"
+              :disabled="!stagedLogo"
+              label="Upload"
+              pending-label="Uploading…"
               @click="handleLogoUpload"
-            >{{ uploadingLogo ? 'Uploading...' : 'Upload' }}</button>
+            />
             <button
               v-if="logoUrl"
               type="button"
@@ -1448,9 +1450,13 @@ onMounted(() => {
 
       <!-- Form Actions -->
       <div class="form-actions">
-        <button type="submit" class="btn btn-primary" :disabled="saving">
-          {{ saving ? 'Saving...' : 'Save' }}
-        </button>
+        <PendingButton
+          type="submit"
+          class="btn btn-primary"
+          :pending="saving"
+          label="Save"
+          pending-label="Saving…"
+        />
         <button type="button" class="btn btn-secondary" @click="loadSettings">Reset</button>
       </div>
     </form>
@@ -1664,10 +1670,27 @@ h1 {
   color: var(--text-color);
 }
 
+/* Genuine action PAIR (Save + Reset), so the two share a width.
+ *
+ * PendingButton reserves enough width for its longest state ("Saving…"),
+ * which on its own would leave "Save" sitting in a visibly over-padded box
+ * beside a snugly-fitted "Reset" — a static asymmetry on every visit.
+ * Equalising absorbs the reservation into a width Reset helps set.
+ *
+ * Deliberately NOT applied to DynamicForm's footer: that holds up to five
+ * heterogeneous controls (Cancel, wizard Back/Next, Create, the autosave
+ * indicator), and equalising there would stretch every one of them to the
+ * longest label. */
 .form-actions {
   display: flex;
   gap: 12px;
   margin-top: 24px;
+}
+
+.form-actions > .btn {
+  flex: 0 1 auto;
+  min-width: var(--action-pair-min-width, 7rem);
+  justify-content: center;
 }
 
 .section-subtitle {

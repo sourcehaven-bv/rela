@@ -46,6 +46,7 @@ import FormFieldList from './FormFieldList.vue'
 import MarkdownEditor from './MarkdownEditor.vue'
 import SidePanel from './SidePanel.vue'
 import HelpModal from '@/components/ui/HelpModal.vue'
+import PendingButton from '@/components/common/PendingButton.vue'
 
 const props = defineProps<{
   formId: string
@@ -1810,14 +1811,16 @@ defineExpose({
           </template>
 
           <!-- Create only: the commit button, on the last (or only) step. -->
-          <button
+          <PendingButton
             v-if="!isEdit && wizard.isLastStep.value"
             type="submit"
             class="btn btn-primary"
-            :disabled="saving"
+            :pending="saving"
+            label="Create"
+            pending-label="Saving…"
           >
-            {{ saving ? 'Saving...' : 'Create' }} <kbd>&#8984;&#8629;</kbd>
-          </button>
+            <template #adornment><kbd>&#8984;&#8629;</kbd></template>
+          </PendingButton>
 
           <!-- Edit: ambient autosave status stands in for a Save button. -->
           <AutoSaveIndicator

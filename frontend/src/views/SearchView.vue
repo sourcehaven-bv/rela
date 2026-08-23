@@ -8,6 +8,7 @@ import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { useBackTarget } from '@/composables/useBackTarget'
 import BackButton from '@/components/common/BackButton.vue'
 import AdHocFilterMenu from '@/components/lists/AdHocFilterMenu.vue'
+import PendingButton from '@/components/common/PendingButton.vue'
 import type { Entity } from '@/types'
 
 const route = useRoute()
@@ -387,9 +388,13 @@ watch(
           @apply="handleAdHocApply"
         />
 
-        <button class="btn btn-primary" :disabled="loading" @click="search">
-          {{ loading ? 'Searching...' : 'Search' }}
-        </button>
+        <PendingButton
+          class="btn btn-primary"
+          :pending="loading"
+          label="Search"
+          pending-label="Searching…"
+          @click="search"
+        />
       </div>
 
       <!-- Active filters chips -->

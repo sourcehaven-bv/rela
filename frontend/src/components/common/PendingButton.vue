@@ -118,11 +118,25 @@ const announcement = computed(() => (showPending.value ? props.pendingLabel : ''
         >{{ pendingLabel }}</span
       >
     </span>
+    <!--
+      Adjacent content that is NOT part of the swap — a keyboard-shortcut
+      hint, say. Deliberately outside the reserved cell: it is identical in
+      both states, so including it would inflate the reservation for no
+      reason, and it must not disappear while pending.
+    -->
+    <slot name="adornment" />
     <span class="pending-button__sr" role="status" aria-live="polite">{{ announcement }}</span>
   </button>
 </template>
 
 <style scoped>
+/* The button itself lays out the label group and any adornment inline. */
+.pending-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs, 4px);
+}
+
 .pending-button__labels {
   display: grid;
   /* Both children occupy the same cell; the grid takes the wider. */
