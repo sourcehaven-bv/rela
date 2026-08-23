@@ -85,6 +85,19 @@
   --shadow-sm: 0 1px 3px rgb(0 0 0 / 10%);
   --shadow-md: 0 2px 8px rgb(0 0 0 / 12%);
   --shadow-lg: 0 4px 12px rgb(0 0 0 / 12%);
+
+  /* Pending-indicator motion (TKT-TFSNBY).
+   *
+   * The delay/minimum values themselves live in JS
+   * (composables/pendingTimings.ts) because the gate is a timer, not a
+   * transition; these are the CSS-side durations that pair with them.
+   *
+   * --pending-fade is how long an indicator eases in once its delay has
+   * elapsed. It is NOT a delay: a fade softens the arrival of an indicator
+   * that has already earned its place, it does not suppress a fast one.
+   * (htmx's default indicator CSS is a 200ms ease-in for the same reason,
+   * and is likewise not an anti-flash mechanism on its own.) */
+  --pending-fade: 200ms;
 }
 
 /* Dark mode needs heavier shadows: on a dark surface a 10%-alpha black shadow

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { navigationPending } from '@/router'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { getErrorMessage } from '@/api'
 import {
@@ -12,6 +13,7 @@ import {
 } from '@/composables'
 import { useConfirmHost } from '@/composables/useConfirm'
 import { useBackTarget } from '@/composables/useBackTarget'
+import ActivityBar from '@/components/common/ActivityBar.vue'
 import Sidebar from '@/components/common/Sidebar.vue'
 import StatusBar from '@/components/common/StatusBar.vue'
 import Toast from '@/components/common/Toast.vue'
@@ -118,6 +120,13 @@ watch(
 </script>
 
 <template>
+  <!--
+    Outside the loading/error/app branches on purpose: a navigation can be
+    in flight in any of them, and re-mounting the bar per branch would
+    restart its fade. Fixed-position, so it costs no layout in any state.
+  -->
+  <ActivityBar :active="navigationPending.isNavigating.value" />
+
   <div v-if="loading" class="loading-screen">
     <div class="spinner"/>
     <p>Loading...</p>
