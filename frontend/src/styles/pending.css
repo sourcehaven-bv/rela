@@ -1,0 +1,37 @@
+/* Shared pending/loading affordances (TKT-TFSNBY).
+ *
+ * Before this file, `@keyframes spin` was declared TEN times across
+ * components — byte-identical except for RelationCards' 0.6s — and
+ * `.spinner` / `.loading-state` were redefined locally in several files
+ * that already inherited a global copy from App.vue. Scoped `<style>`
+ * blocks meant those copies could never actually share, so a change to one
+ * silently diverged from the rest.
+ *
+ * The animation lives here, unscoped, so every spinner in the app honours
+ * one definition — and, crucially, ONE `prefers-reduced-motion` rule.
+ * Before this, that preference was respected in exactly one of eleven
+ * animation sites.
+ *
+ * Note the three-indicator model deliberately leaves few spinners
+ * standing: navigation uses the ActivityBar, explicit actions use
+ * PendingButton's label swap, and autosave uses AutoSaveIndicator. What
+ * remains here is for COLD loads, where a region has no previous content
+ * to hold on screen and genuinely has nothing to show yet.
+ */
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Reduced motion: suppress the rotation everywhere rather than per
+ * component. The spinner still occupies its box and still marks the region
+ * as busy — only the movement is removed, which is what the preference
+ * asks for. A user who sets it should not lose the information. */
+@media (prefers-reduced-motion: reduce) {
+  .spinner,
+  .spinner-sm {
+    animation: none;
+  }
+}

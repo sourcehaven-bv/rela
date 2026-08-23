@@ -248,11 +248,6 @@ onMounted(() => {
   animation: spin 1s linear infinite;
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
 
 /* Summary badge */
 .summary-badge {

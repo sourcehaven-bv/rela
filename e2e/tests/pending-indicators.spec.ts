@@ -95,6 +95,36 @@ test.describe('Pending indicators', () => {
     await pending.expectActivityBarHidden();
   });
 
+  // AC8 — the shared stylesheet replaced ten duplicated @keyframes blocks
+  // with one definition and, more importantly, ONE reduced-motion rule.
+  // Before this, the preference was honoured in 1 of 11 animation sites.
+  test('spinner animation is defined globally and suppressed under reduced motion', async ({
+    appPage,
+  }) => {
+    const normal = await appPage.evaluate(() => {
+      const el = document.createElement('div');
+      el.className = 'spinner';
+      document.body.appendChild(el);
+      const name = getComputedStyle(el).animationName;
+      el.remove();
+      return name;
+    });
+    // Resolves even though every component-scoped copy was deleted.
+    expect(normal).toBe('spin');
+
+    await appPage.emulateMedia({ reducedMotion: 'reduce' });
+    const reduced = await appPage.evaluate(() => {
+      const el = document.createElement('div');
+      el.className = 'spinner';
+      document.body.appendChild(el);
+      const name = getComputedStyle(el).animationName;
+      el.remove();
+      return name;
+    });
+    expect(reduced).toBe('none');
+    await appPage.emulateMedia({ reducedMotion: null });
+  });
+
   // RR-B7U3I8 in the real app: after a burst of navigations the bar must
   // not be stranded on screen. A counter-based implementation leaks here
   // whenever one of these is cancelled or deduplicated.
