@@ -192,15 +192,17 @@ wall-clock budget is more honest for a scheduler (the thing that actually breaks
 is the schedule, not the count), but it makes which users get skipped depend on
 timing.
 
-**Resolved — a user with no usable principal.** Earlier framed as
-"unresolvable users"; the framing was backwards. `ResolvePrincipal` runs *raw
-identifier → entity ID*, whereas `for_each` starts from entities a query already
-returned, so there is nothing to resolve in that direction. The real case is a
-selected entity whose `principal_property` is empty, or shared with another
-entity — a data-integrity fault of exactly the kind the resolver already refuses
-to guess through (`declarative.go:155`, ambiguous natural key). It is handled by
-the rule above: log naming the entity, skip, add to the failed list. Not a
-separate policy decision.
+2. **Failure-retry model** — resolution (a) or (b) above.
+
+**Not in scope — a missing email address.** Earlier listed here as
+"unresolvable users". It does not belong to this ticket at all: `for_each`
+resolves an entity to a *principal*, and whether that principal has a usable
+address is a mail question. A per-user export or cleanup pass needs no address.
+It goes to TKT-U2R7GU, where the recipient field is named in config and can be
+asserted up front rather than discovered mid-send.
+
+The only thing in scope here is an entity that cannot be mapped to a principal at
+all: skipped with a warning naming it, counted as a failed run.
 
 ## Acceptance criteria
 
@@ -215,9 +217,9 @@ principal on the ctx.
 2c. `attenuate:` narrows a run below the user's grants, and a config that
 attempts to WIDEN beyond them grants nothing.
 3. A task without `for_each` behaves exactly as today.
-4. An entity with no usable principal (empty or ambiguous `principal_property`)
-is skipped with a warning naming it, not silently and not fatally, and lands on
-the failed list.
+4. An entity that cannot be mapped to a principal is skipped with a warning
+naming it, not silently and not fatally, and counts as a failed run. Address
+validation is not in scope; see TKT-U2R7GU.
 4a. A failing run does not stop the pass: the remaining users still run, and only
 the failed subset is retried. A user whose run succeeded is never re-run within
 the retry of the same occurrence.
@@ -227,7 +229,8 @@ minutes (see the failure-handling decision).
 5. `for_each` is bounded, and hitting the bound logs what was dropped.
 6. Audit records name the per-run principal, not a generic scheduler identity.
 7. `rela validate` reports an unknown `entity_type` or unparseable `where:` in
-`for_each`.
+`for_each`. This stays syntactic — `scheduler.Config.validate`
+(`config.go:195`) has no store access.
 
 ## Risks
 

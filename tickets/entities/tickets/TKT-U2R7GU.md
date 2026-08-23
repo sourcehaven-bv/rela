@@ -75,6 +75,22 @@ load-time validation that only has something to validate once templates exist.
 Recipients resolve from the graph: an `entity_type` + `property` holding the
 address, optionally filtered.
 
+**Address validity is asserted from config, not discovered at send time.** Since
+the config names the entity type and the property, the selection can be checked
+up front: every entity the recipient query yields must have a non-empty and
+unambiguous value for that property. An operator who mistypes the property name,
+or whose `person` records have blank emails, should learn about it when the
+config is validated — not from a partial send at 6am.
+
+Two consequences for where this lives. It is graph-dependent, so it cannot go in
+a syntactic config check (`scheduler.Config.validate`, `config.go:195`, never
+touches the store); it needs a store-aware surface, alongside the other
+`rela validate` graph checks. And it belongs to **mail**, not to the scheduler:
+`for_each` (TKT-XWZIOB) resolves an entity to a principal, and a per-user export
+or cleanup pass has no address at all. A blank address must not be fatal to the
+whole run — the mail for the other recipients still goes out, and the skipped
+one is named in the log.
+
 **Per-recipient scoping is NOT built here.** It is scheduler fan-out
 (TKT-XWZIOB): "run this task once per selected user, as that user" is a
 scheduler capability that mail is merely the first consumer of. Building a
@@ -87,7 +103,8 @@ So this ticket ships two recipient modes, and the second arrives with fan-out:
    `run_as` principal, sent to every resolved address. `run_as` is identity, not
    capability (DEC-O59WM4) — `acl.yaml` decides what it reads. Correct when every
    recipient is entitled to the same view: an ops digest, a team summary.
-2. **Per-recipient (TKT-XWZIOB).** `for_each` fans the task out, and each run
+2. **Per-recipient (TKT-XWZIOB).** `for_each` runs the task once per user —
+   iteration, not concurrency; the scheduler stays sequential — and each run
    renders under that user's own principal. A recipient cannot be mailed content
    they could not see in the app.
 
@@ -128,6 +145,10 @@ and a list section, deep links resolving to the configured base URL.
 3. A template naming an unknown entity type or an unparseable `where:` fails
 config load.
 4. A scheduled task naming an unknown template fails config load.
+4b. A recipient selection whose entities lack a usable address is reported by
+`rela validate`, naming the property and the offending entities, rather than
+surfacing as a partial send. At send time a blank address skips that recipient
+with a named log line and does not fail the others.
 5. Recipients resolve from the graph: a template naming `entity_type` + `property`
 mails every matching address.
 6. Broadcast mail is rendered under the task's `run_as` principal — an entity
