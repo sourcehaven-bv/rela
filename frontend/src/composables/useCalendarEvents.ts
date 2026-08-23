@@ -3,6 +3,7 @@ import type { CalendarConfig, CalendarSourceConfig, KanbanCardField } from '@/ty
 import type { Entity } from '@/types'
 import type { EntityType } from '@/types/schema'
 import { formatCellValue } from '@/utils/format'
+import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { densePropertyRoutingHint } from '@/widgets/viewRouting'
 import { defaultRegistry } from '@/widgets/registry'
 import {
@@ -63,6 +64,9 @@ export interface CalendarSourceData {
   source: CalendarSourceConfig
   entities: Entity[]
   schema: EntityType | undefined
+  /** Entities embedded by `?include=*`, keyed by id, for resolving relation
+   * field targets to their display titles. */
+  included: Record<string, Entity>
 }
 
 function propString(entity: Entity, name: string | undefined): string {
@@ -81,7 +85,8 @@ function propString(entity: Entity, name: string | undefined): string {
 export function useCalendarEvents(
   config: ComputedRef<CalendarConfig | undefined>,
   sourceData: ComputedRef<CalendarSourceData[]>,
-  timezone: ComputedRef<string>
+  timezone: ComputedRef<string>,
+  inverseName: (relation: string) => string
 ): ComputedRef<CalendarEvent[]> {
   const fieldWidgets = computed(() => {
     const byType = new Map<string, Map<string, { component: Component; propertyName: string; preformatted: boolean }>>()
@@ -113,7 +118,7 @@ export function useCalendarEvents(
 
     const events: CalendarEvent[] = []
 
-    sourceData.value.forEach(({ source, entities, schema }, sourceIndex) => {
+    sourceData.value.forEach(({ source, entities, schema, included }, sourceIndex) => {
       const kind: DateKind =
         schema?.properties?.[source.date]?.type === 'datetime' ? 'datetime' : 'date'
       const widgets = fieldWidgets.value.get(source.entity)
@@ -143,7 +148,7 @@ export function useCalendarEvents(
           timeLabel: minutes == null ? '' : formatMinutes(minutes),
           minutes,
           color: source.color || 'blue',
-          fields: resolveFields(entity, cfg.event?.fields, widgets, schema, tz),
+          fields: resolveFields(entity, cfg.event?.fields, widgets, schema, included, inverseName, tz),
           dateProperty: source.date,
           endDateProperty: source.end_date,
           dateKind: kind,
@@ -185,13 +190,25 @@ function resolveFields(
   fields: KanbanCardField[] | undefined,
   widgets: Map<string, { component: Component; propertyName: string; preformatted: boolean }> | undefined,
   schema: EntityType | undefined,
+  included: Record<string, Entity>,
+  inverseName: (relation: string) => string,
   tz: string
 ): CalendarEventField[] {
   if (!fields?.length) return []
   const out: CalendarEventField[] = []
 
   for (const field of fields) {
-    if (!field.property || field.relation) continue
+    if (field.relation) {
+      const text = relationText(entity, field, included, inverseName)
+      if (!text) continue
+      // Relation fields have no PropertyDef and no widget, so they render as
+      // joined target titles — the same contract kanban cards and list
+      // relation columns use.
+      out.push({ key: `rel:${field.relation}:${field.direction ?? 'outgoing'}`, text })
+      continue
+    }
+    if (!field.property) continue
+
     const text = formatCellValue(entity.properties?.[field.property], field.property, schema, tz)
     // Dense-surface rule: an empty value renders as nothing, not a placeholder.
     if (!text) continue
@@ -206,6 +223,29 @@ function resolveFields(
     })
   }
   return out
+}
+
+/**
+ * Joined display titles of a relation field's targets.
+ *
+ * Outgoing edges are keyed by the relation name; incoming edges by its declared
+ * inverse (falling back to `<relation>_inverse`), matching the wire contract
+ * kanban cards and list relation columns share.
+ *
+ * An unresolved target falls back to its raw id, exactly as those surfaces do.
+ * That leaks nothing: the server strips ACL-hidden neighbour ids from
+ * `relations` before it reaches the SPA, so there is no hidden id to fall back to.
+ */
+function relationText(
+  entity: Entity,
+  field: KanbanCardField,
+  included: Record<string, Entity>,
+  inverseName: (relation: string) => string
+): string {
+  const rel = field.relation ?? ''
+  const key = field.direction === 'incoming' ? inverseName(rel) || `${rel}_inverse` : rel
+  const ids = entity.relations?.[key] ?? []
+  return ids.map((id) => (included[id] ? entityDisplayTitle(included[id]) : id)).join(', ')
 }
 
 function formatMinutes(minutes: number): string {

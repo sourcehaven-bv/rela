@@ -308,8 +308,8 @@ func TestNormalizeCalendars(t *testing.T) {
 	if got.DayStart != "08:00" || got.DayEnd != "20:00" {
 		t.Errorf("hour defaults = %q/%q, want 08:00/20:00", got.DayStart, got.DayEnd)
 	}
-	if got.MaxEventsPerDay != 4 {
-		t.Errorf("max_events_per_day = %d, want 4", got.MaxEventsPerDay)
+	if got.MaxEventsPerDay != 3 {
+		t.Errorf("max_events_per_day = %d, want 3", got.MaxEventsPerDay)
 	}
 	if got.Sources[0].MaxSpan != 31 {
 		t.Errorf("max_span = %d, want 31", got.Sources[0].MaxSpan)

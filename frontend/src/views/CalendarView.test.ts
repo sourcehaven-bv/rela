@@ -557,3 +557,44 @@ describe('CalendarView where clauses', () => {
     expect(params['filter[due][gte]']).toBe('2026-01-01')
   })
 })
+
+/**
+ * Clicking a chip PREVIEWS rather than edits.
+ *
+ * The previous behaviour navigated straight into `edit_form` when one was
+ * configured, so a click on a small chip — the natural "what is this?" gesture
+ * — landed the user in a form with a save button. The modal answers that
+ * question first; editing is a deliberate second step from inside it.
+ */
+describe('CalendarView event click', () => {
+  it('opens a preview modal instead of navigating', async () => {
+    const wrapper = setup({
+      responses: { task: [task('T-1', '2026-08-22')] },
+      editForm: 'edit_task',
+    })
+    await flushPromises()
+
+    await wrapper.find('.calendar-chip').trigger('click')
+    await flushPromises()
+
+    // No navigation: the user stays on the calendar, keeping their period.
+    expect(routerPush).not.toHaveBeenCalled()
+    expect(document.querySelector('.entity-preview')).not.toBeNull()
+  })
+
+  it('closes the preview without navigating away', async () => {
+    const wrapper = setup({ responses: { task: [task('T-1', '2026-08-22')] } })
+    await flushPromises()
+
+    await wrapper.find('.calendar-chip').trigger('click')
+    await flushPromises()
+    expect(document.querySelector('.entity-preview')).not.toBeNull()
+
+    const close = document.querySelector('.entity-preview-close') as HTMLElement
+    close.click()
+    await flushPromises()
+
+    expect(document.querySelector('.entity-preview')).toBeNull()
+    expect(routerPush).not.toHaveBeenCalled()
+  })
+})

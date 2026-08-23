@@ -15,7 +15,9 @@ status: in-progress
 0 issues; `eslint` 0 errors; `just arch-lint` OK
 - [x] Comment lint gate clean (`just comment-lint`) — no findings across 10239
 comments
-- [x] Coverage maintained (`just coverage-check`)
+- [x] Coverage maintained (`just coverage-check`) — PASS on both gates: package
+floor (50%) and total (65%), at 77.6% overall. The changed packages sit well
+above their floors: `dataentryconfig` 90.2%, `schema` 82.2%, `lua` 85.7%.
 
 **Comment findings.** `just comment-report` flagged one finding this diff
 introduced: `validateCalendars`' doc restated what the two per-check functions

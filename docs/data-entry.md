@@ -2439,8 +2439,8 @@ navigation:
 | `sources` | list | Entity-to-event projections; at least one required |
 | `event` | object | Extra fields shown on an event chip |
 | `day_start` / `day_end` | string | `HH:MM` bounds of the week-view hour axis (defaults `08:00` / `20:00`) |
-| `max_events_per_day` | int | Chips per month-view day cell before `+N more` (default 4) |
-| `edit_form` | string | Form opened when an event is clicked |
+| `max_events_per_day` | int | Chips per month-view day cell before `+N more` (default 3) |
+| `edit_form` | string | Form offered when editing from an event's preview |
 | `create_form` | string | Form opened by the "New" button |
 | `filter_controls` | list | Interactive filters, as on lists and kanbans |
 
@@ -2463,20 +2463,41 @@ entities, each mapped its own way. Multiple sources are also how you express
 
 ### Event chips
 
-By default a chip shows the event's title. `event.fields` adds more, using the
-same shape as kanban card fields:
+By default a chip shows the event's title. `event.fields` adds more beneath it,
+using the same shape as kanban card fields — a property, or a relation whose
+target titles are shown:
 
 ```yaml
     event:
       fields:
         - property: status
         - property: assignee
+        - relation: blocked-by
+        - relation: owned-by
+          direction: incoming
+          label: "Owner"
 ```
+
+Values render through the same widgets as list cells and kanban cards, so dates
+read human-readably and enums render as badges. A field with no value is
+omitted rather than showing an empty label.
 
 A field naming a property that one source's entity type lacks is simply not
 rendered for that source's events — sources are heterogeneous by design, so a
 field only has to make sense for the types that have it. A field that matches
 **no** source is a config error.
+
+### Clicking an event
+
+Clicking a chip opens a **preview** of the entity — the same detail rendering
+the entity page uses, in a modal — rather than jumping straight into an edit
+form. The usual sequence is "see more, then maybe edit", and a small chip is a
+poor basis for deciding to change something.
+
+The preview carries the entity's own Edit, History and Delete actions (each
+subject to the same permissions as elsewhere), plus **Open full page** to leave
+the calendar. Escape or a click outside closes it, returning you to the period
+you were looking at.
 
 ### Drag to reschedule
 

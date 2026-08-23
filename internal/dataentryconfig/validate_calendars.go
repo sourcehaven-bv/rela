@@ -25,7 +25,7 @@ const (
 	defaultCalendarWeekStart       = "monday"
 	defaultCalendarDayStart        = "08:00"
 	defaultCalendarDayEnd          = "20:00"
-	defaultCalendarMaxEventsPerDay = 4
+	defaultCalendarMaxEventsPerDay = 3
 	defaultCalendarMaxSpan         = 31
 )
 

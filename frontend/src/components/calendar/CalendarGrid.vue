@@ -77,32 +77,39 @@ defineEmits<{
 </template>
 
 <style scoped>
+/* Grid lines are drawn with a 1px gap over a border-coloured background: the
+   cells sit on top, so every seam is exactly one line with no doubling at the
+   joins and no half-pixel rounding. Subtle by design — the lines should
+   structure the month, not compete with the events in it. */
 .calendar-grid {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 1px;
-  background: var(--color-border);
-  border: 1px solid var(--color-border);
+  background: var(--border-color);
+  border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   overflow: hidden;
 }
 
 .calendar-weekday {
   padding: var(--space-xs) var(--space-sm);
-  background: var(--color-surface-alt);
+  background: var(--hover-bg);
   font-size: var(--font-size-sm);
   font-weight: 600;
-  color: var(--color-text-muted);
+  color: var(--muted-text);
   text-align: center;
 }
 
 .calendar-day {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  min-height: 96px;
+  gap: 3px;
+  /* Sized for readable chips (base font, two-line titles) rather than the
+     densest possible grid. A month is taller than a viewport on a small
+     screen, which is the accepted cost of chips people can actually read. */
+  min-height: 128px;
   padding: var(--space-xs);
-  background: var(--color-surface);
+  background: var(--card-bg);
   /* min-width:0 lets a long chip truncate instead of stretching the column. */
   min-width: 0;
 }
@@ -116,16 +123,16 @@ defineEmits<{
 }
 
 .calendar-day--outside {
-  background: var(--color-surface-alt);
+  background: var(--hover-bg);
 }
 
 .calendar-day--outside .calendar-day-number {
-  color: var(--color-text-muted);
+  color: var(--muted-text);
 }
 
 .calendar-day--today .calendar-day-number {
-  background: var(--color-primary);
-  color: var(--color-on-primary, #fff);
+  background: var(--accent-color);
+  color: #fff;
   border-radius: 50%;
 }
 
@@ -148,7 +155,7 @@ defineEmits<{
   padding: 1px var(--space-xs);
   border: none;
   background: none;
-  color: var(--color-text-muted);
+  color: var(--muted-text);
   font-size: var(--font-size-sm);
   text-align: left;
   cursor: pointer;

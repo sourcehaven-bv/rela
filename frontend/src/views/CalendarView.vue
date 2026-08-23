@@ -31,6 +31,7 @@ import { viewHeaderMarkdown, viewFooterMarkdown } from '@/types/config'
 import type { CalendarConfig, CalendarSourceConfig } from '@/types/config'
 import type { Entity, ListParams } from '@/types'
 import CalendarGrid from '@/components/calendar/CalendarGrid.vue'
+import EntityPreviewModal from '@/components/calendar/EntityPreviewModal.vue'
 import {
   useCalendarEvents,
   eventsByDay,
@@ -134,8 +135,19 @@ function paramsFor(source: CalendarSourceConfig): ListParams {
  * optimistic write and the SSE invalidation both reach it — while the params
  * segment keeps each window in its own cache entry.
  */
+/** True when any chip field names a relation: only then must the server embed
+ * related entities so their titles can be resolved (kanban does the same). */
+const hasRelationFields = computed(
+  () => config.value?.event?.fields?.some((f) => !!f.relation) ?? false
+)
+
 const sourceQueries = computed(() =>
-  (config.value?.sources ?? []).map((source) => ({ source, params: paramsFor(source) }))
+  (config.value?.sources ?? []).map((source) => ({
+    source,
+    params: hasRelationFields.value
+      ? { ...paramsFor(source), include: '*' }
+      : paramsFor(source),
+  }))
 )
 
 /**
@@ -148,11 +160,23 @@ const sourceQueries = computed(() =>
  */
 interface SourceResult {
   entities: Entity[]
+  included: Record<string, Entity>
   truncated: boolean
 }
 
 const fetched = ref<SourceResult[]>([])
-const loading = ref(true)
+/**
+ * True only until the FIRST window arrives.
+ *
+ * Deliberately not "a fetch is in flight": navigating months would then blank
+ * the grid on every step, and paging through a few months flickers badly. The
+ * previous month stays on screen and is replaced when the new data lands —
+ * stale-while-revalidate, the same shape the kanban board uses to keep an SSE
+ * refetch from blanking it.
+ */
+const initialLoad = ref(true)
+/** A refetch is in flight. Drives a subtle busy hint, never a blanked grid. */
+const refreshing = ref(false)
 const loadError = ref('')
 
 /**
@@ -183,11 +207,12 @@ async function refetchGrid() {
 
   if (!queries.length) {
     fetched.value = []
-    loading.value = false
+    initialLoad.value = false
+    refreshing.value = false
     inFlight = null
     return
   }
-  loading.value = true
+  refreshing.value = true
   try {
     const results = await Promise.all(
       queries.map(async ({ source, params }): Promise<SourceResult> => {
@@ -195,7 +220,11 @@ async function refetchGrid() {
         // Publish into the cache entry the optimistic write and SSE
         // invalidation target, so a drag updates the grid immediately.
         queryCache.setQueryData([...entityKeys.listParams(source.entity, params)], res)
-        return { entities: res.data, truncated: res.meta?.has_more === true }
+        return {
+          entities: res.data,
+          included: res.included ?? {},
+          truncated: res.meta?.has_more === true,
+        }
       })
     )
     // A superseded fetch must not publish: its window is no longer on screen.
@@ -206,7 +235,10 @@ async function refetchGrid() {
     if (generation !== refetchGeneration || controller.signal.aborted) return
     loadError.value = getErrorMessage(err, 'Failed to load calendar')
   } finally {
-    if (generation === refetchGeneration) loading.value = false
+    if (generation === refetchGeneration) {
+      initialLoad.value = false
+      refreshing.value = false
+    }
   }
 }
 
@@ -223,11 +255,14 @@ const sourceData = computed<CalendarSourceData[]>(() =>
   (config.value?.sources ?? []).map((source, i) => ({
     source,
     entities: fetched.value[i]?.entities ?? [],
+    included: fetched.value[i]?.included ?? {},
     schema: schemaStore.getEntityType(source.entity),
   }))
 )
 
-const events = useCalendarEvents(config, sourceData, timezone)
+const events = useCalendarEvents(config, sourceData, timezone, (rel) =>
+  schemaStore.getInverseName(rel) ?? ''
+)
 const byDay = computed(() => eventsByDay(events.value, days.value))
 
 /** True when any source hit the page cap: the grid is incomplete and says so
@@ -310,9 +345,22 @@ function canUpdate(entity: Entity): boolean {
   return actionAllowed(entity, 'update')
 }
 
+/**
+ * Clicking a chip PREVIEWS the entity rather than editing it.
+ *
+ * The previous behaviour jumped straight into `edit_form` when one was
+ * configured, which put a save button in front of someone who had only clicked
+ * a small chip to find out what it was. The modal answers that question first
+ * and offers Edit as an explicit next step.
+ */
+const preview = ref<{ type: string; id: string } | null>(null)
+
 function openEvent(ev: CalendarEvent) {
-  const form = config.value?.edit_form
-  void router.push(form ? `/form/${form}/${ev.entity.id}` : `/entity/${ev.entityType}/${ev.entity.id}`)
+  preview.value = { type: ev.entityType, id: ev.entity.id }
+}
+
+function closePreview() {
+  preview.value = null
 }
 
 function createNew() {
@@ -453,6 +501,11 @@ function onDragEnd() {
         <button class="btn" @click="goToday">Today</button>
         <button class="btn" aria-label="Next period" @click="go(1)">›</button>
         <span class="calendar-period">{{ periodLabel }}</span>
+        <!-- A quiet hint, not a spinner over the grid: the previous period
+             stays readable while the next one loads. -->
+        <span v-if="refreshing && !initialLoad" class="calendar-refreshing" aria-live="polite">
+          updating…
+        </span>
       </div>
       <div class="calendar-views">
         <button
@@ -485,7 +538,7 @@ function onDragEnd() {
     </div>
 
     <div v-if="loadError" class="error-state">{{ loadError }}</div>
-    <div v-else-if="loading && !events.length" class="loading-state">Loading…</div>
+    <div v-else-if="initialLoad" class="loading-state">Loading…</div>
 
     <CalendarGrid
       v-else
@@ -505,12 +558,20 @@ function onDragEnd() {
       @drop="onDrop"
     />
 
-    <p v-if="!loading && !loadError && !events.length" class="calendar-empty">
+    <p v-if="!initialLoad && !refreshing && !loadError && !events.length" class="calendar-empty">
       No events in this period.
     </p>
 
     <!-- eslint-disable-next-line vue/no-v-html -- sanitized by renderMarkdown -->
     <div v-if="footerHtml" class="view-info view-info--bottom" v-html="footerHtml" />
+
+    <EntityPreviewModal
+      v-if="preview"
+      :open="!!preview"
+      :entity-type="preview.type"
+      :entity-id="preview.id"
+      @close="closePreview"
+    />
   </div>
 </template>
 
@@ -541,13 +602,18 @@ function onDragEnd() {
   font-weight: 600;
 }
 
+.calendar-refreshing {
+  color: var(--muted-text);
+  font-size: var(--font-size-sm);
+}
+
 .calendar-views .btn.active {
-  background: var(--color-primary);
-  color: var(--color-on-primary, #fff);
+  background: var(--accent-color);
+  color: #fff;
 }
 
 .calendar-empty {
   margin-top: var(--space-md);
-  color: var(--color-text-muted);
+  color: var(--muted-text);
 }
 </style>
