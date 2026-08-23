@@ -90,6 +90,17 @@ type Options struct {
 //
 // Nil: never returned nil by [Open]; a nil *Store is a programming error, not a
 // supported "no store" value.
+//
+// The method count is the MANDATED store.Store interface, not accreted sprawl:
+// 26 of the exported methods are the interface itself, and the rest are the
+// documented optional capabilities (HeaderReader) plus the constructor-adjacent
+// accessors. It ratchets with the interface, exactly as memstore's and
+// fsstore's directives do — a "required interface" exception rather than a
+// target to reduce. Anything ADDED beyond the interface should raise the
+// question this line exists to ask.
+//
+//plimsoll:max-methods=41
+//plimsoll:max-exported-methods=29
 type Store struct {
 	db   *sql.DB
 	opts Options

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -28,6 +29,13 @@ import (
 // have that, so it refuses the second process instead (DEC-LFSYNY).
 type processLock struct {
 	path string
+
+	// mu guards file against concurrent release. Close is documented as
+	// idempotent and callers wire it into defer chains and t.Cleanup, so two
+	// goroutines calling it at once is ordinary usage — not misuse. Without
+	// this, the second caller reads a half-cleared handle (caught by the race
+	// detector in CI, not locally).
+	mu   sync.Mutex
 	file *os.File
 }
 
@@ -81,8 +89,13 @@ func acquireProcessLock(dbPath string) (*processLock, error) {
 //
 // Nil: safe to call on a nil *processLock, so Close paths need no guard.
 func (l *processLock) release() error {
-	if l == nil || l.file == nil {
+	if l == nil {
 		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.file == nil {
+		return nil // already released
 	}
 	// Truncate rather than delete, so a later reader does not report a holder
 	// that has already exited.
