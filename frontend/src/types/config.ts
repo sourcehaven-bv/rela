@@ -353,10 +353,29 @@ export interface KanbanCardField {
   show_label?: boolean
 }
 
-/** The label to render for a field: explicit override, else the name it came
- * from. Keeps `assignee` from having to be restated as "Assignee". */
-export function cardFieldLabel(field: KanbanCardField): string {
-  return field.label || field.relation || field.property || ''
+/**
+ * The label to render for a field.
+ *
+ * Resolution order: the field's explicit `label:`, then — for a relation — the
+ * label authored on the relation type in schema.yaml, then the raw name.
+ *
+ * The relation lookup matters because a relation id reads like a field name:
+ * `belongs-to` on a chip looks like a bug, while the metamodel already carries
+ * "belongs to" one lookup away. Properties have no such authored label, and
+ * this deliberately does NOT invent one by title-casing `assignee` — labels are
+ * authored, never derived (DEC-6C1NAA), so an operator who wants "Assignee"
+ * writes it.
+ *
+ * Nil: `relationLabel` may be omitted; callers without schema access simply get
+ * the raw relation name, as before.
+ */
+export function cardFieldLabel(
+  field: KanbanCardField,
+  relationLabel?: (relation: string) => string | undefined
+): string {
+  if (field.label) return field.label
+  if (field.relation) return relationLabel?.(field.relation) || field.relation
+  return field.property || ''
 }
 
 /** Whether a field's label renders. Unset means true: an unlabelled ambiguous

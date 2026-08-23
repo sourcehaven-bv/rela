@@ -1,5 +1,7 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
+import { useSchemaStore } from '@/stores/schema'
 import { defineComponent, h } from 'vue'
 import CardFieldList from './CardFieldList.vue'
 import { cardFieldLabel, cardFieldLabelShown } from '@/types/config'
@@ -22,6 +24,21 @@ describe('cardFieldLabel', () => {
     expect(cardFieldLabel({ relation: 'belongs-to' })).toBe('belongs-to')
   })
 
+  it('prefers a relation type’s authored label over its raw id', () => {
+    const lookup = (rel: string) => (rel === 'belongs-to' ? 'belongs to' : undefined)
+    // A raw relation id reads like a field name on a chip; the metamodel
+    // already carries a human label one lookup away.
+    expect(cardFieldLabel({ relation: 'belongs-to' }, lookup)).toBe('belongs to')
+    // An unlabelled relation still falls back to its id rather than blank.
+    expect(cardFieldLabel({ relation: 'mentions' }, lookup)).toBe('mentions')
+  })
+
+  it('does not invent a label for a property', () => {
+    // Labels are authored, never derived (DEC-6C1NAA): an operator who wants
+    // "Assignee" writes it, rather than the UI title-casing an identifier.
+    expect(cardFieldLabel({ property: 'assignee' }, () => 'ignored')).toBe('assignee')
+  })
+
   it('prefers an explicit override', () => {
     expect(cardFieldLabel({ property: 'assignee', label: 'Owner' })).toBe('Owner')
   })
@@ -38,6 +55,13 @@ describe('cardFieldLabelShown', () => {
 })
 
 describe('CardFieldList', () => {
+  beforeEach(() => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const schema = useSchemaStore()
+    schema.relationTypes.set('belongs-to', { label: 'belongs to' } as never)
+  })
+
   it('renders one line per field, label then value', () => {
     const wrapper = mount(CardFieldList, {
       props: {
@@ -91,6 +115,15 @@ describe('CardFieldList', () => {
     // The widget renders the model value; the relation falls back to text.
     expect(wrapper.find('em').text()).toBe('todo')
     expect(wrapper.text()).toContain('Apollo')
+  })
+
+  it('renders a relation’s authored label instead of its raw id', () => {
+    const wrapper = mount(CardFieldList, {
+      props: { fields: [{ field: { relation: 'belongs-to' }, text: 'Apollo' }] },
+    })
+
+    expect(wrapper.text()).toContain('belongs to')
+    expect(wrapper.text()).not.toContain('belongs-to')
   })
 
   it('renders nothing at all when there are no fields', () => {

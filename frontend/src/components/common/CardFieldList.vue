@@ -21,6 +21,7 @@
  */
 import type { Component } from 'vue'
 import { cardFieldLabel, cardFieldLabelShown, type KanbanCardField } from '@/types/config'
+import { useSchemaStore } from '@/stores/schema'
 
 /** A field with its value already resolved by the caller. */
 export interface ResolvedCardField {
@@ -38,6 +39,14 @@ defineProps<{
   /** Forwarded to widgets that need it for enum styling. */
   entityType?: string
 }>()
+
+const schemaStore = useSchemaStore()
+
+/** A relation's authored label from the metamodel, so `belongs-to` renders as
+ * "belongs to" rather than looking like a raw field name. */
+function relationLabel(relation: string): string | undefined {
+  return schemaStore.getRelationType(relation)?.label
+}
 </script>
 
 <template>
@@ -48,7 +57,7 @@ defineProps<{
       class="card-field"
     >
       <span v-if="cardFieldLabelShown(resolved.field)" class="field-label">
-        {{ cardFieldLabel(resolved.field) }}:
+        {{ cardFieldLabel(resolved.field, relationLabel) }}:
       </span>
       <component
         :is="resolved.component"

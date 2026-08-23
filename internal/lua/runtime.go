@@ -68,14 +68,22 @@ func stripShebang(code string) string {
 // of entities and relations) registered at all; calling those from Lua raises
 // a "attempt to call a nil value" error from the VM itself.
 //
-// TODO(TKT-N0IKN9): Runtime is a god-object (120 methods). Decompose toward the
+// TODO(TKT-N0IKN9): Runtime is a god-object (105 methods). Decompose toward the
 // 40-method load line; ratchet this number down as bindings move out.
 //
 // 119 → 120 (TKT-ZF2DTV): reader(), the single choke point every read binding
 // resolves its ACL-bound handle through. One method that makes six call sites
 // unable to skip the gate is a good trade against this line.
 //
-//plimsoll:max-methods=120
+// 120 → 105 (TKT-IG54YO): the seventeen rela.url helpers moved to urlHelpers.
+// They needed nothing from the runtime — no store, no deps, no context, not
+// even the Lua state, since each receives the *lua.LState it is called with —
+// so they were only ever methods by habit. Grouping them in a FILE never
+// helped: the linter counts methods per type, and so does anyone reading this
+// struct's API. The remaining bindings are not free like this; they genuinely
+// use deps and callerCtx, which is what makes them TKT-N0IKN9's job.
+//
+//plimsoll:max-methods=105
 type Runtime struct {
 	L             *lua.LState
 	deps          WriteDeps // EntityManager is nil on a reader runtime.

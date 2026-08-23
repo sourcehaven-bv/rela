@@ -796,9 +796,9 @@ radius across existing `--filter` consumers than expected, revisit.
 month/week behaviour, drag semantics), plus a note that a source list can be
 shared with `feeds:` via a YAML anchor (the guide itself is TKT-6RSPA2)
 - [x] `docs/acl-security.md` — only if it enumerates view kinds for gating
-- [ ] `docs/metamodel.md` — N/A (no metamodel change)
-- [ ] `docs/cli-reference.md` — N/A (no CLI change)
-- [ ] `CLAUDE.md` — N/A (no new cross-cutting pattern)
+- [x] ~~`docs/metamodel.md`~~ (N/A: no metamodel change)
+- [x] ~~`docs/cli-reference.md`~~ (N/A: no CLI change)
+- [x] ~~`CLAUDE.md`~~ (N/A: no new cross-cutting pattern)
 
 ## Design Review
 

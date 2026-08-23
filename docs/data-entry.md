@@ -2489,9 +2489,15 @@ target titles are shown:
           label: "Owner"
 ```
 
-Each field renders on its own line as `label: value`. The label is **derived**
-from the property or relation name, so `- property: assignee` renders
-"assignee: Alex" with nothing else to write; `label:` only overrides it.
+Each field renders on its own line as `label: value`. The label comes from,
+in order: the field's own `label:`, the **relation type's label** from
+`schema.yaml` for a relation field, then the raw name. So
+`- relation: belongs-to` renders "belongs to: Apollo" when the relation
+declares `label: belongs to`.
+
+Properties have no authored label in the metamodel, so `- property: assignee`
+renders "assignee: Alex". The UI does not title-case identifiers — labels are
+authored, never derived — so write `label: "Assignee"` if you want one.
 
 `show_label: false` drops the label for a value that already names itself:
 
