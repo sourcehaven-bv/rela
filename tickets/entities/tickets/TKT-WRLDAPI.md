@@ -40,13 +40,29 @@ buildable today proceeds in parallel on the list surface.
    published yet".*
 3. **`pointers` on `_schema`'s EntityType** — a client cannot currently learn
    that `policy` has draft/published.
-4. **World-capable detail read.** `_views/{type}/{id}` 422s under a world by
-   construction (`worldCapablePath`, `world.go:220-234`), and it cannot
-   simply be allowlisted: `views.go:21,159` read via `store.GetEntity`, which
-   takes **no scope parameter** (`store.go:238`) — world resolution exists
-   only on the `ListEntities`+`World` path. Either scope that handler or move
-   the SPA detail page to `GET /{plural}/{id}`. **Design decision, not
-   plumbing.** *Unblocks every Ruling-9 affordance having a page to live on.*
+4. **World-capable detail read, INCLUDING relations (RULING 12).** Jeroen
+   settled the shape 2026-08-23: relations resolve through the SAME world as
+   the entry, per neighbour, independently. An ISMS published view links to
+   published faces; a preview world with chain `[draft, published]` links to
+   drafts where drafts exist; a Spanish page links to Spanish where Spanish
+   exists and English where it does not. The fallback chain does this
+   automatically — it is not configured twice.
+
+   This is **not a design fork**; the previously-offered options (scope the
+   entry only / omit neighbours / move to the thin endpoint) all mis-framed
+   it as "how much of the neighbour question do we avoid". The answer is
+   none of it.
+
+   The machinery already exists: `worldreader.RelationReader.Neighbors` does
+   the per-relation-type scope dispatch (identity types query a nil tail,
+   content types the prime's pointer, merged) and its godoc states it exists
+   so the dispatch is "UNREPRESENTABLE to omit". What is missing is that the
+   detail handler does not call it: `views.go:21,159` read via
+   `store.GetEntity`, which takes **no scope parameter** (`store.go:238`).
+
+   So: scope the detail read through the world and resolve its links via
+   `Neighbors`. *Unblocks every Ruling-9 affordance having a page to live
+   on.*
 5. **Copies: list-by-source + invoke-by-name, and `label:` on `CopyDef`.**
    A request may only invoke a definition BY NAME (transforms-registry
    precedent); the endpoint must **re-authorize the guard server-side**
@@ -74,8 +90,9 @@ buildable today proceeds in parallel on the list surface.
 - Items 1-3 are small and additive. Item 4 is a design decision. Item 5
   should not have its shape chosen unilaterally by an agent.
 - Under a non-default world the backend currently refuses `?include=` (422)
-  and emits **no relations** (`api_v1.go:794-797`, `639-643`). Decide
-  deliberately whether that stays; the SPA has to honour it either way.
+  and emits **no relations** (`api_v1.go:794-797`, `639-643`). Per RULING 12
+  both are **GAPS TO CLOSE, not decisions to preserve** — neighbour titles a
+  client asks for must come from the world-resolved faces.
 - **Do not add a face-enumeration path that lets a client probe which faces
   exist.** That reconstructs the existence oracle `errWorldDenied` was
   designed to close.
