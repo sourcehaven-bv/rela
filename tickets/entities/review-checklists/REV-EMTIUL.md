@@ -98,7 +98,7 @@ one — the behaviour that was silently broken.
 - [x] All CI checks pass
 - [x] PR URL documented below
 
-**PR:** <!-- filled in immediately after opening; see note below -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1418
 
 **Ordering note.** The workflow's PR gate wants the ticket `done` before a PR is
 opened, but these three items can only be completed BY opening it — the

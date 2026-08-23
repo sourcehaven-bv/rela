@@ -5,7 +5,7 @@ title: 'Guide: YAML anchors and merge keys for config reuse'
 kind: docs
 priority: low
 effort: s
-status: ready
+status: backlog
 ---
 
 ## Description
