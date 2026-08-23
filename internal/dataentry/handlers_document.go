@@ -21,5 +21,7 @@ func (a *App) toDocumentRenderConfig(configID string, cfg *DocumentConfig) docum
 		// Only `read` reaches here: validateDocuments rejects write and
 		// read+write on a document, so AllowsRead is the whole condition.
 		Elevated: cfg.AllowACLBypass.AllowsRead(),
+		// TKT-YH52OM: an undeclared block grants nothing.
+		Capabilities: luaCapabilities(cfg.Capabilities),
 	}
 }

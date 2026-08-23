@@ -161,7 +161,10 @@ func Build(ctx context.Context, src string, opts Options) (string, error) {
 		Tracer:        dr.tracer,
 		Meta:          opts.Meta,
 	}
-	rt := rlua.NewReader(readDeps, dr.out, rlua.WithContext(ctx), rlua.WithTimeout(buildTimeout))
+	rt := rlua.NewReader(readDeps, dr.out, rlua.WithContext(ctx), rlua.WithTimeout(buildTimeout),
+		// The docs build runs from the operator shell / CI over in-repo
+		// scripts, the same trust boundary as `rela script` (TKT-YH52OM).
+		rlua.WithCapabilities(rlua.TrustedCapabilities()))
 	defer rt.Close()
 	dr.rt = rt
 	dr.registerModule()
