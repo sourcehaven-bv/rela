@@ -5,7 +5,7 @@ title: 'SQLite store backend: conformance-passing minimal store behind a sqlite 
 kind: enhancement
 priority: medium
 effort: l
-status: backlog
+status: planning
 ---
 
 ## Description
