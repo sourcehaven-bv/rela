@@ -5,7 +5,7 @@ title: 'storeutil.TopValues: hoist the triplicated property-value ranking (one c
 kind: refactor
 priority: low
 effort: xs
-status: in-progress
+status: done
 ---
 
 ## Description
