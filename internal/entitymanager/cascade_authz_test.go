@@ -6,7 +6,9 @@ import (
 	"iter"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
@@ -105,10 +107,15 @@ func TestCascadeDelete_DeniedWhenRelationNotDeletable(t *testing.T) {
 		t.Errorf("error %v does not wrap *acl.ForbiddenError, so callers cannot "+
 			"map it to a 403", err)
 	}
-	// The message must be entity-delete-shaped: a bare relation denial is
-	// baffling when the request was "delete this entity".
-	if !strings.Contains(err.Error(), "REQ-1") || !strings.Contains(err.Error(), "addresses") {
-		t.Errorf("error %q does not name the entity and the blocking relation", err)
+	// The message must be entity-delete-shaped AND name the FAR endpoint.
+	// DEC-1 is the assertion that matters: for an incoming edge the deleted
+	// entity is the To side, so naming rel.To would print "its relation to
+	// REQ-1" while deleting REQ-1 — nonsense, and it withholds the one entity
+	// whose type actually blocked the delete.
+	for _, want := range []string{"REQ-1", "addresses", "DEC-1", "incoming"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
 	}
 }
 
@@ -171,44 +178,75 @@ func TestCascadeDelete_NoRelationsNeedsNoRelationGrant(t *testing.T) {
 	}
 }
 
-// raceStore injects a concurrent relation create in the window between the
-// manager's collect and the store's own re-derivation.
-//
-// This is THE test that distinguishes the correct fix from the naive one. The
-// original design authorized a snapshot collected OUTSIDE any lock; both
-// stores then re-derive the set inside their own lock and delete THAT set. A
-// relation added in that window would be deleted with no authorization at all.
-// Running collect+authorize+delete inside one Tx closes the window, so the
-// injected write cannot land mid-operation.
-type raceStore struct {
+// concurrentWriteStore signals when the manager has finished collecting the
+// incident set, so a test can attempt a write in the exact TOCTOU window: after
+// authorization has decided, before the store re-derives its own set.
+type concurrentWriteStore struct {
 	store.Store
-	once   sync.Once
-	inject func()
+	collects  int
+	collected chan struct{}
+	once      sync.Once
+	// signal is set on the per-Tx decorator and points back at the parent's
+	// counter; nil on the parent itself.
+	signal func()
 }
 
-func (s *raceStore) ListRelations(
+func (s *concurrentWriteStore) ListRelations(
 	ctx context.Context, q store.RelationQuery,
 ) iter.Seq2[*entity.Relation, error] {
-	// Fire on the FIRST collect — i.e. after authorization has begun but
-	// before the store re-derives its own set.
-	s.once.Do(func() {
-		if s.inject != nil {
-			s.inject()
+	seq := s.Store.ListRelations(ctx, q)
+	return func(yield func(*entity.Relation, error) bool) {
+		for r, err := range seq {
+			if !yield(r, err) {
+				return
+			}
 		}
+		// Both directions are collected before the delete; signal after the
+		// second so the window is genuinely open.
+		if s.signal != nil {
+			s.signal()
+		}
+	}
+}
+
+// Tx must hand the callback a decorator over the TX VIEW, not over the outer
+// store. Passing the outer decorator makes tx.DeleteEntity re-enter
+// MemStore.DeleteEntity, which takes txMu — already held by this very Tx —
+// and self-deadlocks. The view's write methods deliberately skip txMu; that
+// is the whole point of the view.
+func (s *concurrentWriteStore) Tx(ctx context.Context, fn func(store.Store) error) error {
+	return s.Store.Tx(ctx, func(view store.Store) error {
+		return fn(&concurrentWriteStore{
+			Store:     view,
+			collected: s.collected,
+			signal:    s.signalCollect,
+		})
 	})
-	return s.Store.ListRelations(ctx, q)
 }
 
-func (s *raceStore) Tx(ctx context.Context, fn func(store.Store) error) error {
-	// Hand the callback THIS decorator so the injection point stays live
-	// inside the transaction.
-	return s.Store.Tx(ctx, func(store.Store) error { return fn(s) })
+// signalCollect closes the collected channel once both directions have been
+// listed. Lives on the PARENT so the per-Tx decorator shares one counter.
+func (s *concurrentWriteStore) signalCollect() {
+	s.collects++
+	if s.collects >= 2 {
+		s.once.Do(func() { close(s.collected) })
+	}
 }
 
-// TestCascadeDelete_ConcurrentRelationIsNotDeletedUnauthorized pins that a
-// relation appearing during the operation is either authorized or blocks the
-// delete — never silently destroyed.
-func TestCascadeDelete_ConcurrentRelationIsNotDeletedUnauthorized(t *testing.T) {
+// TestCascadeDelete_ConcurrentWriterCannotEnterTheWindow pins what the Tx
+// restructure actually buys, which is NOT "a racing edge gets authorized" — it
+// is that the window does not exist for another writer to enter.
+//
+// The naive design authorized a set collected outside any lock, then let the
+// store re-derive and delete its own set; an edge created in between was
+// destroyed unauthorized. Running collect+authorize+delete inside one Tx closes
+// that: on fs/mem the writer BLOCKS on txMu, on pgstore on the advisory lock.
+//
+// So the assertion is that the concurrent write does not land while the Tx is
+// open. An earlier version of this test injected the edge from INSIDE the
+// collect and passed against a build with no Tx at all — it never entered the
+// window it claimed to guard.
+func TestCascadeDelete_ConcurrentWriterCannotEnterTheWindow(t *testing.T) {
 	t.Parallel()
 	inner := memstore.New()
 	ctx := context.Background()
@@ -221,26 +259,46 @@ func TestCascadeDelete_ConcurrentRelationIsNotDeletedUnauthorized(t *testing.T) 
 		}
 	}
 
-	st := &raceStore{Store: inner}
-	st.inject = func() {
-		// A concurrent writer adds an edge alice cannot delete.
-		if _, err := inner.CreateRelation(ctx, "DEC-1", "addresses", "REQ-1", nil); err != nil {
-			t.Errorf("inject: %v", err)
-		}
-	}
+	st := &concurrentWriteStore{Store: inner, collected: make(chan struct{})}
 	mgr := cascadeManager(t, st)
 
-	_, err := mgr.DeleteEntity(asUser("alice"), "REQ-1", true)
+	var writeStarted atomic.Bool
+	landed := make(chan error, 1)
+	go func() {
+		<-st.collected // the window, if there were one
+		writeStarted.Store(true)
+		_, err := inner.CreateRelation(ctx, "DEC-1", "addresses", "REQ-1", nil)
+		landed <- err
+	}()
 
-	// Whichever way it resolves, the invariant is the same: that edge must not
-	// have been deleted without authorization.
-	_, relErr := inner.GetRelation(ctx, "DEC-1", "addresses", "REQ-1")
-	_, entErr := inner.GetEntity(ctx, "REQ-1")
-	if relErr != nil && err == nil {
-		t.Fatal("the concurrently-added addresses edge was deleted by a cascade " +
-			"that never authorized it — the TOCTOU window is open")
+	// alice may delete requirement and there are no edges yet, so this succeeds.
+	if _, err := mgr.DeleteEntity(asUser("alice"), "REQ-1", true); err != nil {
+		t.Fatalf("delete: %v", err)
 	}
-	if err != nil && entErr != nil {
-		t.Error("the delete failed but the entity is gone: partial write")
+
+	select {
+	case err := <-landed:
+		if err != nil {
+			t.Fatalf("the concurrent write failed for an unrelated reason: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the concurrent write never completed; it should proceed once " +
+			"the Tx releases, not block forever")
+	}
+
+	// The write landed AFTER the transaction released — that is the property.
+	// It was signaled during the collect, so with the naive design (collect
+	// and authorize outside any lock) it would have interleaved and been
+	// deleted unauthorized by the store's own re-derivation.
+	//
+	// The edge now dangles off a deleted entity. That is FINE and not what
+	// this test guards: memstore does not enforce referential integrity —
+	// endpoint validation lives in entitymanager.CreateRelation, and this
+	// write deliberately bypassed it to simulate a racing writer. Asserting
+	// on the dangling edge would be asserting a property the store never
+	// promised.
+	if !writeStarted.Load() {
+		t.Fatal("the concurrent write never even started; the collect signal " +
+			"did not fire, so no window was exercised")
 	}
 }

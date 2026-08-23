@@ -252,3 +252,63 @@ relation_grants:
 			"that the closer rule was even consulted", got.Reason)
 	}
 }
+
+// TestRelationGrant_PermissionCheckRoutesThroughGrantsPermission is the
+// companion the ceiling guard cannot provide.
+//
+// ceilingguard_test.go scans for `policy.Roles[` — the pattern that reaches a
+// RoleDef without the clamp. The relation-grant path reads a DIFFERENT map
+// (policy.RelationWriteGrants) which that regex cannot see, so the guard is
+// blind to it. What makes the read safe is that it yields a permission NAME,
+// never a capability: the actual check goes through grantsPermission, which
+// applies permitsPermission and roleFor.
+//
+// This pins that property directly. If someone reworked the relation-grant
+// path to decide from the policy map without grantsPermission, the guard would
+// stay green and only this test would fail.
+func TestRelationGrant_PermissionCheckRoutesThroughGrantsPermission(t *testing.T) {
+	t.Parallel()
+	p := mustPolicy(t, `
+roles:
+  writer:
+    read: ["*"]
+    permissions: [create-spawnt]
+assignments:
+  alice: writer
+client_baselines:
+  attenuated:
+    applies_to: [limited]
+    deny_permissions: [create-spawnt]
+relation_grants:
+  spawnt:
+    create: create-spawnt
+`)
+	d, err := NewDeclarative(p, NullGraph{}, NullGraphQueryer{})
+	if err != nil {
+		t.Fatalf("NewDeclarative: %v", err)
+	}
+	ctx := context.Background()
+
+	// Precondition: unattenuated, the relation grant allows.
+	full, err := d.ForPrincipal(verifiedClient("alice", "user"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := full.authorizeRelationWrite(ctx, OpCreate, spawnt("terugkerend")); !got.Allow {
+		t.Fatalf("precondition: unattenuated alice should be allowed: %s", got.Reason)
+	}
+
+	// A ceiling withholding the PERMISSION (not the verb) must deny. This axis
+	// is only reachable via grantsPermission — a direct map read would sail
+	// past it, and filterPermissions preserves a "*" under a pure denial just
+	// as filterTypes does.
+	limited, err := d.ForPrincipal(verifiedClient("alice", "limited"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := limited.authorizeRelationWrite(ctx, OpCreate, spawnt("terugkerend")); got.Allow {
+		t.Error("the relation grant honored a permission the client ceiling " +
+			"withholds — the permission check is not routing through " +
+			"grantsPermission")
+	}
+}

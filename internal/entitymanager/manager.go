@@ -855,7 +855,7 @@ func (m *Manager) updateCore(
 // the principal would face deleting the edge directly, which is the property
 // that makes this gate meaningful rather than merely stricter.
 func (m *Manager) authorizeCascadeRelations(
-	ctx context.Context, id string, incoming, outgoing []*entity.Relation,
+	ctx context.Context, tx store.Store, id string, incoming, outgoing []*entity.Relation,
 ) error {
 	type subject struct{ relType, fromType string }
 	seen := make(map[subject]bool)
@@ -864,10 +864,17 @@ func (m *Manager) authorizeCascadeRelations(
 		if rel == nil {
 			return nil
 		}
-		// Best-effort, exactly as the live relation-write path resolves it: an
+		// Resolve through the TX view, not the outer store. The whole point of
+		// running in a transaction is that the authorized set and the deleted
+		// set are derived under one serialization; reading the type that the
+		// decision is MADE ON from outside it would undercut exactly that. On
+		// pgstore the outer handle is the pool, so this would also take a
+		// second connection while the first is held.
+		//
+		// Best-effort, as the live relation-write path resolves it: an
 		// unresolvable source yields an empty FromType, which fails closed.
 		var fromType string
-		if from, err := m.deps.Store.GetEntity(ctx, rel.From); err == nil {
+		if from, err := tx.GetEntity(ctx, rel.From); err == nil {
 			fromType = from.Type
 		}
 		key := subject{relType: rel.Type, fromType: fromType}
@@ -876,88 +883,87 @@ func (m *Manager) authorizeCascadeRelations(
 		}
 		seen[key] = true
 
+		// FromID is deliberately EMPTY. The decision is a pure function of
+		// (relation type, source type, op) — FromID is never read by any
+		// branch of authorizeRelationWrite — so one check stands for every
+		// edge sharing that pair. Stamping one arbitrary id into the audit
+		// row would make it look like a claim about that specific entity: a
+		// forensic query for another source in the same class would find
+		// nothing, though it was equally refused. An empty FromID says
+		// "this type-pair", which is what was actually decided.
 		return m.authorizeAndAudit(ctx, acl.WriteRequest{
 			Op: acl.OpDelete,
 			Subject: acl.RelationSubject{
 				Type:     rel.Type,
 				FromType: fromType,
-				FromID:   rel.From,
 			},
 		})
 	}
 
-	for _, rel := range append(append([]*entity.Relation{}, incoming...), outgoing...) {
+	// Split by direction so the error can name the FAR endpoint. For an
+	// incoming edge the entity being deleted IS rel.To, so "its X relation to
+	// <To>" would say "its relation to itself" and withhold the one fact that
+	// makes the error actionable: the other endpoint, whose type is what
+	// actually blocked the delete.
+	for _, rel := range incoming {
 		if err := check(rel); err != nil {
-			// Name the entity the operator asked to delete: a bare "no role
-			// grants delete on relations from type X" is baffling when the
-			// request was "delete this entity".
-			return fmt.Errorf("cannot delete %s: its %s relation to %s: %w",
+			return fmt.Errorf("cannot delete %s: its incoming %s relation from %s: %w",
+				id, rel.Type, rel.From, err)
+		}
+	}
+	for _, rel := range outgoing {
+		if err := check(rel); err != nil {
+			return fmt.Errorf("cannot delete %s: its outgoing %s relation to %s: %w",
 				id, rel.Type, rel.To, err)
 		}
 	}
 	return nil
 }
 
-// deleteEntityInTx is DeleteEntity's critical section, run inside the store
-// transaction: collect the incident relations, authorize every one a cascade
-// would destroy, capture versions, then delete.
+// cascadeCapture is what deleteEntityInTx hands back for the caller to act on
+// AFTER the transaction closes: the incident relations the cascade destroyed,
+// captured before the delete removed them.
+type cascadeCapture struct {
+	incoming []*entity.Relation
+	outgoing []*entity.Relation
+}
+
+// deleteEntityInTx is DeleteEntity's critical section: collect the incident
+// relations, authorize every one a cascade would destroy, then delete.
 //
-// Extracted from DeleteEntity so the transaction body has a name and the
-// caller stays readable — the sequencing here is load-bearing (see the Tx
-// comment at the call site) and deserves to be read on its own.
+// It performs STORE WORK ONLY. Version capture, alias notification and audit
+// all happen in the caller, after the transaction closes — see the Tx comment
+// at the call site for why that separation is load-bearing rather than
+// stylistic.
 func (m *Manager) deleteEntityInTx(
-	ctx context.Context, tx store.Store, current *entity.Entity, id string, cascade bool,
-) (*store.DeleteResult, error) {
+	ctx context.Context, tx store.Store, id string, cascade bool,
+) (*store.DeleteResult, *cascadeCapture, error) {
 	incoming, cErr := collectIncidentRelations(ctx, tx, id, store.DirectionIncoming)
 	if cErr != nil {
-		return nil, fmt.Errorf("collect incoming relations for %q: %w", id, cErr)
+		return nil, nil, fmt.Errorf("collect incoming relations for %q: %w", id, cErr)
 	}
 	outgoing, cErr := collectIncidentRelations(ctx, tx, id, store.DirectionOutgoing)
 	if cErr != nil {
-		return nil, fmt.Errorf("collect outgoing relations for %q: %w", id, cErr)
+		return nil, nil, fmt.Errorf("collect outgoing relations for %q: %w", id, cErr)
 	}
 	totalRelations := len(incoming) + len(outgoing)
 
 	if totalRelations > 0 && !cascade {
-		return nil, ErrHasRelations
+		return nil, nil, ErrHasRelations
 	}
 
 	// A cascade destroys these edges, so the principal must be allowed to
 	// delete each one — otherwise deleting an entity is a back door to
-	// removing relation types you hold no delete grant on. Denials fail
-	// the WHOLE delete: nothing has been written yet, so there is nothing
-	// to unwind.
+	// removing relation types you hold no delete grant on.
+	//
+	// This MUST run inside the transaction: both backends re-derive the
+	// incident set under their own lock and delete THAT set, so authorizing
+	// a set collected outside the serialization would leave a window for a
+	// concurrent writer. Denials abort before any write, so nothing unwinds
+	// — which matters because fs/mem do not roll back (store.Transactor).
 	if cascade && totalRelations > 0 {
-		if aErr := m.authorizeCascadeRelations(ctx, id, incoming, outgoing); aErr != nil {
-			return nil, aErr
-		}
-	}
-
-	// Capture the final pre-delete version BEFORE the store delete. The row is
-	// hard-deleted below, so a version taken after the delete would be
-	// unrecoverable if the process died in between — order-before closes that
-	// permanent-loss window.
-	m.recordEntityVersion(ctx, store.VersionOpDelete, current, "")
-
-	// Tell id-keyed subscribers the entity is gone. They decide what to do:
-	// the CalDAV alias service RETAINS its reference, as the tombstone that
-	// stops a stale client write resurrecting this entity.
-	m.notifyAliasesOfDelete(ctx, id)
-
-	// Capture a final version for every relation this cascade destroys, BEFORE
-	// the store delete removes them. This is the ONLY place cascade-deleted
-	// relations get versioned: the store's DeleteEntity bulk-deletes them below
-	// the write choke-point, so without this their history would silently end
-	// with no `delete` marker and no restore path (RR-181AFY). Each is attributed
-	// to the triggering entity delete. Live rows still exist here, so
-	// WriteRelationVersion resolves rel_record_id from the key.
-	if cascade && totalRelations > 0 {
-		cascadeTB := "cascade:delete-entity:" + id
-		for _, rel := range incoming {
-			m.recordRelationVersion(ctx, store.VersionOpDelete, rel, "", "", cascadeTB)
-		}
-		for _, rel := range outgoing {
-			m.recordRelationVersion(ctx, store.VersionOpDelete, rel, "", "", cascadeTB)
+		if aErr := m.authorizeCascadeRelations(ctx, tx, id, incoming, outgoing); aErr != nil {
+			return nil, nil, aErr
 		}
 	}
 
@@ -967,9 +973,9 @@ func (m *Manager) deleteEntityInTx(
 	// never deleted while a relation is left behind (issue #888).
 	res, delErr := tx.DeleteEntity(ctx, id, cascade)
 	if delErr != nil {
-		return nil, fmt.Errorf("delete entity: %w", delErr)
+		return nil, nil, fmt.Errorf("delete entity: %w", delErr)
 	}
-	return res, nil
+	return res, &cascadeCapture{incoming: incoming, outgoing: outgoing}, nil
 }
 
 // DeleteEntity removes an entity and its incident relations.
@@ -1007,14 +1013,62 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 	// acl.StoreGraph holds). fsstore's readers never take txMu, so this does
 	// not deadlock — pinned by TestTx_ReadsViaOuterHandleDoNotDeadlock.
 	// Writes must use the tx view, per the Tx contract.
-	var res *store.DeleteResult
+	// The critical section — collect, authorize, delete — runs inside ONE Tx.
+	//
+	// Both backends RE-DERIVE the incident set inside their own lock/tx
+	// (fsstore rebuilds from its live index, pgstore re-reads inside the
+	// transaction) and delete THAT set, not the one handed to them.
+	// Authorizing a snapshot taken outside the lock would leave a window in
+	// which a concurrent writer adds an edge that is then deleted with no
+	// authorization at all — the "back door to destroying edge types you
+	// cannot delete directly" this gate exists to close.
+	//
+	// Everything EXTERNAL stays out of the callback: version capture, alias
+	// notification and audit all run below, after the transaction closes.
+	// store.Transactor is explicit that slow external I/O inside fn makes the
+	// whole deployment's writers wait (pgstore holds a global advisory lock
+	// for the callback's duration), and the version recorder writes through
+	// its own pool connection — so a capture emitted inside would commit even
+	// when the delete rolls back, leaving history asserting a delete that
+	// never happened.
+	var (
+		res      *store.DeleteResult
+		captured *cascadeCapture
+	)
 	txErr := m.deps.Store.Tx(ctx, func(tx store.Store) error {
 		var dErr error
-		res, dErr = m.deleteEntityInTx(ctx, tx, current, id, cascade)
+		res, captured, dErr = m.deleteEntityInTx(ctx, tx, id, cascade)
 		return dErr
 	})
 	if txErr != nil {
 		return nil, txErr
+	}
+
+	// Version capture, after commit. The rows are written from the pre-delete
+	// state captured inside the transaction, so their content is the same as
+	// an in-transaction capture would have produced; only the timing differs.
+	// A crash between commit and here loses the delete markers — the same
+	// non-atomicity the pre-Tx code carried and documented, not a regression.
+	m.recordEntityVersion(ctx, store.VersionOpDelete, current, "")
+
+	// Tell id-keyed subscribers the entity is gone. They decide what to do:
+	// the CalDAV alias service RETAINS its reference, as the tombstone that
+	// stops a stale client write resurrecting this entity.
+	m.notifyAliasesOfDelete(ctx, id)
+
+	// Capture a final version for every relation this cascade destroyed. This
+	// is the ONLY place cascade-deleted relations get versioned: the store's
+	// DeleteEntity bulk-deletes them below the write choke-point, so without
+	// this their history would silently end with no `delete` marker and no
+	// restore path (RR-181AFY).
+	if captured != nil {
+		cascadeTB := "cascade:delete-entity:" + id
+		for _, rel := range captured.incoming {
+			m.recordRelationVersion(ctx, store.VersionOpDelete, rel, "", "", cascadeTB)
+		}
+		for _, rel := range captured.outgoing {
+			m.recordRelationVersion(ctx, store.VersionOpDelete, rel, "", "", cascadeTB)
+		}
 	}
 
 	// Audit exactly what the store reports deleting. Cascade-deleted
