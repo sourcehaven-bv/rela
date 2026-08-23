@@ -7,6 +7,7 @@ import { useListKeyboard } from '@/composables/useListKeyboard'
 import { useListSelection } from '@/composables/useListSelection'
 import { useListActions } from '@/composables/useListActions'
 import { useUrlFilterSync } from '@/composables/useUrlFilterSync'
+import { useWorld } from '@/composables/useWorld'
 import { listEntities, deleteEntity, getErrorMessage } from '@/api'
 import { entityKeys } from '@/queries/entities'
 import { beginOptimisticRemove, rollbackOptimistic } from '@/queries/optimisticList'
@@ -178,6 +179,11 @@ function staticFilterProperties(): Set<string> {
 
 // User-selected filters and free-text search synced bidirectionally with the URL.
 const { filters, q: searchQuery, writeToQuery } = useUrlFilterSync({ staticFilterProperties })
+
+// The selected world (`?world=`). A list is one of only two surfaces the API
+// can serve under a non-default world — see worldCapablePath in
+// internal/dataentry/world.go.
+const { world, isWorldBound, worldParam } = useWorld()
 const searchBoxRef = ref<InstanceType<typeof SearchBox> | null>(null)
 const filterMenuRef = ref<InstanceType<typeof AdHocFilterMenu> | null>(null)
 
@@ -324,7 +330,16 @@ const queryParams = computed((): ListParams => {
   }
 
   // Free-text search: backend intersects ?q= results with the typed list.
-  if (searchQuery.value) {
+  //
+  // Suppressed under a non-default world, and NOT as a courtesy to avoid a
+  // 422: the search index holds DEFAULT-face documents only, so a hit under
+  // `?world=published` would be a draft leaking onto a published surface, and
+  // the ACL row gate cannot catch it (guard rule 1 makes that gate
+  // world-independent). The API refuses the combination outright
+  // (world_search_unsupported) — this keeps the UI from sending a request it
+  // knows will fail, while the box itself is hidden and explained in the
+  // template. Per-world indexing is Step 5 (TKT-9KZGJO).
+  if (searchQuery.value && !isWorldBound.value) {
     paramsRecord.q = searchQuery.value
   }
 
@@ -340,9 +355,20 @@ const queryParams = computed((): ListParams => {
     params.sort = defaultSort
   }
 
-  // Include related entities for relation columns
-  if (hasRelationColumns.value) {
+  // Include related entities for relation columns.
+  //
+  // Also suppressed under a world (422 world_include_unsupported): neighbor
+  // resolution goes through the ungated, default-world reader, so a published
+  // row would arrive wrapped in DRAFT neighbors — a mixed-face response whose
+  // entity looks right and whose neighbors are silently wrong. Relation
+  // COLUMNS therefore render empty under a world rather than wrong; the
+  // backend already omits relations entirely on world-bound reads.
+  if (hasRelationColumns.value && !isWorldBound.value) {
     params.include = '*'
+  }
+
+  if (worldParam.value) {
+    params.world = worldParam.value
   }
 
   return params
@@ -794,8 +820,35 @@ watch(searchQuery, () => {
       </span>
     </div>
 
+    <!--
+      Gated on `!loadError`: the banner ASSERTS "you are looking at world X",
+      and it must not make that claim over an error state. An unknown world is
+      a 400 (unknown_world), so a banner rendered beside the error read
+      "Showing the nonexistent world" above a message saying no such world is
+      declared — the page contradicting itself, and in the direction that
+      reads as a designed property rather than a mistake.
+    -->
+    <div v-if="isWorldBound && !loadError" class="world-banner">
+      <span class="world-banner__label">
+        Showing the <strong>{{ world }}</strong> world
+      </span>
+      <span class="world-banner__note">
+        Each entity is shown as it appears in this world, and entities with no
+        face here are not listed at all. Search is unavailable — the index
+        covers the default world only, so it would return entities from it.
+      </span>
+    </div>
+
     <div class="search-row">
+      <!--
+        The search box is OMITTED under a world rather than disabled: a
+        disabled control still advertises an affordance that does not exist
+        here, and the banner above already says why. Leaving it enabled would
+        be worse than either — the backend refuses ?q= with a world (422), and
+        the failure this guards is a draft surfacing on a published surface.
+      -->
       <SearchBox
+        v-if="!isWorldBound"
         ref="searchBoxRef"
         :model-value="searchQuery"
         :placeholder="`Search ${listConfig.entity}s...`"
@@ -1124,6 +1177,27 @@ watch(searchQuery, () => {
   gap: var(--space-sm);
   margin-top: 12px;
   margin-bottom: 12px;
+}
+
+.world-banner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-color) 30%, transparent);
+  border-radius: var(--radius-md);
+}
+
+.world-banner__label {
+  font-size: var(--font-size-base);
+  color: var(--text-color);
+}
+
+.world-banner__note {
+  font-size: var(--font-size-sm);
+  color: var(--muted-text);
 }
 
 .filter-chip {
