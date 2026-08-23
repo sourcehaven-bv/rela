@@ -122,55 +122,65 @@ reads a `visible:`-restricted property will stop seeing it. That is the point,
 but it needs calling out in the changelog rather than landing silently, since a
 script could be relying on the leak.
 
-## Failure handling: continue, collect, retry only the failures
+## Model it as a task-per-user factory
 
-A run that fails does **not** stop the pass. The scheduler continues to the next
-user and collects the ids of the users whose runs failed. Only that subset is
-retried.
+`for_each` is a **task factory**: at scheduling time it expands one declared task
+into N derived tasks, one per matching entity, each carrying that entity's
+principal. `runDueTasks` then iterates derived tasks exactly as it iterates
+declared ones today.
 
-This is the only sensible reading once `for_each` exists: one bad user out of 200
-must not deny the other 199 their digest, and re-running the 199 successes to
-retry one failure would send each of them a duplicate message. So the retry unit
-is the failed subset, never the whole task.
+This is the design decision that makes the retry question disappear rather than
+needing an answer. Every state map is keyed by task NAME
+(`state.go:38-41` — `Tasks`, `Failures`, `NextRetry`, all `map[string]...`), so
+a derived task gets its own entry in each:
 
-**This does not fit the existing ladder as-is, and that needs a decision.** Today
-a failed task gets `state.NextRetry[task.Name]` (`state.go:41`), a persisted
-per-task time, and the ladder **replaces** the schedule until it succeeds
-(`scheduler.go:19-24`) — so a failing *daily* task retries in 5 minutes. Two
-things follow that the current model has no answer for:
+- `Tasks[name]` is that user's last **successful** run. A user who succeeded is
+  not due again, so "never re-run a succeeded user" is a property of the existing
+  schedule check, not bookkeeping this ticket has to add.
+- `Failures[name]` / `NextRetry[name]` give each user their **own ladder**. One
+  user failing suppresses only that user's cadence.
+- "The ladder replaces the schedule" (`scheduler.go:19-24`) becomes correct
+  instead of dangerous: it replaces *that user's* schedule. The other 199 keep
+  their normal daily run; the failing one retries at 5m, 10m, 20m.
 
-- The retry unit becomes a `(task, user)` set, not a task. `NextRetry` is keyed
-  by task name only, so it cannot express "retry these 3 of 200".
-- A daily digest that fails for one user would, under the existing ladder, re-fire
-  the whole task 5 minutes later. For mail that is 199 duplicate messages — the
-  ladder's "speeds a failing daily one up" behaviour is right for a sync job and
-  wrong for a notification.
+So the duplicate-mail hazard is not mitigated, it is **structurally impossible** —
+a successful user is never re-run because their `Tasks` entry says they are not
+due. And "persist the failed subset" is already built: it is `NextRetry`, keyed
+per derived task.
 
-Two candidate resolutions, to settle in planning:
+There is also no "continue past a failure" special case to write.
+`runDueTasks` already moves to the next task after one fails
+(`scheduler.go:225-275`); with derived tasks, that IS continue-and-collect.
 
-**(a) In-pass retry, no state change.** Retry failed users within the same
-execution (a bounded number of immediate attempts), then report the task
-succeeded-with-failures and let the *next* scheduled occurrence pick them up
-naturally. `NextRetry` is never set by a partial failure, so the daily digest
-stays daily. Simple, no schema change, and no duplicate mail. The cost is that a
-user whose mail server was down for an hour waits until tomorrow.
+**Supersedes the earlier (a)/(b) fork.** Both options existed only because the
+retry unit was assumed to be the declared task; making the derived task the unit
+removes the question. Sequential execution is unchanged — N derived tasks run one
+after another in the same goroutine.
 
-**(b) Persist the failed subset.** Extend state with a per-task failed-user list
-and let the ladder drive a retry pass over just those users. Recovers within
-minutes rather than a day, at the cost of new persisted state, a growth bound on
-that list, and reconciling it with a `for_each` query whose membership may have
-changed between passes (a user who no longer matches must be dropped).
+### What the factory model does cost
 
-(a) is the smaller, safer v1 and is what the acceptance criteria below assume;
-(b) is the natural follow-up if operators find a day too long to wait. Either
-way the invariant is the same: **a user whose run succeeded is never re-run
-within the retry of the same occurrence.**
+State is now keyed by a set that CHANGES between ticks, which the current model
+never had to handle:
 
-Also true regardless: the failed-user list is per-execution and unpersisted under
-(a), so a restart mid-pass loses it — consistent with the scheduler's existing
-state model and with mail's best-effort delivery. A task reports failure if any
-user still failed at the end, so a persistent fault stays visible rather than
-being swallowed; the log names the affected users.
+1. **Stale entries.** A user who stops matching (`active = false`) leaves
+   `Tasks`/`Failures`/`NextRetry` entries behind. Needs pruning against the
+   current expansion, or `.rela/scheduler-state.json` grows without bound.
+   Pruning must not disturb declared tasks — only derived names.
+2. **New members run immediately.** A user with no `Tasks` entry hits the
+   "first run, executing immediately" branch (`scheduler.go:264-268`). A person
+   added at 14:00 gets a digest at 14:00 and another at the normal hour.
+   Acceptable for a digest, wrong for a task with side effects — so a derived
+   task's first occurrence should probably inherit the declared task's schedule
+   rather than firing on sight. Needs deciding, not inheriting.
+3. **Name collisions.** Derived names must be stable (same user → same name
+   across restarts, or state is lost) and unable to collide with a declared task
+   name. Use a separator that cannot appear in a hand-written name — `#` — so the
+   namespaces are provably disjoint and a state-file entry is self-describing:
+   `daily-digest#PERS-JV`.
+4. **Log volume.** The per-task lines (`scheduled task`, `first run`,
+   `retrying failed task`) fire per DERIVED task: a 200-user expansion turns one
+   startup line into 200. Log the expansion once with a count, and keep per-user
+   lines to failures.
 
 ## Scope: IS NOT
 
@@ -192,7 +202,8 @@ wall-clock budget is more honest for a scheduler (the thing that actually breaks
 is the schedule, not the count), but it makes which users get skipped depend on
 timing.
 
-2. **Failure-retry model** — resolution (a) or (b) above.
+2. **First run of a newly-matching user** — fire immediately (current
+"unrecorded task" behaviour) or wait for the declared schedule? See cost 2 above.
 
 **Not in scope — a missing email address.** Earlier listed here as
 "unresolvable users". It does not belong to this ticket at all: `for_each`
@@ -220,12 +231,15 @@ attempts to WIDEN beyond them grants nothing.
 4. An entity that cannot be mapped to a principal is skipped with a warning
 naming it, not silently and not fatally, and counts as a failed run. Address
 validation is not in scope; see TKT-U2R7GU.
-4a. A failing run does not stop the pass: the remaining users still run, and only
-the failed subset is retried. A user whose run succeeded is never re-run within
-the retry of the same occurrence.
+4a. A failing run does not stop the others: each derived task carries its own
+`Failures`/`NextRetry` entry, so one user's failure suppresses only that user's
+cadence and retries only that user.
 4b. A partial failure does not drag the whole task onto the retry ladder — a
-daily digest that fails for one user stays daily and does not re-fire in 5
-minutes (see the failure-handling decision).
+daily digest that fails for one user stays daily for the other 199.
+4c. A user whose run succeeded is not re-run by another user's retry (falls out
+of per-derived-task `Tasks` entries; worth a test that pins it).
+4d. Derived-task state is pruned when a user leaves the selection, and declared
+tasks are untouched by that pruning.
 5. `for_each` is bounded, and hitting the bound logs what was dropped.
 6. Audit records name the per-run principal, not a generic scheduler identity.
 7. `rela validate` reports an unknown `entity_type` or unparseable `where:` in
@@ -241,10 +255,12 @@ script may currently read. Intended, but it belongs in the changelog: a script
 relying on the leak will start seeing empty values.
 - **Runtime blowup** — N sequential runs, plus a retry pass over the failures;
 criterion 5 bounds it.
-- **Duplicate side effects on retry** — the existing ladder retries a whole task
-and *replaces* its schedule, so one failed user in a daily digest would re-fire
-the task within 5 minutes and mail the other 199 again. This is the sharpest
-constraint on the design; criteria 4a/4b exist to prevent it, and it is why the
-retry unit cannot simply be the task.
+- **Duplicate side effects on retry** — was the sharpest constraint: the ladder
+retries a whole task and replaces its schedule, so one failed user would re-fire
+a daily digest in 5 minutes and mail the other 199 again. The task-per-user
+factory removes it structurally (a succeeded user is not due), so this is now a
+regression to pin with a test rather than a design problem to solve.
+- **Unbounded state growth** — derived entries accumulate as the selection
+changes; criterion 4d.
 - **Half-enforced scoping** — the reason RR-7408F5 is in scope rather than
 deferred.
