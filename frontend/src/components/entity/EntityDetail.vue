@@ -49,6 +49,8 @@ import {
 } from './sectionEditFields'
 import type { AutoSaveErrorInfo } from '@/composables/useAutoSave'
 import { useConfirm, withConfirmError } from '@/composables/useConfirm'
+import { useDelayedPending } from '@/composables/useDelayedPending'
+import { PENDING_TIMINGS } from '@/composables/pendingTimings'
 
 const props = defineProps<{
   entityType: string
@@ -71,6 +73,23 @@ const backTarget = useBackTarget()
 const loading = ref(true)
 const error = ref<string | null>(null)
 const viewData = ref<ViewResponse | null>(null)
+
+// Prev/next within a list re-fetches this component in place. Blanking the
+// page to a centred spinner on every step was the worst layout shift in
+// the app — the article collapsed to ~140px and sprang back — and on a
+// fast connection it read as a flicker, not a loading state.
+//
+// Two rules apply, in order. (1) Keep previous content: while an entity is
+// already on screen, stepping to a neighbour holds it until the next
+// resolves, so nothing is shown at all. (2) On a genuine cold load, the
+// gate still suppresses anything quicker than the navigation delay.
+const showBlockLoader = useDelayedPending(
+  () => loading.value && !viewData.value,
+  {
+    delay: PENDING_TIMINGS.navDelayMs,
+    minDuration: PENDING_TIMINGS.navMinDurationMs,
+  }
+)
 const commands = ref<Command[]>([])
 const showOverflowMenu = ref(false)
 
@@ -701,10 +720,14 @@ watch(
 
 <template>
   <div class="entity-detail">
-    <div v-if="loading" class="loading-state">
+    <!-- Deliberately empty while loading below the threshold: no spinner,
+         no reserved block, no layout spring. The ActivityBar carries the
+         navigation case; this only paints for a slow cold load. -->
+    <div v-if="showBlockLoader" class="loading-state">
       <div class="spinner" />
-      <span>Loading...</span>
+      <span>Loading…</span>
     </div>
+    <div v-else-if="loading && !entry" class="entity-detail-placeholder" />
 
     <div v-else-if="error" class="error-state">
       <h2>Error</h2>

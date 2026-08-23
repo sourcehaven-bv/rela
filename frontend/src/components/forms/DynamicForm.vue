@@ -47,6 +47,8 @@ import MarkdownEditor from './MarkdownEditor.vue'
 import SidePanel from './SidePanel.vue'
 import HelpModal from '@/components/ui/HelpModal.vue'
 import PendingButton from '@/components/common/PendingButton.vue'
+import { useDelayedPending } from '@/composables/useDelayedPending'
+import { PENDING_TIMINGS } from '@/composables/pendingTimings'
 
 const props = defineProps<{
   formId: string
@@ -146,6 +148,15 @@ const userTouched = ref<Set<string>>(new Set())
 const pickerTypes = ref<Record<string, Map<string, string>>>({})
 const content = ref('')
 const loading = ref(true)
+// Opening an edit form against a local server resolves in tens of
+// milliseconds, so an ungated spinner appears and vanishes before it can be
+// read while the form springs into place underneath. There is no previous
+// content to hold here (a form is either opening or it is not), so the
+// delay alone is the fix: below it, nothing is shown.
+const showBlockLoader = useDelayedPending(() => loading.value, {
+  delay: PENDING_TIMINGS.navDelayMs,
+  minDuration: PENDING_TIMINGS.navMinDurationMs,
+})
 // loadState is a stable, test-visible signal of whether the edit entity
 // actually loaded: 'pending' until the fetch settles, then 'loaded' or
 // 'error'. Stamped as data-testid on the form root so an out-of-process
@@ -1651,10 +1662,11 @@ defineExpose({
         </button>
       </div>
 
-      <div v-if="loading" class="loading-state">
+      <div v-if="showBlockLoader" class="loading-state">
         <div class="spinner" />
-        <span>Loading...</span>
+        <span>Loading…</span>
       </div>
+      <div v-else-if="loading" class="form-loading-placeholder" />
 
       <div v-else-if="notEditable" class="not-editable-state">
         <h2>This entity is not editable</h2>

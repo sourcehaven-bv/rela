@@ -12,6 +12,9 @@ import { buildReturnTo } from '@/utils/returnPath'
 import { getErrorMessage, getScriptError } from '@/api/errors'
 import BackButton from '@/components/common/BackButton.vue'
 import DOMPurify from 'dompurify'
+import { useDelayedPending } from '@/composables/useDelayedPending'
+import { PENDING_TIMINGS } from '@/composables/pendingTimings'
+
 
 const props = defineProps<{
   name: string
@@ -30,6 +33,15 @@ const { on, off } = useEvents()
 // State
 const docContent = ref<string>('')
 const loading = ref(true)
+
+// Cold-load only (the `!docContent` half): a re-render keeps the previous
+// document on screen rather than blanking it. The gate adds the other half
+// — a render quicker than the threshold shows nothing at all.
+const showBlockLoader = useDelayedPending(() => loading.value && !docContent.value, {
+  delay: PENDING_TIMINGS.navDelayMs,
+  minDuration: PENDING_TIMINGS.navMinDurationMs,
+})
+
 const isCached = ref(false)
 
 // Sanitized content for safe rendering
@@ -165,7 +177,7 @@ onUnmounted(() => {
       </div>
     </header>
 
-    <div v-if="loading && !docContent" class="loading-state">
+    <div v-if="showBlockLoader" class="loading-state">
       <div class="spinner" />
       <span>Rendering document...</span>
     </div>

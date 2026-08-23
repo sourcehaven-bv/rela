@@ -1,5 +1,5 @@
 ---
 from: TKT-007
-relation: belongs-to
+type: belongs-to
 to: backend
 ---

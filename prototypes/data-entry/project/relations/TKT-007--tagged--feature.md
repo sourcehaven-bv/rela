@@ -1,5 +1,7 @@
 ---
 from: TKT-007
-relation: tagged
+type: tagged
 to: feature
+added_by: eve
+added_date: 2026-07-18
 ---

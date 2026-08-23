@@ -10,6 +10,9 @@ import { renderMermaidDiagrams, renderPlantUMLDiagrams } from '@/utils/markdown'
 import type { DocumentConfig } from '@/types'
 import { getErrorMessage, getScriptError } from '@/api/errors'
 import DOMPurify from 'dompurify'
+import { useDelayedPending } from '@/composables/useDelayedPending'
+import { PENDING_TIMINGS } from '@/composables/pendingTimings'
+
 
 const props = defineProps<{
   entityType: string
@@ -32,6 +35,15 @@ const handleContentClick = createDocumentClickHandler(router)
 const selectedDoc = ref<string | null>(null)
 const docContent = ref<string>('')
 const loading = ref(false)
+
+// Cold-load only (the `!docContent` half): a re-render keeps the previous
+// document on screen rather than blanking it. The gate adds the other half
+// — a render quicker than the threshold shows nothing at all.
+const showBlockLoader = useDelayedPending(() => loading.value && !docContent.value, {
+  delay: PENDING_TIMINGS.navDelayMs,
+  minDuration: PENDING_TIMINGS.navMinDurationMs,
+})
+
 const isCached = ref(false)
 const docBody = useTemplateRef<HTMLElement>('docBody')
 
@@ -186,7 +198,7 @@ function getDocTitle(name: string, config: DocumentConfig): string {
       </div>
     </header>
 
-    <div v-if="loading && !docContent" class="loading-state">
+    <div v-if="showBlockLoader" class="loading-state">
       <div class="spinner" />
       <span>Rendering document...</span>
     </div>
