@@ -91,13 +91,43 @@ table: `Tasks[id]` stores the last completed **occurrence** rather than a bare
 timestamp. It is therefore a state-format change — an old file's timestamp must
 map onto an occurrence without resetting an in-flight ladder.
 
-## Open question
+## Decided: interval schedules are exempt from the occurrence key
 
-**Occurrence for interval schedules.** `dayKind` and `weekdayKind` have obvious
-boundaries; `every: 30m` does not. Either derive the occurrence from the
-schedule's slot boundary, or exempt interval tasks from the idempotency key and
-keep today's behaviour. Decide it rather than letting `truncateToDay` imply an
-answer for a schedule it was never meant to describe.
+`dayKind` and `weekdayKind` have obvious boundaries; `every: 30m` does not, and
+an interval is a **soft request** — a bit more or less elapsed time is fine by
+design. So interval tasks keep today's `lastRun`-relative behaviour
+(`config.go:75`, `now.Sub(lastRun) >= s.interval`) and carry no occurrence key.
+
+The occurrence key exists to stop a *calendar* double-run: Monday's retry firing
+alongside Tuesday's scheduled run. An interval task has no calendar boundary to
+collide across, so it cannot suffer that failure.
+
+Deriving a slot was considered and rejected. `parseSchedule` (`config.go:140-178`)
+accepts any positive duration, so slots need not divide a day: a `7h` interval
+gives 3.43 slots/day, which drift across midnight. `time.Truncate` also works on
+absolute time since the epoch, so on a DST changeover a local 14:00 truncates to
+12:00 CEST — the wrong boundary. And it would change `IsDue` semantics for every
+existing interval task, firing on slot edges instead of N after the last run: a
+silent behaviour change nobody asked for.
+
+Consequence: `Tasks[id]` holds an occurrence for day/weekday schedules and a
+timestamp for interval ones, so the encoding must be tagged and the difference
+documented.
+
+**Constraint to preserve** (`docs/scheduled-tasks.md:219-230`): a scheduler down
+Monday→Wednesday performs ONE catch-up run, not two. The key records the last
+COMPLETED occurrence; it does not enumerate missed ones.
+
+## Note: interval parsing has no minimum, and a regex wart
+
+`parseSchedule` enforces only `d > 0` — `every: 1m` is accepted despite
+`tickInterval` being 60s (`scheduler.go:48`), so it can fire at most once per
+tick. Out of scope here, but worth knowing.
+
+Separately, `durationRe` (`config.go:119`) admits uppercase `M`/`H` as its prefix
+gate while `time.ParseDuration` rejects them, so `every: 7H` passes the regex and
+then fails with a confusing error. One-line fix whenever that file is next
+touched.
 
 ## Scope: IS NOT
 

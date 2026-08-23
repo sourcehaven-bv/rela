@@ -99,40 +99,79 @@ scheduled job, not just iterated ones, so it landed in its own ticket:
 **TKT-NJ91LX**. This ticket depends on it — a `for_each` run that saw
 unredacted fields would be half-enforced scoping, which is worse than none.
 
-## Model it as a task-per-user factory
+## Two shapes, and only one needs per-user tasks
 
-`for_each` is a **task factory**: at scheduling time it expands one declared task
-into N derived tasks, one per matching entity, each carrying that entity's
-principal. `runDueTasks` then iterates derived tasks exactly as it iterates
-declared ones today.
+A design correction. "Send a digest to N people" and "run something as each of N
+people" are different problems, and conflating them produced a heavier design
+than either needs.
 
-This is the design decision that makes the retry question disappear rather than
-needing an answer. Every state map is keyed by task NAME
-(`state.go:38-41` — `Tasks`, `Failures`, `NextRetry`, all `map[string]...`), so
-a derived task gets its own entry in each:
+**Broadcast send — ONE task, N recipients.** The unit of work is the send, not
+the recipient. Per-recipient failure is internal state on that one task, and
+crucially **mail already retries it**: `Outbox.sendWithRetry`
+(`internal/mail/outbox.go:236-267`) retries each message 5 times with doubling
+backoff. A hiccup affecting 3 recipients is handled BELOW the scheduler, which
+never needs to know it happened.
 
-- `Tasks[name]` is that user's last **successful** run. A user who succeeded is
-  not due again, so "never re-run a succeeded user" is a property of the existing
-  schedule check, not bookkeeping this ticket has to add.
-- `Failures[name]` / `NextRetry[name]` give each user their **own ladder**. One
-  user failing suppresses only that user's cadence.
-- "The ladder replaces the schedule" (`scheduler.go:19-24`) becomes correct
-  instead of dangerous: it replaces *that user's* schedule. The other 199 keep
-  their normal daily run; the failing one retries at 5m, 10m, 20m.
+**Per-recipient render — N runs, one principal each.** This is the shape that
+genuinely needs per-user execution, because each render must happen under that
+user's principal. You cannot render 1000 personalised digests inside one
+principal's context — that is the whole point of the ACL scoping.
 
-So the duplicate-mail hazard is not mitigated, it is **structurally impossible** —
-a successful user is never re-run because their `Tasks` entry says they are not
-due. And "persist the failed subset" is already built: it is `NextRetry`, keyed
-per derived task.
+So `for_each` is NOT the mechanism for broadcast mail. It is the mechanism for
+per-principal execution, and mail's broadcast mode should not use it at all.
 
-There is also no "continue past a failure" special case to write.
-`runDueTasks` already moves to the next task after one fails
-(`scheduler.go:225-275`); with derived tasks, that IS continue-and-collect.
+## The engine does not interpret partial failure
 
-**Supersedes the earlier (a)/(b) fork.** Both options existed only because the
-retry unit was assumed to be the declared task; making the derived task the unit
-removes the question. Sequential execution is unchanged — N derived tasks run one
-after another in the same goroutine.
+The scheduler must not carry a rule like "more than 10% failed means retry" — it
+has no idea what a recipient is. Instead the **task result carries the verdict**,
+and the producer that minted the task decides what its own partial failure means:
+
+```go
+type Outcome struct {
+    Status Status     // Succeeded | Failed | PartiallyFailed
+    Detail string     // for the log
+    Retry  *RetryHint // nil = the task's normal policy applies
+}
+```
+
+This keeps the dependency one-directional (engine → producer, per the section
+below): the engine never calls back to ask "should I retry?", it reads a verdict
+the task already computed.
+
+The two cases that matter, and why they differ:
+
+- **3 of 1000 recipients fail.** Mail's own ladder already retried those three.
+  The task reports success (or `PartiallyFailed` with no retry hint), the
+  occurrence is complete, and the scheduler does nothing. Re-running would mail
+  the 997 again.
+- **1000 of 1000 fail.** The mail server is down. The task reports `Failed`, the
+  ordinary ladder applies to the whole task, and retrying everyone is CORRECT
+  because nobody received anything.
+
+The engine implements the same rule in both cases; only the verdict differs.
+
+## What this removes from the earlier design
+
+The task-per-user factory was specified for broadcast, where it was the wrong
+unit. Dropping it there removes:
+
+- **`TaskID.Subject`** for the broadcast path — one task needs no per-user
+  identity.
+- **Per-user `Failures`/`NextRetry`**, and with them per-user pruning and
+  cross-producer prune scoping.
+- **Quadratic state writes.** `saveState` (`scheduler.go:333`, `:371`) serializes
+  the WHOLE state file with an atomic rename + fsync, once per execution. N
+  derived tasks meant N fsyncs of an N-entry file — O(N²) — which now does not
+  arise for broadcast rather than needing to be fixed.
+- **Liveness reconciliation for retries.** A deactivated user cannot hold a stale
+  `NextRetry` entry when there are no per-user entries.
+
+**Still open for the per-recipient shape:** whether N per-user renders are one
+task with internal state (so a few failed renders do not re-run the successes) or
+genuinely N tasks. The same reasoning says one task — but that state has to live
+somewhere, and if it is not in `scheduler-state.json` then the quadratic-write
+finding returns for that path. Settle it when the per-recipient mode is built,
+not before.
 
 ### The seam: a TaskProducer
 
