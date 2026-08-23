@@ -224,8 +224,34 @@ func (b *caldavBackend) createFromTodo(
 	return obj, nil
 }
 
-// linkToDriver gives a newly created entity the relation that makes it a member
-// of a dynamic collection. A no-op for static collections.
+// attachToDriver creates the relation that makes an entity a member of a
+// dynamic collection. A no-op for static collections, and idempotent: an entry
+// that is already a member reports success.
+//
+// It has NO side effect on the entity. Whether a failure to attach should undo
+// anything depends on which flow is calling — see linkToDriver (create) and
+// updateFromTodo (update), which decide that differently and for good reason.
+func (b *caldavBackend) attachToDriver(ctx context.Context, collection, entityID string) error {
+	dyn, driverID, ok := b.resolveDynamic(ctx, collection)
+	if !ok {
+		return nil // static collection: membership needs no edge
+	}
+	from, to := entityID, driverID
+	if dyn.Direction.IsIncoming() {
+		from, to = driverID, entityID
+	}
+	_, err := b.app.entityManager.CreateRelation(ctx, from, dyn.Relation, to, entitypkg.RelationOptions{})
+	// Already a member: the normal case on every edit, since an ordinary
+	// check-off re-asserts the membership it already has. Idempotent, never an
+	// error.
+	if err == nil || errors.Is(err, entitymanager.ErrRelationAlreadyExists) {
+		return nil
+	}
+	return err
+}
+
+// linkToDriver attaches a NEWLY CREATED entity to its dynamic collection,
+// deleting that entity if the edge cannot be made.
 //
 // # Why the entity is DELETED when the edge fails
 //
@@ -244,33 +270,30 @@ func (b *caldavBackend) createFromTodo(
 // edge is the one that just failed to be created, so a cascade could only reach
 // relations some concurrent writer added — which are not ours to remove.
 //
+// # ONLY the create flow may call this
+//
+// The justification above rests entirely on the entity being seconds old and
+// wholly ours. On an EDIT of a pre-existing to-do none of that holds: the entity
+// is arbitrarily old, its patch already succeeded, and its content is the user's
+// — so undoing an attach failure by deleting it destroys data the caller never
+// asked to remove, for an assignment that merely could not be recorded. An ACL
+// deny makes that routine rather than exotic: a principal allowed to edit
+// to-dos but not to create the membership relation would lose one on every
+// ordinary check-off. The update flow therefore calls attachToDriver directly
+// and never this (BUG-2ATX4H).
+//
 // If the compensation ITSELF fails, the orphan survives and the error says so.
 // Nothing better is available at this layer, and a silent success would leave
 // the user with a to-do they cannot see.
 func (b *caldavBackend) linkToDriver(ctx context.Context, collection, entityID string) error {
-	dyn, driverID, ok := b.resolveDynamic(ctx, collection)
-	if !ok {
-		return nil // static collection: membership needs no edge
-	}
-	from, to := entityID, driverID
-	if dyn.Direction.IsIncoming() {
-		from, to = driverID, entityID
-	}
-	_, err := b.app.entityManager.CreateRelation(ctx, from, dyn.Relation, to, entitypkg.RelationOptions{})
+	err := b.attachToDriver(ctx, collection, entityID)
 	if err == nil {
-		return nil
-	}
-	// Already a member: the normal case on every edit, since an ordinary
-	// check-off re-asserts the membership it already has. Idempotent, never an
-	// error — and CRUCIALLY never a compensating delete, which would destroy a
-	// long-lived entity for the crime of being edited twice.
-	if errors.Is(err, entitymanager.ErrRelationAlreadyExists) {
 		return nil
 	}
 	if _, delErr := b.app.entityManager.DeleteEntity(ctx, entityID, false); delErr != nil {
 		return fmt.Errorf(
-			"caldav: linking %s to %s failed (%w), and removing the now-orphaned entity "+
-				"also failed (%v) — it exists in no collection", entityID, driverID, err, delErr)
+			"caldav: linking %s to collection %q failed (%w), and removing the now-orphaned entity "+
+				"also failed (%v) — it exists in no collection", entityID, collection, err, delErr)
 	}
 	return caldavWriteError(err)
 }
@@ -325,8 +348,19 @@ func (b *caldavBackend) updateFromTodo(
 	// adding one models it exactly — membership is a relation, so belonging to
 	// two projects is a legal graph state. A real move sends a DELETE against
 	// the source collection afterwards, which removes the other edge.
-	if linkErr := b.linkToDriver(ctx, collection, res.Entity.ID); linkErr != nil {
-		return nil, linkErr
+	// NEVER linkToDriver here: its compensating delete is a create-flow undo and
+	// would destroy this already-patched, arbitrarily-old entity (BUG-2ATX4H).
+	// The patch has landed and is the user's data; a membership that could not
+	// be recorded is not a reason to remove it.
+	if linkErr := b.attachToDriver(ctx, collection, res.Entity.ID); linkErr != nil {
+		var linkDenied *acl.ForbiddenError
+		if errors.As(linkErr, &linkDenied) {
+			// Same answer as a deny on the patch itself: accept, serve the
+			// stored state, withhold the ETag so the client refetches and
+			// reconciles. The edit is kept, the assignment is not made.
+			return b.refusedWriteResponse(ctx, collection, href, m, in, entityID)
+		}
+		return nil, caldavWriteError(linkErr)
 	}
 
 	obj, err := b.renderObject(ctx, collection, m, res.Entity, href, in.Todo.UID)

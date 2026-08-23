@@ -1728,6 +1728,80 @@ func TestDynamicCollections_ReEditIsIdempotent(t *testing.T) {
 	}
 }
 
+// TestDynamicCollections_FailedAssignNeverDeletesAnExistingEntity pins
+// BUG-2ATX4H: the compensating delete belongs to the CREATE flow only.
+//
+// The update flow re-asserts membership on every PUT, so it shares the attach
+// step with create — but not create's undo. linkToDriver deletes the entity
+// when the edge cannot be made, justified by the entity being "seconds old and
+// wholly ours". On an edit of a pre-existing to-do that justification is false:
+// the patch has already succeeded and the content is the user's. Routing the
+// update flow through linkToDriver therefore destroyed a long-lived entity
+// whenever the membership write failed — while the client saw only an error.
+//
+// Every non-already-exists error from CreateRelation triggered it, not just an
+// ACL deny: a metamodel-invalid relation (used here, being deterministic), an
+// unreadable driver, or a dropped connection all reached the same delete.
+func TestDynamicCollections_FailedAssignNeverDeletesAnExistingEntity(t *testing.T) {
+	app := caldavDynamicAppWith(t,
+		[]*entity.Entity{mkProject("PRJ-1", "Alpha"), mkTaskIn("TSK-A", "work")},
+		nil) // NOT yet a member: the PUT below is an assignment, so it attaches.
+
+	// Make the membership write fail: the relation no longer admits task->project.
+	meta := app.State().Meta
+	meta.Relations["belongs-to"] = metamodel.RelationDef{
+		From: []string{"project"}, To: []string{"project"},
+	}
+
+	b := &caldavBackend{app: app, baseURL: "https://example.test"}
+	p := b.calendarPath("project_tasks--PRJ-1") + "task--TSK-A@rela.ics"
+	_, err := b.PutCalendarObject(t.Context(), p,
+		mustParseICal(t, caldavDynamicBody("task--TSK-A@rela", "edited")), nil)
+	if err == nil {
+		t.Log("attach failure surfaced as a non-error response; the entity check below is what matters")
+	}
+
+	// THE ASSERTION: the pre-existing entity must still be there. Before the
+	// fix it was deleted by the compensating delete.
+	if _, gErr := app.store.GetEntity(t.Context(), "TSK-A"); gErr != nil {
+		t.Fatalf("a failed collection assignment DELETED the pre-existing to-do: %v", gErr)
+	}
+}
+
+// TestDynamicCollections_FailedCreateStillCompensates pins the other half of
+// BUG-2ATX4H: splitting the flows must not disarm the create-path undo.
+//
+// An entity created in a dynamic collection that does not get its edge is in no
+// collection at all — invisible in every CalDAV view and unreachable by the
+// user. That orphan is worse than a failed create, so the create is undone.
+func TestDynamicCollections_FailedCreateStillCompensates(t *testing.T) {
+	app := caldavDynamicAppWith(t, []*entity.Entity{mkProject("PRJ-1", "Alpha")}, nil)
+	meta := app.State().Meta
+	meta.Relations["belongs-to"] = metamodel.RelationDef{
+		From: []string{"project"}, To: []string{"project"},
+	}
+
+	b := &caldavBackend{app: app, baseURL: "https://example.test"}
+	p := b.calendarPath("project_tasks--PRJ-1") + "brand-new@rela.ics"
+	if _, err := b.PutCalendarObject(t.Context(), p,
+		mustParseICal(t, caldavDynamicBody("brand-new@rela", "fresh")), nil); err == nil {
+		t.Fatal("want an error when a newly created entry cannot be attached to its collection")
+	}
+
+	// No orphan left behind in the entity type.
+	var orphans int
+	for e, eErr := range app.store.ListEntities(t.Context(), store.EntityQuery{Type: "task"}) {
+		if eErr != nil {
+			t.Fatalf("ListEntities: %v", eErr)
+		}
+		orphans++
+		t.Logf("orphan left behind: %s", e.ID)
+	}
+	if orphans != 0 {
+		t.Errorf("create failed to attach but left %d orphaned to-do(s) in no collection", orphans)
+	}
+}
+
 // TestDynamicCollections_DeleteRemovesMembershipNotEntity pins the core of the
 // unlink model: a DELETE names a MEMBERSHIP, not the entity.
 //

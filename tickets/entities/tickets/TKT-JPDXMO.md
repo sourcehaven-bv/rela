@@ -205,6 +205,42 @@ old per-row relation filter O(N·edges).
   no collection is invisible in every CalDAV view, so the user can neither find
   nor fix it. A failed create is visible and retryable; an orphan is neither.
 
+### The compensating delete is create-only (BUG-2ATX4H, added 2026-08-23)
+
+The atomicity reasoning above holds **only for the create flow**, and reusing
+`linkToDriver` for the update flow silently carried it somewhere it is false.
+
+An IB review of #1403 caught it. On an edit of a pre-existing to-do the entity
+is not "seconds old and wholly ours": its patch has already succeeded and its
+content is the user's. Undoing a failed *assignment* by deleting that entity
+destroys data the caller never asked to remove — and the client sees only an
+error, so the loss is silent.
+
+**The trigger is broader than the review stated.** Every non-already-exists
+error from `CreateRelation` reached the delete, not just an ACL deny:
+
+| Trigger | Reachable how |
+|---|---|
+| ACL deny | A principal with `update: task` but not `create: belongs-to` — the routine read-mostly CalDAV setup. Fires on an ordinary check-off. |
+| Driver unreadable/absent | Driver deleted or ACL-hidden while a client still holds the collection — **this is AC4's scenario**. |
+| Relation invalid per metamodel | Operator points `dynamic:` at a mismatched relation. |
+| Source vanished / template load / order assign / store write | Races and transients (a dropped pgx connection). |
+
+Fixed by splitting the primitive: `attachToDriver` creates the edge with no
+side effect on the entity, and `linkToDriver` — now the create path's ONLY
+caller — wraps it with the compensating delete. The update path calls
+`attachToDriver` directly and, on a deny, degrades to `refusedWriteResponse`,
+matching how a deny on `PatchEntity` three lines earlier is already handled.
+
+Consequence, accepted: a to-do whose assignment is refused keeps its edit and
+does not join the target collection. The client reconciles on refetch (no ETag
+is served). A silent partial success, but recoverable — unlike destroying it.
+
+Pinned by `TestDynamicCollections_FailedAssignNeverDeletesAnExistingEntity`
+(verified to fail against the pre-fix code with `store: not found`) and
+`TestDynamicCollections_FailedCreateStillCompensates`, which guards the other
+direction — splitting the flows must not disarm the create-path undo.
+
 ### Membership is symmetric on both write directions (added 2026-08-18)
 
 Live testing against Thunderbird surfaced two gaps that AC7 as written did not
