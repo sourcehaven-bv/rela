@@ -25,7 +25,6 @@ import (
 	"io"
 	"iter"
 	"maps"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -368,26 +367,7 @@ func (m *MemStore) PropertyValues(_ context.Context, property string, limit int)
 		}
 	}
 
-	type vc struct {
-		value string
-		count int
-	}
-	sorted := make([]vc, 0, len(counts))
-	for v, c := range counts {
-		sorted = append(sorted, vc{v, c})
-	}
-	sort.Slice(sorted, func(i, j int) bool {
-		if sorted[i].count != sorted[j].count {
-			return sorted[i].count > sorted[j].count
-		}
-		return sorted[i].value < sorted[j].value
-	})
-
-	result := make([]string, 0, limit)
-	for i := 0; i < len(sorted) && (limit == 0 || i < limit); i++ {
-		result = append(result, sorted[i].value)
-	}
-	return result, nil
+	return storeutil.TopValues(counts, limit), nil
 }
 
 // --- EntityWriter ---
