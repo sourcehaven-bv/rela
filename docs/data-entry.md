@@ -1667,6 +1667,7 @@ next_actions:
 |-------|---------|
 | `band` | **Required.** Names a declared band. |
 | `query` | Candidate entities, in the search syntax (`type:`, `prop:`, …). |
+| `condition` | Refines `query`'s candidates with a predicate expression — the only place date arithmetic works. See below. |
 | `context` | Instead of `query`: scopes the source to the entity being viewed. |
 | `count` | Instead of `query`: fires on `"<entity_type> == 0"` — the first-run case. |
 | `suggest` | **Required.** The message. `{property}` interpolates from the candidate; `{id}` is the entity id. |
@@ -1676,6 +1677,53 @@ next_actions:
 | `defer_scope` | What "not now" covers: `entity` (default) or `source` — see below. |
 
 Exactly one of `query`, `context` or `count` must be set.
+
+#### `condition` — dwell time and other typed comparisons
+
+`query` selects; `condition` refines. The split exists because they are
+different languages: `query` is the search syntax, pushed toward the store,
+and `condition` is a predicate expression evaluated per candidate with the
+same host functions automations use.
+
+```yaml
+next_actions:
+  chase-proposal:
+    band: blocking
+    query: "type:proposal prop:status=sent"
+    condition: "days_between(entity.sent_on, today()) >= 11"
+    suggest: "{title} has been out {days} days with no reply. Chase it?"
+```
+
+That is the shape `query` alone cannot express: "how long has this been
+sitting?" needs date arithmetic, which needs the property's declared type from
+the metamodel, which the search syntax does not consult.
+
+**Do not put an expression in `query`.** The two syntaxes overlap without
+erroring, so `query: "days_between(entity.due, today()) <= 7"` is not rejected
+— it is read as a filter on a property *named*
+`days_between(entity.due, today())`, matches nothing, and the source goes
+quiet with no diagnostic. That is why they are separate keys rather than one
+key that guesses.
+
+Rules worth knowing:
+
+- **`query` must name at least one entity type** when a condition is present
+  (`type:task …`). A condition references `entity.<property>`, and without a
+  type there is nothing to check it against.
+- **The condition must be valid on *every* type the query names.** A query
+  spanning `task` and `note` yields candidates of either, and the engine
+  cannot know which until it holds one — so a condition valid on only one of
+  them is refused at load rather than silently dropping the other's
+  candidates.
+- **A typo fails at startup**, not at render:
+  `condition does not compile against entity type "task": unknown attribute
+  "dew" on record`. A condition that silently matched nothing would be
+  indistinguishable from a source with nothing to say.
+- **Not available on a `count` source** — there is no entity to test.
+
+The available functions are the ones automations use: `days_between`,
+`date_add`, `rrule_next`, `today`, plus `match`, `regex`, `contains` and
+`len`. See [metamodel.md](metamodel.md) for their signatures.
 
 #### `key_props` and re-triggering
 
