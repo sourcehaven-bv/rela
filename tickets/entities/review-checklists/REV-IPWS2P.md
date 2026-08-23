@@ -41,7 +41,25 @@ are comment changes.
 `RR-34KJWO` (significant, addressed) · `RR-17HODW` (minor, addressed) ·
 `RR-DDL5N1` (minor, addressed) · `RR-KF7419` (nit, addressed)
 
-**All 12 addressed. No open responses at any severity.**
+*Demo review (user driving the running app at injected latency):*
+`RR-3UPRSY` (significant, addressed) · `RR-FGHLVX` (significant, addressed)
+
+**All 14 addressed. No open responses at any severity.**
+
+The demo pass earned its place: neither finding was reachable by reading
+code or running the suites. Both needed a human clicking through a real
+browser against a slow connection.
+
+- **`RR-3UPRSY`** — the migration had gated the buttons but left every
+  block spinner ungated, so entity detail, the edit form and search each
+  still blanked their region on every load. Prev/next collapsed the page
+  from ~2300px to ~140px and sprang back.
+- **`RR-FGHLVX`** — the activity bar measured router state, which settles
+  in ~99ms, while the data it was meant to cover lands at ~2100ms. It was
+  correct by its own definition and never appeared when it mattered. Fixing
+  it also corrected a design error of mine: I had reasoned that holding
+  previous content meant no indicator was needed, when stale content with
+  no indicator is exactly what makes a click read as ignored.
 
 The two reviews each caught one genuine bug that the other phase could not have:
 
@@ -114,8 +132,8 @@ autosave's missing entry delay and makes it feel broken.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass
+- [x] PR URL documented below
 
-**PR:** <!-- not yet raised; branch tkt-tfsnby-loading-indicators is ready -->
+**PR:** <!-- filled in below once opened -->
