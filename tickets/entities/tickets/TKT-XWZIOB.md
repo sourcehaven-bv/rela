@@ -70,25 +70,57 @@ reads. `for_each` does not elevate — it *narrows*, running as a real user rath
 than as a system identity, which is strictly less privilege than
 `system:scheduler` with a broad role.
 
-The "perhaps with additional limitations" question is worth deciding explicitly:
-whether a fanned-out run should be further attenuated below the user's own
-grants (the `client_baselines` / `scope_grants` mechanism from TKT-IAC8TX
-already compiles exactly this kind of ceiling, and would fit here as an optional
-`as_role:` or scope restriction). Defaulting to the user's real grants is the
-honest starting point; an attenuation knob can follow if a use case needs it.
+**Attenuation is supported, defaulting to the user's own grants.** A fanned-out
+run reads as the user by default — no more, no less. An optional ceiling narrows
+it further, for a job that should see less than the user does:
 
-## Field-level redaction must be closed with this
+```yaml
+    for_each:
+      entity_type: person
+      where: ["active = true"]
+      attenuate:
+        scopes: [tasks:read]      # or a baseline role
+```
 
-RR-7408F5 is currently open: `appbuild.ScheduledLuaWriteDeps` wires a **nil
-redactor** (`appbuild.go:415-426`), so scheduled jobs get row gating only — a
-job reading `person` receives every property, including ones a human with the
-same role would see redacted.
+This is not new ACL machinery either: `client_baselines` / `scope_grants`
+(TKT-IAC8TX) already compiles exactly this kind of ceiling at `acl.yaml` load
+time, into plain allowlists, with `Request.roleFor` as the clamp point. The
+ceiling only ever NARROWS (`effective = user_grants ∩ (baseline ∪ scopes)`), so a
+bug fails toward less access.
 
-That is tolerable today because a Lua job's read stays in-process. It is **not**
-tolerable for fan-out, whose entire premise is "this run sees what that user
-sees". Half-enforcing that is worse than not offering it, because the config
-reads like a guarantee. The existing doc already names the fix: wire an
-affordance resolver into appbuild.
+Attenuation must never widen. A `for_each` run can see at most what the user can
+see, whatever the config says — that invariant is what makes the feature safe to
+reason about, and it is worth a test that tries to widen and fails.
+
+## Field-level redaction is fixed for ALL scheduled jobs, not just fan-out
+
+RR-7408F5 is open: `appbuild.ScheduledLuaWriteDeps` wires a **nil redactor**
+(`appbuild.go:415-426`), so scheduled jobs get row gating only — a job reading
+`person` receives every property, including ones a human with the same role
+would see redacted in the UI.
+
+That is not a considered trade-off, it is an accident of wiring. There is no
+principled reason a scheduled job should see MORE than the same identity sees
+interactively: `run_as` is an identity (DEC-O59WM4), and an identity's field
+policy should not depend on which entry point happens to be reading. So this
+closes for every scheduled job, not merely the fanned-out ones.
+
+**It is wiring, not new machinery.** `luaWriteDepsFor` already takes a
+`visibility.FieldRedactor` (`appbuild.go:403`) and only ever gets `nil`. The
+redactor is `visibility.NewPolicyRedactor(*affordances.PolicyResolver)`
+(`adapters.go:96`), and `affordances.New(meta, lookup, declarative)`
+(`resolver.go:125`) needs exactly three things `Services` already holds: the
+metamodel, a relation lookup (the store), and `aclDeclarative`
+(`appbuild.go:115`). The dataentry equivalent is `appRedactor` (`app.go:386`).
+
+Behaviour when no ACL policy is configured must stay byte-identical to today —
+`affordances.New` returns a resolver with a nil policy, which redacts nothing,
+so the NopACL path is unaffected.
+
+This is a **behaviour change for existing deployments**: a scheduled Lua job that
+reads a `visible:`-restricted property will stop seeing it. That is the point,
+but it needs calling out in the changelog rather than landing silently, since a
+script could be relying on the leak.
 
 ## Scope: IS NOT
 
@@ -107,8 +139,6 @@ retry ladder, or does it skip and continue? Skipping is probably right (one bad
 user should not stop the other 200), but it changes what `recordFailure` means.
 2. **Bounding.** N users means N runs; a large graph makes a "daily" task not
 daily. Needs a cap with a loud log, not silent truncation.
-3. **Attenuation.** Should a fanned-out run be further restricted below the
-user's own grants? See above.
 4. **Unresolvable users.** An entity with no `principal_property` value, or an
 ambiguous match — skip with a warning, or fail the task?
 
@@ -117,7 +147,13 @@ ambiguous match — skip with a warning, or fail the task?
 1. `for_each` runs the task once per matching entity, each with that entity's
 principal on the ctx.
 2. A run sees only what that user may see — both row gating **and** field-level
-`visible:` redaction (closes RR-7408F5).
+`visible:` redaction.
+2a. Field redaction applies to **every** scheduled job, fanned-out or not
+(closes RR-7408F5): a plain `run_as` Lua task no longer reads a
+`visible:`-restricted property.
+2b. With no ACL policy configured, scheduled reads are byte-identical to today.
+2c. `attenuate:` narrows a run below the user's grants, and a config that
+attempts to WIDEN beyond them grants nothing.
 3. A task without `for_each` behaves exactly as today.
 4. An entity that cannot be resolved to a principal is skipped with a warning
 naming it, not silently and not fatally.
@@ -129,7 +165,10 @@ naming it, not silently and not fatally.
 ## Risks
 
 - **Privilege confusion** — mitigated by keeping DEC-O59WM4 explicit: fan-out
-narrows, never elevates.
+narrows, never elevates, and `attenuate:` can only narrow further.
+- **Silent behaviour change** — closing RR-7408F5 removes properties a scheduled
+script may currently read. Intended, but it belongs in the changelog: a script
+relying on the leak will start seeing empty values.
 - **Runtime blowup** — N sequential runs; criterion 5 bounds it.
 - **Half-enforced scoping** — the reason RR-7408F5 is in scope rather than
 deferred.
