@@ -77,13 +77,32 @@ input[type='checkbox']:checked {
   border-color: var(--accent-color, #6366f1);
 }
 
-/* The checkmark: two borders of a rotated box. Geometry is copied from
-   RelationCards so the glyph is identical at the same 18px size. */
+/* The checkmark: the right and bottom borders of a box, rotated 45°, so the
+   two painted edges read as the short and long arms of a tick.
+
+   The ARM GEOMETRY (5×10, 2px stroke) is RelationCards', unchanged — it
+   matches the native glyph's proportions well. The POSITION is not:
+   RelationCards' `left: 5px; top: 1px` leaves the tick low and right, with
+   dead space along the top and the vertex nearly touching the bottom edge.
+
+   `top` is NEGATIVE and that is correct, not a typo. Rotating about the box
+   centre turns the 5×10 rect into a 10.61×8.49 ink bounding box, so the
+   painted glyph sits well inside — and below — the element's own edges.
+   `left`/`top` position the UNROTATED rect, so they are NOT the visible
+   margins and cannot be reasoned about as if they were.
+
+   These are tuned by eye at 13×, and deliberately NOT the arithmetic centre.
+   Centring the ink bounding box gives 4.5px/0.94px (1.7px clearance on all
+   four sides) — that was tried, and it reads as sitting low, because a tick's
+   mass is in its long upper-right arm while the eye tracks the lower-left
+   vertex. Optical centring wins over the bounding box here. If the 18px box or
+   2px stroke changes, re-tune the same way; do not scale these arithmetically
+   and do not "fix" them back to the computed centre. */
 input[type='checkbox']:checked::after {
   content: '';
   position: absolute;
-  left: 5px;
-  top: 1px;
+  left: 4px;
+  top: -1px;
   width: 5px;
   height: 10px;
   border: solid #fff;
