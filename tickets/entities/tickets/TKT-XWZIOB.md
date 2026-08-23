@@ -92,35 +92,12 @@ Attenuation must never widen. A `for_each` run can see at most what the user can
 see, whatever the config says — that invariant is what makes the feature safe to
 reason about, and it is worth a test that tries to widen and fails.
 
-## Field-level redaction is fixed for ALL scheduled jobs, not just `for_each`
+## Field redaction: split out to TKT-NJ91LX
 
-RR-7408F5 is open: `appbuild.ScheduledLuaWriteDeps` wires a **nil redactor**
-(`appbuild.go:415-426`), so scheduled jobs get row gating only — a job reading
-`person` receives every property, including ones a human with the same role
-would see redacted in the UI.
-
-That is not a considered trade-off, it is an accident of wiring. There is no
-principled reason a scheduled job should see MORE than the same identity sees
-interactively: `run_as` is an identity (DEC-O59WM4), and an identity's field
-policy should not depend on which entry point happens to be reading. So this
-closes for every scheduled job, not merely the iterated ones.
-
-**It is wiring, not new machinery.** `luaWriteDepsFor` already takes a
-`visibility.FieldRedactor` (`appbuild.go:403`) and only ever gets `nil`. The
-redactor is `visibility.NewPolicyRedactor(*affordances.PolicyResolver)`
-(`adapters.go:96`), and `affordances.New(meta, lookup, declarative)`
-(`resolver.go:125`) needs exactly three things `Services` already holds: the
-metamodel, a relation lookup (the store), and `aclDeclarative`
-(`appbuild.go:115`). The dataentry equivalent is `appRedactor` (`app.go:386`).
-
-Behaviour when no ACL policy is configured must stay byte-identical to today —
-`affordances.New` returns a resolver with a nil policy, which redacts nothing,
-so the NopACL path is unaffected.
-
-This is a **behaviour change for existing deployments**: a scheduled Lua job that
-reads a `visible:`-restricted property will stop seeing it. That is the point,
-but it needs calling out in the changelog rather than landing silently, since a
-script could be relying on the leak.
+RR-7408F5 (scheduled jobs wired with a nil field redactor) applies to every
+scheduled job, not just iterated ones, so it landed in its own ticket:
+**TKT-NJ91LX**. This ticket depends on it — a `for_each` run that saw
+unredacted fields would be half-enforced scoping, which is worse than none.
 
 ## Model it as a task-per-user factory
 
@@ -281,66 +258,19 @@ the ENGINE refreshes the set before honouring a pending retry, because it will
 not act on stale liveness. The retry mechanism does not consult the producer, and
 the producer never learns that a retry is why it was called.
 
-### One run per occurrence: the idempotency key
+### One run per occurrence
 
-A daily task must produce **at most one run per day**, and a retry must be an
-attempt at *that day's* run rather than an extra one. Nothing in the current
-model states this, and the gap becomes visible precisely because of the bounded
-retry above.
+The occurrence idempotency key (`daily-digest@2026-08-23`) is specified in
+**TKT-N52HRC**. For `for_each` the key extends with the subject
+(`daily-digest#PERS-JV@2026-08-23`), which settles two questions that would
+otherwise need answering here:
 
-**The hole.** `IsDue` for `dayKind` is
-`truncateToDay(now) != truncateToDay(lastRun)` (`config.go:67-69`), and
-`Tasks[name]` is stamped **only on success** (`scheduler.go:325`). A task that
-fails all Monday never stamps, so at midnight it is due again — correctly, as a
-fresh run for Tuesday. But its ladder is still live, so two things now want to
-fire: the 2h-rung retry of *Monday's* digest and *Tuesday's* scheduled run. Two
-mails.
-
-Today this is masked: a pending `NextRetry` suppresses the ordinary schedule
-entirely (`:234-240`), so the retry wins and Tuesday is silently skipped — one
-mail, for the wrong day. Once giving up clears the ladder, the suppression goes
-and the overlap is exposed.
-
-**The fix is to key runs by OCCURRENCE, not to tune the ladder.** The occurrence
-is the natural idempotency key:
-
-```
-daily-digest#PERS-JV@2026-08-23
-```
-
-"Has this already run?" becomes a state lookup instead of an inference from
-timestamps, and the retry semantics fall out for free: a retry targets the SAME
-occurrence key, so it cannot produce a second send. It also settles the give-up
-case — yesterday's occurrence is abandoned, and there is no mechanism by which it
-could run today, because today is a different key.
-
-Two open questions collapse into this:
-
-- **New members** (was open question 2). "Fire immediately or wait?" becomes
-  "does today's occurrence exist for this user?" A user added at 14:00 has no
-  `@2026-08-23` record, so they get today's digest once and the normal cadence
-  after. The double-send disappears without a special case.
-- **Restart mid-pass.** A restart currently loses the in-flight pass; with
-  occurrence keys the users already completed today are recorded and are not
-  re-sent.
-
-**Retain the last occurrence, not the history.** Keeping every occurrence would
-grow state without bound — 200 users x 365 days is 73k entries in a JSON file
-rewritten on every `saveState`. Only the most recent occurrence per `TaskID` is
-needed to answer "is this occurrence done?", so state stays at one entry per
-user, exactly as today.
-
-That makes this a change of MEANING to an existing field rather than a new table:
-`Tasks[id]` stores the last completed **occurrence** rather than a bare
-timestamp. Which in turn means it is a state-format change, subject to the same
-compatibility constraint as `TaskID` (criterion 9) — an old file's timestamp must
-map onto an occurrence without resetting anything.
-
-**Interval schedules need a defined occurrence.** `dayKind` and `weekdayKind`
-have obvious boundaries; `every: 30m` does not. Either derive the occurrence from
-the schedule's slot boundary, or treat interval tasks as having no idempotency
-key and keep today's behaviour for them. Decide it rather than letting
-`truncateToDay` imply an answer for a schedule it was never meant to describe.
+- **New members.** "Fire immediately or wait?" becomes "does today's occurrence
+  exist for this user?" Someone added at 14:00 has no record for today, so they
+  get that day's run once and the normal cadence after — no special case in the
+  expansion.
+- **Restart mid-pass.** Users already completed today are recorded and are not
+  re-run.
 
 ### The producer does not know about retries
 
@@ -364,79 +294,25 @@ no longer exists requires comparing engine state to a FRESH producer result. Tha
 is the engine refusing to act on stale liveness — same store query, dependency
 pointing the right way.
 
-### Retry policy belongs on the task
+### Retry semantics: split out to TKT-N52HRC
 
-`retryDelay` is package-level (`scheduler.go:373`) with `baseRetryDelay` /
-`maxRetryDelay` as consts, so every task shares one ladder. The package doc
-already names this as a wart: the ladder *"is identical for every schedule, so it
-slows a failing short-interval task down and speeds a failing daily one up"*
-(`:21-23`).
+Bounded retries (a task always gives up rather than retrying forever) and the
+per-occurrence idempotency key that must land with them are **TKT-N52HRC**. Both
+apply to ordinary single-identity tasks, so they are not `for_each` work.
 
-Per-task retry properties fix that, and they belong on **`TaskConfig`** — emitted
-by the producer as ordinary task data, exactly like `Script` or `Every`:
+They matter here for two reasons, which is why this ticket depends on that one:
 
-```yaml
-    retry:
-      base: 5m
-      max: 2h
-      attempts: 6      # bounded: the ladder gives up, it does not retry forever
-```
+- Per-user expansion multiplies the current unbounded ladder: 200 users stuck at
+  the 2h rung is ~2,400 failing executions a day.
+- The occurrence key is what makes "one digest per user per day" true. Without
+  it, a `for_each` mail digest can double-send across a day boundary.
 
-That placement is what keeps the separation above intact: the producer emits a
-task that *describes* its retry policy; the engine *implements* it. A `for_each`
-derived task inherits the declared task's props, so N users share one policy
-without the producer knowing an attempt count exists.
-
-#### Retries are always bounded
-
-A task **always** gives up after a set number of attempts. Retrying indefinitely
-has no value: if the ladder has run its length, the fault is not the transient
-blip retry exists to absorb.
-
-This overturns a stated decision, so it should be overturned explicitly. The
-current comment (`:53-56`) argues the cap *"keeps a persistently broken job to
-roughly a dozen attempts a day rather than silencing it"* — the fear being that a
-bounded retry means a silently dead job. That fear is answered by what "gives up"
-means, below, not by retrying forever. Meanwhile the cost is real: at the 2h rung
-a 200-user expansion is 200 tasks retrying forever, ~2,400 failing executions a
-day, and the ERROR log that was supposed to summon a human becomes noise.
-
-**Giving up ends the LADDER, not the task.** This distinction is the whole
-design, and the other reading is dangerous:
-
-- *Wrong:* the task is abandoned permanently. A daily digest that fails 6 times
-  during a two-hour mail outage would then be dead until someone restarts the
-  process — a transient fault silently promoted to a permanent one. Strictly
-  worse than today.
-- *Right:* on exhausting attempts, clear `NextRetry`/`Failures` and log at ERROR.
-  The task returns to its ORDINARY schedule; tomorrow's digest runs normally.
-
-So: bounded attempts, transient faults still self-heal at the next occurrence,
-and nothing is silenced — `persistentFailureThreshold` (4, `:64`) still escalates
-to ERROR *before* the give-up point, so a human is summoned either way.
-
-Consequences to hold on to:
-
-- **"Gives up" bounds the ladder, not lifetime attempts.** An `every: 30m` task
-  that is permanently broken returns to its own cadence and still fails ~48
-  times a day — at the schedule the operator declared, rather than at the
-  ladder's. That is the right answer (the schedule is the declared expectation),
-  but it means this does not cap total executions.
-- **Default `attempts: 6`.** `maxLadderSteps` (`:71-78`) is the count at which
-  doubling first reaches `maxRetryDelay` — 5m, 10m, 20m, 40m, 80m, 2h. Ending
-  the ladder there is the natural boundary: beyond it every retry is identical,
-  which is precisely where continuing stops adding information. Derive it from
-  `maxLadderSteps` rather than writing `6`, for the reason that variable already
-  exists.
-- **This changes behaviour for every existing task**, not just `for_each` ones —
-  a permanently failing task stops retrying every 2h and reverts to its schedule.
-  Changelog, same as the redaction change.
-
-**Scope note.** This is orthogonal to `for_each` and useful on its own, so it may
-deserve its own ticket. It is recorded here because per-user expansion makes the
-single global ladder visibly wrong — 5m rungs multiplied by N users — and because
-`TaskConfig` is being touched anyway. Split it out if it grows beyond a few
-fields.
+Per-task `retry:` properties (`base`/`max`/`attempts`) belong on `TaskConfig`,
+emitted by the producer as ordinary task data — which is what keeps the
+producer/retry separation above intact: the producer emits a task that
+*describes* its policy, the engine *implements* it. A derived task inherits the
+declared task's props, so N users share one policy without the producer knowing
+an attempt count exists.
 
 ### What the factory model costs
 
@@ -568,96 +444,63 @@ all: skipped with a warning naming it, counted as a failed run.
 
 ## Acceptance criteria
 
+Numbered fresh; the retry/redaction criteria moved with their tickets.
+
 1. `for_each` runs the task once per matching entity, each with that entity's
 principal on the ctx.
-2. A run sees only what that user may see — both row gating **and** field-level
-`visible:` redaction.
-2a. Field redaction applies to **every** scheduled job, iterated or not
-(closes RR-7408F5): a plain `run_as` Lua task no longer reads a
-`visible:`-restricted property.
-2b. With no ACL policy configured, scheduled reads are byte-identical to today.
-2c. `attenuate:` narrows a run below the user's grants, and a config that
-attempts to WIDEN beyond them grants nothing.
-3. A task without `for_each` behaves exactly as today.
-4. An entity that cannot be mapped to a principal is skipped with a warning
+2. A run sees only what that user may see — row gating and, via TKT-NJ91LX,
+field-level `visible:` redaction.
+3. `attenuate:` narrows a run below the user's grants, and a config that attempts
+to WIDEN beyond them grants nothing.
+4. A task without `for_each` behaves exactly as today, including the existing
+`pruneOrphanedState` semantics for declared tasks.
+5. An entity that cannot be mapped to a principal is skipped with a warning
 naming it, not silently and not fatally, and counts as a failed run. Address
 validation is not in scope; see TKT-U2R7GU.
-4a. A failing run does not stop the others: each derived task carries its own
-`Failures`/`NextRetry` entry, so one user's failure suppresses only that user's
-cadence and retries only that user.
-4b. A partial failure does not drag the whole task onto the retry ladder — a
-daily digest that fails for one user stays daily for the other 199.
-4c. A user whose run succeeded is not re-run by another user's retry (falls out
-of per-derived-task `Tasks` entries; worth a test that pins it).
-4d. Derived-task state is pruned when a user leaves the selection, and declared
-tasks are untouched by that pruning.
-4e. A pending retry for a task the producer no longer yields is dropped, not
+6. One user's failure suppresses only that user's cadence and retries only that
+user: each derived task carries its own `Failures`/`NextRetry` entry.
+7. Derived-task state is pruned when a user leaves the selection, declared tasks
+are untouched by that pruning, and pruning is scoped per producer — one
+producer's expansion or failure never removes another's state.
+8. A pending retry for a task the producer no longer yields is dropped, not
 retried indefinitely.
-4f. A producer error leaves state untouched: no pruning, no execution, and no
-mass "first run" on the following tick.
-4g. A task that is neither due nor retrying does not query the store: a daily
+9. A producer error leaves state untouched: no pruning, no execution, and no mass
+"first run" on the following tick.
+10. A task that is neither due nor retrying does not query the store: a daily
 digest in steady state expands about once a day, not once a tick.
-5. `for_each` is bounded, and hitting the bound logs what was dropped.
-6. Audit records name the per-run principal, not a generic scheduler identity.
-7. `rela validate` reports an unknown `entity_type` or unparseable `where:` in
-`for_each`. This stays syntactic — `scheduler.Config.validate`
-(`config.go:195`) has no store access.
-8. The config producer path is behaviour-identical to today, including the
-`pruneOrphanedState` semantics for declared tasks.
-9. `TaskID` round-trips through its string encoding, and a declared task's state
+11. `for_each` is bounded, and hitting the bound logs what was dropped.
+12. `TaskID` round-trips through its string encoding, and a declared task's state
 key is unchanged from a pre-upgrade state file — upgrading does not reset an
 in-flight ladder.
-10. Pruning is scoped per producer: one producer's expansion (or failure) never
-removes another producer's state.
-11. Audit records distinguish per-user runs of the same declared task; the user
-comes from the principal, not from a second encoding in `triggered_by`.
-12. The `TaskProducer` interface mentions nothing about retries, failures or
+13. The `TaskProducer` interface mentions nothing about retries, failures or
 attempts, and a producer cannot observe that a call was prompted by a pending
 retry.
-13. Per-task `retry:` props override the global ladder.
-14. Retries are bounded for every task: after `attempts` consecutive failures the
-ladder is abandoned, `NextRetry`/`Failures` are cleared, and an ERROR is logged
-naming the task.
-15. A task that gave up still runs at its next scheduled occurrence — giving up
-ends the ladder, never the task. Pinned by a test: fail past the bound, advance
-the clock to the next occurrence, assert it runs.
-16. A given occurrence runs at most once: a retry targets the same occurrence and
-cannot produce a second execution, and a task whose ladder is still live when the
-next occurrence arrives does not run both.
-17. A user added to the selection mid-day receives that day's occurrence once,
-not twice, and is on the ordinary cadence thereafter.
+14. Audit records distinguish per-user runs of the same declared task; the user
+comes from the principal, not from a second encoding in `triggered_by`.
+15. `rela validate` reports an unknown `entity_type` or unparseable `where:` in
+`for_each`. This stays syntactic — `scheduler.Config.validate`
+(`config.go:195`) has no store access.
 
 ## Risks
 
 - **Privilege confusion** — mitigated by keeping DEC-O59WM4 explicit: `for_each`
 narrows, never elevates, and `attenuate:` can only narrow further.
-- **Silent behaviour change** — closing RR-7408F5 removes properties a scheduled
-script may currently read. Intended, but it belongs in the changelog: a script
-relying on the leak will start seeing empty values.
-- **Runtime blowup** — N sequential runs, plus a retry pass over the failures;
-criterion 5 bounds it.
+- **Runtime blowup** — N sequential runs; criterion 11 bounds it.
 - **Duplicate side effects on retry** — was the sharpest constraint: the ladder
 retries a whole task and replaces its schedule, so one failed user would re-fire
 a daily digest in 5 minutes and mail the other 199 again. The task-per-user
 factory removes it structurally (a succeeded user is not due), so this is now a
 regression to pin with a test rather than a design problem to solve.
 - **Unbounded state growth** — derived entries accumulate as the selection
-changes; criteria 4d/4e.
+changes; criteria 7/8.
 - **State-key format change** — encoding `TaskID` into the existing string-keyed
-JSON risks resetting every in-flight ladder on upgrade; criterion 9.
-- **Bounded retry read as "task disabled"** — if giving up were taken to mean
-abandoning the task, a two-hour outage would permanently kill a daily digest.
-Criterion 15 exists to prevent that reading from being implemented.
-- **Duplicate daily mail** — clearing the ladder on give-up removes the
-suppression that currently hides the retry/next-occurrence overlap. Criterion 16
-is what replaces it; landing bounded retry WITHOUT the occurrence key would
-introduce the double-send.
+JSON risks resetting every in-flight ladder on upgrade; criterion 12.
 - **Cross-producer pruning** — a shared live set would let one producer delete
-another's entries; criterion 10.
+another's entries; criterion 7.
 - **Mass re-send after a store blip** — a producer error misread as "no tasks"
 prunes every derived entry and makes every user look like a first run. Criterion
-4f; the single most damaging failure mode this design introduces.
+9; the single most damaging failure mode this design introduces.
 - **Query volume** — bounded by expanding only when a decision needs the set
-(criterion 4g); the residual is short-interval tasks and fast retry rungs.
-- **Half-enforced scoping** — the reason RR-7408F5 is in scope rather than
-deferred.
+(criterion 10); the residual is short-interval tasks and fast retry rungs.
+- **Half-enforced scoping** — a `for_each` run without field redaction would be
+worse than none; the dependency on TKT-NJ91LX exists for that reason.
