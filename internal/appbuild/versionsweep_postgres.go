@@ -33,13 +33,27 @@ func (p metaProjectionProvider) Projection() (hash string, projectionJSON []byte
 	return proj.Hash(), b
 }
 
-// startVersionSweepIfSupported starts the pgstore reconciliation sweep. In the
-// postgres build the store is a *pgstore.Store; a non-pgstore store (should not
-// happen in this build) is left unswept. The sweep cadence is taken from
-// sweepConfigFromEnv so a test/dev deployment can make create/update versions
-// appear quickly (production uses the zero-value defaults: 5m interval/idle).
+// versionSweeper is the capability startVersionSweepIfSupported needs: a store
+// that runs its own debounced reconciliation sweep to capture create/update
+// versions.
+//
+// NOTE: the signature still names pgstore types (ProjectionProvider,
+// SweepConfig), so in practice only pgstore can satisfy it — a second backend
+// would have to import pgstore, which is not real decoupling. Promoting those
+// two types into internal/store is the remaining half of this work and is
+// tracked separately. What is fixed here is that DISCOVERY no longer requires
+// being the one concrete type.
+type versionSweeper interface {
+	StartVersionSweep(provider pgstore.ProjectionProvider, cfg pgstore.SweepConfig)
+}
+
+// startVersionSweepIfSupported starts the store's reconciliation sweep. A store
+// without the capability (should not happen in this build) is left unswept. The
+// sweep cadence is taken from sweepConfigFromEnv so a test/dev deployment can
+// make create/update versions appear quickly (production uses the zero-value
+// defaults: 5m interval/idle).
 func startVersionSweepIfSupported(st store.Store, meta *metamodel.Metamodel) {
-	if s, ok := st.(*pgstore.Store); ok {
+	if s, ok := st.(versionSweeper); ok {
 		s.StartVersionSweep(metaProjectionProvider{meta: meta}, sweepConfigFromEnv())
 	}
 }
@@ -85,12 +99,22 @@ func sweepConfigFromEnv() pgstore.SweepConfig {
 	}
 }
 
-// versionServiceFor returns the pgstore versioning service (history reads, version
-// writes, purge) sharing the store's pool. Returns a genuinely nil interface for a
-// non-pgstore store (should not happen in this build), so nil-checks downstream
-// behave correctly.
+// versionServiceProvider is the capability versionServiceFor needs: a store that
+// can hand out a versioning service (history reads, version writes, purge)
+// sharing its own pool.
+//
+// NOTE: like versionSweeper, the return type is still pgstore-specific. See that
+// comment for why, and for what the remaining work is.
+type versionServiceProvider interface {
+	VersionStore() *pgstore.VersionStore
+}
+
+// versionServiceFor returns the store's versioning service (history reads,
+// version writes, purge) sharing its pool. Returns a genuinely nil interface for
+// a store without the capability (should not happen in this build), so
+// nil-checks downstream behave correctly.
 func versionServiceFor(st store.Store) store.VersionService {
-	if s, ok := st.(*pgstore.Store); ok {
+	if s, ok := st.(versionServiceProvider); ok {
 		return s.VersionStore()
 	}
 	return nil
