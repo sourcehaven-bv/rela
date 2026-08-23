@@ -26,8 +26,9 @@ import { useSchemaStore } from '@/stores/schema'
 import { useUIStore } from '@/stores/ui'
 import { actionAllowed } from '@/utils/affordancesWarning'
 import { renderMarkdown } from '@/utils/markdown'
+import { buildFilterKey, parseWhereClause } from '@/utils/filters'
 import { viewHeaderMarkdown, viewFooterMarkdown } from '@/types/config'
-import type { CalendarConfig } from '@/types/config'
+import type { CalendarConfig, CalendarSourceConfig } from '@/types/config'
 import type { Entity, ListParams } from '@/types'
 import CalendarGrid from '@/components/calendar/CalendarGrid.vue'
 import {
@@ -37,12 +38,10 @@ import {
   type CalendarSourceData,
 } from '@/composables/useCalendarEvents'
 import {
-  addDays,
   applyDayDelta,
   dayFromKey,
   dayKey,
   daysBetween,
-  sameDay,
   shiftAnchor,
   todayIn,
   visibleDays,
@@ -93,11 +92,28 @@ const today = computed(() => todayIn(timezone.value))
  * late on the last visible day is included — a `lte` bound of that day would
  * mean "<= midnight" and silently drop it.
  */
-function paramsFor(dateProperty: string, pastPadDays: number): ListParams {
-  const b = windowBounds(view.value, anchor.value, weekStart.value, timezone.value, pastPadDays)
+function paramsFor(source: CalendarSourceConfig): ListParams {
+  const pad = source.end_date ? source.max_span : 0
+  const b = windowBounds(view.value, anchor.value, weekStart.value, timezone.value, pad)
   const params: ListParams = {}
-  params[`filter[${dateProperty}][gte]`] = b.gte
-  params[`filter[${dateProperty}][lt]`] = b.lt
+  params[`filter[${source.date}][gte]`] = b.gte
+  params[`filter[${source.date}][lt]`] = b.lt
+
+  // A source's `where:` clauses are evaluated by the SERVER, in the same
+  // request as the date window. Pushing them down rather than filtering the
+  // response client-side keeps the filter running against the raw entity,
+  // which is what stops calendar membership varying by principal when a
+  // clause names a `visible:`-redacted property.
+  for (const clause of source.where ?? []) {
+    const parsed = parseWhereClause(clause)
+    if (!parsed) {
+      // Config was validated at load, so an unparseable clause means the two
+      // parsers disagree. Refuse to widen the query silently.
+      console.warn(`[calendar] ignoring unparseable where clause: ${clause}`)
+      continue
+    }
+    params[buildFilterKey(parsed.property, parsed.operator) as `filter[${string}]`] = parsed.value
+  }
   return params
 }
 
@@ -119,14 +135,18 @@ function paramsFor(dateProperty: string, pastPadDays: number): ListParams {
  * segment keeps each window in its own cache entry.
  */
 const sourceQueries = computed(() =>
-  (config.value?.sources ?? []).map((source) => ({
-    source,
-    params: paramsFor(source.date, source.end_date ? (source.max_span ?? 31) : 0),
-  }))
+  (config.value?.sources ?? []).map((source) => ({ source, params: paramsFor(source) }))
 )
 
+/**
+ * A fetched source's rows, identified by its INDEX in `sources`.
+ *
+ * Index is the only real identity: two sources over the same entity type and
+ * date property differing only by `where:` is the documented way to express OR
+ * (the filter language has none), so any key built from type+property would
+ * collide and render one source's entities under the other's colour.
+ */
 interface SourceResult {
-  key: string
   entities: Entity[]
   truncated: boolean
 }
@@ -156,13 +176,18 @@ async function refetchGrid() {
   const controller = new AbortController()
   inFlight = controller
 
+  // Cleared before the empty-source early return, not after: otherwise a failed
+  // load followed by a switch to a calendar with no sources leaves the error
+  // banner up and (since the template gates the grid on it) hides the grid.
+  loadError.value = ''
+
   if (!queries.length) {
     fetched.value = []
     loading.value = false
+    inFlight = null
     return
   }
   loading.value = true
-  loadError.value = ''
   try {
     const results = await Promise.all(
       queries.map(async ({ source, params }): Promise<SourceResult> => {
@@ -170,11 +195,7 @@ async function refetchGrid() {
         // Publish into the cache entry the optimistic write and SSE
         // invalidation target, so a drag updates the grid immediately.
         queryCache.setQueryData([...entityKeys.listParams(source.entity, params)], res)
-        return {
-          key: source.entity + ':' + source.date,
-          entities: res.data,
-          truncated: res.meta?.has_more === true,
-        }
+        return { entities: res.data, truncated: res.meta?.has_more === true }
       })
     )
     // A superseded fetch must not publish: its window is no longer on screen.
@@ -199,15 +220,15 @@ watch(
 )
 
 const sourceData = computed<CalendarSourceData[]>(() =>
-  (config.value?.sources ?? []).map((source) => ({
+  (config.value?.sources ?? []).map((source, i) => ({
     source,
-    entities: fetched.value.find((r) => r.key === source.entity + ':' + source.date)?.entities ?? [],
+    entities: fetched.value[i]?.entities ?? [],
     schema: schemaStore.getEntityType(source.entity),
   }))
 )
 
 const events = useCalendarEvents(config, sourceData, timezone)
-const byDay = computed(() => eventsByDay(events.value))
+const byDay = computed(() => eventsByDay(events.value, days.value))
 
 /** True when any source hit the page cap: the grid is incomplete and says so
  * rather than looking merely quiet. */
@@ -216,15 +237,20 @@ const truncated = computed(() => fetched.value.some((r) => r.truncated))
 /** An event longer than its source's max_span may fall outside the fetched
  * window, so the caveat is surfaced instead of the event silently missing. */
 const longEventWarning = computed(() => {
+  const sources = config.value?.sources ?? []
   for (const ev of events.value) {
-    const src = config.value?.sources.find((s) => s.entity === ev.entityType)
+    // By index, not by entity type: two sources over the same type differing
+    // only by `where:` would otherwise both resolve to the first one's span.
+    const src = sources[ev.sourceIndex]
     if (!src?.end_date) continue
-    if (daysBetween(ev.startDay, ev.endDay) > (src.max_span ?? 31)) return true
+    if (daysBetween(ev.startDay, ev.endDay) > src.max_span) return true
   }
   return false
 })
 
-const maxPerDay = computed(() => config.value?.max_events_per_day ?? 4)
+// No `?? 4` fallback: the server normalizes every calendar default at config
+// load, so a second default here would silently diverge if that one changed.
+const maxPerDay = computed(() => config.value?.max_events_per_day ?? 0)
 const expandedDays = ref<Set<string>>(new Set())
 
 function eventsForDay(day: CalendarDay): CalendarEvent[] {
@@ -294,9 +320,21 @@ function createNew() {
   if (form) void router.push(`/form/${form}`)
 }
 
+/**
+ * Whether to offer the "New" button.
+ *
+ * Deliberately NOT derived from an entity's `_actions`: that answers "may I
+ * create something of source #0's type", which for a multi-source calendar may
+ * not even be what `create_form` targets — and it returns nothing useful when
+ * the grid is empty, which is exactly when the button matters most.
+ *
+ * The button is an affordance, not a gate: the server rejects an unauthorized
+ * create regardless. So this shows it whenever a form is configured and lets
+ * the real check happen where it is enforced, rather than guessing from
+ * unrelated data and hiding a button the user may legitimately use.
+ */
 function canCreate(): boolean {
-  const first = sourceData.value[0]?.entities?.[0]
-  return first ? actionAllowed(first, 'create') : true
+  return !!config.value?.create_form
 }
 
 // --- Drag to reschedule ---
@@ -319,6 +357,10 @@ const { mutate: reschedule } = useMutation({
     uiStore.error(getErrorMessage(err, 'Failed to move event'))
   },
   async onSettled(_d, _e, _v, context) {
+    // settleOptimistic invalidates the list key the grid's entries descend
+    // from, so the refetch happens through the cache. Calling refetchGrid()
+    // here as well would issue a second round-trip per source and flash the
+    // loading state over an already-correct optimistic grid.
     await settleOptimistic(queryCache, context)
     await refetchGrid()
   },
@@ -385,12 +427,11 @@ function onDragEnd() {
   dragged.value = null
 }
 
-// Keep the anchor's month meaningful when the view switches to week.
-watch(view, (v) => {
-  if (v === 'week' && !days.value.some((d) => sameDay(d, anchor.value))) {
-    anchor.value = addDays(anchor.value, 0)
-  }
-})
+// Deliberately no watcher materializing the anchor into the URL on a view
+// switch. Writing the anchor back here changes the query, which retriggers the
+// fetch watcher above, which re-renders and writes again — a refetch loop that
+// issued 16 requests where 2 were due. The anchor already reaches the URL
+// whenever the user actually navigates, which is when a shareable link matters.
 </script>
 
 <template>
@@ -436,10 +477,10 @@ watch(view, (v) => {
     <!-- eslint-disable-next-line vue/no-v-html -- sanitized by renderMarkdown -->
     <div v-if="headerHtml" class="view-info view-info--top" v-html="headerHtml" />
 
-    <div v-if="truncated" class="truncation-banner" role="alert">
+    <div v-if="truncated" class="truncation-banner truncation-banner--cap" role="alert">
       Some events are not shown — this period returned more entities than the calendar can load.
     </div>
-    <div v-if="longEventWarning" class="truncation-banner" role="alert">
+    <div v-if="longEventWarning" class="truncation-banner truncation-banner--span" role="alert">
       Some long events may not be shown; increase <code>max_span</code> for this calendar's sources.
     </div>
 

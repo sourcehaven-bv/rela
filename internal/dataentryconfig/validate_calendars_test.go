@@ -209,6 +209,17 @@ func TestValidateCalendars_Invalid(t *testing.T) {
 			want: `property "nope" is not on any of this calendar's entity types`,
 		},
 		{
+			name: "event field named title on a type without a title property",
+			cal: Calendar{
+				// `meeting` has `name`, not `title`. The SPA renders a chip
+				// field from entity.properties[name], so accepting this would
+				// render nothing forever with no diagnostic.
+				Sources: []CalendarSource{{EntityType: "meeting", Date: "starts_at", Summary: "name"}},
+				Event:   CalendarEvent{Fields: []KanbanCardField{{Property: "title"}}},
+			},
+			want: `property "title" is not on any of this calendar's entity types`,
+		},
+		{
 			name: "event field with neither property nor relation",
 			cal: withShell(func(c *Calendar) {
 				c.Event = CalendarEvent{Fields: []KanbanCardField{{Label: "x"}}}
@@ -328,12 +339,18 @@ func TestParseClockMinutes(t *testing.T) {
 		{"00:00", 0, true},
 		{"08:00", 480, true},
 		{"23:59", 1439, true},
-		{"8:00", 0, false},
+		// A single-digit hour is what people actually type; rejecting it was an
+		// artifact of validating the format by counting characters.
+		{"8:00", 480, true},
 		{"24:00", 0, false},
 		{"08:60", 0, false},
 		{"0800", 0, false},
 		{"", 0, false},
 		{"aa:bb", 0, false},
+		// Atoi accepts a sign, so the hand-rolled parser used to read "+8:00"
+		// as 08:00. time.Parse does not.
+		{"+8:00", 0, false},
+		{"08:00:00", 0, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.in, func(t *testing.T) {
@@ -415,5 +432,45 @@ calendars:
 	// is what lets the two structs diverge without breaking shared anchors.
 	if calSrc[0].Color != "blue" {
 		t.Errorf("calendar-only key lost: %+v", calSrc[0])
+	}
+}
+
+// TestValidateCalendars_IDFieldExempt confirms `id` stays accepted: it is an
+// entity-level key rather than a metamodel property, so requiring it to appear
+// in Properties would reject a legitimate chip field.
+func TestValidateCalendars_IDFieldExempt(t *testing.T) {
+	meta := calendarMetamodel()
+	cal := withShell(func(c *Calendar) {
+		c.Event = CalendarEvent{Fields: []KanbanCardField{{Property: "id"}}}
+	})
+	if errs := validateCalendars(calendarCfg(cal), meta); len(errs) > 0 {
+		t.Errorf("an `id` chip field must be accepted, got: %v", errs)
+	}
+}
+
+// TestValidateCalendars_TitleAcceptedWhenReal is the other half of the `title`
+// rule: a type that genuinely HAS a title property may name it.
+func TestValidateCalendars_TitleAcceptedWhenReal(t *testing.T) {
+	meta := calendarMetamodel()
+	cal := withShell(func(c *Calendar) {
+		// The default source is `task`, which does have `title`.
+		c.Event = CalendarEvent{Fields: []KanbanCardField{{Property: "title"}}}
+	})
+	if errs := validateCalendars(calendarCfg(cal), meta); len(errs) > 0 {
+		t.Errorf("a real title property must be accepted, got: %v", errs)
+	}
+}
+
+// TestCheckUnknownKeys_UnderscoreDoesNotShadowSection pins the narrowing of the
+// anchor escape hatch: `_kanbans:` is much more likely to be a section someone
+// disabled by prefixing it than an anchor holder, and silently accepting it
+// would defeat the very check the hatch is an exception to.
+func TestCheckUnknownKeys_UnderscoreDoesNotShadowSection(t *testing.T) {
+	if errs := checkUnknownKeys([]byte("_kanbans:\n  board: {}\n")); len(errs) == 0 {
+		t.Error("an underscore-prefixed REAL section name must still be reported")
+	}
+	// A name that shadows nothing stays a valid anchor holder.
+	if errs := checkUnknownKeys([]byte("_shared_sources:\n  - entity_type: task\n")); len(errs) > 0 {
+		t.Errorf("a non-shadowing anchor holder must be accepted, got: %v", errs)
 	}
 }

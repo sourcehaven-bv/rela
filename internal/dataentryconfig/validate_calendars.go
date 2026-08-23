@@ -2,8 +2,8 @@ package dataentryconfig
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
@@ -247,8 +247,12 @@ func validateCalendarEventFields(calID string, cal Calendar, meta *metamodel.Met
 			}
 		case f.Property == "":
 			errs = append(errs, prefix+": must specify either property or relation")
-		case f.Property == "title" || f.Property == "id":
-			// Entity-level keys, not metamodel properties.
+		case f.Property == "id":
+			// `id` is an entity-level key, not a metamodel property. `title` is
+			// deliberately NOT exempt: the SPA renders a chip field from
+			// `entity.properties[name]`, so a type whose display property is
+			// something else (`name`, say) would accept `property: title` at
+			// load and then render nothing, forever, with no diagnostic.
 		default:
 			if !propertyOnAnySource(cal.Sources, f.Property, meta) {
 				errs = append(errs, fmt.Sprintf(
@@ -275,21 +279,19 @@ func propertyOnAnySource(sources []CalendarSource, name string, meta *metamodel.
 }
 
 // parseClockMinutes parses a "HH:MM" clock time into minutes past midnight.
+//
+// Uses time.Parse rather than hand-splitting: the manual version rejected the
+// "8:00" every human writes while accepting "+8:00" (Atoi takes a sign), which
+// is the usual outcome of validating a format by counting characters.
+//
 // Nil: never returns a negative count — ok=false means the value is malformed.
 func parseClockMinutes(v string) (minutes int, ok bool) {
-	h, m, found := strings.Cut(v, ":")
-	if !found || len(h) != 2 || len(m) != 2 {
-		return 0, false
+	for _, layout := range []string{"15:04", "3:04"} {
+		if t, err := time.Parse(layout, v); err == nil {
+			return t.Hour()*60 + t.Minute(), true
+		}
 	}
-	hh, err := strconv.Atoi(h)
-	if err != nil || hh < 0 || hh > 23 {
-		return 0, false
-	}
-	mm, err := strconv.Atoi(m)
-	if err != nil || mm < 0 || mm > 59 {
-		return 0, false
-	}
-	return hh*60 + mm, true
+	return 0, false
 }
 
 // NormalizeCalendars fills in calendar defaults after load so the wire value is

@@ -73,6 +73,12 @@ interface SetupOptions {
   truncated?: boolean
 }
 
+// Every mounted view is torn down after its test. Without this each one stays
+// alive reacting to the shared routeQuery ref, so a later test sees fetches
+// from every component mounted before it — which looked exactly like a refetch
+// loop in the component until the mounts were counted.
+const mounted: { unmount: () => void }[] = []
+
 function setup(opts: SetupOptions = {}) {
   const pinia = createPinia()
   setActivePinia(pinia)
@@ -122,11 +128,13 @@ function setup(opts: SetupOptions = {}) {
     Promise.resolve(listResponse(opts.responses?.[type] ?? [], opts.truncated ?? false))
   )
 
-  return mount(CalendarView, {
+  const wrapper = mount(CalendarView, {
     props: { id: CAL_ID },
     global: { plugins: [pinia, PiniaColada] },
     attachTo: document.body,
   })
+  mounted.push(wrapper)
+  return wrapper
 }
 
 beforeEach(() => {
@@ -137,6 +145,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  while (mounted.length) mounted.pop()!.unmount()
   document.body.innerHTML = ''
 })
 
@@ -210,7 +219,10 @@ describe('CalendarView rendering', () => {
     const wrapper = setup({ responses: { task: [task('T-1', '2026-08-22')] }, truncated: true })
     await flushPromises()
 
-    expect(wrapper.find('.truncation-banner').exists()).toBe(true)
+    // The cap banner specifically: a shared class would also match the
+    // long-span warning, so the test would pass on the wrong banner.
+    expect(wrapper.find('.truncation-banner--cap').exists()).toBe(true)
+    expect(wrapper.find('.truncation-banner--span').exists()).toBe(false)
   })
 })
 
@@ -366,9 +378,19 @@ describe('CalendarView cache keys', () => {
     const cache = useQueryCache()
     // Every entry the grid populated must sit beneath ['entities','task',...],
     // the prefix both the SSE invalidation and the optimistic write target.
-    const entries = cache.getEntries({ key: entityKeys.list('task') })
-    expect(entries.length).toBeGreaterThan(0)
-    for (const entry of entries) {
+    // Entries under the prefix both the SSE invalidation and the optimistic
+    // write target. Asserting on getEntries({key: list}) alone would be a
+    // tautology over its own filter, so this also checks that NO entry the
+    // component created sits outside that prefix, and that the window is
+    // carried in a params segment beneath it.
+    const scoped = cache.getEntries({ key: entityKeys.list('task') })
+    expect(scoped.length).toBeGreaterThan(0)
+    expect(scoped.some((e) => e.key.length > 3)).toBe(true)
+
+    const all = cache.getEntries({})
+    const entityEntries = all.filter((e) => e.key[0] === 'entities')
+    expect(entityEntries.length).toBeGreaterThan(0)
+    for (const entry of entityEntries) {
       expect(entry.key.slice(0, 3)).toEqual(['entities', 'task', 'list'])
     }
 
@@ -438,5 +460,100 @@ describe('CalendarView refetch races', () => {
     expect(text).not.toContain('Task AUG-1')
 
     wrapper.unmount()
+  })
+})
+
+/**
+ * Two sources over the SAME entity type is the documented way to express OR —
+ * the filter language has none, so `where:` clauses within a source are ANDed
+ * and a second source is the escape hatch.
+ *
+ * Any identity built from entity type (or type + date property) collides for
+ * these, so one source renders the other's rows under the wrong colour. The
+ * existing multi-source test uses two different types and passes either way,
+ * which is exactly why this one exists.
+ */
+describe('CalendarView same-type sources', () => {
+  it('keeps two sources over one entity type distinct', async () => {
+    listAllEntitiesMock.mockClear()
+    const wrapper = setup({
+      sources: [
+        { entity: 'task', date: 'due', summary: 'title', color: 'blue', max_span: 31, where: ['status = todo'] },
+        { entity: 'task', date: 'due', summary: 'title', color: 'red', max_span: 31, where: ['status = done'] },
+      ],
+      responses: { task: [] },
+    })
+    await flushPromises()
+
+    // One request per source, each carrying its own where clause.
+    expect(listAllEntitiesMock).toHaveBeenCalledTimes(2)
+    const params = listAllEntitiesMock.mock.calls.map((c) => c[1] as Record<string, string>)
+    expect(params.map((p) => p['filter[status][eq]']).sort()).toEqual(['done', 'todo'])
+
+    wrapper.unmount()
+  })
+
+  it('renders each same-type source with its own colour', async () => {
+    // Both sources return one row; distinct colours prove they did not collide.
+    listAllEntitiesMock
+      .mockImplementationOnce(() => Promise.resolve(listResponse([task('T-todo', '2026-08-22')])))
+      .mockImplementationOnce(() => Promise.resolve(listResponse([task('T-done', '2026-08-23')])))
+
+    const wrapper = setup({
+      sources: [
+        { entity: 'task', date: 'due', summary: 'title', color: 'blue', max_span: 31 },
+        { entity: 'task', date: 'due', summary: 'title', color: 'red', max_span: 31 },
+      ],
+      responses: { task: [] },
+    })
+    await flushPromises()
+
+    expect(wrapper.find('.calendar-chip--blue').exists()).toBe(true)
+    expect(wrapper.find('.calendar-chip--red').exists()).toBe(true)
+
+    wrapper.unmount()
+  })
+})
+
+/**
+ * `where:` was validated at config load and then never applied — so a calendar
+ * declaring `where: ["status != done"]` showed done tasks. An operator writing
+ * a clause they believe scopes the grid is the failure this pins.
+ */
+describe('CalendarView where clauses', () => {
+  it('pushes where clauses into the request alongside the date window', async () => {
+    setup({
+      sources: [
+        {
+          entity: 'task',
+          date: 'due',
+          summary: 'title',
+          max_span: 31,
+          where: ['status != done', 'priority = high'],
+        },
+      ],
+      responses: { task: [] },
+    })
+    await flushPromises()
+
+    const params = listAllEntitiesMock.mock.calls[0][1] as Record<string, string>
+    expect(params['filter[status][ne]']).toBe('done')
+    expect(params['filter[priority][eq]']).toBe('high')
+    // The date window is still there.
+    expect(params['filter[due][gte]']).toBeDefined()
+    expect(params['filter[due][lt]']).toBeDefined()
+  })
+
+  it('maps comparison operators to their API names', async () => {
+    setup({
+      sources: [
+        { entity: 'task', date: 'due', summary: 'title', max_span: 31, where: ['due >= 2026-01-01'] },
+      ],
+      responses: { task: [] },
+    })
+    await flushPromises()
+
+    const params = listAllEntitiesMock.mock.calls[0][1] as Record<string, string>
+    expect(params['filter[due][gte]']).toBe('2026-01-01')
   })
 })

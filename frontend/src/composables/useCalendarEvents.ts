@@ -6,6 +6,7 @@ import { formatCellValue } from '@/utils/format'
 import { densePropertyRoutingHint } from '@/widgets/viewRouting'
 import { defaultRegistry } from '@/widgets/registry'
 import {
+  addDays,
   compareDays,
   dayKey,
   eventDay,
@@ -52,6 +53,9 @@ export interface CalendarEvent {
   dateProperty: string
   endDateProperty?: string
   dateKind: DateKind
+  /** Index of the source that produced this event — its only real identity,
+   * since two sources may share an entity type and date property. */
+  sourceIndex: number
 }
 
 /** A source paired with the entities fetched for it. */
@@ -109,7 +113,7 @@ export function useCalendarEvents(
 
     const events: CalendarEvent[] = []
 
-    sourceData.value.forEach(({ source, entities, schema }) => {
+    sourceData.value.forEach(({ source, entities, schema }, sourceIndex) => {
       const kind: DateKind =
         schema?.properties?.[source.date]?.type === 'datetime' ? 'datetime' : 'date'
       const widgets = fieldWidgets.value.get(source.entity)
@@ -129,7 +133,7 @@ export function useCalendarEvents(
 
         const minutes = eventMinutes(rawStart, kind, tz)
         events.push({
-          id: `${source.entity}:${entity.id}`,
+          id: `${sourceIndex}:${source.entity}:${entity.id}`,
           entity,
           entityType: source.entity,
           summary: resolveSummary(entity, source),
@@ -138,11 +142,12 @@ export function useCalendarEvents(
           timed: kind === 'datetime',
           timeLabel: minutes == null ? '' : formatMinutes(minutes),
           minutes,
-          color: source.color ?? 'blue',
+          color: source.color || 'blue',
           fields: resolveFields(entity, cfg.event?.fields, widgets, schema, tz),
           dateProperty: source.date,
           endDateProperty: source.end_date,
           dateKind: kind,
+          sourceIndex,
         })
       }
     })
@@ -154,7 +159,9 @@ export function useCalendarEvents(
       if (byDay !== 0) return byDay
       // All-day events sort before timed ones on the same day.
       if ((a.minutes ?? -1) !== (b.minutes ?? -1)) return (a.minutes ?? -1) - (b.minutes ?? -1)
-      return a.id.localeCompare(b.id)
+      // Not localeCompare: its ordering depends on the runtime locale, so two
+      // users could see the same two events in different orders.
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
     })
   })
 }
@@ -207,23 +214,34 @@ function formatMinutes(minutes: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
 }
 
-/** Events grouped by the day key of every day they occupy, so a multi-day
- * event appears in each of its cells. */
-export function eventsByDay(events: CalendarEvent[]): Map<string, CalendarEvent[]> {
+/**
+ * Events grouped by the day key of every day they occupy, so a multi-day event
+ * appears in each of its cells.
+ *
+ * `visibleDays` bounds the work: an event is only expanded across the days the
+ * grid actually shows. Without that, a single entity with a far-future end date
+ * (`2026-01-01` to `2999-01-01` is a plausible typo, or a deliberate "ongoing"
+ * marker) would spin out ~355,000 map entries and hang the tab. Clamping to the
+ * visible window also means cost scales with the grid, not with the data.
+ */
+export function eventsByDay(events: CalendarEvent[], visible: CalendarDay[]): Map<string, CalendarEvent[]> {
   const map = new Map<string, CalendarEvent[]>()
+  if (!visible.length) return map
+
+  const first = visible[0]
+  const last = visible[visible.length - 1]
+
   for (const ev of events) {
-    let cursor = ev.startDay
-    // Bounded by the span itself; a malformed end was already clamped to the
-    // start, so this cannot run away.
-    while (compareDays(cursor, ev.endDay) <= 0) {
+    // Clamp the span to the visible window before walking it.
+    let cursor = compareDays(ev.startDay, first) < 0 ? first : ev.startDay
+    const stop = compareDays(ev.endDay, last) > 0 ? last : ev.endDay
+
+    while (compareDays(cursor, stop) <= 0) {
       const key = dayKey(cursor)
       const list = map.get(key)
       if (list) list.push(ev)
       else map.set(key, [ev])
-      cursor = { ...cursor, day: cursor.day + 1 }
-      // Re-normalize across a month boundary.
-      const js = new Date(cursor.year, cursor.month - 1, cursor.day)
-      cursor = { year: js.getFullYear(), month: js.getMonth() + 1, day: js.getDate() }
+      cursor = addDays(cursor, 1)
     }
   }
   return map

@@ -40,17 +40,19 @@ interface DragSetup {
   entities: Entity[]
   source?: Record<string, unknown>
   timezone?: string
-  entityType?: string
   /** Anchor date for the view; defaults to August 2026. */
   date?: string
 }
+
+// See CalendarView.test.ts: an un-unmounted view keeps reacting to the shared
+// routeQuery ref and refetches during later tests.
+const mounted: { unmount: () => void }[] = []
 
 function setup(opts: DragSetup) {
   const pinia = createPinia()
   setActivePinia(pinia)
   routeQuery.value = { date: opts.date ?? '2026-08-22' }
 
-  const type = opts.entityType ?? 'task'
   const schemaStore = useSchemaStore()
   schemaStore.entityTypes.set('task', {
     label: 'Task',
@@ -86,12 +88,13 @@ function setup(opts: DragSetup) {
   listAllEntitiesMock.mockImplementation(() => Promise.resolve(listResponse(opts.entities)))
   updateEntityMock.mockResolvedValue(opts.entities[0])
 
-  void type
-  return mount(CalendarView, {
+  const wrapper = mount(CalendarView, {
     props: { id: CAL_ID },
     global: { plugins: [pinia, PiniaColada] },
     attachTo: document.body,
   })
+  mounted.push(wrapper)
+  return wrapper
 }
 
 /** Drag the first chip onto the cell showing `dayNumber`. */
@@ -113,6 +116,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  while (mounted.length) mounted.pop()!.unmount()
   document.body.innerHTML = ''
 })
 

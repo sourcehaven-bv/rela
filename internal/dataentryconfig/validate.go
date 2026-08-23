@@ -370,7 +370,12 @@ func checkUnknownKeys(data []byte) []string {
 		// resolves anchors at parse time, so the definition has to live
 		// somewhere in the document, and every real key is already claimed.
 		// The underscore marks intent explicitly rather than inferring it.
-		if strings.HasPrefix(key, "_") {
+		//
+		// Narrowed to keys that do NOT shadow a real section name: `_kanbans`
+		// is far more likely to be a block someone commented out by prefixing
+		// it than an anchor holder, and silently ignoring that would defeat
+		// the check it is an exception to.
+		if strings.HasPrefix(key, "_") && !validTopLevelKeys[strings.TrimPrefix(key, "_")] {
 			continue
 		}
 		if suggestion, ok := knownTypos[key]; ok {
