@@ -182,6 +182,54 @@ The seam is narrow because `config.Tasks` has exactly two consumers:
 `runDueTasks` (`scheduler.go:229`) and `pruneOrphanedState` (`:418`). Both become
 producer calls.
 
+### A task identity, not a name
+
+`task.Name` currently does three unrelated jobs: it is the **state key**
+(`state.Tasks/Failures/NextRetry`), a **log field**, and the **audit identity**
+(`audit.WithTriggeredBy(ctx, "schedule:"+taskName)`, `scheduler.go:153`). A
+derived task needs all three to differ per user, and a string cannot say which
+producer minted it. So the identity becomes a struct:
+
+```go
+type TaskID struct {
+    Producer string // "config" | "for_each"
+    Task     string // declared name, e.g. "daily-digest"
+    Subject  string // derived entity id, e.g. "PERS-JV"; empty when declared
+}
+```
+
+`Subject == ""` distinguishes declared from derived **structurally** — no code
+parses a name to find out.
+
+What this buys beyond provenance:
+
+- **It removes the `#` separator hazard.** Collision-avoidance was previously
+  "pick a character nobody would type in schedules.yaml", i.e. a convention
+  enforced by hope. With a struct the distinction is a field, and `#` demotes to
+  a serialization detail confined to one encode/decode pair.
+- **It scopes liveness correctly.** Pruning today diffs ALL state against one
+  live set (`:418-430`). With two producers that is wrong: a config expansion
+  must not judge `for_each` entries dead, or a producer that errors (or is
+  removed from the config) prunes another producer's ladders. `Producer` makes
+  the diff per-producer, which is a correctness fix, not tidiness.
+- **It gives audit an honest identity.** `schedule:daily-digest` for 200 users
+  makes their writes indistinguishable. Note the principal ALREADY carries the
+  user (`RunAs` → `principal.With`, `:149-152`), so `triggered_by` should name
+  the task and let the principal name the user — encoding the user twice invites
+  two fields that disagree.
+
+Two constraints on the encoding:
+
+1. **State is JSON keyed by string** (`state.go:38-41`), so `TaskID` needs a
+   stable string form that round-trips. This is a compatibility surface: an
+   existing state file has bare `daily-digest` keys, and the format is explicitly
+   NOT forward compatible (`state.go:27-32`). The encoding MUST leave a declared
+   task's key byte-identical to today, or every in-flight ladder resets on
+   upgrade. A declared `TaskID` encodes to just `Task`.
+2. **Config uniqueness is unchanged.** `config.go:206` still rejects duplicate
+   declared names; that check operates on the config, before any identity is
+   minted.
+
 ### Liveness is a batch question, asked only when a decision depends on it
 
 **Batch, not per-task.** The producer is asked for the whole expansion at once
@@ -253,11 +301,11 @@ so it always sees a current set.
    for a task with side effects — a derived task's first occurrence should
    probably inherit the declared schedule instead of firing on sight. Decide it,
    do not inherit it.
-4. **Name collisions.** Derived names must be stable (same user → same name
-   across restarts, or state is lost) and unable to collide with a declared name.
-   Use a separator that cannot appear in a hand-written name — `#` — so the
-   namespaces are provably disjoint and a state entry is self-describing:
-   `daily-digest#PERS-JV`.
+4. **Identity encoding.** A derived `TaskID` must encode stably (same user →
+   same key across restarts, or state is lost) and must not collide with a
+   declared key. `TaskID` makes the distinction structural; the encoding is the
+   remaining risk, and is pinned by a round-trip test plus one asserting a
+   declared task's key is byte-identical to a pre-upgrade state file.
 5. **Log volume.** Per-task lines (`scheduled task`, `first run`, `retrying
    failed task`) fire per DERIVED task: 200 users turns one startup line into
    200. Log the expansion once with a count; keep per-user lines to failures.
@@ -333,6 +381,13 @@ digest in steady state expands about once a day, not once a tick.
 (`config.go:195`) has no store access.
 8. The config producer path is behaviour-identical to today, including the
 `pruneOrphanedState` semantics for declared tasks.
+9. `TaskID` round-trips through its string encoding, and a declared task's state
+key is unchanged from a pre-upgrade state file — upgrading does not reset an
+in-flight ladder.
+10. Pruning is scoped per producer: one producer's expansion (or failure) never
+removes another producer's state.
+11. Audit records distinguish per-user runs of the same declared task; the user
+comes from the principal, not from a second encoding in `triggered_by`.
 
 ## Risks
 
@@ -350,6 +405,10 @@ factory removes it structurally (a succeeded user is not due), so this is now a
 regression to pin with a test rather than a design problem to solve.
 - **Unbounded state growth** — derived entries accumulate as the selection
 changes; criteria 4d/4e.
+- **State-key format change** — encoding `TaskID` into the existing string-keyed
+JSON risks resetting every in-flight ladder on upgrade; criterion 9.
+- **Cross-producer pruning** — a shared live set would let one producer delete
+another's entries; criterion 10.
 - **Mass re-send after a store blip** — a producer error misread as "no tasks"
 prunes every derived entry and makes every user look like a first run. Criterion
 4f; the single most damaging failure mode this design introduces.
