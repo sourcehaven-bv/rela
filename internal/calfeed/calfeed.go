@@ -152,7 +152,7 @@ type Todo struct {
 // It is a convenience, NOT the guarantee: the three fields stay exported and
 // individually settable, so a caller can still construct a half-completed
 // Todo. The actual guarantee is enforced downstream — [ICal.RenderTodo]
-// normalizes the trio (see [Todo.normalized]), so a half-set value can never
+// normalizes the trio (see Todo.normalized), so a half-set value can never
 // reach a client. Prefer this method anyway; it states the intent at the call
 // site.
 func (t *Todo) Complete(at time.Time) {
@@ -215,7 +215,7 @@ const (
 
 // ClampPriority bounds an RFC 5545 PRIORITY to 0-9.
 //
-// Exported for the INBOUND direction. [Todo.normalized] clamps on render, which
+// Exported for the INBOUND direction. Todo.normalized clamps on render, which
 // protects the wire but not the store: a client PUT carrying
 // `PRIORITY:2147483647` used to be written into an entity property verbatim,
 // and every other consumer of that property — the SPA, the CLI, exports,

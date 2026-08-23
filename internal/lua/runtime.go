@@ -487,7 +487,7 @@ func (r *Runtime) pcallWithCapture() error {
 }
 
 // collectStackFrames walks the live Lua stack and returns user-visible
-// frames (skipping built-in [G] frames with no source). Capped at
+// frames (skipping built-in G frames with no source). Capped at
 // maxStackFrames; safe to call from a message handler.
 func collectStackFrames(ls *lua.LState) []StackFrame {
 	var frames []StackFrame

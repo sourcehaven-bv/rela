@@ -123,7 +123,7 @@ type edgeResult struct {
 
 // evalEdge evaluates an edge's guard then precondition for (principal-on-ctx,
 // entity e), in the same order and with the same semantics the write path
-// enforces. It is the single source of truth shared by [Set.applyEdge] (write,
+// enforces. It is the single source of truth shared by Set.applyEdge (write,
 // maps to errors) and [Set.Performable] (read, maps to verdicts) so the two can
 // never drift. A guard is checked first (an unheld guard short-circuits without
 // evaluating the precondition, matching enforcement). A nil guard on a guarded

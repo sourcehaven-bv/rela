@@ -416,7 +416,7 @@ func appRedactor(a *App) visibility.FieldRedactor {
 //
 // This wiring was fail-open on the theory that its callers are interactive,
 // so a broken gate would surface as an immediate, human-visible outage.
-// That does not hold: of the three consumers of [App.luaWriteDeps] —
+// That does not hold: of the three consumers of App.luaWriteDeps —
 // actions.go (interactive), document.go/export_render, and webhook.go — the
 // IdP webhook is unattended machine-to-machine, running as `webhook:<event>`
 // with nobody watching the log. An unattended job quietly reverting to
@@ -585,7 +585,7 @@ func gatedScriptReader(aclImpl acl.ACL, store store.Store, redactor visibility.F
 // way — pruning happens inside the decorator.
 //
 // Construction faults REFUSE ([visibility.DenyTracer]) for the same reason
-// as [App.scriptReader]: traversal is a read, and an unattended caller must
+// as App.scriptReader: traversal is a read, and an unattended caller must
 // not silently walk the whole graph.
 func (a *App) scriptTracer(redactor visibility.FieldRedactor) tracer.Tracer {
 	d, ok := a.acl.(*acl.Declarative)

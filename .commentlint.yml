@@ -2,11 +2,13 @@
 #
 # CI runs two steps (the "Comment lint" job in ci.yml):
 #
-#   gate   — commented-code. Clean today, so a regression fails the build.
+#   gate   — commented-code, doclink. Clean today, so a regression fails the
+#            build. Suppression is available, but read the finding first: the
+#            failure message says why, and a reason is required.
 #   report — every other enabled rule, advisory (continue-on-error).
 #
-# The advisory rules have a real backlog: nil-contract 100, duplication 119,
-# doclink 58, param-contract 5, restatement 19. They are being worked down; a gate that is
+# The advisory rules have a real backlog: duplication 120, nil-contract 105,
+# param-contract 5, restatement 17. They are being worked down; a gate that is
 # red on arrival just teaches people to ignore the job. Promote a rule to the
 # gate once its backlog reaches zero.
 #

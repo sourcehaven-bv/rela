@@ -37,7 +37,7 @@ type Executor interface {
 // of lua.WriteDeps — [lua.ReadDeps] (Store/Tracer/Searcher/Meta/
 // ProjectRoot) — captured at construction. The **dynamic** half — the
 // [autocascade.Mutator] that scripts call back into for graph writes —
-// is passed per-call via [Run]. That split is how the construction
+// is passed per-call via [LuaScriptRunner.Run]. That split is how the construction
 // cycle between EntityManager and the Lua write-deps bundle is broken:
 // Runner is built before EntityManager exists; EntityManager
 // (a Mutator) supplies itself when dispatching.

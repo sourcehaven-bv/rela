@@ -336,8 +336,8 @@ func (s *Service) FindGaps(ctx context.Context, opts Options) []GapResult {
 //
 // This is the single seam world-awareness (TKT-9KZGJO) will thread
 // through: subject population, counting scope, and violation identity
-// each have exactly one home — the spec, [Service.countRelations], and
-// the two emit passes in [Service.checkCardinality] (TKT-RNBLAC).
+// each have exactly one home — the spec, Service.countRelations, and
+// the two emit passes in Service.checkCardinality (TKT-RNBLAC).
 type cardinalitySpec struct {
 	relName       string // metamodel relation name — the count query key
 	direction     store.Direction

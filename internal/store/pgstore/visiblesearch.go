@@ -97,7 +97,7 @@ func (s *Store) SearchVisible(
 // compile-time check: the postgres store also filters at the property level.
 var _ search.FieldVisibleSearcher = (*Store)(nil)
 
-// SearchVisibleFields is [SearchVisible] plus property-level redaction of the
+// SearchVisibleFields is [Store.SearchVisible] plus property-level redaction of the
 // match-on-hidden-field oracle. A hit whose text matched only fields the
 // principal may not see (per hidden) is dropped, so a search cannot confirm a
 // redacted property's value by returning its entity.
