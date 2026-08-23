@@ -470,6 +470,7 @@ deps:
       - memstore
       - metamodel
       - pgstore
+      - sqlitestore
       - project
       - script
       - search

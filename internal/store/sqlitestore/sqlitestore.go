@@ -153,10 +153,24 @@ type pendingEvents struct {
 	notes []func(*Store)
 }
 
-// Open opens (creating if absent) the SQLite database at opts.Path.
+// Open opens (creating if absent) the SQLite database at opts.Path, using the
+// background context for the schema and PRAGMA verification it performs.
 //
 // Nil: never returns a nil Store with a nil error.
 func Open(opts Options, options ...Option) (*Store, error) {
+	return OpenContext(context.Background(), opts, options...)
+}
+
+// OpenContext is [Open] with a caller-supplied context governing the
+// startup work — the PRAGMA read-back and the schema creation.
+//
+// Separate from Open because the context bounds only opening: it does NOT
+// govern the returned store, whose own methods each take their own. A caller
+// that passed a request context here and expected it to cancel later writes
+// would be wrong, so the two are kept visibly distinct.
+//
+// Nil: never returns a nil Store with a nil error.
+func OpenContext(ctx context.Context, opts Options, options ...Option) (*Store, error) {
 	if opts.Path == "" {
 		return nil, errors.New("sqlitestore: Options.Path is required")
 	}
@@ -185,7 +199,7 @@ func Open(opts Options, options ...Option) (*Store, error) {
 	for _, opt := range options {
 		opt(s)
 	}
-	if err := s.init(); err != nil {
+	if err := s.init(ctx); err != nil {
 		_ = db.Close()
 		_ = lock.release()
 		return nil, err
@@ -203,9 +217,7 @@ func dsn(opts Options) string {
 }
 
 // init verifies the connection settings actually took and creates the schema.
-func (s *Store) init() error {
-	ctx := context.Background()
-
+func (s *Store) init(ctx context.Context) error {
 	if err := s.db.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&s.journalMode); err != nil {
 		return fmt.Errorf("sqlitestore: read journal_mode: %w", err)
 	}

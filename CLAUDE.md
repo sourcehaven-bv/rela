@@ -336,7 +336,7 @@ security-reviewed exec pattern `internal/attachment` uses). Rules for new code:
 
 The storage + search backend is chosen at compile time by Go build tags.
 The composition root has one `New` recipe per scenario over shared
-`prepare()`/`assemble()` helpers — see `internal/appbuild/appbuild_{fs,memory,postgres}.go`
+`prepare()`/`assemble()` helpers — see `internal/appbuild/appbuild_{fs,memory,postgres,sqlite}.go`
 and the matching `internal/cli/mcp_wiring_{fs,memory,postgres}.go`:
 
 | Build tag        | Store      | Search                | Binaries                          |
@@ -344,12 +344,23 @@ and the matching `internal/cli/mcp_wiring_{fs,memory,postgres}.go`:
 | *(none, default)*| `fsstore`  | in-memory bleve       | `rela`, `rela-server`             |
 | `memorybackend`  | `memstore` | `LinearSearch`        | (tests / experiments; no bleve)   |
 | `postgres`       | `pgstore`  | PostgreSQL (`pg_trgm` + tsvector) | `rela-postgres`, `rela-server-postgres` |
+| `sqlite`         | `sqlitestore` | in-memory/on-disk bleve       | `rela-sqlite`, `rela-server-sqlite` |
+
+`sqlitestore` is the **single-process** backend (DEC-LFSYNY): one embedded
+database file at `.rela/rela.db`, no server, and `Open` takes an exclusive
+sidecar lock so a second process is refused rather than admitted. That refusal
+is load-bearing — `unique:` is enforced by an untransacted scan in
+entitymanager, so two writers would have no backstop and the violation would be
+silent. It takes the strong `Tx` tier (rollback, post-commit-only events) but
+has no versioning yet, so it currently has neither git history nor version
+history. It also refuses to open on a filesystem where WAL cannot be enabled
+(iCloud/Dropbox/SMB), because SQLite is unsafe there.
 
 Rules when touching this:
 
 - **The `postgres` build must not link bleve; the default build must not
-  link pgx.** CI asserts both via `go list -deps` (the `postgres` job in
-  `ci.yml`). Keep backend-specific imports inside the tagged recipe files.
+  link pgx; no build but `sqlite` may link `modernc.org/sqlite`.** CI asserts
+  each of these via `go list -deps` (the `postgres` job in `ci.yml`). Keep backend-specific imports inside the tagged recipe files.
 - **`pgstore.New(db DBTX)` takes an injected pgx pool**, not a DSN. The
   postgres recipe builds one pool, runs `pgstore.Migrate`, and shares it
   between the store and the in-DB search backend. appbuild owns/closes the

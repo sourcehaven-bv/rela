@@ -13,4 +13,8 @@ import (
 // Returning a GENUINELY nil interface (not a typed nil) is load-bearing — the
 // caller nil-checks this to decide whether to fall back, and a typed nil would
 // defeat that check. Same contract as versionServiceFor.
+// The sqlite build inherits this too (TKT-L1A3PH): the KV backend is unsafe
+// only for MULTI-process deployments, because it rewrites one JSON document per
+// write and two servers would clobber each other's snoozes. sqlitestore refuses
+// a second process at Open, so the hazard cannot arise.
 func storeUserStateFor(_ store.Store) userstate.Store { return nil }

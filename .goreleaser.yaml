@@ -108,6 +108,51 @@ builds:
       - -trimpath
       - -tags=postgres
 
+  # SQLite-backed variants. Selected by the `sqlite` build tag: entities,
+  # relations and attachments live in a single embedded database file under
+  # .rela/, with bleve for search. Single-process by design (the store refuses
+  # a second opener), so this is the desktop / single-server option that needs
+  # no database server.
+  #
+  # CGO_ENABLED=0 like every other binary: modernc.org/sqlite is pure Go, which
+  # is why it was chosen over mattn/go-sqlite3 — the release matrix stays free.
+  - id: rela-sqlite
+    main: ./cmd/rela
+    binary: rela-sqlite
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/Sourcehaven-BV/rela/internal/cli.Version={{.Version}}
+    flags:
+      - -trimpath
+      - -tags=sqlite
+
+  - id: rela-server-sqlite
+    main: ./cmd/rela-server
+    binary: rela-server-sqlite
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+    flags:
+      - -trimpath
+      - -tags=sqlite
+
 archives:
   # Default (filesystem) binaries: rela + rela-server bundled together,
   # keeping the historical archive name so existing download URLs/scripts
@@ -135,6 +180,23 @@ archives:
       - rela-server-postgres
     formats: [tar.gz]
     name_template: "{{ .ProjectName }}-postgres_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE*
+      - README*
+      - CHANGELOG*
+
+  # SQLite binaries in their own -sqlite archive, for the same reason the
+  # postgres ones are separated: extracting two variants onto one PATH would
+  # leave which backend you get depending on shell lookup order.
+  - id: sqlite
+    ids:
+      - rela-sqlite
+      - rela-server-sqlite
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}-sqlite_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     format_overrides:
       - goos: windows
         formats: [zip]
