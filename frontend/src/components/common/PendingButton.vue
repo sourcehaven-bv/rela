@@ -53,7 +53,14 @@ const showPending = useDelayedPending(
 // there the control is not interactive at all, and there is no in-flight
 // operation whose focus we are trying to preserve.
 const nativelyDisabled = computed(() => props.disabled)
-const ariaDisabled = computed(() => (props.pending ? 'true' : undefined))
+// Never emit BOTH. If a caller sets `disabled` while also pending, native
+// disabled has already dropped focus and made the control inert, so adding
+// aria-disabled would only assert a focus-preserving contract the element
+// no longer honours. Native disabled wins; aria-disabled is for the
+// pending-but-otherwise-enabled case it exists to serve.
+const ariaDisabled = computed(() =>
+  props.pending && !props.disabled ? 'true' : undefined
+)
 
 // aria-disabled does NOT prevent activation, so suppression is ours to do.
 // Gated on `pending` (the raw source), not `showPending` (the gated

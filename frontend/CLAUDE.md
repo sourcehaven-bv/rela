@@ -181,8 +181,14 @@ site.
   bar. Create-then-redirect is sequential: the button owns the save, the bar
   takes over at the route change.
 - **`@keyframes spin` lives once, in `styles/pending.css`.** Do not
-  re-declare it in a component; it was previously copied ten times. The
-  shared `prefers-reduced-motion` rule there covers every spinner.
+  re-declare it in a component; it was previously copied ten times.
+- **A new spinner needs its OWN `prefers-reduced-motion` rule unless it is
+  unscoped.** `pending.css` suppresses `.spinner` because that class is
+  declared in App.vue's unscoped `<style>`. A class declared in a *scoped*
+  component `<style>` compiles to a `[data-v-*]` selector that outranks any
+  unscoped rule, so adding it to `pending.css` would silently do nothing —
+  put the rule beside the declaration instead, as `.spinner-sm`,
+  `.search-spinner`, `.cmdk-spinner` and `.entity-picker-spinner` now do.
 
 ### Two sanctioned exceptions
 
@@ -216,6 +222,10 @@ in the DOM, the inactive one hidden by `visibility` rather than removed);
 halves are mutation-verified — swapping `visibility: hidden` for
 `display: none` fails the e2e width tests, and replacing the navigation
 tracker with a counter fails `useNavigationPending.test.ts`.
+
+When asserting a computed style in e2e, remember the scoping rule above: a
+probe element built with `document.createElement` only picks up *unscoped*
+CSS, so it can verify `.spinner` but not any scoped class.
 
 ## CSS Architecture
 

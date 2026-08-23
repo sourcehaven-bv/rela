@@ -180,7 +180,6 @@ function handleOverlayClick(e: MouseEvent) {
   animation: spin 1s linear infinite;
 }
 
-
 .error-state {
   color: var(--error-color, #ef4444);
   text-align: center;

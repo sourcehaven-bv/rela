@@ -82,7 +82,7 @@ describe('useDelayedPending', () => {
     expect(visible.value).toBe(false)
   })
 
-  it('hides immediately when the minimum is already satisfied', async () => {
+  it('hides on the next tick when the minimum is already satisfied', async () => {
     const pending = ref(false)
     const visible = gate(pending, { delay: 100, minDuration: 100 })
 
@@ -90,10 +90,13 @@ describe('useDelayedPending', () => {
     await tick(100)
     expect(visible.value).toBe(true)
 
-    // Well past the minimum — no reason to hold.
+    // Well past the minimum — nothing left to hold, so the hide is
+    // scheduled with 0 delay rather than fired inline. The one-tick
+    // deferral is what lets an immediately-following operation adopt the
+    // display instead of flickering; see the follow-up test below.
     await tick(500)
     pending.value = false
-    await nextTick()
+    await tick(0)
     expect(visible.value).toBe(false)
   })
 
@@ -148,8 +151,9 @@ describe('useDelayedPending', () => {
     await nextTick()
     expect(visible.value).toBe(true)
 
+    // minDuration 0 still hides on the next tick, not inline — see above.
     pending.value = false
-    await nextTick()
+    await tick(0)
     expect(visible.value).toBe(false)
   })
 
@@ -197,18 +201,79 @@ describe('useDelayedPending', () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 
-  it('clears the minimum-duration timer on dispose too', async () => {
+  it('clears the hold timer on dispose too', async () => {
     const pending = ref(false)
     const scope = effectScope()
     scope.run(() => {
       useDelayedPending(pending, { delay: 0, minDuration: 5000 })
     })
 
+    // Shown immediately; the hold timer arms when the source SETTLES,
+    // since that is the point at which a hide has to be scheduled.
     pending.value = true
+    await nextTick()
+    pending.value = false
     await nextTick()
     expect(vi.getTimerCount()).toBe(1)
 
     scope.stop()
     expect(vi.getTimerCount()).toBe(0)
+  })
+
+  // REGRESSION (code review, critical). A second operation that begins
+  // after the first one's minimum has already elapsed used to inherit no
+  // minimum of its own: it vanished the instant it settled, producing the
+  // blink this composable exists to prevent. Worse, the intermediate
+  // settle hid the indicator outright and the restart paid the full delay
+  // again — a visible flicker mid-sequence.
+  it('gives a follow-up operation its own minimum once the first has elapsed', async () => {
+    const pending = ref(false)
+    const visible = gate(pending, { delay: 500, minDuration: 400 })
+
+    pending.value = true
+    await tick(500)
+    expect(visible.value).toBe(true)
+
+    // Run well past the minimum while still pending.
+    await tick(500)
+    expect(visible.value).toBe(true)
+
+    // op1 settles and op2 starts in the same breath.
+    pending.value = false
+    await nextTick()
+    pending.value = true
+    await nextTick()
+    // The indicator must NOT have blinked off in between.
+    expect(visible.value).toBe(true)
+
+    // op2 settles almost immediately. It still owns the display, so it
+    // must be held rather than vanishing on the spot.
+    pending.value = false
+    await nextTick()
+    expect(visible.value).toBe(true)
+
+    // ...and cleared once its own hold expires.
+    await tick(400)
+    expect(visible.value).toBe(false)
+  })
+
+  it('holds only the REMAINING minimum when an operation settles mid-window', async () => {
+    const pending = ref(false)
+    const visible = gate(pending, { delay: 0, minDuration: 400 })
+
+    pending.value = true
+    await nextTick()
+    expect(visible.value).toBe(true)
+
+    // Settles 100ms in — 300ms of the minimum is still owed.
+    await tick(100)
+    pending.value = false
+    await nextTick()
+    expect(visible.value).toBe(true)
+
+    await tick(299)
+    expect(visible.value).toBe(true)
+    await tick(1)
+    expect(visible.value).toBe(false)
   })
 })

@@ -248,7 +248,6 @@ body {
   animation: spin 1s linear infinite;
 }
 
-
 .error-screen h1 {
   color: var(--error-color);
 }
@@ -427,9 +426,22 @@ button kbd {
   white-space: nowrap;
 }
 
-.btn:disabled {
+.btn:disabled,
+.btn[aria-disabled='true'] {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+/* A pending button carries aria-disabled rather than native disabled (so
+   focus is not dropped mid-interaction), which means `:disabled` alone
+   would leave it looking fully live while it silently swallows clicks —
+   a worse affordance than the greyed-out button it replaced. Hover and
+   active feedback go too: they imply the click will do something. */
+.btn[aria-disabled='true']:hover,
+.btn[aria-disabled='true']:active {
+  opacity: 0.6;
+  transform: none;
+  filter: none;
 }
 
 .btn-sm {

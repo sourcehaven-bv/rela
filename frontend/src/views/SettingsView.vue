@@ -1689,7 +1689,10 @@ h1 {
 
 .form-actions > .btn {
   flex: 0 1 auto;
-  min-width: var(--action-pair-min-width, 7rem);
+  /* Literal rather than a var(): the custom property was never declared
+     anywhere, so the fallback was always what applied — a var() whose
+     property does not exist is a lie about configurability. */
+  min-width: 7rem;
   justify-content: center;
 }
 

@@ -113,13 +113,40 @@ describe('PendingButton', () => {
     expect(wrapper.emitted('click')).toBeUndefined()
   })
 
+  // Asserts defaultPrevented, NOT the absence of a click event: jsdom
+  // never synthesises a click from keydown, so `expect(emitted('click'))
+  // .toBeUndefined()` passes even with the whole handler deleted. The
+  // default action is the thing being suppressed, so that is what to check.
   it('suppresses keyboard activation while pending', async () => {
     const wrapper = mountButton({ pending: true })
     await tick(500)
 
-    await wrapper.trigger('keydown', { key: 'Enter' })
-    await wrapper.trigger('keydown', { key: ' ' })
+    for (const key of ['Enter', ' ']) {
+      const event = new KeyboardEvent('keydown', { key, cancelable: true, bubbles: true })
+      wrapper.element.dispatchEvent(event)
+      expect(event.defaultPrevented, `${key} should be prevented`).toBe(true)
+    }
     expect(wrapper.emitted('click')).toBeUndefined()
+  })
+
+  it('does not suppress keyboard activation when idle', async () => {
+    const wrapper = mountButton()
+
+    const event = new KeyboardEvent('keydown', { key: 'Enter', cancelable: true, bubbles: true })
+    wrapper.element.dispatchEvent(event)
+    // An idle button must keep its native Enter-activates behaviour.
+    expect(event.defaultPrevented).toBe(false)
+  })
+
+  // Native disabled already drops focus and makes the control inert, so
+  // asserting aria-disabled alongside it would promise a focus-preserving
+  // contract the element no longer honours.
+  it('does not emit aria-disabled when natively disabled', async () => {
+    const wrapper = mountButton({ pending: true, disabled: true })
+    await tick(500)
+
+    expect(wrapper.attributes('disabled')).toBeDefined()
+    expect(wrapper.attributes('aria-disabled')).toBeUndefined()
   })
 
   it('emits click when idle', async () => {

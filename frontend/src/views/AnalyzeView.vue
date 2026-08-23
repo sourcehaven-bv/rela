@@ -248,7 +248,6 @@ onMounted(() => {
   animation: spin 1s linear infinite;
 }
 
-
 /* Summary badge */
 .summary-badge {
   display: flex;

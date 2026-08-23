@@ -1208,7 +1208,6 @@ watch(searchQuery, () => {
   animation: spin 1s linear infinite;
 }
 
-
 .entity-table {
   width: 100%;
   border-collapse: collapse;

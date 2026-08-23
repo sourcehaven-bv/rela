@@ -813,7 +813,6 @@ function createNew() {
   animation: spin 1s linear infinite;
 }
 
-
 .kanban-board {
   display: flex;
   gap: var(--space-lg);

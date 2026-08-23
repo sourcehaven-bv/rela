@@ -67,14 +67,20 @@ export function useDelayedPending(
   const minDuration = sanitize(options.minDuration, DEFAULT_MIN_DURATION_MS)
 
   const visible = ref(false)
-  // Timers are tracked separately because they can be armed concurrently:
-  // an operation that outlives its delay is in DISPLAY with the minimum
-  // ticking while the source may flip at any moment.
+  // Exactly two pieces of mutable state, and they mean different things:
+  //   delayTimer — armed while counting down to DISPLAY (state DELAY)
+  //   shownAt    — the timestamp DISPLAY began, or null when not visible
+  //
+  // An earlier version carried a `hidePending` boolean plus a second timer
+  // handle. Three flags coordinated across two callbacks admitted a state
+  // the four-state model does not name — visible, minimum already elapsed,
+  // source still pending — in which a SECOND operation inherited no
+  // minimum at all and vanished the instant it settled. Deriving the
+  // remaining hold from a timestamp makes that state unrepresentable: if
+  // we are visible, `shownAt` says when, and the remaining time follows.
   let delayTimer: ReturnType<typeof setTimeout> | null = null
-  let minTimer: ReturnType<typeof setTimeout> | null = null
-  // Set when the source goes false during DISPLAY but the minimum is unmet
-  // (state EXPIRE). The minimum timer reads it to decide whether to hide.
-  let hidePending = false
+  let hideTimer: ReturnType<typeof setTimeout> | null = null
+  let shownAt: number | null = null
 
   function clearDelay() {
     if (delayTimer !== null) {
@@ -83,42 +89,50 @@ export function useDelayedPending(
     }
   }
 
-  function clearMin() {
-    if (minTimer !== null) {
-      clearTimeout(minTimer)
-      minTimer = null
+  function clearHide() {
+    if (hideTimer !== null) {
+      clearTimeout(hideTimer)
+      hideTimer = null
     }
   }
 
   function show() {
     delayTimer = null
+    shownAt = Date.now()
     visible.value = true
-    hidePending = false
-    if (minDuration === 0) return
-    minTimer = setTimeout(() => {
-      minTimer = null
-      // Only hide if the source actually went false while we were holding.
-      // If it is still pending, DISPLAY continues until it settles.
-      if (hidePending) {
-        hidePending = false
-        visible.value = false
-      }
-    }, minDuration)
+  }
+
+  function hideNow() {
+    clearHide()
+    shownAt = null
+    visible.value = false
   }
 
   watch(
     () => toValue(source),
     (pending) => {
       if (pending) {
-        // Re-entering while still visible (a second save before the first
-        // indicator cleared) just cancels the pending hide — do not restart
-        // the minimum, or a rapid sequence would extend it indefinitely.
-        hidePending = false
-        if (visible.value) return
-        // Already counting down to DISPLAY: leave the existing timer alone.
-        // Restarting it here is the classic bug where a flapping source
-        // pushes the indicator out forever (cf. topbar.js's delayTimerId
-        // guard).
+        // A new operation cancels any scheduled hide: whatever is on
+        // screen stays, and this operation now owns it.
+        clearHide()
+        if (visible.value) {
+          // Already displaying, so this operation adopts what is on screen
+          // rather than restarting the delay — no blink between the two.
+          //
+          // If the current period still has time left, keep `shownAt` as
+          // is: resetting it on every re-entry would let a rapid sequence
+          // extend the display indefinitely. If it is already spent, start
+          // a fresh period, so this operation gets a real minimum instead
+          // of inheriting an expired one and vanishing the moment it
+          // settles.
+          if (shownAt !== null && Date.now() - shownAt >= minDuration) {
+            shownAt = Date.now()
+          }
+          return
+        }
+        // Already counting down: leave the timer alone. Restarting it is
+        // the classic bug where a flapping source pushes the indicator out
+        // forever (cf. topbar.js's delayTimerId guard).
         if (delayTimer !== null) return
         if (delay === 0) {
           show()
@@ -135,22 +149,26 @@ export function useDelayedPending(
         clearDelay()
         return
       }
-      if (!visible.value) return
-      if (minTimer !== null) {
-        // DISPLAY with the minimum still running: defer the hide (EXPIRE).
-        hidePending = true
-        return
-      }
-      // Minimum already satisfied — hide immediately.
-      visible.value = false
+      if (!visible.value || shownAt === null) return
+
+      // DISPLAY or EXPIRE: hold for whatever is left of the minimum.
+      //
+      // `Math.max(0, …)` rather than an immediate hide even when the
+      // period is spent: a settle followed by a new operation in the SAME
+      // breath (finish one save, start the next) would otherwise hide on
+      // the first transition and re-pay the whole delay on the second — a
+      // visible flicker mid-sequence. Deferring through a 0ms timer lets
+      // that re-entry cancel the hide first, while still hiding on the
+      // next turn of the loop when nothing follows.
+      const remaining = Math.max(0, minDuration - (Date.now() - shownAt))
+      clearHide()
+      hideTimer = setTimeout(hideNow, remaining)
     },
-    // `sync` so the delay timer is armed (and cancelled) in the same tick
-    // the source changes. With the default post-flush timing, a caller that
-    // flips the source and settles within the same frame could have the
-    // cancellation land after the timer had already been scheduled — the
-    // indicator would then flash for exactly the case this gate exists to
-    // suppress. Arming a timeout is cheap and side-effect-free, so the
-    // usual reason to avoid `sync` (expensive recomputation) does not apply.
+    // `sync` so the machine observes every transition rather than only the
+    // last value in a tick. With the default pre-flush timing a
+    // true -> false -> true sequence inside one tick collapses to a single
+    // `true`, which silently merges two distinct operations into one
+    // display period and loses the second one's minimum.
     { immediate: true, flush: 'sync' }
   )
 
@@ -159,7 +177,7 @@ export function useDelayedPending(
   // useConfirm).
   onScopeDispose(() => {
     clearDelay()
-    clearMin()
+    clearHide()
   })
 
   return computed(() => visible.value)

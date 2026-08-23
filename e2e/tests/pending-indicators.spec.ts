@@ -95,34 +95,41 @@ test.describe('Pending indicators', () => {
     await pending.expectActivityBarHidden();
   });
 
-  // AC8 — the shared stylesheet replaced ten duplicated @keyframes blocks
-  // with one definition and, more importantly, ONE reduced-motion rule.
-  // Before this, the preference was honoured in 1 of 11 animation sites.
-  test('spinner animation is defined globally and suppressed under reduced motion', async ({
-    appPage,
-  }) => {
-    const normal = await appPage.evaluate(() => {
-      const el = document.createElement('div');
-      el.className = 'spinner';
-      document.body.appendChild(el);
-      const name = getComputedStyle(el).animationName;
-      el.remove();
-      return name;
-    });
-    // Resolves even though every component-scoped copy was deleted.
-    expect(normal).toBe('spin');
+  // The GLOBAL `.spinner` (App.vue's unscoped <style>) is the one this
+  // stylesheet can reach. The other rotating affordances — .spinner-sm,
+  // .search-spinner, .cmdk-spinner, .entity-picker-spinner — live in
+  // SCOPED component styles, so their selectors carry a [data-v-*]
+  // attribute and outrank an unscoped rule. Suppressing those has to
+  // happen in the component, next to the declaration. Asserting only what
+  // is actually true here; the scoped ones are tracked separately.
+  test('the global spinner stops animating under reduced motion', async ({ appPage }) => {
+    const pending = new PendingPage(appPage);
+
+    // Sanity: it genuinely animates first, so a typo cannot make this pass
+    // vacuously.
+    expect(await pending.animationNameFor('spinner')).not.toBe('none');
 
     await appPage.emulateMedia({ reducedMotion: 'reduce' });
-    const reduced = await appPage.evaluate(() => {
-      const el = document.createElement('div');
-      el.className = 'spinner';
-      document.body.appendChild(el);
-      const name = getComputedStyle(el).animationName;
-      el.remove();
-      return name;
-    });
-    expect(reduced).toBe('none');
+    expect(await pending.animationNameFor('spinner')).toBe('none');
     await appPage.emulateMedia({ reducedMotion: null });
+  });
+
+  // REGRESSION (code review, significant). RelationCards' .search-spinner
+  // is centred inside its input and used to carry PRIVATE keyframes that
+  // re-applied `translateY(-50%)` alongside the rotation. Consolidating on
+  // the shared rotate-only keyframes silently dropped that, so the spinner
+  // fell half its height the instant it animated. It is now centred with a
+  // negative margin, leaving `transform` free for rotation alone.
+  //
+  // Asserted by comparing the spinner's centre against its container's,
+  // which is what "centred" actually means — and which a static-CSS read
+  // cannot tell you.
+  test('a centred spinner stays centred once it animates', async ({ appPage }) => {
+    const pending = new PendingPage(appPage);
+    const offset = await pending.animatedCentringOffset();
+    // Sub-pixel tolerance: the box is 16px + 2px borders inside a taller
+    // input, so any translate-loss regression is a ~10px jump, not 0.5px.
+    expect(Math.abs(offset)).toBeLessThan(1.5);
   });
 
   // RR-B7U3I8 in the real app: after a burst of navigations the bar must

@@ -81,6 +81,58 @@ export class PendingPage extends BasePage {
     await this.page.waitForLoadState('networkidle');
   }
 
+  /**
+   * Computed `animation-name` for a bare element carrying `className`,
+   * under whatever media emulation is currently active.
+   */
+  async animationNameFor(className: string): Promise<string> {
+    return this.page.evaluate((cls) => {
+      const el = document.createElement('div');
+      el.className = cls;
+      document.body.appendChild(el);
+      const name = getComputedStyle(el).animationName;
+      el.remove();
+      return name;
+    }, className);
+  }
+
+  /**
+   * Vertical distance between an animated, absolutely-centred spinner's
+   * centre and its offset parent's centre, measured MID-ANIMATION.
+   *
+   * Built as a standalone fixture rather than driven through the real
+   * relation search, because the property under test is pure CSS geometry:
+   * does the rotation keyframe clobber the centring transform? Reproducing
+   * the exact `.search-spinner` box inside a positioned parent isolates
+   * that without depending on search timing or seed data.
+   */
+  async animatedCentringOffset(): Promise<number> {
+    return this.page.evaluate(() => {
+      const parent = document.createElement('div');
+      parent.style.cssText = 'position:relative;height:60px;width:200px';
+      const spinner = document.createElement('div');
+      // Mirrors .search-spinner's box and centring strategy.
+      spinner.style.cssText =
+        'position:absolute;right:12px;top:50%;margin-top:-8px;width:16px;' +
+        'height:16px;box-sizing:border-box;border:2px solid #000;border-radius:50%;' +
+        'animation:spin 0.6s linear infinite';
+      parent.appendChild(spinner);
+      document.body.appendChild(parent);
+      // Sample part-way through a rotation, where a clobbered translate
+      // shows up as a vertical displacement.
+      const anim = spinner.getAnimations()[0];
+      if (anim) {
+        anim.currentTime = 150;
+        anim.pause();
+      }
+      const p = parent.getBoundingClientRect();
+      const s = spinner.getBoundingClientRect();
+      const offset = s.top + s.height / 2 - (p.top + p.height / 2);
+      parent.remove();
+      return offset;
+    });
+  }
+
   async expectActivityBarHidden() {
     await expect(this.activityBar).not.toHaveClass(/activity-bar--visible/);
   }

@@ -349,7 +349,6 @@ onUnmounted(() => {
   animation: spin 1s linear infinite;
 }
 
-
 .document-content {
   position: relative;
   background: var(--card-bg);
@@ -373,4 +372,14 @@ onUnmounted(() => {
    pre, blockquote, hr, img, links, tables, kbd) is shared across every
    markdown surface via the `.md-body` class on the `.document-body` container
    — see styles/markdown-content.css. */
+
+/* Reduced motion. This is a SCOPED style, so styles/pending.css cannot
+   reach .spinner-sm — a scoped selector carries a [data-v-*] attribute and
+   outranks an unscoped rule. The suppression has to live beside the
+   declaration. */
+@media (prefers-reduced-motion: reduce) {
+  .spinner-sm {
+    animation: none;
+  }
+}
 </style>

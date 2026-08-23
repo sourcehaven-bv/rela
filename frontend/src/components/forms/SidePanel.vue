@@ -236,7 +236,6 @@ onMounted(() => loadSidePanel())
   animation: spin 1s linear infinite;
 }
 
-
 .error-state {
   padding: 16px;
   color: var(--error-color, #ef4444);

@@ -58,10 +58,20 @@ describe('ActivityBar', () => {
     expect(isVisible(wrapper)).toBe(false)
   })
 
-  // A route change is announced by the destination view's own content; a
-  // live region here would double up on every navigation.
-  it('is hidden from assistive technology', () => {
+  // A route change is announced by the destination view's own content, so
+  // the bar must stay out of the a11y tree in BOTH states — asserting it
+  // only at rest would pass against a version that exposed itself the
+  // moment it became visible.
+  it('is hidden from assistive technology in both states', async () => {
     const wrapper = mount(ActivityBar, { props: { active: false } })
-    expect(wrapper.get('[data-testid="activity-bar"]').attributes('aria-hidden')).toBe('true')
+    const bar = () => wrapper.get('[data-testid="activity-bar"]')
+    expect(bar().attributes('aria-hidden')).toBe('true')
+
+    await wrapper.setProps({ active: true })
+    await tick(250)
+    expect(isVisible(wrapper)).toBe(true)
+    expect(bar().attributes('aria-hidden')).toBe('true')
+    // No live region smuggled in alongside it.
+    expect(wrapper.find('[role="status"]').exists()).toBe(false)
   })
 })

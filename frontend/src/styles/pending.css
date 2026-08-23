@@ -28,10 +28,21 @@
 /* Reduced motion: suppress the rotation everywhere rather than per
  * component. The spinner still occupies its box and still marks the region
  * as busy — only the movement is removed, which is what the preference
- * asks for. A user who sets it should not lose the information. */
+ * asks for. A user who sets it should not lose the information.
+ *
+ * SCOPE LIMIT, and it is not obvious: this rule reaches `.spinner` only.
+ * That class is declared in App.vue's UNSCOPED <style>, so an unscoped
+ * rule here can override it. Every other rotating affordance
+ * (`.spinner-sm`, `.search-spinner`, `.cmdk-spinner`,
+ * `.entity-picker-spinner`) is declared in a SCOPED component <style>,
+ * where the compiled selector carries a [data-v-*] attribute and therefore
+ * outranks anything unscoped — so those each carry their own
+ * reduced-motion rule beside their own declaration. A new scoped spinner
+ * must do the same; adding its class here would silently do nothing.
+ *
+ * AutoSaveIndicator likewise already handles itself. */
 @media (prefers-reduced-motion: reduce) {
-  .spinner,
-  .spinner-sm {
+  .spinner {
     animation: none;
   }
 }
