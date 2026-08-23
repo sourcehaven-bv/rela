@@ -210,6 +210,14 @@ export interface ListParams {
   sort?: string
   fields?: string
   include?: string
+  // world selects which FACE of each entity is served, and which entities
+  // appear at all — an entity with no face in the requested world is omitted
+  // entirely, because existence in a world IS the publication bit.
+  //
+  // Absent means the default world. Note the backend refuses `world` combined
+  // with `include` or `q` (422), and honors it only on `/{plural}` and
+  // `/{plural}/{id}` — see internal/dataentry/world.go's worldCapablePath.
+  world?: string
   [key: `filter[${string}]`]: string | undefined
 }
 

@@ -125,10 +125,14 @@ export async function listAllEntities(
   }
 }
 
+// getEntity reads one entity. `world` selects which face is served; it is
+// mutually exclusive with `include` at the API (422 world_include_unsupported),
+// a constraint callers must respect — the type cannot express "one or the
+// other", so see useEntitiesStore.fetchEntity for the enforcement.
 export async function getEntity(
   type: string,
   id: string,
-  params?: { include?: string; fields?: string }
+  params?: { include?: string; fields?: string; world?: string }
 ): Promise<Entity> {
   const path = `/${getPlural(type)}/${id}`
   const res = await api.get<Entity>(path, params)

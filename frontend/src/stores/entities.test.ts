@@ -327,4 +327,139 @@ describe('Entities Store', () => {
       expect(store.getCached('ticket', 'TKT-001')).toBeUndefined()
     })
   })
+
+  // World-scoped caching (TKT-F2D5U5).
+  //
+  // These pin the "silently serves the wrong face" class: one entity id names
+  // a DIFFERENT face per world, so a world-blind cache hands the first face
+  // fetched to every later reader of the other.
+  //
+  // Per Ruling 10 each of these was mutation-checked — the mutation and what
+  // it breaks is named on the test, because every one of them is a negative or
+  // a same-id/different-content property that passes trivially if the second
+  // fetch never happens. Two guards make them bite: the mock returns
+  // DIFFERENT CONTENT per world (so a stale hit is a wrong VALUE, not just a
+  // wrong call count), and the call count is asserted (so a silent extra
+  // refetch cannot masquerade as a correct miss).
+  describe('world-scoped caching', () => {
+    const draftFace = {
+      id: 'POL-1',
+      type: 'policy',
+      properties: { title: 'Access Control (DRAFT)' },
+      relations: {},
+    }
+    const publishedFace = {
+      id: 'POL-1',
+      type: 'policy',
+      properties: { title: 'Access Control' },
+      relations: {},
+    }
+
+    // Mutation: revert cacheKey() to `${type}:${id}` — the published fetch
+    // hits the draft entry, returns the DRAFT title, and getEntity is called
+    // once instead of twice. Both assertions die.
+    it('does not serve one world\'s face for another world', async () => {
+      vi.mocked(entitiesApi.getEntity).mockResolvedValueOnce(draftFace)
+      vi.mocked(entitiesApi.getEntity).mockResolvedValueOnce(publishedFace)
+
+      const draft = await store.fetchEntity('policy', 'POL-1')
+      const published = await store.fetchEntity('policy', 'POL-1', false, 'published')
+
+      expect(draft.properties.title).toBe('Access Control (DRAFT)')
+      expect(published.properties.title).toBe('Access Control')
+      expect(entitiesApi.getEntity).toHaveBeenCalledTimes(2)
+    })
+
+    // The cache must still WORK per world — a key so unique it never hits
+    // would pass the test above while disabling caching entirely.
+    it('still caches within a single world', async () => {
+      vi.mocked(entitiesApi.getEntity).mockResolvedValue(publishedFace)
+
+      await store.fetchEntity('policy', 'POL-1', false, 'published')
+      await store.fetchEntity('policy', 'POL-1', false, 'published')
+
+      expect(entitiesApi.getEntity).toHaveBeenCalledTimes(1)
+    })
+
+    // `?world=default` is the API's explicit spelling of the implicit default
+    // world. Mutation: drop the DEFAULT_WORLD arm in worldKey() — the two
+    // spellings become two entries, getEntity is called twice, and the SPA
+    // holds two copies of one face that can disagree.
+    it('treats an explicit "default" world as the default world', async () => {
+      vi.mocked(entitiesApi.getEntity).mockResolvedValue(draftFace)
+
+      await store.fetchEntity('policy', 'POL-1')
+      await store.fetchEntity('policy', 'POL-1', false, 'default')
+
+      expect(entitiesApi.getEntity).toHaveBeenCalledTimes(1)
+    })
+
+    // Hazard 3. Mutation: send `{ include: '*', world }` — the assertion sees
+    // include present under a world, which is the exact combination the API
+    // answers with 422 world_include_unsupported.
+    it('drops include=* under a non-default world, and keeps it otherwise', async () => {
+      vi.mocked(entitiesApi.getEntity).mockResolvedValue(publishedFace)
+
+      await store.fetchEntity('policy', 'POL-1', false, 'published')
+      expect(entitiesApi.getEntity).toHaveBeenCalledWith('policy', 'POL-1', {
+        world: 'published',
+      })
+
+      await store.fetchEntity('policy', 'POL-1')
+      expect(entitiesApi.getEntity).toHaveBeenLastCalledWith('policy', 'POL-1', {
+        include: '*',
+      })
+    })
+
+    // Hazard 2, the widest blast radius: merely LISTING a world poisons the
+    // per-entity cache. Mutation: drop the `params?.world` argument in
+    // fetchList's row-caching loop — the default-world fetchEntity then hits
+    // the published row and returns the published title without any network
+    // call, so both assertions die.
+    it('does not let a world-scoped list poison the default-world cache', async () => {
+      vi.mocked(entitiesApi.listEntities).mockResolvedValue({
+        data: [publishedFace],
+        meta: { total: 1, page: 1, per_page: 20, has_more: false },
+      })
+      vi.mocked(entitiesApi.getEntity).mockResolvedValue(draftFace)
+
+      await store.fetchList('policy', { world: 'published' })
+      const entity = await store.fetchEntity('policy', 'POL-1')
+
+      expect(entity.properties.title).toBe('Access Control (DRAFT)')
+      expect(entitiesApi.getEntity).toHaveBeenCalledTimes(1)
+    })
+
+    // The positive half of the same seam: a world-scoped list SHOULD prime the
+    // cache for its own world, or it has merely been disabled.
+    it('primes the per-world cache from a world-scoped list', async () => {
+      vi.mocked(entitiesApi.listEntities).mockResolvedValue({
+        data: [publishedFace],
+        meta: { total: 1, page: 1, per_page: 20, has_more: false },
+      })
+
+      await store.fetchList('policy', { world: 'published' })
+
+      expect(store.getCached('policy', 'POL-1', 'published')).toBeDefined()
+      expect(store.getCached('policy', 'POL-1')).toBeUndefined()
+    })
+
+    // A write updates the DEFAULT face (the API refuses ?world= on writes),
+    // but under `otherwise: default` that changes what a fallback world
+    // serves. Mutation: delete the invalidateEntityWorlds() call in update() —
+    // the published read returns the pre-write cached face.
+    it('drops world-scoped copies when the entity is written', async () => {
+      vi.mocked(entitiesApi.getEntity).mockResolvedValue(publishedFace)
+      await store.fetchEntity('policy', 'POL-1', false, 'published')
+      expect(store.getCached('policy', 'POL-1', 'published')).toBeDefined()
+
+      vi.mocked(entitiesApi.updateEntity).mockResolvedValue({
+        ...draftFace,
+        properties: { title: 'Edited' },
+      })
+      await store.update('policy', 'POL-1', { properties: { title: 'Edited' } })
+
+      expect(store.getCached('policy', 'POL-1', 'published')).toBeUndefined()
+    })
+  })
 })

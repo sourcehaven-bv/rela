@@ -140,8 +140,17 @@ func (a *App) SetWorlds(w WorldLookup) { a.worlds = w }
 //   - UNKNOWN world -> a named 400. A world name is operator-authored
 //     CONFIG (schema.yaml), and CLAUDE.md is explicit that config names are
 //     not secret: naming the missing world is more useful to whoever is
-//     debugging it than a uniform silence, and conceals nothing, because the
-//     set of declared worlds is already served over the API.
+//     debugging it than a uniform silence, and conceals nothing that the
+//     operator's own repo does not already state.
+//
+//     This clause previously justified itself with "the set of declared
+//     worlds is already served over the API". That was FALSE — no endpoint
+//     enumerates worlds today (metamodel.Metamodel.Worlds carries no JSON
+//     tag and no handler reads it), so a client discovers a name only by
+//     being told one or by guessing. The CONCLUSION is unchanged, because it
+//     never depended on that premise: config names are not secret whether or
+//     not this API happens to serve them. Corrected rather than deleted so
+//     the next reader does not re-derive the same wrong premise.
 //
 //   - Known world the principal may NOT read -> (zero handle, errWorldDenied),
 //     which callers render as an EMPTY RESULT, never a 403. What a world
