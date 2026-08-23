@@ -839,3 +839,72 @@ describe('CalendarView source legend', () => {
     expect(wrapper.text()).toContain('Meeting M-1')
   })
 })
+
+/**
+ * Ordering within a day: all-day events first, then timed ones by start time,
+ * with the entity id as a stable tiebreak.
+ *
+ * The tiebreak matters more than it looks: without it two events at the same
+ * time have equal sort keys, so they reshuffle between renders as fetches
+ * settle — a list that reorders itself while you read it.
+ */
+describe('CalendarView event ordering', () => {
+  it('sorts all-day first, then by start time, then stably by id', async () => {
+    const wrapper = setup({
+      sources: [
+        { entity: 'task', date: 'due', summary: 'title', max_span: 31 },
+        { entity: 'meeting', date: 'starts_at', summary: 'name', max_span: 31 },
+      ],
+      responses: {
+        // Deliberately supplied out of order, so passing means the view sorted
+        // rather than echoing the fetch order.
+        task: [task('T-b', '2026-08-26'), task('T-a', '2026-08-26')],
+        meeting: [
+          meeting('M-late', '2026-08-26T18:30:00Z'),
+          meeting('M-noon-b', '2026-08-26T11:00:00Z'),
+          meeting('M-early', '2026-08-26T07:15:00Z'),
+          meeting('M-noon-a', '2026-08-26T11:00:00Z'),
+        ],
+      },
+      maxEventsPerDay: 20,
+    })
+    await flushPromises()
+
+    const titles = wrapper.findAll('.calendar-chip-title').map((n) => n.text())
+    expect(titles).toEqual([
+      'Task T-a', // all-day, id-sorted
+      'Task T-b',
+      'Meeting M-early', // 07:15
+      'Meeting M-noon-a', // 11:00 — tie broken by id
+      'Meeting M-noon-b', // 11:00
+      'Meeting M-late', // 18:30
+    ])
+  })
+
+  it('orders by the DISPLAY timezone, so position agrees with the printed time', async () => {
+    // 22:30Z is 00:30 the next day in Amsterdam, so it must not sort as "late
+    // on the 26th" — it belongs to the 27th entirely.
+    const wrapper = setup({
+      sources: [{ entity: 'meeting', date: 'starts_at', summary: 'name', max_span: 31 }],
+      responses: {
+        meeting: [
+          meeting('M-crosses', '2026-08-26T22:30:00Z'),
+          meeting('M-morning', '2026-08-27T06:00:00Z'),
+        ],
+      },
+      timezone: 'Europe/Amsterdam',
+      maxEventsPerDay: 20,
+    })
+    await flushPromises()
+
+    // NOT `.find(text === '27')`: a month grid shows spill days, so August
+    // 2026 has two cells numbered 27 (July's and August's). Pick the one that
+    // actually holds events.
+    const cell = wrapper
+      .findAll('.calendar-day')
+      .find((c) => c.find('.calendar-day-number').text() === '27' && c.find('.calendar-chip').exists())
+    const titles = cell!.findAll('.calendar-chip-title').map((n) => n.text())
+    // 00:30 sorts before 08:00, both on the 27th in Amsterdam.
+    expect(titles).toEqual(['Meeting M-crosses', 'Meeting M-morning'])
+  })
+})

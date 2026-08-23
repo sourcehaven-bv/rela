@@ -2514,6 +2514,32 @@ omitted rather than showing an empty label.
 derived labels — and render through the same component, so the two surfaces
 cannot drift.
 
+### Ordering within a day
+
+Events in a day cell are ordered:
+
+1. **All-day events first**, before any timed one.
+2. **Then by start time**, earliest first.
+3. **Then by entity id**, so two events at the same time keep a stable order
+   rather than reshuffling between refreshes.
+
+```text
+  Update changelog        ← all-day
+  Ship the release        ← all-day
+  09:15  Early standup
+  13:00  Design review    ← same time, ordered by id
+  13:00  Lunch & learn
+  18:30  Retro
+```
+
+Times are the event's start in your **display timezone** (Settings), which is
+also the timezone that decides which day it falls on — so a chip's position
+never disagrees with the time printed on it.
+
+A multi-day event sorts by where it *started*, so on its later days it appears
+above events that begin that morning. That matches how other calendar apps
+render spans.
+
 ### Multi-day events
 
 An event with an `end_date` is drawn once per day it covers, with an arrow at
