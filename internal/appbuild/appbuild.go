@@ -1240,6 +1240,38 @@ func (b *SharedBase) Assemble(
 	return assemble(b, st, searcher, visible, searchCloser)
 }
 
+// buildEntityManager assembles the write-path manager from the collaborators
+// assemble has already derived. Extracted purely to keep assemble within the
+// funlen budget; it makes no decisions of its own.
+func buildEntityManager(
+	base *SharedBase, st store.Store, aliases entitymanager.AliasRewriter,
+	templater entitymanager.TemplateLoader, resolvedACL acl.ACL,
+	autoEngine *automation.Engine, cascadeRunner *autocascade.Runner,
+	readDeps lua.ReadDeps, versions store.VersionService, tw TransitionWiring,
+) (*entitymanager.Manager, error) {
+	mgr, err := entitymanager.New(entitymanager.Deps{
+		AliasRewriter:           aliases,
+		Store:                   st,
+		Meta:                    base.meta,
+		Templater:               templater,
+		Audit:                   base.cfg.Audit,
+		ACL:                     resolvedACL,
+		Automations:             autoEngine,
+		Cascade:                 cascadeRunner,
+		ScriptRunner:            cascadeScriptRunner(base.cfg.ScriptEngine, readDeps, st, base.cfg.Audit),
+		VersionRecorder:         versionRecorderFor(versions),
+		RelationVersionRecorder: relationVersionRecorderFor(versions),
+		Transitions:             tw.Enforcer,
+		FieldGate:               entitymanager.AllowAllFieldGate{},
+		TransitionGuard:         tw.Guard,
+		TransitionGraph:         tw.Graph,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("build entitymanager: %w", err)
+	}
+	return mgr, nil
+}
+
 func assemble(
 	base *SharedBase, st store.Store, searcher search.Searcher,
 	visible search.VisibleSearcher, searchCloser io.Closer,
@@ -1302,25 +1334,10 @@ func assemble(
 		return nil, err
 	}
 
-	mgr, err := entitymanager.New(entitymanager.Deps{
-		AliasRewriter:           aliases,
-		Store:                   st,
-		Meta:                    base.meta,
-		Templater:               templater,
-		Audit:                   cfg.Audit,
-		ACL:                     resolvedACL,
-		Automations:             autoEngine,
-		Cascade:                 cascadeRunner,
-		ScriptRunner:            cascadeScriptRunner(cfg.ScriptEngine, readDeps, st, cfg.Audit),
-		VersionRecorder:         versionRecorderFor(versions),
-		RelationVersionRecorder: relationVersionRecorderFor(versions),
-		Transitions:             tw.Enforcer,
-		FieldGate:               entitymanager.AllowAllFieldGate{},
-		TransitionGuard:         tw.Guard,
-		TransitionGraph:         tw.Graph,
-	})
+	mgr, err := buildEntityManager(base, st, aliases, templater, resolvedACL,
+		autoEngine, cascadeRunner, readDeps, versions, tw)
 	if err != nil {
-		return nil, fmt.Errorf("build entitymanager: %w", err)
+		return nil, err
 	}
 
 	val := validator.New(st, base.meta, readDeps)

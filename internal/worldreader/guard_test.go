@@ -93,9 +93,18 @@ func TestGuardRule1_PackageCannotSeeAPrincipal(t *testing.T) {
 // state reader, a scope and a canonicalizer. Adding a gate parameter
 // would have to change this call, which is the point.
 func TestGuardRule1_ConstructorTakesNoGate(_ *testing.T) {
-	// Assigning the constructor to a variable of its expected signature
-	// makes a new parameter — a gate, a principal — a compile error.
-	var newResolver = worldreader.NewResolver
+	// The signature is SPELLED OUT deliberately. `var x = NewResolver`
+	// infers whatever the constructor's type currently is, so it pins
+	// nothing and a new gate parameter would compile clean — the pin was a
+	// no-op until TKT-DN37J2's design review caught it (RR-NFDPOA).
+	//nolint:staticcheck // ST1023 wants the type inferred from the RHS —
+	// which is exactly the bug this test had before RR-NFDPOA. Inferring
+	// makes the declaration accept ANY signature, so a new gate parameter
+	// would compile clean and the guard would pin nothing. The explicit
+	// type IS the assertion.
+	var newResolver func(
+		worldreader.StateReader, store.WorldScope, worldreader.TypeCanonicalizer,
+	) (*worldreader.Resolver, error) = worldreader.NewResolver
 	_ = newResolver
 }
 

@@ -90,6 +90,34 @@ func NewDeclarative(p *Policy, g Graph, gq store.GraphQueryer, opts ...Declarati
 	if gq == nil {
 		return nil, errors.New("acl: NewDeclarative: graphQueryer must be non-nil")
 	}
+	// Split world grants here as well as in [Policy.Validate]. Validate is
+	// the LOAD chokepoint; this constructor is the SERVE chokepoint, and a
+	// policy can reach the second without passing the first — NewDeclarative
+	// does not call Validate, and callers construct a Policy directly
+	// (internal/visibility/visibilitytest, appbuild.NewFromCollaborators,
+	// every test literal). Left unsplit, `world:published` stays inline in
+	// Read where roleGrantsRead never matches it and the client ceiling
+	// mis-clamps it — silently, and in the fail-open direction under a deny
+	// ceiling (RR-LWE222).
+	//
+	// normalizeWorldGrants is idempotent, so paying it twice is free — a
+	// policy that came through Validate has no prefixed entries left in
+	// Read and this is a no-op scan.
+	//
+	// It can only fail on a malformed grant (`world:` with no name, or
+	// `world:*`), which for a Validate-loaded policy is already impossible.
+	// Failing construction is right for the paths that skip Validate: the
+	// alternative is serving reads against a grant nobody could interpret.
+	if err := p.normalizeWorldGrants(); err != nil {
+		return nil, fmt.Errorf("acl: NewDeclarative: %w", err)
+	}
+	// State-grant GRAMMAR is deliberately NOT re-checked here, unlike the
+	// world split above. The split must run because a policy that skipped
+	// Validate would otherwise serve reads with an uninterpretable grant
+	// sitting in the wrong field. A malformed state grant has no such
+	// failure mode: GrantsVerbOnState treats an unparseable entry as
+	// granting nothing, so the policy is already fail-closed and Validate
+	// remains the place that says so with a useful message.
 	d := &Declarative{policy: p, graph: g, graphQueryer: gq}
 	for _, opt := range opts {
 		opt(d)

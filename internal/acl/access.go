@@ -151,6 +151,14 @@ func grantForRole(role RoleDef, verb Verb, entityType string) EveryoneGrant {
 		if t == "*" {
 			return EveryoneGrant{Granted: true, Wildcard: true}
 		}
+		// A state-shaped write grant is skipped for the same reason
+		// [grantsVerb] skips it: it authorizes no face today, so reporting
+		// it as a grant here would put a false all-clear into `rela acl
+		// who-can` / `rela acl map` — the operator-facing security reports
+		// this helper exists to keep honest (RR-Q1LI2Y).
+		if verb != VerbRead && isStateGrant(t) {
+			continue
+		}
 		if t == entityType {
 			return EveryoneGrant{Granted: true}
 		}
@@ -258,4 +266,30 @@ func (r *Request) grantingAttributions(
 		}
 	}
 	return out
+}
+
+// GrantsRead reports whether role's read list covers entityType — exact
+// match or the "*" wildcard.
+//
+// GrantsRead and [GrantsVerb] are exported so consumers outside this
+// package (the `rela docs` role-matrix generator) match grants with the
+// SAME predicate the runtime uses, rather than hand-copying the
+// wildcard-or-exact loop. A second copy silently disagrees the moment the
+// grant grammar changes — which is exactly what happened when write grants
+// gained the `type@pointer` form (TKT-DN37J2): the copy reported "cannot
+// update page" for a role holding `update: ["page@draft"]`, a false
+// all-clear in an operator-facing security document (RR-Q1LI2Y).
+//
+// These take a plain RoleDef and so do NOT apply a client ceiling; they
+// answer "what does this role grant", not "what may this principal do".
+// For the latter, resolve through [Request.roleFor] first.
+func GrantsRead(role RoleDef, entityType string) bool {
+	return roleGrantsRead(role, entityType)
+}
+
+// GrantsVerb reports whether role may perform op on entityType, honoring
+// the "*" wildcard and the `type@pointer` state form. Rename routes
+// through the update grant. See [GrantsRead] for why this is exported.
+func GrantsVerb(role RoleDef, op Op, entityType string) bool {
+	return grantsVerb(role, op, entityType)
 }

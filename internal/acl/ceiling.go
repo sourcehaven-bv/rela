@@ -142,6 +142,21 @@ type Restriction struct {
 	// columns and an open-ended set of harmless ones.
 	Redact map[string][]string `yaml:"redact,omitempty"`
 
+	// Worlds and DenyWorlds are the world axis (TKT-DN37J2). Worlds are a
+	// first-class read grant, so the ceiling needs a matching axis: a
+	// client attenuated below its user must be narrowable in worlds too.
+	//
+	// There is deliberately NO wildcard here (a role's world grant cannot
+	// be "*" either — see normalizeWorldGrants), so the allow form is a
+	// plain intersection. The DENY form cannot be applied by intersection
+	// at all, because the default world is the ABSENCE of an entry: an
+	// empty Worlds already means "default world", and intersecting it with
+	// anything leaves it empty. Denial is therefore enforced at match time
+	// by [compiledCeiling.permitsWorld], the same shape permitsRead uses
+	// for the wildcard gap filterTypes cannot express.
+	Worlds     []string `yaml:"worlds,omitempty"`
+	DenyWorlds []string `yaml:"deny_worlds,omitempty"`
+
 	Permissions     []string `yaml:"permissions,omitempty"`
 	DenyPermissions []string `yaml:"deny_permissions,omitempty"`
 }
@@ -155,6 +170,7 @@ func (r Restriction) Narrows() bool {
 		len(r.Delete) > 0 || len(r.DenyRead) > 0 || len(r.DenyCreate) > 0 ||
 		len(r.DenyUpdate) > 0 || len(r.DenyDelete) > 0 || len(r.DenyWrite) > 0 ||
 		len(r.Visible) > 0 || len(r.Redact) > 0 ||
+		len(r.Worlds) > 0 || len(r.DenyWorlds) > 0 ||
 		len(r.Permissions) > 0 || len(r.DenyPermissions) > 0
 }
 
@@ -173,6 +189,7 @@ func (r Restriction) denySpellings() []string {
 		{"deny_delete", len(r.DenyDelete) > 0},
 		{"deny_write", len(r.DenyWrite) > 0},
 		{"redact", len(r.Redact) > 0},
+		{"deny_worlds", len(r.DenyWorlds) > 0},
 		{"deny_permissions", len(r.DenyPermissions) > 0},
 	} {
 		if c.set {
@@ -202,6 +219,7 @@ func (r Restriction) validateSpellings(label string) error {
 		{"create", "deny_create", len(r.Create) > 0, len(r.DenyCreate) > 0},
 		{"update", "deny_update", len(r.Update) > 0, len(r.DenyUpdate) > 0},
 		{"delete", "deny_delete", len(r.Delete) > 0, len(r.DenyDelete) > 0},
+		{"worlds", "deny_worlds", len(r.Worlds) > 0, len(r.DenyWorlds) > 0},
 		{"permissions", "deny_permissions", len(r.Permissions) > 0, len(r.DenyPermissions) > 0},
 	} {
 		if c.allowSet && c.denySet {
@@ -256,6 +274,7 @@ func (r Restriction) validateNoBlanks(label string) error {
 		{"deny_read", r.DenyRead}, {"deny_create", r.DenyCreate},
 		{"deny_update", r.DenyUpdate}, {"deny_delete", r.DenyDelete},
 		{"deny_write", r.DenyWrite},
+		{"worlds", r.Worlds}, {"deny_worlds", r.DenyWorlds},
 		{"permissions", r.Permissions}, {"deny_permissions", r.DenyPermissions},
 	} {
 		for i, v := range c.vals {
@@ -393,6 +412,7 @@ func (r Restriction) normalized() Restriction {
 	r.DenyRead, r.DenyCreate, r.DenyUpdate, r.DenyDelete =
 		trimAll(r.DenyRead), trimAll(r.DenyCreate), trimAll(r.DenyUpdate), trimAll(r.DenyDelete)
 	r.DenyWrite = trimAll(r.DenyWrite)
+	r.Worlds, r.DenyWorlds = trimAll(r.Worlds), trimAll(r.DenyWorlds)
 	r.Permissions, r.DenyPermissions = trimAll(r.Permissions), trimAll(r.DenyPermissions)
 	r.Visible, r.Redact = trimFieldMap(r.Visible), trimFieldMap(r.Redact)
 	return r

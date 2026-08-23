@@ -31,7 +31,14 @@ func checkUndeclaredEntityTypes(p *acl.Policy, m MetamodelReader) []Finding {
 	for _, name := range sortedRoleNames(p) {
 		role := p.Roles[name]
 		seen := map[string]bool{}
-		flag := func(verb, t string) {
+		flag := func(verb, entry string) {
+			// Check the TYPE half. A write grant may be state-shaped
+			// (`page@draft`, TKT-DN37J2); the type is what the metamodel
+			// declares, and reporting the joined string as an undeclared
+			// type would fail CI on every correct state grant (this finding
+			// is High, and `rela acl audit --exit-code` gates on High).
+			// Whether the POINTER is declared is a separate check.
+			t := grantEntityType(entry)
 			// Dedupe on type alone: one typo'd type used across several verbs
 			// (or an affordance key) is one mistake with one fix.
 			if t == "*" || m.HasEntityType(t) || seen[t] {

@@ -235,8 +235,19 @@ func ceilingTypeFindings(
 		{"read", r.Read}, {"create", r.Create}, {"update", r.Update}, {"delete", r.Delete},
 		{"deny_read", r.DenyRead}, {"deny_create", r.DenyCreate},
 		{"deny_update", r.DenyUpdate}, {"deny_delete", r.DenyDelete},
+		// worlds/deny_worlds are deliberately ABSENT: their entries are
+		// world names, not entity types, so HasEntityType is the wrong
+		// question and would report every one of them as undeclared.
+		//
+		// A ceiling naming a world the metamodel does not declare is
+		// therefore checked by NOTHING today. That needs a world-aware
+		// MetamodelReader, which lands with the rest of the world
+		// cross-checks in TKT-DN37J2 PR-B; it is not implemented here.
 	} {
-		for _, t := range c.types {
+		for _, entry := range c.types {
+			// TYPE half only — a ceiling axis may name a state-shaped
+			// grant for the same reason a role may (TKT-DN37J2).
+			t := grantEntityType(entry)
 			if t == "*" || m.HasEntityType(t) || seen[t] {
 				continue
 			}

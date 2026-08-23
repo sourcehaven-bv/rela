@@ -312,6 +312,22 @@ func validateEntitySemantics(m *Metamodel) []string {
 			errs = append(errs, fmt.Sprintf("entity %v", err))
 		}
 
+		// "@" additionally separates a type from a content state in an ACL
+		// write grant (`page@draft`, TKT-DN37J2). A type name carrying one
+		// makes that grant ambiguous in BOTH directions: a grant on a type
+		// named `a@b` stops matching it, and starts matching a different
+		// type named `a`. The second is a cross-type privilege escalation.
+		//
+		// Rejected here rather than in ValidateSchemaName because that is
+		// shared with property names, which are not grant subjects and have
+		// no reason to lose a legal character.
+		if strings.Contains(name, "@") {
+			errs = append(errs, fmt.Sprintf(
+				"entity %q: entity type names must not contain '@' — it separates "+
+					"a type from a content state in ACL write grants (page@draft), "+
+					"so a type name carrying one makes those grants ambiguous", name))
+		}
+
 		if def.Label == "" {
 			errs = append(errs, fmt.Sprintf("entity %q: missing 'label'", name))
 		}
@@ -715,10 +731,21 @@ func validateWorlds(m *Metamodel) []string {
 				worldName))
 		}
 		if err := ValidateSchemaName(worldName); err != nil {
-			// A world name reaches URLs, acl.yaml and CLI flags in later
-			// steps. The empty name is the dangerous one: it would make a
-			// lookup with an unpopulated name succeed and return a real,
-			// non-default world — the inverse of the fail-closed rule.
+			// The empty name is the one THIS check catches that matters: it
+			// would make a lookup with an unpopulated name succeed and
+			// return a real, non-default world — the inverse of the
+			// fail-closed rule.
+			//
+			// It is NOT the whole story, and this comment used to imply it
+			// was. ValidateSchemaName is a blocklist tuned for type and
+			// property names, so it still admits `/`, `%`, `?`, `&`, `#`,
+			// `..` and internal spaces — all hostile in the `?world=` /
+			// `--world` / `acl.yaml` contexts a world name reaches. The
+			// strict allowlist lives in internal/worlds.validateWorldNames,
+			// because that grammar is entity.ParsePointer's and
+			// internal/metamodel may not import internal/entity (arch-lint).
+			// Both run at load; this one first, for the better message on a
+			// blank name.
 			errs = append(errs, fmt.Sprintf("world %q: invalid name: %v", worldName, err))
 		}
 		if len(world.Select) == 0 && len(world.Overrides) == 0 {

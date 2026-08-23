@@ -79,7 +79,7 @@ going to be shown anyway is a visibility decision, not an escalation
 path. Both the warning and the linter evaluate the same predicate, so
 they never disagree.
 
-### This becomes a hard requirement with content states
+### This is a hard requirement with content states
 
 The tolerance above holds only while the worst case is over-granting
 inside a trusted group. It stops holding the moment the same policy
@@ -90,12 +90,35 @@ role-management weakness: it is a working mechanism for reading
 unpublished content, because self-assigning a role that can read the
 draft world is one relation write away.
 
-When world-shaped read grants ship, a policy that combines them with an
-un-gated membership relation will be **refused at load** with an error
-naming the fix, rather than booting with a warning. Deployments that do
-not use worlds are unaffected and keep today's behaviour. Gating the
-membership relation now costs one `requires_permission` line and means
-that change is a no-op for you.
+So a policy that grants read on a non-default world while leaving a
+self-promotion path open is **refused at load**, with an error naming
+the fix — it does not boot with a warning. Two shapes trigger the
+refusal:
+
+1. The membership relation is un-gated and an assignment confers a role
+   that can escalate.
+2. **Any** role-relation is un-gated while conferring a role that can
+   escalate — even if the membership relation itself is gated. Without
+   this second arm, an attacker writes one un-gated edge to gain a role
+   holding the gating permission, then writes the membership edge.
+
+"Can escalate" means the role grants a write verb, holds a permission,
+**or holds a non-default world read grant**. That last term is why a
+read-only role counts here but not in the warning above: normally
+granting yourself read access is a visibility choice, not an escalation
+— but a role that can read `world:published` is exactly the thing worth
+stealing once worlds exist.
+
+The second arm is deliberately broader than strictly necessary: it
+refuses some policies whose un-gated relation could not actually reach
+the membership gate. Those policies already carry a high-severity
+`rela acl audit` finding, and the fix is the same single
+`requires_permission` line. Erring toward refusing is the right
+direction for a check whose failure mode is leaked unpublished content.
+
+Deployments that do not use worlds are unaffected and keep today's
+warn-and-boot behavior. Gating the membership relation now costs one
+`requires_permission` line and means that change is a no-op for you.
 
 The companion section in `docs/server-security.md` carries the same
 guidance with more context on the broader threat model.

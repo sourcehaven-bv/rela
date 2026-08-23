@@ -93,9 +93,9 @@ type verbSpec struct {
 // dispatching read (a separate list) from the create/update/delete verbs.
 func roleGrantsVerb(role acl.RoleDef, v verbSpec, typ string) bool {
 	if v.name == "read" {
-		return grantsList(role.Read, typ)
+		return acl.GrantsRead(role, typ)
 	}
-	return grantsVerb(role, v.op, typ)
+	return acl.GrantsVerb(role, v.op, typ)
 }
 
 // matrixTypes returns the requested type (validated) or all entity types.
@@ -109,29 +109,6 @@ func (dr *docRuntime) matrixTypes(typ string) []string {
 	all := dr.meta.EntityTypes()
 	sort.Strings(all)
 	return all
-}
-
-// grantsVerb / grantsList replicate the policy's wildcard-or-exact match over
-// the exported RoleDef grant lists (the policy's own helpers are unexported).
-func grantsVerb(role acl.RoleDef, op acl.Op, target string) bool {
-	switch op {
-	case acl.OpCreate:
-		return grantsList(role.Create, target)
-	case acl.OpUpdate, acl.OpRename:
-		return grantsList(role.Update, target)
-	case acl.OpDelete:
-		return grantsList(role.Delete, target)
-	}
-	return false
-}
-
-func grantsList(list []string, target string) bool {
-	for _, t := range list {
-		if t == "*" || t == target {
-			return true
-		}
-	}
-	return false
 }
 
 // namedRoleNames returns the policy's role names sorted, EXCLUDING the built-in

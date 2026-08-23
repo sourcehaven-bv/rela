@@ -99,6 +99,7 @@ func Compile(m *metamodel.Metamodel) (Compiled, error) {
 	// states means. Today that scope is discarded, so the fail-open is only
 	// latent; returning here keeps it unreachable even if a future caller
 	// wants a best-effort compile.
+	errs = append(errs, validateWorldNames(m)...)
 	if err := joinErrors(errs); err != nil {
 		return Compiled{}, err
 	}
@@ -114,6 +115,53 @@ func Compile(m *metamodel.Metamodel) (Compiled, error) {
 		byName[name] = compileWorld(m, m.Worlds[name], pointers)
 	}
 	return Compiled{byName: byName}, nil
+}
+
+// validateWorldNames checks every declared world name against the same
+// grammar pointer names use.
+//
+// # Why an allowlist, and why here
+//
+// The loader already rejects the empty name and the reserved `default`
+// (metamodel.validateWorlds) via metamodel.ValidateSchemaName — but that
+// is a BLOCKLIST, deliberately lenient because entity-type and property
+// names legitimately carry dashes and internal spaces. It blocks only
+// quotes, backslashes and control characters, so `../admin`, `a b`,
+// `pub%2f` and `world?x=1` all load clean today.
+//
+// A world name is not a type name. It reaches a `?world=` query
+// parameter, a `--world` flag, and an `acl.yaml` grant token
+// (`read: [world:published]`) — three contexts where `/`, `%`, `?`, `&`,
+// `#` and spaces are hostile, and where `..` would be a traversal
+// primitive if a world name ever became a URL path segment. So worlds get
+// the strict allowlist pointers already have: lowercase alphanumeric runs
+// joined by single hyphens.
+//
+// The grammar is entity.ParsePointer's, reused rather than re-spelled —
+// a third copy of the pattern is a third thing to drift. Validating here
+// rather than in the loader follows the pointer-grammar precedent
+// (TKT-WAV8XP Q6): internal/metamodel may not import internal/entity
+// under arch-lint, and internal/worlds is the package that may see both.
+//
+// Tightening now costs nothing: worlds shipped in Step 2 and no shipped
+// or fixture metamodel declares a name outside this grammar. Waiting
+// makes it a breaking change forever.
+func validateWorldNames(m *metamodel.Metamodel) []error {
+	var errs []error
+	for _, name := range sortedWorldNames(m) {
+		if _, err := entity.ParsePointer(name); err != nil {
+			// The GRAMMAR is reused; the VOCABULARY is not. ParsePointer's
+			// own error says "pointer", a noun the operator did not write
+			// when declaring a world, so it is replaced rather than wrapped.
+			errs = append(errs, fmt.Errorf(
+				"world %q: invalid name — must be lowercase alphanumeric runs "+
+					"joined by single hyphens (e.g. \"published\", \"site-nl\"). "+
+					"World names reach URLs (?world=), CLI flags (--world) and "+
+					"acl.yaml grants (read: [world:...]), so they use the same "+
+					"strict grammar as pointer names", name))
+		}
+	}
+	return errs
 }
 
 // declaredPointers validates every declared pointer name against the

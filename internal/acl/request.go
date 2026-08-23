@@ -279,3 +279,60 @@ func isBlankOrUnknown(s string) bool {
 	t := strings.TrimSpace(s)
 	return t == "" || t == "unknown"
 }
+
+// PermitsWorld reports whether this Request's principal may read the named
+// world (design doc §8.1, §4.4). It is the gate a caller must pass BEFORE
+// constructing a world-resolved reader — the per-entity visibility gate
+// still runs after, on whatever the resolved world contains.
+//
+// Semantics:
+//
+//   - The DEFAULT world (name "" or "default") is permitted by any ordinary
+//     read grant, so an existing acl.yaml keeps meaning what it meant.
+//   - Every other world must be named by a `read: [world:X]` grant.
+//   - The client ceiling is applied twice, deliberately: through roleFor
+//     (which clamps the role's world list) and then through permitsWorld
+//     (which is the only place a denial of the DEFAULT world can be
+//     expressed). See [compiledCeiling.permitsWorld].
+//
+// # Why this returns an error
+//
+// A world grant is a READ capability, and the read paths in this package
+// carry errors on purpose ([Request.PermitsRead], [Request.PermitsReadMany],
+// visibility's listPushdown). Resolving the principal's roles walks the
+// graph, and a store failure there yields a PARTIAL role set — which would
+// silently answer "no" for a principal who genuinely holds the grant.
+//
+// That matters because a denial must render as an EMPTY result rather than
+// a 403 (a 403 would be an existence oracle for the world's contents). So
+// without an error channel a store outage becomes a silently empty page
+// with no operator signal. Callers map: false+nil → empty, err → 500
+// (RR-4TFZNL).
+//
+// LIMITATION, stated because the signature promises more than it currently
+// delivers: the error is reserved, and today always nil. The role walk it
+// depends on ([Request.walkMembers]) discards its own backing error and
+// returns a PARTIAL member list — its "abort the walk loud" comment
+// describes an intent the code does not implement. Threading that error out
+// touches computeGlobals and every Globals caller, which is a separate
+// change. The signature is here now so the ~dozen call sites PR-C adds do
+// not all have to change when it lands, and so a caller cannot form the
+// habit of treating a false as necessarily meaning "denied".
+func (r *Request) PermitsWorld(ctx context.Context, world string) (bool, error) {
+	if !r.ceiling.permitsWorld(world) {
+		return false, nil
+	}
+	for _, a := range r.Globals(ctx).Attributions {
+		// roleFor, never policy.Roles[...] — it is THE clamp point, and a
+		// direct lookup here would bypass the client ceiling entirely
+		// (pinned by TestNoDirectRoleLookupInEvaluationPaths).
+		role, ok := r.roleFor(a.Role)
+		if !ok {
+			continue
+		}
+		if roleGrantsWorldRead(role, world) {
+			return true, nil
+		}
+	}
+	return false, nil
+}

@@ -46,6 +46,12 @@ type compiledCeiling struct {
 
 	read, create, update, del verbCeiling
 	permissions               permissionCeiling
+
+	// worlds narrows the world read axis (TKT-DN37J2). Reuses verbCeiling
+	// because the allow/deny/except semantics are identical — only the
+	// vocabulary differs (world names, not entity types) and there is no
+	// wildcard to expand.
+	worlds verbCeiling
 }
 
 // verbCeiling decides whether one verb is permitted on one entity type.
@@ -142,6 +148,7 @@ func (p *Policy) ceilingFor(principalType string, scopes []string) compiledCeili
 		create:   verbCeiling{allow: nilIfUnset(baseline.Create), deny: baseline.DenyCreate},
 		update:   verbCeiling{allow: nilIfUnset(baseline.Update), deny: baseline.DenyUpdate},
 		del:      verbCeiling{allow: nilIfUnset(baseline.Delete), deny: baseline.DenyDelete},
+		worlds:   verbCeiling{allow: nilIfUnset(baseline.Worlds), deny: baseline.DenyWorlds},
 		permissions: permissionCeiling{
 			allow: nilIfUnset(baseline.Permissions),
 			deny:  baseline.DenyPermissions,
@@ -165,6 +172,7 @@ func (p *Policy) ceilingFor(principalType string, scopes []string) compiledCeili
 		c.create.reopen(g.Create)
 		c.update.reopen(g.Update)
 		c.del.reopen(g.Delete)
+		c.worlds.reopen(g.Worlds)
 		c.permissions.reopen(g.Permissions)
 	}
 	return c
@@ -256,8 +264,33 @@ func (c compiledCeiling) clamp(role RoleDef) RoleDef {
 	role.Create = filterTypes(role.Create, c.create)
 	role.Update = filterTypes(role.Update, c.update)
 	role.Delete = filterTypes(role.Delete, c.del)
+	role.Worlds = filterWorlds(role.Worlds, c.worlds)
 	role.Permissions = filterPermissions(role.Permissions, c.permissions)
 	return role
+}
+
+// filterWorlds intersects a role's world grants with the ceiling's world
+// axis. Simpler than [filterTypes] because neither side can hold a
+// wildcard (normalizeWorldGrants rejects `world:*`, and a ceiling world
+// list is plain names), so there is no "everything" to collapse.
+//
+// This handles the ALLOW direction only. A ceiling that DENIES the default
+// world cannot be expressed here at all: the default world is the absence
+// of an entry, so an empty Worlds stays empty under any intersection and
+// still means "default world". That denial lives in
+// [compiledCeiling.permitsWorld], which every world check consults after
+// the role predicate says yes.
+func filterWorlds(roleWorlds []string, w verbCeiling) []string {
+	if !w.narrows() || len(roleWorlds) == 0 {
+		return roleWorlds
+	}
+	out := make([]string, 0, len(roleWorlds))
+	for _, name := range roleWorlds {
+		if w.permits(name) {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // filterTypes intersects a role's type list with a verb ceiling.
@@ -349,6 +382,45 @@ func (c compiledCeiling) permitsRead(target string) bool {
 		return true
 	}
 	return c.read.permits(target)
+}
+
+// permitsWorld reports whether the ceiling admits reading the named world.
+//
+// MANDATORY, not an optional re-check. [filterWorlds] can only narrow the
+// list of NAMED worlds a role holds; it structurally cannot express a
+// denial of the DEFAULT world, because the default world is spelled as the
+// absence of a grant. `deny_worlds: [default]` against a role whose Worlds
+// is empty intersects to empty — which still means the default world, so
+// the denial would be a silent no-op.
+//
+// So every world check calls this after the role predicate
+// ([roleGrantsWorldRead]) says yes. It can only turn a yes into a no,
+// which is the same contract [compiledCeiling.permitsRead] has.
+func (c compiledCeiling) permitsWorld(name string) bool {
+	if !c.active {
+		return true
+	}
+	if name == "" {
+		name = DefaultWorldName
+	}
+	// The DEFAULT world needs an EXPLICIT denial; an allowlist does not
+	// take it away. `worlds: [published]` reads as "this client may also
+	// reach the published world", not "published and nothing else,
+	// including the default face it could already read" — and an operator
+	// who meant the latter has `deny_worlds: [default]` to say so.
+	//
+	// Silently revoking it would be the failure the world axis exists to
+	// prevent, pointed the other way: the default world is the DRAFT face
+	// under the design doc's layout, so a client scoped to `published`
+	// would find its ordinary reads disappearing for a reason nothing in
+	// the config states. A ceiling narrows what it NAMES; the default
+	// world is the one world a grant never names.
+	// Delegated to worlds.permits when the default world IS explicitly
+	// denied, so a scope grant can still re-open it via `except`.
+	if name == DefaultWorldName && !slices.Contains(c.worlds.deny, DefaultWorldName) {
+		return true
+	}
+	return c.worlds.permits(name)
 }
 
 // permitsPermission re-checks a named permission against the ceiling.

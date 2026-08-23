@@ -1,6 +1,7 @@
 package aclaudit
 
 import (
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -618,4 +619,113 @@ func TestHasAtLeast(t *testing.T) {
 	if !HasAtLeast([]Finding{{Severity: Critical}}, High) {
 		t.Error("HasAtLeast(High) should be true when a critical is present")
 	}
+}
+
+// TestGrantEntityType_MatchesACLSplit pins the duplication this package
+// accepts: grantEntityType mirrors internal/acl's unexported grantTypeOf,
+// and the two must agree or the audit reports a type the runtime never
+// evaluated.
+//
+// Verified through acl's exported behavior rather than by calling the
+// unexported helper: a role granting update on `T@p` must be reported by
+// the audit against type T, which is only true if both split the same way.
+func TestGrantEntityType_MatchesACLSplit(t *testing.T) {
+	for _, tc := range []struct{ entry, wantType string }{
+		{"page", "page"},
+		{"page@draft", "page"},
+		{"*", "*"},
+		{"some property@draft", "some property"},
+		{"review-response@published", "review-response"},
+	} {
+		p := &acl.Policy{Roles: map[string]acl.RoleDef{
+			"r": {Update: []string{tc.entry}, Read: []string{"*"}},
+		}}
+		findings := Audit(p, fakeMetamodel{types: map[string]bool{tc.wantType: true}}, nil)
+		for _, f := range findings {
+			if f.Rule == "B1-undeclared-type" {
+				t.Errorf("entry %q: audit did not resolve it to type %q (finding: %s)",
+					tc.entry, tc.wantType, f.Detail)
+			}
+		}
+	}
+}
+
+// TestRefusalIsWiderThanOrEqualToA2 pins the DIRECTIONAL relationship
+// between the advisory finding and the boot refusal, which is the property
+// that actually matters — not that the two are identical.
+//
+// The invariant: whenever A2 flags a policy, the boot refusal also refuses
+// it (given the refusal's own trigger, a non-default world read grant).
+// Stated as sets: refusal ⊇ A2. An operator can therefore never see
+// `rela acl audit` report clean on a policy the server refuses for an
+// A2-shaped reason.
+//
+// The reverse gap is deliberate and is NOT a violation: the refusal may
+// fire where A2 is silent, because the refusal is scoped to policies that
+// grant a non-default world and A2 is not. That case is
+// TestRefusal_ReadOnlyRoleHoldingWorldGrantCountsAsEscalation in
+// internal/acl.
+//
+// If this ever fails, the two predicates have been allowed to drift apart
+// in the dangerous direction — the audit has become MORE permissive than
+// the gate, so a policy would pass the linter and fail to boot.
+func TestRefusalIsWiderThanOrEqualToA2(t *testing.T) {
+	roles := map[string]acl.RoleDef{
+		"writer":      {Update: []string{"page"}, Read: []string{"page"}},
+		"permholder":  {Permissions: []string{"something"}},
+		"creator":     {Create: []string{"page"}},
+		"deleter":     {Delete: []string{"page"}, Read: []string{"page"}},
+		"reader":      {Read: []string{"page"}},
+		"worldreader": {Read: []string{"page", "world:published"}},
+	}
+	for roleName := range roles {
+		t.Run(roleName, func(t *testing.T) {
+			p := &acl.Policy{
+				// A non-default world grant somewhere in the policy is the
+				// refusal's trigger; without it the refusal never evaluates
+				// the escalation arms at all.
+				Roles: mergeRoles(roles, map[string]acl.RoleDef{
+					"everyone": {Read: []string{"world:published"}},
+				}),
+				RoleRelations: map[string]acl.RoleRelationDef{
+					"owns": {Confers: roleName},
+				},
+			}
+			if err := p.Validate(); err != nil && !strings.Contains(err.Error(), "refusing to load") {
+				t.Fatalf("unexpected non-refusal load error: %v", err)
+			}
+			flaggedByA2 := len(checkUngatedRoleRelations(p)) > 0
+			refused := p.WorldGrantRefusalReason() != ""
+			if flaggedByA2 && !refused {
+				t.Errorf("A2 flags role %q but the boot refusal does not refuse it — "+
+					"the audit is now MORE permissive than the gate, so this policy "+
+					"passes the linter and fails to boot", roleName)
+			}
+		})
+	}
+}
+
+// TestA2_ReadOnlyRoleStillSilent pins that widening A2's criterion to
+// include world grants did NOT reintroduce the read-only false positive the
+// audit design fought (RR-LXI3NW / RR-UR0LJU / RR-EG5D3E).
+func TestA2_ReadOnlyRoleStillSilent(t *testing.T) {
+	p := &acl.Policy{
+		Roles:         map[string]acl.RoleDef{"viewer": {Read: []string{"page", "*"}}},
+		RoleRelations: map[string]acl.RoleRelationDef{"owns": {Confers: "viewer"}},
+	}
+	if err := p.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if got := checkUngatedRoleRelations(p); len(got) != 0 {
+		t.Errorf("a role holding only ordinary read grants — even read: [\"*\"] — "+
+			"is a visibility choice, not an escalation path; got %d finding(s): %+v",
+			len(got), got)
+	}
+}
+
+func mergeRoles(a, b map[string]acl.RoleDef) map[string]acl.RoleDef {
+	out := make(map[string]acl.RoleDef, len(a)+len(b))
+	maps.Copy(out, a)
+	maps.Copy(out, b)
+	return out
 }

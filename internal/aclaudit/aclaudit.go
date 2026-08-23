@@ -229,6 +229,19 @@ func permissionGranted(p *acl.Policy, perm string) bool {
 	return false
 }
 
+// grantEntityType returns the entity type an ACL grant entry addresses:
+// the whole entry for a plain type grant, the part before "@" for a
+// state-shaped write grant (`page@draft`, TKT-DN37J2).
+//
+// Mirrors internal/acl's unexported grantTypeOf. Duplicated rather than
+// exported from there because it is one strings.Cut and the audit already
+// keeps its own narrow view of the policy — but the two must agree, which
+// is what TestGrantEntityType_MatchesACLSplit pins.
+func grantEntityType(entry string) string {
+	typeName, _, _ := strings.Cut(entry, "@")
+	return typeName
+}
+
 // verbLists returns the four grant lists of a role for iteration.
 func verbLists(r acl.RoleDef) map[string][]string {
 	return map[string][]string{

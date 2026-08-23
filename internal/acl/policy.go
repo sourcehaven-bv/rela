@@ -344,6 +344,29 @@ type RoleDef struct {
 	Read        []string `yaml:"read"`
 	Permissions []string `yaml:"permissions"`
 
+	// Worlds holds the world names this role may read, SPLIT OUT of Read
+	// at policy load by [Policy.normalizeWorldGrants]. It carries no yaml
+	// tag: the wire spelling is `read: [world:published]` (design doc
+	// §8.1), and the split happens so that every existing consumer of Read
+	// — roleGrantsRead, grantForRole, filterTypes, aclaudit's verbLists —
+	// keeps seeing a list of nothing but entity types.
+	//
+	// The split is load-bearing, not cosmetic. Left inline, a world token
+	// is intersected with a client ceiling's TYPE allow/deny list by
+	// [filterTypes]: silently DROPPED under an allowlist ceiling (the
+	// token is not an entity type, so it fails the permits check) and
+	// silently KEPT under a deny ceiling (it matches no denied type). Both
+	// directions are wrong, and one of them is wrong in the operator's
+	// favor. aclaudit's B1-undeclared-type would also report every world
+	// grant as an undeclared entity type, at High.
+	//
+	// An EMPTY Worlds means the default world only — the default world is
+	// the ABSENCE of a grant, never an entry. That is what keeps existing
+	// acl.yaml files meaning exactly what they meant, and it is why a
+	// ceiling cannot express "deny the default world" by intersection; see
+	// [compiledCeiling.permitsWorld].
+	Worlds []string `yaml:"-"`
+
 	Fields    map[string][]FieldGrant    `yaml:"fields"`
 	Visible   map[string][]FieldGrant    `yaml:"visible"`
 	Options   map[string][]OptionGrant   `yaml:"options"`
@@ -366,6 +389,23 @@ func (r RoleDef) IsPrivileged() bool {
 // `target`. Op selects the verb list: Create / Update / Delete; Rename
 // routes through Update (it is a modification). Read is handled
 // separately via roleGrantsRead. An unknown op grants nothing.
+//
+// STATE GRANTS GRANT NOTHING HERE, deliberately, and this is the
+// fail-closed half of a two-part change.
+//
+// This function IS the live write-authorization path (decideFromAttrs in
+// authz_write.go, which knows the entity type but not yet which FACE is
+// being written). [GrantsVerbOnState] is the face-granular check, and it
+// has no production caller until the write path learns to pass a pointer.
+//
+// So if a state-shaped entry matched here on its type half, `update:
+// ["page@draft"]` — the NARROWEST grant the new syntax offers — would
+// authorize writing page's DEFAULT face, which is more authority than the
+// operator wrote and more than they had before. A grant must never widen
+// by being made more specific. Until the write path is face-aware, a
+// state-shaped grant authorizes nothing at all; that direction costs an
+// operator a denied write they must then ask about, rather than a silent
+// over-permit nobody notices.
 func grantsVerb(role RoleDef, op Op, target string) bool {
 	var list []string
 	switch op {
@@ -379,6 +419,9 @@ func grantsVerb(role RoleDef, op Op, target string) bool {
 		return false
 	}
 	for _, t := range list {
+		if isStateGrant(t) {
+			continue // see the doc comment: fail closed until the write path is face-aware
+		}
 		if t == "*" || t == target {
 			return true
 		}
@@ -681,6 +724,17 @@ func (p *Policy) normalizeAssertedRoles() {
 // on-demand `rela acl audit` linter — see internal/aclaudit and
 // TKT-TS0J5K — which can rank findings by severity and cross-check the
 // metamodel, neither of which fits a boot gate.
+//
+// ONE EXCEPTION, added by TKT-DN37J2: a policy that grants read on a
+// non-default world while leaving a self-promotion path open is REFUSED
+// here ([Policy.WorldGrantRefusalReason]). It is an escalation foot-gun,
+// so it looks like it belongs to the linter — but the linter is advisory
+// by construction and this is a shipping gate the content-states design
+// requires, docs/acl-security.md promises operators in writing, and
+// TKT-T31NKT made a hard acceptance criterion. It qualifies for the boot
+// gate on the terms the paragraph above sets out: it needs no metamodel
+// and no store, only the policy. The un-worlded case still warns and
+// boots, exactly as before.
 // validateUnmatchedPrincipal checks the unmatched_principal enum and its
 // dependency on the principal_property lookup. Extracted from [Policy.Validate]
 // to keep that function's cognitive complexity in bounds.
@@ -713,6 +767,15 @@ func (p *Policy) validateUnmatchedPrincipal() error {
 func (p *Policy) Validate() error {
 	p.normalizeAssertedRoles()
 	p.normalizeClientAttenuation()
+	// Runs before every check below, because those checks read the grant
+	// lists and must see them in their split form: Read holding only
+	// entity types, Worlds holding the world names.
+	if err := p.normalizeWorldGrants(); err != nil {
+		return err
+	}
+	if err := p.validateStateGrants(); err != nil {
+		return err
+	}
 
 	if err := p.validateUnmatchedPrincipal(); err != nil {
 		return err
@@ -756,6 +819,30 @@ func (p *Policy) Validate() error {
 					"it already applies to every principal", claim, EveryoneRole)
 		}
 	}
+	if err := p.validateWriteReadCoverage(); err != nil {
+		return err
+	}
+
+	// The membership-gate refusal is the LAST check, so a policy that is
+	// structurally broken fails on that first — a refusal naming an
+	// escalation path is confusing advice for a policy that does not parse.
+	//
+	// This is a deliberate, narrow exception to the "Validate is a pure
+	// structural gate" contract stated above. It earns the exception by
+	// being a security invariant expressible in policy alone (no metamodel,
+	// no store), and by firing only for policies that grant read on a
+	// non-default world — see [Policy.WorldGrantRefusalReason].
+	if reason := p.WorldGrantRefusalReason(); reason != "" {
+		return fmt.Errorf("refusing to load: %s", reason)
+	}
+	return nil
+}
+
+// validateWriteReadCoverage enforces the write⊆read invariant (TKT-4LQMWP):
+// Update and Delete require read coverage of the type, Create is exempt.
+// Extracted from [Policy.Validate] to keep that function's cognitive
+// complexity in bounds, the same way validateUnmatchedPrincipal was.
+func (p *Policy) validateWriteReadCoverage() error {
 	for name, role := range p.Roles {
 		// Update and Delete require read coverage: you must be able to read a
 		// type to modify or remove it (TKT-4LQMWP, was the write⊆read invariant
@@ -766,9 +853,17 @@ func (p *Policy) Validate() error {
 			types []string
 		}{{"update", role.Update}, {"delete", role.Delete}} {
 			for _, t := range verb.types {
-				if !roleGrantsRead(role, t) {
-					hint := fmt.Sprintf("add %q (or \"*\")", t)
-					if t == "*" {
+				// Compare on the TYPE half. A state-shaped grant
+				// (`update: ["policy@draft"]`) still requires read coverage
+				// of `policy` — the pointer narrows WHICH FACE is writable,
+				// not which type — so checking the joined string would
+				// reject every state grant with a hint telling the operator
+				// to add "policy@draft" to their read list, which is not a
+				// thing a read list can hold.
+				target := grantTypeOf(t)
+				if !roleGrantsRead(role, target) {
+					hint := fmt.Sprintf("add %q (or \"*\")", target)
+					if target == "*" {
 						hint = `add "*"`
 					}
 					return fmt.Errorf(
@@ -780,6 +875,7 @@ func (p *Policy) Validate() error {
 			}
 		}
 	}
+
 	return nil
 }
 
