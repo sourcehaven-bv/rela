@@ -97,6 +97,37 @@ function setup(opts: DragSetup) {
   return wrapper
 }
 
+/** The day cell showing `dayNumber` that holds events (a month grid can show
+ * the same number twice, once as a spill day from an adjacent month). */
+function dayCell(wrapper: ReturnType<typeof mount>, dayNumber: string, needsChip = false) {
+  return wrapper
+    .findAll('.calendar-day')
+    .find(
+      (c) =>
+        c.find('.calendar-day-number').text() === dayNumber &&
+        (!needsChip || c.find('.calendar-chip').exists())
+    )
+}
+
+/** Grab the chip rendered in `fromDay` and drop it on `toDay`. Which segment of
+ * a span you grab is the point of these tests, so it is explicit. */
+async function dragChipFromTo(
+  wrapper: ReturnType<typeof mount>,
+  fromDay: string,
+  toDay: string
+) {
+  const source = dayCell(wrapper, fromDay, true)
+  expect(source, `no chip in day ${fromDay}`).toBeDefined()
+  await source!
+    .find('.calendar-chip')
+    .trigger('dragstart', { dataTransfer: { setData: vi.fn(), effectAllowed: '' } })
+
+  const target = dayCell(wrapper, toDay)
+  expect(target, `no cell for day ${toDay}`).toBeDefined()
+  await target!.trigger('drop', { dataTransfer: { getData: () => '' } })
+  await flushPromises()
+}
+
 /** Drag the first chip onto the cell showing `dayNumber`. */
 async function dragFirstChipTo(wrapper: ReturnType<typeof mount>, dayNumber: string) {
   const chip = wrapper.find('.calendar-chip')
@@ -295,4 +326,85 @@ describe('drag failure handling', () => {
   // than sending a patch built from a value it could not read. Reproducing
   // that through a mounted component would mean reaching into <script setup>
   // internals, which tests nothing extra and breaks on any refactor.
+})
+
+/**
+ * Dragging a multi-day event is relative to the SEGMENT you grabbed.
+ *
+ * A spanning event is drawn once per day it covers. Measuring the delta from
+ * the event's start instead of the grabbed day made the gesture jump: grabbing
+ * day 3 of an 11-15 event and moving it one day right landed it on 14-18
+ * rather than 12-16, because "move the start to the drop day" is a three-day
+ * shift when you grabbed the third day.
+ */
+describe('multi-day drag', () => {
+  function spanningTask() {
+    return setup({
+      source: { entity: 'task', date: 'due', end_date: 'due_end', summary: 'title', max_span: 31 },
+      entities: [
+        {
+          id: 'T-1',
+          type: 'task',
+          properties: { title: 'Conference', due: '2026-08-11', due_end: '2026-08-15' },
+          relations: {},
+        },
+      ],
+    })
+  }
+
+  it('shifts by the offset when a middle segment is dragged', async () => {
+    const wrapper = spanningTask()
+    await flushPromises()
+
+    // Grab the 13th (the third day) and drop on the 14th: one day right.
+    await dragChipFromTo(wrapper, '13', '14')
+
+    expect(updateEntityMock).toHaveBeenCalledTimes(1)
+    const patch = updateEntityMock.mock.calls[0][2]
+    expect(patch.properties).toEqual({ due: '2026-08-12', due_end: '2026-08-16' })
+  })
+
+  it('shifts by the offset when the last segment is dragged', async () => {
+    const wrapper = spanningTask()
+    await flushPromises()
+
+    // Grab the 15th (the end) and drop on the 18th: three days right.
+    await dragChipFromTo(wrapper, '15', '18')
+
+    const patch = updateEntityMock.mock.calls[0][2]
+    expect(patch.properties).toEqual({ due: '2026-08-14', due_end: '2026-08-18' })
+  })
+
+  it('still moves the start when the first segment is dragged', async () => {
+    const wrapper = spanningTask()
+    await flushPromises()
+
+    await dragChipFromTo(wrapper, '11', '12')
+
+    const patch = updateEntityMock.mock.calls[0][2]
+    expect(patch.properties).toEqual({ due: '2026-08-12', due_end: '2026-08-16' })
+  })
+
+  it('does not write when a segment is dropped on its own day', async () => {
+    const wrapper = spanningTask()
+    await flushPromises()
+
+    await dragChipFromTo(wrapper, '13', '13')
+
+    expect(updateEntityMock).not.toHaveBeenCalled()
+  })
+
+  it('marks every day of a dragged span as in flight, not just the grabbed one', async () => {
+    const wrapper = spanningTask()
+    await flushPromises()
+
+    const source = dayCell(wrapper, '13', true)
+    await source!
+      .find('.calendar-chip')
+      .trigger('dragstart', { dataTransfer: { setData: vi.fn(), effectAllowed: '' } })
+
+    // All five days of the span lift together, so the user can see what they
+    // picked up rather than only the segment under the cursor.
+    expect(wrapper.findAll('.calendar-chip--dragging')).toHaveLength(5)
+  })
 })

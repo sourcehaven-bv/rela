@@ -16,6 +16,9 @@ import { compareDays, sameDay, type CalendarDay } from '@/utils/calendarGrid'
 
 const props = defineProps<{
   event: CalendarEvent
+  /** True while any segment of THIS event is being dragged, so every day of a
+   * span lifts together and the user can see what they picked up. */
+  dragging?: boolean
   /** The grid day this chip is being rendered in. A multi-day event renders
    * once per day it spans, and the chip has to know WHICH day to show the
    * right continuation marker. */
@@ -69,7 +72,9 @@ const spanDescription = computed(() => {
 
 defineEmits<{
   (e: 'open', event: CalendarEvent): void
-  (e: 'dragstart', payload: { event: CalendarEvent; native: DragEvent }): void
+  // The grabbed DAY travels with the event: a multi-day event is drawn once
+  // per day it covers, and a drag is relative to the segment you took hold of.
+  (e: 'dragstart', payload: { event: CalendarEvent; day: CalendarDay; native: DragEvent }): void
   (e: 'dragend'): void
 }>()
 </script>
@@ -78,11 +83,14 @@ defineEmits<{
   <button
     type="button"
     class="calendar-chip"
-    :class="[`calendar-chip--${event.color}`, { 'calendar-chip--timed': event.timed }]"
+    :class="[
+      `calendar-chip--${event.color}`,
+      { 'calendar-chip--timed': event.timed, 'calendar-chip--dragging': dragging },
+    ]"
     :draggable="draggable ? 'true' : 'false'"
     :title="event.summary"
     @click="$emit('open', event)"
-    @dragstart="$emit('dragstart', { event, native: $event })"
+    @dragstart="$emit('dragstart', { event, day, native: $event })"
     @dragend="$emit('dragend')"
   >
     <span class="calendar-chip-headline">
@@ -128,6 +136,15 @@ defineEmits<{
 
 .calendar-chip[draggable='true'] {
   cursor: grab;
+}
+
+/* Every segment of a dragged span lifts, not just the one under the cursor —
+   otherwise picking up the middle of a five-day event gives no indication that
+   the other four days are coming with it. */
+.calendar-chip--dragging {
+  opacity: 0.55;
+  outline: 1px dashed var(--calendar-chip-accent, var(--accent-color));
+  outline-offset: 1px;
 }
 
 .calendar-chip-title {

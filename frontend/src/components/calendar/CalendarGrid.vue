@@ -23,12 +23,15 @@ defineProps<{
   /** How many further events the cap is hiding for a day. */
   hiddenCount: (day: CalendarDay) => number
   canUpdate: (entity: Entity) => boolean
+  /** Id of the event currently being dragged, so every day of a span can
+   * show that it is in flight. */
+  draggingId?: string
 }>()
 
 defineEmits<{
   (e: 'expand', day: CalendarDay): void
   (e: 'open', event: CalendarEvent): void
-  (e: 'dragstart', payload: { event: CalendarEvent; native: DragEvent }): void
+  (e: 'dragstart', payload: { event: CalendarEvent; day: CalendarDay; native: DragEvent }): void
   (e: 'dragend'): void
   (e: 'dragover', native: DragEvent): void
   (e: 'drop', native: DragEvent, day: CalendarDay): void
@@ -59,6 +62,7 @@ defineEmits<{
             :key="ev.id"
             :event="ev"
             :day="day"
+            :dragging="ev.id === draggingId"
             :draggable="canUpdate(ev.entity)"
             @open="(e) => $emit('open', e)"
             @dragstart="(p) => $emit('dragstart', p)"

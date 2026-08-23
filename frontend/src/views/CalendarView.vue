@@ -437,7 +437,16 @@ function canCreate(): boolean {
 
 // --- Drag to reschedule ---
 
-const dragged = ref<CalendarEvent | null>(null)
+/**
+ * The event being dragged, and the day the drag STARTED from.
+ *
+ * The grabbed day matters for a multi-day event: it is drawn once per day it
+ * covers, so grabbing its middle segment and dropping one day later means
+ * "shift by one", not "move the start here". Measuring from the event's start
+ * instead made that gesture jump by the offset — grabbing day 3 of an 11-15
+ * event and moving it one day landed it on 14-18 rather than 12-16.
+ */
+const dragged = ref<{ event: CalendarEvent; from: CalendarDay } | null>(null)
 
 const { mutate: reschedule } = useMutation({
   mutation: ({ event, updates }: { event: CalendarEvent; updates: Record<string, string> }) =>
@@ -464,8 +473,8 @@ const { mutate: reschedule } = useMutation({
   },
 })
 
-function onDragStart(payload: { event: CalendarEvent; native: DragEvent }) {
-  dragged.value = payload.event
+function onDragStart(payload: { event: CalendarEvent; day: CalendarDay; native: DragEvent }) {
+  dragged.value = { event: payload.event, from: payload.day }
   if (payload.native.dataTransfer) {
     payload.native.dataTransfer.effectAllowed = 'move'
     payload.native.dataTransfer.setData('text/plain', payload.event.entity.id)
@@ -479,15 +488,18 @@ function onDragOver(e: DragEvent) {
 
 function onDrop(e: DragEvent, day: CalendarDay) {
   e.preventDefault()
-  const ev = dragged.value
+  const held = dragged.value
   dragged.value = null
-  if (!ev) return
+  if (!held) return
+  const ev = held.event
 
   // Defence in depth: :draggable="false" stops a drag starting here, but an
   // external drag source can still fire this handler.
   if (!canUpdate(ev.entity)) return
 
-  const delta = daysBetween(ev.startDay, day)
+  // Measured from the day the user GRABBED, not the event's start: dragging
+  // the middle of a span one day right means "shift by one day".
+  const delta = daysBetween(held.from, day)
   if (delta === 0) return
 
   const nextStart = applyDayDelta(
@@ -606,6 +618,7 @@ function onDragEnd() {
       :events-for-day="visibleEventsForDay"
       :hidden-count="hiddenCount"
       :can-update="canUpdate"
+      :dragging-id="dragged?.event.id"
       @expand="expandDay"
       @open="openEvent"
       @dragstart="onDragStart"

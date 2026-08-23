@@ -2596,6 +2596,10 @@ worth knowing:
   the wall clock does not.
 - **`end_date` moves with `date`.** Both shift by the same whole-day delta in a
   single write, so a three-day event stays three days long.
+- **A multi-day event moves relative to the segment you grabbed.** Dragging the
+  middle day of an 11–15 event one day right shifts it to 12–16, not "start
+  moves to the drop day". Every day of the span highlights while you drag, so
+  it is clear the whole event is coming with you.
 
 A user without update permission on an entity cannot drag it.
 
