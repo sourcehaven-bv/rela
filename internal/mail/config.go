@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Sourcehaven-BV/rela/internal/secrets"
 )
 
 // ConfigFile is the name of the mail config file inside .rela/.
@@ -39,11 +41,22 @@ var ErrConfigNotFound = errors.New("mail: not configured (no .rela/mail.yaml)")
 
 // Config is the on-disk mail configuration.
 //
-// The credential is deliberately absent. PasswordVar names an environment
-// variable read at SEND time; the password itself never appears in this file,
-// never on a command line, and never in a log. That is the same invariant
-// RELA_DATABASE_URL carries — a secret must not reach `ps` output or shell
-// history — and Validate enforces the file half of it.
+// The credential is deliberately absent from THIS file. It comes from one of
+// two places, checked in order at SEND time:
+//
+//  1. `.rela/secrets.yaml` under the key `smtp_password` — the same store Lua
+//     scripts read, and the natural home for it: an SMTP password is no
+//     different in kind from the API tokens already kept there.
+//  2. The environment variable named by `password_env`, if set.
+//
+// Either way the password never appears in mail.yaml, never on a command line,
+// and never in a log — the invariant RELA_DATABASE_URL carries, because a
+// secret must not reach `ps` output or shell history.
+//
+// secrets.yaml first, because that is where an operator will look. password_env
+// stays for deployments that inject credentials as environment variables
+// (containers, systemd units) and would otherwise have to materialize a
+// plaintext file at deploy time.
 type Config struct {
 	// Transport selects the delivery mechanism. Required.
 	Transport Transport `yaml:"transport"`
@@ -58,19 +71,17 @@ type Config struct {
 	// may accept unauthenticated submission.
 	Username string `yaml:"username"`
 
-	// PasswordVar names the environment variable holding the SMTP password.
+	// PasswordVar names an environment variable holding the SMTP password.
+	// OPTIONAL — `.rela/secrets.yaml` is checked first; see the type doc.
 	//
-	// It holds a VARIABLE NAME, never a secret — which is also why it is not
+	// It holds a VARIABLE NAME, never a secret, which is also why it is not
 	// called PasswordEnv: static analysis treats any field whose name reads
-	// like a credential as a taint source, and flagged the (correct) value
+	// like a credential as a taint source, and flagged the (harmless) value
 	// flowing into error logs. Naming it for what it is keeps the analysis
-	// honest instead of requiring a suppression that would also hide a real
-	// leak later.
+	// honest rather than needing a suppression that would hide a real leak
+	// later.
 	//
 	// The YAML key stays `password_env`: that is the operator-facing contract.
-	//
-	// Resolved at send time, so commands that never send mail start fine with
-	// the variable unset.
 	PasswordVar string `yaml:"password_env"`
 
 	// From is the envelope and header sender. Required.
@@ -85,6 +96,11 @@ type Config struct {
 	// BaseURL is the public app URL used to resolve relative links in mail.
 	// Mail is read outside the app, so a relative link is dead without it.
 	BaseURL string `yaml:"base_url"`
+
+	// relaDir is the .rela directory this config was loaded from, used to find
+	// secrets.yaml at send time. Set by LoadConfig; unexported so it cannot be
+	// supplied from YAML.
+	relaDir string `yaml:"-"`
 
 	// Password is REJECTED by Validate. It exists as a field only so that
 	// writing it produces a clear error naming password_env, rather than
@@ -132,6 +148,7 @@ func LoadConfig(relaDir string) (*Config, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid %s: %w", path, err)
 	}
+	cfg.relaDir = relaDir
 	return &cfg, nil
 }
 
@@ -165,10 +182,6 @@ func (c *Config) Validate() error {
 		if c.Port < 0 || c.Port > 65535 {
 			return fmt.Errorf("port %d out of range", c.Port)
 		}
-		if c.Username != "" && c.PasswordVar == "" {
-			return errors.New("password_env is required when username is set " +
-				"(omit username for a relay that accepts unauthenticated submission)")
-		}
 		return c.validateCommon()
 	case "":
 		return errors.New("transport is required (smtp or memory)")
@@ -197,14 +210,24 @@ func (c *Config) validateCommon() error {
 	return nil
 }
 
-// hasPassword reports whether the configured password environment variable
-// holds a value.
+// WithRelaDir points a programmatically-built Config at a .rela directory so it
+// can find secrets.yaml. LoadConfig sets this automatically; callers that
+// construct a Config in code (tests, and any future wiring) set it explicitly.
+func (c *Config) WithRelaDir(dir string) *Config {
+	c.relaDir = dir
+	return c
+}
+
+// SecretKey is the key read from .rela/secrets.yaml.
+const SecretKey = "smtp_password"
+
+// hasPassword reports whether a password is available from either source.
 //
 // Separate from resolvePassword so a caller can check for the misconfiguration
 // without the plaintext entering its scope — which is what keeps the credential
 // confined to SMTPSender.dial.
 func (c *Config) hasPassword() bool {
-	return c.PasswordVar != "" && os.Getenv(c.PasswordVar) != ""
+	return c.resolvePassword() != ""
 }
 
 // resolvePassword reads the configured password environment variable.
@@ -213,6 +236,13 @@ func (c *Config) hasPassword() bool {
 // cleanly with the variable unset, and the value must not sit in memory for the
 // lifetime of a command that has no use for it.
 func (c *Config) resolvePassword() string {
+	// secrets.yaml first: it is where an operator keeps every other credential,
+	// so it is where they will look for this one.
+	if sec, err := secrets.Load(c.relaDir, ""); err == nil {
+		if v := sec[SecretKey]; v != "" {
+			return v
+		}
+	}
 	if c.PasswordVar == "" {
 		return ""
 	}

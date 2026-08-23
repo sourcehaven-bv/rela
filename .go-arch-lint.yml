@@ -590,6 +590,11 @@ deps:
   mail:
     mayDependOn:
       - mailrender
+      # The SMTP password lives in .rela/secrets.yaml under smtp_password, the
+      # same store Lua scripts read: an SMTP credential is no different in kind
+      # from the API tokens already kept there, and TKT-DS1CR6 makes mail a
+      # script consumer anyway.
+      - secrets
     canUse:
       - gomail
   acl:

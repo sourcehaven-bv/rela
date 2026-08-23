@@ -155,6 +155,13 @@
   value interpolated into CSS — palette tokens included — must be allowlisted).
   Reversing either is a silent downgrade, not a build failure.
 
+  The SMTP password lives in **`.rela/secrets.yaml`** under `smtp_password` —
+  the same store Lua scripts read, because an SMTP credential is no different
+  in kind from the API tokens already kept there. `password_env` in
+  `.rela/mail.yaml` names an environment variable as a fallback for
+  container/systemd deployments; secrets.yaml wins when both are set. Never a
+  literal `password:` in mail.yaml — that is refused at load.
+
   Header-injection validation is **rela's**, not the SMTP library's: go-mail
   rejects CR/LF in addresses but accepts it in a subject, where it is
   neutralized only incidentally by encoded-word escaping. `internal/mail`

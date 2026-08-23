@@ -82,6 +82,9 @@ table { border-collapse:collapse; }
 .tbl { width:100%; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif; font-size:14px; color:{{.C.text}}; }
 .th { text-align:left; padding:8px 10px; border-bottom:2px solid {{.C.border}}; font-weight:600; color:{{.C.muted}}; font-size:12px; text-transform:uppercase; letter-spacing:0.03em; }
 .td { padding:8px 10px; border-bottom:1px solid {{.C.border}}; vertical-align:top; }
+.pad table { width:100%; font-size:14px; margin:0 0 12px 0; }
+.pad th { text-align:left; padding:8px 10px; border-bottom:2px solid {{.C.border}}; font-weight:600; color:{{.C.muted}}; font-size:12px; text-transform:uppercase; letter-spacing:0.03em; }
+.pad td { padding:8px 10px; border-bottom:1px solid {{.C.border}}; vertical-align:top; }
 .foot { padding:16px 24px 24px 24px; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif; font-size:12px; line-height:1.5; color:{{.C.muted}}; }
 .foot a { color:{{.C.muted}}; }
 .logo { display:block; border:0; outline:none; text-decoration:none; max-height:32px; }

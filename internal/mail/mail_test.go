@@ -164,9 +164,11 @@ func TestLoadConfig(t *testing.T) {
 			wantErr: "out of range",
 		},
 		{
-			name:    "username without password_env",
-			yaml:    "transport: smtp\nhost: h\nfrom: f@e.com\nusername: relay\n",
-			wantErr: "password_env is required",
+			// Valid now: .rela/secrets.yaml may supply smtp_password, so a
+			// username without password_env is a normal configuration rather
+			// than an error.
+			name: "username without password_env",
+			yaml: "transport: smtp\nhost: h\nfrom: f@e.com\nusername: relay\n",
 		},
 		{
 			name:    "negative timeout",
@@ -839,4 +841,73 @@ func TestOutbox_ConcurrentEnqueue(t *testing.T) {
 
 	require.Eventually(t, func() bool { return s.Count() == 32 },
 		10*time.Second, 10*time.Millisecond)
+}
+
+// --- credential sources ------------------------------------------------------
+
+// TestConfig_PasswordFromSecretsYAML covers the primary source: the SMTP
+// password lives beside every other credential an operator keeps, rather than
+// in a mechanism unique to mail.
+func TestConfig_PasswordFromSecretsYAML(t *testing.T) {
+	// No t.Parallel: t.Setenv below.
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "secrets.yaml"),
+		[]byte("smtp_password: from-secrets-file\nother_key: unrelated\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, mail.ConfigFile),
+		[]byte("transport: smtp\nhost: h\nfrom: f@e.com\nusername: relay\n"), 0o600))
+
+	cfg, err := mail.LoadConfig(dir)
+	require.NoError(t, err)
+
+	// A username with no password_env is now valid: secrets.yaml supplies it.
+	sender, err := mail.NewSMTPSender(cfg)
+	require.NoError(t, err)
+	require.NotNil(t, sender)
+
+	t.Setenv("RELA_TEST_UNUSED", "from-env")
+	require.Equal(t, "from-secrets-file", mail.ExportResolvePassword(cfg),
+		"secrets.yaml is the primary source")
+}
+
+// TestConfig_PasswordEnvFallback covers the deployment path: containers and
+// systemd units inject credentials as environment variables and would otherwise
+// have to write a plaintext file.
+func TestConfig_PasswordEnvFallback(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, mail.ConfigFile),
+		[]byte("transport: smtp\nhost: h\nfrom: f@e.com\nusername: relay\npassword_env: RELA_TEST_FALLBACK\n"), 0o600))
+	t.Setenv("RELA_TEST_FALLBACK", "from-environment")
+
+	cfg, err := mail.LoadConfig(dir)
+	require.NoError(t, err)
+	require.Equal(t, "from-environment", mail.ExportResolvePassword(cfg),
+		"password_env is used when secrets.yaml has no smtp_password")
+}
+
+// TestConfig_SecretsYAMLWinsOverEnv pins the documented precedence.
+func TestConfig_SecretsYAMLWinsOverEnv(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "secrets.yaml"),
+		[]byte("smtp_password: from-secrets-file\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, mail.ConfigFile),
+		[]byte("transport: smtp\nhost: h\nfrom: f@e.com\nusername: relay\npassword_env: RELA_TEST_LOSER\n"), 0o600))
+	t.Setenv("RELA_TEST_LOSER", "from-environment")
+
+	cfg, err := mail.LoadConfig(dir)
+	require.NoError(t, err)
+	require.Equal(t, "from-secrets-file", mail.ExportResolvePassword(cfg))
+}
+
+// TestConfig_NoPasswordAnywhere pins that neither source configured is an
+// empty password, not a panic or a partial value.
+func TestConfig_NoPasswordAnywhere(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, mail.ConfigFile),
+		[]byte("transport: smtp\nhost: h\nfrom: f@e.com\n"), 0o600))
+
+	cfg, err := mail.LoadConfig(dir)
+	require.NoError(t, err)
+	require.Empty(t, mail.ExportResolvePassword(cfg))
 }

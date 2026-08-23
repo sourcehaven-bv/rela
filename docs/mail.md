@@ -18,16 +18,15 @@ transport: smtp
 host: smtp.example.com
 port: 587
 username: relay@example.com
-password_env: RELA_SMTP_PASSWORD
 from: rela@example.com
 from_name: "Rela"
 base_url: https://rela.example.com
 ```
 
-Then set the password in the environment:
+Then put the password in `.rela/secrets.yaml`:
 
-```bash
-export RELA_SMTP_PASSWORD='...'
+```yaml
+smtp_password: your-smtp-password
 ```
 
 If `.rela/mail.yaml` does not exist, mail is simply off. Every other command works
@@ -41,22 +40,42 @@ exactly as before — an absent config is a normal state, not an error.
 | `host` | for smtp | SMTP server hostname. A bare hostname, not a URL |
 | `port` | no | Defaults to `587` |
 | `username` | no | Omit for a relay that accepts unauthenticated submission |
-| `password_env` | no | **Name of an environment variable**, never the password |
+| `password_env` | no | **Name of an environment variable** holding the password. Optional — see below |
 | `from` | yes | Envelope and header sender |
 | `from_name` | no | Display name for the sender |
 | `timeout_seconds` | no | Per-send timeout. Defaults to `30` |
 | `base_url` | no | Public app URL, used to resolve links in mail |
 
-### The password is never in the config file
+### The password lives with your other secrets
 
-`password_env` names an environment variable; the value is read when a message is
-sent. Writing a literal `password:` key is refused at load with an error telling you
-to use `password_env` instead.
+Put it in `.rela/secrets.yaml`, alongside every other credential rela uses:
 
-This is the same rule that keeps the database DSN env-only: a secret must never reach
-a command line, where it would land in `ps` output and shell history. `.rela/` is
-gitignored by convention, but a config file is still something people paste into bug
-reports.
+```yaml
+# .rela/secrets.yaml
+smtp_password: your-smtp-password
+jira_api_key: sk-abc123
+```
+
+That is the same file Lua scripts read. An SMTP password is no different in kind
+from an API token, so it goes in the same place rather than in a mechanism unique
+to mail.
+
+**Or use an environment variable.** If your deployment injects credentials as
+environment variables — containers, systemd units — name the variable instead:
+
+```yaml
+# .rela/mail.yaml
+password_env: RELA_SMTP_PASSWORD
+```
+
+`secrets.yaml` takes precedence when both are present.
+
+Either way, **the password never goes in `mail.yaml`**. Writing a literal
+`password:` key there is refused at load with an error pointing you at the
+alternatives. This is the rule that keeps the database DSN env-only too: a
+secret must never reach a command line, where it lands in `ps` output and shell
+history. `.rela/` is gitignored by convention, but a config file is still
+something people paste into bug reports.
 
 ### TLS is mandatory
 

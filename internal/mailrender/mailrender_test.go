@@ -211,6 +211,37 @@ func TestRender_KeepsInlineStyles(t *testing.T) {
 	require.Contains(t, strings.ToLower(html), "#4772fb")
 }
 
+// TestRender_StylesMarkdownTables covers a defect found only by LOOKING at the
+// rendered mail: a GFM table written in prose emits bare <th>/<td> with no
+// class, so the .th/.td rules never matched it and it arrived unpadded and
+// collapsed — "col acol b" with the headers run together.
+//
+// Byte-level assertions all passed; the table was present and correct in
+// structure. Only the visual check caught it.
+func TestRender_StylesMarkdownTables(t *testing.T) {
+	t.Parallel()
+
+	r := newRenderer(t, &mailrender.Options{})
+	html, _ := render(t, r, &mailrender.Message{
+		Subject:  "S",
+		Sections: []mailrender.Section{{Body: "| col a | col b |\n|---|---|\n| 1 | 2 |"}},
+	})
+
+	// Every cell in a prose table carries padding, so headers cannot run
+	// together.
+	for _, frag := range []string{"<th style=", "<td style="} {
+		require.Contains(t, html, frag, "markdown table cells must be styled")
+	}
+	// Assert on the table itself. A bare "<td>" also appears inside the mso
+	// conditional comment, which is a literal string rather than a rendered
+	// cell, so a document-wide check would fail for the wrong reason.
+	idx := strings.Index(html, "<thead>")
+	require.GreaterOrEqual(t, idx, 0, "no table rendered at all")
+	body := html[idx:]
+	require.NotContains(t, body, "<th>", "an unstyled header cell means the rules did not match")
+	require.NotContains(t, body, "<td>", "an unstyled data cell means the rules did not match")
+}
+
 // TestRender_PreservesMSOConditionals covers AC 6b. Outlook's fallbacks live in
 // conditional comments, which a sanitizer would drop and which the inliner must
 // leave alone.
