@@ -619,7 +619,13 @@ type VersionSnapshot struct {
 // deduped into the backend's schema store), and attribution. PrevID is set only
 // for VersionOpRename.
 type VersionInput struct {
-	EntityID      string
+	EntityID string
+
+	// Pointer names the CONTENT STATE this snapshot captures; zero is the
+	// default face (TKT-C1XUA8). It participates in the content hash, so two
+	// faces holding identical bytes do not dedup against one another.
+	Pointer entity.Pointer
+
 	Op            VersionOp
 	PrevID        string
 	Type          string
@@ -711,6 +717,34 @@ type HistoryReader interface {
 	GetVersion(ctx context.Context, id string, version int) (*VersionSnapshot, error)
 }
 
+// StateHistoryReader reads the history of ONE CONTENT STATE (face) of an
+// entity, rather than the default face [HistoryReader] serves (TKT-C1XUA8).
+//
+// A separate optional capability rather than a pointer parameter on
+// HistoryReader, deliberately. Every existing consumer — the data-entry
+// history route, restore, the CLI — asks about the default face, and
+// widening the two HistoryReader signatures would touch all of them plus
+// three hand-written test stubs to say something they already say. The
+// zero-pointer call IS HistoryReader, so the two are the same query with a
+// different face.
+//
+// Type-asserted like [Formatter] and the other optional store capabilities:
+// fs/mem return nothing, pgstore implements it.
+//
+// NOTE for read-path callers: a face's history is as sensitive as the face,
+// and the pointer is caller-supplied. A surface that lets a principal name a
+// face must authorize that face — the world read grant (TKT-DN37J2), not
+// merely the entity's read verdict. The store does not and cannot check it.
+type StateHistoryReader interface {
+	// ListStateVersions is [HistoryReader.ListVersions] for one face.
+	ListStateVersions(ctx context.Context, id string, p entity.Pointer) ([]VersionMeta, error)
+
+	// GetStateVersion is [HistoryReader.GetVersion] for one face.
+	GetStateVersion(
+		ctx context.Context, id string, p entity.Pointer, version int,
+	) (*VersionSnapshot, error)
+}
+
 // --- Relation versioning (TKT-92JL8P) ---
 //
 // Relation versioning mirrors entity versioning but is a SEPARATE optional
@@ -792,7 +826,14 @@ type RelationHistoryQuery struct {
 // arrives here, populated from ctx at the boundary — the store learns the
 // Principal by no other route.
 type RelationVersionInput struct {
-	RecordID      int64
+	RecordID int64
+
+	// FromPointer is the state-specific TAIL of the versioned edge; zero is
+	// the default tail (TKT-C1XUA8). Lineages were already fenced by
+	// RecordID; this is what lets the rename stitch tell a state-tailed
+	// predecessor from a default-tail one holding the same triple.
+	FromPointer entity.Pointer
+
 	Op            VersionOp
 	From          string
 	Type          string
@@ -879,7 +920,14 @@ type PurgeSelector struct {
 // returns the target rows WITHOUT deleting. Attribution arrives here from ctx at
 // the boundary — the store never learns the principal by another route.
 type VersionPurgeRequest struct {
-	EntityID      string
+	EntityID string
+
+	// Pointer names the FACE whose history is purged; zero is the default
+	// face (TKT-C1XUA8). Purge is scoped to one face: each face has its own
+	// fenced lineage, and erasing a sibling's history because it shares
+	// bytes would destroy records the operator did not ask about.
+	Pointer entity.Pointer
+
 	Selector      PurgeSelector
 	Reason        string
 	ForceLive     bool

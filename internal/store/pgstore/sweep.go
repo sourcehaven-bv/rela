@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -244,7 +245,10 @@ func (s *sweep) tick(ctx context.Context) error {
 // row's last_edited_by_* columns (nil = no recorded editor) so the captured
 // version is attributed to the real author (TKT-ZIRMGM).
 type sweepCandidate struct {
-	id         string
+	id string
+	// pointer is the face this candidate row is; zero = the default face.
+	// It keys the version alongside the id (TKT-C1XUA8).
+	pointer    string
 	typ        string
 	content    string
 	props      []byte
@@ -276,35 +280,42 @@ func (s *sweep) selectCandidates(ctx context.Context, conn *pgxpool.Conn) ([]swe
 	//     against. Deduping against a pre-delete version would wrongly skip
 	//     re-creating an entity with identical bytes, leaving its timeline
 	//     ending in `delete` while it is live.
-	// e.pointer = '' — DELIBERATE SKIP (2026-08-20, TKT-DOFYR1):
-	// content versioning captures the DEFAULT world only. entity_versions
-	// keys (entity_id, vseq), so sweeping a state row would interleave a
-	// family's faces in ONE lineage — actively corrupt history that
-	// purge would then have to fence — and capturing now would freeze
-	// per-state purge rules, rename stitching, and history addressing
-	// before any consumer exists. Per-state history is designed WITH its
-	// consumer, the Step-4 copy kernel: TKT-C1XUA8 owns that design
-	// (same pattern as the Step-1 search-observer skip → Step 5).
+	// PER-STATE (TKT-C1XUA8): the Step-1 skip (`e.pointer = ''`) is gone —
+	// every face is swept, and entity_versions now keys
+	// (entity_id, pointer, vseq) so faces cannot interleave in one lineage.
+	//
+	// BOTH LATERALs and the delete-fence subselect are scoped
+	// `ev.pointer = e.pointer`, and that is the load-bearing detail rather
+	// than a tidiness one. Scoping only the outer row would leave the inner
+	// probes answering from ANY face: the published capture would dedup
+	// against the draft's identical content_hash and be silently dropped —
+	// a MISSING version, not a duplicate — and one face's delete would reset
+	// another face's lifecycle boundary.
+	//
+	// The content hash also folds in the pointer (contentHashOf), so two
+	// faces with byte-identical content hash differently. That is the
+	// structural half of the same guarantee; the SQL scoping is the other.
 	const q = `
-		SELECT e.id, e.type, e.content, e.properties,
+		SELECT e.id, e.pointer, e.type, e.content, e.properties,
 		       e.last_edited_by_user, e.last_edited_by_tool,
 		       lvc.content_hash,
 		       (lv.vseq IS NOT NULL AND lv.op <> 'delete') AS live_lineage
 		FROM entities e
 		LEFT JOIN LATERAL (
 		    SELECT vseq, op, created_at FROM entity_versions ev
-		    WHERE ev.entity_id = e.id ORDER BY ev.vseq DESC LIMIT 1
+		    WHERE ev.entity_id = e.id AND ev.pointer = e.pointer
+		    ORDER BY ev.vseq DESC LIMIT 1
 		) lv ON true
 		LEFT JOIN LATERAL (
 		    SELECT content_hash FROM entity_versions ev
-		    WHERE ev.entity_id = e.id
+		    WHERE ev.entity_id = e.id AND ev.pointer = e.pointer
 		      AND ev.vseq > COALESCE(
 		          (SELECT max(vseq) FROM entity_versions d
-		           WHERE d.entity_id = e.id AND d.op = 'delete'), 0)
+		           WHERE d.entity_id = e.id AND d.pointer = e.pointer
+		             AND d.op = 'delete'), 0)
 		    ORDER BY ev.vseq DESC LIMIT 1
 		) lvc ON true
-		WHERE e.pointer = ''
-		  AND (e.updated_at < now() - make_interval(secs => $1)
+		WHERE (e.updated_at < now() - make_interval(secs => $1)
 		       OR (lv.vseq IS NOT NULL AND lv.created_at < now() - make_interval(secs => $2)))
 		ORDER BY e.updated_at ASC
 		LIMIT $3`
@@ -324,7 +335,7 @@ func (s *sweep) selectCandidates(ctx context.Context, conn *pgxpool.Conn) ([]swe
 			c          sweepCandidate
 			latestHash *string // NULL when there is no version in the current lifecycle
 		)
-		if err := rows.Scan(&c.id, &c.typ, &c.content, &c.props,
+		if err := rows.Scan(&c.id, &c.pointer, &c.typ, &c.content, &c.props,
 			&c.editorUser, &c.editorTool, &latestHash, &c.hasVersion); err != nil {
 			return nil, err
 		}
@@ -351,6 +362,7 @@ func (s *sweep) captureOne(
 	principalUser, principalTool := sweepAttribution(c.editorUser, c.editorTool)
 	in := store.VersionInput{
 		EntityID:      c.id,
+		Pointer:       entity.Pointer(c.pointer),
 		Type:          c.typ,
 		Content:       c.content,
 		Properties:    props,
@@ -396,16 +408,18 @@ func sweepAttribution(editorUser, editorTool *string) (user, tool string) {
 // of its latest existing version in that lineage (empty if none). editorUser/
 // editorTool mirror sweepCandidate's attribution columns.
 type relationSweepCandidate struct {
-	recordID   int64
-	from       string
-	relType    string
-	to         string
-	content    string
-	props      []byte
-	latestHash string
-	hasVersion bool
-	editorUser *string
-	editorTool *string
+	recordID int64
+	from     string
+	// fromPointer is the state-specific TAIL of the edge; zero = default.
+	fromPointer string
+	relType     string
+	to          string
+	content     string
+	props       []byte
+	latestHash  string
+	hasVersion  bool
+	editorUser  *string
+	editorTool  *string
 }
 
 // selectRelationCandidates returns up to Batch relations that have settled (or
@@ -421,15 +435,19 @@ type relationSweepCandidate struct {
 func (s *sweep) selectRelationCandidates(
 	ctx context.Context, conn *pgxpool.Conn,
 ) ([]relationSweepCandidate, error) {
-	// r.from_pointer = '' — DELIBERATE SKIP (2026-08-20, TKT-DOFYR1),
-	// symmetric with the entity scan above: state-tailed edges mint no
-	// relation versions in Step 1. Their rel_record_ids are distinct so
-	// lineages could not MERGE, but versioning edges whose entity faces
-	// have no history is an asymmetry nobody designed. TKT-C1XUA8 (the
-	// Step-4 copy kernel) owns per-state history, including the doc's
-	// copy-vs-sweep dedup check.
+	// PER-STATE (TKT-C1XUA8): the Step-1 skip (`r.from_pointer = ''`) is
+	// gone, symmetric with the entity scan above.
+	//
+	// This side needed less than the entity side: rel_record_id is minted
+	// per ROW and each tail is its own row since 0011, so lineages were
+	// already fenced per face and could not merge. What the tail is needed
+	// for is the rename STITCH, which matches a predecessor by the triple
+	// (prev_from, rel_type, prev_to) and cannot otherwise tell a
+	// state-tailed edge from a default-tail one — hence from_pointer on
+	// relation_versions and in the stitch's predicate.
 	const q = `
-		SELECT r.rel_record_id, r.from_id, r.rel_type, r.to_id, r.content, r.properties,
+		SELECT r.rel_record_id, r.from_id, r.from_pointer, r.rel_type, r.to_id,
+		       r.content, r.properties,
 		       r.last_edited_by_user, r.last_edited_by_tool,
 		       lv.content_hash,
 		       (lv.vseq IS NOT NULL) AS has_version
@@ -438,8 +456,7 @@ func (s *sweep) selectRelationCandidates(
 		    SELECT vseq, content_hash, created_at FROM relation_versions rv
 		    WHERE rv.rel_record_id = r.rel_record_id ORDER BY rv.vseq DESC LIMIT 1
 		) lv ON true
-		WHERE r.from_pointer = ''
-		  AND (r.updated_at < now() - make_interval(secs => $1)
+		WHERE (r.updated_at < now() - make_interval(secs => $1)
 		       OR (lv.vseq IS NOT NULL AND lv.created_at < now() - make_interval(secs => $2)))
 		ORDER BY r.updated_at ASC
 		LIMIT $3`
@@ -456,7 +473,7 @@ func (s *sweep) selectRelationCandidates(
 			c          relationSweepCandidate
 			latestHash *string // NULL when the lineage has no version yet
 		)
-		if err := rows.Scan(&c.recordID, &c.from, &c.relType, &c.to,
+		if err := rows.Scan(&c.recordID, &c.from, &c.fromPointer, &c.relType, &c.to,
 			&c.content, &c.props, &c.editorUser, &c.editorTool,
 			&latestHash, &c.hasVersion); err != nil {
 			return nil, err
@@ -482,6 +499,7 @@ func (s *sweep) captureRelation(
 	principalUser, principalTool := sweepAttribution(c.editorUser, c.editorTool)
 	in := store.RelationVersionInput{
 		RecordID:      c.recordID,
+		FromPointer:   entity.Pointer(c.fromPointer),
 		From:          c.from,
 		Type:          c.relType,
 		To:            c.to,

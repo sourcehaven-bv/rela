@@ -33,7 +33,10 @@ type VersionRecorder interface {
 // the rename predecessor id (rename only), attribution, and the render-schema
 // projection the snapshot was taken under.
 type VersionRecord struct {
-	EntityID      string
+	EntityID string
+	// Pointer is the content state (face) this record captures; zero is the
+	// default face (TKT-C1XUA8).
+	Pointer       entity.Pointer
 	Op            store.VersionOp
 	PrevID        string // rename only: the entity's former id
 	Type          string
@@ -55,15 +58,10 @@ func (m *Manager) recordEntityVersion(ctx context.Context, op store.VersionOp, e
 	if m.deps.VersionRecorder == nil {
 		return
 	}
-	// DELIBERATE SKIP (2026-08-20, TKT-DOFYR1): default-world versioning
-	// in Step 1 — entity_versions keys (entity_id, vseq), so a state
-	// capture would interleave the family's faces in one lineage. The
-	// manager only writes default states today; this is the defensive
-	// mirror of the sweep's pointer = '' scope. TKT-C1XUA8 (Step-4 copy
-	// kernel) owns per-state history.
-	if !e.Pointer.IsDefault() {
-		return
-	}
+	// PER-STATE (TKT-C1XUA8): the Step-1 skip is gone. entity_versions now
+	// keys (entity_id, pointer, vseq), so a state capture gets its own
+	// lineage instead of interleaving with the family's other faces, and
+	// the pointer travels on the record below.
 	proj := m.deps.Meta.RenderProjection()
 	projJSON, err := proj.JSON()
 	if err != nil {
@@ -74,6 +72,7 @@ func (m *Manager) recordEntityVersion(ctx context.Context, op store.VersionOp, e
 	p := principal.From(ctx)
 	rec := VersionRecord{
 		EntityID:      e.ID,
+		Pointer:       e.Pointer,
 		Op:            op,
 		PrevID:        prevID,
 		Type:          e.Type,
@@ -133,14 +132,21 @@ func (m *Manager) recordRelationVersion(
 	if m.deps.RelationVersionRecorder == nil {
 		return
 	}
-	// DELIBERATE SKIP (2026-08-20, TKT-DOFYR1): content versioning
-	// captures the DEFAULT world in Step 1; a state-tailed edge has its
-	// own rel_record_id and no history yet, and capturing it here would
-	// fail the default-tail record lookup and pre-commit per-state
-	// history's shape. One skip for every capture path (cascade delete,
-	// rename stitch, explicit delete); the entitymanager cannot write
-	// state-tailed edges today, so this is defensive against future
-	// direct callers. TKT-C1XUA8 (Step-4 copy kernel) owns the design.
+	// STILL SKIPPED, and now for a narrower reason (TKT-C1XUA8).
+	//
+	// TKT-C1XUA8 gave state-tailed edges their own history — the SWEEP
+	// captures them, because it reads rel_record_id straight off the row.
+	// This SYNCHRONOUS path cannot: the record it builds carries the
+	// (from, type, to) TRIPLE, and the store resolves that to a lineage via
+	// recordIDForKey, which answers with the DEFAULT tail by design (a key
+	// with no face names the default face). Capturing a state-tailed edge
+	// here would therefore file it under the default tail's lineage — the
+	// interleaving the whole per-state design exists to prevent.
+	//
+	// Lifting this needs the record to carry a rel_record_id (or a tail) so
+	// the store can address the right lineage. Until then the sync path —
+	// rename stitch and pre-delete capture — is default-tail only, and a
+	// state edge's delete is captured by the entity cascade instead.
 	if !r.FromPointer.IsDefault() {
 		return
 	}

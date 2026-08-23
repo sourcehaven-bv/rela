@@ -1398,6 +1398,7 @@ type versionRecorder struct {
 func (r versionRecorder) RecordVersion(ctx context.Context, v entitymanager.VersionRecord) error {
 	return r.w.WriteVersion(ctx, store.VersionInput{
 		EntityID:      v.EntityID,
+		Pointer:       v.Pointer,
 		Op:            v.Op,
 		PrevID:        v.PrevID,
 		Type:          v.Type,

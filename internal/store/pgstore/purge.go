@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -56,16 +57,17 @@ func (v *VersionStore) PurgeVersions(ctx context.Context, req store.VersionPurge
 	defer advisoryUnlock(context.WithoutCancel(ctx), conn, sweepAdvisoryLockKey)
 
 	// Resolve the target lineage ids (fenced) and the current live content hash.
-	ids, err := v.entityLineageIDsForPurge(ctx, conn, req.EntityID)
+	ids, err := v.entityLineageIDsForPurge(ctx, conn, req.EntityID, req.Pointer)
 	if err != nil {
 		return nil, err
 	}
-	liveHash, liveExists, err := v.liveEntityHash(ctx, conn, req.EntityID)
+	liveHash, liveExists, err := v.liveEntityHash(ctx, conn, req.EntityID, req.Pointer)
 	if err != nil {
 		return nil, err
 	}
 
-	targets, err := selectPurgeTargets(ctx, conn, entityPurgeQ, ids, req.Selector)
+	targets, err := selectPurgeTargets(ctx, conn, entityPurgeQ,
+		[]any{ids, string(req.Pointer)}, req.Selector)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +94,7 @@ func (v *VersionStore) PurgeVersions(ctx context.Context, req store.VersionPurge
 	// does not re-capture the live content (its content_hash = the live hash
 	// dedups against the sweep's lvc probe).
 	if liveExists && req.ForceLive {
-		if err := writeEntityPurgeTombstone(ctx, conn, req.EntityID, liveHash); err != nil {
+		if err := writeEntityPurgeTombstone(ctx, conn, req.EntityID, req.Pointer, liveHash); err != nil {
 			return nil, err
 		}
 		res.TombstoneWritten = true
@@ -144,7 +146,7 @@ func (v *VersionStore) PurgeRelationVersions(
 		return nil, err
 	}
 
-	targets, err := selectPurgeTargets(ctx, conn, relationPurgeQ, ids, req.Selector)
+	targets, err := selectPurgeTargets(ctx, conn, relationPurgeQ, []any{ids}, req.Selector)
 	if err != nil {
 		return nil, err
 	}
@@ -276,9 +278,11 @@ func anyRename(targets []store.PurgeTarget) bool {
 // lineage as a slice usable in `entity_id = ANY($1)`. It reuses lineageCTE so
 // --all matches exactly what ListVersions shows and never spills into a reused
 // id's rows. Returns just the queried id if it has no rename ancestry.
-func (v *VersionStore) entityLineageIDsForPurge(ctx context.Context, q DBTX, id string) ([]string, error) {
+func (v *VersionStore) entityLineageIDsForPurge(
+	ctx context.Context, q DBTX, id string, p entity.Pointer,
+) ([]string, error) {
 	sel := lineageCTE + ` SELECT entity_id FROM lin`
-	rows, err := q.Query(ctx, sel, id)
+	rows, err := q.Query(ctx, sel, id, string(p))
 	if err != nil {
 		return nil, err
 	}
@@ -300,18 +304,25 @@ func (v *VersionStore) entityLineageIDsForPurge(ctx context.Context, q DBTX, id 
 	return ids, nil
 }
 
-func (v *VersionStore) liveEntityHash(ctx context.Context, q DBTX, id string) (hash string, exists bool, err error) {
+func (v *VersionStore) liveEntityHash(
+	ctx context.Context, q DBTX, id string, p entity.Pointer,
+) (hash string, exists bool, err error) {
 	e, gErr := scanEntity(q.QueryRow(ctx,
 		`SELECT id, type, pointer, properties, content, updated_at
-		 FROM entities WHERE id = $1 AND pointer = ''`, id))
+		 FROM entities WHERE id = $1 AND pointer = $2`, id, string(p)))
 	if errors.Is(gErr, pgx.ErrNoRows) {
 		return "", false, nil
 	}
 	if gErr != nil {
 		return "", false, gErr
 	}
+	// The pointer MUST travel into the hash: contentHashOf folds it in, so
+	// omitting it here would make a ForceLive tombstone on one face carry a
+	// hash that matches a SIBLING face holding identical bytes — suppressing
+	// that sibling's legitimate sweep capture (TKT-C1XUA8).
 	return contentHashOf(store.VersionInput{
-		EntityID: e.ID, Type: e.Type, Content: e.Content, Properties: e.Properties,
+		EntityID: e.ID, Pointer: e.Pointer, Type: e.Type,
+		Content: e.Content, Properties: e.Properties,
 	}), true, nil
 }
 
@@ -334,11 +345,14 @@ func (v *VersionStore) liveRelationHash(
 
 // entityPurgeQ / relationPurgeQ select the resolvable target metadata (never the
 // snapshot content) for a lineage id-set, applying the selector. `$1` is the
-// id-set (ANY), the selector's vseq/content-hash are appended as $2.
+// id-set (ANY) and, for entities, $2 is the FACE — purge is scoped to one
+// face, so a --content-hash purge cannot reach into a sibling face that
+// happens to hold the same bytes. The selector's vseq/content-hash is
+// appended as the next free placeholder.
 const entityPurgeQ = `
 	SELECT vseq, op, content_hash, created_at
 	FROM entity_versions
-	WHERE entity_id = ANY($1)`
+	WHERE entity_id = ANY($1) AND pointer = $2`
 const relationPurgeQ = `
 	SELECT vseq, op, content_hash, created_at
 	FROM relation_versions
@@ -348,18 +362,19 @@ const relationPurgeQ = `
 // It never selects content. idSet is []string for entities, []int64 for
 // relations — passed through as `ANY`.
 func selectPurgeTargets(
-	ctx context.Context, q DBTX, baseQ string, idSet any, sel store.PurgeSelector,
+	ctx context.Context, q DBTX, baseQ string, baseArgs []any, sel store.PurgeSelector,
 ) ([]store.PurgeTarget, error) {
 	query := baseQ
-	args := []any{idSet}
+	args := append([]any(nil), baseArgs...)
+	next := fmt.Sprintf("$%d", len(args)+1)
 	switch {
 	case sel.All:
 		// no extra predicate — whole fenced lineage
 	case sel.Vseq != 0:
-		query += ` AND vseq = $2`
+		query += ` AND vseq = ` + next
 		args = append(args, sel.Vseq)
 	case sel.ContentHash != "":
-		query += ` AND content_hash = $2`
+		query += ` AND content_hash = ` + next
 		args = append(args, sel.ContentHash)
 	default:
 		return nil, errors.New("pgstore: purge selector must set one of Vseq / ContentHash / All")
@@ -413,16 +428,18 @@ func deletePurgeTargets(
 // equals the live hash, so the sweep's dedup (lvc.content_hash == live hash)
 // suppresses re-capture until the live value genuinely changes. Needs a
 // schema_hash for the FK; reuse a stable sentinel projection row.
-func writeEntityPurgeTombstone(ctx context.Context, q DBTX, id, liveHash string) error {
+func writeEntityPurgeTombstone(
+	ctx context.Context, q DBTX, id string, p entity.Pointer, liveHash string,
+) error {
 	if err := ensureSchemaVersion(ctx, q, purgeSchemaHash, purgeSchemaProjection); err != nil {
 		return err
 	}
 	_, err := q.Exec(ctx, `
 		INSERT INTO entity_versions
-		    (entity_id, op, type, content, properties, content_hash, schema_hash,
-		     principal_user, principal_tool, triggered_by)
-		VALUES ($1, 'purge', '', '', '{}'::jsonb, $2, $3, '', 'version-purge', '')`,
-		id, liveHash, purgeSchemaHash)
+		    (entity_id, pointer, op, type, content, properties, content_hash,
+		     schema_hash, principal_user, principal_tool, triggered_by)
+		VALUES ($1, $2, 'purge', '', '', '{}'::jsonb, $3, $4, '', 'version-purge', '')`,
+		id, string(p), liveHash, purgeSchemaHash)
 	return err
 }
 
