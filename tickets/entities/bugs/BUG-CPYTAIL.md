@@ -32,16 +32,43 @@ All three backends address the default tail only:
 - fsstore `relation.go`: bare `from + "--" + relType + "--" + to`, identical to
   `relKey(from, "", ...)`
 
-## Impact
+## Impact — reproduction transcript
 
-Reproduced against memstore before fixing. Given `PAGE-1` (default) and
-`PAGE-1@published` both holding `references -> SPEC-1`, deleting the
-published-tail edge the way the copy did:
+Reproduced against memstore before fixing, using a throwaway test that made
+exactly the call `applyCopyEdges` made. Setup: `PAGE-1` (default face) and
+`PAGE-1@published`, each holding its own `references -> SPEC-1` edge — two
+distinct relations differing only by tail.
+
+```go
+// This is exactly what applyCopyEdges does for `relations: replace` into
+// PAGE-1@published: it listed the published-tail edge, then called
+// DeleteRelation dropping the tail.
+if err := s.DeleteRelation(ctx, "PAGE-1", "references", "SPEC-1"); err != nil {
+    t.Fatalf("delete: %v", err)
+}
+```
+
+Output:
 
 ```
-delete returned: nil
-edges surviving: [PAGE-1@published--references--SPEC-1]
+=== RUN   TestTailBugDemo
+    edges surviving the intended delete of the PUBLISHED-tail edge:
+      [PAGE-1@published--references--SPEC-1]
+--- PASS: TestTailBugDemo (0.00s)
 ```
+
+Read that carefully — it is the worst of the three possible outcomes:
+
+1. The delete returned **nil**. Not `ErrNotFound`, so the `!errors.Is(derr,
+   store.ErrNotFound)` guard at the call site was never even reached.
+2. It deleted the **default face's** edge — a face the copy never addressed
+   and had no business modifying.
+3. The **published-tail edge it was trying to replace survived**.
+
+An earlier code-reading pass had predicted `ErrNotFound` as the likely
+(benign) branch. It was wrong, and only running it showed that. Had the
+reading stood, the PR description would have carried the benign version and a
+reviewer would reasonably have believed it.
 
 The delete **succeeded**, destroyed the **default** face's edge — which the
 copy never intended to touch — and left the published-tail edge it meant to

@@ -1,8 +1,8 @@
 ---
 id: BUG-FACEVER
 type: bug
-title: Entity delete versions only the default face; the other N-1 faces lose their delete marker
-description: Manager.DeleteEntity reads GetEntity(id) — the default face — and records one VersionOpDelete, while the store hard-deletes the whole state family. Every non-default face's history therefore ends with no delete marker and no restore path. This is the entity half of the bug RR-181AFY fixed for cascade-deleted relations. cascadeHost.DeleteEntity captures no version at all.
+title: "Versioning is not face-aware end to end: delete captures the default face only, the sync relation path cannot address a tail, and capture is not transactional"
+description: "Three facets of one defect — content versioning is per-(id,pointer) in the schema but the write choke-point still addresses faces by bare id. (1) Manager.DeleteEntity records one VersionOpDelete from GetEntity(id) while the store sweeps the whole family. (2) recordRelationVersion must skip state-tailed edges because recordIDForKey has no tail predicate, so a discarded face's edges lose their delete marker. (3) Capture is best-effort outside the store.Tx, so a rollback can leave a delete version for a live row. Fixing them separately would mean touching the same seam three times."
 priority: medium
 status: backlog
 ---
@@ -54,12 +54,64 @@ for the default face while the store re-keys every face
 is worse — it calls the store delete at :195 with **no version capture at
 all**, only a `recordCascade` audit at :207.
 
-## Fix sketch
+## Facet 2 — the sync relation path cannot address a tail
 
-Enumerate the family with `store.EntityQuery{IDs: []string{id}, AllStates: true}`
-before the delete and capture one `VersionOpDelete` per face, the way the
-relation loop directly below already does per relation. Same for rename.
+`recordRelationVersion` (`internal/entitymanager/version_hook.go`) deliberately
+**returns early for any edge whose `FromPointer` is non-default**, and the
+reason is sound: the synchronous record carries only the `(from, type, to)`
+triple, and pgstore resolves that to a lineage via `recordIDForKey`
+(`internal/store/pgstore/relation_version.go`), whose live lookup is
 
-Discovered while implementing TKT-C1XUA8 PR-D (`after: discard`); deliberately
-left out of that PR because it touches the ordinary delete path, which has
-nothing to do with copies.
+```sql
+SELECT rel_record_id FROM relations
+WHERE from_id = $1 AND rel_type = $2 AND to_id = $3 AND from_pointer = ''
+```
+
+— **no tail predicate on the caller's side**. Pushing a state-tailed edge
+through it would file that edge's delete under a **sibling face's** lineage.
+
+That is worse than the gap it would close: a missing delete marker is
+recoverable, a delete marker on the wrong face's history is corruption of a
+face nothing touched, and it would be silent.
+
+Consequence today: when `after: discard` (TKT-C1XUA8 PR-E) consumes a face,
+that face's outgoing edges are hard-deleted with **no delete version**. They
+ARE audited (`OpDeleteRelation`, `triggered_by: copy:<name>`), so the loss is
+visible and attributable — but the history ends without a marker.
+
+**Do not "fix" this by removing the skip.** The skip is load-bearing; the
+actual fix is facet 4 below.
+
+## Facet 3 — capture is not transactional with the write
+
+`VersionRecorder` is a Manager-level dependency writing on its own connection,
+and capture is best-effort by contract (errors logged, never propagated). So:
+
+- capture succeeds, transaction rolls back → a delete version for a live row
+  (recoverable noise);
+- capture fails, transaction commits → the row is gone with no marker.
+
+`Manager.DeleteEntity` already admits this in a comment: *"the store delete is
+still not transactional with this capture; strict atomicity is a future
+hardening."* Same window, now on a second path.
+
+## Fix sketch (one seam, not three)
+
+1. Enumerate the family with `store.EntityQuery{IDs: []string{id}, AllStates: true}`
+   before delete/rename and capture one version per face — the way the relation
+   loop directly below already does per relation.
+2. Give the synchronous relation record a **tail** (or a `rel_record_id`) so
+   `recordIDForKey` can address the right lineage, then drop the non-default
+   skip. This is what unblocks facet 2.
+3. Capture inside the `store.Tx` — needs a view-scoped recorder. **Care
+   required**: the pgstore sweep holds `pg_try_advisory_lock` per tick and
+   issues its inserts on the held connection; a second writer inside a copy's
+   transaction interacts with that guarantee, so this is not a rider on a
+   feature PR.
+
+All three touch the same boundary between the write choke-point and the
+version store, which is why they are one ticket.
+
+Discovered while implementing TKT-C1XUA8 PR-D/PR-E; deliberately left out of
+both because they touch the ordinary delete path and the versioning seam,
+neither of which is what those PRs are about.
