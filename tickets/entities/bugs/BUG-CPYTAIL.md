@@ -1,0 +1,63 @@
+---
+id: BUG-CPYTAIL
+type: bug
+title: "copy `relations: replace` deletes the DEFAULT face's edge and leaves the target's intact"
+description: applyCopyEdges listed the target face's edges by tail then called DeleteRelation with the tail dropped. Every backend's DeleteRelation is default-tail-only, so the delete silently removed the DEFAULT face's edge on the same triple — a face the copy has no business touching — and reported success, while the edge being replaced survived. Fixed in TKT-C1XUA8 PR-D by adding DeleteRelationState; filed for traceability.
+priority: high
+status: backlog
+why1: applyCopyEdges called DeleteRelation(rel.From, rel.Type, rel.To), dropping rel.FromPointer.
+why2: The tail is part of a relation's identity, but DeleteRelation's signature cannot express one, so dropping it silently re-addresses a different edge rather than failing.
+why3: No per-tail delete primitive existed — store.RelationData.FromPointer's godoc deferred it, saying individual delete of a state-tailed edge "has no consumer before the Step-3 copy kernel and is added then". The copy kernel landed without it.
+why4: The ErrNotFound branch at copy_apply.go:64 was written expecting a miss, which made the wrong-edge deletion look like a handled case rather than an unhandled one.
+why5: A deferred primitive was tracked only in a godoc comment on an unrelated struct field, so the consumer that was supposed to add it had no gate forcing the question at merge time.
+prevention: The conformance suite now carries DeleteRelationStateAddressesTheTailNotTheTriple, named for the hazard, so any backend regressing to default-tail addressing fails. More generally — when a godoc defers work to a named future consumer, that consumer needs a ticket, not a comment.
+---
+
+## Symptom
+
+`internal/entitymanager/copy_apply.go` (as shipped in TKT-C1XUA8 PR-C) listed
+the target face's edges filtered by tail:
+
+```go
+for rel, err := range view.ListRelations(ctx, store.RelationQuery{
+    From: plan.targetID, Type: e.relType, FromPointer: &tail,   // tail-scoped
+}) {
+    derr := view.DeleteRelation(ctx, rel.From, rel.Type, rel.To)  // tail DROPPED
+```
+
+All three backends address the default tail only:
+
+- pgstore `relation.go`: `... AND from_pointer = ''`
+- memstore `memstore.go`: `defaultTailKey(from, relType, to)`
+- fsstore `relation.go`: bare `from + "--" + relType + "--" + to`, identical to
+  `relKey(from, "", ...)`
+
+## Impact
+
+Reproduced against memstore before fixing. Given `PAGE-1` (default) and
+`PAGE-1@published` both holding `references -> SPEC-1`, deleting the
+published-tail edge the way the copy did:
+
+```
+delete returned: nil
+edges surviving: [PAGE-1@published--references--SPEC-1]
+```
+
+The delete **succeeded**, destroyed the **default** face's edge — which the
+copy never intended to touch — and left the published-tail edge it meant to
+replace alive. Silent, in all three backends, with no error path reached: the
+`ErrNotFound` branch was never taken, so the swallow at `copy_apply.go:64`
+was not even the mechanism.
+
+`promote-page` with `relations: replace` is the headline use case in design
+doc §9.1, and it was actively destructive.
+
+## Fix
+
+TKT-C1XUA8 PR-D adds `store.DeleteRelationState(ctx, from, pointer, relType, to)`
+across all three backends, reimplements `DeleteRelation` as
+`DeleteRelationState(…, "", …)` so the two cannot drift, and addresses the
+delete by `rel.FromPointer`. Pinned by
+`storetest/states.go` `DeleteRelationStateAddressesTheTailNotTheTriple` and by
+`TestCopy_ReplaceAddressesTheTargetTail`, both mutation-verified to fail
+against the old code.
