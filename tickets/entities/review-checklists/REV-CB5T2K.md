@@ -37,8 +37,16 @@ file in this diff is among them**, and it is not a CI gate.
 **Review Responses:** [[RR-CBC1XZ]] (critical, addressed), [[RR-CBS2QW]]
 (significant, addressed), [[RR-CBS3AC]] (significant, addressed),
 [[RR-CBM1TS]] (minor, addressed), [[RR-CBM3TR]] (minor, addressed),
-[[RR-CBM5OP]] (minor, addressed), [[RR-CBM2SL]] (minor, wont-fix),
-[[RR-CBLEV8]] (minor, deferred), [[RR-CBM4WP]] (nit, addressed).
+[[RR-CBM5OP]] (minor, addressed), [[RR-CBTICK9]] (minor, addressed),
+[[RR-CBM2SL]] (minor, wont-fix), [[RR-CBLEV8]] (minor, deferred),
+[[RR-CBM4WP]] (nit, addressed).
+
+[[RR-CBTICK9]] came from the user reviewing the running demo, not from the
+agent pass — the tick was inheriting an off-centre position from
+`RelationCards`. Worth noting the two failed attempts recorded there: deriving
+the position from the ink bounding box, and validating it by overlaying on the
+native control. Both were reasonable and both were wrong, because neither
+tested the property that actually mattered — how the tick sits in its own box.
 
 The critical finding was a **real defect in my own first draft**, not a false
 positive: `.display-checkbox:disabled` lost the cascade to
