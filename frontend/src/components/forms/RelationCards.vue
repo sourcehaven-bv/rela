@@ -7,6 +7,10 @@ import { useSchemaStore } from '@/stores'
 import { getEntityRelations, searchEntities, getEntity, getErrorMessage } from '@/api'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import InlineCreateFormModal from './InlineCreateFormModal.vue'
+// The shared boolean widget, rather than a local `<input type="checkbox">`.
+// This file used to hand-roll the same custom-drawn checkbox (TKT-CBSTYLE), so
+// a fix to the glyph had to be made twice — and the second copy was missed.
+import CheckboxWidget from '@/widgets/CheckboxWidget.vue'
 import { useInlineCreate } from '@/composables/useInlineCreate'
 import type { FormFieldOrRelation, RelationProperty } from '@/types/config'
 import type { RelationEntry, Entity } from '@/types/entity'
@@ -599,15 +603,13 @@ function onDragEnd() {
             />
 
             <!-- Boolean checkbox -->
-            <input
+            <CheckboxWidget
               v-else-if="isBoolean(prop.property)"
-              :checked="!!entry.meta?.[prop.property]"
-              type="checkbox"
-              class="inline-edit-checkbox"
+              :model-value="!!entry.meta?.[prop.property]"
+              mode="edit"
+              :property-name="prop.property"
               :disabled="isMetaFieldDisabled(prop.property)"
-              @change="
-                updateProperty(entry.id, prop.property, ($event.target as HTMLInputElement).checked)
-              "
+              @update:model-value="updateProperty(entry.id, prop.property, $event)"
             />
 
             <!-- Date / text / number input -->
@@ -708,10 +710,14 @@ function onDragEnd() {
               "
             />
 
-            <input
+            <!-- newMeta seeds every property to '' (see resetNewMeta), which the
+                 widget reads as unchecked and replaces with a real boolean on
+                 first toggle — same as the native v-model this replaced. -->
+            <CheckboxWidget
               v-else-if="isBoolean(prop.property)"
               v-model="newMeta[prop.property]"
-              type="checkbox"
+              mode="edit"
+              :property-name="prop.property"
             />
 
             <input
@@ -958,45 +964,11 @@ function onDragEnd() {
   box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
 }
 
-.inline-edit-checkbox {
-  appearance: none;
-  -webkit-appearance: none;
-  width: 18px;
-  height: 18px;
-  border: 2px solid var(--border-color, #4a4a5a);
-  border-radius: 4px;
-  background: var(--input-bg, #1e1e28);
-  cursor: pointer;
-  position: relative;
-  transition: all 0.15s;
-  flex-shrink: 0;
-}
-
-.inline-edit-checkbox:checked {
-  background: var(--accent-color, #6366f1);
-  border-color: var(--accent-color, #6366f1);
-}
-
-.inline-edit-checkbox:checked::after {
-  content: '';
-  position: absolute;
-  left: 5px;
-  top: 1px;
-  width: 5px;
-  height: 10px;
-  border: solid white;
-  border-width: 0 2px 2px 0;
-  transform: rotate(45deg);
-}
-
-.inline-edit-checkbox:hover {
-  border-color: var(--accent-color, #6366f1);
-}
-
-.inline-edit-checkbox:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.3);
-}
+/* The `.inline-edit-checkbox` rules that used to live here are gone: both
+   boolean inputs in this file now render through CheckboxWidget, which owns
+   the styling. They were a hand-rolled duplicate of the widget's own CSS and
+   had already drifted from it (off-centre tick, hardcoded focus-ring colour).
+   Add nothing back here — style the widget instead. */
 
 .empty-state {
   padding: 16px;

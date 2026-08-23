@@ -41,10 +41,15 @@ function onChange(event: Event) {
 /* TKT-CBSTYLE. The edit arm was a bare native checkbox — OS default size and
    colour — sitting in the same 12-column grid as widgets that all carry
    padding, a token radius and a focus ring, so it read as a foreign control.
-   This is the custom-drawn checkbox RelationCards.vue already uses for its
-   inline boolean edit (`.inline-edit-checkbox`), expressed in the scales.css
-   tokens: same 18px box, same accent fill, same CSS checkmark, so the two
-   boolean edit surfaces agree.
+   It is now custom-drawn from the scales.css tokens.
+
+   THIS IS THE ONLY PLACE A CHECKBOX IS STYLED. RelationCards.vue used to
+   hand-roll an identical control (`.inline-edit-checkbox`) for its inline
+   boolean edit; the two copies drifted (off-centre tick, hardcoded focus-ring
+   colour) and a fix applied to one silently missed the other. Both of its
+   boolean inputs now render this widget and its local rules are deleted. If a
+   new surface needs a checkbox, render this widget — do not restyle a raw
+   `<input type="checkbox">`.
 
    `appearance: none` is what makes the box drawable, and it also removes the
    greyed rendering the browser gave the disabled DISPLAY arm for free. That
@@ -54,7 +59,7 @@ function onChange(event: Event) {
 input[type='checkbox'] {
   /* Unprefixed only: -webkit-appearance is unnecessary from Safari 15.4, and
      nothing in this build regenerates prefixes (no autoprefixer, no
-     browserslist). RelationCards still carries the prefix; it predates that. */
+     browserslist). */
   appearance: none;
   width: 18px;
   height: 18px;

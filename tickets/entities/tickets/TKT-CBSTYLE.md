@@ -89,13 +89,13 @@ actually renders and does not follow the theme ([[RR-CBS2QW]]).
 
 ## Follow-ups
 
-- **Extract a shared `.rela-checkbox`** ([[RR-CBLEV8]], deferred). The visual
-  now exists in two files — this widget and `RelationCards.vue` — which have
-  already diverged, and `RelationCards:998` still carries the hardcoded indigo
-  ring this ticket fixed here. `frontend/CLAUDE.md` documents the same
-  trajectory for `properties-list.css`. The widget is the better copy, so the
-  follow-up is to lift its version into `src/styles/` and adopt it in
-  RelationCards — not to merge equals.
+- ~~**Extract a shared `.rela-checkbox`**~~ — **done in this ticket**
+  ([[RR-CBSHARE]], superseding [[RR-CBLEV8]]). Rather than extracting a
+  stylesheet, both of `RelationCards.vue`'s boolean inputs now render
+  `CheckboxWidget` and its ~35 lines of duplicate CSS are deleted. Sharing the
+  component shares behaviour and accessibility too, not just paint. One of the
+  two call sites turned out to be a bare unstyled `<input type="checkbox">`
+  that had never received any styling at all.
 - **`forced-colors` is unaddressed everywhere else in the SPA.** This ticket
   fixed one control; `forced-colors` still appears nowhere else in `src/`.
   Worth a dedicated accessibility pass rather than fixing it one widget at a
