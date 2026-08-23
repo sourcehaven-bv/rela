@@ -2459,6 +2459,7 @@ navigation:
 | Field | Required | Description |
 | --- | --- | --- |
 | `entity_type` | yes | The entity type to project |
+| `label` | no | Name shown in the source legend (default: the entity type) |
 | `where` | no | Filter clauses, all ANDed. No OR — use a second source |
 | `date` | yes | A `date`- or `datetime`-typed property placing the event. A `date` yields an all-day event, a `datetime` a timed one. Entities without a value are skipped |
 | `end_date` | no | Property ending a multi-day event. Must be the **same kind** as `date` |
@@ -2488,9 +2489,41 @@ target titles are shown:
           label: "Owner"
 ```
 
+Each field renders on its own line as `label: value`. The label is **derived**
+from the property or relation name, so `- property: assignee` renders
+"assignee: Alex" with nothing else to write; `label:` only overrides it.
+
+`show_label: false` drops the label for a value that already names itself:
+
+```yaml
+    event:
+      fields:
+        - property: priority
+          show_label: false     # the badge already reads "High"
+        - property: assignee
+          label: "Owner"        # two person fields need naming
+        - property: reviewer
+          label: "Reviewer"
+```
+
 Values render through the same widgets as list cells and kanban cards, so dates
 read human-readably and enums render as badges. A field with no value is
 omitted rather than showing an empty label.
+
+**Kanban cards take the same `fields:` config** — including `show_label` and
+derived labels — and render through the same component, so the two surfaces
+cannot drift.
+
+### Toggling sources
+
+A calendar with more than one source shows a **legend** above the grid naming
+each one in its colour. Clicking an entry hides that source's events; clicking
+again brings them back.
+
+Which sources are hidden is carried in the URL (`?hide=0,1`), so a filtered view
+is shareable and survives a refresh, exactly as the period and view are. Hiding
+filters what is already loaded rather than refetching — toggling is a
+glance-level gesture and should feel like one.
 
 A field naming a property that one source's entity type lacks is simply not
 rendered for that source's events — sources are heterogeneous by design, so a

@@ -734,3 +734,108 @@ describe('CalendarView chip detail', () => {
     expect(wrapper.find('.calendar-chip').text()).toContain('PRJ-9')
   })
 })
+
+/**
+ * The source legend names each source and toggles it off, with the hidden set
+ * carried in the URL so a filtered calendar is shareable and survives a reload
+ * — the same reasoning as the period and view.
+ */
+describe('CalendarView source legend', () => {
+  const twoSources = [
+    { entity: 'task', label: 'Tasks', date: 'due', summary: 'title', color: 'blue', max_span: 31 },
+    {
+      entity: 'meeting',
+      label: 'Meetings',
+      date: 'starts_at',
+      summary: 'name',
+      color: 'violet',
+      max_span: 31,
+    },
+  ]
+
+  function bothSources() {
+    return setup({
+      sources: twoSources,
+      responses: {
+        task: [task('T-1', '2026-08-22')],
+        meeting: [meeting('M-1', '2026-08-24T09:00:00Z')],
+      },
+    })
+  }
+
+  it('names each source in the legend', async () => {
+    const wrapper = bothSources()
+    await flushPromises()
+
+    const labels = wrapper.findAll('.calendar-legend-label').map((n) => n.text())
+    expect(labels).toEqual(['Tasks', 'Meetings'])
+  })
+
+  it('is absent for a single-source calendar, which has nothing to distinguish', async () => {
+    const wrapper = setup({ responses: { task: [task('T-1', '2026-08-22')] } })
+    await flushPromises()
+
+    expect(wrapper.find('.calendar-legend').exists()).toBe(false)
+  })
+
+  it('hides a source’s events and records it in the URL', async () => {
+    const wrapper = bothSources()
+    await flushPromises()
+    expect(wrapper.text()).toContain('Task T-1')
+
+    await wrapper.findAll('.calendar-legend-item')[0].trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('Task T-1')
+    expect(wrapper.text()).toContain('Meeting M-1')
+
+    const calls = routerReplace.mock.calls
+    expect((calls[calls.length - 1][0].query as Record<string, string>).hide).toBe('0')
+  })
+
+  it('restores hidden sources from the URL', async () => {
+    const wrapper = setup({
+      sources: twoSources,
+      query: { hide: '1' },
+      responses: {
+        task: [task('T-1', '2026-08-22')],
+        meeting: [meeting('M-1', '2026-08-24T09:00:00Z')],
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Task T-1')
+    expect(wrapper.text()).not.toContain('Meeting M-1')
+  })
+
+  it('says sources are hidden rather than claiming the period is empty', async () => {
+    const wrapper = setup({
+      sources: twoSources,
+      query: { hide: '0,1' },
+      responses: {
+        task: [task('T-1', '2026-08-22')],
+        meeting: [meeting('M-1', '2026-08-24T09:00:00Z')],
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.find('.calendar-empty').text()).toContain('All sources are hidden')
+  })
+
+  it('ignores an out-of-range index from a stale link', async () => {
+    // The config changed under an old URL. Showing a source the sender had
+    // hidden is visibly harmless; erroring is not.
+    const wrapper = setup({
+      sources: twoSources,
+      query: { hide: '7' },
+      responses: {
+        task: [task('T-1', '2026-08-22')],
+        meeting: [meeting('M-1', '2026-08-24T09:00:00Z')],
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Task T-1')
+    expect(wrapper.text()).toContain('Meeting M-1')
+  })
+})

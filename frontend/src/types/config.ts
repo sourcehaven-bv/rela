@@ -411,6 +411,8 @@ export type CalendarColor = 'blue' | 'green' | 'amber' | 'red' | 'violet' | 'sla
  */
 export interface CalendarSourceConfig {
   entity: string
+  /** Name shown in the legend that toggles this source; defaults to `entity`. */
+  label?: string
   where?: string[]
   /** Date- or datetime-typed property placing the event on the grid. */
   date: string

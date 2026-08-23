@@ -32,6 +32,7 @@ import type { CalendarConfig, CalendarSourceConfig } from '@/types/config'
 import type { Entity, ListParams } from '@/types'
 import CalendarGrid from '@/components/calendar/CalendarGrid.vue'
 import EntityPreviewModal from '@/components/calendar/EntityPreviewModal.vue'
+import CalendarLegend from '@/components/calendar/CalendarLegend.vue'
 import {
   useCalendarEvents,
   eventsByDay,
@@ -83,6 +84,42 @@ const anchor = computed<CalendarDay>({
     void router.replace({ query: { ...router.currentRoute.value.query, date: dayKey(d) } })
   },
 })
+
+/**
+ * Sources the reader has switched off, by index, carried in the URL.
+ *
+ * In the URL rather than component state so a filtered calendar is shareable
+ * and survives a refresh — the same reasoning as `view` and `date`. Indices
+ * rather than names because index is a source's identity here (two sources may
+ * share an entity type, differing only by `where:`).
+ *
+ * An index that no longer exists — the config changed under an old link — is
+ * ignored rather than erroring: the worst case is showing a source the sender
+ * had hidden, which is visibly harmless.
+ */
+const hiddenSources = computed<number[]>({
+  get: () => {
+    const raw = router.currentRoute.value.query.hide
+    if (typeof raw !== 'string' || !raw) return []
+    return raw
+      .split(',')
+      .map((n) => Number.parseInt(n, 10))
+      .filter((n) => Number.isInteger(n) && n >= 0)
+  },
+  set: (indices) => {
+    const query = { ...router.currentRoute.value.query }
+    if (indices.length) query.hide = [...indices].sort((a, b) => a - b).join(',')
+    else delete query.hide
+    void router.replace({ query })
+  },
+})
+
+function toggleSource(index: number) {
+  const next = new Set(hiddenSources.value)
+  if (next.has(index)) next.delete(index)
+  else next.add(index)
+  hiddenSources.value = [...next]
+}
 
 const weekStart = computed(() => config.value?.week_start ?? 'monday')
 const days = computed(() => visibleDays(view.value, anchor.value, weekStart.value))
@@ -260,8 +297,21 @@ const sourceData = computed<CalendarSourceData[]>(() =>
   }))
 )
 
-const events = useCalendarEvents(config, sourceData, timezone, (rel) =>
+const allEvents = useCalendarEvents(config, sourceData, timezone, (rel) =>
   schemaStore.getInverseName(rel) ?? ''
+)
+
+/**
+ * Events minus any whose source is toggled off.
+ *
+ * Filtered after fetching rather than by skipping the request: toggling is a
+ * glance-level gesture, and refetching on every click would make it feel
+ * slower than the thing it is hiding. The data is already in the cache.
+ */
+const events = computed(() =>
+  hiddenSources.value.length
+    ? allEvents.value.filter((ev) => !hiddenSources.value.includes(ev.sourceIndex))
+    : allEvents.value
 )
 const byDay = computed(() => eventsByDay(events.value, days.value))
 
@@ -530,6 +580,12 @@ function onDragEnd() {
     <!-- eslint-disable-next-line vue/no-v-html -- sanitized by renderMarkdown -->
     <div v-if="headerHtml" class="view-info view-info--top" v-html="headerHtml" />
 
+    <CalendarLegend
+      :sources="config?.sources ?? []"
+      :hidden="hiddenSources"
+      @toggle="toggleSource"
+    />
+
     <div v-if="truncated" class="truncation-banner truncation-banner--cap" role="alert">
       Some events are not shown — this period returned more entities than the calendar can load.
     </div>
@@ -559,7 +615,13 @@ function onDragEnd() {
     />
 
     <p v-if="!initialLoad && !refreshing && !loadError && !events.length" class="calendar-empty">
-      No events in this period.
+      <!-- Distinguishes "nothing here" from "you hid it": telling a reader the
+           period is empty when they switched every source off is misleading,
+           and leaves them without the hint that the legend is the way back. -->
+      <template v-if="allEvents.length">
+        All sources are hidden — use the legend above to show them again.
+      </template>
+      <template v-else>No events in this period.</template>
     </p>
 
     <!-- eslint-disable-next-line vue/no-v-html -- sanitized by renderMarkdown -->
