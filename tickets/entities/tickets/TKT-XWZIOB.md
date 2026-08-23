@@ -471,6 +471,38 @@ fields.
    failed task`) fire per DERIVED task: 200 users turns one startup line into
    200. Log the expansion once with a count; keep per-user lines to failures.
 
+## Not a job queue (yet)
+
+This ticket derives task producers, per-task identity, bounded retries and
+occurrence keys — the components of a job queue, one at a time. That is a real
+signal, and it is already captured: **IDEA-WIJ2H1** proposes a `Queue` seam with
+memory / postgres / redis backends and a conformance suite, in the
+`internal/store/storetest` posture.
+
+**It stays out of scope here, and an off-the-shelf queue does not change that.**
+A PostgreSQL-backed library (River was considered) cannot be the persistence
+design, because the scheduler is not postgres-only:
+
+- `WorkspaceProvider` requires `State() state.KV` (`scheduler.go:83`), and
+  `state.KV` is backend-swapped by build tag — FSKV under `.rela/` by default,
+  `pgstore.StateKV` on postgres (TKT-VC27L3).
+- Three entry points start it: `rela scheduler` (`cli/scheduler.go:32`),
+  `rela-server` (`main.go:521`) and **`rela-desktop`** (`main.go:208`). A desktop
+  app that needs a PostgreSQL instance to send a daily reminder is a non-starter.
+- CI hard-asserts the default build does not link pgx
+  (`ci.yml:488-496`), so such a library could not be imported unconditionally.
+
+So it could only ever sit BEHIND the queue seam as one backend, with a
+memory/fs implementation still required and still needing every semantic derived
+here. **The seam is the work, and adopting a library does not remove it** — it
+adds an impedance mismatch between our occurrence keys / bounded ladder and the
+library's own uniqueness and retry models.
+
+Sequencing follows IDEA-WIJ2H1's existing argument: the consumer proves the
+shape first. The semantics specified in this ticket are what a queue would have
+to honour anyway, so they are the conformance suite written in advance against a
+real workload, not throwaway work.
+
 ## Scope: IS NOT
 
 - No new scheduling syntax beyond `for_each` (`every:` unchanged).
@@ -479,8 +511,8 @@ scheduler is deliberately sequential (`scheduler.go:193-225`) — one Lua VM, on
 job at a time — and this ticket does not change that. N users means N runs, one
 after another. The cost of that needs documenting rather than hiding (see
 criterion 5).
-- No general per-user scheduler state: the only per-run state is the failed-user
-list described below, held for the duration of one task execution.
+- No durable job queue, and no external queue library — see above. State stays in
+`.rela/scheduler-state.json` via the existing `state.KV`.
 
 ## Open questions
 
