@@ -480,8 +480,8 @@ memory / postgres / redis backends and a conformance suite, in the
 `internal/store/storetest` posture.
 
 **It stays out of scope here, and an off-the-shelf queue does not change that.**
-A PostgreSQL-backed library (River was considered) cannot be the persistence
-design, because the scheduler is not postgres-only:
+River (`riverqueue.com`, MPL-2.0) was considered and does not fit as the
+persistence design, because the scheduler is not database-backed on every build:
 
 - `WorkspaceProvider` requires `State() state.KV` (`scheduler.go:83`), and
   `state.KV` is backend-swapped by build tag — FSKV under `.rela/` by default,
@@ -492,11 +492,39 @@ design, because the scheduler is not postgres-only:
 - CI hard-asserts the default build does not link pgx
   (`ci.yml:488-496`), so such a library could not be imported unconditionally.
 
+River needs a SQL database: Postgres (its target), or SQLite, which its own docs
+call **experimental** and which runs at roughly a quarter of the Postgres
+throughput. There is no in-memory client — a driver can be constructed with a nil
+pool for insert-only tests, but worker execution needs a real database. It also
+requires **5 tables of its own** (`river_job`, `river_leader`, `river_queue`,
+`river_migration`, `river_notification`) plus an enum, via its own migration line.
+
 So it could only ever sit BEHIND the queue seam as one backend, with a
 memory/fs implementation still required and still needing every semantic derived
-here. **The seam is the work, and adopting a library does not remove it** — it
-adds an impedance mismatch between our occurrence keys / bounded ladder and the
-library's own uniqueness and retry models.
+here. **The seam is the work, and adopting a library does not remove it.**
+
+Three further mismatches, recorded so this is not re-litigated from the feature
+list alone:
+
+- **Its periodic scheduling is the wrong half.** River's `PeriodicJobs` keeps
+  schedules **in memory** and resets them across restarts; *durable* periodic
+  jobs are a **Pro** (paid) feature. Runtime add/remove exists but only applies
+  to the cluster leader. Since durable scheduling is exactly what we would be
+  adopting it for, the free tier does not supply it.
+- **Its uniqueness is not our occurrence key.** `UniqueOpts.ByPeriod` rounds the
+  current time down to a period multiple, which is a *time-window* key, not the
+  schedule-derived occurrence we specified. And it guarantees single INSERTION —
+  execution stays at-least-once, so "one digest per user per day" would still
+  need enforcing above it.
+- **Its retry defaults are a different posture.** 25 attempts over ~3 weeks with
+  `attempts^4` backoff, exhaustion moving to `discarded` for 7 days; a dead-letter
+  queue is again Pro. Our bounded ladder returning a task to its ordinary
+  schedule has no equivalent.
+
+It is also still **0.x** (v0.44.x as of 2026-08), actively changing its schema,
+and its `riverdriver.Driver` is a wide producer-side interface — against this
+repo's consumer-side-interface rule, so it would want a narrow local interface at
+the enqueue site regardless.
 
 Sequencing follows IDEA-WIJ2H1's existing argument: the consumer proves the
 shape first. The semantics specified in this ticket are what a queue would have
