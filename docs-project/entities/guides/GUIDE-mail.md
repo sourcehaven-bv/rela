@@ -16,7 +16,7 @@ expect from it.
 > message. Scheduled digests and change notifications land next; see
 > [What you cannot do yet](#what-you-cannot-do-yet) before you set this up
 > expecting a daily reminder.
-
+>
 > **Read the delivery guarantee section before you rely on this.** Delivery is
 > best-effort by design, and the failure mode is specific enough to be worth
 > understanding up front.
