@@ -5,7 +5,7 @@ title: 'Wire the SQLite backend: sqlite build tag, appbuild recipe, release and 
 kind: enhancement
 priority: medium
 effort: m
-status: in-progress
+status: review
 ---
 
 ## Description
