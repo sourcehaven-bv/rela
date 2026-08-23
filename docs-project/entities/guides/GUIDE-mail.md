@@ -8,8 +8,14 @@ title: Outbound Mail
 type: guide
 ---
 
-Rela can send email: notification digests, reminders, and "this changed, go look"
-messages. This guide covers configuring a mail transport and what to expect from it.
+Rela can send email. This guide covers configuring a mail transport and what to
+expect from it.
+
+> **Nothing triggers mail yet.** This release ships the transport — configuring
+> a mail server, branding, and delivery behaviour — but no way to *send* a
+> message. Scheduled digests and change notifications land next; see
+> [What you cannot do yet](#what-you-cannot-do-yet) before you set this up
+> expecting a daily reminder.
 
 > **Read the delivery guarantee section before you rely on this.** Delivery is
 > best-effort by design, and the failure mode is specific enough to be worth
@@ -125,6 +131,47 @@ or a transactional mail provider that provides them.
 
 A durable queue with swappable backends is planned; when it lands, this caveat
 narrows considerably.
+
+## What you cannot do yet
+
+The transport works, but nothing in this release calls it. Concretely, there is
+**no way to schedule a daily digest or send on a change** — those arrive in the
+next two pieces of work:
+
+**Declarative mail** will let you describe the content once and trigger it from
+a schedule:
+
+```yaml
+# planned — not available yet
+mail_templates:
+  overdue_digest:
+    subject: "Tasks due {{today}}"
+    sections:
+      - title: "Overdue"
+        entity_type: task
+        where: ["status != done", "due < today"]
+        columns: [title, due, owner]
+```
+
+```yaml
+# schedules.yaml — planned
+tasks:
+  - name: daily-digest
+    template: overdue_digest
+    every: day
+    run_as: system:digest
+```
+
+The same templates will be callable from an automation, so a status change can
+send a notification.
+
+**Sending from Lua** will add a `mail.send` binding for anything the declarative
+form does not cover.
+
+Until then, configuring `.rela/mail.yaml` is useful only to verify your mail
+server works — point it at a local capture tool such as
+[Mailpit](https://mailpit.axllent.org/) and confirm the connection, TLS and
+credentials are right before the triggers land.
 
 ## Local development
 
