@@ -182,23 +182,52 @@ The seam is narrow because `config.Tasks` has exactly two consumers:
 `runDueTasks` (`scheduler.go:229`) and `pruneOrphanedState` (`:418`). Both become
 producer calls.
 
-### Liveness must be a per-tick question
+### Liveness is a batch question, asked only when a decision depends on it
 
-**This is the part that changes existing code rather than adding to it.**
-`pruneOrphanedState` (`:406-443`) is already a degenerate "is this task still
-active?" check — it drops state whose name is absent from the live set. But it
-derives that set from config and runs **once, in `loadState` (`:403`)**.
+**Batch, not per-task.** The producer is asked for the whole expansion at once
+and liveness is set membership — there is no `IsLive(name)` method. That matches
+what `pruneOrphanedState` already does (`:418-430`: build `live` once, diff all
+three maps against it), it is one query instead of N, and it avoids an
+inconsistency a per-task check would allow — the selection changing mid-tick, so
+a user is present at derived task 3 and absent at task 40.
 
-That is sound when membership changes only on a config edit plus restart. It is
-NOT sound for a query producer, where membership changes while the process runs.
-The failure is concrete: a user is deactivated at 09:00 while holding a
-`NextRetry` entry; nothing re-prunes, so the scheduler retries a task for someone
-who no longer matches, on the 2h rung, indefinitely.
+**And the expansion is NOT needed every tick.** For a daily digest that mostly
+succeeds, the set is needed roughly once a day. The scheduler ticks every 60s
+(`tickInterval`, `:48`), but `IsDue` for a `dayKind` schedule is
+`truncateToDay(now) != truncateToDay(lastRun)` (`config.go:67-69`) — false for
+all 1,439 intervening ticks. Querying each tick would be ~1,440 store queries a
+day to answer a question that changes once.
 
-So the engine asks the producer for the live set **each tick** and skips (and
-prunes) a pending retry whose task is no longer produced. One mechanism then
-covers both the zombie-retry case and the unbounded-growth case (cost 1 below),
-instead of adding a second pruner for derived names.
+The set is only needed when a decision actually depends on it: something is due,
+or a retry is pending. Both can be checked BEFORE expanding, provided the check
+does not itself need derived names:
+
+1. **A pending retry is due.** `NextRetry` is non-empty only while something is
+   failing — a pure map check, no query. If a retry is due, expand: the live set
+   is needed to decide retry-vs-drop (criterion 4e).
+2. **The declared task is due.** Requires a per-declared-task watermark (see
+   below), so group dueness is decided before expansion.
+3. **Neither.** No query. This is the steady state.
+
+Cost for a daily digest with no failures: about one query per day, plus one per
+failing user's retry — not one per tick.
+
+**This needs one new piece of state.** The maps are keyed by DERIVED name, so
+"is this group due?" cannot be answered from them without knowing the names,
+which is what the expansion produces — circular. Record a per-declared-task
+watermark (the declared name as a key in `Tasks`, distinct from derived entries
+by the `#` separator) updated when a group pass completes. Without it, every tick
+must expand just to discover it had nothing to do, which is the cost this section
+exists to avoid.
+
+**A pending retry must still be re-checked against a fresh set.**
+`pruneOrphanedState` is already a degenerate liveness check, but it derives its
+set from config and runs **once, in `loadState` (`:403`)**. Sound when membership
+changes only on a config edit plus restart; not sound for a query producer. The
+failure is concrete: a user is deactivated at 09:00 holding a `NextRetry` entry;
+nothing re-prunes, so the scheduler retries a task for a non-matching user on the
+2h rung indefinitely. Case 1 above is what closes that — the retry path expands,
+so it always sees a current set.
 
 ### What the factory model costs
 
@@ -211,10 +240,13 @@ instead of adding a second pruner for derived names.
    mean *skip this tick, change nothing*, and be distinguishable from a
    legitimately empty result. That is why `Tasks` returns `error` rather than
    just a slice, and it needs a test that pins "producer error does not prune".
-2. **I/O moves onto the tick path.** `runDueTasks` is currently pure map lookups
-   at a 60s tick (`tickInterval`, `:48`). A query producer makes every tick hit
-   the store. Needs a cached expansion with an explicit refresh interval
-   decoupled from the tick, or the tick rate becomes the query rate.
+2. **I/O on the decision path.** `runDueTasks` is currently pure map lookups at
+   a 60s tick. Expanding only when a decision depends on it (above) keeps a
+   healthy daily task at ~1 query/day, so a refresh-interval cache is NOT needed
+   for the common case. What remains: a short-interval task (`every: 30m`)
+   expands on every occurrence, and a task stuck on the 5m rung expands every 5
+   minutes. Both are bounded and proportionate, but the query cost should be
+   logged so an operator can see it.
 3. **New members run immediately.** A user with no `Tasks` entry hits the "first
    run, executing immediately" branch (`:264-268`). Someone added at 14:00 gets a
    digest at 14:00 and another at the normal hour. Acceptable for a digest, wrong
@@ -292,6 +324,8 @@ tasks are untouched by that pruning.
 retried indefinitely.
 4f. A producer error leaves state untouched: no pruning, no execution, and no
 mass "first run" on the following tick.
+4g. A task that is neither due nor retrying does not query the store: a daily
+digest in steady state expands about once a day, not once a tick.
 5. `for_each` is bounded, and hitting the bound logs what was dropped.
 6. Audit records name the per-run principal, not a generic scheduler identity.
 7. `rela validate` reports an unknown `entity_type` or unparseable `where:` in
@@ -319,6 +353,7 @@ changes; criteria 4d/4e.
 - **Mass re-send after a store blip** — a producer error misread as "no tasks"
 prunes every derived entry and makes every user look like a first run. Criterion
 4f; the single most damaging failure mode this design introduces.
-- **Query on the tick path** — cost 2; a 60s tick must not become a 60s query.
+- **Query volume** — bounded by expanding only when a decision needs the set
+(criterion 4g); the residual is short-interval tasks and fast retry rungs.
 - **Half-enforced scoping** — the reason RR-7408F5 is in scope rather than
 deferred.
