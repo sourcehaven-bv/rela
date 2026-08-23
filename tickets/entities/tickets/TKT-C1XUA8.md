@@ -5,7 +5,7 @@ title: Copy kernel and declared copy definitions (Step 4)
 kind: enhancement
 priority: high
 effort: l
-status: backlog
+status: review
 ---
 
 Design doc §9. Kernel: write fields/body/edges/attachment-links into a target

@@ -5,7 +5,7 @@ title: 'ACL: world-shaped read grants, state-shaped write grants (Step 3)'
 kind: enhancement
 priority: high
 effort: l
-status: backlog
+status: review
 ---
 
 Design doc §8.
