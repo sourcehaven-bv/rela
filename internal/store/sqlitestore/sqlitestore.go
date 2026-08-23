@@ -97,9 +97,11 @@ type Options struct {
 // accessors. It ratchets with the interface, exactly as memstore's and
 // fsstore's directives do — a "required interface" exception rather than a
 // target to reduce. Anything ADDED beyond the interface should raise the
-// question this line exists to ask.
+// question this line exists to ask. (42 rather than 41 since review: wrapping
+// DeleteEntity in a transaction split it into an exported method plus a
+// locked helper, the same shape RenameEntity already had.)
 //
-//plimsoll:max-methods=41
+//plimsoll:max-methods=42
 //plimsoll:max-exported-methods=29
 type Store struct {
 	db   *sql.DB
