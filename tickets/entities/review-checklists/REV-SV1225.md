@@ -2,7 +2,7 @@
 id: REV-SV1225
 type: review-checklist
 title: 'Review: Mail foundation: Sender interface (SMTP + in-memory), best-effort outbox, branded HTML rendering'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -126,7 +126,7 @@ the documented seam it attaches to.
 ## Pull Request
 
 - [x] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
+- [x] All CI checks pass
 - [x] PR URL documented below
 
 **PR:** https://github.com/sourcehaven-bv/rela/pull/1401
