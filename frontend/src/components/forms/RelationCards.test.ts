@@ -13,6 +13,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import RelationCards from './RelationCards.vue'
+import CheckboxWidget from '@/widgets/CheckboxWidget.vue'
 import { useSchemaStore } from '@/stores/schema'
 import type { FormFieldOrRelation, RelationAffordance, Entity } from '@/types'
 
@@ -189,6 +190,86 @@ describe('RelationCards affordance plumbing', () => {
     expect(row.exists()).toBe(true)
     expect(row.text()).toBe('Pseudoniem API')
     expect(row.text()).not.toBe('FEAT-DO-1')
+    wrapper.unmount()
+  })
+})
+
+// TKT-CBSTYLE. Both boolean inputs in RelationCards render the shared
+// CheckboxWidget rather than a locally-styled `<input type="checkbox">`.
+//
+// This file used to hand-roll a duplicate of the widget's CSS
+// (`.inline-edit-checkbox`). The copies drifted — the tick was off-centre and
+// the focus ring was a hardcoded indigo — and fixing the widget silently left
+// this surface broken. These tests pin the consolidation so the duplicate
+// cannot come back unnoticed: they assert the WIDGET is mounted, not merely
+// that some checkbox exists, which a re-introduced raw input would satisfy.
+describe('RelationCards boolean meta fields use the shared CheckboxWidget', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  async function mountWithBoolean(opts: {
+    verdict?: RelationAffordance
+    meta?: Record<string, unknown>
+  }) {
+    const schemaStore = useSchemaStore()
+    schemaStore.entityTypes.set('ticket', {
+      name: 'ticket', label: 'Ticket', properties: {},
+    } as never)
+    schemaStore.entityTypes.set('feature', {
+      name: 'feature', label: 'Feature', properties: {},
+    } as never)
+    schemaStore.relationTypes.set('implements', {
+      name: 'implements',
+      from: ['ticket'],
+      to: ['feature'],
+      properties: { blocking: { type: 'boolean' } },
+    } as never)
+    seedRelations(['FEAT-001'], { 'FEAT-001': opts.meta ?? {} })
+    const field: FormFieldOrRelation = {
+      relation: 'implements',
+      label: 'Implements',
+      widget: 'cards',
+      properties: [{ property: 'blocking', label: 'Blocking' }],
+    } as never
+    const wrapper = mount(RelationCards, {
+      props: {
+        field, entityType: 'ticket', entityId: 'TKT-001', verdict: opts.verdict,
+      },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    return wrapper
+  }
+
+  it('renders CheckboxWidget for a boolean meta property', async () => {
+    const wrapper = await mountWithBoolean({})
+    expect(wrapper.findComponent(CheckboxWidget).exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('reflects the stored boolean value', async () => {
+    const wrapper = await mountWithBoolean({ meta: { blocking: true } })
+    const cb = wrapper.findComponent(CheckboxWidget)
+    expect((cb.find('input').element as HTMLInputElement).checked).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('a writable=false verdict still disables the boolean field', async () => {
+    // The disabled path used to be a plain :disabled attribute on a raw input;
+    // it now travels through the widget's prop. Same ACL guarantee either way.
+    const wrapper = await mountWithBoolean({
+      verdict: { fields: { blocking: { writable: false } } } as never,
+    })
+    const input = wrapper.findComponent(CheckboxWidget).find('input')
+    expect(input.attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
+
+  it('no locally-styled checkbox class remains in the rendered output', async () => {
+    const wrapper = await mountWithBoolean({})
+    expect(wrapper.find('.inline-edit-checkbox').exists()).toBe(false)
     wrapper.unmount()
   })
 })
