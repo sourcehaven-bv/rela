@@ -157,30 +157,78 @@ retry unit was assumed to be the declared task; making the derived task the unit
 removes the question. Sequential execution is unchanged — N derived tasks run one
 after another in the same goroutine.
 
-### What the factory model does cost
+### The seam: a TaskProducer
 
-State is now keyed by a set that CHANGES between ticks, which the current model
-never had to handle:
+The factory is an interface, and there are two implementations:
 
-1. **Stale entries.** A user who stops matching (`active = false`) leaves
-   `Tasks`/`Failures`/`NextRetry` entries behind. Needs pruning against the
-   current expansion, or `.rela/scheduler-state.json` grows without bound.
-   Pruning must not disturb declared tasks — only derived names.
-2. **New members run immediately.** A user with no `Tasks` entry hits the
-   "first run, executing immediately" branch (`scheduler.go:264-268`). A person
-   added at 14:00 gets a digest at 14:00 and another at the normal hour.
-   Acceptable for a digest, wrong for a task with side effects — so a derived
-   task's first occurrence should probably inherit the declared task's schedule
-   rather than firing on sight. Needs deciding, not inheriting.
-3. **Name collisions.** Derived names must be stable (same user → same name
-   across restarts, or state is lost) and unable to collide with a declared task
-   name. Use a separator that cannot appear in a hand-written name — `#` — so the
-   namespaces are provably disjoint and a state-file entry is self-describing:
+```go
+// TaskProducer supplies the tasks the scheduler should consider this tick.
+type TaskProducer interface {
+    Tasks(ctx context.Context) ([]TaskConfig, error)
+}
+```
+
+- **Config producer** — returns `cfg.Tasks` verbatim. Total, infallible, no store
+  access. This is today's behaviour, unchanged.
+- **Query producer** — evaluates `for_each`, expanding one declared task into N
+  derived `TaskConfig`s, each with a computed `Name` and that entity's principal
+  in `RunAs`.
+
+`TaskConfig` already carries `RunAs`, so a derived task needs no new type: the
+engine, the ladder and the state maps keep working on `TaskConfig` by name and
+learn nothing about users.
+
+The seam is narrow because `config.Tasks` has exactly two consumers:
+`runDueTasks` (`scheduler.go:229`) and `pruneOrphanedState` (`:418`). Both become
+producer calls.
+
+### Liveness must be a per-tick question
+
+**This is the part that changes existing code rather than adding to it.**
+`pruneOrphanedState` (`:406-443`) is already a degenerate "is this task still
+active?" check — it drops state whose name is absent from the live set. But it
+derives that set from config and runs **once, in `loadState` (`:403`)**.
+
+That is sound when membership changes only on a config edit plus restart. It is
+NOT sound for a query producer, where membership changes while the process runs.
+The failure is concrete: a user is deactivated at 09:00 while holding a
+`NextRetry` entry; nothing re-prunes, so the scheduler retries a task for someone
+who no longer matches, on the 2h rung, indefinitely.
+
+So the engine asks the producer for the live set **each tick** and skips (and
+prunes) a pending retry whose task is no longer produced. One mechanism then
+covers both the zombie-retry case and the unbounded-growth case (cost 1 below),
+instead of adding a second pruner for derived names.
+
+### What the factory model costs
+
+1. **A producer can fail, and empty must not mean gone.** Config cannot fail; a
+   query can — store error, bad `where:`, a partially-loaded graph. If a
+   transient failure yields an empty set and that is treated as authoritative,
+   pruning deletes every derived entry: ladders and last-run times are wiped, and
+   on recovery every user looks unrecorded and fires "first run, executing
+   immediately" (`:264-268`) — a mass re-send. A producer error must therefore
+   mean *skip this tick, change nothing*, and be distinguishable from a
+   legitimately empty result. That is why `Tasks` returns `error` rather than
+   just a slice, and it needs a test that pins "producer error does not prune".
+2. **I/O moves onto the tick path.** `runDueTasks` is currently pure map lookups
+   at a 60s tick (`tickInterval`, `:48`). A query producer makes every tick hit
+   the store. Needs a cached expansion with an explicit refresh interval
+   decoupled from the tick, or the tick rate becomes the query rate.
+3. **New members run immediately.** A user with no `Tasks` entry hits the "first
+   run, executing immediately" branch (`:264-268`). Someone added at 14:00 gets a
+   digest at 14:00 and another at the normal hour. Acceptable for a digest, wrong
+   for a task with side effects — a derived task's first occurrence should
+   probably inherit the declared schedule instead of firing on sight. Decide it,
+   do not inherit it.
+4. **Name collisions.** Derived names must be stable (same user → same name
+   across restarts, or state is lost) and unable to collide with a declared name.
+   Use a separator that cannot appear in a hand-written name — `#` — so the
+   namespaces are provably disjoint and a state entry is self-describing:
    `daily-digest#PERS-JV`.
-4. **Log volume.** The per-task lines (`scheduled task`, `first run`,
-   `retrying failed task`) fire per DERIVED task: a 200-user expansion turns one
-   startup line into 200. Log the expansion once with a count, and keep per-user
-   lines to failures.
+5. **Log volume.** Per-task lines (`scheduled task`, `first run`, `retrying
+   failed task`) fire per DERIVED task: 200 users turns one startup line into
+   200. Log the expansion once with a count; keep per-user lines to failures.
 
 ## Scope: IS NOT
 
@@ -240,11 +288,17 @@ daily digest that fails for one user stays daily for the other 199.
 of per-derived-task `Tasks` entries; worth a test that pins it).
 4d. Derived-task state is pruned when a user leaves the selection, and declared
 tasks are untouched by that pruning.
+4e. A pending retry for a task the producer no longer yields is dropped, not
+retried indefinitely.
+4f. A producer error leaves state untouched: no pruning, no execution, and no
+mass "first run" on the following tick.
 5. `for_each` is bounded, and hitting the bound logs what was dropped.
 6. Audit records name the per-run principal, not a generic scheduler identity.
 7. `rela validate` reports an unknown `entity_type` or unparseable `where:` in
 `for_each`. This stays syntactic — `scheduler.Config.validate`
 (`config.go:195`) has no store access.
+8. The config producer path is behaviour-identical to today, including the
+`pruneOrphanedState` semantics for declared tasks.
 
 ## Risks
 
@@ -261,6 +315,10 @@ a daily digest in 5 minutes and mail the other 199 again. The task-per-user
 factory removes it structurally (a succeeded user is not due), so this is now a
 regression to pin with a test rather than a design problem to solve.
 - **Unbounded state growth** — derived entries accumulate as the selection
-changes; criterion 4d.
+changes; criteria 4d/4e.
+- **Mass re-send after a store blip** — a producer error misread as "no tasks"
+prunes every derived entry and makes every user look like a first run. Criterion
+4f; the single most damaging failure mode this design introduces.
+- **Query on the tick path** — cost 2; a 60s tick must not become a 60s query.
 - **Half-enforced scoping** — the reason RR-7408F5 is in scope rather than
 deferred.
