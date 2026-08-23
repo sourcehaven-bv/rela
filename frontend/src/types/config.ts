@@ -336,11 +336,33 @@ export interface KanbanSwimlane {
   icon?: string
 }
 
+/**
+ * One line of detail on a kanban card or a calendar event chip.
+ *
+ * Shared by both surfaces deliberately: they render the same thing — a label
+ * and a value routed through the dense widget registry — so they take the same
+ * config rather than two spellings of it.
+ */
 export interface KanbanCardField {
   property?: string
   relation?: string
   direction?: 'outgoing' | 'incoming'
+  /** Overrides the displayed name; derived from property/relation when unset. */
   label?: string
+  /** Renders the label before the value. Defaults to true when unset. */
+  show_label?: boolean
+}
+
+/** The label to render for a field: explicit override, else the name it came
+ * from. Keeps `assignee` from having to be restated as "Assignee". */
+export function cardFieldLabel(field: KanbanCardField): string {
+  return field.label || field.relation || field.property || ''
+}
+
+/** Whether a field's label renders. Unset means true: an unlabelled ambiguous
+ * value is worse than a redundant label. */
+export function cardFieldLabelShown(field: KanbanCardField): boolean {
+  return field.show_label !== false
 }
 
 /**

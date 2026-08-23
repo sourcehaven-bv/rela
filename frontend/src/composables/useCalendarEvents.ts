@@ -1,5 +1,6 @@
 import { computed, type ComputedRef, type Component } from 'vue'
 import type { CalendarConfig, CalendarSourceConfig, KanbanCardField } from '@/types/config'
+import type { ResolvedCardField } from '@/components/common/CardFieldList.vue'
 import type { Entity } from '@/types'
 import type { EntityType } from '@/types/schema'
 import { formatCellValue } from '@/utils/format'
@@ -16,14 +17,7 @@ import {
   type DateKind,
 } from '@/utils/calendarGrid'
 
-/** One resolved chip field: a widget when the property has one, else text. */
-export interface CalendarEventField {
-  key: string
-  component?: Component
-  propertyName?: string
-  modelValue?: unknown
-  text: string
-}
+export type { ResolvedCardField } from '@/components/common/CardFieldList.vue'
 
 /**
  * An entity placed on the grid.
@@ -49,7 +43,7 @@ export interface CalendarEvent {
   /** Minutes past midnight, for ordering and the week hour axis. */
   minutes: number | null
   color: string
-  fields: CalendarEventField[]
+  fields: ResolvedCardField[]
   /** Which properties a drag must rewrite, and how to interpret them. */
   dateProperty: string
   endDateProperty?: string
@@ -193,9 +187,9 @@ function resolveFields(
   included: Record<string, Entity>,
   inverseName: (relation: string) => string,
   tz: string
-): CalendarEventField[] {
+): ResolvedCardField[] {
   if (!fields?.length) return []
-  const out: CalendarEventField[] = []
+  const out: ResolvedCardField[] = []
 
   for (const field of fields) {
     if (field.relation) {
@@ -204,7 +198,7 @@ function resolveFields(
       // Relation fields have no PropertyDef and no widget, so they render as
       // joined target titles — the same contract kanban cards and list
       // relation columns use.
-      out.push({ key: `rel:${field.relation}:${field.direction ?? 'outgoing'}`, text })
+      out.push({ field, text })
       continue
     }
     if (!field.property) continue
@@ -215,7 +209,7 @@ function resolveFields(
 
     const widget = widgets?.get(field.property)
     out.push({
-      key: field.property,
+      field,
       component: widget?.component,
       propertyName: widget?.propertyName,
       modelValue: widget?.preformatted ? text : entity.properties?.[field.property],

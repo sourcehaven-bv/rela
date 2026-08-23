@@ -10,6 +10,7 @@
  * event per render.
  */
 import type { CalendarEvent } from '@/composables/useCalendarEvents'
+import CardFieldList from '@/components/common/CardFieldList.vue'
 
 defineProps<{
   event: CalendarEvent
@@ -39,18 +40,7 @@ defineEmits<{
       <span v-if="event.timeLabel" class="calendar-chip-time">{{ event.timeLabel }}</span>
       <span class="calendar-chip-title">{{ event.summary }}</span>
     </span>
-    <span v-if="event.fields.length" class="calendar-chip-fields">
-      <template v-for="field in event.fields" :key="field.key">
-        <component
-          :is="field.component"
-          v-if="field.component"
-          :model-value="field.modelValue"
-          :property-name="field.propertyName"
-          mode="display"
-        />
-        <span v-else class="calendar-chip-field">{{ field.text }}</span>
-      </template>
-    </span>
+    <CardFieldList :fields="event.fields" :entity-type="event.entityType" />
   </button>
 </template>
 
@@ -107,16 +97,6 @@ defineEmits<{
   flex: none;
   color: var(--muted-text);
   font-variant-numeric: tabular-nums;
-}
-
-/* Extra fields sit BELOW the title rather than beside it, so they never
-   compete with it for width — the arrangement a card uses, at chip scale. */
-.calendar-chip-fields {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-xs);
-  color: var(--muted-text);
-  font-size: var(--font-size-sm);
 }
 
 /* Source colours map onto the EXISTING badge palette rather than a private set

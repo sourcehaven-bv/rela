@@ -714,10 +714,10 @@ type Calendar struct {
 // multi-type calendar would be nearly unconfigurable if every field had to
 // exist on every type.
 type CalendarEvent struct {
-	// Fields are extra values shown on the chip. KanbanCardField is reused
-	// rather than cloned: the shape (property or relation, direction, label)
-	// is already exactly right, and a structurally identical CalendarChipField
-	// would be duplication for its own sake.
+	// Fields are extra values shown beneath the chip's title, one per line.
+	// [KanbanCardField] is shared with kanban cards: the two surfaces render
+	// the same thing (a label and a value, routed through the same widgets),
+	// so they take the same config rather than two spellings of it.
 	Fields []KanbanCardField `yaml:"fields,omitempty" json:"fields,omitempty"`
 }
 
@@ -752,6 +752,11 @@ type CalendarSource struct {
 	Summary string `yaml:"summary,omitempty" json:"summary,omitempty"`
 	// Description names an optional property shown in the event detail.
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	// Label names this source in the legend that toggles it on and off.
+	// Defaults to the entity type, which is usually what an operator would
+	// have typed anyway; set it when one type appears as two sources (the
+	// documented way to express OR) and "task" twice would be meaningless.
+	Label string `yaml:"label,omitempty" json:"label,omitempty"`
 	// Color is a named palette token (see ValidCalendarColors) distinguishing
 	// this source's events. It is a TOKEN, never a CSS literal: a hex value
 	// baked into config is unreadable in the dark theme and pins every
@@ -779,7 +784,39 @@ type KanbanCardField struct {
 	Property  string    `yaml:"property,omitempty" json:"property,omitempty"`
 	Relation  string    `yaml:"relation,omitempty" json:"relation,omitempty"`
 	Direction Direction `yaml:"direction,omitempty" json:"direction,omitempty"` // "outgoing" (default) or "incoming"
-	Label     string    `yaml:"label,omitempty" json:"label,omitempty"`
+	// Label overrides the displayed name. Left empty it is DERIVED from the
+	// property or relation name, so an author never restates `assignee` as
+	// "Assignee" — only a genuine rename needs writing down.
+	Label string `yaml:"label,omitempty" json:"label,omitempty"`
+	// ShowLabel renders the label before the value. Default true.
+	//
+	// A pointer so "unset" is distinguishable from "false": a plain bool's zero
+	// value would silently turn every label off the moment the key appeared.
+	//
+	// Set it false where the value already names itself — an enum badge reading
+	// "High" gains nothing from a "Priority:" prefix, and space on a card or
+	// chip is scarce. Two person fields, by contrast, are indistinguishable
+	// without their labels, which is the case this setting exists to serve.
+	ShowLabel *bool `yaml:"show_label,omitempty" json:"show_label,omitempty"`
+}
+
+// LabelShown reports whether this field's label should render.
+// Nil: an unset ShowLabel means true — labels are the safe default, since an
+// unlabelled ambiguous value is worse than a redundant one.
+func (f KanbanCardField) LabelShown() bool {
+	return f.ShowLabel == nil || *f.ShowLabel
+}
+
+// DisplayLabel is the label to render: the explicit override when set,
+// otherwise the relation or property name it was derived from.
+func (f KanbanCardField) DisplayLabel() string {
+	if f.Label != "" {
+		return f.Label
+	}
+	if f.Relation != "" {
+		return f.Relation
+	}
+	return f.Property
 }
 
 // NavigationEntry defines a sidebar navigation item or a group of items.

@@ -348,9 +348,11 @@ describe('CalendarView chip fields', () => {
     await flushPromises()
 
     const chips = wrapper.findAll('.calendar-chip')
-    expect(chips[0].find('.calendar-chip-fields').exists()).toBe(true)
+    // `.card-fields` comes from the shared CardFieldList, which kanban cards
+    // render too — the two surfaces now use one implementation.
+    expect(chips[0].find('.card-fields').exists()).toBe(true)
     // T-2 has no status: a dense surface renders nothing, not a placeholder.
-    expect(chips[1].find('.calendar-chip-fields').exists()).toBe(false)
+    expect(chips[1].find('.card-fields').exists()).toBe(false)
   })
 })
 
