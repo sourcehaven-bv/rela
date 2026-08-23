@@ -5,7 +5,7 @@ title: Clear all doclink findings and promote the rule to a blocking CI gate
 kind: enhancement
 priority: medium
 effort: s
-status: in-progress
+status: done
 ---
 
 ## Problem
