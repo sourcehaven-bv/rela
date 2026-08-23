@@ -86,9 +86,13 @@ export const useEntitiesStore = defineStore('entities', () => {
     return undefined
   })
 
-  const isLoading = computed(() => (type: string, id?: string) => {
+  // Takes a world for the same reason getCached does: fetchEntity registers
+  // its in-flight key per world, so a world-blind lookup here would report
+  // "not loading" during a world-scoped fetch. The id-less form is unchanged
+  // — it asks "is anything of this type loading", which spans all worlds.
+  const isLoading = computed(() => (type: string, id?: string, world?: string) => {
     if (id) {
-      return loading.value.has(cacheKey(type, id))
+      return loading.value.has(cacheKey(type, id, world))
     }
     return Array.from(loading.value).some((k) => k.startsWith(type + ':'))
   })
