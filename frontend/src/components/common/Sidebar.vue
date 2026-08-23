@@ -193,7 +193,6 @@ async function handleAction(item: SidebarItem, ev?: Event) {
             >
               <component :is="resolveIcon(item.icon)" class="nav-icon" :size="18" aria-hidden="true" />
               <span class="nav-label">{{ item.label }}</span>
-              <span v-if="item.count !== undefined && !uiStore.sidebarCollapsed" class="nav-count">{{ item.count }}</span>
             </RouterLink>
           </template>
         </div>
@@ -218,7 +217,6 @@ async function handleAction(item: SidebarItem, ev?: Event) {
             >
               <component :is="resolveIcon(item.icon)" class="nav-icon" :size="18" aria-hidden="true" />
               <span class="nav-label">{{ item.label }}</span>
-              <span v-if="item.count !== undefined && !uiStore.sidebarCollapsed" class="nav-count">{{ item.count }}</span>
             </RouterLink>
           </template>
         </template>
@@ -401,16 +399,6 @@ async function handleAction(item: SidebarItem, ev?: Event) {
 .nav-label {
   font-size: 14px;
   flex: 1;
-}
-
-.nav-count {
-  background: rgba(255, 255, 255, 0.15);
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-size: 11px;
-  font-weight: 500;
-  min-width: 20px;
-  text-align: center;
 }
 
 /* Action buttons in the sidebar — same look as RouterLink nav items */
