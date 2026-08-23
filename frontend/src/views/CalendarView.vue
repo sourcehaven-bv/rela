@@ -18,7 +18,7 @@
  */
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { useQuery, useMutation, useQueryCache } from '@pinia/colada'
+import { useMutation, useQueryCache } from '@pinia/colada'
 import { listAllEntities, updateEntity, getErrorMessage } from '@/api'
 import { entityKeys } from '@/queries/entities'
 import { beginOptimistic, rollbackOptimistic, settleOptimistic } from '@/queries/optimisticList'
@@ -88,51 +88,69 @@ const weekStart = computed(() => config.value?.week_start ?? 'monday')
 const days = computed(() => visibleDays(view.value, anchor.value, weekStart.value))
 const today = computed(() => todayIn(timezone.value))
 
-/** The widest past pad any source needs, so one window serves them all. */
-const pastPad = computed(() =>
-  Math.max(0, ...(config.value?.sources ?? []).map((s) => (s.end_date ? (s.max_span ?? 31) : 0)))
-)
-
-const bounds = computed(() =>
-  windowBounds(view.value, anchor.value, weekStart.value, timezone.value, pastPad.value)
-)
-
 /**
  * Per-source query params. The window is a half-open range, so a timed event
  * late on the last visible day is included — a `lte` bound of that day would
  * mean "<= midnight" and silently drop it.
  */
-function paramsFor(dateProperty: string): ListParams {
+function paramsFor(dateProperty: string, pastPadDays: number): ListParams {
+  const b = windowBounds(view.value, anchor.value, weekStart.value, timezone.value, pastPadDays)
   const params: ListParams = {}
-  params[`filter[${dateProperty}][gte]`] = bounds.value.gte
-  params[`filter[${dateProperty}][lt]`] = bounds.value.lt
+  params[`filter[${dateProperty}][gte]`] = b.gte
+  params[`filter[${dateProperty}][lt]`] = b.lt
   return params
 }
 
 /**
- * One query for the whole grid.
+ * The grid's data, fetched per source through the shared query cache.
  *
- * Sources are fetched together rather than through a query each, because the
- * grid is only meaningful when every source has landed: rendering source A
- * while B is still in flight makes events pop in after the fact. The key
- * carries the window, so navigating periods caches separately, and it sits
- * under the entityKeys.type(type) prefix the SSE composable invalidates, so
- * live entity changes still refresh the grid.
+ * The KEY SHAPE is load-bearing in two directions, and an earlier version of
+ * this component broke both by inventing a `['entities','calendar',…]` key:
+ *
+ *   - `useEvents` invalidates `entityKeys.type(<type>)` on SSE entity events,
+ *     which only prefix-matches a key whose second element is the entity type.
+ *     A calendar-namespaced key silently opted out of live updates.
+ *   - `beginOptimistic` writes through `entityKeys.list(<type>)`. A grid reading
+ *     a different entry would never show the optimistic move, so a dragged
+ *     event would visibly snap back until the refetch landed.
+ *
+ * `entityKeys.listParams` gives both: it descends from `list(type)` — so the
+ * optimistic write and the SSE invalidation both reach it — while the params
+ * segment keeps each window in its own cache entry.
  */
-const gridQuery = useQuery({
-  key: () => [
-    'entities',
-    'calendar',
-    props.id,
-    view.value,
-    dayKey(anchor.value),
-    timezone.value,
-  ],
-  query: async ({ signal }) => {
-    const sources = config.value?.sources ?? []
-    return Promise.all(
-      sources.map(async (source) => {
-        const res = await listAllEntities(source.entity, paramsFor(source.date), signal)
+const sourceQueries = computed(() =>
+  (config.value?.sources ?? []).map((source) => ({
+    source,
+    params: paramsFor(source.date, source.end_date ? (source.max_span ?? 31) : 0),
+  }))
+)
+
+interface SourceResult {
+  key: string
+  entities: Entity[]
+  truncated: boolean
+}
+
+const fetched = ref<SourceResult[]>([])
+const loading = ref(true)
+const loadError = ref('')
+
+async function refetchGrid() {
+  const queries = sourceQueries.value
+  if (!queries.length) {
+    fetched.value = []
+    loading.value = false
+    return
+  }
+  loading.value = true
+  loadError.value = ''
+  try {
+    const results = await Promise.all(
+      queries.map(async ({ source, params }): Promise<SourceResult> => {
+        const res = await listAllEntities(source.entity, params)
+        // Publish into the cache entry the optimistic write and SSE
+        // invalidation target, so a drag updates the grid immediately.
+        queryCache.setQueryData([...entityKeys.listParams(source.entity, params)], res)
         return {
           key: source.entity + ':' + source.date,
           entities: res.data,
@@ -140,19 +158,22 @@ const gridQuery = useQuery({
         }
       })
     )
-  },
-  enabled: () => !!config.value,
-})
-
-const loading = computed(() => gridQuery.isPending.value)
-const loadError = computed(() =>
-  gridQuery.error.value ? getErrorMessage(gridQuery.error.value, 'Failed to load calendar') : ''
-)
-const fetched = computed(() => gridQuery.data.value ?? [])
-
-async function refetchGrid() {
-  await gridQuery.refetch()
+    fetched.value = results
+  } catch (err) {
+    loadError.value = getErrorMessage(err, 'Failed to load calendar')
+  } finally {
+    loading.value = false
+  }
 }
+
+// Refetch when the window, the calendar, or the display timezone changes.
+watch(
+  () => [props.id, view.value, dayKey(anchor.value), timezone.value].join('|'),
+  () => {
+    void refetchGrid()
+  },
+  { immediate: true }
+)
 
 const sourceData = computed<CalendarSourceData[]>(() =>
   (config.value?.sources ?? []).map((source) => ({

@@ -120,7 +120,10 @@ func compareValues(left, right, operator string) (match bool, err error) {
 	rt, rIsTime := parseTemporal(right)
 	switch {
 	case lIsTime && rIsTime:
-		return compareOrdered(lt.UnixNano(), rt.UnixNano(), operator), nil
+		// time.Compare, not UnixNano: nanoseconds since the epoch overflow an
+		// int64 outside roughly 1678-2262, and a far-future date would wrap
+		// negative and sort before everything.
+		return compareOrdered(lt.Compare(rt), 0, operator), nil
 	case lIsTime || rIsTime:
 		// One side is temporal, the other isn't — refuse to guess.
 		return false, fmt.Errorf("cannot compare date %q with non-date %q",

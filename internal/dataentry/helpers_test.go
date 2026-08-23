@@ -1149,6 +1149,13 @@ func TestCompareValues_Datetime(t *testing.T) {
 
 		// Plain dates keep working exactly as before.
 		{"date vs date unchanged", "2026-08-22", "2026-08-01", "gt", true},
+
+		// Far-future dates must still order correctly. Nanoseconds since the
+		// epoch overflow an int64 outside roughly 1678-2262, so comparing on
+		// UnixNano would wrap these negative and sort them before everything.
+		{"far future is after near future", "2300-01-01", "2026-08-22", "gt", true},
+		{"far future vs far future", "2400-01-01", "2300-01-01", "gt", true},
+		{"distant past is before now", "1600-01-01", "2026-08-22", "lt", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -1,12 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { PiniaColada } from '@pinia/colada'
+import { PiniaColada, useQueryCache } from '@pinia/colada'
 import { ref } from 'vue'
 import CalendarView from './CalendarView.vue'
 import { useSchemaStore } from '@/stores/schema'
 import { useUIStore } from '@/stores/ui'
 import { _setEntityPluralForTest } from '@/api/entities'
+import { entityKeys } from '@/queries/entities'
 import type { Entity, ListResponse } from '@/types'
 
 const listAllEntitiesMock = vi.fn()
@@ -305,5 +306,64 @@ describe('CalendarView chip fields', () => {
     expect(chips[0].find('.calendar-chip-fields').exists()).toBe(true)
     // T-2 has no status: a dense surface renders nothing, not a placeholder.
     expect(chips[1].find('.calendar-chip-fields').exists()).toBe(false)
+  })
+})
+
+/**
+ * The cache-key contract, which had no test and so let a real bug through.
+ *
+ * An earlier version keyed the grid on `['entities','calendar',…]`. That reads
+ * naturally but breaks two mechanisms silently: `useEvents` invalidates
+ * `['entities',<type>]` on SSE events (which does not prefix-match a key whose
+ * second element is the literal 'calendar'), and `beginOptimistic` writes
+ * through `entityKeys.list(<type>)` (a different entry entirely, so a dragged
+ * event snapped back until the refetch landed).
+ *
+ * Neither failure is visible in a normal render test — the grid still shows the
+ * right events — which is exactly why this asserts on the key itself.
+ */
+describe('CalendarView cache keys', () => {
+  it('writes fetched data under a key descending from entityKeys.list(type)', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    routeQuery.value = { date: '2026-08-22' }
+
+    const schemaStore = useSchemaStore()
+    schemaStore.entityTypes.set('task', {
+      label: 'Task',
+      properties: { title: { type: 'string' }, due: { type: 'date' } },
+    } as never)
+    schemaStore.calendars.set(CAL_ID, {
+      title: 'Schedule',
+      default_view: 'month',
+      week_start: 'monday',
+      day_start: '08:00',
+      day_end: '20:00',
+      max_events_per_day: 4,
+      sources: [{ entity: 'task', date: 'due', summary: 'title', max_span: 31 }],
+    } as never)
+    _setEntityPluralForTest('task', 'tasks')
+    useUIStore().setDatetimeTimezone('UTC')
+    listAllEntitiesMock.mockImplementation(() =>
+      Promise.resolve(listResponse([task('T-1', '2026-08-22')]))
+    )
+
+    const wrapper = mount(CalendarView, {
+      props: { id: CAL_ID },
+      global: { plugins: [pinia, PiniaColada] },
+      attachTo: document.body,
+    })
+    await flushPromises()
+
+    const cache = useQueryCache()
+    // Every entry the grid populated must sit beneath ['entities','task',...],
+    // the prefix both the SSE invalidation and the optimistic write target.
+    const entries = cache.getEntries({ key: entityKeys.list('task') })
+    expect(entries.length).toBeGreaterThan(0)
+    for (const entry of entries) {
+      expect(entry.key.slice(0, 3)).toEqual(['entities', 'task', 'list'])
+    }
+
+    wrapper.unmount()
   })
 })

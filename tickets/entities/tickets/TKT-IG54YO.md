@@ -5,7 +5,7 @@ title: Calendar views (month + week) for data-entry
 kind: enhancement
 priority: medium
 effort: l
-status: in-progress
+status: review
 ---
 
 ## Description
