@@ -5,7 +5,7 @@ title: 'appbuild: widen the three *pgstore.Store concrete-type assertions to int
 kind: refactor
 priority: medium
 effort: m
-status: ready
+status: review
 ---
 
 ## Description

@@ -5,6 +5,7 @@ package appbuild
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -33,7 +34,9 @@ type fakeStore struct{ store.Store }
 
 func newFakeStore(t *testing.T) fakeStore {
 	t.Helper()
-	return fakeStore{Store: memstore.New()}
+	m := memstore.New()
+	t.Cleanup(func() { _ = m.Close() })
+	return fakeStore{Store: m}
 }
 
 type fakeUserStateStore struct {
@@ -57,16 +60,23 @@ type fakeReconciler struct {
 	specsPublished []store.DerivedObjectSpec
 	reconcileCalls int
 	reconcileErr   error
+
+	// calls records the method order. A bool pair cannot express "published
+	// BEFORE reconciling", and the published slice is legitimately empty for a
+	// metamodel with no unique properties — so its nilness proves nothing.
+	calls []string
 }
 
 func (f *fakeReconciler) SetUniqueSpecProvider(specs []store.DerivedObjectSpec) {
 	f.specsPublished = specs
+	f.calls = append(f.calls, "SetUniqueSpecProvider")
 }
 
 func (f *fakeReconciler) Reconcile(
 	_ context.Context, desired []store.DerivedObjectSpec, _ store.ReconcileOptions,
 ) ([]store.DerivedObjectOutcome, error) {
 	f.reconcileCalls++
+	f.calls = append(f.calls, "Reconcile")
 	if f.reconcileErr != nil {
 		return nil, f.reconcileErr
 	}
@@ -75,6 +85,20 @@ func (f *fakeReconciler) Reconcile(
 		outcomes = append(outcomes, store.DerivedObjectOutcome{Spec: spec, State: store.DerivedCreated})
 	}
 	return outcomes, nil
+}
+
+// fakeNilVersionStore has the capability but hands back a nil pointer — the
+// partial-init path a real backend could plausibly take. Boxing that into
+// store.VersionService is what produces a non-nil interface wrapping nil.
+type fakeNilVersionStore struct{ fakeStore }
+
+func (fakeNilVersionStore) VersionStore() *pgstore.VersionStore { return nil }
+
+// fakeNilUserState returns (nil, nil): no handle, no error.
+type fakeNilUserState struct{ fakeStore }
+
+func (fakeNilUserState) UserState() (userstate.Store, error) {
+	return nil, nil //nolint:nilnil // deliberately exercising the (nil, nil) contract hole
 }
 
 type fakeSweeper struct {
@@ -132,13 +156,15 @@ func TestDerivedSchemaPublishesSpecsBeforeReconciling(t *testing.T) {
 	}
 	reconcileDerivedSchemaIfSupported(t.Context(), f, nil)
 
-	if f.reconcileCalls != 1 {
-		t.Errorf("Reconcile calls = %d, want 1", f.reconcileCalls)
-	}
-	// specsPublished is non-nil only if SetUniqueSpecProvider ran; a failing
-	// Reconcile must not prevent that, and must not panic.
-	if f.specsPublished == nil && len(f.specsPublished) != 0 {
-		t.Error("specs were not published before the failing reconcile")
+	// Order is the assertion. An earlier draft tested
+	// `specsPublished == nil && len(specsPublished) != 0`, which is
+	// tautologically false for a slice (a nil slice has len 0) and so could
+	// never fail — a dead check masquerading as coverage.
+	want := []string{"SetUniqueSpecProvider", "Reconcile"}
+	if !slices.Equal(f.calls, want) {
+		t.Errorf("call order = %v, want %v (specs must be published before "+
+			"reconciling, so a violation of an existing index still maps to a "+
+			"property when reconcile degrades)", f.calls, want)
 	}
 }
 
@@ -158,6 +184,9 @@ func TestResolversReturnUntypedNilWithoutCapability(t *testing.T) {
 	if got := versionServiceFor(plain); got != nil {
 		t.Errorf("versionServiceFor = %#v, want untyped nil so version recording is skipped", got)
 	}
+	// stateKVFor is included for its nil contract only — NOT as evidence of
+	// interface parity. It still discovers via pgstore.StateStoreFor's internal
+	// concrete assertion (see its doc comment and TKT-L3FNEN).
 	if got := stateKVFor(plain); got != nil {
 		t.Errorf("stateKVFor = %#v, want untyped nil so the FSKV fallback engages", got)
 	}
@@ -165,6 +194,32 @@ func TestResolversReturnUntypedNilWithoutCapability(t *testing.T) {
 	// Must not panic, and must not start a sweep.
 	startVersionSweepIfSupported(plain, nil)
 	reconcileDerivedSchemaIfSupported(t.Context(), plain, nil)
+}
+
+// TestCapabilityPresentButHandleNilYieldsUntypedNil is the branch the
+// no-capability test CANNOT reach, and the one that actually regressed when
+// discovery widened from a concrete type to an interface.
+//
+// Asserting st.(*pgstore.Store) bounded the reachable implementations to one
+// whose VersionStore() is unconditionally non-nil. An interface admits any
+// implementation — so a nil pointer boxed into store.VersionService yields a
+// NON-nil interface, and every downstream nil-check silently passes before
+// panicking at write time.
+func TestCapabilityPresentButHandleNilYieldsUntypedNil(t *testing.T) {
+	t.Run("version service", func(t *testing.T) {
+		f := fakeNilVersionStore{fakeStore: newFakeStore(t)}
+		if got := versionServiceFor(f); got != nil {
+			t.Errorf("versionServiceFor = %#v, want untyped nil; a typed nil "+
+				"passes downstream nil-checks and panics on first use", got)
+		}
+	})
+
+	t.Run("user state", func(t *testing.T) {
+		f := fakeNilUserState{fakeStore: newFakeStore(t)}
+		if got := storeUserStateFor(f); got != nil {
+			t.Errorf("storeUserStateFor = %#v, want untyped nil", got)
+		}
+	})
 }
 
 // TestUserStateErrorYieldsUntypedNil covers the other typed-nil path: the
@@ -179,17 +234,14 @@ func TestUserStateErrorYieldsUntypedNil(t *testing.T) {
 
 // --- AC-2: pgstore still satisfies every widened interface ----------------
 
-// TestPgstoreSatisfiesWidenedInterfaces is a compile-time assertion. If a future
-// change to pgstore's method set breaks one of these, the failure lands here
-// with a clear name rather than as a silently-skipped capability at runtime —
+// Compile-time assertions, at file scope rather than wrapped in a func Test:
+// they cannot fail at runtime, so a test would only add a fake green line to
+// the report. If a change to pgstore's method set breaks one, the build fails
+// here — instead of the capability being silently skipped at wiring time,
 // which is exactly how this class of bug hides.
-func TestPgstoreSatisfiesWidenedInterfaces(t *testing.T) {
-	var s *pgstore.Store
-	var (
-		_ userStateProvider       = s
-		_ derivedSchemaReconciler = s
-		_ versionSweeper          = s
-		_ versionServiceProvider  = s
-	)
-	t.Log("pgstore.Store satisfies all four widened capability interfaces")
-}
+var (
+	_ userStateProvider       = (*pgstore.Store)(nil)
+	_ derivedSchemaReconciler = (*pgstore.Store)(nil)
+	_ versionSweeper          = (*pgstore.Store)(nil)
+	_ versionServiceProvider  = (*pgstore.Store)(nil)
+)

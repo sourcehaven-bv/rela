@@ -38,7 +38,14 @@ func storeUserStateFor(st store.Store) userstate.Store {
 	}
 	us, err := s.UserState()
 	if err != nil {
-		slog.Warn("next-action state: pgstore backend unavailable", "error", err)
+		slog.Warn("next-action state: store backend unavailable", "error", err)
+		return nil
+	}
+	if us == nil {
+		// Belt-and-braces alongside the error check: a provider that returns
+		// (nil, nil) must not be mistaken for a working handle. Cheap here,
+		// and the alternative is a nil-pointer panic on the first snooze.
+		slog.Warn("next-action state: store returned no backend and no error")
 		return nil
 	}
 	return us

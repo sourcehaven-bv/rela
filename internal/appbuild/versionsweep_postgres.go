@@ -110,14 +110,28 @@ type versionServiceProvider interface {
 }
 
 // versionServiceFor returns the store's versioning service (history reads,
-// version writes, purge) sharing its pool. Returns a genuinely nil interface for
-// a store without the capability (should not happen in this build), so
-// nil-checks downstream behave correctly.
+// version writes, purge) sharing its pool. Returns a genuinely nil interface —
+// never a typed nil — both for a store without the capability and for one whose
+// handle came back nil, so nil-checks downstream behave correctly.
+//
+// The explicit nil-pointer guard is load-bearing, and it became necessary when
+// discovery widened from a concrete type to an interface. Asserting
+// st.(*pgstore.Store) bounded the reachable implementations to exactly one,
+// whose VersionStore() is unconditionally non-nil; an interface admits any
+// implementation, including one that returns a nil pointer on a partial-init
+// path. Boxing that into store.VersionService yields a NON-nil interface, so
+// versionRecorderFor (appbuild.go) and startDataMigration would both pass their
+// nil-checks and then panic on first use — at write time, in production.
 func versionServiceFor(st store.Store) store.VersionService {
-	if s, ok := st.(versionServiceProvider); ok {
-		return s.VersionStore()
+	s, ok := st.(versionServiceProvider)
+	if !ok {
+		return nil
 	}
-	return nil
+	vs := s.VersionStore()
+	if vs == nil {
+		return nil
+	}
+	return vs
 }
 
 // stateKVFor returns a database-backed [state.KV] sharing the store's pool, so
@@ -133,6 +147,14 @@ func versionServiceFor(st store.Store) store.VersionService {
 //
 // Returns a genuinely nil interface for a non-pgstore store so the caller's
 // nil-check falls back to the filesystem KV.
+//
+// NOT widened by TKT-415WA7, unlike the three resolvers above: discovery still
+// goes through pgstore.StateStoreFor, which type-asserts *pgstore.Store
+// internally. So a second backend gets version sweeps, user state and derived
+// schema by interface, then silently falls back to node-local FSKV for state.
+// That partial adoption is worse than none — it degrades quietly at runtime
+// rather than loudly at wiring — so it must be closed before a second backend
+// ships. Tracked in TKT-L3FNEN.
 func stateKVFor(st store.Store) state.KV {
 	raw := pgstore.StateStoreFor(st)
 	if raw == nil {
