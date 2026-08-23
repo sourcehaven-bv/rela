@@ -108,5 +108,21 @@ a checklist item ticked before the fact is exactly the thing these checklists
 exist to prevent, and the next person hitting this loop deserves to know it was
 noticed rather than glossed.
 
-`just ci` passed locally before the transition, so "all CI checks pass" reflects
-a real green run rather than an assumption; the hosted run is confirmed below.
+`just ci` passed locally before the transition, so "all CI checks pass" reflected
+a real green run rather than an assumption. **Confirmed on the hosted run:** all
+25 checks pass (Architecture, God-object lint, Comment lint, Frontend, E2E,
+Fuzz, Postgres Backend, six cross-compile targets, CodeQL, Rela Tickets).
+
+Two rounds were needed. The first run failed one check — the done-before-merge
+gate rejected TKT-6RSPA2 at `ready`, since a ticket carried in a PR must be in a
+terminal state. That follow-up is future work this PR does not deliver, so it
+moved to `backlog`, matching TKT-S18C1U which was already there; the
+inconsistency dated from filing, not from the gate.
+
+Three further failures were caught by `just ci` BEFORE the first push, each of
+which would otherwise have cost a hosted round trip: the new rela.url.calendar
+helper tipping lua.Runtime one method over its god-object line, a docs anchor
+pointing at a heading that had been renamed, and — the significant one —
+docs/data-entry.md being GENERATED from the docs-project graph, so 278 lines of
+hand-edited calendar documentation were being deleted by `just docs`. They now
+live in the source entity and regenerate identically.
