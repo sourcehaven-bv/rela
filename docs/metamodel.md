@@ -1014,27 +1014,82 @@ Lowercase alphanumeric runs joined by single hyphens: `draft`,
 no doubled hyphens, and `+` is reserved. Invalid names are reported at
 startup.
 
+### Selecting a world over the API
+
+The data-entry API takes `?world=<name>` on the entity list
+(`/api/v1/{plural}`) and the single-entity read
+(`/api/v1/{plural}/{id}`). Omitting it means the default world.
+
+Selection is permission-checked before anything is read: a world is
+readable only if the principal holds a `world:<name>` read grant. That
+check is why the parameter exists at all — letting any caller name a world
+would make "which faces may I see?" a client decision.
+
+**Discovering the legal values.** `GET /api/v1/_schema` lists them:
+
+```json
+{
+  "worlds": {
+    "default":   { "readable": true, "default": true },
+    "published": { "select": ["published"], "otherwise": "exclude",
+                   "readable": true },
+    "site-nl":   { "select": ["nl", "en"], "otherwise": "default",
+                   "readable": false }
+  }
+}
+```
+
+Every declared world is listed for every caller — world names are config
+in your `schema.yaml`, not secrets. `readable` says whether *this* caller
+may select it. A world you may not read is not hidden from the list; it is
+marked unreadable, and selecting it anyway returns an empty result rather
+than an error, so it cannot be used to probe what the world contains.
+
+The same endpoint reports each type's declared coordinates under
+`entities.<type>.pointers`. Like the world list, this is schema: it says
+`policy` declares `draft` and `published`, never which faces any
+particular policy has.
+
+**Knowing which face you got.** A single-entity read carries the
+provenance of the face it served:
+
+```json
+"_world": { "name": "site-nl", "pointer": "", "via": "fallback-default" }
+```
+
+`via` is the interesting part. `chain` means the world got the face it
+asked for. `fallback-default` means it did not, and `otherwise: default`
+substituted the default state — the difference between "this is the Dutch
+page" and "this is the English page, because there is no Dutch one". The
+bytes alone do not tell you, which is why the field exists. `unscoped`
+means no resolution applied: a pointerless type, or the default world.
+
 ### What worlds do NOT do yet
 
-Two limits are deliberate, and you will meet both if you try to use a
-world today.
-
-**There is no way to ask for a world per request.** No `?world=` query
-parameter, no `--world` flag. A surface is *built* over its world and
-cannot be asked to serve a different one. Request-level selection needs
-its own permission check — letting any caller name a world would make
-"which faces may I see?" a client decision — so it ships together with
-that check rather than before it.
+Three limits are deliberate, and you will meet them if you use a world
+today.
 
 **A world-bound surface cannot have search.** Search results are not
 world-scoped yet: the index holds default-state documents, so a search
 box on a `published` surface would return drafts. Rather than serve
-wrong results quietly, constructing a world-bound surface *with* a
-searcher fails outright. Access control cannot paper over this — the
-permission gate is deliberately world-independent, so nothing downstream
-would catch a draft that leaked in through search.
+wrong results quietly, a `?q=` combined with a non-default `?world=` is
+refused, and constructing a world-bound surface *with* a searcher fails
+outright. Access control cannot paper over this — the permission gate is
+deliberately world-independent, so nothing downstream would catch a draft
+that leaked in through search.
 
-Both lift when per-world indexing and request-level selection land.
+**Only the two entity routes honour a world.** Every other endpoint —
+views, documents, feeds, analyze, history, and an entity's sub-resources
+— refuses a non-default `?world=` rather than quietly serving default-world
+data under it. Each joins as its read path is scoped and tested.
+
+**`?include=` is refused under a world**, for the same reason: neighbour
+resolution is not world-scoped yet, so including them would return a
+published entity wrapped in draft neighbours.
+
+There is also no `--world` flag on the CLI.
+
+These lift as per-world indexing and per-route scoping land.
 
 ### Checking stored states
 

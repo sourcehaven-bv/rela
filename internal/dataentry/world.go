@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -143,14 +146,14 @@ func (a *App) SetWorlds(w WorldLookup) { a.worlds = w }
 //     debugging it than a uniform silence, and conceals nothing that the
 //     operator's own repo does not already state.
 //
-//     This clause previously justified itself with "the set of declared
-//     worlds is already served over the API". That was FALSE — no endpoint
-//     enumerates worlds today (metamodel.Metamodel.Worlds carries no JSON
-//     tag and no handler reads it), so a client discovers a name only by
-//     being told one or by guessing. The CONCLUSION is unchanged, because it
-//     never depended on that premise: config names are not secret whether or
-//     not this API happens to serve them. Corrected rather than deleted so
-//     the next reader does not re-derive the same wrong premise.
+//     `/api/v1/_schema` now enumerates the declared worlds (TKT-WRLDAPI), so
+//     this 400 names something the same caller can already list. Note the
+//     ORDER of that argument: the conclusion does not rest on the
+//     enumeration. Config names are not secret whether or not this API
+//     happens to serve them, and the enumeration exists because a client
+//     cannot build a world selector by guessing — not to make the 400 safe.
+//     An earlier revision of this comment asserted the enumeration before it
+//     was built; it is recorded here as fact only now that it is one.
 //
 //   - Known world the principal may NOT read -> (zero handle, errWorldDenied),
 //     which callers render as an EMPTY RESULT, never a 403. What a world
@@ -350,4 +353,77 @@ func attachWorld(next http.Handler, a *App) http.Handler {
 		}
 		next.ServeHTTP(w, r.WithContext(withWorld(r.Context(), handle)))
 	})
+}
+
+// worldProvenance labels HOW the request's world resolved this face
+// (TKT-WRLDAPI item 2).
+//
+// # Labeling, not re-resolving
+//
+// Resolution itself happens exactly once, in the store: the world scope rides
+// the query ([store.EntityQuery.World]) and the backend picks the prime. This
+// function reads the answer back — the coordinate the returned row was stored
+// at — and names the rule that must have produced it. It never fetches, never
+// walks the chain, and cannot disagree with the store about WHICH face was
+// served, because it is handed that face.
+//
+// That distinction matters: a second chain walk here would be a second
+// implementation of the semantics deciding which face a reader sees, free to
+// drift from the store's. The mapping below is total over the states the
+// store can return, so there is nothing left to decide:
+//
+//   - type absent from the scope -> rule 1, "unscoped".
+//   - pointer present in the chain -> rule 2, "chain".
+//   - otherwise -> rule 3 under `otherwise: default`, "fallback-default".
+//
+// The third arm is reachable only when the fallback actually fired: under
+// `otherwise: exclude` the store returns NOTHING, so there is no response to
+// label and the handler has already rendered a 404.
+//
+// Returns nil for a nil entity, so a caller may pass a not-found result
+// through without branching.
+func worldProvenance(ctx context.Context, e *entity.Entity) *v1.EntityWorld {
+	if e == nil {
+		return nil
+	}
+	handle := worldFromContext(ctx)
+	name := handle.name
+	if name == "" {
+		name = defaultWorldName
+	}
+	return &v1.EntityWorld{
+		Name:    name,
+		Pointer: e.Pointer.String(),
+		Via:     resolutionRule(handle.scope, e.Type, e.Pointer),
+	}
+}
+
+// Resolution rule names, mirroring worldreader.Rule's String(). Spelled here
+// rather than imported because internal/dataentry does not depend on
+// internal/worldreader (the HTTP path resolves through the store query, not
+// through a Resolver) — but the VOCABULARY is deliberately the same one, so a
+// wire value and a server log line about the same resolution read alike.
+const (
+	ruleUnscoped        = "unscoped"
+	ruleChain           = "chain"
+	ruleFallbackDefault = "fallback-default"
+)
+
+// resolutionRule names the rule that produced a face stored at p, for an
+// entity of entityType, under scope. See [worldProvenance] for why this is a
+// total mapping rather than a walk.
+//
+// entityType MUST be canonical: [store.WorldScope] is keyed on canonical
+// names only, and an alias reaching For() reads as an unknown type, which is
+// rule 1. The route resolves the type by iterating the metamodel's own keys,
+// so every caller on this path is canonical by construction.
+func resolutionRule(scope store.WorldScope, entityType string, p entity.Pointer) string {
+	res, scoped := scope.For(entityType)
+	if !scoped {
+		return ruleUnscoped
+	}
+	if slices.Contains(res.Chain, p) {
+		return ruleChain
+	}
+	return ruleFallbackDefault
 }

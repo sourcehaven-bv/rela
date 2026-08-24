@@ -31,7 +31,44 @@ import (
 
 // --- API v1 Types ---
 
-func (a *App) toV1PropertyDef(meta *metamodel.Metamodel, propDef metamodel.PropertyDef) v1.PropertyDef {
+// toV1EntityType renders one entity type for the wire.
+//
+// Shared by BOTH schema surfaces — the `entities` map of `/api/v1/_schema`
+// and the single-type `/api/v1/_schema/types/{name}` — which previously each
+// built the shape inline. Two copies of a serializer is two places to add a
+// field and one place to forget it: the `pointers` key (TKT-WRLDAPI item 3)
+// would have been exactly such a field, since a client that discovers a
+// type's content states from one endpoint and not the other has no way to
+// tell which answer is authoritative. Extracted so they cannot drift.
+//
+// A free function, like its sibling toV1CustomType: it is a pure transform
+// over its arguments and touches no App state. toV1PropertyDef was converted
+// alongside it for the same reason — it never used its receiver either, and
+// App sits at its plimsoll method cap precisely because methods accrete there
+// by habit rather than by need.
+func toV1EntityType(
+	meta *metamodel.Metamodel, name string, def metamodel.EntityDef,
+) v1.EntityType {
+	et := v1.EntityType{
+		Label:       def.Label,
+		Plural:      def.GetPlural(name),
+		Description: def.Description,
+		Primary:     def.GetPrimaryProperty(),
+		IDType:      def.GetIDType(),
+		Properties:  make(map[string]v1.PropertyDef, len(def.Properties)),
+		Pointers:    schemaPointers(def),
+	}
+	if prefixes := def.GetIDPrefixes(); len(prefixes) > 0 {
+		et.IDPrefix = prefixes[0]
+		et.IDPrefixes = prefixes
+	}
+	for propName, propDef := range def.Properties {
+		et.Properties[propName] = toV1PropertyDef(meta, propDef)
+	}
+	return et
+}
+
+func toV1PropertyDef(meta *metamodel.Metamodel, propDef metamodel.PropertyDef) v1.PropertyDef {
 	pd := v1.PropertyDef{
 		Type:        propDef.Type,
 		Required:    propDef.Required,
@@ -797,6 +834,17 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	}
 	result := a.serializer.forWire(ctx, entity, outgoing, a.Meta(), plural)
 
+	// Face provenance (TKT-WRLDAPI item 2). Attached HERE rather than inside
+	// forWire, even though forWire is the shared per-entity serializer,
+	// because this is the only path whose Pointer is the STORE's answer to a
+	// world query. Its other callers would produce a label the code cannot
+	// back: the history handler serializes a snapshot built by
+	// entityPkg.New(), whose Pointer is always zero, so a historical version
+	// of a PUBLISHED face would report the default coordinate. An affordance
+	// map that lies is a trap for every future consumer (Ruling 11); so is a
+	// provenance block.
+	result.World = worldProvenance(ctx, entity)
+
 	// Handle includes for related entities
 	if includes := query.Get("include"); includes != "" {
 		result.Included = a.resolveV1Includes(ctx, entity, includes)
@@ -1200,26 +1248,11 @@ func (a *App) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 		Entities:  make(map[string]v1.EntityType),
 		Relations: make(map[string]v1.RelationType),
 		Types:     make(map[string]v1.CustomType),
+		Worlds:    schemaWorlds(r.Context(), s.Meta),
 	}
 
 	for name, def := range s.Meta.Entities {
-		et := v1.EntityType{
-			Label:       def.Label,
-			Plural:      def.GetPlural(name),
-			Description: def.Description,
-			Primary:     def.GetPrimaryProperty(),
-			IDType:      def.GetIDType(),
-			Properties:  make(map[string]v1.PropertyDef),
-		}
-		prefixes := def.GetIDPrefixes()
-		if len(prefixes) > 0 {
-			et.IDPrefix = prefixes[0]
-			et.IDPrefixes = prefixes
-		}
-		for propName, propDef := range def.Properties {
-			et.Properties[propName] = a.toV1PropertyDef(s.Meta, propDef)
-		}
-		schema.Entities[name] = et
+		schema.Entities[name] = toV1EntityType(s.Meta, name, def)
 	}
 
 	for name, def := range s.Meta.Relations {
@@ -1240,7 +1273,7 @@ func (a *App) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 		if len(def.Properties) > 0 {
 			rt.Properties = make(map[string]v1.PropertyDef, len(def.Properties))
 			for propName, propDef := range def.Properties {
-				rt.Properties[propName] = a.toV1PropertyDef(s.Meta, propDef)
+				rt.Properties[propName] = toV1PropertyDef(s.Meta, propDef)
 			}
 		}
 		if def.OutgoingOrderProperty() != "" || def.IncomingOrderProperty() != "" {
@@ -1281,22 +1314,7 @@ func (a *App) handleV1SchemaRoutes(w http.ResponseWriter, r *http.Request) {
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity type not found", "")
 			return
 		}
-		et := v1.EntityType{
-			Label:       def.Label,
-			Plural:      def.GetPlural(typeName),
-			Description: def.Description,
-			Primary:     def.GetPrimaryProperty(),
-			IDType:      def.GetIDType(),
-			Properties:  make(map[string]v1.PropertyDef),
-		}
-		if prefixes := def.GetIDPrefixes(); len(prefixes) > 0 {
-			et.IDPrefix = prefixes[0]
-			et.IDPrefixes = prefixes
-		}
-		for propName, propDef := range def.Properties {
-			et.Properties[propName] = a.toV1PropertyDef(s.Meta, propDef)
-		}
-		writeV1JSON(w, http.StatusOK, et)
+		writeV1JSON(w, http.StatusOK, toV1EntityType(s.Meta, typeName, def))
 
 	case path == "relations":
 		writeV1JSON(w, http.StatusOK, s.Meta.Relations)

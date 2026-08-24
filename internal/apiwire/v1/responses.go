@@ -71,6 +71,22 @@ type Entity struct {
 	// non-per-entity shapes. The SPA's file widget reads this to render the
 	// download links / previews instead of the raw stored path string(s).
 	Attachments *map[string][]Attachment `json:"_attachments,omitempty"`
+	// World carries the PROVENANCE of the face in this response: which world
+	// resolved it, which coordinate it was stored at, and which resolution
+	// rule chose it (TKT-WRLDAPI item 2).
+	//
+	// It exists because the bytes alone do not say. Under a world with a
+	// fallback chain, "the Dutch face" and "the English face, because no
+	// Dutch face exists" arrive byte-identically — same id, same type, same
+	// shape — and a client rendering a publication badge, offering a
+	// translate affordance, or deciding whether an edit is safe has to tell
+	// them apart. Re-deriving it client-side would require the chain, the
+	// per-type overrides and the fallback policy, which is a second
+	// implementation of the semantics that decide which face a reader sees.
+	//
+	// Same pointer / per-entity semantics as FieldAffordances: present on
+	// per-entity GET responses, nil on list rows.
+	World *EntityWorld `json:"_world,omitempty"`
 	// Transitions maps a state-machine-typed property name to the LIST of its
 	// outgoing transitions resolved for the requesting principal on this entity
 	// (TKT-3G93B8): each carries the target value, an optional action label,
@@ -153,6 +169,48 @@ type InaccessibleField struct {
 	Reason string `json:"reason"`
 }
 
+// EntityWorld is the provenance of a resolved face — see [Entity.World] for
+// why a client needs it.
+//
+// It describes the RESOLUTION that produced this response, never the entity's
+// other faces. A client learns which coordinate it is looking at; it learns
+// nothing about which coordinates exist for this id. That distinction is the
+// existence oracle the read gate closes, and this shape stays on the safe
+// side of it deliberately.
+type EntityWorld struct {
+	// Name is the world this response was resolved in — `default` for the
+	// implicit total world. Matches a key of [Schema.Worlds].
+	Name string `json:"name"`
+	// Pointer is the coordinate the served state was stored at. EMPTY means
+	// the default state, which is not the same claim as "the default world":
+	// a fallback under `otherwise: default` also serves the default state.
+	// Via is what separates those, which is why Pointer alone is not enough.
+	Pointer string `json:"pointer"`
+	// Via names the resolution rule that chose this face:
+	//
+	//   - "unscoped"         — this world applies no per-type resolution, so
+	//                          the entity contributes its default state.
+	//                          Covers BOTH a type that declares no content
+	//                          states and the total default world, which
+	//                          resolves everything this way — the default
+	//                          world is exactly "no resolution applied", and
+	//                          worldreader.Rule reports it identically.
+	//   - "chain"            — a coordinate the world SELECTS exists; this is
+	//                          the face the world asked for.
+	//   - "fallback-default" — no selected coordinate exists, and the world's
+	//                          `otherwise: default` stood the default state
+	//                          in. The reader is seeing a substitute.
+	//
+	// The third value is the load-bearing one: it is the difference between
+	// "published" and "not published, showing you the draft".
+	//
+	// There is deliberately no "excluded" value. A world that excludes an
+	// entity produces no response to carry provenance on — it is a 404,
+	// indistinguishable from a genuine miss, because existence in a world IS
+	// the publication bit.
+	Via string `json:"via"`
+}
+
 // ListResponse is the response for listing entities.
 type ListResponse struct {
 	Data    []Entity        `json:"data"`
@@ -173,6 +231,64 @@ type Schema struct {
 	Entities  map[string]EntityType   `json:"entities"`
 	Relations map[string]RelationType `json:"relations"`
 	Types     map[string]CustomType   `json:"types,omitempty"`
+	// Worlds enumerates the declared worlds a client may pass to `?world=`,
+	// keyed by world name, plus the implicit `default` world (TKT-WRLDAPI).
+	//
+	// Present even for a project declaring no `worlds:` block, where it holds
+	// the single `default` entry: a client needs to distinguish "this server
+	// has no other worlds" from "this server is too old to tell me", and an
+	// omitted key cannot say the first.
+	Worlds map[string]World `json:"worlds,omitempty"`
+}
+
+// World is the JSON representation of one declared world — a named
+// resolution function picking at most one content state per entity (design
+// doc §4.1).
+//
+// # The declared set is NOT filtered per principal
+//
+// Every world the schema declares appears here for every caller. World names
+// are operator-authored config living in `schema.yaml`, routinely a public
+// repo, so their contents are already disclosed and CLAUDE.md is explicit
+// that code must not contort to conceal a config name. What IS per-principal
+// is [World.Readable] — which says whether this caller may SELECT the world,
+// never whether it exists.
+//
+// The distinction is load-bearing: what a world CONTAINS is secret (a denied
+// world serves an empty result, never a 403, precisely so it cannot be told
+// apart from a world holding nothing), while the fact that the operator
+// declared a world named `published` is not.
+//
+// This carries no per-ENTITY information. Which faces a given entity has is
+// exactly the existence oracle the read gate closes, and nothing here
+// narrows it: a type's declared coordinates ([EntityType.Pointers]) say what
+// the schema permits, never what any row holds.
+type World struct {
+	// Select is the ordered candidate chain: the first coordinate that
+	// EXISTS for an entity is the face served. Empty for the default world,
+	// which resolves every entity to its default state by construction.
+	Select []string `json:"select,omitempty"`
+	// Overrides replaces Select for the named entity types, keyed by type.
+	Overrides map[string][]string `json:"overrides,omitempty"`
+	// Otherwise is the rule-3 policy for a type that declares pointers but
+	// none this world selects: `exclude` (contributes nothing) or `default`
+	// (falls back to the type's default state). Empty for the default world,
+	// which never reaches rule 3.
+	Otherwise string `json:"otherwise,omitempty"`
+	// Readable reports whether THIS caller may select the world via
+	// `?world=`. False means a request naming it is served an empty result
+	// rather than a 403 — so a client that respects this flag shows the user
+	// an honest selector instead of a world that silently returns nothing.
+	//
+	// A UI hint, never a boundary: the server re-checks the grant on every
+	// request (`resolveWorld`), so a client ignoring this learns nothing it
+	// could not learn by asking.
+	Readable bool `json:"readable"`
+	// Default marks the implicit default world — today's graph, total by
+	// construction, always present and always selectable. Spelled as a flag
+	// rather than left for the client to infer from the reserved name, so a
+	// selector can label it without hardcoding the string.
+	Default bool `json:"default,omitempty"`
 }
 
 // EntityType is the JSON representation of an entity type.
@@ -185,6 +301,34 @@ type EntityType struct {
 	IDPrefix    string                 `json:"id_prefix,omitempty"`
 	IDPrefixes  []string               `json:"id_prefixes,omitempty"`
 	Properties  map[string]PropertyDef `json:"properties"`
+	// Pointers declares this type's content-state coordinates, keyed by
+	// coordinate name ("draft", "published", "en", "nl"). ABSENT for the
+	// common case of a type with no content states, which contributes its
+	// single default state to every world.
+	//
+	// This is SCHEMA, not data: it says which coordinates the operator
+	// declared for the type, never which faces any particular entity holds.
+	// Two entities of the same type report identical pointers whether one has
+	// a published face and the other does not.
+	//
+	// DO NOT add the per-entity variant here — "which faces does THIS id
+	// have" is the existence oracle the row gate exists to close, since
+	// existence in a world IS the publication bit. An "other faces" indicator
+	// is a real product need (Ruling 9 item 8), but it has to omit faces the
+	// viewer may not read, which makes it a gated per-entity query rather
+	// than a field on the type's schema.
+	Pointers map[string]Pointer `json:"pointers,omitempty"`
+}
+
+// Pointer is the JSON representation of one declared content state.
+//
+// Deliberately near-empty, mirroring metamodel.PointerDef: a state is
+// identified by its coordinate and nothing else. Per-state knobs (labels,
+// retention) are not added speculatively.
+type Pointer struct {
+	// Default marks the coordinate stored under the ZERO pointer — the
+	// state a bare id addresses. At most one per type.
+	Default bool `json:"default,omitempty"`
 }
 
 // PropertyDef is the JSON representation of a property definition.
