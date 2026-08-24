@@ -586,3 +586,37 @@ func attachTestQueue(t *testing.T, s *Scheduler) {
 	require.NoError(t, s.UseQueue(q))
 	require.NoError(t, q.Start(context.Background()))
 }
+
+// TestNewWithQueue_RejectsProviderWithoutQueue pins the constructor that entry
+// points must use.
+//
+// This is the regression test for a real break: the `rela scheduler` command
+// called New directly, never attached a queue, and after inline execution was
+// removed it started cleanly and then failed EVERY task with "no job queue
+// configured". No unit test caught it, because they all call UseQueue
+// themselves — none exercised a wiring site. A local demo found it.
+func TestNewWithQueue_RejectsProviderWithoutQueue(t *testing.T) {
+	t.Parallel()
+
+	// A provider with no Jobs() method — what every pre-queue caller looks like.
+	_, err := NewWithQueue(&Config{}, nil, newMockWorkspace(t), discardLogger())
+	require.Error(t, err,
+		"a provider without a job queue must be refused, not silently accepted")
+}
+
+// TestNewWithQueue_AttachesQueue is the positive half: a provider that carries
+// a queue produces a scheduler with the handler registered and ready to run.
+func TestNewWithQueue_AttachesQueue(t *testing.T) {
+	t.Parallel()
+
+	q := newFakeQueue()
+	ws := &queueWorkspace{mockWorkspace: newMockWorkspace(t), q: q}
+
+	s, err := NewWithQueue(&Config{}, nil, ws, discardLogger())
+	require.NoError(t, err)
+	require.NotNil(t, s)
+
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	require.Contains(t, q.handlers, TaskKind)
+}

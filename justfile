@@ -107,9 +107,16 @@ test-verbose:
 # convenience, since a skip and a pass look identical in the exit code. CI's
 # Postgres Backend job sets it. This suite is the ONLY enforcement of the
 # backend-parity rule, so if you are changing store behaviour, run it.
+#
+# It covers internal/jobs too, for the same reason: the job queue's memory and
+# postgres backends must satisfy one conformance suite, and a memory-only run
+# cannot see backend-specific breakage. Two such bugs were caught this way — a
+# NUL byte in the dedupe fingerprint that PostgreSQL rejects outright, and an
+# attempt counter kept in the job payload, which the memory backend preserves
+# and postgres discards (so RetryNever ran four times).
 test-postgres:
     @echo "Running postgres-tagged tests (needs RELA_TEST_DATABASE_URL)..."
-    go test -race -tags postgres ./internal/store/pgstore/...
+    go test -race -tags postgres ./internal/store/pgstore/... ./internal/jobs/...
 
 # Verify the binaries compile under every backend build tag. Cheap guard
 # that no build-tag seam drifted; mirrors the CI compile matrix.

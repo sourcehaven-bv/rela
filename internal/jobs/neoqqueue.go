@@ -2,6 +2,8 @@ package jobs
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -90,13 +92,6 @@ const payloadRetryKey = "__rela_retry"
 // Needed because neoq's own Deadline field is fatal to the worker when it
 // expires: see backendRetryBudget.
 const payloadDeadlineKey = "__rela_deadline"
-
-// payloadAttemptKey carries the attempt count this package maintains itself.
-//
-// neoq tracks its own Retries, but reaching ITS limit kills the worker, so
-// rela keeps a parallel count and stops the job before neoq's budget is
-// approached.
-const payloadAttemptKey = "__rela_attempt"
 
 // newNeoqQueue wraps an initialized neoq backend.
 //
@@ -350,7 +345,17 @@ func (q *neoqQueue) dispatch(ctx context.Context) error {
 	// point: an error would schedule yet another retry of a job that is
 	// already spent.
 	retry := retryOf(nj.Payload)
-	attempt := attemptOf(nj.Payload) + 1
+
+	// The attempt number comes from the BACKEND's retry counter, not from one
+	// this package maintains in the payload.
+	//
+	// A payload counter works on the memory backend, where the job object is
+	// re-queued in place, and silently fails on postgres, which re-reads the
+	// row and discards any mutation the handler made — so the counter reset to
+	// zero on every redelivery and RetryNever ran four times. Both backends do
+	// maintain Retries themselves (0 on first delivery, incremented on each
+	// re-run), so that is the one number to trust.
+	attempt := nj.Retries + 1
 
 	if dl, ok := deadlineOf(nj.Payload); ok && !time.Now().Before(dl) {
 		q.logger.Warn("dropping job past its deadline",
@@ -363,14 +368,10 @@ func (q *neoqQueue) dispatch(ctx context.Context) error {
 		return nil
 	}
 
-	// The attempt counter lives on the job neoq re-queues, so it must be
-	// written back onto the payload it carries — not onto our copy.
-	nj.Payload[payloadAttemptKey] = attempt
-
 	payload := make(map[string]any, len(nj.Payload))
 	for k, v := range nj.Payload {
 		switch k {
-		case payloadKindKey, payloadRetryKey, payloadDeadlineKey, payloadAttemptKey:
+		case payloadKindKey, payloadRetryKey, payloadDeadlineKey:
 			continue
 		}
 		payload[k] = v
@@ -442,16 +443,6 @@ func retryOf(payload map[string]any) Retry {
 	return out
 }
 
-// attemptOf reads the attempt count this package maintains. Absent means the
-// job has not run yet.
-func attemptOf(payload map[string]any) int {
-	n, ok := intFromPayload(payload, payloadAttemptKey)
-	if !ok || n < 0 {
-		return 0
-	}
-	return n
-}
-
 // deadlineOf reads the effective deadline. The second result is false when the
 // job carries none.
 func deadlineOf(payload map[string]any) (time.Time, bool) {
@@ -486,9 +477,18 @@ func intFromPayload(payload map[string]any, key string) (int, bool) {
 // Without a key, a fresh UUID: unique per enqueue, so the job always queues.
 // That is the safe default — deduplication has to be asked for, never inferred
 // from two payloads happening to match.
+//
+// Hashed rather than concatenated. The obvious `kind + separator + key` needs a
+// separator that cannot appear in either half, and the obvious choice — a NUL
+// byte — is rejected outright by PostgreSQL, which stores this in a text
+// column: "invalid byte sequence for encoding UTF8: 0x00". Every scheduled job
+// on the durable tier failed to enqueue, and only an end-to-end run against a
+// real database surfaced it. A hash is unambiguous about where one half ends,
+// and its output is safe in any text column.
 func fingerprintFor(job Job) string {
 	if job.IdempotencyKey == "" {
 		return uuid.NewString()
 	}
-	return string(job.Kind) + "\x00" + job.IdempotencyKey
+	sum := sha256.Sum256([]byte(string(job.Kind) + "\x00" + job.IdempotencyKey))
+	return hex.EncodeToString(sum[:])
 }

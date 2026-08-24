@@ -30,6 +30,7 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"iter"
 	"log/slog"
 	"maps"
@@ -119,22 +120,8 @@ func StartBackground(
 	engine := script.NewEngine()
 	s := New(cfg, engine, ws, logger)
 
-	// Script execution happens on the job queue, so the provider must carry
-	// one. An optional interface rather than a parameter, so the two call
-	// sites (rela-server, rela-desktop) keep passing the services bundle they
-	// already have.
-	//
-	// Refusing to start is deliberate. There is no inline path to degrade to,
-	// and a scheduler that came up unable to execute anything would look
-	// healthy — logging every tick while running nothing — which is a worse
-	// failure than not starting at all.
-	jp, ok := ws.(jobQueueProvider)
-	if !ok {
-		logger.Error("scheduler not started: the workspace provides no job queue")
-		return
-	}
-	if err := s.UseQueue(jp.Jobs()); err != nil {
-		logger.Error("scheduler not started: could not use the job queue", "error", err)
+	if err := attachQueue(s, ws); err != nil {
+		logger.Error("scheduler not started", "error", err)
 		return
 	}
 
@@ -146,15 +133,53 @@ func StartBackground(
 	}()
 }
 
-// jobQueueProvider is the optional capability a WorkspaceProvider may carry to
-// hand the scheduler a job queue.
+// jobQueueProvider is the capability a WorkspaceProvider must carry to hand the
+// scheduler a job queue.
 //
-// Optional because the scheduler predates the queue and still works without
-// one: the interface is type-asserted at StartBackground rather than added to
-// WorkspaceProvider, so a provider that has no queue (and every existing test
-// double) keeps compiling.
+// Type-asserted rather than added to WorkspaceProvider so the existing test
+// doubles keep compiling, but it is NOT optional in practice: script execution
+// happens exclusively on the queue, so a provider without one yields a
+// scheduler that cannot run anything.
 type jobQueueProvider interface {
 	Jobs() jobs.Client
+}
+
+// attachQueue wires the workspace's job queue onto s.
+//
+// Shared by every entry point — StartBackground (rela-server, rela-desktop) and
+// the `rela scheduler` command — because forgetting it produces a scheduler
+// that starts cleanly, logs a due task every tick, and fails every one of them
+// with "no job queue configured". That is exactly the regression a demo caught
+// after the unit tests missed it: they all call UseQueue directly, so none of
+// them exercised a wiring site.
+//
+// Nil: rejected — returns an error rather than leaving the scheduler unable to
+// execute, so the caller can refuse to start.
+func attachQueue(s *Scheduler, ws WorkspaceProvider) error {
+	jp, ok := ws.(jobQueueProvider)
+	if !ok {
+		return errors.New("scheduler: the workspace provides no job queue")
+	}
+	if err := s.UseQueue(jp.Jobs()); err != nil {
+		return fmt.Errorf("scheduler: could not use the job queue: %w", err)
+	}
+	return nil
+}
+
+// NewWithQueue builds a scheduler with its job queue attached.
+//
+// The constructor entry points should use: script execution happens only on the
+// queue, so a Scheduler built by New alone cannot run anything until UseQueue
+// is called. Returning an error here means a caller cannot accidentally start a
+// scheduler that will fail every task.
+func NewWithQueue(
+	cfg *Config, engine *script.Engine, ws WorkspaceProvider, logger *slog.Logger,
+) (*Scheduler, error) {
+	s := New(cfg, engine, ws, logger)
+	if err := attachQueue(s, ws); err != nil {
+		return nil, err
+	}
+	return s, nil
 }
 
 // stampTaskAuditContext stamps the task's Principal and the per-task
