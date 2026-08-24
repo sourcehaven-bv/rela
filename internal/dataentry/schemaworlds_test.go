@@ -195,7 +195,7 @@ func TestSchemaWorlds_GateErrorFailsClosed(t *testing.T) {
 // enumeration mirrors rather than papers over.
 //
 // So this test pins AGREEMENT between two paths, not a claim about the ACL.
-// When the request path starts honouring a default-world denial, this test
+// When the request path starts honoring a default-world denial, this test
 // SHOULD fail, and the correct response is to make this endpoint ask the gate
 // too — not to weaken the assertion.
 func TestSchemaWorlds_DefaultWorldAgreesWithTheRequestPath(t *testing.T) {

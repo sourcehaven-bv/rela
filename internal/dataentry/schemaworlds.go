@@ -75,7 +75,7 @@ func schemaWorlds(ctx context.Context, meta *metamodel.Metamodel) map[string]v1.
 	// selector lying in the other direction.
 	//
 	// The two are ONE decision and must not drift. When the request path
-	// starts honouring a default-world denial, this must switch to asking
+	// starts honoring a default-world denial, this must switch to asking
 	// the gate in the same change — and the test named for this
 	// (TestSchemaWorlds_DefaultWorldAgreesWithTheRequestPath) is what will
 	// fail to remind you.

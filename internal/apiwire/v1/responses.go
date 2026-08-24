@@ -92,7 +92,7 @@ type Entity struct {
 	//     this API), so a create / update / clone response is default-world
 	//     by construction and a provenance block would be noise.
 	//   - A history snapshot is rebuilt from a stored version and carries no
-	//     pointer, so labelling it would state a coordinate the code cannot
+	//     pointer, so labeling it would state a coordinate the code cannot
 	//     back — the "affordance map that lies" failure, one layer down.
 	//   - Views, attachments and restore are not world-capable routes.
 	//
