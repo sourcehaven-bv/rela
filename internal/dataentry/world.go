@@ -376,6 +376,23 @@ func attachWorld(next http.Handler, a *App) http.Handler {
 //   - pointer present in the chain -> rule 2, "chain".
 //   - otherwise -> rule 3 under `otherwise: default`, "fallback-default".
 //
+// # The invariant this depends on
+//
+// Totality rests on one property of the compiled scope: A CHAIN NEVER
+// CONTAINS THE ZERO POINTER. Every backend returns a pointer drawn from
+// `Chain ∪ {""}` (storeutil.WorldPrimes writes exactly three values: the
+// matched chain coordinate, or "" for rules 1 and 3; pgstore's worldSQL
+// builds the same candidate set), so the third arm is only ever reached by a
+// genuine rule-3 fallback. internal/worlds upholds this because it maps
+// declared names through entity.ParsePointer, which rejects "".
+//
+// The dependency is named because it lives in a package this one does not
+// import: store.NewWorldScope is exported and a non-worlds producer could
+// construct a chain containing "". That would not corrupt the label — such a
+// coordinate resolves via rule 2 in every backend and slices.Contains agrees
+// — but the reasoning above would no longer be the reason, so a future
+// reader deserves to know which property is load-bearing.
+//
 // The third arm is reachable only when the fallback actually fired: under
 // `otherwise: exclude` the store returns NOTHING, so there is no response to
 // label and the handler has already rendered a 404.

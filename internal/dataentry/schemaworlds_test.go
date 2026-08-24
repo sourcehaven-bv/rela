@@ -177,16 +177,27 @@ func TestSchemaWorlds_GateErrorFailsClosed(t *testing.T) {
 // enumeration and the request path make the SAME decision about the default
 // world.
 //
-// This is the drift the constant `Readable: true` exists to prevent, and it is
-// counter-intuitive enough to be worth a test: acl.Request.PermitsWorld has no
-// default-world arm, so it answers FALSE for `default` unless a role happens to
-// grant the `world:default` token. Computing readability from the gate — the
-// obvious-looking "consistency" fix — would therefore report today's graph as
-// unreadable to nearly every principal, while `resolveWorld` short-circuits and
-// serves it. The selector would contradict the server.
+// `resolveWorld` short-circuits `default` before any grant check, so a request
+// for the default world is always served. This endpoint must therefore report
+// it readable, or the selector contradicts the server about a request the
+// server will in fact answer.
 //
-// So: a gate that denies EVERY world, including `default`, must still leave the
-// default world readable, because the request path never asks it.
+// The gate is NOT consulted, and that is the whole point of the test: a gate
+// denying every world must still leave the default world readable here,
+// because the request path never asks it.
+//
+// # What this test does NOT claim
+//
+// It does not claim a default-world denial is inexpressible. It is:
+// `acl.roleGrantsWorldRead` has an explicit default arm and
+// `compiledCeiling.permitsWorld` implements `deny_worlds: [default]`. The
+// request path simply does not consult them — a pre-existing gap this
+// enumeration mirrors rather than papers over.
+//
+// So this test pins AGREEMENT between two paths, not a claim about the ACL.
+// When the request path starts honouring a default-world denial, this test
+// SHOULD fail, and the correct response is to make this endpoint ask the gate
+// too — not to weaken the assertion.
 func TestSchemaWorlds_DefaultWorldAgreesWithTheRequestPath(t *testing.T) {
 	denyAll := withReadGate(context.Background(), worldGate{permit: nil})
 	got := schemaWorlds(denyAll, worldsMeta())

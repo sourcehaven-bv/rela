@@ -84,8 +84,21 @@ type Entity struct {
 	// per-type overrides and the fallback policy, which is a second
 	// implementation of the semantics that decide which face a reader sees.
 	//
-	// Same pointer / per-entity semantics as FieldAffordances: present on
-	// per-entity GET responses, nil on list rows.
+	// Present on the single-entity GET ONLY — deliberately NOT on every
+	// per-entity response the way FieldAffordances is. The distinction is
+	// worth stating because a client will otherwise look for it on a PATCH:
+	//
+	//   - Writes are refused a `?world=` outright (worlds are read-only on
+	//     this API), so a create / update / clone response is default-world
+	//     by construction and a provenance block would be noise.
+	//   - A history snapshot is rebuilt from a stored version and carries no
+	//     pointer, so labelling it would state a coordinate the code cannot
+	//     back — the "affordance map that lies" failure, one layer down.
+	//   - Views, attachments and restore are not world-capable routes.
+	//
+	// The single-entity GET is the only response whose pointer is the
+	// store's actual answer to a world query, which is why it is the only
+	// one that carries this.
 	World *EntityWorld `json:"_world,omitempty"`
 	// Transitions maps a state-machine-typed property name to the LIST of its
 	// outgoing transitions resolved for the requesting principal on this entity
@@ -263,6 +276,11 @@ type Schema struct {
 // exactly the existence oracle the read gate closes, and nothing here
 // narrows it: a type's declared coordinates ([EntityType.Pointers]) say what
 // the schema permits, never what any row holds.
+// Note the field set is deliberately incomplete: a world's `edits:` key
+// (which state edits made from it land in) is NOT surfaced. It is a
+// write-side concept, and the affordance a client actually needs — "which
+// faces can I create from here" — is a separate gated query over the
+// declared copy definitions (Ruling 9), not something derivable from a world.
 type World struct {
 	// Select is the ordered candidate chain: the first coordinate that
 	// EXISTS for an entity is the face served. Empty for the default world,
@@ -283,6 +301,12 @@ type World struct {
 	// A UI hint, never a boundary: the server re-checks the grant on every
 	// request (`resolveWorld`), so a client ignoring this learns nothing it
 	// could not learn by asking.
+	//
+	// NO omitempty, unlike Default below, and the asymmetry is deliberate:
+	// `false` is the load-bearing answer here — it is precisely what a
+	// selector needs — and an omitted key would be indistinguishable from a
+	// server too old to compute it. `default: false`, by contrast, is noise
+	// on every declared world.
 	Readable bool `json:"readable"`
 	// Default marks the implicit default world — today's graph, total by
 	// construction, always present and always selectable. Spelled as a flag

@@ -52,20 +52,33 @@ func schemaWorlds(ctx context.Context, meta *metamodel.Metamodel) map[string]v1.
 	// explicitly rather than left implicit so a client need not hardcode the
 	// reserved name to offer it.
 	//
-	// Readable is a CONSTANT true here, and deliberately not a gate call.
-	// `resolveWorld` short-circuits `default` (and an absent parameter)
-	// BEFORE any grant check, because the default world is today's graph and
-	// gating it would gate the whole product. Asking the gate anyway would
-	// make this enumeration contradict the server: acl.Request.PermitsWorld
-	// has no default-world arm, so it answers false for `default` unless a
-	// role happens to grant the `world:default` token — and the selector
-	// would then report today's graph as unreadable while every request for
-	// it succeeds.
+	// Readable is a CONSTANT true here, and deliberately not a gate call:
+	// this endpoint reports what the REQUEST PATH does, and `resolveWorld`
+	// short-circuits `default` (and an absent parameter) before any grant
+	// check. Asking the gate here would make the selector disagree with the
+	// server about a request the server will in fact serve.
 	//
-	// So this is not "trusting the default"; it is reporting the same
-	// short-circuit the request path takes. If the request path ever starts
-	// gating the default world, this must start asking too — the two are one
-	// decision and must not drift.
+	// # A known gap this constant inherits, stated plainly
+	//
+	// The gate CAN express a default-world denial, contrary to what an
+	// earlier revision of this comment claimed. `acl.roleGrantsWorldRead`
+	// has an explicit default arm (any read grant covers the default world),
+	// and `compiledCeiling.permitsWorld` implements `deny_worlds: [default]`
+	// — its godoc calls itself MANDATORY precisely because that denial
+	// cannot be expressed any other way.
+	//
+	// `resolveWorld` never consults either, so `deny_worlds: [default]` is
+	// currently inert on this API. That is a PRE-EXISTING gap in the request
+	// path, not one introduced here, and this enumeration deliberately
+	// mirrors the gap rather than papering over it: reporting the default
+	// world unreadable while every request for it succeeds would be the
+	// selector lying in the other direction.
+	//
+	// The two are ONE decision and must not drift. When the request path
+	// starts honouring a default-world denial, this must switch to asking
+	// the gate in the same change — and the test named for this
+	// (TestSchemaWorlds_DefaultWorldAgreesWithTheRequestPath) is what will
+	// fail to remind you.
 	out := map[string]v1.World{
 		defaultWorldName: {Readable: true, Default: true},
 	}
