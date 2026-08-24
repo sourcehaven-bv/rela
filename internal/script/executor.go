@@ -65,7 +65,16 @@ func (e *Engine) LuaCache() *lua.Cache {
 // pass context.Background() explicitly.
 func (e *Engine) ExecuteCode(ctx context.Context, code string, deps lua.WriteDeps,
 	newEntity, oldEntity *entity.Entity) error {
-	return e.execute(ctx, code, deps, "", newEntity, oldEntity)
+	return e.execute(ctx, code, deps, "", newEntity, oldEntity, lua.Capabilities{})
+}
+
+// ExecuteCodeWithCapabilities is [Engine.ExecuteCode] with an explicit ambient
+// capability grant (TKT-YH52OM). ExecuteCode itself grants NOTHING, so an
+// automation that needs http/ai/secrets must come through here with the grant
+// its `capabilities:` block declared.
+func (e *Engine) ExecuteCodeWithCapabilities(ctx context.Context, code string, deps lua.WriteDeps,
+	newEntity, oldEntity *entity.Entity, caps lua.Capabilities) error {
+	return e.execute(ctx, code, deps, "", newEntity, oldEntity, caps)
 }
 
 // ExecuteFile loads and runs a script file from the scripts/ directory.
@@ -73,11 +82,18 @@ func (e *Engine) ExecuteCode(ctx context.Context, code string, deps lua.WriteDep
 // extension. ctx semantics match [ExecuteCode].
 func (e *Engine) ExecuteFile(ctx context.Context, path string, deps lua.WriteDeps,
 	newEntity, oldEntity *entity.Entity) error {
+	return e.ExecuteFileWithCapabilities(ctx, path, deps, newEntity, oldEntity, lua.Capabilities{})
+}
+
+// ExecuteFileWithCapabilities is [Engine.ExecuteFile] with an explicit ambient
+// capability grant (TKT-YH52OM). See [Engine.ExecuteCodeWithCapabilities].
+func (e *Engine) ExecuteFileWithCapabilities(ctx context.Context, path string, deps lua.WriteDeps,
+	newEntity, oldEntity *entity.Entity, caps lua.Capabilities) error {
 	scriptCode, err := loadScript(deps.ProjectRoot, path)
 	if err != nil {
 		return err
 	}
-	return e.execute(ctx, scriptCode, deps, path, newEntity, oldEntity)
+	return e.execute(ctx, scriptCode, deps, path, newEntity, oldEntity, caps)
 }
 
 // ExecuteDocument loads and runs a Lua script in document-rendering mode.
@@ -180,10 +196,13 @@ func wrapScriptError(surface lua.Surface, subdir, scriptPath, entityID string,
 // to Lua write bindings so downstream Manager calls receive the
 // caller's Principal / triggered_by values.
 func (e *Engine) execute(ctx context.Context, code string, deps lua.WriteDeps, scriptPath string,
-	newEntity, oldEntity *entity.Entity) error {
+	newEntity, oldEntity *entity.Entity, caps lua.Capabilities) error {
 	var output bytes.Buffer
 	runtime, err := NewWriterRuntime(deps, scriptPath, &output,
 		lua.WithCache(e.cache), lua.WithContext(ctx),
+		// Ambient capabilities are an explicit per-execution grant (TKT-YH52OM);
+		// the zero value denies http/ai/secrets/write_file.
+		lua.WithCapabilities(caps),
 		// Resolve identity here (the caller side) and pass it as a value, so
 		// the lua package never reads the principal from ctx (TKT-5U6NRR).
 		lua.WithPrincipal(principal.From(ctx)))

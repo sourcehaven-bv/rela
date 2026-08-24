@@ -2,7 +2,6 @@ package dataentry
 
 import (
 	"context"
-	"log/slog"
 	"net/http"
 	"strings"
 
@@ -189,7 +188,7 @@ func (h *viewsHandler) handleV1SidePanel(w http.ResponseWriter, r *http.Request)
 	writeV1JSON(w, http.StatusOK, result)
 }
 
-// handleV1Sidebar returns denormalized sidebar data with entity counts.
+// handleV1Sidebar returns denormalized sidebar data.
 func (h *viewsHandler) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -197,12 +196,7 @@ func (h *viewsHandler) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 	}
 	s := h.schema()
 
-	counts := sidebarCounts{
-		filterCache: make(map[string]int),
-		h:           h,
-	}
-
-	// Build navigation with counts. Entries the principal cannot use are
+	// Build navigation. Entries the principal cannot use are
 	// omitted (permitsNavEntry) — a UX filter, not a boundary; see its doc.
 	// The ACL is resolved ONCE here rather than per entry, matching
 	// resolveCommands.
@@ -220,7 +214,7 @@ func (h *viewsHandler) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 				if !permitsNavEntry(r.Context(), aclImpl, item) {
 					continue
 				}
-				sidebarItem := h.navEntryToSidebarItem(r.Context(), item, counts)
+				sidebarItem := navEntryToSidebarItem(item)
 				group.Items = append(group.Items, sidebarItem)
 			}
 			// A group whose every item was filtered out is dropped rather than
@@ -236,7 +230,7 @@ func (h *viewsHandler) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 			if !permitsNavEntry(r.Context(), aclImpl, entry) {
 				continue
 			}
-			item := h.navEntryToSidebarItem(r.Context(), entry, counts)
+			item := navEntryToSidebarItem(entry)
 			navigation = append(navigation, v1.SidebarGroup{
 				Items: []v1.SidebarItem{item},
 			})
@@ -254,98 +248,6 @@ func (h *viewsHandler) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 	resp.InlineCreate = h.inlineCreateForms(r.Context())
 
 	writeV1JSON(w, http.StatusOK, resp)
-}
-
-// sidebarCounts caches sidebar entity counts, applying list- or kanban-
-// level filters when present. Every count flows through the ACL read
-// scope (TKT-VMD8) — one code path regardless of NopACL vs. Declarative
-// (RR-2O27), so the sidebar can never disagree with the list it links
-// to. filterCache is a within-request memo keyed by list/kanban id; it
-// is safe precisely because a sidebarCounts value lives for one request
-// (one principal) — a longer-lived cache would alias counts across
-// principals (RR-BZ4M).
-type sidebarCounts struct {
-	filterCache map[string]int // key: "list:<id>" or "kanban:<id>"
-	h           *viewsHandler
-}
-
-// listCount returns the entity count for the given list, applying any
-// configured filters. Results are cached per call.
-func (c *sidebarCounts) listCount(ctx context.Context, listID string, list dataentryconfig.List) int {
-	key := "list:" + listID
-	if n, ok := c.filterCache[key]; ok {
-		return n
-	}
-	n := c.countWithFilters(ctx, list.EntityType, list.Filters)
-	c.filterCache[key] = n
-	return n
-}
-
-// kanbanCount returns the entity count for the given kanban, applying
-// any configured filters. Results are cached per call.
-func (c *sidebarCounts) kanbanCount(ctx context.Context, kanbanID string, kanban dataentryconfig.Kanban) int {
-	key := "kanban:" + kanbanID
-	if n, ok := c.filterCache[key]; ok {
-		return n
-	}
-	n := c.countWithFilters(ctx, kanban.EntityType, kanban.Filters)
-	c.filterCache[key] = n
-	return n
-}
-
-// countWithFilters returns the count of entities of the given type that
-// are visible to the requesting principal AND pass the supplied config
-// filters. Ordering is ACL → config filter → count (TKT-VMD8 AC7).
-//
-// Without config filters the count comes straight from GraphCount —
-// identical cost to the old Store.CountEntities for the AllowAll case.
-// With config filters the visible entities are loaded and filtered
-// in-memory; performance scales with the visible-set size (RR-REQW —
-// for visible sets >10k prefer pre-filtering via entity_type in nav
-// config, or file the follow-up that pushes filters into GraphQuery).
-//
-// Backend errors degrade to 0 with a warning — parity with the old
-// CountEntities error path: a broken sidebar count must not take the
-// whole sidebar down, and the list endpoint surfaces the real error.
-//
-// ReadQuery (one member-of walk reuse via the request-scoped
-// acl.Request) and the GraphQuery/GraphCount run once per nav item —
-// two lists over the same type recompute rather than share. Accepted:
-// filterCache keys on list/kanban id, not (type, filters); a
-// (type, filters)-keyed memo is the obvious upgrade if sidebar
-// latency ever warrants it.
-func (c *sidebarCounts) countWithFilters(
-	ctx context.Context, entityType string, filters []dataentryconfig.FilterConfig,
-) int {
-	rqr := readGateFromContext(ctx).ReadQuery(ctx, entityType)
-	if rqr.DenyAll {
-		return 0
-	}
-	q := store.GraphQuery{EntityType: entityType}
-	if rqr.Query != nil {
-		q = *rqr.Query
-	}
-
-	if len(filters) == 0 {
-		matched, _, err := c.h.services().Store.GraphCount(ctx, q)
-		if err != nil {
-			slog.Warn("sidebar: GraphCount failed; count degraded to 0",
-				"entity_type", entityType, "error", err)
-			return 0
-		}
-		return matched
-	}
-
-	var entities []*entityPkg.Entity
-	for e, err := range c.h.services().Store.GraphQuery(ctx, q) {
-		if err != nil {
-			slog.Warn("sidebar: GraphQuery failed; count degraded to 0",
-				"entity_type", entityType, "error", err)
-			return 0
-		}
-		entities = append(entities, e)
-	}
-	return len(applyFilters(entities, filters))
 }
 
 // permitsNavEntry reports whether a navigation entry should appear in this
@@ -441,11 +343,8 @@ func permitsGatedUIElement(ctx context.Context, aclImpl acl.ACL, permission stri
 	}
 }
 
-// navEntryToSidebarItem converts a navigation entry to a sidebar item with count.
-func (h *viewsHandler) navEntryToSidebarItem(
-	ctx context.Context, entry dataentryconfig.NavigationEntry, counts sidebarCounts,
-) v1.SidebarItem {
-	s := h.schema()
+// navEntryToSidebarItem converts a navigation entry to a sidebar item.
+func navEntryToSidebarItem(entry dataentryconfig.NavigationEntry) v1.SidebarItem {
 	item := v1.SidebarItem{
 		Label: entry.Label,
 	}
@@ -454,17 +353,9 @@ func (h *viewsHandler) navEntryToSidebarItem(
 	case entry.List != "":
 		item.Href = "/list/" + entry.List
 		item.Icon = "list"
-		if list, ok := s.Cfg.Lists[entry.List]; ok {
-			count := counts.listCount(ctx, entry.List, list)
-			item.Count = &count
-		}
 	case entry.Kanban != "":
 		item.Href = "/kanban/" + entry.Kanban
 		item.Icon = "kanban"
-		if kanban, ok := s.Cfg.Kanbans[entry.Kanban]; ok {
-			count := counts.kanbanCount(ctx, entry.Kanban, kanban)
-			item.Count = &count
-		}
 	case entry.Dashboard:
 		item.Href = "/"
 		item.Icon = "dashboard"

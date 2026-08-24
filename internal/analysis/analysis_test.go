@@ -2,6 +2,7 @@ package analysis_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -220,7 +221,10 @@ func TestCheckCardinality(t *testing.T) {
 	})
 
 	t.Run("finds violations", func(t *testing.T) {
-		violations := svc.CheckCardinality(context.Background(), analysis.Options{})
+		violations, err := svc.CheckCardinality(context.Background(), analysis.Options{})
+		if err != nil {
+			t.Fatalf("CheckCardinality: %v", err)
+		}
 		if len(violations) != 1 {
 			t.Errorf("got %d violations, want 1", len(violations))
 		}
@@ -235,11 +239,297 @@ func TestCheckCardinality(t *testing.T) {
 	})
 
 	t.Run("scope filters violations", func(t *testing.T) {
-		violations := svc.CheckCardinality(context.Background(), analysis.Options{
+		violations, err := svc.CheckCardinality(context.Background(), analysis.Options{
 			Scope: map[string]bool{"TKT-001": true},
 		})
+		if err != nil {
+			t.Fatalf("CheckCardinality: %v", err)
+		}
 		if len(violations) != 0 {
 			t.Errorf("got %d violations, want 0", len(violations))
+		}
+	})
+}
+
+// TestCheckCardinality_OrderingAndLabels pins the per-relation contract
+// before the TKT-RNBLAC consolidation: min-then-max ordering, outgoing
+// block before incoming block, the constraint strings, the
+// Required/Actual values, and the incoming-side inverse label. The
+// expectations were captured against the four pre-consolidation check
+// functions and must not change. Multi-type ordering is pinned by
+// TestCheckCardinality_MultipleSourceTypes and the pass-grouping by
+// TestCheckCardinality_MinMaxGroupedAcrossTypes.
+func TestCheckCardinality_OrderingAndLabels(t *testing.T) {
+	one := 1
+
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ticket":  {Label: "Ticket", IDPrefixes: []string{"TKT-"}},
+			"concept": {Label: "Concept", IDPrefixes: []string{"CON-"}},
+		},
+		Relations: map[string]metamodel.RelationDef{
+			"depends": {
+				Label:       "depends",
+				From:        []string{"ticket"},
+				To:          []string{"concept"},
+				MinOutgoing: &one,
+				MaxOutgoing: &one,
+				MinIncoming: &one,
+				MaxIncoming: &one,
+				Inverse:     &metamodel.InverseDef{ID: "needed-by"},
+			},
+		},
+	}
+
+	svc := newServiceWith(t, meta, func(s store.Store) {
+		addEntity(s, "TKT-A", "ticket", nil) // 0 outgoing → min_outgoing
+		addEntity(s, "TKT-B", "ticket", nil) // 2 outgoing → max_outgoing
+		addEntity(s, "TKT-C", "ticket", nil) // 1 outgoing → ok
+		addEntity(s, "CON-X", "concept", nil)
+		addEntity(s, "CON-Y", "concept", nil) // 2 incoming → max_incoming
+		addEntity(s, "CON-Z", "concept", nil) // 0 incoming → min_incoming
+		addRelation(s, "TKT-B", "depends", "CON-X")
+		addRelation(s, "TKT-B", "depends", "CON-Y")
+		addRelation(s, "TKT-C", "depends", "CON-Y")
+	})
+
+	got, err := svc.CheckCardinality(context.Background(), analysis.Options{})
+	if err != nil {
+		t.Fatalf("CheckCardinality: %v", err)
+	}
+
+	want := []analysis.CardinalityViolation{
+		{EntityID: "TKT-A", RelationType: "depends", Constraint: "min_outgoing", Required: 1, Actual: 0},
+		{EntityID: "TKT-B", RelationType: "depends", Constraint: "max_outgoing", Required: 1, Actual: 2},
+		// Incoming violations report the inverse label when declared.
+		{EntityID: "CON-Z", RelationType: "needed-by", Constraint: "min_incoming", Required: 1, Actual: 0},
+		{EntityID: "CON-Y", RelationType: "needed-by", Constraint: "max_incoming", Required: 1, Actual: 2},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d violations, want %d: %+v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("violation[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+// TestCheckCardinality_BoundEdgeCases pins the min/max asymmetry: an
+// explicit 0 minimum is a skip (nothing can violate it), while an
+// explicit 0 maximum is a real constraint (any edge violates it).
+func TestCheckCardinality_BoundEdgeCases(t *testing.T) {
+	zero := 0
+
+	t.Run("max zero is enforced", func(t *testing.T) {
+		meta := &metamodel.Metamodel{
+			Entities: map[string]metamodel.EntityDef{
+				"ticket":  {Label: "Ticket", IDPrefixes: []string{"TKT-"}},
+				"concept": {Label: "Concept", IDPrefixes: []string{"CON-"}},
+			},
+			Relations: map[string]metamodel.RelationDef{
+				"depends": {
+					From: []string{"ticket"}, To: []string{"concept"},
+					MaxOutgoing: &zero,
+				},
+			},
+		}
+		svc := newServiceWith(t, meta, func(s store.Store) {
+			addEntity(s, "TKT-A", "ticket", nil)
+			addEntity(s, "CON-X", "concept", nil)
+			addRelation(s, "TKT-A", "depends", "CON-X")
+		})
+		got, err := svc.CheckCardinality(context.Background(), analysis.Options{})
+		if err != nil {
+			t.Fatalf("CheckCardinality: %v", err)
+		}
+		want := []analysis.CardinalityViolation{
+			{EntityID: "TKT-A", RelationType: "depends", Constraint: "max_outgoing", Required: 0, Actual: 1},
+		}
+		if len(got) != 1 || got[0] != want[0] {
+			t.Errorf("got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("min zero is skipped", func(t *testing.T) {
+		meta := &metamodel.Metamodel{
+			Entities: map[string]metamodel.EntityDef{
+				"ticket":  {Label: "Ticket", IDPrefixes: []string{"TKT-"}},
+				"concept": {Label: "Concept", IDPrefixes: []string{"CON-"}},
+			},
+			Relations: map[string]metamodel.RelationDef{
+				"depends": {
+					From: []string{"ticket"}, To: []string{"concept"},
+					MinOutgoing: &zero,
+				},
+			},
+		}
+		svc := newServiceWith(t, meta, func(s store.Store) {
+			addEntity(s, "TKT-A", "ticket", nil) // 0 outgoing, but min is 0
+		})
+		got, err := svc.CheckCardinality(context.Background(), analysis.Options{})
+		if err != nil {
+			t.Fatalf("CheckCardinality: %v", err)
+		}
+		if len(got) != 0 {
+			t.Errorf("got %d violations, want 0: %+v", len(got), got)
+		}
+	})
+}
+
+// TestCheckCardinality_MultipleSourceTypes pins the ordering across a
+// relation's From types: subjects are visited in From-list order.
+func TestCheckCardinality_MultipleSourceTypes(t *testing.T) {
+	one := 1
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"bug":     {Label: "Bug", IDPrefixes: []string{"BUG-"}},
+			"ticket":  {Label: "Ticket", IDPrefixes: []string{"TKT-"}},
+			"concept": {Label: "Concept", IDPrefixes: []string{"CON-"}},
+		},
+		Relations: map[string]metamodel.RelationDef{
+			"affects": {
+				From: []string{"ticket", "bug"}, To: []string{"concept"},
+				MinOutgoing: &one,
+			},
+		},
+	}
+	svc := newServiceWith(t, meta, func(s store.Store) {
+		addEntity(s, "BUG-1", "bug", nil)
+		addEntity(s, "TKT-1", "ticket", nil)
+	})
+	got, err := svc.CheckCardinality(context.Background(), analysis.Options{})
+	if err != nil {
+		t.Fatalf("CheckCardinality: %v", err)
+	}
+	// From-list order (ticket before bug), not ID order.
+	want := []analysis.CardinalityViolation{
+		{EntityID: "TKT-1", RelationType: "affects", Constraint: "min_outgoing", Required: 1, Actual: 0},
+		{EntityID: "BUG-1", RelationType: "affects", Constraint: "min_outgoing", Required: 1, Actual: 0},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d violations, want %d: %+v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("violation[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+// TestCheckCardinality_MinMaxGroupedAcrossTypes is the discriminating
+// ordering test: with min AND max violations spread over two From
+// types, ALL min violations must come before ALL max violations. A
+// single count-and-emit pass would interleave them
+// ([TKT-A min, TKT-B max, BUG-A min]) — the exact regression the
+// two-pass emission in checkCardinality exists to prevent.
+func TestCheckCardinality_MinMaxGroupedAcrossTypes(t *testing.T) {
+	one := 1
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ticket":  {Label: "Ticket", IDPrefixes: []string{"TKT-"}},
+			"bug":     {Label: "Bug", IDPrefixes: []string{"BUG-"}},
+			"concept": {Label: "Concept", IDPrefixes: []string{"CON-"}},
+		},
+		Relations: map[string]metamodel.RelationDef{
+			"affects": {
+				From: []string{"ticket", "bug"}, To: []string{"concept"},
+				MinOutgoing: &one, MaxOutgoing: &one,
+			},
+		},
+	}
+	svc := newServiceWith(t, meta, func(s store.Store) {
+		addEntity(s, "TKT-A", "ticket", nil) // 0 out → min
+		addEntity(s, "TKT-B", "ticket", nil) // 2 out → max
+		addEntity(s, "BUG-A", "bug", nil)    // 0 out → min
+		addEntity(s, "CON-X", "concept", nil)
+		addEntity(s, "CON-Y", "concept", nil)
+		addRelation(s, "TKT-B", "affects", "CON-X")
+		addRelation(s, "TKT-B", "affects", "CON-Y")
+	})
+	got, err := svc.CheckCardinality(context.Background(), analysis.Options{})
+	if err != nil {
+		t.Fatalf("CheckCardinality: %v", err)
+	}
+	want := []analysis.CardinalityViolation{
+		{EntityID: "TKT-A", RelationType: "affects", Constraint: "min_outgoing", Required: 1, Actual: 0},
+		{EntityID: "BUG-A", RelationType: "affects", Constraint: "min_outgoing", Required: 1, Actual: 0},
+		{EntityID: "TKT-B", RelationType: "affects", Constraint: "max_outgoing", Required: 1, Actual: 2},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d violations, want %d: %+v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("violation[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+// failingCountStore wraps a store.Store and fails every CountRelations
+// call, simulating a backend outage during the cardinality scan.
+type failingCountStore struct {
+	store.Store
+	err error
+}
+
+func (f *failingCountStore) CountRelations(context.Context, store.RelationQuery) (int, error) {
+	return 0, f.err
+}
+
+// TestCheckCardinality_CountErrorFailsLoudly pins the TKT-RNBLAC error
+// policy: a failing CountRelations must abort the run with a wrapped
+// error naming the entity and relation, and must NOT surface as a
+// count-0 min violation (the fabricated-violation bug the old
+// `n, _ :=` produced).
+func TestCheckCardinality_CountErrorFailsLoudly(t *testing.T) {
+	one := 1
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ticket":  {Label: "Ticket", IDPrefixes: []string{"TKT-"}},
+			"concept": {Label: "Concept", IDPrefixes: []string{"CON-"}},
+		},
+		Relations: map[string]metamodel.RelationDef{
+			"affects": {
+				From: []string{"ticket"}, To: []string{"concept"},
+				MinOutgoing: &one,
+			},
+		},
+	}
+
+	st := memstore.New()
+	addEntity(st, "TKT-001", "ticket", nil)
+	addEntity(st, "CON-001", "concept", nil)
+	addRelation(st, "TKT-001", "affects", "CON-001") // satisfied — only the outage could "violate"
+
+	countErr := errors.New("backend down")
+	broken := &failingCountStore{Store: st, err: countErr}
+	tr := tracer.New(broken)
+	svc, err := analysis.New(analysis.Deps{Store: broken, Meta: meta, Tracer: tr,
+		LuaReadDeps: lua.ReadDeps{VisibleReader: broken, Tracer: tr, Meta: meta}})
+	if err != nil {
+		t.Fatalf("analysis.New: %v", err)
+	}
+
+	violations, err := svc.CheckCardinality(context.Background(), analysis.Options{})
+	if err == nil {
+		t.Fatalf("want error, got nil (violations: %+v)", violations)
+	}
+	if !errors.Is(err, countErr) {
+		t.Errorf("error does not wrap the store error: %v", err)
+	}
+	for _, want := range []string{"TKT-001", "affects"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing context %q", err, want)
+		}
+	}
+	if len(violations) != 0 {
+		t.Errorf("got %d violations alongside the error, want none: %+v", len(violations), violations)
+	}
+
+	t.Run("AnalyzeAll propagates", func(t *testing.T) {
+		if _, err := svc.AnalyzeAll(context.Background(), analysis.Options{}); err == nil {
+			t.Error("AnalyzeAll: want error, got nil")
 		}
 	})
 }
@@ -255,7 +545,10 @@ func TestAnalyzeAll(t *testing.T) {
 		addEntity(s, "DOC-001", "doc", nil)
 	})
 
-	summary := svc.AnalyzeAll(context.Background(), analysis.Options{})
+	summary, err := svc.AnalyzeAll(context.Background(), analysis.Options{})
+	if err != nil {
+		t.Fatalf("AnalyzeAll: %v", err)
+	}
 	if summary.Orphans != 1 {
 		t.Errorf("Orphans = %d, want 1", summary.Orphans)
 	}

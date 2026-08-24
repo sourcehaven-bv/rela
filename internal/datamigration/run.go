@@ -35,8 +35,8 @@ type VersionCapture interface {
 	WriteRelationVersion(ctx context.Context, in store.RelationVersionInput) error
 }
 
-// Deps are the runner's collaborators. Store, Meta, State, Audit and
-// ScriptFS are required; Versions is optional (pg only).
+// Deps are the runner's collaborators. Store, Meta, State, Audit, ScriptFS
+// and Lock are required; Versions is optional (pg only).
 type Deps struct {
 	Store    store.Store
 	Meta     *metamodel.Metamodel
@@ -44,6 +44,11 @@ type Deps struct {
 	Audit    audit.Audit
 	ScriptFS fs.FS // project root, for `lua:` step scripts
 	Versions VersionCapture
+	// Lock serializes apply runs against every other migration/GC writer on
+	// the same store (TKT-CPCBR7); build it with [LockFor]. Required even
+	// though dry-runs never touch it: a destructive path must not lose its
+	// serialization to a forgotten wiring line.
+	Lock MigrationLock
 }
 
 // Runner executes a resolved migration plan against one store.
@@ -65,6 +70,8 @@ func NewRunner(deps Deps) (*Runner, error) {
 		return nil, errors.New("datamigration: NewRunner: Audit is required")
 	case deps.ScriptFS == nil:
 		return nil, errors.New("datamigration: NewRunner: ScriptFS is required")
+	case deps.Lock == nil:
+		return nil, errors.New("datamigration: NewRunner: Lock is required (use LockFor)")
 	}
 	return &Runner{deps: deps, now: time.Now}, nil
 }
@@ -98,6 +105,16 @@ type FileResult struct {
 // version rows attribute to the invoking operator with the data-migration
 // tool, never to a guessed identity.
 func (r *Runner) Run(ctx context.Context, plan []*File, apply bool) (*RunResult, error) {
+	if apply {
+		// The whole apply run holds the migration lock: marker advances and
+		// bulk rewrites must not interleave with another runner, a GC apply,
+		// or a gate adoption. Dry-runs are read-only and stay lock-free.
+		release, err := r.deps.Lock.TryAcquire(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+	}
 	p := principal.From(ctx)
 	ctx = store.WithAttribution(ctx, store.Attribution{User: p.User, Tool: migrationTool})
 

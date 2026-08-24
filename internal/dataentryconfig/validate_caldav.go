@@ -71,6 +71,13 @@ func validateCalDAVDynamic(
 			"members AND is the edge a client-created entry receives")
 	} else if _, ok := meta.Relations[c.Relation]; !ok {
 		errs = append(errs, fmt.Sprintf("%s: unknown relation %q", prefix, c.Relation))
+	} else {
+		// The edge runs member→driver, so the MEMBER type (entity_type) is the
+		// one whose side decides the direction — not driver_type. A wrong
+		// direction here is a write bug, not a display one: dynamicMembers
+		// queries the mirror side, so a client-created entry lands in the
+		// entity type but in NO collection and vanishes on the next sync.
+		errs = append(errs, CheckAmbiguousDirection(prefix, c.EntityType, c.Relation, c.Direction, meta)...)
 	}
 	return errs
 }

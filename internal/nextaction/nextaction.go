@@ -74,6 +74,25 @@ type PickOption struct {
 // that has not wired it from failing every page.
 type OptionFunc func(ctx context.Context, query string, limit int) ([]PickOption, error)
 
+// MatcherFunc reports whether a candidate satisfies one source's `condition:`.
+// Supplied by the wiring site for the same reason as [CandidateFunc]: the
+// expression is compiled against the metamodel by a predicate engine this
+// package must not learn about, so the engine stays free of both.
+//
+// Returns (nil, false) for a source that declares no condition — the caller
+// then keeps every candidate. A compiled matcher is expected to be built ONCE
+// at config load, so an unparseable expression fails loudly at startup rather
+// than silently suppressing a suggestion forever.
+//
+// An evaluation error is NOT treated as "does not match": it is returned, so a
+// broken condition surfaces instead of quietly emptying a source.
+type MatcherFunc func(sourceID string) (Matcher, bool)
+
+// Matcher evaluates one source's compiled condition against a candidate.
+type Matcher interface {
+	Match(ctx context.Context, e *entity.Entity) (bool, error)
+}
+
 // CandidateFunc produces candidates for one source. Supplied by the wiring
 // site so this package depends on no store, searcher or ACL type: it is the
 // consumer-side interface that keeps the engine testable without a graph.
@@ -115,6 +134,7 @@ type Engine struct {
 	state      userstate.Store
 	candidates CandidateFunc
 	options    OptionFunc
+	matchers   MatcherFunc
 	cap        int
 }
 
@@ -130,6 +150,13 @@ type Option func(*Engine)
 // affordance simply offers nothing rather than failing the page.
 func WithOptions(fn OptionFunc) Option {
 	return func(e *Engine) { e.options = fn }
+}
+
+// WithMatchers supplies the per-source condition matchers. Without it a
+// source's `condition:` is not evaluated at all, so the option is required
+// whenever any source declares one — [New] enforces exactly that.
+func WithMatchers(fn MatcherFunc) Option {
+	return func(e *Engine) { e.matchers = fn }
 }
 
 // New builds an Engine. Every collaborator is required: a nil userstate.Store
@@ -151,6 +178,25 @@ func New(
 	e := &Engine{cfg: cfg, state: state, candidates: candidates, cap: DefaultCandidateCap}
 	for _, opt := range opts {
 		opt(e)
+	}
+	// A source declaring a condition with no matcher wired would evaluate as
+	// "keep every candidate" — the suggestion still appears, but for entities
+	// the operator explicitly excluded. That is worse than not starting: it
+	// looks like the feature works. Unlike a nil OptionFunc, which degrades to
+	// an affordance with no options, there is no safe degradation here.
+	if e.matchers == nil {
+		var withCondition []string
+		for id, src := range cfg.NextActions {
+			if src.Condition != "" {
+				withCondition = append(withCondition, id)
+			}
+		}
+		if len(withCondition) > 0 {
+			sort.Strings(withCondition) // deterministic message
+			return nil, fmt.Errorf(
+				"nextaction: source %q declares a condition but no matchers were supplied "+
+					"(pass WithMatchers)", withCondition[0])
+		}
 	}
 	return e, nil
 }
@@ -248,6 +294,40 @@ func (e *Engine) resolveBand(
 	return e.pick(user, eligible, now), true, nil
 }
 
+// applyCondition filters candidates by the source's compiled `condition:`.
+// A source with no condition, or an engine with no matchers wired, keeps every
+// candidate — [New] rejects the combination where that would be silent.
+func (e *Engine) applyCondition(
+	ctx context.Context, id string, src dataentryconfig.NextActionSource, cands []Candidate,
+) ([]Candidate, error) {
+	if src.Condition == "" {
+		return cands, nil
+	}
+	// A declared condition with no usable matcher must NOT fall through to
+	// "keep everything": that shows the suggestion for entities the operator
+	// explicitly excluded, which looks like the feature working. New() rejects
+	// the nil-matchers case at construction; this covers a lookup that has no
+	// entry for this source, which construction cannot see.
+	if e.matchers == nil {
+		return nil, fmt.Errorf("nextaction: source %q declares a condition but no matchers were supplied", id)
+	}
+	m, ok := e.matchers(id)
+	if !ok || m == nil {
+		return nil, fmt.Errorf("nextaction: source %q declares a condition but no matcher was compiled for it", id)
+	}
+	out := make([]Candidate, 0, len(cands))
+	for _, c := range cands {
+		match, err := m.Match(ctx, c.Entity)
+		if err != nil {
+			return nil, fmt.Errorf("nextaction: condition for %q: %w", id, err)
+		}
+		if match {
+			out = append(out, c)
+		}
+	}
+	return out, nil
+}
+
 // eligibleFromSource returns the suggestions one source contributes after
 // snooze and cooldown suppression.
 func (e *Engine) eligibleFromSource(
@@ -257,6 +337,20 @@ func (e *Engine) eligibleFromSource(
 	if err != nil {
 		return nil, fmt.Errorf("nextaction: candidates for %q: %w", id, err)
 	}
+
+	// The condition runs BEFORE the cap, and the order is load-bearing.
+	//
+	// The cap is justified by "a bounded candidate set is not lossy when only
+	// one candidate is displayed" (see the package doc) — true for suppression,
+	// which is per-suggestion bookkeeping. A condition is a SELECTION
+	// predicate, so truncating first makes the bound lossy: a condition
+	// matching only the 21st candidate would silently never fire, and the
+	// source would look correctly quiet rather than broken.
+	cands, err = e.applyCondition(ctx, id, src, cands)
+	if err != nil {
+		return nil, err
+	}
+
 	if len(cands) > e.cap {
 		cands = cands[:e.cap]
 	}

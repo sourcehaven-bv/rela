@@ -360,10 +360,12 @@ func (b *caldavBackend) dynamicMembers(
 	if !ok {
 		return nil, false, nil
 	}
-	dir := store.DirectionOutgoing
-	if dyn.Direction.IsIncoming() {
-		dir = store.DirectionIncoming
-	}
+	// An absent `direction:` is inferred from the metamodel against the MEMBER
+	// type (entity_type), since the edge runs member→driver. Getting this wrong
+	// is a write bug, not a display one: the mirror query below would select
+	// the wrong set, and a client-created entry would land in no collection.
+	dir := relationDirection(resolveConfigDirection(
+		b.app.State(), dyn.EntityType, dyn.Relation, dyn.Direction))
 	// The edge runs member→driver by default, so from the DRIVER's side the
 	// query is the mirror of the configured direction.
 	q := store.RelationQuery{EntityID: driverID, Type: dyn.Relation, Direction: flipDirection(dir)}

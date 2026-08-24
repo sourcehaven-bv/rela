@@ -71,6 +71,34 @@ type ScriptAction struct {
 	// metamodel.ACLBypass* constants and AllowsRead/AllowsWrite below mirror
 	// their semantics.
 	AllowACLBypass string
+
+	// Capabilities mirrors the action's `capabilities:` block (TKT-YH52OM):
+	// which ambient, non-graph capabilities the script may reach. The zero
+	// value grants NOTHING — an automation runs on the write path of any HTTP
+	// request, so it is not an operator-shell surface.
+	//
+	// Carried as primitives for the same reason AllowACLBypass is a string:
+	// this package may not import metamodel or lua. The caller converts.
+	Capabilities ScriptCapabilities
+}
+
+// ScriptCapabilities is the schema-agnostic carrier for a scripted action's
+// ambient capability grants. It mirrors metamodel.Capabilities / lua.Capabilities
+// field-for-field; see [ScriptAction.Capabilities] for why it is duplicated
+// rather than imported.
+type ScriptCapabilities struct {
+	HTTP      bool
+	AI        bool
+	WriteFile bool
+	// Secrets names the .rela/secrets.yaml keys the script may read. Empty
+	// means none — NOT all.
+	Secrets []string
+}
+
+// Fields returns the grant as plain values, mirroring
+// metamodel.Capabilities.Fields so both ends of the hop read through one shape.
+func (c ScriptCapabilities) Fields() (http, ai, writeFile bool, secrets []string) {
+	return c.HTTP, c.AI, c.WriteFile, c.Secrets
 }
 
 // NopScriptRunner is a no-op [ScriptRunner] for tests that should not

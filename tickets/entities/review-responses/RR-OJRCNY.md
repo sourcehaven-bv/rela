@@ -1,0 +1,9 @@
+---
+id: RR-OJRCNY
+type: review-response
+title: JWT gate classifies its log line on the raw subject, so the security WARN degrades to INFO
+finding: 'In jwtgate.go the deny branch decides which log line to emit using principal.IsReserved(id.Subject) -- the RAW subject -- while verifiedPrincipal made its accept/reject decision on sanitizeUser(id.Subject). The two disagree whenever sanitization CREATES a reserved name. Verified end-to-end: a subject of "\x01system:scheduler" is correctly DENIED (401) but logs level=INFO ''verified subject is unusable after sanitization'' instead of the WARN ''rejected reserved principal in verified assertion''. This is not an authorization hole -- the request is refused -- but it is a DETECTION hole, and detection is the entire purpose of splitting those two log lines. The docs added in this ticket tell operators to grep for ''rejected reserved principal''; that grep misses this variant, which is precisely the one a deliberate attacker would use because it reads as IdP noise.'
+severity: significant
+resolution: 'Replaced verifiedPrincipal''s bare `ok bool` with a typed rejectReason (rejectNone/rejectUnusable/rejectReserved) so the gate''s log classification is driven by the same evaluation that made the decision, instead of re-deriving it from the raw id.Subject. The two can no longer drift -- the same drift-prevention argument that made verifiedPrincipal a single shared function. Confirmed by mutation: reverting BOTH this and the IsReserved fix makes TestRequireVerifiedJWT_ReservedSubjectLogsSecurityWarn fail on exactly the leading_control_char and leading_DEL cases. Note the two fixes overlap -- with RR-NQK412''s control-char-safe IsReserved in place the raw-subject classification would also be correct -- but the typed reason is retained as the structural fix, since it removes the duplicated decision rather than making two copies agree by coincidence.'
+status: addressed
+---

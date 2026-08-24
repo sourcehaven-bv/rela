@@ -1296,27 +1296,103 @@ func resolveFormRelations(
 				resolved[i].Widget = WidgetCards
 			}
 		}
-		if resolved[i].Direction == "" {
-			dir, res := dataentryconfig.InferDirection(entityType, resolved[i].Relation, s.Meta)
-			switch res {
-			case dataentryconfig.DirectionResolved:
-				resolved[i].Direction = dir
-			case dataentryconfig.DirectionAmbiguous:
-				// ValidateConfig rejects an ambiguous binding at load, so the
-				// app should not have started. Reaching here means that gate
-				// was bypassed; say so rather than silently picking a side.
-				slog.Warn("form relation direction is ambiguous but reached the config handler; "+
-					"serving outgoing", "form_entity_type", entityType, "relation", resolved[i].Relation)
-				resolved[i].Direction = dataentryconfig.DirectionOutgoing
-			case dataentryconfig.DirectionNoSide, dataentryconfig.DirectionUnknown:
-				// A wrong-side or unreadable binding — both already reported by
-				// validation. Serve the historical reading rather than inventing
-				// one; the SPA needs a non-empty value either way.
-				resolved[i].Direction = dataentryconfig.DirectionOutgoing
-			}
-		}
+		resolved[i].Direction = resolveConfigDirection(
+			s, entityType, resolved[i].Relation, resolved[i].Direction)
 	}
 	return resolved
+}
+
+// resolveConfigDirection fills in an absent `direction:` from the metamodel,
+// for any relation binding anchored to entityType.
+//
+// Unrelated to [resolveDirection], which maps a PATCH wire key to a canonical
+// relation name; this one is about config bindings served to the SPA.
+//
+// Every SPA consumer of a direction tests the literal string (`direction ===
+// 'incoming'` in RelationCards, RelationPicker, FilterBar, EntityList and
+// KanbanView), so an inferred direction has to be materialized here or the
+// browser silently falls back to outgoing. Validation rejects the ambiguous
+// case at load, so only Resolved changes anything; everything else keeps the
+// historical reading, which is also what the SPA would have assumed.
+func resolveConfigDirection(
+	s *Schema, entityType, relation string, dir dataentryconfig.Direction,
+) dataentryconfig.Direction {
+	if dir != "" || relation == "" {
+		return dir
+	}
+	inferred, res := dataentryconfig.InferDirection(entityType, relation, s.Meta)
+	switch res {
+	case dataentryconfig.DirectionResolved:
+		return inferred
+	case dataentryconfig.DirectionAmbiguous:
+		// ValidateConfig rejects an ambiguous binding at load, so the app
+		// should not have started. Reaching here means that gate was bypassed;
+		// say so rather than silently picking a side.
+		slog.Warn("relation binding direction is ambiguous but reached the config handler; serving outgoing",
+			"entity_type", entityType, "relation", relation)
+	case dataentryconfig.DirectionNoSide, dataentryconfig.DirectionUnknown:
+		// A wrong-side or unreadable binding — both already reported by
+		// validation. Serve the historical reading rather than inventing one;
+		// the SPA needs a non-empty value either way.
+	}
+	return dataentryconfig.DirectionOutgoing
+}
+
+// resolveListDirections returns a copy of lists with relation-column and
+// filter-control directions materialized. Copy-on-serve, like
+// resolveFormRelations: the in-memory config keeps what the operator wrote.
+func resolveListDirections(s *Schema, lists map[string]dataentryconfig.List) map[string]dataentryconfig.List {
+	out := make(map[string]dataentryconfig.List, len(lists))
+	for id, list := range lists {
+		l := list
+		if len(l.Columns) > 0 {
+			cols := make([]dataentryconfig.ListColumn, len(l.Columns))
+			copy(cols, l.Columns)
+			for i := range cols {
+				cols[i].Direction = resolveConfigDirection(s, l.EntityType, cols[i].Relation, cols[i].Direction)
+			}
+			l.Columns = cols
+		}
+		l.FilterControls = resolveFilterControlDirections(s, l.EntityType, l.FilterControls)
+		out[id] = l
+	}
+	return out
+}
+
+// resolveFilterControlDirections materializes directions on a filter-control
+// list. Shared by lists and kanbans, which carry the same control type.
+func resolveFilterControlDirections(
+	s *Schema, entityType string, controls []dataentryconfig.FilterControl,
+) []dataentryconfig.FilterControl {
+	if len(controls) == 0 {
+		return controls
+	}
+	out := make([]dataentryconfig.FilterControl, len(controls))
+	copy(out, controls)
+	for i := range out {
+		out[i].Direction = resolveConfigDirection(s, entityType, out[i].Relation, out[i].Direction)
+	}
+	return out
+}
+
+// resolveKanbanDirections returns a copy of kanbans with card-field and
+// filter-control directions materialized.
+func resolveKanbanDirections(s *Schema, kanbans map[string]dataentryconfig.Kanban) map[string]dataentryconfig.Kanban {
+	out := make(map[string]dataentryconfig.Kanban, len(kanbans))
+	for id, kanban := range kanbans {
+		k := kanban
+		if len(k.Card.Fields) > 0 {
+			fields := make([]dataentryconfig.KanbanCardField, len(k.Card.Fields))
+			copy(fields, k.Card.Fields)
+			for i := range fields {
+				fields[i].Direction = resolveConfigDirection(s, k.EntityType, fields[i].Relation, fields[i].Direction)
+			}
+			k.Card.Fields = fields
+		}
+		k.FilterControls = resolveFilterControlDirections(s, k.EntityType, k.FilterControls)
+		out[id] = k
+	}
+	return out
 }
 
 // aboutDescription is the deployment description shown by the SPA's global
@@ -1372,10 +1448,10 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 		AboutDescription: aboutDescription(s),
 		Styles:           s.StyleMap,
 		Forms:            forms,
-		Lists:            s.Cfg.Lists,
+		Lists:            resolveListDirections(s, s.Cfg.Lists),
 		Views:            s.Cfg.Views,
 		EntityViews:      s.Cfg.EntityViews,
-		Kanbans:          s.Cfg.Kanbans,
+		Kanbans:          resolveKanbanDirections(s, s.Cfg.Kanbans),
 		Dashboard:        s.Cfg.Dashboard,
 		Actions:          s.Cfg.Actions,
 		Navigation:       s.Cfg.Navigation,

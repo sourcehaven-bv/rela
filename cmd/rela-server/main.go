@@ -462,6 +462,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The predicate compiler backing a source's `condition:`. Supplied here
+	// rather than imported by dataentry: the condition engine sits above the
+	// data-entry app, so the composition root bridges the two.
+	if err := app.SetNextActionMatchers(appbuild.NextActionMatchers); err != nil {
+		slog.Error("failed to wire next-action matchers", "error", err)
+		os.Exit(1)
+	}
+
 	// Start file watcher for live-reload.
 	// The watcher goroutine is cleaned up on process exit.
 	if err := app.StartWatching(); err != nil {

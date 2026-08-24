@@ -42,6 +42,10 @@ type GCDeps struct {
 	Verdicts VerdictSource
 	Versions VersionCapture // optional (pg only)
 	Grace    time.Duration  // 0 = DefaultGrace
+	// Lock serializes GC applies against migration runs and other GC
+	// writers (TKT-CPCBR7); build it with [LockFor]. Required — the one
+	// unattended data-deleting path must not lose its serialization.
+	Lock MigrationLock
 }
 
 // GC deletes schema-orphaned data recorded in the drift ledger once the
@@ -66,6 +70,8 @@ func NewGC(deps GCDeps) (*GC, error) {
 		return nil, errors.New("datamigration: NewGC: Audit is required")
 	case deps.Verdicts == nil:
 		return nil, errors.New("datamigration: NewGC: Verdicts is required")
+	case deps.Lock == nil:
+		return nil, errors.New("datamigration: NewGC: Lock is required (use LockFor)")
 	}
 	if deps.Grace <= 0 {
 		deps.Grace = DefaultGrace
@@ -109,6 +115,21 @@ func (g *GC) Tick(ctx context.Context, apply bool) (*GCResult, error) {
 	if v.Status == StatusNeedsMigration {
 		res.Skipped = "schema needs migration — GC will not touch data a pending migration may transform"
 		return res, nil
+	}
+	if apply {
+		// An apply tick competes with migration runs and other GC writers;
+		// contention is a skip, not an error — for the sweep the other
+		// holder is doing equivalent work, and for the CLI the message names
+		// the situation honestly.
+		release, lockErr := g.deps.Lock.TryAcquire(ctx)
+		if errors.Is(lockErr, ErrLockHeld) {
+			res.Skipped = "another migration or GC run holds the migration lock"
+			return res, nil
+		}
+		if lockErr != nil {
+			return nil, lockErr
+		}
+		defer release()
 	}
 
 	live := g.deps.Meta().ShapeProjection()
@@ -269,6 +290,13 @@ func (g *GC) auditTick(ctx context.Context, res *GCResult) {
 // --scan`) — a full content read is fine for an operator command, and
 // deliberately NOT done by the periodic tick (amendment A6).
 func (g *GC) Scan(ctx context.Context) (added []string, err error) {
+	// Scan writes the ledger, so it takes the same lock as the applies.
+	release, err := g.deps.Lock.TryAcquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	live := g.deps.Meta().ShapeProjection()
 	ledger, err := LoadLedger(ctx, g.deps.State)
 	if err != nil {

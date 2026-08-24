@@ -407,11 +407,20 @@ deps:
   # conditionlint reuses the predicate parser to sanity-check wizard-form
   # condition expressions at author time. It sits above dataentryconfig so the
   # config package stays free of the predicate dependency.
+  #
+  # It also COMPILES next-action `condition:` expressions (TKT-N8XQ2R). Those
+  # are evaluated server-side by predicatefns, not by the SPA, so unlike the
+  # wizard-form checks this one is authoritative rather than a superset: it
+  # must see the same host functions (days_between, today, ...) the runtime
+  # will, hence predicatefns. searchparser is needed to read the entity types
+  # out of the source's `query:`, which is what a condition compiles against.
   conditionlint:
     mayDependOn:
       - dataentryconfig
       - metamodel
       - predicate
+      - predicatefns
+      - searchparser
   desktop:
     canUse:
       - wails
@@ -473,7 +482,18 @@ deps:
       - memuserstate
       - kvuserstate
       - datamigration
+      # Bridges conditionlint's next-action condition compiler to the seam
+      # dataentry declares, so the app never imports the predicate engine.
+      - conditionlint
+      - dataentryconfig
+      - nextaction
       - acl
+      # appbuild constructs the affordance resolver so the field write gate
+      # and the two gated-read bundles can share ONE instance (TKT-0XL8MF).
+      # Safe as a dependency edge: affordances is a near-leaf (acl, entity,
+      # metamodel, predicate*, principal, statemachine) and imports no
+      # wiring package, so this cannot close a cycle.
+      - affordances
       - app
       - audit
       - caldavalias

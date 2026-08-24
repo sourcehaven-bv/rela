@@ -102,7 +102,14 @@ const userPaletteFile = "palette.yaml"
 // handler as a parameter and `toolForPath` is a package function, so the
 // mount cost one method rather than three.
 //
-//plimsoll:max-methods=103
+// TKT-N8XQ2R adds [App.SetNextActionMatchers] on the same terms (103 -> 104):
+// the predicate compiler backing a source's `condition:` lives above this
+// package, so it arrives through the same setter idiom rather than a 13th
+// positional NewApp parameter. The compiling and matching themselves stay OFF
+// App entirely — conditionlint owns them and appbuild bridges — so the feature
+// cost one method, not a subsystem.
+//
+//plimsoll:max-methods=104
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS
@@ -140,6 +147,18 @@ type App struct {
 	// backend — the next-action endpoints then report "not configured"
 	// rather than silently forgetting what users asked to hide.
 	userState userstate.Store
+
+	// nextActionMatchers compiles a source's `condition:` into a predicate
+	// matcher. Injected because the compiler lives above this package (it
+	// needs predicatefns + the metamodel), the same way the composition root
+	// picks the userstate backend while consumers take the seam.
+	//
+	// Takes the live config + metamodel rather than a prebuilt lookup: both
+	// reload at runtime, and a lookup captured at boot would evaluate a stale
+	// condition after an operator edits data-entry.yaml. Nil when no
+	// deployment wired it — sources declaring a condition then fail engine
+	// construction rather than silently matching everything.
+	nextActionMatchers NextActionMatcherFunc
 
 	// visibleReader is the ACL-bounded entity-read seam (TKT-N26KLB): the
 	// entity-read analog of visibleSearcher. Read handlers gate single-GET
@@ -1095,9 +1114,7 @@ func checkExportRenderScripts(cfg Config, root string) error {
 // (activeListForEntityType, activeListFromReferer, resolveActiveList) are
 // deleted: nothing outside their own tests called them since the SPA took
 // over navigation, and enrichNavEntry counted entities from the RAW store
-// — leaking existence counts of ACL-hidden entities (#1043). The live
-// sidebar (viewsHandler.handleV1Sidebar) routes every count through the
-// ACL read scope and is pinned by TestACLSidebar_CountsMatchList.
+// — leaking existence counts of ACL-hidden entities (#1043).
 
 // coverage-ignore: requires running workspace, tested via e2e
 

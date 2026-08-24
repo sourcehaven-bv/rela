@@ -130,7 +130,11 @@ func runValidationChecks(
 	opts := analysis.Options{}
 	hasErrors := false
 	if checks.cardinality {
-		if runCardinalityCheck(ctx, checkAnalysis, checkOut, opts) {
+		found, err := runCardinalityCheck(ctx, checkAnalysis, checkOut, opts)
+		if err != nil {
+			return false, err
+		}
+		if found {
 			hasErrors = true
 		}
 	}
@@ -147,19 +151,27 @@ func runValidationChecks(
 	return hasErrors, nil
 }
 
-// runCardinalityCheck runs cardinality validation. Returns true if errors found.
+// runCardinalityCheck runs cardinality validation. Returns true if
+// violations were found; a store error aborts the check before any
+// VIOLATION output is written (never report a fabricated violation —
+// see the CheckCardinality error policy). The section header above the
+// error return is the pre-existing plain-stdout banner every validate
+// check prints on !quiet, including in JSON mode.
 func runCardinalityCheck(
 	ctx context.Context, checkAnalysis *analysis.Service, checkOut *output.Writer, opts analysis.Options,
-) bool {
+) (bool, error) {
 	if !quiet {
 		fmt.Println("\nChecking cardinality constraints...")
 	}
-	violations := checkAnalysis.CheckCardinality(ctx, opts)
+	violations, err := checkAnalysis.CheckCardinality(ctx, opts)
+	if err != nil {
+		return false, err
+	}
 	if len(violations) == 0 {
 		if !quiet && checkOut.Format != output.FormatJSON {
 			checkOut.WriteSuccess("All cardinality constraints satisfied")
 		}
-		return false
+		return false, nil
 	}
 	if checkOut.Format == output.FormatJSON {
 		_ = checkOut.WriteAnalysisResult(output.AnalysisResult{
@@ -178,7 +190,7 @@ func runCardinalityCheck(
 			}
 		}
 	}
-	return true
+	return true, nil
 }
 
 // runPropertiesCheck runs property validation. Returns true if errors found.
