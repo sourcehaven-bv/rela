@@ -187,9 +187,15 @@ func (q *neoqQueue) Enqueue(ctx context.Context, job Job) error {
 		return nil
 	}
 
-	// The backend only creates its queue channel in Start, so enqueueing
-	// first fails with an upstream error describing neoq's internals. Report
-	// the caller's actual mistake instead.
+	// Not reachable in a running process: the queue is created and started
+	// ONCE per process, at composition (appbuild.assemble), and lives until
+	// shutdown. Nothing builds a queue per request or per job.
+	//
+	// This guard exists for the wiring mistake — a new entry point that
+	// assembles services by hand and forgets to start the queue. Without it
+	// the failure surfaces as an upstream error about neoq's internals ("no
+	// processor configured for queue"), which sends the reader looking in the
+	// wrong package.
 	if !started {
 		return ErrNotStarted
 	}

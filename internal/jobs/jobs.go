@@ -6,6 +6,14 @@
 // inline on a user-facing write path makes latency unbounded and failure
 // handling ad hoc. A job moves that work off the caller's goroutine.
 //
+// # Lifetime
+//
+// One queue per process. It is built and started once at composition
+// (appbuild.assemble) and torn down at shutdown; handlers register against
+// that single instance. Nothing constructs a queue per request, per job, or
+// per store operation — the worker pool and, on postgres, the connection pool
+// are process-scoped resources.
+//
 // # Backends
 //
 // The backend is chosen at wiring time, per deployment tier:

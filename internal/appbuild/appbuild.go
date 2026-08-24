@@ -1527,6 +1527,11 @@ func (s *Services) Close() error {
 // a durable PostgreSQL-backed one under the postgres tag. Every assembled
 // Services gets one — a nil queue would surface as a panic at an enqueue site
 // rather than as a wiring error here.
+//
+// Called once per assembled Services, which in every current entry point means
+// once per process (see cmd/rela-server, cmd/rela-desktop, the CLI commands).
+// The queue owns a worker pool, and on postgres a connection pool, so it is a
+// process-scoped resource — not something to build per request.
 func buildJobQueue(base *SharedBase) (jobs.Queue, error) {
 	q, err := jobQueueFor(base)
 	if err != nil {
