@@ -272,38 +272,19 @@ type Lifecycle interface {
 }
 
 // Client is what a subsystem is handed: it can submit work and register a
-// handler for the kinds it owns, but cannot start or stop the queue.
+// handler for the kinds it owns. Start and Close are absent, so no consumer
+// stops background work for everyone else by reaching for the obvious method.
 //
 // This is the type the composition root exposes (see appbuild.Services.Jobs).
 // Prefer depending on [Enqueuer] alone where a subsystem only produces work.
+//
+// The narrowing is a signpost, not a wall: the concrete value still satisfies
+// [Lifecycle], so a type assertion recovers it. That is fine. Someone writing
+// q.(jobs.Lifecycle) has stated an intent, and a wrapper to defeat them would
+// buy nothing but an allocation per call.
 type Client interface {
 	Enqueuer
 	Registrar
-}
-
-// ClientOf returns a [Client] view of q that does NOT type-assert back to
-// [Lifecycle].
-//
-// Returning the queue itself as a Client would narrow only the static type: a
-// consumer could recover Start and Close with a type assertion and shut
-// background work down for every other subsystem. Wrapping makes the narrowing
-// real, which is the difference between a convention and a boundary.
-func ClientOf(q Queue) Client {
-	return clientView{q}
-}
-
-// clientView deliberately embeds the two narrow interfaces rather than Queue,
-// so Lifecycle's methods are not promoted onto it.
-type clientView struct {
-	q Queue
-}
-
-func (c clientView) Enqueue(ctx context.Context, job Job) error {
-	return c.q.Enqueue(ctx, job)
-}
-
-func (c clientView) Register(kind Kind, h Handler) error {
-	return c.q.Register(kind, h)
 }
 
 // Queue is the full surface a backend implements: production, registration and

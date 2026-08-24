@@ -24,14 +24,6 @@ func TestServices_JobsIsWired(t *testing.T) {
 	q := svc.Jobs()
 	require.NotNil(t, q, "assembled Services must carry a job queue")
 
-	// The returned type is jobs.Client — Enqueue and Register, no lifecycle.
-	// A consumer must not be able to Close the queue out from under every
-	// other subsystem, so the assertion is that Lifecycle is NOT reachable
-	// through the accessor.
-	_, hasLifecycle := q.(jobs.Lifecycle)
-	require.False(t, hasLifecycle,
-		"Services.Jobs must not expose lifecycle control to consumers")
-
 	// Usable, not merely non-nil: register and round-trip one job. Handlers
 	// may be registered after start; the dispatcher resolves per job.
 	done := make(chan jobs.Job, 1)

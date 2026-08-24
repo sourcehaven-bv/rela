@@ -287,7 +287,7 @@ func (s *Services) State() state.KV { return s.stateKV }
 // Nil: never — assemble fails rather than returning a Services with no
 // queue, since a nil queue would turn every Enqueue into a panic at the
 // call site rather than a wiring error here.
-func (s *Services) Jobs() jobs.Client { return jobs.ClientOf(s.jobQueue) }
+func (s *Services) Jobs() jobs.Client { return s.jobQueue }
 
 // CalDAVAliases is the CalDAV<->rela resource alias service. Never nil: the
 // service is always constructed (an empty table is the normal first-run state),
