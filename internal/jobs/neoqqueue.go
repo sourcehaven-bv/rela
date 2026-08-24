@@ -56,11 +56,6 @@ type neoqQueue struct {
 	enqueueMu sync.Mutex
 }
 
-// payloadKindKey is the payload field carrying [Job.Kind] through neoq.
-//
-// Prefixed to avoid colliding with a caller's own payload keys — the whole
-// payload map is round-tripped through JSON, and a job whose payload happened
-// to contain "kind" would otherwise hijack dispatch.
 // handlerTimeout bounds a single handler execution.
 //
 // Set explicitly because neoq's default is 30s, which is far too short for the
@@ -70,6 +65,11 @@ type neoqQueue struct {
 // worker forever, not a latency target.
 const handlerTimeout = 15 * time.Minute
 
+// payloadKindKey is the payload field carrying [Job.Kind] through neoq.
+//
+// Prefixed to avoid colliding with a caller's own payload keys — the whole
+// payload map is round-tripped through JSON, and a job whose payload happened
+// to contain "kind" would otherwise hijack dispatch.
 const payloadKindKey = "__rela_kind"
 
 // payloadRetryKey carries [Job.Retry] through neoq so the dispatcher can
@@ -227,11 +227,35 @@ func (q *neoqQueue) Enqueue(ctx context.Context, job Job) error {
 		Fingerprint: fingerprintFor(job),
 	}
 
-	// Serialized: see the enqueueMu field comment for the upstream race this
-	// contains.
+	// Two locks, deliberately.
+	//
+	// enqueueMu serializes concurrent enqueues — see its field comment for the
+	// upstream race that contains.
+	//
+	// q.mu is held as a READER across the backend call so Close cannot complete
+	// underneath it. The closed/started snapshot above is only a fast rejection;
+	// releasing the lock before reaching the backend left a window where a job
+	// that passed the check was handed to a backend already shutting down (a
+	// send on a channel whose reader is gone, or a query on a closing pool).
+	// Close takes the write lock across Shutdown, so taking the read lock here
+	// makes the two mutually exclusive. Readers still run concurrently, so this
+	// serializes enqueue against SHUTDOWN only, not against other enqueues.
 	q.enqueueMu.Lock()
-	id, err := q.nq.Enqueue(ctx, nj)
+	q.mu.RLock()
+	closedNow := q.closed
+	var (
+		id  string
+		err error
+	)
+	if !closedNow {
+		id, err = q.nq.Enqueue(ctx, nj)
+	}
+	q.mu.RUnlock()
 	q.enqueueMu.Unlock()
+
+	if closedNow {
+		return ErrClosed
+	}
 
 	if isDuplicate(id, err) {
 		// A dedupe hit is SUCCESS, not failure: the work the caller wanted is

@@ -36,6 +36,7 @@ import (
 	"maps"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
@@ -248,7 +249,9 @@ type Scheduler struct {
 	// skipped rather than queued behind itself. Guarded by inflightMu because
 	// the writer is the scheduler goroutine and the reader is a queue worker.
 	inflightMu sync.Mutex
-	inflight   map[string]chan error
+	inflight   map[string]inflightRun
+	// runSeq mints in-flight run tokens; see inflightRun.
+	runSeq atomic.Uint64
 }
 
 // New creates a Scheduler.

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/jobs"
 )
@@ -52,6 +54,7 @@ const (
 	payloadTaskName = "task"
 	payloadScript   = "script"
 	payloadRunAs    = "run_as"
+	payloadRunToken = "run_token"
 )
 
 // UseQueue routes script execution through q.
@@ -93,10 +96,22 @@ func (s *Scheduler) UseQueue(q jobs.Client) error {
 // goroutine's context — a worker's ctx is not the submitter's. That is the same
 // stamping the inline path does (see stampTaskAuditContext); doing it in one
 // place would be nicer but the two contexts are genuinely different.
-func (s *Scheduler) runTaskJob(ctx context.Context, job jobs.Job) error {
+func (s *Scheduler) runTaskJob(ctx context.Context, job jobs.Job) (err error) {
 	name, _ := job.Payload[payloadTaskName].(string)
 	script, _ := job.Payload[payloadScript].(string)
 	runAs, _ := job.Payload[payloadRunAs].(string)
+	token, _ := job.Payload[payloadRunToken].(string)
+
+	// Hand the outcome back to the waiting submitter, which owns the state
+	// bookkeeping, on EVERY exit path.
+	//
+	// Deferred rather than called before each return, because enqueueTask
+	// blocks on this report with only its ctx as an escape: a return that
+	// skips it does not fail, it HANGS the scheduler goroutine until the
+	// whole scheduler is cancelled, and then reports ctx.Err() in place of
+	// the real error. A named return plus a defer makes that structural
+	// instead of an obligation every future early return has to remember.
+	defer func() { s.reportInFlight(name, token, err) }()
 
 	if script == "" {
 		// Unrunnable, and no retry would make a script path appear.
@@ -104,14 +119,7 @@ func (s *Scheduler) runTaskJob(ctx context.Context, job jobs.Job) error {
 	}
 
 	taskCtx := stampTaskAuditContext(ctx, name, runAs)
-	err := s.runEngine(taskCtx, TaskConfig{Name: name, Script: script, RunAs: runAs})
-
-	// Hand the outcome back to the waiting submitter, which owns the state
-	// bookkeeping. Reported before returning so the scheduler observes the
-	// result whether or not the queue chooses to retry (it will not — the job
-	// is submitted RetryNever).
-	s.reportInFlight(name, err)
-	return err
+	return s.runEngine(taskCtx, TaskConfig{Name: name, Script: script, RunAs: runAs})
 }
 
 // enqueueTask submits one task execution and waits for it to finish.
@@ -146,11 +154,11 @@ func (s *Scheduler) enqueueTask(ctx context.Context, task TaskConfig) error {
 		return errNoQueue
 	}
 
-	done, err := s.claimInFlight(task.Name)
+	token, done, err := s.claimInFlight(task.Name)
 	if err != nil {
 		return err
 	}
-	defer s.releaseInFlight(task.Name)
+	defer s.releaseInFlight(task.Name, token)
 
 	job := jobs.Job{
 		Kind: TaskKind,
@@ -158,6 +166,10 @@ func (s *Scheduler) enqueueTask(ctx context.Context, task TaskConfig) error {
 			payloadTaskName: task.Name,
 			payloadScript:   task.Script,
 			payloadRunAs:    task.RunAs,
+
+			// Identifies THIS run, so a late report from a run whose
+			// submitter gave up cannot be delivered to a later one.
+			payloadRunToken: token,
 		},
 		Retry: jobs.RetryNever,
 
@@ -181,10 +193,33 @@ func (s *Scheduler) enqueueTask(ctx context.Context, task TaskConfig) error {
 	select {
 	case err := <-done:
 		return err
+	case <-time.After(taskResultTimeout):
+		// The queue accepted the job but never reported an outcome.
+		//
+		// Reachable without any handler bug: jobs.dispatch drops a job
+		// WITHOUT invoking the handler when its deadline has passed or its
+		// retry budget is spent, and a durable backend redelivering a row
+		// whose Retries was already incremented (a crash mid-run, a worker
+		// killed by the queue's own handler timeout) hits the latter on a
+		// RetryNever job — which is every task the scheduler submits.
+		//
+		// Waiting forever here is not a stalled task, it is a stalled
+		// SCHEDULER: runDueTasks executes sequentially in the ticker
+		// goroutine, so one stranded wait stops every other task from being
+		// evaluated for the life of the process. Reported as a failure so
+		// the retry ladder advances and the operator sees it.
+		return fmt.Errorf("scheduler: task %q: queue reported no result within %s", task.Name, taskResultTimeout)
 	case <-ctx.Done():
 		return ctx.Err()
 	}
 }
+
+// taskResultTimeout bounds how long a submitter waits for a queued run.
+//
+// Must exceed the queue's own per-handler cap (15m) with margin, so this fires
+// only when the result genuinely went missing — never merely because a script
+// was slow. It is a liveness backstop, not a task deadline.
+const taskResultTimeout = 20 * time.Minute
 
 // claimInFlight reserves a task name and returns the channel its completion
 // will be reported on.
@@ -193,28 +228,34 @@ func (s *Scheduler) enqueueTask(ctx context.Context, task TaskConfig) error {
 // The single-threaded loop used to give non-overlap for free; with execution on
 // a worker pool it has to be stated, or a slow task on a short cadence queues
 // behind itself and piles up.
-func (s *Scheduler) claimInFlight(name string) (<-chan error, error) {
+func (s *Scheduler) claimInFlight(name string) (token string, done <-chan error, err error) {
 	s.inflightMu.Lock()
 	defer s.inflightMu.Unlock()
 
 	if s.inflight == nil {
-		s.inflight = make(map[string]chan error)
+		s.inflight = make(map[string]inflightRun)
 	}
 	if _, busy := s.inflight[name]; busy {
-		return nil, errTaskInFlight
+		return "", nil, errTaskInFlight
 	}
 	// Buffered: the handler must never block reporting a result, even if the
 	// submitter has already given up on ctx cancellation.
 	ch := make(chan error, 1)
-	s.inflight[name] = ch
-	return ch, nil
+	token = strconv.FormatUint(s.runSeq.Add(1), 10)
+	s.inflight[name] = inflightRun{token: token, ch: ch}
+	return token, ch, nil
 }
 
 // releaseInFlight drops a task's claim, letting its next slot run.
-func (s *Scheduler) releaseInFlight(name string) {
+//
+// Scoped to the token: a submitter that gave up on ctx cancellation must not
+// evict a claim that a LATER run has since installed under the same name.
+func (s *Scheduler) releaseInFlight(name, token string) {
 	s.inflightMu.Lock()
 	defer s.inflightMu.Unlock()
-	delete(s.inflight, name)
+	if cur, ok := s.inflight[name]; ok && cur.token == token {
+		delete(s.inflight, name)
+	}
 }
 
 // reportInFlight delivers a finished run's outcome to whoever is waiting.
@@ -223,13 +264,18 @@ func (s *Scheduler) releaseInFlight(name string) {
 // the job may have been redelivered by a durable backend after a restart, in
 // which case nothing in this process is waiting. Dropping the result is right
 // in both cases — the alternative is blocking a worker forever.
-func (s *Scheduler) reportInFlight(name string, err error) {
+func (s *Scheduler) reportInFlight(name, token string, err error) {
 	s.inflightMu.Lock()
-	ch, ok := s.inflight[name]
+	cur, ok := s.inflight[name]
 	s.inflightMu.Unlock()
-	if !ok {
+	// Token mismatch means this result belongs to an EARLIER run whose
+	// submitter has already given up, and the channel now under this name
+	// belongs to a later one. Delivering would hand run N+1 run N's outcome,
+	// and the scheduler would stamp the wrong result for the wrong run.
+	if !ok || cur.token != token {
 		return
 	}
+	ch := cur.ch
 	select {
 	case ch <- err:
 	default:
@@ -246,3 +292,17 @@ var errNoQueue = errors.New("scheduler: no job queue configured")
 // errTaskPending reports that an identical job is already queued, so this run
 // was collapsed into it rather than stacked behind it.
 var errTaskPending = errors.New("scheduler: an identical task job is already pending")
+
+// inflightRun is one task execution awaiting its result.
+//
+// The token disambiguates runs that share a task name: the map is keyed by
+// name (that is what enforces non-overlap), but a result must only reach the
+// run that produced it.
+//
+// A process-local counter is enough — the token is only ever compared against
+// this process's own map, never persisted or matched across restarts, so it
+// needs uniqueness within one process and nothing more.
+type inflightRun struct {
+	token string
+	ch    chan error
+}

@@ -25,7 +25,7 @@ type fakeQueue struct {
 	got        []jobs.Job
 	enqueErr   error
 	runResult  error
-	onComplete func(name string, err error)
+	onComplete func(name, token string, err error)
 }
 
 func newFakeQueue() *fakeQueue {
@@ -59,14 +59,18 @@ func (f *fakeQueue) Enqueue(_ context.Context, job jobs.Job) error {
 	// about the Job the scheduler builds and the state it records, not about
 	// executing Lua. TestScheduler_ThroughRealQueue covers the handler.
 	name, _ := job.Payload[payloadTaskName].(string)
-	go f.report(name, result)
+	// The run token is carried back from the payload the scheduler built, the
+	// same way the real handler reads it — otherwise completion would be
+	// rejected as belonging to a different run.
+	token, _ := job.Payload[payloadRunToken].(string)
+	go f.report(name, token, result)
 	return nil
 }
 
 // report is overridable so a test can drive completion itself.
-func (f *fakeQueue) report(name string, err error) {
+func (f *fakeQueue) report(name, token string, err error) {
 	if f.onComplete != nil {
-		f.onComplete(name, err)
+		f.onComplete(name, token, err)
 	}
 }
 
@@ -214,7 +218,7 @@ func TestEnqueueTask_SkipsWhenInFlight(t *testing.T) {
 	})
 
 	// Simulate a run already in flight.
-	_, err := s.claimInFlight("task")
+	_, _, err := s.claimInFlight("task")
 	require.NoError(t, err)
 
 	err = s.enqueueTask(context.Background(), s.config.Tasks[0])
@@ -234,7 +238,7 @@ func TestDoExecuteTask_InFlightSkipIsNotAFailure(t *testing.T) {
 		Name: "task", Script: "s.lua", Every: intervalSchedule(time.Hour),
 	})
 
-	_, err := s.claimInFlight("task")
+	_, _, err := s.claimInFlight("task")
 	require.NoError(t, err)
 
 	s.doExecuteTask(context.Background(), s.config.Tasks[0])
@@ -282,7 +286,7 @@ func TestReportInFlight_NoWaiterIsHarmless(t *testing.T) {
 	t.Parallel()
 
 	s := &Scheduler{logger: discardLogger()}
-	require.NotPanics(t, func() { s.reportInFlight("nobody", nil) })
+	require.NotPanics(t, func() { s.reportInFlight("nobody", "tok", nil) })
 }
 
 // newQueuedScheduler builds a scheduler wired to q with a fixed clock.
@@ -619,4 +623,74 @@ func TestNewWithQueue_AttachesQueue(t *testing.T) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	require.Contains(t, q.handlers, TaskKind)
+}
+
+// TestReportInFlight_StaleRunCannotHijackALaterOne pins that a result from a
+// run whose submitter gave up is NOT delivered to a later run of the same task.
+//
+// The registry is keyed by task name, so before run tokens existed a late
+// report from run N found run N+1's channel and handed it run N's outcome —
+// the scheduler then stamped the wrong result for the wrong run. Reachable
+// whenever a submitter returns on ctx cancellation while its worker is still
+// executing.
+func TestReportInFlight_StaleRunCannotHijackALaterOne(t *testing.T) {
+	t.Parallel()
+
+	s := &Scheduler{logger: discardLogger()}
+
+	staleToken, _, err := s.claimInFlight("task")
+	require.NoError(t, err)
+
+	// Run #1's submitter gives up; the claim is freed.
+	s.releaseInFlight("task", staleToken)
+
+	// Run #2 claims the same name and is waiting on its own channel.
+	freshToken, fresh, err := s.claimInFlight("task")
+	require.NoError(t, err)
+	require.NotEqual(t, staleToken, freshToken)
+
+	// Run #1's worker finally finishes and reports late.
+	s.reportInFlight("task", staleToken, errors.New("run-1 outcome"))
+
+	select {
+	case got := <-fresh:
+		t.Fatalf("run #2 received run #1's outcome: %v", got)
+	default:
+	}
+
+	// Run #2's own result still arrives.
+	s.reportInFlight("task", freshToken, nil)
+	select {
+	case got := <-fresh:
+		require.NoError(t, got)
+	default:
+		t.Fatal("run #2 never received its own result")
+	}
+}
+
+// TestReleaseInFlight_StaleSubmitterCannotEvictALaterClaim pins the other half:
+// a cancelled submitter's deferred release must not drop a claim that a later
+// run installed under the same name, which would let a third run start
+// concurrently with the second.
+func TestReleaseInFlight_StaleSubmitterCannotEvictALaterClaim(t *testing.T) {
+	t.Parallel()
+
+	s := &Scheduler{logger: discardLogger()}
+
+	staleToken, _, err := s.claimInFlight("task")
+	require.NoError(t, err)
+	s.releaseInFlight("task", staleToken)
+
+	freshToken, _, err := s.claimInFlight("task")
+	require.NoError(t, err)
+
+	// The stale submitter's deferred release fires late.
+	s.releaseInFlight("task", staleToken)
+
+	_, _, err = s.claimInFlight("task")
+	require.ErrorIs(t, err, errTaskInFlight, "run #2's claim must survive run #1's late release")
+
+	s.releaseInFlight("task", freshToken)
+	_, _, err = s.claimInFlight("task")
+	require.NoError(t, err, "the real owner's release must free the claim")
 }
