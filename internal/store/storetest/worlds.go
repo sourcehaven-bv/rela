@@ -52,6 +52,26 @@ func RunWorldTests(t *testing.T, f Factory) {
 			typ: {Chain: coords, Fallback: fb},
 		})
 	}
+	// coordScope is scope's sibling for chains containing the ZERO
+	// coordinate, which `scope` structurally cannot build: it maps every
+	// element through entity.ParsePointer, and that codec REJECTS the empty
+	// string (it is not a parseable name — it is the absence of one).
+	//
+	// The shape is reachable in production: a pointer declared `default:
+	// true` is stored under the zero pointer, so a world selecting it by name
+	// compiles to a chain carrying "" (internal/worlds, BUG-DFLTCHAIN). Before
+	// that fix the compiler emitted the literal name instead, which no row
+	// could match — so this suite never saw a zero-coordinate chain and could
+	// not have caught the divergence if one existed.
+	//
+	// Taking []entity.Pointer directly rather than widening `scope` keeps the
+	// common case honest: a test naming coordinates as STRINGS still goes
+	// through the codec, so a typo in an ordinary chain is still caught.
+	coordScope := func(typ string, fb store.Fallback, chain ...entity.Pointer) store.WorldScope {
+		return store.NewWorldScope(map[string]store.TypeResolution{
+			typ: {Chain: chain, Fallback: fb},
+		})
+	}
 	// titles collects the resolved faces, keyed by bare id, and asserts
 	// the at-most-one-prime invariant on the way through.
 	titles := func(t *testing.T, s store.Store, q store.EntityQuery) map[string]string {
@@ -393,6 +413,79 @@ func RunWorldTests(t *testing.T, f Factory) {
 	// storage truth versus resolution. The refusal is shared so every
 	// backend inherits it; silently honoring one would be a precedence
 	// rule nobody remembers.
+	// A chain carrying the ZERO coordinate must be matched at its own RANK,
+	// like any other coordinate — not diverted into the rule-1/rule-3 path by
+	// a default-ness special case.
+	//
+	// This is the shape internal/worlds newly emits for a world that selects a
+	// `default: true` pointer by name (BUG-DFLTCHAIN). It is a CROSS-BACKEND
+	// contract because the two implementations reach the answer differently:
+	// storeutil.WorldPrimes has an explicit `Pointer.IsDefault()` branch that
+	// must fall THROUGH to the rank loop rather than short-circuit, while
+	// pgstore builds a CASE whose arms rank the coordinates — and under
+	// `otherwise: default` that CASE ends up with two arms matching the same
+	// row, so it relies on first-match-wins agreeing with the Go ranking.
+	//
+	// Neither property is obvious, both are currently correct, and until this
+	// case existed nothing held them together: the suite could not construct
+	// the chain at all, so a future edit to either side could have diverged
+	// while every test stayed green.
+	//
+	// Both fallbacks are exercised, and the `exclude` arm is what gives the
+	// case teeth: under `otherwise: default` a zero-coordinate row would be
+	// served either way — by the chain if the rank matched, by the fallback if
+	// it did not — so the two outcomes are indistinguishable. Under `exclude`
+	// there is no fallback to hide behind, so serving PAGE-2 at all proves the
+	// rank actually matched. Do not "simplify" this to the default arm alone.
+	//
+	// Mutation-checked (Ruling 10): adding a `continue` to WorldPrimes'
+	// IsDefault branch — diverting the default row past the rank loop, which
+	// is the exact divergence described above — fails THIS CASE AND NOTHING
+	// ELSE across the whole conformance suite. That is the measure of the gap
+	// it closes.
+	t.Run("Rule2_ZeroCoordinateIsRankedLikeAnyOther", func(t *testing.T) {
+		const def = entity.Pointer("")
+		for _, fb := range []struct {
+			name string
+			fb   store.Fallback
+		}{
+			{"exclude", store.FallbackExclude},
+			{"default", store.FallbackDefaultState},
+		} {
+			t.Run(fb.name, func(t *testing.T) {
+				s := f(t)
+				// PAGE-1 holds both faces; PAGE-2 only its default.
+				mustCreate(t, s, newState(t, "PAGE-1", "page", "", "1 default"))
+				mustCreate(t, s, newState(t, "PAGE-1", "page", "published", "1 published"))
+				mustCreate(t, s, newState(t, "PAGE-2", "page", "", "2 default"))
+
+				// The zero coordinate LAST: published outranks it for PAGE-1,
+				// and PAGE-2 is still served — via the CHAIN, not the fallback,
+				// which is why the exclude arm must return it too.
+				last := titles(t, s, store.EntityQuery{
+					Type:  "page",
+					World: coordScope("page", fb.fb, "published", def),
+				})
+				assert.Equal(t, "1 published", last["PAGE-1"],
+					"a higher-ranked coordinate still wins over the zero one")
+				assert.Equal(t, "2 default", last["PAGE-2"],
+					"the zero coordinate is IN the chain, so PAGE-2 resolves by "+
+						"rule 2 — under `exclude` there is no fallback that could "+
+						"have produced this, so serving it proves the rank matched")
+
+				// The zero coordinate FIRST: it now outranks published.
+				first := titles(t, s, store.EntityQuery{
+					Type:  "page",
+					World: coordScope("page", fb.fb, def, "published"),
+				})
+				assert.Equal(t, "1 default", first["PAGE-1"],
+					"chain ORDER governs the zero coordinate exactly as it does "+
+						"any other — reversing the chain reverses the winner")
+				assert.Equal(t, "2 default", first["PAGE-2"])
+			})
+		}
+	})
+
 	t.Run("AllStatesWithWorldIsRejected", func(t *testing.T) {
 		s := f(t)
 		mustCreate(t, s, newState(t, "PAGE-1", "page", "", "default"))

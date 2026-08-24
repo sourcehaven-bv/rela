@@ -983,6 +983,13 @@ worlds:
 | `otherwise` | **Required.** What to do with an entity whose type declares states but none this world selects: `exclude` (the entity is not in this world at all) or `default` (fall back to its default state). |
 | `edits` | Where edits made from this world land. Accepted and validated now; used by a later release. |
 
+A chain may name a state marked `default: true` — the `page: draft` override
+above does exactly that, and it is the ordinary way to say "this world shows
+the draft face". A default state is stored under the bare id rather than as a
+separate row, but that is storage detail: naming it in `select:` or
+`overrides:` selects it by **rule 2**, the same as any other state, and an
+entity holding only its default face is served rather than excluded.
+
 A world resolves each entity to **at most one** face. Three rules, in order:
 
 1. The type declares no states → the entity appears in every world.
