@@ -874,6 +874,17 @@ func NewApp(
 		meta:               func() *metamodel.Metamodel { return app.State().Meta },
 		getEntity:          app.reader.getEntity,
 		currentEdgesByPeer: app.currentEdgesByPeer,
+		// Copy affordances (RULING 9). A closure over App rather than a
+		// captured value, matching every other accessor here: it must read the
+		// manager live, and it stays nil when the manager does not expose the
+		// capability so `_copies` is omitted rather than sent empty.
+		copies: func(ctx context.Context, entityType, pointer, sourceID string) ([]entitymanager.CopyOffer, error) {
+			mgr, ok := app.entityManager.(*entitymanager.Manager)
+			if !ok {
+				return nil, nil
+			}
+			return entitymanager.CopiesForSource(ctx, mgr, entityType, pointer, sourceID)
+		},
 	}
 
 	app.serializer = entitySerializer{affordances: app.affordances}
@@ -984,7 +995,7 @@ func NewApp(
 	// unlogged would be the same "clean by luck" the WorldDef guard was added
 	// to convert into "clean by construction".
 	if mgr, ok := app.entityManager.(*entitymanager.Manager); ok {
-		copies, cerr := newCopiesHandler(entitymanager.CopyAffordances{M: mgr}, app.State)
+		copies, cerr := newCopiesHandler(entitymanager.CopyAffordances{M: mgr})
 		if cerr != nil {
 			return nil, fmt.Errorf("dataentry.NewApp: %w", cerr)
 		}

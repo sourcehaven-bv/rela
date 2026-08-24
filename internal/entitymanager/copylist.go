@@ -31,29 +31,8 @@ type CopyOffer struct {
 	// copy needs a target id, so a caller must know which it is looking at.
 	SameEntity bool
 
-	// Indeterminate marks an offer whose invocability CANNOT be answered
-	// without information the caller has not supplied yet.
-	//
-	// It is true for exactly one case: a CROSS-ENTITY copy, whose target id
-	// the client chooses at invoke time. The authorization path checks
-	// `OpCreate` on the target, so with no target id it would authorize the
-	// EMPTY id — and any policy whose verdict depends on the target's identity
-	// would be evaluated against the wrong subject. A code-review reproduction
-	// showed exactly that: list said allowed, invoke said forbidden.
-	//
-	// Reporting `Allowed: true` for that case would be the RULING 11 defect —
-	// an affordance that says one thing while the write does another. So the
-	// honest answer is "I cannot know", and this field says so rather than
-	// guessing. A client should render such an offer as available-but-
-	// unverified (the server still authorizes), never as confirmed.
-	//
-	// Same-entity offers are always determinate: their target IS the source.
-	Indeterminate bool
-
 	// Allowed reports whether this principal may invoke this copy on this
 	// source RIGHT NOW.
-	//
-	// Meaningful only when Indeterminate is false. See that field.
 	//
 	// # It is a HINT, never a boundary
 	//
@@ -69,9 +48,6 @@ type CopyOffer struct {
 	// RULING 11 failure, where an affordance map said "writable" and the write
 	// path refused.
 	//
-	// That guarantee holds for SAME-ENTITY offers. For a cross-entity offer
-	// the inputs differ (no target id yet), which is what Indeterminate
-	// records — the mechanism is shared, but the question is not the same one.
 	Allowed bool
 	// Reason names why Allowed is false, for a tooltip or a CLI. Empty when
 	// Allowed is true. Advisory: it explains a denial the server already made,
@@ -139,6 +115,37 @@ func CopiesForSource(
 		if metamodel.StoredPointer(m.deps.Meta, from.Type, from.Pointer) != pointer {
 			continue
 		}
+		if !def.IsSameEntity() {
+			// CROSS-ENTITY definitions are not offered as affordances, and this
+			// is a FILTER rather than a probe-then-report: authorization is
+			// never attempted for them.
+			//
+			// # The kernel supports cross-entity; this surface does not OFFER it
+			//
+			// [Manager.CopyState] handles a cross-entity copy exactly as before
+			// — a caller with an explicit target id can still invoke one. What is
+			// scoped here is the AFFORDANCE: this epic is about faces of ONE
+			// entity (promote a draft, translate a page), and cross-entity
+			// copies are foundation for later work that needs no UI yet. Read
+			// this as a scope boundary, not a limitation to "complete".
+			//
+			// # Why it must be a filter and not a verdict
+			//
+			// A cross-entity target is the `new <type>` form: the entity does
+			// not exist and has no id. authorizeCopy checks OpCreate on
+			// EntitySubject{Type, ID, Pointer}, so probing one here would
+			// authorize the EMPTY id — a confident answer to a different
+			// question, and the defect a code review caught (list said allowed,
+			// invoke said forbidden). Skipping before authorization makes that
+			// unreachable rather than guarded against.
+			//
+			// Being called with an entity in hand does NOT supply the missing
+			// id: the entity is the SOURCE. That was verified before this
+			// filter was written, because the alternative — deleting the branch
+			// on the assumption that an entity answers it — would have
+			// reintroduced the empty-subject bug.
+			continue
+		}
 
 		offer := CopyOffer{
 			Name:       name,
@@ -146,15 +153,7 @@ func CopiesForSource(
 			TargetFace: def.To,
 			SameEntity: def.IsSameEntity(),
 		}
-		if offer.SameEntity {
-			offer.Allowed, offer.Reason = copyInvocable(ctx, m, name, def, sourceID)
-		} else {
-			// A cross-entity copy's target is chosen at invoke time, so its
-			// authorization cannot be evaluated now — see CopyOffer.Indeterminate.
-			// Deliberately NOT probed at all: running the check against an empty
-			// target id would produce a confident answer to a different question.
-			offer.Indeterminate = true
-		}
+		offer.Allowed, offer.Reason = copyInvocable(ctx, m, name, def, sourceID)
 		out = append(out, offer)
 	}
 	return out, nil

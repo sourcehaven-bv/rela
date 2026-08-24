@@ -112,6 +112,30 @@ type Entity struct {
 	// transitions, nil on list rows and when no state machines are wired. It is a
 	// UI hint, never authorization — the write path re-enforces every transition.
 	Transitions *map[string][]Transition `json:"_transitions,omitempty"`
+	// Copies lists the declared copy definitions available FROM this entity's
+	// current face — the promote / translate affordances (RULING 9).
+	//
+	// It rides the entity response alongside [Entity.Actions] because that is
+	// how every other affordance in this app is delivered: computed at read
+	// time from data the client already fetched, rather than requiring a
+	// second request keyed on (type, pointer, id). An earlier revision shipped
+	// a `GET /_copies` list endpoint; it was removed for exactly that reason.
+	//
+	// Same contract as `_actions`: a UI HINT, never a boundary. `POST
+	// /_copies/{name}` re-authorizes through the kernel, so a client that
+	// ignores `allowed` and posts anyway gets the same refusal it would have
+	// got regardless. Each entry's verdict is computed by running the kernel's
+	// own authorization path, not a re-derivation, so it cannot drift from
+	// what the write does (RULING 11 — an affordance map that lies is a trap).
+	//
+	// SAME-ENTITY definitions only: a copy that creates a DIFFERENT entity has
+	// no target id until the caller names one, so no honest verdict exists for
+	// it here. The kernel still supports those; they are simply not offered as
+	// an affordance. See entitymanager.CopiesForSource.
+	//
+	// Same pointer / closed-world semantics as FieldAffordances: present
+	// (possibly empty) on per-entity responses, nil on list rows.
+	Copies *[]CopyOffer `json:"_copies,omitempty"`
 	// Warnings lists soft-condition findings surfaced by the write
 	// path. Populated only by mutation responses (PATCH); read paths
 	// leave it nil. Each warning has a stable `code`, an RFC 6901
@@ -894,16 +918,8 @@ type CopyOffer struct {
 	// cross-entity copy REQUIRES a target id, so a client cannot build a valid
 	// invoke without knowing which it has.
 	SameEntity bool `json:"sameEntity"`
-	// Indeterminate marks an offer whose invocability cannot be answered yet:
-	// a CROSS-ENTITY copy, whose target the client chooses at invoke time.
-	// Authorization depends on that target, so no honest verdict exists here.
-	//
-	// When true, `allowed` is meaningless — render the action as available but
-	// UNVERIFIED, never as confirmed. The server authorizes on invoke either
-	// way. Saying "true" instead would be an affordance that lies.
-	Indeterminate bool `json:"indeterminate,omitempty"`
 	// Allowed reports whether the requesting principal may invoke this copy on
-	// this source right now. Meaningful only when `indeterminate` is false.
+	// this source right now.
 	//
 	// A HINT, never a boundary — the same contract as `_actions`. The invoke
 	// endpoint re-authorizes through the kernel, so a client that ignores this

@@ -19,20 +19,11 @@ import (
 // stubCopyService stands in for the manager. It records what it was asked so
 // the tests can assert the handler does not pre-empt it.
 type stubCopyService struct {
-	offers []entitymanager.CopyOffer
 	result *entitymanager.CopyResult
 	err    error
 
-	listCalls   int
 	invokeCalls int
 	gotReq      entitymanager.CopyRequest
-}
-
-func (s *stubCopyService) CopiesForSource(
-	_ context.Context, _, _, _ string,
-) ([]entitymanager.CopyOffer, error) {
-	s.listCalls++
-	return s.offers, s.err
 }
 
 func (s *stubCopyService) CopyState(
@@ -45,8 +36,7 @@ func (s *stubCopyService) CopyState(
 
 func newCopyTestHandler(t *testing.T, svc copyService) *copiesHandler {
 	t.Helper()
-	app := newTestAppV1(t)
-	h, err := newCopiesHandler(svc, app.State)
+	h, err := newCopiesHandler(svc)
 	if err != nil {
 		t.Fatalf("newCopiesHandler: %v", err)
 	}
@@ -74,14 +64,10 @@ func serveCopies(h *copiesHandler, method, target, body string) *httptest.Respon
 // schema.yaml for a definition that is correctly declared.
 func TestCopiesHandler_RejectsNilService(t *testing.T) {
 	t.Parallel()
-	app := newTestAppV1(t)
-	if _, err := newCopiesHandler(nil, app.State); err == nil {
+	if _, err := newCopiesHandler(nil); err == nil {
 		t.Error("a nil copy service must be rejected at construction — a " +
 			"wiring failure that renders as a valid domain answer is the " +
 			"hardest kind to diagnose")
-	}
-	if _, err := newCopiesHandler(&stubCopyService{}, nil); err == nil {
-		t.Error("a nil schema must be rejected at construction")
 	}
 }
 
@@ -210,69 +196,6 @@ func TestCopiesHandler_InvokesByNameOnly(t *testing.T) {
 	}
 }
 
-// TestCopiesHandler_ListReportsAllowedPerDefinition pins the config-is-not-
-// secret rule on the wire: a denied definition is LISTED with allowed=false,
-// not hidden.
-//
-// Copy names are operator-authored config, so concealing them would hide
-// something schema.yaml already states. What is per-principal is the verdict.
-func TestCopiesHandler_ListReportsAllowedPerDefinition(t *testing.T) {
-	t.Parallel()
-	svc := &stubCopyService{offers: []entitymanager.CopyOffer{
-		{Name: "promote-page", Label: "Publish", TargetFace: "page@published",
-			SameEntity: true, Allowed: true},
-		{Name: "archive-page", Label: "archive-page", TargetFace: "page@archived",
-			SameEntity: true, Allowed: false, Reason: "requires permission \"archive\""},
-	}}
-	h := newCopyTestHandler(t, svc)
-
-	rec := serveCopies(h, http.MethodGet,
-		"/api/v1/_copies?type=ticket&source_id=TKT-1", "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body)
-	}
-
-	var got v1.CopyOffersResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(got.Data) != 2 {
-		t.Fatalf("a DENIED definition must still be listed — its name is config, "+
-			"not a secret; got %d entries", len(got.Data))
-	}
-	if !got.Data[0].Allowed || got.Data[1].Allowed {
-		t.Errorf("allowed must be per-definition; got %+v", got.Data)
-	}
-	if got.Data[1].Reason == "" {
-		t.Error("a denied offer should carry a reason for a tooltip")
-	}
-}
-
-// TestCopiesHandler_ListValidatesItsAddress covers the request-shape errors,
-// including that an unknown entity TYPE is named (config, not a secret) while
-// nothing about entity existence is disclosed.
-func TestCopiesHandler_ListValidatesItsAddress(t *testing.T) {
-	t.Parallel()
-	h := newCopyTestHandler(t, &stubCopyService{})
-
-	for _, tc := range []struct {
-		name, target string
-		want         int
-	}{
-		{"no type", "/api/v1/_copies?source_id=TKT-1", http.StatusBadRequest},
-		{"no source_id", "/api/v1/_copies?type=ticket", http.StatusBadRequest},
-		{"unknown type", "/api/v1/_copies?type=nosuch&source_id=X-1", http.StatusNotFound},
-		{"valid", "/api/v1/_copies?type=ticket&source_id=TKT-1", http.StatusOK},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			if got := serveCopies(h, http.MethodGet, tc.target, "").Code; got != tc.want {
-				t.Errorf("%s: got %d, want %d", tc.target, got, tc.want)
-			}
-		})
-	}
-}
-
 // TestCopiesHandler_MethodRouting pins the surface's shape: a list is a GET on
 // the collection, an invoke is a POST to a NAME. A POST to the collection has
 // no definition to invoke, and a GET on a name is not a read of anything.
@@ -285,6 +208,10 @@ func TestCopiesHandler_MethodRouting(t *testing.T) {
 		want                 int
 	}{
 		{"POST to collection", http.MethodPost, "/api/v1/_copies", http.StatusMethodNotAllowed},
+		// GET is gone entirely: offers ride the entity response alongside
+		// `_actions` rather than living behind a second endpoint. Both the
+		// collection and a named definition refuse it.
+		{"GET the collection", http.MethodGet, "/api/v1/_copies", http.StatusMethodNotAllowed},
 		{"GET a name", http.MethodGet, "/api/v1/_copies/promote-page", http.StatusMethodNotAllowed},
 		{"DELETE", http.MethodDelete, "/api/v1/_copies/promote-page", http.StatusMethodNotAllowed},
 		{"OPTIONS", http.MethodOptions, "/api/v1/_copies", http.StatusNoContent},
@@ -315,4 +242,88 @@ func TestCopiesHandler_InvokeRejectsMalformedBody(t *testing.T) {
 	if svc.invokeCalls != 0 {
 		t.Errorf("a malformed request must not reach the kernel; calls=%d", svc.invokeCalls)
 	}
+}
+
+// TestCopyOffers_RideTheEntityResponse pins the design correction: offers
+// arrive on the entity response alongside `_actions`, not from a second
+// endpoint.
+//
+// # Why the shape matters enough to test
+//
+// An earlier revision shipped `GET /_copies?type=&pointer=&source_id=`, which
+// made the client construct a lookup key for an affordance every other
+// affordance in this app delivers inline. Jeroen's question — "where is the
+// menu being sent to the client? I would assume it would work similarly to the
+// ones for actions" — is the one that should have been asked at plan time.
+//
+// # Omitted, not empty, when the capability is absent
+//
+// `_copies` is nil rather than `[]` when nothing is wired. An empty list is a
+// legitimate answer ("this face declares no copies"), so emitting one for a
+// missing capability would render a wiring gap as a domain fact — the visible
+// symptom being "the promote button never appears", which sends someone
+// hunting through schema.yaml for a definition that is correctly declared.
+func TestCopyOffers_RideTheEntityResponse(t *testing.T) {
+	t.Parallel()
+	app := newTestAppV1(t)
+	e := &entity.Entity{ID: "TKT-1", Type: "ticket", Properties: map[string]any{"title": "t"}}
+
+	t.Run("omitted when the capability is not wired", func(t *testing.T) {
+		t.Parallel()
+		svc := app.affordances
+		svc.copies = nil
+		var out v1.Entity
+		svc.attachEntityAffordances(context.Background(), e, &out)
+
+		if out.Copies != nil {
+			t.Errorf("`_copies` must be OMITTED when nothing is wired, not sent "+
+				"empty — an empty list is a real answer, so sending one would "+
+				"render a wiring gap as a domain fact; got %v", *out.Copies)
+		}
+		// The attach ran: other affordances are present. Without this the
+		// assertion above would pass against a build that attached nothing.
+		if out.FieldAffordances == nil {
+			t.Error("precondition: attachEntityAffordances must have run")
+		}
+	})
+
+	t.Run("present, possibly empty, when wired", func(t *testing.T) {
+		t.Parallel()
+		svc := app.affordances
+		svc.copies = func(_ context.Context, _, _, _ string) ([]entitymanager.CopyOffer, error) {
+			return []entitymanager.CopyOffer{{
+				Name: "promote-ticket", Label: "Publish",
+				TargetFace: "ticket@published", SameEntity: true, Allowed: true,
+			}}, nil
+		}
+		var out v1.Entity
+		svc.attachEntityAffordances(context.Background(), e, &out)
+
+		if out.Copies == nil {
+			t.Fatal("`_copies` must be present when the capability is wired")
+		}
+		got := *out.Copies
+		if len(got) != 1 || got[0].Name != "promote-ticket" || got[0].Label != "Publish" {
+			t.Errorf("the offer must reach the wire intact; got %+v", got)
+		}
+		if !got[0].Allowed {
+			t.Error("the verdict must ride the offer — it is what Ruling 9's " +
+				"no-permission-no-button reads")
+		}
+	})
+
+	t.Run("omitted on a capability error, never silently empty", func(t *testing.T) {
+		t.Parallel()
+		svc := app.affordances
+		svc.copies = func(_ context.Context, _, _, _ string) ([]entitymanager.CopyOffer, error) {
+			return nil, errors.New("backend down")
+		}
+		var out v1.Entity
+		svc.attachEntityAffordances(context.Background(), e, &out)
+
+		if out.Copies != nil {
+			t.Errorf("a failure must omit `_copies` rather than emit `[]`, "+
+				"which would read as \"no copies here\"; got %v", *out.Copies)
+		}
+	})
 }

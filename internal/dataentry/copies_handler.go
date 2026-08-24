@@ -4,14 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 // copyService is the copy capability this package needs, declared HERE at the
@@ -37,9 +35,6 @@ import (
 // type-check and would be exactly the RULING 11 defect: an affordance map that
 // says one thing while the write path does another.
 type copyService interface {
-	// CopiesForSource lists the copy definitions available on one face, each
-	// with a per-principal invocability hint.
-	CopiesForSource(ctx context.Context, entityType, pointer, sourceID string) ([]entitymanager.CopyOffer, error)
 	// CopyState invokes a declared definition BY NAME. It authorizes
 	// internally; callers must not pre-empt that with their own check.
 	CopyState(ctx context.Context, req entitymanager.CopyRequest) (*entitymanager.CopyResult, error)
@@ -63,103 +58,39 @@ type copyService interface {
 // whose absence looks like a legitimate result.
 type copiesHandler struct {
 	copies copyService
-	schema func() *Schema
 }
 
 // newCopiesHandler builds the handler. Nil: rejected — see the type doc.
-func newCopiesHandler(copies copyService, schema func() *Schema) (*copiesHandler, error) {
+func newCopiesHandler(copies copyService) (*copiesHandler, error) {
 	if copies == nil {
 		return nil, errors.New("dataentry: newCopiesHandler: copy service must be non-nil")
 	}
-	if schema == nil {
-		return nil, errors.New("dataentry: newCopiesHandler: schema must be non-nil")
-	}
-	return &copiesHandler{copies: copies, schema: schema}, nil
+	return &copiesHandler{copies: copies}, nil
 }
 
 // handleV1Copies routes `/api/v1/_copies…`.
 //
-//	GET  /_copies?type=&pointer=&source_id=   list offers for one face
-//	POST /_copies/{name}                      invoke a definition by name
+//	POST /_copies/{name}   invoke a definition by name
+//
+// There is NO list endpoint. Copy offers ride the entity (detail) response
+// alongside `_actions`, the way every other affordance in this app is
+// delivered — computed at read time from data the client already fetched,
+// rather than requiring it to construct a separate lookup key. An earlier
+// revision shipped a `GET /_copies`; it was removed because a second endpoint
+// for one affordance is the odd shape, not the norm.
 func (h *copiesHandler) handleV1Copies(w http.ResponseWriter, r *http.Request) {
 	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/_copies"), "/")
 	switch {
-	case r.Method == http.MethodGet && rest == "":
-		h.list(w, r)
 	case r.Method == http.MethodPost && rest != "":
 		h.invoke(w, r, rest)
 	case r.Method == http.MethodOptions:
-		w.Header().Set("Allow", "GET, POST, OPTIONS")
+		w.Header().Set("Allow", "POST, OPTIONS")
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed",
 			"Method not allowed",
-			"GET /_copies lists offers for a face; POST /_copies/{name} invokes one")
+			"POST /_copies/{name} invokes a declared copy; offers ride the entity response")
 	}
-}
-
-// list serves the offers for one source face.
-//
-// The face is addressed by (type, pointer, source_id) rather than by an
-// `entity@pointer` string: the wire has no state-ref grammar, and inventing
-// one here would be a second addressing syntax for a surface that already has
-// `?world=` and `_history` doing it differently.
-func (h *copiesHandler) list(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	entityType := q.Get("type")
-	sourceID := q.Get("source_id")
-	if entityType == "" || sourceID == "" {
-		writeV1Error(w, r, http.StatusBadRequest, "invalid_request",
-			"type and source_id are required",
-			"GET /_copies?type=policy&pointer=&source_id=POL-1")
-		return
-	}
-	if _, ok := h.schema().Meta.GetEntityDef(entityType); !ok {
-		// An entity TYPE is config, not a secret, so naming it is fine — the
-		// same asymmetry resolveWorld documents for world names.
-		writeV1Error(w, r, http.StatusNotFound, "entity_type_not_found",
-			"Entity type not found", entityType)
-		return
-	}
-
-	// NORMALIZE the pointer from a DECLARED name to a STORED coordinate.
-	//
-	// A client reads schema.yaml, sees the face is called `draft`, and sends
-	// `pointer=draft`. But `draft` is often `default: true`, whose stored
-	// coordinate is the empty string — so an un-normalized compare returns
-	// `200 []`, which is indistinguishable from "this face has no copies".
-	// That is the silence-shaped defect this file's own docs rail against,
-	// reintroduced at the wire after being fixed inside CopiesForSource.
-	//
-	// StoredPointer is idempotent for an already-stored coordinate, so a
-	// client that sends `pointer=` or `pointer=published` is unaffected.
-	pointer := metamodel.StoredPointer(h.schema().Meta, entityType, q.Get("pointer"))
-
-	offers, err := h.copies.CopiesForSource(r.Context(), entityType, pointer, sourceID)
-	if err != nil {
-		// The detail is generic and the real error is logged: an unfiltered
-		// backend error string in a client-visible body is how store internals
-		// leak, and every other error path in this file is careful about it.
-		slog.Error("dataentry: listing copies failed",
-			"type", entityType, "source", sourceID, "err", err)
-		writeV1Error(w, r, http.StatusInternalServerError, "copy_list_failed",
-			"Could not list copies", "")
-		return
-	}
-
-	resp := v1.CopyOffersResponse{Data: make([]v1.CopyOffer, 0, len(offers))}
-	for _, o := range offers {
-		resp.Data = append(resp.Data, v1.CopyOffer{
-			Name:          o.Name,
-			Label:         o.Label,
-			TargetFace:    o.TargetFace,
-			SameEntity:    o.SameEntity,
-			Indeterminate: o.Indeterminate,
-			Allowed:       o.Allowed,
-			Reason:        o.Reason,
-		})
-	}
-	writeV1JSON(w, http.StatusOK, resp)
 }
 
 // copyInvokeRequest is the invoke body. It names a DEFINITION and the entities

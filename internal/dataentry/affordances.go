@@ -15,6 +15,7 @@ import (
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/statemachine"
@@ -104,6 +105,16 @@ type affordanceService struct {
 	meta     func() *metamodel.Metamodel
 	// getEntity resolves an entity by ID for relation-source attribution.
 	getEntity func(ctx context.Context, id string) (*entityPkg.Entity, bool)
+	// copies lists the copy affordances available from one face (RULING 9's
+	// promote / translate buttons). A per-call accessor like the others, and
+	// OPTIONAL: nil when the entity manager does not expose the capability,
+	// in which case `_copies` is omitted entirely rather than sent empty.
+	//
+	// Omitted-vs-empty matters here: an empty list is a real answer ("this
+	// face declares no copies"), so sending one when the capability is absent
+	// would render a wiring gap as a domain fact — the same shape the copies
+	// handler's own constructor rule rejects.
+	copies func(ctx context.Context, entityType, pointer, sourceID string) ([]entitymanager.CopyOffer, error)
 	// currentEdgesByPeer returns the current edges of entityID for a relation
 	// type/direction, keyed by peer ID. Used to diff desired-vs-current edges.
 	currentEdgesByPeer func(
@@ -1166,6 +1177,9 @@ func (svc affordanceService) attachEntityAffordances(ctx context.Context, e *ent
 	if transitions := svc.computeTransitions(ctx, e, verdicts); transitions != nil {
 		result.Transitions = &transitions
 	}
+	if offers := svc.computeCopyOffers(ctx, e); offers != nil {
+		result.Copies = &offers
+	}
 	// Pass the same verdicts so a policy-hidden `file` property's attachments
 	// are omitted from `_attachments` — otherwise the hidden-field boundary
 	// the rest of the response maintains would leak the file's metadata and a
@@ -1222,6 +1236,51 @@ func (svc affordanceService) computeAttachments(
 			Size:        info.Size,
 			ContentType: contentTypeForFilename(info.FileName),
 			Href:        selfHref + "/_attachments/" + info.Property + "/" + url.PathEscape(info.FileName),
+		})
+	}
+	return out
+}
+
+// computeCopyOffers lists the copy affordances available from e's current
+// face — RULING 9's promote and translate buttons (TKT-F2D5U5).
+//
+// Returns nil when the capability is not wired, so `_copies` is OMITTED rather
+// than sent as an empty list. An empty list is a legitimate answer ("this face
+// declares no copies"), so emitting one for a missing capability would render
+// a wiring gap as a domain fact — and the visible symptom would be "the
+// promote button never appears", sending someone to hunt through schema.yaml
+// for a definition that is correctly declared.
+//
+// The verdicts come from the kernel's own authorization path, not a
+// re-derivation here, which is what stops this hint drifting from what the
+// write actually does. This service must never compute invocability itself.
+//
+// The face is e's stored pointer: an affordance is offered FROM the face being
+// viewed, so a promote appears on the draft and not on the published face.
+func (svc affordanceService) computeCopyOffers(
+	ctx context.Context, e *entityPkg.Entity,
+) []v1.CopyOffer {
+	if svc.copies == nil || e == nil {
+		return nil
+	}
+	offers, err := svc.copies(ctx, e.Type, e.Pointer.String(), e.ID)
+	if err != nil {
+		// Best-effort, like the rest of this affordance map: a failure omits
+		// the offers rather than failing the whole entity read. Logged so it
+		// is not silent — an unlogged empty would look like "no copies here".
+		slog.Warn("dataentry: computing copy offers failed; _copies omitted",
+			"entity", e.ID, "type", e.Type, "err", err)
+		return nil
+	}
+	out := make([]v1.CopyOffer, 0, len(offers))
+	for _, o := range offers {
+		out = append(out, v1.CopyOffer{
+			Name:       o.Name,
+			Label:      o.Label,
+			TargetFace: o.TargetFace,
+			SameEntity: o.SameEntity,
+			Allowed:    o.Allowed,
+			Reason:     o.Reason,
 		})
 	}
 	return out

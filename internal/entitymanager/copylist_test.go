@@ -118,9 +118,14 @@ func TestCopiesForSource_MatchesTheFaceNotJustTheType(t *testing.T) {
 	})
 
 	t.Run("a different type offers nothing of page's", func(t *testing.T) {
-		got := mustOffers(ctx, t, mgr, "ticket", "", "TKT-1")
-		if len(got) != 1 || got[0].Name != "spawn-followup" {
-			t.Errorf("got %v, want only spawn-followup", offerNames(got))
+		// The ticket face declares only a CROSS-ENTITY definition, which is
+		// not offered as an affordance — so this asserts an empty result for
+		// two independent reasons, and the sibling subtests above are what
+		// prove the emptiness is not "the fixture offers nothing at all".
+		if got := mustOffers(ctx, t, mgr, "ticket", "", "TKT-1"); len(got) != 0 {
+			t.Errorf("got %v, want none: page's copies must not leak across "+
+				"types, and ticket's only definition is cross-entity",
+				offerNames(got))
 		}
 	})
 }
@@ -265,47 +270,95 @@ func TestCopiesForSource_AllowedAgreesWithInvoke(t *testing.T) {
 // configurable text and its fallback.
 //
 // The name is a legible fallback because copy names are operator-authored and
-// already read as actions (`promote-page`), which is the same reasoning
+// already read as actions (`promote-page`), the same reasoning
 // metamodel.Transition.Label uses.
+//
+// It uses its OWN metamodel rather than the shared fixture: the unlabelled
+// definition has to be SAME-ENTITY to be offered at all, and adding one to the
+// shared fixture would change the offer counts every other test asserts.
 func TestCopiesForSource_LabelFallsBackToName(t *testing.T) {
-	mgr, _ := newCopyListManager(t, allowGuard{allow: true})
-	ctx := context.Background()
-
-	withLabel := mustOffers(ctx, t, mgr, "page", "", "PAGE-1")
-	if len(withLabel) != 1 || withLabel[0].Label != "Publish" {
-		t.Errorf("an operator `label:` must be used verbatim; got %+v", withLabel)
+	const meta = `
+version: "1"
+entities:
+  page:
+    label: Page
+    id_prefix: PAGE
+    pointers:
+      draft: {default: true}
+      published: {}
+      archived: {}
+    properties:
+      title: {type: string}
+copies:
+  promote-page:
+    from: page@draft
+    to: page@published
+    fields: all
+    label: Publish
+    guard:
+      permission: promote-page
+  archive-page:
+    from: page@draft
+    to: page@archived
+    fields: all
+    guard:
+      permission: archive-page
+`
+	st := memstore.New()
+	parsed, err := metamodel.Parse([]byte(meta))
+	if err != nil {
+		t.Fatalf("metamodel.Parse: %v", err)
+	}
+	mgr, err := entitymanager.New(entitymanager.Deps{
+		Store: st, Meta: parsed, Templater: nopTemplater{},
+		Audit: audit.Nop{}, ACL: acl.NopACL{},
+		Transitions: statemachine.EmptySet(),
+		FieldGate:   entitymanager.AllowAllFieldGate{},
+		CopyGuard:   allowGuard{allow: true},
+	})
+	if err != nil {
+		t.Fatalf("entitymanager.New: %v", err)
 	}
 
-	noLabel := mustOffers(ctx, t, mgr, "ticket", "", "TKT-1")
-	if len(noLabel) != 1 || noLabel[0].Label != "spawn-followup" {
-		t.Errorf("with no `label:`, the definition NAME is the fallback; got %+v", noLabel)
+	got := mustOffers(context.Background(), t, mgr, "page", "", "PAGE-1")
+	byName := map[string]string{}
+	for _, o := range got {
+		byName[o.Name] = o.Label
+	}
+	if byName["promote-page"] != "Publish" {
+		t.Errorf("an operator `label:` must be used verbatim; got %q",
+			byName["promote-page"])
+	}
+	if byName["archive-page"] != "archive-page" {
+		t.Errorf("with no `label:`, the definition NAME is the fallback; got %q",
+			byName["archive-page"])
 	}
 }
 
-// TestCopiesForSource_ReportsTheTargetShape pins the two fields a UI needs to
-// know what a button will do: which face it writes, and whether it needs a
-// target id.
+// TestCopiesForSource_ReportsTheTargetShape pins the field a UI needs to say
+// what a button will do: which face the copy writes.
 //
-// SameEntity is not cosmetic — a cross-entity copy REQUIRES a target id, so a
-// caller that cannot distinguish the two cannot build a valid request.
+// SameEntity is asserted as TRUE for every offer, which is now a property of
+// the surface rather than a per-offer fact — cross-entity definitions are
+// filtered out before they become offers. Keeping the assertion documents
+// that: if a cross-entity offer ever appears here, this fails and points at
+// the filter rather than at the UI that would have mis-rendered it.
 func TestCopiesForSource_ReportsTheTargetShape(t *testing.T) {
 	mgr, _ := newCopyListManager(t, allowGuard{allow: true})
 	ctx := context.Background()
 
-	same := mustOffers(ctx, t, mgr, "page", "", "PAGE-1")[0]
-	if !same.SameEntity {
-		t.Error("page@draft -> page@published writes another face of the SAME entity")
+	offers := mustOffers(ctx, t, mgr, "page", "", "PAGE-1")
+	if len(offers) != 1 {
+		t.Fatalf("expected the draft face's one offer; got %v", offerNames(offers))
 	}
+	same := offers[0]
 	if same.TargetFace != "page@published" {
 		t.Errorf("TargetFace = %q, want the declared target", same.TargetFace)
 	}
-
-	cross := mustOffers(ctx, t, mgr, "ticket", "", "TKT-1")[0]
-	if cross.SameEntity {
-		t.Error("`to: new ticket` creates a DIFFERENT entity")
-	}
-	if cross.TargetFace != "new ticket" {
-		t.Errorf("TargetFace = %q, want the declared target", cross.TargetFace)
+	if !same.SameEntity {
+		t.Error("every OFFERED copy is same-entity: page@draft -> page@published " +
+			"writes another face of the same entity, and cross-entity " +
+			"definitions are filtered before they become offers")
 	}
 }
 
@@ -400,35 +453,59 @@ func TestCopiesForSource_AffordanceProbeEmitsNoAuditRecords(t *testing.T) {
 	}
 }
 
-// TestCopiesForSource_CrossEntityIsIndeterminate pins the honest answer for an
-// offer whose invocability cannot be known yet.
+// TestCopiesForSource_CrossEntityIsNotOffered pins the affordance surface's
+// scope: SAME-ENTITY definitions only.
 //
-// A cross-entity copy's target id is chosen at INVOKE time, so the create
-// check would authorize the empty id — and a policy keyed on the target's
-// identity would be evaluated against the wrong subject. Code review
-// demonstrated list=allowed / invoke=forbidden on exactly that.
+// # Why a filter and not a verdict
 //
-// Reporting `Allowed: true` there is the RULING 11 defect. So the offer says
-// "indeterminate" instead of guessing, and — asserted here — it does not
-// claim Allowed.
-func TestCopiesForSource_CrossEntityIsIndeterminate(t *testing.T) {
-	mgr, _ := newCopyListManager(t, allowGuard{allow: true})
+// A cross-entity target is the `new <type>` form — the entity does not exist
+// and has no id. authorizeCopy checks OpCreate on EntitySubject{Type, ID,
+// Pointer}, so probing one would authorize the EMPTY id: a confident answer to
+// a different question, and the defect code review caught (list said allowed,
+// invoke said forbidden). Skipping BEFORE authorization makes that unreachable
+// rather than guarded against, which is why an earlier `Indeterminate` field
+// was deleted rather than kept.
+//
+// # The kernel is NOT narrowed
+//
+// Manager.CopyState still handles cross-entity copies; a caller with an
+// explicit target id invokes one exactly as before. Only the AFFORDANCE is
+// scoped, because this epic is about faces of one entity. Read the filter as a
+// scope boundary, not a limitation to "complete" — the assertion below on
+// CopyState is what pins that half.
+func TestCopiesForSource_CrossEntityIsNotOffered(t *testing.T) {
+	mgr, st := newCopyListManager(t, allowGuard{allow: true})
 	ctx := context.Background()
 
-	same := mustOffers(ctx, t, mgr, "page", "", "PAGE-1")[0]
-	if same.Indeterminate {
-		t.Error("a SAME-entity offer's target is the source, so it is answerable")
+	// The ticket face declares exactly one copy, and it is cross-entity
+	// (`to: new ticket`).
+	if got := mustOffers(ctx, t, mgr, "ticket", "", "TKT-1"); len(got) != 0 {
+		t.Errorf("a cross-entity definition must not be OFFERED as an "+
+			"affordance — its target has no id yet, so no honest verdict "+
+			"exists; got %v", offerNames(got))
 	}
 
-	cross := mustOffers(ctx, t, mgr, "ticket", "", "TKT-1")[0]
-	if !cross.Indeterminate {
-		t.Error("a CROSS-entity offer cannot be authorized before the client " +
-			"chooses a target id — saying `allowed` would be an affordance " +
-			"that lies (RULING 11)")
+	// Same-entity offers are unaffected: the filter is by shape, not a blanket
+	// narrowing. Without this the test above would pass against a build that
+	// offered nothing at all.
+	if got := mustOffers(ctx, t, mgr, "page", "", "PAGE-1"); len(got) != 1 {
+		t.Fatalf("same-entity definitions must still be offered; got %v",
+			offerNames(got))
 	}
-	if cross.Allowed {
-		t.Error("an indeterminate offer must not also claim Allowed: a client " +
-			"reading only `allowed` would treat it as a confirmed verdict")
+
+	// And the KERNEL still runs a cross-entity copy when given a target id —
+	// the capability is not removed, only unoffered.
+	if err := st.CreateEntity(ctx, &entity.Entity{
+		ID: "TKT-1", Type: "ticket", Properties: map[string]any{"title": "Source"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := mgr.CopyState(ctx, entitymanager.CopyRequest{
+		Definition: "spawn-followup", SourceID: "TKT-1", TargetID: "TKT-2",
+	}); err != nil {
+		t.Errorf("the kernel must still perform a cross-entity copy given an "+
+			"explicit target — the affordance is scoped, the capability is "+
+			"not; got %v", err)
 	}
 }
 
