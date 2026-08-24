@@ -622,6 +622,26 @@ type CopyDef struct {
 	// roles on the target.
 	Relations map[string]string `yaml:"relations,omitempty"`
 
+	// Label is optional display text for the ACTION a copy performs — e.g.
+	// "Publish" for promote-policy, or "Translate to Dutch" for
+	// translate-to-nl. It is what RULING 9 calls the operator-configurable
+	// text: a UI renders one affordance per definition whose `from:` matches
+	// the face being viewed, and this names the button.
+	//
+	// Purely presentational, exactly like [Transition.Label], which this
+	// follows: a copy button and a state-machine move are the same shape —
+	// text for an action, not for a destination. Empty falls back to the
+	// definition's own name, which is a legible last resort because copy
+	// names are operator-authored (`promote-policy`, `translate-to-nl`).
+	// Display-only; the kernel ignores it entirely.
+	//
+	// A PLAIN STRING, deliberately: no `{{...}}` interpolation, even though
+	// Fields has it. This type is "deliberately dumb (§9.1) — no expressions,
+	// no conditionals", and per-entity label rendering would reopen exactly
+	// that refusal. An operator wanting per-entity wording wants a different
+	// feature, not a widened one.
+	Label string `yaml:"label,omitempty"`
+
 	// Guard gates the copy. Reuses the STATEMACHINE's vocabulary — the
 	// `guard:` permission (subject-aware, via HoldsPermissionForEntity) and
 	// a `when:` predicate — rather than acl.yaml's `requires_permission`,
@@ -647,9 +667,17 @@ type CopyGuard struct {
 // UnmarshalYAML accepts `fields: all` as a scalar alongside the mapping form.
 func (c *CopyDef) UnmarshalYAML(unmarshal func(any) error) error {
 	// Alias avoids infinite recursion into this method.
+	//
+	// NOTE: this shadow struct must list EVERY yaml-bearing field of CopyDef.
+	// A field present on CopyDef but missing here is silently dropped at load
+	// — no error, no warning, just a zero value — which is how `label:` was
+	// ignored when it was first added. TestCopyDef_UnmarshalCoversEveryField
+	// compares the two by reflection so the next added field fails loudly
+	// instead.
 	type raw struct {
 		From      string            `yaml:"from"`
 		To        string            `yaml:"to"`
+		Label     string            `yaml:"label,omitempty"`
 		Fields    any               `yaml:"fields,omitempty"`
 		Relations map[string]string `yaml:"relations,omitempty"`
 		Guard     CopyGuard         `yaml:"guard,omitempty"`
@@ -658,7 +686,7 @@ func (c *CopyDef) UnmarshalYAML(unmarshal func(any) error) error {
 	if err := unmarshal(&r); err != nil {
 		return err
 	}
-	c.From, c.To, c.Relations, c.Guard = r.From, r.To, r.Relations, r.Guard
+	c.From, c.To, c.Label, c.Relations, c.Guard = r.From, r.To, r.Label, r.Relations, r.Guard
 	switch f := r.Fields.(type) {
 	case nil:
 	case string:

@@ -144,6 +144,11 @@ type App struct {
 	// [App.SetWorlds] is called, in which case the App serves the default
 	// world only and refuses any other `?world=` — see world.go.
 	worlds WorldLookup
+	// copies serves the copy surface (list-by-source, invoke-by-name).
+	// Constructed in NewApp from the entity manager, which is required, so
+	// this is never nil — see copiesHandler's doc for why a nil-and-skip
+	// design would render a wiring bug as a valid domain answer.
+	copies *copiesHandler
 	// worldNeighbors resolves an entity's LINKS under the request's world
 	// (TKT-WRLDAPI item 4). Nil until [SetWorldNeighbors] is called, in
 	// which case a world-bound response carries no relations — the pre-item-4
@@ -964,6 +969,21 @@ func NewApp(
 	// collaborators are narrow closures over App: the schema snapshot (command/
 	// list/view config), the Services read bundle, the project root (exec cwd +
 	// env), and the view executor for view-context commands.
+	// The copy surface. entityManager is required by NewApp, so the concrete
+	// manager is always available; a project with no `copies:` block simply
+	// yields empty offer lists, which is a DOMAIN answer rather than a wiring
+	// one. The type assertion is what bridges the wide EntityManager interface
+	// App holds to the narrow copyService the handler declares — see that
+	// interface's doc for why the concrete manager is required (Allowed must
+	// run the kernel's own unexported authorization path).
+	if cs, ok := app.entityManager.(copyService); ok {
+		copies, cerr := newCopiesHandler(cs, app.State)
+		if cerr != nil {
+			return nil, fmt.Errorf("dataentry.NewApp: %w", cerr)
+		}
+		app.copies = copies
+	}
+
 	app.commands = &commandHandler{
 		schema:      app.State,
 		services:    app.Services,

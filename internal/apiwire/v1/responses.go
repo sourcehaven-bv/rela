@@ -876,3 +876,55 @@ type Mention struct {
 	Inaccessible       bool   `json:"inaccessible,omitempty"`
 	InaccessibleReason string `json:"inaccessible_reason,omitempty"`
 }
+
+// CopyOffer is one declared copy definition offered for a source face
+// (TKT-WRLDAPI item 5), as the SPA needs it to render RULING 9's affordances.
+type CopyOffer struct {
+	// Name is the `copies:` key and the ONLY thing a client may send back to
+	// invoke it. A request names a definition; it never supplies one.
+	Name string `json:"name"`
+	// Label is the operator-configured display text, falling back to Name.
+	// Display-only.
+	Label string `json:"label"`
+	// TargetFace is the declared target (`policy@published`, `new page`), for
+	// a UI that wants to say what the action will produce.
+	TargetFace string `json:"targetFace"`
+	// SameEntity distinguishes a promote/revise (another face of the SAME
+	// entity) from a copy that creates a different entity. Not cosmetic: a
+	// cross-entity copy REQUIRES a target id, so a client cannot build a valid
+	// invoke without knowing which it has.
+	SameEntity bool `json:"sameEntity"`
+	// Allowed reports whether the requesting principal may invoke this copy on
+	// this source right now.
+	//
+	// A HINT, never a boundary — the same contract as `_actions`. The invoke
+	// endpoint re-authorizes through the kernel, so a client that ignores this
+	// and POSTs anyway receives the same 403 it would have received regardless.
+	// It is computed by running the kernel's own authorization path, not a
+	// parallel implementation, so it cannot drift from what the write does.
+	Allowed bool `json:"allowed"`
+	// Reason names why Allowed is false, for a tooltip. Empty when allowed.
+	// Advisory, and never carries content from an entity the caller cannot
+	// read.
+	Reason string `json:"reason,omitempty"`
+}
+
+// CopyOffersResponse wraps the offers for one face.
+type CopyOffersResponse struct {
+	Data []CopyOffer `json:"data"`
+}
+
+// CopyResult reports what an invoked copy produced.
+type CopyResult struct {
+	// Definition is the name that was invoked.
+	Definition string `json:"definition"`
+	// EntityID is the entity whose face was written.
+	EntityID string `json:"entityId"`
+	// Pointer is the coordinate of the face that was written. Empty means the
+	// default state.
+	Pointer string `json:"pointer"`
+	// Created is true when the copy brought the target face into existence
+	// rather than overwriting one — the difference between "published for the
+	// first time" and "re-published".
+	Created bool `json:"created"`
+}
