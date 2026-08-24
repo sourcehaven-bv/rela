@@ -3,7 +3,7 @@ id: TKT-8HDPQW
 type: ticket
 title: 'ACL increment 3: cascade delete authorizes incident relations under Store.Tx (B1)'
 kind: enhancement
-status: review
+status: done
 priority: high
 effort: m
 ---

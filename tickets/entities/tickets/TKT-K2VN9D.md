@@ -3,7 +3,7 @@ id: TKT-K2VN9D
 type: ticket
 title: 'ACL increment 1: relation_grants: block — config, validation, and the authorizeRelationWrite seam'
 kind: enhancement
-status: review
+status: done
 priority: high
 effort: m
 ---

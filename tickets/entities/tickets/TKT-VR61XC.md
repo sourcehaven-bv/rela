@@ -3,7 +3,7 @@ id: TKT-VR61XC
 type: ticket
 title: 'ACL increment 2: rela acl can — relation verification (may X create a <rel> edge from <id>?)'
 kind: enhancement
-status: review
+status: done
 priority: high
 effort: s
 ---
