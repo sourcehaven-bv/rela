@@ -445,7 +445,7 @@ type RelationGrant struct {
 // both). Values are permission names from [RoleDef.Permissions] — this block
 // CONSUMES permissions, it does not define them.
 //
-// # Not to be confused with [RelationGrant]
+// # Not to be confused with RelationGrant
 //
 // Two similarly-named types live in this package and they are not
 // interchangeable:
@@ -459,8 +459,8 @@ type RelationGrant struct {
 //
 // # It is an ALTERNATIVE SATISFIER, never "sufficient"
 //
-// A relation write is authorized by a CONJUNCTION (see
-// [Request.authorizeRelationWrite]):
+// A relation write is authorized by a CONJUNCTION (see the unexported
+// Request.authorizeRelationWrite, which implements it):
 //
 //	allow = (delegate-X satisfied OR not configured)   // gate A
 //	      AND ceiling permits the verb on FromType      // gate B, ceiling
