@@ -394,14 +394,28 @@ describe('Entities Store', () => {
       expect(entitiesApi.getEntity).toHaveBeenCalledTimes(1)
     })
 
-    // Hazard 3. Mutation: send `{ include: '*', world }` — the assertion sees
-    // include present under a world, which is the exact combination the API
-    // answers with 422 world_include_unsupported.
-    it('drops include=* under a non-default world, and keeps it otherwise', async () => {
+    // Hazard 3, INVERTED by TKT-WRLDAPI item 4.
+    //
+    // This used to assert that include=* was DROPPED under a world, because
+    // the API refused the combination (422 world_include_unsupported). Item 4
+    // made neighbor resolution world-scoped — an included peer is now that
+    // world's face of the neighbor — so the refusal is gone and dropping
+    // include became a self-inflicted degradation: the SPA discarded neighbor
+    // titles to avoid an error that no longer exists.
+    //
+    // The test is inverted rather than deleted, because the property still
+    // needs pinning from the other side: a regression that reinstated the drop
+    // would be invisible (the page would just quietly lose neighbor titles
+    // again), which is exactly how the stale workaround survived.
+    //
+    // Mutation: restore `world ? {world} : {include:'*'}` — the first
+    // assertion fails, because include is absent under a world.
+    it('sends include=* ALONGSIDE the world, not instead of it', async () => {
       vi.mocked(entitiesApi.getEntity).mockResolvedValue(publishedFace)
 
       await store.fetchEntity('policy', 'POL-1', false, 'published')
       expect(entitiesApi.getEntity).toHaveBeenCalledWith('policy', 'POL-1', {
+        include: '*',
         world: 'published',
       })
 

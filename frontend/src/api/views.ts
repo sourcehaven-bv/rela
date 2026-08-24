@@ -142,6 +142,24 @@ export interface ViewResponse {
 // Fetch executed view data for an entity. The backend looks up the
 // configured ViewConfig by entry.type, or synthesizes a default when
 // none is registered.
-export async function fetchView(entityType: string, entityId: string): Promise<ViewResponse> {
-  return api.get<ViewResponse>(`/_views/${entityType}/${entityId}`)
+/**
+ * fetchView reads the entity view — the detail page's data.
+ *
+ * `world` selects which FACE the entry resolves to, and resolves every
+ * collection entity through the same world (TKT-WRLDAPI item 4b). Pass
+ * `undefined` for the default world so the param is omitted rather than sent
+ * empty; `useWorld().worldParam` is already shaped for that.
+ *
+ * Each collection entity carries `_world` provenance under a non-default
+ * world — which face was served and which rule chose it. That distinction is
+ * not decoration: "the Dutch page" and "the English page, because no Dutch
+ * page exists" arrive byte-identically, and only `_world.via` separates them.
+ */
+export async function fetchView(
+  entityType: string,
+  entityId: string,
+  world?: string,
+): Promise<ViewResponse> {
+  const params = world ? { world } : undefined
+  return api.get<ViewResponse>(`/_views/${entityType}/${entityId}`, params)
 }

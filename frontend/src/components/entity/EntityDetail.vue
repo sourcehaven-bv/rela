@@ -6,6 +6,7 @@ import { useScopeNavigation } from '@/composables'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { fetchView, getCommands, getErrorMessage } from '@/api'
+import { useWorld } from '@/composables/useWorld'
 import type { ViewEntity, ViewResponse, ViewSection, ViewSectionField } from '@/api'
 import type { Entity } from '@/types'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
@@ -59,6 +60,10 @@ const router = useRouter()
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
 const { confirm } = useConfirm()
+// The world is read from the URL, the same source EntityList reads, so a
+// detail page reached from a world-bound list stays in that world and a
+// deep link round-trips.
+const { worldParam } = useWorld()
 
 // Scope navigation (prev/next within a list) and back affordance
 // (return_to / from precedence). Two parallel concerns: scope-nav walks
@@ -340,7 +345,16 @@ async function loadView() {
   loading.value = true
   error.value = null
   try {
-    viewData.value = await fetchView(props.entityType, props.entityId)
+    // The world rides the request, so the entry resolves to that world's face
+    // and every collection entity resolves through the same world, per
+    // neighbour (TKT-WRLDAPI item 4b). Without it this page rendered draft
+    // content while the selector said "published" — the API was correct and
+    // the page simply never asked.
+    viewData.value = await fetchView(
+      props.entityType,
+      props.entityId,
+      worldParam.value,
+    )
     if (viewData.value?.entry) {
       // Seed the autosave baseline so the first toggle's no-op
       // suppression can compare against server state without waiting
@@ -677,6 +691,24 @@ onBeforeUnmount(() => {
 })
 
 onUnmounted(() => document.removeEventListener('click', closeOverflow))
+
+// Switching WORLD reloads the view, but is deliberately NOT folded into the
+// entity watcher below.
+//
+// That watcher flushes pending autosaves against the PREVIOUS entity's
+// identity before loading the next one. A world change is the SAME entity seen
+// through a different world, so there is no previous identity to pin and no
+// cross-entity flush to arrange — running that machinery would capture the
+// current entity as its own "previous" and commit a flush nobody asked for.
+//
+// What a world change does need is a refetch, because the face being displayed
+// changes even though the id does not.
+watch(
+  () => worldParam.value,
+  () => {
+    loadView()
+  },
+)
 
 // Watch for route changes
 watch(

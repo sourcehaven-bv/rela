@@ -125,10 +125,14 @@ export async function listAllEntities(
   }
 }
 
-// getEntity reads one entity. `world` selects which face is served; it is
-// mutually exclusive with `include` at the API (422 world_include_unsupported),
-// a constraint callers must respect — the type cannot express "one or the
-// other", so see useEntitiesStore.fetchEntity for the enforcement.
+// getEntity reads one entity. `world` selects which face is served, and it
+// COMBINES with `include`: TKT-WRLDAPI item 4 made neighbor resolution
+// world-scoped, so an included peer is that world's face of the neighbor and a
+// neighbor with no face in the world is simply absent.
+//
+// The two were mutually exclusive until then (422 world_include_unsupported),
+// which is why callers may still carry code shaped around avoiding the
+// combination.
 export async function getEntity(
   type: string,
   id: string,

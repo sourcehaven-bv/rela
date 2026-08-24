@@ -165,18 +165,24 @@ export const useEntitiesStore = defineStore('entities', () => {
     errors.value.delete(key)
 
     try {
-      // `include=*` fetches titles for related entities, but the API REFUSES
-      // it under a non-default world (422 world_include_unsupported): neighbor
-      // resolution is not world-scoped, so a world-bound entity would come
-      // back wrapped in default-world neighbors — the mixed-face response that
-      // is hardest to spot, because the entity itself looks right.
+      // `include=*` fetches titles for related entities, and it is now sent
+      // ALONGSIDE the world rather than instead of it.
       //
-      // So this DROPS include rather than appending a world to it. Sending
-      // both would turn every world-bound detail read into a hard 422; sending
-      // include without the world would serve the wrong face. Under a world we
-      // simply have no neighbor titles, which is what the backend can honestly
-      // answer today.
-      const params = world && world !== DEFAULT_WORLD ? { world } : { include: '*' }
+      // This used to drop include under a world, because the API refused the
+      // combination (422 world_include_unsupported): neighbor resolution was
+      // not world-scoped, so a world-bound entity would have come back wrapped
+      // in default-world neighbors. TKT-WRLDAPI item 4 made neighbor
+      // resolution world-scoped — an included peer is now THAT world's face of
+      // the neighbor, and a neighbor with no face in the world is absent — so
+      // the refusal was removed and the workaround became a self-inflicted
+      // degradation: the SPA was voluntarily discarding neighbor titles to
+      // avoid a 422 that no longer exists.
+      //
+      // The general shape, worth remembering: WHEN A BACKEND REFUSAL IS
+      // REMOVED, ITS CLIENT-SIDE WORKAROUNDS DO NOT REMOVE THEMSELVES. Nothing
+      // in the backend diff can point at them.
+      const params: { include: string; world?: string } = { include: '*' }
+      if (world && world !== DEFAULT_WORLD) params.world = world
       const entity = await getEntity(type, id, params)
       cache.value.set(key, {
         entity,
