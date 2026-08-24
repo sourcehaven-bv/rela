@@ -67,6 +67,22 @@ export interface Entity {
   // re-enforces every transition (attempt-and-recover). See
   // docs/data-entry/api-reference.md.
   _transitions?: Record<string, TransitionOption[]>
+  // Provenance of the face this response served (TKT-WRLDAPI). Present on
+  // per-entity GETs under any world INCLUDING the default one, where it reads
+  // `{name:'default', via:'unscoped'}`. Absent on list rows and on the
+  // `_views` ENTRY — under `_views` only COLLECTION entities carry it
+  // (internal/dataentry/sections.go is the single call site), so a detail page
+  // wanting entry provenance reads it from the entity GET.
+  _world?: EntityWorld
+  // Declared copies offered for this face (TKT-WRLDAPI item 5). Rides the
+  // entity response alongside `_actions` rather than a separate endpoint.
+  //
+  // An empty array is a REAL answer — "this face offers no copies", e.g. an
+  // already-published policy — and is distinct from absent, which means the
+  // server did not compute offers (no copy service wired). Do not collapse
+  // the two: `[]` should render nothing, and so should absent, but only `[]`
+  // means the question was asked.
+  _copies?: CopyOffer[]
   inaccessible?: InaccessibleField[]
   // Soft-validation findings on mutation responses (DEC-HWZHA).
   // Present on PATCH/POST results; absent on GETs.
@@ -105,6 +121,63 @@ export interface TransitionOption {
   to: string
   label?: string
   guard?: string
+  allowed: boolean
+  reason?: string
+}
+
+// EntityWorld is the provenance of a resolved face: which world was asked
+// for, which coordinate was served, and WHICH RULE chose it. Mirrors
+// v1.EntityWorld (internal/apiwire/v1/responses.go).
+//
+// `via` is the load-bearing field, and the reason this type exists rather
+// than a bare world name. Under a world with `otherwise: default`, "the
+// Dutch page" and "the English page, because no Dutch page exists" arrive
+// BYTE-IDENTICALLY — same id, same body, same everything. Only `via`
+// separates them:
+//
+//   - 'unscoped'         — this world applies no resolution to this type, so
+//                          the entity contributes its default state. The
+//                          default world resolves everything this way.
+//   - 'chain'            — the coordinate the world selects exists. This is
+//                          the face the world asked for.
+//   - 'fallback-default' — no selected coordinate exists and the world's
+//                          `otherwise: default` stood the default state in.
+//                          The reader is seeing a SUBSTITUTE.
+//
+// There is deliberately no 'excluded': a world that excludes an entity
+// produces no response to carry provenance on. It is a 404, indistinguishable
+// from a genuine miss, because existence in a world IS the publication bit.
+export interface EntityWorld {
+  name: string
+  pointer: string
+  via: 'unscoped' | 'chain' | 'fallback-default'
+}
+
+// CopyOffer is one declared `copies:` definition offered for the face being
+// viewed. Mirrors v1.CopyOffer.
+//
+// `allowed` is a HINT, never a boundary — the same contract as `_actions` and
+// `TransitionOption`. The invoke endpoint re-authorizes through the kernel, so
+// a client that ignores this and POSTs anyway gets the same 403 it would have
+// received regardless. It is computed by running the kernel's own
+// authorization path, so it cannot drift from what the write does.
+//
+// The UI renders only allowed offers, which makes `reason` advisory (a
+// tooltip for a debugging operator), not a gate.
+export interface CopyOffer {
+  // The `copies:` key, and the ONLY thing a client sends back to invoke it.
+  // A request names a definition; it never supplies one.
+  name: string
+  // Operator-configured display text; falls back to `name` when unset.
+  label: string
+  // The declared target (`policy@published`, `new page`) — for a UI that
+  // wants to say what the action will produce.
+  targetFace: string
+  // Distinguishes a promote/revise (another face of the SAME entity) from a
+  // copy that creates a different entity. Not cosmetic: a cross-entity copy
+  // REQUIRES a target id, so a client cannot build a valid invoke without
+  // knowing which it has.
+  sameEntity: boolean
   allowed: boolean
   reason?: string
 }

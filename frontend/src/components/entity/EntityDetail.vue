@@ -39,6 +39,10 @@ import DocumentsPanel from '@/components/entity/DocumentsPanel.vue'
 import CommandModal from '@/components/entity/CommandModal.vue'
 import ExportMenu from '@/components/entity/ExportMenu.vue'
 import { entityExportUrl } from '@/api/transforms'
+import CopyMenu from '@/components/entity/CopyMenu.vue'
+import WorldBadge from '@/components/entity/WorldBadge.vue'
+import { invokeCopy } from '@/api/copies'
+import type { CopyOffer } from '@/types'
 import SectionEditForm, { type SectionEditField } from '@/components/forms/SectionEditForm.vue'
 import AutoSaveIndicator from '@/components/forms/AutoSaveIndicator.vue'
 import {
@@ -63,7 +67,7 @@ const { confirm } = useConfirm()
 // The world is read from the URL, the same source EntityList reads, so a
 // detail page reached from a world-bound list stays in that world and a
 // deep link round-trips.
-const { worldParam } = useWorld()
+const { world, isWorldBound, worldParam, setWorld } = useWorld()
 
 // Scope navigation (prev/next within a list) and back affordance
 // (return_to / from precedence). Two parallel concerns: scope-nav walks
@@ -113,8 +117,26 @@ const isInaccessible = computed(() => (entry.value?.inaccessible?.length ?? 0) >
 
 // Affordance gates: `_actions` map from the server. `false` → hide;
 // anything else → render. See frontend/src/utils/affordancesWarning.ts.
-const canUpdate = computeActionAllowed(entry, 'update')
-const canDelete = computeActionAllowed(entry, 'delete')
+const mayUpdate = computeActionAllowed(entry, 'update')
+const mayDelete = computeActionAllowed(entry, 'delete')
+
+// A world-bound page is READ-ONLY, regardless of what `_actions` says.
+//
+// The API refuses every write carrying `?world=` (422 world_read_only) —
+// writes always address the default state — but `_actions` is computed from
+// the ACL alone and still reports `update: true` on a world-bound response.
+// Gating on `_actions` by itself therefore renders an Edit button whose save
+// cannot succeed: an affordance map that promises a verb the surface will
+// reject (RULING 11).
+//
+// So the world is ANDed in here rather than fixed in the map. `_actions`
+// answers "may this principal write this entity", which is true and is the
+// question it is defined to answer; "can a write be addressed to THIS
+// response" is a property of the request, and belongs where the request is
+// known. EntityList already draws the same line, omitting its create button
+// under a world.
+const canUpdate = computed(() => mayUpdate.value && !isWorldBound.value)
+const canDelete = computed(() => mayDelete.value && !isWorldBound.value)
 
 // The entry's content section gets a custom renderer (mermaid + interactive
 // checkboxes) instead of the generic section render-path. Other content
@@ -247,6 +269,15 @@ function handleCheckboxToggle(index: number) {
   const current = entry.value
   const view = viewData.value
   if (!current || !view) return
+  // A checkbox click is a WRITE (it schedules a content PATCH), so it is
+  // refused under a world for the same reason the Edit button is hidden — the
+  // API would answer 422 world_read_only. Checkboxes render inside markdown
+  // and cannot be hidden by a `v-if` the way a button can, so the guard has to
+  // live at the handler.
+  if (isWorldBound.value) {
+    uiStore.warning(`Read-only: you are viewing the ${world.value} world`)
+    return
+  }
   let newContent: string
   try {
     newContent = toggleCheckboxInSource(current.content || '', index)
@@ -407,6 +438,79 @@ async function requestDelete() {
   router.push(backTargetAfterDelete())
 }
 
+// --- Copy affordances (RULING 9) ---------------------------------------
+//
+// Offers ride the entity response as `_copies`, so there is nothing to fetch:
+// they arrive with the view and refresh with it.
+// Suppressed under a world, like every other write affordance on this page.
+//
+// The server's offers are CORRECT under a world — they are computed for the
+// RESOLVED face, so `?world=published` (whose face is `policy@published`, which
+// nothing copies from) returns `[]`, while a world that falls back to the
+// default face still offers the promote that face genuinely supports.
+//
+// The problem is the PAGE, not the offer. A copy invoke carries no `?world=`,
+// so it would succeed — and apply the DEFAULT face's content while the reader
+// is looking at whatever face this world resolved. Under `otherwise: default`
+// those are the same bytes and it looks harmless; under a world serving a real
+// alternate face, the user would publish content that is not on their screen.
+// A banner that says "read-only" with a Publish button beside it is also the
+// affordance-map-that-lies shape in plain sight.
+//
+// So writes happen on the default face, where what you see is what you copy.
+// "Go to draft" is one click away, which is the honest path.
+const copyOffers = computed<CopyOffer[] | undefined>(() =>
+  isWorldBound.value ? undefined : entry.value?._copies,
+)
+const copyBusy = ref(false)
+
+async function runCopy(offer: CopyOffer) {
+  // Same-entity copies (promote, translate) target the source by construction
+  // and MUST NOT send a target id; a cross-entity copy requires one and has no
+  // UI here yet, so it is refused locally rather than sent as a malformed
+  // invoke the server would reject with a less specific message.
+  if (!offer.sameEntity) {
+    uiStore.error(`"${offer.label || offer.name}" copies to a different entity, which this page cannot target yet`)
+    return
+  }
+  copyBusy.value = true
+  try {
+    const res = await invokeCopy(offer.name, props.entityId)
+    const face = res.pointer || 'default'
+    uiStore.success(
+      res.created ? `Created the ${face} face` : `Updated the ${face} face`,
+    )
+    // Reload so the offers recompute: a face that now exists may no longer be
+    // offered, and the entry's own content may have moved.
+    await loadView()
+  } catch (err) {
+    // The kernel re-authorizes, so a 403 here is not a contradiction of
+    // `allowed` — it is the boundary doing its job on a hint that went stale
+    // (a permission revoked between render and click). Report it plainly.
+    uiStore.error(getErrorMessage(err, 'Copy failed'))
+  } finally {
+    copyBusy.value = false
+  }
+}
+
+// --- Leaving a world ----------------------------------------------------
+//
+// "Go to draft" returns to the DEFAULT world, which is where writes land: the
+// API refuses `?world=` on a write (422 world_read_only), so a world-bound
+// page is inherently read-only and the editing affordances belong on the
+// default face.
+//
+// Shown only when a non-default world is active (the banner's own `v-if`
+// already establishes that, so there is no second computed for it). There is
+// no attempt to predict whether the draft is READABLE for this principal —
+// that would need a second resolution of the same entity in another world, and
+// a wrong guess either hides a reachable draft or offers a 404. The link goes
+// to the same id in the default world and the ordinary row gate answers,
+// exactly as it would for a typed URL.
+function goToDefaultWorld() {
+  setWorld('')
+}
+
 function backTargetAfterDelete(): string {
   if (backTarget.value) return backTarget.value.to
   const listId = schemaStore.findListIdForEntityType(props.entityType)
@@ -522,6 +626,10 @@ function memoBuildSectionEditFields(section: ViewSection, ent: Entity): SectionE
 }
 
 function sectionShouldRouteToInlineEdit(section: ViewSection, ent: Entity): boolean {
+  // Inline edit is a write surface; a world-bound page has none. Routing to
+  // the display path here is what makes the whole page read-only rather than
+  // just its header buttons.
+  if (isWorldBound.value) return false
   return sectionShouldRouteToInlineEditPure(section.fields, ent, getPropertyDef)
 }
 
@@ -586,6 +694,11 @@ const INLINE_EDIT_ROW_CAP = 100
 // Thin SFC adapter — the cap-behaviour logic lives in the pure module
 // so it's unit-testable without mounting EntityDetail.
 function rowShouldRouteToInlineEdit(ent: ViewEntity, rowCount: number): boolean {
+  // Same as sectionShouldRouteToInlineEdit: no write surface under a world.
+  // Collection rows matter doubly here — under a world each row is a
+  // NEIGHBOUR's resolved face, and an edit would address the default state of
+  // an entity the page is not even showing you.
+  if (isWorldBound.value) return false
   return rowShouldRouteToInlineEditPure(ent, rowCount, INLINE_EDIT_ROW_CAP, getPropertyDef)
 }
 
@@ -765,6 +878,38 @@ watch(
         </template>
       </div>
 
+      <!--
+        The world banner, mirroring EntityList's. It says which world is being
+        shown, that the page is read-only here, and offers the way back to the
+        default world — which is where every write lands, since the API refuses
+        `?world=` on a write.
+
+        "Go to draft" is a plain navigation to the same id with no `?world=`.
+        It is NOT predicated on whether the default face is readable: deciding
+        that would take a second read of the entity in another world, which is
+        the existence-oracle shape this epic forbids. The link goes there and
+        the ordinary row gate answers, exactly as it would for a typed URL.
+
+        There is deliberately no WorldBadge on the ENTRY: `_views` attaches
+        `_world` to collection entities only (sections.go is the single call
+        site), so a badge here would have nothing to render. The entry's own
+        provenance is available on the entity GET, but this page reads the view
+        — wiring a second request for a badge is not worth it. Collection
+        entities, where the fallback-vs-real distinction actually bites, carry
+        the badge below.
+      -->
+      <div v-if="isWorldBound" class="world-banner">
+        <span class="world-banner__label">
+          Showing the <strong>{{ world }}</strong> world
+        </span>
+        <span class="world-banner__note">
+          This face is read-only — writes always address the default state.
+        </span>
+        <button class="btn btn-secondary" @click="goToDefaultWorld">
+          Go to draft
+        </button>
+      </div>
+
       <header class="detail-header">
         <div class="header-info">
           <span class="entity-type-badge">{{ typeDef?.label || entityType }}</span>
@@ -780,6 +925,13 @@ watch(
           >
             {{ cmd.label }}
           </button>
+          <!--
+            Copy affordances (RULING 9). Renders nothing when no offer is
+            allowed — a denied copy is ABSENT, not disabled, so this element
+            simply does not appear for a principal without the guard
+            permission. See CopyMenu.vue.
+          -->
+          <CopyMenu :offers="copyOffers" :busy="copyBusy" @invoke="runCopy" />
           <button
             v-if="editFormId && !isInaccessible && canUpdate"
             class="btn btn-secondary"
@@ -975,6 +1127,14 @@ watch(
                 <span class="entity-type">{{ ent.type }}</span>
                 <span class="entity-title">{{ ent.title }}</span>
                 <span class="entity-id">{{ ent.id }}</span>
+                <!--
+                  Per-neighbour provenance (RULING 12/14). Each collection
+                  entity resolved through the world INDEPENDENTLY, so one
+                  section can mix `chain` and `fallback-default` — the badge is
+                  per row, not per section. Renders nothing under the default
+                  world.
+                -->
+                <WorldBadge :world="ent._world" />
               </header>
               <div
                 v-if="ent.hasContent"
@@ -1002,6 +1162,14 @@ watch(
                 <span class="entity-type">{{ ent.type }}</span>
                 <span class="entity-title">{{ ent.title }}</span>
                 <span class="entity-id">{{ ent.id }}</span>
+                <!--
+                  Per-neighbour provenance (RULING 12/14). Each collection
+                  entity resolved through the world INDEPENDENTLY, so one
+                  section can mix `chain` and `fallback-default` — the badge is
+                  per row, not per section. Renders nothing under the default
+                  world.
+                -->
+                <WorldBadge :world="ent._world" />
                 <button
                   v-if="ent.editFormId"
                   class="edit-btn"
@@ -1066,6 +1234,14 @@ watch(
                 <span class="entity-type">{{ ent.type }}</span>
                 <span class="entity-title">{{ ent.title }}</span>
                 <span class="entity-id">{{ ent.id }}</span>
+                <!--
+                  Per-neighbour provenance (RULING 12/14). Each collection
+                  entity resolved through the world INDEPENDENTLY, so one
+                  section can mix `chain` and `fallback-default` — the badge is
+                  per row, not per section. Renders nothing under the default
+                  world.
+                -->
+                <WorldBadge :world="ent._world" />
               </a>
               <SectionEditForm
                 v-if="rowShouldRouteToInlineEdit(ent, section.entities?.length ?? 0)"
@@ -1543,6 +1719,35 @@ watch(
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: var(--space-lg);
+}
+
+/* Mirrors EntityList's world banner so the two surfaces read as one feature.
+   Horizontal here (the detail page has the width and the note is shorter),
+   with the leave-world button on the trailing edge. */
+.world-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs) var(--space-md);
+  margin-bottom: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-color) 30%, transparent);
+  border-radius: var(--radius-md);
+}
+
+.world-banner__label {
+  font-size: var(--font-size-base);
+  color: var(--text-color);
+}
+
+.world-banner__note {
+  font-size: var(--font-size-sm);
+  color: var(--muted-text);
+}
+
+.world-banner .btn {
+  margin-left: auto;
 }
 
 .entity-card {

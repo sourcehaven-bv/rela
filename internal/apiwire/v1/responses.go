@@ -933,11 +933,6 @@ type CopyOffer struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// CopyOffersResponse wraps the offers for one face.
-type CopyOffersResponse struct {
-	Data []CopyOffer `json:"data"`
-}
-
 // CopyResult reports what an invoked copy produced.
 type CopyResult struct {
 	// Definition is the name that was invoked.

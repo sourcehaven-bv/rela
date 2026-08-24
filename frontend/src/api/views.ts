@@ -1,5 +1,5 @@
 import { api } from './client'
-import type { Entity, FieldAffordance } from '@/types'
+import type { Entity, EntityWorld, FieldAffordance } from '@/types'
 
 // Field data for view sections
 export interface ViewSectionField {
@@ -60,6 +60,16 @@ export interface ViewEntity {
   hasContent: boolean
   _props?: Record<string, unknown>
   _fields?: Record<string, FieldAffordance>
+  // Which face this world served for THIS entity, and which rule chose it
+  // (TKT-WRLDAPI item 4b). Per-neighbour: each collection entity resolves
+  // through the world independently, so one section can mix `chain` and
+  // `fallback-default` entries.
+  //
+  // Absent under the default world — there is no provenance to report when no
+  // resolution was applied. Under a non-default world it is present, and
+  // `via: 'fallback-default'` is the case worth surfacing: the reader is
+  // seeing a SUBSTITUTE face, not the one the world asked for.
+  _world?: EntityWorld
 }
 
 // Table cell data
