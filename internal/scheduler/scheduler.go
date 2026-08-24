@@ -29,14 +29,17 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"iter"
 	"log/slog"
 	"maps"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/config"
+	"github.com/Sourcehaven-BV/rela/internal/jobs"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -116,12 +119,38 @@ func StartBackground(
 	engine := script.NewEngine()
 	s := New(cfg, engine, ws, logger)
 
+	// Route execution through the job queue when the provider carries one.
+	//
+	// An optional interface rather than a parameter so the two call sites
+	// (rela-server, rela-desktop) keep passing the services bundle they
+	// already have. A provider without a queue runs inline, which is the
+	// pre-port behavior and is what the scheduling tests exercise.
+	if jp, ok := ws.(jobQueueProvider); ok {
+		if err := s.UseQueue(jp.Jobs()); err != nil {
+			// Not fatal: inline execution is a working scheduler, and a
+			// project's scheduled tasks should not stop running because the
+			// job queue could not be attached.
+			logger.Error("scheduler: could not use job queue, executing inline", "error", err)
+		}
+	}
+
 	go func() {
 		logger.Info("background scheduler starting", "tasks", len(cfg.Tasks))
 		if runErr := s.Run(ctx); runErr != nil {
 			logger.Error("scheduler stopped with error", "error", runErr)
 		}
 	}()
+}
+
+// jobQueueProvider is the optional capability a WorkspaceProvider may carry to
+// hand the scheduler a job queue.
+//
+// Optional because the scheduler predates the queue and still works without
+// one: the interface is type-asserted at StartBackground rather than added to
+// WorkspaceProvider, so a provider that has no queue (and every existing test
+// double) keeps compiling.
+type jobQueueProvider interface {
+	Jobs() jobs.Client
 }
 
 // stampTaskAuditContext stamps the task's Principal and the per-task
@@ -165,6 +194,26 @@ type Scheduler struct {
 	// executeTaskFunc overrides task execution for testing.
 	// When nil, doExecuteTask is used.
 	executeTaskFunc func(ctx context.Context, task TaskConfig)
+
+	// engineRunner overrides the Lua engine call for testing, WITHOUT
+	// bypassing the job handler around it.
+	//
+	// Distinct from executeTaskFunc, which replaces the whole execution step:
+	// a test that wants to exercise the queue path must keep the real handler
+	// (it is what reports completion back to the waiting submitter) and
+	// substitute only the engine. When nil, the real engine runs.
+	engineRunner func(ctx context.Context, task TaskConfig) error
+
+	// queue routes script execution through the job seam. Nil means execute
+	// inline, which is the pre-port behavior and what the scheduling tests
+	// exercise. Set by UseQueue at wiring time — see jobs.go.
+	queue JobQueue
+
+	// inflight tracks the one running execution per task, so a slow task is
+	// skipped rather than queued behind itself. Guarded by inflightMu because
+	// the writer is the scheduler goroutine and the reader is a queue worker.
+	inflightMu sync.Mutex
+	inflight   map[string]chan error
 }
 
 // New creates a Scheduler.
@@ -293,9 +342,62 @@ func (s *Scheduler) doExecuteTask(ctx context.Context, task TaskConfig) {
 	s.logger.Info("task started", "name", task.Name, "script", task.Script)
 	start := s.now()
 
+	err := s.runScript(ctx, task)
+	elapsed := s.now().Sub(start)
+
+	// A task still running from a previous slot is skipped, not failed: it has
+	// not gone wrong, it is merely slow. Recording a failure would advance the
+	// retry ladder against a healthy task and suppress its normal cadence.
+	if errors.Is(err, errTaskInFlight) {
+		s.logger.Warn("skipping task, previous run still in flight",
+			"name", task.Name, "duration", elapsed)
+		return
+	}
+
+	if err != nil {
+		s.recordFailure(ctx, task, start, elapsed, err)
+		return
+	}
+
+	s.logger.Info("task completed", "name", task.Name, "duration", elapsed)
+	s.recordSuccess(ctx, task, start)
+}
+
+// runScript executes a task's script, through the job queue when one is wired
+// and inline otherwise.
+//
+// The inline path is not a fallback for a broken queue — it is the pre-port
+// behavior, kept because every scheduling test drives execution synchronously
+// and asserting on state right afterwards is exactly what those tests are for.
+// A scheduler with no queue is a valid scheduler.
+func (s *Scheduler) runScript(ctx context.Context, task TaskConfig) error {
+	if s.queue != nil {
+		// The deadline is measured from the task's last successful run. For a
+		// first-ever run there is none, and the zero time would put NextRun in
+		// year 1 — a deadline already past, so the queue would drop the job
+		// before running it. Measure from now instead: the next slot is one
+		// interval away either way.
+		lastRun, ran := s.state.Tasks[task.Name]
+		if !ran {
+			lastRun = s.now()
+		}
+		return s.enqueueTask(ctx, task, lastRun)
+	}
+
 	// The principal goes on the CTX (not into the deps bundle) because the
 	// read seam resolves identity per call — see ScheduledLuaWriteDeps.
 	taskCtx := stampTaskAuditContext(ctx, task.Name, task.RunAs)
+	return s.runEngine(taskCtx, task)
+}
+
+// runEngine executes a task's script, honoring the engineRunner test override.
+//
+// One place, so the inline and queued paths cannot diverge in what they call.
+func (s *Scheduler) runEngine(ctx context.Context, task TaskConfig) error {
+	if s.engineRunner != nil {
+		return s.engineRunner(ctx, task)
+	}
+
 	// TKT-YH52OM: the task's declared capabilities are the only ambient grant.
 	// A scheduled job runs unattended inside the server process, so an
 	// undeclared capability stays absent rather than inheriting the trusted
@@ -305,16 +407,7 @@ func (s *Scheduler) doExecuteTask(ctx context.Context, task TaskConfig) {
 	deps.Capabilities = lua.Capabilities{
 		HTTP: http, AI: ai, WriteFile: writeFile, Secrets: secrets,
 	}
-	err := s.engine.ExecuteFile(taskCtx, task.Script, deps, nil, nil)
-	elapsed := s.now().Sub(start)
-
-	if err != nil {
-		s.recordFailure(ctx, task, start, elapsed, err)
-		return
-	}
-
-	s.logger.Info("task completed", "name", task.Name, "duration", elapsed)
-	s.recordSuccess(ctx, task, start)
+	return s.engine.ExecuteFile(ctx, task.Script, deps, nil, nil)
 }
 
 // recordSuccess stamps a completed run and clears any retry ladder.
