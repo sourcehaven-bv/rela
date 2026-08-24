@@ -93,7 +93,7 @@ func BuiltinPermissions() []string {
 //   - [Policy.MembershipRelation] names the relation type the resolver
 //     walks from a principal to resolve group membership (TKT-Z8A62F).
 //     Blank/whitespace means the default ("member-of") — read the
-//     effective value via [Policy.membershipRelation], never the raw
+//     effective value via Policy.membershipRelation, never the raw
 //     field, since a blank type would otherwise match *all* relations.
 //   - [Policy.Roles] declares the named capability bundles. The
 //     built-in role name [EveryoneRole] ("everyone") is appended to
@@ -188,7 +188,7 @@ func (p *Policy) effectiveUnmatchedPrincipal() string {
 }
 
 // EffectiveUnmatchedPrincipal is the exported form of
-// [Policy.effectiveUnmatchedPrincipal], for out-of-package callers (the
+// Policy.effectiveUnmatchedPrincipal, for out-of-package callers (the
 // data-entry provision seam) that must branch on the resolved mode.
 func (p *Policy) EffectiveUnmatchedPrincipal() string {
 	return p.effectiveUnmatchedPrincipal()
@@ -234,7 +234,7 @@ func (p *Policy) principalPropertyLookupEnabled() bool {
 }
 
 // PrincipalPropertyLookupEnabled is the exported form of
-// [Policy.principalPropertyLookupEnabled], for out-of-package callers that must
+// Policy.principalPropertyLookupEnabled, for out-of-package callers that must
 // distinguish "the resolver attempted a lookup and found no entity" from "no
 // lookup was configured" — e.g. the data-entry middleware deciding whether a
 // no-match is a genuine unmatched principal.
@@ -310,7 +310,7 @@ func (p *Policy) MembershipSelfPromotionOpen() bool {
 // mutation grants (Create / Update / Delete), Permissions, and the
 // affordance grants are honored by the write path and the affordances
 // resolver. Read drives the read-filtering path (see
-// [Declarative.ReadQuery]).
+// [Request.ReadQuery]).
 //
 // Per-verb mutation grants (TKT-4LQMWP): Create / Update / Delete each
 // list the entity types the role may create / update / delete (`"*"`
@@ -890,7 +890,7 @@ func (g RelationWriteGrant) validate(relType string) error {
 // Operators can also call it before persisting a generated policy.
 //
 // It also normalizes asserted_role_assignments keys in place (see
-// [Policy.normalizeAssertedRoles]) — the one mutation it performs, placed here
+// Policy.normalizeAssertedRoles) — the one mutation it performs, placed here
 // so it cannot be bypassed by a policy that reaches the resolver through a
 // path other than LoadPolicy.
 //

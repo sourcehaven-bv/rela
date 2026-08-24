@@ -979,7 +979,7 @@ type relationMetaStrip struct {
 // buildRelationTypeRows builds the single-relation-type wire rows (id/type[/meta])
 // for the visible edges of relType in the given direction, plus the deferred meta
 // strips. It is the shared build step for handleV1GetRelationType; the caller
-// sorts then applies [App.redactRelationMetaStrip].
+// sorts then applies App.redactRelationMetaStrip.
 func buildRelationTypeRows(
 	ctx context.Context, reader entityReader, edges []*entityPkg.Relation,
 	relType string, incoming bool, visibleNeighbors map[string]bool,

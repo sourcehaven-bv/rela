@@ -274,7 +274,7 @@ func (s *Services) CalDAVAliases() *caldavalias.Service { return s.caldavAliases
 // and the docs runtime, where whoever runs the binary already has the
 // project files (RR-17DMC).
 //
-// Request-scoped and scheduled callers must use [Services.luaReadDepsFor]
+// Request-scoped and scheduled callers must use Services.luaReadDepsFor
 // instead, which binds reads to an identity (DEC-O59WM4).
 //
 // Cheap to call; rebuild per-runtime so future metamodel reloads propagate.
@@ -462,7 +462,10 @@ func (s *Services) ScheduledLuaWriteDeps() lua.WriteDeps {
 // `visible:` grants (acl.RelationGrant.Visible, honored on the dataentry wire
 // via affordances.RelationFieldVerdicts) are not consulted. Relations are gated
 // at the ROW level on both endpoints; their properties are not. Do not read the
-// paragraph above as covering them.
+// paragraph above as covering them. Tracked as TKT-0RBFN0 (IB-review #1 on
+// PR #1400), which also covers ListRelations: that path IS row-gated, but
+// visibility.PolicyReader implements only FilterRelations, so a surviving edge
+// still carries all of its meta.
 func (s *Services) GatedReads() GatedReadBundle {
 	reader := scriptEntityReader(s.store, s.aclDeclarative, s.fieldRedactor)
 	tr := scriptTracer(s.tracer, s.store, s.aclDeclarative, s.fieldRedactor)
@@ -514,8 +517,11 @@ type GatedGraphReader interface {
 //   - GetRelation goes to the raw store because a relation is addressed by its
 //     two endpoint ids, which the caller must already hold. Reading one
 //     therefore confirms nothing about entities the caller could not already
-//     name. Relations carry no field-level redaction today (see
-//     docs/acl-security.md), so this matches what a live relation GET exposes.
+//     name. That argument is about ROW-level exposure (whether the edge
+//     exists) and does not extend to the edge's meta VALUES: relations carry
+//     no field-level redaction on this path today (see docs/acl-security.md
+//     and TKT-0RBFN0), so this matches what a live relation GET exposes only
+//     until that ticket lands.
 //
 // If either judgement changes, this is the one type to fix.
 type gatedGraphReader struct {
@@ -794,7 +800,7 @@ type options struct {
 // option always wins, even when an `acl.yaml` is present, so the
 // flag is an unconditional override.
 //
-// Tests should prefer [NewForTest] + [WithTestACL] over driving this
+// Tests should prefer NewForTest + WithTestACL over driving this
 // path directly.
 func WithACL(a acl.ACL) Option {
 	return func(o *options) { o.acl = a }

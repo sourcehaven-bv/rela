@@ -28,7 +28,7 @@ import (
 //
 // # Which seam each source kind uses
 //
-//   - Query  -> [App.executeQuery], the same helper /_search and scope
+//   - Query  -> App.executeQuery, the same helper /_search and scope
 //     navigation use. It resolves SearchScope from the read gate first, and
 //     for a query with no free text (which every structural next-action query
 //     is) routes to visibleListByTypes — a type-scoped store list, NOT the

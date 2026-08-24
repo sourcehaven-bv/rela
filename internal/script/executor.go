@@ -79,7 +79,7 @@ func (e *Engine) ExecuteCodeWithCapabilities(ctx context.Context, code string, d
 
 // ExecuteFile loads and runs a script file from the scripts/ directory.
 // The path must be a local path (no ".." or absolute paths) with .lua
-// extension. ctx semantics match [ExecuteCode].
+// extension. ctx semantics match ExecuteCode.
 func (e *Engine) ExecuteFile(ctx context.Context, path string, deps lua.WriteDeps,
 	newEntity, oldEntity *entity.Entity) error {
 	return e.ExecuteFileWithCapabilities(ctx, path, deps, newEntity, oldEntity, lua.Capabilities{})

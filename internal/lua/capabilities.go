@@ -37,7 +37,7 @@ import (
 //
 // # Secrets is a list, not a bool
 //
-// [Secrets] names the individual keys exposed, because a boolean grants the
+// [Capabilities.Secrets] names the individual keys exposed, because a boolean grants the
 // whole of .rela/secrets.yaml: an action needing one Slack webhook would also
 // receive the database DSN and every API key. Per-script `overrides:` in
 // secrets.yaml do NOT already provide this — they substitute a VALUE for a key
@@ -74,7 +74,7 @@ type Capabilities struct {
 	// nil or empty means no secrets at all.
 	Secrets []string
 
-	// AllSecrets exposes every key in .rela/secrets.yaml, ignoring [Secrets].
+	// AllSecrets exposes every key in .rela/secrets.yaml, ignoring [Capabilities.Secrets].
 	//
 	// This exists ONLY for the operator-shell boundary (see
 	// [TrustedCapabilities]), where the caller can already cat the file. It is

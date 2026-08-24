@@ -9,7 +9,7 @@ import (
 
 // MapAllResult is the whole-graph inventory: every enumerated principal's
 // effective access, aggregated by type with per-entity exceptions — the
-// union of per-principal [MapPrincipalResult]s. It fixes neither the
+// union of one [MapPrincipalResult] per principal. It fixes neither the
 // principal nor the entity (the O(P·E) case), which is why it is a
 // separate slice from map --principal.
 //

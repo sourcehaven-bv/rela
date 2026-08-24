@@ -27,7 +27,7 @@ import "fmt"
 //
 // # Secrets is a list
 //
-// [Secrets] names individual keys rather than being a boolean, because a
+// [Capabilities.Secrets] names individual keys rather than being a boolean, because a
 // boolean grants the whole file: an action needing one Slack webhook would also
 // receive the database DSN. There is deliberately no "all" spelling here — the
 // broad grant exists only as a Go-side wiring choice

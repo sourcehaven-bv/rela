@@ -292,7 +292,7 @@ func NewServer(deps Deps, version string, opts ...Option) (*Server, error) {
 // The returned handler serves THIS server for every request, so per-request
 // state must travel on the ctx rather than be baked in here. That is exactly
 // how identity works: the transport passes the *http.Request ctx through to
-// handlers, and [Server.principalMiddleware] preserves a principal already
+// handlers, and Server.principalMiddleware preserves a principal already
 // stamped there in preference to the construction-time one.
 func (s *Server) HTTPHandler() http.Handler {
 	return mcpgo.NewStreamableHTTPHandler(

@@ -32,7 +32,7 @@ import (
 //     declared permission. See [RoleRelationDef.RequiresPermission].
 //   - **Unstamped principals are hard-denied.** A principal with
 //     User="" / User="unknown" or Tool="" / Tool="unknown" fails the
-//     [ForPrincipal] check; the deny surfaces as RuleKind="role-grant"
+//     [Declarative.ForPrincipal] check; the deny surfaces as RuleKind="role-grant"
 //     with a Reason that names ErrUnstampedPrincipal.
 type Declarative struct {
 	policy          *Policy
