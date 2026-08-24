@@ -67,7 +67,16 @@ func TestWorldCapablePath(t *testing.T) {
 		{"/api/v1/tickets/TKT-1/relations", false, "sub-resource reads through the ungated reader"},
 		{"/api/v1/tickets/TKT-1/_export", false, "export reads through the ungated reader"},
 		{"/api/v1/_search", false, "the searcher cannot honor a world"},
-		{"/api/v1/_views/board", false, "view traversal is world-blind"},
+		{"/api/v1/_views/board", false,
+			"a two-segment _views path is the standalone-view surface, which is NOT scoped"},
+		{"/api/v1/_views/policy/POL-1", true,
+			"the ENTITY view is world-scoped end to end (TKT-WRLDAPI item 4b)"},
+		{"/api/v1/_views/policy/POL-1/extra", false,
+			"a fourth segment is not the entity view; the match is exact, not a prefix"},
+		{"/api/v1/_views//POL-1", false, "an empty type segment is not a view path"},
+		{"/api/v1/_views/policy/", false, "an empty id segment is not the entity view"},
+		{"/api/v1/_sidepanel/policy/POL-1", false,
+			"the side panel shares executeView but was never scoped; it passes defaultViewWorld()"},
 		{"/api/v1/_documents/report", false, "document render and its cache key are world-blind"},
 		{"/api/v1/_position", false, "position reads through the search path"},
 		{"/api/v1/_analyze", false, "whole-graph, tracer-backed"},
@@ -364,6 +373,20 @@ func TestWorldCapableRoutesDoNotUseUngatedReader(t *testing.T) {
 		"includeCandidates":      true,
 		"defaultWorldCandidates": true,
 		"worldCandidates":        true,
+		// TKT-WRLDAPI item 4b made `_views/{type}/{id}` world-capable, so its
+		// handler joins the scanned set. It reached the ungated reader for the
+		// entry's relations, which under a world would pair a resolved entry
+		// with default-world edges — the mixed-face bug. Adding the route to
+		// worldCapablePath without adding the handler here would have shipped
+		// that silently, which is exactly what this guard is for.
+		"handleV1Views": true,
+		// The catch-all dispatcher for `/api/v1/{plural}[/{id}]` — the
+		// world-capable family. It only parses the path and delegates, so it
+		// reaches no reader today; it is listed because the DERIVED check below
+		// requires every world-capable route's handler to be scanned, and
+		// because a dispatcher that grows a reader call is exactly the change
+		// that should fail loudly.
+		"handleV1DynamicRoutes": true,
 	}
 
 	entries, err := os.ReadDir(".")
@@ -443,6 +466,142 @@ func TestWorldCapableRoutesDoNotUseUngatedReader(t *testing.T) {
 		t.Fatalf("scanned %d of %d world-capable functions — if these were "+
 			"renamed, update this guard rather than letting it go quiet",
 			scanned, len(worldCapableFuncs))
+	}
+
+	// And the enumeration itself must be COMPLETE — see
+	// TestWorldCapableRoutesAreAllScanned.
+	assertEveryWorldCapableRouteIsScanned(t, worldCapableFuncs)
+}
+
+// assertEveryWorldCapableRouteIsScanned derives the set of world-capable
+// ROUTE HANDLERS from the route table and fails on any that
+// TestWorldCapableRoutesDoNotUseUngatedReader does not scan.
+//
+// # Why this exists (RULING 15, applied to a test)
+//
+// The scanned set above is a hand-written literal. That makes the guard a
+// check whose FAILURE MODE IS SILENCE: when a route becomes world-capable and
+// its handler is not in the list, the guard does not fail — it passes while
+// checking nothing.
+//
+// That is not hypothetical. It happened TWICE in this epic:
+//
+//   - item 4 extracted a reader-using loop into a helper, which left the
+//     guard's view entirely; and
+//   - item 4b admitted `_views/{type}/{id}` to worldCapablePath while
+//     handleV1Views stayed unlisted — hiding a real leak (the entry's
+//     relations were still read through the ungated, default-world reader)
+//     that was found by READING the code, not by testing it.
+//
+// The third instance is the one that ships, because by then the guard is
+// trusted. So the enumeration is now derived rather than asserted: a new
+// world-capable route fails HERE, loudly, naming the route and the handler.
+func assertEveryWorldCapableRouteIsScanned(t *testing.T, scanned map[string]bool) {
+	t.Helper()
+
+	for _, route := range registeredAPIRoutes(t) {
+		if !worldCapablePath(probePathFor(route.pattern)) {
+			continue
+		}
+		if !scanned[route.handler] {
+			t.Errorf("route %q is WORLD-CAPABLE but its handler %q is not in "+
+				"the scanned set of TestWorldCapableRoutesDoNotUseUngatedReader.\n"+
+				"A world-capable handler that nobody scans can reach the "+
+				"ungated, DEFAULT-WORLD entityReader and pair a resolved entity "+
+				"with draft relations — the mixed-face bug — with no test "+
+				"failing. Add %q to worldCapableFuncs (and make sure it "+
+				"consults the world), or narrow worldCapablePath.",
+				route.pattern, route.handler, route.handler)
+		}
+	}
+}
+
+// apiRoute is one `mux.HandleFunc(pattern, handler)` registration.
+type apiRoute struct {
+	pattern string // e.g. "/api/v1/_views/"
+	handler string // the final selector, e.g. "handleV1Views"
+}
+
+// registeredAPIRoutes parses the route table out of the package source.
+//
+// Parsing rather than calling the registration function: building a real App
+// needs a project on disk and a store, and this assertion is about the STATIC
+// shape of the route table, which is exactly what the source states.
+func registeredAPIRoutes(t *testing.T) []apiRoute {
+	t.Helper()
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read package dir: %v", err)
+	}
+	fset := token.NewFileSet()
+	var routes []apiRoute
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, perr := parser.ParseFile(fset, name, nil, 0)
+		if perr != nil {
+			t.Fatalf("parse %s: %v", name, perr)
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok || len(call.Args) != 2 {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok || sel.Sel == nil || sel.Sel.Name != "HandleFunc" {
+				return true
+			}
+			lit, ok := call.Args[0].(*ast.BasicLit)
+			if !ok || lit.Kind != token.STRING {
+				return true
+			}
+			pattern := strings.Trim(lit.Value, `"`)
+			if !strings.HasPrefix(pattern, "/api/v1/") {
+				return true
+			}
+			if h := handlerName(call.Args[1]); h != "" {
+				routes = append(routes, apiRoute{pattern: pattern, handler: h})
+			}
+			return true
+		})
+	}
+	if len(routes) == 0 {
+		t.Fatal("parsed no /api/v1/ routes — the registration shape changed; " +
+			"update this derivation rather than letting the guard go quiet")
+	}
+	return routes
+}
+
+// handlerName renders the final selector of a handler expression
+// (`a.views.handleV1Views` -> "handleV1Views").
+func handlerName(arg ast.Expr) string {
+	switch fn := arg.(type) {
+	case *ast.SelectorExpr:
+		if fn.Sel != nil {
+			return fn.Sel.Name
+		}
+	case *ast.Ident:
+		return fn.Name
+	}
+	return ""
+}
+
+// probePathFor turns a mux pattern into a concrete path to ask
+// worldCapablePath about.
+//
+// A trailing slash means a prefix route, so it is probed with plausible
+// segments; `/api/v1/` (the dynamic catch-all) is probed as an entity path,
+// since that is what it actually serves.
+func probePathFor(pattern string) string {
+	switch {
+	case pattern == "/api/v1/":
+		return "/api/v1/tickets/TKT-1"
+	case strings.HasSuffix(pattern, "/"):
+		return pattern + "sometype/SOME-1"
+	default:
+		return pattern
 	}
 }
 

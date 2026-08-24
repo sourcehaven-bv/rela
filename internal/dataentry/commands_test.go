@@ -318,7 +318,7 @@ func TestBuildViewInput(t *testing.T) {
 			{From: "entry", Follow: "belongs_to", CollectAs: "components"},
 		},
 	}
-	vr, err := app.views.executeView(context.Background(), view, "TKT-001")
+	vr, err := app.views.executeView(context.Background(), view, "TKT-001", defaultViewWorld())
 	if err != nil {
 		t.Fatalf("executeView: %v", err)
 	}

@@ -448,7 +448,14 @@ func (h *commandHandler) handleCommandExec(w http.ResponseWriter, r *http.Reques
 			http.Error(w, "View not found: "+viewID, http.StatusNotFound)
 			return
 		}
-		vr, err := h.executeView(r.Context(), viewCfg, entityID)
+		// DEFAULT WORLD, named explicitly — and this is the call site the
+		// explicit-parameter design exists for. The viewResult below is
+		// marshaled to JSON and piped to an operator shell script's stdin, so
+		// a world applied here changes what an EXTERNAL PROCESS receives, past
+		// any layer that could observe it. Scoping the command surface for
+		// worlds is its own ticket, with its own thinking about what a
+		// world-bound command even means.
+		vr, err := h.executeView(r.Context(), viewCfg, entityID, defaultViewWorld())
 		if err != nil {
 			http.Error(w, "View error: "+err.Error(), http.StatusBadRequest)
 			return

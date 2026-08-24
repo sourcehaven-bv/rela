@@ -547,8 +547,12 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Execute view
-	result, err := h.executeView(r.Context(), viewCfg, entityID)
+	// Execute view. This is the ONE surface that opts into worlds
+	// (TKT-WRLDAPI item 4b); the other two executeView callers pass
+	// defaultViewWorld() explicitly. See the viewWorld doc for why the world
+	// is a parameter rather than something the engine reads off ctx.
+	result, err := h.executeView(r.Context(), viewCfg, entityID,
+		viewWorldFromRequest(r.Context()))
 	if err != nil {
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "view_execution_failed", "View execution failed", err.Error())
 		return
@@ -561,7 +565,21 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	entityDef := s.Meta.Entities[result.Entry.Type]
 	plural := entityDef.GetPlural(result.Entry.Type)
 
-	entryRels := h.reader.outgoingRelations(r.Context(), result.Entry.ID)
+	// The entry's relations. Under the DEFAULT world this is the ungated
+	// reader, exactly as before. Under a world it must NOT be: that reader is
+	// default-world-only, so it would pair a resolved entry with draft edges —
+	// the mixed-face response item 4 exists to prevent. A world-bound view
+	// carries no entry relations until the view surface resolves them through
+	// the world, which is deliberately NOT in this ticket's scope (item 4b is
+	// the entry face, collections, and provenance).
+	//
+	// Emitting nothing is the honest placeholder, and it is the same posture
+	// the entity GET held between item 2 and item 4. Recorded in the PR body
+	// as a known gap rather than left for a reader to discover.
+	var entryRels []*entityPkg.Relation
+	if !worldBoundRelations(r.Context()) {
+		entryRels = h.reader.outgoingRelations(r.Context(), result.Entry.ID)
+	}
 	resp := v1.ViewResponse{
 		Entry:    h.serializer.forWire(r.Context(), result.Entry, entryRels, h.schema().Meta, plural),
 		Sections: make([]v1.ViewSection, 0, len(sections)),

@@ -1242,8 +1242,26 @@ where: "status = active"     # Match status property
 where: "priority != low"     # Exclude low priority
 ```
 
+#### `where:` under a world
+
+When the view is requested with `?world=<name>`, a `where:` clause is evaluated
+against the **resolved face** — the state that world selected — not against the
+entity's default state.
+
+So under a world that selects `published`, `where: "status = active"` reads the
+*published* face's `status`. A page rendering published content while filtering
+on draft values would contradict itself, so the filter follows the page.
+
+Filters on the `type` pseudo-property are unaffected: an entity's type is the
+same on every face.
+
 If a where clause is invalid or a property doesn't exist, the filter is silently
 skipped and all entities are returned (fail-open for robustness).
+
+> **Note:** that fail-open behaviour is a known defect, not a design goal — a
+> mistyped `where:` silently *widens* a clause whose purpose is to narrow. It is
+> tracked as BUG-WHEREWIDE and will become a load-time error, so a bad `where:`
+> is refused when the config parses rather than ignored at render time.
 
 ### Sections
 

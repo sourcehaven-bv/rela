@@ -745,6 +745,25 @@ type ViewEntity struct {
 	HasContent       bool                        `json:"hasContent"`
 	Props            map[string]any              `json:"_props,omitempty"`
 	FieldAffordances *map[string]FieldAffordance `json:"_fields,omitempty"`
+	// World is the PROVENANCE of this collection entity's face — which world
+	// resolved it, which coordinate it was stored at, and which rule chose it
+	// (TKT-WRLDAPI item 4b).
+	//
+	// This is the slot the per-neighbor provenance deferred in item 4 belongs
+	// in, and the reason 4b exists. A view collection carries whole ENTITIES,
+	// unlike the entity GET's `relations` map, which carries bare id strings
+	// and so had nowhere to put this without a wire-type change.
+	//
+	// It lets a client distinguish "the Dutch page" from "the English page,
+	// because no Dutch face exists" for each item in a collection — the same
+	// question [Entity.World] answers for a single entity, which arrives
+	// byte-identically either way and cannot be re-derived client-side without
+	// the chain and the fallback policy.
+	//
+	// Present only under a NON-DEFAULT world. Under the default world every
+	// entity resolves to its default state by definition, so a provenance
+	// block would be noise on every row of every existing view.
+	World *EntityWorld `json:"_world,omitempty"`
 }
 
 // ViewColumn represents a column definition.

@@ -139,6 +139,9 @@ type SectionEntityData struct {
 	HasContent    bool
 	Props         map[string]any
 	FieldVerdicts map[string]v1.FieldAffordance
+	// World is the face-provenance of this entity under the view's world
+	// (TKT-WRLDAPI item 4b). Nil under the default world.
+	World *v1.EntityWorld
 }
 
 // SectionColumnData holds a resolved table cell for template rendering.
@@ -221,9 +224,12 @@ type SectionData struct {
 //
 // sectionRender is the containing section's `render:` default; each field's
 // own `render:` overrides it (TKT-HOIX1).
+//
+// w is the world the containing view executed in; it labels each row's face
+// provenance (TKT-WRLDAPI item 4b) and is nil-stamped under the default world.
 func (h *viewsHandler) buildSectionEntityData(
 	ctx context.Context, e *entity.Entity, secFields []ViewSectionField, eDef *metamodel.EntityDef,
-	sectionRender string,
+	sectionRender string, w viewWorld,
 ) SectionEntityData {
 	s := h.schema()
 	sed := SectionEntityData{
@@ -233,6 +239,7 @@ func (h *viewsHandler) buildSectionEntityData(
 		EditFormID:    h.editFormForType(e.Type),
 		Props:         h.affordances.copyVisibleProperties(ctx, e),
 		FieldVerdicts: h.affordances.computeFieldAffordances(ctx, e),
+		World:         w.provenanceFor(e),
 	}
 	for _, f := range secFields {
 		sed.Fields = append(sed.Fields, buildSectionFieldData(f, e, eDef, sectionRender))
@@ -280,7 +287,7 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 			case "properties", "list":
 				for _, e := range entities {
 					eDef, _ := s.Meta.GetEntityDef(e.Type)
-					sed := h.buildSectionEntityData(ctx, e, sec.Fields, eDef, sec.Render)
+					sed := h.buildSectionEntityData(ctx, e, sec.Fields, eDef, sec.Render, result.World)
 					sd.Entities = append(sd.Entities, sed)
 				}
 			case "table":
@@ -345,7 +352,7 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 			case "content", "cards":
 				for _, e := range entities {
 					eDef, _ := s.Meta.GetEntityDef(e.Type)
-					sed := h.buildSectionEntityData(ctx, e, sec.Fields, eDef, sec.Render)
+					sed := h.buildSectionEntityData(ctx, e, sec.Fields, eDef, sec.Render, result.World)
 					sed.Content = e.Content
 					sed.HasContent = e.Content != ""
 					sd.Entities = append(sd.Entities, sed)
@@ -375,7 +382,12 @@ func (h *viewsHandler) executeSidePanel(
 		Sections: panel.Sections,
 	}
 
-	result, err := h.executeView(ctx, viewCfg, entityID)
+	// DEFAULT WORLD, named explicitly. The side panel has not been scoped for
+	// worlds (TKT-WRLDAPI item 4b covers `_views` only), and `_sidepanel` is
+	// refused a `?world=` by worldCapablePath — but a surface must DECLARE its
+	// world rather than inherit one, or scoping `_views` silently drags every
+	// executeView caller along with it.
+	result, err := h.executeView(ctx, viewCfg, entityID, defaultViewWorld())
 	if err != nil {
 		return nil
 	}

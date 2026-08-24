@@ -236,13 +236,39 @@ func worldCapablePath(path string) bool {
 		return false
 	}
 	trimmed = strings.Trim(trimmed, "/")
-	if trimmed == "" || strings.HasPrefix(trimmed, "_") {
+	if trimmed == "" {
+		return false
+	}
+	// The ONE underscore route that is world-capable: the entity view
+	// (TKT-WRLDAPI item 4b). It is named exactly rather than admitted by a
+	// prefix rule, so widening the underscore family stays a deliberate act —
+	// every other `_`-prefixed endpoint remains refused by the clause below.
+	if isWorldCapableViewPath(trimmed) {
+		return true
+	}
+	if strings.HasPrefix(trimmed, "_") {
 		return false
 	}
 	// `{plural}` or `{plural}/{id}` only. A third segment is a
 	// sub-resource (relations, attachments, _export) and is refused.
 	return strings.Count(trimmed, "/") <= 1 &&
 		!strings.Contains(trimmed, "/_")
+}
+
+// isWorldCapableViewPath matches `_views/{type}/{id}` — the entity view, whose
+// whole read path was world-scoped in TKT-WRLDAPI item 4b.
+//
+// EXACTLY three segments, and the id must be non-empty. `_views/{name}` (a
+// standalone view by config name) is a DIFFERENT surface reached through a
+// different handler, and it is not scoped: it is refused here rather than
+// admitted by a looser prefix match.
+//
+// `_sidepanel` and the command runner's `kind: view` share executeView but are
+// not routes this admits — and they pass defaultViewWorld() explicitly, so
+// even a future routing mistake could not hand them a world. See [viewWorld].
+func isWorldCapableViewPath(trimmed string) bool {
+	parts := strings.Split(trimmed, "/")
+	return len(parts) == 3 && parts[0] == "_views" && parts[1] != "" && parts[2] != ""
 }
 
 // worldRefusesSearch reports whether this request combines a non-default

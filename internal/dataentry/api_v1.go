@@ -2505,5 +2505,6 @@ func sectionEntityToV1(e SectionEntityData) v1.ViewEntity {
 		fa := e.FieldVerdicts
 		v1Ent.FieldAffordances = &fa
 	}
+	v1Ent.World = e.World
 	return v1Ent
 }
