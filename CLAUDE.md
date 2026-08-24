@@ -575,8 +575,9 @@ type over raising the number.
 
 **Comment discipline** (`just comment-lint`, CI job "Comment lint").
 [commentlint](https://github.com/sourcehaven-bv/commentlint) checks comments
-against the scope they are attached to. Only `commented-code` is a gate; the
-rest are advisory (`just comment-report`) with a backlog being worked down:
+against the scope they are attached to. `commented-code` and `doclink` are
+**blocking gates** (both clean); the rest are advisory (`just comment-report`)
+with a backlog being worked down:
 
 - **`duplication`** — the same fact explained in two or more comments. The
   signal we act on: a fact stored three times gets corrected in one place and
@@ -584,11 +585,13 @@ rest are advisory (`just comment-report`) with a backlog being worked down:
 - **`nil-contract`** — nil behaviour as ad-hoc prose. Go cannot express this
   in a type, so the convention is `Nil: rejected|accepted|never returned —
   <why>`. Fixing one removes it permanently (the rule skips tagged comments).
-- **`doclink`** — a `[Bracketed.Reference]` that resolves to nothing. Go
-  degrades these silently (pkg.go.dev renders the literal brackets) and no
+- **`doclink`** (gate) — a `[Bracketed.Reference]` that resolves to nothing.
+  Go degrades these silently (pkg.go.dev renders the literal brackets) and no
   other linter catches them — `go vet`, `staticcheck` and `godoclint` all
   report zero on a broken link. Most are a bare `[Method]` where Go needs
-  `[Recv.Method]`; the finding names the qualified form.
+  `[Recv.Method]`; the finding names the qualified form. Note Go cannot link
+  an unexported member or a symbol from an unimported package at all — those
+  references should simply lose their brackets.
 - **`param-contract`** — a precondition asserted about a bare `string`/`int`
   parameter ("MUST already have passed containedPath"). Usually a missing
   type; this repo already does it where it matters most, e.g.
@@ -598,8 +601,15 @@ rest are advisory (`just comment-report`) with a backlog being worked down:
 
 False positives are expected (every rule is a heuristic over prose). Suppress
 with `//commentlint:ignore <rule>  <reason>` on the declaration line, or via
-`.commentlint.yml` when the same prose recurs across many sites. A reason is
-required either way.
+`.commentlint.yml` when the same prose recurs across many sites.
+
+**Read the finding before suppressing it.** A blocking check with an easy
+escape hatch makes silencing the cheapest path to green, and a reviewer
+skimming a diff cannot tell a considered suppression from a reflex one. Fixing
+the comment is the outcome the gate exists for; suppression is for findings
+that are genuinely *wrong*, and the reason must say why. "Suppressed to unblock
+CI" is not a reason. The failure message says all this too, at the moment it
+matters.
 
 ## Security
 

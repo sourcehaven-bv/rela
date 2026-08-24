@@ -273,7 +273,7 @@ func (s *Service) EntityRenamed(ctx context.Context, oldID, newID string) error 
 // resurrecting the entity. Dropping the alias here would destroy that evidence:
 // the next PUT would find nothing, read as a create, and undo the delete.
 //
-// This is therefore a no-op today, kept because it is the [AliasRewriter] half
+// This is therefore a no-op today, kept because it is the AliasRewriter half
 // of the rename/delete pair and the obvious place for future bookkeeping (a
 // deletion timestamp to prune on). Callers rely on the graph, not this table,
 // for what currently exists.

@@ -197,7 +197,7 @@ const (
 // VerifyAssertion verifies a request assertion and projects the identity claims
 // the principal resolver needs. Any signature/issuer/audience/expiry failure, or
 // an empty subject, yields an error wrapping either [ErrInvalid] or
-// [ErrKeysUnavailable] — identical to [VerifySubject], which this widens rather
+// [ErrKeysUnavailable] — identical to [Verifier.VerifySubject], which this widens rather
 // than replaces. See classify for why the distinction matters.
 //
 // Absent org/role claims are NOT an error (see [AssertionClaims]). Roles are

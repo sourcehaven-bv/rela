@@ -109,7 +109,7 @@ type Reader interface {
 	FilterRelations(ctx context.Context, rels []*entity.Relation) []*entity.Relation
 }
 
-// HeaderFilterer is [Reader.Filter] for content-free [store.EntityHeader]s
+// HeaderFilterer is [Reader.Filter] for content-free [store.EntityHeader] values
 // (TKT-1ESTYJ).
 //
 // OPTIONAL, kept off [Reader] so a third-party or test Reader need not

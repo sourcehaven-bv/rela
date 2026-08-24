@@ -15,7 +15,7 @@ import (
 // from/to/initial, or a `when:` predicate that fails to compile — so a bad
 // metamodel is rejected at boot, not at write time.
 //
-// A metamodel with no transitions compiles to an empty [Set]; [Set.Enforce] is
+// A metamodel with no transitions compiles to an empty [Set]; [Set.EnforceUpdate] is
 // then a no-op and every write behaves exactly as it did before this feature.
 //
 // meta must not be nil (a required input from appbuild).

@@ -188,7 +188,7 @@ func (t *VisibleTracer) redactStepTitle(ctx context.Context, s *tracer.PathStep)
 
 // FindOrphans implements [tracer.Tracer]: the base's orphan ids minus
 // the hidden ones. Each id's TYPE is resolved (the gate needs it) via
-// [VisibleTracer.typesOf], then ids are gated with one PermitsReadMany
+// VisibleTracer.typesOf, then ids are gated with one PermitsReadMany
 // per distinct type (RR-MYLUSZ). A vanished entity drops fail-closed.
 func (t *VisibleTracer) FindOrphans(ctx context.Context) ([]string, error) {
 	ids, err := t.base.FindOrphans(ctx)

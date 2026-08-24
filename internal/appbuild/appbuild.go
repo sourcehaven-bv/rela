@@ -274,7 +274,7 @@ func (s *Services) CalDAVAliases() *caldavalias.Service { return s.caldavAliases
 // and the docs runtime, where whoever runs the binary already has the
 // project files (RR-17DMC).
 //
-// Request-scoped and scheduled callers must use [Services.luaReadDepsFor]
+// Request-scoped and scheduled callers must use Services.luaReadDepsFor
 // instead, which binds reads to an identity (DEC-O59WM4).
 //
 // Cheap to call; rebuild per-runtime so future metamodel reloads propagate.
@@ -794,7 +794,7 @@ type options struct {
 // option always wins, even when an `acl.yaml` is present, so the
 // flag is an unconditional override.
 //
-// Tests should prefer [NewForTest] + [WithTestACL] over driving this
+// Tests should prefer NewForTest + WithTestACL over driving this
 // path directly.
 func WithACL(a acl.ACL) Option {
 	return func(o *options) { o.acl = a }

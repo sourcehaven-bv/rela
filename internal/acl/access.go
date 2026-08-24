@@ -9,7 +9,7 @@ import (
 // Verb is a read-or-write access verb the who-can query asks about. It
 // widens [Op] (create/update/delete/rename) with read, which has no Op
 // because the write path never authorizes reads — the read path is
-// [Request.readQuery]. VerbRead routes through the read machinery;
+// Request.readQuery. VerbRead routes through the read machinery;
 // every other verb routes through the per-verb write grant.
 type Verb string
 
@@ -95,7 +95,7 @@ type AssertedGrant struct {
 }
 
 // AssertedGrants reports every asserted_role_assignments mapping that grants
-// verb on entityType. Uses the same grantForRole helper as [EveryoneGrants] and
+// verb on entityType. Uses the same grantForRole helper as [Declarative.EveryoneGrants] and
 // Request.AccessRoutes, so a reported grant can never disagree with an actual
 // authorization decision.
 //
