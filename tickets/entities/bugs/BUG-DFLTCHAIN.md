@@ -63,11 +63,12 @@ that can never match.
 is still in open PRs. This defect was introduced by **PR #1393**
 (`TKT-WAV8XP PR-A`, commit d5ef3c66) and has never run for a user.
 
-That makes it cheaper to fix than a released bug, and it argues for fixing it
-**in #1393 itself** rather than as a follow-up on top — the epic is an
-18-PR stack, and a fix landing above the PR that introduced the bug means
-every intermediate PR carries the broken compiler. Decide before #1393
-merges; after that, a follow-up is the only option.
+**DECIDED (Jeroen, 2026-08-24): fix it as a follow-up PR at the TOP of the
+stack, not by amending #1393.** Rebasing eighteen branches to fix a defect
+no user can reach is not worth the churn, and the whole stack is being
+reviewed as one unit at the end anyway. The intermediate PRs carrying the
+broken compiler is acceptable precisely because none of them ship
+independently.
 
 Found during TKT-WRLDAPI PR-A review; confirmed empirically against the real
 compiler. Out of THAT PR's scope either way — it is a defect in
