@@ -1249,6 +1249,12 @@ func buildEntityManager(
 	autoEngine *automation.Engine, cascadeRunner *autocascade.Runner,
 	readDeps lua.ReadDeps, versions store.VersionService, tw TransitionWiring,
 ) (*entitymanager.Manager, error) {
+	// A policy is "active" when the resolved ACL is the declarative one — the
+	// same test CompileTransitions applies, spelled here rather than widened
+	// onto TransitionWiring so the copy deps do not depend on the transition
+	// wiring's shape.
+	_, policyActive := resolvedACL.(*acl.Declarative)
+
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		AliasRewriter:           aliases,
 		Store:                   st,
@@ -1265,6 +1271,20 @@ func buildEntityManager(
 		FieldGate:               entitymanager.AllowAllFieldGate{},
 		TransitionGuard:         tw.Guard,
 		TransitionGraph:         tw.Graph,
+		// The copy deps (TKT-WRLDAPI item 5). Before this, NONE of the three
+		// was wired in any deployment — so every guarded copy 403'd
+		// ("no guard is wired") and every copy's source read took the
+		// no-policy branch, which CopyReadGate's own godoc says must never
+		// happen on a deployment that has a policy.
+		//
+		// CopyGuard reuses tw.Guard: entitymanager.CopyGuard and
+		// statemachine.Guard are the same shape ON PURPOSE, so a copy's
+		// `guard:` and a transition's ask the identical question of the
+		// identical implementation and cannot drift into asking different
+		// ones.
+		CopyGuard:      tw.Guard,
+		CopyReadGate:   copyReadGate{policyActive: policyActive},
+		CopyVisibility: copyVisibility{st: st, policyActive: policyActive},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build entitymanager: %w", err)

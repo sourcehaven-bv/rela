@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -88,4 +89,83 @@ func CompileTransitions(meta *metamodel.Metamodel, st store.Store, resolvedACL a
 		Guard:    transitionGuard{policyActive: policyActive},
 		Graph:    transitionGraph{st: st},
 	}, nil
+}
+
+// copyReadGate answers "may this principal READ the copy's source", the first
+// of authorizeCopy's three checks (TKT-WRLDAPI item 5).
+//
+// # Same shape and same tiering as [transitionGuard], deliberately
+//
+// It resolves the [acl.Request] from the context per call, because the gate is
+// per-PRINCIPAL while Deps is built once at startup. The three tiers match:
+//
+//   - No policy at all: inert, permits. Every other read on such a deployment
+//     is raw too (CLI, demos), so gating this one would be theater.
+//   - A policy IS configured but no Request is on the context: FAIL CLOSED.
+//     That is a served path that lost its Request-attach middleware, or a
+//     background job on a bare ctx — a policy-backed deployment must not open
+//     a governed read because plumbing broke.
+//
+// # Why this had to be wired at all
+//
+// Before item 5 nothing in appbuild set any Copy* dep, so entitymanager's
+// `CopyReadGate` was nil in EVERY deployment — while its own godoc says "what
+// it must never be is absent on a deployment that HAS a policy". A copy's
+// source read then took the no-policy branch, so an unguarded cross-entity
+// copy read with no row gate and no redaction.
+type copyReadGate struct{ policyActive bool }
+
+func (g copyReadGate) PermitsRead(ctx context.Context, entityType, entityID string) (bool, error) {
+	req := acl.FromContext(ctx)
+	if req == nil {
+		return !g.policyActive, nil
+	}
+	return req.PermitsRead(ctx, entityType, entityID)
+}
+
+// copyVisibility is the CALLER'S read gate for CROSS-ENTITY copies: it returns
+// the source as that principal may see it, so a redacted field cannot travel
+// into an entity with a different audience (design doc §9.2).
+//
+// Same-entity copies deliberately do NOT use this — they run elevated, because
+// hidden fields belong to the same entity under the same policy, and routing
+// them through a redacting read would destroy the fields the principal cannot
+// see (the read-modify-write bug the codebase forbids everywhere).
+//
+// Nil-Request tiering matches [copyReadGate]: inert without a policy, and with
+// a policy present but no Request it reports NOT FOUND rather than handing back
+// an ungated entity — the fail-closed direction for a read.
+type copyVisibility struct {
+	st           store.Store
+	policyActive bool
+}
+
+func (v copyVisibility) Get(
+	ctx context.Context, entityType, id string,
+) (*entity.Entity, bool, error) {
+	req := acl.FromContext(ctx)
+	if req == nil {
+		if v.policyActive {
+			// Fail closed: absent rather than ungated. Indistinguishable from
+			// a genuine miss, which is what every read gate here promises.
+			return nil, false, nil
+		}
+		e, err := v.st.GetEntity(ctx, id)
+		if err != nil {
+			return nil, false, nil //nolint:nilerr // a miss is not-found, matching the gated path
+		}
+		return e, true, nil
+	}
+	permitted, err := req.PermitsRead(ctx, entityType, id)
+	if err != nil {
+		return nil, false, err
+	}
+	if !permitted {
+		return nil, false, nil
+	}
+	e, err := v.st.GetEntity(ctx, id)
+	if err != nil {
+		return nil, false, nil //nolint:nilerr // a miss is not-found
+	}
+	return e, true, nil
 }
