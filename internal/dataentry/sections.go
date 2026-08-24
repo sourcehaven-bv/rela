@@ -68,6 +68,11 @@ type SectionFieldData struct {
 	Inaccessible bool
 	Span         int
 	Render       string
+	// Widget is the config's widget override for this field, empty when the
+	// author did not set one. Passed through verbatim: resolving it is the
+	// SPA's job (its registry owns the type→widget default), and the server
+	// has already rejected a name/type mismatch at config load (TKT-3R7RF3).
+	Widget string
 }
 
 // buildSectionFieldData resolves one configured field against an entity.
@@ -108,6 +113,10 @@ func buildSectionFieldData(
 		// the API surface.
 		Span:   int(f.Span),
 		Render: resolveFieldRender(sectionRender, f.Render),
+		// No section-level inheritance for Widget, unlike Render — a widget is
+		// per-property, and a section-wide one would be a config error on every
+		// field of a non-matching type. See ViewSectionField's godoc.
+		Widget: f.Widget,
 	}
 }
 
@@ -284,7 +293,11 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 							Link: resolveLinkTarget(col.Link, e.Type, e.ID), EntityID: e.ID, EntityType: e.Type,
 						}
 						if col.Relation != "" {
-							cell.Values = h.resolveRelationColumnValues(ctx, e.ID, col.Relation, col.Direction)
+							// The row entity's own type anchors the inference: a
+							// section's rows come from a traversal, so the type is
+							// only known per row, not from the section declaration.
+							dir := resolveConfigDirection(s, e.Type, col.Relation, col.Direction)
+							cell.Values = h.resolveRelationColumnValues(ctx, e.ID, col.Relation, dir)
 						} else {
 							var pd metamodel.PropertyDef
 							if eDef != nil {

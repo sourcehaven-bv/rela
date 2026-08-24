@@ -20,6 +20,12 @@ func (c *ScriptCmd) Run(ctx context.Context, svc *writeServices) error {
 	opts := []lua.Option{
 		lua.WithContext(ctx),
 		lua.WithCache(svc.LuaCache),
+		// `rela script` is the OPERATOR-SHELL trust boundary (TKT-YH52OM):
+		// the caller already has the shell, the project directory and
+		// .rela/secrets.yaml, so withholding http/ai/secrets/write_file here
+		// protects nothing and would only break working scripts. Every
+		// network- or agent-reachable surface gets a narrow grant instead.
+		lua.WithCapabilities(lua.TrustedCapabilities()),
 	}
 	if c.OutputDir != "" {
 		opts = append(opts, lua.WithOutputDir(c.OutputDir))

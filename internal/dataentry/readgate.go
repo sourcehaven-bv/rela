@@ -23,7 +23,7 @@ import (
 //     permission map. Used by the ?include= filter and any future
 //     list consumer.
 //   - ReadQuery(ctx, type) — list-scope verdict. Used by the list
-//     pipeline (scopedSortedEntities) and the sidebar counts to decide
+//     pipeline (scopedSortedEntities) to decide
 //     between unfiltered (AllowAll), empty (DenyAll), and a composed
 //     store.GraphQuery that selects the visible subset (TKT-VMD8).
 //   - SearchScope(ctx, types) — the mixed-type search scope: ReadQuery

@@ -113,6 +113,12 @@ func (h *writeHandler) handleV1Action(w http.ResponseWriter, r *http.Request) {
 	// the script runs with, and so luaDeps() builds one gate/reader/redactor
 	// chain per request rather than two.
 	deps := h.luaDeps()
+	// TKT-YH52OM: the action's declared `capabilities:` block is the ONLY
+	// source of ambient capability for this script. An action with no block
+	// gets no http, no ai, no secrets and no write_file — this endpoint is
+	// reachable by anyone who may POST an action, so it is not an
+	// operator-shell surface and must not inherit a trusted default.
+	deps.Capabilities = luaCapabilities(action.Capabilities)
 	var ent *entity.Entity
 	if req.EntityID != "" {
 		if e, err := deps.VisibleReader.GetEntity(r.Context(), req.EntityID); err == nil {

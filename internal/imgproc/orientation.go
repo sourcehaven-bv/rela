@@ -45,7 +45,7 @@ const (
 	tiffMagic        = 0x002A
 	tiffHeaderLen    = 8 // "II"/"MM" + magic(2) + IFD0 offset(4)
 
-	exifHeaderLen = 6 // "Exif\0\0"
+	exifHeaderLen = 6 //commentlint:ignore restatement  the literal IS the why: those 6 bytes
 )
 
 // applyOrientation returns img transformed per the EXIF orientation tag found

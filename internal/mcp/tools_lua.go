@@ -65,6 +65,16 @@ func (s *Server) handleLuaEval(ctx context.Context, req *mcpgo.CallToolRequest) 
 	// Capture output
 	var output bytes.Buffer
 
+	// No capability grant (TKT-YH52OM): lua_eval executes code chosen by an
+	// MCP client, so it is the LEAST appropriate surface to hold http, ai or
+	// secrets — arbitrary attacker-influenceable code paired with the whole
+	// secrets file is precisely the exfiltration chain the ticket closes.
+	// Since TKT-BDG8U9 the MCP endpoint can also be mounted over HTTP, so this
+	// is reachable off-host rather than only over stdio — which raises the
+	// stakes rather than changing the answer.
+	// LuaWriteDeps.Capabilities is the zero value here and must stay that way;
+	// do not "fix" a script that fails with "attempt to index a nil value
+	// (global http)" by granting it here.
 	runtime, err := script.NewWriterRuntime(s.deps.LuaWriteDeps, "",
 		&output, lua.WithContext(ctx), lua.WithCache(s.deps.LuaCache))
 	if err != nil {
@@ -150,6 +160,10 @@ func (s *Server) handleLuaRun(ctx context.Context, req *mcpgo.CallToolRequest) (
 	// Capture output
 	var output bytes.Buffer
 
+	// No capability grant — see the note in lua_eval above (TKT-YH52OM).
+	// lua_run names a file under scripts/, but the CHOICE of file is the MCP
+	// client's, so this inherits the same posture rather than the operator-shell
+	// default `rela script` uses for the very same files.
 	runtime, err := script.NewWriterRuntime(s.deps.LuaWriteDeps, path,
 		&output, lua.WithContext(ctx), lua.WithCache(s.deps.LuaCache))
 	if err != nil {

@@ -48,6 +48,11 @@ type serverFlags struct {
 	principalHeader   string
 	readOnly          bool
 	unconfinedCommand bool
+	// remoteMCP serves the MCP endpoint over HTTP at dataentry.MCPPath.
+	// Off by default; requires the JWT identity flags below (dataentry
+	// refuses to enable it otherwise — the endpoint is CSRF-exempt, and
+	// that is only sound while rela verifies a bearer token itself).
+	remoteMCP bool
 	// JWT identity: verify a signed-JWT assertion from an OIDC proxy against its
 	// JWKS and stamp the verified subject as the principal. Provider-agnostic
 	// (Pratique, oauth2-proxy, Pomerium, ...). All three of issuer/audience/jwks
@@ -96,6 +101,15 @@ func parseFlags() *serverFlags {
 			"commands. Accepts running third-party parsers on untrusted input "+
 			"unconfined — see docs/transforms.md. Also enabled by "+
 			"RELA_UNCONFINED_COMMANDS=1.")
+	flag.BoolVar(&f.remoteMCP, "mcp", os.Getenv("RELA_MCP") == "1",
+		"Serve the Model Context Protocol endpoint over HTTP at /api/v1/_mcp, "+
+			"so AI assistants can reach a deployed rela the same way `rela mcp` "+
+			"serves a local one. Off by default. REQUIRES the -jwt-* identity "+
+			"flags: the endpoint must be CSRF-exempt (MCP clients send no Origin), "+
+			"which is only sound while rela verifies a bearer token itself — "+
+			"startup is refused otherwise. Every tool call runs as the requesting "+
+			"principal and is ACL-gated like any other API request. Also enabled "+
+			"by RELA_MCP=1.")
 	// JWT identity flags (env fallbacks $RELA_JWT_*). Verifying a SIGNED assertion
 	// is safer than --principal-header (which merely trusts the proxy set a header).
 	flag.StringVar(&f.jwtIssuer, "jwt-issuer", os.Getenv("RELA_JWT_ISSUER"),
@@ -448,6 +462,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The predicate compiler backing a source's `condition:`. Supplied here
+	// rather than imported by dataentry: the condition engine sits above the
+	// data-entry app, so the composition root bridges the two.
+	if err := app.SetNextActionMatchers(appbuild.NextActionMatchers); err != nil {
+		slog.Error("failed to wire next-action matchers", "error", err)
+		os.Exit(1)
+	}
+
 	// Start file watcher for live-reload.
 	// The watcher goroutine is cleaned up on process exit.
 	if err := app.StartWatching(); err != nil {
@@ -467,18 +489,7 @@ func main() {
 
 	// Identity sources are mutually exclusive — validate BEFORE building anything,
 	// so a conflicting config never reaches a running server.
-	mode, modeErr := validateIdentityFlags(f, os.Getenv(dataentry.EnvDataEntryUserVar))
-	if modeErr != nil {
-		slog.Error("invalid identity configuration", "error", modeErr)
-		os.Exit(1)
-	}
-
-	// Build the signed-JWT verifier once (nil when JWT identity is disabled) and
-	// share it between the identity gate and the webhook receiver so the JWKS
-	// is fetched a single time.
-	idv := buildIdentityVerifier(context.Background(), f)
-	wirePrincipalResolvers(app, f, idv, mode)
-	wireWebhookReceiver(app, f, idv)
+	wireIdentityAndMCP(app, svc, f)
 
 	srv := newHTTPServer(addr, app.NewRouter())
 

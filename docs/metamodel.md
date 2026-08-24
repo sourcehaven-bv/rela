@@ -614,7 +614,7 @@ entities:
 | `format`         | Date format (Go layout string, e.g., `2006-01-02`)                                    |
 | `description`    | Documentation for the property                                                        |
 | `list: true`     | Allow multiple values (multi-select for enum types)                                   |
-| `unique: true`   | Natural key: no two entities of the type may share a non-empty value (write-time 422; find pre-existing dups with `rela analyze unique`). Not for `list` properties. |
+| `unique: true`   | Natural key: no two entities of the type may share a non-empty value (write-time 422; find pre-existing dups with `rela analyze unique`). Only for string-valued properties (`string`, `date`, `datetime`, `enum`, custom types) — not `list`, and not `integer`/`boolean`/`file`. On the PostgreSQL backend this is additionally enforced by an automatically-maintained database index, so it holds even under concurrent writers ([details](postgres-backend.md#derived-schema-unique-constraints)). |
 | `max`            | For `file` properties: max attachments (default 1)                                    |
 | `accept`         | For `file` properties: narrow the MIME allowlist (e.g. `[application/pdf]`)           |
 | `scan_cmd`       | For `file` properties: the scan command (array args); configuring it enables scanning |
@@ -1084,6 +1084,14 @@ rela tui
 
 Note: Existing entities remain valid. The metamodel only affects creation and validation of new entities and relations.
 
+**Schema evolution:** additive changes (new types, new optional properties,
+new enum values) are adopted automatically. Changes that leave stored data
+mismatched — a renamed property, a changed property type, remapped enum
+values — are detected at startup and handled by the data-migration system:
+`rela migrate status` shows where the data stands, `rela migrate gen` drafts
+a migration, `rela migrate data` runs it. See the
+[data-migration guide](data-migration.md).
+
 ## Filtering Entities
 
 Filter entities by property values using the `--where` flag:
@@ -1232,6 +1240,8 @@ validations:
       - "status=accepted"
     then: # THEN these must be true
       - "priority!="
+    when_condition: "..." # Optional: expression, ANDed with `when`
+    then_condition: "..." # Optional: expression, ANDed with `then`
     severity: error # Optional: "error" or "warning" (default)
 ```
 
@@ -1241,6 +1251,40 @@ validations:
 2. **Apply when filter**: If `when` is specified, only entities satisfying ALL when conditions are subject to the rule
 3. **Check then conditions**: Matched entities must satisfy ALL `then` conditions
 4. **Report violations**: Entities that match `when` but don't satisfy `then` are reported
+
+### `when:` vs `when_condition:` — two dialects, on purpose
+
+`when:`/`then:` take **filter clauses** (`status=accepted`, `priority!=`) — one
+property, one operator, one value, ANDed together. `when_condition:` and
+`then_condition:` take a **predicate expression**, the same language as the
+CLI's `--filter` flag and ACL `when:` rules. Expressions add boolean
+composition, parentheses, and host functions — including date arithmetic:
+
+```yaml
+validations:
+  - name: stale-open-tasks
+    description: "an open task due within a week must have an owner"
+    entity_type: taak
+    when:
+      - "status=open"
+    when_condition: "days_between(entity.due, today()) <= 7"
+    then_condition: "entity.owner ~= nil and entity.owner ~= ''"
+    severity: error
+```
+
+Both keys are optional and independent — mix filter clauses and expressions
+freely; everything present is ANDed.
+
+Why two keys rather than one that accepts either? Because the syntaxes overlap
+**without erroring**. The filter parser reads
+`days_between(entity.due, today()) <= 7` as a filter on a property literally
+named `days_between(entity.due, today())`. No such property exists, so the rule
+silently selects nothing — no error at load, no warning at runtime. Choosing
+the key states which dialect you meant, so a mistake surfaces immediately.
+
+Note that a date literal in an expression is a **string**:
+`entity.due <= '2026-08-25'`. It is parsed against the property's declared
+format when the expression compiles.
 
 ### Example Validation Rules
 
@@ -1585,6 +1629,7 @@ Automations fire based on entity changes:
 | `relation_created` | Fires when this relation type is created  | `implements`           |
 | `relation_removed` | Fires when this relation type is removed  | `implements`           |
 | `when`             | Property conditions that must match (AND) | `["kind=enhancement"]` |
+| `condition`        | Predicate expression that must hold (AND) | `"days_between(entity.due, today()) <= 7"` |
 
 ### Conditional Triggers
 
@@ -1742,6 +1787,92 @@ automations:
       - set: started_by
         value: "{{user.name}}"
 ```
+
+### Expression Conditions (`condition:`)
+
+`when:` takes filter clauses. `condition:` takes a **predicate expression** —
+the same language as the CLI's `--filter` flag and ACL rules — which adds
+boolean composition and host functions, including date arithmetic:
+
+```yaml
+automations:
+  - name: flag-due-soon
+    description: Flag tasks coming due within a week
+    on:
+      entity: taak
+      created: true
+      when:
+        - "status=todo" # filter clause
+      condition: "days_between(entity.due, today()) <= 7" # expression
+    do:
+      - set: flag
+        value: "due-soon"
+```
+
+Both keys are optional and AND together. Available functions include
+`today()`, `days_between(a, b)`, `date_add(d, n, unit)`,
+`rrule_next(rule, after)`, plus the string matchers `match`, `regex`,
+`fuzzy`, and `contains`.
+
+`condition:` requires `entity:` naming the type(s) it applies to — the
+expression is compiled against that type's properties.
+
+**A broken `condition:` fails at load**, naming the automation. That is
+deliberate: a dropped constraint would make the automation fire on *more*
+entities than you wrote, which is invisible in production. The same now
+applies to an unparseable `when:` clause, which earlier versions skipped
+silently.
+
+> **Upgrade note.** Making an unparseable `when:` clause fatal is a
+> behaviour change on the load path. It can only affect a clause that was
+> *already* broken — one that parsed to nothing and was silently dropped,
+> so the automation had been firing more widely than intended. The filter
+> parser rejects only three shapes: an empty string, a clause with no
+> operator (`status`), and one with no property (`=todo`). A plausible
+> way to hit this is a YAML-confusion typo like `- "status: todo"` inside
+> a `when:` list. If your project starts failing to load after upgrading,
+> the error names the automation and the offending clause — the fix is to
+> write the clause you meant, e.g. `status=todo`.
+
+Why not one key that accepts either dialect? The syntaxes overlap without
+erroring — the filter parser reads
+`days_between(entity.due, today()) <= 7` as a filter on a property literally
+named `days_between(entity.due, today())`, which matches nothing and reports
+nothing. Choosing the key states which you meant.
+
+Date literals inside an expression are **strings**:
+`entity.due <= '2026-08-25'`.
+
+#### Guard optional date properties
+
+A date function applied to a property the entity does not carry is an
+**eval error**, not `false`. The automation does not fire and a warning is
+attached to the result:
+
+```yaml
+condition: "days_between(entity.due, today()) <= 7" # skips tasks with no due date
+```
+
+An entity with no `due` is skipped — which is often the opposite of what you
+want, since a task with no due date may be exactly the one to flag. Guard the
+property when it is optional:
+
+```yaml
+condition: "entity.due ~= nil and days_between(entity.due, today()) <= 7"
+```
+
+Or invert the test to catch the missing case:
+
+```yaml
+condition: "entity.due == nil or days_between(entity.due, today()) <= 7"
+```
+
+The same applies to validation rules, where the two keys fail in opposite
+directions from this identical cause: a `when_condition:` that errors means
+"entity not selected" (the rule skips it), while a `then_condition:` that
+errors means "assertion not shown to hold" (a violation). Both fail toward
+not-silently-passing, but one ignores the entity and the other flags it — so
+guard optional properties rather than relying on either.
 
 ### Automation Options
 

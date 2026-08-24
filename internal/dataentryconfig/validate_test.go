@@ -435,6 +435,10 @@ func TestValidateConfig_UnknownFormRelation(t *testing.T) {
 func inverseTestMetamodel(t *testing.T) *metamodel.Metamodel {
 	t.Helper()
 	yaml := `version: "1.0"
+types:
+  entity_status:
+    values: [open, closed]
+    default: open
 entities:
   from_entity:
     label: From
@@ -443,6 +447,8 @@ entities:
       title:
         type: string
         required: true
+      status:
+        type: entity_status
   to_entity:
     label: To
     id_prefix: "TO-"
@@ -450,6 +456,8 @@ entities:
       title:
         type: string
         required: true
+      status:
+        type: entity_status
   other_entity:
     label: Other
     id_prefix: "OTH-"
@@ -467,6 +475,10 @@ relations:
     label: multi source
     from: [from_entity, other_entity]
     to: [to_entity]
+  depends_on:
+    label: depends on
+    from: [from_entity]
+    to: [from_entity]
 `
 	m, err := metamodel.Parse([]byte(yaml))
 	if err != nil {
@@ -504,10 +516,11 @@ func TestValidateConfig_FormRelationInverseName(t *testing.T) {
 	}
 }
 
-func TestValidateConfig_FormRelationWrongSide_HintsIncoming(t *testing.T) {
+func TestValidateConfig_FormRelationToSide_InfersIncoming(t *testing.T) {
 	meta := inverseTestMetamodel(t)
-	// to_entity is on the TO side of connects_to; the default outgoing
-	// direction makes this form silently broken.
+	// to_entity is ONLY on the TO side of connects_to, so an absent direction
+	// has exactly one correct answer and is inferred as incoming rather than
+	// defaulting to outgoing and being reported as wrong-side.
 	cfg := &Config{
 		Forms: map[string]Form{
 			"edit_to": {
@@ -517,27 +530,17 @@ func TestValidateConfig_FormRelationWrongSide_HintsIncoming(t *testing.T) {
 		},
 	}
 
-	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
-	if err == nil {
-		t.Fatal("expected error for form entity not on the source side of an outgoing relation")
-	}
-	msg := err.Error()
-	if !strings.Contains(msg, `"to_entity"`) {
-		t.Errorf("expected error to mention form entity type, got: %v", err)
-	}
-	if !strings.Contains(msg, `"connects_to"`) {
-		t.Errorf("expected error to mention the relation, got: %v", err)
-	}
-	if !strings.Contains(msg, "direction: incoming") {
-		t.Errorf("expected hint to set direction: incoming, got: %v", err)
+	if err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta); err != nil {
+		t.Fatalf("expected an unambiguous to-side binding to infer incoming, got: %v", err)
 	}
 }
 
-func TestValidateConfig_FormRelationWrongSide_NoHintWhenDirectionExplicit(t *testing.T) {
+func TestValidateConfig_FormRelationWrongSide_HintsWhenDirectionExplicit(t *testing.T) {
 	meta := inverseTestMetamodel(t)
-	// Explicit outgoing with form entity on the wrong side — flipping the
-	// direction would help, but the user has explicitly chosen outgoing,
-	// so we error without a "did you mean" hint.
+	// Explicit outgoing with the form entity on the TO side. The author wrote a
+	// direction and picked the wrong one, so flipping it is the actionable fix
+	// and the message says so. (An ABSENT direction cannot reach here for this
+	// shape — inference would have resolved it to incoming.)
 	cfg := &Config{
 		Forms: map[string]Form{
 			"edit_to": {
@@ -551,8 +554,12 @@ func TestValidateConfig_FormRelationWrongSide_NoHintWhenDirectionExplicit(t *tes
 	if err == nil {
 		t.Fatal("expected error for form entity not on the source side")
 	}
-	if !strings.Contains(err.Error(), `"to_entity"`) {
+	msg := err.Error()
+	if !strings.Contains(msg, `"to_entity"`) {
 		t.Errorf("expected error to mention form entity type, got: %v", err)
+	}
+	if !strings.Contains(msg, "direction: incoming") {
+		t.Errorf("expected hint to suggest flipping to incoming, got: %v", err)
 	}
 }
 
@@ -2679,5 +2686,182 @@ func TestValidateDocuments_LegacyIDPlaceholderRejected(t *testing.T) {
 		if !strings.Contains(err.Error(), "{in}") {
 			t.Errorf("arg %q: error should name {in} as the replacement, got: %s", arg, err.Error())
 		}
+	}
+}
+
+// TestValidateConfig_FormRelationSelfReferencing_RequiresDirection pins the one
+// case inference cannot resolve: when the form's entity type is BOTH the from
+// and the to of the relation, outgoing and incoming are equally valid and mean
+// opposite things. Guessing would silently pick one reading, so the author must
+// say which.
+func TestValidateConfig_FormRelationSelfReferencing_RequiresDirection(t *testing.T) {
+	meta := inverseTestMetamodel(t)
+	cfg := &Config{
+		Forms: map[string]Form{
+			"edit_from": {
+				EntityType: "from_entity",
+				Relations:  []FormRelation{{Relation: "depends_on"}},
+			},
+		},
+	}
+
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err == nil {
+		t.Fatal("expected an error for a self-referencing relation with no explicit direction")
+	}
+	msg := err.Error()
+	for _, want := range []string{"depends_on", "from_entity", "direction"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("expected error to mention %q, got: %v", want, err)
+		}
+	}
+}
+
+// An explicit direction resolves the ambiguity either way.
+func TestValidateConfig_FormRelationSelfReferencing_ExplicitDirectionOK(t *testing.T) {
+	meta := inverseTestMetamodel(t)
+	for _, dir := range []Direction{DirectionOutgoing, DirectionIncoming} {
+		t.Run(string(dir), func(t *testing.T) {
+			cfg := &Config{
+				Forms: map[string]Form{
+					"edit_from": {
+						EntityType: "from_entity",
+						Relations:  []FormRelation{{Relation: "depends_on", Direction: dir}},
+					},
+				},
+			}
+			if err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta); err != nil {
+				t.Errorf("explicit direction %q should validate, got: %v", dir, err)
+			}
+		})
+	}
+}
+
+// TestValidateConfig_EmptyDirectionStringIsNotOutgoing pins the fix for a hole
+// in the ambiguity check: `direction: ""` (written but empty, as a templating
+// system or config generator emits) used to unmarshal to "outgoing" and so
+// walked straight past the self-referencing check that is the whole point of
+// requiring an explicit direction. An empty value must be treated the same as
+// an absent key — inferred, and rejected when ambiguous.
+func TestValidateConfig_EmptyDirectionStringIsNotOutgoing(t *testing.T) {
+	meta := inverseTestMetamodel(t)
+
+	t.Run("ambiguous relation still errors", func(t *testing.T) {
+		cfg := &Config{
+			Forms: map[string]Form{
+				"edit_from": {
+					EntityType: "from_entity",
+					Relations:  []FormRelation{{Relation: "depends_on", Direction: ""}},
+				},
+			},
+		}
+		if err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta); err == nil {
+			t.Fatal("empty direction must not bypass the self-referencing check")
+		}
+	})
+
+	t.Run("to-side binding still infers incoming", func(t *testing.T) {
+		cfg := &Config{
+			Forms: map[string]Form{
+				"edit_to": {
+					EntityType: "to_entity",
+					Relations:  []FormRelation{{Relation: "connects_to", Direction: ""}},
+				},
+			},
+		}
+		if err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta); err != nil {
+			t.Fatalf("empty direction should infer incoming on a to-side binding, got: %v", err)
+		}
+	})
+}
+
+// TestValidateConfig_AmbiguousDirection_AllSurfaces pins that every surface
+// carrying a `direction:` refuses to guess on a self-referencing relation, not
+// just form relations. A wrong side is a silent bug on each of them: a list
+// column or kanban card renders the wrong neighbors, a filter control filters
+// the wrong edge, and a CalDAV collection selects the wrong members.
+func TestValidateConfig_AmbiguousDirection_AllSurfaces(t *testing.T) {
+	meta := inverseTestMetamodel(t)
+	// from_entity is BOTH the from and the to of depends_on.
+	const selfRef = "depends_on"
+
+	tests := []struct {
+		name string
+		cfg  *Config
+	}{
+		{
+			name: "list column",
+			cfg: &Config{Lists: map[string]List{
+				"l": {EntityType: "from_entity", Columns: []ListColumn{{Relation: selfRef}}},
+			}},
+		},
+		{
+			name: "list filter control",
+			cfg: &Config{Lists: map[string]List{
+				"l": {EntityType: "from_entity", FilterControls: []FilterControl{{Relation: selfRef}}},
+			}},
+		},
+		{
+			name: "kanban card field",
+			cfg: &Config{Kanbans: map[string]Kanban{
+				"k": {
+					EntityType:     "from_entity",
+					ColumnProperty: "status",
+					Card:           KanbanCard{Fields: []KanbanCardField{{Relation: selfRef}}},
+				},
+			}},
+		},
+		{
+			name: "kanban filter control",
+			cfg: &Config{Kanbans: map[string]Kanban{
+				"k": {
+					EntityType:     "from_entity",
+					ColumnProperty: "status",
+					FilterControls: []FilterControl{{Relation: selfRef}},
+				},
+			}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateConfig([]byte(`version: "1.0"`), tt.cfg, meta)
+			if err == nil {
+				t.Fatalf("%s: expected an ambiguity error for a self-referencing relation", tt.name)
+			}
+			msg := err.Error()
+			for _, want := range []string{selfRef, "from_entity", "direction"} {
+				if !strings.Contains(msg, want) {
+					t.Errorf("expected error to mention %q, got: %v", want, err)
+				}
+			}
+		})
+	}
+}
+
+// An unambiguous binding on those same surfaces must stay silent — inference
+// resolves it, so requiring the key would be noise.
+func TestValidateConfig_UnambiguousDirection_AllSurfaces(t *testing.T) {
+	meta := inverseTestMetamodel(t)
+	// to_entity is only ever the TO of connects_to.
+	cfg := &Config{
+		Lists: map[string]List{
+			"l": {
+				EntityType:     "to_entity",
+				Columns:        []ListColumn{{Relation: "connects_to"}},
+				FilterControls: []FilterControl{{Relation: "connects_to"}},
+			},
+		},
+		Kanbans: map[string]Kanban{
+			"k": {
+				EntityType:     "to_entity",
+				ColumnProperty: "status",
+				Card:           KanbanCard{Fields: []KanbanCardField{{Relation: "connects_to"}}},
+				FilterControls: []FilterControl{{Relation: "connects_to"}},
+			},
+		},
+	}
+	if err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta); err != nil {
+		t.Fatalf("unambiguous bindings should validate without an explicit direction, got: %v", err)
 	}
 }

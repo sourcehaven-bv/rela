@@ -28,6 +28,17 @@ type Trigger struct {
 	RelationCreated string
 	RelationRemoved string
 	When            []*filter.Filter // Property conditions that must all match
+
+	// Condition is a predicate expression ANDed with every When clause.
+	// Kept as SOURCE, not a parsed filter: routing it through
+	// filter.Parse is exactly the bug this field exists to fix — that
+	// parser accepts an expression and silently reinterprets it as a
+	// filter on a nonexistent property, so the condition never matches
+	// and nothing reports why.
+	//
+	// Compiled once when the engine is built (the metamodel is needed for
+	// the typed env); a compile failure is a load error, never a skip.
+	Condition string
 }
 
 // Action specifies an operation to perform.
@@ -41,6 +52,10 @@ type Action struct {
 	// AllowACLBypass: which rela.bypass_acl capabilities this Lua action
 	// unlocks (TKT-D8T148, TKT-Y3JVFK).
 	AllowACLBypass metamodel.ACLBypass
+	// Capabilities is the action's `capabilities:` block (TKT-YH52OM): which
+	// ambient capabilities (http/ai/write_file/named secrets) the script may
+	// reach. Zero value grants none.
+	Capabilities metamodel.Capabilities
 }
 
 // CreateRelationAction specifies parameters for creating a relation.
@@ -135,6 +150,17 @@ type LuaToExecute struct {
 	// AllowACLBypass is the action's allow_acl_bypass (TKT-D8T148): which
 	// bypass_acl capabilities are unlocked.
 	AllowACLBypass metamodel.ACLBypass
+	// Capabilities is the action's `capabilities:` block (TKT-YH52OM): which
+	// ambient capabilities (http/ai/write_file/named secrets) the script may
+	// reach. Zero value grants none.
+	Capabilities metamodel.Capabilities
+}
+
+// CapabilityFields exposes the grant as plain values so consumers that may not
+// import metamodel (autocascade) still read it through the single translation
+// seam rather than copying fields by hand. See metamodel.Capabilities.Fields.
+func (l LuaToExecute) CapabilityFields() (http, ai, writeFile bool, secrets []string) {
+	return l.Capabilities.Fields()
 }
 
 // Result represents the outcome of running automations.

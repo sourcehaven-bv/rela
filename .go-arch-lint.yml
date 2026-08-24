@@ -47,6 +47,7 @@ components:
   app:              { in: internal/app }
   appbuild:         { in: internal/appbuild }
   appbuildtest:     { in: internal/appbuild/appbuildtest }
+  backendtest:      { in: internal/appbuild/backendtest }
 
   # Domain services
   analysis:         { in: internal/analysis }
@@ -58,6 +59,7 @@ components:
   calfeed:          { in: internal/calfeed }
   caldavalias:      { in: internal/caldavalias }
   conflict:         { in: internal/conflict }
+  datamigration:    { in: internal/datamigration }
   entitymanager:    { in: internal/entitymanager }
   imgproc:          { in: internal/imgproc }
   importer:         { in: internal/importer }
@@ -217,6 +219,11 @@ deps:
       - script
     canUse:
       - kong
+  # cmdServer is a composition root, so it may name both the transport
+  # (dataentry) and the protocol server it mounts inside it (mcp) — the same
+  # pairing `cli` already has for the stdio transport. Keeping the MCP wiring
+  # here is what lets `dataentry` take a plain http.Handler and stay off the
+  # go-sdk (TKT-BDG8U9).
   cmdServer:
     mayDependOn:
       - acl
@@ -225,6 +232,7 @@ deps:
       - cmdexec
       - dataentry
       - jwtauth
+      - mcp
       - principal
       - scheduler
       - script
@@ -268,6 +276,7 @@ deps:
       - cmdexec
       - config
       - dataentryconfig
+      - datamigration
       - entitymanager
       - filter
       - importer
@@ -382,11 +391,20 @@ deps:
   # conditionlint reuses the predicate parser to sanity-check wizard-form
   # condition expressions at author time. It sits above dataentryconfig so the
   # config package stays free of the predicate dependency.
+  #
+  # It also COMPILES next-action `condition:` expressions (TKT-N8XQ2R). Those
+  # are evaluated server-side by predicatefns, not by the SPA, so unlike the
+  # wizard-form checks this one is authoritative rather than a superset: it
+  # must see the same host functions (days_between, today, ...) the runtime
+  # will, hence predicatefns. searchparser is needed to read the entity types
+  # out of the source's `query:`, which is what a condition compiles against.
   conditionlint:
     mayDependOn:
       - dataentryconfig
       - metamodel
       - predicate
+      - predicatefns
+      - searchparser
   desktop:
     canUse:
       - wails
@@ -442,7 +460,19 @@ deps:
       - userstate
       - memuserstate
       - kvuserstate
+      - datamigration
+      # Bridges conditionlint's next-action condition compiler to the seam
+      # dataentry declares, so the app never imports the predicate engine.
+      - conditionlint
+      - dataentryconfig
+      - nextaction
       - acl
+      # appbuild constructs the affordance resolver so the field write gate
+      # and the two gated-read bundles can share ONE instance (TKT-0XL8MF).
+      # Safe as a dependency edge: affordances is a near-leaf (acl, entity,
+      # metamodel, predicate*, principal, statemachine) and imports no
+      # wiring package, so this cannot close a cycle.
+      - affordances
       - app
       - audit
       - caldavalias
@@ -466,6 +496,14 @@ deps:
       - tracer
       - validator
       - visibility
+  # backendtest supplies each build's test backend. The pgx dependency is
+  # confined to its postgres-tagged file, which the default build does not
+  # compile — the same arrangement pgstore uses.
+  backendtest:
+    mayDependOn:
+      - appbuild
+    canUse:
+      - pgx
   appbuildtest:
     mayDependOn:
       - acl
@@ -639,6 +677,19 @@ deps:
       - docscapture
       - metamodel
       - project
+  datamigration:
+    mayDependOn:
+      - audit
+      - entity
+      - metamodel
+      - principal
+      - schema
+      - state
+      - store
+    canUse:
+      # The lua: migration step runs a sandboxed pure transform on a bare
+      # gopher-lua state (no rela.* bindings) — see luastep.go.
+      - gopherlua
   entitymanager:
     mayDependOn:
       - acl

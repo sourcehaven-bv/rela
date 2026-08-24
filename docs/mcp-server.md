@@ -177,20 +177,88 @@ recorded in the audit log below.
 
 Because stdio MCP runs as a local user-launched process, this gating is
 principally about consistency with the rest of the read paths rather than about
-defending a network boundary. Serving MCP over HTTP is tracked separately as
-Remote MCP part 2.
+defending a network boundary. Serving MCP over HTTP is described in
+[Remote MCP (over HTTP)](#remote-mcp-over-http) below.
 
 See [acl-security.md](acl-security.md) for the read-path rules these wrappers
 enforce.
+
+## Remote MCP (over HTTP)
+
+Everything above describes `rela mcp`, the **local stdio** transport. A
+deployed `rela-server` can serve the same tools over HTTP so a hosted
+assistant reaches your project without a local checkout.
+
+It is **off by default**. Enable it with `-mcp` (or `RELA_MCP=1`):
+
+```bash
+rela-server -mcp \
+  -jwt-issuer https://idp.example.com \
+  -jwt-audience rela-prod \
+  -jwt-jwks-url https://idp.example.com/.well-known/jwks.json
+```
+
+The endpoint is `POST /api/v1/_mcp`.
+
+### The JWT flags are mandatory
+
+`-mcp` **refuses to start** without `-jwt-issuer` / `-jwt-audience` /
+`-jwt-jwks-url`. This is not a style preference:
+
+An MCP client is not a browser and sends no `Origin`, so the endpoint has to
+be exempt from the same-origin (CSRF) check the rest of `/api/` gets. That
+exemption is only sound while rela verifies a bearer token *itself*. In
+header-identity mode (`-principal-header`, or nothing at all) an
+unauthenticated request resolves to the user `unknown` — combined with the
+CSRF exemption that would be an unauthenticated, internet-reachable write
+surface. Refusing at startup is the only place to catch it, because the
+downgrade would otherwise show up per request, long after anyone reads the
+startup log.
+
+### What a remote caller can do
+
+Exactly what their ACL grants — no more, and no less than the same person
+gets through the web UI:
+
+- Every read goes through the same ACL gate as `/api/v1/...`. Two callers
+  hitting the same endpoint see different rows.
+- Every write is authorized and audited as the **requesting** principal, with
+  `principal.tool: "mcp"`.
+- A denied entity is indistinguishable from a nonexistent one.
+
+Note the current scope: **every tool is exposed remotely**, including
+`lua_eval` and `lua_run`. Those run in a sandboxed interpreter with no OS
+libraries and are ACL-gated like everything else, so they are not an escape
+hatch — but if you would rather a new tool were opt-in per transport, that
+allowlist is not built yet.
+
+### Differences from stdio
+
+- **Stateless.** Protocol revision `2026-07-28` removes sessions, and the
+  Go SDK only reaches it in stateless mode. `GET` and `DELETE` return 405;
+  only `POST` carries messages.
+- **No change notifications.** `resources/list_changed` has no stateless
+  equivalent, so there is no file watcher. Clients re-read on demand and
+  always see current data, because every read hits the store.
+- **No IdP auto-discovery yet.** RFC 9728 Protected Resource Metadata is not
+  served, and the 401 carries a `WWW-Authenticate` challenge only when your
+  assertion header is literally `Authorization`. Point your client at the IdP
+  by configuration.
 
 ## Audit log
 
 Every entity / relation write performed through MCP tools (including
 `lua_eval` and `lua_run`) is recorded in `.rela/audit/YYYY-MM-DD.jsonl`
-with `principal.tool: "mcp"`. The `principal.user` is the OS user that
-launched `rela mcp` — *not* the LLM caller. MCP's wire protocol has no
-notion of "user", so the host-process user is the right grain for
-forensics: "alice ran an MCP-backed agent that did X".
+with `principal.tool: "mcp"`.
+
+**Over stdio**, `principal.user` is the OS user that launched `rela mcp` —
+*not* the LLM caller. The stdio protocol has no notion of "user", so the
+host-process user is the right grain for forensics: "alice ran an
+MCP-backed agent that did X".
+
+**Over HTTP**, `principal.user` is the JWT-verified subject of the request,
+so the record names the actual caller. Asserted roles and org are carried
+too, exactly as for a web-UI write.
 
 Filter for MCP-driven changes:
 

@@ -272,7 +272,6 @@ func (r *PolicyResolver) compileFieldBlock(
 	return errs
 }
 
-// compileOptionBlock validates + compiles an options block.
 func (r *PolicyResolver) compileOptionBlock(
 	roleName, entityType string, grants []acl.OptionGrant, out *[]compiledOptionGrant,
 ) []error {

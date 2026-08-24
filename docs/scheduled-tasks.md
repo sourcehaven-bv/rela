@@ -131,15 +131,24 @@ have.
 
 Notes:
 
+- **`system:` identities cannot be asserted over the API.** The grant above
+  is reachable only by the scheduler process itself. rela reserves the whole
+  `system:` namespace at the HTTP boundary: a proxy header, a
+  `RELA_DATAENTRY_USER` value, or even a validly signed identity assertion
+  naming `system:scheduler` is refused with a 403 and logged, so a wide
+  `read: ["*"]` grant here cannot be borrowed by a web or MCP caller. `run_as`
+  in this file is unaffected — it is operator-authored config, read
+  in-process, and may name any `system:` identity you like.
 - **An identity with no assignment reads nothing.** If `run_as` names a
   principal that `acl.yaml` never assigns a role, the task's reads come back
   empty. A typo produces a silently empty job, so check the identity against
   your assignments when a task stops finding data.
-- **Field-level redaction does not apply to scheduled tasks yet.** Row-level
-  access is enforced (an entity your identity cannot read stays invisible),
-  but `visible:` field policy is *not* applied on this path — a task that may
-  read an entity type receives all of its properties. Do not rely on field
-  policy to hide values from a scheduled script.
+- **Both row- and field-level policy apply.** An entity your identity cannot
+  read stays invisible, and `visible:` field policy redacts hidden property
+  values on the entities it does return — a scheduled task sees the same
+  redacted view a person with that identity sees in the UI. (Field redaction
+  on this path landed in TKT-0XL8MF; before that, row access was enforced but
+  every property of a readable entity came through.)
 - Writes are unaffected: they go through the normal ACL, exactly as before.
 
 ### Schedule Values
@@ -149,7 +158,7 @@ Notes:
 | `day`        | Once per day — runs after local midnight                   |
 | `monday`     | Once per week on Mondays (after midnight local time)       |
 | `friday`     | Once per week on Fridays                                   |
-| `week`       | Alias for `monday`                                         |
+| `week`       | Alias for `monday` — fires on Mondays, not ISO-week change |
 | `30m`        | Every 30 minutes                                           |
 | `2h`         | Every 2 hours                                              |
 | `1h30m`      | Every 90 minutes (any valid Go duration)                   |
@@ -226,7 +235,7 @@ was missed and executes the task immediately before entering the normal schedule
 This applies to all schedule types:
 
 - **Day tasks**: missed if the day changed since the last run
-- **Week tasks**: missed if the ISO week changed since the last run
+- **Weekday tasks**: missed if the target weekday has occurred since the last run
 - **Interval tasks**: missed if more than the interval has elapsed
 
 ### First Run

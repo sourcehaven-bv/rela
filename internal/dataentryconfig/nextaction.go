@@ -136,6 +136,21 @@ type NextActionSource struct {
 	// candidate is the viewed entity.
 	Query string `yaml:"query,omitempty" json:"query,omitempty"`
 
+	// Condition refines the candidates Query selected, as a predicate
+	// expression (e.g. "days_between(entity.due, today()) <= 7"). Optional.
+	//
+	// A SECOND key rather than accepting either dialect in Query: the two
+	// syntaxes overlap without erroring, so a sniffing heuristic would guess,
+	// and guess quietly — filter.Parse turns an expression into a filter on a
+	// property literally named "days_between(entity.due, today())", which
+	// matches nothing, with no error at load and no warning at eval.
+	//
+	// Query selects (filter syntax, pushed toward the store); Condition
+	// refines (predicate syntax, evaluated per candidate). Date arithmetic
+	// lives here because ordered comparison needs the property's declared
+	// type from the metamodel, which the store layer does not consult.
+	Condition string `yaml:"condition,omitempty" json:"condition,omitempty"`
+
 	// Count makes this an entity-LESS source: it fires on a whole-graph
 	// aggregate rather than about any particular entity. The only supported
 	// form today is "<entity_type> == 0" — the first-run case ("nothing here

@@ -55,6 +55,42 @@ The `rela acl audit` linter (below) flags an un-gated membership
 relation — default or configured — as a high-severity finding, so run
 it after editing `acl.yaml`.
 
+You do not have to remember to run it, though: whenever rela loads a
+policy whose `assignments` confer a **privileged** role while the
+membership relation is un-gated — at server startup, and equally when a
+CLI command builds the full service bundle — it logs a prominent
+warning naming the relation and the fix. (Surfaces that inject their
+own ACL instead of loading the policy, such as the server's read-only
+mode, do not evaluate it and stay silent.) The server still boots — the
+gap is pre-existing, and in a single-team deployment where everyone who
+can write to the project is already trusted, it may be an acceptable
+risk you have consciously taken. The warning exists so it is a choice
+rather than an oversight.
+
+A group assigned a **read-only** role does not trigger the warning (or
+the audit finding): granting yourself read access to something you were
+going to be shown anyway is a visibility decision, not an escalation
+path. Both the warning and the linter evaluate the same predicate, so
+they never disagree.
+
+### This becomes a hard requirement with content states
+
+The tolerance above holds only while the worst case is over-granting
+inside a trusted group. It stops holding the moment the same policy
+also grants read on a **non-default world** — the content-states
+feature, where an entity has separate draft/review/published faces.
+There, an un-gated membership relation is no longer just a
+role-management weakness: it is a working mechanism for reading
+unpublished content, because self-assigning a role that can read the
+draft world is one relation write away.
+
+When world-shaped read grants ship, a policy that combines them with an
+un-gated membership relation will be **refused at load** with an error
+naming the fix, rather than booting with a warning. Deployments that do
+not use worlds are unaffected and keep today's behaviour. Gating the
+membership relation now costs one `requires_permission` line and means
+that change is a no-op for you.
+
 The companion section in `docs/server-security.md` carries the same
 guidance with more context on the broader threat model.
 
@@ -141,33 +177,30 @@ Two layers keep that from happening:
    grants only what the raw string is assigned — it never silently picks
    one of the duplicates.
 
-**Enforcement rigor by backend.** The write-time uniqueness check is
-exact on the single-writer backends (fsstore, memstore). On PostgreSQL,
-concurrent writers leave a narrow time-of-check/time-of-use window
-between the check and the durable write. Operators who need race-free
-enforcement add a partial unique index — which is also the recommended
-performance index for the lookup itself:
+**Enforcement rigor by backend.** The application-level uniqueness check
+reads the existing entities of the type and then writes — two separate
+operations with no lock held across them. On the single-writer backends
+(fsstore, memstore) that is race-free enough. Under concurrent writers,
+though, two racing writes with the same value could both pass the check
+and both commit, leaving a duplicate.
 
-```sql
-CREATE UNIQUE INDEX persoon_email_unique_idx
-  ON entities ((properties->>'email'))
-  WHERE type = 'persoon';
-```
+On **PostgreSQL** this window is closed automatically: rela maintains a
+partial unique index for every `unique: true` property (see
+[Derived schema](postgres-backend.md#derived-schema-unique-constraints)
+in the PostgreSQL backend guide), so a colliding write fails atomically in
+the database and surfaces as the same conflict the write path already
+reports. You do not add this index by hand — rela creates and maintains it
+from the metamodel. (If existing rows already contain duplicate values when
+you add `unique: true`, the index cannot be built; rela warns and leaves it
+unenforced until you clean up the duplicates — run `rela db reconcile
+--dry-run` to see what is blocking it.)
 
-With the index in place a colliding write fails atomically in the
-database and surfaces as the same conflict the write path already
-reports.
-
-**The write-time check is not atomic.** It reads the existing entities
-of the type, then writes — two separate operations with no lock held
-across them. Under concurrent writers (the data-entry server runs one
-goroutine per request) two racing writes with the same value can both
-pass the check and both commit, on *any* backend, not just PostgreSQL.
-The window is small, and the resolver's multi-match fallback (keep-raw,
-above) is the runtime backstop for the identity-key case — but the only
-*race-free* enforcement is the store-level unique index. If you rely on
-uniqueness for correctness rather than as a data-quality guard, add the
-index.
+This matters most for `unmatched_principal: provision`
+([below](#unknown-verified-identities-unmatched_principal)), which creates a
+stub user keyed on `principal_property`: the database index is what
+guarantees two servers provisioning the same subject at once produce exactly
+one user rather than a permanently ambiguous pair. On fsstore/memstore, which
+have no such index, keep provisioning to a single writer.
 
 **Two operator notes for `principal_property`:**
 
@@ -247,6 +280,16 @@ Load-bearing details:
   migration runs on first store open) or add the grant by hand. A
   `provision` policy **without** that grant is a **load error**, so a
   misconfiguration fails at startup, not at the first unmatched request.
+- **`system:` identities cannot be asserted from a request.** Both
+  `system:provisioner` and `system:scheduler` are grantable assignment
+  keys, and the ACL matches a principal by raw username with no notion of
+  where it came from. The boundary check lives at the API instead: a
+  `system:`-prefixed username arriving via `--principal-header`,
+  `$RELA_DATAENTRY_USER`, or a *validly signed* JWT `sub` is refused and
+  logged, so neither grant can be borrowed by a web or MCP caller. See
+  "Reserved `system:` identities" in [GUIDE-server-security]. This is also
+  why a forged subject can never be provisioned into a stub's
+  `principal_property`.
 - **The provisioned stub is bare — identity, not authority.** The
   `system:provisioner` role is `create`-only on the user type and nothing
   else, so provisioning gives the principal a graph *identity* but **no
@@ -508,7 +551,7 @@ deny models:
 
 - **Per-entity responses** (TKT-VQGN): deny is shaped exactly like
   not-found — a 404 indistinguishable from a nonexistent id.
-- **Aggregates** (TKT-VMD8): lists, sidebar counts, and pagination
+- **Aggregates** (TKT-VMD8): lists and pagination
   metadata are shaped exactly like "the hidden entities don't exist" —
   filtered sets, filtered totals, no cardinality residue.
 
@@ -551,7 +594,7 @@ operator debugging.
   surfaces (e.g. nested includes in a list response) MUST go through
   the same gate.
 
-### Lists, sidebar counts, pagination (TKT-VMD8)
+### Lists and pagination (TKT-VMD8)
 
 Anything that enumerates entities of a type returns only the visible
 subset, with no leak surface revealing hidden cardinality. The list
@@ -573,14 +616,6 @@ Every pagination surface derives from the post-filter total:
 `X-Page`, `X-Per-Page`, and the `Link` header rels — `rel="next"` is
 absent when no *visible* next page exists, even when hidden pages
 exist after it.
-
-Sidebar counts go through the same gate, single-mode: there is no
-"ACL off" code branch (a count path that only runs under ACL is a
-count path that silently drifts). `listCount` / `kanbanCount` always
-resolve the read scope, then `GraphCount` (no config filters) or
-GraphQuery-then-filter (with config filters). Ordering is always
-ACL → config filter → count, so a sidebar badge can never disagree
-with the list it links to.
 
 ### Invariants downstream maintainers MUST preserve (aggregates)
 
@@ -680,7 +715,7 @@ The sidebar's *structure* (groups, labels, links) reveals metamodel
 shape, not data shape. It is served identically to every principal
 **except** for entries an operator explicitly marks with a
 `permission:` (see GUIDE-data-entry, "Hiding entries a user cannot act
-on"); the *counts* are gated per principal as always.
+on"). The sidebar carries no per-principal data of its own.
 
 That exception is a **UX convenience and is not a confidentiality
 control** — the distinction matters, because the reasoning that once
@@ -730,14 +765,6 @@ measure. Hiding entries a user cannot act on is still wanted as a
 **UX** improvement and is tracked separately; if that lands, the
 filter is an affordance — the endpoints keep enforcing independently,
 and a hidden entry stays reachable by direct URL.
-
-### Sidebar config-filter performance caveat
-
-A sidebar list with `filters:` evaluates them in-memory after the ACL
-GraphQuery — cost scales with the principal's visible-set size. For
-visible sets beyond ~10k entities per type, prefer narrowing the nav
-entry to a dedicated entity type, or file the follow-up that pushes
-config filters down into GraphQuery.
 
 ## ACL fail-loud and middleware scope
 
@@ -906,7 +933,7 @@ its meta unchanged (permissive default).
   out of scope (RR-ATFNM1).
 
 For threat-modelling purposes today: per-entity GET, write, include,
-list, sidebar, pagination, global-search, the SSE event stream, and the
+list, pagination, global-search, the SSE event stream, and the
 machine-to-machine sync channel are all read-gated (the SSE feed per-type,
 see above); `visible:` property/meta redaction applies to every data-entry
 HTTP read body — and **sync inherits it by reading through `/api/v1`**

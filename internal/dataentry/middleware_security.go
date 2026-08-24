@@ -261,6 +261,24 @@ var nonBrowserExemptPrefixes = []string{
 	// would fail the same-origin check. Authentication is unaffected — the
 	// JWT gate still applies, and the ACL still scopes every read.
 	"/api/v1/_caldav/",
+	// Remote MCP (TKT-BDG8U9). An MCP client is a non-browser HTTP client —
+	// no Cookie, no Origin, no Sec-Fetch-* — so isCSRFExempt's
+	// provably-non-browser test still gates the exemption, and a browser
+	// fetch() of the MCP endpoint is still same-origin checked.
+	//
+	// **This exemption is only sound because the endpoint requires verified
+	// JWT identity.** [App.SetRemoteMCP] refuses to enable MCP without a JWT
+	// gate for exactly this reason: in header-identity mode the terminal
+	// resolver yields `User: "unknown"` and nothing would authenticate the
+	// caller, so exempting the path would publish an unauthenticated remote
+	// write surface. Unlike the entries above — which ride an already-required
+	// gate — this one CREATES the requirement it depends on. If that refusal
+	// is ever relaxed, this exemption must be removed with it.
+	//
+	// Note the trailing slash is absent: the endpoint is the exact path
+	// MCPPath, not a subtree. isCSRFExempt uses HasPrefix, so this also
+	// covers any future `/api/v1/_mcp/...` sub-route.
+	MCPPath,
 	// NOTE: the sync CLI's /api/v1 data + schema routes are also non-browser
 	// exempt, but they can't be a static prefix ({plural} varies per type), so
 	// they're matched by isSyncExemptV1Path (folded into isCSRFExempt) rather

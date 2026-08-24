@@ -3,8 +3,13 @@ name: CI
 on:
   push:
     branches: [main, develop]
+  # No `branches:` filter on pull_request, deliberately. The filter matches the
+  # TARGET branch, so a stacked PR (one opened against another feature branch
+  # rather than develop) matched nothing and ran ZERO checks — while the PR page
+  # showed no failures, which reads identically to "everything passed". A
+  # security-relevant endpoint was reviewed that way before this was caught.
+  # Every PR gets CI regardless of what it targets.
   pull_request:
-    branches: [main, develop]
   # Required for the merge queue: entries are tested on an ephemeral
   # `gh-readonly-queue/...` ref, and a required check that never runs there
   # leaves the entry queued forever. Every check listed as required on
@@ -161,6 +166,42 @@ jobs:
 
       - name: Check type load lines
         run: plimsoll ./...
+
+  comment-lint:
+    name: Comment lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.6'
+
+      - name: Install commentlint
+        # Keep in sync with commentlint_version in the justfile.
+        run: go install github.com/sourcehaven-bv/commentlint@v0.2.1
+
+      # Gate: clean today, so a regression fails the build. Rules are promoted
+      # here from the advisory step once their backlog reaches zero.
+      - name: Check comments (gate)
+        run: commentlint -rules commented-code ./internal ./cmd
+
+      # Advisory: real findings with a backlog being worked down. Visible in
+      # the log, never red — see .commentlint.yml for why each rule is here.
+      #
+      # One invocation PER RULE, deliberately: the cross-comment rules
+      # (duplication, nil-contract, doclink, param-contract) each have their
+      # own output shape and replace the per-comment output rather than adding
+      # to it, so a single run would silently report only one of them.
+      - name: Comment report (advisory)
+        continue-on-error: true
+        run: |
+          for rule in restatement param-contract doclink nil-contract duplication; do
+            echo "::group::commentlint $rule"
+            commentlint -rules "$rule" -rank -top 30 ./internal ./cmd || true
+            echo "::endgroup::"
+          done
 
   lint-markdown:
     name: Lint Markdown
@@ -488,6 +529,56 @@ jobs:
             exit 1
           fi
           echo "OK: pgstore suite ran against PostgreSQL with no skips."
+
+      # The step above covers the STORE under -tags postgres. Nothing covered
+      # the WIRING: `internal/appbuild` and `internal/cli` were compiled with
+      # the tag but never run with it, so every build-agnostic composition-root
+      # test in them (Services fully populated, Close idempotent, acl.yaml
+      # loaded, corrupt CalDAV cache non-fatal) silently regressed on the
+      # postgres build and stayed invisible until someone ran the tagged suite
+      # by hand.
+      #
+      # These are not backend tests — they assert wiring that must hold on
+      # every backend — so they run against the same database rather than
+      # being excluded. backendtest gives each one a private migrated schema.
+      #
+      # Skips are tolerated here, unlike the pgstore step: a few cases
+      # deliberately assert boot failures that occur before any store opens and
+      # legitimately need no database. RELA_TEST_DATABASE_REQUIRED (job env)
+      # still turns a MISSING DSN into a hard failure, which is the regression
+      # that actually matters.
+      #
+      # internal/cli and internal/dataentry are scoped with -run rather than run
+      # whole. Both hold tests that shell out through internal/cmdexec, which
+      # fails closed without a working sandbox — and bubblewrap cannot set up its
+      # loopback device on this job's runner ("RTM_NEWADDR: Operation not
+      # permitted"), even with the package installed, unlike the `test` job.
+      # Those tests are backend-independent and already covered there; running
+      # them here would gate the postgres wiring on an unrelated sandbox
+      # capability. The `test` job remains the owner of full-package coverage.
+      #
+      # THE LIST BELOW MUST COVER EVERY PACKAGE WITH A postgres-TAGGED FILE.
+      # That is the rule this step exists to enforce: the original defect
+      # (BUG-3KQW7P) was tag coverage scoped to the package that motivated the
+      # tag (the store) rather than to everything the tag changes, so tagged code
+      # elsewhere compiled on every PR and never ran. Find the current set with:
+      #
+      #   grep -rl '^//go:build postgres' --include='*.go' internal/ cmd/ \
+      #     | xargs -n1 dirname | sort -u
+      #
+      # internal/dataentry earns its place: store_bridge_postgres_test.go holds
+      # TestStoreEventBridgeCrossProcessSSE, the ONLY end-to-end proof that a
+      # write in one process reaches another's SSE feed over LISTEN/NOTIFY —
+      # TKT-WZYWM9's headline feature, and the path TKT-9TOEBH changed the wire
+      # format of. Verified non-vacuous: with remote emission disabled it fails.
+      - name: Run composition-root wiring tests against PostgreSQL
+        run: |
+          set -euo pipefail
+          go test -race -tags postgres ./internal/appbuild/...
+          go test -race -tags postgres -run 'TestNewMCPServices|TestMCPServices|TestMCPWatcher' \
+            ./internal/cli/
+          go test -race -tags postgres -run 'TestStoreEventBridge' ./internal/dataentry/
+          go test -race -tags postgres ./internal/docscli/
 
   # Cross-compile every (GOOS, build-tag) combination GoReleaser ships so a
   # platform-specific compile break (e.g. a unix-only syscall used without a

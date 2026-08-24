@@ -328,144 +328,150 @@ func (s *Service) FindGaps(ctx context.Context, opts Options) []GapResult {
 
 // --- Cardinality analysis ---
 
+// cardinalitySpec is one direction of a relation's cardinality
+// constraints: the subject population (which entity types are checked),
+// the count direction, the min/max bounds with their constraint labels,
+// and the relation label reported on violations (the inverse id for the
+// incoming side, when declared).
+//
+// This is the single seam world-awareness (TKT-9KZGJO) will thread
+// through: subject population, counting scope, and violation identity
+// each have exactly one home — the spec, [Service.countRelations], and
+// the two emit passes in [Service.checkCardinality] (TKT-RNBLAC).
+type cardinalitySpec struct {
+	relName       string // metamodel relation name — the count query key
+	direction     store.Direction
+	subjectTypes  []string // relDef.From (outgoing) / relDef.To (incoming)
+	minBound      *int     // nil or 0 disables the min check
+	maxBound      *int     // nil disables the max check; 0 forbids any edge
+	minConstraint string
+	maxConstraint string
+	relationLabel string // violation display label; inverse id on the incoming side
+}
+
 // CheckCardinality checks all cardinality constraints, filtered by
 // scope.
-func (s *Service) CheckCardinality(ctx context.Context, opts Options) []CardinalityViolation {
-	violations := make([]CardinalityViolation, 0) //nolint:prealloc // capacity unknown
+//
+// A store error fails the run loudly: the first failing count aborts
+// with a wrapped error and NO violations. Reporting around a failed
+// count would fabricate violations — a backend outage reads as count 0,
+// which for a min bound looks exactly like missing relations
+// (TKT-RNBLAC). This deliberately diverges from the under-count logging
+// of the other analyses (see [Service.FindOrphansWithScope]): those can
+// only miss findings, a failed count invents them.
+func (s *Service) CheckCardinality(ctx context.Context, opts Options) ([]CardinalityViolation, error) {
+	// Non-nil even when empty: JSON callers serialize Details as [], not null.
+	violations := make([]CardinalityViolation, 0)
 
 	for relName, relDef := range s.deps.Meta.Relations {
-		violations = append(violations, s.checkMinOutgoing(ctx, relName, relDef, opts.Scope)...)
-		violations = append(violations, s.checkMaxOutgoing(ctx, relName, relDef, opts.Scope)...)
-		violations = append(violations, s.checkMinIncoming(ctx, relName, relDef, opts.Scope)...)
-		violations = append(violations, s.checkMaxIncoming(ctx, relName, relDef, opts.Scope)...)
+		incomingLabel := relName
+		if relDef.Inverse != nil && relDef.Inverse.GetID() != "" {
+			incomingLabel = relDef.Inverse.GetID()
+		}
+		specs := [2]cardinalitySpec{
+			{
+				relName: relName, direction: store.DirectionOutgoing, subjectTypes: relDef.From,
+				minBound: relDef.MinOutgoing, maxBound: relDef.MaxOutgoing,
+				minConstraint: "min_outgoing", maxConstraint: "max_outgoing",
+				relationLabel: relName,
+			},
+			{
+				relName: relName, direction: store.DirectionIncoming, subjectTypes: relDef.To,
+				minBound: relDef.MinIncoming, maxBound: relDef.MaxIncoming,
+				minConstraint: "min_incoming", maxConstraint: "max_incoming",
+				relationLabel: incomingLabel,
+			},
+		}
+		for _, spec := range specs {
+			v, err := s.checkCardinality(ctx, spec, opts.Scope)
+			if err != nil {
+				return nil, err
+			}
+			violations = append(violations, v...)
+		}
 	}
-	return violations
+	return violations, nil
 }
 
-func (s *Service) checkMinOutgoing(
-	ctx context.Context, relName string, relDef metamodel.RelationDef, scope map[string]bool,
-) []CardinalityViolation {
-	if relDef.MinOutgoing == nil || *relDef.MinOutgoing == 0 {
-		return nil
+// checkCardinality evaluates one direction of one relation. Each
+// subject is scanned and counted once; min violations are then emitted
+// before max violations (two passes over the cached counts) so the
+// output order matches the historical per-constraint grouping.
+func (s *Service) checkCardinality(
+	ctx context.Context, spec cardinalitySpec, scope map[string]bool,
+) ([]CardinalityViolation, error) {
+	minActive := spec.minBound != nil && *spec.minBound > 0
+	maxActive := spec.maxBound != nil
+	if !minActive && !maxActive {
+		return nil, nil
 	}
-	var violations []CardinalityViolation
-	for _, sourceType := range relDef.From {
-		entities := collectEntities(ctx, s.deps.Store, store.EntityQuery{Type: sourceType})
+	dirWord := "outgoing"
+	if spec.direction == store.DirectionIncoming {
+		dirWord = "incoming"
+	}
+
+	// Buffering every (subject, count) before emitting is deliberate: the
+	// two emit passes below reproduce the historical min-then-max grouped
+	// ordering. Collapsing this into a single count-and-emit pass would
+	// interleave min and max violations and reorder the output the
+	// pinning tests guard.
+	type subject struct {
+		id    string
+		count int
+	}
+	var subjects []subject
+	for _, subjectType := range spec.subjectTypes {
+		entities := collectEntities(ctx, s.deps.Store, store.EntityQuery{Type: subjectType})
 		for _, e := range filterByScope(entities, scope) {
-			count := s.countOutgoingByType(ctx, e.ID, relName)
-			if count < *relDef.MinOutgoing {
+			count, err := s.countRelations(ctx, e.ID, spec.relName, spec.direction)
+			if err != nil {
+				return nil, fmt.Errorf("analysis: count %s %q relations of %s: %w", dirWord, spec.relName, e.ID, err)
+			}
+			subjects = append(subjects, subject{id: e.ID, count: count})
+		}
+	}
+
+	var violations []CardinalityViolation
+	if minActive {
+		for _, sub := range subjects {
+			if sub.count < *spec.minBound {
 				violations = append(violations, CardinalityViolation{
-					EntityID:     e.ID,
-					RelationType: relName,
-					Constraint:   "min_outgoing",
-					Required:     *relDef.MinOutgoing,
-					Actual:       count,
+					EntityID:     sub.id,
+					RelationType: spec.relationLabel,
+					Constraint:   spec.minConstraint,
+					Required:     *spec.minBound,
+					Actual:       sub.count,
 				})
 			}
 		}
 	}
-	return violations
-}
-
-func (s *Service) checkMaxOutgoing(
-	ctx context.Context, relName string, relDef metamodel.RelationDef, scope map[string]bool,
-) []CardinalityViolation {
-	if relDef.MaxOutgoing == nil {
-		return nil
-	}
-	var violations []CardinalityViolation
-	for _, sourceType := range relDef.From {
-		entities := collectEntities(ctx, s.deps.Store, store.EntityQuery{Type: sourceType})
-		for _, e := range filterByScope(entities, scope) {
-			count := s.countOutgoingByType(ctx, e.ID, relName)
-			if count > *relDef.MaxOutgoing {
+	if maxActive {
+		for _, sub := range subjects {
+			if sub.count > *spec.maxBound {
 				violations = append(violations, CardinalityViolation{
-					EntityID:     e.ID,
-					RelationType: relName,
-					Constraint:   "max_outgoing",
-					Required:     *relDef.MaxOutgoing,
-					Actual:       count,
+					EntityID:     sub.id,
+					RelationType: spec.relationLabel,
+					Constraint:   spec.maxConstraint,
+					Required:     *spec.maxBound,
+					Actual:       sub.count,
 				})
 			}
 		}
 	}
-	return violations
+	return violations, nil
 }
 
-func (s *Service) checkMinIncoming(
-	ctx context.Context, relName string, relDef metamodel.RelationDef, scope map[string]bool,
-) []CardinalityViolation {
-	if relDef.MinIncoming == nil || *relDef.MinIncoming == 0 {
-		return nil
-	}
-	var violations []CardinalityViolation
-	for _, targetType := range relDef.To {
-		entities := collectEntities(ctx, s.deps.Store, store.EntityQuery{Type: targetType})
-		for _, e := range filterByScope(entities, scope) {
-			count := s.countIncomingByType(ctx, e.ID, relName)
-			if count < *relDef.MinIncoming {
-				relLabel := relName
-				if relDef.Inverse != nil && relDef.Inverse.GetID() != "" {
-					relLabel = relDef.Inverse.GetID()
-				}
-				violations = append(violations, CardinalityViolation{
-					EntityID:     e.ID,
-					RelationType: relLabel,
-					Constraint:   "min_incoming",
-					Required:     *relDef.MinIncoming,
-					Actual:       count,
-				})
-			}
-		}
-	}
-	return violations
-}
-
-func (s *Service) checkMaxIncoming(
-	ctx context.Context, relName string, relDef metamodel.RelationDef, scope map[string]bool,
-) []CardinalityViolation {
-	if relDef.MaxIncoming == nil {
-		return nil
-	}
-	var violations []CardinalityViolation
-	for _, targetType := range relDef.To {
-		entities := collectEntities(ctx, s.deps.Store, store.EntityQuery{Type: targetType})
-		for _, e := range filterByScope(entities, scope) {
-			count := s.countIncomingByType(ctx, e.ID, relName)
-			if count > *relDef.MaxIncoming {
-				relLabel := relName
-				if relDef.Inverse != nil && relDef.Inverse.GetID() != "" {
-					relLabel = relDef.Inverse.GetID()
-				}
-				violations = append(violations, CardinalityViolation{
-					EntityID:     e.ID,
-					RelationType: relLabel,
-					Constraint:   "max_incoming",
-					Required:     *relDef.MaxIncoming,
-					Actual:       count,
-				})
-			}
-		}
-	}
-	return violations
-}
-
-func (s *Service) countOutgoingByType(ctx context.Context, entityID, relName string) int {
-	n, _ := s.deps.Store.CountRelations(ctx, store.RelationQuery{
+// countRelations counts an entity's relations of one type in one
+// direction. Errors propagate — see the [Service.CheckCardinality]
+// error policy.
+func (s *Service) countRelations(
+	ctx context.Context, entityID, relName string, direction store.Direction,
+) (int, error) {
+	return s.deps.Store.CountRelations(ctx, store.RelationQuery{
 		EntityID:  entityID,
-		Direction: store.DirectionOutgoing,
+		Direction: direction,
 		Type:      relName,
 	})
-	return n
-}
-
-func (s *Service) countIncomingByType(ctx context.Context, entityID, relName string) int {
-	n, _ := s.deps.Store.CountRelations(ctx, store.RelationQuery{
-		EntityID:  entityID,
-		Direction: store.DirectionIncoming,
-		Type:      relName,
-	})
-	return n
 }
 
 // --- Custom validations ---
@@ -529,14 +535,20 @@ func CountValidationsBySeverity(violations []ValidationViolation) (errors, warni
 
 // --- Summary ---
 
-// AnalyzeAll runs all analyses and returns a summary of counts.
-func (s *Service) AnalyzeAll(ctx context.Context, opts Options) *Summary {
+// AnalyzeAll runs all analyses and returns a summary of counts. A
+// cardinality store error fails the whole run — see the
+// [Service.CheckCardinality] error policy.
+func (s *Service) AnalyzeAll(ctx context.Context, opts Options) (*Summary, error) {
+	cardinality, err := s.CheckCardinality(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
 	summary := &Summary{
 		Orphans:          len(s.FindOrphansWithScope(ctx, opts)),
 		Duplicates:       len(s.FindDuplicates(ctx, opts)),
 		UniqueViolations: len(s.FindUniqueViolations(ctx, opts)),
 		Gaps:             len(s.FindGaps(ctx, opts)),
-		Cardinality:      len(s.CheckCardinality(ctx, opts)),
+		Cardinality:      len(cardinality),
 	}
 
 	for _, pe := range schema.ValidateEntityProperties(ctx, s.deps.Store, s.deps.Meta) {
@@ -551,7 +563,7 @@ func (s *Service) AnalyzeAll(ctx context.Context, opts Options) *Summary {
 	summary.ValidationScriptErrors = len(result.ScriptErrors)
 	summary.ValidationLoadErrors = len(result.LoadErrors)
 
-	return summary
+	return summary, nil
 }
 
 // --- Orphan temp files ---

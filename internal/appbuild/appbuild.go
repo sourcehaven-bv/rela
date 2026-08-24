@@ -31,6 +31,7 @@ import (
 	"sync"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
@@ -44,6 +45,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/state"
+	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
@@ -115,6 +117,20 @@ type Services struct {
 	aclDeclarative *acl.Declarative
 	aclPolicy      *acl.Policy
 	audit          audit.Audit
+	// gcStop terminates this store's data-migration GC sweep goroutine
+	// (TKT-0C57FS). Per-assembled, torn down in Close like searchCloser.
+	gcStop func()
+	// fieldRedactor applies field-level `visible:` policy to the unattended
+	// and identity-bearing read paths (TKT-425426). Never nil after
+	// construction: [visibility.NopRedactor] when no policy declares
+	// affordance grants, so the no-policy path stays byte-identical.
+	//
+	// It is a FIELD, not an accessor, on purpose. Services sits at its
+	// plimsoll max-exported-methods ceiling, and the underlying resolver
+	// must be fully built before it is shared — [affordances.PolicyResolver.WithMachines]
+	// is the one mutator on an otherwise-immutable value and is safe only
+	// during single-threaded wiring. Constructing here, once, preserves that.
+	fieldRedactor visibility.FieldRedactor
 
 	closeOnce sync.Once
 	closeErr  error
@@ -405,17 +421,12 @@ func (s *Services) luaWriteDepsFor(redactor visibility.FieldRedactor) lua.WriteD
 // privileges coming from acl.yaml — a job sees what its identity may see,
 // nothing more (DEC-O59WM4).
 //
-// KNOWN LIMITATION (RR-7408F5): appbuild has no affordance resolver, so
-// scheduled jobs get ROW gating only — **field-level `visible:` redaction
-// does NOT apply here**. A job whose identity may read `person` receives
-// every property of it, including ones a human with the same role would
-// have redacted in the UI. Row gating still bounds WHICH entities reach a
-// prompt, which is the larger half, but do not assume field policy is
-// enforced on this path. Documented for operators in
-// docs/scheduled-tasks.md next to `run_as`; closing it means wiring an
-// affordance resolver into appbuild.
+// Field-level `visible:` redaction APPLIES here (TKT-0XL8MF): a job whose
+// identity may read `person` receives that entity with the same properties
+// redacted as a human with the same role sees in the UI. This closed
+// RR-7408F5, which documented the earlier row-gating-only behavior.
 func (s *Services) ScheduledLuaWriteDeps() lua.WriteDeps {
-	return s.luaWriteDepsFor(nil)
+	return s.luaWriteDepsFor(s.fieldRedactor)
 }
 
 // GatedReads returns the read handles bound to whatever principal is on the
@@ -440,13 +451,21 @@ func (s *Services) ScheduledLuaWriteDeps() lua.WriteDeps {
 // visibility.DenyReader / DenyTracer rather than degrading to raw reads
 // (RR-GKCZO5).
 //
-// KNOWN LIMITATION, same as [Services.ScheduledLuaWriteDeps]: appbuild has no
-// affordance resolver, so this is ROW gating only — field-level `visible:`
-// redaction does NOT apply. Row gating bounds WHICH entities are reachable,
-// which is the larger half; do not assume field policy is enforced here.
+// Gating is BOTH row-level and field-level (TKT-425426): the reader prunes
+// entities the principal may not see, and redacts `visible:`-hidden ENTITY
+// PROPERTY values on the ones it returns. The validator is built over that same
+// reader, so a violation message cannot quote a value the requester cannot read
+// (the field-level half of TKT-3FL2S6).
+//
+// SCOPE: field redaction covers entity properties only. Relation meta is NOT
+// redacted here — [gatedGraphReader.GetRelation] reads raw, and relation-level
+// `visible:` grants (acl.RelationGrant.Visible, honored on the dataentry wire
+// via affordances.RelationFieldVerdicts) are not consulted. Relations are gated
+// at the ROW level on both endpoints; their properties are not. Do not read the
+// paragraph above as covering them.
 func (s *Services) GatedReads() GatedReadBundle {
-	reader := scriptEntityReader(s.store, s.aclDeclarative, nil)
-	tr := scriptTracer(s.tracer, s.store, s.aclDeclarative, nil)
+	reader := scriptEntityReader(s.store, s.aclDeclarative, s.fieldRedactor)
+	tr := scriptTracer(s.tracer, s.store, s.aclDeclarative, s.fieldRedactor)
 
 	deps := s.LuaReadDeps()
 	deps.VisibleReader = reader
@@ -653,6 +672,10 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 		}
 		visible = v
 	}
+	fieldRedactor, err := buildFieldRedactor(c.Meta, c.Store, c.Declarative)
+	if err != nil {
+		return nil, fmt.Errorf("appbuild.NewFromCollaborators: %w", err)
+	}
 	return &Services{
 		fs:              c.FS,
 		paths:           c.Paths,
@@ -673,7 +696,59 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 		aclDeclarative:  c.Declarative,
 		aclPolicy:       aclPolicy,
 		audit:           c.Audit,
+		fieldRedactor:   fieldRedactor,
 	}, nil
+}
+
+// buildFieldRedactor constructs the field-level `visible:` redactor shared by
+// every appbuild-wired read path (TKT-0XL8MF). Before this existed, appbuild
+// could not build an affordance resolver at all, so the unattended and
+// identity-bearing paths were ROW-gated only and every property of a readable
+// entity came through — including ones a human with the same role sees
+// redacted in the UI.
+//
+// Returns [visibility.NopRedactor] (hide nothing) when no policy is wired or
+// the policy declares no affordance grants. Those are ordinary configurations
+// — NopACL, or an acl.yaml with only row rules — not failures, and the
+// no-policy path must stay byte-identical to pre-ACL behavior.
+//
+// A policy that DOES declare grants but fails to compile is an error, not a
+// fallback: it is returned to the caller, which aborts construction. Degrading
+// to NopRedactor there would silently serve unredacted properties to an
+// operator who had asked for redaction — the fail-open this whole path exists
+// to prevent (RR-GKCZO5).
+//
+// The resolver is built to completion here — including WithMachines — before
+// it escapes into a redactor, which is what keeps its documented
+// "safe for concurrent use after construction" guarantee true.
+func buildFieldRedactor(
+	meta *metamodel.Metamodel, st store.Store, d *acl.Declarative,
+) (visibility.FieldRedactor, error) {
+	if d == nil {
+		return visibility.NopRedactor{}, nil
+	}
+	// Read the policy through Declarative, never a second channel — the two
+	// must not drift (RR-WTLD).
+	policy := d.Policy()
+	if policy == nil || !policy.HasAffordanceGrants() {
+		return visibility.NopRedactor{}, nil
+	}
+
+	resolver, err := affordances.New(meta, storeRelationLookup{st: st}, d)
+	if err != nil {
+		return nil, fmt.Errorf("appbuild: compiling acl.yaml affordance predicates: %w", err)
+	}
+	machines, err := statemachine.Compile(meta)
+	if err != nil {
+		return nil, fmt.Errorf("appbuild: compiling state machines: %w", err)
+	}
+	resolver.WithMachines(machines)
+
+	redactor, err := visibility.NewPolicyRedactor(resolver)
+	if err != nil {
+		return nil, fmt.Errorf("appbuild: build field redactor: %w", err)
+	}
+	return redactor, nil
 }
 
 // buildAutomation wires the automation engine + cascade runner from
@@ -683,7 +758,10 @@ func buildAutomation(meta *metamodel.Metamodel) (*automation.Engine, *autocascad
 	if len(meta.Automations) == 0 {
 		return nil, nil, nil
 	}
-	autoEngine := automation.NewEngineFromMetamodel(meta, meta.Automations)
+	autoEngine, err := automation.NewEngineFromMetamodel(meta, meta.Automations)
+	if err != nil {
+		return nil, nil, fmt.Errorf("build automation engine: %w", err)
+	}
 	cascadeRunner, err := autocascade.New(autocascade.Deps{Engine: autoEngine})
 	if err != nil {
 		return nil, nil, fmt.Errorf("build autocascade runner: %w", err)
@@ -854,6 +932,7 @@ func buildACL(policy *acl.Policy, meta *metamodel.Metamodel, st store.Store) (ac
 	if err := policy.ValidateAgainstMetamodel(metamodelView{meta}); err != nil {
 		return nil, nil, fmt.Errorf("appbuild: validate acl policy against metamodel: %w", err)
 	}
+	warnUngatedMembership(policy)
 	// `st` is passed twice: once via NewStoreGraph (the Graph
 	// adapter the resolver uses for member-of / ancestor walks), and
 	// once as the GraphQueryer (executes store.MatchingIDs for
@@ -872,6 +951,37 @@ func buildACL(policy *acl.Policy, meta *metamodel.Metamodel, st store.Store) (ac
 		return nil, nil, fmt.Errorf("appbuild: build acl.Declarative: %w", err)
 	}
 	return d, d, nil
+}
+
+// warnUngatedMembership logs a prominent startup warning when the loaded
+// policy leaves the membership-relation self-promotion path open: a group
+// named in `assignments:` confers a privileged role, but writes to the
+// membership relation carry no `requires_permission` gate, so anyone who can
+// write that edge can grant themselves the role (RR-7O6Q, TKT-T31NKT).
+//
+// **Warning, not a refusal.** The hole is pre-existing and the shape is a
+// reasonable one inside a trusted team, where the trust boundary is who can
+// write to the project at all. Hard-failing the boot would break those
+// deployments on upgrade for a risk they have already accepted. The refusal
+// is scoped to the case that genuinely changes the stakes — a policy that
+// also grants read on a non-default world, where the same hole becomes a
+// mechanism for leaking unpublished content — and lands with the world grant
+// syntax it needs to be evaluated (TKT-DN37J2).
+//
+// The condition comes from [acl.Policy.MembershipSelfPromotionOpen], the same
+// predicate behind the `rela acl audit` A1-ungated-membership finding, so the
+// boot warning and the linter can never disagree.
+func warnUngatedMembership(policy *acl.Policy) {
+	if !policy.MembershipSelfPromotionOpen() {
+		return
+	}
+	rel := policy.EffectiveMembershipRelation()
+	slog.Warn("appbuild: ACL membership relation is NOT gated — self-promotion is possible; "+
+		"any principal who can write this relation can grant themselves an assigned privileged role",
+		"relation", rel,
+		"fix", fmt.Sprintf("set role_relations.%s.requires_permission and grant that permission only to admins", rel),
+		"docs", "docs/acl-security.md",
+		"audit", "rela acl audit")
 }
 
 // Config carries the inputs every build of [New] needs, plus
@@ -1114,6 +1224,52 @@ func (b *SharedBase) Assemble(
 	return assemble(b, st, searcher, visible, searchCloser)
 }
 
+// resolveACLAndRedactor resolves the ACL and derives the field redactor that
+// depends on it. They are returned together because the redactor is a function
+// of the resolved Declarative: splitting them invites a caller that has one
+// without the other, which is precisely the state that left three read paths
+// ungated (TKT-BUYEW1).
+func resolveACLAndRedactor(
+	base *SharedBase, st store.Store,
+) (acl.ACL, *acl.Declarative, visibility.FieldRedactor, error) {
+	resolvedACL, aclDeclarative, err := resolveACL(base, st)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	fieldRedactor, err := buildFieldRedactor(base.meta, st, aclDeclarative)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return resolvedACL, aclDeclarative, fieldRedactor, nil
+}
+
+// cascadeReadDeps builds the static lua.ReadDeps backing automation cascades.
+//
+// Cascade reads are ACL-BOUND to the ACTING USER (DEC-O59WM4, RR-XC0URX): an
+// automation fires in response to someone's write and runs on that person's
+// ctx, so it reads their view — symmetric with its write path, which already
+// gates through entitymanager and needs an explicit allow_acl_bypass to
+// elevate. Escalating reads is deliberately NOT a config default; it is
+// TKT-ACSBSA (an admin-handle extension), so a cascade that needs more must ask
+// for it in the open.
+//
+// Field-level `visible:` redaction applies here too (TKT-BUYEW1) — a Lua action
+// can send what it reads onward exactly as a scheduled job can, so it must not
+// see property values the same principal has redacted everywhere else.
+func cascadeReadDeps(
+	st store.Store, tr tracer.Tracer, searcher search.Searcher,
+	meta *metamodel.Metamodel, projectRoot string,
+	d *acl.Declarative, redactor visibility.FieldRedactor,
+) lua.ReadDeps {
+	return lua.ReadDeps{
+		VisibleReader: scriptEntityReader(st, d, redactor),
+		Tracer:        scriptTracer(tr, st, d, redactor),
+		Searcher:      searcher,
+		Meta:          meta,
+		ProjectRoot:   projectRoot,
+	}
+}
+
 func assemble(
 	base *SharedBase, st store.Store, searcher search.Searcher,
 	visible search.VisibleSearcher, searchCloser io.Closer,
@@ -1128,7 +1284,7 @@ func assemble(
 		visible = v
 	}
 
-	resolvedACL, aclDeclarative, err := resolveACL(base, st)
+	resolvedACL, aclDeclarative, fieldRedactor, err := resolveACLAndRedactor(base, st)
 	if err != nil {
 		return nil, err
 	}
@@ -1144,21 +1300,8 @@ func assemble(
 
 	// Build the static lua read deps once — the ScriptRunner (automation
 	// cascades) is constructed with these.
-	//
-	// Cascade reads are ACL-BOUND to the ACTING USER (DEC-O59WM4,
-	// RR-XC0URX): an automation fires in response to someone's write and
-	// runs on that person's ctx, so it reads their view — symmetric with
-	// its write path, which already gates through entitymanager and needs
-	// an explicit allow_acl_bypass to elevate. Escalating reads is
-	// deliberately NOT a config default; it is TKT-ACSBSA (an admin-handle
-	// extension), so a cascade that needs more must ask for it in the open.
-	readDeps := lua.ReadDeps{
-		VisibleReader: scriptEntityReader(st, aclDeclarative, nil),
-		Tracer:        scriptTracer(tr, st, aclDeclarative, nil),
-		Searcher:      searcher,
-		Meta:          base.meta,
-		ProjectRoot:   cfg.Paths.Root,
-	}
+	readDeps := cascadeReadDeps(st, tr, searcher, base.meta, cfg.Paths.Root,
+		aclDeclarative, fieldRedactor)
 
 	tw, err := CompileTransitions(base.meta, st, resolvedACL)
 	if err != nil {
@@ -1203,7 +1346,21 @@ func assemble(
 	// rename/delete are captured synchronously via the entitymanager hook above.
 	startVersionSweepIfSupported(st, base.meta)
 
+	// Reconcile the derived schema (postgres build only; a no-op elsewhere):
+	// synthesize the metamodel's `unique: true` properties into partial unique
+	// indexes so uniqueness is enforced atomically, and publish the current
+	// unique pairs so a violation can be attributed to a property (TKT-3Q0GP1).
+	// Failures degrade to warnings — a derived-schema problem never fails boot.
+	reconcileDerivedSchemaIfSupported(context.Background(), st, base.meta)
+
+	// Evaluate the data-migration gate (adopt compatible schema-shape
+	// changes, warn on incompatible ones) and start the drift GC sweep
+	// (TKT-0C57FS). Never fails boot; the stop func is torn down in Close —
+	// per-assembled, like the search closer.
+	gcStop := startDataMigration(stateKV, base.meta, st, cfg.Audit, versions, cfg.Paths.CacheDir)
+
 	return &Services{
+		gcStop:          gcStop,
 		fs:              cfg.FS,
 		paths:           cfg.Paths,
 		meta:            base.meta,
@@ -1225,6 +1382,7 @@ func assemble(
 		aclDeclarative:  aclDeclarative,
 		aclPolicy:       base.aclPolicy,
 		audit:           cfg.Audit,
+		fieldRedactor:   fieldRedactor,
 	}, nil
 }
 
@@ -1315,6 +1473,10 @@ func relationVersionRecorderFor(vs store.VersionService) entitymanager.RelationV
 // failures are slog.Warn'd).
 func (s *Services) Close() error {
 	s.closeOnce.Do(func() {
+		if s.gcStop != nil {
+			s.gcStop()
+			s.gcStop = nil
+		}
 		if s.store != nil {
 			if lc, ok := s.store.(store.Lifecycle); ok {
 				if err := lc.Close(); err != nil {

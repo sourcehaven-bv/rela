@@ -4,7 +4,16 @@ type: review-response
 title: 'verifiedPrincipal hardcodes ToolDataEntry, so AC #4 (audit Tool == mcp) fails and the obvious fix silently drops roles'
 finding: 'router.go:576-578 returns principal.Verified(user, principal.ToolDataEntry, ...) with the tool hardcoded, so a remote MCP request is stamped Tool=data-entry. AC #4 requires Tool==mcp. Constructing a principal.Principal literal with Tool: ToolMCP instead would drop orgID/orgSlug/roles, since Verified is the only constructor that populates those unexported fields — the forbidden forge-proof-bypass path.'
 severity: significant
-status: open
+status: addressed
+resolution: >-
+  Fixed in TKT-BDG8U9. verifiedPrincipal now takes the audit tool as a
+  parameter (router.go), derived from the request path by toolForPath, so a
+  request on /api/v1/_mcp is stamped Tool=mcp while still going through
+  VerifiedFrom — the asserted org/roles/scopes are preserved rather than
+  dropped. Pinned by TestRemoteMCP_AuditAttributionIsMCP, which asserts Roles()
+  and OrgID() survive the swap; mutation-tested against the exact naive fix
+  this finding warned about (a principal.Principal composite literal), which
+  fails the test with empty roles and org.
 ---
 
 ## Finding

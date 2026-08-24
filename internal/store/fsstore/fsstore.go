@@ -372,7 +372,6 @@ func (s *FSStore) entityFileKey(entityType, id string) string {
 	return path.Join(s.entitiesKey, plural, id+".md")
 }
 
-// relationFileKey returns the key for a relation file.
 func (s *FSStore) relationFileKey(from, relType, to string) string {
 	return path.Join(s.relationsKey, from+"--"+relType+"--"+to+".md")
 }

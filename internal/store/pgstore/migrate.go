@@ -154,16 +154,6 @@ func isUndefinedTable(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "42P01"
 }
 
-// isUniqueViolation reports whether err is PostgreSQL's unique_violation
-// (SQLSTATE 23505). Callers map it to store.ErrConflict: a write blocked by a
-// uniqueness rule the query's own ON CONFLICT clause does not cover — notably
-// the case-folded entity-identity index entities_id_lower_key (BUG-3RCWNS) —
-// is still an "already exists" outcome, not an internal error.
-func isUniqueViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
-}
-
 // loadMigrations reads and parses the embedded migration files. File names
 // must be "<version>_<name>.sql" with a zero-padded or plain integer version.
 func loadMigrations() ([]migration, error) {

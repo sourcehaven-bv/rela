@@ -88,6 +88,53 @@ rela's tables are created in the connection's default schema (typically
 `public`). Point rela at a database it owns; if you share a schema with
 another application, rela's tables sit alongside it.
 
+## Derived schema (unique constraints)
+
+Some things you declare in the metamodel are enforced not only in the
+application but by the **database itself** on the PostgreSQL backend. Today
+that means `unique: true` properties: for each one, rela maintains a partial
+unique index (named `rela_derived_uniq__…`) so a duplicate value is rejected
+atomically at write time, even across two server processes writing at once.
+On the filesystem backend the same rule is enforced by an application-level
+check, which is race-free enough for a single process; the database index is
+what makes it safe for a multi-writer PostgreSQL deployment.
+
+These indexes are **derived from the metamodel, not from a migration**. rela
+reconciles them at every start: it compares what `schema.yaml` declares
+against the indexes actually present and creates the missing ones, dropping
+any it previously created for a rule you have since removed. This is
+idempotent and self-correcting — a hand-dropped index is recreated on the
+next start — and in the steady state (nothing changed) it does no work.
+
+### When a constraint can't be enforced
+
+Adding `unique: true` to a property whose existing rows already contain
+duplicate values cannot create the index — PostgreSQL rejects it. rela treats
+this as a **warning, not a fatal error**: the server still starts, the
+property is simply left unenforced at the database level (the application
+check still runs), and a message tells you which property and how many
+duplicate value groups are blocking it. This is deliberate: a configuration
+edit must never turn existing data into a startup outage. Clean up the
+duplicates and the constraint is enforced on the next reconcile.
+
+### Inspecting and reconciling explicitly
+
+Like migrations, reconciliation runs automatically at startup, but you can
+also drive it as an explicit step:
+
+```bash
+rela db status              # also reports any derived-schema drift (always exit 0 for drift)
+rela db reconcile           # create/drop derived objects to match the metamodel
+rela db reconcile --dry-run # show what WOULD change; non-zero exit if anything would — a CI/pre-deploy gate
+```
+
+`rela db reconcile --dry-run` is the pre-flight: run it against your live
+database before shipping a schema change to see exactly which constraints
+would be created, dropped, or left unenforced (and, with `--show-values`, a
+sample of the blocking values — this prints entity data, so it is opt-in and
+operator-only). Because the dry-run and the real startup reconcile share one
+planner, what the dry-run predicts is what startup does.
+
 ## Search
 
 In the PostgreSQL build, search runs **in the database** (a `tsvector`
@@ -318,6 +365,32 @@ Two guardrails you will hit:
 the primary database; a value may still survive in your PITR/base backups and WAL
 until their retention expires — accounting for the backup lifecycle is the
 operator's separate responsibility.
+
+## Data migration (schema shape changes)
+
+Each schema (tenant) tracks the shape of the metamodel its DATA conforms to
+in its own `state_kv` rows, so tenants at different points migrate
+independently: `rela migrate data` resolves each store's own chain (see the
+[data-migration guide](data-migration.md)). Postgres-specific behavior:
+
+- Migrated content lands in the version history: create/update rewrites are
+  captured by the version sweep (attributed to the operator with the
+  `data-migration` tool via `store.WithAttribution`), and destructive steps
+  (`drop_entities`, `drop_relations`, `rename_relation_type`, GC deletions)
+  capture pre-delete snapshots **synchronously** — the sweep cannot
+  reconstruct a row that is already gone.
+- `rename_relation_type` recreates relations under the new type, so relation
+  history starts a fresh lifetime (`rel_record_id`); the old lifetime is
+  closed with a delete capture.
+- The drift GC sweep runs in each process that assembles services, one
+  goroutine per store; runs are serialized against writers through the
+  store's transaction contract. `RELA_DATA_GC=off` disables it (e.g. on
+  read-mostly replicas where one designated process should own GC).
+- Migration and GC applies (and gate marker writes) are mutually excluded
+  across processes by a schema-scoped **advisory migration lock** — a
+  session lock held on one pool connection for the duration of the run, so
+  two `migrate data --apply` invocations against the same schema cannot
+  interleave, while different schemas stay independent.
 
 ## Other scope notes
 

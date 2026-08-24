@@ -44,6 +44,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"unicode"
 )
 
 // Principal identifies who is making a write. User is the OS user
@@ -425,6 +426,61 @@ const UserScheduler = "system:scheduler"
 // [ToolProvisioner].
 const UserProvisioner = "system:provisioner"
 
+// ReservedPrefix namespaces the [Principal.User] values that only rela's own
+// in-process entry points may assert. [UserScheduler] and [UserProvisioner] are
+// its current members.
+//
+// The whole prefix is reserved, not just the two constants above, so a future
+// `system:*` identity is safe by construction rather than depending on someone
+// remembering to extend a list. The cost is that a deployment whose IdP issues
+// a `system:`-shaped subject cannot use it as an acting identity.
+const ReservedPrefix = "system:"
+
+// IsReserved reports whether user names an internal identity under
+// [ReservedPrefix].
+//
+// **Request-path entry points MUST reject a reserved user.** These names are
+// grantable in acl.yaml — the DEC-O59WM4 migration binds [UserScheduler] to a
+// role with `read: ["*"]` — and the ACL resolves them by a plain map lookup on
+// the raw string (`policy.Assignments[user]`), with no notion of where the
+// principal came from. So a reserved name arriving from the wire is identity
+// spoofing that inherits the scheduler's grants; the ACL cannot detect it,
+// because it cannot tell a forged `system:scheduler` from the real one.
+//
+// The check belongs at the boundary where request input becomes a Principal,
+// not in the ACL and not in [With] — the scheduler, the provisioner and the CLI
+// all stamp reserved identities legitimately, in-process.
+//
+// The comparison is deliberately case-SENSITIVE: acl.yaml assignments are
+// matched exactly, so "System:Scheduler" confers no scheduler grant and is an
+// ordinary (if odd) username. Case-folding here would reject it for no security
+// gain.
+//
+// It is correct on a RAW value, not merely a pre-sanitized one. Leading control
+// characters are stripped before the prefix test, because a caller's own
+// sanitizer may map them to something that IS reserved: data-entry's
+// sanitizeUser turns "\x01system:scheduler" into exactly "system:scheduler". If
+// this function only trimmed whitespace, whether a name counted as reserved
+// would depend on whether the caller happened to sanitize first — safe by
+// ordering rather than by construction, and silently wrong for any future entry
+// point that passes a raw value (provisioning already does).
+func IsReserved(user string) bool {
+	return strings.HasPrefix(trimReservedNoise(user), ReservedPrefix)
+}
+
+// trimReservedNoise strips the leading characters that carry no identity but
+// could hide a reserved prefix: ASCII whitespace and C0/DEL control codes.
+//
+// Only the LEADING run matters. The prefix test that follows anchors at
+// position 0, so interior or trailing noise cannot manufacture a `system:`
+// prefix — and stripping it would risk equating names that are genuinely
+// distinct to the ACL's exact-match assignment lookup.
+func trimReservedNoise(user string) string {
+	return strings.TrimLeftFunc(user, func(r rune) bool {
+		return unicode.IsSpace(r) || r <= 0x1f || r == 0x7f
+	})
+}
+
 // principalKey is the unexported context.WithValue key so no other
 // package can collide with it or read/write the value outside this
 // package's API.
@@ -454,6 +510,28 @@ func From(ctx context.Context) Principal {
 		return v.Clone()
 	}
 	return Principal{User: "unknown", Tool: "unknown"}
+}
+
+// Stamped returns the Principal carried by ctx and whether one was actually
+// stamped. It is [From] without the unknown/unknown default, for the callers
+// that must distinguish "no identity on this ctx" from "an identity that
+// happens to be unknown".
+//
+// Use it only when the two cases lead to DIFFERENT behavior — chiefly a
+// transport deciding whether to supply a fallback identity (the MCP server's
+// principal middleware: a request-borne identity wins, a construction-time
+// one fills in when there is none). Everywhere else, [From]'s default is the
+// right answer and this function would just be a way to reintroduce nil
+// checks.
+//
+// Never use ok==false to grant access. An unstamped ctx means the identity is
+// unknown, not that the caller is privileged.
+func Stamped(ctx context.Context) (Principal, bool) {
+	v, ok := ctx.Value(principalKey{}).(Principal)
+	if !ok {
+		return Principal{}, false
+	}
+	return v.Clone(), true
 }
 
 // SystemUser returns the OS user running this process — $USER

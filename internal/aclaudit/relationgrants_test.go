@@ -8,6 +8,14 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/aclaudit"
 )
 
+// noExternalPerms reports that no permission is referenced outside acl.yaml.
+// A nil PermissionConsumer would SKIP A7 entirely (see the Audit godoc), which
+// would make the A7 tests below vacuous — they must run the check, not
+// suppress it.
+type noExternalPerms struct{}
+
+func (noExternalPerms) UsedPermissions() []string { return nil }
+
 func findRule(t *testing.T, findings []aclaudit.Finding, rule string) *aclaudit.Finding {
 	t.Helper()
 	for i := range findings {
@@ -35,7 +43,7 @@ relation_grants:
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	got := findRule(t, aclaudit.Audit(p, nil), "A6b-inert-relation-grant")
+	got := findRule(t, aclaudit.Audit(p, nil, noExternalPerms{}), "A6b-inert-relation-grant")
 	if got == nil {
 		t.Fatal("no A6b finding; a relation_grants entry naming a permission no " +
 			"role grants is inert, and nothing else reports it")
@@ -66,7 +74,7 @@ relation_grants:
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if got := findRule(t, aclaudit.Audit(p, nil), "A6b-inert-relation-grant"); got != nil {
+	if got := findRule(t, aclaudit.Audit(p, nil, noExternalPerms{}), "A6b-inert-relation-grant"); got != nil {
 		t.Errorf("A6b fired on a backed grant: %s", got.Detail)
 	}
 }
@@ -86,7 +94,7 @@ relation_grants:
 		t.Fatalf("load: %v", err)
 	}
 	var n int
-	for _, f := range aclaudit.Audit(p, nil) {
+	for _, f := range aclaudit.Audit(p, nil, noExternalPerms{}) {
 		if f.Rule == "A6b-inert-relation-grant" {
 			n++
 		}
@@ -118,7 +126,7 @@ relation_grants:
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if got := findRule(t, aclaudit.Audit(p, nil), "A7-dead-permission"); got != nil {
+	if got := findRule(t, aclaudit.Audit(p, nil, noExternalPerms{}), "A7-dead-permission"); got != nil {
 		t.Errorf("A7 called a permission dead that relation_grants consumes: %s", got.Detail)
 	}
 }
@@ -136,7 +144,7 @@ roles:
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if got := findRule(t, aclaudit.Audit(p, nil), "A7-dead-permission"); got == nil {
+	if got := findRule(t, aclaudit.Audit(p, nil, noExternalPerms{}), "A7-dead-permission"); got == nil {
 		t.Error("A7 no longer reports a genuinely unreferenced permission")
 	}
 }

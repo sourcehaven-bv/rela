@@ -281,6 +281,18 @@ func (s *FSStore) updateEntity(_ context.Context, e *entity.Entity) error {
 		return err
 	}
 
+	// The entity's type determines its file path, so a type change wrote the
+	// record at the NEW type's path — the file at the old path must go too,
+	// or it would resurrect the stale record on the next reload. Part of the
+	// type-change-on-update store contract (storetest UpdateChangesType).
+	if meta.Type != e.Type {
+		oldKey := s.entityFileKey(meta.Type, e.ID)
+		if err := s.rooted.Remove(oldKey); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		s.echoes.Forget(s.absPath(oldKey))
+	}
+
 	// Update index
 	s.entities[e.ID] = entityMeta{ID: e.ID, Type: e.Type}
 	removeEntityFromCache(s.propCache, old)

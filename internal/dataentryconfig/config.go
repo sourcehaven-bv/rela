@@ -29,7 +29,13 @@ const (
 	WidgetDate        = "date"
 	WidgetDatetime    = "datetime"
 	WidgetRrule       = "rrule"
-	WidgetCards       = "cards" // card-based UI for relations with properties
+	// WidgetFile is registered by the SPA (frontend/src/widgets/registry.ts)
+	// but had no Go constant until TKT-3R7RF3 needed to name it in the section
+	// field widget table. Note Metamodel.ResolveWidgetFromType has no `file`
+	// case and resolves a file property to "text" — a real divergence from the
+	// SPA's defaultWidgetFor, documented at sectionFieldWidgetTypes.
+	WidgetFile  = "file"
+	WidgetCards = "cards" // card-based UI for relations with properties
 )
 
 // Direction represents the edge direction for relation columns and form relations.
@@ -48,7 +54,15 @@ func (d *Direction) UnmarshalYAML(value *yaml.Node) error {
 		return err
 	}
 	switch s {
-	case "", "outgoing":
+	case "":
+		// A written-but-empty `direction: ""` (or a bare `direction:`) is NOT
+		// the same as an absent key. Absent means "infer from the metamodel";
+		// collapsing an empty value to outgoing here would let a config walk
+		// straight past the ambiguity check that makes a self-referencing
+		// relation an error. Leave it empty so the single inference rule in
+		// InferDirection owns the decision.
+		*d = ""
+	case "outgoing":
 		*d = DirectionOutgoing
 	case "incoming":
 		*d = DirectionIncoming
@@ -115,6 +129,20 @@ type Action struct {
 	Key         string            `yaml:"key,omitempty" json:"key,omitempty"`
 	Confirm     bool              `yaml:"confirm,omitempty" json:"confirm,omitempty"`
 	Set         map[string]string `yaml:"set,omitempty" json:"set,omitempty"`
+
+	// Capabilities declares which ambient capabilities this action's script
+	// may reach — http, ai, write_file, and named secrets (TKT-YH52OM).
+	// Omitting it grants NONE of them.
+	//
+	// An action is invoked over HTTP by whoever may POST /_action/{id}, so it
+	// is not an operator-shell surface: the grant has to be written down by
+	// the operator who authored the action, in the same file as the script:
+	// reference. `secrets` is a LIST of key names, never a bool — an action
+	// that needs one webhook token must not also receive the database DSN.
+	//
+	// Not serialized to JSON: the SPA has no use for it, and an action's
+	// capability grant is not part of its affordance.
+	Capabilities metamodel.Capabilities `yaml:"capabilities,omitempty" json:"-"`
 }
 
 // AppConfig holds display metadata for the application.
@@ -844,11 +872,24 @@ type ViewSection struct {
 // Render is resolved server-side against the containing section — see
 // ResolveFieldRender — so consumers receive an already-resolved value and
 // never reimplement the inheritance rule.
+//
+// Widget overrides which registered widget renders this property, instead of
+// the type-derived default (TKT-3R7RF3). Empty means "use the default", which
+// is the SPA's defaultWidgetFor dispatch — NOT a value this package resolves.
+//
+// Deliberately field-level only, with no section-level counterpart, which is
+// the one structural difference from Render. Render can inherit because BOTH
+// of its values are valid for every field; a section-level widget would be a
+// config-load error on every field whose type does not match it, turning one
+// authored line into N errors the operator must override back field by field.
+// Validating one would also need each field's property type — exactly the
+// metamodel-dependent context RR-4ICH8M moved the field-level check out of.
 type ViewSectionField struct {
 	Property string `yaml:"property" json:"property"`
 	Label    string `yaml:"label,omitempty" json:"label,omitempty"`
 	Span     Span   `yaml:"span,omitempty" json:"span,omitempty"`
 	Render   string `yaml:"render,omitempty" json:"render,omitempty"`
+	Widget   string `yaml:"widget,omitempty" json:"widget,omitempty"`
 }
 
 // ResolveFieldRender returns the effective render mode for a field within a
@@ -993,6 +1034,19 @@ type DocumentConfig struct {
 	// deploying — that review IS the mitigation, and it is why this value is
 	// declared in config where a reviewer will see it.
 	AllowACLBypass metamodel.ACLBypass `yaml:"allow_acl_bypass,omitempty" json:"allow_acl_bypass,omitempty"`
+
+	// Capabilities declares which ambient capabilities this document's render
+	// script may reach — http, ai, write_file, named secrets (TKT-YH52OM).
+	// Omitting it grants none.
+	//
+	// A render is a READ surface, so the default matters more here than
+	// anywhere: before this existed a document script — which cannot mutate
+	// the graph beyond the caller's permissions — could still read every
+	// secret and POST it outbound. Most reports need nothing; a report that
+	// genuinely calls an upstream API names exactly what it needs.
+	//
+	// Not serialized to JSON: the SPA renders the output, not the grant.
+	Capabilities metamodel.Capabilities `yaml:"capabilities,omitempty" json:"-"`
 	// Command is the external render command as an ARGUMENT ARRAY, e.g.
 	//   command: ["my-renderer", "{in}"]
 	// It is executed directly — there is no shell, so pipes, redirection, and

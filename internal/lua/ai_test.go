@@ -39,7 +39,8 @@ func newAIRuntime(t *testing.T, server *httptest.Server, apiKeyEnv string) *Runt
 
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
-	rt := NewWriter(ws.services(t.TempDir()), &buf, WithAIProvider(provider))
+	rt := NewWriter(ws.services(t.TempDir()), &buf, WithAIProvider(provider),
+		WithCapabilities(Capabilities{AI: true}))
 	t.Cleanup(rt.Close)
 	return rt
 }
@@ -49,7 +50,8 @@ func newAIRuntimeNoProvider(t *testing.T) *Runtime {
 	t.Helper()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
-	rt := NewWriter(ws.services(t.TempDir()), &buf)
+	rt := NewWriter(ws.services(t.TempDir()), &buf,
+		WithCapabilities(Capabilities{AI: true}))
 	t.Cleanup(rt.Close)
 	return rt
 }

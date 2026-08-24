@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
+	"net/http"
 	"path/filepath"
 	"sync"
 
@@ -95,7 +96,20 @@ const userPaletteFile = "palette.yaml"
 // and redactedForSuggestion to 102 — the field-redaction seam the next-action
 // candidate path needs, which has to reach affordanceService.
 //
-//plimsoll:max-methods=102
+// TKT-BDG8U9 adds [App.SetRemoteMCP] on the same terms — the public opt-in
+// setter for the remote MCP endpoint, matching that setter idiom. The rest of
+// that feature deliberately stays OFF App: `registerMCPRoute` takes its
+// handler as a parameter and `toolForPath` is a package function, so the
+// mount cost one method rather than three.
+//
+// TKT-N8XQ2R adds [App.SetNextActionMatchers] on the same terms (103 -> 104):
+// the predicate compiler backing a source's `condition:` lives above this
+// package, so it arrives through the same setter idiom rather than a 13th
+// positional NewApp parameter. The compiling and matching themselves stay OFF
+// App entirely — conditionlint owns them and appbuild bridges — so the feature
+// cost one method, not a subsystem.
+//
+//plimsoll:max-methods=104
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS
@@ -133,6 +147,18 @@ type App struct {
 	// backend — the next-action endpoints then report "not configured"
 	// rather than silently forgetting what users asked to hide.
 	userState userstate.Store
+
+	// nextActionMatchers compiles a source's `condition:` into a predicate
+	// matcher. Injected because the compiler lives above this package (it
+	// needs predicatefns + the metamodel), the same way the composition root
+	// picks the userstate backend while consumers take the seam.
+	//
+	// Takes the live config + metamodel rather than a prebuilt lookup: both
+	// reload at runtime, and a lookup captured at boot would evaluate a stale
+	// condition after an operator edits data-entry.yaml. Nil when no
+	// deployment wired it — sources declaring a condition then fail engine
+	// construction rather than silently matching everything.
+	nextActionMatchers NextActionMatcherFunc
 
 	// visibleReader is the ACL-bounded entity-read seam (TKT-N26KLB): the
 	// entity-read analog of visibleSearcher. Read handlers gate single-GET
@@ -267,6 +293,17 @@ type App struct {
 	// with a header/env principal chain — cmd/rela-server refuses to start
 	// with both, so a JWT failure can never downgrade to a spoofable header.
 	jwtGate *JWTGateConfig
+
+	// mcpHandler, when non-nil, serves the remote MCP endpoint at
+	// [MCPPath]. Built once by SetRemoteMCP (before NewRouter) from an
+	// [MCPHandlerFactory]; nil means the route is not registered at
+	// all, so an upgraded server serves no MCP until an operator opts
+	// in. SetRemoteMCP refuses to enable it without jwtGate — see its
+	// doc comment for why.
+	//
+	// It is a plain http.Handler because `internal/mcp` is the only
+	// component allowed to import the MCP go-sdk (arch-lint).
+	mcpHandler http.Handler
 
 	// principalHeader is the name of the HTTP header that carries the
 	// principal identity (the --principal-header flag value), or ""
@@ -1077,9 +1114,7 @@ func checkExportRenderScripts(cfg Config, root string) error {
 // (activeListForEntityType, activeListFromReferer, resolveActiveList) are
 // deleted: nothing outside their own tests called them since the SPA took
 // over navigation, and enrichNavEntry counted entities from the RAW store
-// — leaking existence counts of ACL-hidden entities (#1043). The live
-// sidebar (viewsHandler.handleV1Sidebar) routes every count through the
-// ACL read scope and is pinned by TestACLSidebar_CountsMatchList.
+// — leaking existence counts of ACL-hidden entities (#1043).
 
 // coverage-ignore: requires running workspace, tested via e2e
 

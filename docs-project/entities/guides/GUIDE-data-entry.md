@@ -499,7 +499,7 @@ Each entry in `relations:` configures a relation picker:
 | Field          | Type   | Description                                                    |
 | -------------- | ------ | -------------------------------------------------------------- |
 | `relation`     | string | Relation type name from the metamodel                          |
-| `direction`    | string | `"outgoing"` or `"incoming"`                                   |
+| `direction`    | string | `"outgoing"` or `"incoming"` — inferred when omitted; required for self-referencing relations (see below) |
 | `target_type`  | string | Entity type of the related entity                              |
 | `label`        | string | Display label                                                  |
 | `required`     | bool   | At least one relation must be selected                         |
@@ -549,6 +549,35 @@ Two details worth knowing:
 > them. If a `+ New` button disappeared after upgrading, the target type has no registered form.
 
 ### Reverse (incoming) Relations
+
+#### How `direction` is resolved
+
+`direction` may be omitted when the binding's entity type sits on exactly
+**one** side of the relation — there is only one sensible reading, so rela
+infers it:
+
+- entity type is the relation's `from` → `outgoing`
+- entity type is the relation's `to` → `incoming`
+
+It must be written explicitly when the entity type is on **both** sides — a
+self-referencing relation such as `depends-on` from `ticket` to `ticket`. There
+`outgoing` and `incoming` are both valid and mean opposite things, so rela
+refuses to guess and names the offending binding.
+
+The same rule applies to **every** surface that takes a `direction:`:
+
+| Surface | Anchored to |
+| --- | --- |
+| form relations (including wizard steps) | the form's `entity_type` |
+| list columns and `filter_controls` | the list's `entity_type` |
+| kanban `card.fields` and `filter_controls` | the kanban's `entity_type` |
+| `caldav.dynamic.<name>` | the collection's `entity_type` (the **member**, not `driver_type` — the edge runs member→driver) |
+
+> **Upgrading.** `direction` used to default to `outgoing` whenever it was
+> absent, which silently bound the wrong side of a `to`-side relation. Run
+> `rela migrate` to write explicit directions for the unambiguous bindings; it
+> deliberately leaves self-referencing ones alone, and `rela validate` lists
+> those for you to decide.
 
 Relation types are directional in the metamodel: `implements` goes from `task` to `feature`.
 Often you want to show the *inbound* side on the opposite entity's form — on the feature form,
@@ -891,7 +920,7 @@ entities — set exactly one of `property` or `relation`.
 | ----------- | ------ | --------------------------------------------------------------------------- |
 | `property`  | string | Property name to display                                                    |
 | `relation`  | string | Relation type whose targets are shown comma-separated                       |
-| `direction` | string | Relation columns only: `"outgoing"` (default) or `"incoming"` for reverse   |
+| `direction` | string | Relation columns only: `"outgoing"` or `"incoming"`; inferred when omitted   |
 | `label`     | string | Column header (defaults to property / relation name)                        |
 | `sortable`  | bool   | Column can be sorted by clicking the header                                 |
 | `link`      | bool   | Cell value links to the entity's detail page                                |
@@ -994,7 +1023,7 @@ filter_controls:
 | ----------- | ------ | -------------------------------------------------------------- |
 | `property`  | string | Property to filter on                                          |
 | `relation`  | string | Relation to filter on (mutually exclusive with `property`)     |
-| `direction` | string | For `relation`: `"outgoing"` (default) or `"incoming"`         |
+| `direction` | string | For `relation`: `"outgoing"` or `"incoming"`; inferred when omitted |
 | `widget`    | string | For `property`: `"select"`, `"multi-select"`, or `"search"`    |
 | `label`     | string | Optional display label override                                |
 
@@ -1261,11 +1290,107 @@ sections:
 | `heading`       | string | Section heading (optional; omit for no heading)         |
 | `source`        | string | `"entry"` or a traverse collection name                 |
 | `display`       | string | Display mode (see below)                                |
+| `render`        | string | `display` (default) or `input` — see Field Render Modes |
 | `fields`        | list   | Properties to show (`properties`, `content`, `cards`, `list` modes) |
 | `columns`       | list   | Column definitions (`table` mode)                       |
 | `group_by`      | string | Property to group entities by                           |
 | `empty_message` | string | Text shown when the collection is empty                 |
 | `link`          | bool   | Link entity titles to their detail pages                |
+
+Each entry under `fields:` takes:
+
+| Field      | Type   | Description                                                  |
+| ---------- | ------ | ------------------------------------------------------------ |
+| `property` | string | Property name                                                |
+| `label`    | string | Display label (defaults to the raw property name)            |
+| `span`     | int    | Width on the 12-column grid (1-12; omit for full width)      |
+| `render`   | string | `display` or `input`; overrides the section's `render`        |
+| `widget`   | string | Which widget renders this property (see Widget Overrides)    |
+
+### Field Render Modes
+
+A view section field renders as a **view-oriented display value** by default.
+Set `render: input` to opt a field into inline editing:
+
+```yaml
+sections:
+  - heading: "Properties"
+    source: entry
+    display: properties
+    render: input          # section-wide default for its fields
+    fields:
+      - property: status   # inherits `input`
+      - property: id
+        render: display    # ...but this one overrides back to display
+```
+
+| Value     | Effect                                                            |
+| --------- | ----------------------------------------------------------------- |
+| `display` | (default) A read-oriented value. Not a disabled input — no control |
+| `input`   | An editable widget that saves on change (auto-save)                |
+
+Resolution is field-first: a field's own `render:` wins, else the section's,
+else `display`. It is resolved server-side, so the value the SPA receives is
+already effective.
+
+> **Breaking change.** Before this, inline editing was implied by write
+> permission. Sections that want it must now say so with `render: input`.
+
+`render: input` **cannot grant editability.** Effective editability is
+`render: input` AND the ACL permitting the write, so `input` on a field the
+caller may not edit still renders as display. Config can only narrow.
+
+A field belonging to a state machine renders its transition control instead of
+an ordinary widget when `render: input`; on `render: display` it renders the
+plain value.
+
+### Widget Overrides
+
+By default the widget is chosen from the property's declared type — `boolean`
+gets a checkbox, `date` a date picker, an enum a dropdown. Set `widget:` to
+choose a different registered widget:
+
+```yaml
+fields:
+  - property: done
+    widget: checkbox     # the payoff case: click to tick, with render: input
+  - property: notes
+    widget: textarea     # a long string, not a single-line input
+```
+
+| Widget         | Accepts                       |
+| -------------- | ----------------------------- |
+| `text`         | string                        |
+| `textarea`     | string                        |
+| `number`       | integer                       |
+| `checkbox`     | boolean                       |
+| `date`         | date                          |
+| `datetime`     | datetime                      |
+| `select`       | enum, string, custom types    |
+| `multi-select` | enum, string (list values)    |
+| `rrule`        | rrule                         |
+| `file`         | file                          |
+
+Rules worth knowing:
+
+- **Field-level only.** There is no section-wide `widget:`, unlike `render:`.
+  A widget is inherently per-property: a section-level one would be a config
+  error on every field whose type didn't match, which the author would then
+  have to override back field by field.
+- **Omitting it changes nothing** — the type default applies exactly as before.
+- **A mismatch is a config-load error.** `widget: checkbox` on a `date`
+  property fails at startup, naming the property, its type, and what the widget
+  does accept.
+- **`widget: file` only works on `display: properties`.** Card and list rows
+  are not given attachment data, so a file widget there would have nothing to
+  show.
+- **It pairs with `render:`.** A checkbox you cannot click is just an icon, so
+  the interactive case needs `render: input` too.
+- **On a property the schema doesn't declare, the override is ignored** and a
+  warning is logged at startup. Such a field has no type to validate against.
+- **On a state-machine field with `render: input`**, the transition control
+  takes precedence and the widget is inert; with `render: display` the widget
+  is used.
 
 ### Display Modes
 
@@ -1558,6 +1683,7 @@ next_actions:
 |-------|---------|
 | `band` | **Required.** Names a declared band. |
 | `query` | Candidate entities, in the search syntax (`type:`, `prop:`, …). |
+| `condition` | Refines `query`'s candidates with a predicate expression — the only place date arithmetic works. See below. |
 | `context` | Instead of `query`: scopes the source to the entity being viewed. |
 | `count` | Instead of `query`: fires on `"<entity_type> == 0"` — the first-run case. |
 | `suggest` | **Required.** The message. `{property}` interpolates from the candidate; `{id}` is the entity id. |
@@ -1567,6 +1693,53 @@ next_actions:
 | `defer_scope` | What "not now" covers: `entity` (default) or `source` — see below. |
 
 Exactly one of `query`, `context` or `count` must be set.
+
+#### `condition` — dwell time and other typed comparisons
+
+`query` selects; `condition` refines. The split exists because they are
+different languages: `query` is the search syntax, pushed toward the store,
+and `condition` is a predicate expression evaluated per candidate with the
+same host functions automations use.
+
+```yaml
+next_actions:
+  chase-proposal:
+    band: blocking
+    query: "type:proposal prop:status=sent"
+    condition: "days_between(entity.sent_on, today()) >= 11"
+    suggest: "{title} has been out {days} days with no reply. Chase it?"
+```
+
+That is the shape `query` alone cannot express: "how long has this been
+sitting?" needs date arithmetic, which needs the property's declared type from
+the metamodel, which the search syntax does not consult.
+
+**Do not put an expression in `query`.** The two syntaxes overlap without
+erroring, so `query: "days_between(entity.due, today()) <= 7"` is not rejected
+— it is read as a filter on a property *named*
+`days_between(entity.due, today())`, matches nothing, and the source goes
+quiet with no diagnostic. That is why they are separate keys rather than one
+key that guesses.
+
+Rules worth knowing:
+
+- **`query` must name at least one entity type** when a condition is present
+  (`type:task …`). A condition references `entity.<property>`, and without a
+  type there is nothing to check it against.
+- **The condition must be valid on *every* type the query names.** A query
+  spanning `task` and `note` yields candidates of either, and the engine
+  cannot know which until it holds one — so a condition valid on only one of
+  them is refused at load rather than silently dropping the other's
+  candidates.
+- **A typo fails at startup**, not at render:
+  `condition does not compile against entity type "task": unknown attribute
+  "dew" on record`. A condition that silently matched nothing would be
+  indistinguishable from a source with nothing to say.
+- **Not available on a `count` source** — there is no entity to test.
+
+The available functions are the ones automations use: `days_between`,
+`date_add`, `rrule_next`, `today`, plus `match`, `regex`, `contains` and
+`len`. See [metamodel.md](metamodel.md) for their signatures.
 
 #### `key_props` and re-triggering
 
@@ -2090,9 +2263,6 @@ will reject it with a clear error message.
 
 The first navigable entry is the default landing page — the first direct item, or the first item
 inside the first group. Order matters; items appear in the sidebar in the order listed.
-
-List and kanban entries show an entity count badge next to the label (based on their filters).
-Dashboard, search and settings entries do not show a count.
 
 ### Hiding entries a user cannot act on (`permission:`)
 

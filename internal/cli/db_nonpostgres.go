@@ -13,3 +13,5 @@ var errDBNotAvailable = errors.New(
 func runDBMigrate() error { return errDBNotAvailable }
 
 func runDBStatus() error { return errDBNotAvailable }
+
+func runDBReconcile(_, _ bool) error { return errDBNotAvailable }

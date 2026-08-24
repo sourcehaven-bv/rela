@@ -95,6 +95,9 @@ func (a *App) NewRouter() http.Handler {
 	// Sync API (FEAT-NJ9FEN) - machine-to-machine fs↔pg sync, under /api/sync/.
 	a.sync.registerSyncRoutes(inner)
 
+	// Remote MCP (TKT-BDG8U9) — opt-in, absent unless SetRemoteMCP enabled it.
+	registerMCPRoute(inner, a.mcpHandler)
+
 	// noCacheMiddleware sets no-cache headers on API responses so that
 	// browsers always fetch fresh data after file changes trigger a reload.
 	mux.Handle("/api/", a.noCacheMiddleware(inner))
@@ -570,8 +573,8 @@ func JWTPrincipalResolver(v assertionVerifier, headerName string) PrincipalResol
 		if err != nil {
 			return principal.Principal{}
 		}
-		p, ok := verifiedPrincipal(id)
-		if !ok {
+		p, reason := verifiedPrincipal(id, principal.ToolDataEntry)
+		if !reason.ok() {
 			return principal.Principal{}
 		}
 		return p
@@ -592,16 +595,35 @@ func JWTPrincipalResolver(v assertionVerifier, headerName string) PrincipalResol
 // from a record this process already wrote and verified). A role reaching the
 // ACL from an unverified source would be a complete authorization bypass, so
 // this must be called ONLY on the output of a completed signature verification.
-func verifiedPrincipal(id AssertedIdentity) (principal.Principal, bool) {
+//
+// tool is the audit attribution for the surface the request arrived on —
+// [principal.ToolDataEntry] for the SPA/API, [principal.ToolMCP] for the
+// remote MCP endpoint. It is a parameter rather than a constant because
+// [principal.VerifiedFrom] is the ONLY constructor that populates the
+// unexported org/role/scope fields: a caller needing a different Tool cannot
+// just build a `principal.Principal{Tool: ...}` composite literal without
+// silently dropping every asserted role, so the Tool has to enter here
+// (RR-H8S10M).
+func verifiedPrincipal(id AssertedIdentity, tool string) (principal.Principal, rejectReason) {
 	if id.Subject == "" {
-		return principal.Principal{}, false
+		return principal.Principal{}, rejectUnusable
 	}
 	// The subject is a controlled id (opaque, from the IdP), but sanitize it the
 	// same way as header/env users for defense in depth (length cap, control-char
 	// strip). A control-only value sanitizes to "" and is rejected.
 	user := sanitizeUser(id.Subject)
 	if user == "" {
-		return principal.Principal{}, false
+		return principal.Principal{}, rejectUnusable
+	}
+	// A signature proves the IdP issued this subject; it does NOT prove the
+	// subject is not one of rela's reserved internal identities (TKT-9PCL7D).
+	// Where subjects are user-influenced — email-shaped, or an operator creating
+	// an account — a genuinely valid assertion can carry `system:scheduler` and
+	// inherit its acl.yaml grants. Reject it here, which covers BOTH callers:
+	// the deprecated resolver and [requireVerifiedJWT], the production gate that
+	// re-stamps over stampAuditPrincipal's check on `/api/` and `/api/v1/_mcp`.
+	if principal.IsReserved(user) {
+		return principal.Principal{}, rejectReserved
 	}
 	// Org and roles get the same treatment. Roles are already bounded by the
 	// verifier's projection; sanitizing here covers control chars and any future
@@ -613,7 +635,7 @@ func verifiedPrincipal(id AssertedIdentity) (principal.Principal, bool) {
 	// away is dropped rather than kept as "": it could never match a policy
 	// mapping, so keeping it would only re-open nothing at a cost.
 	scopes := sanitizeClaimList(id.Scopes)
-	return principal.VerifiedFrom(user, principal.ToolDataEntry, principal.Claims{
+	return principal.VerifiedFrom(user, tool, principal.Claims{
 		OrgID:   sanitizeUser(id.OrgID),
 		OrgSlug: sanitizeUser(id.OrgSlug),
 		Roles:   roles,
@@ -624,8 +646,36 @@ func verifiedPrincipal(id AssertedIdentity) (principal.Principal, bool) {
 		PrincipalType: sanitizeUser(id.PrincipalType),
 		Scopes:        scopes,
 		Email:         sanitizeUser(id.Email),
-	}), true
+	}), rejectNone
 }
+
+// rejectReason says WHY [verifiedPrincipal] refused a subject, or that it did
+// not. It replaced a bare `ok bool` so the caller's log classification is driven
+// by the same evaluation that made the decision (RR-OJRCNY).
+//
+// The bug it prevents: the gate used to re-derive "was this reserved?" from the
+// RAW `id.Subject`, while verifiedPrincipal decided on the SANITIZED value. Those
+// disagree exactly when sanitizing CREATES a reserved name — "\x01system:scheduler"
+// was correctly denied but logged as a benign unusable-subject INFO rather than
+// the security WARN, so the one log line operators are told to grep for missed
+// the variant an attacker would actually send. Returning the reason makes the
+// two impossible to drift, which is the same argument that made verifiedPrincipal
+// a single shared function in the first place.
+type rejectReason int
+
+const (
+	// rejectNone means the subject was accepted; the Principal is usable.
+	rejectNone rejectReason = iota
+	// rejectUnusable means the subject was empty, or sanitized away entirely —
+	// an IdP/claims problem for the operator to chase.
+	rejectUnusable
+	// rejectReserved means the subject named a reserved `system:` identity —
+	// a misconfigured IdP, or someone probing for TKT-9PCL7D.
+	rejectReserved
+)
+
+// ok reports whether the subject was accepted.
+func (r rejectReason) ok() bool { return r == rejectNone }
 
 // sanitizeClaimList applies sanitizeUser to every element, dropping any that
 // sanitizes to empty. Shared by the roles and scopes projections: both are
@@ -694,6 +744,14 @@ func ChainResolvers(resolvers ...PrincipalResolver) PrincipalResolver {
 // whitespace. Returns "" when the cleaned value is empty so chained
 // resolvers can fall through.
 //
+// **It does NOT reject reserved `system:` principals** (TKT-9PCL7D), even
+// though every HTTP username source passes through here, which makes it a
+// tempting place for the check. It can only signal "unusable" by returning "",
+// and every caller reads that as fall-through — a silent demotion to the next
+// resolver or to `unknown`, which is exactly the wrong answer for an
+// impersonation attempt. The rejection lives in [stampAuditPrincipal] and
+// [verifiedPrincipal], which can fail loudly. See [principal.IsReserved].
+//
 // **Important — order matters.** Control-char replacement runs
 // *before* the final whitespace trim. A value of `"\x00\x00"`
 // would survive `strings.TrimSpace` (NULs are not whitespace),
@@ -728,9 +786,56 @@ func isControlRune(r rune) bool {
 // stampAuditPrincipal stamps a Principal (resolved by resolve) on
 // every request ctx. See plan AC4 for the test that pins this
 // behavior.
+//
+// **Reserved principals are rejected here (TKT-9PCL7D).** A resolver derives
+// User from request-controlled input — a proxy header or $RELA_DATAENTRY_USER —
+// and neither is a proof of identity. `system:scheduler` is grantable in
+// acl.yaml (the DEC-O59WM4 migration gives it `read: ["*"]`) and the ACL
+// matches it by raw string, so letting one through the door is a privilege
+// escalation the ACL cannot detect. See [principal.IsReserved].
+//
+// The rejection is split by surface, mirroring [attachACLRequest]'s RR-T15E
+// scope rule:
+//
+//   - On `/api/` — 403. This is the surface that carries entity data and the
+//     only one where the forged identity could confer anything.
+//   - Everywhere else (`/`, `/static/`) — serve the request, but strip the
+//     identity to the anonymous default rather than erroring. A misconfigured
+//     proxy that stamps a reserved name on every request must not render the
+//     SPA as raw JSON: that locks operators out of the very surface they need
+//     to fix the proxy. Nothing outside `/api/` reads the principal for
+//     authorization, so downgrading is safe here in a way it is NOT on the API
+//     (where AC1 requires a loud failure, not a silent demotion to `unknown`).
+//
+// The JWT gate re-stamps on API paths after this middleware, so it repeats the
+// check on its own verified subject — see [verifiedPrincipal]. A guard here
+// alone would be bypassed whenever the gate is installed.
 func stampAuditPrincipal(next http.Handler, resolve PrincipalResolver) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx := principal.With(r.Context(), resolve(r))
+		p := resolve(r)
+		if principal.IsReserved(p.User) {
+			slog.WarnContext(r.Context(), "rejected reserved principal asserted by request",
+				"user", p.User,
+				"path", r.URL.Path,
+				"method", r.Method,
+				"remote_addr", r.RemoteAddr)
+			if isAPIPath(r.URL.Path) {
+				// The rule is named, the VALUE is not echoed back. Naming the
+				// rule is right (the config is not a secret, and an operator
+				// debugging a proxy needs it) but repeating up to 256
+				// attacker-chosen runes into the response body makes this a
+				// reflection gadget for whatever consumes the problem+json
+				// downstream, and buys nothing — the log line above already
+				// carries the value, which is where it belongs (RR-I5S4NK).
+				writeV1Error(w, r, http.StatusForbidden, "reserved_principal",
+					"Reserved principal",
+					"A '"+principal.ReservedPrefix+"' prefixed identity is internal to rela "+
+						"and cannot be asserted by a request.")
+				return
+			}
+			p = defaultPrincipalResolver(r)
+		}
+		ctx := principal.With(r.Context(), p)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

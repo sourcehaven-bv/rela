@@ -203,6 +203,54 @@ Header values are sanitized at the middleware (trim, 256-rune cap,
 control-char strip) as defense-in-depth against header-injection
 corrupting the JSONL stream.
 
+### Reserved `system:` identities
+
+rela reserves the whole **`system:`** username namespace for its own
+in-process entry points. `system:scheduler` (scheduled tasks) and
+`system:provisioner` (lazy user provisioning) live there today.
+
+These are ordinary *grantable* identities in `acl.yaml` — `rela migrate`
+gives `system:scheduler` a `read: ["*"]` role so existing scheduled jobs
+keep working — and the ACL resolves a principal by matching the raw
+username against its assignments. It has no way to tell where a principal
+came from, so without a boundary check any caller who could influence the
+acting username would inherit the scheduler's grants.
+
+So a `system:`-prefixed username arriving from a **request** is refused:
+
+| Source | Result |
+| --- | --- |
+| `--principal-header` value | **403** on `/api/`, logged |
+| `$RELA_DATAENTRY_USER` | **403** on `/api/`, logged |
+| Verified JWT `sub` (incl. remote MCP) | **denied**, logged |
+
+A valid signature proves your IdP *issued* the subject; it does not prove
+the subject is not one of rela's internal names, so the verified path is
+checked too. The asymmetry in that table is not about the reserved check:
+the JWT gate answers **401** uniformly for every failed assertion, so a
+reserved subject is indistinguishable from an expired or unsigned one. The
+distinction is in the log, not the response.
+
+Outside `/api/` (the SPA shell, static assets) the request is served with
+the identity stripped to `unknown` rather than erroring — a misconfigured
+proxy stamping a reserved name must not lock you out of the UI you need in
+order to fix it. Nothing on those paths uses the principal for
+authorization.
+
+The match is **case-sensitive** and tests the prefix only: `system:`,
+`system:scheduler`, `system:anything` are reserved; `System:Scheduler`,
+`systemscheduler` and `my-system:scheduler` are ordinary usernames (none
+of which matches an assignment key either).
+
+> **Upgrade note.** If your IdP issues subjects that begin with `system:`,
+> those users can no longer authenticate. Look for
+> `rejected reserved principal` in the server log. Remap the affected
+> subjects in your IdP or proxy.
+
+`run_as:` in `schedules.yaml` is **not** affected — it is operator-authored
+config read in-process, inside the trust boundary, and may name any
+`system:` identity.
+
 ### Verified JWT identity (`--jwt-*`)
 
 A third, **stronger** attribution source: a signed identity assertion
@@ -343,7 +391,7 @@ project root (alongside `schema.yaml`). Three modes:
 |---|---|---|
 | **Open** (default) | No `acl.yaml` present | Every authenticated request can write. Reads have no filtering. Suitable for single-user local projects. |
 | **Read-only** | `rela-server --read-only` or `RELA_READ_ONLY=1` | Every write returns HTTP 403; reads unaffected. Useful for demos, maintenance, observe-only deployments. Wins over `acl.yaml` — explicit flag overrides policy. |
-| **Policy** | `acl.yaml` present | Writes are gated by role assignments and delegate permissions. Reads are filtered on the data-entry HTTP surface: per-entity GETs 404 like not-found for hidden entities; lists / sidebar counts / pagination / `?include=` / `/_position` / `/_search` return only the visible subset; and `visible:`-denied properties are redacted from every response body. MCP read surfaces are not yet filtered. See [GUIDE-acl-security]. |
+| **Policy** | `acl.yaml` present | Writes are gated by role assignments and delegate permissions. Reads are filtered on the data-entry HTTP surface: per-entity GETs 404 like not-found for hidden entities; lists / pagination / `?include=` / `/_position` / `/_search` return only the visible subset; and `visible:`-denied properties are redacted from every response body. MCP read surfaces are not yet filtered. See [GUIDE-acl-security]. |
 
 A startup warning fires when the server binds **beyond loopback**
 (`--bind` non-loopback) **without** `acl.yaml` AND **without**
@@ -375,8 +423,8 @@ defense** in the server threat model.
   with optional `when:` predicates. See [GUIDE-acl-security].
 - ✅ **Entity-level read filtering** on the data-entry HTTP surface.
   Per-entity GETs 404 like not-found for hidden entities; lists,
-  sidebar counts, pagination, `?include=` neighbours, `/_position`,
-  and `/_search` return only the visible subset. See [GUIDE-acl-security].
+  pagination, `?include=` neighbours, `/_position`, and `/_search`
+  return only the visible subset. See [GUIDE-acl-security].
 - ✅ **Property-level redaction** (`visible:` grants) on every
   data-entry HTTP read. A field denied by `visible:` is omitted from
   the response `properties` map on per-entity GET, list rows,
@@ -478,12 +526,25 @@ This is an accepted residual because:
 - Portable mitigation (file-descriptor passing through `open`/`xdg-open`/
   `explorer`) does not exist.
 
-### No authentication
+### No authentication *by default*
 
-There is intentionally no login or per-user authentication. The trust
-boundary is "anything running as the current user on this machine."
-Per-instance session tokens (defense in depth on top of the Origin
-allowlist) are tracked as a follow-up.
+In the default single-user deployment there is intentionally no login. The
+trust boundary is "anything running as the current user on this machine."
+Per-instance session tokens (defense in depth on top of the Origin allowlist)
+are tracked as a follow-up.
+
+This is a statement about the **default**, not a limit of the server. Two
+opt-in identity sources exist, and a multi-user or network-reachable
+deployment should use one:
+
+- `-jwt-issuer` / `-jwt-audience` / `-jwt-jwks-url` — verify a signed
+  assertion against the IdP's JWKS. Fail-closed: an unverified request to
+  `/api/` is refused, with no fall-through to a header.
+- `-principal-header` — trust a header set by a fronting proxy. Only as
+  trustworthy as that proxy; it is refused alongside the JWT flags precisely
+  so a JWKS outage cannot silently downgrade to it.
+
+Remote MCP (`-mcp`) requires the JWT form specifically — see above.
 
 ### Configured commands are remote-code-execution by design
 
@@ -491,6 +552,32 @@ The `commands` section of `data-entry.yaml` lets you wire up arbitrary
 shell scripts that run with your user privileges. Be careful what you put
 there. The `/api/command/` endpoint is `POST`-only and protected by the
 Origin allowlist, but the scripts themselves are still trusted code.
+
+### Remote MCP exposes every tool, with no per-transport allowlist
+
+`-mcp` (see [mcp-server.md](mcp-server.md#remote-mcp-over-http)) serves the
+full MCP tool set over HTTP, including `lua_eval` and `lua_run`. Every call is
+authenticated (the flag refuses to start without verified JWT identity),
+authorized by the same ACL as the web API, and audited as the requesting
+principal — so a remote caller can do exactly what that person could do
+through the UI, no more.
+
+What is *not* built is a per-transport allowlist: a tool added for local stdio
+use becomes remotely reachable the moment `-mcp` is on. The Lua tools run
+sandboxed (no OS libraries) and gated, so this is a defense-in-depth gap
+rather than an escape hatch, but operators enabling `-mcp` should know the
+surface is "all tools", not a curated subset.
+
+Two related gaps, both deliberate and tracked:
+
+- **No RFC 9728 discovery.** The 401 does not carry a `resource_metadata`
+  challenge unless your assertion header is literally `Authorization`, so MCP
+  clients must be pointed at the IdP by configuration rather than discovering
+  it. Usability, not confidentiality.
+- **`acl.Request` is not goroutine-safe.** One is attached per HTTP request
+  and memoises global roles without synchronisation. Nothing in the current
+  handler fans a JSON-RPC batch across goroutines, so this is latent rather
+  than live — but it constrains how batch dispatch may be implemented.
 
 ### Future WebSocket endpoints need explicit Origin checks
 

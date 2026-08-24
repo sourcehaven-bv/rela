@@ -360,6 +360,7 @@ type SectionField struct {
 	Inaccessible bool     `json:"inaccessible,omitempty"`
 	Span         int      `json:"span,omitempty"`
 	Render       string   `json:"render,omitempty"`
+	Widget       string   `json:"widget,omitempty"`
 }
 
 // SidePanelEntity represents an entity in a side panel section.
@@ -373,12 +374,11 @@ type SidePanelEntity struct {
 	HasContent bool           `json:"hasContent"`
 }
 
-// SidebarItem represents a navigation item with count.
+// SidebarItem represents a navigation item.
 type SidebarItem struct {
 	Label  string `json:"label"`
 	Href   string `json:"href"`
 	Icon   string `json:"icon,omitempty"`
-	Count  *int   `json:"count,omitempty"`
 	Action string `json:"action,omitempty"`
 }
 
