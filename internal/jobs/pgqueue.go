@@ -51,5 +51,5 @@ func NewPostgresQueue(ctx context.Context, logger *slog.Logger, databaseURL stri
 		// string — neoq's own errors are safe, ours must stay that way.
 		return nil, fmt.Errorf("jobs: init postgres backend: %w", err)
 	}
-	return newNeoqQueue(nq, logger, DefaultQueueName, pgConcurrency)
+	return newNeoqQueue(nq, logger, pgConcurrency)
 }

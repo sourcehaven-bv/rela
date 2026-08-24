@@ -54,21 +54,6 @@ const (
 	payloadRunAs    = "run_as"
 )
 
-// JobQueue is the slice of the job seam the scheduler needs.
-//
-// Declared here, at the call site, rather than taking jobs.Client: the
-// scheduler both registers its handler and submits work, but it has no business
-// starting or stopping the queue, and naming the two methods it uses documents
-// that better than a wider interface would.
-//
-// Nil: rejected — [Scheduler.UseQueue] returns an error rather than silently
-// falling back to inline execution, since a scheduler that quietly stopped
-// using the queue would be indistinguishable from one that never had it.
-type JobQueue interface {
-	Enqueue(ctx context.Context, job jobs.Job) error
-	Register(kind jobs.Kind, h jobs.Handler) error
-}
-
 // UseQueue routes script execution through q.
 //
 // Call it once at wiring time, before Run. It registers the task handler and
@@ -79,7 +64,18 @@ type JobQueue interface {
 // The handler is registered here rather than by the wiring site because the
 // scheduler owns [TaskKind] — a subsystem that owns a kind should be the thing
 // that binds it.
-func (s *Scheduler) UseQueue(q JobQueue) error {
+//
+// Takes [jobs.Client] — production plus registration, no lifecycle — rather
+// than a locally-declared interface. The call-site-interface convention exists
+// to avoid binding a consumer to methods it does not use, and Client is already
+// exactly the two the scheduler needs; restating them here would have been a
+// second name for one concept, not a narrowing. Starting and stopping the queue
+// stays out of reach, which is the property that mattered.
+//
+// Nil: rejected — returns an error rather than silently falling back to inline
+// execution, since a scheduler that quietly stopped using the queue would be
+// indistinguishable from one that never had it.
+func (s *Scheduler) UseQueue(q jobs.Client) error {
 	if q == nil {
 		return errors.New("scheduler: job queue must not be nil")
 	}

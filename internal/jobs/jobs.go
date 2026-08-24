@@ -283,7 +283,8 @@ type Enqueuer interface {
 	//
 	// If ctx carries an open transaction collector (see [WithDeferral]),
 	// the enqueue is held until that transaction commits. That path does NOT
-	// require a started queue: the enqueue happens at commit time.
+	// require a started queue: the enqueue happens at commit time. Nothing
+	// installs a collector yet, so today every enqueue takes the direct path.
 	Enqueue(ctx context.Context, job Job) error
 }
 

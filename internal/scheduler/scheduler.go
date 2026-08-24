@@ -231,12 +231,18 @@ type Scheduler struct {
 	// a test that wants to exercise the queue path must keep the real handler
 	// (it is what reports completion back to the waiting submitter) and
 	// substitute only the engine. When nil, the real engine runs.
+	//
+	// Two nil-able override hooks on one struct is one more than is
+	// comfortable, and a third would be the signal to stop: the honest shape
+	// is a constructor-injected engine interface, collapsing both into one
+	// real dependency. Not done here because executeTaskFunc predates the
+	// queue port and rewiring it touches every scheduler test.
 	engineRunner func(ctx context.Context, task TaskConfig) error
 
 	// queue is where script execution happens. REQUIRED: there is no inline
 	// path, so a scheduler without one cannot run anything. Set by UseQueue at
 	// wiring time — see jobs.go.
-	queue JobQueue
+	queue jobs.Client
 
 	// inflight tracks the one running execution per task, so a slow task is
 	// skipped rather than queued behind itself. Guarded by inflightMu because

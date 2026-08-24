@@ -222,18 +222,27 @@ func runScheduler(t *testing.T, svc *appbuild.Services) {
 	s, err := scheduler.NewWithQueue(cfg, script.NewEngine(), svc, discardTestLogger())
 	require.NoError(t, err)
 
+	// Run executes due tasks immediately on start, so the first run lands
+	// without waiting for a tick. Stop as soon as the state file shows it.
+	runUntil(t, s, func() bool { return schedulerSettled(svc) },
+		"the scheduler did not finish a task run")
+}
+
+// runUntil starts s, waits for settled to hold, then stops it.
+//
+// Extracted because every e2e case needs the same start/await/stop dance, and
+// the stop half in particular (cancel, then confirm Run actually returned) is
+// easy to get subtly wrong or omit.
+func runUntil(t *testing.T, s *scheduler.Scheduler, settled func() bool, msg string) {
+	t.Helper()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	done := make(chan error, 1)
 	go func() { done <- s.Run(ctx) }()
 
-	// Run executes due tasks immediately on start, so the first run lands
-	// without waiting for a tick. Stop as soon as the state file shows it.
-	require.Eventually(t, func() bool {
-		return schedulerSettled(svc)
-	}, settleFor, 20*time.Millisecond,
-		"the scheduler did not finish a task run")
+	require.Eventually(t, settled, settleFor, 20*time.Millisecond, msg)
 
 	cancel()
 	select {
@@ -258,39 +267,22 @@ func runSchedulerTwice(t *testing.T, svc *appbuild.Services) {
 	s, err := scheduler.NewWithQueue(cfg, script.NewEngine(), svc, discardTestLogger())
 	require.NoError(t, err)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	done := make(chan error, 1)
-	go func() { done <- s.Run(ctx) }()
-
-	require.Eventually(t, func() bool { return schedulerSettled(svc) },
-		settleFor, 20*time.Millisecond, "first run did not complete")
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(settleFor):
-		t.Fatal("scheduler did not stop")
-	}
+	runUntil(t, s, func() bool { return schedulerSettled(svc) },
+		"first run did not complete")
 
 	// Rewind so the task is due, then run the SAME scheduler again.
 	rewindLastRun(t, svc)
 
-	ctx2, cancel2 := context.WithCancel(context.Background())
-	defer cancel2()
-	done2 := make(chan error, 1)
-	go func() { done2 <- s.Run(ctx2) }()
-
-	require.Eventually(t, func() bool {
-		return len(listNotes(t, svc)) > 0 && listNotes(t, svc)[0] == "2"
-	}, settleFor, 20*time.Millisecond, "second run did not complete")
-	cancel2()
-	select {
-	case <-done2:
-	case <-time.After(settleFor):
-		t.Fatal("scheduler did not stop")
-	}
+	runUntil(t, s, func() bool {
+		notes := listNotes(t, svc)
+		return len(notes) > 0 && notes[0] == "2"
+	}, "second run did not complete")
 }
+
+// schedulerStateFile is the scheduler's state file inside .rela/. The
+// scheduler names it in its own unexported const; duplicated here because
+// this is an external test package.
+const schedulerStateFile = "scheduler-state.json"
 
 // rewindLastRun pushes the task's last-run stamp far enough into the past that
 // the scheduler considers it due on its next evaluation.
@@ -298,7 +290,7 @@ func rewindLastRun(t *testing.T, svc *appbuild.Services) {
 	t.Helper()
 
 	ctx := context.Background()
-	data, err := svc.State().Get(ctx, "scheduler-state.json")
+	data, err := svc.State().Get(ctx, schedulerStateFile)
 	require.NoError(t, err)
 
 	old := time.Now().Add(-48 * time.Hour).Format(time.RFC3339Nano)
@@ -309,13 +301,13 @@ func rewindLastRun(t *testing.T, svc *appbuild.Services) {
 
 	out, err := json.Marshal(st)
 	require.NoError(t, err)
-	require.NoError(t, svc.State().Put(ctx, "scheduler-state.json", out))
+	require.NoError(t, svc.State().Put(ctx, schedulerStateFile, out))
 }
 
 // schedulerSettled reports whether the scheduler has written an outcome —
 // either a successful run or a failure — to its state file.
 func schedulerSettled(svc *appbuild.Services) bool {
-	data, err := svc.State().Get(context.Background(), "scheduler-state.json")
+	data, err := svc.State().Get(context.Background(), schedulerStateFile)
 	if err != nil {
 		return false
 	}
@@ -327,7 +319,7 @@ func schedulerSettled(svc *appbuild.Services) bool {
 func readSchedulerState(t *testing.T, svc *appbuild.Services) string {
 	t.Helper()
 
-	data, err := svc.State().Get(context.Background(), "scheduler-state.json")
+	data, err := svc.State().Get(context.Background(), schedulerStateFile)
 	require.NoError(t, err)
 	return string(data)
 }

@@ -145,6 +145,10 @@ vendors:
   # the grant this narrow is what stops a consumer importing neoq types
   # directly and re-coupling every producer to the queue implementation.
   neoq:        { in: [github.com/acaloiaro/neoq, github.com/acaloiaro/neoq/**] }
+  # uuid: the per-job fingerprint when a caller supplies no IdempotencyKey.
+  # A random fingerprint is what DISABLES neoq's payload-equality dedup, so
+  # two identical-payload jobs both run unless dedup was asked for by name.
+  uuid:        { in: github.com/google/uuid }
   # x/sys/unix: prlimit(2) for the per-command resource ceilings in cmdexec.
   # Go's syscall.SysProcAttr exposes no Rlimits field on Linux, so this is the
   # only way to bound a child's memory/PIDs/file size without a re-exec.
@@ -838,6 +842,7 @@ deps:
   jobs:
     canUse:
       - neoq
+      - uuid
   scheduler:
     mayDependOn:
       - audit

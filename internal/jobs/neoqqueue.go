@@ -30,12 +30,6 @@ type neoqQueue struct {
 	nq     neoq.Neoq
 	logger *slog.Logger
 
-	// queueName is the neoq queue every kind is submitted to. rela routes by
-	// Kind inside a single queue rather than mapping kind→neoq queue: neoq
-	// starts a worker per queue, and one worker pool with a dispatch table is
-	// both cheaper and keeps concurrency governable in one place.
-	queueName string
-
 	// concurrency is the worker count for the dispatch handler.
 	concurrency int
 
@@ -86,6 +80,15 @@ const payloadKindKey = "__rela_kind"
 // JSON, so it is read back as a number of any concrete type.
 const payloadRetryKey = "__rela_retry"
 
+// queueName is the neoq queue every kind is submitted to. rela routes by Kind
+// inside a single queue rather than mapping kind→neoq queue: neoq starts a
+// worker per queue, and one worker pool with a dispatch table is both cheaper
+// and keeps concurrency governable in one place.
+//
+// A constant, not a parameter: no caller has reason to vary it, and the name is
+// an implementation detail of this seam rather than part of its contract.
+const queueName = "rela"
+
 // payloadDeadlineKey carries the job's effective deadline (Unix nanoseconds)
 // through neoq so the dispatcher can enforce it.
 //
@@ -97,15 +100,12 @@ const payloadDeadlineKey = "__rela_deadline"
 //
 // Nil: rejected — a nil backend or logger is a wiring bug, and substituting a
 // no-op would turn every enqueue into a silent drop discovered much later.
-func newNeoqQueue(nq neoq.Neoq, logger *slog.Logger, queueName string, concurrency int) (*neoqQueue, error) {
+func newNeoqQueue(nq neoq.Neoq, logger *slog.Logger, concurrency int) (*neoqQueue, error) {
 	if nq == nil {
 		return nil, errors.New("jobs: neoq backend must not be nil")
 	}
 	if logger == nil {
 		return nil, errors.New("jobs: logger must not be nil")
-	}
-	if queueName == "" {
-		return nil, errors.New("jobs: queue name must not be empty")
 	}
 	if concurrency < 1 {
 		return nil, fmt.Errorf("jobs: concurrency must be >= 1, got %d", concurrency)
@@ -113,7 +113,6 @@ func newNeoqQueue(nq neoq.Neoq, logger *slog.Logger, queueName string, concurren
 	return &neoqQueue{
 		nq:          nq,
 		logger:      logger,
-		queueName:   queueName,
 		concurrency: concurrency,
 		handlers:    make(map[Kind]Handler),
 	}, nil
@@ -210,7 +209,7 @@ func (q *neoqQueue) Enqueue(ctx context.Context, job Job) error {
 	// backendRetryBudget for the full reasoning.
 	maxRetries := backendRetryBudget
 	nj := &neoqjobs.Job{
-		Queue:      q.queueName,
+		Queue:      queueName,
 		Payload:    payload,
 		MaxRetries: &maxRetries,
 
@@ -294,12 +293,12 @@ func (q *neoqQueue) Start(ctx context.Context) error {
 	// would silently kill exactly the work this package exists for — an LLM
 	// call or a slow SMTP send — and count it as a failed attempt. The value
 	// is ours to choose and document rather than inherit.
-	h := handler.New(q.queueName, q.dispatch,
+	h := handler.New(queueName, q.dispatch,
 		handler.Concurrency(q.concurrency),
 		handler.JobTimeout(handlerTimeout),
 	)
 	if err := q.nq.Start(ctx, h); err != nil {
-		return fmt.Errorf("jobs: start queue %q: %w", q.queueName, err)
+		return fmt.Errorf("jobs: start queue %q: %w", queueName, err)
 	}
 	return nil
 }
@@ -357,9 +356,10 @@ func (q *neoqQueue) dispatch(ctx context.Context) error {
 	// re-run), so that is the one number to trust.
 	attempt := nj.Retries + 1
 
-	if dl, ok := deadlineOf(nj.Payload); ok && !time.Now().Before(dl) {
+	deadline, hasDeadline := deadlineOf(nj.Payload)
+	if hasDeadline && !time.Now().Before(deadline) {
 		q.logger.Warn("dropping job past its deadline",
-			"kind", kind, "job_id", nj.ID, "attempt", attempt, "deadline", dl)
+			"kind", kind, "job_id", nj.ID, "attempt", attempt, "deadline", deadline)
 		return nil
 	}
 	if attempt > retry.maxAttempts() {
@@ -380,8 +380,8 @@ func (q *neoqQueue) dispatch(ctx context.Context) error {
 	// Retry is carried through so a handler inspecting it sees the policy the
 	// caller actually chose, not the zero value.
 	job := Job{Kind: kind, Payload: payload, Retry: retry}
-	if dl, ok := deadlineOf(nj.Payload); ok {
-		job.Deadline = dl
+	if hasDeadline {
+		job.Deadline = deadline
 	}
 
 	if err := h(ctx, job); err != nil {

@@ -10,10 +10,6 @@ import (
 	"github.com/acaloiaro/neoq/backends/memory"
 )
 
-// DefaultQueueName is the neoq queue rela submits every job to. Kinds are
-// routed within it by the dispatch handler — see neoqQueue.
-const DefaultQueueName = "rela"
-
 // defaultConcurrency is the worker count for a memory queue.
 //
 // Small on purpose. These jobs are I/O-bound against external systems, and the
@@ -41,5 +37,5 @@ func NewMemoryQueue(ctx context.Context, logger *slog.Logger) (Queue, error) {
 	if err != nil {
 		return nil, fmt.Errorf("jobs: init memory backend: %w", err)
 	}
-	return newNeoqQueue(nq, logger, DefaultQueueName, defaultConcurrency)
+	return newNeoqQueue(nq, logger, defaultConcurrency)
 }

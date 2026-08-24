@@ -28,6 +28,14 @@ import (
 // succeeds. It lives here rather than in the store because the store must not
 // learn about jobs — arch-lint forbids the import, and the concept does not
 // belong there either.
+//
+// STATUS: this seam is BUILT AND PINNED by jobstest, but not yet wired to a
+// transaction. No production code calls [WithDeferral] today, because no write
+// path enqueues a job from inside store.Store.Tx yet — the scheduler, the only
+// current producer, enqueues from its own goroutine. The first caller that
+// enqueues inside a transaction MUST wire it at that transaction's boundary
+// rather than reaching for Enqueue directly; until then the guarantee below is
+// available, not active.
 
 // collectorKey is the context key for the in-flight [Collector].
 //
@@ -49,10 +57,10 @@ type Collector struct {
 // WithDeferral returns a context carrying a fresh [Collector], and the
 // collector itself.
 //
-// The transaction seam calls this at the top of a transaction, then calls
+// A transaction seam calls this at the top of a transaction, then calls
 // exactly one of [Collector.Flush] (on commit) or [Collector.Discard] (on
 // rollback or error). Enqueues made with the returned context are held until
-// then.
+// then. See the STATUS note above: no seam calls it yet.
 //
 // A nested transaction that joins an outer one must NOT call this again —
 // reusing the outer context keeps every enqueue on the outer collector, so

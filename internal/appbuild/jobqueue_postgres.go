@@ -6,14 +6,9 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/jobs"
 )
-
-// jobQueueShutdownTimeout bounds how long Close waits for the job queue to
-// stop. A queue that will not drain must not wedge process shutdown.
-const jobQueueShutdownTimeout = 5 * time.Second
 
 // jobQueueFor returns the background-job queue for the postgres build: DURABLE
 // work that survives a restart and is safe to process from several rela-server

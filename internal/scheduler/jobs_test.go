@@ -287,7 +287,7 @@ func TestReportInFlight_NoWaiterIsHarmless(t *testing.T) {
 
 // newQueuedScheduler builds a scheduler wired to q with a fixed clock.
 func newQueuedScheduler(
-	t *testing.T, q JobQueue, now time.Time, tasks ...TaskConfig,
+	t *testing.T, q jobs.Client, now time.Time, tasks ...TaskConfig,
 ) *Scheduler {
 	t.Helper()
 

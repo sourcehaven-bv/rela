@@ -29,6 +29,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
@@ -1484,6 +1485,13 @@ func relationVersionRecorderFor(vs store.VersionService) entitymanager.RelationV
 // the pgstore reconciliation sweep, every other build no-ops — which keeps this
 // build-agnostic file free of any pgstore import. assemble calls it above.)
 
+// jobQueueShutdownTimeout bounds how long [Services.Close] waits for the job
+// queue to stop. A queue that will not drain must not wedge process shutdown.
+//
+// Build-agnostic on purpose: both tiers get the same shutdown budget, so it
+// lives here rather than once per build-tagged jobqueue_*.go file.
+const jobQueueShutdownTimeout = 5 * time.Second
+
 // Close releases resources held by Services: store first (so any
 // in-flight observer callbacks complete), then the search backend.
 //
@@ -1532,6 +1540,19 @@ func (s *Services) Close() error {
 // once per process (see cmd/rela-server, cmd/rela-desktop, the CLI commands).
 // The queue owns a worker pool, and on postgres a connection pool, so it is a
 // process-scoped resource — not something to build per request.
+//
+// KNOWN COST: this is EAGER, and the scheduler is currently the only consumer
+// of Services.Jobs. So every short-lived CLI command (show, list, trace, …)
+// builds and starts a queue it never enqueues to. On the default build that is
+// cheap (~14µs and a few goroutines); on the postgres build it is not — neoq's
+// backend runs a golang-migrate check and opens a SECOND connection pool before
+// Start adds a LISTEN connection and its workers, all on the startup path of a
+// command that may only be reading one entity.
+//
+// Deliberately not made lazy here: deferring construction to the first Jobs()
+// call would move queue-construction errors from wiring time to first use,
+// which is a change to the accessor's contract rather than an optimization.
+// Worth doing if postgres CLI startup latency becomes a complaint.
 func buildJobQueue(base *SharedBase) (jobs.Queue, error) {
 	q, err := jobQueueFor(base)
 	if err != nil {
