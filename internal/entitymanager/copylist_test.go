@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"sync"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -130,7 +132,7 @@ func mustOffers(
 	entityType, pointer, sourceID string,
 ) []entitymanager.CopyOffer {
 	t.Helper()
-	got, err := mgr.CopiesForSource(ctx, entityType, pointer, sourceID)
+	got, err := entitymanager.CopiesForSource(ctx, mgr, entityType, pointer, sourceID)
 	if err != nil {
 		t.Fatalf("CopiesForSource: %v", err)
 	}
@@ -199,6 +201,19 @@ func TestCopiesForSource_ListsDeniedDefinitionsWithAllowedFalse(t *testing.T) {
 
 // TestCopiesForSource_AllowedAgreesWithInvoke is the invariant that makes the
 // hint worth having, and the RULING 11 failure it exists to avoid.
+//
+// # Mutation-checked, and the first attempt found something about the CODE
+//
+// Deleting copyInvocable's `authorizeCopy` call killed nothing — not because
+// this test is weak, but because `planCopy` calls `authorizeCopy` itself, so
+// the second call was redundant. The redundancy is now removed and the reason
+// documented at the call site.
+//
+// The real mechanism is `planCopy`, and it IS pinned: making planCopy stop
+// authorizing fails 8 tests across this package. The `guard denies` and
+// `no guard wired` rows are what make this one of them — with a permissive
+// guard alone, "the check ran" and "the check was skipped" both yield
+// allowed, and the assertion could not tell them apart.
 //
 // `_actions` said a published face was writable while the write path refused.
 // The fix there was to make the map honest. This asserts the same property
@@ -311,4 +326,142 @@ func TestCopiesForSource_StableOrder(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestCopiesForSource_AffordanceProbeEmitsNoAuditRecords is the regression
+// test for a defect code review found: a READ-ONLY list emitted `denied-write`
+// audit records.
+//
+// # Why it happened
+//
+// `Allowed` is computed by running the real authorization path — that is what
+// stops the hint drifting from the write. But that path AUDITS its denials, so
+// asking the question recorded an answer as though someone had attempted a
+// write. A SPA rendering an entity view would append N rows per page load.
+//
+// # Why it matters more than volume
+//
+// `op=denied-write` would stop meaning "someone tried to write and was
+// refused" and start meaning "someone looked at a page". Anyone alerting on
+// denied-write volume gets paged by ordinary browsing, and the real signal
+// drowns. The audit log's value is that it does not lie.
+//
+// The verdict is still computed identically — only the RECORD is suppressed —
+// so the hint cannot drift as a result of this fix.
+//
+// # Mutation-checked, and the result is worth recording
+//
+// Removing the suppression in authorizeAndAudit does NOT fail this test, and
+// that is not a flaw in the assertion — it is because the OTHER fix from the
+// same review (CopyOffer.Indeterminate) removed the path that audited. The
+// records came from planCopyEdges on CROSS-ENTITY definitions, and cross-entity
+// offers are no longer probed at all.
+//
+// So today the suppression is BELT-AND-BRACES, not the mechanism. It stays
+// because the reachable-path set is a property of the current call graph
+// rather than of the design: anything that probes a definition performing a
+// per-edge authorization re-opens the path immediately, and the failure would
+// be silent pollution of an append-only log.
+//
+// This test therefore asserts the PROPERTY (a read-only query writes nothing),
+// not the mechanism, and it would catch a regression from either direction.
+func TestCopiesForSource_AffordanceProbeEmitsNoAuditRecords(t *testing.T) {
+	st := memstore.New()
+	meta, err := metamodel.Parse([]byte(copyListMeta))
+	if err != nil {
+		t.Fatalf("metamodel.Parse: %v", err)
+	}
+	rec := &recordingAudit{}
+	mgr, err := entitymanager.New(entitymanager.Deps{
+		Store: st, Meta: meta, Templater: nopTemplater{},
+		Audit: rec, ACL: denyAllACL{},
+		Transitions: statemachine.EmptySet(),
+		FieldGate:   entitymanager.AllowAllFieldGate{},
+		CopyGuard:   allowGuard{allow: true},
+	})
+	if err != nil {
+		t.Fatalf("entitymanager.New: %v", err)
+	}
+	ctx := context.Background()
+	if err := st.CreateEntity(ctx, &entity.Entity{
+		ID: "PAGE-1", Type: "page", Properties: map[string]any{"title": "Draft"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	if _, err := entitymanager.CopiesForSource(ctx, mgr, "page", "", "PAGE-1"); err != nil {
+		t.Fatalf("CopiesForSource: %v", err)
+	}
+
+	if n := rec.count(); n != 0 {
+		t.Errorf("a read-only affordance query wrote %d audit record(s). "+
+			"`denied-write` must mean an attempted write was refused, not "+
+			"that someone rendered a page; records: %v", n, rec.ops())
+	}
+}
+
+// TestCopiesForSource_CrossEntityIsIndeterminate pins the honest answer for an
+// offer whose invocability cannot be known yet.
+//
+// A cross-entity copy's target id is chosen at INVOKE time, so the create
+// check would authorize the empty id — and a policy keyed on the target's
+// identity would be evaluated against the wrong subject. Code review
+// demonstrated list=allowed / invoke=forbidden on exactly that.
+//
+// Reporting `Allowed: true` there is the RULING 11 defect. So the offer says
+// "indeterminate" instead of guessing, and — asserted here — it does not
+// claim Allowed.
+func TestCopiesForSource_CrossEntityIsIndeterminate(t *testing.T) {
+	mgr, _ := newCopyListManager(t, allowGuard{allow: true})
+	ctx := context.Background()
+
+	same := mustOffers(ctx, t, mgr, "page", "", "PAGE-1")[0]
+	if same.Indeterminate {
+		t.Error("a SAME-entity offer's target is the source, so it is answerable")
+	}
+
+	cross := mustOffers(ctx, t, mgr, "ticket", "", "TKT-1")[0]
+	if !cross.Indeterminate {
+		t.Error("a CROSS-entity offer cannot be authorized before the client " +
+			"chooses a target id — saying `allowed` would be an affordance " +
+			"that lies (RULING 11)")
+	}
+	if cross.Allowed {
+		t.Error("an indeterminate offer must not also claim Allowed: a client " +
+			"reading only `allowed` would treat it as a confirmed verdict")
+	}
+}
+
+// recordingAudit counts audit records so a test can assert that a read-only
+// query wrote none.
+type recordingAudit struct {
+	mu      sync.Mutex
+	records []string
+}
+
+func (r *recordingAudit) Record(rec audit.Record) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.records = append(r.records, rec.Op)
+}
+
+func (r *recordingAudit) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.records)
+}
+
+func (r *recordingAudit) ops() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.records...)
+}
+
+// denyAllACL refuses every write, so any authorization the affordance query
+// performs produces a denial worth auditing — which is what makes the
+// zero-records assertion meaningful rather than vacuous.
+type denyAllACL struct{ acl.NopACL }
+
+func (denyAllACL) AuthorizeWrite(_ context.Context, _ acl.WriteRequest) acl.Decision {
+	return acl.Decision{Allow: false, RuleKind: "test", Reason: "denied for test"}
 }

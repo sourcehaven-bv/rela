@@ -894,8 +894,16 @@ type CopyOffer struct {
 	// cross-entity copy REQUIRES a target id, so a client cannot build a valid
 	// invoke without knowing which it has.
 	SameEntity bool `json:"sameEntity"`
+	// Indeterminate marks an offer whose invocability cannot be answered yet:
+	// a CROSS-ENTITY copy, whose target the client chooses at invoke time.
+	// Authorization depends on that target, so no honest verdict exists here.
+	//
+	// When true, `allowed` is meaningless — render the action as available but
+	// UNVERIFIED, never as confirmed. The server authorizes on invoke either
+	// way. Saying "true" instead would be an affordance that lies.
+	Indeterminate bool `json:"indeterminate,omitempty"`
 	// Allowed reports whether the requesting principal may invoke this copy on
-	// this source right now.
+	// this source right now. Meaningful only when `indeterminate` is false.
 	//
 	// A HINT, never a boundary — the same contract as `_actions`. The invoke
 	// endpoint re-authorizes through the kernel, so a client that ignores this

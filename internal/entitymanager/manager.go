@@ -388,15 +388,58 @@ func New(d Deps) (*Manager, error) {
 // on the bypass path — there is no denial to record.
 func (m *Manager) authorizeAndAudit(ctx context.Context, req acl.WriteRequest) error {
 	if m.bypassACL {
-		m.recordACLBypass(ctx, req)
+		if !isAffordanceProbe(ctx) {
+			m.recordACLBypass(ctx, req)
+		}
 		return nil
 	}
 	decision := m.deps.ACL.AuthorizeWrite(ctx, req)
 	if decision.Allow {
 		return nil
 	}
-	m.recordDeniedWrite(ctx, decision, req)
+	if !isAffordanceProbe(ctx) {
+		// An affordance PROBE is not an attempted write, so recording it would
+		// make the audit log say something untrue. See [withAffordanceProbe].
+		m.recordDeniedWrite(ctx, decision, req)
+	}
 	return &acl.ForbiddenError{Decision: decision}
+}
+
+// affordanceProbeKey marks a context as an AFFORDANCE QUERY: a read-only
+// "could this principal do X" question, not an attempted write.
+type affordanceProbeKey struct{}
+
+// withAffordanceProbe marks ctx as an affordance query, suppressing audit
+// records from the authorization path.
+//
+// # Why the audit log must not see these
+//
+// [CopiesForSource] answers "which copies may this principal invoke here" by
+// running the REAL authorization path — that is what stops the hint drifting
+// from the write. But that path audits its denials, and a denial recorded for
+// a question nobody asked makes `op=denied-write` mean "someone looked at a
+// page" rather than "someone tried to write and was refused".
+//
+// A SPA renders an entity view, the view lists copy affordances, and every
+// page load appends N rows to an append-only log. Anyone alerting on
+// denied-write volume gets paged by ordinary browsing, and the real signal
+// drowns. The audit log's whole value is that it does not lie (see
+// [Manager.CopyState]'s note on why audit lands after the commit); this keeps
+// that true in the other direction.
+//
+// It suppresses ONLY the record, never the decision: the verdict is computed
+// identically and returned identically, so the hint still cannot drift.
+//
+// The key is typed and unexported, so nothing outside this package can mark a
+// real write as a probe.
+func withAffordanceProbe(ctx context.Context) context.Context {
+	return context.WithValue(ctx, affordanceProbeKey{}, true)
+}
+
+// isAffordanceProbe reports whether ctx was marked by [withAffordanceProbe].
+func isAffordanceProbe(ctx context.Context) bool {
+	v, _ := ctx.Value(affordanceProbeKey{}).(bool)
+	return v
 }
 
 // mapTransitionError translates a state-machine enforcement error into the

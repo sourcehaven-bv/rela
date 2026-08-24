@@ -14,6 +14,36 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
+// copyEngine owns the copy operation: planning, authorization, target
+// construction, edge planning and audit.
+//
+// # Why a separate type (Jeroen's call, TKT-WRLDAPI item 5)
+//
+// It is a decomposition, not a lint workaround. Copies are already a distinct
+// operation — deliberately NOT on the [EntityManager] interface, which is the
+// ordinary-CRUD write contract — and this makes that boundary structural
+// rather than conventional. `Manager` was at 41 methods against a 40 load
+// line, almost all of them private helpers; adding the copy-affordance query
+// would have pinned it at the line rather than under it, and the load line is
+// a ratchet to narrow, not a budget to spend.
+//
+// # It holds the Manager, and that is deliberate
+//
+// The engine needs `authorizeAndAudit`, which is Manager's and is shared with
+// every other write path. Duplicating it here would be a second authorization
+// implementation — the exact defect this feature's design refuses. So the
+// engine composes the manager rather than replacing it.
+//
+// # planCopy and authorizeCopy stay UNEXPORTED
+//
+// That is load-bearing, not incidental. [CopiesForSource] computes each
+// offer's `Allowed` by running those two — the same code the invoke runs — and
+// that is the only reason the hint cannot drift from the write (RULING 11).
+// Exporting them, or making invocability computable from outside this package,
+// would let a caller answer the question a different way and reintroduce the
+// two-authorization-sites defect.
+type copyEngine struct{ m *Manager }
+
 // Copy errors. ErrUnknownCopy is caller input (4xx); the guard errors map to
 // 403/422 exactly as the statemachine's do, because they ARE the
 // statemachine's vocabulary (design doc §9.1: shared guard machinery,
@@ -82,7 +112,7 @@ type CopyResult struct {
 // Two consequences the contract forces:
 //
 //   - Every store call inside the transaction goes through the VIEW, never
-//     m.deps.Store. A write on the outer store from inside deadlocks on
+//     ce.m.deps.Store. A write on the outer store from inside deadlocks on
 //     fs/mem and silently bypasses the transaction on pg.
 //   - fs/mem have NO ROLLBACK — store.Tx there is a write mutex. A mid-copy
 //     failure leaves a partially written target face on those backends. That
@@ -102,19 +132,19 @@ type CopyResult struct {
 // a world selects is valid iff that world remains a valid graph, but
 // `must_hold_in` is TKT-9KZGJO's declared seam and shipping half of it here
 // would fork it. That is a boundary, not an omission.
-func (m *Manager) CopyState(ctx context.Context, req CopyRequest) (*CopyResult, error) {
+func (ce *copyEngine) copyState(ctx context.Context, req CopyRequest) (*CopyResult, error) {
 	ctx = withStoreAttribution(ctx)
 
-	def, ok := m.deps.Meta.Copies[req.Definition]
+	def, ok := ce.m.deps.Meta.Copies[req.Definition]
 	if !ok {
 		return nil, fmt.Errorf("%w: %q", ErrUnknownCopy, req.Definition)
 	}
-	plan, err := m.planCopy(ctx, req, def)
+	plan, err := ce.planCopy(ctx, req, def)
 	if err != nil {
 		return nil, err
 	}
 
-	tx, ok := m.deps.Store.(store.Transactor)
+	tx, ok := ce.m.deps.Store.(store.Transactor)
 	if !ok {
 		// Every backend implements Transactor; a store that does not is a
 		// wiring error, and running the copy unsynchronized would be worse
@@ -135,7 +165,7 @@ func (m *Manager) CopyState(ctx context.Context, req CopyRequest) (*CopyResult, 
 	}
 
 	// AFTER the commit — see the godoc.
-	m.recordCopyAudit(ctx, plan, result)
+	ce.recordCopyAudit(ctx, plan, result)
 	return &result, nil
 }
 
@@ -188,7 +218,7 @@ type copyEdge struct {
 //     fields the principal cannot read into an entity with a different
 //     audience — a redaction bypass, and the reason `fields: all` is a load
 //     error on that form.
-func (m *Manager) planCopy(
+func (ce *copyEngine) planCopy(
 	ctx context.Context, req CopyRequest, def metamodel.CopyDef,
 ) (*copyPlan, error) {
 	from, err := metamodel.ParseCopyTarget(def.From)
@@ -203,28 +233,28 @@ func (m *Manager) planCopy(
 	plan := &copyPlan{
 		name: req.Definition, def: def, from: from, to: to,
 		sourceID: req.SourceID, targetID: req.SourceID,
-		sourceTail: entity.Pointer(metamodel.StoredPointer(m.deps.Meta, from.Type, from.Pointer)),
-		targetTail: entity.Pointer(metamodel.StoredPointer(m.deps.Meta, to.Type, to.Pointer)),
+		sourceTail: entity.Pointer(metamodel.StoredPointer(ce.m.deps.Meta, from.Type, from.Pointer)),
+		targetTail: entity.Pointer(metamodel.StoredPointer(ce.m.deps.Meta, to.Type, to.Pointer)),
 	}
 	if !def.IsSameEntity() {
 		plan.targetID = req.TargetID
 	}
 
-	src, err := m.readCopySource(ctx, def, plan)
+	src, err := ce.readCopySource(ctx, def, plan)
 	if err != nil {
 		return nil, err
 	}
-	if err := m.authorizeCopy(ctx, plan); err != nil {
+	if err := ce.authorizeCopy(ctx, plan); err != nil {
 		return nil, err
 	}
-	if err := m.buildCopyTarget(ctx, plan, src); err != nil {
+	if err := ce.buildCopyTarget(ctx, plan, src); err != nil {
 		return nil, err
 	}
 	return plan, nil
 }
 
 // readCopySource performs the elevation split's read half.
-func (m *Manager) readCopySource(
+func (ce *copyEngine) readCopySource(
 	ctx context.Context, def metamodel.CopyDef, plan *copyPlan,
 ) (*entity.Entity, error) {
 	ptr := plan.sourceTail
@@ -233,7 +263,7 @@ func (m *Manager) readCopySource(
 		// RAW and elevated. The read feeds a write, and a redacted read that
 		// feeds a write destroys the hidden fields it could not see — the
 		// precise bug the never-redact-a-write-prep rule pins.
-		e, err := m.deps.Store.GetEntityState(ctx, plan.sourceID, ptr)
+		e, err := ce.m.deps.Store.GetEntityState(ctx, plan.sourceID, ptr)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %s", ErrCopySourceMissing, plan.sourceID)
 		}
@@ -243,14 +273,14 @@ func (m *Manager) readCopySource(
 	// Cross-entity: through the caller's gate. A nil gate means no ACL is
 	// wired, which is the CLI/no-policy case — the raw read is then what
 	// every other read on that deployment already does.
-	if m.deps.CopyVisibility == nil {
-		e, err := m.deps.Store.GetEntityState(ctx, plan.sourceID, ptr)
+	if ce.m.deps.CopyVisibility == nil {
+		e, err := ce.m.deps.Store.GetEntityState(ctx, plan.sourceID, ptr)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %s", ErrCopySourceMissing, plan.sourceID)
 		}
 		return e, nil
 	}
-	e, ok, err := m.deps.CopyVisibility.Get(ctx, plan.from.Type, plan.sourceID)
+	e, ok, err := ce.m.deps.CopyVisibility.Get(ctx, plan.from.Type, plan.sourceID)
 	if err != nil {
 		return nil, err
 	}
@@ -288,12 +318,12 @@ func (m *Manager) readCopySource(
 // The same-entity target face is deliberately exempt from (3): nobody holds
 // `update` on published by design, so requiring it would make every promote
 // impossible. (1) and (2) are what stand in its place.
-func (m *Manager) authorizeCopy(ctx context.Context, plan *copyPlan) error {
+func (ce *copyEngine) authorizeCopy(ctx context.Context, plan *copyPlan) error {
 	// (1) READ on the source. Same-entity copies read RAW afterwards, which
 	// is about hidden FIELDS traveling with the entity — it is not a
 	// license to read an entity the principal has no access to.
-	if m.deps.CopyReadGate != nil {
-		permitted, err := m.deps.CopyReadGate.PermitsRead(ctx, plan.from.Type, plan.sourceID)
+	if ce.m.deps.CopyReadGate != nil {
+		permitted, err := ce.m.deps.CopyReadGate.PermitsRead(ctx, plan.from.Type, plan.sourceID)
 		if err != nil {
 			return err
 		}
@@ -304,7 +334,7 @@ func (m *Manager) authorizeCopy(ctx context.Context, plan *copyPlan) error {
 	}
 
 	if perm := plan.def.Guard.Permission; perm != "" {
-		if m.deps.CopyGuard == nil {
+		if ce.m.deps.CopyGuard == nil {
 			// A guarded copy with no guard implementation fails CLOSED,
 			// matching the statemachine's nil-guard rule: a guarded edge with
 			// no guard is denied, never waved through.
@@ -315,7 +345,7 @@ func (m *Manager) authorizeCopy(ctx context.Context, plan *copyPlan) error {
 					plan.name, perm),
 			}}
 		}
-		if !m.deps.CopyGuard.HoldsPermission(ctx, plan.sourceID, perm) {
+		if !ce.m.deps.CopyGuard.HoldsPermission(ctx, plan.sourceID, perm) {
 			return &acl.ForbiddenError{Decision: acl.Decision{
 				RuleKind: "copy-guard", RuleID: perm,
 				Reason: fmt.Sprintf(
@@ -329,7 +359,7 @@ func (m *Manager) authorizeCopy(ctx context.Context, plan *copyPlan) error {
 		// (3) does not apply — see above.
 		return nil
 	}
-	return m.authorizeAndAudit(ctx, acl.WriteRequest{
+	return ce.m.authorizeAndAudit(ctx, acl.WriteRequest{
 		Op: acl.OpCreate,
 		Subject: acl.EntitySubject{
 			Type:    plan.to.Type,
@@ -345,12 +375,12 @@ func (m *Manager) authorizeCopy(ctx context.Context, plan *copyPlan) error {
 // target (§9.1's partial-copy semantics); `fields: all` is the full-replace
 // promote case, and is only reachable on a same-entity copy because the
 // cross-entity form rejects it at load.
-func (m *Manager) buildCopyTarget(
+func (ce *copyEngine) buildCopyTarget(
 	ctx context.Context, plan *copyPlan, src *entity.Entity,
 ) error {
 	targetPtr := plan.targetTail
 
-	existing, err := m.deps.Store.GetEntityState(ctx, plan.targetID, targetPtr)
+	existing, err := ce.m.deps.Store.GetEntityState(ctx, plan.targetID, targetPtr)
 	switch {
 	case err == nil:
 	case errors.Is(err, store.ErrNotFound):
@@ -386,7 +416,7 @@ func (m *Manager) buildCopyTarget(
 	}
 
 	plan.entity = target
-	edges, err := m.planCopyEdges(ctx, plan)
+	edges, err := ce.planCopyEdges(ctx, plan)
 	if err != nil {
 		return err
 	}
@@ -406,7 +436,7 @@ func (m *Manager) buildCopyTarget(
 // never create an edge the principal could not create by hand. Same-entity
 // elevated copies only touch the entity's own state edges, so the concern
 // does not arise there.
-func (m *Manager) planCopyEdges(ctx context.Context, plan *copyPlan) ([]copyEdge, error) {
+func (ce *copyEngine) planCopyEdges(ctx context.Context, plan *copyPlan) ([]copyEdge, error) {
 	if len(plan.def.Relations) == 0 {
 		return nil, nil
 	}
@@ -414,7 +444,7 @@ func (m *Manager) planCopyEdges(ctx context.Context, plan *copyPlan) ([]copyEdge
 	crossEntity := !plan.def.IsSameEntity()
 
 	var out []copyEdge
-	for rel, err := range m.deps.Store.ListRelations(ctx, store.RelationQuery{
+	for rel, err := range ce.m.deps.Store.ListRelations(ctx, store.RelationQuery{
 		From: plan.sourceID, FromPointer: &srcTail,
 	}) {
 		if err != nil {
@@ -426,7 +456,7 @@ func (m *Manager) planCopyEdges(ctx context.Context, plan *copyPlan) ([]copyEdge
 			continue
 		}
 		if crossEntity {
-			if aerr := m.authorizeAndAudit(ctx, acl.WriteRequest{
+			if aerr := ce.m.authorizeAndAudit(ctx, acl.WriteRequest{
 				Op: acl.OpCreate,
 				Subject: acl.RelationSubject{
 					Type: rel.Type, FromType: plan.to.Type, FromID: plan.targetID,
@@ -450,9 +480,9 @@ func (m *Manager) planCopyEdges(ctx context.Context, plan *copyPlan) ([]copyEdge
 // It does NOT reuse purge's Manager bypass: purge is a store-level
 // destructive op with no entity write, whereas a copy IS an entity write and
 // must not have weaker authorization or attribution than a property edit.
-func (m *Manager) recordCopyAudit(ctx context.Context, plan *copyPlan, res CopyResult) {
+func (ce *copyEngine) recordCopyAudit(ctx context.Context, plan *copyPlan, res CopyResult) {
 	p := principal.From(ctx)
-	m.deps.Audit.Record(audit.Record{
+	ce.m.deps.Audit.Record(audit.Record{
 		Op: audit.OpCopyState,
 		Subject: &audit.Subject{
 			Kind: "entity", Type: plan.to.Type, ID: plan.targetID,
@@ -471,4 +501,11 @@ func copyFaceLabel(id string, t metamodel.CopyTarget) string {
 		return id
 	}
 	return id + "@" + t.Pointer
+}
+
+// CopyState executes a declared copy definition. See [copyEngine.copyState]
+// for the full contract; this is the Manager-facing entry point and delegates
+// without deciding anything.
+func (m *Manager) CopyState(ctx context.Context, req CopyRequest) (*CopyResult, error) {
+	return (&copyEngine{m: m}).copyState(ctx, req)
 }

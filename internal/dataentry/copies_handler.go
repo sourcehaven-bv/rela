@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 // copyService is the copy capability this package needs, declared HERE at the
@@ -120,22 +122,41 @@ func (h *copiesHandler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	offers, err := h.copies.CopiesForSource(r.Context(), entityType, q.Get("pointer"), sourceID)
+	// NORMALIZE the pointer from a DECLARED name to a STORED coordinate.
+	//
+	// A client reads schema.yaml, sees the face is called `draft`, and sends
+	// `pointer=draft`. But `draft` is often `default: true`, whose stored
+	// coordinate is the empty string — so an un-normalized compare returns
+	// `200 []`, which is indistinguishable from "this face has no copies".
+	// That is the silence-shaped defect this file's own docs rail against,
+	// reintroduced at the wire after being fixed inside CopiesForSource.
+	//
+	// StoredPointer is idempotent for an already-stored coordinate, so a
+	// client that sends `pointer=` or `pointer=published` is unaffected.
+	pointer := metamodel.StoredPointer(h.schema().Meta, entityType, q.Get("pointer"))
+
+	offers, err := h.copies.CopiesForSource(r.Context(), entityType, pointer, sourceID)
 	if err != nil {
+		// The detail is generic and the real error is logged: an unfiltered
+		// backend error string in a client-visible body is how store internals
+		// leak, and every other error path in this file is careful about it.
+		slog.Error("dataentry: listing copies failed",
+			"type", entityType, "source", sourceID, "err", err)
 		writeV1Error(w, r, http.StatusInternalServerError, "copy_list_failed",
-			"Could not list copies", err.Error())
+			"Could not list copies", "")
 		return
 	}
 
 	resp := v1.CopyOffersResponse{Data: make([]v1.CopyOffer, 0, len(offers))}
 	for _, o := range offers {
 		resp.Data = append(resp.Data, v1.CopyOffer{
-			Name:       o.Name,
-			Label:      o.Label,
-			TargetFace: o.TargetFace,
-			SameEntity: o.SameEntity,
-			Allowed:    o.Allowed,
-			Reason:     o.Reason,
+			Name:          o.Name,
+			Label:         o.Label,
+			TargetFace:    o.TargetFace,
+			SameEntity:    o.SameEntity,
+			Indeterminate: o.Indeterminate,
+			Allowed:       o.Allowed,
+			Reason:        o.Reason,
 		})
 	}
 	writeV1JSON(w, http.StatusOK, resp)
@@ -209,6 +230,15 @@ func (h *copiesHandler) invoke(w http.ResponseWriter, r *http.Request, name stri
 		return
 	}
 
+	if res == nil || res.Entity == nil {
+		// Unreachable through the concrete manager, which never returns
+		// (nil, nil). Guarded because copyService is an INTERFACE: a stub or a
+		// future implementation that returns an empty success would panic an
+		// HTTP handler on the request path, and two lines prevent that.
+		writeV1Error(w, r, http.StatusInternalServerError, "copy_failed",
+			"Copy returned no result", "")
+		return
+	}
 	writeV1JSON(w, http.StatusOK, v1.CopyResult{
 		Definition: res.Definition,
 		EntityID:   res.Entity.ID,

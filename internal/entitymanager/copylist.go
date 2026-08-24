@@ -31,8 +31,29 @@ type CopyOffer struct {
 	// copy needs a target id, so a caller must know which it is looking at.
 	SameEntity bool
 
+	// Indeterminate marks an offer whose invocability CANNOT be answered
+	// without information the caller has not supplied yet.
+	//
+	// It is true for exactly one case: a CROSS-ENTITY copy, whose target id
+	// the client chooses at invoke time. The authorization path checks
+	// `OpCreate` on the target, so with no target id it would authorize the
+	// EMPTY id — and any policy whose verdict depends on the target's identity
+	// would be evaluated against the wrong subject. A code-review reproduction
+	// showed exactly that: list said allowed, invoke said forbidden.
+	//
+	// Reporting `Allowed: true` for that case would be the RULING 11 defect —
+	// an affordance that says one thing while the write does another. So the
+	// honest answer is "I cannot know", and this field says so rather than
+	// guessing. A client should render such an offer as available-but-
+	// unverified (the server still authorizes), never as confirmed.
+	//
+	// Same-entity offers are always determinate: their target IS the source.
+	Indeterminate bool
+
 	// Allowed reports whether this principal may invoke this copy on this
 	// source RIGHT NOW.
+	//
+	// Meaningful only when Indeterminate is false. See that field.
 	//
 	// # It is a HINT, never a boundary
 	//
@@ -47,6 +68,10 @@ type CopyOffer struct {
 	// can disagree is a worse defect than having no hint at all — that is the
 	// RULING 11 failure, where an affordance map said "writable" and the write
 	// path refused.
+	//
+	// That guarantee holds for SAME-ENTITY offers. For a cross-entity offer
+	// the inputs differ (no target id yet), which is what Indeterminate
+	// records — the mechanism is shared, but the question is not the same one.
 	Allowed bool
 	// Reason names why Allowed is false, for a tooltip or a CLI. Empty when
 	// Allowed is true. Advisory: it explains a denial the server already made,
@@ -72,8 +97,17 @@ type CopyOffer struct {
 //
 // Sorted by name, so a UI renders a stable button order across requests
 // rather than one that reshuffles with Go's map iteration.
-func (m *Manager) CopiesForSource(
-	ctx context.Context, entityType, pointer, sourceID string,
+//
+// A package FUNCTION, not a method. Manager carries a
+// `//plimsoll:max-methods=40` load line, and the project rule is to split the
+// type rather than raise the number — so a copy-affordance query, which needs
+// only the manager's metamodel and its planning path, does not become a
+// forty-first method on the write god-object.
+//
+// Consumers that need this as an interface method wrap it; see
+// [CopyAffordances].
+func CopiesForSource(
+	ctx context.Context, m *Manager, entityType, pointer, sourceID string,
 ) ([]CopyOffer, error) {
 	if m.deps.Meta == nil {
 		return nil, nil
@@ -112,7 +146,15 @@ func (m *Manager) CopiesForSource(
 			TargetFace: def.To,
 			SameEntity: def.IsSameEntity(),
 		}
-		offer.Allowed, offer.Reason = m.copyInvocable(ctx, name, def, sourceID)
+		if offer.SameEntity {
+			offer.Allowed, offer.Reason = copyInvocable(ctx, m, name, def, sourceID)
+		} else {
+			// A cross-entity copy's target is chosen at invoke time, so its
+			// authorization cannot be evaluated now — see CopyOffer.Indeterminate.
+			// Deliberately NOT probed at all: running the check against an empty
+			// target id would produce a confident answer to a different question.
+			offer.Indeterminate = true
+		}
 		out = append(out, offer)
 	}
 	return out, nil
@@ -148,14 +190,35 @@ func copyOfferLabel(name string, def metamodel.CopyDef) string {
 // read gate's whole design is that a denied source is indistinguishable from
 // an absent one. So the Reason is the error's own text for a genuine
 // authorization refusal, and a generic phrase otherwise.
-func (m *Manager) copyInvocable(
-	ctx context.Context, name string, def metamodel.CopyDef, sourceID string,
+//
+// A package FUNCTION rather than a method, deliberately. Manager carries a
+// `//plimsoll:max-methods=40` load line and CopiesForSource + this would have
+// taken it to 42; the load line is a ratchet to narrow, not a budget to spend.
+// CopiesForSource STAYS a method because the consumer-side interface in
+// internal/dataentry is satisfied structurally by the concrete manager, and a
+// package function could not participate in that. This one needs nothing from
+// the receiver that a parameter cannot carry, so it moves.
+func copyInvocable(
+	ctx context.Context, m *Manager, name string, def metamodel.CopyDef, sourceID string,
 ) (allowed bool, reason string) {
-	plan, err := m.planCopy(ctx, CopyRequest{Definition: name, SourceID: sourceID}, def)
-	if err != nil {
-		return false, copyDenialReason(err)
-	}
-	if err := m.authorizeCopy(ctx, plan); err != nil {
+	// Mark the context so the authorization path computes its verdict WITHOUT
+	// auditing it: this is a question, not an attempted write. See
+	// [withAffordanceProbe].
+	ctx = withAffordanceProbe(ctx)
+
+	ce := &copyEngine{m: m}
+
+	// planCopy AUTHORIZES INTERNALLY — it calls authorizeCopy itself (copy.go,
+	// right after readCopySource), which is why this does not call it again.
+	//
+	// An earlier revision did, and a mutation check exposed the redundancy:
+	// deleting the second call changed nothing, because the first had already
+	// run. That is the stronger arrangement, not the weaker one — there is
+	// exactly ONE way to plan a copy and it is inseparable from authorizing
+	// it, so a caller cannot obtain a plan without a verdict. A second call
+	// here would have implied the authorization was this function's to
+	// arrange, which would invite someone to "optimize" it away.
+	if _, err := ce.planCopy(ctx, CopyRequest{Definition: name, SourceID: sourceID}, def); err != nil {
 		return false, copyDenialReason(err)
 	}
 	return true, ""
@@ -173,4 +236,31 @@ func copyDenialReason(err error) string {
 		return forbidden.Decision.Reason
 	}
 	return "not available for this entity"
+}
+
+// CopyAffordances adapts a [Manager] to the method-shaped copy surface a
+// consumer-side interface needs.
+//
+// It exists because [CopiesForSource] is a package function (Manager is at its
+// plimsoll load line) while `internal/dataentry` declares a narrow
+// `copyService` interface at its call site, per the project's
+// interfaces-at-the-consumer rule. This is the one line that reconciles the
+// two: a value type wrapping the manager, whose methods delegate.
+//
+// It carries no state and makes no decisions — in particular it does NOT
+// authorize. Every method here forwards to the manager, which authorizes
+// internally. A wrapper that grew a check of its own would be the second
+// authorization site this design exists to avoid.
+type CopyAffordances struct{ M *Manager }
+
+// CopiesForSource forwards to [CopiesForSource].
+func (c CopyAffordances) CopiesForSource(
+	ctx context.Context, entityType, pointer, sourceID string,
+) ([]CopyOffer, error) {
+	return CopiesForSource(ctx, c.M, entityType, pointer, sourceID)
+}
+
+// CopyState forwards to [Manager.CopyState], which authorizes internally.
+func (c CopyAffordances) CopyState(ctx context.Context, req CopyRequest) (*CopyResult, error) {
+	return c.M.CopyState(ctx, req)
 }

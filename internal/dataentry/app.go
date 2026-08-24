@@ -976,12 +976,23 @@ func NewApp(
 	// App holds to the narrow copyService the handler declares — see that
 	// interface's doc for why the concrete manager is required (Allowed must
 	// run the kernel's own unexported authorization path).
-	if cs, ok := app.entityManager.(copyService); ok {
-		copies, cerr := newCopiesHandler(cs, app.State)
+	// The copy surface. A FAILED assertion is logged rather than passed over
+	// in silence: every production manager is a *entitymanager.Manager, so a
+	// miss means an embedding caller supplied a different implementation and
+	// silently lost a capability. That is the shape this package's own
+	// constructor rule rejects — see copiesHandler's doc — and leaving it
+	// unlogged would be the same "clean by luck" the WorldDef guard was added
+	// to convert into "clean by construction".
+	if mgr, ok := app.entityManager.(*entitymanager.Manager); ok {
+		copies, cerr := newCopiesHandler(entitymanager.CopyAffordances{M: mgr}, app.State)
 		if cerr != nil {
 			return nil, fmt.Errorf("dataentry.NewApp: %w", cerr)
 		}
 		app.copies = copies
+	} else {
+		slog.Warn("dataentry: entity manager is not *entitymanager.Manager; " +
+			"the copy surface (/api/v1/_copies) is NOT served. Declared " +
+			"`copies:` definitions will be unreachable over HTTP.")
 	}
 
 	app.commands = &commandHandler{
