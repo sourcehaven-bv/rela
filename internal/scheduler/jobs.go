@@ -130,6 +130,33 @@ func (s *Scheduler) runTaskJob(ctx context.Context, job jobs.Job) (err error) {
 // advances the retry ladder, and runDueTasks reads both. Returning before the
 // script has run would let the next tick see stale state.
 //
+// # SINGLE-NODE ONLY (TKT-7XLVP7)
+//
+// Waiting here is what confines the scheduler to one process, and the limit is
+// in the BOOKKEEPING, not in the queue. Jobs do not double-fire across nodes:
+// the idempotency key becomes a fingerprint under a partial UNIQUE INDEX on
+// neoq_jobs (queue, fingerprint, status), so two rela-server processes ticking
+// at once both INSERT and PostgreSQL lets exactly one win — the loser gets
+// ErrDuplicateJob and skips. That part is atomic in the database, not a
+// check-then-act.
+//
+// What does NOT survive a second node is the state machine around it. Workers
+// claim with FOR UPDATE SKIP LOCKED, so any node may execute any job: node B
+// can run a task node A enqueued. B's reportInFlight then finds nothing in B's
+// in-flight map (the map is per-process), A's submitter never hears back, and
+// A eventually records a FAILURE via taskResultTimeout for a task that in fact
+// SUCCEEDED. Last-run state compounds it — .rela/scheduler-state.json is
+// node-local on the postgres tier, so each node keeps its own view of what is
+// due and the two diverge.
+//
+// The fix is to stop waiting: let the executing node own recordSuccess /
+// recordFailure inside runTaskJob, and move scheduler state into state.KV,
+// which is already database-backed on the postgres build (TKT-VC27L3) for
+// exactly this class of node-local state. That removes the completion channel,
+// both skip sentinels and taskResultTimeout together. Until then, run the
+// scheduler on ONE node — docs/postgres-backend.md describes multi-process
+// deployments, and this is the piece that does not yet participate.
+//
 // Retry is [jobs.RetryNever] because the scheduler owns retrying: its ladder
 // (5m→2h, suppressing the normal cadence) already encodes hard-won behavior
 // including the BUG-ZKK2UL clock-jump guard. Two retry mechanisms stacked on
