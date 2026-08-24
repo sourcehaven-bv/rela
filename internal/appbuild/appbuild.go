@@ -275,14 +275,19 @@ func (s *Services) State() state.KV { return s.stateKV }
 
 // Jobs returns the background-job queue, already started.
 //
-// Register handlers on it at wiring time; the dispatcher resolves a handler
-// per job, so registration after start is fine. Its durability depends on the
-// build — ephemeral on fs/desktop, durable on postgres.
+// The return type deliberately omits [jobs.Lifecycle]: starting and stopping
+// the queue is the composition root's concern, and a consumer that could Close
+// it would be shutting background work down for every other subsystem. Services
+// keeps the lifecycle handle privately and tears it down in Close.
+//
+// Register handlers at wiring time; the dispatcher resolves a handler per job,
+// so registration after start is fine. Durability depends on the build —
+// ephemeral on fs/desktop, durable on postgres.
 //
 // Nil: never — assemble fails rather than returning a Services with no
 // queue, since a nil queue would turn every Enqueue into a panic at the
 // call site rather than a wiring error here.
-func (s *Services) Jobs() jobs.Queue { return s.jobQueue }
+func (s *Services) Jobs() jobs.Client { return jobs.ClientOf(s.jobQueue) }
 
 // CalDAVAliases is the CalDAV<->rela resource alias service. Never nil: the
 // service is always constructed (an empty table is the normal first-run state),

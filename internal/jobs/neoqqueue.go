@@ -37,7 +37,7 @@ type neoqQueue struct {
 	concurrency int
 
 	mu       sync.RWMutex
-	handlers map[string]Handler
+	handlers map[Kind]Handler
 	started  bool
 	closed   bool
 
@@ -119,12 +119,12 @@ func newNeoqQueue(nq neoq.Neoq, logger *slog.Logger, queueName string, concurren
 		logger:      logger,
 		queueName:   queueName,
 		concurrency: concurrency,
-		handlers:    make(map[string]Handler),
+		handlers:    make(map[Kind]Handler),
 	}, nil
 }
 
 // Register implements [Queue].
-func (q *neoqQueue) Register(kind string, h Handler) error {
+func (q *neoqQueue) Register(kind Kind, h Handler) error {
 	if kind == "" {
 		return ErrNoKind
 	}
@@ -196,7 +196,7 @@ func (q *neoqQueue) Enqueue(ctx context.Context, job Job) error {
 
 	payload := make(map[string]any, len(job.Payload)+3)
 	maps.Copy(payload, job.Payload)
-	payload[payloadKindKey] = job.Kind
+	payload[payloadKindKey] = string(job.Kind)
 	payload[payloadRetryKey] = int(job.Retry)
 	if dl := job.Retry.effectiveDeadline(job, now); !dl.IsZero() {
 		payload[payloadDeadlineKey] = dl.UnixNano()
@@ -278,7 +278,8 @@ func (q *neoqQueue) dispatch(ctx context.Context) error {
 		return fmt.Errorf("jobs: no job on context: %w", err)
 	}
 
-	kind, _ := nj.Payload[payloadKindKey].(string)
+	rawKind, _ := nj.Payload[payloadKindKey].(string)
+	kind := Kind(rawKind)
 	if kind == "" {
 		// Unroutable. Returning an error would retry it to no purpose, so
 		// log and consume — nothing about a later attempt would differ.

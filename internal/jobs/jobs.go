@@ -40,6 +40,30 @@
 // The queue knows nothing about cadence or schedules. Callers that have one
 // express it through [Job.Deadline]. See internal/scheduler for how a
 // recurring task maps its interval onto that primitive.
+//
+// # Semantics worth knowing before you write a handler
+//
+// A job is delivered AT LEAST once in principle and, in the ordinary case,
+// exactly once. Two properties are worth stating because the opposite is a
+// common default elsewhere:
+//
+//   - Submitting the same payload twice produces two jobs and two executions.
+//     There is no deduplication by payload contents. Two triggers that both
+//     decide to notify someone send two notifications.
+//   - Job submission is NOT atomic with the database write. If the process
+//     dies between a commit and the job reaching the backend, that job is
+//     lost. Redis- and AMQP-backed queues behave the same way alongside a
+//     database; it is the right trade for payloads that are notifications and
+//     API calls, where a rare miss is an annoyance rather than a correctness
+//     problem.
+//
+// So a handler should re-check current state rather than trusting its payload
+// to still be accurate, and repeated delivery should be harmless where it
+// matters.
+//
+// A single execution is capped at [handlerTimeout]. That is a backstop against
+// a wedged handler holding a worker forever, not a latency target — real
+// bounding comes from the job's deadline and its retry budget.
 package jobs
 
 import (
@@ -132,6 +156,31 @@ func (r Retry) valid() bool {
 	return r >= RetryNever && r <= RetryPersistent
 }
 
+// Kind identifies which handler runs a job.
+//
+// A named type rather than a bare string because the kind namespace is global
+// across the process: every subsystem registers into one queue, so two packages
+// that both picked "sync" would collide — the second Register would fail at
+// startup, or worse, route one subsystem's jobs into another's handler. A
+// string parameter gives no hint that the value has to be unique repo-wide.
+//
+// Construct one with [NewKind], which namespaces it by owner.
+type Kind string
+
+// NewKind builds a [Kind] owned by a subsystem.
+//
+// The owner is conventionally the package that registers the handler
+// ("scheduler", "mail"), which is what makes collisions between subsystems
+// structurally unlikely rather than a matter of everyone remembering to prefix.
+//
+//	var taskKind = jobs.NewKind("scheduler", "run-task") // "scheduler:run-task"
+func NewKind(owner, name string) Kind {
+	return Kind(owner + ":" + name)
+}
+
+// String implements [fmt.Stringer].
+func (k Kind) String() string { return string(k) }
+
 // Job is a unit of deferred work.
 //
 // Payload must be JSON-serializable: a durable backend round-trips it through
@@ -139,7 +188,7 @@ func (r Retry) valid() bool {
 // work on the fs build and fail on postgres.
 type Job struct {
 	// Kind routes the job to a registered handler. Required.
-	Kind string
+	Kind Kind
 
 	// Payload is the job's input. It names WHAT to act on — never what is
 	// permitted. A handler must re-derive authority from the principal on
@@ -170,27 +219,48 @@ type Job struct {
 // so long operations should select on ctx.Done.
 type Handler func(ctx context.Context, job Job) error
 
-// Queue is the seam. Consumers depend on this interface, not on a backend.
+// Enqueuer submits work. This is the seam the vast majority of code should
+// depend on — a subsystem that produces jobs has no business starting or
+// stopping the queue.
 //
 // Nil: rejected — constructors validate their collaborators and never return
-// a nil Queue alongside a nil error.
-type Queue interface {
-	// Register binds a handler to a kind. It must be called before Start;
-	// registering the same kind twice returns [ErrDuplicateKind].
-	Register(kind string, h Handler) error
-
+// a nil Enqueuer alongside a nil error.
+type Enqueuer interface {
 	// Enqueue submits a job. It returns once the job is accepted, not once
 	// it has run.
 	//
-	// Start must have been called first; otherwise it returns
-	// [ErrNotStarted]. The wiring site is responsible for starting the queue
-	// — see appbuild.
+	// The queue must be running; otherwise it returns [ErrNotStarted]. The
+	// wiring site starts it (see appbuild), so ordinary consumers can treat
+	// the queue they are handed as live.
 	//
 	// If ctx carries an open transaction collector (see [WithDeferral]),
 	// the enqueue is held until that transaction commits. That path does NOT
 	// require a started queue: the enqueue happens at commit time.
 	Enqueue(ctx context.Context, job Job) error
+}
 
+// Registrar binds handlers to kinds.
+//
+// Separate from [Enqueuer] because producing and consuming are different
+// capabilities: most code only submits work, and a subsystem that registers a
+// handler (the scheduler, a mail sender) does so once, at wiring time, with the
+// queue injected — it does not need Enqueue to do it.
+type Registrar interface {
+	// Register binds a handler to a kind. Registering the same kind twice
+	// returns [ErrDuplicateKind].
+	//
+	// May be called before or after the queue starts; the dispatcher resolves
+	// a handler per job. Registering at wiring time is the norm.
+	Register(kind Kind, h Handler) error
+}
+
+// Lifecycle starts and stops a queue.
+//
+// This is a FRAMEWORK concern, not a consumer one. It is a separate interface
+// so that handing a subsystem the ability to submit work does not also hand it
+// the ability to shut the queue down for everyone else. Only the composition
+// root (appbuild) should depend on it.
+type Lifecycle interface {
 	// Start begins processing. It does not block; workers run until the
 	// queue is closed.
 	Start(ctx context.Context) error
@@ -199,6 +269,53 @@ type Queue interface {
 	//
 	// On an ephemeral backend, jobs still queued are lost — by design.
 	Close(ctx context.Context) error
+}
+
+// Client is what a subsystem is handed: it can submit work and register a
+// handler for the kinds it owns, but cannot start or stop the queue.
+//
+// This is the type the composition root exposes (see appbuild.Services.Jobs).
+// Prefer depending on [Enqueuer] alone where a subsystem only produces work.
+type Client interface {
+	Enqueuer
+	Registrar
+}
+
+// ClientOf returns a [Client] view of q that does NOT type-assert back to
+// [Lifecycle].
+//
+// Returning the queue itself as a Client would narrow only the static type: a
+// consumer could recover Start and Close with a type assertion and shut
+// background work down for every other subsystem. Wrapping makes the narrowing
+// real, which is the difference between a convention and a boundary.
+func ClientOf(q Queue) Client {
+	return clientView{q}
+}
+
+// clientView deliberately embeds the two narrow interfaces rather than Queue,
+// so Lifecycle's methods are not promoted onto it.
+type clientView struct {
+	q Queue
+}
+
+func (c clientView) Enqueue(ctx context.Context, job Job) error {
+	return c.q.Enqueue(ctx, job)
+}
+
+func (c clientView) Register(kind Kind, h Handler) error {
+	return c.q.Register(kind, h)
+}
+
+// Queue is the full surface a backend implements: production, registration and
+// lifecycle together.
+//
+// Backends satisfy this; CONSUMERS SHOULD NOT DEPEND ON IT. Take the narrowest
+// interface that does the job — [Enqueuer] to submit work, [Registrar] to bind
+// a handler, and [Lifecycle] only at the composition root.
+type Queue interface {
+	Enqueuer
+	Registrar
+	Lifecycle
 }
 
 // validate checks the parts of a job that no backend can sensibly accept.

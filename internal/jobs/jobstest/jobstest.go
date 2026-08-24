@@ -161,7 +161,7 @@ func (r *recorder) waitFired(t *testing.T) {
 }
 
 // startQueue registers handlers and starts the queue, returning a live one.
-func startQueue(t *testing.T, q jobs.Queue, kind string, h jobs.Handler) jobs.Queue {
+func startQueue(t *testing.T, q jobs.Queue, kind jobs.Kind, h jobs.Handler) jobs.Queue {
 	t.Helper()
 	require.NoError(t, q.Register(kind, h))
 	require.NoError(t, q.Start(context.Background()))
@@ -184,7 +184,7 @@ func testEnqueueRunsHandler(t *testing.T, newQueue NewQueue) {
 	rec.waitFired(t)
 	got, ok := rec.last()
 	require.True(t, ok)
-	require.Equal(t, "greet", got.Kind)
+	require.Equal(t, jobs.Kind("greet"), got.Kind)
 	require.Equal(t, "ada", got.Payload["name"])
 }
 
