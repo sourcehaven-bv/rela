@@ -57,6 +57,18 @@ discipline applied to A1/A2 in TKT-T31NKT and to `DeleteRelation`/
 behaviour, and consider whether a load-time check should reject a chain entry
 that can never match.
 
+## Where this lives — NOT shipped
+
+`internal/worlds` does not exist on `develop`; the whole content-states epic
+is still in open PRs. This defect was introduced by **PR #1393**
+(`TKT-WAV8XP PR-A`, commit d5ef3c66) and has never run for a user.
+
+That makes it cheaper to fix than a released bug, and it argues for fixing it
+**in #1393 itself** rather than as a follow-up on top — the epic is an
+18-PR stack, and a fix landing above the PR that introduced the bug means
+every intermediate PR carries the broken compiler. Decide before #1393
+merges; after that, a follow-up is the only option.
+
 Found during TKT-WRLDAPI PR-A review; confirmed empirically against the real
-compiler. Out of that PR's scope — it is a pre-existing defect in
-`internal/worlds`, not in the API surface being added.
+compiler. Out of THAT PR's scope either way — it is a defect in
+`internal/worlds`, not in the API surface being added there.
