@@ -12,15 +12,31 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store/pgstore"
 )
 
-// reconcileDerivedSchemaIfSupported converges the postgres derived schema at
-// store-open and publishes the metamodel's unique (type, property) pairs so the
-// write path can attribute a unique-index violation to a property (TKT-3Q0GP1).
-// A non-pgstore store (should not happen in this build) is skipped. Reconcile
+// derivedSchemaReconciler is the capability reconcileDerivedSchemaIfSupported
+// needs: a store that can synthesize derived schema objects (partial unique
+// indexes) from the metamodel and accept the unique-spec list used to attribute
+// a violation to a property.
+//
+// Declared at the call site rather than beside the implementation, so any store
+// offering these methods is discovered — not just one concrete backend
+// (TKT-415WA7). Both methods are taken together deliberately: publishing specs
+// without reconciling, or the reverse, is never wanted.
+type derivedSchemaReconciler interface {
+	SetUniqueSpecProvider(specs []store.DerivedObjectSpec)
+	Reconcile(
+		ctx context.Context, desired []store.DerivedObjectSpec, opts store.ReconcileOptions,
+	) ([]store.DerivedObjectOutcome, error)
+}
+
+// reconcileDerivedSchemaIfSupported converges the derived schema at store-open
+// and publishes the metamodel's unique (type, property) pairs so the write path
+// can attribute a unique-index violation to a property (TKT-3Q0GP1). A store
+// without the capability (should not happen in this build) is skipped. Reconcile
 // failures are logged and swallowed: a derived-schema problem — most often
 // pre-existing duplicate values blocking an index — must NEVER fail store-open.
 // An operator inspects/repairs drift via `rela db status` / `rela db reconcile`.
 func reconcileDerivedSchemaIfSupported(ctx context.Context, st store.Store, meta *metamodel.Metamodel) {
-	s, ok := st.(*pgstore.Store)
+	s, ok := st.(derivedSchemaReconciler)
 	if !ok {
 		return
 	}

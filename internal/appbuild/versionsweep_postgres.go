@@ -33,13 +33,27 @@ func (p metaProjectionProvider) Projection() (hash string, projectionJSON []byte
 	return proj.Hash(), b
 }
 
-// startVersionSweepIfSupported starts the pgstore reconciliation sweep. In the
-// postgres build the store is a *pgstore.Store; a non-pgstore store (should not
-// happen in this build) is left unswept. The sweep cadence is taken from
-// sweepConfigFromEnv so a test/dev deployment can make create/update versions
-// appear quickly (production uses the zero-value defaults: 5m interval/idle).
+// versionSweeper is the capability startVersionSweepIfSupported needs: a store
+// that runs its own debounced reconciliation sweep to capture create/update
+// versions.
+//
+// NOTE: the signature still names pgstore types (ProjectionProvider,
+// SweepConfig), so in practice only pgstore can satisfy it — a second backend
+// would have to import pgstore, which is not real decoupling. Promoting those
+// two types into internal/store is the remaining half of this work and is
+// tracked separately. What is fixed here is that DISCOVERY no longer requires
+// being the one concrete type.
+type versionSweeper interface {
+	StartVersionSweep(provider pgstore.ProjectionProvider, cfg pgstore.SweepConfig)
+}
+
+// startVersionSweepIfSupported starts the store's reconciliation sweep. A store
+// without the capability (should not happen in this build) is left unswept. The
+// sweep cadence is taken from sweepConfigFromEnv so a test/dev deployment can
+// make create/update versions appear quickly (production uses the zero-value
+// defaults: 5m interval/idle).
 func startVersionSweepIfSupported(st store.Store, meta *metamodel.Metamodel) {
-	if s, ok := st.(*pgstore.Store); ok {
+	if s, ok := st.(versionSweeper); ok {
 		s.StartVersionSweep(metaProjectionProvider{meta: meta}, sweepConfigFromEnv())
 	}
 }
@@ -85,15 +99,39 @@ func sweepConfigFromEnv() pgstore.SweepConfig {
 	}
 }
 
-// versionServiceFor returns the pgstore versioning service (history reads, version
-// writes, purge) sharing the store's pool. Returns a genuinely nil interface for a
-// non-pgstore store (should not happen in this build), so nil-checks downstream
-// behave correctly.
+// versionServiceProvider is the capability versionServiceFor needs: a store that
+// can hand out a versioning service (history reads, version writes, purge)
+// sharing its own pool.
+//
+// NOTE: like versionSweeper, the return type is still pgstore-specific. See that
+// comment for why, and for what the remaining work is.
+type versionServiceProvider interface {
+	VersionStore() *pgstore.VersionStore
+}
+
+// versionServiceFor returns the store's versioning service (history reads,
+// version writes, purge) sharing its pool. Returns a genuinely nil interface —
+// never a typed nil — both for a store without the capability and for one whose
+// handle came back nil, so nil-checks downstream behave correctly.
+//
+// The explicit nil-pointer guard is load-bearing, and it became necessary when
+// discovery widened from a concrete type to an interface. Asserting
+// st.(*pgstore.Store) bounded the reachable implementations to exactly one,
+// whose VersionStore() is unconditionally non-nil; an interface admits any
+// implementation, including one that returns a nil pointer on a partial-init
+// path. Boxing that into store.VersionService yields a NON-nil interface, so
+// versionRecorderFor (appbuild.go) and startDataMigration would both pass their
+// nil-checks and then panic on first use — at write time, in production.
 func versionServiceFor(st store.Store) store.VersionService {
-	if s, ok := st.(*pgstore.Store); ok {
-		return s.VersionStore()
+	s, ok := st.(versionServiceProvider)
+	if !ok {
+		return nil
 	}
-	return nil
+	vs := s.VersionStore()
+	if vs == nil {
+		return nil
+	}
+	return vs
 }
 
 // stateKVFor returns a database-backed [state.KV] sharing the store's pool, so
@@ -109,6 +147,14 @@ func versionServiceFor(st store.Store) store.VersionService {
 //
 // Returns a genuinely nil interface for a non-pgstore store so the caller's
 // nil-check falls back to the filesystem KV.
+//
+// NOT widened by TKT-415WA7, unlike the three resolvers above: discovery still
+// goes through pgstore.StateStoreFor, which type-asserts *pgstore.Store
+// internally. So a second backend gets version sweeps, user state and derived
+// schema by interface, then silently falls back to node-local FSKV for state.
+// That partial adoption is worse than none — it degrades quietly at runtime
+// rather than loudly at wiring — so it must be closed before a second backend
+// ships. Tracked in TKT-L3FNEN.
 func stateKVFor(st store.Store) state.KV {
 	raw := pgstore.StateStoreFor(st)
 	if raw == nil {
