@@ -372,16 +372,11 @@ func (s *Scheduler) doExecuteTask(ctx context.Context, task TaskConfig) {
 // A scheduler with no queue is a valid scheduler.
 func (s *Scheduler) runScript(ctx context.Context, task TaskConfig) error {
 	if s.queue != nil {
-		// The deadline is measured from the task's last successful run. For a
-		// first-ever run there is none, and the zero time would put NextRun in
-		// year 1 — a deadline already past, so the queue would drop the job
-		// before running it. Measure from now instead: the next slot is one
-		// interval away either way.
-		lastRun, ran := s.state.Tasks[task.Name]
-		if !ran {
-			lastRun = s.now()
-		}
-		return s.enqueueTask(ctx, task, lastRun)
+		// Measured from NOW, not from the last run: the task is executing
+		// because it is due, so its next run relative to lastRun has already
+		// arrived and would yield a deadline at or before this instant. See
+		// enqueueTask for the full reasoning.
+		return s.enqueueTask(ctx, task, s.now())
 	}
 
 	// The principal goes on the CTX (not into the deps bundle) because the

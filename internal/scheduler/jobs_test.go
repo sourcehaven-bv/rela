@@ -110,11 +110,15 @@ func TestUseQueue_RejectsNil(t *testing.T) {
 // job's deadline. This test is where that translation is checked — if the
 // mapping regresses, a 1m task gets a 24h retry window or none at all, and
 // nothing else would notice.
+//
+// The deadline is measured from the moment of submission. An earlier version
+// measured it from the task's last run and this test, written to match, asserted
+// deadlines that were already in the past — see
+// TestEnqueuedDeadline_IsAlwaysInTheFuture for the property that catches it.
 func TestEnqueuedJob_CarriesCadenceAsDeadline(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
-	lastRun := now.Add(-90 * time.Second)
 
 	tests := []struct {
 		name     string
@@ -124,12 +128,12 @@ func TestEnqueuedJob_CarriesCadenceAsDeadline(t *testing.T) {
 		{
 			name:     "short interval yields a short deadline",
 			schedule: intervalSchedule(time.Minute),
-			want:     lastRun.Add(time.Minute),
+			want:     now.Add(time.Minute),
 		},
 		{
 			name:     "long interval yields a long deadline",
 			schedule: intervalSchedule(2 * time.Hour),
-			want:     lastRun.Add(2 * time.Hour),
+			want:     now.Add(2 * time.Hour),
 		},
 		{
 			name:     "daily rolls to the next local midnight",
@@ -148,15 +152,69 @@ func TestEnqueuedJob_CarriesCadenceAsDeadline(t *testing.T) {
 				Script: "s.lua",
 				Every:  tc.schedule,
 			})
-			s.state.Tasks["task"] = lastRun
 
-			require.NoError(t, s.enqueueTask(context.Background(), s.config.Tasks[0], lastRun))
+			require.NoError(t, s.enqueueTask(context.Background(), s.config.Tasks[0], now))
 
 			submitted := q.jobs()
 			require.Len(t, submitted, 1)
 			require.Equal(t, tc.want, submitted[0].Deadline,
-				"the job deadline must be the task's own next scheduled run")
+				"the job deadline must be the task's next scheduled run from now")
 		})
+	}
+}
+
+// TestEnqueuedDeadline_IsAlwaysInTheFuture is the property that would have
+// caught the original mistake, and is worth more than the exact-value table
+// above.
+//
+// A task executes BECAUSE it is due, so its next run measured from lastRun has
+// by definition already arrived — a deadline at or before now. Every such job
+// would be refused by the guard or dropped by the queue, and a table test
+// written to match the buggy formula would happily assert the past value.
+//
+// Whatever the schedule and however late the tick, the deadline must leave a
+// usable window.
+func TestEnqueuedDeadline_IsAlwaysInTheFuture(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 24, 12, 0, 30, 0, time.UTC)
+
+	schedules := map[string]Schedule{
+		"1m":      intervalSchedule(time.Minute),
+		"30m":     intervalSchedule(30 * time.Minute),
+		"2h":      intervalSchedule(2 * time.Hour),
+		"daily":   dailySchedule(),
+		"weekday": {kind: weekdayKind, weekday: time.Monday, set: true},
+	}
+
+	// Ticks land late in practice: the loop wakes every 60s, so a task is
+	// often overdue by the time it runs. None of that may produce a past
+	// deadline.
+	lateness := []time.Duration{0, 35 * time.Second, 10 * time.Minute, 26 * time.Hour}
+
+	for name, sched := range schedules {
+		for _, late := range lateness {
+			t.Run(name+"/late-"+late.String(), func(t *testing.T) {
+				t.Parallel()
+
+				q := newFakeQueue()
+				s := newQueuedScheduler(t, q, now, TaskConfig{
+					Name: "task", Script: "s.lua", Every: sched,
+				})
+				s.state.Tasks["task"] = now.Add(-late)
+
+				// Through runScript, not enqueueTask directly: runScript is
+				// what chooses the reference point, and that choice is the
+				// thing under test.
+				require.NoError(t, s.runScript(context.Background(), s.config.Tasks[0]))
+
+				submitted := q.jobs()
+				require.Len(t, submitted, 1)
+				require.True(t, submitted[0].Deadline.After(now),
+					"deadline %v must be after now (%v); a past deadline means the job is dropped unrun",
+					submitted[0].Deadline, now)
+			})
+		}
 	}
 }
 

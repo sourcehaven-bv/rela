@@ -121,10 +121,17 @@ func (s *Scheduler) runTaskJob(ctx context.Context, job jobs.Job) error {
 // including the BUG-ZKK2UL clock-jump guard. Two retry mechanisms stacked on
 // one task would multiply, not compose.
 //
-// The deadline is the task's own next scheduled run. That is the cadence rule
-// the seam was designed around — expressed with the queue's generic primitive,
-// with no cadence concept crossing the boundary.
-func (s *Scheduler) enqueueTask(ctx context.Context, task TaskConfig, lastRun time.Time) error {
+// The deadline is the task's next scheduled run measured FROM NOW, which is the
+// cadence rule expressed with the queue's generic primitive — no cadence
+// concept crosses the boundary.
+//
+// From now, not from the last run. A task fires because it is due, so its next
+// run measured from lastRun has by definition already arrived: a 1m task that
+// ticks on time gets a deadline of exactly now, and one that ticks a few
+// seconds late gets one in the past. Every such job would be refused or
+// dropped. Measuring forward from the moment of submission gives the window the
+// rule actually intends — "keep trying until my next slot comes round".
+func (s *Scheduler) enqueueTask(ctx context.Context, task TaskConfig, from time.Time) error {
 	// The completion channel is registered before the enqueue and found again
 	// by the handler through s.inflight, keyed by task name. It cannot ride in
 	// the payload: that must stay JSON-serializable for the durable backend,
@@ -146,7 +153,7 @@ func (s *Scheduler) enqueueTask(ctx context.Context, task TaskConfig, lastRun ti
 			payloadRunAs:    task.RunAs,
 		},
 		Retry:    jobs.RetryNever,
-		Deadline: task.Every.NextRun(lastRun),
+		Deadline: task.Every.NextRun(from),
 	}
 
 	// A deadline already past means the queue will drop the job without
@@ -156,7 +163,7 @@ func (s *Scheduler) enqueueTask(ctx context.Context, task TaskConfig, lastRun ti
 	// Reachable through a clock that jumped backwards, or a state file whose
 	// last-run stamp is in the future. Both are the same class of input the
 	// retry ladder's clock-jump guard exists for.
-	if !job.Deadline.IsZero() && !time.Now().Before(job.Deadline) {
+	if !job.Deadline.IsZero() && !s.now().Before(job.Deadline) {
 		return fmt.Errorf("%w: task %q deadline %v already passed",
 			errDeadlinePassed, task.Name, job.Deadline)
 	}
