@@ -114,15 +114,22 @@
   belong on `jobs.Queue` rather than inline on a write path. Two rules keep
   the seam usable:
 
-  *Retry is a flat enum* (`RetryNever` / `RetryBounded` / `RetryPersistent`)
-  plus an optional deadline — nothing else. The enum names INTENT; mechanism
-  (attempt counts, backoff, the `RetryPersistent` outer bound) lives in
-  `internal/jobs/retry.go` and is meant to be retuned there for everyone.
-  Do NOT widen it into a policy struct or add per-call knobs: a call site
-  needing different mechanics is evidence for a new intent value. A caller
-  with a cadence (the scheduler) expresses it by passing its own next run as
-  the deadline — `Schedule.NextRun` — so the queue never learns what a
-  schedule is.
+  *Retry is a flat enum* (`RetryNever` / `RetryBounded` / `RetryPersistent`),
+  plus an optional deadline and idempotency key — nothing else. The enum names
+  INTENT; mechanism (attempt counts, backoff, the `RetryPersistent` outer
+  bound) lives in `internal/jobs/retry.go` and is meant to be retuned there for
+  everyone. Do NOT widen it into a policy struct or add per-call knobs: a call
+  site needing different mechanics is evidence for a new intent value.
+
+  *A recurring task uses `IdempotencyKey`, never a cadence-derived
+  `Deadline`.* A key says "one of these pending at a time is enough", so a run
+  that is still queued suppresses the next rather than stacking a second copy
+  — a daily report delayed six hours must not then send twice. A deadline
+  expresses something different: "this is worthless after T", which makes the
+  job VANISH when it cannot start in time. Under load that drops scheduled
+  work precisely when the operator most wants it done, and (before the guard
+  existed) hung the scheduler on a completion that never arrived. Deadlines
+  are for work whose value genuinely expires; schedules are not that.
 
   *A job enqueued inside `store.Store.Tx` must not become runnable until that
   transaction commits.* Otherwise a worker reads it on another connection

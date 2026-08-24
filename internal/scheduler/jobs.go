@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/jobs"
 )
@@ -107,38 +106,24 @@ func (s *Scheduler) runTaskJob(ctx context.Context, job jobs.Job) error {
 // contract is that a task's outcome updates its state before the next tick
 // evaluates it: recordSuccess stamps the last successful run, recordFailure
 // advances the retry ladder, and runDueTasks reads both. Returning before the
-// script has run would let the next tick see stale state and re-fire a task
-// that is already running — the pile-up the single-threaded design has always
-// prevented.
-//
-// So what the queue buys here is not fire-and-forget. It is that execution now
-// carries a retry policy and a deadline the scheduler no longer hand-rolls per
-// call, and that the same seam serves the fire-and-forget producers (mail,
-// HTTP) that come later.
+// script has run would let the next tick see stale state.
 //
 // Retry is [jobs.RetryNever] because the scheduler owns retrying: its ladder
 // (5m→2h, suppressing the normal cadence) already encodes hard-won behavior
 // including the BUG-ZKK2UL clock-jump guard. Two retry mechanisms stacked on
 // one task would multiply, not compose.
 //
-// The deadline is the task's next scheduled run measured FROM NOW, which is the
-// cadence rule expressed with the queue's generic primitive — no cadence
-// concept crosses the boundary.
-//
-// From now, not from the last run. A task fires because it is due, so its next
-// run measured from lastRun has by definition already arrived: a 1m task that
-// ticks on time gets a deadline of exactly now, and one that ticks a few
-// seconds late gets one in the past. Every such job would be refused or
-// dropped. Measuring forward from the moment of submission gives the window the
-// rule actually intends — "keep trying until my next slot comes round".
-func (s *Scheduler) enqueueTask(ctx context.Context, task TaskConfig, from time.Time) error {
-	// The completion channel is registered before the enqueue and found again
-	// by the handler through s.inflight, keyed by task name. It cannot ride in
-	// the payload: that must stay JSON-serializable for the durable backend,
-	// and a channel is neither serializable nor meaningful in another process.
-	//
-	// The key is safe because a task is single-in-flight by construction — the
-	// claim below is what enforces it.
+// The task name is the idempotency key, which is how "do not stack two runs of
+// the same task" is expressed. An earlier version used a deadline derived from
+// the cadence; that was wrong in a way worth recording, because the reasoning
+// looked sound. A deadline makes the job VANISH when it cannot be started in
+// time — so under load, when the queue is exactly as busy as the operator most
+// wants the work done, scheduled runs are silently dropped. The intent was
+// never "expire this"; it was "if one is already pending, that is enough" —
+// a daily report delayed six hours should not then send twice. That is
+// deduplication by identity, and it degrades the right way: the run happens
+// late instead of not at all.
+func (s *Scheduler) enqueueTask(ctx context.Context, task TaskConfig) error {
 	done, err := s.claimInFlight(task.Name)
 	if err != nil {
 		return err
@@ -152,23 +137,22 @@ func (s *Scheduler) enqueueTask(ctx context.Context, task TaskConfig, from time.
 			payloadScript:   task.Script,
 			payloadRunAs:    task.RunAs,
 		},
-		Retry:    jobs.RetryNever,
-		Deadline: task.Every.NextRun(from),
-	}
+		Retry: jobs.RetryNever,
 
-	// A deadline already past means the queue will drop the job without
-	// running it — and nothing would ever report completion, so the wait below
-	// would block forever. Refuse to submit instead of hanging the scheduler.
-	//
-	// Reachable through a clock that jumped backwards, or a state file whose
-	// last-run stamp is in the future. Both are the same class of input the
-	// retry ladder's clock-jump guard exists for.
-	if !job.Deadline.IsZero() && !s.now().Before(job.Deadline) {
-		return fmt.Errorf("%w: task %q deadline %v already passed",
-			errDeadlinePassed, task.Name, job.Deadline)
+		// Scoped to the task, so two tasks never suppress each other. On the
+		// durable backend this holds ACROSS processes, which the in-process
+		// claim above cannot: two rela-server instances sharing a database
+		// will not both queue the same task.
+		IdempotencyKey: task.Name,
 	}
 
 	if err := s.queue.Enqueue(ctx, job); err != nil {
+		// Already pending. Not a failure — the work is scheduled — and not a
+		// success either, since this run did not happen. Reported up so
+		// doExecuteTask can leave the state alone.
+		if errors.Is(err, jobs.ErrDuplicateJob) {
+			return errTaskPending
+		}
 		return fmt.Errorf("scheduler: enqueue task %q: %w", task.Name, err)
 	}
 
@@ -233,6 +217,6 @@ func (s *Scheduler) reportInFlight(name string, err error) {
 // errTaskInFlight reports that a task's previous run has not finished.
 var errTaskInFlight = errors.New("scheduler: task already in flight")
 
-// errDeadlinePassed reports that a task's computed deadline is already in the
-// past, so the queue would drop the job rather than run it.
-var errDeadlinePassed = errors.New("scheduler: task deadline already passed")
+// errTaskPending reports that an identical job is already queued, so this run
+// was collapsed into it rather than stacked behind it.
+var errTaskPending = errors.New("scheduler: an identical task job is already pending")

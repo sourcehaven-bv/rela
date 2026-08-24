@@ -345,11 +345,21 @@ func (s *Scheduler) doExecuteTask(ctx context.Context, task TaskConfig) {
 	err := s.runScript(ctx, task)
 	elapsed := s.now().Sub(start)
 
-	// A task still running from a previous slot is skipped, not failed: it has
-	// not gone wrong, it is merely slow. Recording a failure would advance the
-	// retry ladder against a healthy task and suppress its normal cadence.
-	if errors.Is(err, errTaskInFlight) {
-		s.logger.Warn("skipping task, previous run still in flight",
+	// A task whose previous run has not finished is SKIPPED, and the skip
+	// records neither success nor failure.
+	//
+	// Not a failure: the task has not gone wrong, it is merely slow, and
+	// advancing the retry ladder would back off a healthy task and suppress
+	// its normal cadence. Not a success either: it did not run, and stamping
+	// the last-run time would make a permanently stuck task look healthy
+	// forever while nothing executed. Leaving state untouched lets the next
+	// tick evaluate it normally.
+	//
+	// Two routes reach here — an in-process claim (errTaskInFlight) and the
+	// queue collapsing a duplicate (errTaskPending). They mean the same thing
+	// to the scheduler; the second also covers other processes.
+	if errors.Is(err, errTaskInFlight) || errors.Is(err, errTaskPending) {
+		s.logger.Warn("skipping task, a run is already pending",
 			"name", task.Name, "duration", elapsed)
 		return
 	}
@@ -372,11 +382,7 @@ func (s *Scheduler) doExecuteTask(ctx context.Context, task TaskConfig) {
 // A scheduler with no queue is a valid scheduler.
 func (s *Scheduler) runScript(ctx context.Context, task TaskConfig) error {
 	if s.queue != nil {
-		// Measured from NOW, not from the last run: the task is executing
-		// because it is due, so its next run relative to lastRun has already
-		// arrived and would yield a deadline at or before this instant. See
-		// enqueueTask for the full reasoning.
-		return s.enqueueTask(ctx, task, s.now())
+		return s.enqueueTask(ctx, task)
 	}
 
 	// The principal goes on the CTX (not into the deps bundle) because the

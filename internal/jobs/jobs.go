@@ -45,9 +45,10 @@
 //
 // # Scheduling is not this package's concern
 //
-// The queue knows nothing about cadence or schedules. Callers that have one
-// express it through [Job.Deadline]. See internal/scheduler for how a
-// recurring task maps its interval onto that primitive.
+// The queue knows nothing about cadence or schedules. A recurring caller
+// expresses what it needs through [Job.IdempotencyKey] — "one of these pending
+// at a time is enough" — not through [Job.Deadline], which would make its work
+// disappear under load. See internal/scheduler.
 //
 // # Semantics worth knowing before you write a handler
 //
@@ -102,6 +103,21 @@ var (
 
 	// ErrClosed is returned by Enqueue after the queue has been closed.
 	ErrClosed = errors.New("jobs: queue is closed")
+
+	// ErrDuplicateJob is returned by Enqueue when a job carrying an
+	// [Job.IdempotencyKey] was collapsed into one already pending.
+	//
+	// It is NOT a failure: the work the caller wanted is scheduled. It is
+	// reported so a caller that cares — a scheduler deciding whether a task
+	// ran — can tell "already queued" from "queued now", which are different
+	// facts even though both are successful outcomes.
+	//
+	// Callers that do not care should ignore it:
+	//
+	//	if err := q.Enqueue(ctx, job); err != nil && !errors.Is(err, jobs.ErrDuplicateJob) {
+	//		return err
+	//	}
+	ErrDuplicateJob = errors.New("jobs: an identical job is already pending")
 
 	// ErrNotStarted is returned by Enqueue before Start has been called.
 	//
@@ -208,13 +224,37 @@ type Job struct {
 	// so explicitly.
 	Retry Retry
 
+	// IdempotencyKey collapses this job into an identical one that is already
+	// pending: if a job with the same key has been submitted and has not yet
+	// finished, this submission is a no-op and Enqueue reports success.
+	//
+	// Empty (the default) means every submission is its own job — two
+	// identical payloads produce two executions.
+	//
+	// This is how a caller says "one of these at a time is enough". A
+	// recurring task uses its own name, so a run that is still queued
+	// suppresses the next one rather than stacking a second copy behind it:
+	// a daily report delayed six hours should not then send twice.
+	//
+	// The key is matched only against PENDING work. Once a job completes, the
+	// same key is free again, which is what makes it a concurrency guard
+	// rather than a permanent record of what has run.
+	//
+	// Unlike an in-process lock, this holds across processes on the durable
+	// backend — two rela-server instances sharing a database cannot both
+	// queue the same keyed job.
+	IdempotencyKey string
+
 	// Deadline is when the job stops being worth running. Zero means no
 	// deadline.
 	//
-	// This is the generic primitive callers with a schedule use to express
-	// "do not retry past my next run" — see the package doc. A job already
-	// past its deadline at enqueue is dropped rather than run once and
-	// failed.
+	// For work whose value expires — a notification that is pointless an hour
+	// late. A job already past its deadline is dropped rather than run.
+	//
+	// NOT the way to express a schedule. A recurring task that wants "skip
+	// this run if one is already pending" wants IdempotencyKey: a deadline
+	// makes the job vanish under load, when the queue is exactly as busy as
+	// the caller most wants the work done. See internal/scheduler.
 	Deadline time.Time
 }
 

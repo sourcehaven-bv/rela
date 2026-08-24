@@ -102,120 +102,50 @@ func TestUseQueue_RejectsNil(t *testing.T) {
 	require.Error(t, s.UseQueue(nil))
 }
 
-// TestEnqueuedJob_CarriesCadenceAsDeadline is the load-bearing assertion for
-// the whole design.
+// TestEnqueuedJob_UsesIdempotencyKey is the load-bearing assertion for how a
+// schedule reaches the queue.
 //
-// The queue deliberately knows nothing about schedules; the scheduler expresses
-// "do not keep retrying past my next run" by passing its own next run as the
-// job's deadline. This test is where that translation is checked — if the
-// mapping regresses, a 1m task gets a 24h retry window or none at all, and
-// nothing else would notice.
-//
-// The deadline is measured from the moment of submission. An earlier version
-// measured it from the task's last run and this test, written to match, asserted
-// deadlines that were already in the past — see
-// TestEnqueuedDeadline_IsAlwaysInTheFuture for the property that catches it.
-func TestEnqueuedJob_CarriesCadenceAsDeadline(t *testing.T) {
+// The key is what says "one run of this task at a time is enough". An earlier
+// version used a cadence-derived deadline instead, which made scheduled jobs
+// vanish under load — precisely when the work matters most. The key degrades
+// the other way: the run happens late rather than not at all.
+func TestEnqueuedJob_UsesIdempotencyKey(t *testing.T) {
 	t.Parallel()
 
-	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
+	q := newFakeQueue()
+	now := time.Now()
+	s := newQueuedScheduler(t, q, now, TaskConfig{
+		Name: "daily-report", Script: "report.lua", Every: intervalSchedule(time.Hour),
+	})
 
-	tests := []struct {
-		name     string
-		schedule Schedule
-		want     time.Time
-	}{
-		{
-			name:     "short interval yields a short deadline",
-			schedule: intervalSchedule(time.Minute),
-			want:     now.Add(time.Minute),
-		},
-		{
-			name:     "long interval yields a long deadline",
-			schedule: intervalSchedule(2 * time.Hour),
-			want:     now.Add(2 * time.Hour),
-		},
-		{
-			name:     "daily rolls to the next local midnight",
-			schedule: dailySchedule(),
-			want:     time.Date(2026, 8, 25, 0, 0, 0, 0, time.UTC),
-		},
-	}
+	require.NoError(t, s.enqueueTask(context.Background(), s.config.Tasks[0]))
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			q := newFakeQueue()
-			s := newQueuedScheduler(t, q, now, TaskConfig{
-				Name:   "task",
-				Script: "s.lua",
-				Every:  tc.schedule,
-			})
-
-			require.NoError(t, s.enqueueTask(context.Background(), s.config.Tasks[0], now))
-
-			submitted := q.jobs()
-			require.Len(t, submitted, 1)
-			require.Equal(t, tc.want, submitted[0].Deadline,
-				"the job deadline must be the task's next scheduled run from now")
-		})
-	}
+	submitted := q.jobs()
+	require.Len(t, submitted, 1)
+	require.Equal(t, "daily-report", submitted[0].IdempotencyKey,
+		"the task name is the dedupe identity, so a pending run suppresses the next")
+	require.True(t, submitted[0].Deadline.IsZero(),
+		"a scheduled job must carry NO deadline: a deadline drops the job under load")
 }
 
-// TestEnqueuedDeadline_IsAlwaysInTheFuture is the property that would have
-// caught the original mistake, and is worth more than the exact-value table
-// above.
-//
-// A task executes BECAUSE it is due, so its next run measured from lastRun has
-// by definition already arrived — a deadline at or before now. Every such job
-// would be refused by the guard or dropped by the queue, and a table test
-// written to match the buggy formula would happily assert the past value.
-//
-// Whatever the schedule and however late the tick, the deadline must leave a
-// usable window.
-func TestEnqueuedDeadline_IsAlwaysInTheFuture(t *testing.T) {
+// TestEnqueuedJob_KeyIsPerTask pins that two tasks never suppress each other.
+// A shared key would mean one slow task silently blocked every other one.
+func TestEnqueuedJob_KeyIsPerTask(t *testing.T) {
 	t.Parallel()
 
-	now := time.Date(2026, 8, 24, 12, 0, 30, 0, time.UTC)
+	q := newFakeQueue()
+	now := time.Now()
+	s := newQueuedScheduler(t, q, now,
+		TaskConfig{Name: "a", Script: "a.lua", Every: intervalSchedule(time.Hour)},
+		TaskConfig{Name: "b", Script: "b.lua", Every: intervalSchedule(time.Hour)},
+	)
 
-	schedules := map[string]Schedule{
-		"1m":      intervalSchedule(time.Minute),
-		"30m":     intervalSchedule(30 * time.Minute),
-		"2h":      intervalSchedule(2 * time.Hour),
-		"daily":   dailySchedule(),
-		"weekday": {kind: weekdayKind, weekday: time.Monday, set: true},
-	}
+	require.NoError(t, s.enqueueTask(context.Background(), s.config.Tasks[0]))
+	require.NoError(t, s.enqueueTask(context.Background(), s.config.Tasks[1]))
 
-	// Ticks land late in practice: the loop wakes every 60s, so a task is
-	// often overdue by the time it runs. None of that may produce a past
-	// deadline.
-	lateness := []time.Duration{0, 35 * time.Second, 10 * time.Minute, 26 * time.Hour}
-
-	for name, sched := range schedules {
-		for _, late := range lateness {
-			t.Run(name+"/late-"+late.String(), func(t *testing.T) {
-				t.Parallel()
-
-				q := newFakeQueue()
-				s := newQueuedScheduler(t, q, now, TaskConfig{
-					Name: "task", Script: "s.lua", Every: sched,
-				})
-				s.state.Tasks["task"] = now.Add(-late)
-
-				// Through runScript, not enqueueTask directly: runScript is
-				// what chooses the reference point, and that choice is the
-				// thing under test.
-				require.NoError(t, s.runScript(context.Background(), s.config.Tasks[0]))
-
-				submitted := q.jobs()
-				require.Len(t, submitted, 1)
-				require.True(t, submitted[0].Deadline.After(now),
-					"deadline %v must be after now (%v); a past deadline means the job is dropped unrun",
-					submitted[0].Deadline, now)
-			})
-		}
-	}
+	submitted := q.jobs()
+	require.Len(t, submitted, 2)
+	require.NotEqual(t, submitted[0].IdempotencyKey, submitted[1].IdempotencyKey)
 }
 
 // TestEnqueuedJob_UsesRetryNever pins that the scheduler keeps ownership of
@@ -234,7 +164,7 @@ func TestEnqueuedJob_UsesRetryNever(t *testing.T) {
 		Name: "task", Script: "s.lua", Every: intervalSchedule(time.Hour),
 	})
 
-	require.NoError(t, s.enqueueTask(context.Background(), s.config.Tasks[0], now))
+	require.NoError(t, s.enqueueTask(context.Background(), s.config.Tasks[0]))
 
 	submitted := q.jobs()
 	require.Len(t, submitted, 1)
@@ -259,7 +189,7 @@ func TestEnqueuedJob_CarriesTaskIdentity(t *testing.T) {
 		Every: intervalSchedule(time.Hour),
 	})
 
-	require.NoError(t, s.enqueueTask(context.Background(), s.config.Tasks[0], now))
+	require.NoError(t, s.enqueueTask(context.Background(), s.config.Tasks[0]))
 
 	submitted := q.jobs()
 	require.Len(t, submitted, 1)
@@ -287,7 +217,7 @@ func TestEnqueueTask_SkipsWhenInFlight(t *testing.T) {
 	_, err := s.claimInFlight("task")
 	require.NoError(t, err)
 
-	err = s.enqueueTask(context.Background(), s.config.Tasks[0], now)
+	err = s.enqueueTask(context.Background(), s.config.Tasks[0])
 	require.ErrorIs(t, err, errTaskInFlight)
 	require.Empty(t, q.jobs(), "a task already running must not be submitted again")
 }
@@ -326,7 +256,7 @@ func TestEnqueueTask_ReportsEnqueueFailure(t *testing.T) {
 		Name: "task", Script: "s.lua", Every: intervalSchedule(time.Hour),
 	})
 
-	err := s.enqueueTask(context.Background(), s.config.Tasks[0], now)
+	err := s.enqueueTask(context.Background(), s.config.Tasks[0])
 	require.Error(t, err)
 	require.NotErrorIs(t, err, errTaskInFlight)
 }
@@ -429,7 +359,7 @@ func TestScheduler_ThroughRealQueue(t *testing.T) {
 	}
 	require.NoError(t, s.UseQueue(q))
 
-	require.NoError(t, s.enqueueTask(context.Background(), s.config.Tasks[0], now))
+	require.NoError(t, s.enqueueTask(context.Background(), s.config.Tasks[0]))
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -530,28 +460,6 @@ func TestFirstEverRun_DoesNotHang(t *testing.T) {
 		"a successful first run must stamp its last-run time")
 }
 
-// TestEnqueueTask_RefusesPastDeadline pins the defensive guard behind the bug
-// above: a deadline already past must be refused, not submitted.
-//
-// Submitting it would mean the queue drops the job and the submitter waits on a
-// completion that can never arrive. Reachable through a backwards clock jump or
-// a state file stamped in the future — the same input class the retry ladder's
-// clock-jump guard exists for.
-func TestEnqueueTask_RefusesPastDeadline(t *testing.T) {
-	t.Parallel()
-
-	q := newFakeQueue()
-	now := time.Now()
-	s := newQueuedScheduler(t, q, now, TaskConfig{
-		Name: "task", Script: "s.lua", Every: intervalSchedule(time.Minute),
-	})
-
-	// A last-run stamp far enough back that the next run is already behind us.
-	err := s.enqueueTask(context.Background(), s.config.Tasks[0], now.Add(-time.Hour))
-	require.ErrorIs(t, err, errDeadlinePassed)
-	require.Empty(t, q.jobs(), "a job the queue would drop must not be submitted")
-}
-
 // TestStartBackground_UsesQueueWhenAvailable pins the production wiring.
 //
 // The queue is attached through an optional interface on the workspace
@@ -586,3 +494,78 @@ type queueWorkspace struct {
 }
 
 func (w *queueWorkspace) Jobs() jobs.Client { return w.q }
+
+// TestOverloadedQueue_RunsLateRatherThanDropping is the regression test for the
+// failure mode that motivated using an idempotency key instead of a deadline.
+//
+// With a cadence-derived deadline, a short-interval task queued behind a busy
+// pool had its deadline lapse while it waited. The queue then correctly dropped
+// it, nothing reported completion, and the scheduler blocked forever on a
+// result that could not arrive — one overload episode stopped ALL scheduling
+// until restart, silently, with the process idle rather than loaded.
+//
+// The right behavior under load is late, not never.
+func TestOverloadedQueue_RunsLateRatherThanDropping(t *testing.T) {
+	q, err := jobs.NewMemoryQueue(context.Background(), discardLogger())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = q.Close(context.Background()) })
+
+	// Saturate every worker with jobs that will not finish until released.
+	release := make(chan struct{})
+	slow := jobs.NewKind("test", "slow")
+	require.NoError(t, q.Register(slow, func(ctx context.Context, _ jobs.Job) error {
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return nil
+	}))
+	require.NoError(t, q.Start(context.Background()))
+	for range 8 {
+		require.NoError(t, q.Enqueue(context.Background(), jobs.Job{Kind: slow}))
+	}
+	time.Sleep(300 * time.Millisecond)
+
+	ran := make(chan struct{}, 1)
+	s := &Scheduler{
+		config: &Config{Tasks: []TaskConfig{{
+			// A one-second cadence: the shortest realistic interval, and the
+			// case a deadline handled worst.
+			Name: "frequent", Script: "f.lua", Every: intervalSchedule(time.Second),
+		}}},
+		ws:     newMockWorkspace(t),
+		state:  newState(),
+		logger: discardLogger(),
+		now:    time.Now,
+	}
+	s.engineRunner = func(context.Context, TaskConfig) error {
+		ran <- struct{}{}
+		return nil
+	}
+	require.NoError(t, s.UseQueue(q))
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.doExecuteTask(context.Background(), s.config.Tasks[0])
+	}()
+
+	// The task waits behind the backlog for longer than its own interval —
+	// exactly the window in which a deadline would have expired it.
+	time.Sleep(1500 * time.Millisecond)
+	close(release)
+
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatal("scheduler hung waiting on a job the queue dropped under load")
+	}
+
+	select {
+	case <-ran:
+	default:
+		t.Fatal("task was dropped under load; it should have run late instead")
+	}
+	require.Contains(t, s.state.Tasks, "frequent",
+		"a run that completed late is still a successful run")
+}

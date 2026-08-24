@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"strings"
 	"sync"
 	"time"
 
@@ -218,28 +219,60 @@ func (q *neoqQueue) Enqueue(ctx context.Context, job Job) error {
 		Payload:    payload,
 		MaxRetries: &maxRetries,
 
-		// A unique fingerprint per enqueue. neoq otherwise derives one from
-		// md5(queue + payload) and silently DROPS a job matching an
-		// unprocessed one — returning a nil error having queued nothing. As
-		// every rela job shares one queue, two legitimately identical
-		// payloads ("notify alice" twice) would collapse into one. Worse,
-		// the tiers disagree: the memory backend drops silently while
-		// postgres has a unique index and returns an error. An explicit
-		// fingerprint disables the behavior on both. If deduplication is
-		// ever wanted it should be an opt-in field on Job, not an accident
-		// of payload equality.
-		Fingerprint: newFingerprint(),
+		// The fingerprint IS the dedupe identity, so it is derived from the
+		// caller's intent rather than left to neoq.
+		//
+		// neoq would otherwise compute md5(queue + payload) and silently drop
+		// any job matching an unprocessed one. Since every rela job shares one
+		// queue, that made two legitimately identical payloads ("notify alice"
+		// twice) collapse into one — deduplication by accident of payload
+		// equality, which is never what a caller asked for.
+		//
+		// Now: an IdempotencyKey opts IN to exactly that collapse, and a job
+		// without one gets a unique value so it always queues.
+		Fingerprint: fingerprintFor(job),
 	}
 
 	// Serialized: see the enqueueMu field comment for the upstream race this
 	// contains.
 	q.enqueueMu.Lock()
-	_, err := q.nq.Enqueue(ctx, nj)
+	id, err := q.nq.Enqueue(ctx, nj)
 	q.enqueueMu.Unlock()
+
+	if isDuplicate(id, err) {
+		// A dedupe hit is SUCCESS, not failure: the work the caller wanted is
+		// already scheduled. Normalized here because the backends disagree —
+		// memory returns (DuplicateJobID, nil), postgres returns
+		// ErrDuplicateJob — and a seam that leaked that difference would make
+		// the two tiers behave differently for the same call.
+		q.logger.Debug("job already pending, not queued again",
+			"kind", job.Kind, "idempotency_key", job.IdempotencyKey)
+		return ErrDuplicateJob
+	}
 	if err != nil {
 		return fmt.Errorf("jobs: enqueue %q: %w", job.Kind, err)
 	}
 	return nil
+}
+
+// isDuplicate reports whether an enqueue was collapsed into a pending job.
+//
+// The two backends report it differently and neither exposes a sentinel this
+// package can reach: the memory backend returns the DuplicateJobID constant
+// with a nil error, while postgres returns an error whose only distinguishing
+// feature is its message — and it is declared in neoq's postgres package,
+// which the default build must not import (it would link pgx and break the
+// build-tag isolation CI asserts).
+//
+// So the postgres arm matches on the message. That is fragile, and pinned by
+// a jobstest conformance case rather than left to chance: if the wording
+// changes upstream, the tiers diverge silently, with a duplicate surfacing as
+// a hard enqueue failure on postgres only.
+func isDuplicate(id string, err error) bool {
+	if err != nil {
+		return strings.Contains(err.Error(), "duplicate job")
+	}
+	return id == neoqjobs.DuplicateJobID
 }
 
 // Start implements [Queue]. It registers a single dispatch handler that routes
@@ -444,11 +477,18 @@ func intFromPayload(payload map[string]any, key string) (int, bool) {
 	}
 }
 
-// newFingerprint returns a value unique to one enqueue.
+// fingerprintFor returns the value neoq deduplicates on.
 //
-// See the Fingerprint field in Enqueue: this exists to DISABLE neoq's
-// payload-equality deduplication, which would otherwise silently drop a job
-// that looks like one already in flight.
-func newFingerprint() string {
-	return uuid.NewString()
+// With an IdempotencyKey the fingerprint is derived from it (namespaced by
+// kind, so two subsystems choosing the same key do not collide), which is what
+// makes a second submission collapse into the pending one.
+//
+// Without a key, a fresh UUID: unique per enqueue, so the job always queues.
+// That is the safe default — deduplication has to be asked for, never inferred
+// from two payloads happening to match.
+func fingerprintFor(job Job) string {
+	if job.IdempotencyKey == "" {
+		return uuid.NewString()
+	}
+	return string(job.Kind) + "\x00" + job.IdempotencyKey
 }

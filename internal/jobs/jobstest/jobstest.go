@@ -96,6 +96,8 @@ func RunAll(t *testing.T, newQueue NewQueue) {
 	t.Run("EnqueueAfterCloseRejected", func(t *testing.T) { testEnqueueAfterClose(t, newQueue) })
 	t.Run("ConcurrentEnqueueLosesNothing", func(t *testing.T) { testConcurrentEnqueue(t, newQueue) })
 	t.Run("PayloadRoundTrips", func(t *testing.T) { testPayloadRoundTrips(t, newQueue) })
+	t.Run("IdempotencyKeyCollapsesPending", func(t *testing.T) { testIdempotencyCollapses(t, newQueue) })
+	t.Run("IdempotencyKeyFreedAfterCompletion", func(t *testing.T) { testIdempotencyFreed(t, newQueue) })
 	t.Run("PoolSurvivesExhaustedJobs", func(t *testing.T) { testPoolSurvivesExhaustion(t, newQueue) })
 	t.Run("PoolSurvivesExpiredDeadlines", func(t *testing.T) { testPoolSurvivesExpiredDeadlines(t, newQueue) })
 	t.Run("IdenticalPayloadsAreDistinctJobs", func(t *testing.T) { testIdenticalPayloads(t, newQueue) })
@@ -613,6 +615,79 @@ func testHandlerSeesRetryPolicy(t *testing.T, newQueue NewQueue) {
 	got, ok := rec.last()
 	require.True(t, ok)
 	require.Equal(t, jobs.RetryPersistent, got.Retry)
+}
+
+// testIdempotencyCollapses pins the dedupe contract: a keyed job submitted
+// while an identical one is pending must not queue a second execution, and the
+// caller must be told so rather than being handed a silent success.
+//
+// This is what a recurring task uses to say "one at a time is enough" — a daily
+// report delayed six hours should not then send twice.
+func testIdempotencyCollapses(t *testing.T, newQueue NewQueue) {
+	t.Helper()
+
+	var ran atomicCounter
+	release := make(chan struct{})
+	q := newQueue(t)
+	require.NoError(t, q.Register("keyed", func(ctx context.Context, _ jobs.Job) error {
+		ran.inc()
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return nil
+	}))
+	require.NoError(t, q.Start(context.Background()))
+	t.Cleanup(func() { close(release) })
+
+	first := jobs.Job{Kind: "keyed", IdempotencyKey: "daily-report"}
+	require.NoError(t, q.Enqueue(context.Background(), first))
+
+	// Wait until it is actually running, so the second submission is racing a
+	// genuinely pending job rather than an empty queue.
+	require.Eventually(t, func() bool { return ran.get() == 1 }, settleTimeout, pollInterval)
+
+	for range 3 {
+		err := q.Enqueue(context.Background(), jobs.Job{Kind: "keyed", IdempotencyKey: "daily-report"})
+		require.ErrorIs(t, err, jobs.ErrDuplicateJob,
+			"a keyed job matching a pending one must report ErrDuplicateJob")
+	}
+
+	// A DIFFERENT key is a different job and must queue.
+	require.NoError(t, q.Enqueue(context.Background(), jobs.Job{
+		Kind: "keyed", IdempotencyKey: "weekly-report",
+	}))
+	require.Eventually(t, func() bool { return ran.get() == 2 }, settleTimeout, pollInterval,
+		"a job with a different key must not be deduplicated")
+}
+
+// testIdempotencyFreed pins that the key guards CONCURRENCY, not history: once
+// a keyed job finishes, the same key must be usable again.
+//
+// Otherwise a daily report would send exactly once, ever — the key would become
+// a permanent record of what has run rather than of what is pending.
+func testIdempotencyFreed(t *testing.T, newQueue NewQueue) {
+	t.Helper()
+
+	var ran atomicCounter
+	rec := newRecorder()
+	q := startQueue(t, newQueue(t), "cycle", func(_ context.Context, job jobs.Job) error {
+		ran.inc()
+		rec.record(job)
+		return nil
+	})
+
+	require.NoError(t, q.Enqueue(context.Background(), jobs.Job{
+		Kind: "cycle", IdempotencyKey: "report",
+	}))
+	require.Eventually(t, func() bool { return ran.get() == 1 }, settleTimeout, pollInterval)
+
+	// Same key again, after completion: must queue.
+	require.NoError(t, q.Enqueue(context.Background(), jobs.Job{
+		Kind: "cycle", IdempotencyKey: "report",
+	}))
+	require.Eventually(t, func() bool { return ran.get() == 2 }, settleTimeout, pollInterval,
+		"a completed key must be free for reuse; it guards pending work, not history")
 }
 
 // atomicCounter is a mutex-guarded counter. Used instead of sync/atomic so a
