@@ -201,3 +201,103 @@ worlds:
 			"otherwise it is an unknown type, which is rule 1, which serves "+
 			"the default face in a world that meant to exclude it")
 }
+
+// TestWorldSurface_ChainNamingTheDefaultCoordinateResolves is the
+// BUG-DFLTCHAIN regression, asserted END TO END: compile a world whose chain
+// names the type's `default: true` pointer, then check the entity is actually
+// RETURNED by a real store.
+//
+// # Why it asserts a resolved row, not a compiled chain
+//
+// A test asserting `res.Chain == [...]` would pass against the broken
+// compiler as easily as the fixed one — it would simply describe whichever
+// coordinate the compiler emitted, which is the thing under test. The defect
+// only becomes visible when something tries to MATCH that coordinate against
+// storage, so the assertion has to be "the page comes back", with a real
+// store holding a real row.
+//
+// # The defect
+//
+// A `default: true` state is stored under the ZERO pointer (the bare id
+// addresses it), but the compiler mapped declared names literally, so `draft`
+// compiled to the coordinate `"draft"` — which no row carries. Under
+// `otherwise: exclude` the entity then vanished from a world that had
+// explicitly selected it, with no error and a config that reads correctly.
+//
+// `otherwise: exclude` is load-bearing HERE: under `otherwise: default` the
+// fallback silently supplies the same face, so the bug is invisible in the
+// bytes and shows up only as a mislabelled provenance rule. Excluding is what
+// turns a silent mislabel into an observable absence.
+//
+// Mutation-checked (Ruling 10), since a negative-shaped assertion about
+// silent exclusion is exactly the kind that can prove nothing. Verified to
+// die in both directions: reverting declaredPointers to the literal mapping
+// fails this test on `Found` (the silent-exclusion mode), and mapping EVERY
+// name to the zero coordinate fails the sibling world tests instead.
+//
+// # The other symptom, observed live
+//
+// Under `otherwise: default` the same defect produced a WRONG PROVENANCE
+// LABEL rather than an absence, and that is worth recording because it is
+// the form an operator is far more likely to meet.
+//
+// The isms-demo project declares `site-nl: select: [nl, en]` where `en` is
+// blog-post's default. A post with only an English face was reported as
+// `via: fallback-default` — "no face this world asked for, so here is the
+// default instead" — when the truth is `via: chain`: the world explicitly
+// named `en` and got its declared second choice. The bytes were identical
+// either way, so nothing downstream could notice.
+//
+// So the defect degraded gracefully into a lie. That is why the fix belongs
+// in the mapping and not in a load-time rejection: the config was never
+// wrong.
+func TestWorldSurface_ChainNamingTheDefaultCoordinateResolves(t *testing.T) {
+	meta, err := metamodel.Parse([]byte(`
+entities:
+  page:
+    label: Page
+    plural: pages
+    id_prefix: "PAGE-"
+    id_type: sequential
+    properties:
+      title:
+        type: string
+        required: true
+    pointers:
+      draft: {default: true}
+      published: {}
+relations: {}
+worlds:
+  editorial:
+    select: [published, draft]
+    otherwise: exclude
+`))
+	require.NoError(t, err)
+	svc := appbuildtest.New(meta)
+	defer func() { _ = svc.Close() }()
+	ctx := context.Background()
+
+	// PAGE-1 holds ONLY its default face, which `draft` names.
+	draftOnly := entity.New("PAGE-1", "page")
+	draftOnly.SetString("title", "draft only")
+	require.NoError(t, svc.Store().CreateEntity(ctx, draftOnly))
+
+	surface, err := appbuild.WorldSurface(svc, "editorial", nil)
+	require.NoError(t, err)
+
+	got, err := surface.Resolver().Resolve(ctx, "page", "PAGE-1")
+	require.NoError(t, err)
+
+	require.True(t, got.Found,
+		"the world's chain names `draft`, the page HAS a draft face, and the "+
+			"world must therefore serve it — a compiler that maps `draft` to a "+
+			"literal coordinate instead of the zero one excludes this page from "+
+			"a world that explicitly selected it (BUG-DFLTCHAIN)")
+	assert.Equal(t, "draft only", got.Entity.GetString("title"))
+	assert.Equal(t, worldreader.RuleChain, got.Via,
+		"the page was selected BY THE CHAIN, not substituted by a fallback — "+
+			"and `otherwise: exclude` means there is no fallback to hide behind")
+	assert.Equal(t, entity.Pointer(""), got.Pointer,
+		"a default-marked state lives at the ZERO coordinate; there is no "+
+			"second row named `draft`")
+}

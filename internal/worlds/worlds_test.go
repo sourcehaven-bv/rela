@@ -60,6 +60,18 @@ func ptr(t *testing.T, s string) entity.Pointer {
 	return p
 }
 
+// defaultCoord is the coordinate a `default: true` pointer compiles to: the
+// ZERO pointer, because a default-marked state is the one the bare id
+// addresses (design doc §2.1). Deliberately NOT expressible via ptr() —
+// entity.ParsePointer rejects the empty string, which is why a test that
+// reached for ptr("draft") to describe a default coordinate was describing
+// something that cannot exist in storage (BUG-DFLTCHAIN).
+//
+// Spelled as a named constant rather than a bare "" at each site so the
+// assertion reads as a claim about DEFAULTNESS rather than as an empty value
+// someone might tidy away.
+const defaultCoord = entity.Pointer("")
+
 // TestCompile_PointerlessProjectIsTheDefaultWorld pins AC1 and the whole
 // compatibility story: a metamodel with no worlds and no pointers yields
 // nothing to resolve, and the default world stays available and total.
@@ -121,11 +133,20 @@ func TestCompile_ChainsAndFallback(t *testing.T) {
 		assert.Equal(t, []entity.Pointer{ptr(t, "review"), ptr(t, "published")}, res.Chain)
 
 		// page declares published, which the world's global chain selects —
-		// but the per-type override replaces that chain entirely.
+		// but the per-type override (`page: draft`) replaces that chain
+		// entirely.
+		//
+		// The override names `draft`, which page marks `default: true`, so it
+		// compiles to the ZERO coordinate — not to the literal name. That is
+		// BUG-DFLTCHAIN: this assertion previously expected ptr("draft"), a
+		// coordinate no page row can ever carry, so the override selected
+		// nothing and every page fell through to `otherwise`. The world read
+		// as configured and resolved as if it were not.
 		res, ok = scope.For("page")
 		require.True(t, ok)
-		assert.Equal(t, []entity.Pointer{ptr(t, "draft")}, res.Chain,
-			"the override replaces the global chain, it does not extend it")
+		assert.Equal(t, []entity.Pointer{defaultCoord}, res.Chain,
+			"the override replaces the global chain, it does not extend it — "+
+				"and `draft` is page's default, so it addresses the zero coordinate")
 	})
 
 	t.Run("rule 3: otherwise compiles to the fallback verdict", func(t *testing.T) {
@@ -212,6 +233,18 @@ worlds:
 // TestCompile_ChainDedup pins that a repeated coordinate collapses rather
 // than being ranked twice (design doc §4.5's dedup rule, which applies
 // even without templates).
+//
+// It ALSO pins the default-coordinate mapping, because `draft` here is
+// `default: true`. This test previously expected the literal ptr("draft") and
+// so DEFENDED BUG-DFLTCHAIN: a chain entry no row could match, under
+// `otherwise: exclude`, silently removing every draft-only page from a world
+// that had explicitly selected drafts. A bug with a passing test guarding it
+// is worse than a bare bug — the test is what a future reader trusts — so the
+// old expectation is recorded here rather than quietly swapped.
+//
+// Dedup and the mapping interact: dedup runs AFTER mapping (see
+// resolveChain), so two names collapsing onto the same coordinate collapse
+// correctly. That is why this test can carry both properties at once.
 func TestCompile_ChainDedup(t *testing.T) {
 	c, err := worlds.Compile(parseSchema(t, `version: "1.0"
 namespace: https://example.org/test#
@@ -233,7 +266,9 @@ worlds:
 	require.True(t, ok)
 	res, ok := scope.For("page")
 	require.True(t, ok)
-	assert.Equal(t, []entity.Pointer{ptr(t, "published"), ptr(t, "draft")}, res.Chain)
+	assert.Equal(t, []entity.Pointer{ptr(t, "published"), defaultCoord}, res.Chain,
+		"`published` is an ordinary coordinate; `draft` is this type's default "+
+			"and so addresses the zero coordinate")
 }
 
 // TestCompile_RejectsBadPointerGrammar pins that the pointer grammar is

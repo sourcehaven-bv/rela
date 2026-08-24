@@ -164,10 +164,35 @@ func validateWorldNames(m *metamodel.Metamodel) []error {
 	return errs
 }
 
-// declaredPointers validates every declared pointer name against the
-// codec grammar and returns them as parsed coordinates, keyed by entity
-// type. Types declaring no pointers are absent from the result — that
+// declaredPointers validates every declared pointer name against the codec
+// grammar and returns the STORED COORDINATE each name addresses, keyed by
+// entity type. Types declaring no pointers are absent from the result — that
 // absence is what rule 1 compiles to.
+//
+// # A declared NAME is not a stored COORDINATE (BUG-DFLTCHAIN)
+//
+// The two differ for exactly one name per type: the one marked
+// `default: true`. A default-marked state is stored under the ZERO pointer —
+// the bare id addresses it (design doc §2.1) — so `page@draft` where `draft`
+// is the default names a row that does not exist. There are exactly N states
+// and nothing else; marking a name default does not mint a second row.
+//
+// This function used to parse names literally and skip that step, so a world
+// naming its type's default coordinate compiled to a chain entry NO ROW COULD
+// EVER MATCH. Under `otherwise: exclude` the entity vanished from a world
+// that had explicitly selected it; under `otherwise: default` it was served
+// via the fallback and mislabelled as such. Both failed silently, with a
+// config that reads correctly.
+//
+// So the mapping goes through [metamodel.StoredPointer], the one definition
+// of "declared name -> stored coordinate" — the same function the copy kernel
+// applies (internal/entitymanager/copy.go). Two functions answering that
+// question differently is the root cause; there is now one.
+//
+// Note the ORDER: grammar is checked on the DECLARED name, then the name is
+// mapped. Validating the mapped value instead would run [entity.ParsePointer]
+// over the empty string for every default coordinate, which it correctly
+// rejects — turning a valid schema into a load error.
 func declaredPointers(m *metamodel.Metamodel) (map[string]map[string]entity.Pointer, []error) {
 	var errs []error
 	out := make(map[string]map[string]entity.Pointer)
@@ -178,13 +203,14 @@ func declaredPointers(m *metamodel.Metamodel) (map[string]map[string]entity.Poin
 		}
 		parsed := make(map[string]entity.Pointer, len(def.Pointers))
 		for _, name := range sortedPointerNames(def) {
-			p, err := entity.ParsePointer(name)
-			if err != nil {
+			if _, err := entity.ParsePointer(name); err != nil {
 				errs = append(errs, fmt.Errorf(
 					"entity %q: invalid pointer name %q: %w", typeName, name, err))
 				continue
 			}
-			parsed[name] = p
+			// The declared name passed the grammar; the COORDINATE it
+			// addresses is what a chain must carry.
+			parsed[name] = entity.Pointer(metamodel.StoredPointer(m, typeName, name))
 		}
 		out[typeName] = parsed
 	}
