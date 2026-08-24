@@ -63,6 +63,26 @@ buildable today proceeds in parallel on the list surface.
    So: scope the detail read through the world and resolve its links via
    `Neighbors`. *Unblocks every Ruling-9 affordance having a page to live
    on.*
+4b. **World-enable `_views/` — and carry provenance on its collections
+   (RULING 14).** This is the item that makes the SPA's DETAIL PAGE work:
+   `EntityDetail.vue` reads `fetchView()` -> `GET /_views/{type}/{id}`,
+   which is `_`-prefixed and blanket-refused by `worldCapablePath`. Item 4
+   fixes the entity GET and list rows; the page the user actually opens
+   still cannot switch worlds until this lands.
+
+   **Provenance belongs HERE, not on the entity-GET relations map.**
+   `viewResult.Collections` is `map[string][]*entity.Entity` (`views.go:16`)
+   — the neighbours are already whole entities, so attaching `_world` to
+   each is additive, unlike the relations map where a neighbour is a bare
+   ID string (Ruling 13). This delivers "this link is a real Dutch page vs
+   the English fallback" with **no extra requests**, which is what the
+   Ruling 13 caveat identified as the real cost of deferring.
+
+   Known design questions, not yet decided: does a traverse rule's `where:`
+   run against the resolved face? What does the 10-pass fixpoint do when a
+   neighbour is excluded by `otherwise: exclude` mid-traversal? `views.go`
+   reads raw `store.GetEntity`, which takes no scope parameter.
+
 5. **Copies: list-by-source + invoke-by-name, and `label:` on `CopyDef`.**
    A request may only invoke a definition BY NAME (transforms-registry
    precedent); the endpoint must **re-authorize the guard server-side**
