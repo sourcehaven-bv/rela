@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -513,15 +514,19 @@ func TestParseIncludeSpec(t *testing.T) {
 		wantWanted map[string]string
 	}{
 		{"star", "*", true, nil},
-		{"star with spaces", " * ", true, nil},
+		// NOT the star form: the pre-refactor code compared the RAW string, so
+		// a padded star fell through to the named branch and matched nothing.
+		// Trimming here would widen the default world on a stray space.
+		{"padded star is not the star form", " * ", false, map[string]string{"*": ""}},
 		{"single", "implements", false, map[string]string{"implements": ""}},
 		{"nested", "implements.requires", false, map[string]string{"implements": "requires"}},
 		{"several", "a,b", false, map[string]string{"a": "", "b": ""}},
 		{"spaces trimmed", " a , b ", false, map[string]string{"a": "", "b": ""}},
 		{"empty parts skipped", "a,,b", false, map[string]string{"a": "", "b": ""}},
 		{"deep nesting keeps remainder", "a.b.c", false, map[string]string{"a": "b.c"}},
-		// First wins, matching the pre-refactor loop order.
-		{"duplicate keeps first", "a.b,a.c", false, map[string]string{"a": "b"}},
+		// LAST wins: the pre-refactor inner loop wrote nestedFor
+		// unconditionally per pass, so a later clause overwrote an earlier one.
+		{"duplicate keeps last", "a.b,a.c", false, map[string]string{"a": "c"}},
 		// A trailing dot records NO nesting. The pre-refactor loop recorded an
 		// empty one and recursed once for nothing; see parseIncludeSpec.
 		{"trailing dot is not nesting", "a.", false, map[string]string{"a": ""}},
@@ -797,5 +802,241 @@ func TestWorldETag_DoesNotFoldDefaultWorldEdges(t *testing.T) {
 			"ETag — folding default-world edges into a published validator " +
 			"means a draft-only edit invalidates a published cache entry, " +
 			"and publishing a face does not")
+	}
+}
+
+// TestWorldNeighbors_SelfEdgeSurvives is the regression test for a real bug
+// found in code review: a self-referential edge present in the default world
+// VANISHED under every non-default world.
+//
+// # The mechanism, because it is not obvious
+//
+// headIDsOf deliberately omits selfID — there is nothing to look up, the
+// entry's face is already in hand. But `heads` doubles as the consumer's test
+// for "does this world resolve that link", so an unseeded self id read as
+// EXCLUDED and worldEdgesForWire dropped the edge. Two functions disagreed
+// about what an absent key meant.
+//
+// `blocks: ticket -> ticket` is in the shared fixture, and self-edges are an
+// ordinary shape (dependency, supersedes, related-to), so this was silent data
+// loss on real graphs — not a theoretical corner.
+//
+// # Why it asserts default-vs-world PARITY
+//
+// Asserting only "the world shows the self-edge" would pass against a build
+// that showed it in neither. The property is that the world does not LOSE a
+// link the default world shows, so both are read and compared.
+//
+// Mutation-checked: removing the `heads[res.Entity.ID] = res.Entity` seeding
+// in worldScopedNeighbors fails this; removing the per-row seeding in
+// worldNeighborsForPage fails the list half below.
+func TestWorldNeighbors_SelfEdgeSurvives(t *testing.T) {
+	app := withWorldNeighbors(t, newTestAppV1(t))
+	ctx := context.Background()
+
+	seedEntity(app, &entity.Entity{
+		ID: "TKT-1", Type: "ticket", Properties: map[string]any{"title": "draft"},
+	})
+	seedFace(t, app, "TKT-1", "ticket", "published", "published")
+	if _, err := app.store.CreateRelation(ctx, "TKT-1", "blocks", "TKT-1", nil); err != nil {
+		t.Fatalf("seed self edge: %v", err)
+	}
+
+	// Default world: the baseline this must not regress from.
+	e, found, err := app.visibleReader.getVisible(ctx, "ticket", "TKT-1")
+	if err != nil || !found {
+		t.Fatalf("default get: found=%v err=%v", found, err)
+	}
+	def := app.serializer.forWire(ctx, e, app.reader.outgoingRelations(ctx, e.ID), app.Meta(), "tickets")
+	if got := def.Relations["blocks"]; len(got) != 1 || got[0] != "TKT-1" {
+		t.Fatalf("precondition: the default world must show the self-edge, "+
+			"or this test proves nothing; got %v", def.Relations)
+	}
+
+	// Single-entity GET under a world.
+	wctx := worldCtx(publishedScope("ticket"))
+	face, found, err := app.visibleReader.getVisible(wctx, "ticket", "TKT-1")
+	if err != nil || !found {
+		t.Fatalf("world get: found=%v err=%v", found, err)
+	}
+	out, vis, err := worldOutgoingForEntity(wctx, app.worldNeighbors, app.visibleReader, face)
+	if err != nil {
+		t.Fatalf("worldOutgoingForEntity: %v", err)
+	}
+	wire := app.serializer.forWireScoped(wctx, face, out, vis, app.Meta(), "tickets")
+	if got := wire.Relations["blocks"]; len(got) != 1 || got[0] != "TKT-1" {
+		t.Errorf("a self-edge must survive world resolution — the entry IS its "+
+			"own head and is already resolved; got %v", wire.Relations)
+	}
+
+	// The LIST path batches across rows and does its own seeding, so it needs
+	// its own assertion rather than inheriting this one.
+	outRows, _, visRows, err := worldNeighborsForPage(
+		wctx, app.worldNeighbors, app.visibleReader, []*entity.Entity{face})
+	if err != nil {
+		t.Fatalf("worldNeighborsForPage: %v", err)
+	}
+	if len(outRows[0]) != 1 {
+		t.Errorf("the list path must keep the self-edge too; got %d edges", len(outRows[0]))
+	}
+	if !visRows["TKT-1"] {
+		t.Error("the entry's own id must be in the visible set — it passed the " +
+			"gate to be in the page at all")
+	}
+
+	// And the include block must agree with the relations map.
+	included := app.resolveV1Includes(wctx, face, "*")
+	if _, ok := included["TKT-1"]; !ok {
+		t.Error("include=* must resolve the self-edge peer, or `included` and " +
+			"`relations` disagree (the RR-HJV8CP invariant)")
+	}
+}
+
+// TestIncludeSpec_DefaultWorldParityWithPreRefactor pins the two default-world
+// behaviors that the parseIncludeSpec extraction changed and code review
+// caught.
+//
+// Both were silent widenings/reorderings of the DEFAULT world — the branch this
+// PR claimed was byte-identical. The claim was false, and asserting it in a
+// comment while a five-line test falsified it is worse than not claiming it. So
+// the behaviors are now asserted rather than described.
+//
+// Expected values were taken by RUNNING the pre-refactor code on this exact
+// graph, not by reading it. The duplicate-nesting rule in particular reads the
+// opposite way round in the source: the old inner loop looks like it sets
+// nesting once per clause, but it runs per matching EDGE and writes
+// unconditionally, so the last clause wins.
+func TestIncludeSpec_DefaultWorldParityWithPreRefactor(t *testing.T) {
+	app := withWorldNeighbors(t, newTestAppV1(t))
+	ctx := context.Background()
+
+	// TKT-1 -blocks-> TKT-2 -blocks-> TKT-3, and TKT-2 -implements-> FEAT-1.
+	for _, id := range []string{"TKT-1", "TKT-2", "TKT-3"} {
+		seedEntity(app, &entity.Entity{
+			ID: id, Type: "ticket", Properties: map[string]any{"title": id},
+		})
+	}
+	seedEntity(app, &entity.Entity{
+		ID: "FEAT-1", Type: "feature", Properties: map[string]any{"title": "f"},
+	})
+	for _, e := range []struct{ from, typ, to string }{
+		{"TKT-1", "blocks", "TKT-2"},
+		{"TKT-2", "blocks", "TKT-3"},
+		{"TKT-2", "implements", "FEAT-1"},
+	} {
+		if _, err := app.store.CreateRelation(ctx, e.from, e.typ, e.to, nil); err != nil {
+			t.Fatalf("seed %s-%s->%s: %v", e.from, e.typ, e.to, err)
+		}
+	}
+	entry, found, err := app.visibleReader.getVisible(ctx, "ticket", "TKT-1")
+	if err != nil || !found {
+		t.Fatalf("get: found=%v err=%v", found, err)
+	}
+
+	ids := func(m map[string]v1.Entity) []string {
+		out := make([]string, 0, len(m))
+		for id := range m {
+			out = append(out, id)
+		}
+		slices.Sort(out)
+		return out
+	}
+
+	t.Run("duplicate relation type keeps the LAST nesting", func(t *testing.T) {
+		// Pre-refactor output on this graph, MEASURED by running PR-B rather
+		// than read off the source: [FEAT-1 TKT-2]. The ".implements" clause
+		// is the later duplicate, so it wins and the recursion follows
+		// implements from TKT-2, yielding FEAT-1.
+		got := ids(app.resolveV1Includes(ctx, entry, "blocks.blocks,blocks.implements"))
+		want := []string{"FEAT-1", "TKT-2"}
+		if !slices.Equal(got, want) {
+			t.Errorf("include=blocks.blocks,blocks.implements = %v, want %v "+
+				"(last duplicate wins, as the pre-refactor loop did)", got, want)
+		}
+	})
+
+	t.Run("padded star does not expand", func(t *testing.T) {
+		// Pre-refactor output: empty. `includes == "*"` was a RAW comparison,
+		// so " * " took the named branch and matched no relation type.
+		if got := ids(app.resolveV1Includes(ctx, entry, " * ")); len(got) != 0 {
+			t.Errorf("include=%q must not expand — trimming it into the star "+
+				"form widens the default world on a stray space; got %v", " * ", got)
+		}
+		// The unpadded form still works, so the test above is not passing
+		// because expansion is broken generally.
+		if got := ids(app.resolveV1Includes(ctx, entry, "*")); len(got) == 0 {
+			t.Error("precondition: the bare star must still expand")
+		}
+	})
+}
+
+// TestWorldETag_ResolutionFaultDoesNotForgeAValidValidator pins the failure
+// mode code review found: an ETag computed during a resolution fault must not
+// equal the ETag of a legitimately edge-less entity.
+//
+// # Why "swallow the error and hash zero edges" was wrong
+//
+// The hash of an edge-less entity is a perfectly VALID validator for a real
+// document state. So swallowing the fault does not merely weaken the ETag — it
+// mints one that a later If-None-Match matches, winning a 304 against a body
+// that does have edges. That is an infrastructure failure wearing the costume
+// of a correct answer, which this codebase has a named rule against
+// (RR-4TFZNL).
+//
+// The fix folds a sentinel, so a fault produces a validator that matches
+// nothing: a MISSED 304, which is the harmless direction.
+func TestWorldETag_ResolutionFaultDoesNotForgeAValidValidator(t *testing.T) {
+	app := withWorldNeighbors(t, newTestAppV1(t))
+
+	seedEntity(app, &entity.Entity{
+		ID: "TKT-1", Type: "ticket", Properties: map[string]any{"title": "draft"},
+	})
+	seedFace(t, app, "TKT-1", "ticket", "published", "published")
+
+	wctx := worldCtx(publishedScope("ticket", "feature"))
+	face, found, err := app.visibleReader.getVisible(wctx, "ticket", "TKT-1")
+	if err != nil || !found {
+		t.Fatalf("resolve entry: found=%v err=%v", found, err)
+	}
+
+	// The validator for a genuinely edge-less entity.
+	edgeless := entityETagWithEdges(wctx, face, nil)
+	// The validator produced when edges could not be resolved.
+	faulted := etagUnresolved(wctx, face)
+
+	if edgeless == faulted {
+		t.Error("a resolution fault must not produce the SAME validator as a " +
+			"genuinely edge-less entity — that value is valid for a real " +
+			"document state, so a later If-None-Match would win a 304 " +
+			"against a body that does have edges")
+	}
+}
+
+// TestWorldETag_UsesTheEdgesItIsGiven pins that the validator is derived from
+// the caller's edges rather than re-read.
+//
+// This is what keeps the ETag describing the same document as the body: the
+// GET computes the edges once and hands the same slice to both. It also
+// removes a per-request duplicate head-resolution query and ACL pass under a
+// world (the RR-FRK1 shape).
+func TestWorldETag_UsesTheEdgesItIsGiven(t *testing.T) {
+	app := withWorldNeighbors(t, newTestAppV1(t))
+	ctx := context.Background()
+
+	seedEntity(app, &entity.Entity{
+		ID: "TKT-1", Type: "ticket", Properties: map[string]any{"title": "t"},
+	})
+	e, found, err := app.visibleReader.getVisible(ctx, "ticket", "TKT-1")
+	if err != nil || !found {
+		t.Fatalf("get: found=%v err=%v", found, err)
+	}
+
+	none := entityETagWithEdges(ctx, e, nil)
+	one := entityETagWithEdges(ctx, e, []*entity.Relation{
+		{From: "TKT-1", Type: "implements", To: "FEAT-1"},
+	})
+	if none == one {
+		t.Error("the supplied edges must reach the hash — otherwise the " +
+			"validator does not describe the body it was computed for")
 	}
 }

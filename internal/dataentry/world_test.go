@@ -411,7 +411,15 @@ func TestWorldCapableRoutesDoNotUseUngatedReader(t *testing.T) {
 						usesReader = true
 					}
 				case *ast.Ident:
-					if v.Name == "worldScopeFrom" || v.Name == "worldFromContext" {
+					// worldBoundRelations is the NAMED predicate the relation
+					// branches share (it wraps worldFromContext so a denied
+					// handle answers consistently). It counts as consulting
+					// the world — otherwise introducing one shared predicate,
+					// which is strictly better than three open-coded copies,
+					// would fail this guard and pressure the next author back
+					// into copying.
+					switch v.Name {
+					case "worldScopeFrom", "worldFromContext", "worldBoundRelations":
 						consultsWorld = true
 					}
 				}

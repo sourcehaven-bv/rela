@@ -674,7 +674,7 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 	// row's links resolve through THAT world, per neighbor (RULING 12); under
 	// the default world this is the previous behavior verbatim.
 	var visibleNeighbors map[string]bool
-	if worldScopeFrom(r.Context()).IsDefaultWorld() {
+	if !worldBoundRelations(r.Context()) {
 		for i, e := range entities {
 			outgoingByRow[i] = a.reader.outgoingRelations(r.Context(), e.ID)
 			incomingByRow[i] = a.reader.incomingRelations(r.Context(), e.ID)
@@ -845,7 +845,7 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	// correct because the entity looks right and only its links are wrong.
 	var outgoing []*entityPkg.Relation
 	var visibleNeighbors map[string]bool
-	if worldScopeFrom(ctx).IsDefaultWorld() {
+	if !worldBoundRelations(ctx) {
 		outgoing = a.reader.outgoingRelations(ctx, entity.ID)
 	} else {
 		var werr error
@@ -879,7 +879,14 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	}
 
 	// ETag for caching (visible-only path; deny-path above emits no ETag).
-	etag := a.computeEntityETag(ctx, entity)
+	//
+	// The edges computed for the BODY above are reused rather than re-read.
+	// Under a world, re-deriving them costs a second head-resolution query,
+	// two more relation queries and a second ACL pass per request — the
+	// RR-FRK1 duplication this PR is careful to avoid one function over — and
+	// it also opens a window in which the validator could describe a
+	// different edge set than the body it is validating.
+	etag := entityETagWithEdges(ctx, entity, outgoing)
 	w.Header().Set("ETag", etag)
 
 	// Check If-None-Match
@@ -1935,7 +1942,41 @@ func addPaginationLinks(w http.ResponseWriter, _ *http.Request, page, perPage, t
 	w.Header().Set("Link", strings.Join(links, ", "))
 }
 
+// computeEntityETag reads the entity's edges itself. Callers that ALREADY hold
+// the edges they served should use [App.entityETagWithEdges] instead — see the
+// duplication note at the single-entity GET's call site.
 func (a *App) computeEntityETag(ctx context.Context, e *entityPkg.Entity) string {
+	edges, err := etagEdges(ctx, a.reader, a.worldNeighbors, a.visibleReader, e)
+	if err != nil {
+		return etagUnresolved(ctx, e)
+	}
+	return entityETagWithEdges(ctx, e, edges)
+}
+
+// etagUnresolved is the validator for an entity whose edges could not be
+// resolved. See the sentinel rationale on [entityETagWithEdges].
+func etagUnresolved(ctx context.Context, e *entityPkg.Entity) string {
+	slog.Warn("dataentry: ETag: world-scoped edge read failed; "+
+		"folding a sentinel so the validator matches nothing",
+		"entity", e.ID, "world", worldFromContext(ctx).name)
+	return entityETagWithEdges(ctx, e, []*entityPkg.Relation{
+		{Type: "!unresolved", To: "!unresolved"},
+	})
+}
+
+// entityETagWithEdges hashes e together with the edges the response actually
+// carried.
+//
+// Taking the edges as a PARAMETER rather than reading them is what keeps the
+// validator and the body describing the same document: the GET computes them
+// once, for both.
+//
+// A package function, not a method: it needs nothing from App, and App is
+// pinned at its plimsoll cap. (The ETag split briefly took it to 105, which is
+// the load line doing its job — see the App type doc.)
+func entityETagWithEdges(
+	ctx context.Context, e *entityPkg.Entity, edges []*entityPkg.Relation,
+) string {
 	h := sha256.New()
 	_, _ = h.Write([]byte(e.ID))
 	_, _ = h.Write([]byte(e.Type))
@@ -1963,27 +2004,14 @@ func (a *App) computeEntityETag(ctx context.Context, e *entityPkg.Entity) string
 	// edges also change the ETag — otherwise If-Match / If-None-Match
 	// round-trips poison client caches.
 	//
-	// The edges must come from the SAME reader the response body used, or the
-	// validator describes a different document than the one served. Until
-	// TKT-WRLDAPI item 4 a world-bound response carried no relations at all,
-	// so this folded nothing under a world; now it carries world-resolved
-	// ones, and folding nothing would mean an edge change under a world never
-	// moved the ETag — a stale 304 on a response whose links had changed.
-	//
-	// Reading the DEFAULT-world reader here instead would be the mirror bug:
-	// draft edges in a published validator, so publishing a face would not
-	// invalidate it while an unrelated draft edit would.
-	var edges []*entityPkg.Relation
-	if world.isDefault() {
-		edges = a.reader.outgoingRelations(ctx, e.ID)
-	} else if a.worldNeighbors != nil {
-		// Errors are swallowed deliberately: this is a cache validator, not a
-		// read. A resolution fault yields a hash over fewer edges, which is
-		// weaker (a missed 304) and never wrong in the dangerous direction —
-		// and the GET that produced this response has already surfaced the
-		// same fault as a 5xx if it mattered.
-		edges, _, _ = worldOutgoingForEntity(ctx, a.worldNeighbors, a.visibleReader, e)
-	}
+	// The edges are the caller's, and must be the ones the response BODY
+	// carried. Until TKT-WRLDAPI item 4 a world-bound response carried no
+	// relations at all, so nothing was folded under a world; now it carries
+	// world-resolved ones, and folding nothing would mean an edge change under
+	// a world never moved the ETag — a stale 304 on a response whose links had
+	// changed. Folding DEFAULT-world edges instead is the mirror bug: a draft
+	// edit would invalidate a published validator, and publishing a face would
+	// not.
 	edgeKeys := make([]string, 0, len(edges))
 	for _, edge := range edges {
 		edgeKeys = append(edgeKeys, edge.Type+"|"+edge.To)

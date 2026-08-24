@@ -149,14 +149,28 @@ func (wn *worldNeighbors) worldScopedNeighbors(
 	}
 
 	ids := headIDsOf(edges, res.Entity.ID)
-	if len(ids) == 0 {
-		return edges, nil, nil
+	if len(ids) > 0 {
+		heads, err = wn.resolveHeads(ctx, ids)
+		if err != nil {
+			return nil, nil, err
+		}
+	} else {
+		heads = make(map[string]*entityPkg.Entity, 1)
 	}
 
-	heads, err = wn.resolveHeads(ctx, ids)
-	if err != nil {
-		return nil, nil, err
-	}
+	// SEED THE ENTRY'S OWN FACE. A SELF-EDGE (from == to == this entity) names
+	// the entry as its own head, and headIDsOf deliberately omits it — there
+	// is nothing to look up, the face is already in hand. But `heads` is also
+	// the CONSUMER'S test for "does this world resolve that link", so an
+	// unseeded self id reads as EXCLUDED and the edge is dropped.
+	//
+	// That was a real bug, not a theoretical one: `blocks: ticket -> ticket`
+	// is an ordinary shape (dependency, supersedes, related-to), and a
+	// self-edge visible in the default world silently vanished under every
+	// non-default one. The two functions disagreed about what an absent key
+	// meant — headIDsOf said "already known", headOnWire said "unresolvable".
+	// Seeding here makes them agree, at the one place that holds the face.
+	heads[res.Entity.ID] = res.Entity
 	return edges, heads, nil
 }
 
@@ -472,6 +486,20 @@ func worldNeighborsForPage(
 			return nil, nil, nil, err
 		}
 	}
+	if heads == nil {
+		heads = make(map[string]*entityPkg.Entity, len(entities))
+	}
+	// Seed each row's OWN face, for the same reason worldScopedNeighbors does:
+	// a self-edge names its row as its own head, headIDsOf omits it, and an
+	// unseeded id reads as "excluded by this world" to worldEdgesForWire. A row
+	// already IS a resolved face, so this needs no query.
+	//
+	// This path does not call worldScopedNeighbors (it batches across rows
+	// instead), so the seeding cannot be inherited and has to be restated —
+	// which is precisely how the self-edge bug reached two call sites.
+	for _, e := range entities {
+		heads[e.ID] = e
+	}
 	visible = visibleWorldNeighbors(ctx, visReader, heads)
 
 	// Pass 3: split each row's edges by direction, dropping heads this world
@@ -505,7 +533,7 @@ func includeCandidates(
 	e *entityPkg.Entity, includes string,
 ) (candidates []*entityPkg.Entity, nestedFor map[string]string, err error) {
 	wanted, all := parseIncludeSpec(includes)
-	if worldScopeFrom(ctx).IsDefaultWorld() {
+	if !worldBoundRelations(ctx) {
 		candidates, nestedFor = defaultWorldCandidates(ctx, reader, e, wanted, all)
 		return candidates, nestedFor, nil
 	}
@@ -524,7 +552,7 @@ func defaultWorldCandidates(
 	wanted map[string]string, all bool,
 ) (candidates []*entityPkg.Entity, nestedFor map[string]string) {
 	nestedFor = make(map[string]string)
-	if !worldScopeFrom(ctx).IsDefaultWorld() {
+	if worldBoundRelations(ctx) {
 		// Unreachable through includeCandidates, which branches on exactly
 		// this. Restated HERE because the reader below is default-world-only
 		// and this function is now the one that touches it: a defense that
@@ -604,16 +632,33 @@ func worldCandidates(
 	return candidates, nestedFor, nil
 }
 
-// peerOf returns the endpoint of edge that is not selfID.
+// peerOf returns the endpoint of edge that is not selfID, or "" when the edge
+// names selfID on neither side.
 //
 // Derived rather than assumed to be edge.To, because a DirectionBoth query
-// returns edges naming the entry on either side. A self-edge yields selfID,
-// which resolves to the entry's own already-resolved face and is harmless.
+// returns edges naming the entry on either side.
+//
+// A SELF-EDGE yields selfID, and that is correct rather than merely harmless:
+// worldScopedNeighbors seeds the entry's own face into `heads`, so the lookup
+// finds it and the self-link is included. (An earlier revision of this comment
+// called it harmless when it was not — the face was unseeded, so a self-edge
+// was silently dropped under every non-default world. Fixed at the seeding
+// site; recorded here because this doc asserted the opposite.)
+//
+// An edge naming NEITHER endpoint returns "" rather than defaulting to
+// edge.To. Unreachable — the Neighbors query is endpoint-scoped — but
+// worldEdgesForWire already treats that case as worth refusing, and a sibling
+// that silently admitted a third party instead would be the divergence a
+// reader is entitled to assume does not exist.
 func peerOf(edge *entityPkg.Relation, selfID string) string {
-	if edge.To == selfID {
+	switch selfID {
+	case edge.From:
+		return edge.To
+	case edge.To:
 		return edge.From
+	default:
+		return ""
 	}
-	return edge.To
 }
 
 // parseIncludeSpec splits an `?include=` expression into the relation types
@@ -624,20 +669,27 @@ func peerOf(edge *entityPkg.Relation, selfID string) string {
 // remainder after the first dot ("implements.requires" → wanted["implements"]
 // = "requires"), or "" when there is no nesting.
 //
-// A duplicate relation type keeps the FIRST nested expression rather than the
-// last, matching the pre-existing loop order — `include=a.b,a.c` was never a
-// documented form, and silently switching which one wins would be a behavior
-// change smuggled in under a refactor.
+// # Two rules preserved from the loop this replaced, both verified rather than assumed
 //
-// One deliberate divergence from the pre-refactor loop, recorded because it
-// IS a difference even though nothing observes it: a TRAILING DOT
-// (`include=implements.`) used to set an empty nested expression, which
-// recursed once and returned an empty map (the recursion splits "" into a
-// single empty part and skips it). Here an empty remainder simply records no
-// nesting, so the pointless recursion does not happen. The `included` map is
-// identical either way; only the wasted call is gone.
+// A DUPLICATE relation type keeps the LAST nested expression, not the first.
+// The pre-refactor inner loop wrote `nestedFor[target.ID] = relParts[1]`
+// unconditionally on every pass, so a later clause overwrote an earlier one:
+// `include=a.b,a.c` recursed with "c". An earlier revision of this function
+// kept the FIRST and claimed in a comment that doing so "matched the
+// pre-existing loop order" — it did not, and code review caught the
+// contradiction. Undocumented behavior is still behavior; a refactor does not
+// get to change it silently in either direction.
+//
+// The `*` form is matched WITHOUT trimming, likewise deliberately. The old
+// code tested `includes == "*"` on the raw string, so `" * "` fell through to
+// the named branch, trimmed to "*", matched no relation type, and produced an
+// EMPTY include block. Trimming here would turn that stray space into a full
+// expansion — including incoming peers — which is a widening of the default
+// world triggered by a client's query-string builder. Whether `" * "` ought to
+// mean `*` is a real question; it is not one this PR gets to answer by
+// accident.
 func parseIncludeSpec(includes string) (wanted map[string]string, all bool) {
-	if strings.TrimSpace(includes) == "*" {
+	if includes == "*" {
 		return nil, true
 	}
 	wanted = make(map[string]string)
@@ -647,10 +699,59 @@ func parseIncludeSpec(includes string) (wanted map[string]string, all bool) {
 			continue
 		}
 		relType, nested, _ := strings.Cut(part, ".")
-		if _, dup := wanted[relType]; dup {
-			continue
-		}
+		// Last wins, matching the pre-refactor unconditional map write.
 		wanted[relType] = nested
 	}
 	return wanted, false
+}
+
+// worldBoundRelations reports whether this request's relation reads must go
+// through the world-scoped seam rather than the ungated, default-world reader.
+//
+// # Why this is not `worldScopeFrom(ctx).IsDefaultWorld()`
+//
+// A DENIED world handle carries a ZERO scope (see [worldHandle]), so the raw
+// scope says "default world" while the handle says otherwise. The two
+// predicates therefore disagree for exactly one input, and code that mixed
+// them would send a denied request down the default-world relation path while
+// a sibling site sent it down the world path.
+//
+// That is unreachable today — getVisible and scopedSortedEntities both bail on
+// blocksAllReads() before any relation code runs — so this is latent rather
+// than live. It is still worth one named predicate: the alternative is three
+// call sites that happen to agree, held together by an invariant enforced
+// somewhere else entirely.
+//
+// A denied handle answers TRUE (world-bound). That is the safe direction: the
+// world seam resolves nothing for a request that may read nothing, whereas the
+// ungated reader would happily return default-world edges.
+func worldBoundRelations(ctx context.Context) bool {
+	return !worldFromContext(ctx).isDefault()
+}
+
+// etagEdges returns the outgoing edges a cache validator must hash for e
+// under world w.
+//
+// It mirrors the branch [App.handleV1GetEntity] takes for the response body,
+// because a validator computed from a different edge set than the body
+// describes a different document — which is the whole failure mode an ETag
+// exists to prevent.
+//
+// Errors are RETURNED, not swallowed. The tempting shortcut is to treat a
+// resolution fault as "no edges", but the hash of an edge-less entity is a
+// perfectly valid validator for a real document state, so a fault would mint
+// a validator that a later If-None-Match matches against a body that does have
+// edges. The caller folds a sentinel instead. See the call site.
+func etagEdges(
+	ctx context.Context, reader entityReader, wn *worldNeighbors,
+	visReader visibleReader, e *entityPkg.Entity,
+) ([]*entityPkg.Relation, error) {
+	if !worldBoundRelations(ctx) {
+		return reader.outgoingRelations(ctx, e.ID), nil
+	}
+	if wn == nil {
+		return nil, nil
+	}
+	edges, _, err := worldOutgoingForEntity(ctx, wn, visReader, e)
+	return edges, err
 }
