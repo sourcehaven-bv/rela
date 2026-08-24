@@ -569,3 +569,20 @@ func TestOverloadedQueue_RunsLateRatherThanDropping(t *testing.T) {
 	require.Contains(t, s.state.Tasks, "frequent",
 		"a run that completed late is still a successful run")
 }
+
+// attachTestQueue wires a real memory-backed queue onto a hand-built
+// Scheduler.
+//
+// Needed because execution now goes exclusively through the queue: a scheduler
+// without one cannot run anything. The tests that exercise the real execution
+// path therefore need a real queue, and using the actual backend rather than a
+// double means they keep testing what production does.
+func attachTestQueue(t *testing.T, s *Scheduler) {
+	t.Helper()
+
+	q, err := jobs.NewMemoryQueue(context.Background(), discardLogger())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = q.Close(context.Background()) })
+	require.NoError(t, s.UseQueue(q))
+	require.NoError(t, q.Start(context.Background()))
+}

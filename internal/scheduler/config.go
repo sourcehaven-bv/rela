@@ -120,50 +120,6 @@ var weekdayNames = map[string]time.Weekday{
 	"sunday":    time.Sunday,
 }
 
-// NextRun returns when the schedule fires again after lastRun.
-//
-// This is the scheduler's half of the cadence-to-deadline mapping: the job
-// queue deliberately knows nothing about schedules, so a recurring task
-// expresses "do not keep retrying past my next run" by passing this value as
-// the job's deadline. A 60s task therefore stops retrying just before the next
-// tick re-submits it, while a daily task gets a real backoff window — one
-// generic primitive, both behaviors, no cadence concept in the queue.
-//
-// It is the inverse of [Schedule.IsDue]: NextRun(lastRun) is the earliest time
-// for which IsDue(lastRun, t) holds.
-func (s Schedule) NextRun(lastRun time.Time) time.Time {
-	// The zero Schedule has kind == dayKind (iota 0), so an unparsed value
-	// would otherwise be treated as a daily schedule. `set` is the only
-	// reliable "was this parsed" signal.
-	if !s.set {
-		return time.Time{}
-	}
-	switch s.kind {
-	case dayKind:
-		// IsDue fires once the calendar day changes, so the next run is the
-		// following local midnight.
-		y, m, d := lastRun.Date()
-		return time.Date(y, m, d, 0, 0, 0, 0, lastRun.Location()).AddDate(0, 0, 1)
-	case weekdayKind:
-		// The next occurrence of the target weekday STRICTLY after lastRun.
-		// Landing exactly on lastRun would yield a deadline already reached,
-		// which would suppress every retry.
-		y, m, d := lastRun.Date()
-		day := time.Date(y, m, d, 0, 0, 0, 0, lastRun.Location())
-		ahead := (int(s.weekday) - int(day.Weekday()) + 7) % 7
-		if ahead == 0 {
-			ahead = 7
-		}
-		return day.AddDate(0, 0, ahead)
-	case intervalKind:
-		return lastRun.Add(s.interval)
-	}
-	// Unknown kind. The zero time means "no deadline" to the queue, which is
-	// the safe direction — a job keeps its own retry budget rather than being
-	// silently cancelled before its first attempt.
-	return time.Time{}
-}
-
 // String returns a human-readable representation of the schedule.
 func (s Schedule) String() string {
 	switch s.kind {

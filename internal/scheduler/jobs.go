@@ -17,10 +17,28 @@ import (
 // .rela/scheduler-state.json.
 //
 // That split is deliberate and is the whole point of the port. The queue owns
-// "run this, retry it like so, give up by then"; the scheduler owns "is this
-// due, and did it succeed". Moving the bookkeeping too would have meant either
-// duplicating the ladder in a handler or letting the queue learn what a
-// schedule is — and the seam exists precisely so it never has to.
+// "run this, retry it like so"; the scheduler owns "is this due, and did it
+// succeed". Moving the bookkeeping too would have meant either duplicating the
+// ladder in a handler or letting the queue learn what a schedule is — and the
+// seam exists precisely so it never has to.
+//
+// # Why not neoq's own scheduler
+//
+// neoq offers StartCron, and it is deliberately unused. It is an in-process
+// robfig/cron ticker that enqueues an empty job (memory_backend.go:160):
+//
+//   - No missed-run detection. It fires only while the process is alive, so a
+//     daily task would never run on a desktop app that is closed at the
+//     moment it was due. Running a task whose window passed while the app was
+//     shut is the main reason this scheduler persists last-run times.
+//   - No persistence, on any backend. cron is in-process, so several server
+//     instances would each fire every task.
+//   - Cron syntax, not schedules.yaml's "day" / "friday" / "30m".
+//   - The enqueue error is discarded, so a task that fails to queue vanishes.
+//
+// Adopting it would also drop the retry ladder, the clock-jump guard
+// (BUG-ZKK2UL) and run_as attribution. What neoq is good at — worker pools,
+// retry mechanics, deduplication, durability — is what this file uses it for.
 
 // TaskKind is the job kind for a scheduled Lua script.
 //
@@ -124,6 +142,14 @@ func (s *Scheduler) runTaskJob(ctx context.Context, job jobs.Job) error {
 // deduplication by identity, and it degrades the right way: the run happens
 // late instead of not at all.
 func (s *Scheduler) enqueueTask(ctx context.Context, task TaskConfig) error {
+	// A missing queue is a wiring bug, not a runtime condition: StartBackground
+	// refuses to start without one. Reported rather than dereferenced so the
+	// failure names its cause instead of surfacing as a nil panic in a
+	// goroutine.
+	if s.queue == nil {
+		return errNoQueue
+	}
+
 	done, err := s.claimInFlight(task.Name)
 	if err != nil {
 		return err
@@ -216,6 +242,10 @@ func (s *Scheduler) reportInFlight(name string, err error) {
 
 // errTaskInFlight reports that a task's previous run has not finished.
 var errTaskInFlight = errors.New("scheduler: task already in flight")
+
+// errNoQueue reports that the scheduler has no job queue, so it cannot execute
+// anything. Only reachable from a hand-built Scheduler that skipped UseQueue.
+var errNoQueue = errors.New("scheduler: no job queue configured")
 
 // errTaskPending reports that an identical job is already queued, so this run
 // was collapsed into it rather than stacked behind it.

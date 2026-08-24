@@ -119,19 +119,23 @@ func StartBackground(
 	engine := script.NewEngine()
 	s := New(cfg, engine, ws, logger)
 
-	// Route execution through the job queue when the provider carries one.
+	// Script execution happens on the job queue, so the provider must carry
+	// one. An optional interface rather than a parameter, so the two call
+	// sites (rela-server, rela-desktop) keep passing the services bundle they
+	// already have.
 	//
-	// An optional interface rather than a parameter so the two call sites
-	// (rela-server, rela-desktop) keep passing the services bundle they
-	// already have. A provider without a queue runs inline, which is the
-	// pre-port behavior and is what the scheduling tests exercise.
-	if jp, ok := ws.(jobQueueProvider); ok {
-		if err := s.UseQueue(jp.Jobs()); err != nil {
-			// Not fatal: inline execution is a working scheduler, and a
-			// project's scheduled tasks should not stop running because the
-			// job queue could not be attached.
-			logger.Error("scheduler: could not use job queue, executing inline", "error", err)
-		}
+	// Refusing to start is deliberate. There is no inline path to degrade to,
+	// and a scheduler that came up unable to execute anything would look
+	// healthy — logging every tick while running nothing — which is a worse
+	// failure than not starting at all.
+	jp, ok := ws.(jobQueueProvider)
+	if !ok {
+		logger.Error("scheduler not started: the workspace provides no job queue")
+		return
+	}
+	if err := s.UseQueue(jp.Jobs()); err != nil {
+		logger.Error("scheduler not started: could not use the job queue", "error", err)
+		return
 	}
 
 	go func() {
@@ -204,9 +208,9 @@ type Scheduler struct {
 	// substitute only the engine. When nil, the real engine runs.
 	engineRunner func(ctx context.Context, task TaskConfig) error
 
-	// queue routes script execution through the job seam. Nil means execute
-	// inline, which is the pre-port behavior and what the scheduling tests
-	// exercise. Set by UseQueue at wiring time — see jobs.go.
+	// queue is where script execution happens. REQUIRED: there is no inline
+	// path, so a scheduler without one cannot run anything. Set by UseQueue at
+	// wiring time — see jobs.go.
 	queue JobQueue
 
 	// inflight tracks the one running execution per task, so a slow task is
@@ -342,7 +346,7 @@ func (s *Scheduler) doExecuteTask(ctx context.Context, task TaskConfig) {
 	s.logger.Info("task started", "name", task.Name, "script", task.Script)
 	start := s.now()
 
-	err := s.runScript(ctx, task)
+	err := s.enqueueTask(ctx, task)
 	elapsed := s.now().Sub(start)
 
 	// A task whose previous run has not finished is SKIPPED, and the skip
@@ -373,27 +377,12 @@ func (s *Scheduler) doExecuteTask(ctx context.Context, task TaskConfig) {
 	s.recordSuccess(ctx, task, start)
 }
 
-// runScript executes a task's script, through the job queue when one is wired
-// and inline otherwise.
-//
-// The inline path is not a fallback for a broken queue — it is the pre-port
-// behavior, kept because every scheduling test drives execution synchronously
-// and asserting on state right afterwards is exactly what those tests are for.
-// A scheduler with no queue is a valid scheduler.
-func (s *Scheduler) runScript(ctx context.Context, task TaskConfig) error {
-	if s.queue != nil {
-		return s.enqueueTask(ctx, task)
-	}
-
-	// The principal goes on the CTX (not into the deps bundle) because the
-	// read seam resolves identity per call — see ScheduledLuaWriteDeps.
-	taskCtx := stampTaskAuditContext(ctx, task.Name, task.RunAs)
-	return s.runEngine(taskCtx, task)
-}
-
 // runEngine executes a task's script, honoring the engineRunner test override.
 //
-// One place, so the inline and queued paths cannot diverge in what they call.
+// Called only from the job handler: there is one execution path, and it goes
+// through the queue. Keeping the override here rather than around the whole
+// execution step is what lets a test substitute Lua while still exercising the
+// handler, the completion reporting and the state bookkeeping.
 func (s *Scheduler) runEngine(ctx context.Context, task TaskConfig) error {
 	if s.engineRunner != nil {
 		return s.engineRunner(ctx, task)
