@@ -459,6 +459,15 @@ func main() {
 	// right posture for a surface whose wiring never opted in.
 	app.SetWorlds(appbuild.CompiledWorlds(svc))
 
+	// World-scoped LINK resolution, wired together with the world lookup
+	// above and never separately: a surface that can SELECT a world but
+	// cannot resolve that world's links renders every page with no
+	// relations, which looks like a data problem rather than a wiring gap.
+	if err := dataentry.SetWorldNeighbors(app, svc.Store(), appbuild.RelationScopes(svc)); err != nil {
+		slog.Error("failed to wire world-scoped relations", "error", err)
+		os.Exit(1)
+	}
+
 	// Next-action per-user state. The composition root picks the backend
 	// (durable over state.KV, or the store-native one on postgres); this only
 	// hands the app what it built.

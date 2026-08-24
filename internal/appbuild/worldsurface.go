@@ -47,6 +47,23 @@ func (c metamodelScopes) IsContentScoped(relType string) bool {
 	return def.Scope.IsContent()
 }
 
+// RelationScopes returns svc's relation scope classifier, for surfaces that
+// resolve LINKS through a world (TKT-WRLDAPI item 4).
+//
+// Returned as the metamodel-free [worldreader.ScopeClassifier] interface, so
+// a consumer that may not import internal/metamodel's relation defs — and
+// must not reimplement the identity-vs-content dispatch — can supply the one
+// metamodel fact worldreader.RelationReader needs.
+//
+// A package-level function for the same reason [WorldSurface] and
+// [CompiledWorlds] are: Services sits at its plimsoll exported-method cap.
+func RelationScopes(svc *Services) worldreader.ScopeClassifier {
+	if svc == nil {
+		return metamodelScopes{}
+	}
+	return metamodelScopes{meta: svc.meta}
+}
+
 // CompiledWorlds returns svc's compiled world map, for surfaces that offer
 // request-level world selection (TKT-DN37J2).
 //

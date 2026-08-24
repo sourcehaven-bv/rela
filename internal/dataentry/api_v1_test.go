@@ -2896,6 +2896,19 @@ func newTestAppV1(t *testing.T) *App {
 				From:  []string{"ticket"},
 				To:    []string{"ticket"},
 			},
+			// CONTENT-scoped: the edge attaches to one face's tail, so a
+			// draft may cite different targets than the published face
+			// (design §2.2). Declared in the SHARED fixture so the
+			// world-neighbor tests exercise the identity-vs-content dispatch
+			// against the same metamodel every other test uses — a dispatch
+			// tested only against a bespoke fixture proves the fixture works,
+			// not the app.
+			"cites": {
+				Label: "cites",
+				From:  []string{"ticket"},
+				To:    []string{"feature"},
+				Scope: metamodel.ScopeContent,
+			},
 		},
 	}
 

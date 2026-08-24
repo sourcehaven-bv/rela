@@ -348,6 +348,22 @@ func TestWorldCapableRoutesDoNotUseUngatedReader(t *testing.T) {
 		"handleV1GetEntity":    true,
 		"resolveV1Includes":    true,
 		"computeEntityETag":    true,
+		// TKT-WRLDAPI item 4 moved neighbor collection out of
+		// resolveV1Includes and down into includeCandidates, which dispatches
+		// to one of two collectors. Without these entries the guard would
+		// keep scanning resolveV1Includes — which no longer reaches the
+		// reader at all — and pass while the reader call it was written to
+		// catch sat two frames down. The `scanned` assertion below does not
+		// protect against that: it counts what was found, not what was moved.
+		//
+		// defaultWorldCandidates is the one that USES the reader, and it is
+		// listed precisely so the guard has something to check: it is
+		// reader-using and world-consulting, which is the shape the guard
+		// permits. worldCandidates must never appear in the reader-using set
+		// at all.
+		"includeCandidates":      true,
+		"defaultWorldCandidates": true,
+		"worldCandidates":        true,
 	}
 
 	entries, err := os.ReadDir(".")
@@ -382,6 +398,16 @@ func TestWorldCapableRoutesDoNotUseUngatedReader(t *testing.T) {
 				switch v := inner.(type) {
 				case *ast.SelectorExpr:
 					if x, ok := v.X.(*ast.SelectorExpr); ok && x.Sel != nil && x.Sel.Name == "reader" {
+						usesReader = true
+					}
+					// The reader is also passed BY VALUE into package functions
+					// now (item 4 moved these off App to stay under the
+					// plimsoll cap), so `a.reader.X` is no longer the only
+					// shape a reader call takes. A bare `reader.X` selector
+					// counts too — without this, extracting a reader-using
+					// loop into a helper silently leaves the guard's view,
+					// which is exactly what happened once during item 4.
+					if ident, ok := v.X.(*ast.Ident); ok && ident.Name == "reader" {
 						usesReader = true
 					}
 				case *ast.Ident:
@@ -602,17 +628,27 @@ func TestAttachWorld_WritesRefuseAWorld(t *testing.T) {
 	}
 }
 
-// TestAttachWorld_IncludeRefusesAWorld pins the neighbor half of the
-// mixed-face problem: `?include=` resolves neighbors through the ungated,
-// default-world reader, so a world-bound response with includes would be a
-// published entity wrapped in draft neighbors.
-func TestAttachWorld_IncludeRefusesAWorld(t *testing.T) {
+// TestAttachWorld_IncludeIsAcceptedUnderAWorld pins the REMOVAL of the
+// `?include=` refusal (TKT-WRLDAPI item 4, RULING 12).
+//
+// The refusal existed because neighbor resolution went through the ungated,
+// default-world reader, so a world-bound response with includes would have
+// been a published entity wrapped in draft neighbors. Neighbor resolution is
+// world-scoped now, so the combination is served rather than refused.
+//
+// This asserts the middleware LETS IT THROUGH; that what comes back is
+// actually this world's faces is the job of the end-to-end tests in
+// worldneighbors_test.go. Both halves are needed: a middleware that accepts
+// the parameter while the handler ignores it would pass this test and serve
+// the wrong faces, which is why this one is deliberately not the only
+// coverage of the removal.
+func TestAttachWorld_IncludeIsAcceptedUnderAWorld(t *testing.T) {
 	t.Parallel()
 	app := &App{worlds: stubWorlds{names: map[string]bool{"published": true}}}
 	rec := serveWorldRequest(t, app, "/api/v1/tickets/TKT-1?world=published&include=*")
-	if rec.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("?include= under a world must refuse rather than serve draft "+
-			"neighbors alongside a published entity; got %d %s", rec.Code, rec.Body)
+	if rec.Code == http.StatusUnprocessableEntity {
+		t.Fatalf("?include= under a world is no longer refused — neighbor "+
+			"resolution is world-scoped (RULING 12); got %d %s", rec.Code, rec.Body)
 	}
 }
 

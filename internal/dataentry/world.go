@@ -332,18 +332,15 @@ func attachWorld(next http.Handler, a *App) http.Handler {
 					"this endpoint serves the default world only; omit ?world=")
 				return
 			}
-			if r.URL.Query().Get("include") != "" {
-				// `?include=` resolves NEIGHBORS, and every neighbor read on
-				// these routes goes through the ungated, default-world
-				// entityReader. Serving them under a world would return a
-				// published entity wrapped in DRAFT neighbors — the mixed-face
-				// response that is hardest to spot, because the entity looks
-				// right and only its neighbors are wrong.
-				writeV1Error(w, r, http.StatusUnprocessableEntity, "world_include_unsupported",
-					"?include= cannot be resolved in a non-default world",
-					"omit ?include= — neighbor resolution is not world-scoped yet")
-				return
-			}
+			// `?include=` was REFUSED here until TKT-WRLDAPI item 4. It no
+			// longer is: neighbor resolution is world-scoped now, so an
+			// included peer is this world's face of the neighbor and a
+			// neighbor with no face in this world is absent (RULING 12).
+			// The refusal existed because every neighbor read went through
+			// the ungated, default-world entityReader; the world-capable
+			// handlers no longer reach it. Do not restore the refusal
+			// without also reverting worldneighbors.go — a bare refusal
+			// here would leave the resolution built and unreachable.
 			if worldRefusesSearch(r) {
 				writeV1Error(w, r, http.StatusUnprocessableEntity, "world_search_unsupported",
 					"free-text search cannot be scoped to a non-default world",

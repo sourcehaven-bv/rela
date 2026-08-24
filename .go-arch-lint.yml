@@ -378,6 +378,19 @@ deps:
       - transform
       - validator
       - visibility
+      # The world-scoped RELATION dispatch only (TKT-WRLDAPI item 4).
+      # worldreader.RelationReader.Neighbors is the sole implementation of
+      # the identity-vs-content scope split, and its godoc exists to make
+      # reimplementation UNREPRESENTABLE — a caller handed that capability
+      # cannot issue a raw nil-tail query through it. Reimplementing the
+      # dispatch here to avoid this edge would be the exact mistake that
+      # doc is written against, so the edge is the cheaper of the two.
+      #
+      # ENTITY resolution deliberately does NOT come through here: it stays
+      # on the store path (store.EntityQuery.World), which is the second of
+      # the two mechanisms worldreader's own package doc names. Two sites,
+      # neither duplicated.
+      - worldreader
     canUse:
       - goldmark
       - gogit

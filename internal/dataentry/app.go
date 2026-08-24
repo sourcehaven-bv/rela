@@ -107,6 +107,16 @@ const userPaletteFile = "palette.yaml"
 // `worldRefusesSearch` are all package functions taking what they need, so
 // request-level world selection cost ONE method rather than five.
 //
+// TKT-WRLDAPI item 4 (world-scoped relations) cost ZERO methods, and that was
+// not free discipline — it was written as five methods first and plimsoll
+// failed the build at 108/104. They became package functions taking their
+// seams explicitly (`worldOutgoingForEntity`, `worldNeighborsForPage`,
+// `includeCandidates`, `defaultWorldCandidates`, `worldCandidates`, plus
+// `SetWorldNeighbors`), which reads better anyway: the seams a world-scoped
+// link read depends on are named in the signature rather than reached through
+// this struct. The load line doing its job is worth recording, because the
+// habit it interrupts is the one that produced the 104.
+//
 //plimsoll:max-methods=104
 type App struct {
 	// Primitives — immutable after NewApp.
@@ -133,8 +143,15 @@ type App struct {
 	// worlds resolves a `?world=` name to its compiled scope. Nil until
 	// [App.SetWorlds] is called, in which case the App serves the default
 	// world only and refuses any other `?world=` — see world.go.
-	worlds   WorldLookup
-	searcher search.Searcher
+	worlds WorldLookup
+	// worldNeighbors resolves an entity's LINKS under the request's world
+	// (TKT-WRLDAPI item 4). Nil until [SetWorldNeighbors] is called, in
+	// which case a world-bound response carries no relations — the pre-item-4
+	// behavior, which is safe but is the gap RULING 12 closed. Separate from
+	// `worlds` because the two are injected from different places: the world
+	// LOOKUP is a compiled map, this is a store-backed capability.
+	worldNeighbors *worldNeighbors
+	searcher       search.Searcher
 	// visibleSearcher is the ACL-scoped search seam (TKT-BA8BSX):
 	// executeQuery routes free-text searches through it so /_search
 	// and the _position search scope only ever see hits the request

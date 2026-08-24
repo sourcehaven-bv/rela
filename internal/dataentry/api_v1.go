@@ -670,26 +670,34 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 	outgoingByRow := make([][]*entityPkg.Relation, len(entities))
 	incomingByRow := make([][]*entityPkg.Relation, len(entities))
 	var pageNeighborIDs []string
-	// Same rule as the single-entity GET: these edges are default-world, so a
-	// world-bound list carries none rather than pairing published rows with
-	// draft neighbors.
-	worldBound := !worldScopeFrom(r.Context()).IsDefaultWorld()
-	for i, e := range entities {
-		if worldBound {
-			continue
+	// Same two-reader split as the single-entity GET. Under a world, each
+	// row's links resolve through THAT world, per neighbor (RULING 12); under
+	// the default world this is the previous behavior verbatim.
+	var visibleNeighbors map[string]bool
+	if worldScopeFrom(r.Context()).IsDefaultWorld() {
+		for i, e := range entities {
+			outgoingByRow[i] = a.reader.outgoingRelations(r.Context(), e.ID)
+			incomingByRow[i] = a.reader.incomingRelations(r.Context(), e.ID)
+			pageNeighborIDs = append(pageNeighborIDs, neighborIDsOf(outgoingByRow[i], incomingByRow[i])...)
 		}
-		outgoingByRow[i] = a.reader.outgoingRelations(r.Context(), e.ID)
-		incomingByRow[i] = a.reader.incomingRelations(r.Context(), e.ID)
-		pageNeighborIDs = append(pageNeighborIDs, neighborIDsOf(outgoingByRow[i], incomingByRow[i])...)
+		// Gate neighbor IDs for the WHOLE page in one type-batched pass
+		// (RR-HJV8CP + RR-FRK1): a neighbor's ID may appear in a row's relations
+		// map only if its entity is visible to the caller, so `relations` and the
+		// visibility-filtered `included` map can never disagree. Outgoing targets
+		// (edge.To) and incoming sources (edge.From) are gated together — an
+		// entity's visibility is direction-independent.
+		visibleNeighbors = visibleRelationIDs(r.Context(), a.reader, a.visibleReader, pageNeighborIDs)
+	} else {
+		var werr error
+		outgoingByRow, incomingByRow, visibleNeighbors, werr = worldNeighborsForPage(
+			r.Context(), a.worldNeighbors, a.visibleReader, entities)
+		if werr != nil {
+			// Infrastructure failure, not an empty page. See the same arm on
+			// the single-entity GET.
+			writeGateError(w, r, werr)
+			return
+		}
 	}
-
-	// Gate neighbor IDs for the WHOLE page in one type-batched pass
-	// (RR-HJV8CP + RR-FRK1): a neighbor's ID may appear in a row's relations
-	// map only if its entity is visible to the caller, so `relations` and the
-	// visibility-filtered `included` map can never disagree. Outgoing targets
-	// (edge.To) and incoming sources (edge.From) are gated together — an
-	// entity's visibility is direction-independent.
-	visibleNeighbors := visibleRelationIDs(r.Context(), a.reader, a.visibleReader, pageNeighborIDs)
 
 	// Build response - always include relations for relation column support
 	data := make([]v1.Entity, 0, len(entities))
@@ -824,15 +832,35 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 
 	// Single per-entity serialization: strips hidden + attaches
 	// `_fields` / `_relations` per docs/data-entry/api-reference.md.
-	// Relations come from the ungated, DEFAULT-world reader, so a world-bound
-	// response must not carry them: a published entity wrapped in draft edges
-	// is the mixed-face response that reads as correct. Under the default
-	// world this is the previous behavior verbatim.
+	//
+	// Two readers, chosen by world. The DEFAULT world takes the ungated
+	// reader — the previous behavior verbatim. A non-default world takes the
+	// world-scoped seam, which resolves each link through the SAME world as
+	// the entry, per neighbor, independently (RULING 12): a published view
+	// links to published faces, and a link whose head has no face in this
+	// world is ABSENT rather than pointing at a 404.
+	//
+	// Reaching the ungated reader here under a world would pair a published
+	// entity with draft edges — the mixed-face response that reads as
+	// correct because the entity looks right and only its links are wrong.
 	var outgoing []*entityPkg.Relation
+	var visibleNeighbors map[string]bool
 	if worldScopeFrom(ctx).IsDefaultWorld() {
 		outgoing = a.reader.outgoingRelations(ctx, entity.ID)
+	} else {
+		var werr error
+		outgoing, visibleNeighbors, werr = worldOutgoingForEntity(
+			ctx, a.worldNeighbors, a.visibleReader, entity)
+		if werr != nil {
+			// A neighbor-resolution fault is an infrastructure failure, not
+			// an empty link set. Rendering it as "this world links to
+			// nothing" would hide an outage behind a page that looks like a
+			// correctly-sparse published face (RR-4TFZNL).
+			writeGateError(w, r, werr)
+			return
+		}
 	}
-	result := a.serializer.forWire(ctx, entity, outgoing, a.Meta(), plural)
+	result := a.serializer.forWireScoped(ctx, entity, outgoing, visibleNeighbors, a.Meta(), plural)
 
 	// Face provenance (TKT-WRLDAPI item 2). Attached HERE rather than inside
 	// forWire, even though forWire is the shared per-entity serializer,
@@ -1582,15 +1610,19 @@ func flattenIssues(sections []AnalysisSection) []visibleIssue {
 
 // --- Helper Functions ---
 
+// resolveV1Includes expands `?include=` into the `included` map.
+//
+// Candidate collection is world-aware (TKT-WRLDAPI item 4): under a
+// non-default world the neighbors come from the world-scoped seam, so an
+// included peer is THAT world's face of the neighbor and a neighbor with no
+// face in this world is absent. Under the default world it is the ungated
+// reader, byte-identical to before.
+//
+// Everything after collection — the batched ACL gate, nested recursion,
+// serialization — is shared by both paths deliberately. The world decides
+// WHICH entities are candidates; it does not change how they are gated or
+// rendered, and forking that would be two visibility rules to keep in step.
 func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, includes string) map[string]v1.Entity {
-	// Neighbor resolution reads through the ungated, DEFAULT-world reader,
-	// so it cannot answer for a non-default world. attachWorld already
-	// refuses `?include=` there, making this unreachable — but a defense
-	// that lives only in the middleware is one route registration away from
-	// being bypassed, so it is restated at the site that does the reading.
-	if !worldScopeFrom(ctx).IsDefaultWorld() {
-		return nil
-	}
 	s := a.State()
 	included := make(map[string]v1.Entity)
 
@@ -1600,46 +1632,22 @@ func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, i
 	// must respect the per-entity visibility rule) AND RR-FRK1 (a
 	// hub entity with 50 neighbors must not cost 50 GraphCount
 	// round-trips).
-	var candidates []*entityPkg.Entity
+	//
 	// nestedFor maps target.ID → the remaining nested-include
 	// expression (e.g. "implements.requires" → "requires" stored
-	// against the implements target). Recurses after the visibility
-	// filter so hidden neighbors don't trigger hidden nested probes.
-	nestedFor := make(map[string]string)
-
-	if includes == "*" { //nolint:nestif // include-all vs. named-include expansion is inherently nested; flattening would obscure the two-mode logic.
-		for _, edge := range a.reader.outgoingRelations(ctx, entity.ID) {
-			if target, found := a.reader.getEntity(ctx, edge.To); found {
-				candidates = append(candidates, target)
-			}
-		}
-		for _, edge := range a.reader.incomingRelations(ctx, entity.ID) {
-			if source, found := a.reader.getEntity(ctx, edge.From); found {
-				candidates = append(candidates, source)
-			}
-		}
-	} else {
-		for part := range strings.SplitSeq(includes, ",") {
-			part = strings.TrimSpace(part)
-			if part == "" {
-				continue
-			}
-			relParts := strings.SplitN(part, ".", 2)
-			relType := relParts[0]
-			for _, edge := range a.reader.outgoingRelations(ctx, entity.ID) {
-				if edge.Type != relType {
-					continue
-				}
-				target, found := a.reader.getEntity(ctx, edge.To)
-				if !found {
-					continue
-				}
-				candidates = append(candidates, target)
-				if len(relParts) > 1 {
-					nestedFor[target.ID] = relParts[1]
-				}
-			}
-		}
+	// against the implements target). Recursion happens after the
+	// visibility filter so hidden neighbors don't trigger hidden nested
+	// probes.
+	candidates, nestedFor, err := includeCandidates(ctx, a.reader, a.worldNeighbors, entity, includes)
+	if err != nil {
+		// The include channel is a best-effort affordance (see
+		// filterVisibleIncludes): the authoritative read is the explicit GET.
+		// A world-resolution fault drops the block and logs rather than
+		// failing the whole entity response — but it must not be silent, or
+		// an outage reads as "this entity has no neighbors in this world".
+		slog.Warn("dataentry: resolving world-scoped includes failed; include block omitted",
+			"entity", entity.ID, "include", includes, "err", err)
+		return nil
 	}
 
 	visible := a.filterVisibleIncludes(ctx, candidates)
@@ -1955,12 +1963,26 @@ func (a *App) computeEntityETag(ctx context.Context, e *entityPkg.Entity) string
 	// edges also change the ETag — otherwise If-Match / If-None-Match
 	// round-trips poison client caches.
 	//
-	// World-bound responses carry NO relations (they would be default-world
-	// edges on a resolved entity), so there is nothing to fold and reading
-	// them would put draft state into a published validator.
+	// The edges must come from the SAME reader the response body used, or the
+	// validator describes a different document than the one served. Until
+	// TKT-WRLDAPI item 4 a world-bound response carried no relations at all,
+	// so this folded nothing under a world; now it carries world-resolved
+	// ones, and folding nothing would mean an edge change under a world never
+	// moved the ETag — a stale 304 on a response whose links had changed.
+	//
+	// Reading the DEFAULT-world reader here instead would be the mirror bug:
+	// draft edges in a published validator, so publishing a face would not
+	// invalidate it while an unrelated draft edit would.
 	var edges []*entityPkg.Relation
 	if world.isDefault() {
 		edges = a.reader.outgoingRelations(ctx, e.ID)
+	} else if a.worldNeighbors != nil {
+		// Errors are swallowed deliberately: this is a cache validator, not a
+		// read. A resolution fault yields a hash over fewer edges, which is
+		// weaker (a missed 304) and never wrong in the dangerous direction —
+		// and the GET that produced this response has already surfaced the
+		// same fault as a 5xx if it mattered.
+		edges, _, _ = worldOutgoingForEntity(ctx, a.worldNeighbors, a.visibleReader, e)
 	}
 	edgeKeys := make([]string, 0, len(edges))
 	for _, edge := range edges {

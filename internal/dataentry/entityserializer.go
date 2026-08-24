@@ -106,14 +106,39 @@ func (s entitySerializer) toV1(
 // v1.Entity should use: toV1 + strip hidden properties + attach the affordance
 // maps. Use forWireRelated for entities that appear as list rows or under
 // `included` (no affordance maps, but still strip).
+//
+// The edges passed here are assumed ALREADY GATED — it forwards a nil
+// neighbor filter. A caller holding edges whose heads have not been through
+// the row gate must use [entitySerializer.forWireScoped] instead.
 func (s entitySerializer) forWire(
 	ctx context.Context, e *entityPkg.Entity, outgoing []*entityPkg.Relation,
 	meta *metamodel.Metamodel, plural string,
 ) v1.Entity {
+	return s.forWireScoped(ctx, e, outgoing, nil, meta, plural)
+}
+
+// forWireScoped is forWire with an explicit neighbor-visibility filter.
+//
+// It exists for the world path (TKT-WRLDAPI item 4), where the edges reaching
+// the serializer were resolved by the world-scoped seam and their heads gated
+// as a batch. Passing that set through means the `relations` map can only
+// name a neighbor that this world resolves AND the principal may read —
+// the same guarantee forWireRelated already gives list rows via
+// visibleNeighbors, which the per-entity path previously had no way to
+// express.
+//
+// visibleNeighbors nil disables the filter, which is what forWire passes: the
+// default-world path's edges come from a reader whose heads the caller has
+// already accounted for, and threading an empty (non-nil) map there would
+// silently blank every relation.
+func (s entitySerializer) forWireScoped(
+	ctx context.Context, e *entityPkg.Entity, outgoing []*entityPkg.Relation,
+	visibleNeighbors map[string]bool, meta *metamodel.Metamodel, plural string,
+) v1.Entity {
 	// Per-entity responses carry outgoing edges only; incoming edges reach the
 	// SPA via the dedicated /relations endpoint, not the top-level relations
 	// map. Incoming list columns are served by forWireRelated (list rows).
-	result := s.toV1(ctx, e, outgoing, nil, nil, meta, plural)
+	result := s.toV1(ctx, e, outgoing, nil, visibleNeighbors, meta, plural)
 	s.affordances.stripHiddenProperties(ctx, e, &result)
 	s.affordances.attachEntityAffordances(ctx, e, &result)
 	return result
