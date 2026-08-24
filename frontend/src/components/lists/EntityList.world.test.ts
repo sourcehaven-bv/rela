@@ -175,14 +175,27 @@ describe('EntityList world binding', () => {
       expect(banner.text()).toContain('Search is unavailable')
     })
 
-    // Mutation: drop `&& !isWorldBound.value` from the include arm — include
-    // is sent with world, which the API answers 422 world_include_unsupported.
-    it('suppresses include=* even with relation columns', async () => {
+    // INVERTED by TKT-WRLDAPI item 4, like its sibling in stores/entities.ts.
+    //
+    // This asserted that include=* was SUPPRESSED under a world, because the
+    // API refused the combination and neighbour resolution was default-world.
+    // Item 4 made neighbour resolution world-scoped and removed the refusal,
+    // so suppressing it now costs relation columns their content for nothing.
+    //
+    // Inverted rather than deleted: a regression that reinstated the
+    // suppression would be INVISIBLE — relation columns would simply render
+    // empty again under a world, which is indistinguishable from "these rows
+    // have no relations". That invisibility is exactly how the workaround
+    // survived item 4 in the first place.
+    //
+    // Mutation: restore `&& !isWorldBound.value` — include goes missing and
+    // the first assertion fails.
+    it('sends include=* WITH the world when there are relation columns', async () => {
       const wrapper = await mountList({ relationColumn: true })
       rendersProof(wrapper)
 
+      expect(lastParams().include).toBe('*')
       expect(lastParams().world).toBe('published')
-      expect(lastParams().include).toBeUndefined()
     })
   })
 

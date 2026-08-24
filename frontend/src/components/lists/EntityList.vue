@@ -355,15 +355,19 @@ const queryParams = computed((): ListParams => {
     params.sort = defaultSort
   }
 
-  // Include related entities for relation columns.
+  // Include related entities for relation columns — under a world too.
   //
-  // Also suppressed under a world (422 world_include_unsupported): neighbor
-  // resolution goes through the ungated, default-world reader, so a published
-  // row would arrive wrapped in DRAFT neighbors — a mixed-face response whose
-  // entity looks right and whose neighbors are silently wrong. Relation
-  // COLUMNS therefore render empty under a world rather than wrong; the
-  // backend already omits relations entirely on world-bound reads.
-  if (hasRelationColumns.value && !isWorldBound.value) {
+  // This used to be suppressed under a world, because neighbor resolution went
+  // through the ungated, default-world reader and a published row would have
+  // arrived wrapped in DRAFT neighbors. Two facts in that reasoning are now
+  // false: TKT-WRLDAPI item 4 made neighbor resolution WORLD-SCOPED (an
+  // included peer is that world's face; a neighbor with no face in the world
+  // is absent), and the backend no longer "omits relations entirely on
+  // world-bound reads" — it resolves them per neighbour.
+  //
+  // So suppressing it now costs relation columns their content for no reason.
+  // See the same orphan in stores/entities.ts for the general shape.
+  if (hasRelationColumns.value) {
     params.include = '*'
   }
 
