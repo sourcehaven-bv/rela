@@ -169,12 +169,14 @@ What you need to know to run it:
   is submitted under an idempotency key backed by a unique index, so two nodes
   ticking at the same moment cannot both queue it, and PostgreSQL — not the
   application — decides which one wins. What is *not* yet shared is the
-  scheduler's bookkeeping. Last-run times and the retry ladder still live in
-  each node's `.rela/scheduler-state.json`, so two schedulers keep diverging
-  views of what is due; and because any node's worker may claim any job, a task
-  executed on one node can be recorded as a *failure* on the node that queued
-  it. Neither costs you a duplicate run, but both corrupt the schedule's
-  history. Tracked as TKT-7XLVP7.
+  scheduler's bookkeeping. Last-run times and the retry ladder are stored as one
+  document, read once at startup and rewritten whole on every update, so two
+  schedulers overwrite each other's tasks rather than merging them; and because
+  any node's worker may claim any job, a task executed on one node can be
+  recorded as a *failure* on the node that queued it. Neither costs you a
+  duplicate run — the queue's idempotency key is enforced by a unique index in
+  PostgreSQL — but both corrupt the schedule's history. Tracked as TKT-DK0X6O
+  and TKT-7XLVP7.
 
 ### Write transactions
 

@@ -145,15 +145,18 @@ func (s *Scheduler) runTaskJob(ctx context.Context, job jobs.Job) (err error) {
 // can run a task node A enqueued. B's reportInFlight then finds nothing in B's
 // in-flight map (the map is per-process), A's submitter never hears back, and
 // A eventually records a FAILURE via taskResultTimeout for a task that in fact
-// SUCCEEDED. Last-run state compounds it — .rela/scheduler-state.json is
-// node-local on the postgres tier, so each node keeps its own view of what is
-// due and the two diverge.
+// SUCCEEDED. The bookkeeping compounds it: state is one document, loaded once
+// at startup and rewritten whole on every update through a KV whose Put is an
+// unconditional upsert, so two nodes overwrite each other's tasks rather than
+// merging them (TKT-DK0X6O). Note the state itself IS shared on the postgres
+// tier — it goes through state.KV, which is the state_kv table there — so the
+// problem is the write, not the location.
 //
-// The fix is to stop waiting: let the executing node own recordSuccess /
-// recordFailure inside runTaskJob, and move scheduler state into state.KV,
-// which is already database-backed on the postgres build (TKT-VC27L3) for
-// exactly this class of node-local state. That removes the completion channel,
-// both skip sentinels and taskResultTimeout together. Until then, run the
+// The fix is to stop waiting: give run-state its own per-task storage so a
+// write is one record rather than the whole document (TKT-DK0X6O), then let the
+// executing node own recordSuccess / recordFailure inside runTaskJob
+// (TKT-7XLVP7). That removes the completion channel, both skip sentinels, the
+// run token and taskResultTimeout together. Until then, run the
 // scheduler on ONE node — docs/postgres-backend.md describes multi-process
 // deployments, and this is the piece that does not yet participate.
 //
