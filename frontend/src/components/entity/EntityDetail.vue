@@ -473,10 +473,25 @@ async function runCopy(offer: CopyOffer) {
     uiStore.error(`"${offer.label || offer.name}" copies to a different entity, which this page cannot target yet`)
     return
   }
+  // Capture the subject. `copyBusy` only disables THIS menu's button — the
+  // scope-nav shortcuts (P/N), the back button and the sidebar stay live, so
+  // the page can be showing a different entity by the time the invoke
+  // resolves. Without this the success toast names a face on the entity the
+  // user has already left, and `loadView()` fires a second, pointless fetch
+  // for the one they are now on. Same shape as `pinEntityForFlush` below.
+  const subject = props.entityId
   copyBusy.value = true
   try {
-    const res = await invokeCopy(offer.name, props.entityId)
+    const res = await invokeCopy(offer.name, subject)
     const face = res.pointer || 'default'
+    if (props.entityId !== subject) {
+      // Still worth telling them it succeeded — they asked for it — but name
+      // the entity, since the page in front of them is no longer the subject.
+      uiStore.success(
+        res.created ? `Created the ${face} face of ${subject}` : `Updated the ${face} face of ${subject}`,
+      )
+      return
+    }
     uiStore.success(
       res.created ? `Created the ${face} face` : `Updated the ${face} face`,
     )
@@ -486,8 +501,11 @@ async function runCopy(offer: CopyOffer) {
   } catch (err) {
     // The kernel re-authorizes, so a 403 here is not a contradiction of
     // `allowed` — it is the boundary doing its job on a hint that went stale
-    // (a permission revoked between render and click). Report it plainly.
-    uiStore.error(getErrorMessage(err, 'Copy failed'))
+    // (a permission revoked between render and click). Report it plainly, and
+    // name the subject if the user has since navigated away — an unqualified
+    // "Copy failed" beside an unrelated entity reads as that entity failing.
+    const detail = getErrorMessage(err, 'Copy failed')
+    uiStore.error(props.entityId === subject ? detail : `${subject}: ${detail}`)
   } finally {
     copyBusy.value = false
   }

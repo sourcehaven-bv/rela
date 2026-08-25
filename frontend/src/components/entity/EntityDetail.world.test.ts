@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mount, flushPromises } from '@vue/test-utils'
+import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
 import EntityDetail from './EntityDetail.vue'
@@ -138,6 +138,15 @@ describe('EntityDetail world binding', () => {
     expect(wrapper.text()).toContain('Access Control Policy')
   }
 
+  // Match a BUTTON by its label rather than searching whole-page text.
+  // `wrapper.text().not.toContain('Edit')` is a substring match over the
+  // entire render, so it is satisfied — or broken — by unrelated copy: the
+  // fixture's own form is titled "Edit policy", and any future heading
+  // containing the word would flip the result without the gate changing.
+  function button(wrapper: VueWrapper, label: string) {
+    return wrapper.findAll('button').find((b) => b.text().replace(/\s+/g, ' ').trim().startsWith(label))
+  }
+
   describe('the world rides the request', () => {
     it('sends no world under the default world', async () => {
       const w = await mountDetail(viewResponse())
@@ -162,7 +171,7 @@ describe('EntityDetail world binding', () => {
       // The positive control for both absence assertions below. `_actions` is
       // identical in the world-bound case, so this is the ONLY thing that
       // distinguishes "hidden because of the world" from "hidden always".
-      expect(w.text()).toContain('Delete')
+      expect(button(w, 'Delete')).toBeDefined()
     })
 
     it('hides Delete under a world even though _actions permits it', async () => {
@@ -192,7 +201,17 @@ describe('EntityDetail world binding', () => {
       // Same `_actions: {update: true}` as the default-world case, which
       // renders Edit — so this distinguishes "hidden by the world" from
       // "hidden always".
-      expect(w.text()).not.toContain('Edit')
+      expect(button(w, 'Edit')).toBeUndefined()
+    })
+
+    it('offers Edit under the default world (the control for the case above)', async () => {
+      // Without this, hiding Edit unconditionally — or a fixture that never
+      // satisfies `editFormId` — passes the assertion above while proving
+      // nothing. This is the half that was missing when the canUpdate mutant
+      // survived.
+      const w = await mountDetail(viewResponse())
+      rendersProof(w)
+      expect(button(w, 'Edit')).toBeDefined()
     })
 
     it('hides "Go to draft" when the principal cannot read the default world', async () => {
@@ -219,6 +238,32 @@ describe('EntityDetail world binding', () => {
       const w = await mountDetail(viewResponse())
       rendersProof(w)
       expect(w.text()).toContain('Go to draft')
+    })
+
+    it('renders NO inline-edit surface under a world', async () => {
+      // The autosave paths (handlePropertyApplied / handleRowPropertyApplied,
+      // and the content channel) are reachable ONLY as props on a
+      // SectionEditForm. All three of its call sites route through
+      // sectionShouldRouteToInlineEdit / rowShouldRouteToInlineEdit, both of
+      // which refuse under a world — so no pending save can be CREATED while
+      // world-bound, and the two commitImmediately() flushes have nothing to
+      // flush. This test is what makes that argument checkable rather than a
+      // claim in a comment.
+      mockRoute.query = { world: 'published' }
+      const w = await mountDetail({
+        entry: entry(),
+        sections: [{
+          heading: 'Properties',
+          sectionId: 'props',
+          display: 'properties',
+          isEmpty: false,
+          isGrouped: false,
+          hasContent: false,
+          fields: [{ property: 'title', label: 'Title', values: ['Access Control Policy'], render: 'input' }],
+        }],
+      } as never)
+      rendersProof(w)
+      expect(w.findComponent({ name: 'SectionEditForm' }).exists()).toBe(false)
     })
 
     it('offers the way back to the default world', async () => {
@@ -309,6 +354,35 @@ describe('EntityDetail world binding', () => {
 
       // A face that now exists may no longer be offered.
       expect(fetchViewMock.mock.calls.length).toBeGreaterThan(before)
+    })
+
+    it('does not reload or misattribute when the entity changes mid-invoke', async () => {
+      // `copyBusy` only disables THIS menu's button; the scope-nav shortcuts
+      // (P/N), the back button and the sidebar stay live, so the page can be
+      // showing a different entity by the time the invoke resolves.
+      //
+      // Before the fix this fired a SECOND fetchView for the entity the user
+      // had navigated TO — an entity the copy never touched — and showed an
+      // unqualified "Created the published face" beside it.
+      let resolveInvoke: (v: unknown) => void = () => {}
+      invokeCopyMock.mockReturnValue(new Promise((r) => { resolveInvoke = r }))
+      const w = await mountDetail(viewResponse({ _copies: [promoteOffer()] }))
+      const btn = w.findAll('button').find((b) => b.text() === 'Publish this policy')
+      await btn!.trigger('click')
+
+      await w.setProps({ entityId: 'POL-2' })
+      await flushPromises()
+      const afterNav = fetchViewMock.mock.calls.length
+
+      resolveInvoke({
+        definition: 'promote-policy', entityId, pointer: 'published', created: true,
+      })
+      await flushPromises()
+
+      // The copy still targeted the entity the user clicked on...
+      expect(invokeCopyMock).toHaveBeenCalledWith('promote-policy', entityId)
+      // ...and it did NOT reload the unrelated entity now on screen.
+      expect(fetchViewMock.mock.calls.length).toBe(afterNav)
     })
 
     it('surfaces a refusal rather than pretending the copy ran', async () => {
