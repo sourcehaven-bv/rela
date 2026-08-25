@@ -5,7 +5,7 @@ title: Declarative next-action layer
 summary: Operator-configured rules that derive one suggested follow-up from graph state and surface it as an advisory hint in the UI.
 description: Operator-configured sources derive a suggested follow-up from graph state and surface one at a time in the UI — advisory ("could do"), never a task queue. Sources yield entity-shaped candidates; operator-defined ordered bands rank them, with stable-random selection within a band. Snooze/mute/cooldown live in a per-user state service (mem/disk/postgres), never in the graph, and resolved suggestions are never cached because a cross-principal cache would defeat the ACL gate. Phase 0 ships without store changes; Phase 1 extends store.GraphQuery with property predicates.
 priority: medium
-status: in-progress
+status: implemented
 ---
 
 ## What

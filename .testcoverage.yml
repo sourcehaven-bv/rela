@@ -26,6 +26,15 @@ override:
   - path: ^internal/visibility$
     threshold: 85
 
+  # Outbound mail (TKT-332QZY). Both are security-relevant — mailrender is
+  # the sanitize/inline pipeline whose ORDER is a security property, and mail
+  # owns header-injection validation — so they are pinned above the default
+  # floor rather than left to it.
+  - path: ^internal/mailrender$
+    threshold: 85
+  - path: ^internal/mail$
+    threshold: 85
+
   # Below the default floor — explicit lower floors so the gap is
   # visible. Raise these as tests are added; don't lower without reason.
   - path: ^internal/git$
@@ -81,6 +90,7 @@ exclude:
     - ^internal/visibility/visibilitytest # shared conformance test kit (exercised via visibility + future wirings)
     - ^internal/state/statetest # shared conformance test kit (exercised via FSKV + pgstore's StateKV)
     - ^internal/jobs/jobstest # shared conformance test kit (exercised via the memory + postgres queues)
+    - ^internal/mail/mailtest # shared conformance test kit (exercised via the smtp + memory transports)
     - ^internal/userstate/userstatetest # shared conformance test kit (exercised via mem/kv/pgstore backends)
     - ^internal/appbuild/backendtest # build-tagged test backend supplier; the postgres half only compiles under -tags postgres
     - ^internal/store/pgstore  # covered by the dedicated postgres CI job (needs a live DB; skipped without RELA_TEST_DATABASE_URL)
