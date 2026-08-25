@@ -68,6 +68,22 @@ func maybeProvision(
 	p := principal.From(ctx)
 	sub := p.User // the verified subject; the lookup found no entity for it
 
+	// Never persist a reserved identity as a stub's principal_property join key
+	// (TKT-9PCL7D). The boundary checks in stampAuditPrincipal/verifiedPrincipal
+	// mean a `system:*` subject cannot reach here today, but the invariant "a
+	// reserved name never becomes durable graph state" must not depend on an
+	// upstream check: a stub carrying `system:scheduler` as its join key would
+	// make ResolvePrincipal map that name to a real entity. Belt and braces on
+	// the write side, matching the read-side rejection.
+	//
+	// This gates the SUBJECT, not the actor: the create below is stamped
+	// UserProvisioner, which is itself reserved and must keep working.
+	if principal.IsReserved(sub) {
+		slog.WarnContext(ctx, "dataentry: provision: refusing to provision a reserved principal",
+			"sub", sub, "user_type", pol.UserEntityType)
+		return ctx
+	}
+
 	// Create the stub under system:provisioner — a create-user-only identity, so
 	// the write authorizes and audits to it while it cannot touch anything but a
 	// fresh stub of the user type (bare-stub containment, RR-28SCW3).

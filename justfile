@@ -252,10 +252,10 @@ vet:
 # Comment discipline. The gate (commented-code) is clean and enforced in CI;
 # the report surfaces the advisory rules whose backlog is still being worked
 # down. Keep commentlint_version in sync with .github/workflows/ci.yml.
-commentlint_version := "v0.2.1"
+commentlint_version := "v0.3.1"
 comment-lint:
     @echo "==> commentlint (gate)"
-    go run github.com/sourcehaven-bv/commentlint@{{commentlint_version}} -rules commented-code ./internal ./cmd
+    go run github.com/sourcehaven-bv/commentlint@{{commentlint_version}} -rules commented-code,doclink ./internal ./cmd
 
 # One invocation per rule, because the cross-comment rules replace the
 # per-comment output rather than adding to it — a single run would silently
@@ -270,7 +270,7 @@ comment-report rule="":
             -rules "{{rule}}" -rank -top 40 ./internal ./cmd
         exit 0
     fi
-    for rule in restatement param-contract doclink nil-contract duplication; do
+    for rule in restatement param-contract nil-contract duplication; do
         echo "==> commentlint $rule"
         go run github.com/sourcehaven-bv/commentlint@{{commentlint_version}} \
             -rules "$rule" -rank -top 40 ./internal ./cmd || true

@@ -30,6 +30,9 @@ func newTestRunner(t *testing.T, deps Deps) *Runner {
 	if deps.ScriptFS == nil {
 		deps.ScriptFS = emptyFS
 	}
+	if deps.Lock == nil {
+		deps.Lock = NewProcessLock()
+	}
 	r, err := NewRunner(deps)
 	if err != nil {
 		t.Fatalf("NewRunner: %v", err)

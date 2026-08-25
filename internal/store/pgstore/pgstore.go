@@ -104,8 +104,14 @@ type DBTX interface {
 // the row-property reads together, the way versioning and user-state were
 // extracted as subsystems.
 //
-//plimsoll:max-exported-methods=38
-//plimsoll:max-methods=48
+// TryMigrationLock (TKT-CPCBR7) is +1 for the row-property reason too: it is
+// a session advisory lock that must be pinned to a connection from THIS
+// store's pool and schema-qualified with THIS store's schema — a lock handle
+// hoisted into a service would still need exactly this pool, gaining a type
+// but no separation.
+//
+//plimsoll:max-exported-methods=39
+//plimsoll:max-methods=49
 type Store struct {
 	db        DBTX
 	observers []store.EntityObserver // notified synchronously after committed entity writes

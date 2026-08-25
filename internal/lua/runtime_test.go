@@ -548,7 +548,7 @@ func TestWriteFile(t *testing.T) {
 	var buf bytes.Buffer
 
 	projectRoot := t.TempDir()
-	r := NewWriter(ws.services(projectRoot), &buf)
+	r := NewWriter(ws.services(projectRoot), &buf, WithCapabilities(Capabilities{WriteFile: true}))
 	defer r.Close()
 
 	// Files are written to output/ directory
@@ -616,7 +616,7 @@ func TestWriteFile_PathTraversal(t *testing.T) {
 	var buf bytes.Buffer
 
 	projectRoot := t.TempDir()
-	r := NewWriter(ws.services(projectRoot), &buf)
+	r := NewWriter(ws.services(projectRoot), &buf, WithCapabilities(Capabilities{WriteFile: true}))
 	defer r.Close()
 
 	// Try to escape output/ using path traversal
@@ -643,7 +643,7 @@ func TestWriteFile_AbsolutePathOutside(t *testing.T) {
 	var buf bytes.Buffer
 
 	projectRoot := t.TempDir()
-	r := NewWriter(ws.services(projectRoot), &buf)
+	r := NewWriter(ws.services(projectRoot), &buf, WithCapabilities(Capabilities{WriteFile: true}))
 	defer r.Close()
 
 	// Try to write to absolute path (should be rejected)
@@ -660,7 +660,7 @@ func TestWriteFile_InOutputDir(t *testing.T) {
 	var buf bytes.Buffer
 
 	projectRoot := t.TempDir()
-	r := NewWriter(ws.services(projectRoot), &buf)
+	r := NewWriter(ws.services(projectRoot), &buf, WithCapabilities(Capabilities{WriteFile: true}))
 	defer r.Close()
 
 	// Write to output directory
@@ -1409,7 +1409,7 @@ func TestWriteFile_NestedDirectories(t *testing.T) {
 	var buf bytes.Buffer
 
 	projectRoot := t.TempDir()
-	r := NewWriter(ws.services(projectRoot), &buf)
+	r := NewWriter(ws.services(projectRoot), &buf, WithCapabilities(Capabilities{WriteFile: true}))
 	defer r.Close()
 
 	// Write to a deeply nested path within output/
@@ -1691,7 +1691,7 @@ func TestWriteFile_EnsureNewline(t *testing.T) {
 	var buf bytes.Buffer
 
 	projectRoot := t.TempDir()
-	r := NewWriter(ws.services(projectRoot), &buf)
+	r := NewWriter(ws.services(projectRoot), &buf, WithCapabilities(Capabilities{WriteFile: true}))
 	defer r.Close()
 
 	// Write without trailing newline, but with ensure_newline option
@@ -1718,7 +1718,7 @@ func TestWriteFile_EnsureNewline_AlreadyHasNewline(t *testing.T) {
 	var buf bytes.Buffer
 
 	projectRoot := t.TempDir()
-	r := NewWriter(ws.services(projectRoot), &buf)
+	r := NewWriter(ws.services(projectRoot), &buf, WithCapabilities(Capabilities{WriteFile: true}))
 	defer r.Close()
 
 	// Write with trailing newline and ensure_newline option - should not double
@@ -1745,7 +1745,7 @@ func TestWriteFile_EnsureNewline_EmptyContent(t *testing.T) {
 	var buf bytes.Buffer
 
 	projectRoot := t.TempDir()
-	r := NewWriter(ws.services(projectRoot), &buf)
+	r := NewWriter(ws.services(projectRoot), &buf, WithCapabilities(Capabilities{WriteFile: true}))
 	defer r.Close()
 
 	// Empty content should stay empty even with ensure_newline
@@ -2623,7 +2623,8 @@ func TestWithSecrets(t *testing.T) {
 		"api_key":  "sk-secret",
 		"base_url": "https://example.com",
 	}
-	r := NewWriter(ws.services("/tmp"), &buf, WithSecrets(sec))
+	r := NewWriter(ws.services("/tmp"), &buf, WithSecrets(sec),
+		WithCapabilities(Capabilities{Secrets: []string{"api_key", "base_url"}}))
 	defer r.Close()
 
 	script := `rela.output({k = rela.secrets.api_key, u = rela.secrets.base_url})`
@@ -2765,7 +2766,7 @@ func TestWriterRuntime_MutationBindingsPresent(t *testing.T) {
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
-	r := NewWriter(ws.services("/tmp"), &buf)
+	r := NewWriter(ws.services("/tmp"), &buf, WithCapabilities(Capabilities{WriteFile: true}))
 	defer r.Close()
 
 	mutators := []string{"create_entity", "update_entity", "delete_entity", "create_relation", "delete_relation", "write_file"}

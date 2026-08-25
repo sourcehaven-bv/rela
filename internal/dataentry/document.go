@@ -120,6 +120,15 @@ type documentRenderConfig struct {
 	// `permission:`, this struct carries the decision's INPUT, not the
 	// decision — the renderer makes no ACL choice of its own.
 	Elevated bool
+
+	// Capabilities is the document's declared ambient capability grant
+	// (TKT-YH52OM). Per-render for the same reason Elevated is: the grant
+	// belongs to THIS document's declaration, and putting it in the shared
+	// luaDeps bundle would hand it to every render.
+	//
+	// Zero value grants nothing, which is what an export or a document with no
+	// `capabilities:` block gets.
+	Capabilities lua.Capabilities
 }
 
 // DocumentResult holds the result of rendering a document.
@@ -203,6 +212,10 @@ func newDocumentService(st store.Store, kv state.KV, projectRoot string,
 // applies it; it does not re-decide.
 func (s *documentService) elevatedDeps(cfg documentRenderConfig) lua.WriteDeps {
 	deps := s.luaDeps()
+	// TKT-YH52OM: ambient capabilities come from THIS document's declaration.
+	// Applied before the elevation early-return below so a non-elevated
+	// document still receives the grant it declared.
+	deps.Capabilities = cfg.Capabilities
 	if !cfg.Elevated || s.elevation == nil {
 		return deps
 	}
@@ -323,7 +336,11 @@ func (s *documentService) RenderListMarkdown(
 		return "", errors.New("script rendering not available (engine or deps not wired)")
 	}
 	var buf bytes.Buffer
-	if err := s.scriptEngine.ExecuteListDocument(ctx, cfg.Script, s.luaDeps(), &buf,
+	// Routed through elevatedDeps like the other two render paths so the
+	// capability grant is applied here too (TKT-YH52OM). A list export sets no
+	// Elevated flag, so this is the capability half only — but going through
+	// the one seam means a future grant cannot be forgotten on this path.
+	if err := s.scriptEngine.ExecuteListDocument(ctx, cfg.Script, s.elevatedDeps(cfg), &buf,
 		cfg.ConfigID, lrc, cfg.Timeout); err != nil {
 		// Same shaping as renderScript: attach the output captured before the
 		// script threw, then bubble up unchanged so the HTTP layer can branch

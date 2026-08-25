@@ -13,8 +13,6 @@ import (
 // reads as five identical rows distinguished only by their labels. The
 // override exists so an author can tell them apart.
 func TestNavEntryIcon(t *testing.T) {
-	app := newTestAppV1(t)
-
 	tests := []struct {
 		name  string
 		entry dataentryconfig.NavigationEntry
@@ -57,7 +55,7 @@ func TestNavEntryIcon(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			item := app.views.navEntryToSidebarItem(t.Context(), tc.entry, sidebarCounts{})
+			item := navEntryToSidebarItem(tc.entry)
 			if item.Icon != tc.want {
 				t.Errorf("Icon = %q, want %q", item.Icon, tc.want)
 			}

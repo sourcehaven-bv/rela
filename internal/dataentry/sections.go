@@ -293,7 +293,11 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 							Link: resolveLinkTarget(col.Link, e.Type, e.ID), EntityID: e.ID, EntityType: e.Type,
 						}
 						if col.Relation != "" {
-							cell.Values = h.resolveRelationColumnValues(ctx, e.ID, col.Relation, col.Direction)
+							// The row entity's own type anchors the inference: a
+							// section's rows come from a traversal, so the type is
+							// only known per row, not from the section declaration.
+							dir := resolveConfigDirection(s, e.Type, col.Relation, col.Direction)
+							cell.Values = h.resolveRelationColumnValues(ctx, e.ID, col.Relation, dir)
 						} else {
 							var pd metamodel.PropertyDef
 							if eDef != nil {

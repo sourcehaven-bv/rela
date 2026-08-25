@@ -18,7 +18,7 @@ import (
 // closed (deny), never open.
 //
 // WIRING REQUIREMENT (RR-MXKD2O): open ONE Request per logical operation
-// and attach it with [Bind] (or acl.WithRequest) before calling into the
+// and attach it with [DeclarativeGate.Bind] (or acl.WithRequest) before calling into the
 // wrappers. Without it, every gate probe AND every field-verdict
 // resolution opens its own Request — the Globals member-of walk re-runs
 // per collaborator (the cost RR-JJYW amortizes away), and the row-gate

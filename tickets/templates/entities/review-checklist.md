@@ -64,7 +64,18 @@ Skip this section for bugs and internal refactors.
 ## Pull Request
 
 - [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
 
-**PR:** <!-- e.g., https://github.com/org/repo/pull/123 -->
+<!--
+Deliberately NOT tracked here: the PR URL and whether CI passed.
+
+Both post-date this checklist. `/pr` requires the ticket to be `done` and
+validating clean before it opens the PR, and a `done` review-checklist may
+have no unchecked items — so an item asking for the PR URL can only be
+satisfied by a PR that does not exist yet. Checking it early would mean
+asserting "CI passed" before CI ran, which turns the checklist from evidence
+into a formality.
+
+GitHub records both authoritatively, and the branch and commit messages carry
+the ticket ID, so the ticket-to-PR link is recoverable without duplicating it
+here. See TKT-UFV01M.
+-->

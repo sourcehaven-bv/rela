@@ -51,7 +51,7 @@ type Filesystem struct {
 // long enough that a sustained failure doesn't spam slog.
 const retryAfter = 60 * time.Second
 
-// filesystemConfig is the receiver for [Option]s.
+// filesystemConfig is the receiver each [Option] configures.
 type filesystemConfig struct {
 	clock func() time.Time
 }

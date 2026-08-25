@@ -158,10 +158,28 @@ func requireVerifiedJWT(next http.Handler, cfg JWTGateConfig) http.Handler {
 		// This carries org_id/org_slug/roles onto the Principal — without it an
 		// asserted_role_assignments policy grants nothing on the production path
 		// (TKT-OJL2GN). The claims flow on to the ACL via attachACLRequest.
-		p, ok := verifiedPrincipal(id, toolForPath(r.URL.Path))
-		if !ok {
-			slog.InfoContext(r.Context(), "jwt gate: verified subject is unusable after sanitization",
-				"path", r.URL.Path, "method", r.Method, "remote_addr", r.RemoteAddr)
+		p, reason := verifiedPrincipal(id, toolForPath(r.URL.Path))
+		if !reason.ok() {
+			// Two distinct causes, logged apart because they call for different
+			// operator action: an unusable subject is an IdP/claims problem,
+			// whereas a reserved one (TKT-9PCL7D) means an IdP is issuing
+			// subjects in rela's internal `system:` namespace — a
+			// misconfiguration or an impersonation attempt.
+			//
+			// The reason comes back FROM verifiedPrincipal rather than being
+			// re-derived from id.Subject here. Re-deriving would classify on the
+			// raw subject while the decision was made on the sanitized one, so a
+			// control-char-prefixed name like "\x01system:scheduler" — denied
+			// correctly — would log as merely unusable and never produce the WARN
+			// operators are told to grep for (RR-OJRCNY).
+			if reason == rejectReserved {
+				slog.WarnContext(r.Context(), "jwt gate: rejected reserved principal in verified assertion",
+					"user", id.Subject,
+					"path", r.URL.Path, "method", r.Method, "remote_addr", r.RemoteAddr)
+			} else {
+				slog.InfoContext(r.Context(), "jwt gate: verified subject is unusable after sanitization",
+					"path", r.URL.Path, "method", r.Method, "remote_addr", r.RemoteAddr)
+			}
 			g.deny(w, r)
 			return
 		}

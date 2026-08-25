@@ -151,6 +151,23 @@ best guesses: same-shaped remove+add pairs become `rename_property` /
 deletions appear only as commented-out cleanups. **The review is the safety
 mechanism** — never apply a draft unread.
 
+Applies are serialized by a **migration lock**: `rela migrate data --apply`,
+`rela migrate gc --apply`/`--scan`, and the server's GC sweep all take a
+per-store lock before writing, so two concurrent runs cannot interleave — the
+second fails fast with "another migration or GC run is active" (the sweep
+just skips its cycle, and the startup gate skips persisting an adoption
+until the holder finishes). On PostgreSQL the lock is a schema-scoped
+advisory lock, so tenants sharing a database never block each other; on the
+filesystem backend it is a lock file under `.rela/` (single machine, with
+stale-lock detection after a crash). Dry-runs never take the lock.
+
+One caveat on crash recovery: staleness is judged by whether the recorded
+process id is still alive on this machine, never by age (a long migration
+is not a crash). If a crashed run's pid has been recycled by an unrelated
+process, the lock stays honored — the remedy is simply removing
+`.rela/migration.lock` by hand once you have confirmed no migration is
+running.
+
 `data` resolves the chain from the store's current hash to the live schema.
 Migrations run in file-name order; compatible gaps between them (additive
 changes that were adopted without a migration) are bridged automatically, so

@@ -207,7 +207,7 @@ func (w *projectionHasher) optInt(p *int) {
 }
 
 // JSON returns the projection serialized as deterministic JSON, for embedding
-// in migration files and the state.KV marker. Identity is [Hash] (a separate
+// in migration files and the state.KV marker. Identity is [ShapeProjection.Hash] (a separate
 // length-prefixed digest); this serialization is for storage and re-load.
 func (p ShapeProjection) JSON() ([]byte, error) {
 	return json.Marshal(p)

@@ -471,7 +471,7 @@ func knownToResolver(v FieldVerdicts, name string) bool {
 // response. The wire shape mirrors writeForbiddenIfACLDenied (the
 // ACL helper) so SPA error-handling can treat the two uniformly.
 //
-// Prefer [App.denyAffordance] when handler context is available — it
+// Prefer App.denyAffordance when handler context is available — it
 // emits the audit row in addition to writing the response.
 func writeAffordanceDenialError(w http.ResponseWriter, denial AffordanceDenialError) {
 	w.Header().Set("Content-Type", "application/json")
@@ -520,7 +520,7 @@ func (a *App) denyAffordance(
 }
 
 // RelationOp identifies which relation-write operation a caller is
-// gating. Pass via [App.validateRelationOp].
+// gating. Pass via App.validateRelationOp.
 type RelationOp int
 
 const (
@@ -1151,7 +1151,7 @@ func (svc affordanceService) applyCreateLock(
 // attachEntityAffordances writes the per-entity `_fields` and
 // `_relations` wire maps onto result. Called by paths that return a
 // per-entity response (GET, PATCH, POST, clone, action) — list rows
-// and includes get [App.stripHiddenProperties] only.
+// and includes get App.stripHiddenProperties only.
 func (svc affordanceService) attachEntityAffordances(ctx context.Context, e *entityPkg.Entity, result *v1.Entity) {
 	verdicts := svc.resolver().FieldVerdicts(ctx, e)
 	fields := computeFieldAffordancesFrom(verdicts)
