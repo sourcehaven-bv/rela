@@ -360,7 +360,8 @@ Rules when touching this:
 
 - **The `postgres` build must not link bleve; the default build must not
   link pgx; no build but `sqlite` may link `modernc.org/sqlite`.** CI asserts
-  each of these via `go list -deps` (the `postgres` job in `ci.yml`). Keep backend-specific imports inside the tagged recipe files.
+  each of these via `go list -deps` (the `postgres` job in `ci.yml`). Keep
+  backend-specific imports inside the tagged recipe files.
 - **`pgstore.New(db DBTX)` takes an injected pgx pool**, not a DSN. The
   postgres recipe builds one pool, runs `pgstore.Migrate`, and shares it
   between the store and the in-DB search backend. appbuild owns/closes the
