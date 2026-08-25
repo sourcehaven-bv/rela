@@ -145,6 +145,32 @@
   to stop an unauthorized caller triggering an expensive render — just don't
   justify it as concealment, because the next person will build on a secrecy
   property that was never real. Write down which of the two you mean.
+- **Mail: the render pipeline order is a security property, and delivery is
+  best-effort.** `internal/mailrender` runs markdown → goldmark → **bluemonday
+  on the untrusted CONTENT ONLY** → trusted template → **douceur inline LAST**.
+  Both ends are load-bearing and verified: bluemonday strips `style` attributes
+  (so sanitizing the assembled document ships unstyled mail, and also strips the
+  `cellpadding`/`border`/`role` and `cid:` sources email needs), while douceur
+  does **no** CSS value validation (so nothing may sanitize after it, and every
+  value interpolated into CSS — palette tokens included — must be allowlisted).
+  Reversing either is a silent downgrade, not a build failure.
+
+  The SMTP password lives in **`.rela/secrets.yaml`** under `smtp_password` —
+  the same store Lua scripts read, because an SMTP credential is no different
+  in kind from the API tokens already kept there. `password_env` in
+  `.rela/mail.yaml` names an environment variable as a fallback for
+  container/systemd deployments; secrets.yaml wins when both are set. Never a
+  literal `password:` in mail.yaml — that is refused at load.
+
+  Header-injection validation is **rela's**, not the SMTP library's: go-mail
+  rejects CR/LF in addresses but accepts it in a subject, where it is
+  neutralized only incidentally by encoded-word escaping. `internal/mail`
+  rejects CR/LF/NUL in every caller-supplied header value at enqueue.
+
+  The outbox is an in-process buffer, **not a durable queue** — in `rela-server`
+  there is no signal handler, so pending mail is lost on every restart with no
+  drain. Mail is notification, never a system of record. A durable queue with
+  swappable backends is IDEA-WIJ2H1.
 - **Boundaries are enforced.** `just arch-lint` checks package import
   rules; run it before PR.
 
@@ -226,6 +252,8 @@ Domain and storage:
 | `internal/store`         | Storage abstraction — CRUD + events; `fsstore`/`memstore`/`pgstore` |
 | `internal/tracer`        | Pure-reader graph traversal (trace, path, orphans, cycles)|
 | `internal/calfeed`       | Pure calendar-feed model + iCalendar/JSON serializers (event-granular; no store/vendor) |
+| `internal/mailrender`    | Pure message model → sanitized, CSS-inlined branded HTML + text/plain (leaf; no store/metamodel) |
+| `internal/mail`          | Outbound email: `Sender` seam, SMTP + memory transports, `.rela/mail.yaml`, best-effort outbox |
 | `internal/search`        | Full-text + structured search (bleve + linear)            |
 | `internal/visibility`    | Read-side ACL wrappers: row-gate + field-redact readers, tracer decorator (DEC-ZBI39P) |
 | `internal/entitymanager` | Write path: automations, validation, audit, policy        |

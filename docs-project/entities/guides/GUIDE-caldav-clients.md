@@ -24,7 +24,7 @@ PUTs it back.
 
 | Client | Platforms | VTODO | Rich-text notes | Round-trip of `ALTREP` | Notes |
 |---|---|---|---|---|---|
-| **Mozilla Thunderbird** | Win / macOS / Linux | Full (VEVENT + VTODO, no VJOURNAL) | **Emits and renders `DESCRIPTION;ALTREP="data:text/html,…"`** — the only client verified to do so | Preserves its own; **clears `ALTREP` whenever the plain text is set** | Since TB 91. Rich-text editor in the task dialog. HTML is sanitised before display. Auto-discovers. |
+| **Mozilla Thunderbird** | Win / macOS / Linux | Full (VEVENT + VTODO, no VJOURNAL) | **Emits and renders `DESCRIPTION;ALTREP="data:text/html,…"`** — the only client verified to do so | Preserves its own; **clears `ALTREP` whenever the plain text is set** | Since TB 91. Rich-text editor in the task dialog. HTML is sanitised before display. **Auto-discovers from the calendar HOME SET** (`/principal/calendars/`) — it walks the discovery chain and offers a subscribe picker. Given a single COLLECTION URL it treats that as the whole calendar and never finds siblings, so an account set up that way misses collections added later. |
 | **Apple Reminders** | macOS / iOS | Full — two-way, verified against self-hosted CalDAV. Preserves `LOCATION`, `CATEGORIES` and `PRIORITY` on write, but displays only PRIORITY; its "Locatie" is a geofence, not `LOCATION` (see below) | Plain text only (no formatting UI) | **Emits a bare `DESCRIPTION` with no `ALTREP`** (wire capture, iOS 26.5.1 PRODID). Whether it would *preserve* an `ALTREP` we sent is untested | **TLS mandatory** (plaintext → endless 401). Needs explicit `https://`. Rewrites the whole VCALENDAR on PUT. Client-created UIDs are bare UUIDs. See [caldav.md](caldav.md). |
 | **Apple Calendar** | macOS / iOS | **None** — events only; to-dos are Reminders' job | n/a | n/a | Will not display a VTODO collection. |
 | **eM Client** | Win / macOS | Full | **Emits `X-ALT-DESC;FMTTYPE=text/html`** (Microsoft mechanism, not `ALTREP`) | Unknown for `ALTREP`; **prefers `X-ALT-DESC` when present** | If you change `DESCRIPTION` but leave a stale `X-ALT-DESC`, eM Client shows the **old** HTML and the edit looks lost. Auto-discovery, Basic auth. |
@@ -51,6 +51,34 @@ Closed-source clients (**BusyCal, 2Do, Fantastical, eM Client's `ALTREP`
 handling**) cannot be verified without live wire capture. They are marked
 "unknown" rather than guessed. **Apple Reminders' `ALTREP` round-trip is
 likewise unverified** — see below.
+
+## Moving a to-do between collections
+
+With [graph-driven collections](caldav.md), a to-do's membership of a collection
+is a *relation*, so moving one between lists is a graph edit. Clients implement
+that move in two incompatible ways, and the difference is visible in your data.
+
+Verified on the wire (2026-08-18):
+
+| Client | Move sent as | Result in rela |
+|---|---|---|
+| **Mozilla Thunderbird** | `PUT` the **same UID** into the target, then `DELETE` from the source | One entity. Its membership moves. ✅ |
+| **Apple Reminders** | `DELETE` from the source, then `PUT` a **fresh UUID** into the target | **A duplicate.** A new entity in the target; the original survives, belonging to nothing. |
+
+**This is not something the server can fix.** A `PUT` carrying a UID rela has
+never seen is, on the wire, exactly what a genuinely new to-do looks like — that
+is the create path, and it is why a client-composed entry works at all. Treating
+it as a move would mean guessing that two unrelated resources are "the same
+to-do", which risks silently merging entries that are not.
+
+What rela does guarantee is that each half is correct in isolation: the `DELETE`
+removes only the membership (the original entity survives, unmodified), and the
+`PUT` creates a properly-linked member of the target collection. The unfortunate
+composite is the client's choice of encoding.
+
+**Practical advice.** In Reminders, prefer *assigning* a to-do to a second list
+over dragging it between lists, and delete the original afterwards if you meant
+a move. In Thunderbird, drag freely — its encoding preserves identity.
 
 ## What a client does when a write is refused
 

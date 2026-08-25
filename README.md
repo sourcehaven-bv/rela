@@ -87,6 +87,7 @@ go build -o rela ./cmd/rela
 | [Encrypting a rela repo with git-crypt](docs/git-crypt.md) | Use git-crypt for confidentiality when pushing to untrusted git hosts |
 | [Scheduled Tasks](docs/scheduled-tasks.md) | Run Lua scripts on recurring schedules |
 | [Audit Log](docs/audit-log.md) | Forensic JSONL log of every entity / relation write |
+| [Outbound Mail](docs/mail.md) | Configure outbound email — SMTP, branding, and what best-effort delivery means |
 | [PostgreSQL Backend](docs/postgres-backend.md) | Run rela-server and the CLI against PostgreSQL instead of markdown files |
 | [Attachment Security: Scanning, MIME Allowlist & Transforms](docs/attachment-security.md) | Virus scanning, a sniffed MIME allowlist, and byte transforms for uploaded attachments |
 | [SQLite Backend](docs/sqlite-backend.md) | Run rela against an embedded SQLite database — one file, no server, single process |

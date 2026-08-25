@@ -8,6 +8,7 @@ require (
 	github.com/MicahParks/jwkset v0.11.3
 	github.com/MicahParks/keyfunc/v3 v3.8.1
 	github.com/alecthomas/kong v1.16.1
+	github.com/aymerick/douceur v0.2.0
 	github.com/blevesearch/bleve/v2 v2.6.0
 	github.com/charmbracelet/glamour v1.0.0
 	github.com/charmbracelet/huh v1.0.0
@@ -21,6 +22,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/mattn/go-runewidth v0.0.28
+	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/mitchellh/go-wordwrap v1.0.1
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/olekukonko/tablewriter v1.1.4
@@ -28,6 +30,7 @@ require (
 	github.com/teambition/rrule-go v1.8.2
 	github.com/teekennedy/goldmark-markdown v0.5.1
 	github.com/wailsapp/wails/v2 v2.15.0
+	github.com/wneessen/go-mail v0.8.1
 	github.com/yuin/goldmark v1.8.5
 	github.com/yuin/gopher-lua v1.1.2
 	go.uber.org/goleak v1.3.0
@@ -44,11 +47,12 @@ require (
 	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/ProtonMail/go-crypto v1.1.6 // indirect
+	github.com/PuerkitoBio/goquery v1.12.0 // indirect
 	github.com/RoaringBitmap/roaring/v2 v2.14.5 // indirect
 	github.com/alecthomas/chroma/v2 v2.20.0 // indirect
+	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
-	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/bep/debounce v1.2.1 // indirect
 	github.com/bits-and-blooms/bitset v1.24.2 // indirect
 	github.com/blevesearch/bleve_index_api v1.3.11 // indirect
@@ -121,7 +125,6 @@ require (
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/mattn/go-localereader v0.0.1 // indirect
-	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
 	github.com/mitchellh/hashstructure/v2 v2.0.2 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180228061459-e0a39a4cb421 // indirect
 	github.com/modern-go/reflect2 v1.0.1 // indirect

@@ -1,0 +1,34 @@
+Tasks due today
+===============
+
+You have 3 items needing attention. See the board (https://app.example/board).
+
+Overdue
+-------
+These are past their due date.
+Title: Ship the thing
+Due: 2026-08-01
+Owner: jeroen
+https://app.example/e/TKT-1
+
+Title: Review PR #1390
+Due: 2026-08-14
+Owner: alex
+https://app.example/e/TKT-2
+
+Notes
+-----
+Heading
+
+- one
+- two
+
+a | b
+1 | 2
+
+Empty
+-----
+Nothing to show.
+
+--
+Sent by rela.
