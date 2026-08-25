@@ -47,6 +47,12 @@ type listRelationsErrStore struct {
 	err error
 }
 
+// Tx hands the callback THIS decorator so the ListRelations override stays
+// effective inside a transaction; the embedded store's Tx would bypass it.
+func (s *listRelationsErrStore) Tx(_ context.Context, fn func(store.Store) error) error {
+	return fn(s)
+}
+
 func (s *listRelationsErrStore) ListRelations(_ context.Context, _ store.RelationQuery) iter.Seq2[*entity.Relation, error] {
 	return func(yield func(*entity.Relation, error) bool) {
 		yield(nil, s.err)

@@ -191,6 +191,14 @@ func (v aclMetamodelView) HasEntityType(entityType string) bool {
 	return v.m.HasEntityType(entityType)
 }
 
+func (v aclMetamodelView) HasRelationType(relationType string) bool {
+	if v.m == nil {
+		return false
+	}
+	_, ok := v.m.Relations[relationType]
+	return ok
+}
+
 func (v aclMetamodelView) PropertyInfo(entityType, property string) acl.PropertyInfo {
 	if v.m == nil {
 		return acl.PropertyInfo{}

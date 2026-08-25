@@ -149,6 +149,11 @@ func (v metaView) HasEntityType(t string) bool {
 	return ok
 }
 
+func (v metaView) HasRelationType(t string) bool {
+	_, ok := v.m.Relations[t]
+	return ok
+}
+
 func (v metaView) PropertyInfo(entityType, property string) acl.PropertyInfo {
 	def, ok := v.m.Entities[entityType]
 	if !ok {
