@@ -12,6 +12,7 @@ exclude:
   - internal/state/statetest
   - internal/jobs/jobstest
   - internal/userstate/userstatetest
+  - internal/schedulerstate/schedulerstatetest
   - frontend
   - e2e
   - .claude
@@ -97,6 +98,8 @@ components:
   nextaction:       { in: internal/nextaction }
   memuserstate:     { in: internal/userstate/memuserstate }
   kvuserstate:      { in: internal/userstate/kvuserstate }
+  schedulerstate:   { in: internal/schedulerstate }
+  kvschedstate:     { in: internal/schedulerstate/kvstate }
   pattern:          { in: internal/pattern }
   search:           { in: internal/search }
   bleveindex:       { in: internal/search/bleveindex }
@@ -803,6 +806,17 @@ deps:
     mayDependOn:
       - state
       - userstate
+  # schedulerstate is the per-task scheduler bookkeeping seam (last successful
+  # run, failure count, next retry). Deliberately NOT dependent on store: a
+  # last-run stamp is a fact about a deployment's operation, not graph content,
+  # and a write per tick would land in the audit log and the version sweep.
+  # (schedulerstate itself is a pure leaf — no deps entry, like entity.)
+  # The filesystem/desktop backend rides state.KV, the same seam the document
+  # cache and user settings use.
+  kvschedstate:
+    mayDependOn:
+      - state
+      - schedulerstate
   # nextaction is the resolution engine. It depends on NO store, searcher or
   # ACL type: candidates arrive through a consumer-side CandidateFunc that the
   # wiring site supplies already read-gated. That is what keeps the engine
