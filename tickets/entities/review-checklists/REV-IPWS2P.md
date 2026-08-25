@@ -136,4 +136,8 @@ autosave's missing entry delay and makes it feel broken.
 - [x] All CI checks pass
 - [x] PR URL documented below
 
-**PR:** <!-- filled in below once opened -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1446
+
+All 22 CI checks green. The one initial failure was the `Rela Tickets` gate
+refusing a ticket still in `review` — the workflow's own done-before-merge
+rule, resolved by this transition rather than by a code change.
