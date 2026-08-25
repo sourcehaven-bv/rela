@@ -88,9 +88,3 @@ func openBackend(ctx context.Context, base *SharedBase) (store.Store, search.Sea
 	}
 	return st, search.New(st, idx), idx, nil
 }
-
-// noopSQLiteCloser satisfies the io.Closer assemble tears down when there is no
-// search index to close. Declared per-recipe like the other builds' equivalents.
-type noopSQLiteCloser struct{}
-
-func (noopSQLiteCloser) Close() error { return nil }

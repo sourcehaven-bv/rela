@@ -1,4 +1,4 @@
-//go:build !postgres && !memorybackend
+//go:build (!postgres && !memorybackend) || sqlite
 
 package appbuild
 
@@ -224,3 +224,14 @@ func markIndexBackfilled(idx *bleveindex.Index, storeMtime time.Time) {
 		slog.Warn("appbuild: could not record search index watermark", "error", err)
 	}
 }
+
+// noopCloser is the io.Closer assemble tears down when a recipe has no search
+// index to close.
+//
+// Lives here rather than per-recipe because this file is already compiled into
+// every recipe that could need it. The fs and memory builds declare their own
+// only because their tags are mutually exclusive, so sharing was impossible
+// there.
+type noopSQLiteCloser struct{}
+
+func (noopSQLiteCloser) Close() error { return nil }
