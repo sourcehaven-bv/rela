@@ -43,3 +43,24 @@ func TestServices_JobsIsWired(t *testing.T) {
 		t.Fatal("timed out waiting for the wired queue to run a job")
 	}
 }
+
+// TestJobQueueFor_NoDSNStillAssembles pins that a build WITHOUT a database URL
+// still gets a working queue.
+//
+// The postgres build tag does not imply a postgres store: the composition-root
+// tests assemble the tagged binary over an in-memory store with no DSN. An
+// earlier version required a DSN from the tag alone, which failed those
+// assemblies outright — on a queue they never enqueue to. Durability follows
+// the STORE, not the tag.
+//
+// On the default build this is the only path, so the test is meaningful on
+// both and needs no tag of its own.
+func TestJobQueueFor_NoDSNStillAssembles(t *testing.T) {
+	t.Parallel()
+
+	svc, err := discover(t, writeMinimalProject(t))
+	require.NoError(t, err, "assembly without a DSN must not fail")
+	t.Cleanup(func() { _ = svc.Close() })
+
+	require.NotNil(t, svc.Jobs(), "assembly without a DSN must still yield a usable queue")
+}
