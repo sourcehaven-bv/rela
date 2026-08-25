@@ -99,79 +99,42 @@ scheduled job, not just iterated ones, so it landed in its own ticket:
 **TKT-NJ91LX**. This ticket depends on it — a `for_each` run that saw
 unredacted fields would be half-enforced scoping, which is worse than none.
 
-## Two shapes, and only one needs per-user tasks
+## Two-phase execution over the shared job queue
 
-A design correction. "Send a digest to N people" and "run something as each of N
-people" are different problems, and conflating them produced a heavier design
-than either needs.
+There is one safe shape for graph-derived mail: one recipient, one job, one
+principal, one render. A shared render under `run_as` proves that the sender may
+read it; it cannot prove that every selected recipient may read it. Declarative
+mail therefore has no broadcast mode.
 
-**Broadcast send — ONE task, N recipients.** The unit of work is the send, not
-the recipient. Per-recipient failure is internal state on that one task, and
-crucially **mail already retries it**: `Outbox.sendWithRetry`
-(`internal/mail/outbox.go:236-267`) retries each message 5 times with doubling
-backoff. A hiccup affecting 3 recipients is handled BELOW the scheduler, which
-never needs to know it happened.
+PR #1444 / TKT-YOED3R supplies the general background-job seam. A scheduled
+`for_each` task uses it in two phases:
 
-**Per-recipient render — N runs, one principal each.** This is the shape that
-genuinely needs per-user execution, because each render must happen under that
-user's principal. You cannot render 1000 personalised digests inside one
-principal's context — that is the whole point of the ACL scoping.
+1. An expansion job queries the bounded selection for one task occurrence.
+2. It records and enqueues one child job per selected entity, without waiting.
+3. Each child resolves that entity to a principal, installs the ACL request, and
+   runs the task body independently.
 
-So `for_each` is NOT the mechanism for broadcast mail. It is the mechanism for
-per-principal execution, and mail's broadcast mode should not use it at all.
+The child payload carries task, occurrence, selected entity and principal IDs;
+it carries neither rendered data nor a mail address. Mail resolves the current
+address and content inside the child. Non-mail consumers use the same scoped
+execution without acquiring an address capability.
 
-## The engine does not interpret partial failure
+Failure is naturally per child: one user's failure retries only that user and
+never replays successful peers. The expansion succeeds after every intended
+child has been accepted, not after the children finish.
 
-The scheduler must not carry a rule like "more than 10% failed means retry" — it
-has no idea what a recipient is. Instead the **task result carries the verdict**,
-and the producer that minted the task decides what its own partial failure means:
+Pending-only queue idempotency is insufficient for expansion retries because a
+completed child's key becomes reusable. Derived tasks therefore need a
+persistent occurrence identity (`task + occurrence + selected entity`) or a
+child ledger. Re-running expansion consults those claims and posts only missing
+children. This bounds the guarantee at the job boundary; a side effect such as
+SMTP cannot be atomically committed with job completion, so the crash window
+after external success remains explicitly at-least-once.
 
-```go
-type Outcome struct {
-    Status Status     // Succeeded | Failed | PartiallyFailed
-    Detail string     // for the log
-    Retry  *RetryHint // nil = the task's normal policy applies
-}
-```
-
-This keeps the dependency one-directional (engine → producer, per the section
-below): the engine never calls back to ask "should I retry?", it reads a verdict
-the task already computed.
-
-The two cases that matter, and why they differ:
-
-- **3 of 1000 recipients fail.** Mail's own ladder already retried those three.
-  The task reports success (or `PartiallyFailed` with no retry hint), the
-  occurrence is complete, and the scheduler does nothing. Re-running would mail
-  the 997 again.
-- **1000 of 1000 fail.** The mail server is down. The task reports `Failed`, the
-  ordinary ladder applies to the whole task, and retrying everyone is CORRECT
-  because nobody received anything.
-
-The engine implements the same rule in both cases; only the verdict differs.
-
-## What this removes from the earlier design
-
-The task-per-user factory was specified for broadcast, where it was the wrong
-unit. Dropping it there removes:
-
-- **`TaskID.Subject`** for the broadcast path — one task needs no per-user
-  identity.
-- **Per-user `Failures`/`NextRetry`**, and with them per-user pruning and
-  cross-producer prune scoping.
-- **Quadratic state writes.** `saveState` (`scheduler.go:333`, `:371`) serializes
-  the WHOLE state file with an atomic rename + fsync, once per execution. N
-  derived tasks meant N fsyncs of an N-entry file — O(N²) — which now does not
-  arise for broadcast rather than needing to be fixed.
-- **Liveness reconciliation for retries.** A deactivated user cannot hold a stale
-  `NextRetry` entry when there are no per-user entries.
-
-**Still open for the per-recipient shape:** whether N per-user renders are one
-task with internal state (so a few failed renders do not re-run the successes) or
-genuinely N tasks. The same reasoning says one task — but that state has to live
-somewhere, and if it is not in `scheduler-state.json` then the quadratic-write
-finding returns for that path. Settle it when the per-recipient mode is built,
-not before.
+This also removes the old O(N²) scheduler-state design. Per-user retry and
+completion live with the job backend rather than rewriting an N-entry JSON state
+file after every child. The scheduler owns cadence and occurrence creation; the
+job queue owns execution and retry; the producer owns expansion and its bound.
 
 ### The seam: a TaskProducer
 

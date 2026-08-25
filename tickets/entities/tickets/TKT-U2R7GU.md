@@ -10,8 +10,9 @@ status: planning
 
 ## Description
 
-The declarative layer, built on the SMTP foundation (TKT-332QZY). Automation
-triggers split out to TKT-LU4AAY; per-recipient scoping to TKT-XWZIOB. Covers the cases
+The declarative layer, built on the SMTP foundation (TKT-332QZY), the shared job
+queue (TKT-YOED3R), and scheduler fan-out (TKT-XWZIOB). Automation triggers are
+split out to TKT-LU4AAY. Covers the cases
 an operator actually asks for — a daily digest of overdue tasks, upcoming
 events, a meeting reminder carrying its agenda, and "this changed, go look" from
 an automation — declaratively.
@@ -25,16 +26,13 @@ triggers reference it — the same split `feeds:` already makes (a feed declares
 content; the URL is delivery).
 
 ```yaml
-# content only — no trigger, no delivery mechanism
+# content only — no trigger or recipient selection
 mail_templates:
   overdue_digest:
     subject: "Tasks due {{today}}"
     intro: |
       You have **{{count}}** items needing attention.
-    to:
-      entity_type: person
-      property: email
-      where: ["active = true"]   # broadcast: one render, N addresses
+    address_property: email
     sections:
       - title: "Overdue"
         entity_type: task
@@ -58,11 +56,15 @@ tasks:
   - name: daily-digest
     template: overdue_digest
     every: day
-    run_as: system:digest      # ONE identity: the mail renders under it
+    for_each:
+      entity_type: person
+      where: ["active = true"]
 ```
 
-Per-recipient rendering adds `for_each:` here (TKT-XWZIOB); without it the
-digest is a broadcast under `run_as`.
+Mail tasks require `for_each:`. There is deliberately no broadcast fallback:
+the selected entity is resolved to a principal and the message is rendered as
+that principal. A shared `run_as` would prove only that the sender may read the
+content, not that every recipient may read it.
 
 **Trigger 2 — automation** is TKT-LU4AAY, along with the `{{entity}}`
 load-time validation that only has something to validate once templates exist.
@@ -72,8 +74,8 @@ load-time validation that only has something to validate once templates exist.
 
 ## Recipients and ACL
 
-Recipients resolve from the graph: an `entity_type` + `property` holding the
-address, optionally filtered.
+`for_each` resolves recipients from the graph. The template names the property
+on that recipient entity that holds its delivery address.
 
 **Address validity is asserted from config, not discovered at send time.** Since
 the config names the entity type and the property, the selection can be checked
@@ -91,36 +93,25 @@ or cleanup pass has no address at all. A blank address must not be fatal to the
 whole run — the mail for the other recipients still goes out, and the skipped
 one is named in the log.
 
-**Per-recipient scoping is NOT built here.** It is scheduler fan-out
-(TKT-XWZIOB): "run this task once per selected user, as that user" is a
-scheduler capability that mail is merely the first consumer of. Building a
-mail-shaped version would leave the next consumer — a per-user report, a per-user
-cleanup pass — either duplicating it or bending mail's config to reach it.
+Execution is two-phase. The scheduler posts one expansion job for the task
+occurrence. That job queries the bounded `for_each` selection and posts one
+delivery job per recipient. Each delivery job independently resolves the
+recipient principal, installs its ACL request, resolves the current address,
+queries content, renders, and sends. The payload carries stable identifiers
+(task, template, occurrence, recipient entity, principal), never rendered bytes
+or an email address.
 
-So this ticket ships two recipient modes, and the second arrives with fan-out:
-
-1. **Broadcast (this ticket).** One mail, rendered once under the task's
-   `run_as` principal, sent to every resolved address. `run_as` is identity, not
-   capability (DEC-O59WM4) — `acl.yaml` decides what it reads. Correct when every
-   recipient is entitled to the same view: an ops digest, a team summary.
-2. **Per-recipient (TKT-XWZIOB).** `for_each` runs the task once per user —
-   iteration, not concurrency; the scheduler stays sequential — and each run
-   renders under that user's own principal. A recipient cannot be mailed content
-   they could not see in the app.
-
-The distinction has to be **visible in the config**, not implicit, because the
-two have different confidentiality properties and a reader must be able to tell
-which one they wrote.
+The expansion succeeds once every intended child is accepted; it does not wait
+for delivery. A child failure retries only that recipient. Persistent
+occurrence-level child claims prevent an expansion retry from recreating a
+delivery that already completed; the queue's pending-only `IdempotencyKey` is
+not sufficient because its key becomes reusable after completion.
 
 Reads go through `internal/visibility` decorators at the wiring site — never
 per-consumer redaction calls.
 
-**Note on field-level redaction.** Scheduled jobs currently get row gating only;
-`appbuild.ScheduledLuaWriteDeps` wires a nil redactor (RR-7408F5,
-`appbuild.go:415-426`). Broadcast mail inherits that limitation and must say so
-in the operator guide: a digest may include a property a human with the same
-role would see redacted. TKT-XWZIOB closes it, because "sees what that user
-sees" cannot be half-enforced.
+Field-level redaction is mandatory, not a documented limitation. TKT-NJ91LX
+must land before delivery: "sees what that user sees" cannot be half-enforced.
 
 ## Testing note
 
@@ -145,19 +136,19 @@ and a list section, deep links resolving to the configured base URL.
 3. A template naming an unknown entity type or an unparseable `where:` fails
 config load.
 4. A scheduled task naming an unknown template fails config load.
-4b. A recipient selection whose entities lack a usable address is reported by
+4b. A `for_each` selection whose entities lack a usable address is reported by
 `rela validate`, naming the property and the offending entities, rather than
 surfacing as a partial send. At send time a blank address skips that recipient
 with a named log line and does not fail the others.
-5. Recipients resolve from the graph: a template naming `entity_type` + `property`
-mails every matching address.
-6. Broadcast mail is rendered under the task's `run_as` principal — an entity
-that principal may not read does **not** appear (row-level). Per-recipient
-scoping and field-level redaction are TKT-XWZIOB's criteria, not this
-ticket's.
+5. `for_each` posts one delivery job per matching recipient, and each job sends
+only to the address on its recipient entity.
+6. Every delivery renders under its recipient principal: a denied entity and a
+`visible:`-redacted field are absent from that recipient's message.
 7. A section matching zero entities renders the empty message, not a broken table.
-8. Automation-triggered send enqueues without blocking the write, and the write still
-commits if the mail server is unreachable.
+8. Expansion does not wait for delivery; one delivery failure retries only that
+recipient and does not stop later scheduler tasks or replay successful peers.
+8b. Retrying an expansion after one child completed does not enqueue that child
+again; task + occurrence + recipient is a persistent delivery identity.
 9. `rela validate` reports unknown template names, unknown entity types, and
 unparseable `where:` clauses.
 10. Config validation rejects unknown keys with a typo suggestion (the
@@ -165,14 +156,12 @@ unparseable `where:` clauses.
 
 ## Risks
 
-- **ACL leak via mail** — the central risk. Broadcast mail renders under one
-principal, so the exposure is bounded by what `run_as` may read, and the
-operator guide must state that plainly rather than implying per-recipient
-scoping. Shipping broadcast-only is deliberate: a half-enforced per-recipient
-mode would read like a guarantee it does not provide.
-- **Recipient-count blowup** — a broadcast to N addresses is one render and N
-sends through a sequential outbox; needs a bound with a loud log rather than
-silent truncation.
-- **Broadcast mistaken for per-recipient** — the config must make the two modes
-visibly different, since they have different confidentiality properties;
-TKT-XWZIOB adds the second one.
+- **ACL leak via mail** — the central risk. There is no broadcast mode. Every
+delivery installs the resolved recipient's row and field visibility before any
+content query, and an end-to-end denial test pins the boundary.
+- **Recipient-count blowup** — expansion is bounded and logs/counts what was not
+posted rather than silently truncating.
+- **Duplicate sends after expansion retry** — pending-job dedup is insufficient;
+persistent occurrence-level child claims prevent completed deliveries from being
+recreated. SMTP itself remains non-transactional, so a process loss after DATA
+but before completion can still duplicate a retry and is documented honestly.

@@ -9,108 +9,206 @@ status: in-progress
 
 ## Understanding
 
-- [ ] Problem/requirements clearly understood
-- [ ] Scope defined (what's in/out documented below)
-- [ ] Acceptance criteria documented with specific test scenarios
+- [x] Problem/requirements clearly understood
+- [x] Scope defined (what's in/out documented below)
+- [x] Acceptance criteria documented with specific test scenarios
 
 **Scope:**
-<!-- Document explicitly what IS and IS NOT in scope -->
+Per-recipient scheduled mail only: declarative content templates, bounded
+`for_each` expansion, one durable delivery job and one ACL-scoped render per
+recipient, table/list/detail sections, and store-aware address validation.
+Automation triggers are TKT-LU4AAY; scheduler fan-out is TKT-XWZIOB; the shared
+job seam is TKT-YOED3R; HTTP/script transports are TKT-DS1CR6. No broadcast,
+editor, preferences,
+unsubscribe flow, new filter language, or preview endpoint.
 
 **Acceptance Criteria:**
-<!-- Each criterion must have a concrete test scenario -->
-1. ...
+1. Parse a two-section template, run its scheduled task against a fixture store,
+   and assert one message per selected recipient with table/list content and absolute links.
+2. Render a detail section and assert its entity markdown appears in both body parts.
+3. Table-test unknown entity types and malformed filters at config load.
+4. Reference a missing template from a task and assert a named load error.
+5. Run store-aware validation with missing/blank/ambiguous address properties and
+   assert every offending entity and property is named; at runtime assert bad
+   recipients are logged and valid recipients still enqueue.
+6. Resolve a filtered recipient set and assert exactly one child job per recipient.
+7. Deny one row and redact one field from a recipient principal; assert both are absent.
+8. Match zero rows and assert a valid empty section in HTML and text.
+9. Fail one delivery and assert only its child retries while successful peers do not.
+10. Retry expansion after a child completed and assert its persistent occurrence
+    claim prevents a duplicate send.
+11. Run `rela validate` fixtures for missing templates/types and malformed filters.
+12. Table-test unknown keys at all new YAML levels, including typo suggestions.
 
 ## Research
 
 - [ ] For larger features: run `/research` to create a structured research doc
-- [ ] Searched for existing libraries that solve this problem
-- [ ] Checked codebase for similar patterns or reusable code
-- [ ] Looked for reference implementations in other projects
-- [ ] Reviewed relevant rela concepts for prior art
+- [x] Searched for existing libraries that solve this problem
+- [x] Checked codebase for similar patterns or reusable code
+- [x] Looked for reference implementations in other projects
+- [x] Reviewed relevant rela concepts for prior art
 
-**Research Doc:** <!-- Link RES-xxxx if created, or N/A for small changes -->
+**Research Doc:** Pending design review; the feature-wide SMTP/rendering research is
+captured in PLAN-EQC0Q8. This layer introduces no new third-party library.
 
 **Existing Solutions:**
-<!-- Document what you found:
-- Libraries considered (with pros/cons, why chosen or rejected)
-- Similar patterns in codebase (file:line references)
-- Reference implementations that inspired the approach
-- Relevant concepts from rela-docs or rela-issues-and-design-tickets
--->
+- `internal/dataentry/feed_provider.go` already parses section filters and queries
+  entity lists; reuse its vocabulary and extraction patterns without coupling mail
+  to the HTTP/feed surface.
+- `internal/dataentryconfig.ListColumn` is the established property/relation column
+  model. Reuse it rather than define a mail-only column dialect.
+- `internal/mailrender` is the pure, sanitized model-to-HTML/text boundary;
+  declarative mail assembles `mailrender.Message` and never emits HTML itself.
+- PR #1444's `internal/jobs` provides the process-scoped asynchronous seam,
+  memory/PostgreSQL durability tiers, handler registration, and retry policy.
+  Scheduled mail must not add a second queue through `internal/mail.Outbox`.
+- The memory sender remains the integration-test probe; no SMTP fake is needed here.
+- `internal/appbuild.ScheduledLuaWriteDeps` and `internal/visibility` establish the
+  ACL-bound reader wiring pattern. `run_as` remains identity, not capability
+  (DEC-O59WM4).
+- Scheduler fan-out, retry state, and field redaction have deliberately separate
+  tickets (TKT-XWZIOB, TKT-N52HRC, TKT-NJ91LX); this ticket must not partially
+  reproduce them.
 
 ## Approach
 
-- [ ] Technical approach chosen and documented
-- [ ] Approach builds on existing patterns (not reinventing)
-- [ ] Alternatives considered (document why rejected)
-- [ ] Dependencies identified (packages, APIs, types)
+- [x] Technical approach chosen and documented
+- [x] Approach builds on existing patterns (not reinventing)
+- [x] Alternatives considered (document why rejected)
+- [x] Dependencies identified (packages, APIs, types)
 
 **Technical Approach:**
-<!-- Document the approach with enough detail that implementation is mechanical -->
+1. Add a leaf `internal/mailtemplate` package containing strict YAML-facing template,
+   recipient, section, and style models plus syntactic validation against metamodel
+   and `filter.ParseAll`. It assembles `mailrender.Message` from an injected reader;
+   it does not know SMTP, scheduler state, or appbuild.
+2. Load `mail_templates:` alongside the existing data-entry configuration so column
+   semantics and metamodel validation share one source of truth. Unknown keys are
+   rejected recursively with the existing suggestion convention.
+3. Extend scheduler tasks to a closed `script` xor `template` action. Validate the
+   referenced template set at application assembly/`rela validate`, where both
+   configs are available; keep `scheduler.Config.validate` store-free.
+4. Register separate mail expansion and delivery job kinds on `internal/jobs`.
+   Scheduler occurrences enqueue expansion jobs. Expansion performs the bounded
+   `for_each` query and records/posts one child per recipient without waiting for it.
+5. Delivery resolves the recipient principal and current address, builds a row- and
+   field-visible reader at the appbuild boundary, queries sections, renders once,
+   stamps `mail.Message.RenderedFor`, and calls `mail.Sender` directly. Do not route
+   a job through the foundation's in-memory outbox (double queue).
+6. Persist task + occurrence + recipient child claims. Pending-only queue idempotency
+   cannot prevent recreation of a child that completed before expansion retried.
+7. Add store-aware validation for recipient properties and matching entity values to
+   the `rela validate` pipeline. Runtime repeats address validation because data can
+   change after validation; one bad entity is logged/skipped without aborting peers.
+
+Rejected: putting graph queries in `mailrender` (breaks its pure leaf boundary),
+putting templates in `.rela/mail.yaml` (mixes operator-local transport secrets with
+project content), broadcast rendering (cannot prove every recipient may read shared
+content), and scheduler job -> mail outbox double queueing.
 
 **Files to modify:**
-<!-- List specific files that will change -->
+- `internal/mailtemplate/{config,render,validate}.go` and tests (new)
+- `internal/dataentryconfig/config.go`, `validate.go`, and tests
+- `internal/scheduler/config.go`, `scheduler.go`, and tests
+- `internal/appbuild/appbuild.go`, `mail.go`, and integration tests
+- `internal/cli/validate.go` and validation tests
+- `.go-arch-lint.yml`, `.testcoverage.yml`
+- `docs/mail.md`, `docs/scheduled-tasks.md`, and the docs-project mail guide
 
 ## Security Considerations
 
-- [ ] Input sources identified (user input, config, external APIs)
-- [ ] Input validation approach defined (allowlist preferred over blocklist)
-- [ ] Security-sensitive operations identified (file access, auth, crypto)
-- [ ] Error handling doesn't leak sensitive information
+- [x] Input sources identified (user input, config, external APIs)
+- [x] Input validation approach defined (allowlist preferred over blocklist)
+- [x] Security-sensitive operations identified (file access, auth, crypto)
+- [x] Error handling doesn't leak sensitive information
 
 **Input Sources & Validation:**
-<!-- For each input: source, validation approach, what happens on invalid input -->
+- Project YAML: strict known-key decoding; allowlisted styles; known metamodel types,
+  properties, relations, columns, and parseable filters. Invalid config fails load.
+- Entity properties/bodies: untrusted graph content; read only through the injected
+  visibility wrapper and sanitized by `mailrender`.
+- Recipient addresses: require one scalar, trimmed, non-empty, header-safe address;
+  store-aware validation reports all offenders, runtime logs entity IDs and skips.
+- Links/base URL: retain `mailrender`'s http/https allowlist and safe relative-link
+  resolution. Template names are exact map keys, never paths.
 
 **Security-Sensitive Operations:**
-<!-- List operations and how they're protected -->
+- Inbox export is irreversible: `RenderedFor` is mandatory and all reads originate
+  from the ACL-bound dependency assembled for the resolved recipient; no shared
+  `run_as` or raw store escape hatch.
+- Recipient fan-out is bounded before enqueue to prevent memory/SMTP amplification.
+- Logs name template/entity/property but never body, address values, credentials, or
+  rendered message bytes.
+- Field-level redaction is a prerequisite through TKT-NJ91LX/TKT-XWZIOB.
 
 ## Test Plan
 
-- [ ] Test scenarios documented for each acceptance criterion
-- [ ] Edge cases identified and documented
-- [ ] Negative test cases defined (invalid input, error conditions)
-- [ ] Integration test approach defined (not just unit tests)
+- [x] Test scenarios documented for each acceptance criterion
+- [x] Edge cases identified and documented
+- [x] Negative test cases defined (invalid input, error conditions)
+- [x] Integration test approach defined (not just unit tests)
 
 **Test Scenarios:**
-<!-- Map each acceptance criterion to how it will be tested -->
+The Understanding section maps each criterion. Unit tests cover strict parsing,
+model assembly, styles, filter/column validation, address extraction, bounds,
+occurrence claims, and empty results. Scheduler tests cover the script/template
+union, expansion, child independence, and task liveness.
+An appbuild integration test uses a real filesystem store, ACL policy, visibility
+wrapper, renderer, job queue, and memory sender end-to-end.
 
 **Edge Cases:**
-<!-- List specific edge cases and expected behavior. Consider:
-- Empty/null/missing values
-- Boundary values (0, -1, MAX_INT)
-- Special characters, unicode, null bytes
-- Concurrent access
-- Resource exhaustion
--->
+- Missing/empty template maps remain backward compatible; template and task names
+  must be non-empty and unique by YAML map semantics.
+- Empty recipient/section results produce no sends/a valid empty section respectively.
+- Missing, list-valued, whitespace-only, malformed, CR/LF, and duplicate addresses are
+  rejected or skipped with deterministic diagnostics.
+- Unicode content remains intact; hostile markdown/URLs are sanitized by mailrender.
+- Exactly-at-limit recipients send; limit+1 logs the dropped count without silently
+  truncating. Outbox-full is surfaced and logged by the producer.
+- Config/store changes between validation and execution are handled by runtime checks.
 
 **Negative Tests:**
-<!-- What should fail? How should it fail? -->
+Unknown keys/types/properties/templates/styles, invalid filters/columns/base URLs, a
+task specifying both/neither script and template, and invalid recipient definitions
+fail load/validate with location and name. A bad runtime recipient does not fail valid
+peers; renderer or enqueue failure fails that scheduled task so existing scheduler
+failure policy applies, while later tasks remain live.
 
 ## Risk Assessment
 
-- [ ] Technical risks assessed with mitigations
-- [ ] Security risks assessed (see Security Considerations)
-- [ ] Effort estimated (xs/s/m/l/xl)
+- [x] Technical risks assessed with mitigations
+- [x] Security risks assessed (see Security Considerations)
+- [x] Effort estimated (xs/s/m/l/xl)
 
 **Risks:**
-<!-- List risks and how they will be mitigated -->
+- ACL exfiltration: remove broadcast; type the reader dependency, assemble it only
+  through recipient visibility, require/stamp `RenderedFor`, and prove row and field
+  denial end-to-end.
+- Configuration ownership drift: keep content project-owned and transport local; add
+  cross-config validation at assembly/validate rather than merging files.
+- Recipient amplification: hard expansion bound and explicit log/counter.
+- Duplicate delivery: persistent occurrence child claims; document the unavoidable
+  SMTP acknowledgement crash window rather than claiming exactly-once delivery.
+- Scheduler regression: model task action as xor while preserving legacy script state
+  keys and execution semantics; regression-test script-only configs.
+- Dependency sequencing: TKT-U2R7GU currently depends on TKT-XWZIOB, which depends on
+  TKT-N52HRC and TKT-NJ91LX. Do not enter implementation until the design review
+  confirms whether broadcast delivery can remove/relax that dependency.
 
 ## Documentation Planning
 
 For enhancements: identify what documentation needs updating.
 
-- [ ] User-facing docs identified (skip if internal refactor)
-- [ ] Docs-checklist will be created when entering implementation
+- [x] User-facing docs identified (skip if internal refactor)
+- [x] Docs-checklist will be created when entering implementation
 
 **Documentation Impact:**
-<!-- Which docs need updating? Check all that apply:
-- [ ] docs/metamodel.md - New metamodel features
-- [ ] docs/cli-reference.md - New/changed commands
-- [ ] docs/data-entry.md - UI changes
-- [ ] CLAUDE.md - New patterns or conventions
-- [ ] README.md - Project-level changes
-- [ ] N/A - Internal change, no user-facing docs needed
--->
+- [x] `docs/mail.md` — template schema, broadcast ACL model, recipient validation,
+  bounds, failure behavior, and field-redaction limitation
+- [x] `docs/scheduled-tasks.md` — `template` action and `run_as` semantics
+- [x] docs-project mail guide — complete operator example and troubleshooting
+- [x] `docs/cli-reference.md` — new `rela validate` diagnostics if enumerated there
+- [ ] `CLAUDE.md` — only if implementation establishes a reusable producer seam
 
 ## Design Review
 
