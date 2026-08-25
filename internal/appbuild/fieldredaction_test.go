@@ -5,7 +5,7 @@
 // a database backend the entity simply is not there, so the failure would look
 // like an ACL-redaction bug rather than a fixture that does not apply.
 //
-// The redaction behaviour under test is backend-agnostic — it lives in
+// The redaction behavior under test is backend-agnostic — it lives in
 // internal/visibility decorators applied at the wiring site — so covering it on
 // one backend is sufficient. What is fsstore-specific is only how the fixture
 // gets into the store.

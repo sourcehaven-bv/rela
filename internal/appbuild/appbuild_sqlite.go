@@ -88,3 +88,15 @@ func openBackend(ctx context.Context, base *SharedBase) (store.Store, search.Sea
 	}
 	return st, search.New(st, idx), idx, nil
 }
+
+// noopSQLiteCloser is the io.Closer assemble tears down when there is no search
+// index to close.
+//
+// Declared here rather than in bleveindex_shared.go despite that file being
+// compiled into this build too: the fs recipe has its own noopCloser, so a
+// shared one would be unused on the default build — dead code the linter
+// rightly rejects. Sharing it would mean also removing the fs copy, which is
+// a change to the filesystem recipe that this ticket has no reason to make.
+type noopSQLiteCloser struct{}
+
+func (noopSQLiteCloser) Close() error { return nil }
