@@ -34,6 +34,12 @@ const text = computed(() => {
     case 'chain':
       // The coordinate the world selected exists. Name it, because "published"
       // is more useful to a reader than the world's own name.
+      //
+      // The `|| w.name` arm should be unreachable: `chain` means a SELECTED
+      // coordinate matched, and the default state is reported as `unscoped`,
+      // never as `chain` with an empty pointer. It is a display fallback so a
+      // server that broke that invariant renders a world name rather than an
+      // empty badge — not a case to design around.
       return w.pointer || w.name
     case 'fallback-default':
       return 'default'

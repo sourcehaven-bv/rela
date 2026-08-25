@@ -29,11 +29,19 @@ import type { ViewResponse } from '@/api'
 const fetchViewMock = vi.fn()
 const getCommandsMock = vi.fn()
 const invokeCopyMock = vi.fn()
+// The WRITE mock. Asserting on this rather than on an internal spy is what
+// makes the world guards testable at the boundary that matters: whether a
+// PATCH leaves the client at all.
+const updateEntityMock = vi.fn()
 
 vi.mock('@/api', async (orig) => ({
   ...(await orig<typeof import('@/api')>()),
   fetchView: (...a: unknown[]) => fetchViewMock(...a),
   getCommands: (...a: unknown[]) => getCommandsMock(...a),
+}))
+vi.mock('@/api/entities', async (orig) => ({
+  ...(await orig<typeof import('@/api/entities')>()),
+  updateEntity: (...a: unknown[]) => updateEntityMock(...a),
 }))
 vi.mock('@/api/copies', () => ({
   invokeCopy: (...a: unknown[]) => invokeCopyMock(...a),
@@ -109,6 +117,9 @@ describe('EntityDetail world binding', () => {
       title: 'Edit policy',
     } as never)
     fetchViewMock.mockReset()
+    updateEntityMock.mockReset().mockResolvedValue({
+      id: entityId, type: entityType, properties: {}, content: '', _actions: {},
+    })
     getCommandsMock.mockReset().mockResolvedValue([])
     invokeCopyMock.mockReset()
     routerPush.mockClear()
@@ -133,6 +144,11 @@ describe('EntityDetail world binding', () => {
   // The anti-vacuity guard: proves the page actually rendered, so that an
   // "absent" assertion is a statement about the page rather than about a
   // crashed setup.
+  //
+  // SCOPE: it proves the ENTRY rendered, nothing more. Tests asserting on
+  // COLLECTION entities are not carried by it — their own positive controls
+  // (e.g. the badge-count assertions in the provenance block) are what make
+  // them non-vacuous. Do not read a rendersProof call as blanket cover.
   function rendersProof(wrapper: { text: () => string }) {
     expect(fetchViewMock).toHaveBeenCalled()
     expect(wrapper.text()).toContain('Access Control Policy')
@@ -264,6 +280,128 @@ describe('EntityDetail world binding', () => {
       } as never)
       rendersProof(w)
       expect(w.findComponent({ name: 'SectionEditForm' }).exists()).toBe(false)
+    })
+
+    it('refuses a checkbox toggle under a world (G1)', async () => {
+      // The checkbox lives inside v-html markdown and is caught by a delegated
+      // handler, so there is no element to `v-if` — the guard has to be in
+      // handleCheckboxToggle, and this is what holds it there.
+      //
+      // The server is NOT a backstop: `attachWorld` refuses a write only when
+      // `?world=` is on the WRITE request, and useAutoSave never attaches it.
+      // So without the guard this silently PATCHes the DEFAULT face while the
+      // user is reading a resolved one — no 422, no error, wrong state.
+      const contentSection = {
+        heading: '',
+        sectionId: 'content',
+        display: 'content',
+        isEmpty: false,
+        isGrouped: false,
+        hasContent: true,
+        content: '- [ ] a task',
+      }
+      mockRoute.query = { world: 'published' }
+      const w = await mountDetail({
+        entry: entry({ content: '- [ ] a task' }),
+        sections: [contentSection],
+      } as never)
+      rendersProof(w)
+
+      const box = w.find('input[type="checkbox"][data-cb-idx]')
+      expect(box.exists()).toBe(true) // the control renders; it just must not write
+      await box.trigger('click')
+      // Flush the SAME way as the positive control below. Without this the
+      // absence would only prove the debounce had not elapsed.
+      w.unmount()
+      await flushPromises()
+      expect(updateEntityMock).not.toHaveBeenCalled()
+
+      // Positive control: the SAME click on the SAME markup under the default
+      // world DOES schedule a write. Without this the assertion above passes
+      // against a checkbox that was never wired.
+      mockRoute.query = {}
+      const dflt = await mountDetail({
+        entry: entry({ content: '- [ ] a task' }),
+        sections: [contentSection],
+      } as never)
+      const dfltBox = dflt.find('input[type="checkbox"][data-cb-idx]')
+      expect(dfltBox.exists()).toBe(true)
+      await dfltBox.trigger('click')
+      // The content channel debounces, so flush it the way the component
+      // itself does on navigation — unmount triggers commitImmediately().
+      dflt.unmount()
+      await flushPromises()
+      expect(updateEntityMock).toHaveBeenCalled()
+    })
+
+    it('renders NO inline-edit surface on a collection ROW under a world (G3)', async () => {
+      // rowShouldRouteToInlineEdit is a SEPARATE predicate from the section
+      // one, so the entry-level test does not cover it. Rows matter doubly:
+      // under a world each row is a NEIGHBOUR's resolved face, so an edit
+      // would address the default state of an entity the page is not showing.
+      const cardSection = (extra: object = {}) => ({
+        heading: 'Implements',
+        sectionId: 'implements',
+        display: 'cards',
+        isEmpty: false,
+        isGrouped: false,
+        hasContent: false,
+        entities: [{
+          id: 'CTL-1',
+          type: 'control',
+          title: 'MFA enforcement',
+          hasContent: false,
+          editFormId: 'control-edit',
+          fields: [{ property: 'title', label: 'Title', values: ['MFA'], render: 'input' }],
+          _props: { title: 'MFA' },
+          _fields: {},
+          ...extra,
+        }],
+      })
+      mockRoute.query = { world: 'published' }
+      const w = await mountDetail({ entry: entry(), sections: [cardSection()] } as never)
+      rendersProof(w)
+      expect(w.findComponent({ name: 'SectionEditForm' }).exists()).toBe(false)
+
+      // Positive control under the default world — otherwise this passes
+      // against a row that could never have routed to inline edit anyway.
+      mockRoute.query = {}
+      const dflt = await mountDetail({ entry: entry(), sections: [cardSection()] } as never)
+      expect(dflt.findComponent({ name: 'SectionEditForm' }).exists()).toBe(true)
+    })
+
+    it('treats ?world=default as writable and unbannered (S2)', async () => {
+      // The default world IS where writes land, so this is correct — but the
+      // invariant "banner shown <=> writes blocked" rests on TWO independently
+      // maintained expressions (`isWorldBound` in useWorld, and the banner's
+      // own v-if). This pins them together for the one spelling where they
+      // could most plausibly drift: the explicit `default`, which the API
+      // accepts and which round-trips through the URL.
+      mockRoute.query = { world: 'default' }
+      const w = await mountDetail(viewResponse())
+      rendersProof(w)
+      expect(w.find('.world-banner').exists()).toBe(false)
+      expect(button(w, 'Delete')).toBeDefined()
+      // And the param is OMITTED rather than sent as the reserved name.
+      expect(fetchViewMock).toHaveBeenCalledWith(entityType, entityId, undefined)
+    })
+
+    it('hides operator COMMANDS under a world (S1)', async () => {
+      // A command pipes a rendered view to a shell script's stdin, and the
+      // server passes defaultViewWorld() explicitly there — so under a world
+      // the script gets DRAFT content while the user reads published. What a
+      // world-bound command should mean is another ticket; rendering the
+      // button beside a "read-only" banner in the meantime is not.
+      getCommandsMock.mockResolvedValue([{ id: 'publish', label: 'Run publish script' }])
+      mockRoute.query = { world: 'published' }
+      const w = await mountDetail(viewResponse())
+      rendersProof(w)
+      expect(w.text()).not.toContain('Run publish script')
+
+      // Positive control: same command list, default world, button renders.
+      mockRoute.query = {}
+      const dflt = await mountDetail(viewResponse())
+      expect(dflt.text()).toContain('Run publish script')
     })
 
     it('offers the way back to the default world', async () => {

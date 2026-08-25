@@ -80,7 +80,28 @@ const backTarget = useBackTarget()
 const loading = ref(true)
 const error = ref<string | null>(null)
 const viewData = ref<ViewResponse | null>(null)
-const commands = ref<Command[]>([])
+const loadedCommands = ref<Command[]>([])
+
+// Commands are SUPPRESSED under a world, and this is a stop-gap with a known
+// expiry rather than a design.
+//
+// A command pipes a rendered view to an operator shell script's stdin. The
+// server passes `defaultViewWorld()` explicitly at that call site
+// (internal/dataentry/commands.go), so under `?world=published` the script
+// receives DRAFT content while the user is reading the published face — and it
+// receives it "past any layer that could observe it", as that comment says.
+//
+// What a world-bound command should MEAN is deliberately another ticket. But
+// until it has one, rendering the buttons beside a banner that says "read-only"
+// is the affordance-that-lies shape: the page would be promising an action
+// whose input is not what is on screen. Hiding them is the honest reading of
+// today's server behaviour, not a claim about tomorrow's.
+//
+// Gated HERE rather than on the two button sites (desktop header + mobile
+// overflow) so a third render site cannot be added without inheriting it.
+const commands = computed<Command[]>(() =>
+  isWorldBound.value ? [] : loadedCommands.value,
+)
 const showOverflowMenu = ref(false)
 
 const commandModalRef = ref<InstanceType<typeof CommandModal> | null>(null)
@@ -356,7 +377,7 @@ async function loadCommands() {
   commandsAbort = new AbortController()
   const localAbort = commandsAbort
   try {
-    commands.value = await getCommands(
+    loadedCommands.value = await getCommands(
       { pageType: 'entity', entityType: props.entityType },
       localAbort.signal
     )
@@ -364,7 +385,7 @@ async function loadCommands() {
     if (localAbort.signal.aborted) return
     if (isCancelledFetch(err)) return
     console.error('Failed to load commands:', err)
-    commands.value = []
+    loadedCommands.value = []
   }
 }
 
@@ -459,6 +480,13 @@ async function requestDelete() {
 //
 // So writes happen on the default face, where what you see is what you copy.
 // "Go to draft" is one click away, which is the honest path.
+//
+// NOTE the overload: `undefined` here means EITHER "the server computed no
+// offers" (an unwired copy service) OR "suppressed because we are world-bound",
+// which `Entity._copies` deliberately keeps distinct from `[]`. Nothing
+// branches on absent-vs-empty today — CopyMenu renders nothing for both — so
+// this is safe. If a caller ever does branch on it, this computed becomes a
+// lie and must return `[]` for the suppressed case instead.
 const copyOffers = computed<CopyOffer[] | undefined>(() =>
   isWorldBound.value ? undefined : entry.value?._copies,
 )
