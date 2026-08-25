@@ -68,6 +68,13 @@ func resolveFilterVariablesInList(value string) string {
 	return strings.Join(parts, ",")
 }
 
+// TODO(TKT-HFEKVN): this list is the THIRD copy of the same layout set —
+// metamodel.ParseDateValue and predicate.parseDateLiteral hold the other two,
+// and their comments say they mirror each other by hand. They already disagree:
+// this one accepts minute precision and ignores a property's declared format:
+// (compareValues gets two bare strings and has no PropertyDef in scope), so a
+// custom-format date compares correctly under --filter and incorrectly here.
+//
 // temporalLayouts are the layouts a filter value may use, tried in order.
 // A bare date is listed first so it keeps winning for date-typed properties;
 // the datetime layouts exist because a `datetime` property stores RFC3339 and
