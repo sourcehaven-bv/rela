@@ -5,7 +5,7 @@ title: 'Computed properties in schema.yaml: derived, non-editable, stored and in
 kind: enhancement
 priority: medium
 effort: l
-status: review
+status: done
 ---
 
 ## Problem
