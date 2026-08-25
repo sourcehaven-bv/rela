@@ -1,5 +1,5 @@
 ---
 from: TKT-XWZIOB
-type: depends-on
+relation: depends-on
 to: TKT-YOED3R
 ---

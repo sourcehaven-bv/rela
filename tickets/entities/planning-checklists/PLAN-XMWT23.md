@@ -66,8 +66,9 @@ captured in PLAN-EQC0Q8. This layer introduces no new third-party library.
 - `internal/appbuild.ScheduledLuaWriteDeps` and `internal/visibility` establish the
   ACL-bound reader wiring pattern. `run_as` remains identity, not capability
   (DEC-O59WM4).
-- Scheduler fan-out and occurrence state have deliberately separate tickets
-  (TKT-XWZIOB, TKT-N52HRC); field redaction already shipped in TKT-BUYEW1. This ticket must not partially
+- Scheduler fan-out is TKT-XWZIOB; field redaction already shipped in
+  TKT-BUYEW1. The legacy scheduler ladder work in TKT-N52HRC is independent
+  after TKT-YOED3R supplied bounded child-job retries. This ticket must not partially
   reproduce them.
 
 ## Approach
@@ -191,8 +192,8 @@ failure policy applies, while later tasks remain live.
   SMTP acknowledgement crash window rather than claiming exactly-once delivery.
 - Scheduler regression: model task action as xor while preserving legacy script state
   keys and execution semantics; regression-test script-only configs.
-- Dependency sequencing: TKT-U2R7GU currently depends on TKT-XWZIOB, which depends on
-  TKT-N52HRC and the completed TKT-YOED3R job seam. Do not enter implementation until the design review
+- Dependency sequencing: TKT-U2R7GU depends on TKT-XWZIOB and the completed
+  TKT-YOED3R job seam. TKT-N52HRC is no longer a blocker. Do not enter implementation until the design review
   confirms whether broadcast delivery can remove/relax that dependency.
 
 ## Documentation Planning

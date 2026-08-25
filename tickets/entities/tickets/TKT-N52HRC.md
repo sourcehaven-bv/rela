@@ -102,13 +102,14 @@ The occurrence key exists to stop a *calendar* double-run: Monday's retry firing
 alongside Tuesday's scheduled run. An interval task has no calendar boundary to
 collide across, so it cannot suffer that failure.
 
-Deriving a slot was considered and rejected. `parseSchedule` (`config.go:140-178`)
-accepts any positive duration, so slots need not divide a day: a `7h` interval
-gives 3.43 slots/day, which drift across midnight. `time.Truncate` also works on
-absolute time since the epoch, so on a DST changeover a local 14:00 truncates to
-12:00 CEST — the wrong boundary. And it would change `IsDue` semantics for every
-existing interval task, firing on slot edges instead of N after the last run: a
-silent behaviour change nobody asked for.
+Deriving a slot was considered and rejected. `parseSchedule`
+(`config.go:140-178`) accepts any positive duration, so slots need not divide a
+day: a `7h` interval gives 3.43 slots/day, which drift across midnight.
+`time.Truncate` also works on absolute time since the epoch, so on a DST
+changeover a local 14:00 truncates to 12:00 CEST — the wrong boundary. And it
+would change `IsDue` semantics for every existing interval task, firing on slot
+edges instead of N after the last run: a silent behaviour change nobody asked
+for.
 
 Consequence: `Tasks[id]` holds an occurrence for day/weekday schedules and a
 timestamp for interval ones, so the encoding must be tagged and the difference
@@ -124,10 +125,10 @@ COMPLETED occurrence; it does not enumerate missed ones.
 `tickInterval` being 60s (`scheduler.go:48`), so it can fire at most once per
 tick. Out of scope here, but worth knowing.
 
-Separately, `durationRe` (`config.go:119`) admits uppercase `M`/`H` as its prefix
-gate while `time.ParseDuration` rejects them, so `every: 7H` passes the regex and
-then fails with a confusing error. One-line fix whenever that file is next
-touched.
+Separately, `durationRe` (`config.go:119`) admits uppercase `M`/`H` as its
+prefix gate while `time.ParseDuration` rejects them, so `every: 7H` passes the
+regex and then fails with a confusing error. One-line fix whenever that file is
+next touched.
 
 ## Scope: IS NOT
 
