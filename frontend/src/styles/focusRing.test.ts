@@ -56,18 +56,41 @@ describe('focus rings use the shared token', () => {
     expect(offenders, `hardcoded indigo found:\n${offenders.join('\n')}`).toEqual([])
   })
 
-  it('every 2px box-shadow ring resolves through a custom property', () => {
+  // Generalised deliberately. The first version of this test matched
+  // `box-shadow: 0 0 0 2px` and only the two rgba triples being swept, which
+  // enforces "don't reintroduce THESE colours at THIS width" — not the actual
+  // invariant. It missed a live offender in the same tree:
+  // DocumentsPanel's `0 0 0 3px rgba(59, 130, 246, 0.1)`, a hardcoded BLUE at
+  // 3px, wrong on both axes the narrow regex keyed on.
+  //
+  // This version matches any ring-shaped box-shadow at any width and any
+  // colour notation, and requires a custom property.
+  it('every ring-shaped box-shadow resolves through a custom property', () => {
+    // Matched against the WHOLE declaration, not a line. Prettier wraps a
+    // two-shadow ring across three lines, so a line-scoped regex never sees
+    // `box-shadow:` and its colour together — which let a novel hardcoded
+    // colour through in exactly the rings this ticket created. Verified by
+    // mutation: `0 0 0 4px #00ff00` on a continuation line passed the
+    // line-based version and fails this one.
+    const COLOUR_LITERAL = /#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/i
+    // A spread-only shadow (`0 0 0 <n>px`) is a ring; anything with a real
+    // offset or blur is a drop shadow and not a focus indicator.
+    const RING_SPREAD = /(^|,)\s*0\s+0\s+0\s+[\d.]+px/
     const offenders: string[] = []
     for (const f of files) {
       const text = readFileSync(f, 'utf8')
-      for (const [i, line] of text.split('\n').entries()) {
-        if (!/box-shadow:\s*0 0 0 2px/.test(line)) continue
-        if (/^\s*(\*|\/\*|\/\/)/.test(line)) continue
-        // A ring must name a var(); a raw colour is what this ticket removed.
-        if (!/var\(--/.test(line)) offenders.push(`${rel(f)}:${i + 1}  ${line.trim()}`)
+      // Strip comments first so prose examples never trip the guard.
+      const code = text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+      for (const m of code.matchAll(/box-shadow:\s*([^;}]*)[;}]/g)) {
+        const value = m[1]
+        if (!RING_SPREAD.test(value)) continue
+        if (COLOUR_LITERAL.test(value.replace(/var\(--[\w-]+,[^)]*\)/g, ''))) {
+          const line = code.slice(0, m.index).split('\n').length
+          offenders.push(`${rel(f)}:${line}  box-shadow: ${value.trim().replace(/\s+/g, ' ').slice(0, 80)}`)
+        }
       }
     }
-    expect(offenders, `ring with a non-token colour:\n${offenders.join('\n')}`).toEqual([])
+    expect(offenders, `ring with a hardcoded colour:\n${offenders.join('\n')}`).toEqual([])
   })
 
   // The error-state ring has the identical defect and was found BY the guard
@@ -110,18 +133,18 @@ describe('forced-colors focus fallback', () => {
     expect(main).toContain("import './styles/focus-ring.css'")
   })
 
-  it('does not use !important, so operator custom.css can still win', () => {
-    // The @layer rela wrap means an unlayered operator rule already outranks
-    // this; a layered !important would invert that (see docs/customisation.md).
-    //
-    // Checked against DECLARATIONS only. The file's own comment explains why
-    // !important is avoided, so a naive substring match finds its own prose
-    // and fails on a correct file — which it did on first run.
+  // This test previously asserted the OPPOSITE — that `!important` is absent —
+  // and in doing so pinned the bug in place. Without it the rule loses the
+  // cascade to every `input:focus { outline: none }` it exists to override
+  // ((0,1,0) vs (0,1,1), and Vue's scoped [data-v-x] widens the gap), so the
+  // control ends up with no indicator at all under forced-colors. Verified in
+  // Chrome: with `!important` the fallback wins; without it, it does not.
+  it('uses !important, without which the rule loses the cascade and does nothing', () => {
     const declarations = css
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .split('\n')
       .filter((l) => l.includes(':'))
       .join('\n')
-    expect(declarations).not.toContain('!important')
+    expect(declarations).toContain('outline: 2px solid Highlight !important')
   })
 })

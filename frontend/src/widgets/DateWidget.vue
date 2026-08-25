@@ -73,7 +73,9 @@ input {
 input:focus {
   outline: none;
   border-color: var(--accent-color, #6366f1);
-  box-shadow: 0 0 0 2px var(--focus-ring);
+  box-shadow:
+    0 0 0 2px var(--focus-ring-gap),
+    0 0 0 4px var(--focus-ring);
 }
 
 input:disabled {

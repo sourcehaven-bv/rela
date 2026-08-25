@@ -313,7 +313,9 @@ function isDaySelected(day: Weekday): boolean {
 .rrule-builder__date:focus {
   outline: none;
   border-color: var(--accent-color);
-  box-shadow: 0 0 0 2px var(--focus-ring);
+  box-shadow:
+    0 0 0 2px var(--focus-ring-gap),
+    0 0 0 4px var(--focus-ring);
 }
 
 .rrule-builder__weekdays {
@@ -382,7 +384,9 @@ function isDaySelected(day: Weekday): boolean {
 .rrule-builder__day-input:focus {
   outline: none;
   border-color: var(--accent-color);
-  box-shadow: 0 0 0 2px var(--focus-ring);
+  box-shadow:
+    0 0 0 2px var(--focus-ring-gap),
+    0 0 0 4px var(--focus-ring);
 }
 
 .rrule-builder__dtstart {

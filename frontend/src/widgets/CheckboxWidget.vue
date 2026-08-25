@@ -123,10 +123,19 @@ input[type='checkbox']:hover:not(:disabled) {
    local `color-mix` at 30% — the first fix for the hardcoded indigo — which is
    now hoisted into `--focus-ring` and used by every focusable control. The
    token is fully opaque because no translucent ring reaches WCAG 2.2's 3:1
-   non-text minimum; 30% scored 1.46:1. */
+   non-text minimum; 30% scored 1.46:1.
+
+   TWO shadows, not one, via the shared --focus-ring-gap band. This widget is
+   the extreme case that motivated the token: a CHECKED checkbox is FILLED with
+   --accent-color and the ring is that same colour, so a single ring abuts its
+   own fill at 1:1 contrast and disappears entirely — focused+checked would
+   look identical to unfocused. Every other control has the milder version of
+   the same problem (accent border against accent ring). */
 input[type='checkbox']:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px var(--focus-ring);
+  box-shadow:
+    0 0 0 2px var(--focus-ring-gap),
+    0 0 0 4px var(--focus-ring);
 }
 
 /* `:not(.display-checkbox)` is load-bearing, not defensive.

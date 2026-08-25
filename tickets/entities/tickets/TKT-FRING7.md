@@ -5,7 +5,7 @@ title: Focus rings are a hardcoded indigo that ignores the theme, and vanish ent
 kind: enhancement
 priority: medium
 effort: s
-status: in-progress
+status: done
 ---
 
 ## Goal
@@ -93,3 +93,48 @@ TKT-CBSTYLE.
   every touched control needs its focus state confirmed rather than assumed —
   the same trap that let a specificity bug ship in TKT-CBSTYLE under green
   tests.
+
+## Outcome
+
+Three tokens (`--focus-ring`, `--error-ring`, `--focus-ring-gap`), 26 rings
+converted across 19 files, and a global forced-colors fallback. Rings now
+follow the theme and an operator's `custom.css`, and clear WCAG 2.2 §1.4.11 at
+4.14:1 (light) / 5.85:1 (dark) where the old ring scored 1.13:1.
+
+The ticket as written was "swap the hue, keep the look". Three things changed
+that, each found by measuring or by review rather than by inspection:
+
+1. **No translucent ring can pass WCAG.** Measured during implementation; even
+   30% alpha reaches only 1.46:1. Raised as a scope decision rather than
+   decided unilaterally — the user chose the WCAG-passing ring, accepting a
+   visibly bolder focus state everywhere.
+2. **The forced-colors rule silently did nothing** ([[RR-FRC1SP]]) — a bare
+   `:focus-visible` loses the cascade to every `input:focus { outline: none }`
+   it exists to override. It needs `!important`, and the test that asserted
+   `!important` was absent had been pinning the bug in place.
+3. **The palette path dropped every new token** ([[RR-FRC4PL]]) — worse than
+   the original bug, since a palette-configured custom app rendered no ring at
+   all. The token contract has two renderers and only one is obvious.
+
+## Follow-ups
+
+- **Assert built CSS, not source.** All seven guards match text, and text
+  matching cannot see a cascade. It let a specificity defeat ship
+  ([[RR-FRC1SP]]) and a duplicated declaration pass a byte-sync test
+  ([[RR-FRC5DP]]). `postcss` is already a dependency and `TestBuiltCSSIsLayered`
+  already reads build output — a specificity comparison and a duplicate-property
+  check over the emitted bundle would close the whole class.
+- **Collapse the two-shadow form into one `.focus-ring` utility.** It is now
+  repeated ~23 times. A single class would make the guard trivial ("no
+  component declares a focus box-shadow") and stop the next widget getting it
+  subtly wrong. Deliberately deferred: it edits every focusable component's
+  markup, which is a much larger diff than a token swap.
+- **Three controls still have no focus indicator in normal mode** —
+  `EntityPickerModal.vue:319`, `CommandPaletteModal.vue:337` (both the
+  auto-focused primary input of a modal) and `AdHocFilterMenu.vue:386`.
+  Verified pre-existing and untouched by this branch, so not a regression, but
+  the same defect class. Note the wrinkle: because they suppress the outline in
+  their *base* rule, the new global rule restores them under forced-colors —
+  visible in High Contrast, invisible normally.
+- **The 47 dead `var(--accent-color, #6366f1)` fallbacks** remain, out of scope
+  throughout. They cannot render, so this is cosmetic cleanup.

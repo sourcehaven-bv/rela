@@ -20,14 +20,29 @@
  * OS guarantees. A control that never suppressed its outline is unaffected —
  * it is already getting the same treatment from the UA.
  *
- * NOTE ON `@layer`. The build wraps every emitted stylesheet in `@layer rela`
- * so operator `custom.css` can win the cascade. That applies here too, which
- * is correct: an operator who deliberately restyles focus should still be able
- * to. `!important` is NOT used precisely so that stays true.
+ * WHY `!important`, WHICH IS OTHERWISE BANNED HERE.
+ * Without it this rule does nothing at all. The declarations it must beat are
+ * component rules like `input:focus { outline: none }` — (0,1,1), and Vue's
+ * scoped `[data-v-x]` lifts them further — against a bare `:focus-visible` at
+ * (0,1,0). The component rule wins, the outline stays suppressed, the
+ * box-shadow is dropped by forced-colors, and the control ends up with NO
+ * indicator: precisely the bug this file exists to fix. Verified in a CSS
+ * engine, not assumed.
+ *
+ * The obvious objection — "layered !important inverts the cascade and steals
+ * the override from operator custom.css" (docs/customisation.md) — does not
+ * apply as an argument AGAINST it here. That inversion is already true of
+ * every layered `!important` in the tree, and this one is scoped to a media
+ * query an operator restyling their skin is not in. Forced-colors is an
+ * accessibility floor, not a theme: an operator should not be able to
+ * accidentally remove the only focus indicator a High Contrast user has.
+ *
+ * `revert` is the tempting alternative (hand the outline back to the UA) but
+ * it loses the same specificity race, so it is not one.
  */
 @media (forced-colors: active) {
   :focus-visible {
-    outline: 2px solid Highlight;
-    outline-offset: 2px;
+    outline: 2px solid Highlight !important;
+    outline-offset: 2px !important;
   }
 }

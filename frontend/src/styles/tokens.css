@@ -19,7 +19,9 @@
   --sidebar-text: #f3f2ef;
   --accent-color: #4772fb;
 
-  /* Focus-ring fill, for `box-shadow: 0 0 0 2px var(--focus-ring)`.
+  /* Focus-ring fill. Used as the OUTER of two shadows:
+   *
+   *   box-shadow: 0 0 0 2px var(--focus-ring-gap), 0 0 0 4px var(--focus-ring);
    *
    * TWO fixes over the hand-written `rgba(99, 102, 241, 0.1)` rings this
    * replaced (TKT-FRING7). It is an alias of --accent-color, not a literal,
@@ -39,6 +41,19 @@
    * dedicated hue) without repainting every accent-coloured surface. */
   --focus-ring: var(--accent-color);
 
+  /* The separator band that goes BETWEEN a control and its ring, as the inner
+   * of two shadows:
+   *
+   *   box-shadow: 0 0 0 2px var(--focus-ring-gap), 0 0 0 4px var(--focus-ring);
+   *
+   * Needed because most focus rules also set `border-color: var(--accent-color)`,
+   * and --focus-ring is that same colour — so a single ring abuts its own
+   * border at 1:1 contrast and reads as one thick accent band with no shape.
+   * WCAG 1.4.11 wants 3:1 against ADJACENT colours, and the inner adjacency is
+   * the one a page-background measurement misses. The checked checkbox is the
+   * extreme case: accent ring on an accent FILL, i.e. invisible. */
+  --focus-ring-gap: var(--bg-color);
+
   /* The error-state counterpart, for a field that failed validation. Same
    * story as --focus-ring: the six widgets that draw one were writing
    * `rgba(239, 68, 68, …)`, a red that is not this app's --error-color
@@ -46,6 +61,7 @@
    * for the same WCAG 1.4.11 reason — an invalid field is precisely where the
    * indicator must not be a faint tint. */
   --error-ring: var(--error-color);
+
   --bg-color: #f3f2ef;
   --text-color: #191919;
   --border-color: #e0ddd5;
