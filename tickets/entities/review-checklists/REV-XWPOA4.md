@@ -2,73 +2,98 @@
 id: REV-XWPOA4
 type: review-checklist
 title: 'Review: Wire the SQLite backend: sqlite build tag, appbuild recipe, release and CI isolation'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
+PR #1434 · branch `feat/sqlite-wiring-TKT-L1A3PH`.
+
 ## Automated Checks
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Comment lint gate clean (`just comment-lint`)
-- [ ] Coverage maintained (`just coverage-check`)
-
-**Comment findings.** `just comment-report` lists the advisory rules
-(duplication, nil-contract, param-contract, restatement). They are not a merge
-gate, but a finding your diff *introduces* should be fixed or suppressed — don't
-grow the backlog.
-
-Every rule is a heuristic over prose, so false positives are expected. To
-suppress one, prefer the inline form on the declaration line, which travels with
-the code and is reviewed in this diff:
-
-```go
-func f(p string) {} //commentlint:ignore param-contract  p is contained by Clone
-```
-
-Use `.commentlint.yml` (`ignore:` path globs, `allow-phrases:`) only when the
-same prose recurs across many sites. A reason is required either way — an
-unexplained suppression is a finding nobody can re-evaluate later.
+- [x] All four build-tag combinations compile (`just build-check-tags`)
+- [x] Six release targets cross-compile at `CGO_ENABLED=0`
+- [x] `go test -tags sqlite ./internal/appbuild/... ./internal/cli/...` — green
+- [x] Default build: store, appbuild and docscli suites all green, pgstore
+against a live PostgreSQL
+- [x] `golangci-lint` — 0 issues under both the default and sqlite tags
+- [x] `just arch-lint` clean; `just plimsoll` clean
+- [x] Docs regenerated from `docs-project/` and committed
 
 ## Code Review
 
-- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
-- [ ] All critical review-responses addressed
-- [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
+- [x] Reviewed by the `cranky-code-reviewer` agent
+- [x] All critical and significant findings addressed
 
-**Review Responses:** <!-- List IDs of review-response entities created, e.g.,
-RR-xxxx -->
+**The review found two critical bugs I had missed, and both were real.**
+
+I had asked it specifically to find files whose tags should have widened and did
+not. It found one — and it was the worst kind, because it writes to data.
+
+| ID | Severity | Status | Finding |
+|----|----------|--------|---------|
+| RR-S185UV | critical | addressed | `rela-desktop` bricks on re-selecting the already-open project |
+| RR-ZGHOI1 | critical | addressed | `rela-docs` screenshot capture could seed fixtures into a real database |
+| RR-EH1K2S | significant | addressed | No `PRAGMA user_version`, so a ladder could never be retrofitted cleanly |
+| RR-I6GF36 | significant | addressed | `rela db migrate` exited non-zero for a no-op; CI lacked negative tag assertions |
+| RR-L03E7L | minor | addressed | Shared-bleve tag did not state its own requirement; third copy of the closer |
+| RR-R5RVIX | minor | addressed | Single-process invariant is per-project, not per-machine |
+
+**The desktop bug is the one worth dwelling on.** `LoadProject` opened the new
+store before closing the previous services — an ordering that was fine for every
+prior backend because none held an exclusive resource. With SQLite, re-selecting
+the already-open project from the recent-projects menu hits *this process's own
+lock*, and the error names its own pid as the culprit. I reproduced it before
+fixing rather than reasoning about it:
+
+```
+REPRODUCED — reopening the same project fails:
+  another process is using .../rela.db (held by pid 71054 on Space.local ...)
+```
+
+Nothing would have caught it: `rela-desktop` appears in no goreleaser build and
+no CI isolation assertion. It does now.
+
+**The docs-capture bug is the same class as the one I did catch.** I found the
+`cli/db_nonpostgres.go` tag trap myself, three sessions earlier, and fixed it.
+`internal/docscli/capturer_fs.go` was the *identical* pattern — `!postgres`,
+inheriting into the sqlite build — and I did not look for a second instance of a
+bug I had already found once. Its doc comment even asserted "an ephemeral
+fsstore that never touches real data", which is false under `-tags sqlite`.
+
+**On the `user_version` finding, the reviewer's sharpest point was about the
+future, not the present.** Shipping without a ladder is defensible; shipping
+without a *version marker* is not, because a ladder retrofitted later cannot
+tell v1 from v2 and would have to sniff `pragma_table_info` to guess. Stamping
+it now costs nothing and is the difference between a follow-up ticket and an
+archaeology project.
+
+No findings were deferred or disputed.
 
 ## Acceptance Verification
 
-- [ ] Each acceptance criterion tested (reference planning checklist)
-- [ ] Test evidence documented in implementation checklist
+| AC | Verdict | Evidence |
+|----|---------|----------|
+| 1 — `-tags sqlite` builds | **PASS** | `build-check-tags` covers all four combinations |
+| 2 — six targets at `CGO_ENABLED=0` | **PASS** | linux/darwin/windows × amd64/arm64 |
+| 3 — `rela db` correct under sqlite | **PASS** | all three subcommands exit 0 and report schema version 1 |
+| 4 — CI isolation | **PASS** | 8 assertions now, incl. negative tag-conflict checks and rela-desktop |
+| 5 — appbuild suite under the tag | **PASS** | all three packages green |
+| 6 — no-ops justified | **PASS** | each carries its reasoning, now with the correct per-project scope |
+| 7 — arch-lint / lint / coverage | **PASS** | clean under both tags |
 
-**Acceptance Status:**
-<!-- For each acceptance criterion, state PASS/FAIL with evidence -->
+Verified end-to-end through the shipped binary rather than only the suite:
+created entities and a relation, confirmed the data is in SQLite with zero
+markdown files, and confirmed a real second process is refused by the lock and
+admitted again on release.
 
-## Documentation (enhancements only)
+## Documentation
 
-Skip this section for bugs and internal refactors.
-
-- [ ] Docs-checklist created and linked via `has-docs`
-- [ ] User-facing documentation updated
-- [ ] Docs-checklist marked as done
-
-**Docs Checklist:** <!-- e.g., DOCS-xxxx -->
-
-## Final Checks
-
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
-
-## Pull Request
-
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
-
-**PR:** <!-- e.g., https://github.com/org/repo/pull/123 -->
+- [x] `docs/sqlite-backend.md` — generated from a guide entity, covering the
+single-writer constraint, the network-filesystem refusal, and **plainly stating
+that this backend has neither git history nor version history today**
+- [x] `CLAUDE.md` storage-backend table gains a row plus the isolation rule
+- [x] `README.md` index regenerated
+- [x] Reasoning documented where it would otherwise be undone —
+`releaseLoadedProject` explains the ordering requirement at the site someone
+would reverse it
