@@ -88,7 +88,7 @@ func (r *PolicyReader) Filter(ctx context.Context, candidates []*entity.Entity) 
 	return out
 }
 
-// FilterHeaders implements [HeaderFilterer]: the [Filter] contract applied
+// FilterHeaders implements [HeaderFilterer]: the [PolicyReader.Filter] contract applied
 // to content-free headers.
 //
 // Identical gating — one PermitsReadMany per distinct type, order preserved,

@@ -113,10 +113,17 @@ func TestIdpSyncAction_SkipsOn404(t *testing.T) {
 func runIdpSync(t *testing.T, ws *mockWorkspace, script string, secrets, params map[string]string) {
 	t.Helper()
 	var buf strings.Builder
+	// Grant exactly the secrets this fixture supplies, plus HTTP — the shape a
+	// real idp-sync action declares in config (TKT-YH52OM).
+	names := make([]string, 0, len(secrets))
+	for k := range secrets {
+		names = append(names, k)
+	}
 	rt := NewWriter(ws.services("/tmp"), &buf,
 		WithSecrets(secrets),
 		WithParams(params),
 		WithActionMode(),
+		WithCapabilities(Capabilities{HTTP: true, Secrets: names}),
 	)
 	defer rt.Close()
 	if _, err := rt.RunActionString(script, "idp-sync.lua"); err != nil {

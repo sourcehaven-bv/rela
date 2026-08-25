@@ -74,6 +74,27 @@ type ReadDeps struct {
 
 	Meta        *metamodel.Metamodel
 	ProjectRoot string
+
+	// Capabilities declares the ambient, non-graph capabilities a runtime
+	// built from these deps may reach — outbound HTTP, the AI provider, named
+	// secrets, and rela.write_file (TKT-YH52OM).
+	//
+	// The zero value grants NOTHING, which is the point: before this existed
+	// every runtime on every surface held http, ai and the entire contents of
+	// .rela/secrets.yaml, so any script could read a secret and POST it out in
+	// two calls. A forgotten wiring must deny, exactly as a nil VisibleReader
+	// denies rather than falling back to a raw handle (RR-X9NVHI).
+	//
+	// It lives on ReadDeps rather than WriteDeps because READ-only surfaces
+	// (validation rules, document renders) had the same exposure — they cannot
+	// mutate the graph, but they could still exfiltrate.
+	//
+	// Precedence: a NON-EMPTY [WithCapabilities] overrides this; an empty one
+	// leaves it alone. Engine.execute passes that option unconditionally, so
+	// treating an empty grant as a revocation silently erased this field for
+	// every plain ExecuteCode/ExecuteFile caller — which is how the scheduler
+	// runs. See the WithCapabilities godoc.
+	Capabilities Capabilities
 }
 
 // Mutator is the consumer-side write surface Lua bindings call into

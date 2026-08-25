@@ -7,14 +7,15 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 )
 
 // installCalendarSidebarConfig publishes a Config carrying one calendar over
-// tickets alongside a list, so a calendar entry can be compared against an
-// entry that does carry a count.
-func installCalendarSidebarConfig(app *App) {
+// tickets alongside a list, so a calendar entry can be compared against another
+// entry kind.
+func installCalendarSidebarConfig(app *App, nav []dataentryconfig.NavigationEntry) {
 	cur := app.State()
 	next := *cur
 	cfg := *cur.Cfg
@@ -27,16 +28,12 @@ func installCalendarSidebarConfig(app *App) {
 			Sources: []dataentryconfig.CalendarSource{{EntityType: "ticket", Date: "due"}},
 		},
 	}
-	cfg.Navigation = []dataentryconfig.NavigationEntry{
-		{Label: "All", List: "all-tickets"},
-		{Label: "Schedule", Calendar: "schedule"},
-	}
+	cfg.Navigation = nav
 	next.Cfg = &cfg
 	app.schema.Publish(&next)
 }
 
-// sidebarItemsByLabel returns every top-level sidebar item keyed by label,
-// including those without a count (which sidebarCountsByLabel drops).
+// sidebarItemsByLabel performs a sidebar request and returns items by label.
 func sidebarItemsByLabel(ctx context.Context, t *testing.T, app *App) map[string]v1.SidebarItem {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_sidebar", http.NoBody)
@@ -60,18 +57,13 @@ func sidebarItemsByLabel(ctx context.Context, t *testing.T, app *App) map[string
 }
 
 // TestSidebar_CalendarEntry covers the calendar navigation arm: the href and
-// icon are minted server-side, and — unlike a list or kanban — no count is
-// attached.
-//
-// The absent count is the behavior under test, not an oversight. A list counts
-// the set it displays; a calendar displays one period, so a total over all time
-// could never agree with what is on screen and would never change as the user
-// navigates. The sibling list entry is asserted to still carry a count, so a
-// regression that drops counts wholesale cannot pass this test.
+// icon are minted server-side, the same way every other entry kind's are.
 func TestSidebar_CalendarEntry(t *testing.T) {
 	app := newTestAppV1(t)
-	seedSidebarWorld(app)
-	installCalendarSidebarConfig(app)
+	installCalendarSidebarConfig(app, []dataentryconfig.NavigationEntry{
+		{Label: "All", List: "all-tickets"},
+		{Label: "Schedule", Calendar: "schedule"},
+	})
 
 	items := sidebarItemsByLabel(context.Background(), t, app)
 
@@ -85,13 +77,10 @@ func TestSidebar_CalendarEntry(t *testing.T) {
 	if cal.Icon != "calendar" {
 		t.Errorf("icon = %q, want calendar", cal.Icon)
 	}
-	if cal.Count != nil {
-		t.Errorf("a calendar entry must carry no count, got %d", *cal.Count)
-	}
-
-	// Guard against a regression that simply stops emitting counts.
-	if list, ok := items["All"]; !ok || list.Count == nil {
-		t.Errorf("the sibling list entry must still carry a count, got %+v", list)
+	// The sibling list entry proves the sidebar rendered normally rather than
+	// the calendar arm being the only thing exercised.
+	if _, ok := items["All"]; !ok {
+		t.Errorf("list entry missing: %+v", items)
 	}
 }
 
@@ -100,19 +89,14 @@ func TestSidebar_CalendarEntry(t *testing.T) {
 // a calendar introduces no gating path of its own.
 func TestSidebar_CalendarHiddenWithoutPermission(t *testing.T) {
 	app := newTestAppV1(t)
-	seedSidebarWorld(app)
-	installCalendarSidebarConfig(app)
-
-	cur := app.State()
-	next := *cur
-	cfg := *cur.Cfg
-	cfg.Navigation = []dataentryconfig.NavigationEntry{
+	installCalendarSidebarConfig(app, []dataentryconfig.NavigationEntry{
 		{Label: "Schedule", Calendar: "schedule", Permission: "view_schedule"},
-	}
-	next.Cfg = &cfg
-	app.schema.Publish(&next)
+	})
 
-	d := mustNewACL(t, sidebarPolicy(), app.store)
+	d := mustNewACL(t, &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
+		Assignments: map[string]string{"alice": "viewer"},
+	}, app.store)
 	app.acl = d
 
 	items := sidebarItemsByLabel(gateCtxFor(aliceCtx(), t, d), t, app)

@@ -230,7 +230,7 @@ func equalsCond(b *sqlBuilder, txt, jsn, value string) string {
 //     the in-package constants `"in"` / `"out"`
 //
 // User data never reaches the SQL text. The same property holds
-// when [BuildGraphQuerySQLForTest] is invoked from tests — the
+// when BuildGraphQuerySQLForTest is invoked from tests — the
 // builder treats all input the same way.
 func buildGraphQuerySQL(q store.GraphQuery, countOnly bool) (sqlText string, args []any) {
 	b := &sqlBuilder{}
@@ -270,7 +270,7 @@ func buildGraphQuerySQL(q store.GraphQuery, countOnly bool) (sqlText string, arg
 // in/out predicates don't collide when both are set.
 //
 // The endpoint and entity expansions are independent: each emits its
-// own CTE only when [Predicate.InheritThrough] / EntityInheritThrough
+// own CTE only when Predicate.InheritThrough / EntityInheritThrough
 // is non-empty AND the corresponding Depth is > 0. When omitted, the
 // EXISTS query references the seed directly.
 func buildPredicateSQL(

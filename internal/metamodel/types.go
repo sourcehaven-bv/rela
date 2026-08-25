@@ -688,6 +688,13 @@ type AutomationAction struct {
 	// `true` is refused at parse time with a message naming `read+write`;
 	// `rela migrate` rewrites it.
 	AllowACLBypass ACLBypass `yaml:"allow_acl_bypass,omitempty"`
+
+	// Capabilities declares which ambient capabilities this Lua action may
+	// reach: http, ai, write_file and named secrets (TKT-YH52OM). Omitting it
+	// grants NONE of them — automations run on the write path of any HTTP
+	// request, so they are not an operator-shell surface and do not get the
+	// trusted default. Ignored for non-Lua actions.
+	Capabilities Capabilities `yaml:"capabilities,omitempty"`
 }
 
 // CreateRelationAction specifies parameters for creating a relation.

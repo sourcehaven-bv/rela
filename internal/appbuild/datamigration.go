@@ -2,6 +2,7 @@ package appbuild
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"time"
@@ -32,9 +33,13 @@ import (
 // per-assembled resource, never shared across tenants.
 func startDataMigration(
 	stateKV state.KV, meta *metamodel.Metamodel, st store.Store,
-	aud audit.Audit, versions store.VersionService,
+	aud audit.Audit, versions store.VersionService, cacheDir string,
 ) (stop func()) {
-	gate, err := datamigration.NewGate(stateKV)
+	// One lock per assembled store, shared by the gate and the GC sweep —
+	// and equivalent to the one the CLI builds for the same store, since
+	// LockFor derives it from the store/cache dir (TKT-CPCBR7).
+	lock := datamigration.LockFor(st, cacheDir)
+	gate, err := datamigration.NewGate(stateKV, lock)
 	if err != nil {
 		slog.Warn("datamigration: gate not started", "error", err)
 		return func() {}
@@ -66,6 +71,7 @@ func startDataMigration(
 		Verdicts: gate,
 		Versions: capture,
 		Grace:    envDuration("RELA_DATA_GC_GRACE", 0), // 0 → datamigration.DefaultGrace
+		Lock:     lock,
 	})
 	if err != nil {
 		slog.Warn("datamigration: gc sweep not started", "error", err)
@@ -91,6 +97,8 @@ func startDataMigration(
 			case <-ticker.C:
 				res, err := gc.Tick(ctx, true)
 				switch {
+				case errors.Is(err, context.Canceled):
+					// Shutdown raced a tick; not a failure worth a warning.
 				case err != nil:
 					slog.Warn("datamigration: gc tick failed", "error", err)
 				case res.Skipped != "":

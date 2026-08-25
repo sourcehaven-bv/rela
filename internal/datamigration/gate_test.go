@@ -8,7 +8,7 @@ import (
 
 func newTestGate(t *testing.T, kv *fakeKV) *Gate {
 	t.Helper()
-	g, err := NewGate(kv)
+	g, err := NewGate(kv, nil)
 	if err != nil {
 		t.Fatalf("NewGate: %v", err)
 	}

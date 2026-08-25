@@ -109,7 +109,7 @@ type compiledGrants struct {
 // The policy is read from `declarative.Policy()` — the same object
 // the resolver uses for role attribution — so the two cannot drift
 // (RR-WTLD). Callers that want an all-permissive resolver wire
-// [NopFieldVerdictResolver] at the dispatch boundary instead.
+// NopFieldVerdictResolver at the dispatch boundary instead.
 //
 // The full *metamodel.Metamodel is required (not a narrower slice):
 // the resolver can be asked about any entity type at runtime, and for
@@ -168,7 +168,7 @@ func New(
 // CONCURRENCY: this is the one mutator on an otherwise-immutable-after-[New]
 // resolver, so the "safe for concurrent use" guarantee holds only if it is
 // called during single-threaded wiring, BEFORE the resolver is shared — which
-// is the sole production call site ([ResolverFromProfile], synchronous, before
+// is the sole production call site (ResolverFromProfile, synchronous, before
 // the resolver escapes). It is a setter rather than a [New] parameter
 // deliberately: machines are optional and adding a required arg would churn all
 // [New] callers. Never call WithMachines concurrently with TransitionVerdicts.
@@ -624,7 +624,7 @@ func (r *PolicyResolver) transitionGuard(ctx context.Context) statemachine.Guard
 
 // requestGuard evaluates a transition guard against an acl.Request. A nil
 // request (unresolved/unstamped principal) holds no permission → guarded edges
-// resolve as not-performable (fail closed). See [PolicyResolver.transitionGuard]
+// resolve as not-performable (fail closed). See PolicyResolver.transitionGuard
 // for why there is no inert tier.
 type requestGuard struct{ req *acl.Request }
 
@@ -640,7 +640,7 @@ func (g requestGuard) HoldsPermission(ctx context.Context, subjectID, permission
 // this call. Returns nil bc when no policy roles apply.
 //
 // Role resolution flows through [acl.Declarative.ForPrincipal] /
-// [Request.ForEntity], which includes group expansion and containment
+// Request.ForEntity, which includes group expansion and containment
 // inheritance.
 func (r *PolicyResolver) bindingFor(ctx context.Context, e *entity.Entity) (bc *bindingContext, roles []string) {
 	p := principal.From(ctx)

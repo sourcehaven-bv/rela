@@ -640,12 +640,11 @@ export interface NavigationEntry {
   items?: NavigationEntry[]
 }
 
-// Sidebar API types (denormalized navigation with counts)
+// Sidebar API types (denormalized navigation)
 export interface SidebarItem {
   label: string
   href?: string
   icon?: string
-  count?: number
   action?: string
 }
 

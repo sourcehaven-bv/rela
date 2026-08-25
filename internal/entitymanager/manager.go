@@ -69,7 +69,7 @@ type Manager struct {
 	// bypassACL marks this Manager as an ELEVATED write handle: its writes
 	// skip the ACL deny (TKT-D8T148, the `rela.bypass_acl(...)` path). It is
 	// false on the normal Manager and set true ONLY on the throwaway handle
-	// returned by [Manager.elevated]. Carrying elevation on the object (not
+	// returned by Manager.elevated. Carrying elevation on the object (not
 	// the context) is what makes it leak-proof: a nested cascade an elevated
 	// write triggers re-dispatches with the gated Manager (see the cascade
 	// dispatch sites, which pass `m.gated()` as the Mutator), so elevation
@@ -326,7 +326,7 @@ func New(d Deps) (*Manager, error) {
 // When this Manager is an elevated handle (`m.bypassACL` — TKT-D8T148: a
 // `rela.bypass_acl(...)` write), the ACL deny is SKIPPED: the write is allowed
 // regardless of the principal's grants. Elevation is a property of WHICH
-// Manager you hold, not of the context — see [Manager.elevated]. The real
+// Manager you hold, not of the context — see Manager.elevated. The real
 // principal is still preserved (`principal.From(ctx)`, unchanged) and the
 // bypass is recorded (recordACLBypass) so the audit trail is unambiguous about
 // which writes were elevated and on whose behalf. We do NOT recordDeniedWrite
@@ -737,7 +737,7 @@ func (m *Manager) PatchEntity(
 // Method on Manager (not a free function over [Deps] like [createCore])
 // because the cascade needs m.gated() to stop elevation propagating into
 // descendants. It deliberately contains **no ACL check and no attribution**
-// — both belong to the entry points ([UpdateEntity], [PatchEntity]), which
+// — both belong to the entry points ([Manager.UpdateEntity], [Manager.PatchEntity]), which
 // authorize with the subject shape appropriate to how they learned the
 // entity type. Putting authorize here would double-authorize PatchEntity
 // (which must authorize early, before it can merge) and emit two

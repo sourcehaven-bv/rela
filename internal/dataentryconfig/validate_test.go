@@ -435,6 +435,10 @@ func TestValidateConfig_UnknownFormRelation(t *testing.T) {
 func inverseTestMetamodel(t *testing.T) *metamodel.Metamodel {
 	t.Helper()
 	yaml := `version: "1.0"
+types:
+  entity_status:
+    values: [open, closed]
+    default: open
 entities:
   from_entity:
     label: From
@@ -443,6 +447,8 @@ entities:
       title:
         type: string
         required: true
+      status:
+        type: entity_status
   to_entity:
     label: To
     id_prefix: "TO-"
@@ -450,6 +456,8 @@ entities:
       title:
         type: string
         required: true
+      status:
+        type: entity_status
   other_entity:
     label: Other
     id_prefix: "OTH-"
@@ -2765,4 +2773,95 @@ func TestValidateConfig_EmptyDirectionStringIsNotOutgoing(t *testing.T) {
 			t.Fatalf("empty direction should infer incoming on a to-side binding, got: %v", err)
 		}
 	})
+}
+
+// TestValidateConfig_AmbiguousDirection_AllSurfaces pins that every surface
+// carrying a `direction:` refuses to guess on a self-referencing relation, not
+// just form relations. A wrong side is a silent bug on each of them: a list
+// column or kanban card renders the wrong neighbors, a filter control filters
+// the wrong edge, and a CalDAV collection selects the wrong members.
+func TestValidateConfig_AmbiguousDirection_AllSurfaces(t *testing.T) {
+	meta := inverseTestMetamodel(t)
+	// from_entity is BOTH the from and the to of depends_on.
+	const selfRef = "depends_on"
+
+	tests := []struct {
+		name string
+		cfg  *Config
+	}{
+		{
+			name: "list column",
+			cfg: &Config{Lists: map[string]List{
+				"l": {EntityType: "from_entity", Columns: []ListColumn{{Relation: selfRef}}},
+			}},
+		},
+		{
+			name: "list filter control",
+			cfg: &Config{Lists: map[string]List{
+				"l": {EntityType: "from_entity", FilterControls: []FilterControl{{Relation: selfRef}}},
+			}},
+		},
+		{
+			name: "kanban card field",
+			cfg: &Config{Kanbans: map[string]Kanban{
+				"k": {
+					EntityType:     "from_entity",
+					ColumnProperty: "status",
+					Card:           KanbanCard{Fields: []KanbanCardField{{Relation: selfRef}}},
+				},
+			}},
+		},
+		{
+			name: "kanban filter control",
+			cfg: &Config{Kanbans: map[string]Kanban{
+				"k": {
+					EntityType:     "from_entity",
+					ColumnProperty: "status",
+					FilterControls: []FilterControl{{Relation: selfRef}},
+				},
+			}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateConfig([]byte(`version: "1.0"`), tt.cfg, meta)
+			if err == nil {
+				t.Fatalf("%s: expected an ambiguity error for a self-referencing relation", tt.name)
+			}
+			msg := err.Error()
+			for _, want := range []string{selfRef, "from_entity", "direction"} {
+				if !strings.Contains(msg, want) {
+					t.Errorf("expected error to mention %q, got: %v", want, err)
+				}
+			}
+		})
+	}
+}
+
+// An unambiguous binding on those same surfaces must stay silent — inference
+// resolves it, so requiring the key would be noise.
+func TestValidateConfig_UnambiguousDirection_AllSurfaces(t *testing.T) {
+	meta := inverseTestMetamodel(t)
+	// to_entity is only ever the TO of connects_to.
+	cfg := &Config{
+		Lists: map[string]List{
+			"l": {
+				EntityType:     "to_entity",
+				Columns:        []ListColumn{{Relation: "connects_to"}},
+				FilterControls: []FilterControl{{Relation: "connects_to"}},
+			},
+		},
+		Kanbans: map[string]Kanban{
+			"k": {
+				EntityType:     "to_entity",
+				ColumnProperty: "status",
+				Card:           KanbanCard{Fields: []KanbanCardField{{Relation: "connects_to"}}},
+				FilterControls: []FilterControl{{Relation: "connects_to"}},
+			},
+		},
+	}
+	if err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta); err != nil {
+		t.Fatalf("unambiguous bindings should validate without an explicit direction, got: %v", err)
+	}
 }

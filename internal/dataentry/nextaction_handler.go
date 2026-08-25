@@ -270,12 +270,24 @@ func (a *App) applyNextActionFeedback(
 func (a *App) nextActionEngine() (*nextaction.Engine, bool) {
 	// Snapshot the config once: State() reads an atomic pointer, and two
 	// reads could observe different snapshots if a reload lands between them.
-	cfg := a.Cfg()
+	st := a.State()
+	cfg := st.Cfg
 	if cfg == nil || len(cfg.NextActions) == 0 || a.userState == nil {
 		return nil, false
 	}
-	eng, err := nextaction.New(cfg, a.userState, a.nextActionCandidates(),
-		nextaction.WithOptions(a.nextActionOptions()))
+
+	opts := []nextaction.Option{nextaction.WithOptions(a.nextActionOptions())}
+	if a.nextActionMatchers != nil {
+		// Compile errors are already reported at load by projectsetup; a
+		// config that reached here should compile. If it somehow does not,
+		// leave matchers unwired so New fails loudly for a source that
+		// declares a condition, rather than silently keeping every candidate.
+		if lookup, issues := a.nextActionMatchers(cfg, st.Meta); len(issues) == 0 && lookup != nil {
+			opts = append(opts, nextaction.WithMatchers(lookup))
+		}
+	}
+
+	eng, err := nextaction.New(cfg, a.userState, a.nextActionCandidates(), opts...)
 	if err != nil {
 		return nil, false
 	}

@@ -203,7 +203,10 @@ func (c *AnalyzeCardinalityCmd) Run(ctx context.Context, analyzer *analysis.Serv
 	if err != nil {
 		return err
 	}
-	violations := analyzer.CheckCardinality(ctx, *opts)
+	violations, err := analyzer.CheckCardinality(ctx, *opts)
+	if err != nil {
+		return err
+	}
 	cardMsg := "All cardinality constraints satisfied"
 	if writeAnalysisJSON(len(violations), violations, cardMsg, "Found %d cardinality violations") {
 		return nil
@@ -527,7 +530,10 @@ func (c *AnalyzeAllCmd) Run(ctx context.Context, svc *readServices, analyzer *an
 	if err != nil {
 		return err
 	}
-	summary := analyzer.AnalyzeAll(ctx, *opts)
+	summary, err := analyzer.AnalyzeAll(ctx, *opts)
+	if err != nil {
+		return err
+	}
 	if out.Format == "json" {
 		return writeAnalyzeAllJSON(summary)
 	}
@@ -633,6 +639,10 @@ func runAnalyzeAllSections(
 	}
 	out.WriteMessage("")
 	out.WriteSectionHeader("Cardinality Analysis")
+	// Second full cardinality scan (the summary above already ran one).
+	// With a flaky backend the two runs can disagree — summary success
+	// followed by a section error here. Pre-existing shape; computing
+	// once and passing the violations down is the follow-up fix.
 	if err := (&AnalyzeCardinalityCmd{}).Run(ctx, analyzer); err != nil {
 		errs = append(errs, fmt.Errorf("cardinality analysis: %w", err))
 	}

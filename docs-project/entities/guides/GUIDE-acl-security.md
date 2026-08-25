@@ -286,6 +286,16 @@ Load-bearing details:
   migration runs on first store open) or add the grant by hand. A
   `provision` policy **without** that grant is a **load error**, so a
   misconfiguration fails at startup, not at the first unmatched request.
+- **`system:` identities cannot be asserted from a request.** Both
+  `system:provisioner` and `system:scheduler` are grantable assignment
+  keys, and the ACL matches a principal by raw username with no notion of
+  where it came from. The boundary check lives at the API instead: a
+  `system:`-prefixed username arriving via `--principal-header`,
+  `$RELA_DATAENTRY_USER`, or a *validly signed* JWT `sub` is refused and
+  logged, so neither grant can be borrowed by a web or MCP caller. See
+  "Reserved `system:` identities" in [GUIDE-server-security]. This is also
+  why a forged subject can never be provisioned into a stub's
+  `principal_property`.
 - **The provisioned stub is bare — identity, not authority.** The
   `system:provisioner` role is `create`-only on the user type and nothing
   else, so provisioning gives the principal a graph *identity* but **no
@@ -547,7 +557,7 @@ deny models:
 
 - **Per-entity responses** (TKT-VQGN): deny is shaped exactly like
   not-found — a 404 indistinguishable from a nonexistent id.
-- **Aggregates** (TKT-VMD8): lists, sidebar counts, and pagination
+- **Aggregates** (TKT-VMD8): lists and pagination
   metadata are shaped exactly like "the hidden entities don't exist" —
   filtered sets, filtered totals, no cardinality residue.
 
@@ -590,7 +600,7 @@ operator debugging.
   surfaces (e.g. nested includes in a list response) MUST go through
   the same gate.
 
-### Lists, sidebar counts, pagination (TKT-VMD8)
+### Lists and pagination (TKT-VMD8)
 
 Anything that enumerates entities of a type returns only the visible
 subset, with no leak surface revealing hidden cardinality. The list
@@ -612,14 +622,6 @@ Every pagination surface derives from the post-filter total:
 `X-Page`, `X-Per-Page`, and the `Link` header rels — `rel="next"` is
 absent when no *visible* next page exists, even when hidden pages
 exist after it.
-
-Sidebar counts go through the same gate, single-mode: there is no
-"ACL off" code branch (a count path that only runs under ACL is a
-count path that silently drifts). `listCount` / `kanbanCount` always
-resolve the read scope, then `GraphCount` (no config filters) or
-GraphQuery-then-filter (with config filters). Ordering is always
-ACL → config filter → count, so a sidebar badge can never disagree
-with the list it links to.
 
 ### Invariants downstream maintainers MUST preserve (aggregates)
 
@@ -719,7 +721,7 @@ The sidebar's *structure* (groups, labels, links) reveals metamodel
 shape, not data shape. It is served identically to every principal
 **except** for entries an operator explicitly marks with a
 `permission:` (see GUIDE-data-entry, "Hiding entries a user cannot act
-on"); the *counts* are gated per principal as always.
+on"). The sidebar carries no per-principal data of its own.
 
 That exception is a **UX convenience and is not a confidentiality
 control** — the distinction matters, because the reasoning that once
@@ -769,14 +771,6 @@ measure. Hiding entries a user cannot act on is still wanted as a
 **UX** improvement and is tracked separately; if that lands, the
 filter is an affordance — the endpoints keep enforcing independently,
 and a hidden entry stays reachable by direct URL.
-
-### Sidebar config-filter performance caveat
-
-A sidebar list with `filters:` evaluates them in-memory after the ACL
-GraphQuery — cost scales with the principal's visible-set size. For
-visible sets beyond ~10k entities per type, prefer narrowing the nav
-entry to a dedicated entity type, or file the follow-up that pushes
-config filters down into GraphQuery.
 
 ## ACL fail-loud and middleware scope
 
@@ -945,7 +939,7 @@ its meta unchanged (permissive default).
   out of scope (RR-ATFNM1).
 
 For threat-modelling purposes today: per-entity GET, write, include,
-list, sidebar, pagination, global-search, the SSE event stream, and the
+list, pagination, global-search, the SSE event stream, and the
 machine-to-machine sync channel are all read-gated (the SSE feed per-type,
 see above); `visible:` property/meta redaction applies to every data-entry
 HTTP read body — and **sync inherits it by reading through `/api/v1`**

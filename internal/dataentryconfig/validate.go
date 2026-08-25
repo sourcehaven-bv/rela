@@ -643,11 +643,8 @@ func validateFormRelation(
 		_, res := InferDirection(entityType, r.Relation, meta)
 		ambiguous := r.Direction == "" && res == DirectionAmbiguous
 		if ambiguous {
-			errs = append(errs, fmt.Sprintf(
-				"form %q: %srelation[%d] needs an explicit `direction:` — entity type %q is both a from "+
-					"and a to of relation %q, so outgoing and incoming are both valid and mean "+
-					"opposite things (set `direction: outgoing` or `direction: incoming`)",
-				formID, ctx, i, entityType, r.Relation))
+			errs = append(errs, AmbiguousDirectionError(
+				fmt.Sprintf("form %q: %srelation[%d]", formID, ctx, i), entityType, r.Relation))
 		}
 		// Canonical name resolved — check that the form's entity type is on
 		// the correct side of the edge for the chosen direction. Wrong-side
@@ -856,6 +853,9 @@ func validateLists(cfg *Config, meta *metamodel.Metamodel) []string {
 						"list %q: column[%d] references unknown relation %q",
 						listID, i, c.Relation))
 				}
+				errs = append(errs, CheckAmbiguousDirection(
+					fmt.Sprintf("list %q: column[%d]", listID, i),
+					list.EntityType, c.Relation, c.Direction, meta)...)
 			} else if c.Property != "" {
 				if _, ok := entDef.Properties[c.Property]; !ok {
 					errs = append(errs, fmt.Sprintf(
@@ -917,6 +917,9 @@ func validateLists(cfg *Config, meta *metamodel.Metamodel) []string {
 						"list %q: filter_controls[%d] references unknown relation %q",
 						listID, i, fc.Relation))
 				}
+				errs = append(errs, CheckAmbiguousDirection(
+					fmt.Sprintf("list %q: filter_controls[%d]", listID, i),
+					list.EntityType, fc.Relation, fc.Direction, meta)...)
 			}
 		}
 	}
@@ -1676,6 +1679,9 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 						"kanban %q: card.fields[%d] references unknown relation %q",
 						kanbanID, i, f.Relation))
 				}
+				errs = append(errs, CheckAmbiguousDirection(
+					fmt.Sprintf("kanban %q: card.fields[%d]", kanbanID, i),
+					kanban.EntityType, f.Relation, f.Direction, meta)...)
 				continue
 			}
 			if f.Property != "" && f.Property != "title" && f.Property != "id" {
@@ -1723,6 +1729,9 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 						"kanban %q: filter_controls[%d] references unknown relation %q",
 						kanbanID, i, fc.Relation))
 				}
+				errs = append(errs, CheckAmbiguousDirection(
+					fmt.Sprintf("kanban %q: filter_controls[%d]", kanbanID, i),
+					kanban.EntityType, fc.Relation, fc.Direction, meta)...)
 			}
 		}
 

@@ -17,10 +17,9 @@ import (
 // sidebarShape performs a sidebar request and returns the groups as
 // (groupLabel, itemLabels) pairs.
 //
-// A sibling of sidebarCountsByLabel, which records only items carrying a
-// non-nil Count and so cannot express "this entry is absent" — the property
-// every test here turns on. It also surfaces group structure, needed to assert
-// that an emptied group is dropped rather than rendered as a bare heading.
+// It records every item's presence — the property every test here turns on —
+// and surfaces group structure, needed to assert that an emptied group is
+// dropped rather than rendered as a bare heading.
 func sidebarShape(ctx context.Context, t *testing.T, app *App) []struct {
 	Group string
 	Items []string

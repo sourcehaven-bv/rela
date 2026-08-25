@@ -37,6 +37,13 @@ const provSub = "usr_new"
 // is an unmatched verified principal until the stub is provisioned.
 func provisionApp(t *testing.T) (*App, store.Store) {
 	t.Helper()
+	return provisionAppWithSubject(t, provSub)
+}
+
+// provisionAppWithSubject is provisionApp parameterized by the verified subject,
+// so a test can drive a subject the boundary is expected to refuse (TKT-9PCL7D).
+func provisionAppWithSubject(t *testing.T, subject string) (*App, store.Store) {
+	t.Helper()
 
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -107,7 +114,7 @@ func provisionApp(t *testing.T) (*App, store.Store) {
 
 	if err := app.SetJWTGate(JWTGateConfig{
 		Verifier: gateVerifier{
-			validToken: "good", subject: provSub,
+			validToken: "good", subject: subject,
 			email: "new@example.com", orgID: "org_9", orgSlug: "acme",
 		},
 		HeaderName: unmatchedHeader,
@@ -288,5 +295,93 @@ func TestProvision_AuditedToProvisioner(t *testing.T) {
 	var body map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("create response is not JSON: %v", err)
+	}
+}
+
+// TestProvision_ReservedSubjectNeverProvisioned is AC7 for TKT-9PCL7D.
+//
+// buildStubEntity writes the verified subject VERBATIM as the stub's
+// principal_property join key. A stub carrying `system:scheduler` there would
+// make ResolvePrincipal map that reserved name to a real entity — turning a
+// forged identity into durable graph state.
+//
+// The boundary in verifiedPrincipal already refuses the assertion, so the whole
+// request is denied and nothing reaches provisioning. That IS the behavior
+// under test: no stub, on any write path. maybeProvision carries its own guard
+// as belt-and-braces so the invariant does not depend solely on the boundary;
+// removing either one alone keeps this passing, which is the point of having
+// both, so the direct guard is pinned separately below.
+func TestProvision_ReservedSubjectNeverProvisioned(t *testing.T) {
+	for _, sub := range []string{principal.UserScheduler, principal.UserProvisioner} {
+		t.Run(sub, func(t *testing.T) {
+			app, st := provisionAppWithSubject(t, sub)
+			router := app.NewRouter()
+
+			for _, tc := range []struct {
+				name, method, path, body string
+			}{
+				{"CRUD create", http.MethodPost, "/api/v1/tickets", `{"properties":{"title":"x"}}`},
+				{"CRUD update", http.MethodPatch, "/api/v1/tickets/TKT-001", `{"properties":{"title":"x"}}`},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					rec := httptest.NewRecorder()
+					router.ServeHTTP(rec, provReq(t, tc.method, tc.path, tc.body))
+
+					if rec.Code == http.StatusOK || rec.Code == http.StatusCreated {
+						t.Errorf("write succeeded (%d) for reserved subject %q", rec.Code, sub)
+					}
+				})
+			}
+
+			// The load-bearing assertion: no person entity was minted carrying
+			// the reserved name as its join key.
+			for e, err := range st.ListEntities(context.Background(), store.EntityQuery{Type: "person"}) {
+				if err != nil {
+					t.Fatalf("ListEntities: %v", err)
+				}
+				if e.Properties["sub"] == sub {
+					t.Errorf("provisioned person %s carries reserved sub %q", e.ID, sub)
+				}
+			}
+		})
+	}
+}
+
+// TestMaybeProvision_RefusesReservedSubjectDirectly pins the defense-in-depth
+// guard inside maybeProvision on its own, independent of the boundary that
+// normally stops a reserved subject earlier. Without this, deleting the guard
+// would be invisible: the boundary test above would still pass, and the
+// invariant "a reserved name never becomes durable graph state" would quietly
+// rest on a single check.
+func TestMaybeProvision_RefusesReservedSubjectDirectly(t *testing.T) {
+	app, st := provisionAppWithSubject(t, principal.UserScheduler)
+	d, ok := app.acl.(*acl.Declarative)
+	if !ok {
+		t.Fatal("test app ACL is not *acl.Declarative")
+	}
+
+	// Hand maybeProvision exactly the state it sees mid-request for an
+	// unmatched verified principal, bypassing the HTTP boundary entirely.
+	ctx := acl.WithUnmatchedVerified(
+		principal.With(context.Background(), principal.Principal{
+			User: principal.UserScheduler,
+			Tool: principal.ToolDataEntry,
+		}))
+
+	got := maybeProvision(ctx, d, app.entityManager, schemaMetaView{schema: app.State})
+
+	// It returns ctx UNCHANGED on refusal, the same shape as every other
+	// non-provision path — no stub, no re-stamp.
+	if principal.From(got).User != principal.UserScheduler {
+		t.Errorf("principal = %q, want the ctx returned unchanged",
+			principal.From(got).User)
+	}
+	for e, err := range st.ListEntities(context.Background(), store.EntityQuery{Type: "person"}) {
+		if err != nil {
+			t.Fatalf("ListEntities: %v", err)
+		}
+		if e.Properties["sub"] == principal.UserScheduler {
+			t.Fatalf("maybeProvision created person %s for a reserved subject", e.ID)
+		}
 	}
 }

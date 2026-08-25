@@ -54,7 +54,7 @@ func (r *AllowAllReader) Filter(_ context.Context, candidates []*entity.Entity) 
 }
 
 // FilterHeaders implements [HeaderFilterer]: pass-through, input returned
-// unchanged — the same allow-all capability [Filter] grants, applied to
+// unchanged — the same allow-all capability [AllowAllReader.Filter] grants, applied to
 // content-free headers.
 func (r *AllowAllReader) FilterHeaders(
 	_ context.Context, candidates []store.EntityHeader,
