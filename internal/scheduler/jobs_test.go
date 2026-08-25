@@ -123,6 +123,35 @@ func TestCapabilitiesFromPayload_DurableJSONShape(t *testing.T) {
 	}, got, "capabilities must survive the durable backend's JSON round-trip")
 }
 
+func TestCapabilitiesFromPayload_EmptyGrantStaysClosed(t *testing.T) {
+	t.Parallel()
+
+	got := capabilitiesFromPayload(map[string]any{
+		payloadHTTP:      false,
+		payloadAI:        false,
+		payloadWriteFile: false,
+		payloadSecrets:   []any{},
+	})
+
+	require.False(t, got.Any(),
+		"an explicitly empty payload must not acquire an ambient capability")
+	require.Empty(t, got.Secrets)
+}
+
+func TestCapabilitiesFromPayload_MalformedGrantFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	got := capabilitiesFromPayload(map[string]any{
+		payloadHTTP:      "true",
+		payloadAI:        1,
+		payloadWriteFile: []any{true},
+		payloadSecrets:   []any{42, true, nil},
+	})
+
+	require.False(t, got.Any(),
+		"malformed authorization data must be rejected rather than coerced")
+}
+
 // TestEnqueuedJob_UsesIdempotencyKey is the load-bearing assertion for how a
 // schedule reaches the queue.
 //
