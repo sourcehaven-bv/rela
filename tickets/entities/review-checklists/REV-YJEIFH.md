@@ -36,6 +36,33 @@ wrong "pre-existing" label is what would have let it ship.
 Both acceptance criteria PASS — evidence in IMPL-YJEIFH. 265/265 e2e with a
 database configured; postgres job-queue conformance green.
 
+## Adjacent CI failures found while verifying
+
+Two failures surfaced that are NOT this bug and are recorded here so they are
+not mistaken for it later:
+
+1. **`TestFSLock_ConcurrentStaleBreakSingleWinner`** (`internal/datamigration`)
+   failed about one `just coverage-check` run in three. Pre-existing on
+   `develop` and untouched by this PR. `breakIfStale` re-verified staleness
+   under the break mutex with `isStale`, which reports a MISSING file as
+   stale, then removed unconditionally — so a breaker reading the path during
+   the gap between another breaker removing the stale file and the winner
+   creating its own could delete the winner's LIVE lock. Split into
+   `staleState() (present, stale)`; removal now requires present AND stale.
+
+   **Confidence is stated honestly:** the window is a few syscalls wide, so at
+   the observed rate an A/B could not distinguish fixed from lucky within a
+   practical number of runs. The committed test pins the present/absent
+   distinction, not the race. The causal claim is reasoned from the code path,
+   not demonstrated by reproduction.
+
+2. **`Docs` job** failed because `a488b3b1` (this PR) added the single-node
+   scheduler note directly to the GENERATED `docs/postgres-backend.md`, so
+   `just docs` kept deleting it. Moved to its source entity,
+   `docs-project/entities/guides/GUIDE-postgres-backend.md`; `just docs-check`
+   now passes with `docs/` unchanged, confirming the generated output matches
+   the hand-written text byte for byte.
+
 ## Final Checks
 
 - [x] Commit message explains the why, not just what
