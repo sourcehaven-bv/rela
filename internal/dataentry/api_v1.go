@@ -1434,7 +1434,7 @@ func resolveCalendarDirections(
 //
 // Nil: an empty result is returned unchanged when no source declares the
 // relation — the field simply renders nothing for those sources, which is the
-// documented best-effort behaviour for a heterogeneous calendar.
+// documented best-effort behavior for a heterogeneous calendar.
 func resolveCalendarFieldDirection(
 	s *Schema, sources []dataentryconfig.CalendarSource, field dataentryconfig.KanbanCardField,
 ) dataentryconfig.Direction {
