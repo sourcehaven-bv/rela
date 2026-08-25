@@ -651,7 +651,7 @@ not the full Lua runtime. It has no statements, loops, dynamic property access,
 store/relations, network or filesystem access. Supported value constructs are
 scalar literals, `entity.<property>` reads, checked integer arithmetic, string
 concatenation (`..`), and the pure expression functions documented under
-[automation conditions](#conditions), including `today`, `date_add`,
+[automation conditions](#expression-conditions-condition), including `today`, `date_add`,
 `days_between`, and `rrule_next`.
 
 Dependencies are inferred from the compiled expression. Computed properties may
