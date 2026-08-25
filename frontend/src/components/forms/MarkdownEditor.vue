@@ -289,7 +289,7 @@ function onPopupHover(idx: number): void {
 
 .markdown-editor :deep(.CodeMirror-focused) {
   border-color: var(--accent-color);
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
+  box-shadow: 0 0 0 2px var(--focus-ring);
 }
 
 .markdown-editor :deep(.editor-toolbar) {

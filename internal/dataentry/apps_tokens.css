@@ -18,6 +18,34 @@
   --sidebar-bg: #164155;
   --sidebar-text: #f3f2ef;
   --accent-color: #4772fb;
+
+  /* Focus-ring fill, for `box-shadow: 0 0 0 2px var(--focus-ring)`.
+   *
+   * TWO fixes over the hand-written `rgba(99, 102, 241, 0.1)` rings this
+   * replaced (TKT-FRING7). It is an alias of --accent-color, not a literal,
+   * so it follows the dark theme AND an operator's custom.css accent, which a
+   * literal could do neither of. And it is FULLY OPAQUE, which is what makes
+   * the ring actually visible: measured against the composited surfaces, the
+   * old 10%-alpha ring scored 1.13:1 — WCAG 2.2 §1.4.11 requires 3:1 for
+   * non-text UI. Every translucent option failed (30% only reaches 1.46);
+   * full opacity clears it at 4.14 light / 5.85 dark.
+   *
+   * Declared in :root ONLY, deliberately: var() resolves at use time, so the
+   * .dark block below re-derives this from its own --accent-color. A second
+   * declaration there would be a copy to keep in sync, not a fix.
+   *
+   * Kept as its own name rather than using --accent-color at the call sites:
+   * the ring is a distinct ROLE, so its contrast can be revisited (or given a
+   * dedicated hue) without repainting every accent-coloured surface. */
+  --focus-ring: var(--accent-color);
+
+  /* The error-state counterpart, for a field that failed validation. Same
+   * story as --focus-ring: the six widgets that draw one were writing
+   * `rgba(239, 68, 68, …)`, a red that is not this app's --error-color
+   * (#e5484d light / #f87171 dark) and does not follow the theme. Also opaque,
+   * for the same WCAG 1.4.11 reason — an invalid field is precisely where the
+   * indicator must not be a faint tint. */
+  --error-ring: var(--error-color);
   --bg-color: #f3f2ef;
   --text-color: #191919;
   --border-color: #e0ddd5;

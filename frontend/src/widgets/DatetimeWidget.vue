@@ -83,7 +83,7 @@ input {
 input:focus {
   outline: none;
   border-color: var(--accent-color, #6366f1);
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
+  box-shadow: 0 0 0 2px var(--focus-ring);
 }
 
 input:disabled {
@@ -96,7 +96,7 @@ input.is-error {
 }
 
 input.is-error:focus {
-  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.1);
+  box-shadow: 0 0 0 2px var(--error-ring);
 }
 
 .tz-indicator {

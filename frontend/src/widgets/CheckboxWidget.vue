@@ -119,14 +119,14 @@ input[type='checkbox']:hover:not(:disabled) {
   border-color: var(--accent-color, #6366f1);
 }
 
-/* Derived from the accent rather than a hardcoded indigo. The sibling widgets
-   write `rgba(99, 102, 241, 0.1)` here, but that literal is NOT the app's
-   accent (#4772fb light / #6f93ff dark) — it renders as an off-hue ring that
-   ignores the theme, and an operator's `custom.css` accent would not reach it.
-   Copying that would propagate the one part of the prior art that is a bug. */
+/* The shared ring token (TKT-FRING7). This widget originally carried its own
+   local `color-mix` at 30% — the first fix for the hardcoded indigo — which is
+   now hoisted into `--focus-ring` and used by every focusable control. The
+   token is fully opaque because no translucent ring reaches WCAG 2.2's 3:1
+   non-text minimum; 30% scored 1.46:1. */
 input[type='checkbox']:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color) 30%, transparent);
+  box-shadow: 0 0 0 2px var(--focus-ring);
 }
 
 /* `:not(.display-checkbox)` is load-bearing, not defensive.

@@ -1,0 +1,33 @@
+/* Forced-colors (Windows High Contrast) focus-ring fallback — TKT-FRING7.
+ *
+ * THE PROBLEM. The SPA's convention for a focus indicator is
+ * `outline: none` + `box-shadow: 0 0 0 2px var(--focus-ring)`, used on ~18
+ * controls. Under `forced-colors: active` the OS discards `box-shadow`
+ * entirely and overrides author colours — so those controls keep the
+ * `outline: none` (which IS honoured) and lose the box-shadow that replaced
+ * it. Net effect: a keyboard user in High Contrast mode gets NO visible focus
+ * indicator anywhere in the app. Before the box-shadow convention existed the
+ * native outline handled this for free.
+ *
+ * THE FIX. One global rule restoring a real `outline` for every focusable
+ * element, using the system `Highlight` keyword so it adopts the user's chosen
+ * scheme. Deliberately global rather than 18 per-component copies: this is a
+ * property of the app's focus convention, not of any one component, and a
+ * copy-per-file is exactly how the checkbox styling drifted (TKT-CBSTYLE).
+ *
+ * WHY THIS IS SAFE TO SCOPE BROADLY. It only applies inside a media query no
+ * ordinary user is in, and within it `outline` is the one focus mechanism the
+ * OS guarantees. A control that never suppressed its outline is unaffected —
+ * it is already getting the same treatment from the UA.
+ *
+ * NOTE ON `@layer`. The build wraps every emitted stylesheet in `@layer rela`
+ * so operator `custom.css` can win the cascade. That applies here too, which
+ * is correct: an operator who deliberately restyles focus should still be able
+ * to. `!important` is NOT used precisely so that stays true.
+ */
+@media (forced-colors: active) {
+  :focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+}
