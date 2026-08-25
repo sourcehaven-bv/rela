@@ -92,12 +92,13 @@ Attenuation must never widen. A `for_each` run can see at most what the user can
 see, whatever the config says — that invariant is what makes the feature safe to
 reason about, and it is worth a test that tries to widen and fails.
 
-## Field redaction: split out to TKT-NJ91LX
+## Field redaction is already available
 
-RR-7408F5 (scheduled jobs wired with a nil field redactor) applies to every
-scheduled job, not just iterated ones, so it landed in its own ticket:
-**TKT-NJ91LX**. This ticket depends on it — a `for_each` run that saw
-unredacted fields would be half-enforced scoping, which is worse than none.
+The read half of TKT-BUYEW1 wired the policy-backed field redactor into
+`ScheduledLuaWriteDeps`; its regression test proves a scheduled principal sees
+the same `visible:` projection as the interactive path. `for_each` must reuse
+that dependency unchanged — a scoped run with a raw or nil-redactor reader is a
+hard wiring error.
 
 ## Two-phase execution over the shared job queue
 
@@ -450,7 +451,7 @@ Numbered fresh; the retry/redaction criteria moved with their tickets.
 
 1. `for_each` runs the task once per matching entity, each with that entity's
 principal on the ctx.
-2. A run sees only what that user may see — row gating and, via TKT-NJ91LX,
+2. A run sees only what that user may see — row gating and, via TKT-BUYEW1,
 field-level `visible:` redaction.
 3. `attenuate:` narrows a run below the user's grants, and a config that attempts
 to WIDEN beyond them grants nothing.
@@ -505,4 +506,4 @@ prunes every derived entry and makes every user look like a first run. Criterion
 - **Query volume** — bounded by expanding only when a decision needs the set
 (criterion 10); the residual is short-interval tasks and fast retry rungs.
 - **Half-enforced scoping** — a `for_each` run without field redaction would be
-worse than none; the dependency on TKT-NJ91LX exists for that reason.
+worse than none; reuse of TKT-BUYEW1's scheduled-read seam is mandatory.

@@ -110,8 +110,9 @@ not sufficient because its key becomes reusable after completion.
 Reads go through `internal/visibility` decorators at the wiring site — never
 per-consumer redaction calls.
 
-Field-level redaction is mandatory, not a documented limitation. TKT-NJ91LX
-must land before delivery: "sees what that user sees" cannot be half-enforced.
+Field-level redaction is mandatory, not a documented limitation. The read half
+of TKT-BUYEW1 already supplies it through `ScheduledLuaWriteDeps`; delivery must
+reuse that seam because "sees what that user sees" cannot be half-enforced.
 
 ## Testing note
 
