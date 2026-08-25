@@ -46,6 +46,45 @@ describe('Schema Store', () => {
   })
 
   describe('load', () => {
+    it('loads the per-caller world map from /_schema', async () => {
+      // Pins the WIRING, not just the getter. Deleting the
+      // `worlds.value = new Map(...)` line survives every component test,
+      // because those seed the store directly — verified by mutation. The
+      // only test that can catch it is one that goes through load().
+      const { getSchema, getConfig } = await import('@/api/schema')
+      vi.mocked(getSchema).mockResolvedValue({
+        entities: {},
+        relations: {},
+        types: {},
+        worlds: {
+          default: { readable: true, default: true },
+          published: { readable: false, select: ['published'], otherwise: 'exclude' },
+        },
+      })
+      vi.mocked(getConfig).mockResolvedValue({
+        app: { name: 'Test App' },
+        forms: {},
+        lists: {},
+        views: {},
+        kanbans: {},
+        navigation: [],
+      })
+
+      const store = useSchemaStore()
+      await store.load()
+
+      expect(store.worlds.size).toBe(2)
+      // `false` is the load-bearing value — the server never omits `readable`
+      // precisely so a denial is distinguishable from an old server.
+      expect(store.worldReadable('published')).toBe(false)
+      expect(store.worldReadable('default')).toBe(true)
+      // The empty name is how the SPA spells the default world.
+      expect(store.worldReadable('')).toBe(true)
+      // An undeclared world is readable, not denied: absence means "unknown",
+      // and manufacturing a denial would hide a working affordance.
+      expect(store.worldReadable('no-such-world')).toBe(true)
+    })
+
     it('loads schema and config from API', async () => {
       const { getSchema, getConfig } = await import('@/api/schema')
 

@@ -9,6 +9,7 @@ import type {
   PropertyDef,
   RelationType,
   CustomType,
+  WorldInfo,
   FormConfig,
   ListConfig,
   ViewConfig,
@@ -27,6 +28,11 @@ export const useSchemaStore = defineStore('schema', () => {
   const entityTypes = ref<Map<string, EntityType>>(new Map())
   const relationTypes = ref<Map<string, RelationType>>(new Map())
   const customTypes = ref<Map<string, CustomType>>(new Map())
+  // Declared worlds and, per world, whether THIS caller may select it
+  // (`/_schema`.worlds). Empty on a server too old to serve it — which is
+  // why `worldReadable` below treats an unknown world as readable rather
+  // than hiding an affordance against a map that was never populated.
+  const worlds = ref<Map<string, WorldInfo>>(new Map())
   const forms = ref<Map<string, FormConfig>>(new Map())
   const lists = ref<Map<string, ListConfig>>(new Map())
   const views = ref<Map<string, ViewConfig>>(new Map())
@@ -75,6 +81,22 @@ export const useSchemaStore = defineStore('schema', () => {
 
   // Getters
   const getEntityType = computed(() => (name: string) => entityTypes.value.get(name))
+  // Whether this caller may select the named world (`''`/`'default'` = the
+  // default world). Drives affordances that NAVIGATE to a world, so it must
+  // not manufacture a denial the server would not make.
+  //
+  // Unknown world → TRUE. A world absent from the map means either a server
+  // too old to serve `worlds` or a schema not yet loaded, and in both cases
+  // the request would in fact be served. Defaulting to false would hide a
+  // working affordance and read as a permission problem — a wrong answer in
+  // the direction nobody can debug. Ignoring a real denial merely reproduces
+  // what the URL bar already does: the server re-checks on every request and
+  // renders a denial as an empty result.
+  const worldReadable = computed(() => (name: string) => {
+    const key = !name ? 'default' : name
+    const w = worlds.value.get(key)
+    return w ? w.readable : true
+  })
   const getRelationType = computed(() => (name: string) => relationTypes.value.get(name))
   // Look up a relation type's inverse name (e.g., "blocks" → "blockedBy").
   // Returns undefined when the relation has no declared inverse. Used by
@@ -267,6 +289,7 @@ export const useSchemaStore = defineStore('schema', () => {
       entityTypes.value = new Map(Object.entries(schemaData.entities || {}))
       relationTypes.value = new Map(Object.entries(schemaData.relations || {}))
       customTypes.value = new Map(Object.entries(schemaData.types || {}))
+      worlds.value = new Map(Object.entries(schemaData.worlds || {}))
 
       // Feed the API layer's plural registry so it doesn't have to import
       // this store (B1a). Mirror the server's GetPlural fallback (type+'s')
@@ -339,6 +362,7 @@ export const useSchemaStore = defineStore('schema', () => {
     entityTypes,
     relationTypes,
     customTypes,
+    worlds,
     forms,
     lists,
     views,
@@ -364,6 +388,7 @@ export const useSchemaStore = defineStore('schema', () => {
     // Getters
     getEntityType,
     getRelationType,
+    worldReadable,
     getInverseName,
     getForm,
     getList,

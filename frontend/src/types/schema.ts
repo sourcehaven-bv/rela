@@ -2,6 +2,37 @@ export interface Schema {
   entities: Record<string, EntityType>
   relations: Record<string, RelationType>
   types: Record<string, CustomType>
+  // Every DECLARED world plus the implicit `default`, each marked with
+  // whether THIS caller may select it (TKT-WRLDAPI item 1). Absent on a
+  // server too old to compute it.
+  //
+  // The declared SET is principal-independent — world names are
+  // operator-authored schema.yaml config, so their existence is already
+  // disclosed and the server does not filter them per principal. Only
+  // `readable` varies by caller.
+  worlds?: Record<string, WorldInfo>
+}
+
+// WorldInfo mirrors v1.World. See internal/dataentry/schemaworlds.go.
+export interface WorldInfo {
+  select?: string[]
+  overrides?: Record<string, string[]>
+  otherwise?: string
+  // Whether this caller may select the world via `?world=`.
+  //
+  // A UI HINT about SELECTION, never a boundary: the server re-checks the
+  // grant on every request, and a denial is served as an EMPTY RESULT rather
+  // than a 403 — deliberately, so it stays indistinguishable from a world
+  // holding nothing readable. That is exactly why a client should respect
+  // this flag: ignoring it means offering a world that silently returns
+  // nothing, which reads as "nothing is published yet".
+  //
+  // Never omitted by the server (no `omitempty`), so `false` is
+  // distinguishable from a server too old to compute it.
+  readable: boolean
+  // Marks the implicit default world. Spelled as a flag so a client need not
+  // hardcode the reserved name.
+  default?: boolean
 }
 
 export interface EntityType {

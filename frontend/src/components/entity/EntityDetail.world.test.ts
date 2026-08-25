@@ -195,6 +195,32 @@ describe('EntityDetail world binding', () => {
       expect(w.text()).not.toContain('Edit')
     })
 
+    it('hides "Go to draft" when the principal cannot read the default world', async () => {
+      // A GLOBAL role-level grant, reported per world by `/_schema`.worlds —
+      // no per-entity probe, so no existence oracle and no extra request.
+      // Offering the button to someone whose default-world request returns an
+      // empty result would send them somewhere that looks broken.
+      useSchemaStore().worlds.set('default', { readable: false, default: true })
+      mockRoute.query = { world: 'published' }
+      const w = await mountDetail(viewResponse())
+      rendersProof(w)
+      expect(w.text()).not.toContain('Go to draft')
+      // The banner itself still renders — proving the absence is the button's
+      // gate and not a failure to render the whole block.
+      expect(w.find('.world-banner').exists()).toBe(true)
+    })
+
+    it('shows "Go to draft" when the world map is EMPTY (older server)', async () => {
+      // Unknown world defaults to readable: hiding a working affordance
+      // because the schema had not loaded would read as a permission problem,
+      // which is the wrong answer in the direction nobody can debug.
+      useSchemaStore().worlds.clear()
+      mockRoute.query = { world: 'published' }
+      const w = await mountDetail(viewResponse())
+      rendersProof(w)
+      expect(w.text()).toContain('Go to draft')
+    })
+
     it('offers the way back to the default world', async () => {
       mockRoute.query = { world: 'published' }
       const w = await mountDetail(viewResponse())

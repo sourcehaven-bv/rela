@@ -500,13 +500,51 @@ async function runCopy(offer: CopyOffer) {
 // page is inherently read-only and the editing affordances belong on the
 // default face.
 //
-// Shown only when a non-default world is active (the banner's own `v-if`
-// already establishes that, so there is no second computed for it). There is
-// no attempt to predict whether the draft is READABLE for this principal —
-// that would need a second resolution of the same entity in another world, and
-// a wrong guess either hides a reachable draft or offers a 404. The link goes
-// to the same id in the default world and the ordinary row gate answers,
-// exactly as it would for a typed URL.
+// Hidden when the principal cannot read the default world.
+//
+// This is a GLOBAL, role-level grant, not a per-entity probe: `PermitsWorld`
+// takes a world NAME and nothing else, and `/_schema`.worlds already reports
+// the verdict per world for this caller. So the check costs no extra request
+// and reads no entity — an earlier revision of this comment claimed the check
+// was unimplementable without an existence-oracle read, and that was simply
+// wrong about the mechanism.
+//
+// It was also the wrong rule. The uniform 404 exists for an ENTITY ID, whose
+// existence is a genuine secret. A world NAME is operator-authored
+// schema.yaml config, already disclosed in a routinely public repo, and
+// `/_schema` serves every declared world to every principal by design — only
+// `readable` varies. Hiding a config-declared capability conceals nothing:
+// the user can type the URL and find out.
+//
+// So the gate here is purely an honesty measure, not a confidentiality one.
+// Offering "Go to draft" to someone whose default-world request returns an
+// empty result would send them somewhere that looks broken. `worldReadable`
+// answers TRUE for an unknown world, so an older server or an unloaded schema
+// shows the button rather than hiding a working affordance.
+//
+// # It cannot fire TODAY, and that is deliberate rather than overlooked
+//
+// `/_schema` reports the default world's `readable` as a hardcoded `true`
+// (schemaworlds.go), because `resolveWorld` short-circuits `default` before
+// any grant check — the enumeration mirrors what the request path DOES rather
+// than what the gate could say. So this computed is `true` for every
+// principal on today's server.
+//
+// Measured, not assumed: a role with `worlds: [published]` and `read: []` is
+// genuinely denied the default world (`roleGrantsWorldRead` requires
+// `len(role.Read) > 0`) and its entity GETs 404 — yet `/_schema` still
+// reports `default.readable: true`. That is the PRE-EXISTING gap
+// schemaworlds.go documents at length, guarded by
+// TestSchemaWorlds_DefaultWorldAgreesWithTheRequestPath, and it is one
+// decision with the request path: both change together or neither does.
+//
+// This gate is wired to the honest input anyway. When the request path starts
+// honoring a default-world denial and the enumeration switches to asking the
+// gate, this button starts hiding itself with no change here. Reading the
+// flag now is what makes that true; hardcoding `true` here would have to be
+// found and fixed at that point instead.
+const canReachDefaultWorld = computed(() => schemaStore.worldReadable(''))
+
 function goToDefaultWorld() {
   setWorld('')
 }
@@ -884,11 +922,12 @@ watch(
         default world — which is where every write lands, since the API refuses
         `?world=` on a write.
 
-        "Go to draft" is a plain navigation to the same id with no `?world=`.
-        It is NOT predicated on whether the default face is readable: deciding
-        that would take a second read of the entity in another world, which is
-        the existence-oracle shape this epic forbids. The link goes there and
-        the ordinary row gate answers, exactly as it would for a typed URL.
+        "Go to draft" is a plain navigation to the same id with no `?world=`,
+        shown only when this principal may read the default world — a global
+        role-level grant already reported per world by `/_schema`.worlds, so
+        the check costs no extra request. It does NOT predict whether the
+        specific ENTITY is readable there; that is the row gate's job and it
+        answers on arrival, exactly as it would for a typed URL.
 
         There is deliberately no WorldBadge on the ENTRY: `_views` attaches
         `_world` to collection entities only (sections.go is the single call
@@ -905,7 +944,11 @@ watch(
         <span class="world-banner__note">
           This face is read-only — writes always address the default state.
         </span>
-        <button class="btn btn-secondary" @click="goToDefaultWorld">
+        <button
+          v-if="canReachDefaultWorld"
+          class="btn btn-secondary"
+          @click="goToDefaultWorld"
+        >
           Go to draft
         </button>
       </div>
