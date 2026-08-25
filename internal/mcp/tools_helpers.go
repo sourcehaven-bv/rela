@@ -3,6 +3,7 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -134,11 +135,15 @@ func (s *Server) validatePropertyNames(entityType string, properties map[string]
 		return nil // Type validation will catch this
 	}
 
-	var unknown, requiredDeletes []string
+	var unknown, requiredDeletes, computed []string
 	for propName, v := range properties {
 		def, exists := entityDef.Properties[propName]
 		if !exists {
 			unknown = append(unknown, propName)
+			continue
+		}
+		if def.Computed != "" {
+			computed = append(computed, propName)
 			continue
 		}
 		if v == nil && def.Required {
@@ -160,6 +165,12 @@ func (s *Server) validatePropertyNames(entityType string, properties map[string]
 		return errorResult(fmt.Sprintf(
 			"cannot delete required properties for %s: %s (set a new value instead)",
 			entityType, strings.Join(requiredDeletes, ", ")))
+	}
+	if len(computed) > 0 {
+		slices.Sort(computed)
+		return errorResult(fmt.Sprintf(
+			"computed properties are read-only for %s: %s",
+			entityType, strings.Join(computed, ", ")))
 	}
 
 	return nil

@@ -321,6 +321,10 @@ func comparePropertyShape(r *ShapeReport, subject string, from, to PropertyShape
 		r.add(TierAdditive, "property_default_changed", subject,
 			fmt.Sprintf("property %s default changed %q → %q (future creates only)", subject, from.Default, to.Default))
 	}
+	if from.Computed != to.Computed {
+		r.add(TierDrift, "property_computed_changed", subject,
+			fmt.Sprintf("property %s computed expression changed: stored values must be recomputed", subject))
+	}
 	compareValueList(r, subject, from.Values, to.Values)
 }
 
@@ -388,7 +392,7 @@ func compareNamedTypes(r *ShapeReport, from, to map[string][]string) {
 // samePropertyKernel reports whether two property shapes agree on the fields
 // that make a delete+add pair look like a rename (type, list, format).
 func samePropertyKernel(a, b PropertyShape) bool {
-	return a.Type == b.Type && a.List == b.List && a.Format == b.Format
+	return a.Type == b.Type && a.List == b.List && a.Format == b.Format && a.Computed == b.Computed
 }
 
 // propertyShapesSimilar reports whether two property maps share at least half

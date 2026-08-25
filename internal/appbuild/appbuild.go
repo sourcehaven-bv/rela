@@ -36,6 +36,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/caldavalias"
+	"github.com/Sourcehaven-BV/rela/internal/computed"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
@@ -1351,6 +1352,10 @@ func assemble(
 	if err != nil {
 		return nil, fmt.Errorf("compile transitions: %w", err)
 	}
+	computedSet, err := computed.Compile(base.meta)
+	if err != nil {
+		return nil, fmt.Errorf("compile computed properties: %w", err)
+	}
 
 	// Content versioning is a separate injected service (pgstore only; nil
 	// elsewhere), NOT a store capability the manager type-asserts. Derived once
@@ -1375,6 +1380,7 @@ func assemble(
 		VersionRecorder:         versionRecorderFor(versions),
 		RelationVersionRecorder: relationVersionRecorderFor(versions),
 		Transitions:             tw.Enforcer,
+		Computed:                computedSet,
 		FieldGate:               entitymanager.AllowAllFieldGate{},
 		TransitionGuard:         tw.Guard,
 		TransitionGraph:         tw.Graph,

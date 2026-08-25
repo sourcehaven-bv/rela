@@ -86,6 +86,33 @@ type notNode struct {
 func (*notNode) resultType() Type { return BoolType }
 func (*notNode) sealedNode()      {}
 
+// arithmeticNode performs a typed numeric operation. Int operations remain
+// Int and are checked for overflow; Number operations follow float64/Lua
+// numeric semantics.
+type arithmeticNode struct {
+	op       string
+	lhs, rhs node
+	typ      Type
+}
+
+func (n *arithmeticNode) resultType() Type { return n.typ }
+func (*arithmeticNode) sealedNode()        {}
+
+type unaryMinusNode struct {
+	expr node
+	typ  Type
+}
+
+func (n *unaryMinusNode) resultType() Type { return n.typ }
+func (*unaryMinusNode) sealedNode()        {}
+
+type concatNode struct {
+	lhs, rhs node
+}
+
+func (*concatNode) resultType() Type { return StringType }
+func (*concatNode) sealedNode()      {}
+
 // tableArgType is an internal type carried only by table-literal
 // nodes passed as function arguments. It is not in the public Type
 // surface; callers can't observe or declare it.

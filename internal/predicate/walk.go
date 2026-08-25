@@ -234,6 +234,53 @@ func isOrderedType(t Type) bool {
 		t.equalsType(DateType) || t.equalsType(StringType)
 }
 
+func (w *walker) walkArithmetic(e *ast.ArithmeticOpExpr) (node, error) {
+	lhs, err := w.walkExpr(e.Lhs)
+	if err != nil {
+		return nil, err
+	}
+	rhs, err := w.walkExpr(e.Rhs)
+	if err != nil {
+		return nil, err
+	}
+	// Number literals are the Lua syntax for integer constants. Coerce them
+	// when paired with an Int expression, exactly as comparisons do.
+	lhs, rhs, err = w.coerceLiteralOperands(lhs, rhs, e.Line())
+	if err != nil {
+		return nil, err
+	}
+	lt, rt := lhs.resultType(), rhs.resultType()
+	if !lt.equalsType(rt) || (!lt.equalsType(IntType) && !lt.equalsType(NumberType)) {
+		return nil, &CompileError{Line: e.Line(), Reason: fmt.Sprintf("arithmetic %q requires matching int or number operands, got %s and %s", e.Operator, lt.typeName(), rt.typeName())}
+	}
+	switch e.Operator {
+	case "+", "-", "*", "%":
+		return &arithmeticNode{op: e.Operator, lhs: lhs, rhs: rhs, typ: lt}, nil
+	case "/", "^":
+		if lt.equalsType(IntType) {
+			return nil, &CompileError{Line: e.Line(), Reason: fmt.Sprintf("operator %q is not available for int expressions", e.Operator)}
+		}
+		return &arithmeticNode{op: e.Operator, lhs: lhs, rhs: rhs, typ: NumberType}, nil
+	default:
+		return nil, &CompileError{Line: e.Line(), Reason: fmt.Sprintf("unsupported arithmetic operator %q", e.Operator)}
+	}
+}
+
+func (w *walker) walkConcat(e *ast.StringConcatOpExpr) (node, error) {
+	lhs, err := w.walkExpr(e.Lhs)
+	if err != nil {
+		return nil, err
+	}
+	rhs, err := w.walkExpr(e.Rhs)
+	if err != nil {
+		return nil, err
+	}
+	if !lhs.resultType().equalsType(StringType) || !rhs.resultType().equalsType(StringType) {
+		return nil, &CompileError{Line: e.Line(), Reason: fmt.Sprintf("string concatenation requires string operands, got %s and %s", lhs.resultType().typeName(), rhs.resultType().typeName())}
+	}
+	return &concatNode{lhs: lhs, rhs: rhs}, nil
+}
+
 func (w *walker) walkLogical(e *ast.LogicalOpExpr) (node, error) {
 	switch e.Operator {
 	case "and", "or":

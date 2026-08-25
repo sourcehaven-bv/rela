@@ -61,6 +61,7 @@ components:
   mailrender:       { in: internal/mailrender }
   caldavalias:      { in: internal/caldavalias }
   conflict:         { in: internal/conflict }
+  computed:         { in: internal/computed }
   datamigration:    { in: internal/datamigration }
   entitymanager:    { in: internal/entitymanager }
   imgproc:          { in: internal/imgproc }
@@ -485,6 +486,7 @@ deps:
       # Bridges conditionlint's next-action condition compiler to the seam
       # dataentry declares, so the app never imports the predicate engine.
       - conditionlint
+      - computed
       - dataentryconfig
       - nextaction
       - acl
@@ -554,6 +556,7 @@ deps:
   projectsetup:
     mayDependOn:
       - conditionlint
+      - computed
       - dataentryconfig
       - metamodel
       - migration
@@ -733,12 +736,18 @@ deps:
       # The lua: migration step runs a sandboxed pure transform on a bare
       # gopher-lua state (no rela.* bindings) — see luastep.go.
       - gopherlua
+  computed:
+    mayDependOn:
+      - metamodel
+      - predicate
+      - predicatefns
   entitymanager:
     mayDependOn:
       - acl
       - audit
       - autocascade
       - automation
+      - computed
       - metamodel
       - principal
       - statemachine
