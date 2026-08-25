@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/jobs"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 // These tests are the point of porting the scheduler onto the job seam: they
@@ -104,6 +105,22 @@ func TestUseQueue_RejectsNil(t *testing.T) {
 
 	s := &Scheduler{logger: discardLogger()}
 	require.Error(t, s.UseQueue(nil))
+}
+
+func TestCapabilitiesFromPayload_DurableJSONShape(t *testing.T) {
+	t.Parallel()
+
+	got := capabilitiesFromPayload(map[string]any{
+		payloadHTTP:      true,
+		payloadAI:        true,
+		payloadWriteFile: true,
+		payloadSecrets:   []any{"reporting_token", "mail_password"},
+	})
+
+	require.Equal(t, metamodel.Capabilities{
+		HTTP: true, AI: true, WriteFile: true,
+		Secrets: []string{"reporting_token", "mail_password"},
+	}, got, "capabilities must survive the durable backend's JSON round-trip")
 }
 
 // TestEnqueuedJob_UsesIdempotencyKey is the load-bearing assertion for how a
@@ -332,9 +349,10 @@ func TestScheduler_ThroughRealQueue(t *testing.T) {
 	t.Cleanup(func() { _ = q.Close(context.Background()) })
 
 	var (
-		mu     sync.Mutex
-		ranAs  string
-		ranFor string
+		mu      sync.Mutex
+		ranAs   string
+		ranFor  string
+		ranWith metamodel.Capabilities
 	)
 
 	// Stand in for the Lua engine. The handler must still report completion
@@ -347,6 +365,10 @@ func TestScheduler_ThroughRealQueue(t *testing.T) {
 	s := &Scheduler{
 		config: &Config{Tasks: []TaskConfig{{
 			Name: "nightly", Script: "reports.lua", RunAs: "system:reporting",
+			Capabilities: metamodel.Capabilities{
+				HTTP: true, AI: true, WriteFile: true,
+				Secrets: []string{"reporting_token", "mail_password"},
+			},
 			Every: intervalSchedule(time.Hour),
 		}}},
 		ws:     newMockWorkspace(t),
@@ -357,7 +379,7 @@ func TestScheduler_ThroughRealQueue(t *testing.T) {
 	// Wired exactly as production wires it, with the engine call replaced.
 	s.engineRunner = func(_ context.Context, task TaskConfig) error {
 		mu.Lock()
-		ranFor, ranAs = task.Script, task.RunAs
+		ranFor, ranAs, ranWith = task.Script, task.RunAs, task.Capabilities
 		mu.Unlock()
 		return nil
 	}
@@ -369,6 +391,10 @@ func TestScheduler_ThroughRealQueue(t *testing.T) {
 	defer mu.Unlock()
 	require.Equal(t, "reports.lua", ranFor, "the worker must receive the task's script")
 	require.Equal(t, "system:reporting", ranAs, "run_as must survive the hop to a worker")
+	require.Equal(t, metamodel.Capabilities{
+		HTTP: true, AI: true, WriteFile: true,
+		Secrets: []string{"reporting_token", "mail_password"},
+	}, ranWith, "capabilities must remain the enqueue-time authorization snapshot")
 }
 
 // TestScheduler_ThroughRealQueue_RecordsFailure pins that a failing script

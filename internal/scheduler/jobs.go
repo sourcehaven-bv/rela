@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/jobs"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 // This file is the scheduler's half of the job seam.
@@ -48,13 +49,18 @@ import (
 // subsystem registers into one process-wide queue.
 var TaskKind = jobs.NewKind("scheduler", "run-task")
 
-// Payload keys for a task job. The payload names WHAT to run; authority comes
-// from the principal the handler stamps on its context, never from these.
+// Payload keys for a task job. The payload snapshots both what to run and its
+// authorization: run_as is stamped onto the worker context, while capabilities
+// become the Lua runtime's ambient grant.
 const (
-	payloadTaskName = "task"
-	payloadScript   = "script"
-	payloadRunAs    = "run_as"
-	payloadRunToken = "run_token"
+	payloadTaskName  = "task"
+	payloadScript    = "script"
+	payloadRunAs     = "run_as"
+	payloadRunToken  = "run_token"
+	payloadHTTP      = "capability_http"
+	payloadAI        = "capability_ai"
+	payloadWriteFile = "capability_write_file"
+	payloadSecrets   = "capability_secrets"
 )
 
 // UseQueue routes script execution through q.
@@ -101,6 +107,7 @@ func (s *Scheduler) runTaskJob(ctx context.Context, job jobs.Job) (err error) {
 	script, _ := job.Payload[payloadScript].(string)
 	runAs, _ := job.Payload[payloadRunAs].(string)
 	token, _ := job.Payload[payloadRunToken].(string)
+	capabilities := capabilitiesFromPayload(job.Payload)
 
 	// Hand the outcome back to the waiting submitter, which owns the state
 	// bookkeeping, on EVERY exit path.
@@ -119,7 +126,34 @@ func (s *Scheduler) runTaskJob(ctx context.Context, job jobs.Job) (err error) {
 	}
 
 	taskCtx := stampTaskAuditContext(ctx, name, runAs)
-	return s.runEngine(taskCtx, TaskConfig{Name: name, Script: script, RunAs: runAs})
+	return s.runEngine(taskCtx, TaskConfig{
+		Name: name, Script: script, RunAs: runAs, Capabilities: capabilities,
+	})
+}
+
+// capabilitiesFromPayload restores the authorization snapshot captured when
+// the task was enqueued. []any is the durable JSON round-trip shape; []string
+// is what the in-memory backend preserves. Unknown values fail closed.
+func capabilitiesFromPayload(payload map[string]any) metamodel.Capabilities {
+	http, _ := payload[payloadHTTP].(bool)
+	ai, _ := payload[payloadAI].(bool)
+	writeFile, _ := payload[payloadWriteFile].(bool)
+
+	var secrets []string
+	switch values := payload[payloadSecrets].(type) {
+	case []string:
+		secrets = append([]string(nil), values...)
+	case []any:
+		for _, value := range values {
+			if secret, ok := value.(string); ok {
+				secrets = append(secrets, secret)
+			}
+		}
+	}
+
+	return metamodel.Capabilities{
+		HTTP: http, AI: ai, WriteFile: writeFile, Secrets: secrets,
+	}
 }
 
 // enqueueTask submits one task execution and waits for it to finish.
@@ -189,13 +223,18 @@ func (s *Scheduler) enqueueTask(ctx context.Context, task TaskConfig) error {
 		return err
 	}
 	defer s.releaseInFlight(task.Name, token)
+	http, ai, writeFile, secrets := task.Capabilities.Fields()
 
 	job := jobs.Job{
 		Kind: TaskKind,
 		Payload: map[string]any{
-			payloadTaskName: task.Name,
-			payloadScript:   task.Script,
-			payloadRunAs:    task.RunAs,
+			payloadTaskName:  task.Name,
+			payloadScript:    task.Script,
+			payloadRunAs:     task.RunAs,
+			payloadHTTP:      http,
+			payloadAI:        ai,
+			payloadWriteFile: writeFile,
+			payloadSecrets:   append([]string(nil), secrets...),
 
 			// Identifies THIS run, so a late report from a run whose
 			// submitter gave up cannot be delivered to a later one.
