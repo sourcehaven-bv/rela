@@ -248,8 +248,23 @@ func (l *fsLock) breakIfStale() bool {
 	// Re-verify UNDER the break mutex: between our first read and now,
 	// another breaker may have removed the stale file and a new holder may
 	// have created a fresh one.
-	if !l.isStale() {
+	//
+	// "Missing" must NOT reach the os.Remove below. isStale reports a missing
+	// file as stale — correct for the pre-check, whose only question is
+	// whether a retry is worthwhile — but as a license to remove it reopens
+	// the very TOCTOU the break mutex exists to close: two breakers see the
+	// seeded stale file, the first removes it and wins the O_EXCL race, and
+	// the second, having read the path during that gap, deletes the winner's
+	// LIVE lock and creates its own. Both then believe they hold it. So
+	// removal is conditional on the file still being present AND provably
+	// stale; a missing file just means retry, which the O_EXCL create
+	// arbitrates correctly on its own.
+	present, stale := l.staleState()
+	if !stale {
 		return false
+	}
+	if !present {
+		return true
 	}
 	slog.Warn("datamigration: breaking stale migration lock", "path", l.path)
 	_ = os.Remove(l.path)
@@ -259,16 +274,29 @@ func (l *fsLock) breakIfStale() bool {
 // isStale reports whether the lock file exists and its holder is provably
 // gone (dead pid) or unattributable (unparseable). A missing file counts as
 // stale too: the retry's O_EXCL create decides ownership either way.
+//
+// Use this only to decide whether a RETRY is worthwhile. To decide whether the
+// file may be REMOVED, use staleState and remove only when it is present —
+// see the TOCTOU note in breakIfStale.
 func (l *fsLock) isStale() bool {
+	_, stale := l.staleState()
+	return stale
+}
+
+// staleState reports whether the lock file is present, and whether its holder
+// is stale. A missing file is reported as stale-but-absent, which lets a caller
+// distinguish "nothing to break, just retry" from "a dead holder's file is
+// sitting there and must be removed".
+func (l *fsLock) staleState() (present, stale bool) {
 	data, err := os.ReadFile(l.path)
 	if err != nil {
-		return errors.Is(err, os.ErrNotExist)
+		return false, errors.Is(err, os.ErrNotExist)
 	}
 	var p lockFilePayload
 	if err := json.Unmarshal(data, &p); err != nil || p.PID <= 0 {
-		return true
+		return true, true
 	}
-	return !pidAlive(p.PID)
+	return true, !pidAlive(p.PID)
 }
 
 // clearAbandonedBreak removes a break file left behind by a crashed breaker.
