@@ -117,6 +117,10 @@ type Services struct {
 	aclDeclarative *acl.Declarative
 	aclPolicy      *acl.Policy
 	audit          audit.Audit
+	// mailStop drains and stops the mail worker. Per-assembled like gcStop,
+	// and bounded by the outbox's drain timeout so it cannot hang shutdown.
+	mailStop func()
+
 	// gcStop terminates this store's data-migration GC sweep goroutine
 	// (TKT-0C57FS). Per-assembled, torn down in Close like searchCloser.
 	gcStop func()
@@ -1218,6 +1222,55 @@ func (b *SharedBase) Assemble(
 	return assemble(b, st, searcher, visible, searchCloser)
 }
 
+// resolveVisibleSearcher derives an ACL-scoped searcher when the caller did not
+// supply one. A recipe may pass its own (the postgres build has a DB-backed
+// implementation); everything else gets the generic decorator.
+func resolveVisibleSearcher(
+	visible search.VisibleSearcher, searcher search.Searcher, st store.Store,
+) (search.VisibleSearcher, error) {
+	if visible != nil {
+		return visible, nil
+	}
+	v, err := search.NewVisible(searcher, st)
+	if err != nil {
+		return nil, fmt.Errorf("appbuild: derive VisibleSearcher: %w", err)
+	}
+	return v, nil
+}
+
+// backgroundServices holds the optional per-assembled subsystems and the stop
+// functions Services.Close tears down. Grouped so assemble stays readable as
+// more optional services are added — each is independently nil-able and none
+// may fail boot.
+type backgroundServices struct {
+	gcStop   func()
+	mailStop func()
+}
+
+// startBackgroundServices launches the optional per-store subsystems: the
+// data-migration gate and GC sweep, and the mail outbox worker.
+//
+// Neither may fail boot. Each returns a stop function that is always safe to
+// call, so Close needs no nil checks beyond the ones it already has.
+func startBackgroundServices(
+	base *SharedBase, st store.Store, stateKV state.KV, versions store.VersionService,
+) backgroundServices {
+	cfg := base.cfg
+
+	gcStop := startDataMigration(stateKV, base.meta, st, cfg.Audit, versions, cfg.Paths.CacheDir)
+
+	// Mail is optional and never fails boot. The outbox itself is discarded
+	// here: nothing can enqueue until the declarative layer (TKT-U2R7GU)
+	// lands, and storing a handle no code reads would look wired when it is
+	// not. Only the stop function is retained, because Close genuinely uses it.
+	_, mailStop := startMail(cfg.Paths)
+
+	return backgroundServices{
+		gcStop:   gcStop,
+		mailStop: mailStop,
+	}
+}
+
 // resolveACLAndRedactor resolves the ACL and derives the field redactor that
 // depends on it. They are returned together because the redactor is a function
 // of the resolved Declarative: splitting them invites a caller that has one
@@ -1270,12 +1323,9 @@ func assemble(
 ) (*Services, error) {
 	cfg := base.cfg
 
-	if visible == nil {
-		v, err := search.NewVisible(searcher, st)
-		if err != nil {
-			return nil, fmt.Errorf("appbuild: derive VisibleSearcher: %w", err)
-		}
-		visible = v
+	visible, err := resolveVisibleSearcher(visible, searcher, st)
+	if err != nil {
+		return nil, err
 	}
 
 	resolvedACL, aclDeclarative, fieldRedactor, err := resolveACLAndRedactor(base, st)
@@ -1351,10 +1401,11 @@ func assemble(
 	// changes, warn on incompatible ones) and start the drift GC sweep
 	// (TKT-0C57FS). Never fails boot; the stop func is torn down in Close —
 	// per-assembled, like the search closer.
-	gcStop := startDataMigration(stateKV, base.meta, st, cfg.Audit, versions, cfg.Paths.CacheDir)
+	background := startBackgroundServices(base, st, stateKV, versions)
 
 	return &Services{
-		gcStop:          gcStop,
+		gcStop:          background.gcStop,
+		mailStop:        background.mailStop,
 		fs:              cfg.FS,
 		paths:           cfg.Paths,
 		meta:            base.meta,
@@ -1467,6 +1518,13 @@ func relationVersionRecorderFor(vs store.VersionService) entitymanager.RelationV
 // failures are slog.Warn'd).
 func (s *Services) Close() error {
 	s.closeOnce.Do(func() {
+		// Mail first: the worker may still be delivering, and its drain is
+		// bounded, so stopping it before the store closes gives in-flight
+		// sends their best chance without risking a hung shutdown.
+		if s.mailStop != nil {
+			s.mailStop()
+			s.mailStop = nil
+		}
 		if s.gcStop != nil {
 			s.gcStop()
 			s.gcStop = nil
