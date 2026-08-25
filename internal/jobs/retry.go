@@ -43,7 +43,7 @@ const (
 // including the first.
 //
 // This package enforces the budget itself, in the dispatcher — it is never
-// handed to the backend. See [Retry.backendRetryBudget] for why.
+// handed to the backend. See backendRetryBudget for why.
 func (r Retry) maxAttempts() int {
 	switch r {
 	case RetryNever:

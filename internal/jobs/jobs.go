@@ -41,7 +41,7 @@
 // A job enqueued inside an open store transaction must not become runnable
 // until that transaction commits — otherwise a worker picks it up on a
 // different connection and reads a snapshot that cannot yet see the writes,
-// acting on the pre-write world. See [Deferred] and deferred.go.
+// acting on the pre-write world. See [Collector] and deferred.go.
 //
 // # Scheduling is not this package's concern
 //

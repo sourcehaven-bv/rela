@@ -60,7 +60,7 @@ const (
 // UseQueue routes script execution through q.
 //
 // Call it once at wiring time, before Run. It registers the task handler and
-// switches [Scheduler.doExecuteTask] onto the queue; without it the scheduler
+// switches doExecuteTask onto the queue; without it the scheduler
 // executes inline exactly as before, which is what keeps every existing test
 // meaningful.
 //
