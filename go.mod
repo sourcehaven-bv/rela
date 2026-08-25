@@ -175,3 +175,11 @@ require (
 	google.golang.org/protobuf v1.36.6 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 )
+
+// neoq's make-job-id-bigint migration hardcoded `public.neoq_jobs_id_seq`
+// while its tables are created through search_path, so the job queue could not
+// initialize against ANY schema-pinned DSN — which is how rela scopes a tenant
+// (docs/postgres-backend.md) and how the postgres e2e specs connect. The fork
+// resolves the sequence via pg_get_serial_sequence instead. Drop this once the
+// fix is upstream: https://github.com/acaloiaro/neoq/pull/149
+replace github.com/acaloiaro/neoq => github.com/sourcehaven-bv/neoq v0.72.2-0.20260825051739-c4c1564854aa
