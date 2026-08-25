@@ -1,60 +1,86 @@
 ---
 id: BUG-YJEIFH
 type: bug
-title: Postgres-backed e2e specs fail to start rela-server-postgres when a database IS configured
-description: history-url-params.spec.ts (6 tests) and relation-history.spec.ts (2 tests) fail with 'spawn bin/rela-server-postgres ENOENT' or a serverUrl setup timeout whenever RELA_E2E_DATABASE_URL is set. Reproduced identically on unmodified develop, so not caused by TKT-YOED3R. Hidden in most environments because the specs SKIP when the env var is unset.
-priority: medium
-status: backlog
+title: Postgres job queue cannot initialize against a schema-pinned DSN
+description: neoq's make-job-id-bigint migration hardcodes public.neoq_jobs_id_seq while its tables are created through search_path, so NewPostgresQueue fails on any DSN that pins search_path to a non-public schema. That is how rela scopes a tenant and how the postgres e2e specs connect, so rela-server-postgres refused to start and 8 e2e tests failed with a misleading 'spawn ... ENOENT'. Introduced by TKT-YOED3R; fixed via a vendored neoq fork plus a schema-pinned regression test.
+priority: high
+status: done
+why1: rela-server-postgres exited during startup, so the e2e fixture never got a listening server and every postgres-gated spec timed out setting up serverUrl.
+why2: appbuild could not build the job queue - neoq's migration failed with 'relation "public.neoq_jobs_id_seq" does not exist'.
+why3: neoq creates its tables through search_path (so they land in the tenant schema) but one migration names the sequence as public.neoq_jobs_id_seq, which only resolves when the tables happen to be in public.
+why4: rela's own postgres conformance suite passes RELA_TEST_DATABASE_URL through unchanged, which resolves to public - so no test ever exercised the schema-pinned DSN that every tenant and the e2e fixture actually use.
+why5: the queue was adopted as a dependency without checking it against rela's schema-per-tenant contract, and that contract is documented in prose (docs/postgres-backend.md) rather than pinned by a test that new storage-touching dependencies must pass.
+prevention: internal/jobs now has TestPostgresQueue_SchemaPinnedDSN, which initializes the queue against a freshly-created non-public schema and asserts neoq_jobs lands there. Any dependency that writes to PostgreSQL must be exercised through a schema-pinned DSN, not just the bare test DSN.
 ---
 
 ## Symptom
 
-The two postgres-gated e2e specs fail every run on a machine (or CI job) where
-`RELA_E2E_DATABASE_URL` is set:
+Every postgres-gated e2e spec fails when `RELA_E2E_DATABASE_URL` is set:
 
 - `e2e/tests/history-url-params.spec.ts` (6 tests)
 - `e2e/tests/relation-history.spec.ts` (2 tests)
 
-Errors are one of:
-
 ```text
-Error: spawn <root>/bin/rela-server-postgres ENOENT
 Test timeout of 30000ms exceeded while setting up "serverUrl".
+Error: spawn <root>/bin/rela-server-postgres ENOENT
 ```
 
-## Not caused by TKT-YOED3R
+## Root cause
 
-Found while landing PR #1444, and checked rather than assumed, because
-`develop`'s own CI run was green:
+The server never starts. Its stderr — which the fixture discarded — said:
 
-- Built a worktree at `origin/develop` (`f5702e75`), built the same
-`rela-server-postgres` binary and the e2e frontend bundle, ran
-`history-url-params.spec.ts` against a local PostgreSQL.
-- **6 failed on `develop`; 6 failed on the PR branch — identical.**
-- `git diff origin/develop...HEAD -- e2e/` is empty on that branch.
+```text
+appbuild: build job queue: jobs: init postgres backend:
+unable to run migrations, could not apply up migration: migration failed:
+relation "public.neoq_jobs_id_seq" does not exist
+  in: ALTER TABLE neoq_jobs ALTER COLUMN id SET DATA TYPE bigint;
+      ALTER SEQUENCE public.neoq_jobs_id_seq AS bigint;
+```
 
-## Why it hides
+neoq's `CREATE TABLE neoq_jobs` is unqualified, so `SERIAL` mints
+`<search_path_head>.neoq_jobs_id_seq`. The later `make-job-id-bigint`
+migration then names `public.neoq_jobs_id_seq` explicitly. The two agree only
+when the queue's tables are in `public`.
 
-The fixture skips these specs when `RELA_E2E_DATABASE_URL` is unset
-(`POSTGRES_E2E_ENABLED`), which is the default. So they SKIP in most
-environments and only fail where a database is actually configured — the
-opposite of the usual flaky-test shape, and why `develop` can look green.
+The e2e fixture connects with `-c search_path=<test schema>,public` (per-test
+schema isolation), so they never agree there — and neither do they in a
+schema-per-tenant deployment, which is the documented multi-tenant mode.
 
-## Notes for whoever picks this up
+Sharing one `public.neoq_jobs` across tenants is not an acceptable workaround:
+rela submits every kind to a single queue name and neoq's insert trigger does
+`pg_notify(NEW.queue, ...)`, so tenants would consume each other's jobs.
 
-`ENOENT` is misleading: the binary exists at the path in the message and runs
-fine when executed directly (`./bin/rela-server-postgres --help` exits 0). Node
-reports `ENOENT` from `spawn` for causes other than a missing file, so the real
-failure is likely in process startup or in `waitForServer`'s readiness probe
-(`/api/v1/_config`), not in path resolution. `spawnServer` retries 3× and then
-reports only the last error, which is why the surfaced message is unhelpful.
+## Why the ENOENT was misleading
 
-The fixture attaches the server's stdout/stderr to the Playwright report on
-failure (`rela-server-postgres.log`) — read that first; it was not inspected
-during triage.
+`spawnServer` never registered a `'error'` listener on the child, so Node
+re-raised the spawn-side event out of band while `waitForServer` polled a dead
+port for the full 30s. The reported error was therefore both wrong (the binary
+exists and runs) and late. The child's stderr was captured but only attached on
+a *test* failure, not on a fixture-setup failure.
+
+## Not pre-existing
+
+Earlier triage concluded this reproduced on unmodified `develop`. It does not:
+`internal/jobs` does not exist on `develop` (`git ls-tree origin/develop
+internal/jobs` is empty), so `develop` has no job queue to fail. The comparison
+run must have used a binary built from the branch.
+
+## Fix
+
+1. **Vendored neoq fork** (`sourcehaven-bv/neoq`, branch
+   `fix/schema-qualified-sequence`, pinned by a `replace` in `go.mod`): the
+   migration resolves the sequence with `pg_get_serial_sequence('neoq_jobs',
+   'id')` instead of naming a schema. Correct in `public` and in any other
+   schema. Offered upstream as acaloiaro/neoq#149; drop the `replace` when
+   it lands.
+2. **Regression test** `TestPostgresQueue_SchemaPinnedDSN` — initializes the
+   queue against a fresh non-public schema and asserts `neoq_jobs` is created
+   there.
+3. **Fixture diagnostics** — `spawnServer` now handles `'error'`, fails fast
+   when the child exits during startup, and puts the server's stderr in the
+   thrown error.
 
 ## Acceptance
 
-- The two specs pass with `RELA_E2E_DATABASE_URL` set, locally and in CI.
-- The failure mode reports the server's actual startup error rather than
-a bare `ENOENT`.
+- [x] Both specs pass with `RELA_E2E_DATABASE_URL` set.
+- [x] The failure mode reports the server's actual startup error.

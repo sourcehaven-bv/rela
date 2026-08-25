@@ -142,6 +142,20 @@
   an unsent mail from an ended session is not worth resurrecting. Don't
   "fix" it to persist; that is what the postgres tier is for.
 
+  *The durable queue's tables live in the TENANT's schema, like every other
+  postgres-backed table.* A schema-pinned `search_path` is how rela scopes a
+  tenant, and the queue is not exempt: rela submits every kind to one queue
+  name and neoq's insert trigger does `pg_notify(NEW.queue, ...)`, so tables
+  shared across tenants would mean tenants consuming each other's jobs. neoq
+  v0.72.1 could not do this — one migration named `public.neoq_jobs_id_seq`
+  while its tables follow `search_path` — which is why `go.mod` carries a
+  `replace` onto a fork (BUG-YJEIFH, upstream acaloiaro/neoq#149). Drop the
+  `replace` when that lands, not before: `TestPostgresQueue_SchemaPinnedDSN`
+  is what fails if it goes early. **Test any new postgres-touching dependency
+  through a schema-pinned DSN**, not just the bare `RELA_TEST_DATABASE_URL` —
+  the bare DSN resolves to `public`, which is precisely the one case that
+  worked.
+
 - **The configuration is not a secret; the data is.** `schema.yaml`,
   `data-entry.yaml`, `acl.yaml`, `schedules.yaml`, `scripts/`, `actions/`,
   `templates/` are operator-authored files that live in the repo — routinely a
