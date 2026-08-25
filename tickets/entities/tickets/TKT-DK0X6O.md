@@ -6,7 +6,7 @@ kind: enhancement
 priority: medium
 effort: m
 tags: needs-design
-status: in-progress
+status: ready
 ---
 
 ## Problem

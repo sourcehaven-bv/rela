@@ -124,9 +124,8 @@ const lockFileName = "migration.lock"
 
 // lockFilePayload is what the holder writes into the lock file: enough to
 // decide staleness (pid liveness on this host) and to name the holder in
-// logs. Parsed defensively — an unparseable file counts as stale, because a
-// file we cannot attribute to a live process must not wedge migrations
-// forever.
+// logs. Parsed defensively — an old unparseable file counts as stale, while a
+// newly created one may still be receiving its payload and is honored.
 type lockFilePayload struct {
 	PID        int       `json:"pid"`
 	AcquiredAt time.Time `json:"acquired_at"`
@@ -223,6 +222,11 @@ func (l *fsLock) breakPath() string { return l.path + ".break" }
 // mid-break is the only way one persists.
 const breakStaleWindow = 30 * time.Second
 
+// malformedLockGrace closes the create-then-write window: O_EXCL publishes an
+// empty file before its payload is written, so another contender must not
+// mistake a new, incomplete file for an abandoned lock and remove it.
+const malformedLockGrace = time.Second
+
 // breakIfStale removes the lock file when its holder is provably gone on
 // this host, returning true when a retry is worthwhile. A file naming a
 // LIVE pid is always honored — staleness can only be concluded from a dead
@@ -294,6 +298,10 @@ func (l *fsLock) staleState() (present, stale bool) {
 	}
 	var p lockFilePayload
 	if err := json.Unmarshal(data, &p); err != nil || p.PID <= 0 {
+		info, statErr := os.Stat(l.path)
+		if statErr == nil && time.Since(info.ModTime()) < malformedLockGrace {
+			return true, false
+		}
 		return true, true
 	}
 	return true, !pidAlive(p.PID)

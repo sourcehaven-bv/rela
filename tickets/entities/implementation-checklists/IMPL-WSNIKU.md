@@ -2,7 +2,7 @@
 id: IMPL-WSNIKU
 type: implementation-checklist
 title: 'Implementation: Scheduler run-state gets its own storage service: per-task rows, atomic outcome writes, out of the general KV blob'
-status: in-progress
+status: pending
 ---
 
 <!-- @managed: claude-workflow v1 -->
