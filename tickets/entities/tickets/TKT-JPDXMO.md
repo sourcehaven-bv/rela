@@ -152,16 +152,11 @@ exposes the old shape.
 
 ## Implementation status (2026-08-17): read path landed, ticket stays open
 
-**Status stays `backlog` deliberately.** The read path is implemented in PR
-#1359, but the feature is not usable end-to-end until AC7 lands — a client that
-creates a to-do in a generated collection gets an entity in no collection, which
-is worse than the feature being absent. `in-progress` would be the honest label
-for the work, but the workflow requires a terminal status to merge and this
-ticket is not finished; `backlog` says "more to do here" without claiming the
-feature ships.
-
-The READ path is implemented in PR #1359; writes into a generated collection are
-not. Split that way deliberately: the read path is testable against real clients,
+**Status stays `backlog` deliberately.** Read and create both work now, but AC4
+(driver deletion) is unverified against real clients and the AC requires that it
+be observed rather than assumed. `in-progress` would be the honest label, but
+the workflow requires a terminal status to merge; `backlog` says "more to do
+here" without claiming the feature is finished. Split that way deliberately: the read path is testable against real clients,
 which is how every genuine CalDAV bug in this arc was found, and the write half
 carries an unresolved atomicity question (below).
 
@@ -189,17 +184,109 @@ Membership is ONE relation traversal anchored on the driver, not one per member
 — O(1) queries per collection rather than O(members), the shape that made the
 old per-row relation filter O(N·edges).
 
+### Landed since
+
+- **AC7 (client-created entries)** — `createFromTodo` now gives a new entry the
+  driver relation, so it is a member of the collection it was created in. The
+  config already carried `relation:` (it serves both directions by design), so
+  no new config surface was needed.
+
+  **Atomicity resolved as a compensating delete, not a transaction.**
+  `entitymanager` exposes no `Tx`, and `store.Tx` would not have helped
+  uniformly anyway: fsstore keeps writes already made (no rollback — a
+  deliberate reduced guarantee), so the same compensation would be required
+  there regardless. If the edge fails the entity is deleted, non-cascading —
+  it is seconds old and its only possible edge is the one that just failed, so
+  a cascade could only reach relations a concurrent writer added, which are not
+  ours to remove. If the compensation itself fails the orphan survives and the
+  error says so, which is the best available at this layer.
+
+  The reasoning for deleting rather than keeping: an entity in the type but in
+  no collection is invisible in every CalDAV view, so the user can neither find
+  nor fix it. A failed create is visible and retryable; an orphan is neither.
+
+### The compensating delete is create-only (BUG-2ATX4H, added 2026-08-23)
+
+The atomicity reasoning above holds **only for the create flow**, and reusing
+`linkToDriver` for the update flow silently carried it somewhere it is false.
+
+An IB review of #1403 caught it. On an edit of a pre-existing to-do the entity
+is not "seconds old and wholly ours": its patch has already succeeded and its
+content is the user's. Undoing a failed *assignment* by deleting that entity
+destroys data the caller never asked to remove — and the client sees only an
+error, so the loss is silent.
+
+**The trigger is broader than the review stated.** Every non-already-exists
+error from `CreateRelation` reached the delete, not just an ACL deny:
+
+| Trigger | Reachable how |
+|---|---|
+| ACL deny | A principal with `update: task` but not `create: belongs-to` — the routine read-mostly CalDAV setup. Fires on an ordinary check-off. |
+| Driver unreadable/absent | Driver deleted or ACL-hidden while a client still holds the collection — **this is AC4's scenario**. |
+| Relation invalid per metamodel | Operator points `dynamic:` at a mismatched relation. |
+| Source vanished / template load / order assign / store write | Races and transients (a dropped pgx connection). |
+
+Fixed by splitting the primitive: `attachToDriver` creates the edge with no
+side effect on the entity, and `linkToDriver` — now the create path's ONLY
+caller — wraps it with the compensating delete. The update path calls
+`attachToDriver` directly and, on a deny, degrades to `refusedWriteResponse`,
+matching how a deny on `PatchEntity` three lines earlier is already handled.
+
+Consequence, accepted: a to-do whose assignment is refused keeps its edit and
+does not join the target collection. The client reconciles on refetch (no ETag
+is served). A silent partial success, but recoverable — unlike destroying it.
+
+Pinned by `TestDynamicCollections_FailedAssignNeverDeletesAnExistingEntity`
+(verified to fail against the pre-fix code with `store: not found`) and
+`TestDynamicCollections_FailedCreateStillCompensates`, which guards the other
+direction — splitting the flows must not disarm the create-path undo.
+
+### Membership is symmetric on both write directions (added 2026-08-18)
+
+Live testing against Thunderbird surfaced two gaps that AC7 as written did not
+cover. Both come from the same mistake: treating a dynamic collection as a
+*view* rather than as *membership*.
+
+- **PUT of an EXISTING to-do into another collection was a silent no-op.**
+  `linkToDriver` ran only on create, so assigning an existing to-do to a second
+  project patched properties and never added the edge — the client showed it in
+  the new list, the next poll did not. Now the update path adds the edge too.
+
+  **Additive, never a move.** A client "move" and a "assign to a second list"
+  are indistinguishable on the wire (both PUT the same UID into another
+  collection), and Thunderbird supports move, copy AND multi-collection
+  assignment. Dropping the old edge would silently break the third; adding one
+  models all three, because membership is a relation and belonging to two
+  projects is a legal graph state. A real move sends a DELETE against the source
+  afterwards, which removes the other edge.
+
+- **DELETE applied `on_delete:` to the ENTITY.** A DELETE against
+  `project_tasks--PRJ-home/TSK-1.ics` names a MEMBERSHIP, not the entity: the
+  user removed the to-do from Home, not from existence. The old behaviour
+  cancelled it globally — in the static collection, in every other project, and
+  in the web app. **Reproduced live**: a to-do deleted from one project was
+  cancelled everywhere while still holding its `belongs-to` edge.
+
+  Now the edge is removed. The one genuinely ambiguous case — the entity's LAST
+  membership — is `on_unlink: auto|keep|delete`, defaulting to `auto`, which
+  reads the relation's own `min_outgoing`: a mandatory membership means an
+  orphan violates the operator's declared schema, so `on_delete:` applies;
+  an optional one means belonging to nothing is legal and the entity is kept.
+  Deriving it keeps the schema the single source of truth rather than a second
+  setting that can disagree with it. (Caveat recorded in the code: a cardinality
+  violation is a WARNING at write time per DEC-HWZHA, so `min_outgoing` is read
+  as intent, not as an enforced invariant.)
+
+Two bugs found while building this, both fixed and pinned:
+
+- Re-editing a to-do failed with `relation already exists`, because an ordinary
+  check-off re-asserts the membership it already has — and the compensating
+  delete then tried to destroy a long-lived entity. Now idempotent via
+  `entitymanager.ErrRelationAlreadyExists`.
+- The create-path compensation could fire on an entity that was never new.
+
 ### Deferred, with reasons
 
-- **AC7 (client-created entries)** — a to-do created in
-  `project_tasks--PRJ-1` must also receive the `belongs-to` edge, or it lands in
-  the entity type but in NO collection and vanishes from the client on the next
-  sync. The config already carries `relation:` for this (it serves both
-  directions by design), so no new config surface is needed. What is unresolved
-  is ATOMICITY: `createFromTodo` creates the entity and would then create the
-  relation, and a failure between the two strands an entity outside every
-  collection. Wants the pair in one `store.Tx`, or an explicit compensating
-  delete — decide before implementing.
 - **AC4 (driver deletion)** — deleting a driver removes a collection, and the
   ticket requires the client behaviour be *documented, not assumed*. That needs
   live observation against Reminders and Thunderbird; every client finding in
