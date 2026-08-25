@@ -1,6 +1,7 @@
 package storetest
 
 import (
+	"context"
 	"errors"
 	"runtime"
 	"strconv"
@@ -211,4 +212,137 @@ func RunTxRollbackTests(t *testing.T, f Factory) {
 			t.Fatal("no event delivered after committed transaction")
 		}
 	})
+}
+
+// TxDurabilityFactory builds a store for the abnormal-exit cases below. It is
+// separate from Factory because these cases need a store that OUTLIVES the
+// transaction under test — a factory that registers t.Cleanup teardown is fine,
+// but the store must still be usable after fn has panicked.
+//
+// The cases exist because RunTxRollbackTests only ever returns an ERROR from
+// fn. A backend can pass it while leaving the store permanently unusable after
+// a panic or a cancelled commit, which is exactly what happened to sqlitestore:
+// abandoning an open transaction on a pooled connection poisoned every
+// subsequent transaction AND made the uncommitted write durable. The suite
+// could not see it, so the bug shipped to review.
+func RunTxAbnormalExitTests(t *testing.T, f Factory) {
+	t.Run("PanicInFnLeavesStoreUsable", func(t *testing.T) {
+		s := f(t)
+
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Error("expected the panic to propagate out of Tx")
+				}
+			}()
+			_ = s.Tx(ctx(), func(tx store.Store) error {
+				require.NoError(t, tx.CreateEntity(ctx(), entity.New("PANIC-1", "feature")))
+				panic("boom")
+			})
+		}()
+
+		// The write must not have survived...
+		_, err := s.GetEntity(ctx(), "PANIC-1")
+		require.ErrorIs(t, err, store.ErrNotFound,
+			"a panicking transaction must not commit its writes")
+
+		// ...and the store must still work. A backend that pins a connection
+		// for the transaction can return it to the pool mid-transaction here,
+		// poisoning every later write.
+		require.NoError(t, s.Tx(ctx(), func(tx store.Store) error {
+			return tx.CreateEntity(ctx(), entity.New("AFTER-PANIC", "feature"))
+		}), "the store must remain usable after a panic inside Tx")
+
+		got, err := s.GetEntity(ctx(), "AFTER-PANIC")
+		require.NoError(t, err)
+		require.Equal(t, "AFTER-PANIC", got.ID)
+	})
+
+	t.Run("ContextCancelledDuringTxLeavesStoreUsable", func(t *testing.T) {
+		s := f(t)
+
+		cancelCtx, cancel := context.WithCancel(context.Background())
+		err := s.Tx(cancelCtx, func(tx store.Store) error {
+			if err := tx.CreateEntity(cancelCtx, entity.New("CANCEL-1", "feature")); err != nil {
+				return err
+			}
+			// Cancel between the last write and the commit — a closed browser
+			// tab mid-save. The commit must not leave the transaction open.
+			cancel()
+			return nil
+		})
+		// Either outcome is acceptable: the backend may commit (the work was
+		// done) or fail. What is NOT acceptable is being unusable afterwards.
+		_ = err
+
+		require.NoError(t, s.Tx(context.Background(), func(tx store.Store) error {
+			return tx.CreateEntity(context.Background(), entity.New("AFTER-CANCEL", "feature"))
+		}), "the store must remain usable after a cancelled Tx")
+	})
+}
+
+// RunTxObserverIsolationTests asserts observers do not witness rolled-back
+// writes.
+//
+// Separate from RunTxRollbackTests because it needs a store with an observer
+// attached, which Factory cannot express. Worth its own entry point: observers
+// are how derived state (search indexes) stays correct, so an observer firing
+// for a write that never committed leaves the index holding a phantom entity —
+// and nothing self-heals until a full reindex.
+func RunTxObserverIsolationTests(t *testing.T, newStore func(t *testing.T, o store.EntityObserver) store.Store) {
+	t.Run("RollbackDoesNotNotifyObservers", func(t *testing.T) {
+		obs := &recordingObserver{}
+		s := newStore(t, obs)
+
+		sentinel := errors.New("boom")
+		err := s.Tx(ctx(), func(tx store.Store) error {
+			if err := tx.CreateEntity(ctx(), entity.New("OBS-1", "feature")); err != nil {
+				return err
+			}
+			return sentinel
+		})
+		require.ErrorIs(t, err, sentinel)
+		require.Empty(t, obs.puts,
+			"an observer must not see a write that was rolled back; a search "+
+				"index would hold an entity the store does not have")
+	})
+
+	t.Run("CommitNotifiesObservers", func(t *testing.T) {
+		obs := &recordingObserver{}
+		s := newStore(t, obs)
+
+		require.NoError(t, s.Tx(ctx(), func(tx store.Store) error {
+			return tx.CreateEntity(ctx(), entity.New("OBS-2", "feature"))
+		}))
+		require.Equal(t, []string{"OBS-2"}, obs.puts,
+			"deferring observer callbacks must not drop them")
+	})
+}
+
+// recordingObserver records the ids it was told about.
+type recordingObserver struct {
+	mu      sync.Mutex
+	puts    []string
+	deletes []string
+}
+
+func (o *recordingObserver) EntityPut(e *entity.Entity) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.puts = append(o.puts, e.ID)
+	return nil
+}
+
+func (o *recordingObserver) EntityDelete(id string) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.deletes = append(o.deletes, id)
+	return nil
+}
+
+func (o *recordingObserver) EntityRenamed(_ string, renamed *entity.Entity) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.puts = append(o.puts, renamed.ID)
+	return nil
 }
