@@ -150,6 +150,44 @@ itself as theme-tokens-only, so dimension scales do **not** belong there.
 Before this existed the SPA had 10 distinct border-radius values and 17 font
 sizes chosen per-component, so nothing lined up between components.
 
+**Focus rings are two shadows and a token, never a hand-written colour**
+(TKT-FRING7). The pattern is:
+
+```css
+.thing:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--focus-ring-gap),
+    0 0 0 4px var(--focus-ring);
+}
+```
+
+Use `--error-ring` in place of `--focus-ring` for a validation-failed field.
+Three things this encodes, each of which was a live bug before:
+
+- **A literal cannot follow the theme.** 26 rings were written as
+  `rgba(99, 102, 241, 0.1)` — an indigo that is not this app's accent, is
+  wrong in dark mode, and is unreachable by an operator's `custom.css`.
+- **The ring is opaque on purpose.** Every translucent value fails WCAG 2.2
+  §1.4.11's 3:1 minimum for non-text UI — the old ring measured 1.13:1. Don't
+  "soften" it back to a tint.
+- **The inner gap band is load-bearing, not decoration.** Focus rules usually
+  also set `border-color: var(--accent-color)`, which is the same colour as
+  the ring, so a single shadow abuts its own border at 1:1 and reads as one
+  thick band. A checked `CheckboxWidget` is the extreme case: accent ring on
+  an accent fill, i.e. invisible.
+
+`styles/focus-ring.css` restores a real `outline` under
+`@media (forced-colors: active)`, where Windows High Contrast discards
+`box-shadow` and would otherwise leave no focus indicator at all. It needs
+`!important` — a bare `:focus-visible` (0,1,0) loses to every
+`input:focus { outline: none }` (0,1,1) it must override. That is the one
+sanctioned `!important` in the tree; don't copy the pattern for styling.
+
+`styles/focusRing.test.ts` enforces all of this by reading the source, because
+Vitest does not apply scoped SFC styles — a mounted-component assertion on
+ring colour passes against no CSS at all.
+
 **`--font-size-{sm,base,lg,xl}` is a frozen cross-boundary contract.** The same
 four names and values are declared in Go, in `appTypographyCSS`
 (`internal/dataentry/apps_css.go`), and served to every custom app — TKT-PF4E6S

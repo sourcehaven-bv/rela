@@ -249,7 +249,9 @@ function getDocTitle(name: string, config: DocumentConfig): string {
 .doc-select:focus {
   outline: none;
   border-color: var(--accent-color);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  box-shadow:
+    0 0 0 2px var(--focus-ring-gap),
+    0 0 0 4px var(--focus-ring);
 }
 
 .btn {
