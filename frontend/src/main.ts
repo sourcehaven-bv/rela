@@ -16,6 +16,7 @@ import './styles/mobile-bars.css'
 import './styles/text-utilities.css'
 import './styles/markdown-content.css'
 import './styles/view-info.css'
+import './styles/pending.css'
 
 const app = createApp(App)
 

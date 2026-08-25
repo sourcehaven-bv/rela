@@ -33,6 +33,28 @@ A `data-entry.yaml` file defines:
 The file drives the entire UI without writing any code. The server reads `data-entry.yaml` and
 your `schema.yaml` together, validates them, and serves a fully functional CRUD application.
 
+### Loading and saving feedback
+
+The UI is deliberately quiet about waiting. rela usually runs against a local
+or nearby server, so most requests finish in well under a tenth of a second —
+fast enough that a spinner would appear and vanish before you could read it.
+Rather than flash one, the UI shows **nothing at all** unless an operation is
+genuinely slow:
+
+- **Navigating** to another page shows a thin progress bar across the top of
+  the window, but only once the page has taken about a quarter-second.
+- **Saving, creating or searching** changes the button's own label — "Save"
+  becomes "Saving…" — but only after about half a second. The button is sized
+  in advance for both labels, so it never changes width or shifts the layout
+  under your cursor.
+- **Autosaving** a form shows a small status mark beside the section you are
+  editing, which settles into a checkmark once the change is stored.
+- **Background refreshes** — when someone else changes data you are looking at
+  — update the page silently, without blanking what is already on screen.
+
+If you see no indicator at all, the operation completed quickly. That is the
+intended behaviour.
+
 ## Quick Start
 
 ### 1. Create data-entry.yaml
