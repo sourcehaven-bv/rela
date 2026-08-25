@@ -21,6 +21,8 @@ func TestClampRetry(t *testing.T) {
 	maxDelay := 2 * time.Hour
 
 	t.Run("plausible retry is unchanged", func(t *testing.T) {
+		t.Parallel()
+
 		rs := RunState{NextRetry: now.Add(maxDelay)}
 		got, clamped := ClampRetry(rs, now, maxDelay)
 		require.False(t, clamped)
@@ -28,6 +30,8 @@ func TestClampRetry(t *testing.T) {
 	})
 
 	t.Run("implausible retry is clamped to now", func(t *testing.T) {
+		t.Parallel()
+
 		rs := RunState{NextRetry: now.Add(maxDelay + time.Nanosecond)}
 		got, clamped := ClampRetry(rs, now, maxDelay)
 		require.True(t, clamped)
