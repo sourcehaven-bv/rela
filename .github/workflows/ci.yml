@@ -514,7 +514,25 @@ jobs:
           echo "the sqlite build DOES link bleve and the sqlite driver (it uses both):"
           go list -deps -tags sqlite ./cmd/rela-server | grep -q 'blevesearch/bleve'
           go list -deps -tags sqlite ./cmd/rela-server | grep -q 'modernc.org/sqlite'
+          echo "the sqlite rela-docs must NOT link chromedp (screenshot{} would seed a real database):"
+          ! go list -deps -tags sqlite ./cmd/rela-docs | grep -q 'chromedp/chromedp'
+          echo "rela-desktop links the default backend only:"
+          ! go list -deps ./cmd/rela-desktop | grep -q 'jackc/pgx'
+          ! go list -deps ./cmd/rela-desktop | grep -q 'modernc.org/sqlite'
           echo "OK: backends and the browser dependency are isolated."
+
+      # Backend tags are mutually exclusive by construction: each recipe
+      # declares New, so two at once is a redeclaration error. That is the
+      # mechanism keeping "which backend am I running" unambiguous, and it is
+      # only load-bearing if it is pinned — narrowing a tag to "fix" a
+      # redeclaration would silently let one recipe win instead.
+      - name: Assert conflicting backend tags fail loudly
+        run: |
+          set -euo pipefail
+          ! go build -tags sqlite,postgres      ./internal/appbuild/ 2>/dev/null
+          ! go build -tags sqlite,memorybackend ./internal/appbuild/ 2>/dev/null
+          ! go build -tags postgres,memorybackend ./internal/appbuild/ 2>/dev/null
+          echo "OK: conflicting backend tags are rejected at compile time."
 
       - name: Compile all backend build-tag combinations
         run: |

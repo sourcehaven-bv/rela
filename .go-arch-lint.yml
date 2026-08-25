@@ -292,6 +292,7 @@ deps:
       - metamodel
       - output
       - pgstore
+      - sqlitestore
       - predicate
       - predicatefns
       - principal

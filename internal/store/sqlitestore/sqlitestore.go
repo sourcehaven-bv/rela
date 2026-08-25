@@ -97,11 +97,15 @@ type Options struct {
 // accessors. It ratchets with the interface, exactly as memstore's and
 // fsstore's directives do — a "required interface" exception rather than a
 // target to reduce. Anything ADDED beyond the interface should raise the
-// question this line exists to ask. (42 rather than 41 since review: wrapping
-// DeleteEntity in a transaction split it into an exported method plus a
-// locked helper, the same shape RenameEntity already had.)
+// question this line exists to ask.
 //
-//plimsoll:max-methods=42
+// Two bumps since the first draft, both from review and both unexported
+// helpers rather than new API: wrapping DeleteEntity in a transaction split it
+// into an exported method plus a locked helper (the shape RenameEntity already
+// had), and checkSchemaVersion carries the user_version guard. The EXPORTED
+// count has not moved, which is the number that actually measures coupling.
+//
+//plimsoll:max-methods=43
 //plimsoll:max-exported-methods=29
 type Store struct {
 	db   *sql.DB
@@ -237,7 +241,65 @@ func (s *Store) init(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, schemaSQL); err != nil {
 		return fmt.Errorf("sqlitestore: create schema: %w", err)
 	}
-	return nil
+	return s.checkSchemaVersion(ctx)
+}
+
+// schemaVersion is the shape of the tables this binary expects. Bump it
+// whenever schemaSQL changes shape, and add the migration that carries an
+// existing database forward.
+const schemaVersion = 1
+
+// SchemaVersion reports the table shape this binary expects, so the CLI can
+// show a real number rather than prose.
+func SchemaVersion() int { return schemaVersion }
+
+// checkSchemaVersion stamps the version on a fresh database and refuses one
+// written by a newer binary.
+//
+// The marker matters more than it looks. schemaSQL is CREATE TABLE IF NOT
+// EXISTS, which is a silent NO-OP against an existing table of a DIFFERENT
+// shape — so without a version an old database opens happily and then fails at
+// the first query with "no such column", at runtime, on user data, with nothing
+// pointing at the schema. Stamping from the start is what makes a real
+// migration ladder possible later; retrofitting one means sniffing
+// pragma_table_info to guess which shape you are looking at, because neither
+// version ever recorded itself.
+//
+// Forward-only and fail-loud, matching pgstore.Migrate: a database from a
+// newer binary is refused rather than opened and silently mis-read.
+func (s *Store) checkSchemaVersion(ctx context.Context) error {
+	var found int
+	if err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&found); err != nil {
+		return fmt.Errorf("sqlitestore: read user_version: %w", err)
+	}
+
+	switch {
+	case found == schemaVersion:
+		return nil
+	case found == 0:
+		// Either brand new, or written before versions were stamped. Both are
+		// this shape, so claim it.
+		if _, err := s.db.ExecContext(ctx,
+			fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
+			return fmt.Errorf("sqlitestore: stamp user_version: %w", err)
+		}
+		return nil
+	case found > schemaVersion:
+		return fmt.Errorf(
+			"sqlitestore: %s was written by a newer rela (schema version %d, "+
+				"this binary understands %d); upgrade rela rather than "+
+				"downgrading the database",
+			s.opts.Path, found, schemaVersion)
+	default:
+		// An older shape with no migration to carry it forward. Refusing is
+		// the honest answer: opening would mean querying columns that may not
+		// exist, and failing later with a much worse error.
+		return fmt.Errorf(
+			"sqlitestore: %s has schema version %d but this binary expects %d, "+
+				"and no migration is available; this backend does not yet have "+
+				"a migration ladder",
+			s.opts.Path, found, schemaVersion)
+	}
 }
 
 // verifyBusyTimeout confirms the PRAGMA reached more than one connection.
