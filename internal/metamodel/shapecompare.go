@@ -272,10 +272,14 @@ func compareProperties(r *ShapeReport, owner string, from, to map[string]Propert
 			continue
 		}
 		added := to[pname]
-		if added.Required {
+		switch {
+		case added.Computed != "" && subjectFn == nil:
+			r.add(TierDrift, "computed_property_added", subject(pname),
+				fmt.Sprintf("computed property %s added: existing records must be materialized", subject(pname)))
+		case added.Required:
 			r.add(TierDrift, "required_property_added", subject(pname),
 				fmt.Sprintf("required property %s added: existing records lack it (soft warnings) until backfilled", subject(pname)))
-		} else {
+		default:
 			r.add(TierAdditive, "property_added", subject(pname), fmt.Sprintf("property %s added", subject(pname)))
 		}
 		// Rename spelled as delete+add?

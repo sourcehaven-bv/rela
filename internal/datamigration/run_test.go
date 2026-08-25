@@ -157,6 +157,66 @@ func TestRunner_ReRunAfterPartialApplyIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestRunner_RecomputeComputedGraph(t *testing.T) {
+	from := metaV1()
+	from.Entities["task"].Properties["effort"] = metamodel.PropertyDef{Type: "integer"}
+	to := metaV1()
+	to.Entities["task"].Properties["effort"] = metamodel.PropertyDef{Type: "integer"}
+	to.Entities["task"].Properties["doubled"] = metamodel.PropertyDef{
+		Type: "integer", Computed: "entity.effort * 2",
+	}
+	to.Entities["task"].Properties["quadrupled"] = metamodel.PropertyDef{
+		Type: "integer", Computed: "entity.doubled * 2",
+	}
+
+	st := seedStore(t)
+	for i, id := range []string{"TSK-1", "TSK-2", "TSK-3"} {
+		e := getEntity(t, st, id)
+		e.Properties["effort"] = int64(i + 1)
+		e.Properties["doubled"] = int64(99)
+		e.Properties["quadrupled"] = int64(99)
+		if err := st.UpdateEntity(t.Context(), e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f := mustParse(t, "0001-computed.yaml", mustFileYAML(t, from, to,
+		"  - recompute_computed: {entity: task}\n"))
+	r := newTestRunner(t, Deps{Store: st, Meta: to})
+
+	dry, err := r.Run(t.Context(), []*File{f}, false)
+	if err != nil {
+		t.Fatalf("dry-run: %v", err)
+	}
+	if got := dry.Files[0].Steps[0].Affected; got != 3 {
+		t.Fatalf("dry-run affected = %d, want 3", got)
+	}
+	if got := getEntity(t, st, "TSK-1").Properties["quadrupled"]; got != int64(99) {
+		t.Fatalf("dry-run wrote quadrupled = %v", got)
+	}
+
+	applied, err := r.Run(t.Context(), []*File{f}, true)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if got := applied.Files[0].Steps[0].Affected; got != 3 {
+		t.Fatalf("apply affected = %d, want 3", got)
+	}
+	if got := getEntity(t, st, "TSK-3").Properties["doubled"]; got != int64(6) {
+		t.Errorf("doubled = %v, want 6", got)
+	}
+	if got := getEntity(t, st, "TSK-3").Properties["quadrupled"]; got != int64(12) {
+		t.Errorf("quadrupled = %v, want 12", got)
+	}
+
+	steady, err := r.Run(t.Context(), []*File{f}, true)
+	if err != nil {
+		t.Fatalf("steady-state apply: %v", err)
+	}
+	if got := steady.Files[0].Steps[0].Affected; got != 0 {
+		t.Errorf("steady-state affected = %d, want 0", got)
+	}
+}
+
 func TestRunner_UnconvertibleValueLeftInPlace(t *testing.T) {
 	st := seedStore(t)
 	ctx := t.Context()

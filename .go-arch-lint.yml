@@ -726,6 +726,7 @@ deps:
   datamigration:
     mayDependOn:
       - audit
+      - computed
       - entity
       - metamodel
       - principal

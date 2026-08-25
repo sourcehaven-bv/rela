@@ -663,13 +663,18 @@ data-entry reports `_fields.<name>.writable: false` and renders the value as
 read-only.
 
 `today()` and similar clock-dependent expressions capture **write time**. A
-stored value does not advance merely because time passes. Calendar feeds that
-need a live recurrence answer continue to evaluate RRULEs directly rather than
-treating a stored `next_occurrence` as authoritative.
+stored value does not advance merely because time passes.
 
 Changing `computed` changes the schema-shape hash and reports drift because
-existing materialized values need recomputation. Automatic bulk recomputation
-is not performed; run an explicit data migration or touch the affected entities.
+existing materialized values need recomputation. `rela migrate gen` drafts a
+declarative step for the affected entity type:
+
+```yaml
+- recompute_computed: {entity: risk}
+```
+
+The step recomputes the complete computed-property graph in dependency order,
+including downstream values, for every entity of that type.
 
 Compiled expressions also report SQL portability as groundwork for future
 database-side evaluation. Property reads, arithmetic and concatenation are
