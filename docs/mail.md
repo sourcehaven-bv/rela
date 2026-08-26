@@ -5,11 +5,9 @@
 Rela can send email. This guide covers configuring a mail transport and what to
 expect from it.
 
-> **Nothing triggers mail yet.** This release ships the transport — configuring
-> a mail server, branding, and delivery behaviour — but no way to *send* a
-> message. Scheduled digests and change notifications land next; see
-> [What you cannot do yet](#what-you-cannot-do-yet) before you set this up
-> expecting a daily reminder.
+> **Scheduled mail is recipient-scoped.** There is no broadcast mode: every
+> message is rendered through its recipient's ACL visibility. See
+> [Scheduled declarative mail](#scheduled-declarative-mail).
 >
 > **Read the delivery guarantee section before you rely on this.** Delivery is
 > best-effort by design, and the failure mode is specific enough to be worth
@@ -126,20 +124,16 @@ or a transactional mail provider that provides them.
 A durable queue with swappable backends is planned; when it lands, this caveat
 narrows considerably.
 
-## What you cannot do yet
+## Scheduled declarative mail
 
-The transport works, but nothing in this release calls it. Concretely, there is
-**no way to schedule a daily digest or send on a change** — those arrive in the
-next two pieces of work:
-
-**Declarative mail** will let you describe the content once and trigger it from
-a schedule:
+Put project-owned message declarations in `mail-templates.yaml`:
 
 ```yaml
-# planned — not available yet
 mail_templates:
   overdue_digest:
     subject: "Tasks due {{today}}"
+    intro: "Items visible to you that need attention."
+    address_property: email
     sections:
       - title: "Overdue"
         entity_type: task
@@ -148,24 +142,37 @@ mail_templates:
 ```
 
 ```yaml
-# schedules.yaml — planned
+# schedules.yaml
 tasks:
   - name: daily-digest
     template: overdue_digest
     every: day
-    run_as: system:digest
+    for_each:
+      entity_type: person
+      where: ["active = true"]
 ```
 
-The same templates will be callable from an automation, so a status change can
-send a notification.
+There is deliberately no broadcast mode. The scheduler posts one child job per
+selected recipient. Each child resolves the current address and renders through
+that recipient's row- and field-visible reader before sending. One failed
+recipient retries independently.
+
+Sections support `style: table` (the default), `list`, and `detail`. `rela validate`
+checks template keys, schema references, filters, scheduled template
+references, and the recipient address property. Runtime validates the current
+address again.
+
+Pending task + occurrence + recipient identities suppress concurrent duplicate
+work. A retry after a completed child can send again, and SMTP has its own
+acknowledgement crash window, so delivery is at-least-once rather than exactly-once.
+
+Automation-triggered templates are planned separately.
 
 **Sending from Lua** will add a `mail.send` binding for anything the declarative
 form does not cover.
 
-Until then, configuring `.rela/mail.yaml` is useful only to verify your mail
-server works — point it at a local capture tool such as
-[Mailpit](https://mailpit.axllent.org/) and confirm the connection, TLS and
-credentials are right before the triggers land.
+For local verification, point SMTP at a capture tool such as
+[Mailpit](https://mailpit.axllent.org/) or use the memory transport below.
 
 ## Local development
 

@@ -132,6 +132,62 @@ func TestParseConfig_invalidYAML(t *testing.T) {
 	}
 }
 
+func TestParseConfig_ForEach(t *testing.T) {
+	t.Parallel()
+	cfg, err := ParseConfig([]byte(`tasks:
+  - name: digest
+    script: digest.lua
+    every: day
+    for_each:
+      entity_type: person
+      where: ["active=true"]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Tasks[0].ForEach.EffectiveLimit(); got != defaultForEachLimit {
+		t.Fatalf("limit = %d, want %d", got, defaultForEachLimit)
+	}
+}
+
+func TestParseConfig_ForEachRejectsUnsafeShapes(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"run_as conflict", "run_as: system:x\n    for_each: {entity_type: person}"},
+		{"interval", "for_each: {entity_type: person}\n    every: 30m"},
+		{"bad filter", "for_each: {entity_type: person, where: [not-a-filter]}"},
+		{"too large", "for_each: {entity_type: person, limit: 10001}"},
+		{"unknown key", "for_each: {entity_type: person, limti: 2}"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			base := "tasks:\n  - name: x\n    script: x.lua\n    every: day\n    "
+			if tc.name == "interval" {
+				base = "tasks:\n  - name: x\n    script: x.lua\n    "
+			}
+			if _, err := ParseConfig([]byte(base + tc.body + "\n")); err == nil {
+				t.Fatal("expected validation error")
+			}
+		})
+	}
+}
+
+func TestScheduleOccurrence(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, time.August, 25, 13, 0, 0, 0, time.FixedZone("x", 2*60*60))
+	day := Schedule{kind: dayKind, set: true}
+	if got, ok := day.Occurrence(now); !ok || got != "2026-08-25" {
+		t.Fatalf("day occurrence = %q, %v", got, ok)
+	}
+	interval := intervalSchedule(time.Hour)
+	if got, ok := interval.Occurrence(now); ok || got != "" {
+		t.Fatalf("interval occurrence = %q, %v", got, ok)
+	}
+}
+
 func TestParseSchedule_day(t *testing.T) {
 	t.Parallel()
 	s, err := parseSchedule("day")

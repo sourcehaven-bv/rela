@@ -14,12 +14,12 @@ status: done
 - [x] Acceptance criteria documented with specific test scenarios
 
 **Scope:** Strict `for_each` config, bounded selection, expansion and child job
-kinds, recipient-principal resolution, ACL-scoped child execution, and
-persistent occurrence child claims. No mail/address logic, broadcast,
+kinds, recipient-principal resolution, and ACL-scoped child execution. No
+mail/address logic, broadcast,
 attenuation, worker pool controls, or legacy scheduler-ladder rewrite.
 
-**Acceptance Criteria:** The twelve numbered ticket criteria are each covered by
-config table tests, jobs/claims conformance tests, scheduler unit tests, or one
+**Acceptance Criteria:** The eleven numbered ticket criteria are each covered by
+config table tests, scheduler unit tests, or one
 appbuild end-to-end test with a real store, ACL policy, queue, and Lua action.
 
 ## Research
@@ -43,9 +43,9 @@ retry state belongs to jobs after #1444.
 - `acl.Declarative.ResolvePrincipal` and `acl.RequestResolver.ForPrincipal`:
 existing identity mapping and request construction.
 - `ScheduledLuaWriteDeps`: existing row/field-visible scheduled read seam.
-- Pending queue keys expire on completion, so they cannot serve as historical
-expansion claims; a distinct narrow claim store is required whose durability
-matches the queue backend.
+- Pending queue keys collapse concurrent work. Once a child completes the key
+  expires, so a later expansion retry can recreate it; this is an explicit
+  at-least-once boundary rather than a reason to add a second persistence seam.
 
 ## Approach
 
@@ -56,19 +56,18 @@ matches the queue backend.
 
 **Technical Approach:** Implement strict `ForEachConfig`; enqueue an expansion
 job instead of the existing action job when present; query a deterministic
-bounded set; atomically claim each task/occurrence/entity identity; enqueue
-bounded-retry child jobs; release only claims whose enqueue failed; reconstruct
+bounded set; enqueue bounded-retry child jobs under a stable pending identity;
+reconstruct
 the selected principal and ACL request in the child; invoke the existing action
-handler. Inject a minimal claims interface with memory and PostgreSQL
-implementations selected in appbuild. Preserve the entire non-for_each path.
+handler. Preserve the entire non-for_each path.
 
 Rejected: expanding inline in the scheduler (blocks cadence), one job containing
 all recipients (coupled retry and wrong ACL scope), trusting a serialized ACL
-request (stale authority), and using pending idempotency as historical state.
+request (stale authority), and adding a second pool/table that still cannot make
+SMTP or other external effects exactly-once.
 
 **Files to modify:**
 - `internal/scheduler/{config,jobs,foreach}.go` plus tests
-- `internal/occurrenceclaims` with memory/PostgreSQL backends and conformance tests
 - `internal/appbuild` queue/scheduler wiring and end-to-end tests
 - `.go-arch-lint.yml`, `.testcoverage.yml`
 - `docs/scheduled-tasks.md`, changelog
@@ -88,8 +87,8 @@ authority is ignored.
 
 **Security-Sensitive Operations:** Child execution can export graph data or
 mutate it. The handler installs a fresh ACL request for the resolved recipient
-before creating read dependencies; field redaction remains active. Claims use
-atomic create/unique insert. Diagnostics log IDs and counts, never entity
+before creating read dependencies; field redaction remains active. Diagnostics
+log IDs and counts, never entity
 properties or payload bodies.
 
 ## Test Plan
@@ -100,19 +99,19 @@ properties or payload bodies.
 - [x] Integration test approach defined (not just unit tests)
 
 **Test Scenarios:** Config tests cover AC4/5; scheduler/job tests
-AC1/2/6/7/9/10/11/12; claims conformance AC7/8; appbuild end-to-end covers AC2/3
+AC1/2/6/7/9/10/11; appbuild end-to-end covers AC2/3
 with real Lua and ACL.
 
 **Edge Cases:** Empty selection; exactly limit and limit+1; interval schedule
 rejection; duplicate IDs; entity removed after expansion; blank/list principal
-property; expansion retry after mixed child completion; enqueue failure after
-claim; two concurrent expanders; cancellation; JSON numeric decoding; calendar
+property; expansion retry after mixed child completion; enqueue failure; two
+concurrent expanders; cancellation; JSON numeric decoding; calendar
 occurrence IDs; old tasks without for_each; Unicode and separator characters in
 IDs.
 
 **Negative Tests:** Unknown keys/type, malformed filter, invalid limit, run_as
-conflict, malformed payload, store/query failure and claim backend failure
-return named errors. Unresolvable recipients are safe skips with warnings, never
+conflict, malformed payload, and store/query failure return named errors.
+Unresolvable recipients are safe skips with warnings, never
 identity fallback.
 
 ## Risk Assessment
@@ -122,8 +121,8 @@ identity fallback.
 - [x] Effort estimated (xs/s/m/l/xl)
 
 **Risks:** ACL exfiltration (fresh per-child request + E2E denial test);
-duplicate expansion (persistent atomic claims); amplification (hard bound);
-backend drift (shared conformance); authority staleness (reload/resolve);
+duplicate expansion (stable pending keys, with the post-completion replay window
+documented); amplification (hard bound); authority staleness (reload/resolve);
 external exactly-once gap (document honestly). Effort remains L.
 
 ## Documentation Planning
@@ -136,8 +135,7 @@ For enhancements: identify what documentation needs updating.
 **Documentation Impact:**
 - [x] `docs/scheduled-tasks.md`: syntax, execution, ACL, bounds and failures
 - [x] changelog: new behavior and compatibility
-- [x] ~~`CLAUDE.md`~~ (N/A: the claim store is ticket-local infrastructure;
-  existing consumer-interface and conformance conventions already cover it)
+- [x] ~~`CLAUDE.md`~~ (N/A: no new repository-wide convention)
 
 ## Design Review
 

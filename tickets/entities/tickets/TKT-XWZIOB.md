@@ -8,7 +8,7 @@ effort: l
 tags:
     - needs-design
     - security
-status: in-progress
+status: review
 ---
 
 ## Description
@@ -74,31 +74,14 @@ The child identity is `<task>/<occurrence>/<entity-id>`. The occurrence is the
 selected local calendar date. The expansion job and every child use that
 identity as their pending `jobs.IdempotencyKey`.
 
-Pending-only deduplication is not enough when expansion partially succeeds: a
-completed child frees its queue key, so an expansion retry could recreate it.
-Expansion therefore maintains a persistent child claim through an injected
-`OccurrenceClaims` interface:
-
-```go
-type OccurrenceClaims interface {
-    Claim(ctx context.Context, task, occurrence, subject string) (bool, error)
-    Release(ctx context.Context, task, occurrence, subject string) error
-}
-```
-
-`Claim=false` means already posted. A claim is retained after enqueue and
-expires after 35 days; it is released only when enqueue itself fails, allowing
-an expansion retry to fill the hole. Durability matches the queue: FS/desktop's
-ephemeral memory queue uses in-memory claims, so a restart may recreate work the
-queue lost; PostgreSQL uses a durable unique-key table alongside its durable
-queue. A persistent FS claim in front of an ephemeral queue would turn a crash
-into guaranteed lost work. Backend conformance tests pin atomic claim and
-cross-instance behavior where the backend promises it.
-
-This provides at-most-once job creation per occurrence. It cannot provide
-exactly-once external effects: a process can die after SMTP accepts DATA but
-before the job records completion. That residual at-least-once crash window is
-documented rather than hidden.
+The existing pending `jobs.IdempotencyKey` collapses concurrent expansion and
+children that are still queued or running. It deliberately does not retain a
+history after completion. Consequently an expansion retry after partial enqueue
+can recreate a child that already finished. That is the queue's documented
+at-least-once boundary and matches the external effect: a process can also die
+after SMTP accepts DATA but before job completion. A separate claim table would
+add another pool, migration and retention policy without making delivery
+exactly-once, so this ticket does not invent one.
 
 ## ACL invariants
 
@@ -120,8 +103,9 @@ semantics. Recipient identity alone is the safe, mechanical first slice.
 
 ## Failure behavior
 
-- Selection/query failure: expansion fails and is retried; existing child claims
-prevent replay of children already posted.
+- Selection/query failure: expansion fails and is retried; pending child keys
+collapse work still queued or running, while completed children remain in the
+documented at-least-once replay window.
 - One child failure: only that child follows `RetryBounded`.
 - Principal resolution failure: log entity ID, count as skipped, continue peers.
 - Limit exceeded: process the deterministic first `limit`, log and count the
@@ -151,26 +135,25 @@ validation with named diagnostics.
 5. Tasks without `for_each` retain their current config, state key, queue job,
 retry ladder, and audit behavior.
 6. One child failure retries only that child and does not block or replay peers.
-7. Expansion retry after a child completed does not enqueue that child again;
-an enqueue failure releases only that child's claim.
-8. Memory and PostgreSQL claim backends pass one conformance suite, including
-concurrent claim of the same identity; their durability matches their queue.
-9. An unresolvable or removed principal is skipped with a warning naming the
+7. Concurrent expansion and pending children collapse by their stable
+idempotency keys; the post-completion replay window is documented as
+at-least-once.
+8. An unresolvable or removed principal is skipped with a warning naming the
 entity and never falls back to the scheduler identity.
-10. Expansion is bounded, deterministic, and reports the dropped count.
-11. Payload round-trips through JSON and contains only task, occurrence and
+9. Expansion is bounded, deterministic, and reports the dropped count.
+10. Payload round-trips through JSON and contains only task, occurrence and
 entity IDs—no address, rendered content, action config, capability, role, or
 serialized ACL request.
-12. Audit attribution names the schedule while the context principal identifies
+11. Audit attribution names the schedule while the context principal identifies
 the selected user.
 
 ## Risks
 
 - **ACL exfiltration:** authority is reconstructed inside the child and content
 reads use the existing row/field visibility bundle.
-- **Duplicate side effects:** persistent child claims prevent expansion replay;
-the unavoidable external-effect acknowledgement window is documented.
+- **Duplicate side effects:** stable pending idempotency limits concurrent
+duplicates; post-completion replay remains honestly at-least-once.
 - **Fan-out amplification:** strict bounded selection plus worker-pool backpressure.
 - **Stale payload authority:** payload carries identity hints only; worker reloads
 and resolves against current state.
-- **Cross-backend drift:** claim implementations share a conformance suite.
+- **Cross-backend drift:** the existing job conformance suite covers both tiers.

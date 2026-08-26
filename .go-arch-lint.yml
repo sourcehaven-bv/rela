@@ -61,6 +61,7 @@ components:
   automation:       { in: internal/automation }
   calfeed:          { in: internal/calfeed }
   mailrender:       { in: internal/mailrender }
+  mailtemplate:     { in: internal/mailtemplate }
   caldavalias:      { in: internal/caldavalias }
   conflict:         { in: internal/conflict }
   datamigration:    { in: internal/datamigration }
@@ -491,6 +492,8 @@ deps:
       # data-migration GC sweep. Consumers take the mail.Sender seam, not this
       # edge.
       - mail
+      - mailrender
+      - filter
       # The composition root picks the userstate backend, the same way it
       # picks the store backend. Consumers take the userstate.Store seam.
       - userstate
@@ -524,6 +527,8 @@ deps:
       - lua
       - memstore
       - metamodel
+      - mailtemplate
+      - scheduler
       - pgstore
       - project
       - script
@@ -574,9 +579,11 @@ deps:
     mayDependOn:
       - conditionlint
       - dataentryconfig
+      - mailtemplate
       - metamodel
       - migration
       - project
+      - scheduler
       - storage
 
   # Domain services
@@ -623,6 +630,14 @@ deps:
       - goldmark
       - bluemonday
       - douceur
+  # Project declarations assemble renderer models from an injected visible
+  # reader. SMTP and app wiring remain outside this package.
+  mailtemplate:
+    mayDependOn:
+      - filter
+      - mailrender
+      - metamodel
+      - store
   # Sender seam, transports, config and the best-effort outbox. Depends on
   # mailrender for the body model only; it reaches the store through a narrow
   # structural interface at the wiring site, never by importing appbuild.
@@ -655,6 +670,7 @@ deps:
       - acl
       - entity
       - metamodel
+      - filter
       - predicate
       - predicatefns
       - principal
@@ -907,6 +923,7 @@ deps:
       - config
       - lua
       - metamodel
+      - filter
       - principal
       - project
       - script

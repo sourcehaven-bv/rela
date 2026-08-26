@@ -10,24 +10,30 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/conditionlint"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	"github.com/Sourcehaven-BV/rela/internal/mailtemplate"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // ValidateResult contains the outcome of validating project configuration.
 type ValidateResult struct {
-	MetamodelValid   bool
-	MetamodelError   error
-	Metamodel        *metamodel.Metamodel // nil if validation failed
-	DataEntryValid   bool
-	DataEntryError   error
-	DataEntrySkipped bool // true if file doesn't exist
+	ProjectRoot          string
+	MetamodelValid       bool
+	MetamodelError       error
+	Metamodel            *metamodel.Metamodel // nil if validation failed
+	DataEntryValid       bool
+	DataEntryError       error
+	DataEntrySkipped     bool // true if file doesn't exist
+	MailTemplatesError   error
+	MailTemplatesPresent bool
+	SchedulesError       error
 }
 
 // HasErrors returns true if any validation failed.
 func (r *ValidateResult) HasErrors() bool {
-	return r.MetamodelError != nil || r.DataEntryError != nil
+	return r.MetamodelError != nil || r.DataEntryError != nil || r.MailTemplatesError != nil || r.SchedulesError != nil
 }
 
 // Validate validates project configuration files (metamodel.yaml, data-entry.yaml)
@@ -47,6 +53,7 @@ func ValidateWithFS(startDir string, fs storage.FS) (*ValidateResult, error) {
 	}
 
 	result := &ValidateResult{}
+	result.ProjectRoot = ctx.Root
 
 	// Validate metamodel
 	mm, _, err := metamodel.Load(ctx.SchemaPath, fs)
@@ -67,8 +74,65 @@ func ValidateWithFS(startDir string, fs storage.FS) (*ValidateResult, error) {
 			result.DataEntryValid = true
 		}
 	}
+	result.MailTemplatesError, result.SchedulesError = validateScheduledMail(ctx.Root, mm, fs)
+	result.MailTemplatesPresent, _ = fileExists(filepath.Join(ctx.Root, mailtemplate.ConfigFile), fs)
 
 	return result, nil
+}
+
+func validateScheduledMail(root string, mm *metamodel.Metamodel, fs storage.FS) (mailErr, schedulesErr error) {
+	if mm == nil {
+		return nil, nil
+	}
+	var templates *mailtemplate.Config
+	mailPath := filepath.Join(root, mailtemplate.ConfigFile)
+	if exists, _ := fileExists(mailPath, fs); exists {
+		data, err := fs.ReadFile(mailPath)
+		if err != nil {
+			return err, nil
+		}
+		templates, mailErr = mailtemplate.Parse(data, mm)
+	}
+	schedulePath := filepath.Join(root, scheduler.ConfigFile)
+	if exists, _ := fileExists(schedulePath, fs); !exists {
+		return mailErr, nil
+	}
+	data, err := fs.ReadFile(schedulePath)
+	if err != nil {
+		return mailErr, err
+	}
+	schedules, err := scheduler.ParseConfig(data)
+	if err != nil {
+		return mailErr, err
+	}
+	if err := schedules.ValidateMetamodel(mm); err != nil {
+		return mailErr, err
+	}
+	if templates == nil {
+		templates = &mailtemplate.Config{}
+	}
+	return mailErr, validateTemplateReferences(schedules, templates, mm)
+}
+
+func validateTemplateReferences(
+	schedules *scheduler.Config, templates *mailtemplate.Config, mm *metamodel.Metamodel,
+) error {
+	for _, task := range schedules.Tasks {
+		if task.Template == "" {
+			continue
+		}
+		tmpl, ok := templates.Templates[task.Template]
+		if !ok {
+			return fmt.Errorf("task %q: unknown mail template %q", task.Name, task.Template)
+		}
+		def, _ := mm.GetEntityDef(task.ForEach.EntityType)
+		addressDef, ok := def.Properties[tmpl.AddressProperty]
+		if !ok || addressDef.List {
+			return fmt.Errorf("task %q: recipient type %q has no address property %q",
+				task.Name, task.ForEach.EntityType, tmpl.AddressProperty)
+		}
+	}
+	return nil
 }
 
 // validateDataEntry validates the data-entry.yaml file.

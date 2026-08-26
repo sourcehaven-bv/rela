@@ -27,7 +27,21 @@ import (
 // connection) per tenant. That satisfies the SharedBase rule that Close tears
 // down only per-assembled resources, at the cost of N connections to a shared
 // provider — documented in docs/mail.md rather than hidden here.
+type mailRuntime struct {
+	config *mail.Config
+	sender mail.Sender
+	outbox *mail.Outbox
+}
+
 func startMail(paths *project.Context) (ob *mail.Outbox, stop func()) {
+	runtime, stop := startMailRuntime(paths)
+	if runtime == nil {
+		return nil, stop
+	}
+	return runtime.outbox, stop
+}
+
+func startMailRuntime(paths *project.Context) (runtime *mailRuntime, stop func()) {
 	noop := func() {}
 
 	if paths == nil {
@@ -62,7 +76,7 @@ func startMail(paths *project.Context) (ob *mail.Outbox, stop func()) {
 	outbox.Start()
 
 	slog.Info("mail: enabled", "transport", cfg.Transport)
-	return outbox, outbox.Stop
+	return &mailRuntime{config: cfg, sender: sender, outbox: outbox}, outbox.Stop
 }
 
 // senderFor builds the transport named by the config.

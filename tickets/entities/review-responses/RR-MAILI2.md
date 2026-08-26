@@ -1,9 +1,9 @@
 ---
 id: RR-MAILI2
 type: review-response
-title: Persistent filesystem claims would suppress jobs lost by the ephemeral queue
-finding: A file-backed child claim survives desktop restart while the memory job queue deliberately does not. The surviving claim would prevent expansion from recreating a child that the restart discarded and turn an acknowledged ephemeral limit into guaranteed mail loss.
+title: A separate occurrence claim store adds a pool and DDL without exactly-once delivery
+finding: The proposed claim layer opened another PostgreSQL pool and created a rela_job_claims table from the queue constructor. It bypassed normal migration and pool-injection conventions while SMTP could still duplicate after remote acceptance and before local completion.
 severity: critical
-resolution: Match claim durability to queue durability. FS and desktop use in-memory claims while PostgreSQL uses durable unique claims alongside its durable queue. Both implement one conformance contract without pretending the ephemeral tier survives restart.
+resolution: Remove the claim store entirely. Reuse the queue's stable pending idempotency keys and document the post-completion expansion retry window as at-least-once instead of purchasing infrastructure for a guarantee the external effect cannot provide.
 status: addressed
 ---

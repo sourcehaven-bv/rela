@@ -1,21 +1,20 @@
 ---
 id: TKT-U2R7GU
 type: ticket
-title: 'Declarative mails: content templates, scheduler + automation triggers, graph-resolved recipients with per-recipient ACL scoping'
+title: Declarative scheduled mail with per-recipient ACL scoping
 kind: enhancement
 priority: medium
 effort: l
-status: planning
+status: review
 ---
 
 ## Description
 
 The declarative layer, built on the SMTP foundation (TKT-332QZY), the shared job
 queue (TKT-YOED3R), and scheduler fan-out (TKT-XWZIOB). Automation triggers are
-split out to TKT-LU4AAY. Covers the cases
-an operator actually asks for — a daily digest of overdue tasks, upcoming
-events, a meeting reminder carrying its agenda, and "this changed, go look" from
-an automation — declaratively.
+split out to TKT-LU4AAY. Covers the scheduled cases an operator actually asks
+for — a daily digest of overdue tasks, upcoming events, and a meeting reminder
+carrying its agenda — declaratively.
 
 ## Design: content and trigger are separate
 
@@ -61,13 +60,13 @@ tasks:
       where: ["active = true"]
 ```
 
-Mail tasks require `for_each:`. There is deliberately no broadcast fallback:
-the selected entity is resolved to a principal and the message is rendered as
-that principal. A shared `run_as` would prove only that the sender may read the
+Mail tasks require `for_each:`. There is deliberately no broadcast fallback: the
+selected entity is resolved to a principal and the message is rendered as that
+principal. A shared `run_as` would prove only that the sender may read the
 content, not that every recipient may read it.
 
-**Trigger 2 — automation** is TKT-LU4AAY, along with the `{{entity}}`
-load-time validation that only has something to validate once templates exist.
+**Trigger 2 — automation** is TKT-LU4AAY, along with the `{{entity}}` load-time
+validation that only has something to validate once templates exist.
 
 **`style:`** per section — `table` (columns), `list` (titles + deep links), or
 `detail` (renders the entity's markdown body, for the meeting-agenda case).
@@ -86,8 +85,8 @@ config is validated — not from a partial send at 6am.
 
 Two consequences for where this lives. It is graph-dependent, so it cannot go in
 a syntactic config check (`scheduler.Config.validate`, `config.go:195`, never
-touches the store); it needs a store-aware surface, alongside the other
-`rela validate` graph checks. And it belongs to **mail**, not to the scheduler:
+touches the store); it needs a store-aware surface, alongside the other `rela
+validate` graph checks. And it belongs to **mail**, not to the scheduler:
 `for_each` (TKT-XWZIOB) resolves an entity to a principal, and a per-user export
 or cleanup pass has no address at all. A blank address must not be fatal to the
 whole run — the mail for the other recipients still goes out, and the skipped
@@ -102,10 +101,9 @@ queries content, renders, and sends. The payload carries stable identifiers
 or an email address.
 
 The expansion succeeds once every intended child is accepted; it does not wait
-for delivery. A child failure retries only that recipient. Persistent
-occurrence-level child claims prevent an expansion retry from recreating a
-delivery that already completed; the queue's pending-only `IdempotencyKey` is
-not sufficient because its key becomes reusable after completion.
+for delivery. A child failure retries only that recipient. Stable pending
+idempotency keys collapse concurrent work; a post-completion expansion retry
+remains at-least-once, matching SMTP's own acknowledgement crash window.
 
 Reads go through `internal/visibility` decorators at the wiring site — never
 per-consumer redaction calls.
@@ -148,8 +146,8 @@ only to the address on its recipient entity.
 7. A section matching zero entities renders the empty message, not a broken table.
 8. Expansion does not wait for delivery; one delivery failure retries only that
 recipient and does not stop later scheduler tasks or replay successful peers.
-8b. Retrying an expansion after one child completed does not enqueue that child
-again; task + occurrence + recipient is a persistent delivery identity.
+8b. Task + occurrence + recipient is the pending delivery identity; the
+post-completion replay window is documented rather than called exactly-once.
 9. `rela validate` reports unknown template names, unknown entity types, and
 unparseable `where:` clauses.
 10. Config validation rejects unknown keys with a typo suggestion (the
@@ -162,7 +160,7 @@ delivery installs the resolved recipient's row and field visibility before any
 content query, and an end-to-end denial test pins the boundary.
 - **Recipient-count blowup** — expansion is bounded and logs/counts what was not
 posted rather than silently truncating.
-- **Duplicate sends after expansion retry** — pending-job dedup is insufficient;
-persistent occurrence-level child claims prevent completed deliveries from being
-recreated. SMTP itself remains non-transactional, so a process loss after DATA
-but before completion can still duplicate a retry and is documented honestly.
+- **Duplicate sends after expansion retry** — pending-job dedup suppresses
+concurrent copies but SMTP remains non-transactional. A process loss after DATA
+or a partial expansion retry can duplicate a completed recipient and is
+documented honestly.

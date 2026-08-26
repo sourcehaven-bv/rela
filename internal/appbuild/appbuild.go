@@ -91,7 +91,11 @@ import (
 // facade, so each new subsystem it composes adds one getter. Ratchet this down
 // by splitting the bundle (TKT-N0IKN9), not by hiding an accessor.
 //
-//plimsoll:max-exported-methods=26
+// The three recipient-scoped scheduler methods take this to 29. They are
+// exported because scheduler consumes them through narrow capability
+// interfaces; they do not add general Services getters.
+//
+//plimsoll:max-exported-methods=30
 type Services struct {
 	fs    storage.FS
 	paths *project.Context
@@ -130,6 +134,7 @@ type Services struct {
 	// mailStop drains and stops the mail worker. Per-assembled like gcStop,
 	// and bounded by the outbox's drain timeout so it cannot hang shutdown.
 	mailStop func()
+	mail     *mailRuntime
 
 	// gcStop terminates this store's data-migration GC sweep goroutine
 	// (TKT-0C57FS). Per-assembled, torn down in Close like searchCloser.
@@ -1271,6 +1276,7 @@ func resolveVisibleSearcher(
 type backgroundServices struct {
 	gcStop   func()
 	mailStop func()
+	mail     *mailRuntime
 }
 
 // startBackgroundServices launches the optional per-store subsystems: the
@@ -1289,11 +1295,12 @@ func startBackgroundServices(
 	// here: nothing can enqueue until the declarative layer (TKT-U2R7GU)
 	// lands, and storing a handle no code reads would look wired when it is
 	// not. Only the stop function is retained, because Close genuinely uses it.
-	_, mailStop := startMail(cfg.Paths)
+	mailRuntime, mailStop := startMailRuntime(cfg.Paths)
 
 	return backgroundServices{
 		gcStop:   gcStop,
 		mailStop: mailStop,
+		mail:     mailRuntime,
 	}
 }
 
@@ -1432,6 +1439,7 @@ func assemble(
 	return &Services{
 		gcStop:          background.gcStop,
 		mailStop:        background.mailStop,
+		mail:            background.mail,
 		fs:              cfg.FS,
 		paths:           cfg.Paths,
 		meta:            base.meta,

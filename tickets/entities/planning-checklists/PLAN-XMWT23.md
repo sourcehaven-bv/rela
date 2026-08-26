@@ -2,7 +2,7 @@
 id: PLAN-XMWT23
 type: planning-checklist
 title: 'Planning: Declarative mails: content templates, scheduler + automation triggers, graph-resolved recipients with per-recipient ACL scoping'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -35,14 +35,15 @@ unsubscribe flow, new filter language, or preview endpoint.
 7. Deny one row and redact one field from a recipient principal; assert both are absent.
 8. Match zero rows and assert a valid empty section in HTML and text.
 9. Fail one delivery and assert only its child retries while successful peers do not.
-10. Retry expansion after a child completed and assert its persistent occurrence
-    claim prevents a duplicate send.
+10. Submit concurrent expansion work and assert its stable pending identity
+    collapses duplicate child jobs; document the post-completion replay window.
 11. Run `rela validate` fixtures for missing templates/types and malformed filters.
 12. Table-test unknown keys at all new YAML levels, including typo suggestions.
 
 ## Research
 
-- [ ] For larger features: run `/research` to create a structured research doc
+- [x] ~~For larger features: run `/research`~~ (N/A: PLAN-EQC0Q8 already
+  contains the feature-wide SMTP/rendering research; this slice adds no library)
 - [x] Searched for existing libraries that solve this problem
 - [x] Checked codebase for similar patterns or reusable code
 - [x] Looked for reference implementations in other projects
@@ -89,15 +90,15 @@ captured in PLAN-EQC0Q8. This layer introduces no new third-party library.
 3. Extend scheduler tasks to a closed `script` xor `template` action. Validate the
    referenced template set at application assembly/`rela validate`, where both
    configs are available; keep `scheduler.Config.validate` store-free.
-4. Register separate mail expansion and delivery job kinds on `internal/jobs`.
-   Scheduler occurrences enqueue expansion jobs. Expansion performs the bounded
-   `for_each` query and records/posts one child per recipient without waiting for it.
-5. Delivery resolves the recipient principal and current address, builds a row- and
+4. Reuse the scheduler expansion and child job kinds from TKT-XWZIOB. A template
+   is an action executed by the existing recipient child; do not introduce a
+   second mail fan-out or delivery job layer.
+5. The child resolves the recipient principal and current address, builds a row- and
    field-visible reader at the appbuild boundary, queries sections, renders once,
    stamps `mail.Message.RenderedFor`, and calls `mail.Sender` directly. Do not route
    a job through the foundation's in-memory outbox (double queue).
-6. Persist task + occurrence + recipient child claims. Pending-only queue idempotency
-   cannot prevent recreation of a child that completed before expansion retried.
+6. Use task + occurrence + recipient as the pending child identity. Concurrent
+   copies collapse; the post-completion replay window remains explicitly at-least-once.
 7. Add store-aware validation for recipient properties and matching entity values to
    the `rela validate` pipeline. Runtime repeats address validation because data can
    change after validation; one bad entity is logged/skipped without aborting peers.
@@ -152,7 +153,7 @@ content), and scheduler job -> mail outbox double queueing.
 **Test Scenarios:**
 The Understanding section maps each criterion. Unit tests cover strict parsing,
 model assembly, styles, filter/column validation, address extraction, bounds,
-occurrence claims, and empty results. Scheduler tests cover the script/template
+pending identities, and empty results. Scheduler tests cover the script/template
 union, expansion, child independence, and task liveness.
 An appbuild integration test uses a real filesystem store, ACL policy, visibility
 wrapper, renderer, job queue, and memory sender end-to-end.
@@ -188,13 +189,14 @@ failure policy applies, while later tasks remain live.
 - Configuration ownership drift: keep content project-owned and transport local; add
   cross-config validation at assembly/validate rather than merging files.
 - Recipient amplification: hard expansion bound and explicit log/counter.
-- Duplicate delivery: persistent occurrence child claims; document the unavoidable
-  SMTP acknowledgement crash window rather than claiming exactly-once delivery.
+- Duplicate delivery: stable pending identities suppress concurrent work; document
+  post-completion expansion replay and SMTP acknowledgement crash windows rather
+  than claiming exactly-once delivery.
 - Scheduler regression: model task action as xor while preserving legacy script state
   keys and execution semantics; regression-test script-only configs.
 - Dependency sequencing: TKT-U2R7GU depends on TKT-XWZIOB and the completed
   TKT-YOED3R job seam. TKT-N52HRC is no longer a blocker. Do not enter implementation until the design review
-  confirms whether broadcast delivery can remove/relax that dependency.
+  confirms the recipient-scoped action boundary.
 
 ## Documentation Planning
 
@@ -204,16 +206,20 @@ For enhancements: identify what documentation needs updating.
 - [x] Docs-checklist will be created when entering implementation
 
 **Documentation Impact:**
-- [x] `docs/mail.md` — template schema, broadcast ACL model, recipient validation,
-  bounds, failure behavior, and field-redaction limitation
+- [x] `docs/mail.md` — template schema, recipient ACL model, recipient validation,
+  bounds, failure behavior, and field redaction
 - [x] `docs/scheduled-tasks.md` — `template` action and `run_as` semantics
 - [x] docs-project mail guide — complete operator example and troubleshooting
 - [x] `docs/cli-reference.md` — new `rela validate` diagnostics if enumerated there
-- [ ] `CLAUDE.md` — only if implementation establishes a reusable producer seam
+- [x] ~~`CLAUDE.md`~~ (N/A: implementation reuses the existing scheduler job
+  and mail sender seams; no repository-wide convention was added)
 
 ## Design Review
 
-- [ ] Run `/design-review` before starting implementation
-- [ ] All critical/significant findings addressed in plan
+- [x] Run `/design-review` before starting implementation
+- [x] All critical/significant findings addressed in plan
 
-**Design Review Findings:** <!-- List review-response IDs, e.g., RR-xxxx -->
+**Design Review Findings:** TKT-XWZIOB's RR-MAILI1/2/3 establish the stable
+calendar occurrence, pending-idempotency, and authority-reload boundaries reused
+here. Mail adds no second expansion/delivery layer: the scheduler child is the
+recipient-scoped action boundary, preventing double queueing and split retry state.
