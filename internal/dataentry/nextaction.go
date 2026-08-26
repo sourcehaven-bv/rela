@@ -8,6 +8,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/nextaction"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/userstate"
@@ -27,7 +28,7 @@ import (
 //
 // # Which seam each source kind uses
 //
-//   - Query  -> [App.executeQuery], the same helper /_search and scope
+//   - Query  -> App.executeQuery, the same helper /_search and scope
 //     navigation use. It resolves SearchScope from the read gate first, and
 //     for a query with no free text (which every structural next-action query
 //     is) routes to visibleListByTypes — a type-scoped store list, NOT the
@@ -214,3 +215,30 @@ func (a *App) SetUserState(s userstate.Store) error {
 	a.userState = s
 	return nil
 }
+
+// SetNextActionMatchers injects the predicate compiler backing a source's
+// `condition:`.
+//
+// Separate from NewApp for the same reason as [App.SetUserState]: the compiler
+// lives above this package, so the composition root supplies it rather than
+// this package importing it. Rejects nil for the same reason too — a silently
+// absent compiler would leave every condition unevaluated, showing suggestions
+// for entities the operator explicitly excluded.
+func (a *App) SetNextActionMatchers(fn NextActionMatcherFunc) error {
+	if fn == nil {
+		return errors.New("dataentry.SetNextActionMatchers: func must be non-nil")
+	}
+	a.nextActionMatchers = fn
+	return nil
+}
+
+// NextActionMatcherFunc compiles the `condition:` of every configured source
+// against the current metamodel, returning a per-source lookup plus one
+// message per problem.
+//
+// The consumer-side seam for the predicate compiler: this package must not
+// import it (arch-lint keeps the condition/policy engine above the data-entry
+// app), so the composition root supplies an implementation.
+type NextActionMatcherFunc func(
+	cfg *dataentryconfig.Config, meta *metamodel.Metamodel,
+) (func(sourceID string) (nextaction.Matcher, bool), []string)

@@ -17,6 +17,15 @@ import (
 type Executor interface {
 	ExecuteCode(ctx context.Context, code string, deps lua.WriteDeps, newEntity, oldEntity *entity.Entity) error
 	ExecuteFile(ctx context.Context, path string, deps lua.WriteDeps, newEntity, oldEntity *entity.Entity) error
+
+	// The WithCapabilities variants carry the action's `capabilities:` grant
+	// (TKT-YH52OM). The runner always calls these; the two above remain on the
+	// interface because other callers still use them and because a stub that
+	// implements only them would silently lose the grant.
+	ExecuteCodeWithCapabilities(ctx context.Context, code string, deps lua.WriteDeps,
+		newEntity, oldEntity *entity.Entity, caps lua.Capabilities) error
+	ExecuteFileWithCapabilities(ctx context.Context, path string, deps lua.WriteDeps,
+		newEntity, oldEntity *entity.Entity, caps lua.Capabilities) error
 }
 
 // LuaScriptRunner adapts a Lua-based [Executor] to the
@@ -28,7 +37,7 @@ type Executor interface {
 // of lua.WriteDeps — [lua.ReadDeps] (Store/Tracer/Searcher/Meta/
 // ProjectRoot) — captured at construction. The **dynamic** half — the
 // [autocascade.Mutator] that scripts call back into for graph writes —
-// is passed per-call via [Run]. That split is how the construction
+// is passed per-call via [LuaScriptRunner.Run]. That split is how the construction
 // cycle between EntityManager and the Lua write-deps bundle is broken:
 // Runner is built before EntityManager exists; EntityManager
 // (a Mutator) supplies itself when dispatching.
@@ -178,12 +187,19 @@ func (l *LuaScriptRunner) Run(ctx context.Context, action autocascade.ScriptActi
 			deps.ElevationRecorder = l.elevationRecorder
 		}
 	}
+	// TKT-YH52OM: translate the action's declared capability grant. An
+	// automation runs on the write path of an ordinary HTTP request, so it is
+	// NOT an operator-shell surface: an undeclared capability stays absent.
+	http, ai, writeFile, secrets := action.Capabilities.Fields()
+	caps := lua.Capabilities{HTTP: http, AI: ai, WriteFile: writeFile, Secrets: secrets}
 	var err error
 	switch {
 	case action.Code != "":
-		err = l.exec.ExecuteCode(ctx, action.Code, deps, action.NewEntity, action.OldEntity)
+		err = l.exec.ExecuteCodeWithCapabilities(ctx, action.Code, deps,
+			action.NewEntity, action.OldEntity, caps)
 	case action.FilePath != "":
-		err = l.exec.ExecuteFile(ctx, action.FilePath, deps, action.NewEntity, action.OldEntity)
+		err = l.exec.ExecuteFileWithCapabilities(ctx, action.FilePath, deps,
+			action.NewEntity, action.OldEntity, caps)
 	}
 	if err == nil {
 		return nil

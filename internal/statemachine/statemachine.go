@@ -5,13 +5,13 @@
 // # Two phases, cleanly split
 //
 // Compile runs ONCE at startup (from appbuild), turning the metamodel's
-// declarative transition data into a [Set] of ready-to-run [Machine]s: edge
+// declarative transition data into a [Set] of ready-to-run [Machine] values: edge
 // lookups are indexed, `when:` predicates are compiled, and load-time
 // well-formedness is checked (dangling from/to/initial, bad predicate syntax)
 // so a malformed machine fails fast at boot, never at write time. Nothing here
 // consults the metamodel again after Compile.
 //
-// [Set.Enforce] runs on every entity write (from entitymanager, a required
+// [Set.EnforceUpdate] runs on every entity write (from entitymanager, a required
 // collaborator in the fixed write pipeline — as unforgettable as validation and
 // audit). Given (old, new, principal) it finds every changed state-machine
 // property, and for each:

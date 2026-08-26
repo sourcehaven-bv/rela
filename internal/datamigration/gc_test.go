@@ -19,6 +19,9 @@ func newTestGC(t *testing.T, deps GCDeps) *GC {
 	if deps.Audit == nil {
 		deps.Audit = audit.NewMemory()
 	}
+	if deps.Lock == nil {
+		deps.Lock = NewProcessLock()
+	}
 	g, err := NewGC(deps)
 	if err != nil {
 		t.Fatalf("NewGC: %v", err)

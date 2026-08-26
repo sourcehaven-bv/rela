@@ -21,10 +21,11 @@ import (
 
 // ACLCmd groups access-control commands.
 type ACLCmd struct {
-	Audit  ACLAuditCmd  `cmd:"" help:"Audit the ACL policy (acl.yaml) for misconfigurations."`
-	WhoCan ACLWhoCanCmd `cmd:"" name:"who-can" help:"List every principal who can perform a verb on an entity, with the route each grant took."`
-	Can    ACLCanCmd    `cmd:"" help:"Spot-check whether one principal can perform a verb on an entity; exits non-zero on deny."`
-	Map    ACLMapCmd    `cmd:"" help:"Map effective access across the graph — one principal (--principal) or every principal — by type with per-entity exceptions."`
+	Audit       ACLAuditCmd       `cmd:"" help:"Audit the ACL policy (acl.yaml) for misconfigurations."`
+	WhoCan      ACLWhoCanCmd      `cmd:"" name:"who-can" help:"List every principal who can perform a verb on an entity, with the route each grant took."`
+	Can         ACLCanCmd         `cmd:"" help:"Spot-check whether one principal can perform a verb on an entity; exits non-zero on deny."`
+	CanRelation ACLCanRelationCmd `cmd:"" name:"can-relation" help:"Spot-check whether one principal can create/update/delete a relation of a type from an entity; exits non-zero on deny."`
+	Map         ACLMapCmd         `cmd:"" help:"Map effective access across the graph — one principal (--principal) or every principal — by type with per-entity exceptions."`
 }
 
 // ACLAuditCmd runs the on-demand authorization-misconfiguration linter over the

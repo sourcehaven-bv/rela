@@ -69,14 +69,12 @@ func LoadMarker(ctx context.Context, kv state.KV) (*Marker, error) {
 }
 
 // SaveMarker writes the applied-state marker. state.KV has no
-// compare-and-swap, so concurrent writers are last-write-wins. The two
-// writers are the gate (adoption) and the migration runner; racing gates
-// write identical content, and a gate racing a RUNNER can at worst clobber
-// the runner's just-appended Applied entry with a stale list — recovered on
-// the next `migrate data`, where Resolve skips a file whose `to` shape is
-// already reached and every step is idempotent. A cross-process lock is the
-// documented upgrade if multi-writer postgres deployments migrate under
-// live traffic routinely.
+// compare-and-swap; the read-modify-write is made safe by the
+// [MigrationLock] (TKT-CPCBR7), which every writer holds: the runner and GC
+// for their whole apply, the gate for each adoption write (skipping on
+// contention). Step idempotency and Resolve's reached-shape skip remain the
+// backstop for the one unlocked writer combination — two gates — whose
+// racing writes are content-identical anyway.
 func SaveMarker(ctx context.Context, kv state.KV, m *Marker) error {
 	data, err := json.Marshal(m)
 	if err != nil {

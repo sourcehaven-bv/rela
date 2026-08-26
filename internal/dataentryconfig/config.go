@@ -129,6 +129,20 @@ type Action struct {
 	Key         string            `yaml:"key,omitempty" json:"key,omitempty"`
 	Confirm     bool              `yaml:"confirm,omitempty" json:"confirm,omitempty"`
 	Set         map[string]string `yaml:"set,omitempty" json:"set,omitempty"`
+
+	// Capabilities declares which ambient capabilities this action's script
+	// may reach — http, ai, write_file, and named secrets (TKT-YH52OM).
+	// Omitting it grants NONE of them.
+	//
+	// An action is invoked over HTTP by whoever may POST /_action/{id}, so it
+	// is not an operator-shell surface: the grant has to be written down by
+	// the operator who authored the action, in the same file as the script:
+	// reference. `secrets` is a LIST of key names, never a bool — an action
+	// that needs one webhook token must not also receive the database DSN.
+	//
+	// Not serialized to JSON: the SPA has no use for it, and an action's
+	// capability grant is not part of its affordance.
+	Capabilities metamodel.Capabilities `yaml:"capabilities,omitempty" json:"-"`
 }
 
 // AppConfig holds display metadata for the application.
@@ -1020,6 +1034,19 @@ type DocumentConfig struct {
 	// deploying — that review IS the mitigation, and it is why this value is
 	// declared in config where a reviewer will see it.
 	AllowACLBypass metamodel.ACLBypass `yaml:"allow_acl_bypass,omitempty" json:"allow_acl_bypass,omitempty"`
+
+	// Capabilities declares which ambient capabilities this document's render
+	// script may reach — http, ai, write_file, named secrets (TKT-YH52OM).
+	// Omitting it grants none.
+	//
+	// A render is a READ surface, so the default matters more here than
+	// anywhere: before this existed a document script — which cannot mutate
+	// the graph beyond the caller's permissions — could still read every
+	// secret and POST it outbound. Most reports need nothing; a report that
+	// genuinely calls an upstream API names exactly what it needs.
+	//
+	// Not serialized to JSON: the SPA renders the output, not the grant.
+	Capabilities metamodel.Capabilities `yaml:"capabilities,omitempty" json:"-"`
 	// Command is the external render command as an ARGUMENT ARRAY, e.g.
 	//   command: ["my-renderer", "{in}"]
 	// It is executed directly — there is no shell, so pipes, redirection, and
@@ -1176,6 +1203,56 @@ type CalDAVConfig struct {
 // keeps an unconfigured server's JSON free of an empty caldav object.
 func (c CalDAVConfig) IsZero() bool { return len(c.Static) == 0 && len(c.Dynamic) == 0 }
 
+// CalDAVUnlinkPolicy decides what a DELETE against a dynamic collection does
+// when it removes an entity's LAST membership.
+//
+// A DELETE addressed at `project_tasks--PRJ-home/TSK-1.ics` names a MEMBERSHIP,
+// not the entity: the user removed the to-do from Home, not from existence. So
+// the edge is always what goes. The only real question is what should happen to
+// an entity that now belongs to nothing, and that is genuinely
+// deployment-specific — hence a policy rather than a hardcoded answer.
+//
+// Removing a NON-last membership is never affected: the entity still belongs
+// somewhere, so only the edge is removed whatever the policy says.
+type CalDAVUnlinkPolicy string
+
+// Unlink policies.
+const (
+	// CalDAVUnlinkAuto derives the answer from the relation's own cardinality,
+	// and is the default.
+	//
+	// If the relation declares `min_outgoing >= 1`, an entity with no
+	// memberships violates a constraint the OPERATOR already stated in the
+	// metamodel, so the collection's `on_delete:` is applied — the schema is
+	// the single source of truth for whether membership is mandatory, rather
+	// than a second setting that can disagree with it.
+	//
+	// Otherwise the entity is kept with its edge removed: membership is
+	// optional by declaration, so an entity belonging to nothing is a legal
+	// state and destroying it would exceed what the user asked for.
+	//
+	// CAVEAT: a cardinality violation is a WARNING at write time in rela
+	// (DEC-HWZHA — a write is never blocked for one), so `min_outgoing` is read
+	// here as a statement of intent, not as an enforced invariant.
+	CalDAVUnlinkAuto CalDAVUnlinkPolicy = "auto"
+	// CalDAVUnlinkKeep always keeps the entity, removing only the edge. The
+	// entity survives outside every dynamic collection, reachable through a
+	// static collection or the web app.
+	CalDAVUnlinkKeep CalDAVUnlinkPolicy = "keep"
+	// CalDAVUnlinkDelete always applies the collection's `on_delete:` when the
+	// last membership goes — for deployments where a to-do outside every
+	// project is meaningless.
+	CalDAVUnlinkDelete CalDAVUnlinkPolicy = "delete"
+)
+
+// OrDefault returns the policy, defaulting to [CalDAVUnlinkAuto].
+func (p CalDAVUnlinkPolicy) OrDefault() CalDAVUnlinkPolicy {
+	if p == "" {
+		return CalDAVUnlinkAuto
+	}
+	return p
+}
+
 // dynamicNameSep joins a pattern key to its driver id in the URL segment
 // (`project_tasks--PRJ-1`). Mirrors internal/dataentry's feedUIDSep; duplicated
 // rather than imported because dataentryconfig must not depend on dataentry.
@@ -1229,6 +1306,9 @@ type CalDAVDynamicCollection struct {
 	// Direction is the member→driver edge direction, defaulting to outgoing
 	// (the member points AT the driver, e.g. task --belongs-to--> project).
 	Direction Direction `yaml:"direction,omitempty" json:"direction,omitempty"`
+	// OnUnlink decides what a DELETE means when it removes the entity's LAST
+	// membership. See [CalDAVUnlinkPolicy]; empty means [CalDAVUnlinkAuto].
+	OnUnlink CalDAVUnlinkPolicy `yaml:"on_unlink,omitempty" json:"on_unlink,omitempty"`
 }
 
 // CalDAVCollection declares one CalDAV collection: a single entity type

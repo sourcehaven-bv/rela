@@ -10,6 +10,7 @@ exclude:
   - internal/entitymanager/entitymanagertest
   - internal/visibility/visibilitytest
   - internal/state/statetest
+  - internal/mail/mailtest
   - internal/userstate/userstatetest
   - frontend
   - e2e
@@ -57,6 +58,7 @@ components:
   autocascade:      { in: internal/autocascade }
   automation:       { in: internal/automation }
   calfeed:          { in: internal/calfeed }
+  mailrender:       { in: internal/mailrender }
   caldavalias:      { in: internal/caldavalias }
   conflict:         { in: internal/conflict }
   datamigration:    { in: internal/datamigration }
@@ -116,6 +118,7 @@ components:
   affordances:      { in: internal/affordances }
   visibility:       { in: internal/visibility }
   ai:               { in: internal/ai }
+  mail:             { in: internal/mail }
   audit:            { in: internal/audit }
   jwtauth:          { in: internal/jwtauth }
   principal:        { in: internal/principal }
@@ -152,6 +155,19 @@ vendors:
       - github.com/emersion/go-webdav
       - github.com/emersion/go-webdav/**
   goical:      { in: github.com/emersion/go-ical }
+  # Outbound mail (TKT-332QZY). net/smtp is frozen and covers only the wire
+  # protocol; go-mail owns RFC 5322 assembly — header folding, encoded-words,
+  # quoted-printable, multipart — which is the part that is easy to get subtly
+  # wrong. Granted only to mail.
+  gomail:      { in: github.com/wneessen/go-mail }
+  # HTML sanitize + CSS inline for mail bodies. Both granted only to
+  # mailrender; the ORDER they run in is a security property documented on that
+  # package (sanitize the untrusted fragment, inline last).
+  bluemonday:  { in: github.com/microcosm-cc/bluemonday }
+  douceur:
+    in:
+      - github.com/aymerick/douceur
+      - github.com/aymerick/douceur/**
   goldmark:
     in:
       - github.com/yuin/goldmark
@@ -391,11 +407,20 @@ deps:
   # conditionlint reuses the predicate parser to sanity-check wizard-form
   # condition expressions at author time. It sits above dataentryconfig so the
   # config package stays free of the predicate dependency.
+  #
+  # It also COMPILES next-action `condition:` expressions (TKT-N8XQ2R). Those
+  # are evaluated server-side by predicatefns, not by the SPA, so unlike the
+  # wizard-form checks this one is authoritative rather than a superset: it
+  # must see the same host functions (days_between, today, ...) the runtime
+  # will, hence predicatefns. searchparser is needed to read the entity types
+  # out of the source's `query:`, which is what a condition compiles against.
   conditionlint:
     mayDependOn:
       - dataentryconfig
       - metamodel
       - predicate
+      - predicatefns
+      - searchparser
   desktop:
     canUse:
       - wails
@@ -446,13 +471,29 @@ deps:
   # any tag, so both backends' deps must be allow-listed here.
   appbuild:
     mayDependOn:
+      # Mail is optional infrastructure the composition root wires and owns the
+      # lifecycle of (start in assemble, stop in Close), exactly like the
+      # data-migration GC sweep. Consumers take the mail.Sender seam, not this
+      # edge.
+      - mail
       # The composition root picks the userstate backend, the same way it
       # picks the store backend. Consumers take the userstate.Store seam.
       - userstate
       - memuserstate
       - kvuserstate
       - datamigration
+      # Bridges conditionlint's next-action condition compiler to the seam
+      # dataentry declares, so the app never imports the predicate engine.
+      - conditionlint
+      - dataentryconfig
+      - nextaction
       - acl
+      # appbuild constructs the affordance resolver so the field write gate
+      # and the two gated-read bundles can share ONE instance (TKT-0XL8MF).
+      # Safe as a dependency edge: affordances is a near-leaf (acl, entity,
+      # metamodel, predicate*, principal, statemachine) and imports no
+      # wiring package, so this cannot close a cycle.
+      - affordances
       - app
       - audit
       - caldavalias
@@ -554,6 +595,28 @@ deps:
     canUse:
       - ximage
       - semaphore
+  # Message model -> branded HTML + text/plain. A leaf in the calfeed sense: no
+  # internal deps at all, so it takes a plain map of colour tokens rather than
+  # dataentryconfig.ResolvedPalette (which would drag in filter/git/metamodel
+  # and make "leaf" a fiction).
+  mailrender:
+    canUse:
+      - goldmark
+      - bluemonday
+      - douceur
+  # Sender seam, transports, config and the best-effort outbox. Depends on
+  # mailrender for the body model only; it reaches the store through a narrow
+  # structural interface at the wiring site, never by importing appbuild.
+  mail:
+    mayDependOn:
+      - mailrender
+      # The SMTP password lives in .rela/secrets.yaml under smtp_password, the
+      # same store Lua scripts read: an SMTP credential is no different in kind
+      # from the API tokens already kept there, and TKT-DS1CR6 makes mail a
+      # script consumer anyway.
+      - secrets
+    canUse:
+      - gomail
   acl:
     mayDependOn:
       - entity

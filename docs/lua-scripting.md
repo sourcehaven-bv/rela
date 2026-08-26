@@ -981,11 +981,59 @@ not by the document config. Two `documents:` entries that share one
 script caches work across all its callers). If you need doc-scoped
 keys, include `rela.document.id` in your cache key explicitly.
 
+### Capabilities — `http`, `ai`, `secrets`, `write_file`
+
+Four things a script can reach are **not** granted by default: outbound HTTP,
+the AI provider, named secrets, and `rela.write_file`. A script that has not
+been granted one does not merely fail the call — the binding is **absent**, so
+you get `attempt to index a nil value (global 'http')`.
+
+Declare what a script needs with a `capabilities:` block next to its `script:`
+reference:
+
+```yaml
+# data-entry.yaml
+actions:
+  notify_slack:
+    script: notify.lua
+    capabilities:
+      http: true
+      secrets: [slack_webhook_url]
+```
+
+The same block works on `documents:` entries, automation actions in
+`schema.yaml`, and tasks in `schedules.yaml`.
+
+**`secrets:` is a list of key names, not a boolean.** This is the point of the
+feature: an action that needs one Slack webhook does not also receive your
+database DSN and every other API key in `.rela/secrets.yaml`. A key you did not
+name is absent from `rela.secrets`, so a typo shows up as a `nil` at the use
+site rather than as a silently-empty credential sent to an upstream.
+
+Why closed by default: a script holding `secrets` **and** `http` can read a
+credential and post it anywhere in two calls. That combination used to be
+granted to *every* script on every surface — including read-only document
+renders and validation rules, which cannot even write to the graph. Requiring
+the grant means the capability appears only where an operator wrote it down.
+
+Two surfaces differ, both deliberately:
+
+- **`rela script` / `rela flow` / the docs build** grant everything. These run
+  from your shell, where you already have the project directory and can read
+  `.rela/secrets.yaml` yourself, so withholding anything protects nothing.
+- **MCP `lua_eval` / `lua_run`** grant nothing, and there is no way to change
+  that from config. The code (or the choice of file) comes from an MCP client,
+  which is the least appropriate place to pair arbitrary code with your secrets.
+
 ### Secrets
 
 Scripts can access secrets (API keys, tokens, passwords) via the `rela.secrets` table.
 Secrets are loaded from `.rela/secrets.yaml`, which lives inside the gitignored `.rela/`
 directory.
+
+A script only sees the keys its `capabilities.secrets` list names (see
+[Capabilities](#capabilities--http-ai-secrets-write_file) above); everything
+below describes how the *values* are resolved once a key has been granted.
 
 #### Configuration
 

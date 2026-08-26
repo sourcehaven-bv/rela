@@ -13,6 +13,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/caldavalias"
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	entitypkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -202,6 +203,13 @@ func (b *caldavBackend) createFromTodo(
 		return nil, caldavWriteError(err)
 	}
 
+	// A DYNAMIC collection is defined by a relation, so an entry created inside
+	// one is not a member until that edge exists. See linkToDriver for why a
+	// failure here deletes the entity rather than leaving it.
+	if linkErr := b.linkToDriver(ctx, collection, created.Entity.ID); linkErr != nil {
+		return nil, linkErr
+	}
+
 	obj, err := b.renderObject(ctx, collection, m, created.Entity, href, in.Todo.UID)
 	if err != nil {
 		return nil, err
@@ -214,6 +222,80 @@ func (b *caldavBackend) createFromTodo(
 		return nil, fmt.Errorf("caldav: record alias: %w", err)
 	}
 	return obj, nil
+}
+
+// attachToDriver creates the relation that makes an entity a member of a
+// dynamic collection. A no-op for static collections, and idempotent: an entry
+// that is already a member reports success.
+//
+// It has NO side effect on the entity. Whether a failure to attach should undo
+// anything depends on which flow is calling — see linkToDriver (create) and
+// updateFromTodo (update), which decide that differently and for good reason.
+func (b *caldavBackend) attachToDriver(ctx context.Context, collection, entityID string) error {
+	dyn, driverID, ok := b.resolveDynamic(ctx, collection)
+	if !ok {
+		return nil // static collection: membership needs no edge
+	}
+	from, to := entityID, driverID
+	if dyn.Direction.IsIncoming() {
+		from, to = driverID, entityID
+	}
+	_, err := b.app.entityManager.CreateRelation(ctx, from, dyn.Relation, to, entitypkg.RelationOptions{})
+	// Already a member: the normal case on every edit, since an ordinary
+	// check-off re-asserts the membership it already has. Idempotent, never an
+	// error.
+	if err == nil || errors.Is(err, entitymanager.ErrRelationAlreadyExists) {
+		return nil
+	}
+	return err
+}
+
+// linkToDriver attaches a NEWLY CREATED entity to its dynamic collection,
+// deleting that entity if the edge cannot be made.
+//
+// # Why the entity is DELETED when the edge fails
+//
+// Membership in a dynamic collection IS the relation. An entity created without
+// it lands in the entity type but in no collection at all: it vanishes from the
+// client on the next sync, and it is invisible in every CalDAV view, so the user
+// has no way to find or fix it. That is worse than the create having failed —
+// a failed create is visible and retryable, an orphan is neither.
+//
+// So the create is undone. This is a compensating delete, not a transaction:
+// entitymanager exposes no Tx, and store.Tx would not help uniformly anyway —
+// fsstore keeps writes already made (no rollback, a deliberate reduced
+// guarantee), so the same compensation would be needed there regardless.
+//
+// The delete is NON-cascading: the entity is seconds old and its only possible
+// edge is the one that just failed to be created, so a cascade could only reach
+// relations some concurrent writer added — which are not ours to remove.
+//
+// # ONLY the create flow may call this
+//
+// The justification above rests entirely on the entity being seconds old and
+// wholly ours. On an EDIT of a pre-existing to-do none of that holds: the entity
+// is arbitrarily old, its patch already succeeded, and its content is the user's
+// — so undoing an attach failure by deleting it destroys data the caller never
+// asked to remove, for an assignment that merely could not be recorded. An ACL
+// deny makes that routine rather than exotic: a principal allowed to edit
+// to-dos but not to create the membership relation would lose one on every
+// ordinary check-off. The update flow therefore calls attachToDriver directly
+// and never this (BUG-2ATX4H).
+//
+// If the compensation ITSELF fails, the orphan survives and the error says so.
+// Nothing better is available at this layer, and a silent success would leave
+// the user with a to-do they cannot see.
+func (b *caldavBackend) linkToDriver(ctx context.Context, collection, entityID string) error {
+	err := b.attachToDriver(ctx, collection, entityID)
+	if err == nil {
+		return nil
+	}
+	if _, delErr := b.app.entityManager.DeleteEntity(ctx, entityID, false); delErr != nil {
+		return fmt.Errorf(
+			"caldav: linking %s to collection %q failed (%w), and removing the now-orphaned entity "+
+				"also failed (%v) — it exists in no collection", entityID, collection, err, delErr)
+	}
+	return caldavWriteError(err)
 }
 
 // updateFromTodo applies a client edit to an existing entity.
@@ -252,6 +334,33 @@ func (b *caldavBackend) updateFromTodo(
 	}
 	if err != nil {
 		return nil, caldavWriteError(err)
+	}
+
+	// An EXISTING entity written into a dynamic collection it does not yet
+	// belong to is an assignment: the client put this to-do in this list.
+	// Without the edge the write is a silent no-op — the client shows it in the
+	// collection and the next poll does not.
+	//
+	// ADDITIVE, never a move: a client "move" and a client "copy-to-second-list"
+	// are indistinguishable on the wire (both are a PUT of the same UID into
+	// another collection), and Thunderbird supports assigning one to-do to
+	// several calendars. Dropping the old edge would silently break that, while
+	// adding one models it exactly — membership is a relation, so belonging to
+	// two projects is a legal graph state. A real move sends a DELETE against
+	// the source collection afterwards, which removes the other edge.
+	// NEVER linkToDriver here: its compensating delete is a create-flow undo and
+	// would destroy this already-patched, arbitrarily-old entity (BUG-2ATX4H).
+	// The patch has landed and is the user's data; a membership that could not
+	// be recorded is not a reason to remove it.
+	if linkErr := b.attachToDriver(ctx, collection, res.Entity.ID); linkErr != nil {
+		var linkDenied *acl.ForbiddenError
+		if errors.As(linkErr, &linkDenied) {
+			// Same answer as a deny on the patch itself: accept, serve the
+			// stored state, withhold the ETag so the client refetches and
+			// reconciles. The edit is kept, the assignment is not made.
+			return b.refusedWriteResponse(ctx, collection, href, m, in, entityID)
+		}
+		return nil, caldavWriteError(linkErr)
 	}
 
 	obj, err := b.renderObject(ctx, collection, m, res.Entity, href, in.Todo.UID)
@@ -430,6 +539,108 @@ func staleWriteResponse() error {
 	return notFoundHere()
 }
 
+// unlinkFromDriver removes the membership a DELETE against a dynamic collection
+// addresses, and reports whether the entity itself was also disposed of.
+//
+// handled=false means the collection is static — there is no membership to
+// remove, so the caller applies `on_delete:` to the entity as before.
+//
+// # Removing the LAST membership
+//
+// An entity that now belongs to nothing is the only genuinely ambiguous case,
+// and [dataentryconfig.CalDAVUnlinkPolicy] decides it. Under the default
+// `auto`, the relation's own `min_outgoing` is the answer: a relation declared
+// mandatory means an orphan violates the operator's own schema, so `on_delete:`
+// applies; an optional one means belonging to nothing is a legal state and the
+// entity is kept.
+//
+// The edge is removed FIRST in either case. If the subsequent on_delete fails
+// the membership is still gone, which is the half the user actually asked for —
+// the reverse order could leave a cancelled entity still sitting in the list.
+func (b *caldavBackend) unlinkFromDriver(
+	ctx context.Context, collection, entityID string,
+) (handled, entityDisposed bool, err error) {
+	dyn, driverID, ok := b.resolveDynamic(ctx, collection)
+	if !ok {
+		return false, false, nil
+	}
+	from, to := entityID, driverID
+	if dyn.Direction.IsIncoming() {
+		from, to = driverID, entityID
+	}
+
+	last, err := b.isLastMembership(ctx, dyn, entityID)
+	if err != nil {
+		return false, false, err
+	}
+	if delErr := b.app.entityManager.DeleteRelation(ctx, from, dyn.Relation, to); delErr != nil {
+		return false, false, caldavWriteError(delErr)
+	}
+	if !last || !b.disposeOnLastUnlink(dyn) {
+		return true, false, nil
+	}
+
+	m, _, mapErr := b.mapperFor(ctx, collection)
+	if mapErr != nil {
+		return true, false, mapErr
+	}
+	patch, hard, configured := m.deletePatch()
+	if !configured {
+		// No on_delete to apply. The membership is already gone, which is what
+		// the client asked for — refusing now would be a lie about what
+		// happened.
+		return true, false, nil
+	}
+	if hard {
+		if _, e := b.app.entityManager.DeleteEntity(ctx, entityID, false); e != nil {
+			return true, false, caldavWriteError(e)
+		}
+		return true, true, nil
+	}
+	if _, e := b.app.entityManager.PatchEntity(ctx, entityID, patch); e != nil {
+		return true, false, caldavWriteError(e)
+	}
+	return true, true, nil
+}
+
+// isLastMembership reports whether the entity's only remaining edge of this
+// relation type is the one about to be removed.
+func (b *caldavBackend) isLastMembership(
+	ctx context.Context, dyn dataentryconfig.CalDAVDynamicCollection, entityID string,
+) (bool, error) {
+	dir := store.DirectionOutgoing
+	if dyn.Direction.IsIncoming() {
+		dir = store.DirectionIncoming
+	}
+	rels, err := listRelationsCtx(ctx, b.app.Services().Store,
+		store.RelationQuery{EntityID: entityID, Type: dyn.Relation, Direction: dir})
+	if err != nil {
+		return false, fmt.Errorf("caldav: count memberships: %w", err)
+	}
+	return len(rels) <= 1, nil
+}
+
+// disposeOnLastUnlink resolves the unlink policy for a pattern.
+//
+// Under `auto` the relation's declared cardinality decides: a mandatory
+// membership (`min_outgoing >= 1`) means an orphan contradicts the operator's
+// own schema, so the entity is disposed of via on_delete:.
+func (b *caldavBackend) disposeOnLastUnlink(dyn dataentryconfig.CalDAVDynamicCollection) bool {
+	switch dyn.OnUnlink.OrDefault() {
+	case dataentryconfig.CalDAVUnlinkKeep:
+		return false
+	case dataentryconfig.CalDAVUnlinkDelete:
+		return true
+	default: // auto
+		def, ok := b.app.State().Meta.Relations[dyn.Relation]
+		if !ok {
+			return false
+		}
+		required := def.GetMinOutgoing()
+		return required != nil && *required >= 1
+	}
+}
+
 // DeleteCalendarObject applies the collection's configured delete behavior.
 //
 // The default is a STATUS TRANSITION, not an entity delete: the client gesture
@@ -450,6 +661,22 @@ func (b *caldavBackend) DeleteCalendarObject(ctx context.Context, p string) erro
 	entityID, ok := b.entityIDFor(ctx, name, href, m)
 	if !ok {
 		return webdav.NewHTTPError(http.StatusNotFound, errors.New("caldav: not found"))
+	}
+
+	// A DELETE against a DYNAMIC collection names a MEMBERSHIP, not the entity:
+	// the user removed this to-do from THIS project, not from existence.
+	// Applying on_delete: here would cancel it everywhere — in the static
+	// collection, in every other project, and in the web app — which is data
+	// loss from a gesture that meant "take it out of this list".
+	unlinked, entityGone, err := b.unlinkFromDriver(ctx, name, entityID)
+	if err != nil {
+		return err
+	}
+	if unlinked && !entityGone {
+		return nil // membership removed; the entity itself survives
+	}
+	if unlinked && entityGone {
+		return nil // last membership: on_delete already applied below-the-line
 	}
 
 	patch, hard, configured := m.deletePatch()

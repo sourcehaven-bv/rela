@@ -150,7 +150,7 @@ func (p RenderProjection) Hash() string {
 }
 
 // JSON returns the projection serialized as deterministic JSON, for storage in
-// schema_versions.projection. The bytes are content-addressed by [Hash] (a
+// schema_versions.projection. The bytes are content-addressed by [RenderProjection.Hash] (a
 // separate length-prefixed digest), so this serialization is for storage and
 // re-render, not identity — encoding/json with sorted map keys is sufficient.
 //

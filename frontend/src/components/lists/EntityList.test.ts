@@ -4,6 +4,7 @@ import { defineComponent, h } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
 import EntityList from './EntityList.vue'
+import Pagination from './Pagination.vue'
 import ConfirmModal from '@/components/ui/ConfirmModal.vue'
 import { useSchemaStore } from '@/stores/schema'
 import { useUIStore } from '@/stores/ui'
@@ -537,6 +538,115 @@ describe('EntityList incoming relation columns', () => {
     const dataCells = wrapper.findAll('tbody tr td:not(.actions-cell):not(.select-cell)')
     const relCell = dataCells[dataCells.length - 1]
     expect(relCell.text()).toBe('')
+    wrapper.unmount()
+  })
+})
+
+// Pins the anti-flash contract that TKT-TFSNBY's design depends on: a page
+// change must NOT blank the table back to the `.loading-state` spinner.
+//
+// `loading` is computed from `isPending`, and a page change swaps to a NEW
+// query key whose entry starts out `pending` — so the guard is Colada's
+// `placeholderData: (prev) => prev`. When placeholder data is present Colada
+// overrides the exposed state to `{status: 'success', data: placeholderData}`,
+// which keeps `isPending` false and holds the previous page's rows on screen
+// until the next page resolves.
+//
+// Without this test the behaviour is unpinned, and EntityList carried two
+// contradictory comments about it (one claiming the spinner does show on a
+// param change). Removing `placeholderData`, or gating the template on
+// `asyncStatus`/`isLoading` instead of `isPending`, must fail here.
+describe('EntityList pagination keeps previous rows (no spinner flash)', () => {
+  const listId = 'tickets-list'
+  const entityType = 'ticket'
+
+  let pinia: ReturnType<typeof createPinia>
+  beforeEach(() => {
+    pinia = createPinia()
+    setActivePinia(pinia)
+    _setEntityPluralForTest(entityType, 'tickets')
+    listEntitiesMock.mockReset()
+    mockRoute.query = {}
+    const schemaStore = useSchemaStore()
+    schemaStore.lists.set(listId, {
+      id: listId,
+      title: 'Tickets',
+      entity: entityType,
+      page_size: 2,
+      columns: [{ property: 'title', label: 'Title' }],
+    } as never)
+    schemaStore.entityTypes.set(entityType, {
+      name: entityType,
+      label: 'Ticket',
+      properties: { title: { type: 'string', values: null } },
+    } as never)
+  })
+
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  function page(ids: string[], pageNo: number, hasMore: boolean): ListResponse<Entity> {
+    return {
+      data: ids.map((id) => ({ id, type: entityType, properties: { title: `Title ${id}` } })),
+      meta: { total: 4, page: pageNo, per_page: 2, has_more: hasMore },
+      included: {},
+    }
+  }
+
+  it('holds page 1 rows on screen while page 2 is in flight', async () => {
+    listEntitiesMock.mockResolvedValueOnce(page(['T-1', 'T-2'], 1, true))
+    const wrapper = mount(EntityList, {
+      props: { listId },
+      attachTo: document.body,
+      global: { plugins: [pinia, PiniaColada] },
+    })
+    await flushPromises()
+    expect(wrapper.findAll('tbody tr')).toHaveLength(2)
+    expect(wrapper.find('.loading-state').exists()).toBe(false)
+
+    // Page 2 resolves only when we say so, so we can observe the in-flight gap.
+    let resolvePage2: (r: ListResponse<Entity>) => void = () => {}
+    listEntitiesMock.mockImplementationOnce(
+      () => new Promise<ListResponse<Entity>>((res) => { resolvePage2 = res })
+    )
+
+    await wrapper.findComponent(Pagination).vm.$emit('page-change', 2)
+    await flushPromises()
+
+    // THE ASSERTION: mid-flight the old rows are still mounted and no
+    // spinner replaced the table.
+    expect(wrapper.find('.loading-state').exists()).toBe(false)
+    expect(wrapper.findAll('tbody tr')).toHaveLength(2)
+    expect(wrapper.text()).toContain('Title T-1')
+
+    resolvePage2(page(['T-3', 'T-4'], 2, false))
+    await flushPromises()
+
+    // Page 2's rows are now the real (non-placeholder) data.
+    expect(wrapper.find('.loading-state').exists()).toBe(false)
+    expect(wrapper.text()).toContain('Title T-3')
+    wrapper.unmount()
+  })
+
+  it('does show the spinner on the very first load (no previous data to hold)', async () => {
+    let resolveFirst: (r: ListResponse<Entity>) => void = () => {}
+    listEntitiesMock.mockImplementationOnce(
+      () => new Promise<ListResponse<Entity>>((res) => { resolveFirst = res })
+    )
+    const wrapper = mount(EntityList, {
+      props: { listId },
+      attachTo: document.body,
+      global: { plugins: [pinia, PiniaColada] },
+    })
+    await flushPromises()
+
+    // Cold load is the one case where the block spinner is correct.
+    expect(wrapper.find('.loading-state').exists()).toBe(true)
+
+    resolveFirst(page(['T-1', 'T-2'], 1, true))
+    await flushPromises()
+    expect(wrapper.find('.loading-state').exists()).toBe(false)
     wrapper.unmount()
   })
 })

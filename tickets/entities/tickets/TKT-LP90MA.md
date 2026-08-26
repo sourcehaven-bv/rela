@@ -5,7 +5,21 @@ title: Sidebar counts are fetched once on mount and never refresh
 kind: enhancement
 priority: low
 effort: s
-status: backlog
+status: wont-fix
+---
+
+## Resolution: obsolete (wont-fix)
+
+Closed by [[TKT-VKM1E9]], which removed sidebar entity counts entirely — badges,
+the `sidebarCounts` server path, and the `count` field on `/api/v1/_sidebar`.
+There is no longer a count to go stale, so the staleness this ticket describes
+cannot occur.
+
+Both concerns raised in the notes below were resolved by deletion rather than by
+a refresh mechanism: the per-request `countWithFilters` cost is gone, and so is
+the error-degrades-to-`0` path that would have made a naive refresh actively
+misleading.
+
 ---
 
 ## Problem

@@ -23,7 +23,7 @@ import (
 //
 // The check queries other entities and so cannot live in the pure,
 // per-entity ValidateEntity. Violations are returned as
-// [metamodel.ValidationError]s of type [metamodel.ValidationErrorUnique]
+// [metamodel.ValidationError] values of type [metamodel.ValidationErrorUnique]
 // (a HARD error) so the caller folds them into the same
 // [newValidationError] → 422 path as structural validation failures.
 //

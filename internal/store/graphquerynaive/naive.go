@@ -34,9 +34,9 @@ type Reader interface {
 // against pathological inputs (huge fan-out, deep chains) where
 // even bounded BFS would be too expensive.
 //
-// Exported so a caller that supplies a [GraphQuery.HasInbound.Depth]
+// Exported so a caller that supplies a GraphQuery.HasInbound.Depth
 // (or EntityDepth) can pin its own cap to the same value when it
-// wants symmetric behavior. Backends that implement [GraphQuery]
+// wants symmetric behavior. Backends that implement GraphQuery
 // via natural-termination primitives (recursive-CTE UNION, etc.)
 // are free to ignore this cap unless they'd expand past it.
 const DepthCap = 5

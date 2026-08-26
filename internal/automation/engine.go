@@ -185,6 +185,10 @@ func convertFromMetamodel(def metamodel.AutomationDef) (Automation, error) {
 			Lua:            a.Lua,
 			LuaFile:        a.LuaFile,
 			AllowACLBypass: a.AllowACLBypass,
+			// Carried like AllowACLBypass: omitting it here silently drops every
+			// automation's `capabilities:` block (TKT-YH52OM), which is the
+			// hand-copy failure mode this hop is most prone to.
+			Capabilities: a.Capabilities,
 		}
 		if a.CreateRelation != nil {
 			action.CreateRelation = &CreateRelationAction{
@@ -439,6 +443,7 @@ func (e *Engine) executeAction(action Action, event Event, result *Result, autom
 			Code:           code,
 			AutomationName: automationName,
 			AllowACLBypass: action.AllowACLBypass,
+			Capabilities:   action.Capabilities,
 		})
 	}
 
@@ -449,6 +454,7 @@ func (e *Engine) executeAction(action Action, event Event, result *Result, autom
 			FilePath:       action.LuaFile,
 			AutomationName: automationName,
 			AllowACLBypass: action.AllowACLBypass,
+			Capabilities:   action.Capabilities,
 		})
 	}
 }

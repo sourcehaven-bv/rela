@@ -398,7 +398,17 @@ func mergeBadges(dst, src map[string]string) {
 	maps.Copy(dst, src)
 }
 
-// deriveTheme produces the full 21-variable CSS map from 8 base colors + 7 badges.
+// deriveTheme produces the full CSS variable map from 8 base colors + 7 badges.
+//
+// This is the SECOND renderer of the token contract: when a project configures
+// a palette, appCSSSource replaces the whole :root block with this map instead
+// of serving the embedded apps_tokens.css. So a token added to tokens.css and
+// not added here simply does not exist for palette-configured projects, and
+// every rule referencing it silently resolves to nothing. TKT-FRING7 shipped
+// exactly that bug for one review cycle — the focus-ring tokens were defined
+// in tokens.css only, so custom apps under a palette rendered no focus ring at
+// all, which is worse than the hardcoded color they replaced.
+// TestPaletteCarriesEveryDefaultToken pins the two renderers against each other.
 func deriveTheme(colors PaletteColors, badges map[string]string) map[string]string {
 	m := map[string]string{
 		"--sidebar-bg":    colors.Base,
@@ -409,6 +419,12 @@ func deriveTheme(colors PaletteColors, badges map[string]string) map[string]stri
 		"--error-color":   colors.Error,
 		"--warning-color": colors.Warning,
 		"--info-color":    colors.Info,
+
+		// Role aliases, not colors: they are var() references, so they resolve
+		// against whichever palette produced this block and need no derivation.
+		"--focus-ring":     "var(--accent-color)",
+		"--error-ring":     "var(--error-color)",
+		"--focus-ring-gap": "var(--bg-color)",
 	}
 
 	// Derive 6 computed variables

@@ -386,6 +386,11 @@ independently: `rela migrate data` resolves each store's own chain (see the
   goroutine per store; runs are serialized against writers through the
   store's transaction contract. `RELA_DATA_GC=off` disables it (e.g. on
   read-mostly replicas where one designated process should own GC).
+- Migration and GC applies (and gate marker writes) are mutually excluded
+  across processes by a schema-scoped **advisory migration lock** — a
+  session lock held on one pool connection for the duration of the run, so
+  two `migrate data --apply` invocations against the same schema cannot
+  interleave, while different schemas stay independent.
 
 ## Other scope notes
 

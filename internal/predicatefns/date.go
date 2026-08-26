@@ -232,7 +232,7 @@ func daysInMonth(year int, month time.Month) int {
 // A rule that is exhausted (COUNT reached, UNTIL passed) has no next
 // occurrence, and the engine enforces declared return types
 // (eval.go:156) — a Date-returning host function may not return Nil. So
-// exhaustion is an error carrying [ErrRruleExhausted] rather than a
+// exhaustion is an error carrying ErrRruleExhausted rather than a
 // nil-ish Date. A zero date would be worse: it is a real, comparable
 // value, so `rrule_next(r, d) > today()` would silently be false for
 // year 1 and no caller could tell "finished" from "far future".

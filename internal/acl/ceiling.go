@@ -338,12 +338,12 @@ func (p *Policy) validateClientAttenuation() error {
 	}
 
 	// Only now that every collision has been rejected is it safe to rewrite the
-	// deny_write shorthand — see [Restriction.expanded].
+	// deny_write shorthand — see Restriction.expanded.
 	p.expandClientAttenuation()
 	return nil
 }
 
-// expandClientAttenuation applies [Restriction.expanded] to every block. Called
+// expandClientAttenuation applies Restriction.expanded to every block. Called
 // at the tail of validation, never before it.
 func (p *Policy) expandClientAttenuation() {
 	for name, b := range p.ClientBaselines {
@@ -382,7 +382,7 @@ func (p *Policy) normalizeClientAttenuation() {
 
 // normalized returns r with every type name, field name and permission trimmed.
 //
-// It deliberately does NOT expand deny_write — that is [Restriction.expanded],
+// It deliberately does NOT expand deny_write — that is Restriction.expanded,
 // and the ordering matters: expanding before validation would rewrite
 // deny_write into the three per-verb lists, and the "deny_write alongside
 // deny_update" collision check would then find deny_write already gone and pass

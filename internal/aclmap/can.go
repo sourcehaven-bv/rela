@@ -16,7 +16,7 @@ import (
 // carries the deciding route(s) when Allowed, so a "yes" is explained the
 // same way who-can/map explain a grant.
 //
-// A grant via the built-in everyone role (which [WhoCan] reports globally,
+// A grant via the built-in everyone role (which [Engine.WhoCan] reports globally,
 // not per principal) still makes Allowed true and is recorded as the
 // Everyone flag — a spot-check must answer "can this principal?" including
 // the case where the reason is "everyone can".
