@@ -508,13 +508,16 @@ onMounted(() => {
   transition: all 0.15s ease;
 }
 
+/* Surface TINTS, not focus rings — so these stay translucent and must NOT use
+   --focus-ring (which is fully opaque; it would paint solid accent blocks over
+   the text). Derived from --accent-color so they still follow the theme. */
 .resolve-value-selectable:hover {
-  background: rgba(99, 102, 241, 0.1);
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
 }
 
 .resolve-value-selected {
-  background: rgba(99, 102, 241, 0.2);
-  border-color: #6366f1;
+  background: color-mix(in srgb, var(--accent-color) 20%, transparent);
+  border-color: var(--accent-color);
 }
 
 .resolve-content-choice {

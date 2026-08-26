@@ -10,7 +10,12 @@ import (
 // and searchFactory live in testdb_test.go (they provision an isolated schema
 // per call). The whole suite is skipped when RELA_TEST_DATABASE_URL is unset.
 func TestConformance(t *testing.T) {
-	storetest.RunAll(t, factory, searchFactory, visibleSearchFactory, storetest.Capabilities{Attachments: true})
+	storetest.RunAll(t, factory, searchFactory, visibleSearchFactory, storetest.Capabilities{
+		Attachments: true,
+		// pgstore is the one backend meeting the strong Tx contract: rollback
+		// on error, events withheld until commit (DEC-8UIL0).
+		TxRollback: true,
+	})
 }
 
 // TestVisibleFieldConformance runs the property-level (match-on-hidden-field)
@@ -18,14 +23,6 @@ func TestConformance(t *testing.T) {
 // DB-gated on RELA_TEST_DATABASE_URL like the rest of the suite.
 func TestVisibleFieldConformance(t *testing.T) {
 	storetest.RunVisibleFieldSearchTests(t, fieldVisibleSearchFactory)
-}
-
-// TestTxRollback runs the strong-Tx suite only pgstore meets: rollback on
-// error and post-commit-only event delivery (DEC-8UIL0). fsstore/memstore
-// deliberately provide the reduced mutual-exclusion-only guarantees and do
-// not run this.
-func TestTxRollback(t *testing.T) {
-	storetest.RunTxRollbackTests(t, factory)
 }
 
 func FuzzRelationKeyCollision(f *testing.F) {
