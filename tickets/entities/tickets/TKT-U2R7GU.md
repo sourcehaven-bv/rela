@@ -5,7 +5,7 @@ title: Declarative scheduled mail with per-recipient ACL scoping
 kind: enhancement
 priority: medium
 effort: l
-status: review
+status: done
 ---
 
 ## Description
