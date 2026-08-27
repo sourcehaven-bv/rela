@@ -16,6 +16,7 @@ import { renderMarkdown } from '@/utils/markdown'
 import { resolveIcon } from '@/utils/icons'
 import { formatCellValue } from '@/utils/format'
 import { densePropertyRoutingHint } from '@/widgets/viewRouting'
+import CardFieldList, { type ResolvedCardField } from '@/components/common/CardFieldList.vue'
 import { defaultRegistry } from '@/widgets/registry'
 import type { DenseRoutingHint } from '@/widgets/viewRouting'
 
@@ -376,27 +377,7 @@ function getCardFieldStoredValue(entity: Entity, field: KanbanCardField): unknow
   return entity.properties[field.property]
 }
 
-// Card fields with an unset value are dropped entirely: a dangling
-// "effort:" label next to an empty Badge pill (enum fields render a
-// styled chip even for "") is noise on every card that hasn't set the
-// property, worst on mobile where card space is scarce.
-//
-// Emptiness is decided by the FORMATTED string, matching EntityList's
-// visibleMobileColumns so the two surfaces agree. Note this is only correct
-// because formatCellValue renders `false` as "No" and `0` as "0" -- both
-// non-empty, both kept. The bug this replaced was in getCardFieldValue's old
-// `String(v || '')`, which collapsed them to '' before the predicate ever
-// ran; formatCellValue never had that flaw.
-function visibleCardFields(entity: Entity): KanbanCardField[] {
-  return (kanbanConfig.value?.card.fields ?? []).filter(
-    (field) => getCardFieldValue(entity, field) !== ''
-  )
-}
 
-function getCardFieldLabel(field: KanbanCardField): string {
-  if (field.label) return field.label
-  return field.relation || field.property || ''
-}
 
 // Widget resolution for property card-fields, computed once per configured
 // field rather than per card (RR-UD2A). Relation fields are absent on
@@ -422,17 +403,44 @@ const cardFieldWidgets = computed(() => {
 // already dropped empty fields before the template renders, so a widget's
 // "no value" placeholder (MultiSelectWidget's em-dash, RR-UD2C) is
 // unreachable here.
-function resolveCardField(entity: Entity, field: KanbanCardField) {
-  if (field.relation || !field.property) return undefined
-  const entry = cardFieldWidgets.value.get(field.property)
-  if (!entry) return undefined
-  return {
-    component: entry.component,
-    propertyName: entry.hint.propertyName,
-    modelValue: entry.hint.preformatted
-      ? getCardFieldValue(entity, field)
-      : getCardFieldStoredValue(entity, field),
+/**
+ * Every visible field for one card, resolved once.
+ *
+ * The template used to call `resolveCardField` three times per field per card
+ * (once for `v-if`, once for the component, once for each bound prop), so a
+ * board of 50 cards with 3 fields did 450 resolutions per render where 150
+ * would do — and each one re-derives a value the widget map already holds.
+ *
+ * Empty fields are dropped here rather than in the renderer, keeping the
+ * dense-surface rule (empty renders as nothing, not a placeholder) with the
+ * code that knows how a value is formatted.
+ */
+function resolvedCardFields(entity: Entity): ResolvedCardField[] {
+  const out: ResolvedCardField[] = []
+
+  for (const field of kanbanConfig.value?.card.fields ?? []) {
+    const text = getCardFieldValue(entity, field)
+    if (text === '') continue
+
+    // Relation fields have no PropertyDef and so no widget: they render as
+    // joined target titles, the contract shared with list relation columns.
+    const entry = field.property && !field.relation
+      ? cardFieldWidgets.value.get(field.property)
+      : undefined
+
+    out.push({
+      field,
+      component: entry?.component,
+      propertyName: entry?.hint.propertyName,
+      modelValue: entry
+        ? entry.hint.preformatted
+          ? text
+          : getCardFieldStoredValue(entity, field)
+        : undefined,
+      text,
+    })
   }
+  return out
 }
 
 function onDragStart(event: DragEvent, entity: Entity) {
@@ -586,25 +594,10 @@ function createNew() {
           >
             <div class="card-id">{{ entity.id }}</div>
             <div class="card-title text-wrap-anywhere">{{ getCardTitle(entity) }}</div>
-            <div v-if="visibleCardFields(entity).length" class="card-fields">
-              <div
-                v-for="(field, fieldIndex) in visibleCardFields(entity)"
-                :key="field.relation || field.property || fieldIndex"
-                class="card-field"
-              >
-                <span class="field-label">{{ getCardFieldLabel(field) }}:</span>
-                <component
-                  :is="resolveCardField(entity, field)!.component"
-                  v-if="resolveCardField(entity, field)"
-                  class="field-value"
-                  :model-value="resolveCardField(entity, field)!.modelValue"
-                  :mode="'display'"
-                  :property-name="resolveCardField(entity, field)!.propertyName"
-                  :entity-type="kanbanConfig?.entity"
-                />
-                <span v-else class="field-value">{{ getCardFieldValue(entity, field) }}</span>
-              </div>
-            </div>
+            <CardFieldList
+              :fields="resolvedCardFields(entity)"
+              :entity-type="kanbanConfig?.entity"
+            />
           </div>
 
           <div v-if="!entitiesByColumn[column.value]?.length" class="empty-column">
@@ -669,25 +662,10 @@ function createNew() {
           >
             <div class="card-id">{{ entity.id }}</div>
             <div class="card-title text-wrap-anywhere">{{ getCardTitle(entity) }}</div>
-            <div v-if="visibleCardFields(entity).length" class="card-fields">
-              <div
-                v-for="(field, fieldIndex) in visibleCardFields(entity)"
-                :key="field.relation || field.property || fieldIndex"
-                class="card-field"
-              >
-                <span class="field-label">{{ getCardFieldLabel(field) }}:</span>
-                <component
-                  :is="resolveCardField(entity, field)!.component"
-                  v-if="resolveCardField(entity, field)"
-                  class="field-value"
-                  :model-value="resolveCardField(entity, field)!.modelValue"
-                  :mode="'display'"
-                  :property-name="resolveCardField(entity, field)!.propertyName"
-                  :entity-type="kanbanConfig?.entity"
-                />
-                <span v-else class="field-value">{{ getCardFieldValue(entity, field) }}</span>
-              </div>
-            </div>
+            <CardFieldList
+              :fields="resolvedCardFields(entity)"
+              :entity-type="kanbanConfig?.entity"
+            />
           </div>
           <div v-if="!(entitiesByCell[column.value]?.[swimlane.value]?.length)" class="empty-cell">
             —

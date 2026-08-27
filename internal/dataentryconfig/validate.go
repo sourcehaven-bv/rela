@@ -27,6 +27,7 @@ var validTopLevelKeys = map[string]bool{
 	"views":        true,
 	"entity_views": true,
 	"kanbans":      true,
+	"calendars":    true,
 	"documents":    true,
 	"feeds":        true,
 	"caldav":       true,
@@ -46,6 +47,7 @@ var knownTypos = map[string]string{
 	"list":        "lists",
 	"view":        "views",
 	"kanban":      "kanbans",
+	"calendar":    "calendars",
 	"command":     "commands",
 	"style":       "styles",
 	"nav":         "navigation",
@@ -331,6 +333,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateViews(cfg, meta)...)
 	errs = append(errs, validateEntityViews(cfg, meta)...)
 	errs = append(errs, validateKanbans(cfg, meta)...)
+	errs = append(errs, validateCalendars(cfg, meta)...)
 	errs = append(errs, validateDashboard(cfg, meta)...)
 	errs = append(errs, validateCommands(cfg, meta)...)
 	errs = append(errs, validateActions(cfg, meta)...)
@@ -359,6 +362,20 @@ func checkUnknownKeys(data []byte) []string {
 	var errs []string
 	for key := range raw {
 		if validTopLevelKeys[key] {
+			continue
+		}
+		// An underscore-prefixed key holds a YAML anchor and is not config.
+		// Strict key checking is what makes config typos loud, but it also
+		// rejects the only place an author can PUT a shared anchor: YAML
+		// resolves anchors at parse time, so the definition has to live
+		// somewhere in the document, and every real key is already claimed.
+		// The underscore marks intent explicitly rather than inferring it.
+		//
+		// Narrowed to keys that do NOT shadow a real section name: `_kanbans`
+		// is far more likely to be a block someone commented out by prefixing
+		// it than an anchor holder, and silently ignoring that would defeat
+		// the check it is an exception to.
+		if strings.HasPrefix(key, "_") && !validTopLevelKeys[strings.TrimPrefix(key, "_")] {
 			continue
 		}
 		if suggestion, ok := knownTypos[key]; ok {
@@ -417,6 +434,12 @@ func validateNavEntry(nav NavigationEntry, cfg *Config) []string {
 		if _, ok := cfg.Kanbans[nav.Kanban]; !ok {
 			errs = append(errs, fmt.Sprintf(
 				"navigation: references unknown kanban %q", nav.Kanban))
+		}
+	}
+	if nav.Calendar != "" {
+		if _, ok := cfg.Calendars[nav.Calendar]; !ok {
+			errs = append(errs, fmt.Sprintf(
+				"navigation: references unknown calendar %q", nav.Calendar))
 		}
 	}
 
