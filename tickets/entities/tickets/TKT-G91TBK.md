@@ -5,7 +5,7 @@ title: 'SQLite store backend: conformance-passing minimal store behind a sqlite 
 kind: enhancement
 priority: medium
 effort: l
-status: backlog
+status: done
 ---
 
 ## Description
@@ -60,11 +60,15 @@ hostname written before locking; holder identity treated as advisory.
 - Refuse to start, or warn loudly, when `journal_mode` is not `wal` — this is
 the network-filesystem guard, and it costs nothing since `Open` already reads
 the value back.
-- A `sqlite` build tag: `appbuild_sqlite.go` recipe, GoReleaser entries,
-CI backend-isolation assertions (`go list -deps` must show no pgx and no bleve
-leakage in the wrong direction), `justfile` build-check-tags.
 - Pin `modernc.org/libc` to the version from `modernc.org/sqlite`'s `go.mod`
 (upstream #177), with a `go.mod` comment saying why.
+
+**Split out to TKT-L1A3PH** during implementation: the `sqlite` build tag,
+`appbuild_sqlite.go`, `cli/db_sqlite.go`, GoReleaser entries, CI isolation
+assertions and `justfile` build-check-tags. The store and the wiring are
+independently reviewable, and the store is provable on its own — so they are two
+stacked PRs rather than one large diff touching store, appbuild, cli, release
+config and CI at once.
 
 OUT: versioning, `StateKV`, `UserState`, FTS5 native search (use bleve initially
 — `search.Visible` wraps any `Searcher`), SQL pushdown,
@@ -80,8 +84,11 @@ deadlock dump, no lost updates, pair atomicity holding.
 5. A second process opening the same database fails with a clear error naming
 the holder; it never corrupts silently.
 6. Startup refuses or warns when WAL is not in effect.
-7. CI asserts the default build does not link the sqlite driver, and the
-sqlite build links neither pgx nor bleve inappropriately.
+7. ~~CI asserts the default build does not link the sqlite driver, and the
+sqlite build links neither pgx nor bleve inappropriately.~~ **Moved to
+TKT-L1A3PH** — there is no sqlite binary to assert about until the build tag
+exists. The half that IS verifiable here holds: neither the default nor the
+postgres build links `modernc.org/sqlite`.
 8. `just arch-lint`, `just lint`, `just coverage-check` pass.
 
 ## Not licensed by this ticket

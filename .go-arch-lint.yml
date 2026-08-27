@@ -107,6 +107,7 @@ components:
   memstore:         { in: internal/store/memstore }
   graphquerynaive:  { in: internal/store/graphquerynaive }
   pgstore:          { in: internal/store/pgstore }
+  sqlitestore:      { in: internal/store/sqlitestore }
   storeutil:        { in: internal/store/storeutil }
 
   # Project bootstrap utilities
@@ -191,6 +192,10 @@ vendors:
   color:       { in: github.com/fatih/color }
   fsnotify:    { in: github.com/fsnotify/fsnotify }
   pgx:         { in: github.com/jackc/pgx/** }
+  # modernc.org/sqlite: the pure-Go (no cgo) SQLite driver. Granted ONLY to
+  # sqlitestore, so the default and postgres builds cannot link it — the same
+  # isolation rule pgx and bleve carry.
+  sqlite:      { in: modernc.org/sqlite }
   singleflight: { in: golang.org/x/sync/singleflight }
   semaphore:   { in: golang.org/x/sync/semaphore }
   ximage:      { in: [golang.org/x/image, golang.org/x/image/**] }
@@ -941,6 +946,21 @@ deps:
       - sync
     canUse:
       - pgx
+  sqlitestore:
+    mayDependOn:
+      # Deliberately narrower than pgstore: no userstate, no sync, no canonical.
+      # This backend is the conformance-passing minimal store (DEC-LFSYNY stage
+      # 3); versioning, state and the sync manifest are later stages, and each
+      # should have to justify widening this list.
+      - entity
+      - graphquerynaive
+      - store
+      - storeutil
+    canUse:
+      - sqlite
+      # x/sys for flock/LockFileEx: the single-writer sidecar lock. Go's stdlib
+      # exposes no portable advisory file lock.
+      - xsys
   storeutil:
     mayDependOn:
       - store
