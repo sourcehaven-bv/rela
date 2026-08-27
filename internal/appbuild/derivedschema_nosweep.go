@@ -5,7 +5,6 @@ package appbuild
 import (
 	"context"
 
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -14,4 +13,4 @@ import (
 // the metamodel. fsstore/memstore enforce `unique: true` with the
 // application-level check-then-write scan, which is correct for their
 // single-process nature (TKT-3Q0GP1).
-func reconcileDerivedSchemaIfSupported(_ context.Context, _ store.Store, _ *metamodel.Metamodel) {}
+func reconcileDerivedSchemaIfSupported(_ context.Context, _ store.Store, _ *SharedBase) {}

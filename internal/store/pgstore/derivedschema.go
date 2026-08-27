@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -33,10 +34,9 @@ func safeDDLName(name string) bool {
 
 // Derived-schema reconciliation (TKT-3Q0GP1). pgstore implements the optional
 // [store.DerivedSchemaReconciler] capability: it synthesizes Postgres objects
-// from the metamodel that enforce declarations atomically which the application
-// otherwise checks non-atomically. Today the one rule is `unique: true`, which
-// becomes a partial unique EXPRESSION index over `properties->>'<prop>'` scoped
-// to `type = '<type>'`.
+// from validated project configuration. `unique: true` becomes a partial
+// unique expression index; eligible static query shapes become partial
+// composite expression indexes over their scalar string properties.
 //
 // Reconciliation is STATELESS: the metamodel is the desired set, the live
 // catalog (pg_indexes) is the actual set, and a name prefix marks ownership.
@@ -60,6 +60,9 @@ const reconcileAdvisoryLockKey = 0x52_45_4c_44 // "RELD"
 // It is also the discriminator the write path matches on (see mapUniqueViolation).
 const derivedUniquePrefix = "rela_derived_uniq__"
 
+// derivedQueryPrefix is owned exclusively by the static-query index rule.
+const derivedQueryPrefix = "rela_derived_query__"
+
 // uniqueIndexName is the deterministic index name for a (type, property) unique
 // rule. Deterministic across processes and versions (no per-run entropy) so the
 // drop side of reconcile is safe: an index whose name is not recomputed from the
@@ -70,6 +73,16 @@ const derivedUniquePrefix = "rela_derived_uniq__"
 func uniqueIndexName(entityType, property string) string {
 	sum := sha256.Sum256([]byte(entityType + "\x00" + property))
 	return derivedUniquePrefix + hex.EncodeToString(sum[:16])
+}
+
+func queryIndexName(entityType string, properties []string) string {
+	h := sha256.New()
+	_, _ = h.Write([]byte(entityType))
+	for _, property := range properties {
+		_, _ = h.Write([]byte{'\x00'})
+		_, _ = h.Write([]byte(property))
+	}
+	return derivedQueryPrefix + hex.EncodeToString(h.Sum(nil)[:16])
 }
 
 // Reconcile implements store.DerivedSchemaReconciler. It converges the derived
@@ -168,8 +181,8 @@ func (s *Store) Reconcile(
 			})
 			continue
 		}
-		if _, err := conn.Exec(ctx, `DROP INDEX IF EXISTS `+quoteIdent(name)); err != nil {
-			return nil, fmt.Errorf("pgstore: reconcile: drop %s: %w", name, err)
+		if _, dropErr := conn.Exec(ctx, `DROP INDEX IF EXISTS `+quoteIdent(name)); dropErr != nil {
+			return nil, fmt.Errorf("pgstore: reconcile: drop %s: %w", name, dropErr)
 		}
 		outcomes = append(outcomes, store.DerivedObjectOutcome{
 			Spec:   store.DerivedObjectSpec{Kind: store.DerivedUnique},
@@ -194,7 +207,111 @@ func (s *Store) Reconcile(
 		outcomes = append(outcomes, createUniqueIndex(ctx, conn, spec, name, opts.ShowValues))
 	}
 
+	queryOutcomes, err := reconcileQueryIndexes(ctx, conn, desired, opts)
+	if err != nil {
+		return nil, err
+	}
+	return append(outcomes, queryOutcomes...), nil
+}
+
+func reconcileQueryIndexes(
+	ctx context.Context, conn *pgxpool.Conn, desired []store.DerivedObjectSpec, opts store.ReconcileOptions,
+) ([]store.DerivedObjectOutcome, error) {
+	desiredByName := make(map[string]store.DerivedObjectSpec)
+	var outcomes []store.DerivedObjectOutcome
+	for _, spec := range desired {
+		if spec.Kind != store.DerivedQueryIndex {
+			continue
+		}
+		spec.Properties = slices.Clone(spec.Properties)
+		slices.Sort(spec.Properties)
+		spec.Properties = slices.Compact(spec.Properties)
+		if !safeDDLName(spec.Type) || len(spec.Properties) == 0 {
+			outcomes = append(outcomes, unenforced(spec, "invalid static query index shape"))
+			continue
+		}
+		valid := true
+		for _, property := range spec.Properties {
+			if !safeDDLName(property) {
+				valid = false
+				break
+			}
+		}
+		if !valid {
+			outcomes = append(outcomes, unenforced(spec, "unsafe property name for DDL"))
+			continue
+		}
+		desiredByName[queryIndexName(spec.Type, spec.Properties)] = spec
+	}
+
+	actual, err := listOwnedIndexes(ctx, conn, derivedQueryPrefix)
+	if err != nil {
+		return nil, fmt.Errorf("pgstore: reconcile: list query indexes: %w", err)
+	}
+	for name := range actual {
+		if _, ok := desiredByName[name]; ok {
+			continue
+		}
+		out := store.DerivedObjectOutcome{
+			Spec: store.DerivedObjectSpec{Kind: store.DerivedQueryIndex}, State: store.DerivedDropped,
+			Reason: "index " + name + " no longer declared", WouldChange: opts.DryRun,
+		}
+		if !opts.DryRun {
+			if _, dropErr := conn.Exec(ctx, `DROP INDEX IF EXISTS `+quoteIdent(name)); dropErr != nil {
+				return nil, fmt.Errorf("pgstore: reconcile: drop %s: %w", name, dropErr)
+			}
+		}
+		outcomes = append(outcomes, out)
+	}
+	for _, name := range sortedNames(desiredByName) {
+		spec := desiredByName[name]
+		if _, ok := actual[name]; ok {
+			outcomes = append(outcomes, store.DerivedObjectOutcome{Spec: spec, State: store.DerivedEnforced})
+			continue
+		}
+		if opts.DryRun {
+			outcomes = append(outcomes, store.DerivedObjectOutcome{
+				Spec: spec, State: store.DerivedCreated, WouldChange: true,
+			})
+			continue
+		}
+		if _, createErr := conn.Exec(ctx, createQueryIndexDDL(name, spec)); createErr != nil {
+			outcomes = append(outcomes, unenforced(spec, "index could not be created: "+createErr.Error()))
+			continue
+		}
+		outcomes = append(outcomes, store.DerivedObjectOutcome{Spec: spec, State: store.DerivedCreated})
+	}
 	return outcomes, nil
+}
+
+func listOwnedIndexes(ctx context.Context, conn *pgxpool.Conn, prefix string) (map[string]struct{}, error) {
+	rows, err := conn.Query(ctx, `SELECT indexname FROM pg_indexes
+		WHERE schemaname = current_schema() AND indexname LIKE $1`, prefix+`%`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]struct{})
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		out[name] = struct{}{}
+	}
+	return out, rows.Err()
+}
+
+func createQueryIndexDDL(name string, spec store.DerivedObjectSpec) string {
+	expressions := make([]string, 0, len(spec.Properties))
+	guards := make([]string, 0, len(spec.Properties)+1)
+	guards = append(guards, "type = "+quoteLiteral(spec.Type))
+	for _, property := range spec.Properties {
+		expressions = append(expressions, "(properties->>"+quoteLiteral(property)+")")
+		guards = append(guards, "jsonb_typeof(properties->"+quoteLiteral(property)+") = 'string'")
+	}
+	return "CREATE INDEX IF NOT EXISTS " + quoteIdent(name) + " ON entities (" +
+		strings.Join(expressions, ", ") + ") WHERE " + strings.Join(guards, " AND ")
 }
 
 // listOwnedUniqueIndexes returns the set of this schema's unique-rule indexes.

@@ -539,6 +539,14 @@ Rules when touching this:
   `--database-url` flag, so the credential never lands in `ps`/shell history.
   `appbuild.Discover` reads the env into `appbuild.Config.DatabaseURL`; the
   `db` commands read the env directly. Don't add a DSN flag.
+- **Derived static-query indexes are all-or-nothing desired state.** The
+  PostgreSQL reconciler owns only `rela_derived_query__*` and derives those
+  indexes from validated static dashboard/next-action query shapes. Never
+  reconcile a partial set after a `data-entry.yaml` read/parse/validation
+  failure: an absent desired object means DROP, so partial input is destructive.
+  Runtime/ad-hoc queries never issue DDL. Pushdown and index inference must use
+  the same `internal/queryplan` eligibility decision, and an EXPLAIN test must
+  prove each newly supported SQL shape actually uses its generated index.
 - **Migrations** are embedded SQL (`pgstore/migrations/*.sql`), applied by
   `pgstore.Migrate` in one transaction under a `pg_advisory_xact_lock`
   (concurrent-start safe; forward-only). Auto-applied on first store open;
