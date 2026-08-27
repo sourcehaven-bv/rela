@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/url"
 	"sort"
@@ -228,6 +229,30 @@ type FieldVerdicts struct {
 	Attribution map[string]string
 }
 
+// fieldVerdicts overlays schema-intrinsic read-only fields onto the
+// policy-derived verdict. Computed properties are materialized for display but
+// can never be authored, regardless of ACL role.
+func (svc affordanceService) fieldVerdicts(ctx context.Context, e *entityPkg.Entity) FieldVerdicts {
+	v := svc.resolver().FieldVerdicts(ctx, e)
+	if e == nil {
+		return v
+	}
+	def, ok := svc.meta().GetEntityDef(e.Type)
+	if !ok {
+		return v
+	}
+	v.Writable = maps.Clone(v.Writable)
+	if v.Writable == nil {
+		v.Writable = map[string]bool{}
+	}
+	for name, pd := range def.Properties {
+		if pd.Computed != "" {
+			v.Writable[name] = false
+		}
+	}
+	return v
+}
+
 // RelationVerdicts carries per-entity relation-level affordance
 // decisions. The map is sparse: relation types not listed default to
 // fully-permitted ({creatable: true, removable: true} with no
@@ -329,7 +354,7 @@ func (svc affordanceService) validateFieldWrite(
 	if e == nil {
 		return nil
 	}
-	v := svc.resolver().FieldVerdicts(ctx, e)
+	v := svc.fieldVerdicts(ctx, e)
 	declared := declaredProperties(svc.meta(), e.Type)
 
 	check := func(key string, value any, present bool) *AffordanceDenialError {
@@ -724,7 +749,7 @@ func (svc affordanceService) validateRelationMetaWrite(
 func (svc affordanceService) computeFieldAffordances(
 	ctx context.Context, e *entityPkg.Entity,
 ) map[string]v1.FieldAffordance {
-	return computeFieldAffordancesFrom(svc.resolver().FieldVerdicts(ctx, e))
+	return computeFieldAffordancesFrom(svc.fieldVerdicts(ctx, e))
 }
 
 // computeFieldAffordancesFrom is computeFieldAffordances given an
@@ -1124,7 +1149,7 @@ func (svc affordanceService) applyCreateLock(
 	if len(entries) == 0 {
 		return
 	}
-	fieldVerdicts := svc.resolver().FieldVerdicts(ctx, candidate)
+	fieldVerdicts := svc.fieldVerdicts(ctx, candidate)
 	fields := map[string]v1.FieldAffordance{}
 	if result.FieldAffordances != nil {
 		fields = *result.FieldAffordances
@@ -1153,7 +1178,7 @@ func (svc affordanceService) applyCreateLock(
 // per-entity response (GET, PATCH, POST, clone, action) — list rows
 // and includes get App.stripHiddenProperties only.
 func (svc affordanceService) attachEntityAffordances(ctx context.Context, e *entityPkg.Entity, result *v1.Entity) {
-	verdicts := svc.resolver().FieldVerdicts(ctx, e)
+	verdicts := svc.fieldVerdicts(ctx, e)
 	fields := computeFieldAffordancesFrom(verdicts)
 	relations := svc.computeRelationAffordances(ctx, e)
 	result.FieldAffordances = &fields

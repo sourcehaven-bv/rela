@@ -45,6 +45,13 @@ func TestCompareShapes_Classification(t *testing.T) {
 			kind: "property_added", tier: TierAdditive,
 		},
 		{
+			name: "new computed property is drift",
+			mutate: func(m *Metamodel) {
+				m.Entities["task"].Properties["computed"] = PropertyDef{Type: "integer", Computed: "1 + 1"}
+			},
+			kind: "computed_property_added", tier: TierDrift,
+		},
+		{
 			name: "new required property is drift",
 			mutate: func(m *Metamodel) {
 				m.Entities["task"].Properties["owner"] = PropertyDef{Type: "string", Required: true}

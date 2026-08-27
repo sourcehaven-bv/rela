@@ -22,9 +22,9 @@ type Draft struct {
 }
 
 // Generate drafts a migration from the store's current shape (the marker's
-// projection) to the live schema's shape. Only needs-migration deltas
-// produce active steps; drift deltas produce commented-out optional
-// cleanups (drops, backfills) the operator may enable. Returns nil when the
+// projection) to the live schema's shape. Needs-migration deltas and safe,
+// deterministic computed-property drift produce active steps; other drift
+// deltas produce commented-out optional cleanups (drops, backfills) the operator may enable. Returns nil when the
 // shapes are identical or the change is purely additive with no drift — in
 // both cases there is nothing worth a file.
 func Generate(current, live metamodel.ShapeProjection, existing []*File, description string) (*Draft, error) {
@@ -91,8 +91,9 @@ func draftSteps(report metamodel.ShapeReport, live metamodel.ShapeProjection) (a
 		}
 	}
 	var act, com strings.Builder
+	recomputed := map[string]bool{}
 	for _, d := range report.Deltas {
-		draftActiveStep(&act, d, live)
+		draftActiveStep(&act, d, live, recomputed)
 		draftCleanupComment(&com, d, live, renamed)
 	}
 	return act.String(), com.String()
@@ -100,7 +101,9 @@ func draftSteps(report metamodel.ShapeReport, live metamodel.ShapeProjection) (a
 
 // draftActiveStep emits the uncommented (GUESS/TODO) step for one delta,
 // if its kind produces one.
-func draftActiveStep(w *strings.Builder, d metamodel.ShapeDelta, live metamodel.ShapeProjection) {
+func draftActiveStep(
+	w *strings.Builder, d metamodel.ShapeDelta, live metamodel.ShapeProjection, recomputed map[string]bool,
+) {
 	switch d.Kind {
 	case "possible_property_rename":
 		owner, newProp, ok := splitPropertyKey(d.Subject)
@@ -142,6 +145,20 @@ func draftActiveStep(w *strings.Builder, d metamodel.ShapeDelta, live metamodel.
 			fmt.Fprintf(w, "  # TODO — no built-in coercion to %q: write migrations/%s-%s.lua\n", ps.Type, owner, prop)
 			fmt.Fprintf(w, "  # - lua: {entity: %s, script: migrations/%s-%s.lua}\n", owner, owner, prop)
 		}
+	case "computed_property_added", "property_computed_changed":
+		owner, prop, ok := splitPropertyKey(d.Subject)
+		if !ok || strings.HasPrefix(d.Subject, "rel:") || recomputed[owner] {
+			return
+		}
+		// A removed computed expression needs no evaluation. Additions and
+		// changes do, and the entity-wide step also refreshes transitive users.
+		ps, found := live.Entities[owner].Properties[prop]
+		if !found || ps.Computed == "" {
+			return
+		}
+		recomputed[owner] = true
+		fmt.Fprintf(w, "  # recompute the entity's computed-property graph in dependency order\n")
+		fmt.Fprintf(w, "  - recompute_computed: {entity: %s}\n", owner)
 	case "relation_endpoint_narrowed", "relation_cardinality_tightened", "relation_symmetry_changed":
 		fmt.Fprintf(w, "  # TODO — %s: no declarative step can fix this; write a lua step or adjust the data by hand\n", d.Detail)
 	}

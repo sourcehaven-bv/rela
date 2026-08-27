@@ -13,6 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
+	"github.com/Sourcehaven-BV/rela/internal/computed"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -195,6 +196,11 @@ type Deps struct {
 	// re-derives it from the metamodel.
 	Transitions TransitionEnforcer
 
+	// Computed is the compiled materialized-property evaluator. If omitted,
+	// New compiles it from Meta so a wiring omission can never skip
+	// computation. Production appbuild injects the already-compiled set.
+	Computed *computed.Set
+
 	// TransitionGuard answers the guard question for a state-machine
 	// transition (does the ctx principal hold permission P for the subject).
 	// May be nil: a nil guard makes every guarded edge fail closed, which is
@@ -301,6 +307,13 @@ func New(d Deps) (*Manager, error) {
 	if d.Transitions == nil {
 		return nil, errors.New(
 			"entitymanager: New: Transitions is required (use statemachine.Compile; an empty set is a no-op)")
+	}
+	if d.Computed == nil {
+		compiled, err := computed.Compile(d.Meta)
+		if err != nil {
+			return nil, fmt.Errorf("entitymanager: New: %w", err)
+		}
+		d.Computed = compiled
 	}
 	if d.FieldGate == nil {
 		return nil, errors.New(
@@ -523,8 +536,14 @@ func (m *Manager) CreateEntity(
 		Entity: created,
 	})
 	if len(autoResult.PropertiesSet) > 0 {
+		if err := rejectComputedPresent(m.deps, created.Type, stringMapAny(autoResult.PropertiesSet)); err != nil {
+			return nil, err
+		}
 		for prop, val := range autoResult.PropertiesSet {
 			created.SetString(prop, val)
+		}
+		if err := m.deps.Computed.Evaluate(ctx, created); err != nil {
+			return nil, err
 		}
 		// Re-enforce unique constraints against the POST-automation values:
 		// createCore's check ran before automations, so an automation that
@@ -646,6 +665,9 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 	if getErr != nil {
 		return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, e.ID)
 	}
+	if err := rejectComputedChanges(m.deps, oldEntity, e); err != nil {
+		return nil, err
+	}
 
 	return m.updateCore(ctx, e, oldEntity)
 }
@@ -723,6 +745,9 @@ func (m *Manager) PatchEntity(
 			return nil, err
 		}
 	}
+	if err := rejectComputedPatch(m.deps, stored.Type, p.Properties, p.MetaUnset); err != nil {
+		return nil, err
+	}
 
 	updated := stored.Clone()
 	p.Apply(updated)
@@ -751,6 +776,9 @@ func (m *Manager) PatchEntity(
 func (m *Manager) updateCore(
 	ctx context.Context, e, oldEntity *entity.Entity,
 ) (*entity.UpdateResult, error) {
+	if err := m.deps.Computed.Evaluate(ctx, e); err != nil {
+		return nil, err
+	}
 	// DEC-HWZHA: partition validation errors once. Hard errors abort;
 	// soft conditions populate Result.Warnings. If automation runs and
 	// mutates properties, we recompute warnings against the post-
@@ -763,18 +791,12 @@ func (m *Manager) updateCore(
 
 	result := &entity.UpdateResult{Entity: e, Warnings: soft}
 
-	runAutomation := m.deps.Automations != nil
-	var autoResult *automation.Result
-	if runAutomation {
-		autoResult = m.deps.Automations.Process(ctx, automation.Event{
-			Type:      automation.EventEntityUpdated,
-			Entity:    e,
-			OldEntity: oldEntity,
-		})
+	autoResult, ranAutomation, err := m.processUpdateAutomation(ctx, e, oldEntity)
+	if err != nil {
+		return nil, err
+	}
+	if ranAutomation {
 		if len(autoResult.PropertiesSet) > 0 {
-			for prop, val := range autoResult.PropertiesSet {
-				e.SetString(prop, val)
-			}
 			// Properties changed — recompute warnings against the
 			// post-automation state (DEC-HWZHA).
 			if errs := m.deps.Meta.ValidateEntity(e.ID, e.Type, e.Properties); len(errs) > 0 {
@@ -825,7 +847,7 @@ func (m *Manager) updateCore(
 	// window where a committed write produced no audit record.
 	m.recordEntityAudit(ctx, audit.OpUpdateEntity, e, updateEntitySummary(oldEntity, e))
 
-	if !runAutomation {
+	if !ranAutomation {
 		return result, nil
 	}
 
@@ -845,6 +867,32 @@ func (m *Manager) updateCore(
 	result.AutomationWarnings = append(result.AutomationWarnings, outcome.Warnings...)
 
 	return result, nil
+}
+
+func (m *Manager) processUpdateAutomation(
+	ctx context.Context, e, oldEntity *entity.Entity,
+) (*automation.Result, bool, error) {
+	if m.deps.Automations == nil {
+		return nil, false, nil
+	}
+	result := m.deps.Automations.Process(ctx, automation.Event{
+		Type:      automation.EventEntityUpdated,
+		Entity:    e,
+		OldEntity: oldEntity,
+	})
+	if len(result.PropertiesSet) == 0 {
+		return result, true, nil
+	}
+	if err := rejectComputedPresent(m.deps, e.Type, stringMapAny(result.PropertiesSet)); err != nil {
+		return nil, true, err
+	}
+	for prop, val := range result.PropertiesSet {
+		e.SetString(prop, val)
+	}
+	if err := m.deps.Computed.Evaluate(ctx, e); err != nil {
+		return nil, true, err
+	}
+	return result, true, nil
 }
 
 // authorizeCascadeRelations checks the principal may delete every relation

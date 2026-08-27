@@ -117,6 +117,11 @@ func (m *Manager) ApplyEntity(ctx context.Context, e *entity.Entity) (*entity.Up
 	}); err != nil {
 		return nil, err
 	}
+	// Apply is a trusted whole-record replica path: ignore any incoming
+	// materialized value and recompute under the receiving schema.
+	if err := m.deps.Computed.Evaluate(ctx, e); err != nil {
+		return nil, err
+	}
 
 	// DEC-HWZHA: hard structural errors abort (the API layer maps these to
 	// 422); soft conditions surface as warnings on the result.

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
+	"github.com/Sourcehaven-BV/rela/internal/computed"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -53,8 +54,9 @@ type Deps struct {
 
 // Runner executes a resolved migration plan against one store.
 type Runner struct {
-	deps Deps
-	now  func() time.Time
+	deps     Deps
+	computed *computed.Set
+	now      func() time.Time
 }
 
 // NewRunner validates required collaborators up front.
@@ -73,7 +75,11 @@ func NewRunner(deps Deps) (*Runner, error) {
 	case deps.Lock == nil:
 		return nil, errors.New("datamigration: NewRunner: Lock is required (use LockFor)")
 	}
-	return &Runner{deps: deps, now: time.Now}, nil
+	computedSet, err := computed.Compile(deps.Meta)
+	if err != nil {
+		return nil, fmt.Errorf("datamigration: NewRunner: compile computed properties: %w", err)
+	}
+	return &Runner{deps: deps, computed: computedSet, now: time.Now}, nil
 }
 
 // RunResult reports one Run invocation.
@@ -126,6 +132,7 @@ func (r *Runner) Run(ctx context.Context, plan []*File, apply bool) (*RunResult,
 			Store:    r.deps.Store,
 			Apply:    apply,
 			ScriptFS: r.deps.ScriptFS,
+			Computed: r.computed,
 			capture:  r.newCapturer(f.Name),
 		}
 		fr := FileResult{Name: f.Name, From: f.From, To: f.To}
@@ -201,6 +208,7 @@ type Exec struct {
 	Store    store.Store
 	Apply    bool
 	ScriptFS fs.FS
+	Computed *computed.Set
 	capture  *capturer
 }
 

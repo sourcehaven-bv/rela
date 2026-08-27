@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -64,6 +66,8 @@ func parseStep(node *yaml.Node) (Step, error) {
 		step = &mapValuesStep{}
 	case "set_default":
 		step = &setDefaultStep{}
+	case "recompute_computed":
+		step = &recomputeComputedStep{}
 	case "convert":
 		step = &convertStep{}
 	case "drop_property":
@@ -356,6 +360,49 @@ func (s *setDefaultStep) Run(ctx context.Context, x *Exec) (StepResult, error) {
 		}
 		e.Properties[s.Property] = s.Value
 		return true, nil
+	}, &res)
+	return res, err
+}
+
+// ---- recompute_computed ----
+
+// recomputeComputedStep deliberately targets an entity type, not one
+// property. Re-evaluating the complete graph is what keeps both dependencies
+// and downstream computed properties coherent after any expression changes.
+type recomputeComputedStep struct {
+	Entity string `yaml:"entity"`
+}
+
+func (s *recomputeComputedStep) Kind() string   { return "recompute_computed" }
+func (s *recomputeComputedStep) Target() string { return s.Entity }
+
+func (s *recomputeComputedStep) Validate(_, to metamodel.ShapeProjection) error {
+	if s.Entity == "" {
+		return errors.New("entity is required")
+	}
+	shape, ok := to.Entities[s.Entity]
+	if !ok {
+		return fmt.Errorf("entity type %q is not in the to-schema", s.Entity)
+	}
+	for _, prop := range shape.Properties {
+		if prop.Computed != "" {
+			return nil
+		}
+	}
+	return fmt.Errorf("entity type %q has no computed properties in the to-schema", s.Entity)
+}
+
+func (s *recomputeComputedStep) Run(ctx context.Context, x *Exec) (StepResult, error) {
+	res := StepResult{Kind: s.Kind(), Target: s.Target()}
+	if x.Computed == nil {
+		return res, errors.New("computed property evaluator is not configured")
+	}
+	err := x.forEachEntity(ctx, s.Entity, func(e *entity.Entity) (bool, error) {
+		before := maps.Clone(e.Properties)
+		if err := x.Computed.Evaluate(ctx, e); err != nil {
+			return false, err
+		}
+		return !reflect.DeepEqual(before, e.Properties), nil
 	}, &res)
 	return res, err
 }
