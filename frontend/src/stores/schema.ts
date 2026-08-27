@@ -12,6 +12,7 @@ import type {
   FormConfig,
   ListConfig,
   ViewConfig,
+  CalendarConfig,
   KanbanConfig,
   DashboardResponse,
   NextActionBand,
@@ -31,6 +32,7 @@ export const useSchemaStore = defineStore('schema', () => {
   const lists = ref<Map<string, ListConfig>>(new Map())
   const views = ref<Map<string, ViewConfig>>(new Map())
   const kanbans = ref<Map<string, KanbanConfig>>(new Map())
+  const calendars = ref<Map<string, CalendarConfig>>(new Map())
   const documents = ref<Map<string, DocumentConfig>>(new Map())
   const apps = ref<Map<string, AppEntry>>(new Map())
   const actions = ref<Map<string, ActionConfig>>(new Map())
@@ -96,6 +98,7 @@ export const useSchemaStore = defineStore('schema', () => {
   })
   const getView = computed(() => (id: string) => views.value.get(id))
   const getKanban = computed(() => (id: string) => kanbans.value.get(id))
+  const getCalendar = computed(() => (id: string) => calendars.value.get(id))
   const getAction = computed(() => (id: string) => actions.value.get(id))
 
   const entityTypeList = computed(() => Array.from(entityTypes.value.entries()))
@@ -285,6 +288,7 @@ export const useSchemaStore = defineStore('schema', () => {
       lists.value = new Map(Object.entries(configData.lists || {}))
       views.value = new Map(Object.entries(configData.views || {}))
       kanbans.value = new Map(Object.entries(configData.kanbans || {}))
+      calendars.value = new Map(Object.entries(configData.calendars || {}))
       documents.value = new Map(Object.entries(configData.documents || {}))
       apps.value = new Map(Object.entries(configData.apps || {}))
       actions.value = new Map(Object.entries(configData.actions || {}))
@@ -343,6 +347,7 @@ export const useSchemaStore = defineStore('schema', () => {
     lists,
     views,
     kanbans,
+    calendars,
     documents,
     apps,
     actions,
@@ -370,6 +375,7 @@ export const useSchemaStore = defineStore('schema', () => {
     findListIdForEntityType,
     getView,
     getKanban,
+    getCalendar,
     getAction,
     getEnumLabel,
     resolveOptionLabels,

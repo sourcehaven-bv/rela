@@ -404,4 +404,14 @@ const showNoMatches = computed(
   color: var(--muted-text);
   flex-shrink: 0;
 }
+
+/* Reduced motion. This is a SCOPED style, so styles/pending.css cannot
+   reach .entity-picker-spinner — a scoped selector carries a [data-v-*] attribute and
+   outranks an unscoped rule. The suppression has to live beside the
+   declaration. */
+@media (prefers-reduced-motion: reduce) {
+  .entity-picker-spinner {
+    animation: none;
+  }
+}
 </style>

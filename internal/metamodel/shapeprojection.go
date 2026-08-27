@@ -55,6 +55,9 @@ type PropertyShape struct {
 	// the generator offers backfill steps from it, and the classifier
 	// tiers default-only changes additive (amendment A7).
 	Default string `json:"default,omitempty"`
+	// Computed changes affect already-materialized values and therefore take
+	// part in shape identity even though bulk recomputation is operator-driven.
+	Computed string `json:"computed,omitempty"`
 }
 
 // RelationShape is the data-shape projection of one relation type.
@@ -122,6 +125,7 @@ func propertyShape(p PropertyDef) PropertyShape {
 		List:     p.List,
 		Format:   p.Format,
 		Default:  p.Default,
+		Computed: p.Computed,
 	}
 	if len(p.Values) > 0 {
 		ps.Values = append([]string(nil), p.Values...)
@@ -192,6 +196,7 @@ func hashPropertyShapes(h *projectionHasher, props map[string]PropertyShape) {
 		h.str(ps.Format)
 		h.strList(ps.Values)
 		h.str(ps.Default)
+		h.str(ps.Computed)
 	}
 }
 

@@ -1395,6 +1395,60 @@ func resolveKanbanDirections(s *Schema, kanbans map[string]dataentryconfig.Kanba
 	return out
 }
 
+// resolveCalendarDirections fills in each calendar's relation directions, the
+// same treatment resolveKanbanDirections gives a board (TKT-QXY8CQ).
+//
+// Calendars need it for the same reason: an event chip's relation field is
+// resolved client-side against the relation's inverse key, and an unresolved
+// direction leaves the SPA computing the wrong key and rendering nothing. The
+// per-source entity type is what a field resolves against, so a chip field is
+// resolved once per source rather than once per calendar — a calendar may
+// project several types, and a relation's direction is only meaningful
+// relative to one of them.
+func resolveCalendarDirections(
+	s *Schema, calendars map[string]dataentryconfig.Calendar,
+) map[string]dataentryconfig.Calendar {
+	out := make(map[string]dataentryconfig.Calendar, len(calendars))
+	for id, calendar := range calendars {
+		c := calendar
+		// A field's direction depends on the type it hangs off, so resolve
+		// against the first source that actually declares the relation.
+		if len(c.Event.Fields) > 0 {
+			fields := make([]dataentryconfig.KanbanCardField, len(c.Event.Fields))
+			copy(fields, c.Event.Fields)
+			for i := range fields {
+				fields[i].Direction = resolveCalendarFieldDirection(s, c.Sources, fields[i])
+			}
+			c.Event = dataentryconfig.CalendarEvent{Fields: fields}
+		}
+		if len(c.Sources) > 0 && len(c.FilterControls) > 0 {
+			c.FilterControls = resolveFilterControlDirections(s, c.Sources[0].EntityType, c.FilterControls)
+		}
+		out[id] = c
+	}
+	return out
+}
+
+// resolveCalendarFieldDirection resolves one chip field's direction against the
+// calendar's sources, taking the first that yields a direction.
+//
+// Nil: an empty result is returned unchanged when no source declares the
+// relation — the field simply renders nothing for those sources, which is the
+// documented best-effort behavior for a heterogeneous calendar.
+func resolveCalendarFieldDirection(
+	s *Schema, sources []dataentryconfig.CalendarSource, field dataentryconfig.KanbanCardField,
+) dataentryconfig.Direction {
+	if field.Relation == "" {
+		return field.Direction
+	}
+	for _, src := range sources {
+		if d := resolveConfigDirection(s, src.EntityType, field.Relation, field.Direction); d != "" {
+			return d
+		}
+	}
+	return field.Direction
+}
+
 // aboutDescription is the deployment description shown by the SPA's global
 // "About" help (TKT-DUQBD0). The data-entry.yaml `app.description` wins when set
 // (it is the UI-app-specific text); otherwise it falls back to the metamodel's
@@ -1452,6 +1506,7 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 		Views:            s.Cfg.Views,
 		EntityViews:      s.Cfg.EntityViews,
 		Kanbans:          resolveKanbanDirections(s, s.Cfg.Kanbans),
+		Calendars:        resolveCalendarDirections(s, s.Cfg.Calendars),
 		Dashboard:        s.Cfg.Dashboard,
 		Actions:          s.Cfg.Actions,
 		Navigation:       s.Cfg.Navigation,

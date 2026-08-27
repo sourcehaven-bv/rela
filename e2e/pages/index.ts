@@ -16,3 +16,4 @@ export { DocumentPage } from './document.page';
 export { HistoryPage } from './history.page';
 export { RelationHistoryPage } from './relation-history.page';
 export { CustomisationPage } from './customisation.page';
+export { PendingPage } from './pending.page';

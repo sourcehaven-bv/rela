@@ -1,5 +1,6 @@
-// Package predicate is a small, sandboxed expression-evaluation engine
-// for boolean predicates over named values and host-registered functions.
+// Package predicate is a small, sandboxed typed expression-evaluation engine
+// over named values and host-registered functions. Compile retains the strict
+// boolean-predicate profile; CompileValue accepts an explicit scalar profile.
 //
 // The package parses a strict subset of Lua expression syntax via
 // gopher-lua's parse package (already vendored for write-path automation),
@@ -105,4 +106,12 @@
 //
 // The package does no I/O: no file access, no network, no goroutine
 // spawning. It is a pure function from (Program, Bindings) to a Value.
+//
+// # Target portability
+//
+// Programs expose their exact static record-field references and whether every
+// node/host function declares SQL-portable semantics. This is classification,
+// not lowering: a host-only function remains valid in a context that permits it
+// and makes only that Program non-portable. Context profiles can restrict the
+// accepted feature set, but must never change the semantics of accepted IR.
 package predicate

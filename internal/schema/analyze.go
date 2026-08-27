@@ -42,7 +42,7 @@ type TypeUsage struct {
 type Reference struct {
 	File    string `json:"file"`    // "metamodel.yaml", "data-entry.yaml"
 	Section string `json:"section"` // e.g., "forms.ticket", "entities.ticket.properties.status"
-	Kind    string `json:"kind"`    // "form", "list", "view", "kanban", "validation", "automation", "property", "relation_from", "relation_to"
+	Kind    string `json:"kind"`    // "form", "list", "view", "kanban", "calendar", "validation", "automation", "property", "relation_from", "relation_to"
 }
 
 // Analyze examines metamodel usage and returns analysis results.
@@ -232,6 +232,21 @@ func findEntityTypeInDataEntry(entityType string, cfg *dataentryconfig.Config) [
 				Section: "kanbans." + name,
 				Kind:    "kanban",
 			})
+		}
+	}
+
+	// Calendars — a calendar references a type through any of its sources, so
+	// one match is enough and duplicates are avoided by breaking out.
+	for name, cal := range cfg.Calendars {
+		for _, src := range cal.Sources {
+			if src.EntityType == entityType {
+				refs = append(refs, Reference{
+					File:    "data-entry.yaml",
+					Section: "calendars." + name,
+					Kind:    "calendar",
+				})
+				break
+			}
 		}
 	}
 

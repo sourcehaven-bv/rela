@@ -92,6 +92,16 @@ func (h *cascadeHost) WriteEntity(ctx context.Context, e *entity.Entity) error {
 	if e == nil {
 		return nil
 	}
+	stored, err := h.deps.Store.GetEntity(ctx, e.ID)
+	if err != nil {
+		return err
+	}
+	if err := rejectComputedChanges(h.deps, stored, e); err != nil {
+		return err
+	}
+	if err := h.deps.Computed.Evaluate(ctx, e); err != nil {
+		return err
+	}
 
 	if errs := h.deps.Meta.ValidateEntity(e.ID, e.Type, e.Properties); len(errs) > 0 {
 		// DEC-HWZHA: only HARD errors abort. Soft conditions (a required

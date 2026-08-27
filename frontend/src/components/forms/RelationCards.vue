@@ -1021,19 +1021,24 @@ function onDragEnd() {
   position: absolute;
   right: 12px;
   top: 50%;
-  transform: translateY(-50%);
+  /* Centred with a negative margin rather than translateY(-50%), so
+     `transform` is free for the rotation alone. An animated transform
+     REPLACES the static one for the animation's duration, so the old
+     translate-based centring only worked because this component carried
+     private keyframes that re-applied it (`translateY(-50%) rotate(...)`).
+     Those keyframes are now shared from styles/pending.css and rotate
+     only — keeping the translate here would drop the spinner half its
+     height the moment it started.
+
+     -8px is half the box: `box-sizing: border-box` is global (App.vue), so
+     the 16px height already includes the 2px borders. */
+  margin-top: -8px;
   width: 16px;
   height: 16px;
   border: 2px solid var(--border-color);
   border-top-color: var(--accent-color);
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: translateY(-50%) rotate(360deg);
-  }
 }
 
 .search-results {
@@ -1303,6 +1308,16 @@ function onDragEnd() {
     min-width: 0;
   }
 }
+/* Reduced motion. This is a SCOPED style, so styles/pending.css cannot
+   reach .search-spinner — a scoped selector carries a [data-v-*] attribute and
+   outranks an unscoped rule. The suppression has to live beside the
+   declaration. */
+@media (prefers-reduced-motion: reduce) {
+  .search-spinner {
+    animation: none;
+  }
+}
+
 </style>
 
 <style>

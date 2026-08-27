@@ -21,6 +21,18 @@ export class SettingsPage extends BasePage {
     this.appInfoCard = page.locator('.settings-card').filter({ hasText: 'Application Info' });
   }
 
+  /**
+   * Measured widths of the Save/Reset action pair (TKT-TFSNBY AC4).
+   * Save is a PendingButton reserving room for "Saving…", so without the
+   * equal-width pair rule it would sit visibly wider than Reset.
+   */
+  async actionPairWidths(): Promise<{ save: number; reset: number }> {
+    const save = await this.saveButton.boundingBox();
+    const reset = await this.resetButton.boundingBox();
+    if (!save || !reset) throw new Error('settings action buttons have no bounding box');
+    return { save: save.width, reset: reset.width };
+  }
+
   async navigateToSettings() {
     await this.navigateTo('/settings');
     await this.waitForSpinnerToDisappear();

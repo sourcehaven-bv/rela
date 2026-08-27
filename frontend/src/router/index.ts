@@ -7,6 +7,7 @@ import {
   type RouteRecordRaw,
 } from 'vue-router'
 import { isCancelledFetch } from '@/composables/usePageData'
+import { useNavigationPending } from '@/composables/useNavigationPending'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -58,6 +59,12 @@ const routes: RouteRecordRaw[] = [
     path: '/kanban/:id',
     name: 'kanban',
     component: () => import('@/views/KanbanView.vue'),
+    props: true,
+  },
+  {
+    path: '/calendar/:id',
+    name: 'calendar',
+    component: () => import('@/views/CalendarView.vue'),
     props: true,
   },
   {
@@ -288,6 +295,22 @@ router.onError((err, to, from) => {
   }
   console.error(`[router-error] navigating to=${to.fullPath} from=${from.fullPath}:`, err)
 })
+
+// Navigation tracking for the global activity bar (TKT-TFSNBY).
+//
+// Registered here, at the composition root, rather than from a component:
+// the guards must exist for the app's whole life, and a component that
+// mounts late would miss the first navigation.
+//
+// The tracker registers its OWN onError handler rather than hooking into
+// the one above. Vue Router invokes every registered error handler, and an
+// early `return` only exits the handler it appears in — so registration
+// ORDER is irrelevant here, and the tracker's unconditional clear runs even
+// for the cancelled/aborted/duplicated failures that handler swallows.
+// Those are precisely the cases where afterEach never fires, and where a
+// beforeEach/afterEach counter would strand the bar on screen permanently
+// (RR-B7U3I8, pinned by a mutation-tested regression test).
+export const navigationPending = useNavigationPending(router)
 
 export default router
 /* v8 ignore stop */

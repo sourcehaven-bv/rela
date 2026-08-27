@@ -151,4 +151,49 @@ relations:
 			t.Errorf("source config was mutated: direction = %q, want empty", d)
 		}
 	})
+
+	t.Run("calendar event fields and filter controls", func(t *testing.T) {
+		calendars := map[string]dec.Calendar{
+			"schedule": {
+				Sources:        []dec.CalendarSource{{EntityType: "project", Date: "due"}},
+				Event:          dec.CalendarEvent{Fields: []dec.KanbanCardField{{Relation: "belongs-to"}}},
+				FilterControls: []dec.FilterControl{{Relation: "belongs-to"}},
+			},
+		}
+		got := resolveCalendarDirections(s, calendars)
+
+		if d := got["schedule"].Event.Fields[0].Direction; d != dec.DirectionIncoming {
+			t.Errorf("calendar event field direction = %q, want incoming", d)
+		}
+		if d := got["schedule"].FilterControls[0].Direction; d != dec.DirectionIncoming {
+			t.Errorf("calendar filter control direction = %q, want incoming", d)
+		}
+		if d := calendars["schedule"].Event.Fields[0].Direction; d != "" {
+			t.Errorf("source config was mutated: direction = %q, want empty", d)
+		}
+	})
+
+	// A calendar may project several entity types, and a relation's direction
+	// is only meaningful relative to one of them — so resolution takes the
+	// first source that actually declares the relation rather than assuming
+	// source[0] speaks for all of them.
+	t.Run("calendar resolves against the source that has the relation", func(t *testing.T) {
+		calendars := map[string]dec.Calendar{
+			"mixed": {
+				Sources: []dec.CalendarSource{
+					// `note` does not participate in belongs-to at all.
+					{EntityType: "note", Date: "on"},
+					{EntityType: "task", Date: "due"},
+				},
+				Event: dec.CalendarEvent{Fields: []dec.KanbanCardField{{Relation: "belongs-to"}}},
+			},
+		}
+		got := resolveCalendarDirections(s, calendars)
+
+		// task is the FROM side, so the field resolves outgoing despite the
+		// first source knowing nothing about the relation.
+		if d := got["mixed"].Event.Fields[0].Direction; d != dec.DirectionOutgoing {
+			t.Errorf("direction = %q, want outgoing (resolved via the task source)", d)
+		}
+	})
 }

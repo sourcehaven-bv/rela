@@ -36,6 +36,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/caldavalias"
+	"github.com/Sourcehaven-BV/rela/internal/computed"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
@@ -874,6 +875,13 @@ func loadACLPolicy(projectRoot string) (*acl.Policy, error) {
 		}
 		return nil, fmt.Errorf("appbuild: load acl.yaml: %w", err)
 	}
+	// Debug, not Info: this is wiring shared by every CLI command, and an
+	// INFO line on each `rela list` trains operators to filter the logger —
+	// which would defeat the point. `rela acl audit` is the surface that
+	// reports the block at operator-facing volume.
+	if types := policy.RelationWriteGrantTypes(); len(types) > 0 {
+		slog.Debug("acl: relation_grants active", "relation_types", types)
+	}
 	return policy, nil
 }
 
@@ -904,6 +912,11 @@ type metamodelView struct{ m *metamodel.Metamodel }
 
 func (v metamodelView) HasEntityType(entityType string) bool {
 	return v.m.HasEntityType(entityType)
+}
+
+func (v metamodelView) HasRelationType(relationType string) bool {
+	_, ok := v.m.Relations[relationType]
+	return ok
 }
 
 func (v metamodelView) PropertyInfo(entityType, property string) acl.PropertyInfo {
@@ -1351,6 +1364,10 @@ func assemble(
 	if err != nil {
 		return nil, fmt.Errorf("compile transitions: %w", err)
 	}
+	computedSet, err := computed.Compile(base.meta)
+	if err != nil {
+		return nil, fmt.Errorf("compile computed properties: %w", err)
+	}
 
 	// Content versioning is a separate injected service (pgstore only; nil
 	// elsewhere), NOT a store capability the manager type-asserts. Derived once
@@ -1375,6 +1392,7 @@ func assemble(
 		VersionRecorder:         versionRecorderFor(versions),
 		RelationVersionRecorder: relationVersionRecorderFor(versions),
 		Transitions:             tw.Enforcer,
+		Computed:                computedSet,
 		FieldGate:               entitymanager.AllowAllFieldGate{},
 		TransitionGuard:         tw.Guard,
 		TransitionGraph:         tw.Graph,

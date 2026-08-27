@@ -25,7 +25,7 @@
 // directory, keyed from→to shape hash with both projections embedded (the
 // file is self-contained: the resolver and plan-time validation never need a
 // historical schema.yaml). Steps are declarative (rename_property,
-// map_values, convert, set_default, drop_*) with a Lua escape hatch that is
+// map_values, convert, set_default, recompute_computed, drop_*) with a Lua escape hatch that is
 // a PURE TRANSFORM: the script returns a patch, the runner applies it — Lua
 // never holds a write handle, so no entitymanager validation, automations,
 // or state machines run mid-migration.

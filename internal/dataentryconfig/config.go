@@ -89,6 +89,7 @@ type Config struct {
 	Views       map[string]ViewConfig        `yaml:"views"`
 	EntityViews map[string]EntityViewConfig  `yaml:"entity_views,omitempty" json:"entity_views,omitempty"`
 	Kanbans     map[string]Kanban            `yaml:"kanbans"`
+	Calendars   map[string]Calendar          `yaml:"calendars,omitempty" json:"calendars,omitempty"`
 	Documents   map[string]DocumentConfig    `yaml:"documents,omitempty"`
 	Feeds       map[string]Feed              `yaml:"feeds,omitempty" json:"feeds,omitempty"`
 	CalDAV      CalDAVConfig                 `yaml:"caldav,omitempty" json:"caldav,omitzero"`
@@ -333,6 +334,7 @@ var ValidIconNames = map[string]bool{
 	"list":      true,
 	"kanban":    true,
 	"search":    true,
+	"calendar":  true,
 	"warning":   true,
 	"apps":      true,
 	"settings":  true,
@@ -346,6 +348,35 @@ var ValidIconNames = map[string]bool{
 	"done":   true,
 	"clock":  true,
 	"status": true,
+}
+
+// ValidCalendarColors is the allowlist of palette tokens a calendar source may
+// use to distinguish its events.
+//
+// Named tokens rather than CSS literals, for the same reason ValidIconNames
+// holds names and not glyphs: a hex value written into config is unreadable in
+// whichever theme it was not chosen for, and it pins every deployment's config
+// against any future restyle. A token maps to a CSS custom property, so the
+// theme keeps ownership of what the color actually is.
+//
+// Exported so the check and its frontend-parity test share one source.
+var ValidCalendarColors = map[string]bool{
+	"blue":   true,
+	"green":  true,
+	"amber":  true,
+	"red":    true,
+	"violet": true,
+	"slate":  true,
+}
+
+// validateCalendarColor reports a config error for an unknown color token.
+// An empty value means "use the default" and is always valid.
+func validateCalendarColor(color, context string) []string {
+	if color == "" || ValidCalendarColors[color] {
+		return nil
+	}
+	return []string{fmt.Sprintf("%s: unknown color %q (valid: %s)",
+		context, color, strings.Join(sortedMapKeys(ValidCalendarColors), ", "))}
 }
 
 // validateIconName reports a config error for an unknown icon name.
@@ -626,6 +657,133 @@ type KanbanCard struct {
 	Fields []KanbanCardField `yaml:"fields,omitempty" json:"fields,omitempty"`
 }
 
+// Calendar defines a calendar view: entities carrying a date property laid out
+// in a month or week grid, navigable between periods, with drag-to-reschedule
+// writing a new date back to the entity.
+//
+// It is the interactive, in-app sibling of a [Feed], which projects the same
+// kind of data to foreign clients as read-only iCalendar. The two are
+// deliberately INDEPENDENT types rather than sharing an event-source struct:
+// keeping them separate means an incompatible change to either stays cheap
+// (operators copy a little config) instead of locking both to one schema.
+// Their source field NAMES are identical on purpose, so a single YAML anchor
+// can feed both — nested unknown keys are ignored by the decoder, so a shared
+// anchor carrying calendar-only keys still parses as a [FeedSource].
+//
+// Unlike [Kanban] a calendar takes a LIST of sources: showing several entity
+// types on one grid is the point of a calendar, whereas a board groups one type
+// by one property.
+type Calendar struct {
+	// Title is the heading shown above the grid. Defaults to the config key.
+	Title string `yaml:"title" json:"title"`
+	// Header and Footer are admin-authored markdown rendered above and below
+	// the grid (sanitized client-side), matching the kanban info regions.
+	Header string `yaml:"header,omitempty" json:"header,omitempty"`
+	Footer string `yaml:"footer,omitempty" json:"footer,omitempty"`
+	// DefaultView is the period shown on first load: "month" or "week". It is
+	// normalized at load so the wire value is never empty, which keeps the SPA
+	// from having to re-implement the default. A ?view= query param overrides
+	// it for a single visit without changing the config.
+	DefaultView string `yaml:"default_view,omitempty" json:"default_view"`
+	// WeekStart is "monday" (default) or "sunday". There is no correct
+	// hardcoded value — Monday is wrong for US users and Sunday for most of
+	// Europe — so it is configuration rather than a constant.
+	WeekStart string `yaml:"week_start,omitempty" json:"week_start"`
+	// Sources are the entity-to-event projections; at least one is required.
+	// Events from every source merge into one grid.
+	Sources []CalendarSource `yaml:"sources" json:"sources"`
+	// Event configures what an event chip displays beyond its title. It is the
+	// [KanbanCard] analog. Omitted, a chip shows the source's summary alone.
+	Event CalendarEvent `yaml:"event,omitempty" json:"event,omitzero"`
+	// DayStart and DayEnd bound the hour axis in week view (defaults "08:00"
+	// and "20:00"). A grid rendering all 24 hours at readable density is far
+	// taller than a viewport, which buries every daytime event.
+	DayStart string `yaml:"day_start,omitempty" json:"day_start"`
+	DayEnd   string `yaml:"day_end,omitempty" json:"day_end"`
+	// MaxEventsPerDay caps how many chips a month-view day cell renders before
+	// collapsing the remainder into an in-place "+N more" (default 4). Without
+	// a cap one busy day stretches its whole grid row.
+	MaxEventsPerDay int `yaml:"max_events_per_day,omitempty" json:"max_events_per_day"`
+	// EditForm names the form opened when an event is clicked; without it the
+	// click navigates to the entity page.
+	EditForm string `yaml:"edit_form,omitempty" json:"edit_form,omitempty"`
+	// CreateForm names the form opened by the "New" button.
+	CreateForm string `yaml:"create_form,omitempty" json:"create_form,omitempty"`
+	// FilterControls are interactive filters, as on lists and kanbans.
+	FilterControls []FilterControl `yaml:"filter_controls,omitempty" json:"filter_controls,omitempty"`
+}
+
+// CalendarEvent configures the content of an event chip — the calendar's
+// equivalent of [KanbanCard].
+//
+// It has no Title field, deliberately: [CalendarSource.Summary] already names
+// the title property, and a second way to say the same thing would let a
+// calendar and the feed sharing its YAML anchor disagree. Event only ADDS
+// fields beneath the title.
+//
+// Fields live on the calendar rather than per source because resolution is
+// best-effort across heterogeneous types: a field naming a property that one
+// source's entity type lacks is simply not rendered for that source's events.
+// That is deliberately laxer than kanban's strict card validation — a
+// multi-type calendar would be nearly unconfigurable if every field had to
+// exist on every type.
+type CalendarEvent struct {
+	// Fields are extra values shown beneath the chip's title, one per line.
+	// [KanbanCardField] is shared with kanban cards: the two surfaces render
+	// the same thing (a label and a value, routed through the same widgets),
+	// so they take the same config rather than two spellings of it.
+	Fields []KanbanCardField `yaml:"fields,omitempty" json:"fields,omitempty"`
+}
+
+// IsZero reports whether any chip content is configured, so `omitzero` keeps an
+// unconfigured Event off the wire.
+func (e CalendarEvent) IsZero() bool { return len(e.Fields) == 0 }
+
+// CalendarSource projects entities of one type onto the grid. Its field names
+// match [FeedSource] so one YAML anchor can serve a calendar and a feed; the
+// differences are that a calendar has no alarm/rrule (export concerns) and adds
+// Color (per-source visual distinction, which a merged feed cannot express).
+type CalendarSource struct {
+	// EntityType is the entity type to project. Required; validated at load.
+	// The json tag is "entity" — not "entity_type" — matching List and Kanban,
+	// which is what the SPA reads.
+	EntityType string `yaml:"entity_type" json:"entity"`
+	// Where is a list of filter clauses, all ANDed, in the internal/filter
+	// language. Empty selects every entity of the type. There is no OR — use a
+	// second source. Evaluated client-side over ACL-scoped rows, as kanban's
+	// filters are.
+	Where []string `yaml:"where,omitempty" json:"where,omitempty"`
+	// Date names the date- or datetime-typed property placing the event on the
+	// grid. Required. A date property yields an all-day event; a datetime
+	// property yields a timed one. Entities without a value are skipped.
+	Date string `yaml:"date" json:"date"`
+	// EndDate optionally names the property ending a multi-day or multi-hour
+	// event. It must be the SAME KIND as Date — an event is all-day or timed,
+	// never a mix.
+	EndDate string `yaml:"end_date,omitempty" json:"end_date,omitempty"`
+	// Summary names the property used as the event title. Defaults to the
+	// entity type's display property.
+	Summary string `yaml:"summary,omitempty" json:"summary,omitempty"`
+	// Description names an optional property shown in the event detail.
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	// Label names this source in the legend that toggles it on and off.
+	// Defaults to the entity type, which is usually what an operator would
+	// have typed anyway; set it when one type appears as two sources (the
+	// documented way to express OR) and "task" twice would be meaningless.
+	Label string `yaml:"label,omitempty" json:"label,omitempty"`
+	// Color is a named palette token (see ValidCalendarColors) distinguishing
+	// this source's events. It is a TOKEN, never a CSS literal: a hex value
+	// baked into config is unreadable in the dark theme and pins every
+	// deployment against future restyling.
+	Color string `yaml:"color,omitempty" json:"color,omitempty"`
+	// MaxSpan bounds how far back the view looks for events that START before
+	// the visible window but extend into it, as an integer number of days
+	// (default 31). Only meaningful with EndDate. Events longer than this may
+	// not appear; the view surfaces that rather than hiding it, because a
+	// silently missing event is worse than a visible caveat.
+	MaxSpan int `yaml:"max_span,omitempty" json:"max_span"`
+}
+
 // KanbanCardField defines a single field shown on a kanban card.
 // A field references either a Property (entity property) or a Relation
 // (relation type whose target titles are shown). For relation fields,
@@ -640,7 +798,39 @@ type KanbanCardField struct {
 	Property  string    `yaml:"property,omitempty" json:"property,omitempty"`
 	Relation  string    `yaml:"relation,omitempty" json:"relation,omitempty"`
 	Direction Direction `yaml:"direction,omitempty" json:"direction,omitempty"` // "outgoing" (default) or "incoming"
-	Label     string    `yaml:"label,omitempty" json:"label,omitempty"`
+	// Label overrides the displayed name. Left empty it is DERIVED from the
+	// property or relation name, so an author never restates `assignee` as
+	// "Assignee" — only a genuine rename needs writing down.
+	Label string `yaml:"label,omitempty" json:"label,omitempty"`
+	// ShowLabel renders the label before the value. Default true.
+	//
+	// A pointer so "unset" is distinguishable from "false": a plain bool's zero
+	// value would silently turn every label off the moment the key appeared.
+	//
+	// Set it false where the value already names itself — an enum badge reading
+	// "High" gains nothing from a "Priority:" prefix, and space on a card or
+	// chip is scarce. Two person fields, by contrast, are indistinguishable
+	// without their labels, which is the case this setting exists to serve.
+	ShowLabel *bool `yaml:"show_label,omitempty" json:"show_label,omitempty"`
+}
+
+// LabelShown reports whether this field's label should render.
+// Nil: an unset ShowLabel means true — labels are the safe default, since an
+// unlabelled ambiguous value is worse than a redundant one.
+func (f KanbanCardField) LabelShown() bool {
+	return f.ShowLabel == nil || *f.ShowLabel
+}
+
+// DisplayLabel is the label to render: the explicit override when set,
+// otherwise the relation or property name it was derived from.
+func (f KanbanCardField) DisplayLabel() string {
+	if f.Label != "" {
+		return f.Label
+	}
+	if f.Relation != "" {
+		return f.Relation
+	}
+	return f.Property
 }
 
 // NavigationEntry defines a sidebar navigation item or a group of items.
@@ -652,6 +842,7 @@ type NavigationEntry struct {
 	List      string `yaml:"list,omitempty" json:"list,omitempty"`
 	Dashboard bool   `yaml:"dashboard,omitempty" json:"dashboard,omitempty"`
 	Kanban    string `yaml:"kanban,omitempty" json:"kanban,omitempty"`
+	Calendar  string `yaml:"calendar,omitempty" json:"calendar,omitempty"`
 	Search    bool   `yaml:"search,omitempty" json:"search,omitempty"`
 	Settings  bool   `yaml:"settings,omitempty" json:"settings,omitempty"`
 	Action    string `yaml:"action,omitempty" json:"action,omitempty"`
