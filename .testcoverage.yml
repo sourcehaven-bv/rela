@@ -39,6 +39,11 @@ override:
   # visible. Raise these as tests are added; don't lower without reason.
   - path: ^internal/git$
     threshold: 30
+  # The seam and its memory backend are well covered; the postgres backend is
+  # build-tagged and only compiles under -tags postgres, so it reads as
+  # uncovered in the default run — same situation as pgstore.
+  - path: ^internal/jobs$
+    threshold: 75
   - path: ^internal/cli$
     threshold: 30
   - path: ^internal/search$
@@ -84,7 +89,9 @@ exclude:
     - ^internal/store/storetest # shared conformance test kit (exercised via backends)
     - ^internal/visibility/visibilitytest # shared conformance test kit (exercised via visibility + future wirings)
     - ^internal/state/statetest # shared conformance test kit (exercised via FSKV + pgstore's StateKV)
+    - ^internal/jobs/jobstest # shared conformance test kit (exercised via the memory + postgres queues)
     - ^internal/mail/mailtest # shared conformance test kit (exercised via the smtp + memory transports)
+    - ^internal/schedulerstate/schedulerstatetest # shared conformance test kit (exercised via scheduler-state backends)
     - ^internal/userstate/userstatetest # shared conformance test kit (exercised via mem/kv/pgstore backends)
     - ^internal/appbuild/backendtest # build-tagged test backend supplier; the postgres half only compiles under -tags postgres
     - ^internal/store/pgstore  # covered by the dedicated postgres CI job (needs a live DB; skipped without RELA_TEST_DATABASE_URL)

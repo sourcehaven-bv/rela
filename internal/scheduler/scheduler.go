@@ -29,14 +29,19 @@ package scheduler
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"iter"
 	"log/slog"
 	"maps"
 	"slices"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/config"
+	"github.com/Sourcehaven-BV/rela/internal/jobs"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -116,12 +121,66 @@ func StartBackground(
 	engine := script.NewEngine()
 	s := New(cfg, engine, ws, logger)
 
+	if err := attachQueue(s, ws); err != nil {
+		logger.Error("scheduler not started", "error", err)
+		return
+	}
+
 	go func() {
 		logger.Info("background scheduler starting", "tasks", len(cfg.Tasks))
 		if runErr := s.Run(ctx); runErr != nil {
 			logger.Error("scheduler stopped with error", "error", runErr)
 		}
 	}()
+}
+
+// jobQueueProvider is the capability a WorkspaceProvider must carry to hand the
+// scheduler a job queue.
+//
+// Type-asserted rather than added to WorkspaceProvider so the existing test
+// doubles keep compiling, but it is NOT optional in practice: script execution
+// happens exclusively on the queue, so a provider without one yields a
+// scheduler that cannot run anything.
+type jobQueueProvider interface {
+	Jobs() jobs.Client
+}
+
+// attachQueue wires the workspace's job queue onto s.
+//
+// Shared by every entry point — StartBackground (rela-server, rela-desktop) and
+// the `rela scheduler` command — because forgetting it produces a scheduler
+// that starts cleanly, logs a due task every tick, and fails every one of them
+// with "no job queue configured". That is exactly the regression a demo caught
+// after the unit tests missed it: they all call UseQueue directly, so none of
+// them exercised a wiring site.
+//
+// Nil: rejected — returns an error rather than leaving the scheduler unable to
+// execute, so the caller can refuse to start.
+func attachQueue(s *Scheduler, ws WorkspaceProvider) error {
+	jp, ok := ws.(jobQueueProvider)
+	if !ok {
+		return errors.New("scheduler: the workspace provides no job queue")
+	}
+	if err := s.UseQueue(jp.Jobs()); err != nil {
+		return fmt.Errorf("scheduler: could not use the job queue: %w", err)
+	}
+	return nil
+}
+
+// NewWithQueue builds a scheduler with its job queue attached.
+//
+// The constructor entry points should use: script execution happens only on the
+// queue, so a Scheduler built by New alone cannot run anything until UseQueue
+// is called. Returning an error here means a caller cannot accidentally start a
+// scheduler that will fail every task.
+func NewWithQueue(
+	cfg *Config, engine *script.Engine, ws WorkspaceProvider, logger *slog.Logger,
+) (*Scheduler, error) {
+	s := New(cfg, engine, ws, logger)
+	if err := attachQueue(s, ws); err != nil {
+		return nil, err
+	}
+	return s, nil
 }
 
 // stampTaskAuditContext stamps the task's Principal and the per-task
@@ -165,6 +224,34 @@ type Scheduler struct {
 	// executeTaskFunc overrides task execution for testing.
 	// When nil, doExecuteTask is used.
 	executeTaskFunc func(ctx context.Context, task TaskConfig)
+
+	// engineRunner overrides the Lua engine call for testing, WITHOUT
+	// bypassing the job handler around it.
+	//
+	// Distinct from executeTaskFunc, which replaces the whole execution step:
+	// a test that wants to exercise the queue path must keep the real handler
+	// (it is what reports completion back to the waiting submitter) and
+	// substitute only the engine. When nil, the real engine runs.
+	//
+	// Two nil-able override hooks on one struct is one more than is
+	// comfortable, and a third would be the signal to stop: the honest shape
+	// is a constructor-injected engine interface, collapsing both into one
+	// real dependency. Not done here because executeTaskFunc predates the
+	// queue port and rewiring it touches every scheduler test.
+	engineRunner func(ctx context.Context, task TaskConfig) error
+
+	// queue is where script execution happens. REQUIRED: there is no inline
+	// path, so a scheduler without one cannot run anything. Set by UseQueue at
+	// wiring time — see jobs.go.
+	queue jobs.Client
+
+	// inflight tracks the one running execution per task, so a slow task is
+	// skipped rather than queued behind itself. Guarded by inflightMu because
+	// the writer is the scheduler goroutine and the reader is a queue worker.
+	inflightMu sync.Mutex
+	inflight   map[string]inflightRun
+	// runSeq mints in-flight run tokens; see inflightRun.
+	runSeq atomic.Uint64
 }
 
 // New creates a Scheduler.
@@ -293,9 +380,48 @@ func (s *Scheduler) doExecuteTask(ctx context.Context, task TaskConfig) {
 	s.logger.Info("task started", "name", task.Name, "script", task.Script)
 	start := s.now()
 
-	// The principal goes on the CTX (not into the deps bundle) because the
-	// read seam resolves identity per call — see ScheduledLuaWriteDeps.
-	taskCtx := stampTaskAuditContext(ctx, task.Name, task.RunAs)
+	err := s.enqueueTask(ctx, task)
+	elapsed := s.now().Sub(start)
+
+	// A task whose previous run has not finished is SKIPPED, and the skip
+	// records neither success nor failure.
+	//
+	// Not a failure: the task has not gone wrong, it is merely slow, and
+	// advancing the retry ladder would back off a healthy task and suppress
+	// its normal cadence. Not a success either: it did not run, and stamping
+	// the last-run time would make a permanently stuck task look healthy
+	// forever while nothing executed. Leaving state untouched lets the next
+	// tick evaluate it normally.
+	//
+	// Two routes reach here — an in-process claim (errTaskInFlight) and the
+	// queue collapsing a duplicate (errTaskPending). They mean the same thing
+	// to the scheduler; the second also covers other processes.
+	if errors.Is(err, errTaskInFlight) || errors.Is(err, errTaskPending) {
+		s.logger.Warn("skipping task, a run is already pending",
+			"name", task.Name, "duration", elapsed)
+		return
+	}
+
+	if err != nil {
+		s.recordFailure(ctx, task, start, elapsed, err)
+		return
+	}
+
+	s.logger.Info("task completed", "name", task.Name, "duration", elapsed)
+	s.recordSuccess(ctx, task, start)
+}
+
+// runEngine executes a task's script, honoring the engineRunner test override.
+//
+// Called only from the job handler: there is one execution path, and it goes
+// through the queue. Keeping the override here rather than around the whole
+// execution step is what lets a test substitute Lua while still exercising the
+// handler, the completion reporting and the state bookkeeping.
+func (s *Scheduler) runEngine(ctx context.Context, task TaskConfig) error {
+	if s.engineRunner != nil {
+		return s.engineRunner(ctx, task)
+	}
+
 	// TKT-YH52OM: the task's declared capabilities are the only ambient grant.
 	// A scheduled job runs unattended inside the server process, so an
 	// undeclared capability stays absent rather than inheriting the trusted
@@ -305,16 +431,7 @@ func (s *Scheduler) doExecuteTask(ctx context.Context, task TaskConfig) {
 	deps.Capabilities = lua.Capabilities{
 		HTTP: http, AI: ai, WriteFile: writeFile, Secrets: secrets,
 	}
-	err := s.engine.ExecuteFile(taskCtx, task.Script, deps, nil, nil)
-	elapsed := s.now().Sub(start)
-
-	if err != nil {
-		s.recordFailure(ctx, task, start, elapsed, err)
-		return
-	}
-
-	s.logger.Info("task completed", "name", task.Name, "duration", elapsed)
-	s.recordSuccess(ctx, task, start)
+	return s.engine.ExecuteFile(ctx, task.Script, deps, nil, nil)
 }
 
 // recordSuccess stamps a completed run and clears any retry ladder.

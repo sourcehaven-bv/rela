@@ -497,6 +497,7 @@ func TestDoExecuteTask_PullsLuaWriteDeps(t *testing.T) {
 	s := New(cfg, script.NewEngine(), ws, discardLogger())
 	s.now = func() time.Time { return time.Date(2026, 4, 10, 14, 0, 0, 0, time.UTC) }
 	s.state = newState()
+	attachTestQueue(t, s)
 
 	s.doExecuteTask(context.Background(), cfg.Tasks[0])
 
@@ -774,6 +775,7 @@ func newRealPathScheduler(
 		}
 		return start.Add(runDuration)
 	}
+	attachTestQueue(t, s)
 	return s
 }
 

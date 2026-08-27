@@ -87,7 +87,7 @@ func standUp(ctx context.Context, projectDir string, seed []docs.SeedOp) (*proje
 	// Seed the temp project's store (raw — no entitymanager, so automations can't
 	// mutate the fixture); the same ops already ran against the in-mem store.
 	if serr := docs.ApplySeed(ctx, svc.Store(), seed); serr != nil {
-		svc.Close()
+		svc.Close() //nolint:contextcheck // teardown is not request-scoped; Close takes no ctx
 		_ = os.RemoveAll(tmp)
 		return nil, fmt.Errorf("seed temp project: %w", serr)
 	}
@@ -102,7 +102,7 @@ func standUp(ctx context.Context, projectDir string, seed []docs.SeedOp) (*proje
 		svc.State(),
 	)
 	if err != nil {
-		svc.Close()
+		svc.Close() //nolint:contextcheck // teardown is not request-scoped; Close takes no ctx
 		_ = os.RemoveAll(tmp)
 		return nil, fmt.Errorf("build data-entry app: %w", err)
 	}

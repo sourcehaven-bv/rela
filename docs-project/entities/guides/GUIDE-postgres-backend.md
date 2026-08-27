@@ -185,6 +185,17 @@ What you need to know to run it:
   and every node serves it; a document rendered on one node is not re-rendered
   on the next. (On the filesystem build this state stays under `.rela/`, which
   is correct for a single-process deployment.)
+- **Run `rela scheduler` on exactly one node.** Scheduled tasks execute through
+  the background-job queue, and the queue itself is multi-process safe: a task
+  is submitted under an idempotency key backed by a unique index, so two nodes
+  ticking at the same moment cannot both queue it, and PostgreSQL — not the
+  application — decides which one wins. What is *not* yet shared is the
+  scheduler's bookkeeping. Last-run times and the retry ladder still live in
+  each node's `.rela/scheduler-state.json`, so two schedulers keep diverging
+  views of what is due; and because any node's worker may claim any job, a task
+  executed on one node can be recorded as a *failure* on the node that queued
+  it. Neither costs you a duplicate run, but both corrupt the schedule's
+  history. Tracked as TKT-7XLVP7.
 
 ### Write transactions
 
