@@ -517,6 +517,11 @@ suppresses no-op PATCHes client-side via its `lastSeenServer` snapshot,
 so no real SPA path produces a same-value PATCH; the rejection exists
 for defense against hand-crafted clients.
 
+Schema-declared `computed` properties always participate in this contract as
+read-only fields, independently of ACL policy. Their materialized value is
+returned for display with `_fields.<name>.writable: false`; the server derives
+the value after writable input has been accepted.
+
 ### Create-mode affordances: dry-run (`?dry_run=true`) (TKT-3I5U)
 
 The create form has no persisted entity to derive `_fields` from, and

@@ -8,6 +8,7 @@ import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { useBackTarget } from '@/composables/useBackTarget'
 import BackButton from '@/components/common/BackButton.vue'
 import AdHocFilterMenu from '@/components/lists/AdHocFilterMenu.vue'
+import PendingButton from '@/components/common/PendingButton.vue'
 import type { Entity } from '@/types'
 
 const route = useRoute()
@@ -387,9 +388,13 @@ watch(
           @apply="handleAdHocApply"
         />
 
-        <button class="btn btn-primary" :disabled="loading" @click="search">
-          {{ loading ? 'Searching...' : 'Search' }}
-        </button>
+        <PendingButton
+          class="btn btn-primary"
+          :pending="loading"
+          label="Search"
+          pending-label="Searching…"
+          @click="search"
+        />
       </div>
 
       <!-- Active filters chips -->
@@ -409,12 +414,12 @@ watch(
       </div>
     </div>
 
-    <div v-if="loading" class="loading-state">
-      <div class="spinner"/>
-      <span>Searching...</span>
-    </div>
-
-    <div v-else-if="searched && results.length === 0" class="empty-state">
+    <!-- No block spinner here on purpose. The Search BUTTON already owns
+         this operation's pending state (one indicator per user act), and
+         previous results stay on screen while the next query runs rather
+         than being replaced by a spinner — the keep-previous-content rule.
+         A re-search therefore never blanks the list. -->
+    <div v-if="searched && !loading && results.length === 0" class="empty-state">
       <p>No results found for "{{ query }}"</p>
     </div>
 
@@ -607,7 +612,9 @@ watch(
 .search-input:focus {
   outline: none;
   border-color: var(--accent-color, #6366f1);
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
+  box-shadow:
+    0 0 0 2px var(--focus-ring-gap),
+    0 0 0 4px var(--focus-ring);
 }
 
 /* Filter dropdown styles live on AdHocFilterMenu (scoped). */

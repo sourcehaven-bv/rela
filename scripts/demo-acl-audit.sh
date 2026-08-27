@@ -82,7 +82,19 @@ expect_rc() {
 # expect_finding <label> <dir> <rule-id>
 expect_finding() {
     local label="$1" dir="$2" rule="$3"
-    if run_audit "${dir}" 2>&1 | grep -q "${rule}"; then
+    # Capture, then match with a here-string — never `... | grep -q`.
+    #
+    # `grep -q` exits the instant it matches. If the writer is still writing it
+    # dies of SIGPIPE (141), and `set -o pipefail` surfaces that as a failed
+    # pipeline — so the assertion fails BECAUSE the finding was found. Whether
+    # it fires depends on the output fitting the 64K pipe buffer, which is why
+    # this passed locally and went red only in CI, where the audit logs more.
+    #
+    # Capturing alone is not enough: `printf '%s' "$out" | grep -q` has exactly
+    # the same race. The pipe has to go.
+    local out
+    out="$(run_audit "${dir}" 2>&1 || true)"
+    if grep -q "${rule}" <<<"${out}"; then
         step "✓ ${label} (${rule})"
     else
         step "✗ ${label}: expected finding ${rule}"
@@ -94,7 +106,10 @@ expect_finding() {
 # refute_finding <label> <dir> <rule-id>
 refute_finding() {
     local label="$1" dir="$2" rule="$3"
-    if run_audit "${dir}" 2>&1 | grep -q "${rule}"; then
+    # Same capture-then-match reasoning as expect_finding.
+    local out
+    out="$(run_audit "${dir}" 2>&1 || true)"
+    if grep -q "${rule}" <<<"${out}"; then
         step "✗ ${label}: unexpected finding ${rule}"
         run_audit "${dir}" || true
         exit 1
@@ -200,8 +215,8 @@ expect_rc "medium-only: --fail-on=any fails"    1 "${WARN}" --fail-on=any
 say "6. JSON output → AnalysisResult envelope"
 JSON="$(run_audit "${EVERYONE}" -o json)"
 printf '%s\n' "${JSON}"
-if printf '%s' "${JSON}" | grep -q '"status": "warning"' \
-    && printf '%s' "${JSON}" | grep -q '"rule": "A3-everyone-privileged"'; then
+if grep -q '"status": "warning"' <<<"${JSON}" \
+    && grep -q '"rule": "A3-everyone-privileged"' <<<"${JSON}"; then
     step "✓ JSON envelope carries status + rule"
 else
     step "✗ JSON envelope missing expected fields"

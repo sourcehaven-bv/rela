@@ -80,8 +80,15 @@ const meta = computed<ListMeta>(
 )
 // `isPending` is true while a query key has no resolved data. Same-key SSE
 // refetches keep the entry `success` (placeholderData holds the rows, no
-// spinner — the liveness win). A param change (page/filter/sort) swaps to a
-// new key that starts pending, so the spinner shows then, as before.
+// spinner — the liveness win).
+//
+// A param change (page/filter/sort) swaps to a NEW key whose entry starts
+// out pending — but `placeholderData: (prev) => prev` below seeds it from
+// the previous entry, and Colada then exposes the state as
+// `{status: 'success', data: placeholderData}`. So `isPending` stays false
+// and the old rows are held on screen instead of flashing the spinner.
+// The block spinner is therefore reached only on a cold first load.
+// Pinned by the "pagination keeps previous rows" tests.
 const loading = computed(() => listQueryRef.value?.isPending.value ?? true)
 const loadError = computed(() => {
   const err = listQueryRef.value?.error.value
@@ -1199,12 +1206,6 @@ watch(searchQuery, () => {
   border-top-color: var(--accent-color);
   border-radius: var(--radius-circle);
   animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 .entity-table {

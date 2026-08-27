@@ -34,7 +34,7 @@ func writeLockPayload(t *testing.T, l *fsLock, pid int) {
 // Pins the distinction rather than the race: the window is a few syscalls
 // wide, so a timing test observes it only under heavy parallel load (it
 // surfaced in `just coverage-check`, roughly one run in three) and cannot be
-// staged deterministically without a hook inside breakIfStale.
+// staged deterministically without a hook inside acquireFile.
 func TestStaleState_DistinguishesMissingFromStalePresent(t *testing.T) {
 	t.Run("missing is retry-worthy but not present", func(t *testing.T) {
 		l := newFSLock(t.TempDir())

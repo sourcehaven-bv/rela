@@ -324,7 +324,7 @@ func validateEntitySemantics(m *Metamodel) []string {
 				"entity %q: 'id_caps' has no effect (only applies to 'id_type: short')", name))
 		}
 
-		errs = append(errs, validatePropertyDefs(fmt.Sprintf("entity %q", name), def.Properties, m, nil)...)
+		errs = append(errs, validatePropertyDefs(fmt.Sprintf("entity %q", name), def.Properties, m, nil, true)...)
 
 		errs = append(errs, validateDefaultSort(name, def)...)
 
@@ -603,7 +603,7 @@ func validateRelationProperties(m *Metamodel) []string {
 	relNames := sortedKeys(m.Relations)
 	for _, name := range relNames {
 		rel := m.Relations[name]
-		errs = append(errs, validatePropertyDefs(fmt.Sprintf("relation %q", name), rel.Properties, m, reservedRelProps)...)
+		errs = append(errs, validatePropertyDefs(fmt.Sprintf("relation %q", name), rel.Properties, m, reservedRelProps, false)...)
 		// Forbid users from declaring the managed order properties explicitly:
 		// rela owns these names, and a user-supplied PropertyDef would conflict
 		// with the auto-assigned float values written by the entity manager.
@@ -661,69 +661,73 @@ func sortedKeys[V any](m map[string]V) []string {
 // schemaName is used in error messages (e.g., "entity \"foo\"" or "relation \"bar\"").
 // reserved is an optional set of reserved property names (nil for entities).
 func validatePropertyDefs(
-	schemaName string, props map[string]PropertyDef, m *Metamodel, reserved map[string]bool,
+	schemaName string, props map[string]PropertyDef, m *Metamodel, reserved map[string]bool, allowComputed bool,
 ) []string {
-	var errs []string
-
+	errs := make([]string, 0, len(props))
 	for propName, propDef := range props {
-		// Check for reserved property names
-		if reserved != nil && reserved[propName] {
-			errs = append(errs, fmt.Sprintf(
-				"%s: property %q is reserved and cannot be used", schemaName, propName))
-			continue
-		}
+		errs = append(errs, validatePropertyDef(schemaName, propName, propDef, m, reserved, allowComputed)...)
+	}
+	return errs
+}
 
-		// Check the property name's character set. Names are interpolated into
-		// backend DDL by the derived-schema reconciler, so a name outside the
-		// safe set is a DDL-injection vector; forbid it at load (TKT-3Q0GP1).
-		if err := ValidateSchemaName(propName); err != nil {
-			errs = append(errs, fmt.Sprintf("%s: property %v", schemaName, err))
-			continue
-		}
-
-		// Check property type is specified
-		if propDef.Type == "" {
-			errs = append(errs, fmt.Sprintf(
-				"%s: property %q has no type specified", schemaName, propName))
-			continue
-		}
-
-		// Check property type is known
-		if !isKnownPropertyType(propDef.Type, m) {
-			if propDef.Type == "number" || propDef.Type == "float" {
-				errs = append(errs, fmt.Sprintf(
-					"%s: property %q has type %q which is not supported; use \"integer\" instead",
-					schemaName, propName, propDef.Type))
-			} else {
-				errs = append(errs, fmt.Sprintf(
-					"%s: property %q has unknown type %q (not a built-in type and not defined in 'types')",
-					schemaName, propName, propDef.Type))
-			}
-		}
-
-		// Check enum has values
-		if propDef.Type == PropertyTypeEnum && len(propDef.Values) == 0 {
-			errs = append(errs, fmt.Sprintf(
-				"%s: property %q is type \"enum\" but has no 'values' list", schemaName, propName))
-		}
-
-		// `unique: true` is only meaningful on string-valued properties. The
-		// application uniqueness check reads values as strings (empty for a
-		// non-string), so on an integer/boolean/file property it would silently
-		// never fire — while the PostgreSQL derived index over `properties->>'p'`
-		// WOULD enforce, giving two enforcement paths that disagree. Reject the
-		// combination at load rather than ship that divergence (TKT-3Q0GP1).
-		// string/date/datetime/enum/rrule are all stored as strings and are fine.
-		if propDef.Unique && !isStringValuedType(propDef.Type) {
-			errs = append(errs, fmt.Sprintf(
-				"%s: property %q has 'unique: true' on non-string type %q; "+
-					"unique is only supported on string-valued properties",
-				schemaName, propName, propDef.Type))
-		}
-
-		errs = append(errs, validateFilePropertyOptions(schemaName, propName, propDef)...)
+func validatePropertyDef(
+	schemaName, propName string, propDef PropertyDef, m *Metamodel, reserved map[string]bool, allowComputed bool,
+) []string {
+	if reserved != nil && reserved[propName] {
+		return []string{fmt.Sprintf("%s: property %q is reserved and cannot be used", schemaName, propName)}
+	}
+	// Property names reach backend DDL, so validate the safe character set at load.
+	if err := ValidateSchemaName(propName); err != nil {
+		return []string{fmt.Sprintf("%s: property %v", schemaName, err)}
+	}
+	if propDef.Type == "" {
+		return []string{fmt.Sprintf("%s: property %q has no type specified", schemaName, propName)}
 	}
 
+	var errs []string
+	if !isKnownPropertyType(propDef.Type, m) {
+		if propDef.Type == "number" || propDef.Type == "float" {
+			errs = append(errs, fmt.Sprintf(
+				"%s: property %q has type %q which is not supported; use \"integer\" instead",
+				schemaName, propName, propDef.Type))
+		} else {
+			errs = append(errs, fmt.Sprintf(
+				"%s: property %q has unknown type %q (not a built-in type and not defined in 'types')",
+				schemaName, propName, propDef.Type))
+		}
+	}
+	if propDef.Type == PropertyTypeEnum && len(propDef.Values) == 0 {
+		errs = append(errs, fmt.Sprintf(
+			"%s: property %q is type \"enum\" but has no 'values' list", schemaName, propName))
+	}
+	if propDef.Unique && !isStringValuedType(propDef.Type) {
+		errs = append(errs, fmt.Sprintf(
+			"%s: property %q has 'unique: true' on non-string type %q; "+
+				"unique is only supported on string-valued properties",
+			schemaName, propName, propDef.Type))
+	}
+	errs = append(errs, validateComputedProperty(schemaName, propName, propDef, allowComputed)...)
+	errs = append(errs, validateFilePropertyOptions(schemaName, propName, propDef)...)
+	return errs
+}
+
+func validateComputedProperty(schemaName, propName string, propDef PropertyDef, allowComputed bool) []string {
+	if propDef.Computed == "" {
+		return nil
+	}
+	var errs []string
+	if !allowComputed {
+		errs = append(errs, fmt.Sprintf("%s: property %q: computed is only supported on entity properties", schemaName, propName))
+	}
+	if propDef.List {
+		errs = append(errs, fmt.Sprintf("%s: property %q: computed list properties are not supported", schemaName, propName))
+	}
+	if propDef.Type == PropertyTypeFile {
+		errs = append(errs, fmt.Sprintf("%s: property %q: computed file properties are not supported", schemaName, propName))
+	}
+	if propDef.Default != "" {
+		errs = append(errs, fmt.Sprintf("%s: property %q: computed and default are mutually exclusive", schemaName, propName))
+	}
 	return errs
 }
 

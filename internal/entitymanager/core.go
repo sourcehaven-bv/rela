@@ -170,6 +170,9 @@ func buildCandidateEntity(
 	}
 
 	maps.Copy(e.Properties, opts.Properties)
+	if err := rejectComputedPresent(deps, entityType, e.Properties); err != nil {
+		return nil, nil, err
+	}
 
 	if opts.Content != "" {
 		e.Content = opts.Content
@@ -177,6 +180,9 @@ func buildCandidateEntity(
 
 	if e.GetString("status") == "" {
 		e.SetString("status", entityDef.GetDefaultStatus(deps.Meta))
+	}
+	if err := deps.Computed.Evaluate(ctx, e); err != nil {
+		return nil, nil, err
 	}
 
 	// DEC-HWZHA: hard structural errors abort; soft conditions

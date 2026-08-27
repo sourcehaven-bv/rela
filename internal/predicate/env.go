@@ -108,6 +108,10 @@ type FuncSig struct {
 	Params   []Type
 	Variadic Type
 	Return   Type
+	// SQLPortable reports that this function has target-neutral semantics
+	// which a future SQL lowering may reproduce exactly. False is the safe
+	// default: host functions must opt in deliberately.
+	SQLPortable bool
 }
 
 // Env declares the variables and functions a predicate may reference.

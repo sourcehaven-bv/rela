@@ -620,12 +620,77 @@ entities:
 | `format`         | Date format (Go layout string, e.g., `2006-01-02`)                                    |
 | `description`    | Documentation for the property                                                        |
 | `list: true`     | Allow multiple values (multi-select for enum types)                                   |
+| `computed`       | Pure entity-local expression materialized on every write; the property is read-only   |
 | `unique: true`   | Natural key: no two entities of the type may share a non-empty value (write-time 422; find pre-existing dups with `rela analyze unique`). Only for string-valued properties (`string`, `date`, `datetime`, `enum`, custom types) — not `list`, and not `integer`/`boolean`/`file`. On the PostgreSQL backend this is additionally enforced by an automatically-maintained database index, so it holds even under concurrent writers ([details](postgres-backend.md#derived-schema-unique-constraints)). |
 | `max`            | For `file` properties: max attachments (default 1)                                    |
 | `accept`         | For `file` properties: narrow the MIME allowlist (e.g. `[application/pdf]`)           |
 | `scan_cmd`       | For `file` properties: the scan command (array args); configuring it enables scanning |
 | `scan: off`      | For `file` properties: opt out of scanning despite a global `scan_cmd`                |
 | `transform`      | For `file` properties: ordered byte transforms, each `{cmd: [...]}` or `{image: {...}}` |
+
+### Computed properties
+
+A property may derive its value from other properties on the same entity:
+
+```yaml
+entities:
+  risk:
+    properties:
+      impact: { type: integer }
+      likelihood: { type: integer }
+      score:
+        type: integer
+        computed: entity.impact * entity.likelihood
+      label:
+        type: string
+        computed: entity.category .. ": " .. entity.name
+```
+
+The expression uses rela's strict, typed Lua-compatible expression language,
+not the full Lua runtime. It has no statements, loops, dynamic property access,
+store/relations, network or filesystem access. Supported value constructs are
+scalar literals, `entity.<property>` reads, checked integer arithmetic, string
+concatenation (`..`), and the pure expression functions documented under
+[automation conditions](#expression-conditions-condition), including `today`, `date_add`,
+`days_between`, and `rrule_next`.
+
+Dependencies are inferred from the compiled expression. Computed properties may
+depend on other computed properties; rela evaluates them in dependency order.
+A self-reference or indirect cycle is a schema-load error. The expression's
+static result type must match the property's declared type. Computed list and
+file properties are not supported, and `default` cannot be combined with
+`computed`.
+
+Computed values are materialized during every entity create, update, patch and
+sync apply. They are stored and indexed exactly like authored properties, so
+normal filtering, sorting, search and views require no special syntax. Attempts
+to set or unset them through the CLI, MCP, Lua or data-entry API are rejected;
+data-entry reports `_fields.<name>.writable: false` and renders the value as
+read-only.
+
+`today()` and similar clock-dependent expressions capture **write time**. A
+stored value does not advance merely because time passes.
+
+Changing `computed` changes the schema-shape hash and reports drift because
+existing materialized values need recomputation. `rela migrate gen` drafts a
+declarative step for the affected entity type:
+
+```yaml
+- recompute_computed: {entity: risk}
+```
+
+The step recomputes the complete computed-property graph in dependency order,
+including downstream values, for every entity of that type.
+
+Compiled expressions also report SQL portability as groundwork for future
+database-side evaluation. Property reads, arithmetic and concatenation are
+portable; host-only functions such as `rrule_next` keep working on writes but
+mark that program non-portable. Portability never changes expression semantics.
+
+Computed expressions run against the raw write candidate, including properties
+that may be hidden from a reader by field ACL. Treat the computed property's own
+visibility as a disclosure decision: a broadly visible derived value can reveal
+information about a more restricted source field.
 
 ### File attachments and `max`
 

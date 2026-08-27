@@ -17,6 +17,8 @@ export interface Config {
   lists: Record<string, ListConfig>
   views: Record<string, ViewConfig>
   kanbans: Record<string, KanbanConfig>
+  /** Optional: the Go side omits the key entirely when no calendar is configured. */
+  calendars?: Record<string, CalendarConfig>
   dashboard?: DashboardConfig
   actions?: Record<string, ActionConfig>
   navigation: NavigationEntry[]
@@ -334,11 +336,118 @@ export interface KanbanSwimlane {
   icon?: string
 }
 
+/**
+ * One line of detail on a kanban card or a calendar event chip.
+ *
+ * Shared by both surfaces deliberately: they render the same thing — a label
+ * and a value routed through the dense widget registry — so they take the same
+ * config rather than two spellings of it.
+ */
 export interface KanbanCardField {
   property?: string
   relation?: string
   direction?: 'outgoing' | 'incoming'
+  /** Overrides the displayed name; derived from property/relation when unset. */
   label?: string
+  /** Renders the label before the value. Defaults to true when unset. */
+  show_label?: boolean
+}
+
+/**
+ * The label to render for a field.
+ *
+ * Resolution order: the field's explicit `label:`, then — for a relation — the
+ * label authored on the relation type in schema.yaml, then the raw name.
+ *
+ * The relation lookup matters because a relation id reads like a field name:
+ * `belongs-to` on a chip looks like a bug, while the metamodel already carries
+ * "belongs to" one lookup away. Properties have no such authored label, and
+ * this deliberately does NOT invent one by title-casing `assignee` — labels are
+ * authored, never derived (DEC-6C1NAA), so an operator who wants "Assignee"
+ * writes it.
+ *
+ * Nil: `relationLabel` may be omitted; callers without schema access simply get
+ * the raw relation name, as before.
+ */
+export function cardFieldLabel(
+  field: KanbanCardField,
+  relationLabel?: (relation: string) => string | undefined
+): string {
+  if (field.label) return field.label
+  if (field.relation) return relationLabel?.(field.relation) || field.relation
+  return field.property || ''
+}
+
+/** Whether a field's label renders. Unset means true: an unlabelled ambiguous
+ * value is worse than a redundant label. */
+export function cardFieldLabelShown(field: KanbanCardField): boolean {
+  return field.show_label !== false
+}
+
+/**
+ * CalendarConfig is a month/week grid over date-bearing entities.
+ *
+ * Unlike a kanban it takes a LIST of sources: several entity types on one grid
+ * is the point of a calendar, whereas a board groups one type by one property.
+ *
+ * Defaults (default_view, week_start, day_start, day_end, max_events_per_day,
+ * and each source's max_span) are filled in server-side at config load, so the
+ * SPA never has to re-implement them and the wire value is never empty.
+ */
+export interface CalendarConfig {
+  title?: string
+  /** Markdown rendered above the grid. */
+  header?: string
+  /** Markdown rendered below the grid. */
+  footer?: string
+  default_view: CalendarViewKind
+  week_start: CalendarWeekStart
+  sources: CalendarSourceConfig[]
+  /** Extra fields on an event chip. Absent means title only. */
+  event?: CalendarEventConfig
+  /** Bounds of the week-view hour axis, "HH:MM". */
+  day_start: string
+  day_end: string
+  /** Chips per month-view day cell before collapsing into "+N more". */
+  max_events_per_day: number
+  edit_form?: string
+  create_form?: string
+  filter_controls?: FilterControl[]
+}
+
+export type CalendarViewKind = 'month' | 'week'
+export type CalendarWeekStart = 'monday' | 'sunday'
+
+/** A named palette token; the theme owns what the colour actually is. */
+export type CalendarColor = 'blue' | 'green' | 'amber' | 'red' | 'violet' | 'slate'
+
+/**
+ * CalendarSourceConfig projects one entity type onto the grid.
+ *
+ * Field names match a feed source so a single YAML anchor can serve both a
+ * calendar and an ICS feed; `entity` carries the same yaml/json asymmetry as
+ * lists and kanbans (yaml `entity_type`, json `entity`).
+ */
+export interface CalendarSourceConfig {
+  entity: string
+  /** Name shown in the legend that toggles this source; defaults to `entity`. */
+  label?: string
+  where?: string[]
+  /** Date- or datetime-typed property placing the event on the grid. */
+  date: string
+  /** Optional end property; always the same kind as `date`. */
+  end_date?: string
+  summary?: string
+  description?: string
+  color?: CalendarColor
+  /** Days to look back for events starting before the window (with end_date). */
+  max_span: number
+}
+
+/** CalendarEventConfig is the kanban `card:` analogue for an event chip. It has
+ * no title field: the source's `summary` already names the title property. */
+export interface CalendarEventConfig {
+  fields?: KanbanCardField[]
 }
 
 export interface KanbanCard {
@@ -513,6 +622,7 @@ export interface NavigationEntry {
   list?: string
   dashboard?: boolean
   kanban?: string
+  calendar?: string
   search?: boolean
   settings?: boolean
   action?: string

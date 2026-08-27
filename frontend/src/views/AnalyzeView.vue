@@ -7,6 +7,7 @@ import BackButton from '@/components/common/BackButton.vue'
 import PageLayout from '@/components/common/PageLayout.vue'
 import PageTitle from '@/components/common/PageTitle.vue'
 import IssuesTable from '@/components/common/IssuesTable.vue'
+import PendingButton from '@/components/common/PendingButton.vue'
 
 const backTarget = useBackTarget()
 
@@ -138,9 +139,13 @@ onMounted(() => {
     </template>
 
     <template #actions>
-      <button class="btn btn-secondary" :disabled="loading" @click="loadAnalysis">
-        {{ loading ? 'Refreshing...' : 'Refresh' }}
-      </button>
+      <PendingButton
+        class="btn btn-secondary"
+        :pending="loading"
+        label="Refresh"
+        pending-label="Refreshing…"
+        @click="loadAnalysis"
+      />
     </template>
 
     <div v-if="loading" class="loading-state">
@@ -241,12 +246,6 @@ onMounted(() => {
   border-top-color: var(--accent-color);
   border-radius: 50%;
   animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 /* Summary badge */

@@ -329,10 +329,16 @@ func TestResolvePalette(t *testing.T) {
 		}
 	})
 
-	t.Run("21 variables in each theme when dark enabled by default", func(t *testing.T) {
+	t.Run("24 variables in each theme when dark enabled by default", func(t *testing.T) {
 		r := ResolvePalette(nil, nil)
-		assert.Len(t, r.Light, 21) // 8 base + 6 derived + 7 badges
-		assert.Len(t, r.Dark, 21)
+		// 8 base + 6 derived + 7 badges + 3 role aliases (--focus-ring,
+		// --error-ring, --focus-ring-gap; TKT-FRING7). The aliases are var()
+		// references rather than derived colors, so they cost no derivation
+		// but MUST be emitted here — the palette path replaces the whole
+		// :root block, so a token missing from this map does not exist for
+		// palette-configured projects. See TestPaletteCarriesEveryDefaultToken.
+		assert.Len(t, r.Light, 24)
+		assert.Len(t, r.Dark, 24)
 	})
 
 	t.Run("dark explicitly disabled by project skips built-in dark", func(t *testing.T) {

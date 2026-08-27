@@ -1108,3 +1108,90 @@ func TestPushdownPrefilters_Empty(t *testing.T) {
 		t.Errorf("nil filters should push nothing, got %+v", got)
 	}
 }
+
+// TestCompareValues_Datetime covers the defect found in TKT-IG54YO design
+// review: compareValues parsed only "2006-01-02", so a datetime-typed property
+// (stored as RFC3339) compared against a window bound either errored — and the
+// entity was excluded — or fell through to lexicographic string comparison,
+// which is wrong the moment offsets differ. A calendar over a datetime source
+// rendered empty with only a per-entity log line as diagnosis.
+func TestCompareValues_Datetime(t *testing.T) {
+	tests := []struct {
+		name        string
+		left, right string
+		op          string
+		want        bool
+	}{
+		// The exact failing case: stored RFC3339 vs a bare-date window bound.
+		{"rfc3339 gte bare date, after", "2026-08-22T14:30:00Z", "2026-08-01", "gte", true},
+		{"rfc3339 gte bare date, before", "2026-07-22T14:30:00Z", "2026-08-01", "gte", false},
+		{"rfc3339 lt bare date, before", "2026-08-22T14:30:00Z", "2026-09-01", "lt", true},
+		{"rfc3339 lt bare date, after", "2026-09-22T14:30:00Z", "2026-09-01", "lt", false},
+
+		// A bare date denotes midnight, so an instant later that same day is
+		// after it. This is why the calendar uses a half-open window.
+		{"same day after midnight is gt", "2026-08-22T00:00:01Z", "2026-08-22", "gt", true},
+		{"midnight equals bare date", "2026-08-22T00:00:00Z", "2026-08-22", "gte", true},
+
+		// Offsets must normalize to instants, not compare as strings.
+		// 12:00+02:00 == 10:00Z, so neither is strictly before the other.
+		{"equal instants across offsets, lt", "2026-08-22T12:00:00+02:00", "2026-08-22T10:00:00Z", "lt", false},
+		{"equal instants across offsets, lte", "2026-08-22T12:00:00+02:00", "2026-08-22T10:00:00Z", "lte", true},
+		// Lexicographically "2026-08-22T09:00:00+02:00" > "2026-08-22T08:00:00Z",
+		// but as instants 07:00Z < 08:00Z. The old code got this backwards.
+		{"offset ordering beats string ordering", "2026-08-22T09:00:00+02:00", "2026-08-22T08:00:00Z", "lt", true},
+
+		// Sub-second precision must not be truncated away.
+		{"sub-second precision honored", "2026-08-22T10:00:00.500Z", "2026-08-22T10:00:00.100Z", "gt", true},
+
+		// Zone-less stored values (the "naive datetime" form the SPA tolerates).
+		{"naive datetime compares", "2026-08-22T14:30:00", "2026-08-22T09:00:00", "gt", true},
+
+		// Plain dates keep working exactly as before.
+		{"date vs date unchanged", "2026-08-22", "2026-08-01", "gt", true},
+
+		// Far-future dates must still order correctly. Nanoseconds since the
+		// epoch overflow an int64 outside roughly 1678-2262, so comparing on
+		// UnixNano would wrap these negative and sort them before everything.
+		{"far future is after near future", "2300-01-01", "2026-08-22", "gt", true},
+		{"far future vs far future", "2400-01-01", "2300-01-01", "gt", true},
+		{"distant past is before now", "1600-01-01", "2026-08-22", "lt", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := compareValues(tt.left, tt.right, tt.op)
+			if err != nil {
+				t.Fatalf("compareValues(%q, %q, %q) returned error: %v",
+					tt.left, tt.right, tt.op, err)
+			}
+			if got != tt.want {
+				t.Errorf("compareValues(%q, %q, %q) = %v, want %v",
+					tt.left, tt.right, tt.op, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestCompareValues_DatetimeMismatch confirms that widening to datetimes did
+// not weaken the type-mismatch guard: a genuine non-temporal string compared
+// against a datetime must still error rather than fall back to lexicographic
+// comparison.
+func TestCompareValues_DatetimeMismatch(t *testing.T) {
+	tests := []struct{ name, left, right string }{
+		{"datetime vs word", "2026-08-22T14:30:00Z", "tomorrow"},
+		{"word vs datetime", "tomorrow", "2026-08-22T14:30:00Z"},
+		{"datetime vs number", "2026-08-22T14:30:00Z", "42"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			match, err := compareValues(tt.left, tt.right, "lt")
+			if err == nil {
+				t.Errorf("expected error for compareValues(%q, %q, lt), got match=%v",
+					tt.left, tt.right, match)
+			}
+			if match {
+				t.Errorf("type mismatch should return match=false, got true")
+			}
+		})
+	}
+}

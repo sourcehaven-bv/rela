@@ -9,12 +9,14 @@ import '@fontsource/open-sans/400.css'
 import '@fontsource/open-sans/500.css'
 import '@fontsource/open-sans/600.css'
 import '@fontsource/open-sans/700.css'
+import './styles/focus-ring.css'
 import './styles/back-button.css'
 import './styles/properties-list.css'
 import './styles/mobile-bars.css'
 import './styles/text-utilities.css'
 import './styles/markdown-content.css'
 import './styles/view-info.css'
+import './styles/pending.css'
 
 const app = createApp(App)
 

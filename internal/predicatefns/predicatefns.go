@@ -72,14 +72,14 @@ func Declare(env *predicate.Env) error {
 		{FuncFuzzy, twoStr},
 		{FuncContains, predicate.FuncSig{Params: []predicate.Type{strList, str}, Return: predicate.BoolType}},
 		{FuncLen, predicate.FuncSig{Params: []predicate.Type{strList}, Return: predicate.NumberType}},
-		{FuncToday, predicate.FuncSig{Return: predicate.DateType}},
+		{FuncToday, predicate.FuncSig{Return: predicate.DateType, SQLPortable: true}},
 		{FuncDaysBetween, predicate.FuncSig{
 			Params: []predicate.Type{predicate.DateType, predicate.DateType},
-			Return: predicate.IntType,
+			Return: predicate.IntType, SQLPortable: true,
 		}},
 		{FuncDateAdd, predicate.FuncSig{
 			Params: []predicate.Type{predicate.DateType, predicate.NumberType, str},
-			Return: predicate.DateType,
+			Return: predicate.DateType, SQLPortable: true,
 		}},
 		{FuncRruleNext, predicate.FuncSig{
 			Params: []predicate.Type{str, predicate.DateType},

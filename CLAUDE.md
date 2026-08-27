@@ -333,9 +333,13 @@ Other packages under `internal/` are self-descriptive — ls the tree.
 
 ### Condition engine: `internal/predicate` + `internal/predicatefns`
 
-`internal/predicate` is the **condition engine** — a sandboxed, typed
-boolean-expression evaluator (Lua-expression subset; no I/O at eval;
-depth/step budgets). `internal/predicatefns` is its metamodel-aware glue:
+`internal/predicate` is the shared **typed expression engine** — a sandboxed
+Lua-expression subset with no I/O and fixed depth/step budgets. `Compile`
+retains the boolean condition profile; `CompileValue` accepts an explicit
+context profile for scalar computations. Programs expose exact static record
+dependencies and conservative SQL-portability metadata. Context profiles may
+enable or refuse language features, but an accepted IR node must keep identical
+semantics across evaluators and future targets. `internal/predicatefns` is its metamodel-aware glue:
 the `ScalarType`/`EntityRecordType` type adapter, the host-fn stdlib
 (`match`/`regex`/`fuzzy`/`contains`/`len`/`today`), the `FromFilter`
 transpiler, and the `Evaluator` (compile-once, metamodel-scoped Program

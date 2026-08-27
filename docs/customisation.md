@@ -118,6 +118,30 @@ Overriding a token is therefore ordinary CSS, and re-themes the whole UI:
 }
 ```
 
+Note that `--accent-color` reaches further than the obvious accented surfaces:
+focus rings derive from it (`--focus-ring`), so overriding it re-themes every
+focused control too. That is intentional — a focus ring in the stock blue on
+an otherwise re-skinned UI looks like a bug.
+
+If you want the ring to differ from the accent, override it directly:
+
+```css
+:root {
+  --accent-color: #d64545;
+  --focus-ring: #1a73e8; /* ring stays blue while the accent goes red */
+  --focus-ring-gap: var(--bg-color); /* the band between control and ring */
+}
+```
+
+Two constraints worth knowing before you do. Keep the ring **opaque**: a
+translucent value cannot meet WCAG 2.2 §1.4.11's 3:1 contrast minimum for
+non-text UI, which is what the stock ring was failing before it became a
+token. And keep `--focus-ring-gap` distinct from `--focus-ring`, since it is
+the band that stops the ring merging into the control's own border.
+
+Focus indication under Windows High Contrast is **not** overridable this way,
+by design — it is an accessibility floor rather than a skin.
+
 ## Writing `custom.js`
 
 Served as `<script type="module">`, so it defers automatically and you get
