@@ -171,6 +171,11 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 				want: []string{"D-list", "D-str"},
 			},
 			{
+				name: "scalar equality excludes list and non-string shapes",
+				pred: store.PropPredicate{Property: "p", Op: store.PropEqual, Value: "a", Scalar: true},
+				want: []string{"D-str"},
+			},
+			{
 				// Exclusion must not sweep in the empty rows.
 				name: "exclusion excludes matches and empties",
 				pred: store.PropPredicate{Property: "p", Op: store.PropNotEqual, Value: "a"},

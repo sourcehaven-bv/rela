@@ -93,6 +93,7 @@ components:
   sync:             { in: internal/sync }
   frontmatter:      { in: internal/frontmatter }
   filter:           { in: internal/filter }
+  queryplan:        { in: internal/queryplan }
   propmatch:        { in: internal/propmatch }
   userstate:        { in: internal/userstate }
   nextaction:       { in: internal/nextaction }
@@ -314,6 +315,7 @@ deps:
       - principal
       - project
       - projectsetup
+      - queryplan
       - renametype
       - scheduler
       - schema
@@ -382,6 +384,7 @@ deps:
       - migration
       - openapi
       - project
+      - queryplan
       - script
       - search
       - searchparser
@@ -514,6 +517,7 @@ deps:
       - metamodel
       - pgstore
       - project
+      - queryplan
       - script
       - search
       - state
@@ -910,6 +914,13 @@ deps:
   searchparser:
     mayDependOn:
       - filter
+  queryplan:
+    mayDependOn:
+      - dataentryconfig
+      - filter
+      - metamodel
+      - searchparser
+      - store
   store:
     mayDependOn:
       - metamodel

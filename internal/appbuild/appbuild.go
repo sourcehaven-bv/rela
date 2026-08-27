@@ -1413,7 +1413,7 @@ func assemble(
 	// indexes so uniqueness is enforced atomically, and publish the current
 	// unique pairs so a violation can be attributed to a property (TKT-3Q0GP1).
 	// Failures degrade to warnings — a derived-schema problem never fails boot.
-	reconcileDerivedSchemaIfSupported(context.Background(), st, base.meta)
+	reconcileDerivedSchemaIfSupported(context.Background(), st, base)
 
 	// Evaluate the data-migration gate (adopt compatible schema-shape
 	// changes, warn on incompatible ones) and start the drift GC sweep

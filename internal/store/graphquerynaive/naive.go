@@ -155,6 +155,13 @@ func matches(ctx context.Context, r Reader, e *entity.Entity, q store.GraphQuery
 // exactly with internal/filter and with the pgstore pushdown.
 func matchesProps(e *entity.Entity, props []store.PropPredicate) bool {
 	for _, p := range props {
+		if p.Scalar && p.Op == store.PropEqual && p.Value != "" {
+			value, ok := e.Properties[p.Property].(string)
+			if !ok || value != p.Value {
+				return false
+			}
+			continue
+		}
 		op := propmatch.OpEqual
 		if p.Op == store.PropNotEqual {
 			op = propmatch.OpNotEqual

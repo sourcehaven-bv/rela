@@ -175,6 +175,10 @@ func propCond(b *sqlBuilder, p store.PropPredicate) string {
 	propArg := b.arg(p.Property)
 	txt := fmt.Sprintf("(e.properties ->> %s)", propArg)
 	jsn := fmt.Sprintf("(e.properties -> %s)", propArg)
+	if p.Scalar && p.Op == store.PropEqual && p.Value != "" {
+		valArg := b.arg(p.Value)
+		return fmt.Sprintf("(jsonb_typeof(%s) = 'string' AND %s = %s)", jsn, txt, valArg)
+	}
 
 	// isEmpty covers: missing key, JSON null, empty string, empty array.
 	isEmpty := fmt.Sprintf(

@@ -85,6 +85,42 @@ func TestGraphQueryExplainUsesIndex(t *testing.T) {
 	}
 }
 
+func TestGraphQueryExplainUsesDerivedStaticQueryIndex(t *testing.T) {
+	const n = 5000
+	pool := newScopedPool(t)
+	s, err := pgstore.New(pool)
+	require.NoError(t, err)
+	ctx := context.Background()
+	spec := []store.DerivedObjectSpec{{
+		Kind: store.DerivedQueryIndex, Type: "task", Properties: []string{"status"},
+	}}
+	_, err = s.Reconcile(ctx, spec, store.ReconcileOptions{})
+	require.NoError(t, err)
+
+	for i := range n {
+		status := "closed"
+		if i == n-1 {
+			status = "open"
+		}
+		e := entity.New(fmt.Sprintf("TASK-%06d", i), "task")
+		e.Properties["status"] = status
+		require.NoError(t, s.CreateEntity(ctx, e))
+	}
+	_, err = pool.Exec(ctx, "ANALYZE entities")
+	require.NoError(t, err)
+
+	plan := explainGraphQuery(t, pool, store.GraphQuery{
+		EntityType: "task",
+		Props: []store.PropPredicate{{
+			Property: "status", Op: store.PropEqual, Value: "open", Scalar: true,
+		}},
+	})
+	t.Logf("plan:\n%s", plan)
+	if !strings.Contains(plan, "rela_derived_query__") {
+		t.Fatalf("derived static-query index is not used:\n%s", plan)
+	}
+}
+
 // explainGraphQuery runs EXPLAIN (no ANALYZE — we only need the plan
 // shape) against the SQL pgstore would build for q, and returns the
 // formatted plan as a single string.

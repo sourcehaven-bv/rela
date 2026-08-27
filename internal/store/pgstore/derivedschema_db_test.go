@@ -20,6 +20,46 @@ var personSpec = []store.DerivedObjectSpec{
 	{Kind: store.DerivedUnique, Type: "person", Property: "email"},
 }
 
+var taskQuerySpec = []store.DerivedObjectSpec{
+	{Kind: store.DerivedQueryIndex, Type: "task", Properties: []string{"owner", "status"}},
+}
+
+func TestDerivedQueryIndex_ReconcileLifecycleAndIsolation(t *testing.T) {
+	pool := newScopedPool(t)
+	s, err := pgstore.New(pool)
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	out, err := s.Reconcile(ctx, taskQuerySpec, store.ReconcileOptions{DryRun: true})
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.Equal(t, store.DerivedCreated, out[0].State)
+	require.True(t, out[0].WouldChange)
+
+	out, err = s.Reconcile(ctx, taskQuerySpec, store.ReconcileOptions{})
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.Equal(t, store.DerivedCreated, out[0].State)
+
+	out, err = s.Reconcile(ctx, taskQuerySpec, store.ReconcileOptions{})
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.Equal(t, store.DerivedEnforced, out[0].State)
+
+	_, err = pool.Exec(ctx, `CREATE INDEX operator_owned_task_idx ON entities (type)`)
+	require.NoError(t, err)
+	out, err = s.Reconcile(ctx, nil, store.ReconcileOptions{})
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.Equal(t, store.DerivedDropped, out[0].State)
+
+	var operatorExists bool
+	require.NoError(t, pool.QueryRow(ctx, `SELECT EXISTS (
+		SELECT 1 FROM pg_indexes WHERE schemaname=current_schema() AND indexname='operator_owned_task_idx'
+	)`).Scan(&operatorExists))
+	require.True(t, operatorExists, "reconcile must not drop operator-owned indexes")
+}
+
 // newReconciledStore builds a store on a fresh migrated schema, reconciles the
 // person.email unique rule, publishes the specs, and returns the store. It
 // asserts the index was created (no pre-existing dupes).

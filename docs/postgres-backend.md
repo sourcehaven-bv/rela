@@ -82,7 +82,7 @@ rela's tables are created in the connection's default schema (typically
 `public`). Point rela at a database it owns; if you share a schema with
 another application, rela's tables sit alongside it.
 
-## Derived schema (unique constraints)
+## Derived schema (constraints and query indexes)
 
 Some things you declare in the metamodel are enforced not only in the
 application but by the **database itself** on the PostgreSQL backend. Today
@@ -99,6 +99,21 @@ against the indexes actually present and creates the missing ones, dropping
 any it previously created for a rule you have since removed. This is
 idempotent and self-correcting — a hand-dropped index is recreated on the
 next start — and in the steady state (nothing changed) it does no work.
+
+PostgreSQL also derives ordinary B-tree indexes from eligible static queries in
+`data-entry.yaml`. Dashboard cards, global next-action queries, and `pick_one`
+option queries qualify when they target exactly one entity type and all pushed
+filters are non-empty equality checks on declared, scalar string properties.
+rela creates one composite `rela_derived_query__…` index for the complete set
+of properties in each query shape. Equivalent queries share an index even when
+their literal values or filter order differ.
+
+Runtime and URL queries are not observed. Free text, relations, sorting, glob,
+not-equal, empty-value, list-valued, and non-string filters do not produce an
+index. Query indexes are recalculated only at startup or by `rela db reconcile`,
+so restart or reconcile after changing static query configuration. A missing
+`data-entry.yaml` is valid; an invalid or unreadable file aborts reconciliation
+without dropping existing rela-owned query indexes.
 
 ### When a constraint can't be enforced
 
@@ -123,7 +138,7 @@ rela db reconcile --dry-run # show what WOULD change; non-zero exit if anything 
 ```
 
 `rela db reconcile --dry-run` is the pre-flight: run it against your live
-database before shipping a schema change to see exactly which constraints
+database before shipping a configuration change to see exactly which constraints
 would be created, dropped, or left unenforced (and, with `--show-values`, a
 sample of the blocking values — this prints entity data, so it is opt-in and
 operator-only). Because the dry-run and the real startup reconcile share one

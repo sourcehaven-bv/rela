@@ -6,8 +6,12 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os"
+	"path/filepath"
 
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/queryplan"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/pgstore"
 )
@@ -28,24 +32,36 @@ type derivedSchemaReconciler interface {
 	) ([]store.DerivedObjectOutcome, error)
 }
 
-// reconcileDerivedSchemaIfSupported converges the derived schema at store-open
-// and publishes the metamodel's unique (type, property) pairs so the write path
-// can attribute a unique-index violation to a property (TKT-3Q0GP1). A store
-// without the capability (should not happen in this build) is skipped. Reconcile
-// failures are logged and swallowed: a derived-schema problem — most often
-// pre-existing duplicate values blocking an index — must NEVER fail store-open.
-// An operator inspects/repairs drift via `rela db status` / `rela db reconcile`.
-func reconcileDerivedSchemaIfSupported(ctx context.Context, st store.Store, meta *metamodel.Metamodel) {
+// reconcileDerivedSchemaIfSupported converges unique constraints and eligible
+// static-query indexes at store-open. It also publishes unique pairs so the
+// write path can attribute a unique-index violation to a property. A store
+// without the capability is skipped. Reconcile failures are logged and
+// swallowed: a derived-schema problem must never fail store-open. An operator
+// inspects or repairs drift via `rela db status` / `rela db reconcile`.
+func reconcileDerivedSchemaIfSupported(ctx context.Context, st store.Store, base *SharedBase) {
 	s, ok := st.(derivedSchemaReconciler)
 	if !ok {
 		return
 	}
 
-	specs := uniqueSpecsFromMetamodel(meta)
-
-	// Publish the pairs first so that even if the reconcile below degrades, a
-	// violation of an already-present index still maps to its property.
-	s.SetUniqueSpecProvider(specs)
+	uniqueSpecs := uniqueSpecsFromMetamodel(base.meta)
+	// Publish unique pairs even when data-entry config later prevents DDL. An
+	// already-present unique index may still reject a concurrent write, and the
+	// error must remain attributable to its property.
+	s.SetUniqueSpecProvider(uniqueSpecs)
+	specs := append([]store.DerivedObjectSpec(nil), uniqueSpecs...)
+	configPath := filepath.Join(base.cfg.Paths.Root, dataentryconfig.ConfigFile)
+	if data, err := base.cfg.FS.ReadFile(configPath); err == nil {
+		querySpecs, err := queryplan.LoadStaticIndexSpecs(data, base.meta)
+		if err != nil {
+			slog.Warn("appbuild: derived-schema reconcile skipped; invalid data-entry config", "error", err)
+			return
+		}
+		specs = append(specs, querySpecs...)
+	} else if !os.IsNotExist(err) {
+		slog.Warn("appbuild: derived-schema reconcile skipped; data-entry config unreadable", "error", err)
+		return
+	}
 
 	outcomes, err := s.Reconcile(ctx, specs, store.ReconcileOptions{})
 	switch {
@@ -56,19 +72,29 @@ func reconcileDerivedSchemaIfSupported(ctx context.Context, st store.Store, meta
 		slog.Debug("appbuild: derived-schema reconcile skipped; a peer holds the lock")
 		return
 	case err != nil:
-		slog.Warn("appbuild: derived-schema reconcile failed; uniqueness may be "+
-			"enforced only by the application-level check until repaired", "error", err)
+		slog.Warn("appbuild: derived-schema reconcile failed; database constraints or query indexes may be stale",
+			"error", err)
 		return
 	}
 	for _, o := range outcomes {
 		switch o.State {
 		case store.DerivedUnenforced:
-			slog.Warn("appbuild: derived unique constraint NOT enforced",
-				"type", o.Spec.Type, "property", o.Spec.Property,
-				"blocking_value_groups", o.BlockingCount, "reason", o.Reason)
+			if o.Spec.Kind == store.DerivedQueryIndex {
+				slog.Warn("appbuild: derived static-query index NOT created",
+					"type", o.Spec.Type, "properties", o.Spec.Properties, "reason", o.Reason)
+			} else {
+				slog.Warn("appbuild: derived unique constraint NOT enforced",
+					"type", o.Spec.Type, "property", o.Spec.Property,
+					"blocking_value_groups", o.BlockingCount, "reason", o.Reason)
+			}
 		case store.DerivedCreated:
-			slog.Info("appbuild: derived unique constraint created",
-				"type", o.Spec.Type, "property", o.Spec.Property)
+			if o.Spec.Kind == store.DerivedQueryIndex {
+				slog.Info("appbuild: derived static-query index created",
+					"type", o.Spec.Type, "properties", o.Spec.Properties)
+			} else {
+				slog.Info("appbuild: derived unique constraint created",
+					"type", o.Spec.Type, "property", o.Spec.Property)
+			}
 		case store.DerivedDropped:
 			slog.Info("appbuild: derived schema object dropped (no longer declared)",
 				"reason", o.Reason)
