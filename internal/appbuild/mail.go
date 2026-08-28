@@ -62,7 +62,7 @@ func startMailRuntime(paths *project.Context) (runtime *mailRuntime, stop func()
 		return nil, noop
 	}
 
-	sender, err := senderFor(cfg)
+	sender, err := mail.SenderFor(cfg)
 	if err != nil {
 		slog.Warn("mail: disabled — cannot build sender", "error", err)
 		return nil, noop
@@ -77,20 +77,4 @@ func startMailRuntime(paths *project.Context) (runtime *mailRuntime, stop func()
 
 	slog.Info("mail: enabled", "transport", cfg.Transport)
 	return &mailRuntime{config: cfg, sender: sender, outbox: outbox}, outbox.Stop
-}
-
-// senderFor builds the transport named by the config.
-//
-// The switch is exhaustive over a closed set; an unknown transport cannot reach
-// here because Validate rejects it at load, but the default arm stays as a
-// compile-time reminder that a new transport needs wiring in both places.
-func senderFor(cfg *mail.Config) (mail.Sender, error) {
-	switch cfg.Transport {
-	case mail.TransportSMTP:
-		return mail.NewSMTPSender(cfg)
-	case mail.TransportMemory:
-		return mail.NewMemorySender(0), nil
-	default:
-		return nil, errors.New("mail: unsupported transport " + string(cfg.Transport))
-	}
 }

@@ -22,6 +22,14 @@
 //
 //	crypto.sha256_hex(data)             -> string  (lowercase hex of SHA-256)
 //	crypto.hmac_sha256_base64(key, msg) -> string  (std base64 of HMAC-SHA256)
+//	crypto.base64_encode(data)          -> string  (std base64, padded)
+//	crypto.base64_decode(s)             -> (string, nil) | (nil, err_table)
+//
+// base64_decode is the one function here that takes UNTRUSTED input — an API
+// response, a file, anything the script did not itself encode — so it is the
+// one that returns an error pair instead of raising. Malformed base64 from a
+// remote is an expected runtime condition, not a programming error, and a
+// script must be able to branch on it.
 package lua
 
 import (
@@ -41,6 +49,8 @@ func registerCryptoModule(r *Runtime) {
 	tbl := r.L.NewTable()
 	r.L.SetField(tbl, "sha256_hex", r.L.NewFunction(luaSHA256Hex))
 	r.L.SetField(tbl, "hmac_sha256_base64", r.L.NewFunction(luaHMACSHA256Base64))
+	r.L.SetField(tbl, "base64_encode", r.L.NewFunction(luaBase64Encode))
+	r.L.SetField(tbl, "base64_decode", r.L.NewFunction(luaBase64Decode))
 	r.L.SetGlobal("crypto", tbl)
 }
 
@@ -67,4 +77,63 @@ func luaHMACSHA256Base64(ls *lua.LState) int {
 	_, _ = mac.Write([]byte(msg))
 	ls.Push(lua.LString(base64.StdEncoding.EncodeToString(mac.Sum(nil))))
 	return 1
+}
+
+// luaBase64Encode implements crypto.base64_encode(data) -> std-base64 string.
+//
+// Standard encoding with padding (RFC 4648 §4), which is what every API that
+// says "base64" means unless it says otherwise. A script needing the URL-safe
+// alphabet can translate the two differing characters itself; shipping four
+// variants here would be four names to get wrong at the call site for a
+// two-character substitution.
+//
+// Lua strings are byte strings, so binary input (an image, a signature)
+// round-trips intact. Raises on a non-string argument.
+func luaBase64Encode(ls *lua.LState) int {
+	data := ls.CheckString(1)
+	ls.Push(lua.LString(base64.StdEncoding.EncodeToString([]byte(data))))
+	return 1
+}
+
+// luaBase64Decode implements crypto.base64_decode(s) -> (string, nil) |
+// (nil, err_table).
+//
+// Unlike its siblings this returns a PAIR: the input is typically untrusted
+// (an API response body, a header, a file), so malformed base64 is an expected
+// runtime condition a script must be able to handle, not the programming error
+// a raise would signal. The error table carries the ai.*/http.* shape so a
+// script sees one error vocabulary across every fallible binding.
+//
+// Both the padded standard alphabet and the unpadded/URL-safe variants are
+// accepted, because a script decoding someone else's output does not get to
+// choose which one it receives, and "decode this base64" is one intent rather
+// than four. Encoding stays single-variant (see luaBase64Encode) — being
+// liberal in what you accept does not oblige you to be liberal in what you
+// emit.
+func luaBase64Decode(ls *lua.LState) int {
+	s := ls.CheckString(1)
+	for _, enc := range []*base64.Encoding{
+		base64.StdEncoding,
+		base64.RawStdEncoding,
+		base64.URLEncoding,
+		base64.RawURLEncoding,
+	} {
+		if out, err := enc.DecodeString(s); err == nil {
+			ls.Push(lua.LString(string(out)))
+			ls.Push(lua.LNil)
+			return 2
+		}
+	}
+	ls.Push(lua.LNil)
+	tbl := ls.NewTable()
+	tbl.RawSetString("kind", lua.LString("bad_input"))
+	// The message deliberately does NOT echo the input. Decoding is reached
+	// with credentials (a Basic-auth pair, an API token) often enough that
+	// quoting the offending string into an error bound for a log is a leak
+	// waiting for the one call site that does.
+	tbl.RawSetString("message", lua.LString("crypto.base64_decode: input is not valid base64"))
+	tbl.RawSetString("retry_after", lua.LNumber(0))
+	tbl.RawSetString("details", lua.LString(""))
+	ls.Push(tbl)
+	return 2
 }

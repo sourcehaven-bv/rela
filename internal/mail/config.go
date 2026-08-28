@@ -9,6 +9,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/secrets"
 )
 
@@ -26,7 +27,20 @@ const (
 	// TransportMemory records messages in process instead of sending them.
 	// A real transport, selected by config — see memory.go.
 	TransportMemory Transport = "memory"
+
+	// TransportHTTP delivers through the SimpleMailService APIv2 HTTP API.
+	// See http.go, including why exactly one provider is compiled in.
+	TransportHTTP Transport = "http"
+
+	// TransportScript delivers by running an operator Lua script. The general
+	// answer for any provider rela does not ship — see script.go.
+	TransportScript Transport = "script"
 )
+
+// transportList is the closed set, for error messages. One source so a new
+// transport cannot be added to the switch and forgotten in the message an
+// operator actually reads.
+const transportList = "smtp, memory, http or script"
 
 // DefaultTimeoutSeconds bounds a single send.
 const DefaultTimeoutSeconds = 30
@@ -44,19 +58,25 @@ var ErrConfigNotFound = errors.New("mail: not configured (no .rela/mail.yaml)")
 // The credential is deliberately absent from THIS file. It comes from one of
 // two places, checked in order at SEND time:
 //
-//  1. `.rela/secrets.yaml` under the key `smtp_password` — the same store Lua
-//     scripts read, and the natural home for it: an SMTP password is no
-//     different in kind from the API tokens already kept there.
+//  1. `.rela/secrets.yaml` — under `smtp_password` for the SMTP transport and
+//     `mail_api_token` for the HTTP one. The same store Lua scripts read, and
+//     the natural home for both: neither is different in kind from the API
+//     tokens already kept there.
 //  2. The environment variable named by `password_env`, if set.
 //
-// Either way the password never appears in mail.yaml, never on a command line,
-// and never in a log — the invariant RELA_DATABASE_URL carries, because a
-// secret must not reach `ps` output or shell history.
+// Either way the credential never appears in mail.yaml, never on a command
+// line, and never in a log — the invariant RELA_DATABASE_URL carries, because
+// a secret must not reach `ps` output or shell history.
 //
 // secrets.yaml first, because that is where an operator will look. password_env
 // stays for deployments that inject credentials as environment variables
 // (containers, systemd units) and would otherwise have to materialize a
 // plaintext file at deploy time.
+//
+// `transport: script` is the exception: its credential is whatever key the
+// script names, granted through `capabilities.secrets` and read as
+// `rela.secrets.<key>`. Nothing here resolves it, because only the script
+// knows what its provider wants.
 type Config struct {
 	// Transport selects the delivery mechanism. Required.
 	Transport Transport `yaml:"transport"`
@@ -102,11 +122,70 @@ type Config struct {
 	// supplied from YAML.
 	relaDir string `yaml:"-"`
 
+	// AccountID is the provider account the APIv2 endpoint is scoped to.
+	// Required for TransportHTTP; it is a path segment, not a credential.
+	AccountID string `yaml:"account_id"`
+
+	// Script is the project-relative path to the Lua send script. Required
+	// for TransportScript.
+	//
+	// Project-relative, and refused if it escapes the project (see
+	// scriptPathIsContained): the script runs with outbound HTTP and a named
+	// credential, so `../../../tmp/x.lua` is worth refusing at load rather
+	// than discovering later.
+	Script string `yaml:"script"`
+
+	// Capabilities is the ambient grant the send script runs with. Only
+	// meaningful for TransportScript.
+	//
+	// Fail-closed (TKT-YH52OM): omitted means the script gets NOTHING — no
+	// http, no secrets — so a typo'd key name produces a script that cannot
+	// reach the network rather than one that quietly can.
+	Capabilities ScriptCapabilities `yaml:"capabilities"`
+
 	// Password is REJECTED by Validate. It exists as a field only so that
 	// writing it produces a clear error naming password_env, rather than
 	// yaml silently ignoring an unknown key and the operator wondering why
 	// authentication fails.
 	Password string `yaml:"password"`
+}
+
+// ScriptCapabilities is the YAML face of [lua.Capabilities] for a send script.
+//
+// A separate type rather than embedding lua.Capabilities directly, for two
+// reasons. It keeps the YAML surface NARROWER than the Go one — `write_file`
+// and `ai` are absent here because a mail transport has no business writing
+// files or spending money on inference, and a field that exists in YAML is a
+// field an operator will eventually set. And lua.Capabilities carries
+// AllSecrets, which is deliberately not settable from config; re-exposing the
+// struct wholesale would be one embedded field away from an operator writing
+// `all_secrets: true` in mail.yaml.
+type ScriptCapabilities struct {
+	// HTTP registers the `http` global. Effectively required for any real
+	// provider, but not defaulted on: "this script may reach the network" is
+	// a sentence the operator should have written.
+	HTTP bool `yaml:"http"`
+
+	// Secrets names the keys from .rela/secrets.yaml the script may read.
+	//
+	// A LIST of key names, never a bool. A boolean would hand a send script
+	// the database DSN and every other API key along with the one credential
+	// it needs — see the lua.Capabilities doc for the full argument.
+	Secrets []string `yaml:"secrets"`
+}
+
+// toLua converts the config grant into the runtime's capability type.
+//
+// AI and WriteFile are hard-wired false, not merely unset: a send script has
+// no legitimate use for either, and a zero value that happened to change
+// meaning later should not silently grant them here.
+func (c ScriptCapabilities) toLua() lua.Capabilities {
+	return lua.Capabilities{
+		HTTP:      c.HTTP,
+		AI:        false,
+		WriteFile: false,
+		Secrets:   c.Secrets,
+	}
 }
 
 // Timeout returns the configured send timeout, or the default.
@@ -183,10 +262,32 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("port %d out of range", c.Port)
 		}
 		return c.validateCommon()
+	case TransportHTTP:
+		if strings.TrimSpace(c.AccountID) == "" {
+			return errors.New("account_id is required for transport: http")
+		}
+		// The account ID becomes a URL path segment, so a value containing a
+		// slash or a traversal component would silently retarget the request
+		// at a different endpoint on the same host.
+		if strings.ContainsAny(c.AccountID, "/?#") || strings.Contains(c.AccountID, "..") {
+			return fmt.Errorf("account_id must be a plain identifier, got %q", c.AccountID)
+		}
+		return c.validateCommon()
+	case TransportScript:
+		if strings.TrimSpace(c.Script) == "" {
+			return errors.New("script is required for transport: script")
+		}
+		if !scriptPathIsContained(c.Script) {
+			return fmt.Errorf("script must be a project-relative path inside the project, got %q", c.Script)
+		}
+		if !strings.HasSuffix(c.Script, ".lua") {
+			return fmt.Errorf("script must be a .lua file, got %q", c.Script)
+		}
+		return c.validateCommon()
 	case "":
-		return errors.New("transport is required (smtp or memory)")
+		return fmt.Errorf("transport is required (%s)", transportList)
 	default:
-		return fmt.Errorf("unknown transport %q (want smtp or memory)", c.Transport)
+		return fmt.Errorf("unknown transport %q (want %s)", c.Transport, transportList)
 	}
 }
 
@@ -240,6 +341,29 @@ func (c *Config) resolvePassword() string {
 	// so it is where they will look for this one.
 	if sec, err := secrets.Load(c.relaDir, ""); err == nil {
 		if v := sec[SecretKey]; v != "" {
+			return v
+		}
+	}
+	if c.PasswordVar == "" {
+		return ""
+	}
+	return os.Getenv(c.PasswordVar)
+}
+
+// resolveAPIToken reads the HTTP transport's bearer token.
+//
+// Same two sources and same order as resolvePassword — secrets.yaml
+// first, then the environment variable named by password_env — under a
+// different key, because a bearer token and an SMTP password are different
+// credentials and a project that migrates from one transport to the other
+// should not silently authenticate with the wrong one.
+//
+// Read at SEND time for the same reason: a process that never sends mail must
+// start cleanly with nothing configured, and the value must not sit in memory
+// for the lifetime of a command that has no use for it.
+func (c *Config) resolveAPIToken() string {
+	if sec, err := secrets.Load(c.relaDir, ""); err == nil {
+		if v := sec[HTTPSenderSecretKey]; v != "" {
 			return v
 		}
 	}

@@ -661,8 +661,22 @@ deps:
       # from the API tokens already kept there, and TKT-DS1CR6 makes mail a
       # script consumer anyway.
       - secrets
+      # transport: script (TKT-DS1CR6) runs an operator Lua script that ships
+      # an already-rendered message. The arrow points mail -> lua and NEVER
+      # back: lua declares its own MailSender interface at the call site, so
+      # mail.send needs no import of this package and no cycle exists.
+      #
+      # The runtime is built with a ZERO ReadDeps and no WriteDeps, which is
+      # why mail does not gain store/tracer/search here — a send script has no
+      # graph access at all, by construction rather than by convention.
+      - lua
+      # For the fixed system:mail identity the send runtime runs as. See
+      # mail.SendScriptPrincipal for why the identity is fixed rather than
+      # inherited from whoever enqueued the message.
+      - principal
     canUse:
       - gomail
+      - gopherlua
   acl:
     mayDependOn:
       - entity
@@ -952,6 +966,11 @@ deps:
       - ai
       - autocascade
       - lua
+      # The mail.send binding's transport. This package supplies
+      # mail.LoadLuaSender to lua.LoadContextOptions because internal/lua
+      # cannot import internal/mail (mail -> lua already, for transport:
+      # script), so the adapter has to live at a site that sees both.
+      - mail
       - metamodel
       - principal
       - project

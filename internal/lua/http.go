@@ -17,17 +17,37 @@
 //   - network:      DNS, connection refused, TLS, read error, etc.
 //   - bad_response: response body exceeded the 10 MiB cap
 //
+// # Request encodings
+//
+// Three ways to supply a request body, all provider-neutral:
+//
+//	body       = "..."                        -- raw bytes; you set Content-Type
+//	form       = {k = "v"}                    -- multipart/form-data
+//	basic_auth = {user = "api", pass = key}   -- Authorization: Basic
+//
+// form and basic_auth exist because a JSON-only client is not a general HTTP
+// client. Several widely used APIs (Mailgun's send endpoint being the case
+// that forced this) accept multipart/form-data with HTTP Basic and nothing
+// else, so without them "call any API from Lua" quietly meant "call any JSON
+// API from Lua". They are deliberately NOT mail-specific: form encoding and
+// Basic auth are HTTP, and putting them here rather than behind a mail
+// abstraction is what lets the next form-encoded upstream be reached without
+// another Go change.
+//
 // JSON encode/decode helpers live separately under rela.json (see json.go).
 package lua
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -95,11 +115,13 @@ func (r *Runtime) registerHTTPModule() {
 
 // luaHTTPRequest implements http.request(opts) where opts is a table with:
 //
-//	url      (string, required)
-//	method   (string, optional, default "GET")
-//	headers  (table, optional)
-//	body     (string, optional)
-//	timeout  (number, optional, seconds)
+//	url        (string, required)
+//	method     (string, optional, default "GET")
+//	headers    (table, optional)
+//	body       (string, optional)
+//	form       (table, optional, string->string; multipart/form-data)
+//	basic_auth (table, optional, {user=..., pass=...})
+//	timeout    (number, optional, seconds)
 //
 // Returns (response_table, nil) on success, (nil, err_table) on failure.
 func (r *Runtime) luaHTTPRequest(ls *lua.LState) int {
@@ -109,7 +131,7 @@ func (r *Runtime) luaHTTPRequest(ls *lua.LState) int {
 		ls.RaiseError("http.request: %s", err.Error())
 		return 0
 	}
-	return r.doHTTPRequest(ls, "http.request", parsed.method, parsed.url, parsed.headers, parsed.body, parsed.timeout)
+	return r.doHTTPRequest(ls, "http.request", parsed)
 }
 
 // luaHTTPGet implements http.get(url, opts?) -> (response, nil) | (nil, err).
@@ -140,7 +162,7 @@ func (r *Runtime) luaHTTPDelete(ls *lua.LState) int {
 // luaHTTPSimple implements the convenience-method shape:
 // - position 1: URL string
 // - position 2 (when withBody): body string
-// - last position: optional opts table {headers, timeout}
+// - last position: optional opts table {headers, timeout, form, basic_auth}
 //
 // fnName ("http.get", etc.) is used as the prefix on raised errors so
 // scripts see the entry-point name in error messages, not "http.request".
@@ -152,7 +174,7 @@ func (r *Runtime) luaHTTPSimple(ls *lua.LState, fnName, method string, withBody 
 		body = ls.OptString(2, "")
 		optsPos = 3
 	}
-	headers, timeout, err := parseConvenienceOpts(ls, optsPos)
+	opts, err := parseConvenienceOpts(ls, optsPos)
 	if err != nil {
 		ls.RaiseError("%s: %s", fnName, err.Error())
 		return 0
@@ -162,41 +184,54 @@ func (r *Runtime) luaHTTPSimple(ls *lua.LState, fnName, method string, withBody 
 		ls.RaiseError("%s: %s", fnName, err.Error())
 		return 0
 	}
-	return r.doHTTPRequest(ls, fnName, method, reqURL, headers, body, timeout)
+	opts.method = method
+	opts.url = reqURL
+	opts.body = body
+	return r.doHTTPRequest(ls, fnName, opts)
 }
 
 // doHTTPRequest performs the actual HTTP request and pushes the result
 // onto the Lua stack. Returns the number of values pushed (always 2).
 // fnName is used as the prefix on raised errors so scripts see the
 // entry-point name (e.g. "http.get") rather than always "http.request".
-func (r *Runtime) doHTTPRequest(
-	ls *lua.LState,
-	fnName, method string,
-	reqURL *url.URL,
-	headers map[string]string,
-	body string,
-	timeout time.Duration,
-) int {
+//
+// Takes the parsed opts STRUCT rather than seven positional arguments: the
+// convenience methods and http.request now agree on a growing set of request
+// features (body, form, basic auth), and a parameter list that grows with each
+// one is how a caller ends up passing headers where the body goes.
+func (r *Runtime) doHTTPRequest(ls *lua.LState, fnName string, o httpRequestOpts) int {
 	ctx := httpContext(r)
-	if timeout > 0 {
+	if o.timeout > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, timeout)
+		ctx, cancel = context.WithTimeout(ctx, o.timeout)
 		defer cancel()
 	}
 
-	var bodyReader io.Reader
-	if body != "" {
-		bodyReader = strings.NewReader(body)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, method, reqURL.String(), bodyReader)
+	bodyReader, contentType, err := o.payload()
 	if err != nil {
 		ls.RaiseError("%s: %s", fnName, err.Error())
 		return 0
 	}
 
-	for k, v := range headers {
+	httpReq, err := http.NewRequestWithContext(ctx, o.method, o.url.String(), bodyReader)
+	if err != nil {
+		ls.RaiseError("%s: %s", fnName, err.Error())
+		return 0
+	}
+
+	for k, v := range o.headers {
 		httpReq.Header.Set(k, v)
+	}
+	// Content-Type is set AFTER the caller's headers so the multipart boundary,
+	// which only this function knows, cannot be clobbered by a script that
+	// helpfully set `Content-Type = "multipart/form-data"` without one. A body
+	// whose declared boundary does not match its parts is unparseable at the
+	// far end and the failure reads as "the server rejected my request".
+	if contentType != "" {
+		httpReq.Header.Set("Content-Type", contentType)
+	}
+	if o.basicAuth != nil {
+		httpReq.SetBasicAuth(o.basicAuth.user, o.basicAuth.pass)
 	}
 
 	resp, doErr := httpClient.Do(httpReq)
@@ -228,7 +263,74 @@ type httpRequestOpts struct {
 	url     *url.URL
 	headers map[string]string
 	body    string
+
+	// form, when non-nil, makes the request a multipart/form-data POST body
+	// built from these fields. Mutually exclusive with body — see payload.
+	form []formField
+
+	// basicAuth, when non-nil, sets an Authorization: Basic header.
+	basicAuth *basicAuthOpts
+
 	timeout time.Duration
+}
+
+// formField is one multipart/form-data part. A SLICE of these rather than a
+// map because Mailgun and friends accept repeated field names (`to` given
+// three times is three recipients), which a map cannot express — and because
+// part order is then deterministic, so a test can assert on the body it
+// produced rather than on a set.
+type formField struct {
+	name  string
+	value string
+}
+
+// basicAuthOpts carries an HTTP Basic credential.
+//
+// A struct with two named fields rather than a "user:pass" string: the colon
+// is significant in Basic auth, so a password containing one would silently
+// split in the wrong place, and the resulting request would fail
+// authentication with no hint as to why.
+type basicAuthOpts struct {
+	user string
+	pass string
+}
+
+// payload returns the request body, its Content-Type (empty when the caller's
+// headers should decide), and any error.
+//
+// Body and form are mutually exclusive and that is an ERROR rather than a
+// precedence rule. Silently preferring one would mean a script that set both —
+// most plausibly by adding `form` to a call that already had `body` — sends a
+// request missing half of what its author intended, and gets a 400 from the
+// far end describing a field problem rather than a local mistake.
+func (o httpRequestOpts) payload() (io.Reader, string, error) {
+	if o.form != nil && o.body != "" {
+		return nil, "", errors.New("body and form are mutually exclusive; set one")
+	}
+	if o.form == nil {
+		if o.body == "" {
+			return nil, "", nil
+		}
+		return strings.NewReader(o.body), "", nil
+	}
+
+	// Buffered rather than streamed through an io.Pipe. The whole body is
+	// already in memory — it came from Lua strings — so a pipe would add a
+	// goroutine and an error-propagation path to move bytes that are sitting
+	// right there. It also means multipart.Writer.Close, and therefore the
+	// closing boundary, is done before the request is built rather than
+	// racing it.
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	for _, f := range o.form {
+		if err := w.WriteField(f.name, f.value); err != nil {
+			return nil, "", fmt.Errorf("form field %q: %w", f.name, err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		return nil, "", fmt.Errorf("finalizing form: %w", err)
+	}
+	return &buf, w.FormDataContentType(), nil
 }
 
 // parseHTTPRequestOpts extracts fields from the opts table for http.request().
@@ -264,30 +366,11 @@ func parseHTTPRequestOpts(opts *lua.LTable) (httpRequestOpts, error) {
 	// headers (optional)
 	out.headers = make(map[string]string)
 	if v := opts.RawGetString("headers"); v != lua.LNil {
-		tbl, ok := v.(*lua.LTable)
-		if !ok {
-			return out, errors.New("headers must be a table")
+		headers, err := parseHeaderTable(v)
+		if err != nil {
+			return out, err
 		}
-		var headerErr error
-		tbl.ForEach(func(k, v lua.LValue) {
-			if headerErr != nil {
-				return
-			}
-			ks, kok := k.(lua.LString)
-			if !kok {
-				headerErr = fmt.Errorf("header key must be a string, got %s", k.Type().String())
-				return
-			}
-			vs, vok := v.(lua.LString)
-			if !vok {
-				headerErr = fmt.Errorf("header value for %q must be a string, got %s", string(ks), v.Type().String())
-				return
-			}
-			out.headers[string(ks)] = string(vs)
-		})
-		if headerErr != nil {
-			return out, headerErr
-		}
+		out.headers = headers
 	}
 
 	// body (optional)
@@ -297,6 +380,24 @@ func parseHTTPRequestOpts(opts *lua.LTable) (httpRequestOpts, error) {
 			return out, errors.New("body must be a string")
 		}
 		out.body = string(s)
+	}
+
+	// form (optional): multipart/form-data fields.
+	if v := opts.RawGetString("form"); v != lua.LNil {
+		fields, err := parseFormFields(v)
+		if err != nil {
+			return out, err
+		}
+		out.form = fields
+	}
+
+	// basic_auth (optional)
+	if v := opts.RawGetString("basic_auth"); v != lua.LNil {
+		auth, err := parseBasicAuth(v)
+		if err != nil {
+			return out, err
+		}
+		out.basicAuth = auth
 	}
 
 	// timeout (optional, seconds)
@@ -314,58 +415,188 @@ func parseHTTPRequestOpts(opts *lua.LTable) (httpRequestOpts, error) {
 	return out, nil
 }
 
-// parseConvenienceOpts extracts headers and timeout from the optional
-// opts table used by convenience methods (get, post, etc.). Returns an
-// error rather than raising so the caller can prefix the function name
-// (http.get / http.post / ...) — matches parseHTTPRequestOpts.
-func parseConvenienceOpts(ls *lua.LState, pos int) (map[string]string, time.Duration, error) {
-	headers := make(map[string]string)
-	var timeout time.Duration
+// parseFormFields converts the `form` table into ordered multipart parts.
+//
+// Two shapes are accepted, because the two things a caller wants are genuinely
+// different:
+//
+//	form = { subject = "hi", to = "a@example.com" }        -- one value per name
+//	form = { {"to", "a@example.com"}, {"to", "b@example.com"} }  -- repeats
+//
+// The map shape is what almost every call wants and reads best. The array
+// shape exists because form encoding permits repeated names and several
+// providers rely on it (Mailgun takes multiple `to` fields), which a Lua table
+// keyed by name cannot express at all.
+//
+// Map iteration order is not defined, so the map shape is SORTED by name.
+// Unsorted, the produced body would differ between runs and every test
+// asserting on it would be flaky — and a caller who needs a specific order
+// has the array shape.
+func parseFormFields(v lua.LValue) ([]formField, error) {
+	tbl, ok := v.(*lua.LTable)
+	if !ok {
+		return nil, fmt.Errorf("form must be a table, got %s", v.Type().String())
+	}
+
+	// A non-zero array part means the positional shape. Len() reports the
+	// array part only, so a pure string-keyed table reads 0 here.
+	if n := tbl.Len(); n > 0 {
+		out := make([]formField, 0, n)
+		for i := 1; i <= n; i++ {
+			pair, pok := tbl.RawGetInt(i).(*lua.LTable)
+			if !pok || pair.Len() != 2 {
+				return nil, fmt.Errorf("form entry %d must be a {name, value} pair", i)
+			}
+			name, nok := pair.RawGetInt(1).(lua.LString)
+			val, vok := pair.RawGetInt(2).(lua.LString)
+			if !nok || !vok {
+				return nil, fmt.Errorf("form entry %d must be a {string, string} pair", i)
+			}
+			if name == "" {
+				return nil, fmt.Errorf("form entry %d has an empty field name", i)
+			}
+			out = append(out, formField{name: string(name), value: string(val)})
+		}
+		return out, nil
+	}
+
+	var out []formField
+	var fieldErr error
+	tbl.ForEach(func(k, v lua.LValue) {
+		if fieldErr != nil {
+			return
+		}
+		ks, kok := k.(lua.LString)
+		if !kok {
+			fieldErr = fmt.Errorf("form field name must be a string, got %s", k.Type().String())
+			return
+		}
+		vs, vok := v.(lua.LString)
+		if !vok {
+			// Numbers are refused rather than coerced. Lua has one numeric
+			// type, so 1 formats as "1" and 1.0 as "1" too — a caller passing
+			// a computed value gets a string whose shape depends on float
+			// rounding. tostring() at the call site is explicit about which
+			// rendering was meant.
+			fieldErr = fmt.Errorf("form field %q must be a string, got %s (use tostring)",
+				string(ks), v.Type().String())
+			return
+		}
+		out = append(out, formField{name: string(ks), value: string(vs)})
+	})
+	if fieldErr != nil {
+		return nil, fieldErr
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })
+	return out, nil
+}
+
+// parseBasicAuth converts the `basic_auth` table into a credential.
+//
+// An empty user is refused: `basic_auth = {pass = secret}` with a mistyped
+// user key would otherwise send `Authorization: Basic OnNlY3JldA==` — a
+// syntactically valid header with an empty username — and the server's 401
+// would say nothing about the typo. An empty PASS is allowed, because APIs
+// that authenticate with a token-as-username and no password are common
+// enough (Mailgun's own `api:KEY` is the mirror image of it).
+func parseBasicAuth(v lua.LValue) (*basicAuthOpts, error) {
+	tbl, ok := v.(*lua.LTable)
+	if !ok {
+		return nil, fmt.Errorf("basic_auth must be a table, got %s", v.Type().String())
+	}
+	user, uok := tbl.RawGetString("user").(lua.LString)
+	if !uok || user == "" {
+		return nil, errors.New("basic_auth.user must be a non-empty string")
+	}
+	pass, _ := tbl.RawGetString("pass").(lua.LString)
+	return &basicAuthOpts{user: string(user), pass: string(pass)}, nil
+}
+
+// parseConvenienceOpts extracts the shared option table used by the
+// convenience methods (get, post, ...): headers, timeout, form and
+// basic_auth. Returns a partially-filled httpRequestOpts — the caller fills in
+// method, url and body, which come from positional arguments.
+//
+// Returns an error rather than raising so the caller can prefix the function
+// name (http.get / http.post / ...) — matches parseHTTPRequestOpts.
+func parseConvenienceOpts(ls *lua.LState, pos int) (httpRequestOpts, error) {
+	out := httpRequestOpts{headers: make(map[string]string)}
 
 	optsTbl := ls.OptTable(pos, nil)
 	if optsTbl == nil {
-		return headers, timeout, nil
+		return out, nil
 	}
 
 	if v := optsTbl.RawGetString("headers"); v != lua.LNil {
-		tbl, ok := v.(*lua.LTable)
-		if !ok {
-			return nil, 0, fmt.Errorf("headers must be a table, got %s", v.Type().String())
+		headers, err := parseHeaderTable(v)
+		if err != nil {
+			return httpRequestOpts{}, err
 		}
-		var headerErr error
-		tbl.ForEach(func(k, v lua.LValue) {
-			if headerErr != nil {
-				return
-			}
-			ks, kok := k.(lua.LString)
-			if !kok {
-				headerErr = fmt.Errorf("header key must be a string, got %s", k.Type().String())
-				return
-			}
-			vs, vok := v.(lua.LString)
-			if !vok {
-				headerErr = fmt.Errorf("header value for %q must be a string, got %s", string(ks), v.Type().String())
-				return
-			}
-			headers[string(ks)] = string(vs)
-		})
-		if headerErr != nil {
-			return nil, 0, headerErr
+		out.headers = headers
+	}
+
+	if v := optsTbl.RawGetString("form"); v != lua.LNil {
+		fields, err := parseFormFields(v)
+		if err != nil {
+			return httpRequestOpts{}, err
 		}
+		out.form = fields
+	}
+
+	if v := optsTbl.RawGetString("basic_auth"); v != lua.LNil {
+		auth, err := parseBasicAuth(v)
+		if err != nil {
+			return httpRequestOpts{}, err
+		}
+		out.basicAuth = auth
 	}
 
 	if v := optsTbl.RawGetString("timeout"); v != lua.LNil {
 		n, ok := v.(lua.LNumber)
 		if !ok {
-			return nil, 0, fmt.Errorf("timeout must be a number, got %s", v.Type().String())
+			return httpRequestOpts{}, fmt.Errorf("timeout must be a number, got %s", v.Type().String())
 		}
 		if n <= 0 {
-			return nil, 0, errors.New("timeout must be positive")
+			return httpRequestOpts{}, errors.New("timeout must be positive")
 		}
-		timeout = time.Duration(float64(n) * float64(time.Second))
+		out.timeout = time.Duration(float64(n) * float64(time.Second))
 	}
 
-	return headers, timeout, nil
+	return out, nil
+}
+
+// parseHeaderTable converts a Lua table of string->string into a header map.
+//
+// Shared by http.request and the convenience methods so the two cannot drift
+// on what they accept — they had separate copies of this loop, which is
+// exactly how one of them ends up quietly permitting a numeric value.
+func parseHeaderTable(v lua.LValue) (map[string]string, error) {
+	tbl, ok := v.(*lua.LTable)
+	if !ok {
+		return nil, fmt.Errorf("headers must be a table, got %s", v.Type().String())
+	}
+	headers := make(map[string]string)
+	var headerErr error
+	tbl.ForEach(func(k, v lua.LValue) {
+		if headerErr != nil {
+			return
+		}
+		ks, kok := k.(lua.LString)
+		if !kok {
+			headerErr = fmt.Errorf("header key must be a string, got %s", k.Type().String())
+			return
+		}
+		vs, vok := v.(lua.LString)
+		if !vok {
+			headerErr = fmt.Errorf("header value for %q must be a string, got %s", string(ks), v.Type().String())
+			return
+		}
+		headers[string(ks)] = string(vs)
+	})
+	if headerErr != nil {
+		return nil, headerErr
+	}
+	return headers, nil
 }
 
 // validateURL parses and validates a URL for HTTP requests.

@@ -83,7 +83,14 @@ func stripShebang(code string) string {
 // struct's API. The remaining bindings are not free like this; they genuinely
 // use deps and callerCtx, which is what makes them TKT-N0IKN9's job.
 //
-//plimsoll:max-methods=105
+// The count is 106 rather than 105 because mail.send must be a method value:
+// contextcheck follows a registration CLOSURE back to every NewReader/NewWriter
+// call site and demands a context be threaded into runtime construction, which
+// is not a thing that exists. ai.* and http.* register method values for the
+// same reason. See registerMailModule. The ceiling is a ratchet against drift,
+// not a hard budget, and the fix for a full Runtime is still TKT-N0IKN9.
+//
+//plimsoll:max-methods=106
 type Runtime struct {
 	L             *lua.LState
 	deps          WriteDeps // EntityManager is nil on a reader runtime.
@@ -111,6 +118,12 @@ type Runtime struct {
 	aiProvider ai.Provider // nil means AI is not configured
 	cache      cacheStore  // nil means rela.cache.* is not registered
 	scriptPath string      // set by RunFile; empty for RunString/inline
+
+	// mailSender backs mail.send. Nil means mail is not configured for this
+	// project, which the binding reports as a typed not_configured error
+	// rather than by being absent — see mail.go for why this one differs
+	// from the ai/http capability gate.
+	mailSender MailSender
 
 	// principal is the identity this runtime runs as, exposed read-only as
 	// rela.principal (TKT-5U6NRR). Set by [WithPrincipal] from the caller's
@@ -322,6 +335,19 @@ func WithSecrets(secrets map[string]string) Option {
 func WithAIProvider(p ai.Provider) Option {
 	return func(r *Runtime) {
 		r.aiProvider = p
+	}
+}
+
+// WithMailSender wires a mail transport into the runtime so mail.send
+// delivers. When omitted (or passed nil) the `mail` global is STILL present
+// and mail.send returns a typed not_configured error — see mail.go for why
+// this differs from the ai/http capability gate.
+//
+// The sender is the same seam every other mail caller uses, so a script cannot
+// reach a transport the operator did not configure.
+func WithMailSender(s MailSender) Option {
+	return func(r *Runtime) {
+		r.mailSender = s
 	}
 }
 
@@ -793,6 +819,13 @@ func (r *Runtime) registerBindings(allowWrites bool) {
 	// registered; no configuration needed. Free function (see crypto.go) to keep
 	// the Runtime method count flat.
 	registerCryptoModule(r)
+
+	// Top-level mail.* module. Registered UNCONDITIONALLY — including when no
+	// sender is wired — so a script can feature-detect and so an unconfigured
+	// project produces "mail is not configured" rather than "attempt to call a
+	// nil value". mail.go states at length why this is not the same decision
+	// as the ai/http capability gate above.
+	registerMailModule(r)
 }
 
 // registerReadBindings installs read-only bindings on the rela table: entity
