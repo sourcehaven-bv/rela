@@ -719,6 +719,12 @@ deps:
       - acl
       - entity
       - lua
+      # principal: the refuses{}/permits{} assertion verbs authorize through
+      # acl.Declarative, whose API takes a principal.Principal — so this is
+      # implied by the acl dependency above rather than a new reach. The
+      # package is a dependency-free leaf; docscapture lists it for the same
+      # reason (TKT-DOCASSERT).
+      - principal
       # visibility: only for visibility.Unrestricted, which NAMES the
       # docs runtime's deliberately ungated reads (TKT-1WV50C). It reads a
       # throwaway memstore the doc build just seeded itself.
