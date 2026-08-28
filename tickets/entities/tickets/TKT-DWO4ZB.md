@@ -5,7 +5,7 @@ title: 'Reachability floor: merged-coverage pipeline + scupper (report-only base
 kind: enhancement
 priority: medium
 effort: m
-status: in-progress
+status: done
 ---
 
 ## Scope
