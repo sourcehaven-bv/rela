@@ -236,3 +236,69 @@ func TestIdenticalIgnoresInstance(t *testing.T) {
 		})
 	}
 }
+
+// TestIdenticalComparesOracleHeaders: the body is not the only channel. A
+// denied GET that emits an ETag lets a replayed If-None-Match return 304,
+// confirming the entity exists — pinned in Go by TestACLGet_ETagSuppressedOnDeny
+// and now expressible in a manual.
+func TestIdenticalComparesOracleHeaders(t *testing.T) {
+	body := `{"type":"not_found","instance":"/x"}`
+	tests := []struct {
+		name     string
+		a, b     APIResponse
+		wantFail bool
+	}{
+		{
+			name:     "one response carries an ETag and the other does not",
+			a:        APIResponse{Status: 404, Body: body, Header: map[string][]string{"Etag": {`W/"abc"`}}},
+			b:        APIResponse{Status: 404, Body: body},
+			wantFail: true,
+		},
+		{
+			name:     "differing ETags",
+			a:        APIResponse{Status: 404, Body: body, Header: map[string][]string{"Etag": {`W/"a"`}}},
+			b:        APIResponse{Status: 404, Body: body, Header: map[string][]string{"Etag": {`W/"b"`}}},
+			wantFail: true,
+		},
+		{
+			name: "matching ETags are fine",
+			a:    APIResponse{Status: 404, Body: body, Header: map[string][]string{"Etag": {`W/"a"`}}},
+			b:    APIResponse{Status: 404, Body: body, Header: map[string][]string{"Etag": {`W/"a"`}}},
+		},
+		{
+			// Only an allowlist is compared: Date and Content-Length vary for
+			// reasons that disclose nothing, so comparing everything would make
+			// the assertion fail always — the same trap `instance` sets.
+			name: "headers that disclose nothing are ignored",
+			a: APIResponse{Status: 404, Body: body, Header: map[string][]string{
+				"Date": {"Mon, 01 Jan 2035 00:00:00 GMT"}, "Content-Length": {"42"},
+			}},
+			b: APIResponse{Status: 404, Body: body, Header: map[string][]string{
+				"Date": {"Tue, 02 Jan 2035 00:00:00 GMT"}, "Content-Length": {"99"},
+			}},
+		},
+		{
+			name: "no headers at all on either side",
+			a:    APIResponse{Status: 404, Body: body},
+			b:    APIResponse{Status: 404, Body: body},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := checkIdentical("/a", "/b", tc.a, tc.b)
+			if tc.wantFail {
+				if msg == "" {
+					t.Fatal("want the header difference reported, got pass")
+				}
+				if !strings.Contains(msg, "differing headers") {
+					t.Errorf("failure should name the header channel:\n%s", msg)
+				}
+				return
+			}
+			if msg != "" {
+				t.Fatalf("want pass, got:\n%s", msg)
+			}
+		})
+	}
+}

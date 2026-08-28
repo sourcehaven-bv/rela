@@ -53,9 +53,14 @@ func (dr *docRuntime) luaShows(ls *lua.LState) int {
 		return 0
 	}
 
-	contains := fieldStringSlice(ls, tbl, "contains")
-	absent := fieldStringSlice(ls, tbl, "absent")
-	exactly := fieldStringSlice(ls, tbl, "exactly")
+	contains, cerr := claimList(tbl, "contains")
+	absent, aerr := claimList(tbl, "absent")
+	exactly, eerr := claimList(tbl, "exactly")
+	for _, err := range []error{cerr, aerr, eerr} {
+		if err != nil {
+			return dr.luaFail(ls, "shows: %v", err)
+		}
+	}
 	hasExactly := hasField(tbl, "exactly")
 
 	if len(contains) == 0 && len(absent) == 0 && !hasExactly {
@@ -63,6 +68,16 @@ func (dr *docRuntime) luaShows(ls *lua.LState) int {
 			"shows{type=%q}: asserts nothing. Give at least one of contains=, absent= or "+
 				"exactly= — a call with no claim passes whatever the code does, which is "+
 				"worse than no call at all", typ)
+	}
+
+	// An unknown type yields an EMPTY set, which satisfies `exactly={}` and any
+	// `absent=` claim — so a typo'd type makes exactly the negative claims
+	// vacuous, and those are the ones this verb recommends. (`contains=` fails
+	// safe, which is why the hole is easy to miss.)
+	if _, ok := dr.meta.Entities[typ]; !ok {
+		return dr.luaFail(ls, "shows{type=%q}: no such entity type in the schema. An unknown "+
+			"type reads as an empty set, so absent= and exactly={} would pass no matter what "+
+			"the code did. Declared types: %s", typ, strings.Join(declaredTypes(dr), ", "))
 	}
 
 	got, err := dr.entityIDs(typ)
@@ -74,6 +89,52 @@ func (dr *docRuntime) luaShows(ls *lua.LState) int {
 		return dr.luaFail(ls, "%s", msg)
 	}
 	return 0
+}
+
+// declaredTypes lists schema entity types for a failure message, so a typo is
+// fixable without opening schema.yaml.
+func declaredTypes(dr *docRuntime) []string {
+	out := make([]string, 0, len(dr.meta.Entities))
+	for name := range dr.meta.Entities {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// claimList reads a list-of-ids claim, refusing anything that is not a table of
+// strings.
+//
+// Both silent coercions here weaken a claim rather than strengthen it, which is
+// the wrong direction to fail. A non-string element used to be DROPPED, so
+// `exactly={"a", 42}` quietly asserted a smaller set than written. And a scalar
+// `exactly="a"` reads as present-but-empty, which `hasField` correctly reports
+// as a claim — so it silently became "assert this type is empty", the opposite
+// of what the author wrote.
+func claimList(tbl *lua.LTable, key string) ([]string, error) {
+	v := tbl.RawGetString(key)
+	if v == lua.LNil {
+		return nil, nil
+	}
+	arr, ok := v.(*lua.LTable)
+	if !ok {
+		return nil, fmt.Errorf("%s must be a list, e.g. %s={\"ID-1\"} — a bare value silently "+
+			"reads as an empty list, which asserts the opposite of what you wrote", key, key)
+	}
+	var out []string
+	var bad []string
+	arr.ForEach(func(_, item lua.LValue) {
+		if s, ok := item.(lua.LString); ok {
+			out = append(out, string(s))
+			return
+		}
+		bad = append(bad, item.String())
+	})
+	if len(bad) > 0 {
+		return nil, fmt.Errorf("%s contains non-string %s (%s) — dropping them would silently "+
+			"weaken the claim", key, pluralize("entry", len(bad)), strings.Join(bad, ", "))
+	}
+	return out, nil
 }
 
 // entityIDs lists the seeded ids of one type, sorted so a failure message is

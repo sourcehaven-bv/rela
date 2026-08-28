@@ -225,9 +225,10 @@ func TestUnknownKeysAreRefused(t *testing.T) {
 			wantErr: "unknown keys absnt, exactl",
 		},
 		{
-			name:    "refuses: a typo beside a valid claim",
+			name: "refuses: a typo beside a valid claim",
+			//nolint:misspell // the misspelling IS the fixture: this asserts a typo is caught
 			body:    `refuses{who="vi", op="update", type="risico", becuase="x"}`,
-			wantErr: "unknown key becuase",
+			wantErr: "unknown key becuase", //nolint:misspell // ditto
 		},
 		{
 			name:    "api: a typo beside a valid claim",

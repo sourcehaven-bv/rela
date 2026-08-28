@@ -126,6 +126,23 @@ type docRuntime struct {
 	warnings []string
 }
 
+// usesAPI reports whether any island mentions api{}. A textual scan is enough:
+// the cost of a false positive is a longer ceiling on a build that would not
+// have hit it, and the alternative (widening the deadline for every build) is
+// strictly worse. A false NEGATIVE would need `api` to be reached indirectly,
+// which the doc language has no way to express.
+func usesAPI(segs []segment) bool {
+	for _, seg := range segs {
+		if seg.kind == segLiteral {
+			continue
+		}
+		if strings.Contains(seg.body, "api") {
+			return true
+		}
+	}
+	return false
+}
+
 // Build resolves every island in the manual source and returns the rendered
 // Markdown. It is the package entry point.
 func Build(ctx context.Context, src string, opts Options) (string, error) {
@@ -143,7 +160,11 @@ func Build(ctx context.Context, src string, opts Options) (string, error) {
 	// If the caller already set an earlier deadline, that one wins. Screenshot
 	// builds get a longer ceiling (browser launch + navigate + capture).
 	deadline := buildTimeout
-	if opts.APIClient != nil {
+	// Gate on the manual actually USING api{}: the fs build always supplies a
+	// client (it cannot fail to construct one), so keying on the client alone
+	// widened the ceiling for every build, including Tier-A manuals with no
+	// server to stand up — quadrupling how long a hung build takes to say so.
+	if opts.APIClient != nil && usesAPI(segs) {
 		deadline = apiBuildTimeout
 	}
 	// A screenshot build also stands up a server, so its (longer) ceiling wins.

@@ -104,9 +104,10 @@ backends.**
   repr of the relation-leak bug would have pinned the duplicate as correct, and
   the test would then defend it.
 - **Ellipsis elision.** If repr-capture ever lands, use a NAMED exclusion
-  (`except={"updated_at"}`) — the precedent is `bodyWithoutInstance`
-  (`viewworld_absent_test.go:159`), which excludes one field with a stated
-  reason. An ellipsis silently swallows new fields; several FEAT-9CD2MX bugs
+  (`except={"updated_at"}`) — the precedent is `stripInstance`
+  (`internal/dataentry/acl_get_test.go:77`), which excludes one field with a
+  stated reason. (The originally-cited `bodyWithoutInstance` in
+  `viewworld_absent_test.go` was deleted in `d8154c57`.) An ellipsis silently swallows new fields; several FEAT-9CD2MX bugs
   were EXTRA content an ellipsis would have hidden.
 
 ## First step

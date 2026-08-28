@@ -63,7 +63,7 @@ available without the `doc.` prefix.
 | `roles_matrix{type}` | a role × verb capability table from `acl.yaml` (omit `type` for every type) |
 | `description()` | the metamodel's top-level `description:` (echo-friendly) |
 | `shows{type, contains\|absent\|exactly}` | **asserts** which entities of a type exist (emits nothing) |
-| `refuses{who, op, type, because}` / `permits{...}` | **asserts** an authorization outcome (emits nothing) |
+| `refuses{who, op, type, because, unassigned}` / `permits{...}` | **asserts** an authorization outcome (emits nothing) |
 | `api{path, status, error, as, identical_to}` | **asserts** an API contract against a real server (emits nothing) |
 | `h1/h2/h3(text)`, `md(text)` | structural Markdown emitted from Lua |
 
@@ -145,6 +145,13 @@ see an over-inclusive result, and over-inclusion (a leaked row, a duplicate) is
 usually the interesting bug. `exactly = {}` is a real claim — "this type has no
 entities" — not an empty one.
 
+`who` must name a principal in `acl.yaml`'s `assignments`. An unknown one is
+refused, because a principal with no assignment has no grants and is therefore
+denied *by construction* — so a `refuses{}` with a misspelled `who` would pass
+forever, unable to ever fail. When the missing assignment IS the point ("there
+is no self-service sign-up"), say `unassigned = true`; without it, an intended
+claim and a typo look identical to a reviewer.
+
 `refuses{}` / `permits{}` evaluate through the **same authorization path the
 write path uses**, not by re-reading `acl.yaml`. Answering from the policy file
 would only prove that the manual and the file agree, which they would even if
@@ -191,12 +198,20 @@ api{
 }
 ```
 
-The comparison covers status and body but **excludes** the problem-details
-`instance` member, which echoes the requested URL: two requests to different
+The comparison covers status, body, and the response headers that can by
+themselves disclose existence (`ETag`, `Last-Modified` — a denied GET that
+emits an ETag lets a replayed `If-None-Match` return 304, confirming the entity
+exists). It **excludes** the problem-details `instance` member, which echoes the requested URL: two requests to different
 urls necessarily differ there, so including it would make the check fail on
 every pair — a check that never passes is not checking anything. `instance`
 reflects only what the caller already typed, so it leaks nothing; every other
 field must match exactly.
+
+The exclusion is minimal and route-specific: on `/api/v1/{plural}/{id}` the two
+404s differ only in `instance`. Some other routes interpolate the request into
+the problem `title` (`entity %q not found`), so `identical_to` will fail there —
+in the safe direction, but it means the verb is meaningful on the entity routes
+and needs checking before use elsewhere.
 
 ## Building
 

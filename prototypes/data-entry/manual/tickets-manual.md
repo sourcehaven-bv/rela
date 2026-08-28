@@ -80,7 +80,9 @@ refuses{ who = "bob@example.com", op = "create", type = "ticket" }
 refuses{ who = "bob@example.com", op = "delete", type = "ticket" }
 
 -- There is no self-service sign-up: an unassigned principal gets nothing.
-refuses{ who = "carol@example.com", op = "update", type = "ticket" }
+-- `unassigned = true` states that the missing assignment IS the claim, so this
+-- cannot be confused with a typo in the principal name.
+refuses{ who = "carol@example.com", op = "update", type = "ticket", unassigned = true }
 ```
 
 ## The edit form

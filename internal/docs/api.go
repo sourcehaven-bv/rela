@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	lua "github.com/yuin/gopher-lua"
@@ -48,6 +49,12 @@ type APIRequest struct {
 type APIResponse struct {
 	Status int
 	Body   string
+	// Header carries response headers, because the body is not the only
+	// existence-oracle channel: a denied GET that emits an ETag (or honors
+	// If-None-Match with a 304) confirms the entity exists while the body says
+	// nothing. Pinned in Go by TestACLGet_ETagSuppressedOnDeny; identical_to
+	// compares it so a manual can make the same claim.
+	Header map[string][]string
 }
 
 // api{} asserts an API contract: status, machine-readable error code, or that
@@ -74,6 +81,7 @@ func (dr *docRuntime) luaAPI(ls *lua.LState) int {
 
 	if rejectUnknownKeys(dr, ls, "api", tbl,
 		"path", "method", "as", "body", "status", "error", "identical_to") {
+
 		return 0
 	}
 
@@ -127,6 +135,13 @@ func (dr *docRuntime) luaAPI(ls *lua.LState) int {
 		if other.Path == "" {
 			return dr.luaFail(ls, "api{path=%q}: identical_to needs its own `path`", path)
 		}
+		// Comparing a request with itself is trivially true — a claimless call
+		// wearing a claim's clothes, which is the class this feature refuses.
+		if other.Path == path && other.As == req.As && other.Method == req.Method && other.Body == req.Body {
+			return dr.luaFail(ls, "api{path=%q}: identical_to names the SAME request, which is "+
+				"always true. The claim is that two DIFFERENT requests are indistinguishable — "+
+				"vary the path or the principal", path)
+		}
 		otherResp, oerr := dr.apiClient.Do(dr.ctx, other)
 		if oerr != nil {
 			return dr.luaFail(ls, "api{identical_to=%q}: %v", other.Path, oerr)
@@ -140,25 +155,28 @@ func (dr *docRuntime) luaAPI(ls *lua.LState) int {
 
 // checkAPI compares one response against the status/error claims.
 func checkAPI(path string, resp APIResponse, wantStatus int, wantError string) string {
-	var b strings.Builder
+	// Both claims are reported when both fail: a wrong status used to mask a
+	// wrong error code, costing an extra fix-and-rerun cycle on a red build.
+	var problems []string
 	if wantStatus != 0 && resp.Status != wantStatus {
-		fmt.Fprintf(&b, "api{path=%q} failed\n  claimed status: %d\n  actual status:  %d",
-			path, wantStatus, resp.Status)
-		if body := strings.TrimSpace(resp.Body); body != "" {
-			fmt.Fprintf(&b, "\n  body: %s", truncate(body, bodyExcerpt))
-		}
-		return b.String()
+		problems = append(problems, fmt.Sprintf("  claimed status: %d\n  actual status:  %d",
+			wantStatus, resp.Status))
 	}
 	if wantError != "" {
-		got := problemCode(resp.Body)
-		if got != wantError {
-			fmt.Fprintf(&b, "api{path=%q} failed\n  claimed error: %s\n  actual error:  %s",
-				path, wantError, orNone(got))
-			fmt.Fprintf(&b, "\n  body: %s", truncate(strings.TrimSpace(resp.Body), bodyExcerpt))
-			return b.String()
+		if got := problemCode(resp.Body); got != wantError {
+			problems = append(problems, fmt.Sprintf("  claimed error: %s\n  actual error:  %s",
+				wantError, orNone(got)))
 		}
 	}
-	return ""
+	if len(problems) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "api{path=%q} failed\n%s", path, strings.Join(problems, "\n"))
+	if body := strings.TrimSpace(resp.Body); body != "" {
+		fmt.Fprintf(&b, "\n  body: %s", truncate(body, bodyExcerpt))
+	}
+	return b.String()
 }
 
 // checkIdentical is the existence-oracle assertion: two responses must be
@@ -174,7 +192,11 @@ func checkAPI(path string, resp APIResponse, wantStatus int, wantError string) s
 // what the caller already typed, so it discloses nothing. Everything else —
 // status, type, title, and any other field — must match exactly.
 func checkIdentical(pathA, pathB string, a, b APIResponse) string {
-	if a.Status == b.Status && normalizeProblem(a.Body) == normalizeProblem(b.Body) {
+	hdrA, hdrB := oracleHeaders(a.Header), oracleHeaders(b.Header)
+	if a.Status == b.Status &&
+		normalizeProblem(a.Body) == normalizeProblem(b.Body) &&
+		hdrA == hdrB {
+
 		return ""
 	}
 	var s strings.Builder
@@ -182,6 +204,9 @@ func checkIdentical(pathA, pathB string, a, b APIResponse) string {
 		"distinguishes a denied read from a missing one\n")
 	fmt.Fprintf(&s, "  %s → %d %s\n", pathA, a.Status, truncate(strings.TrimSpace(a.Body), pairExcerpt))
 	fmt.Fprintf(&s, "  %s → %d %s", pathB, b.Status, truncate(strings.TrimSpace(b.Body), pairExcerpt))
+	if hdrA != hdrB {
+		fmt.Fprintf(&s, "\n  differing headers: %s vs %s", orNone(hdrA), orNone(hdrB))
+	}
 	return s.String()
 }
 
@@ -216,6 +241,28 @@ func normalizeProblem(body string) string {
 		return body
 	}
 	return string(out)
+}
+
+// oracleHeaders renders the response headers that can BY THEMSELVES disclose
+// existence, as a stable comparable string.
+//
+// Only a deliberate allowlist is compared, not every header: Date and
+// Content-Length vary for reasons that disclose nothing, so comparing
+// everything would fail always — the same trap the `instance` member sets.
+// ETag is the documented channel (a denied GET must not emit one, or a replayed
+// If-None-Match turns into a 304 that confirms the entity exists).
+func oracleHeaders(h map[string][]string) string {
+	if h == nil {
+		return ""
+	}
+	var parts []string
+	for _, name := range []string{"Etag", "Last-Modified"} {
+		if v, ok := h[name]; ok && len(v) > 0 {
+			parts = append(parts, name+"="+strings.Join(v, ","))
+		}
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, "; ")
 }
 
 func orNone(s string) string {

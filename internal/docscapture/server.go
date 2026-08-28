@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -38,6 +39,9 @@ type project struct {
 	svc      *appbuild.Services
 	server   *httptest.Server
 	assignee func(role string) principal.Principal
+	// byRole is the role→user index behind assignee, kept so a caller can
+	// distinguish an unknown role from a known one (see resolveRole).
+	byRole map[string]string
 	// seeded is how many seed ops have been applied to the store. The manual's
 	// seed grows as create()/link() islands run; each screenshot{} passes the
 	// FULL accumulated seed, so we apply only the new tail before capturing —
@@ -47,7 +51,18 @@ type project struct {
 
 // syncSeed applies any seed ops beyond those already applied to the running
 // store, so a screenshot{} of an entity created after standUp still renders.
+//
+// The watermark is POSITIONAL, which is only sound because docRuntime.seedOps is
+// append-only: each call must pass the same prefix it passed last time, with new
+// ops appended. If a caller ever rewrote or reordered the prefix, the already-
+// applied ops would be skipped silently and every later assertion would be about
+// a store that does not match the manual. Nothing in the type enforces this, so
+// it is stated here.
 func (p *project) syncSeed(ctx context.Context, seed []docs.SeedOp) error {
+	if p.seeded > len(seed) {
+		return fmt.Errorf("seed shrank from %d to %d ops: the seed must be append-only, "+
+			"or already-applied ops are silently skipped", p.seeded, len(seed))
+	}
 	if p.seeded >= len(seed) {
 		return nil
 	}
@@ -99,6 +114,7 @@ func standUp(ctx context.Context, projectDir string, seed []docs.SeedOp, needSPA
 	}
 
 	assignee := buildRoleAssignee(dir)
+	roles := roleIndex(dir)
 
 	app, err := dataentry.NewApp( //nolint:contextcheck // app construction is not request-scoped
 		svc.FS(), svc.Paths(), svc.Meta(), svc.Store(), svc.Versions(),
@@ -117,7 +133,7 @@ func standUp(ctx context.Context, projectDir string, seed []docs.SeedOp, needSPA
 		return assignee(r.Header.Get(roleHeader))
 	})
 
-	p := &project{dir: tmp, svc: svc, assignee: assignee, seeded: len(seed)}
+	p := &project{dir: tmp, svc: svc, assignee: assignee, byRole: roles, seeded: len(seed)}
 	p.server = httptest.NewServer(app.NewRouter())
 	return p, nil
 }
@@ -205,6 +221,23 @@ func copyDirIfExists(src, dst string) error {
 	return nil
 }
 
+// roleIndex returns the role→user index for the project's acl.yaml, so a caller
+// can validate a requested role name. Empty when there is no policy, in which
+// case no validation is possible and none is done.
+func roleIndex(projectDir string) map[string]string {
+	byRole := map[string]string{}
+	pol, err := acl.LoadPolicy(filepath.Join(projectDir, "acl.yaml"))
+	if err != nil {
+		return byRole
+	}
+	for user, role := range pol.Assignments {
+		if _, seen := byRole[role]; !seen {
+			byRole[role] = user
+		}
+	}
+	return byRole
+}
+
 // buildRoleAssignee returns a function mapping a requested role name to a
 // principal assigned that role in acl.yaml. acl.yaml Assignments are User→role;
 // we invert to role→a User holding it. When the requested role is empty or
@@ -242,14 +275,39 @@ func buildRoleAssignee(projectDir string) func(role string) principal.Principal 
 		defaultUser = "docs-capture"
 	}
 	return func(role string) principal.Principal {
-		user := defaultUser
-		if role != "" {
-			if u, ok := byRole[role]; ok {
-				user = u
-			}
-		}
-		return principal.Principal{User: user, Tool: principal.ToolDataEntry}
+		p, _ := resolveRole(byRole, defaultUser, role)
+		return p
 	}
+}
+
+// resolveRole maps a requested role to a principal and reports whether the role
+// was KNOWN. The bool is the whole point: an unknown role silently resolves to
+// defaultUser — a user chosen for having UPDATE grants — so `as="vewer"` runs as
+// the editor and an assertion passes for entirely the wrong reason. Callers that
+// know the role was explicitly named (api{}) refuse an unknown one; the empty
+// `as=` default stays a legitimate fallback.
+func resolveRole(byRole map[string]string, defaultUser, role string) (principal.Principal, bool) {
+	user := defaultUser
+	known := true
+	if role != "" {
+		u, ok := byRole[role]
+		if ok {
+			user = u
+		} else {
+			known = false
+		}
+	}
+	return principal.Principal{User: user, Tool: principal.ToolDataEntry}, known
+}
+
+// knownRoles lists the roles that have an assigned user, for a failure message.
+func knownRoles(byRole map[string]string) []string {
+	out := make([]string, 0, len(byRole))
+	for r := range byRole {
+		out = append(out, r)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // hasChrome reports whether a Chrome/Chromium binary is resolvable, so the

@@ -29,8 +29,9 @@ import (
 type APIClient struct {
 	projectDir string
 
-	mu   sync.Mutex
-	proj *project
+	mu     sync.Mutex
+	proj   *project
+	closed bool
 }
 
 // NewAPIClient returns a client serving the given project.
@@ -45,6 +46,13 @@ func NewAPIClient(projectDir string) *APIClient {
 func (c *APIClient) Do(ctx context.Context, req docs.APIRequest) (docs.APIResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	// Without this a request after Close silently stands up a WHOLE NEW temp
+	// project, so the caller gets an answer from a server it believes it tore
+	// down — and the fresh project leaks.
+	if c.closed {
+		return docs.APIResponse{}, errors.New("api{}: client is closed")
+	}
 
 	if c.proj == nil {
 		dir := req.ProjectDir
@@ -62,6 +70,19 @@ func (c *APIClient) Do(ctx context.Context, req docs.APIRequest) (docs.APIRespon
 		c.proj = p
 	} else if err := c.proj.syncSeed(ctx, req.Seed); err != nil {
 		return docs.APIResponse{}, fmt.Errorf("api{}: seeding: %w", err)
+	}
+
+	// An unknown role silently resolves to a user with UPDATE grants, so a
+	// typo'd `as=` would run as the editor and the assertion would pass for the
+	// wrong reason. Only validated when the project HAS assignments to check
+	// against.
+	if req.As != "" && len(c.proj.byRole) > 0 {
+		if _, ok := c.proj.byRole[req.As]; !ok {
+			return docs.APIResponse{}, fmt.Errorf(
+				"as=%q: no principal is assigned that role in acl.yaml, and an unknown role "+
+					"falls back to a privileged default — so this request would run as someone "+
+					"else. Known roles: %s", req.As, strings.Join(knownRoles(c.proj.byRole), ", "))
+		}
 	}
 
 	method := req.Method
@@ -97,13 +118,14 @@ func (c *APIClient) Do(ctx context.Context, req docs.APIRequest) (docs.APIRespon
 	if err != nil {
 		return docs.APIResponse{}, fmt.Errorf("api{path=%q}: reading body: %w", req.Path, err)
 	}
-	return docs.APIResponse{Status: resp.StatusCode, Body: string(raw)}, nil
+	return docs.APIResponse{Status: resp.StatusCode, Body: string(raw), Header: resp.Header}, nil
 }
 
 // Close tears down the temp project and server if one was stood up.
 func (c *APIClient) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.closed = true
 	if c.proj != nil {
 		c.proj.close()
 		c.proj = nil
