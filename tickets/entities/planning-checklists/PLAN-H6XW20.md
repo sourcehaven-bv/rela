@@ -215,7 +215,8 @@ replace the false SSE clause with the precondition strategy.
 **Files to modify:**
 
 - `internal/dataentry/api_v1.go` — extract the per-key fold; emit `_versions`
-- `internal/dataentry/entityserializer.go` — carry `_versions` on the wire entity
+- `internal/apiwire/v1/responses.go` — `_versions` field on the wire entity, beside `_fields` (`responses.go:32`)
+- `internal/dataentry/entityserializer.go` — populate `_versions` in `forWire`, AFTER `stripHiddenProperties` runs (`entityserializer.go:105-120`), which is what makes the post-redaction guarantee structural
 - `internal/dataentry/write_handler.go` — decode + check `preconditions`; 412 body
 - `frontend/src/types/entity.ts` — `_versions` on the entity type
 - `frontend/src/api/entities.ts`, `frontend/src/stores/entities.ts` — pass preconditions; version-bearing read bypasses the TTL
