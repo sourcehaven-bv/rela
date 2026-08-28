@@ -4,7 +4,7 @@
 
 The data entry application provides a web-based UI for creating, editing, and browsing entities
 stored in a rela project. It is configured entirely through a `data-entry.yaml` file placed
-alongside your `metamodel.yaml`.
+alongside your `schema.yaml`.
 
 ## Overview
 
@@ -25,13 +25,35 @@ A `data-entry.yaml` file defines:
 - **User Defaults** - Per-user default values for properties and relations, configurable via Settings page
 
 The file drives the entire UI without writing any code. The server reads `data-entry.yaml` and
-your `metamodel.yaml` together, validates them, and serves a fully functional CRUD application.
+your `schema.yaml` together, validates them, and serves a fully functional CRUD application.
+
+### Loading and saving feedback
+
+The UI is deliberately quiet about waiting. rela usually runs against a local
+or nearby server, so most requests finish in well under a tenth of a second —
+fast enough that a spinner would appear and vanish before you could read it.
+Rather than flash one, the UI shows **nothing at all** unless an operation is
+genuinely slow:
+
+- **Navigating** to another page shows a thin progress bar across the top of
+  the window, but only once the page has taken about a quarter-second.
+- **Saving, creating or searching** changes the button's own label — "Save"
+  becomes "Saving…" — but only after about half a second. The button is sized
+  in advance for both labels, so it never changes width or shifts the layout
+  under your cursor.
+- **Autosaving** a form shows a small status mark beside the section you are
+  editing, which settles into a checkmark once the change is stored.
+- **Background refreshes** — when someone else changes data you are looking at
+  — update the page silently, without blanking what is already on screen.
+
+If you see no indicator at all, the operation completed quickly. That is the
+intended behaviour.
 
 ## Quick Start
 
 ### 1. Create data-entry.yaml
 
-Place a `data-entry.yaml` in your project root (next to `metamodel.yaml`):
+Place a `data-entry.yaml` in your project root (next to `schema.yaml`):
 
 ```yaml
 version: "1.0"
@@ -232,21 +254,27 @@ styles:
     low: green
 ```
 
-The key is the custom type name (as defined in `metamodel.yaml` under `types:`). Each value maps
+The key is the custom type name (as defined in `schema.yaml` under `types:`). Each value maps
 to a color name. These colors are applied everywhere that enum value appears: list cells, badges,
 and form select options.
 
 **Available colors:** `red`, `orange`, `yellow`, `green`, `blue`, `purple`, `gray`.
+
+For customisation beyond palette and theme — arbitrary CSS, JavaScript and
+assets against rela's own UI, from a `custom/` directory in your project — see
+[Operator customisation hooks](customisation.md). That is an explicitly
+best-effort escape hatch; the palette/theme system remains the supported path
+for ordinary branding.
 
 ## Display names
 
 Every entity's display name — the human-readable string shown in
 lists, cards, side-panel breadcrumbs, related-entity links, and
 search results — comes from the entity type's *primary property*.
-Set it with `display_property` in `metamodel.yaml`:
+Set it with `display_property` in `schema.yaml`:
 
 ```yaml
-# metamodel.yaml
+# schema.yaml
 entities:
   applicatie:
     label: Applicatie
@@ -337,7 +365,72 @@ Each entry in `fields:` configures one property input:
 | `default`     | string            | Default value for new entities                                 |
 | `hidden`      | bool              | Include in form data but hide from UI                          |
 | `widget`      | string            | Input widget type (see below)                                  |
+| `span`        | int (1-12)        | Width on the layout grid; omit for full width (see below)      |
 | `transitions` | map[string]list   | Allowed state transitions for enum fields (edit forms only)    |
+
+> **Labels are authored, never derived.** When `label` is omitted the raw
+> property name is displayed — rela never converts `laatste_contact` into
+> `Laatste Contact`. Any such conversion would encode an English orthographic
+> convention (word splitting, capitalization) into a metamodel that is
+> deliberately language-neutral, and it is wrong for most languages. Write the
+> label you want, in your project's own language. The same rule applies to list
+> column headers, relation field labels, view-section fields, and Lua flow
+> fields. `rela migrate` will never remove a `label:` you have written.
+
+### Field Layout (`span`)
+
+Fields lay out on a **12-column grid**. A field with no `span` takes the full
+row, so a form or view section reads as one scannable column by default — you
+have to author nothing to get a sensible layout.
+
+Set `span` to put related fields side by side:
+
+```yaml
+fields:
+  - property: title # full width (no span)
+  - property: description
+    widget: textarea # full width
+  - property: priority
+    span: 4 # ┐
+  - property: reporter
+    span: 4 # ├ three across one row (4+4+4 = 12)
+  - property: assignee
+    span: 4 # ┘
+  - property: due_date
+    span: 6 # ┐ two across the next row
+  - property: estimated_hours
+    span: 6 # ┘
+```
+
+`span` works the same way on form fields and on view-section fields, so the
+model is worth learning once.
+
+**Adjacency is something you declare.** Two fields share a row because you said
+they belong together — not because the browser window happened to be wide
+enough. That is the point: a layout that regroups itself at different window
+sizes is not a layout you can reason about.
+
+Row behaviour, all deliberate:
+
+- **A row that doesn't add up to 12 leaves the remainder empty.** Two `span: 5`
+  fields occupy 10 columns and the last 2 stay blank; fields do not stretch to
+  close the gap.
+- **A field that doesn't fit wraps to the next row**, leaving the remainder of
+  the previous one empty. `span: 8` followed by `span: 6` gives you two rows.
+- **On narrow screens every field goes full width.** A `span: 4` date input on a
+  phone would be unusable, so the grid collapses to one column below 640px.
+- **Long-form values ignore `span`** on entity detail pages: a paragraph
+  squeezed into a third of the row is unreadable whatever the config says.
+
+A `span` outside 1-12 is a **config error at startup**, reported with the
+offending field's position — rela will not silently round it or ignore it:
+
+```text
+form "create_ticket": field[3]: span 13 is out of range (must be 1-12, or omitted for full width)
+```
+
+A `span` on a **relation** is also an error: relation widgets (card lists,
+searchable pickers) always take the full row, so a narrow one would break them.
 
 ### Widget Types
 
@@ -422,13 +515,11 @@ Each entry in `relations:` configures a relation picker:
 | Field          | Type   | Description                                                    |
 | -------------- | ------ | -------------------------------------------------------------- |
 | `relation`     | string | Relation type name from the metamodel                          |
-| `direction`    | string | `"outgoing"` or `"incoming"`                                   |
+| `direction`    | string | `"outgoing"` or `"incoming"` — inferred when omitted; required for self-referencing relations (see below) |
 | `target_type`  | string | Entity type of the related entity                              |
 | `label`        | string | Display label                                                  |
 | `required`     | bool   | At least one relation must be selected                         |
 | `widget`       | string | `"select"`, `"multi-select"`, `"cards"`, or `"search"` (auto-detected) |
-| `allow_create` | bool   | Show an inline "create new" button                             |
-| `create_form`  | string | Form name to use for inline creation                           |
 | `properties`   | list   | Editable properties on the relation (only with `cards` widget) |
 
 **Relation widget types:**
@@ -443,11 +534,66 @@ Each entry in `relations:` configures a relation picker:
 Widget is auto-detected based on metamodel: if the relation type has `properties` or `content: true` defined,
 the UI uses `cards`. Otherwise, cardinality determines `select` vs `multi-select`.
 
-**Inline creation:** When `allow_create: true` and `create_form` is set, a button appears next to
-the relation picker. Clicking it opens a modal with the referenced form, and the newly created
-entity is automatically linked.
+**Inline creation:** A `+ New <Type>` button appears in the relation widget when you need to link
+something that does not exist yet. Clicking it opens the target type's create form in a modal,
+and the new entity is selected for linking — all without leaving the form you are filling in, so
+your in-progress input is preserved.
+
+There is no configuration for this. The button appears for a target type when **both** hold:
+
+1. the current user has permission to `create` that entity type, and
+2. a form is registered for that type.
+
+That means you control it the same way you control everything else: by registering (or not
+registering) a form for the type, and through `acl.yaml`. This mirrors how the side panel's "Add"
+buttons already resolve their form.
+
+Because a create form is an ordinary form definition, **a deliberately small form gives a small
+inline modal** — if you want inline creation to ask for a title and nothing else, register a form
+with just that field. The form definition *is* the "which fields" mechanism.
+
+Two details worth knowing:
+
+- If a type has only an `mode: edit` form, that form is used (an edit form works for creation when
+  no entity id is supplied). Register a dedicated create form if you want different fields.
+- `visible_when` inside the nested form is evaluated against the **nested** entity's own values.
+  A condition cannot reference the parent form you opened it from.
+- Nesting stops at one level: a relation field *inside* the inline modal offers link-existing only.
+
+> **Changed:** `allow_create` and `create_form` on a form relation are no longer read — the rule
+> above replaced them. Leaving them in your YAML is harmless (they are ignored), but you can delete
+> them. If a `+ New` button disappeared after upgrading, the target type has no registered form.
 
 ### Reverse (incoming) Relations
+
+#### How `direction` is resolved
+
+`direction` may be omitted when the binding's entity type sits on exactly
+**one** side of the relation — there is only one sensible reading, so rela
+infers it:
+
+- entity type is the relation's `from` → `outgoing`
+- entity type is the relation's `to` → `incoming`
+
+It must be written explicitly when the entity type is on **both** sides — a
+self-referencing relation such as `depends-on` from `ticket` to `ticket`. There
+`outgoing` and `incoming` are both valid and mean opposite things, so rela
+refuses to guess and names the offending binding.
+
+The same rule applies to **every** surface that takes a `direction:`:
+
+| Surface | Anchored to |
+| --- | --- |
+| form relations (including wizard steps) | the form's `entity_type` |
+| list columns and `filter_controls` | the list's `entity_type` |
+| kanban `card.fields` and `filter_controls` | the kanban's `entity_type` |
+| `caldav.dynamic.<name>` | the collection's `entity_type` (the **member**, not `driver_type` — the edge runs member→driver) |
+
+> **Upgrading.** `direction` used to default to `outgoing` whenever it was
+> absent, which silently bound the wrong side of a `to`-side relation. Run
+> `rela migrate` to write explicit directions for the unambiguous bindings; it
+> deliberately leaves self-referencing ones alone, and `rela validate` lists
+> those for you to decide.
 
 Relation types are directional in the metamodel: `implements` goes from `task` to `feature`.
 Often you want to show the *inbound* side on the opposite entity's form — on the feature form,
@@ -600,9 +746,15 @@ step. An out-of-range or non-numeric `?step=` falls back to the first step.
 blocks progression while any are invalid. The final step's Submit re-validates
 every visible step.
 
-**Hidden branches are not saved.** If a step or field is hidden by a
+**Hidden branches are not saved on create.** If a step or field is hidden by a
 `visible_when` that is false at submit time, its values are dropped from the
-created/updated entity — a toggled-off branch never persists stale data.
+**created** entity — a branch the user revealed, filled, then abandoned never
+persists.
+
+**On edit, hiding does not delete.** A field that already had a stored value
+keeps it when its branch hides, and gets it back when the branch is revealed.
+Hiding is a presentation decision, not a delete. Use
+[`clear_when_hidden`](#clear_when_hidden) to opt a field into clearing.
 
 #### Condition expressions (`visible_when` / `required_when`)
 
@@ -641,6 +793,47 @@ Notes:
   a property that doesn't exist on the entity is reported at author time. (The
   check uses a slightly stricter grammar than the browser, so it may flag a few
   conditions the runtime would tolerate — treat every reported error as real.)
+
+#### `clear_when_hidden`
+
+Decides what happens to a field's **stored value** when its `visible_when` turns
+false while editing. Per-field; the default keeps the value.
+
+| Value | Behavior when the branch hides |
+| --- | --- |
+| `no` *(default)* | Keep the value. Hiding and revealing is lossless. |
+| `yes` | Clear the value. |
+| `confirm` | Ask first. On decline, the change that triggered the hide is abandoned too. |
+
+```yaml
+fields:
+  - property: inkooproute
+  - property: inschrijfdeadline
+    visible_when: "form.inkooproute == 'aanbesteding'"
+    # omit clear_when_hidden (or set `no`) to keep the date when the
+    # branch hides; `yes` clears it; `confirm` asks first
+```
+
+Notes:
+
+- Under the default, a hidden field's value is held client-side, so revealing
+  the branch again restores it with no server round-trip — and the value was
+  never deleted server-side, so it survives a reload too.
+- This is per-**field** only. When a whole step hides, each of its fields
+  honors its own setting.
+- Setting it without a `visible_when` is a config error — it could never apply.
+  A field on a conditional *step* is fine: the step can hide it.
+- `confirm` is **not** simply `yes` with a prompt. Declining also abandons the
+  edit that caused the hide, leaving the form exactly as it was — the dropdown
+  snaps back. Nothing is written to the server either way until the user
+  answers, so declining is a true no-op rather than an undo.
+- `confirm` only prompts when something is at stake: a hidden field that is
+  already empty is cleared without asking, so users are not trained to dismiss
+  a dialog that never matters. One dialog names every affected field, rather
+  than one dialog per field.
+- Approving a `confirm` sends the triggering change and the clear in a **single**
+  request, so the entity is never briefly left in a state the user did not
+  approve.
 
 ## Lists
 
@@ -699,6 +892,7 @@ lists:
 | `edit_form`       | string | Form name for the row edit action                           |
 | `page_size`       | int    | Rows per page (default: 25)                                 |
 | `actions`         | list   | Action IDs available as keyboard shortcuts on selected rows |
+| `export_render`   | string | Lua script under `scripts/` that renders this list for export instead of the built-in column table (see View Export & Transforms) |
 
 #### Header and footer info regions
 
@@ -742,7 +936,7 @@ entities — set exactly one of `property` or `relation`.
 | ----------- | ------ | --------------------------------------------------------------------------- |
 | `property`  | string | Property name to display                                                    |
 | `relation`  | string | Relation type whose targets are shown comma-separated                       |
-| `direction` | string | Relation columns only: `"outgoing"` (default) or `"incoming"` for reverse   |
+| `direction` | string | Relation columns only: `"outgoing"` or `"incoming"`; inferred when omitted   |
 | `label`     | string | Column header (defaults to property / relation name)                        |
 | `sortable`  | bool   | Column can be sorted by clicking the header                                 |
 | `link`      | bool   | Cell value links to the entity's detail page                                |
@@ -845,7 +1039,7 @@ filter_controls:
 | ----------- | ------ | -------------------------------------------------------------- |
 | `property`  | string | Property to filter on                                          |
 | `relation`  | string | Relation to filter on (mutually exclusive with `property`)     |
-| `direction` | string | For `relation`: `"outgoing"` (default) or `"incoming"`         |
+| `direction` | string | For `relation`: `"outgoing"` or `"incoming"`; inferred when omitted |
 | `widget`    | string | For `property`: `"select"`, `"multi-select"`, or `"search"`    |
 | `label`     | string | Optional display label override                                |
 
@@ -1112,11 +1306,107 @@ sections:
 | `heading`       | string | Section heading (optional; omit for no heading)         |
 | `source`        | string | `"entry"` or a traverse collection name                 |
 | `display`       | string | Display mode (see below)                                |
+| `render`        | string | `display` (default) or `input` — see Field Render Modes |
 | `fields`        | list   | Properties to show (`properties`, `content`, `cards`, `list` modes) |
 | `columns`       | list   | Column definitions (`table` mode)                       |
 | `group_by`      | string | Property to group entities by                           |
 | `empty_message` | string | Text shown when the collection is empty                 |
 | `link`          | bool   | Link entity titles to their detail pages                |
+
+Each entry under `fields:` takes:
+
+| Field      | Type   | Description                                                  |
+| ---------- | ------ | ------------------------------------------------------------ |
+| `property` | string | Property name                                                |
+| `label`    | string | Display label (defaults to the raw property name)            |
+| `span`     | int    | Width on the 12-column grid (1-12; omit for full width)      |
+| `render`   | string | `display` or `input`; overrides the section's `render`        |
+| `widget`   | string | Which widget renders this property (see Widget Overrides)    |
+
+### Field Render Modes
+
+A view section field renders as a **view-oriented display value** by default.
+Set `render: input` to opt a field into inline editing:
+
+```yaml
+sections:
+  - heading: "Properties"
+    source: entry
+    display: properties
+    render: input          # section-wide default for its fields
+    fields:
+      - property: status   # inherits `input`
+      - property: id
+        render: display    # ...but this one overrides back to display
+```
+
+| Value     | Effect                                                            |
+| --------- | ----------------------------------------------------------------- |
+| `display` | (default) A read-oriented value. Not a disabled input — no control |
+| `input`   | An editable widget that saves on change (auto-save)                |
+
+Resolution is field-first: a field's own `render:` wins, else the section's,
+else `display`. It is resolved server-side, so the value the SPA receives is
+already effective.
+
+> **Breaking change.** Before this, inline editing was implied by write
+> permission. Sections that want it must now say so with `render: input`.
+
+`render: input` **cannot grant editability.** Effective editability is
+`render: input` AND the ACL permitting the write, so `input` on a field the
+caller may not edit still renders as display. Config can only narrow.
+
+A field belonging to a state machine renders its transition control instead of
+an ordinary widget when `render: input`; on `render: display` it renders the
+plain value.
+
+### Widget Overrides
+
+By default the widget is chosen from the property's declared type — `boolean`
+gets a checkbox, `date` a date picker, an enum a dropdown. Set `widget:` to
+choose a different registered widget:
+
+```yaml
+fields:
+  - property: done
+    widget: checkbox     # the payoff case: click to tick, with render: input
+  - property: notes
+    widget: textarea     # a long string, not a single-line input
+```
+
+| Widget         | Accepts                       |
+| -------------- | ----------------------------- |
+| `text`         | string                        |
+| `textarea`     | string                        |
+| `number`       | integer                       |
+| `checkbox`     | boolean                       |
+| `date`         | date                          |
+| `datetime`     | datetime                      |
+| `select`       | enum, string, custom types    |
+| `multi-select` | enum, string (list values)    |
+| `rrule`        | rrule                         |
+| `file`         | file                          |
+
+Rules worth knowing:
+
+- **Field-level only.** There is no section-wide `widget:`, unlike `render:`.
+  A widget is inherently per-property: a section-level one would be a config
+  error on every field whose type didn't match, which the author would then
+  have to override back field by field.
+- **Omitting it changes nothing** — the type default applies exactly as before.
+- **A mismatch is a config-load error.** `widget: checkbox` on a `date`
+  property fails at startup, naming the property, its type, and what the widget
+  does accept.
+- **`widget: file` only works on `display: properties`.** Card and list rows
+  are not given attachment data, so a file widget there would have nothing to
+  show.
+- **It pairs with `render:`.** A checkbox you cannot click is just an icon, so
+  the interactive case needs `render: input` too.
+- **On a property the schema doesn't declare, the override is ignored** and a
+  warning is logged at startup. Such a field has no type to validate against.
+- **On a state-machine field with `render: input`**, the transition control
+  takes precedence and the widget is inert; with `render: display` the widget
+  is used.
 
 ### Display Modes
 
@@ -1236,6 +1526,50 @@ dashboard:
 | `columns` | list   | Column definitions (`table` mode only, same format as list columns) |
 | `sort`    | object | Sort order (`table` mode only)                                     |
 | `limit`   | int    | Maximum rows to display (`table` mode only)                        |
+| `permission` | string | Hide this card from principals who do not hold the named ACL permission |
+
+### Hiding cards a user cannot use (`permission`)
+
+A card carrying a `permission:` is omitted from the dashboard for principals
+who do not hold it:
+
+```yaml
+dashboard:
+  cards:
+    - title: "Open Tickets"        # everyone sees this
+      query: "type:ticket status:open"
+      display: count
+
+    - title: "Audit Log"           # only holders of admin:read
+      query: "type:audit-entry"
+      display: table
+      permission: admin:read
+      columns:
+        - property: title
+```
+
+**This is a UX filter, not an access control.** Card data already flows through
+the ACL-scoped search path, so a principal who cannot read the matching
+entities already sees a card reading `0` or an empty table — `permission:`
+just stops rendering that useless tile. Hiding a card grants and revokes
+nothing: its query typed into the search page returns exactly the rows it
+always did. Nor does it conceal configuration — `/api/v1/_config` still serves
+the whole `dashboard:` block, `permission:` values included, to every
+principal. Only `/api/v1/_dashboard` is filtered.
+
+With no `acl.yaml`, and under `--read-only`, gated cards are **shown**: neither
+configures a permission model, so there is nothing to check. (`--read-only`
+restricts writes only; hiding read surfaces there would hide them from
+everyone, since the flag carries no identity.)
+
+When every card is filtered out, the dashboard renders an empty state — the
+same one shown when no cards are configured at all.
+
+> **Gotcha: permission names are not validated.** A typo like `admin:raed`
+> yields a card **nobody can see**, with no error and no warning at startup.
+> If a card has vanished, check it against the `permissions:` list on your
+> roles in `acl.yaml` first. This applies equally to `permission:` on
+> commands, documents, and navigation entries.
 
 ### Display Modes
 
@@ -1276,6 +1610,345 @@ Multiple terms are combined with AND logic. For example,
 Every card includes a link icon that opens the same query on the search page for further
 exploration.
 
+## Next actions
+
+An optional advisory layer: operator-declared rules that derive **one**
+suggested follow-up from graph state and surface it in the UI.
+
+It is deliberately **not** a task queue:
+
+- **Advisory.** A hint, not a demand — things a user *could* do, not *should*.
+  That is what separates it from `analyze`, which has an opinion about
+  correctness.
+- **One at a time.** Never a list. The aim is a companion that does not
+  overload, and there is no "show me all 12" surface to grow into.
+- **Good, not optimal.** Surfacing one of several good next actions is the
+  goal; avoiding a bad one is the bar.
+
+### Bands
+
+Bands are your priority vocabulary. Declare them in order — **list order is
+priority order**, highest first — and every source names one:
+
+```yaml
+next_action_bands:
+  - id: blocking
+    label: "Someone is waiting"
+    prominence: banner
+  - id: stalled
+    prominence: notice
+  - id: ambient
+    label: "Nothing owed"
+    prominence: statusbar
+```
+
+Bands rather than numeric priorities because per-source numbers do not
+compose: one source returning 90 and another returning 7 on a different scale
+is arbitrary ordering wearing the costume of ranking. With bands, "why is this
+on top?" always has a one-sentence answer.
+
+The engine evaluates bands in order and **stops at the first one with
+something to say**, so a typical page runs one or two queries rather than all
+of them.
+
+#### Prominence
+
+How much a band interrupts. The levels differ in what the user must do to
+clear it, not in decoration:
+
+| Value | Behaviour | Use for |
+|-------|-----------|---------|
+| `banner` | A bordered, accented block at the top of the page. Must be dealt with. | Onboarding; work someone else is blocked on |
+| `notice` | One quiet line in the same position. Easy to read past. | Worth saying once a visit, no urgency |
+| `statusbar` | A chip in the status bar; click to expand. You must go looking. | Ongoing minor stuff — true most of the time, urgent none of it |
+
+`statusbar` is the **default**: a band that has not declared a prominence has
+not earned the top of the page.
+
+### Sources
+
+A source is one rule. Sources are independent — none knows the others exist —
+so adding a rule is adding a source, and a bad source can be deleted without
+perturbing the rest.
+
+```yaml
+next_actions:
+  # Fires only on an empty graph: the first-run case, which no
+  # entity-shaped source can express.
+  first-run:
+    band: blocking
+    count: "client == 0"
+    suggest: "Nothing here yet. Add your first client?"
+    actions:
+      - navigate: "/form/client"
+        label: "Add a client"
+
+  # The common shape: a query plus a message.
+  stale-proposal:
+    band: stalled
+    query: "type:proposal prop:status=sent"
+    suggest: "{title} has been out since {sent_on}. Chase it?"
+    cooldown: 3d
+    key_props: [status]
+    actions:
+      - snooze: ["1d", "7d"]
+      - dismiss: true
+```
+
+| Field | Meaning |
+|-------|---------|
+| `band` | **Required.** Names a declared band. |
+| `query` | Candidate entities, in the search syntax (`type:`, `prop:`, …). |
+| `condition` | Refines `query`'s candidates with a predicate expression — the only place date arithmetic works. See below. |
+| `context` | Instead of `query`: scopes the source to the entity being viewed. |
+| `count` | Instead of `query`: fires on `"<entity_type> == 0"` — the first-run case. |
+| `suggest` | **Required.** The message. `{property}` interpolates from the candidate; `{id}` is the entity id. |
+| `actions` | The affordances offered. See below. |
+| `cooldown` | How long after being *shown* to stay quiet. Defaults to 24h. |
+| `key_props` | Properties that make a re-triggered condition count as **new** — see below. |
+| `defer_scope` | What "not now" covers: `entity` (default) or `source` — see below. |
+
+Exactly one of `query`, `context` or `count` must be set.
+
+#### `condition` — dwell time and other typed comparisons
+
+`query` selects; `condition` refines. The split exists because they are
+different languages: `query` is the search syntax, pushed toward the store,
+and `condition` is a predicate expression evaluated per candidate with the
+same host functions automations use.
+
+```yaml
+next_actions:
+  chase-proposal:
+    band: blocking
+    query: "type:proposal prop:status=sent"
+    condition: "days_between(entity.sent_on, today()) >= 11"
+    suggest: "{title} has been out {days} days with no reply. Chase it?"
+```
+
+That is the shape `query` alone cannot express: "how long has this been
+sitting?" needs date arithmetic, which needs the property's declared type from
+the metamodel, which the search syntax does not consult.
+
+**Do not put an expression in `query`.** The two syntaxes overlap without
+erroring, so `query: "days_between(entity.due, today()) <= 7"` is not rejected
+— it is read as a filter on a property *named*
+`days_between(entity.due, today())`, matches nothing, and the source goes
+quiet with no diagnostic. That is why they are separate keys rather than one
+key that guesses.
+
+Rules worth knowing:
+
+- **`query` must name at least one entity type** when a condition is present
+  (`type:task …`). A condition references `entity.<property>`, and without a
+  type there is nothing to check it against.
+- **The condition must be valid on *every* type the query names.** A query
+  spanning `task` and `note` yields candidates of either, and the engine
+  cannot know which until it holds one — so a condition valid on only one of
+  them is refused at load rather than silently dropping the other's
+  candidates.
+- **A typo fails at startup**, not at render:
+  `condition does not compile against entity type "task": unknown attribute
+  "dew" on record`. A condition that silently matched nothing would be
+  indistinguishable from a source with nothing to say.
+- **Not available on a `count` source** — there is no entity to test.
+
+The available functions are the ones automations use: `days_between`,
+`date_add`, `rrule_next`, `today`, plus `match`, `regex`, `contains` and
+`len`. See [metamodel.md](metamodel.md) for their signatures.
+
+#### `key_props` and re-triggering
+
+A suggestion is identified by `(source, entity, key_props values)`. Without
+`key_props`, a proposal going `draft → sent → draft` keeps the same identity,
+so a snooze from the first draft still suppresses the second one.
+
+Listing `key_props: [status]` makes the identity change with the status, so a
+genuinely new stall surfaces even though an old snooze exists.
+
+#### `defer_scope` — what "not now" covers
+
+When a user snoozes or dismisses a suggestion, what were they declining?
+
+- **`entity`** (the default) — *this item*. An ISMS task needing attention:
+  they still want the other tasks, just not this one.
+- **`source`** — *the interruption*. A daily quip, one entity per quip: which
+  quip was on offer is incidental, and handing them another immediately is
+  precisely what they said no to. Same for a "complete your profile" nudge —
+  prompting about a different field a moment later is the same nag.
+
+All three are entity-shaped sources with interpolated messages, so neither the
+message template nor the query shape separates them. Only you know which a
+source is, which is why it is declared rather than inferred.
+
+A source with a `pick_one` affordance defaults to `source` scope: its
+suggestion is about the set ("one of these is small"), so keying the deferral
+to whichever option happened to be picked would hand back the same suggestion
+with a different entity. Override it explicitly if you want per-candidate
+deferral anyway.
+
+#### `count` and the read gate
+
+A `count` source is evaluated **through the caller's read gate** by default:
+it asks "do *I* have any clients?", not "does anyone?". A principal who can
+read no clients therefore sees the first-run hint.
+
+`count_ungated: true` asks the whole-graph question instead. Use it only for a
+genuinely operator-level check ("has this deployment been set up at all?") —
+it discloses that entities of a type exist to someone permitted to read none
+of them.
+
+### Actions
+
+The affordances offered alongside a suggestion. Each entry sets exactly one:
+
+```yaml
+    actions:
+      - navigate: "/entity/task/{id}"   # hand off to a destination
+        label: "Open it"
+      - action: mark-task-done          # run a configured action
+      - set: { status: done }           # inline property mutation
+        confirm: true
+      - snooze: ["1d", "7d"]            # defer, offering these durations
+      - dismiss: true                   # "not this one"
+      - acknowledge: true               # "seen it" — for content sources
+```
+
+`snooze` and `dismiss` are not decoration. Without a way to say "not now", the
+only way to clear a suggestion is to comply with it — which makes it a demand
+rather than a hint. They are also the best signal available: a source
+dismissed every time is a source to delete.
+
+**Muting is always available**, whether or not you configure it. The UI offers
+"stop suggesting this" on every suggestion, per source and per user, and it is
+reversible.
+
+### What is stored, and where
+
+Snoozes, mutes and last-shown timestamps are **per user** and live in
+`.rela/next-action-state.json` — never in the graph. A snooze is not a fact
+about an entity; it is a fact about one person's relationship to a suggestion
+at a moment, and storing it as an entity would make it visible to everyone and
+audited forever.
+
+The state is disposable: losing it costs a user a repeated suggestion, not
+data.
+
+> **Note.** With no identity source configured, every request shares one
+> bucket of this state — fine for a single-user deployment, surprising for a
+> shared one. Wiring any identity (JWT, header) separates it.
+
+### A worked example
+
+A small consultancy. Four sources, each a different shape, ordered so the
+loudest is the one someone else is blocked on:
+
+```yaml
+next_action_bands:
+  - id: blocking
+    label: Someone is waiting
+    prominence: banner
+  - id: stalled
+    label: In your court
+    prominence: notice
+  - id: tidying
+    label: Spare time
+    prominence: statusbar
+  - id: ambient
+    label: Nothing owed
+    prominence: statusbar
+
+next_actions:
+  # The ball is in THEIR court. Interpolates the client so the message
+  # says who you would be chasing.
+  chase-proposal:
+    band: blocking
+    query: "type:proposal prop:status=sent"
+    suggest: "The {title} proposal is out with {client}. Chase it?"
+    cooldown: 3d
+    key_props: [status]
+    actions:
+      - navigate: "/entity/{id}"
+        label: "Open it"
+      - snooze: ["1d", "7d"]
+      - dismiss: true
+
+  # Same shape, opposite ownership: this one is waiting on you. Quieter,
+  # because nobody else is blocked.
+  send-draft:
+    band: stalled
+    query: "type:proposal prop:status=draft"
+    suggest: "{title} has been in draft a while. Send it?"
+    cooldown: 3d
+    key_props: [status]
+    actions:
+      - action: mark-sent
+      - snooze: ["1d"]
+      - dismiss: true
+
+  # Nothing is wrong — there is simply an opportunity. The options come
+  # from a query at render time, so they are whatever is small right now.
+  spare-time:
+    band: tidying
+    query: "type:task prop:status=todo prop:effort=xs"
+    suggest: "Got a spare moment? One of these is small."
+    cooldown: 12h
+    actions:
+      - pick_one:
+          query: "type:task prop:status=todo prop:effort=xs"
+          limit: 3
+          action: start-task
+      - snooze: ["1d"]
+
+  # The counterweight. A configuration made only of chores is a nag however
+  # well-tuned, so the quietest band holds something that is not work.
+  daily-quip:
+    band: ambient
+    query: "type:quip"
+    suggest: "{text}"
+    actions:
+      - acknowledge: true
+```
+
+What this produces, as each suggestion is deferred:
+
+1. **banner** — "The Meridian retainer proposal is out with Meridian. Chase it?"
+2. **notice** — "Kessler SOW has been in draft a while. Send it?"
+3. **status bar** — "Got a spare moment?", offering three small tasks
+4. **status bar** — the quip
+5. nothing at all
+
+Two things worth noticing:
+
+`chase-proposal` and `send-draft` are almost identical rules. They differ in
+**band**, because who is blocked is the thing that matters — and that is a
+judgement only you can make, which is why bands are operator-declared.
+
+`spare-time` needs no `defer_scope`: a `pick_one` source defaults to `source`
+scope, so declining it means "not now" for the whole idea, not just for
+whichever task happened to be offered.
+
+### Customising the look
+
+The next-action UI emits the operator hooks documented in
+[customisation.md](customisation.md): a `<rela-slot name="companion">` you can
+define in `custom.js`, and `rela-na*` classes plus `data-band` /
+`data-prominence` / `data-source` attributes for `custom.css`.
+
+```js
+// custom.js — a character per band
+const FACES = { blocking: '🐉', stalled: '🦊', ambient: '🌙' }
+customElements.define('rela-slot', class extends HTMLElement {
+  static observedAttributes = ['name', 'data-band']
+  connectedCallback() { this.render() }
+  attributeChangedCallback() { this.render() }
+  render() {
+    if (this.getAttribute('name') !== 'companion') return
+    this.textContent = FACES[this.getAttribute('data-band')] || '✨'
+  }
+})
+```
+
 ## Kanbans
 
 Kanbans provide a visual board view where entities are displayed as cards grouped into columns
@@ -1305,15 +1978,74 @@ kanbans:
 | ------------------ | ------ | ---------------------------------------------------------- |
 | `entity_type`      | string | Entity type to display on the board                        |
 | `title`            | string | Board heading                                              |
+| `header`           | string | Markdown rendered above the board (info/help; see below)   |
+| `footer`           | string | Markdown rendered below the board                          |
 | `column_property`  | string | Property to group by for columns (must be enum/custom type)|
-| `columns`          | list   | Explicit column definitions (optional)                     |
+| `columns`          | list   | Explicit column definitions (`value`, `label`, `icon`)     |
 | `swimlane_property`| string | Property to group by for swimlanes (optional)              |
-| `swimlanes`        | list   | Explicit swimlane definitions (optional)                   |
+| `swimlanes`        | list   | Explicit swimlane definitions (`value`, `label`, `icon`)   |
 | `card`             | object | Card display configuration                                 |
 | `edit_form`        | string | Form name for editing cards (click to open)                |
 | `create_form`      | string | Form name for the "New" button                             |
 | `filters`          | list   | Static filters (same as lists)                             |
 | `filter_controls`  | list   | Interactive filter controls (same as lists)                |
+
+#### Column and swimlane icons
+
+Columns and swimlanes take an optional `icon:` — a **name**, not a glyph:
+
+```yaml
+columns:
+  - value: open
+    label: "To Do"
+    icon: inbox
+  - value: in-progress
+    label: "In Progress"
+    icon: progress
+  - value: resolved
+    label: "Done"
+    icon: done
+```
+
+Icons are SVG and inherit the current text colour, so they follow the light /
+dark theme and any styling applied to the header.
+
+An unknown name is a config error at startup **that lists every valid name**, so
+the error message is the authoritative reference — deliberately not repeated
+here, where a copy would silently go stale as icons are added.
+
+You can still put an emoji directly in `label:` — it renders verbatim, and
+rela will never strip or reinterpret it. But an emoji cannot take the theme's
+colour and renders differently on every operating system, so `icon:` is
+preferred where one of the names above fits.
+
+#### Header and footer info regions
+
+Boards support the same admin-authored info regions as lists — see
+[Header and footer info regions](#header-and-footer-info-regions) under Lists
+for the full description. `header` and `footer` accept Markdown, render as
+sanitized HTML above and below the board, and are authored in
+`data-entry.yaml` only.
+
+```yaml
+kanbans:
+  ticket_board:
+    entity_type: ticket
+    title: "Ticket Board"
+    header: |
+      Cards move **left to right**. Drag a card to change its status — see the
+      [workflow guide](/entity/guide-ticket-workflow).
+    footer: |
+      _Reopening a done ticket? Talk to the maintainers first._
+    column_property: status
+```
+
+The regions sit outside the board's horizontal scroll area, so they stay
+visible when a wide board scrolls sideways.
+
+Unlike lists, a kanban has **no `description` fallback** for `header`: that
+alias exists on lists only because `description` predated the info regions and
+was already present in configs. Set `header` directly.
 
 ### Columns
 
@@ -1337,7 +2069,7 @@ kanbans:
 | Field   | Type   | Description                                    |
 | ------- | ------ | ---------------------------------------------- |
 | `value` | string | Enum value that maps to this column            |
-| `label` | string | Display label (defaults to title-cased value)  |
+| `label` | string | Display label (defaults to the raw enum value)  |
 
 Entities with column property values not in the explicit list are hidden from the board.
 
@@ -1361,7 +2093,7 @@ kanbans:
 | Field   | Type   | Description                                      |
 | ------- | ------ | ------------------------------------------------ |
 | `value` | string | Enum value that maps to this swimlane            |
-| `label` | string | Display label (defaults to title-cased value)    |
+| `label` | string | Display label (defaults to the raw enum value)    |
 
 Without explicit swimlanes, values are inferred from the metamodel. Entities whose swimlane
 property value is not in the list are hidden.
@@ -1462,7 +2194,7 @@ kanbans:
 ## Navigation
 
 The navigation section defines the sidebar menu. Each entry is either a direct item (linking to a
-list, dashboard, or graph) or a **group** containing multiple items:
+list, kanban, dashboard, search or settings page) or a **group** containing multiple items:
 
 ```yaml
 navigation:
@@ -1479,8 +2211,8 @@ navigation:
     items:
       - label: "Categories"
         list: categories
-  - label: "Graph Explorer"
-    graph: true
+  - label: "Search"
+    search: true
 ```
 
 ### Direct Items
@@ -1492,19 +2224,55 @@ navigation:
 | `kanban`    | string | Kanban board name to navigate to                               |
 | `dashboard` | bool   | Link to the dashboard page                                     |
 | `graph`     | bool   | Link to the graph explorer                                     |
+| `document`  | string | Standalone document to open (see [Standalone documents](#standalone-documents)) |
+| `search`    | bool   | Link to the search page                                        |
+| `settings`  | bool   | Link to the settings page                                      |
 | `action`    | string | Action ID to trigger when clicked (renders as a sidebar button)|
+| `icon`      | string | Icon name; overrides the icon derived from the entry type (see below) |
+| `permission`| string | Hide this entry from users who lack the named ACL permission (see below) |
+
+#### Item icons
+
+Each entry gets an icon from its *type* — every `list:` entry the same list
+glyph, every `kanban:` the same board glyph. In a sidebar with several lists
+that means several identical rows, distinguishable only by their labels.
+
+`icon:` overrides it:
+
+```yaml
+navigation:
+  - group: "Tickets"
+    items:
+      - label: "My Tickets"
+        list: my_tickets
+        icon: inbox
+      - label: "Open Tickets"
+        list: open_tickets
+        icon: status
+      - label: "All Tickets"
+        list: all_tickets # no icon: keeps the derived list glyph
+```
+
+Valid names are the same set kanban columns use. An unknown name is a config
+error at startup listing them all.
+
+An `action:` entry derives no icon of its own, so `icon:` is the only way to
+give one a symbol. A **group** cannot take an icon — it renders as a plain
+section title with nowhere to put one — and naming one there is an error
+rather than silently ignored.
 
 ### Groups
 
 | Field       | Type   | Description                                              |
 | ----------- | ------ | -------------------------------------------------------- |
 | `group`     | string | Group header text (displayed as uppercase label)         |
-| `collapsed` | bool   | Default collapsed state (optional, default: `false`)     |
+| `collapsed` | bool   | Default collapsed state (accepted and sent on the wire; the current SPA renders groups always expanded) |
 | `items`     | list   | List of direct navigation items within the group         |
 
-Groups appear as collapsible sections in the sidebar. Clicking the group header toggles
-expand/collapse. The collapsed state is persisted server-side in `.rela/ui-state.json`, so it
-survives page reloads. If the active page is inside a collapsed group, the group auto-expands.
+Groups appear as titled sections in the sidebar. The `collapsed` flag is kept in the config
+schema and the sidebar API response for compatibility, but the current SPA does not render a
+collapse toggle — groups are always expanded. (The old server-rendered UI persisted collapse
+state in `.rela/ui-state.json`; that mechanism has been removed.)
 
 Nested groups are not supported. If an item inside `items` has a `group` field, config validation
 will reject it with a clear error message.
@@ -1512,8 +2280,53 @@ will reject it with a clear error message.
 The first navigable entry is the default landing page — the first direct item, or the first item
 inside the first group. Order matters; items appear in the sidebar in the order listed.
 
-List entries show an entity count badge next to the label (based on the list's filters). Dashboard
-and graph entries do not show a count.
+### Hiding entries a user cannot act on (`permission:`)
+
+An entry with a `permission:` is omitted from the sidebar for principals who do
+not hold that permission — a global named permission granted through a role's
+`permissions:` list in `acl.yaml`, the same mechanism behind `history:read` and
+the `delegate-*` family:
+
+```yaml
+navigation:
+  - label: "Tickets"
+    list: all_tickets
+  - label: "Audit log"
+    list: audit_log
+    permission: admin:read      # only holders see this entry
+  - group: "Admin"
+    items:
+      - label: "Settings"
+        settings: true
+        permission: admin:settings
+```
+
+A group whose every item is hidden disappears with them, so you never get a
+heading with nothing under it. `permission:` is not valid **on** a group —
+gate the items instead.
+
+Behaviour without a policy: with no `acl.yaml`, every entry is shown — nothing
+is denied when nothing is configured. The same applies under `--read-only`,
+which restricts *writes* and leaves reads untouched, so there is no permission
+model to consult and no reason to hide read surfaces from an observe-only
+operator.
+
+**This is a convenience, not a security control.** It keeps menu entries a user
+cannot act on out of their way; it does not protect anything. The target of a
+hidden entry behaves exactly as it always did — type its URL and you reach it,
+and a list still returns its ACL-scoped rows, which for someone permitted to
+read none of them is simply an empty list. Nor is anything concealed:
+`/api/v1/_config` serves the whole navigation tree to every principal.
+
+So do not use `permission:` here *instead of* real access control. What
+protects your data is the read ACL on the entities themselves; this only
+decides what appears in a menu.
+
+One caveat worth knowing: the permission name is **not** checked against
+`acl.yaml` at config load (the same is true of `commands:` and `documents:`).
+A typo like `admin:raed` produces an entry nobody can see, with no error. If a
+menu item has vanished, check the spelling against the `permissions:` list on
+your roles first.
 
 Direct items and groups can be freely mixed in any order.
 
@@ -1662,6 +2475,281 @@ The following keys are reserved for built-in list navigation and cannot be used 
 - `script` paths must end in `.lua` and be local paths (no `..` or absolute paths)
 - Keys must be unique within a list (no two actions on the same list can share a key)
 
+## Calendars
+
+A calendar lays date-bearing entities out in a **month** or **week** grid, with
+drag-to-reschedule writing a new date back to the entity.
+
+```yaml
+calendars:
+  schedule:
+    title: "Schedule"
+    default_view: month          # month | week (default: month)
+    week_start: monday           # monday | sunday (default: monday)
+    sources:
+      - entity_type: task
+        where: ["status != done"]
+        date: due_date
+        summary: title
+        color: blue
+    event:                       # extra detail on each chip
+      fields:
+        - property: assignee
+        - property: priority
+        - relation: belongs-to
+          label: "Project"
+    edit_form: edit_task
+    create_form: create_task
+```
+
+Without an `event:` block a chip shows the event's title alone. Adding fields
+is usually worth it — a calendar of bare titles rarely answers the question the
+reader opened it with.
+
+Reach it from the sidebar with a `calendar:` navigation entry:
+
+```yaml
+navigation:
+  - label: "Schedule"
+    calendar: schedule
+```
+
+### Calendar fields
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `title` | string | Heading above the grid (default: the config key) |
+| `header` | string | Markdown rendered above the grid |
+| `footer` | string | Markdown rendered below the grid |
+| `default_view` | string | `month` or `week` — the period shown on first load |
+| `week_start` | string | `monday` or `sunday` |
+| `sources` | list | Entity-to-event projections; at least one required |
+| `event` | object | Extra fields shown on an event chip |
+| `day_start` / `day_end` | string | `HH:MM` bounds of the week-view hour axis (defaults `08:00` / `20:00`) |
+| `max_events_per_day` | int | Chips per month-view day cell before `+N more` (default 3) |
+| `edit_form` | string | Form offered when editing from an event's preview |
+| `create_form` | string | Form opened by the "New" button |
+| `filter_controls` | list | Interactive filters, as on lists and kanbans |
+
+### Source fields
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `entity_type` | yes | The entity type to project |
+| `label` | no | Name shown in the source legend (default: the entity type) |
+| `where` | no | Filter clauses, all ANDed. No OR — use a second source |
+| `date` | yes | A `date`- or `datetime`-typed property placing the event. A `date` yields an all-day event, a `datetime` a timed one. Entities without a value are skipped |
+| `end_date` | no | Property ending a multi-day event. Must be the **same kind** as `date` |
+| `summary` | no | Property used as the event title (default: the type's display property) |
+| `description` | no | Property shown in the event detail |
+| `color` | no | Palette token: `blue`, `green`, `amber`, `red`, `violet`, `slate` |
+| `max_span` | no | Days to look back for events starting before the visible period (default 31). Only meaningful with `end_date` |
+
+Several sources merge into one grid, so a calendar can mix `task` and `meeting`
+entities, each mapped its own way. Multiple sources are also how you express
+**OR**, since a single source's `where` clauses are ANDed.
+
+### Event chips
+
+By default a chip shows the event's title. `event.fields` adds more beneath it,
+using the same shape as kanban card fields — a property, or a relation whose
+target titles are shown:
+
+```yaml
+    event:
+      fields:
+        - property: status
+        - property: assignee
+        - relation: blocked-by
+        - relation: owned-by
+          direction: incoming
+          label: "Owner"
+```
+
+Each field renders on its own line as `label: value`. The label comes from,
+in order: the field's own `label:`, the **relation type's label** from
+`schema.yaml` for a relation field, then the raw name. So
+`- relation: belongs-to` renders "belongs to: Apollo" when the relation
+declares `label: belongs to`.
+
+Properties have no authored label in the metamodel, so `- property: assignee`
+renders "assignee: Alex". The UI does not title-case identifiers — labels are
+authored, never derived — so write `label: "Assignee"` if you want one.
+
+`show_label: false` drops the label for a value that already names itself:
+
+```yaml
+    event:
+      fields:
+        - property: priority
+          show_label: false     # the badge already reads "High"
+        - property: assignee
+          label: "Owner"        # two person fields need naming
+        - property: reviewer
+          label: "Reviewer"
+```
+
+Values render through the same widgets as list cells and kanban cards, so dates
+read human-readably and enums render as badges. A field with no value is
+omitted rather than showing an empty label.
+
+**Kanban cards take the same `fields:` config** — including `show_label` and
+derived labels — and render through the same component, so the two surfaces
+cannot drift.
+
+### Ordering within a day
+
+Events in a day cell are ordered:
+
+1. **All-day events first**, before any timed one.
+2. **Then by start time**, earliest first.
+3. **Then by entity id**, so two events at the same time keep a stable order
+   rather than reshuffling between refreshes.
+
+```text
+  Update changelog        ← all-day
+  Ship the release        ← all-day
+  09:15  Early standup
+  13:00  Design review    ← same time, ordered by id
+  13:00  Lunch & learn
+  18:30  Retro
+```
+
+Times are the event's start in your **display timezone** (Settings), which is
+also the timezone that decides which day it falls on — so a chip's position
+never disagrees with the time printed on it.
+
+A multi-day event sorts by where it *started*, so on its later days it appears
+above events that begin that morning. That matches how other calendar apps
+render spans.
+
+### Multi-day events
+
+An event with an `end_date` is drawn once per day it covers, with an arrow at
+the chip's edge saying how it continues:
+
+| Marker | Meaning |
+| --- | --- |
+| `→` | The event starts on this day |
+| `↔` | It runs through this day, having started earlier and continuing after |
+| `←` | It ends on this day |
+
+Without them, five consecutive identical chips read as five separate events
+rather than one five-day event. An event whose real start falls before the
+visible period still shows a continuation marker on the first visible day,
+rather than appearing to begin there.
+
+### Toggling sources
+
+A calendar with more than one source shows a **legend** above the grid naming
+each one in its colour. Clicking an entry hides that source's events; clicking
+again brings them back.
+
+Which sources are hidden is carried in the URL (`?hide=0,1`), so a filtered view
+is shareable and survives a refresh, exactly as the period and view are. Hiding
+filters what is already loaded rather than refetching — toggling is a
+glance-level gesture and should feel like one.
+
+A field naming a property that one source's entity type lacks is simply not
+rendered for that source's events — sources are heterogeneous by design, so a
+field only has to make sense for the types that have it. A field that matches
+**no** source is a config error.
+
+### Clicking an event
+
+Clicking a chip opens a **preview** of the entity — the same detail rendering
+the entity page uses, in a modal — rather than jumping straight into an edit
+form. The usual sequence is "see more, then maybe edit", and a small chip is a
+poor basis for deciding to change something.
+
+The preview is a read surface: it shows the entity's properties and content
+without the entity page's Edit / History / Delete toolbar. Its two actions are
+**Edit** (opening the calendar's `edit_form`, when one is configured) and
+**Open full page**, where the full toolbar lives. Escape or a click outside
+closes it, returning you to the period you were looking at.
+
+### Drag to reschedule
+
+Dragging an event to another day patches its date property. Two things are
+worth knowing:
+
+- **Drag is day-granular.** It changes the day and preserves the time of day.
+  Dropping a 09:00 meeting on the next day leaves it at 09:00 — including
+  across a daylight-saving boundary, where the underlying instant shifts but
+  the wall clock does not.
+- **`end_date` moves with `date`.** Both shift by the same whole-day delta in a
+  single write, so a three-day event stays three days long.
+- **A multi-day event moves relative to the segment you grabbed.** Dragging the
+  middle day of an 11–15 event one day right shifts it to 12–16, not "start
+  moves to the drop day". Every day of the span highlights while you drag, so
+  it is clear the whole event is coming with you.
+
+A user without update permission on an entity cannot drag it.
+
+### Timezones
+
+A `date` property is a calendar date: `2026-03-01` is 1 March everywhere. A
+`datetime` is an instant, so which day it occupies depends on the display
+timezone set in Settings — `2026-03-01T00:30:00Z` sits on 1 March in UTC and on
+28 February in New York. The grid, the event's printed time and a drag all use
+that same display timezone, so they never disagree.
+
+### Sharing a source list with a feed
+
+`calendars:` and `feeds:` (see [Calendar feeds](#calendar-feeds)) use the same
+source field names,
+so a YAML anchor can declare a projection once and serve both an in-app
+calendar and a subscribable ICS feed:
+
+```yaml
+_task_events: &task_events
+  - entity_type: task
+    where: ["status != done"]
+    date: due_date
+    summary: title
+
+feeds:
+  tasks:
+    sources: *task_events
+calendars:
+  schedule:
+    sources: *task_events
+```
+
+The anchor holder must start with an **underscore** (`_task_events`). Unknown
+top-level keys are rejected so a config typo is loud, and the underscore is how
+you say "this is an anchor, not a section" — YAML resolves anchors at parse
+time, so the definition has to live somewhere in the document.
+
+The two config blocks are otherwise independent: a calendar has no `alarm:` or
+`rrule:` (export concerns), and a feed has no `event:` or `default_view:` (view
+concerns). Extra keys on the other side are ignored, so an anchor carrying
+`color:` still parses as a feed source. Keeping them separate means either can
+change without the other having to follow.
+
+### Validation
+
+A calendar fails config load — rather than breaking on first use — when:
+
+- a source names an unknown entity type, or a `date`/`summary`/`description`
+  property the type does not have
+- `date` or `end_date` is not `date`- or `datetime`-typed, or is a `list`
+  property (an event needs one date, and a drag would not know which to move)
+- `date` and `end_date` are different kinds (one all-day, one timed)
+- `date` uses a custom `format:`. Drag writes the property back, and only the
+  default `2006-01-02` layout is supported today
+- `default_view`, `week_start`, or a `color` token is not a known value
+- `day_start` is not before `day_end`
+- `edit_form` or `create_form` names a form that does not exist
+- an `event.fields` entry matches no source's entity type
+
+### Limits
+
+- Only **month** and **week** views exist today; day and year are not built.
+- Recurrence is not expanded — an entity with an `rrule` property renders on its
+  base date only. `rrule:` remains a feed-export concern.
+- Dragging changes the day, not the time, and events cannot be resized.
+
 ## Commands
 
 Commands let you define shell scripts in `data-entry.yaml` that users can trigger from the UI.
@@ -1771,6 +2859,35 @@ filters).
 and relations between them.
 
 **`global`** — runs from the dashboard. Receives only project metadata.
+
+#### Redacted and inaccessible properties
+
+Entities on stdin are the same ACL-filtered entities the page rendered, so a
+property hidden from the current user by a `visible:` rule is **absent from
+`properties`**. Absence alone is ambiguous — the property may simply never have
+been set — so the payload names the withheld ones:
+
+```json
+{
+  "context": "entity",
+  "entity": {
+    "id": "P-1",
+    "type": "person",
+    "properties": {"name": "Ann"},
+    "redacted": ["salary"],
+    "inaccessible": [{"name": "content", "reason": "git-crypt"}]
+  }
+}
+```
+
+- `redacted` — property names withheld by field-level ACL. Names only; the
+  values are not in the payload. Absent or empty when nothing was redacted.
+- `inaccessible` — fields whose stored bytes are unreadable (git-crypt
+  encrypted with no local key). Distinct from `redacted`: the data is
+  unavailable to *everyone* here, not just this user.
+
+A command that writes entities back should treat both as read-only signals and
+must not echo them into a write — doing so would erase the hidden values.
 
 ### Visibility Rules (`available_on`)
 
@@ -1909,7 +3026,7 @@ When creating a new entity, default values are resolved in this order (highest p
 1. **Entity-type override** from user defaults (e.g., ticket-specific override)
 2. **Global user default** (e.g., `assignee: alice`)
 3. **Form-level default** (from `data-entry.yaml`, e.g., `default: medium`)
-4. **Metamodel default** (from `metamodel.yaml` type definition)
+4. **Metamodel default** (from `schema.yaml` type definition)
 
 User defaults never override values explicitly set by the user in the form.
 
@@ -1965,8 +3082,6 @@ forms:
         target_type: category
         label: "Category"
         widget: select
-        allow_create: true
-        create_form: create_category
 
   edit_ticket:
     entity_type: ticket
@@ -2214,21 +3329,34 @@ No configuration is needed — the analysis page is always available in the side
 
 ## Documents
 
-Documents are read-only rendered markdown panels attached to an entity's detail
-view. A document's configuration declares which entity type it applies to and
-how to produce the markdown — either a shell `command:` that writes markdown to
-stdout, or a Lua `script:` that does the same via the embedded runtime.
-Captured markdown is converted to HTML via goldmark. Links using
-app-relative paths (e.g. `/form/<form_id>/<entity_id>`, `/entity/ticket/TKT-001`)
-get a `return_to` query param appended automatically on form links so the
-user lands back on the document after submitting the form. See "Links in
-rendered documents" below.
+Documents are read-only rendered markdown, produced either by a shell
+`command:` that writes markdown to stdout or by a Lua `script:` that does the
+same via the embedded runtime.
 
-The frontend's `DocumentsPanel.vue` shows every document whose `entity_type`
-matches the current entity. SSE live-reload re-renders a document when the
-entity changes (see the "SSE live-reload" caveat below).
+There are two kinds, distinguished by whether `entity_type:` is set:
 
-A document is also reachable on its own page at
+| Kind | `entity_type:` | URL | Where it appears |
+|------|----------------|-----|------------------|
+| **Entity-anchored** | set | `/document/<name>/<entity_id>` | Panel on the entity's detail view |
+| **Standalone** | omitted | `/document/<name>` | Sidebar, via a `document:` navigation entry |
+
+Use an entity-anchored document for content *about one entity* (a release's
+notes, a ticket's summary). Use a [standalone document](#standalone-documents)
+for content that is company-wide — a periodic sales report aggregated across
+many types — which would otherwise have to be anchored to an arbitrary entity
+that does not actually drive its content.
+
+Captured markdown is converted to HTML via goldmark. Links using app-relative
+paths (e.g. `/form/<form_id>/<entity_id>`, `/entity/ticket/TKT-001`) get a
+`return_to` query param appended automatically on form links so the user lands
+back on the document after submitting the form. See "Links in rendered
+documents" below.
+
+The frontend's `DocumentsPanel.vue` shows every entity-anchored document whose
+`entity_type` matches the current entity. SSE live-reload re-renders a document
+when any entity changes (see the "SSE live-reload" caveat below).
+
+An entity-anchored document is also reachable on its own page at
 `/document/<name>/<entity_id>` (used by `rela.url.document` links and direct
 deep-links). On that page the header shows Back and Refresh by default; add
 an `edit:` block to the doc config to also expose an Edit button that takes
@@ -2241,39 +3369,238 @@ returns to the document.
 documents:
   release_notes:
     title: "Release Notes"         # shown as the panel title
-    entity_type: release           # REQUIRED; renderer runs only for this type
+    entity_type: release           # renderer runs only for this type
     script: docs/release_notes.lua # OR command: — exactly one must be set
     timeout: 15                    # seconds; defaults to 30
     edit:                          # optional; renders an Edit button on the
-      form: edit_release           # standalone /document/... page
+      form: edit_release           # full-page /document/... view
       label: "Edit release"
   ticket_summary:
     title: "Ticket Summary"
     entity_type: ticket
-    command: "my-renderer {id}"    # {id} / {id_lower} are substituted
+    command: ["my-renderer", "{in}"] # argv array; {in} = entity markdown file
     timeout: 30
+  sales_review:                    # standalone — no entity_type
+    title: "Verkooprapportage"
+    script: docs/sales_review.lua
+    permission: report:sales       # optional; see "Gating a document"
 ```
 
-Validation is strict: `entity_type:` must be set, and exactly one of
-`command:` or `script:` must be non-empty. Configs with both, or with
-neither, are rejected at startup. For `script:` docs, the referenced file
-is checked for existence at startup too, so typos fail loudly instead of at
-the first HTTP request. When an `edit:` block is present, both `form:` and
-`label:` are required and `form:` must reference a known form ID. Note that a
-bare `edit:` line with no subkeys is treated as "field absent" (no button, no
-validation error); to catch a stub block write `edit: {}` instead so the
-required-field checks fire.
+| Field         | Type   | Description                                                       |
+| ------------- | ------ | ----------------------------------------------------------------- |
+| `title`       | string | Display title                                                     |
+| `entity_type` | string | Entity type this document is about. Omit for a standalone document |
+| `command`     | string | Shell command producing markdown on stdout (exclusive with `script`) |
+| `script`      | string | Lua script under `scripts/` (exclusive with `command`)            |
+| `timeout`     | int    | Render timeout in seconds; defaults to 30                         |
+| `permission`  | string | Global named permission required to render (optional; REQUIRED when `allow_acl_bypass` is set) |
+| `allow_acl_bypass` | string | `read` — let the script read past the caller's ACL (optional; see "Elevated documents") |
+| `edit`        | map    | Edit button config; entity-anchored documents only                |
 
-### Shell command renderer (`command:`)
+Validation is strict: exactly one of `command:` or `script:` must be non-empty.
+Configs with both, or with neither, are rejected at startup. For `script:`
+docs, the referenced file is checked for existence at startup too, so typos
+fail loudly instead of at the first HTTP request. When an `edit:` block is
+present, both `form:` and `label:` are required and `form:` must reference a
+known form ID. Note that a bare `edit:` line with no subkeys is treated as
+"field absent" (no button, no validation error); to catch a stub block write
+`edit: {}` instead so the required-field checks fire.
 
-The command runs in a POSIX shell (`sh -c`) with the project root as the
-working directory. The script must write the rendered markdown to stdout.
-Placeholders inside the command string are substituted before execution:
+`entity_type:` is optional — omitting it declares a standalone document rather
+than being an error. An `edit:` block on a standalone document is rejected,
+since there is no entity for the button to open.
+
+### Standalone documents
+
+A document with no `entity_type:` renders company-wide content — typically a
+report aggregated across many entity types — at `/document/<name>`, with no
+entity id in the URL. Reach it from the sidebar with a `document:` navigation
+entry:
+
+```yaml
+documents:
+  sales_review:
+    title: "Verkooprapportage"
+    script: docs/sales_review.lua
+
+navigation:
+  - label: "Dashboard"
+    dashboard: true
+  - label: "Verkooprapportage"
+    document: sales_review
+```
+
+Rules:
+
+- **Script-only.** A `command:` renderer is handed the entry entity as its
+  `{in}` file, and a standalone document has no entry entity, so `command:` is
+  rejected rather than run against an empty or guessed one.
+- **`rela.document.entry_id` is `nil`** (not `""`). Scripts should already
+  tolerate this — list-render mode has behaved the same way since it shipped.
+- **Only standalone documents can be navigation entries.** Pointing
+  `document:` at an entity-anchored document is a config error: the sidebar has
+  no entity id to put in the URL.
+- **No disk caching.** Command renders cache on the entry entity's hash, and
+  there is no entry entity here. Use `rela.cache.memoize` inside the script.
+- **SSE live-reload re-renders on any entity change**, since the document
+  declares no dependencies. Until `rela.document.depends_on` lands (TKT-E1FO1),
+  the Refresh button is the reliable way to update a stale report.
+
+### Gating a document
+
+`permission:` restricts a document to principals holding a global named
+permission granted through a role's `permissions:` list in `acl.yaml` — the
+same mechanism behind `history:read` and the `delegate-*` family:
+
+```yaml
+# data-entry.yaml
+documents:
+  sales_review:
+    script: docs/sales_review.lua
+    permission: report:sales
+
+# acl.yaml
+roles:
+  directie:
+    permissions: [report:sales]
+```
+
+A principal without the permission gets a **403** naming the document and the
+required permission, and the renderer never runs.
+
+The menu is **not** filtered: a `document:` navigation entry is shown to every
+principal, and `/api/v1/_config` serves the document config in full. That is
+deliberate and matches the rest of the app — see
+[ACL security](acl-security.md#sidebar-menu-structure-is-principal-independent).
+Your `data-entry.yaml` is an operator-authored file that lives in your repo, so
+document names, script paths, and permission names are not secrets; hiding them
+from the API would buy nothing and make the menu differ per user for no gain.
+A user may therefore see an entry that 403s, which is the accepted trade: an
+actionable error beats a silently divergent menu.
+
+What *is* protected is the entity data behind the document, by the read ACL —
+that is the boundary, and it does not depend on `permission:` at all.
+
+Note this differs from `commands:`, which **fails closed** under a configured
+`acl.yaml`: a command without `permission:` is denied. Documents fail open
+because their content is already bounded by the read ACL, while a command
+shells out and its side effects are not. If you are adding both to the same
+config, the identical-looking `permission:` key has opposite defaults.
+
+`permission:` is **optional, and its absence is not an oversight.** Document
+*content* is already bounded by the ACL: a document's Lua reads go through the
+same gated reader as every other read path, so a principal who cannot read the
+underlying entities renders an empty or partial report either way. It is not
+the confidentiality boundary, so requiring it everywhere would be ceremony.
+
+What it *does* buy on an ordinary document is honesty about scope. A report
+titled "company-wide revenue" rendered for someone who can see a tenth of the
+rows shows a smaller number that looks just as authoritative — nothing leaked,
+but the page now asserts something untrue. Use `permission:` when a report
+makes a claim its reader may not be able to compute, when the *composition* is
+sensitive even though the parts are readable, or simply to keep reports a user
+cannot act on out of their menu.
+
+### Elevated documents (`allow_acl_bypass: read`)
+
+Some reports must compute over rows the reader is not allowed to see. Consider
+sales managers who each own a client set and cannot see the others — not just
+the figures, but the clients' *existence*. A report benchmarking a manager
+company-wide, or against the top performer, cannot be built from their own
+view, and no `acl.yaml` role fixes it: granting enough to **compute** the
+benchmark grants enough to **enumerate** the competitors.
+
+`allow_acl_bypass: read` lets that document's script read past the caller's
+ACL:
+
+```yaml
+documents:
+  sales_benchmark:
+    title: "Verkoop benchmark"
+    script: docs/benchmark.lua
+    allow_acl_bypass: read
+    permission: report:sales
+```
+
+The script uses `rela.bypass_acl(fn)` for the reads that must span the graph;
+everything outside that closure stays gated as usual. Elevated reads are
+audited (`acl-bypass-read`).
+
+**`permission:` is required here**, and this is the one case where it is the
+confidentiality boundary rather than an intent gate — an elevated render has
+nothing downstream bounding its output. A configured `acl.yaml` is required
+too: with no policy the permission names a capability nothing can withhold, so
+the document is refused rather than served to everyone.
+
+**Only `read` is accepted.** A render is served on a `GET`, so `write` and
+`read+write` are a config error: elevated writes there would not be idempotent
+(browsers prefetch, users refresh, the SPA retries) and would foreclose caching
+an otherwise principal-independent render. Put them in an automation action or
+a schedule instead.
+
+Note what this rule does and does not do. A document script *can* already write
+through the ordinary `rela.create_entity` / `update_entity` / `delete_entity`
+bindings, bounded by your own permissions — refusing `write` here prevents a
+render mutating **beyond** them, it does not make rendering read-only.
+
+**The script is trusted code.** Nothing stops it printing the rows it read
+instead of a statistic derived from them, so `permission: report:sales` really
+grants "may read whatever this script reads". Review the `bypass_acl` block
+before deploying, and treat the permission as equivalent to the read access the
+script performs.
+
+On an entity-anchored document `permission:` applies *in addition to* the
+per-entity read gate — it narrows access, and can never widen it.
+
+### External command renderer (`command:`)
+
+`command:` is an **argument array**, executed directly. There is no shell, so
+pipes, redirection, globbing, and variable expansion are not available — and no
+quoting or escaping is needed. The program must write the rendered markdown to
+stdout.
+
+```yaml
+command: ["my-renderer", "{in}"]
+```
 
 | Placeholder | Expands to |
 |-------------|------------|
-| `{id}`      | The entry entity ID |
-| `{id_lower}`| The ID lowercased |
+| `{in}`      | Path to a temp file holding the entry entity's markdown, frontmatter included |
+
+The entity id is the `id:` key of that file's frontmatter, so a renderer that
+needs it reads it from the file.
+
+> **Migrating from `{id}` / `{id_lower}`**
+>
+> Those placeholders were removed. They spliced a request-derived value into a
+> shell string, which made the entity id the one piece of user-controlled data
+> reaching `sh -c` — an id beginning with `-` arrived as an option flag rather
+> than an operand. A config still using them is **rejected at load** with an
+> error naming `{in}`.
+>
+> Two other things changed with the shell:
+>
+> - **A string `command:` is no longer valid**; use an array.
+>   `command: "my-renderer"` → `command: ["my-renderer"]`.
+> - **The working directory is no longer the project root.** Name the program
+>   on `PATH` or by absolute path rather than relying on a relative path such
+>   as `render.sh`.
+>
+> - **A sandbox is now required.** Commands run confined via `internal/cmdexec`
+>   (bubblewrap on Linux, `sandbox-exec` on macOS) and **fail closed**: on a host
+>   with no mechanism available, the render is refused rather than run
+>   unconfined. Previously `command:` ran through a bare `sh -c` with no
+>   confinement.
+>
+>   On Linux, installing bubblewrap is necessary but **not always sufficient**:
+>   bwrap also needs unprivileged user namespaces. Distributions that restrict
+>   them (Ubuntu 23.10+ with `kernel.apparmor_restrict_unprivileged_userns=1`,
+>   or `kernel.unprivileged_userns_clone=0`) will refuse renders even with
+>   bubblewrap installed. The server logs the specific reason at startup under
+>   `external command confinement`.
+>
+> Shell features (pipes, redirection) are unavailable by design. If you need
+> them, put them in a script file and invoke that script as the program.
 
 Command renderer output is cached to disk at
 `.rela/documents/<entry>-<hash>.html` keyed by an FNV hash of the entry
@@ -2294,7 +3621,21 @@ When invoked in document mode, the runtime exposes extra context:
 |----------------------------|---------|
 | `rela.mode`                | Always `"document"` in this context; `nil` elsewhere |
 | `rela.document.id`         | The key under `documents:` in `data-entry.yaml` |
-| `rela.document.entry_id`   | The ID of the entity being rendered |
+| `rela.document.entry_id`   | The ID of the entity being rendered; **`nil` for a standalone document** |
+
+A script shared between both document kinds should branch on `entry_id`
+rather than assume it:
+
+```lua
+if rela.document.entry_id then
+  -- entity-anchored render
+else
+  -- standalone render: aggregate across the graph
+end
+```
+
+`entry_id` is absent (Lua `nil`), never an empty string — `""` is truthy in
+Lua, so the guard above would take the wrong branch and then fail.
 
 Example — a document that composes a markdown doc from an entity plus its
 graph neighbours:
@@ -2493,6 +3834,10 @@ covered in the **User defaults** section earlier in this guide.
   only re-render when the **entry** entity changes, not the walked ones.
   The refresh button in the UI is the escape hatch. A follow-up ticket
   (TKT-E1FO1) tracks the fix for explicit dependency tracking.
+- **Standalone documents** have no entry entity, so neither the disk cache nor
+  entry-scoped reload applies. They are script-only (use `rela.cache.memoize`),
+  and the same TKT-E1FO1 limitation applies more broadly: a standalone report
+  is refreshed on demand.
 
 ### Security notes
 
@@ -2502,6 +3847,13 @@ covered in the **User defaults** section earlier in this guide.
 - The HTTP handler enforces `entity_type:` on every request: a document
   configured for `entity_type: release` cannot be rendered against a
   ticket, even if the caller bypasses the frontend filter.
+- The two URL shapes are not interchangeable: requesting an entity-anchored
+  document without an id, or a standalone document with one, is a 400. Neither
+  falls back to rendering against a guessed or empty entity.
+- Document scripts read through the same ACL-gated reader as the rest of the
+  API, so a standalone document renders only what its caller may already see —
+  it is not a way to bypass read gating. Add `permission:` when the aggregate
+  itself should be restricted (see "Gating a document").
 - Rendered markdown uses goldmark's `html.WithUnsafe` — the frontend
   (DOMPurify) is the sanitization boundary. If you add another consumer of
   the rendered HTML (PDF export, copy-HTML button, etc.), it must add its
@@ -2624,7 +3976,21 @@ property, or **timed** (a UTC `DTSTART` with a time-of-day) when it is a
 
 Point your calendar app at
 `http://<host>:<port>/api/v1/_feeds/<name>.ics`. The endpoint applies the
-server's ACL: a feed only ever exposes entities the request's principal may read.
+server's ACL in both dimensions: an entity the request's principal may not read
+is absent from the feed, and a property hidden from them by a `visible:` grant is
+omitted from the event it would otherwise appear in.
+
+Field redaction applies to what the event **renders**, not to which entities the
+feed selects. A `where:` clause is evaluated against the unredacted entity on
+purpose — otherwise a hidden property would read as empty inside the filter, and
+the same feed would contain different events for different readers. Which
+entities a feed selects is an operator-authored decision; what their fields say
+is the reader's business.
+
+One consequence worth knowing: if a feed is anchored on a date property that a
+reader may not see, entities have no usable date for them and drop out of that
+reader's calendar entirely. That is deliberate — an event whose date you may not
+read is not one you should be shown.
 
 On a plain localhost server there is no authentication — the feed is readable by
 anything that can reach the port, which is appropriate for a single-user local

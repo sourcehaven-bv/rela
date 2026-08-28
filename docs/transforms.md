@@ -7,7 +7,7 @@ becomes available everywhere a view can render markdown.
 
 ## Registering transforms
 
-Add a `transforms:` map to `metamodel.yaml`. Each entry names an external command
+Add a `transforms:` map to `schema.yaml`. Each entry names an external command
 that converts markdown to an output format:
 
 ```yaml
@@ -103,6 +103,72 @@ only for an entity the caller is allowed to read — export resolves the entity
 through the ACL gate first, so a denied caller gets a 404 and the script never
 runs.
 
+### Custom per-list rendering
+
+List export has the same escape hatch, configured on the **list** rather than
+the entity type — so two lists of the same type can export differently, and the
+list that owns the columns and filters also owns its export:
+
+```yaml
+lists:
+  tickets:
+    entity_type: ticket
+    columns: [...]
+    export_render: docs/ticket_report.lua
+```
+
+Now "Export as PDF/ODT" on the **tickets** list renders through
+`ticket_report.lua` instead of the built-in column table. The script receives
+the rows the server already resolved, plus the resolved query as read-only
+context:
+
+```lua
+print("# " .. rela.document.list_id .. " report")
+if rela.document.query.filters.status then
+  print("_status: " .. rela.document.query.filters.status .. "_")
+end
+print()
+
+for _, row in rela.document.rows() do
+  print("## " .. row.properties.title)
+  print(row.content or "")
+end
+
+if rela.document.truncated then
+  print(("\n_Showing %d of %d._"):format(rela.document.count, rela.document.total))
+end
+```
+
+What a list render sees on `rela.document`:
+
+| Field | Meaning |
+|---|---|
+| `list_id`, `entity_type` | which list, over which type |
+| `rows()` | iterator over the rows — `for _, row in rela.document.rows() do` |
+| `row(i)` | one row by 1-based index, or nil |
+| `count` | rows this render can see (post-cap) |
+| `total`, `truncated` | rows before the cap, and whether it applied |
+| `query.q`, `query.filters`, `query.sort` | the resolved request, read-only |
+| `entry_id` | **absent** — a list render has no entry entity |
+
+Two contracts worth knowing:
+
+- **Render the rows you are given.** `rela.document.rows()` is exactly the
+  ACL-scoped, filtered, sorted, capped set the on-screen list resolved. Building
+  your own set with `rela.list_entities` would silently ignore the filters the
+  user actually had applied and escape the row cap, so an export would stop
+  matching the view it came from. Narrowing, grouping, or sorting the given rows
+  in Lua is fine — that is the intended way to shape the output.
+- **Rows are materialized lazily**, one at a time, so a large export stays flat
+  in memory. Each call to `rows()` starts a fresh walk, so you may iterate more
+  than once (to total, then to emit); each walk re-materializes, which costs CPU
+  rather than memory. Use `count` and `row(i)` when you only need a length or
+  one row.
+
+A list with no `export_render` keeps the built-in column table. As with entity
+export, the override is config-selected — a request may choose a transform
+*name*, never a renderer.
+
 ## Security
 
 ### The threat
@@ -189,10 +255,15 @@ untrusted content through the Linux tier.
   - `rela.update_entity`'s read-before-write is deliberately **not**
     redacted — reading a redacted copy there would erase the caller's hidden
     properties on save. Writes remain gated by the ACL as before.
+  - A **list** override (`lists.<id>.export_render`) receives its rows from
+    the server, already row-gated and field-redacted by the same read the
+    on-screen list uses — the script never queries for them. That is why an
+    export always matches the view it came from, and why the row cap still
+    bounds it.
 
 ### Other notes
 
-- Transform commands come from project config (`metamodel.yaml`) — the same trust
+- Transform commands come from project config (`schema.yaml`) — the same trust
   level as attachment scan/transform commands and schedules. A request may only
   choose a registered transform **name**; it can never supply a command, flag, or
   path.
@@ -206,8 +277,6 @@ untrusted content through the Linux tier.
 ## Not yet supported (v1 limits)
 
 - Format chaining (e.g. markdown → HTML → PDF) — each transform is a single step.
-- A render override for LIST export — `export_render` applies to entity export
-  only; list export always emits the column table.
 - Asynchronous export for slow converters (LaTeX / LibreOffice) — exports run
   synchronously within the request.
 - A per-view configurable row cap for list export.

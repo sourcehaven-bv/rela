@@ -12,6 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/openapi"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -20,6 +21,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/validator"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // seedEntity writes an entity directly into the app's store.
@@ -133,12 +136,22 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	app.searcher = svc.Searcher()
 	app.visibleSearcher = svc.VisibleSearcher()
 	app.tracer = svc.Tracer()
-	app.validator = svc.Validator()
-	app.analyze = analyzeService{store: svc.Store(), tracer: svc.Tracer(), validator: svc.Validator()}
+	// Gated reads mirror production (NewApp): the validator and analyze read
+	// through lateGatedReader so tests exercise the real per-principal gating
+	// (TKT-3FL2S6). lateGatedReader is late-bound, so it tolerates app.acl /
+	// app.affordances being rebound below.
+	gatedReader := lateGatedReader{app: app}
+	app.validator = validator.New(gatedReader, svc.Meta(), lua.ReadDeps{
+		VisibleReader: gatedReader,
+		Tracer:        lateGatedTracer{app: app},
+		Searcher:      svc.Searcher(),
+		Meta:          svc.Meta(),
+		ProjectRoot:   paths.Root,
+	})
+	app.analyze = analyzeService{reads: gatedReader, relCounts: svc.Store(), tracer: lateGatedTracer{app: app}, validator: app.validator}
 	app.templater = svc.Templater()
 	app.cfgLoader = svc.Config()
 	app.kv = svc.State()
-	app.userState = userStateStore{kv: svc.State()}
 	// logo + palette stores over the same kv; fresh fixtures have nothing on
 	// disk so the loads can't error (nil-returns match production's clean-boot
 	// path). Callers that need a specific project palette resolved re-wire
@@ -152,7 +165,16 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	// handler. Script engine can be the real one (tests that use script:
 	// configs will need to seed scripts on disk).
 	if app.scriptEngine != nil {
-		app.documents = newDocumentService(app.store, app.kv, "/", app.scriptEngine, app.luaWriteDeps)
+		// Elevation wired exactly as production does (NewApp): an elevated
+		// document test that got a nil bundle here would silently render
+		// WITHOUT bypass_acl and the test would pass for the wrong reason.
+		app.documents = newDocumentService(app.store, app.kv, "/", app.scriptEngine, app.luaWriteDeps,
+			func() documentElevation {
+				return documentElevation{
+					Reader:   visibility.Unrestricted(app.store),
+					Recorder: elevationRecorder(app.auditSink),
+				}
+			})
 	}
 	app.affordances = affordanceService{
 		acl:                func() acl.ACL { return app.acl },
@@ -163,10 +185,29 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		currentEdgesByPeer: app.currentEdgesByPeer,
 	}
 	app.serializer = entitySerializer{affordances: app.affordances}
-	// Rebuild the sync handler over the rebound store/manager. writeMu is App's
-	// own, so sync writes serialize with the other mutation handlers just as in
-	// production.
-	app.sync = newSyncHandler(svc.Store(), svc.EntityManager(), &app.writeMu)
+	// viewReader mirrors the production wiring (NewApp) so view-pipeline reads
+	// are row-gated + field-redacted in tests too. The construction only errors
+	// on nil args, which the literals above cannot produce — same clean-boot
+	// swallow as the logo/palette stores.
+	app.viewReader, _ = visibility.NewPolicyReader(ctxRowGate{}, appRedactor(app), svc.Store())
+	// Rebuild the sync handler (manifest-only) over the rebound store. The record
+	// write path was retired in TKT-8P1TM7, so there is no writeMu/provision here.
+	app.sync = newSyncHandler(svc.Store())
+	// viewsHandler mirrors production wiring (see NewApp): fixed service
+	// handles by value, schema/services closures, and App's shared read gate.
+	app.views = &viewsHandler{
+		schema:      app.State,
+		store:       svc.Store(),
+		reader:      app.reader,
+		serializer:  app.serializer,
+		affordances: app.affordances,
+		viewReader:  app.viewReader,
+		services:    app.Services,
+		logo:        app.logo,
+		gateRead:    app.gateReadOrNotFound,
+		// Late-bound, as in NewApp: tests reassign app.acl after construction.
+		aclImpl: func() acl.ACL { return app.acl },
+	}
 	// commandHandler holds closures over App methods, which read the fields
 	// rebound above — so it stays valid after this rebind. (Rebuilt rather than
 	// relying on a nil zero value, since newHandlerTestApp bypasses NewApp.)
@@ -174,7 +215,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		schema:      app.State,
 		services:    app.Services,
 		projectRoot: app.ProjectRoot,
-		executeView: app.executeView,
+		executeView: app.views.executeView,
 		// Late-bound like production: ACL-gating tests reassign app.acl after
 		// this rebind.
 		aclImpl: func() acl.ACL { return app.acl },
@@ -194,6 +235,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		fields:     func() FieldVerdictResolver { return app.fieldResolver },
 		gateRead:   app.gateReadOrNotFound,
 		writeMu:    &app.writeMu,
+		provision:  newProvisionSeam(app),
 	}
 
 	// Export handler over the app's current services (mirrors NewApp).
@@ -220,8 +262,12 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		denyAfford:         app.denyAffordance,
 		computeETag:        app.computeEntityETag,
 		currentEdgesByPeer: app.currentEdgesByPeer,
+		engine:             func() *script.Engine { return app.scriptEngine },
+		luaDeps:            app.luaWriteDeps,
+		fullScriptDetail:   app.allowFullScriptDetail,
 		paths:              paths,
 		writeMu:            &app.writeMu,
+		provision:          newProvisionSeam(app),
 	}
 }
 
@@ -231,7 +277,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 // inject a fake manifest/apply source must call this so the handler re-resolves
 // against the swapped store.
 func rebindSyncHandler(app *App) {
-	app.sync = newSyncHandler(app.store, app.entityManager, &app.writeMu)
+	app.sync = newSyncHandler(app.store)
 }
 
 // rebindVisibleSearcher re-derives the generic visible-search wrapper

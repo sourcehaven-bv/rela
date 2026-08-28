@@ -54,13 +54,22 @@ func newMCPServices(startDir string) (*mcpServices, error) {
 // the MCP server consumes. Built once at wiring time; the resulting
 // value holds domain types only, so the server has no path back to
 // this struct or to any composition-root aggregate.
+// The three read handles come from [appbuild.Services.GatedReads] rather
+// than the raw accessors. Under this command's NopACL wiring they ARE the
+// raw store / tracer / validator, so `rela mcp` behaves exactly as before —
+// but every MCP read surface (tools, resources, prompts, analyze, export)
+// now reaches the graph through one seam that a networked wiring can
+// substitute, instead of each handler holding the store directly. That is
+// what makes the remote transport a wiring change rather than a rewrite of
+// 34 handlers (TKT-UIR41P).
 func (s *mcpServices) Deps() relamcp.Deps {
+	reads := s.svc.GatedReads()
 	return relamcp.Deps{
-		Store:         s.svc.Store(),
+		Store:         reads.Reader,
 		Meta:          s.svc.Meta(),
-		Tracer:        s.svc.Tracer(),
+		Tracer:        reads.Tracer,
 		Searcher:      s.svc.Searcher(),
-		Validator:     s.svc.Validator(),
+		Validator:     reads.Validator,
 		EntityManager: s.svc.EntityManager(),
 		Config:        s.svc.Config(),
 		LuaWriteDeps:  s.svc.LuaWriteDeps(),

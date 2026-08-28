@@ -53,6 +53,16 @@ func (p *policyResolver) RelationVerdicts(ctx context.Context, e *entityPkg.Enti
 	return out
 }
 
+// RelationFieldVerdicts forwards to the wrapped policy resolver, making
+// policyResolver satisfy [RelationVisibilityResolver] (TKT-B1F5Q1). Only the
+// policy-backed resolver implements this — Nop / Demo do not, so relation meta
+// is emitted un-redacted under them.
+func (p *policyResolver) RelationFieldVerdicts(
+	ctx context.Context, from *entityPkg.Entity, relType string, metaKeys []string,
+) map[string]bool {
+	return p.inner.RelationFieldVerdicts(ctx, from, relType, metaKeys)
+}
+
 // TransitionVerdicts forwards to the wrapped policy resolver, making
 // policyResolver satisfy [TransitionResolver] (TKT-3G93B8). The affordances
 // resolver returns statemachine verdicts directly (no wire-shape mapping here);
@@ -75,6 +85,10 @@ func (p *policyResolver) EntryValues(entityType string) map[string]string {
 // the resolver itself snapshots once per call by virtue of being
 // invoked once per per-entity GET (the App captures appState.Load() at
 // the top of each handler).
+// NOTE: internal/appbuild/relationlookup.go holds a deliberate copy of this
+// adapter (appbuild cannot import dataentry). The two are behaviourally
+// identical and both feed affordance `when:` predicates — fix bugs in BOTH or
+// the two surfaces will disagree about who may see what.
 type storeRelationLookup struct {
 	st store.Store
 }

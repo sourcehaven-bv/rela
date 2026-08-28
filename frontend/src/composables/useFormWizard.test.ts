@@ -241,4 +241,91 @@ describe('useFormWizard', () => {
     expect(warn).toHaveBeenCalled()
     warn.mockRestore()
   })
+
+  // TKT-7S5735: answer "what would be visible if the user made this edit?"
+  // WITHOUT applying it. Visibility is a pure function of the form values, so
+  // before this the only way to find out was to write formData first — which is
+  // the propose/commit conflation BUG-FB0LN8 kept failing on.
+  describe('activePropertiesFor (hypothetical evaluation)', () => {
+    // The reporter's actual configuration, reduced: two deadline fields
+    // conditioned on a procurement-route enum.
+    function conditionalForm(): FormConfig {
+      return {
+        entity: 'opportunity',
+        fields: [
+          { property: 'inkooproute' },
+          { property: 'vragenronde_deadline', visible_when: "form.inkooproute == 'aanbesteding'" },
+          { property: 'inschrijfdeadline', visible_when: "form.inkooproute == 'aanbesteding'" },
+        ],
+      }
+    }
+
+    it('reports what would be visible after a hypothetical change', () => {
+      const { wiz } = setup(conditionalForm(), { inkooproute: 'aanbesteding' })
+      const after = wiz.activePropertiesFor({
+        form: { inkooproute: 'onderhands' },
+        entity: {},
+        current_user: {},
+      })
+      expect([...after]).toEqual(['inkooproute'])
+    })
+
+    // The load-bearing property. If asking the question changed the answer,
+    // the seam would be decorative.
+    it('does not disturb live state', () => {
+      const { wiz, formData } = setup(conditionalForm(), { inkooproute: 'aanbesteding' })
+      const before = [...wiz.activeProperties.value]
+
+      wiz.activePropertiesFor({
+        form: { inkooproute: 'onderhands' },
+        entity: {},
+        current_user: {},
+      })
+
+      expect([...wiz.activeProperties.value]).toEqual(before)
+      expect(formData.value).toEqual({ inkooproute: 'aanbesteding' })
+    })
+
+    it('reports a reveal as well as a hide', () => {
+      const { wiz } = setup(conditionalForm(), { inkooproute: 'onderhands' })
+      expect([...wiz.activeProperties.value]).toEqual(['inkooproute'])
+
+      const after = wiz.activePropertiesFor({
+        form: { inkooproute: 'aanbesteding' },
+        entity: {},
+        current_user: {},
+      })
+      expect([...after].sort()).toEqual([
+        'inkooproute',
+        'inschrijfdeadline',
+        'vragenronde_deadline',
+      ])
+    })
+
+    // A step's own visible_when reads the same bindings, so a proposal can hide
+    // a whole step — not just fields within a still-visible one. This is why
+    // the implementation re-filters steps rather than reusing `visibleSteps`.
+    it('accounts for a step hidden by the proposal', () => {
+      const { wiz } = setup(wizardForm(), { has_processors: true })
+      expect(wiz.activeProperties.value.has('processor_name')).toBe(true)
+
+      const after = wiz.activePropertiesFor({
+        form: { has_processors: false },
+        entity: {},
+        current_user: {},
+      })
+      expect(after.has('processor_name')).toBe(false)
+      expect(after.has('name')).toBe(true) // unconditional step survives
+    })
+
+    it('agrees with activeProperties when given the live bindings', () => {
+      const { wiz } = setup(conditionalForm(), { inkooproute: 'aanbesteding' })
+      const same = wiz.activePropertiesFor({
+        form: { inkooproute: 'aanbesteding' },
+        entity: {},
+        current_user: {},
+      })
+      expect([...same].sort()).toEqual([...wiz.activeProperties.value].sort())
+    })
+  })
 })

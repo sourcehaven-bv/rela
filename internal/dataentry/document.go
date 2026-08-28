@@ -9,7 +9,6 @@ import (
 	"io"
 	"log/slog"
 	"net/url"
-	"os/exec"
 	"regexp"
 	"slices"
 	"sort"
@@ -23,6 +22,9 @@ import (
 	"github.com/yuin/goldmark/renderer/html"
 	"golang.org/x/sync/singleflight"
 
+	"gopkg.in/yaml.v3"
+
+	"github.com/Sourcehaven-BV/rela/internal/cmdexec"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/htmlutil"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
@@ -54,12 +56,31 @@ func isFormRoute(path string) bool {
 type documentScriptEngine interface {
 	ExecuteDocument(ctx context.Context, path string, deps lua.WriteDeps, stdout io.Writer,
 		documentID, entryID string, timeout time.Duration) error
+	ExecuteListDocument(ctx context.Context, path string, deps lua.WriteDeps, stdout io.Writer,
+		documentID string, lrc lua.ListRenderContext, timeout time.Duration) error
+	ExecuteStandaloneDocument(ctx context.Context, path string, deps lua.WriteDeps, stdout io.Writer,
+		documentID string, timeout time.Duration) error
 }
 
 // documentDeps yields the lua.WriteDeps the script engine needs. The App
 // constructs these from its current metamodel snapshot, so we keep the
 // dependency as a function to avoid stale deps after reload.
 type documentDepsFunc func() lua.WriteDeps
+
+// documentElevation is the raw read capability plus its audit recorder,
+// handed to a render that declares allow_acl_bypass (TKT-Y3JVFK). It mirrors
+// script.ReadElevation, declared here at the consumer per CLAUDE.md
+// "interfaces at the call site" — documentService needs exactly these two
+// fields and must not depend on the script package's bundle type.
+type documentElevation struct {
+	Reader   lua.EntityReader
+	Recorder lua.ElevationRecorder
+}
+
+// documentElevationFunc resolves the elevation bundle per render. A func
+// rather than a value so test builders can rebind it after construction,
+// matching documentDepsFunc.
+type documentElevationFunc func() documentElevation
 
 // docCacheSubdir is the subdirectory under .rela/ for document cache files.
 const docCacheSubdir = "documents"
@@ -73,11 +94,12 @@ type documentRenderConfig struct {
 	// participates in the singleflight/cache key so concurrent renders
 	// of different documents against the same entry don't collapse.
 	ConfigID string
-	// Command is the external render command. Placeholders:
-	//   {id}       - entry ID
-	//   {id_lower} - lowercase entry ID
+	// Command is the external render command as an argument array, run
+	// directly with no shell. The single placeholder is {in}: a temp file
+	// holding the entry entity's markdown (frontmatter included, so the id
+	// travels in the file rather than on the command line — TKT-QGHNVA).
 	// Mutually exclusive with Script.
-	Command string
+	Command []string
 	// Script is a relative path under scripts/ to a Lua file. When set,
 	// the renderer runs the Lua script via script.Engine.ExecuteDocument
 	// and captures its stdout as markdown. Mutually exclusive with Command.
@@ -85,6 +107,28 @@ type documentRenderConfig struct {
 	// Timeout is the render timeout. Defaults to 30s. Applies to both
 	// renderers.
 	Timeout time.Duration
+	// Elevated, when true, grants this render's Lua an elevated READER, so
+	// the script may call rela.bypass_acl(fn) and read entities the request
+	// principal cannot see (TKT-Y3JVFK). Reads only: no elevated Mutator is
+	// ever supplied here, so the admin handle carries no write methods.
+	//
+	// Per-render rather than part of the shared luaDeps bundle: elevation is
+	// a property of THIS document's declaration, and putting it in the shared
+	// bundle would hand it to every render.
+	//
+	// The caller must have passed authorizeElevatedDocument first. Like
+	// `permission:`, this struct carries the decision's INPUT, not the
+	// decision — the renderer makes no ACL choice of its own.
+	Elevated bool
+
+	// Capabilities is the document's declared ambient capability grant
+	// (TKT-YH52OM). Per-render for the same reason Elevated is: the grant
+	// belongs to THIS document's declaration, and putting it in the shared
+	// luaDeps bundle would hand it to every render.
+	//
+	// Zero value grants nothing, which is what an export or a document with no
+	// `capabilities:` block gets.
+	Capabilities lua.Capabilities
 }
 
 // DocumentResult holds the result of rendering a document.
@@ -108,25 +152,77 @@ type DocumentResult struct {
 // rela.cache.memoize is the caching story for scripts, and reading an old
 // command:-era cache file for a script: request would serve stale HTML.
 type documentService struct {
-	store        store.Store
-	state        state.KV
+	store store.Store
+	state state.KV
+	// projectRoot is retained for script rendering and diagnostics. It is NOT
+	// the working directory of a `command:` renderer any more: cmdexec runs
+	// commands without setting cwd (and sandboxes them), so a relative program
+	// path such as ["render.sh"] no longer resolves against the project root.
+	// Operator configs must name the program on PATH or by absolute path — see
+	// the migration note in docs/data-entry.md.
 	projectRoot  string
 	scriptEngine documentScriptEngine
 	luaDeps      documentDepsFunc
-	group        singleflight.Group
+	// elevation supplies the raw read capability for documents that declare
+	// allow_acl_bypass. Nil when the wiring site granted none, in which case
+	// an elevated document renders WITHOUT bypass_acl rather than failing —
+	// lua raises per-method if the script calls it, naming the missing
+	// capability (deps.go: nil reader is a DENY, not a fallback).
+	elevation documentElevationFunc
+	group     singleflight.Group
 }
 
 // newDocumentService builds a documentService. scriptEngine and luaDeps
 // may be nil in tests that only exercise the command: path.
 func newDocumentService(st store.Store, kv state.KV, projectRoot string,
-	engine documentScriptEngine, deps documentDepsFunc) *documentService {
+	engine documentScriptEngine, deps documentDepsFunc,
+	elevation documentElevationFunc) *documentService {
 	return &documentService{
 		store:        st,
 		state:        kv,
 		projectRoot:  projectRoot,
 		scriptEngine: engine,
 		luaDeps:      deps,
+		elevation:    elevation,
 	}
+}
+
+// elevatedDeps returns deps carrying the elevated READ capability when cfg
+// declares it, and deps unchanged otherwise (TKT-Y3JVFK).
+//
+// Only ElevatedReader and ElevationRecorder are set — never ElevatedManager —
+// so lua.newElevatedHandle omits the write methods entirely and the script
+// cannot write PAST THE ACL.
+//
+// That is NOT the same as "a render cannot mutate", and the difference matters.
+// A document renders on a WriterRuntime (script.runDocumentScript ->
+// NewWriterRuntime -> lua.NewWriter), and registerBindings has no isDocument
+// guard, so ordinary rela.create_entity / update_entity / delete_entity /
+// write_file ARE present and callable in a document script — bounded by the
+// caller's own ACL. That is pre-existing and tracked in TKT-PX5YL7; withholding
+// the elevated Mutator here narrows elevation, it does not make the render
+// read-only.
+//
+// The recorder travels with the reader so an elevated document read leaves the
+// same `acl-bypass-read` audit row a cascade one does. Granting the capability
+// without the trace is the exact gap TKT-ACSBSA closed; it must not reopen on
+// a new surface.
+//
+// The ACL decision was made by the caller (authorizeElevatedDocument). This
+// applies it; it does not re-decide.
+func (s *documentService) elevatedDeps(cfg documentRenderConfig) lua.WriteDeps {
+	deps := s.luaDeps()
+	// TKT-YH52OM: ambient capabilities come from THIS document's declaration.
+	// Applied before the elevation early-return below so a non-elevated
+	// document still receives the grant it declared.
+	deps.Capabilities = cfg.Capabilities
+	if !cfg.Elevated || s.elevation == nil {
+		return deps
+	}
+	el := s.elevation()
+	deps.ElevatedReader = el.Reader
+	deps.ElevationRecorder = el.Recorder
+	return deps
 }
 
 // GetCached returns a cached document if available and still valid.
@@ -206,6 +302,123 @@ func (s *documentService) RenderMarkdown(
 	return s.renderCommand(ctx, entryID, cfg)
 }
 
+// RenderListMarkdown renders a LIST export override (`lists.<id>.export_render`)
+// to markdown, for the same reason RenderMarkdown exists on the entity side:
+// view export feeds the markdown to a format transform rather than converting
+// it to HTML.
+//
+// Script-only: a `command:` renderer is handed the entry entity as {in}, of an
+// entry entity and a list has none. No caller sets Command today; the guard
+// below is a fail-closed assertion so a future one gets an error instead of a
+// silently entry-less substitution.
+//
+// It deliberately does NOT hash, cache, or singleflight, and none of those are
+// oversights to be "optimized" back in later:
+//   - computeDocumentHash loads ONE entity by id; a list has no entry entity,
+//     so there is nothing for it to hash.
+//   - The disk cache is keyed on that entry hash and holds HTML; list export
+//     produces per-request markdown.
+//   - A correct singleflight key would need the full resolved query AND the
+//     caller's ACL scope, because two principals' row sets legitimately differ.
+//     Getting that key wrong collapses two callers onto one render — a
+//     cross-principal leak, the RR-2QSGLU hazard with more to lose. Not
+//     deduping is the safe default.
+//
+// Callers MUST have resolved the rows through the ACL read path before calling
+// this — it makes no ACL decision of its own.
+func (s *documentService) RenderListMarkdown(
+	ctx context.Context, cfg documentRenderConfig, lrc lua.ListRenderContext,
+) (string, error) {
+	if len(cfg.Command) > 0 {
+		return "", errors.New("list export render must be a script, not a command")
+	}
+	if s.scriptEngine == nil || s.luaDeps == nil {
+		return "", errors.New("script rendering not available (engine or deps not wired)")
+	}
+	var buf bytes.Buffer
+	// Routed through elevatedDeps like the other two render paths so the
+	// capability grant is applied here too (TKT-YH52OM). A list export sets no
+	// Elevated flag, so this is the capability half only — but going through
+	// the one seam means a future grant cannot be forgotten on this path.
+	if err := s.scriptEngine.ExecuteListDocument(ctx, cfg.Script, s.elevatedDeps(cfg), &buf,
+		cfg.ConfigID, lrc, cfg.Timeout); err != nil {
+		// Same shaping as renderScript: attach the output captured before the
+		// script threw, then bubble up unchanged so the HTTP layer can branch
+		// via errors.As.
+		var se *lua.ScriptError
+		if errors.As(err, &se) {
+			return "", se.AttachCapturedOutput(buf.Bytes())
+		}
+		return "", fmt.Errorf("list script render: %w", err)
+	}
+	return buf.String(), nil
+}
+
+// RenderStandalone renders a STANDALONE document — one declared without an
+// `entity_type:`, whose content is company-wide rather than about one entity
+// (TKT-M1AX6P). Returns HTML.
+//
+// It returns a plain string rather than a *DocumentResult because two of that
+// struct's three fields — ContentHash and Entities — describe an entry
+// entity's dependency footprint, and a standalone document has no entry
+// entity. Returning a struct whose fields this constructor can never populate
+// would invite a caller to wire the SSE live-reload subscription to an always-
+// empty Entities and ship a document that silently never refreshes. The
+// narrower type makes that a compile error instead of a comment nobody reads.
+// (Standalone documents do refresh on any entity change — the SPA's SSE feed
+// is type-scoped, not keyed on this return value — but on-demand Refresh is
+// the reliable path until TKT-E1FO1 lets scripts declare dependencies.)
+//
+// Script-only, for the same reason RenderListMarkdown is: a `command:`
+// renderer is handed an entry entity as {in}, and a
+// standalone document has none. Rejecting is fail-closed — the alternative is
+// substituting an empty id into a shell command, which is how a renderer
+// silently produces a document about the wrong thing (or nothing).
+//
+// Like RenderListMarkdown it deliberately does NOT hash, cache, or
+// singleflight, and none of those are oversights:
+//   - computeDocumentHash loads ONE entity by id; there is no entry entity to
+//     hash, so there is no content hash to key a cache on.
+//   - A correct singleflight key would need the caller's full ACL scope,
+//     because two principals' aggregates legitimately differ. Getting that key
+//     wrong collapses two callers onto one render — the RR-2QSGLU
+//     cross-principal hazard. Not deduping is the safe default.
+//
+// Callers MUST apply the document's `permission:` gate before invoking this —
+// RenderStandalone makes no ACL decision of its own. (Its Lua reads are still
+// ACL-bound via lua.ReadDeps.VisibleReader, so content is gated regardless;
+// the caller's gate is what keeps a denied principal from triggering the
+// render at all.)
+func (s *documentService) RenderStandalone(
+	ctx context.Context, cfg documentRenderConfig,
+) (string, error) {
+	if len(cfg.Command) > 0 {
+		return "", errors.New("a document without an entity_type must use a script renderer, not a command")
+	}
+	if s.scriptEngine == nil || s.luaDeps == nil {
+		return "", errors.New("script rendering not available (engine or deps not wired)")
+	}
+
+	var buf bytes.Buffer
+	if err := s.scriptEngine.ExecuteStandaloneDocument(ctx, cfg.Script, s.elevatedDeps(cfg), &buf,
+		cfg.ConfigID, cfg.Timeout); err != nil {
+		// Same shaping as renderScript/RenderListMarkdown: attach the output
+		// captured before the script threw, then bubble up unchanged so the
+		// HTTP layer can branch via errors.As.
+		var se *lua.ScriptError
+		if errors.As(err, &se) {
+			return "", se.AttachCapturedOutput(buf.Bytes())
+		}
+		return "", fmt.Errorf("standalone script render: %w", err)
+	}
+
+	htmlContent, err := markdownToHTML(buf.String())
+	if err != nil {
+		return "", fmt.Errorf("markdown conversion: %w", err)
+	}
+	return htmlContent, nil
+}
+
 // doRender performs the actual rendering work. Dispatches on Script vs.
 // Command — these are mutually exclusive at config load (see
 // dataentryconfig.validateDocuments) so exactly one branch fires.
@@ -247,13 +460,95 @@ func (s *documentService) doRender(
 	}, nil
 }
 
-// renderCommand invokes the external render command and returns its stdout
-// as markdown. Placeholder substitution happens on the command string.
+// renderCommand invokes the external render command and returns its stdout as
+// markdown.
+//
+// The entry entity is serialized to markdown and handed to the command as the
+// {in} temp file. NOTHING request-derived reaches the argument vector: the
+// command array is operator-authored config, and the only substitution is {in}
+// → a runner-owned temp path. That is the structural fix for TKT-QGHNVA —
+// previously the entry id was spliced into a string run through `sh -c`, so an
+// id such as "-rf" arrived as an option flag rather than an operand, and the
+// only thing standing between a stored id and that shell was input filtering.
+//
+// A renderer that needs the id reads it from the file: the serialized
+// frontmatter always carries `id:` (see renderEntityMarkdown).
 func (s *documentService) renderCommand(ctx context.Context, entryID string, cfg documentRenderConfig) (string, error) {
-	command := cfg.Command
-	command = strings.ReplaceAll(command, "{id}", entryID)
-	command = strings.ReplaceAll(command, "{id_lower}", strings.ToLower(entryID))
-	return s.executeCommand(ctx, command, cfg.Timeout)
+	e, err := s.store.GetEntity(ctx, entryID)
+	if err != nil {
+		return "", fmt.Errorf("load entity %q for command render: %w", entryID, err)
+	}
+
+	in, err := renderEntityMarkdown(e)
+	if err != nil {
+		return "", fmt.Errorf("serialize entity %q for command render: %w", entryID, err)
+	}
+
+	return s.executeCommand(ctx, cfg.Command, []byte(in), cfg.Timeout)
+}
+
+// renderEntityMarkdown serializes an entity to the markdown shape the store
+// persists: YAML frontmatter followed by the body.
+//
+// The `id` key is what makes a command-line placeholder unnecessary, so it is
+// written unconditionally and asserted by TestRenderEntityMarkdown_CarriesID.
+// `id` and `type` lead, then the remaining properties in a stable order so a
+// renderer sees deterministic input.
+//
+// This builds the frontmatter with yaml directly rather than reusing
+// internal/markdown: dataentry must not depend on that package (arch-lint), and
+// what a renderer needs is the frontmatter contract, not the store's exact
+// byte-for-byte formatting.
+func renderEntityMarkdown(e *entity.Entity) (string, error) {
+	// yaml.v3 has no MapSlice, so build a mapping Node to control key order.
+	mapping := &yaml.Node{Kind: yaml.MappingNode}
+	appendPair := func(k string, v any) error {
+		key := &yaml.Node{Kind: yaml.ScalarNode, Value: k}
+		val := &yaml.Node{}
+		if err := val.Encode(v); err != nil {
+			return fmt.Errorf("encode %q: %w", k, err)
+		}
+		mapping.Content = append(mapping.Content, key, val)
+		return nil
+	}
+
+	if err := appendPair("id", e.ID); err != nil {
+		return "", err
+	}
+	if err := appendPair("type", e.Type); err != nil {
+		return "", err
+	}
+
+	rest := make([]string, 0, len(e.Properties))
+	for k := range e.Properties {
+		if k != "id" && k != "type" {
+			rest = append(rest, k)
+		}
+	}
+	sort.Strings(rest)
+	for _, k := range rest {
+		if err := appendPair(k, e.Properties[k]); err != nil {
+			return "", err
+		}
+	}
+
+	fm, err := yaml.Marshal(mapping)
+	if err != nil {
+		return "", fmt.Errorf("marshal frontmatter: %w", err)
+	}
+
+	var b strings.Builder
+	b.WriteString("---\n")
+	b.Write(fm)
+	b.WriteString("---\n")
+	if e.Content != "" {
+		b.WriteString("\n")
+		b.WriteString(e.Content)
+		if !strings.HasSuffix(e.Content, "\n") {
+			b.WriteString("\n")
+		}
+	}
+	return b.String(), nil
 }
 
 // renderScript executes a Lua document script and returns its captured
@@ -265,7 +560,7 @@ func (s *documentService) renderScript(
 		return "", errors.New("script rendering not available (engine or deps not wired)")
 	}
 	var buf bytes.Buffer
-	if err := s.scriptEngine.ExecuteDocument(ctx, cfg.Script, s.luaDeps(), &buf,
+	if err := s.scriptEngine.ExecuteDocument(ctx, cfg.Script, s.elevatedDeps(cfg), &buf,
 		cfg.ConfigID, entryID, cfg.Timeout); err != nil {
 		// On a Lua failure the engine returns *lua.ScriptError; attach
 		// the print() output we captured before it threw, then bubble
@@ -329,26 +624,42 @@ func hashEntities(entities []*entity.Entity) string {
 // value from producing an already-expired context.
 const commandDefaultTimeout = 30 * time.Second
 
-// executeCommand runs an external command and returns its stdout.
-func (s *documentService) executeCommand(ctx context.Context, command string, timeout time.Duration) (string, error) {
+// maxCommandOutputBytes caps a document renderer's stdout. The rendered
+// markdown is held in memory and then converted to HTML, so an unbounded
+// converter could exhaust the host; cmdexec enforces the cap as it reads.
+const maxCommandOutputBytes = 32 << 20 // 32 MiB
+
+// executeCommand runs an external render command over `in` and returns its
+// stdout.
+//
+// It delegates to internal/cmdexec, the reviewed "bytes in → bytes out" core
+// already used by attachment processing and view export: argv array (never a
+// shell string), {in}/{out} templated to runner-owned temp paths, a timeout, an
+// output cap, a no-network sandbox, and rlimits. There is deliberately no
+// `sh -c` here any more — see renderCommand.
+func (s *documentService) executeCommand(
+	ctx context.Context, command []string, in []byte, timeout time.Duration,
+) (string, error) {
+	if len(command) == 0 {
+		return "", errors.New("document command is empty")
+	}
 	if timeout <= 0 {
 		timeout = commandDefaultTimeout
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "sh", "-c", command)
-	cmd.Dir = s.projectRoot
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("command failed: %w\nstderr: %s", err, stderr.String())
+	// Temp files land in the OS temp dir, not the project root: the {in} file
+	// is runner-owned scratch, and a project checkout may legitimately be
+	// read-only.
+	runner, err := cmdexec.New(timeout, maxCommandOutputBytes)
+	if err != nil {
+		return "", fmt.Errorf("build document command runner: %w", err)
 	}
 
-	return stdout.String(), nil
+	out, _, err := runner.Run(ctx, command, in, true)
+	if err != nil {
+		return "", fmt.Errorf("command failed: %w", err)
+	}
+	return string(out), nil
 }
 
 // markdownToHTML converts markdown to HTML using goldmark.

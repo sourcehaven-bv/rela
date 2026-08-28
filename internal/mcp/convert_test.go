@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -54,10 +54,14 @@ func testMeta() *metamodel.Metamodel {
 }
 
 // makeToolRequest creates a CallToolRequest with the given arguments.
-func makeToolRequest(args map[string]any) mcp.CallToolRequest {
-	return mcp.CallToolRequest{
-		Params: mcp.CallToolParams{
-			Arguments: args,
+func makeToolRequest(args map[string]any) *mcpgo.CallToolRequest {
+	raw, err := json.Marshal(args)
+	if err != nil {
+		panic("makeToolRequest: marshal args: " + err.Error())
+	}
+	return &mcpgo.CallToolRequest{
+		Params: &mcpgo.CallToolParamsRaw{
+			Arguments: raw,
 		},
 	}
 }

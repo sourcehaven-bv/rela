@@ -3,6 +3,7 @@ package dataentry
 import (
 	"fmt"
 	htmltemplate "html/template"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -175,111 +176,100 @@ func gatherEnumHelp(meta *metamodel.Metamodel, entDef *metamodel.EntityDef) []En
 	return out
 }
 
-// renderHelpContent generates HTML for entity help content.
-func (a *App) renderHelpContent(
-	w http.ResponseWriter, entityDesc htmltemplate.HTML, props []PropertyHelp,
-	outgoingRels, incomingRels []RelationHelp, enums []EnumHelp,
-) {
-	fmt.Fprint(w, `<div class="help-content">`)
-	if entityDesc != "" {
-		fmt.Fprintf(w, `<div class="entity-description">%s</div>`, entityDesc)
-	}
-
-	// Properties section
-	if len(props) > 0 {
-		fmt.Fprint(w, `<h4>Properties</h4><table class="help-table"><thead><tr><th>Name</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody>`)
-		for _, p := range props {
-			required := ""
-			if p.Required {
-				required = "Yes"
-			}
-			fmt.Fprintf(w, `<tr><td><code>%s</code></td><td>%s</td><td>%s</td><td>%s</td></tr>`,
-				htmltemplate.HTMLEscapeString(p.Name),
-				htmltemplate.HTMLEscapeString(p.Type),
-				required,
-				p.Description)
-		}
-		fmt.Fprint(w, `</tbody></table>`)
-	}
-
-	// Outgoing relations section
-	if len(outgoingRels) > 0 {
-		fmt.Fprint(w, `<h4>Outgoing Relations</h4><table class="help-table"><thead><tr><th>Name</th><th>Target</th><th>Cardinality</th><th>Description</th></tr></thead><tbody>`)
-		for _, r := range outgoingRels {
-			name := r.Name
-			if r.Label != "" {
-				name = r.Label + " (" + r.Name + ")"
-			}
-			fmt.Fprintf(w, `<tr><td><code>%s</code></td><td>%s</td><td>%s</td><td>%s</td></tr>`,
-				htmltemplate.HTMLEscapeString(name),
-				htmltemplate.HTMLEscapeString(r.TargetType),
-				htmltemplate.HTMLEscapeString(r.Cardinality),
-				r.Description)
-		}
-		fmt.Fprint(w, `</tbody></table>`)
-	}
-
-	// Incoming relations section
-	if len(incomingRels) > 0 {
-		fmt.Fprint(w, `<h4>Incoming Relations</h4><table class="help-table"><thead><tr><th>Name</th><th>Source</th><th>Cardinality</th><th>Description</th></tr></thead><tbody>`)
-		for _, r := range incomingRels {
-			name := r.Name
-			if r.Label != "" {
-				name = r.Label + " (" + r.Name + ")"
-			}
-			fmt.Fprintf(w, `<tr><td><code>%s</code></td><td>%s</td><td>%s</td><td>%s</td></tr>`,
-				htmltemplate.HTMLEscapeString(name),
-				htmltemplate.HTMLEscapeString(r.TargetType),
-				htmltemplate.HTMLEscapeString(r.Cardinality),
-				r.Description)
-		}
-		fmt.Fprint(w, `</tbody></table>`)
-	}
-
-	// Values + Lifecycle sections per enum / state-machine property (TKT-DUQBD0).
-	for _, e := range enums {
-		renderEnumHelp(w, e)
-	}
-
-	fmt.Fprint(w, `</div>`)
+// helpContentData is the template model for the entity-help fragment. It exists
+// so the fragment is rendered by html/template (contextual auto-escaping) rather
+// than assembled with fmt.Fprintf, which made every field's escaping a manual,
+// individually-auditable decision.
+type helpContentData struct {
+	EntityDesc   htmltemplate.HTML
+	Props        []PropertyHelp
+	OutgoingRels []RelationHelp
+	IncomingRels []RelationHelp
+	Enums        []EnumHelp
 }
 
-// renderEnumHelp emits the Values table (and, for a state machine, the Lifecycle
-// table) for one enum property. Sections with no rows are skipped, so a plain
-// enum shows only Values and a value with no description shows just its
-// value/label.
-func renderEnumHelp(w http.ResponseWriter, e EnumHelp) {
-	if len(e.Values) > 0 {
-		fmt.Fprintf(w, `<h4>Values: <code>%s</code></h4>`, htmltemplate.HTMLEscapeString(e.Property))
-		fmt.Fprint(w, `<table class="help-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody>`)
-		for _, v := range e.Values {
-			shown := v.Value
-			if v.Label != "" {
-				shown = v.Label + " (" + v.Value + ")"
-			}
-			fmt.Fprintf(w, `<tr><td><code>%s</code></td><td>%s</td></tr>`,
-				htmltemplate.HTMLEscapeString(shown), v.Description)
-		}
-		fmt.Fprint(w, `</tbody></table>`)
-	}
+// helpContentTemplate renders the entity-help fragment.
+//
+// Escaping contract: every plain-string field (names, types, cardinalities,
+// enum values, state names, and the mermaid diagram source) is auto-escaped by
+// html/template in its element context. The only fields interpolated as raw
+// markup are the htmltemplate.HTML ones — Description / Help — which hold
+// goldmark output produced from OPERATOR-authored schema.yaml prose by
+// simpleMarkdownToHTML (internal/dataentry/helpers.go:345). That converter runs
+// goldmark with html.WithUnsafe() (helpers.go:341), so it passes raw HTML
+// through unsanitized; it is safe HERE only because schema.yaml is on-disk
+// operator configuration that no HTTP/MCP/Lua write path can modify — NOT
+// because the markdown is sanitized. Never route user-authored entity content
+// (entity bodies or property values) into these fields.
+var helpContentTemplate = htmltemplate.Must(htmltemplate.New("help").
+	Funcs(htmltemplate.FuncMap{"stateDiagram": enumStateDiagram}).
+	Parse(`
+<div class="help-content">
+{{- with .EntityDesc}}<div class="entity-description">{{.}}</div>{{end}}
+{{- if .Props}}
+<h4>Properties</h4><table class="help-table"><thead><tr><th>Name</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody>
+{{- range .Props}}
+<tr><td><code>{{.Name}}</code></td><td>{{.Type}}</td><td>{{if .Required}}Yes{{end}}</td><td>{{.Description}}</td></tr>
+{{- end}}
+</tbody></table>
+{{- end}}
+{{- if .OutgoingRels}}
+<h4>Outgoing Relations</h4><table class="help-table"><thead><tr><th>Name</th><th>Target</th><th>Cardinality</th><th>Description</th></tr></thead><tbody>
+{{- range .OutgoingRels}}
+<tr><td><code>{{template "relName" .}}</code></td><td>{{.TargetType}}</td><td>{{.Cardinality}}</td><td>{{.Description}}</td></tr>
+{{- end}}
+</tbody></table>
+{{- end}}
+{{- if .IncomingRels}}
+<h4>Incoming Relations</h4><table class="help-table"><thead><tr><th>Name</th><th>Source</th><th>Cardinality</th><th>Description</th></tr></thead><tbody>
+{{- range .IncomingRels}}
+<tr><td><code>{{template "relName" .}}</code></td><td>{{.TargetType}}</td><td>{{.Cardinality}}</td><td>{{.Description}}</td></tr>
+{{- end}}
+</tbody></table>
+{{- end}}
+{{- range .Enums}}
+{{- if .Values}}
+<h4>Values: <code>{{.Property}}</code></h4><table class="help-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody>
+{{- range .Values}}
+<tr><td><code>{{if .Label}}{{.Label}} ({{.Value}}){{else}}{{.Value}}{{end}}</code></td><td>{{.Description}}</td></tr>
+{{- end}}
+</tbody></table>
+{{- end}}
+{{- if .Transitions}}
+<h4>Lifecycle: <code>{{.Property}}</code></h4>
+<pre class="mermaid">{{stateDiagram .}}</pre>
+<table class="help-table"><thead><tr><th>Move</th><th>From &rarr; To</th><th>When to use</th></tr></thead><tbody>
+{{- range .Transitions}}
+<tr><td>{{.Move}}</td><td><code>{{.From}}</code> &rarr; <code>{{.To}}</code></td><td>{{.Help}}</td></tr>
+{{- end}}
+</tbody></table>
+{{- end}}
+{{- end}}
+</div>`))
 
-	if len(e.Transitions) > 0 {
-		fmt.Fprintf(w, `<h4>Lifecycle: <code>%s</code></h4>`, htmltemplate.HTMLEscapeString(e.Property))
-		// A mermaid state diagram of this field's machine, rendered client-side
-		// (the help modal runs renderMermaidDiagrams over the injected HTML). One
-		// diagram per state-machine field.
-		fmt.Fprintf(w, `<pre class="mermaid">%s</pre>`,
-			htmltemplate.HTMLEscapeString(enumStateDiagram(e)))
-		fmt.Fprint(w, `<table class="help-table"><thead><tr><th>Move</th><th>From &rarr; To</th><th>When to use</th></tr></thead><tbody>`)
-		for _, tr := range e.Transitions {
-			fmt.Fprintf(w, `<tr><td>%s</td><td><code>%s</code> &rarr; <code>%s</code></td><td>%s</td></tr>`,
-				htmltemplate.HTMLEscapeString(tr.Move),
-				htmltemplate.HTMLEscapeString(tr.From),
-				htmltemplate.HTMLEscapeString(tr.To),
-				tr.Help)
-		}
-		fmt.Fprint(w, `</tbody></table>`)
-	}
+// relName renders a relation's display name (Label with the raw name in
+// parentheses, else the bare name). Defined as an associated template so both
+// relation tables share one definition.
+var _ = htmltemplate.Must(helpContentTemplate.New("relName").
+	Parse(`{{if .Label}}{{.Label}} ({{.Name}}){{else}}{{.Name}}{{end}}`))
+
+// renderHelpContent generates HTML for entity help content. It takes an
+// io.Writer (not http.ResponseWriter) because it only ever writes the body —
+// which also lets the escaping contract be tested against a buffer.
+func (a *App) renderHelpContent(
+	w io.Writer, entityDesc htmltemplate.HTML, props []PropertyHelp,
+	outgoingRels, incomingRels []RelationHelp, enums []EnumHelp,
+) {
+	// The template is static and parsed at init, so Execute can only fail if the
+	// writer fails (e.g. the client hung up). Headers are already sent by then,
+	// so there is nothing to report — matching the previous fmt.Fprintf behavior.
+	_ = helpContentTemplate.Execute(w, helpContentData{
+		EntityDesc:   entityDesc,
+		Props:        props,
+		OutgoingRels: outgoingRels,
+		IncomingRels: incomingRels,
+		Enums:        enums,
+	})
 }
 
 // enumStateDiagram builds a stateDiagram-v2 source for one state-machine field

@@ -7,6 +7,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // viewResult holds the entry entity and collected entities after traversal.
@@ -16,8 +17,8 @@ type viewResult struct {
 }
 
 // executeView runs a view's traversal rules and returns the result.
-func (a *App) executeView(ctx context.Context, view ViewConfig, entryID string) (*viewResult, error) {
-	entry, err := a.store.GetEntity(ctx, entryID)
+func (h *viewsHandler) executeView(ctx context.Context, view ViewConfig, entryID string) (*viewResult, error) {
+	entry, err := h.store.GetEntity(ctx, entryID)
 	if err != nil {
 		return nil, fmt.Errorf("entry entity not found: %s", entryID)
 	}
@@ -35,7 +36,7 @@ func (a *App) executeView(ctx context.Context, view ViewConfig, entryID string) 
 	for range maxPasses {
 		before := countViewEntities(result.Collections)
 		for _, rule := range view.Traverse {
-			a.applyViewTraverse(ctx, rule, result)
+			h.applyViewTraverse(ctx, rule, result)
 		}
 		if countViewEntities(result.Collections) == before {
 			break
@@ -45,10 +46,31 @@ func (a *App) executeView(ctx context.Context, view ViewConfig, entryID string) 
 	// Remove internal "entry" collection
 	delete(result.Collections, "entry")
 
+	// Row-gate + field-redact on the way out (DEC-ZBI39P). Traversal above runs
+	// on raw store entities on purpose: a rule's where: filter may reference a
+	// hidden property, and edges are walked by id — redacting mid-traversal
+	// would break both. Redacting here, once, gives every section builder
+	// already-redacted entities (closes BUG-9QL9XV property-value leak and
+	// BUG-R9EHKV title leak) and drops hidden neighbors from collections
+	// (Filter gates by row). The entry is already row-gated at the handler
+	// (api_v1.go, TKT-BNX2PN), so it only needs field redaction, not a re-gate
+	// that could 404 an entry the caller was just cleared to read.
+	//
+	// Residual (accepted, like the computed-path timing note in
+	// internal/visibility): a traverse rule's where: runs on raw entities above,
+	// so for a READABLE neighbor whose only hidden aspect is a field value, its
+	// presence/absence in a collection still reflects whether it matched a
+	// predicate over that hidden field. The value is redacted; membership is a
+	// one-bit inference channel, not a value disclosure.
+	result.Entry = visibility.Redact(ctx, h.redactor(), result.Entry)
+	for name, entities := range result.Collections {
+		result.Collections[name] = h.viewReader.Filter(ctx, entities)
+	}
+
 	return result, nil
 }
 
-func (a *App) applyViewTraverse(ctx context.Context, rule ViewTraverse, result *viewResult) {
+func (h *viewsHandler) applyViewTraverse(ctx context.Context, rule ViewTraverse, result *viewResult) {
 	// Gather source entities
 	var sources []*entity.Entity
 	if rule.From == "*" {
@@ -74,15 +96,15 @@ func (a *App) applyViewTraverse(ctx context.Context, rule ViewTraverse, result *
 			if maxD <= 0 {
 				maxD = maxRecursionDepth
 			}
-			found = append(found, a.traverseViewRecursive(ctx, src.ID, rule, 0, maxD, map[string]bool{})...)
+			found = append(found, h.traverseViewRecursive(ctx, src.ID, rule, 0, maxD, map[string]bool{})...)
 		} else {
-			found = append(found, a.traverseViewOnce(ctx, src.ID, rule)...)
+			found = append(found, h.traverseViewOnce(ctx, src.ID, rule)...)
 		}
 	}
 
 	// Apply where filter if specified
 	if rule.Where != "" {
-		filtered, err := a.filterEntities(found, rule.Where)
+		filtered, err := h.filterEntities(found, rule.Where)
 		if err == nil {
 			found = filtered
 		}
@@ -105,8 +127,8 @@ func (a *App) applyViewTraverse(ctx context.Context, rule ViewTraverse, result *
 	}
 }
 
-func (a *App) traverseViewOnce(ctx context.Context, sourceID string, rule ViewTraverse) []*entity.Entity {
-	st := a.store
+func (h *viewsHandler) traverseViewOnce(ctx context.Context, sourceID string, rule ViewTraverse) []*entity.Entity {
+	st := h.store
 	var out []*entity.Entity
 
 	var relType string
@@ -141,18 +163,18 @@ func (a *App) traverseViewOnce(ctx context.Context, sourceID string, rule ViewTr
 	return out
 }
 
-func (a *App) traverseViewRecursive(
+func (h *viewsHandler) traverseViewRecursive(
 	ctx context.Context, sourceID string, rule ViewTraverse, depth, maxDepth int, visited map[string]bool,
 ) []*entity.Entity {
 	if depth >= maxDepth || visited[sourceID] {
 		return nil
 	}
 	visited[sourceID] = true
-	immediate := a.traverseViewOnce(ctx, sourceID, rule)
+	immediate := h.traverseViewOnce(ctx, sourceID, rule)
 	var all []*entity.Entity
 	all = append(all, immediate...)
 	for _, e := range immediate {
-		all = append(all, a.traverseViewRecursive(ctx, e.ID, rule, depth+1, maxDepth, visited)...)
+		all = append(all, h.traverseViewRecursive(ctx, e.ID, rule, depth+1, maxDepth, visited)...)
 	}
 	return all
 }
@@ -169,13 +191,13 @@ func countViewEntities(collections map[string][]*entity.Entity) int {
 
 // filterEntities filters entities based on a where expression.
 // Supports the "type" pseudo-property to filter by entity type.
-func (a *App) filterEntities(entities []*entity.Entity, whereExpr string) ([]*entity.Entity, error) {
+func (h *viewsHandler) filterEntities(entities []*entity.Entity, whereExpr string) ([]*entity.Entity, error) {
 	f, err := filter.Parse(whereExpr)
 	if err != nil {
 		return nil, fmt.Errorf("invalid where expression: %w", err)
 	}
 
-	s := a.State()
+	s := h.schema()
 	var result []*entity.Entity
 	for _, e := range entities {
 		// Special handling for "type" pseudo-property

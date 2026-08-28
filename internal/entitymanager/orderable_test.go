@@ -77,6 +77,7 @@ func newOrderableManagerWithAudit(t *testing.T, mode string) (*entitymanager.Man
 		Audit:       mem,
 		ACL:         acl.NopACL{},
 		Transitions: statemachine.EmptySet(),
+		FieldGate:   entitymanager.AllowAllFieldGate{},
 	}
 	mgr, err := entitymanager.New(deps)
 	if err != nil {

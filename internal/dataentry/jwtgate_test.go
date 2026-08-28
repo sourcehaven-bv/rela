@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -25,17 +26,27 @@ var errStubKeysUnavailable = errors.New("keys unavailable")
 type gateVerifier struct {
 	validToken string
 	subject    string
+	orgID      string
+	orgSlug    string
+	email      string
+	roles      []string
 	failWith   error
 }
 
-func (g gateVerifier) VerifySubject(_ context.Context, raw string) (string, error) {
+func (g gateVerifier) VerifyAssertion(_ context.Context, raw string) (AssertedIdentity, error) {
 	if raw == g.validToken {
-		return g.subject, nil
+		return AssertedIdentity{
+			Subject: g.subject,
+			OrgID:   g.orgID,
+			OrgSlug: g.orgSlug,
+			Email:   g.email,
+			Roles:   g.roles,
+		}, nil
 	}
 	if g.failWith != nil {
-		return "", g.failWith
+		return AssertedIdentity{}, g.failWith
 	}
-	return "", errors.New("invalid")
+	return AssertedIdentity{}, errors.New("invalid")
 }
 
 // newGateHandler builds the gate over a handler that echoes the stamped
@@ -360,6 +371,92 @@ func TestRequireVerifiedJWT_OrderingRelativeToStamper(t *testing.T) {
 	}
 }
 
+// TestRequireVerifiedJWT_StampsAssertedClaims pins that the gate stamps the
+// FULL verified identity — org and roles, not just the subject. This is the
+// direct regression guard for TKT-OJL2GN: the gate used to stamp a subject-only
+// literal, silently dropping every asserted claim before the ACL saw it.
+func TestRequireVerifiedJWT_StampsAssertedClaims(t *testing.T) {
+	const header = "X-Auth-Assertion"
+	cfg := JWTGateConfig{
+		Verifier: gateVerifier{
+			validToken: "good.jwt.token", subject: "usr_abc123",
+			orgID: "org_acme", orgSlug: "acme", roles: []string{"admin", "billing"},
+		},
+		HeaderName: header,
+	}
+
+	var seen principal.Principal
+	inner := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		seen = principal.From(r.Context())
+	})
+	h := stampAuditPrincipal(requireVerifiedJWT(inner, cfg), defaultPrincipalResolver)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/entities", http.NoBody)
+	req.Header.Set(header, "good.jwt.token")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	if seen.User != "usr_abc123" {
+		t.Fatalf("User = %q, want the verified subject", seen.User)
+	}
+	if seen.OrgID() != "org_acme" {
+		t.Errorf("OrgID = %q, want org_acme — the gate dropped the org claim", seen.OrgID())
+	}
+	if seen.OrgSlug() != "acme" {
+		t.Errorf("OrgSlug = %q, want acme", seen.OrgSlug())
+	}
+	if want := []string{"admin", "billing"}; !slices.Equal(seen.Roles(), want) {
+		t.Errorf("Roles = %v, want %v — the gate dropped the asserted roles", seen.Roles(), want)
+	}
+}
+
+// TestRequireVerifiedJWT_SanitizesRolesThroughGate drives roles carrying control
+// characters through the gate and asserts they are cleaned before landing on the
+// Principal. The per-element cap and control-char strip live in the shared
+// verifiedPrincipal projection; this pins that they run on the gate path
+// specifically, not only in jwtauth's own unit tests. A hostile IdP must not be
+// able to inject a control-char role into the audit JSONL stream via the gate.
+//
+// (The 32-role count cap is enforced in jwtauth.VerifyAssertion, upstream of the
+// stub used here, so it is covered by internal/jwtauth; this guards the
+// dataentry-side per-element sanitization the gate applies.)
+func TestRequireVerifiedJWT_SanitizesRolesThroughGate(t *testing.T) {
+	const header = "X-Auth-Assertion"
+	cfg := JWTGateConfig{
+		Verifier: gateVerifier{
+			validToken: "good.jwt.token", subject: "usr_abc123",
+			// A control char in a role, and one role that is control-only (must
+			// be dropped, since an empty role can never match a policy mapping).
+			roles: []string{"ad\x00min", "\x00\x00", "ok"},
+		},
+		HeaderName: header,
+	}
+
+	var seen principal.Principal
+	inner := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		seen = principal.From(r.Context())
+	})
+	h := stampAuditPrincipal(requireVerifiedJWT(inner, cfg), defaultPrincipalResolver)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/entities", http.NoBody)
+	req.Header.Set(header, "good.jwt.token")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	for _, role := range seen.Roles() {
+		if strings.ContainsRune(role, 0) {
+			t.Errorf("role %q reached the Principal with a control char — the gate "+
+				"did not sanitize", role)
+		}
+		if role == "" {
+			t.Error("an empty role survived the gate; it can never match a policy " +
+				"mapping and only pads the attribution set")
+		}
+	}
+	// "ad\x00min" -> "ad min", "\x00\x00" -> dropped, "ok" -> "ok".
+	if len(seen.Roles()) != 2 {
+		t.Errorf("Roles = %v, want 2 surviving entries", seen.Roles())
+	}
+}
+
 // A denied request must never reach the handlers the gate protects — no store
 // read, no ACL request, no side effect.
 func TestRequireVerifiedJWT_DenialShortCircuits(t *testing.T) {
@@ -529,6 +626,84 @@ func TestJWTGate_RouterChainOrder(t *testing.T) {
 
 		if rec.Code == http.StatusUnauthorized {
 			t.Error("SPA shell was gated (RR-T15E): operators lose the recovery surface")
+		}
+	})
+}
+
+// TestJWTGate_AssertedRolesReachACL is the systemic guard TKT-OJL2GN's 5-whys
+// identified as missing: it drives a signed assertion CARRYING ROLES through the
+// real NewRouter stack and asserts the mapped role produces an ACL decision.
+//
+// The prior gate test (TestJWTGate_RouterChainOrder) proved the verified subject
+// reaches the ACL but stopped short of the claims — which is exactly the gap
+// that let the gate ship stamping a subject-only Principal while the asserted-
+// role machinery sat inert. This test pins the whole identity path
+// (verify → stamp → resolve → ACL), so a future rework of the gate or the
+// resolver cannot silently sever claims again.
+func TestJWTGate_AssertedRolesReachACL(t *testing.T) {
+	const header = "X-Auth-Assertion"
+
+	// A policy where the ONLY way to read a ticket is an asserted "admin" claim
+	// mapped to the viewer role. The principal has no assignments entry and no
+	// membership edge, so a 200 can only come from the asserted role flowing
+	// through the gate.
+	newApp := func(t *testing.T) *App {
+		t.Helper()
+		app := newTestAppV1(t)
+		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
+		app.acl = mustNewACL(t, &acl.Policy{
+			Roles:         map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
+			AssertedRoles: map[string]acl.RoleList{"admin": {"viewer"}},
+		}, app.store)
+		return app
+	}
+
+	get := func(t *testing.T, h http.Handler) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody)
+		req.Header.Set(header, "good.jwt.token")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	t.Run("asserted role grants read through the real gate", func(t *testing.T) {
+		app := newApp(t)
+		if err := app.SetJWTGate(JWTGateConfig{
+			Verifier: gateVerifier{
+				validToken: "good.jwt.token", subject: "usr_nobody",
+				orgID: "org_acme", roles: []string{"admin"},
+			},
+			HeaderName: header,
+		}); err != nil {
+			t.Fatalf("SetJWTGate: %v", err)
+		}
+
+		rec := get(t, app.NewRouter())
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200 — the asserted 'admin' claim maps to "+
+				"viewer and should grant read; got %s", rec.Code, rec.Body)
+		}
+	})
+
+	t.Run("without the claim the same request is denied", func(t *testing.T) {
+		// The negative half: identical setup, no roles on the assertion. Proves
+		// the 200 above came from the claim, not from an accidental open grant.
+		app := newApp(t)
+		if err := app.SetJWTGate(JWTGateConfig{
+			Verifier: gateVerifier{
+				validToken: "good.jwt.token", subject: "usr_nobody",
+				roles: nil,
+			},
+			HeaderName: header,
+		}); err != nil {
+			t.Fatalf("SetJWTGate: %v", err)
+		}
+
+		rec := get(t, app.NewRouter())
+		if rec.Code == http.StatusOK {
+			t.Fatalf("status = 200 for a principal holding no asserted role — the "+
+				"gate is granting read without the claim (body %s)", rec.Body)
 		}
 	})
 }

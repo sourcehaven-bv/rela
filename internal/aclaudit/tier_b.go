@@ -13,12 +13,13 @@ import (
 // sentinel, which is not an entity type (RR-TZ2S3G).
 func tierB(p *acl.Policy, m MetamodelReader) []Finding {
 	f := make([]Finding, 0, 8)
-	f = append(f, checkUndeclaredEntityTypes(p, m)...)  // B1
-	f = append(f, checkUndeclaredRelations(p, m)...)    // B2
-	f = append(f, checkMembershipFromCompat(p, m)...)   // B3
-	f = append(f, checkUndeclaredFields(p, m)...)       // B4
-	f = append(f, checkUndeclaredOptions(p, m)...)      // B5
-	f = append(f, checkUserEntityTypeDeclared(p, m)...) // B7
+	f = append(f, checkUndeclaredEntityTypes(p, m)...)    // B1
+	f = append(f, checkUndeclaredRelations(p, m)...)      // B2
+	f = append(f, checkMembershipFromCompat(p, m)...)     // B3
+	f = append(f, checkUndeclaredFields(p, m)...)         // B4
+	f = append(f, checkUndeclaredOptions(p, m)...)        // B5
+	f = append(f, checkUserEntityTypeDeclared(p, m)...)   // B7
+	f = append(f, checkCeilingsAgainstMetamodel(p, m)...) // B8 / B9
 	return f
 }
 

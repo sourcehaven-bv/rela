@@ -24,27 +24,38 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
+	"github.com/Sourcehaven-BV/rela/internal/caldavalias"
+	"github.com/Sourcehaven-BV/rela/internal/computed"
 	"github.com/Sourcehaven-BV/rela/internal/config"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/jobs"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/state"
+	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/userstate"
+	"github.com/Sourcehaven-BV/rela/internal/userstate/kvuserstate"
+	"github.com/Sourcehaven-BV/rela/internal/userstate/memuserstate"
 	"github.com/Sourcehaven-BV/rela/internal/validator"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
@@ -64,9 +75,24 @@ import (
 // exception, not a ratchet target. ScheduledLuaWriteDeps() (TKT-ZF2DTV) takes
 // it to 22: it is a scheduler.WorkspaceProvider interface method, so it must be
 // exported; the two redactor-parameterized variants behind it are unexported
-// precisely to keep this surface from growing by three.
+// precisely to keep this surface from growing by three. CalDAVAliases()
+// (TKT-WAA092) takes it to 23: the alias service is constructed here and
+// consumed by cmd/rela-server when wiring the data-entry App, so it has to
+// cross the package boundary — there is no in-package caller to hide it behind.
+// GatedReads() (TKT-UIR41P) takes it to 24: it returns the ACL-bound read
+// handles an identity-bearing consumer needs, and it is deliberately ONE method
+// returning a bundle rather than three accessors — the three handles must come
+// from the same gate to stay consistent, and splitting them would both grow this
+// surface by three and let a caller mix a gated reader with a raw tracer.
+// UserState() (TKT-CXD0A4) takes it to 25, for the same reason as the others:
+// the backend is chosen here (per build tag) and handed to the App at the
+// wiring site.
 //
-//plimsoll:max-exported-methods=22
+// The exported count is the service-accessor surface: Services IS the wiring
+// facade, so each new subsystem it composes adds one getter. Ratchet this down
+// by splitting the bundle (TKT-N0IKN9), not by hiding an accessor.
+//
+//plimsoll:max-exported-methods=26
 type Services struct {
 	fs    storage.FS
 	paths *project.Context
@@ -82,20 +108,44 @@ type Services struct {
 	// the generic search.NewVisible wrapper on the fs/memory builds,
 	// the pgstore-native implementation on the postgres build.
 	visibleSearcher search.VisibleSearcher
+	userState       userstate.Store
 	entityManager   entitymanager.EntityManager
 	tracer          tracer.Tracer
 	validator       validator.Validator
 	templater       templating.Templater
 	cfgLoader       config.Loader
 	stateKV         state.KV
-	scriptEngine    *script.Engine
-	searchCloser    io.Closer
-	acl             acl.ACL
+	// jobQueue is the background-job seam (TKT-YOED3R). Its backend is a
+	// per-tier choice made by the recipe: ephemeral in-process on fs/mem,
+	// durable PostgreSQL on the postgres build. Torn down in Close.
+	jobQueue      jobs.Queue
+	caldavAliases *caldavalias.Service
+	scriptEngine  *script.Engine
+	searchCloser  io.Closer
+	acl           acl.ACL
 	// aclDeclarative is set when buildACL constructs a Declarative; nil
 	// for NopACL, ReadOnlyACL, or when Declarative construction fails.
 	aclDeclarative *acl.Declarative
 	aclPolicy      *acl.Policy
 	audit          audit.Audit
+	// mailStop drains and stops the mail worker. Per-assembled like gcStop,
+	// and bounded by the outbox's drain timeout so it cannot hang shutdown.
+	mailStop func()
+
+	// gcStop terminates this store's data-migration GC sweep goroutine
+	// (TKT-0C57FS). Per-assembled, torn down in Close like searchCloser.
+	gcStop func()
+	// fieldRedactor applies field-level `visible:` policy to the unattended
+	// and identity-bearing read paths (TKT-425426). Never nil after
+	// construction: [visibility.NopRedactor] when no policy declares
+	// affordance grants, so the no-policy path stays byte-identical.
+	//
+	// It is a FIELD, not an accessor, on purpose. Services sits at its
+	// plimsoll max-exported-methods ceiling, and the underlying resolver
+	// must be fully built before it is shared — [affordances.PolicyResolver.WithMachines]
+	// is the one mutator on an otherwise-immutable value and is safe only
+	// during single-threaded wiring. Constructing here, once, preserves that.
+	fieldRedactor visibility.FieldRedactor
 
 	closeOnce sync.Once
 	closeErr  error
@@ -126,6 +176,53 @@ func (s *Services) Searcher() search.Searcher { return s.searcher }
 // generic scope-filter wrapper on the fs/memory builds, the native
 // SQL-composed implementation on the postgres build.
 func (s *Services) VisibleSearcher() search.VisibleSearcher { return s.visibleSearcher }
+
+// newUserState builds the next-action per-user state backend.
+//
+// Durable by default, over the same state.KV that already holds the
+// scheduler's last-run timestamps and the document render cache — this state
+// has exactly that character (persists between runs, not tracked source), so
+// it gets the same seam and the same `.rela/` home rather than a second
+// persistence mechanism beside it.
+//
+// Falls back to the in-memory backend if the KV is unavailable, and says so.
+// Losing a snooze across a restart is a repeated suggestion, not lost data;
+// refusing to boot over it would be the wrong trade. The warning matters
+// because the degradation is otherwise invisible — the feature keeps working
+// and just forgets.
+//
+// Still build-agnostic: a multi-process deployment wants the postgres backend
+// (this one is last-writer-wins across processes), and that becomes a
+// per-recipe choice when it lands.
+func newUserState(st store.Store, kv state.KV) userstate.Store {
+	// A store-native backend wins where one exists (postgres): it is the only
+	// one safe for the multi-process deployment, where the KV document's
+	// whole-file rewrite is last-writer-wins. Resolved by a build-tagged
+	// helper, mirroring versionServiceFor — the fs/memory builds return nil
+	// and neither know nor link the postgres implementation.
+	if s := storeUserStateFor(st); s != nil {
+		return s
+	}
+	if kv == nil {
+		slog.Warn("next-action state: no state KV; snoozes and mutes will not survive a restart")
+		return memuserstate.New()
+	}
+	s, err := kvuserstate.New(kv)
+	if err != nil {
+		slog.Warn("next-action state: falling back to in-memory", "error", err)
+		return memuserstate.New()
+	}
+	return s
+}
+
+// UserState returns the next-action per-user state backend (snooze / mute /
+// cooldown).
+//
+// Build-agnostic today: every build gets the in-memory backend, because this
+// state is disposable — losing it costs a user one repeated suggestion, not
+// data. When a durable backend lands it becomes a per-recipe choice like the
+// store, and only the recipes change; this accessor and its consumers do not.
+func (s *Services) UserState() userstate.Store { return s.userState }
 
 // EntityManager returns the production write path.
 func (s *Services) EntityManager() entitymanager.EntityManager { return s.entityManager }
@@ -182,12 +279,33 @@ func (s *Services) Config() config.Loader { return s.cfgLoader }
 // when no cache dir is available).
 func (s *Services) State() state.KV { return s.stateKV }
 
+// Jobs returns the background-job queue, already started.
+//
+// The return type deliberately omits [jobs.Lifecycle]: starting and stopping
+// the queue is the composition root's concern, and a consumer that could Close
+// it would be shutting background work down for every other subsystem. Services
+// keeps the lifecycle handle privately and tears it down in Close.
+//
+// Register handlers at wiring time; the dispatcher resolves a handler per job,
+// so registration after start is fine. Durability depends on the build —
+// ephemeral on fs/desktop, durable on postgres.
+//
+// Nil: never — assemble fails rather than returning a Services with no
+// queue, since a nil queue would turn every Enqueue into a panic at the
+// call site rather than a wiring error here.
+func (s *Services) Jobs() jobs.Client { return s.jobQueue }
+
+// CalDAVAliases is the CalDAV<->rela resource alias service. Never nil: the
+// service is always constructed (an empty table is the normal first-run state),
+// so consumers need no nil check.
+func (s *Services) CalDAVAliases() *caldavalias.Service { return s.caldavAliases }
+
 // LuaReadDeps materializes the read-only Lua capability bundle with
 // UNRESTRICTED reads — the operator-trust-boundary wiring used by the CLI
 // and the docs runtime, where whoever runs the binary already has the
 // project files (RR-17DMC).
 //
-// Request-scoped and scheduled callers must use [Services.luaReadDepsFor]
+// Request-scoped and scheduled callers must use Services.luaReadDepsFor
 // instead, which binds reads to an identity (DEC-O59WM4).
 //
 // Cheap to call; rebuild per-runtime so future metamodel reloads propagate.
@@ -197,12 +315,11 @@ func (s *Services) LuaReadDeps() lua.ReadDeps {
 		root = s.paths.Root
 	}
 	return lua.ReadDeps{
-		VisibleReader:  s.store,
-		WritePrepStore: s.store,
-		Tracer:         s.tracer,
-		Searcher:       s.searcher,
-		Meta:           s.meta,
-		ProjectRoot:    root,
+		VisibleReader: visibility.Unrestricted(s.store),
+		Tracer:        s.tracer,
+		Searcher:      s.searcher,
+		Meta:          s.meta,
+		ProjectRoot:   root,
 	}
 }
 
@@ -225,12 +342,12 @@ func (s *Services) LuaReadDeps() lua.ReadDeps {
 //
 // Falls back to unrestricted reads when no Declarative ACL is configured —
 // that is the NopACL path, byte-identical to pre-ACL behavior, not a
-// bypass. A construction failure is also unrestricted-with-a-warning
-// rather than silent denial: failing every script closed on a wiring error
-// would be a louder outage than the ACL is worth here, and it is logged.
+// bypass. A construction failure does NOT: it REFUSES, via
+// [visibility.DenyReader] / [visibility.DenyTracer] (RR-GKCZO5). See
+// [scriptEntityReader] for why an unattended path must not degrade to the
+// raw store.
 func (s *Services) luaReadDepsFor(redactor visibility.FieldRedactor) lua.ReadDeps {
 	deps := s.LuaReadDeps()
-	// WritePrepStore stays RAW on purpose — see lua.ReadDeps.WritePrepStore.
 	deps.VisibleReader = scriptEntityReader(s.store, s.aclDeclarative, redactor)
 	deps.Tracer = scriptTracer(s.tracer, s.store, s.aclDeclarative, redactor)
 	return deps
@@ -252,7 +369,11 @@ func scriptEntityReader(
 	st store.Store, d *acl.Declarative, redactor visibility.FieldRedactor,
 ) lua.EntityReader {
 	if d == nil {
-		return st
+		// Named, not bare: this is the NopACL path and the single largest
+		// ungated read surface in the tree, so it must show up in
+		// `grep -rn visibility.Unrestricted` like every other one
+		// (TKT-1WV50C).
+		return visibility.Unrestricted(st)
 	}
 	if redactor == nil {
 		redactor = visibility.NopRedactor{}
@@ -331,17 +452,142 @@ func (s *Services) luaWriteDepsFor(redactor visibility.FieldRedactor) lua.WriteD
 // privileges coming from acl.yaml — a job sees what its identity may see,
 // nothing more (DEC-O59WM4).
 //
-// KNOWN LIMITATION (RR-7408F5): appbuild has no affordance resolver, so
-// scheduled jobs get ROW gating only — **field-level `visible:` redaction
-// does NOT apply here**. A job whose identity may read `person` receives
-// every property of it, including ones a human with the same role would
-// have redacted in the UI. Row gating still bounds WHICH entities reach a
-// prompt, which is the larger half, but do not assume field policy is
-// enforced on this path. Documented for operators in
-// docs/scheduled-tasks.md next to `run_as`; closing it means wiring an
-// affordance resolver into appbuild.
+// Field-level `visible:` redaction APPLIES here (TKT-0XL8MF): a job whose
+// identity may read `person` receives that entity with the same properties
+// redacted as a human with the same role sees in the UI. This closed
+// RR-7408F5, which documented the earlier row-gating-only behavior.
 func (s *Services) ScheduledLuaWriteDeps() lua.WriteDeps {
-	return s.luaWriteDepsFor(nil)
+	return s.luaWriteDepsFor(s.fieldRedactor)
+}
+
+// GatedReads returns the read handles bound to whatever principal is on the
+// ctx AT CALL TIME — the reader, the traversal handle, and a validator whose
+// candidate set comes from that same gated reader.
+//
+// This is the read bundle for an identity-bearing, non-HTTP consumer. The MCP
+// server is the caller: its handlers, resources, prompts, analyze and export
+// surfaces all read through the returned reader, so gating is decided once
+// here rather than per handler (DEC-ZBI39P).
+//
+// The validator matters as much as the reader. `Services.Validator()` is built
+// over the RAW store, which is right for the unattended paths that own it —
+// but a validation rule evaluated for a requester must not read rows the
+// requester cannot see, or a hidden value reaches a violation message
+// (TKT-3FL2S6). So this builds a second validator over the gated reader.
+//
+// Identity is deliberately NOT captured here: the wrapped handles resolve the
+// ctx principal per call, so ONE bundle serves every request. Under NopACL
+// (no acl.yaml) these are the raw store/tracer — byte-identical to pre-ACL
+// behavior, not a bypass. A construction failure REFUSES via
+// visibility.DenyReader / DenyTracer rather than degrading to raw reads
+// (RR-GKCZO5).
+//
+// Gating is BOTH row-level and field-level (TKT-425426): the reader prunes
+// entities the principal may not see, and redacts `visible:`-hidden ENTITY
+// PROPERTY values on the ones it returns. The validator is built over that same
+// reader, so a violation message cannot quote a value the requester cannot read
+// (the field-level half of TKT-3FL2S6).
+//
+// SCOPE: field redaction covers entity properties only. Relation meta is NOT
+// redacted here — [gatedGraphReader.GetRelation] reads raw, and relation-level
+// `visible:` grants (acl.RelationGrant.Visible, honored on the dataentry wire
+// via affordances.RelationFieldVerdicts) are not consulted. Relations are gated
+// at the ROW level on both endpoints; their properties are not. Do not read the
+// paragraph above as covering them. Tracked as TKT-0RBFN0 (IB-review #1 on
+// PR #1400), which also covers ListRelations: that path IS row-gated, but
+// visibility.PolicyReader implements only FilterRelations, so a surviving edge
+// still carries all of its meta.
+func (s *Services) GatedReads() GatedReadBundle {
+	reader := scriptEntityReader(s.store, s.aclDeclarative, s.fieldRedactor)
+	tr := scriptTracer(s.tracer, s.store, s.aclDeclarative, s.fieldRedactor)
+
+	deps := s.LuaReadDeps()
+	deps.VisibleReader = reader
+	deps.Tracer = tr
+
+	return GatedReadBundle{
+		Reader:    gatedGraphReader{rows: reader, raw: s.store},
+		Tracer:    tr,
+		Validator: validator.New(reader, s.meta, deps),
+	}
+}
+
+// GatedReadBundle is the result of [Services.GatedReads]: the three read
+// handles an identity-bearing consumer needs, each ACL-bound to the ctx
+// principal at call time.
+type GatedReadBundle struct {
+	Reader    GatedGraphReader
+	Tracer    tracer.Tracer
+	Validator validator.Validator
+}
+
+// GatedGraphReader is the row-and-tally read surface returned by
+// [Services.GatedReads]. Row reads are ACL-gated; the two counts are not —
+// see [gatedGraphReader] for why.
+type GatedGraphReader interface {
+	GetEntity(ctx context.Context, id string) (*entity.Entity, error)
+	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
+	GetRelation(ctx context.Context, from, relType, to string) (*entity.Relation, error)
+	ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
+	CountEntities(ctx context.Context, q store.EntityQuery) (int, error)
+	CountRelations(ctx context.Context, q store.RelationQuery) (int, error)
+}
+
+// gatedGraphReader composes the ACL-gated row reader with the raw store for
+// the two operations the gated reader does not provide.
+//
+// The split is deliberate, and matches the line `internal/dataentry` already
+// draws (`analyzeService.relCounts` is documented "raw (ungated) on purpose"):
+//
+//   - GetEntity / ListEntities / ListRelations go through `rows`, so a hidden
+//     entity is absent and a hidden edge is not listed.
+//   - CountEntities / CountRelations go to the raw store. A count is
+//     STRUCTURAL: it says how many rows of a declared type exist, never which.
+//     Entity *existence* is the secret the row gate protects; an aggregate
+//     tally of a type the metamodel already publishes is not.
+//   - GetRelation goes to the raw store because a relation is addressed by its
+//     two endpoint ids, which the caller must already hold. Reading one
+//     therefore confirms nothing about entities the caller could not already
+//     name. That argument is about ROW-level exposure (whether the edge
+//     exists) and does not extend to the edge's meta VALUES: relations carry
+//     no field-level redaction on this path today (see docs/acl-security.md
+//     and TKT-0RBFN0), so this matches what a live relation GET exposes only
+//     until that ticket lands.
+//
+// If either judgement changes, this is the one type to fix.
+type gatedGraphReader struct {
+	rows lua.EntityReader
+	raw  store.Store
+}
+
+func (g gatedGraphReader) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
+	return g.rows.GetEntity(ctx, id)
+}
+
+func (g gatedGraphReader) ListEntities(
+	ctx context.Context, q store.EntityQuery,
+) iter.Seq2[*entity.Entity, error] {
+	return g.rows.ListEntities(ctx, q)
+}
+
+func (g gatedGraphReader) ListRelations(
+	ctx context.Context, q store.RelationQuery,
+) iter.Seq2[*entity.Relation, error] {
+	return g.rows.ListRelations(ctx, q)
+}
+
+func (g gatedGraphReader) GetRelation(
+	ctx context.Context, from, relType, to string,
+) (*entity.Relation, error) {
+	return g.raw.GetRelation(ctx, from, relType, to)
+}
+
+func (g gatedGraphReader) CountEntities(ctx context.Context, q store.EntityQuery) (int, error) {
+	return g.raw.CountEntities(ctx, q)
+}
+
+func (g gatedGraphReader) CountRelations(ctx context.Context, q store.RelationQuery) (int, error) {
+	return g.raw.CountRelations(ctx, q)
 }
 
 // Collaborators bundles the fully-built dependencies of a [Services]
@@ -463,6 +709,10 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 		}
 		visible = v
 	}
+	fieldRedactor, err := buildFieldRedactor(c.Meta, c.Store, c.Declarative)
+	if err != nil {
+		return nil, fmt.Errorf("appbuild.NewFromCollaborators: %w", err)
+	}
 	return &Services{
 		fs:              c.FS,
 		paths:           c.Paths,
@@ -470,6 +720,7 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 		store:           c.Store,
 		searcher:        c.Searcher,
 		visibleSearcher: visible,
+		userState:       newUserState(c.Store, c.StateKV),
 		entityManager:   c.EntityManager,
 		tracer:          c.Tracer,
 		validator:       c.Validator,
@@ -482,7 +733,59 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 		aclDeclarative:  c.Declarative,
 		aclPolicy:       aclPolicy,
 		audit:           c.Audit,
+		fieldRedactor:   fieldRedactor,
 	}, nil
+}
+
+// buildFieldRedactor constructs the field-level `visible:` redactor shared by
+// every appbuild-wired read path (TKT-0XL8MF). Before this existed, appbuild
+// could not build an affordance resolver at all, so the unattended and
+// identity-bearing paths were ROW-gated only and every property of a readable
+// entity came through — including ones a human with the same role sees
+// redacted in the UI.
+//
+// Returns [visibility.NopRedactor] (hide nothing) when no policy is wired or
+// the policy declares no affordance grants. Those are ordinary configurations
+// — NopACL, or an acl.yaml with only row rules — not failures, and the
+// no-policy path must stay byte-identical to pre-ACL behavior.
+//
+// A policy that DOES declare grants but fails to compile is an error, not a
+// fallback: it is returned to the caller, which aborts construction. Degrading
+// to NopRedactor there would silently serve unredacted properties to an
+// operator who had asked for redaction — the fail-open this whole path exists
+// to prevent (RR-GKCZO5).
+//
+// The resolver is built to completion here — including WithMachines — before
+// it escapes into a redactor, which is what keeps its documented
+// "safe for concurrent use after construction" guarantee true.
+func buildFieldRedactor(
+	meta *metamodel.Metamodel, st store.Store, d *acl.Declarative,
+) (visibility.FieldRedactor, error) {
+	if d == nil {
+		return visibility.NopRedactor{}, nil
+	}
+	// Read the policy through Declarative, never a second channel — the two
+	// must not drift (RR-WTLD).
+	policy := d.Policy()
+	if policy == nil || !policy.HasAffordanceGrants() {
+		return visibility.NopRedactor{}, nil
+	}
+
+	resolver, err := affordances.New(meta, storeRelationLookup{st: st}, d)
+	if err != nil {
+		return nil, fmt.Errorf("appbuild: compiling acl.yaml affordance predicates: %w", err)
+	}
+	machines, err := statemachine.Compile(meta)
+	if err != nil {
+		return nil, fmt.Errorf("appbuild: compiling state machines: %w", err)
+	}
+	resolver.WithMachines(machines)
+
+	redactor, err := visibility.NewPolicyRedactor(resolver)
+	if err != nil {
+		return nil, fmt.Errorf("appbuild: build field redactor: %w", err)
+	}
+	return redactor, nil
 }
 
 // buildAutomation wires the automation engine + cascade runner from
@@ -492,7 +795,10 @@ func buildAutomation(meta *metamodel.Metamodel) (*automation.Engine, *autocascad
 	if len(meta.Automations) == 0 {
 		return nil, nil, nil
 	}
-	autoEngine := automation.NewEngineFromMetamodel(meta, meta.Automations)
+	autoEngine, err := automation.NewEngineFromMetamodel(meta, meta.Automations)
+	if err != nil {
+		return nil, nil, fmt.Errorf("build automation engine: %w", err)
+	}
 	cascadeRunner, err := autocascade.New(autocascade.Deps{Engine: autoEngine})
 	if err != nil {
 		return nil, nil, fmt.Errorf("build autocascade runner: %w", err)
@@ -509,6 +815,12 @@ type Option func(*options)
 
 type options struct {
 	acl acl.ACL
+
+	// databaseURL, when non-empty, supplies the DSN that [Discover] would
+	// otherwise read from the environment. Consumed by [Discover] only:
+	// [New] takes the DSN from [Config.DatabaseURL], because a caller
+	// building a Config already decides where the data lives.
+	databaseURL string
 }
 
 // WithACL overrides the auto-loaded ACL with the supplied
@@ -519,10 +831,49 @@ type options struct {
 // option always wins, even when an `acl.yaml` is present, so the
 // flag is an unconditional override.
 //
-// Tests should prefer [NewForTest] + [WithTestACL] over driving this
+// Tests should prefer NewForTest + WithTestACL over driving this
 // path directly.
 func WithACL(a acl.ACL) Option {
 	return func(o *options) { o.acl = a }
+}
+
+// WithDatabaseURL supplies the PostgreSQL DSN explicitly, instead of letting
+// [Discover] read it from $RELA_DATABASE_URL. The option always wins over the
+// environment, so a caller that knows where a project's data lives never has to
+// mutate process state to say so.
+//
+// This exists so that *which database a project uses* is an argument rather than
+// an ambient property. Two [Services] can then be constructed in one process
+// against different databases — impossible via the environment, which is global
+// and shared. `rela-desktop` already builds a fresh bundle per project switch,
+// and a future multi-tenant server resolves a DSN per tenant.
+//
+// The invariant this must not break: a DSN carries a password, so it must never
+// reach a command line. Passing one here in Go code is fine — sourcing it from a
+// flag is not. See [Config.DatabaseURL].
+//
+// Ignored by the FS and memory builds, which have no DSN.
+func WithDatabaseURL(dsn string) Option {
+	return func(o *options) { o.databaseURL = dsn }
+}
+
+// resolveDatabaseURL decides which DSN [Discover] hands to [New]: an explicit
+// [WithDatabaseURL] wins, otherwise $RELA_DATABASE_URL. getenv is injected so
+// the precedence is testable without mutating process environment — which is
+// itself the ambient-state problem this seam removes.
+//
+// Split out of Discover because on the FS and memory builds the resolved DSN is
+// never consumed, so a test could not otherwise distinguish "option honored"
+// from "option ignored" without a live PostgreSQL.
+func resolveDatabaseURL(opts []Option, getenv func(string) string) string {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
+	if o.databaseURL != "" {
+		return o.databaseURL
+	}
+	return getenv("RELA_DATABASE_URL")
 }
 
 // loadACLPolicy reads `acl.yaml` from projectRoot and returns the
@@ -549,6 +900,13 @@ func loadACLPolicy(projectRoot string) (*acl.Policy, error) {
 			return nil, nil //nolint:nilnil // (nil, nil) = no policy intended; caller checks aclPolicy != nil
 		}
 		return nil, fmt.Errorf("appbuild: load acl.yaml: %w", err)
+	}
+	// Debug, not Info: this is wiring shared by every CLI command, and an
+	// INFO line on each `rela list` trains operators to filter the logger —
+	// which would defeat the point. `rela acl audit` is the surface that
+	// reports the block at operator-facing volume.
+	if types := policy.RelationWriteGrantTypes(); len(types) > 0 {
+		slog.Debug("acl: relation_grants active", "relation_types", types)
 	}
 	return policy, nil
 }
@@ -582,6 +940,11 @@ func (v metamodelView) HasEntityType(entityType string) bool {
 	return v.m.HasEntityType(entityType)
 }
 
+func (v metamodelView) HasRelationType(relationType string) bool {
+	_, ok := v.m.Relations[relationType]
+	return ok
+}
+
 func (v metamodelView) PropertyInfo(entityType, property string) acl.PropertyInfo {
 	def, ok := v.m.GetEntityDef(entityType)
 	if !ok {
@@ -606,6 +969,7 @@ func buildACL(policy *acl.Policy, meta *metamodel.Metamodel, st store.Store) (ac
 	if err := policy.ValidateAgainstMetamodel(metamodelView{meta}); err != nil {
 		return nil, nil, fmt.Errorf("appbuild: validate acl policy against metamodel: %w", err)
 	}
+	warnUngatedMembership(policy)
 	// `st` is passed twice: once via NewStoreGraph (the Graph
 	// adapter the resolver uses for member-of / ancestor walks), and
 	// once as the GraphQueryer (executes store.MatchingIDs for
@@ -626,6 +990,37 @@ func buildACL(policy *acl.Policy, meta *metamodel.Metamodel, st store.Store) (ac
 	return d, d, nil
 }
 
+// warnUngatedMembership logs a prominent startup warning when the loaded
+// policy leaves the membership-relation self-promotion path open: a group
+// named in `assignments:` confers a privileged role, but writes to the
+// membership relation carry no `requires_permission` gate, so anyone who can
+// write that edge can grant themselves the role (RR-7O6Q, TKT-T31NKT).
+//
+// **Warning, not a refusal.** The hole is pre-existing and the shape is a
+// reasonable one inside a trusted team, where the trust boundary is who can
+// write to the project at all. Hard-failing the boot would break those
+// deployments on upgrade for a risk they have already accepted. The refusal
+// is scoped to the case that genuinely changes the stakes — a policy that
+// also grants read on a non-default world, where the same hole becomes a
+// mechanism for leaking unpublished content — and lands with the world grant
+// syntax it needs to be evaluated (TKT-DN37J2).
+//
+// The condition comes from [acl.Policy.MembershipSelfPromotionOpen], the same
+// predicate behind the `rela acl audit` A1-ungated-membership finding, so the
+// boot warning and the linter can never disagree.
+func warnUngatedMembership(policy *acl.Policy) {
+	if !policy.MembershipSelfPromotionOpen() {
+		return
+	}
+	rel := policy.EffectiveMembershipRelation()
+	slog.Warn("appbuild: ACL membership relation is NOT gated — self-promotion is possible; "+
+		"any principal who can write this relation can grant themselves an assigned privileged role",
+		"relation", rel,
+		"fix", fmt.Sprintf("set role_relations.%s.requires_permission and grant that permission only to admins", rel),
+		"docs", "docs/acl-security.md",
+		"audit", "rela acl audit")
+}
+
 // Config carries the inputs every build of [New] needs, plus
 // backend-specific configuration that only some builds consume.
 //
@@ -642,12 +1037,20 @@ type Config struct {
 	ScriptEngine *script.Engine
 	Audit        audit.Audit
 
-	// DatabaseURL is the PostgreSQL connection string, sourced from the
-	// RELA_DATABASE_URL environment variable (see [Discover]). It is
-	// deliberately env-only — never a command-line flag — so the
-	// credential-bearing DSN does not leak into process listings or shell
-	// history. Consumed only by the postgres build; empty (and ignored) in
-	// the FS/memory builds.
+	// DatabaseURL is the PostgreSQL connection string. The caller decides
+	// where it comes from: [Discover] takes it from [WithDatabaseURL] or, as a
+	// fallback, $RELA_DATABASE_URL; a caller building a Config directly (e.g.
+	// rela-desktop, or a per-tenant lookup) simply sets it.
+	//
+	// The invariant is that a DSN must **never reach a command line** — it
+	// carries a password, and a flag would put it in `ps` output and shell
+	// history. That is why no binary exposes a --database-url flag. It is NOT
+	// an invariant that the value come from the environment; passing it in Go
+	// code is fine and is what makes two differently-backed Services
+	// constructible in one process.
+	//
+	// Consumed only by the postgres build; empty (and ignored) in the
+	// FS/memory builds.
 	DatabaseURL string
 }
 
@@ -675,41 +1078,92 @@ func (c Config) validate() error {
 // engine; production callers pass [script.NewEngine].
 //
 // Discover constructs a production [audit.Filesystem] under
-// .rela/audit/ and resolves the database URL (postgres build) from the
-// RELA_DATABASE_URL environment variable — env-only, so the credential
-// never appears on a command line. The entry point caller is responsible
-// for stamping [principal.Principal] onto the request context (this varies
-// per binary — cli, mcp, scheduler, data-entry server).
+// .rela/audit/ and resolves the database URL (postgres build) from
+// [WithDatabaseURL] when supplied, falling back to the RELA_DATABASE_URL
+// environment variable. Neither source is a command-line flag, which is the
+// property that matters: a DSN carries a password and must not land in `ps`
+// output or shell history. The entry point caller is responsible for stamping
+// [principal.Principal] onto the request context (this varies per binary — cli,
+// mcp, scheduler, data-entry server).
 func Discover(startDir string, scriptEngine *script.Engine, opts ...Option) (*Services, error) {
 	fs := storage.NewSafeFS(storage.NewOsFS())
 	paths, err := project.Discover(startDir, fs)
 	if err != nil {
 		return nil, fmt.Errorf("discover project: %w", err)
 	}
+	// Shared startup path for cli, mcp, scheduler and the data-entry server —
+	// warns at most once per process.
+	project.WarnIfLegacySchema(paths)
 	auditSink, auditErr := audit.NewFilesystem(filepath.Join(paths.CacheDir, "audit"))
 	if auditErr != nil {
 		return nil, fmt.Errorf("build audit sink: %w", auditErr)
 	}
+
 	return New(Config{
 		FS:           fs,
 		Paths:        paths,
 		ScriptEngine: scriptEngine,
 		Audit:        auditSink,
-		DatabaseURL:  os.Getenv("RELA_DATABASE_URL"),
+		DatabaseURL:  resolveDatabaseURL(opts, os.Getenv),
 	}, opts...)
 }
 
-// buildBase holds the build-agnostic inputs resolved by [prepare] and
+// SharedBase holds the build-agnostic inputs resolved by [prepare] and
 // consumed by [assemble]: the validated config, applied options, the
 // resolved ACL (+ parsed policy), and the loaded metamodel. The
 // per-scenario New recipes thread this between prepare → openBackend →
 // assemble so the shared steps are written exactly once.
-type buildBase struct {
+// SharedBase is the tenant-independent half of construction: the validated
+// config, the applied options, the parsed `acl.yaml` policy, and the loaded
+// metamodel. Nothing in it is derived from a store, so ONE base can be built
+// per process and assembled against several stores.
+//
+// Build it with [NewSharedBase]; turn it into a [Services] with
+// [SharedBase.Assemble] (which the per-backend New recipes call for you).
+//
+// # What is shared and what is not
+//
+// The split is NOT along the [Services] field list, which is the intuitive but
+// wrong reading. `acl.Declarative` is constructed from the STORE — it needs a
+// store-backed `acl.Graph` for group expansion and containment inheritance —
+// so the ACL *policy* is shared while the ACL *evaluator* is per-store. Same
+// for `lua.ReadDeps`, which closes over the store. That is precisely why ACL
+// construction is deferred out of this type and into [SharedBase.Assemble].
+//
+// # Shared values must not be mutated during assembly
+//
+// `meta` and `aclPolicy` are POINTERS handed to every assembled Services. A
+// mutation through either during assembly would be visible to every other
+// consumer of the same base — a cross-tenant defect in a multi-tenant host, and
+// a cross-project one on the desktop. Assembly only reads them (the metamodel
+// consumers derive new values: `statemachine.Compile`, `NewEngineFromMetamodel`),
+// and TestSharedBase_AssemblyDoesNotMutateSharedValues pins it.
+type SharedBase struct {
 	cfg       Config
 	opts      options
 	acl       acl.ACL
 	aclPolicy *acl.Policy
 	meta      *metamodel.Metamodel
+}
+
+// Meta returns the loaded metamodel this base was built from. Exposed so a host
+// holding one base can answer "what schema am I serving?" without assembling a
+// Services first.
+func (b *SharedBase) Meta() *metamodel.Metamodel { return b.meta }
+
+// Paths returns the project context this base was built from.
+func (b *SharedBase) Paths() *project.Context { return b.cfg.Paths }
+
+// NewSharedBase builds the tenant-independent half of construction once:
+// validate config, apply options, parse `acl.yaml`, load and validate the
+// metamodel. It opens no store and touches no database.
+//
+// Use it when one process serves several stores from one project
+// configuration — a multi-tenant host (RES-D54281), or any caller that would
+// otherwise re-read and re-validate the same metamodel per store. The
+// single-store path is [New] / [Discover], which call this internally.
+func NewSharedBase(cfg Config, opts ...Option) (*SharedBase, error) {
+	return prepare(cfg, opts)
 }
 
 // prepare runs the build-agnostic front half of construction: validate
@@ -722,7 +1176,7 @@ type buildBase struct {
 // the project has no acl.yaml" — both end up NopACL, but only the
 // latter triggers the "consider adding an acl.yaml" warning an entry
 // point may render.
-func prepare(cfg Config, opts []Option) (*buildBase, error) {
+func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
@@ -745,12 +1199,12 @@ func prepare(cfg Config, opts []Option) (*buildBase, error) {
 		}
 	}
 
-	meta, _, err := metamodel.NewFSLoader(cfg.FS, cfg.Paths.MetamodelPath).Load(context.Background())
+	meta, _, err := metamodel.NewFSLoader(cfg.FS, cfg.Paths.SchemaPath).Load(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("load metamodel: %w", err)
 	}
 
-	return &buildBase{cfg: cfg, opts: o, acl: resolvedACL, aclPolicy: aclPolicy, meta: meta}, nil
+	return &SharedBase{cfg: cfg, opts: o, acl: resolvedACL, aclPolicy: aclPolicy, meta: meta}, nil
 }
 
 // assemble runs the build-agnostic back half: it takes the opened store
@@ -766,41 +1220,156 @@ func prepare(cfg Config, opts []Option) (*buildBase, error) {
 // search.NewVisible(searcher, st) wrapper, the correct ACL-scoped
 // search implementation for every in-process store. The postgres
 // recipe passes its native implementation instead.
+
+// resolveACL settles which ACL the services use, now that the store is open.
+//
+// Deferred out of prepare because acl.Declarative needs a store-backed Graph.
+// A missing policy yields NopACL, but an error from the Declarative
+// constructor is propagated — booting allow-all on a policy that failed to
+// parse would silently disable authorization.
+func resolveACL(base *SharedBase, st store.Store) (acl.ACL, *acl.Declarative, error) {
+	if base.acl == nil {
+		return buildACL(base.aclPolicy, base.meta, st)
+	}
+	// RR-36UL: when WithACL was passed a *acl.Declarative, surface it as the
+	// declarative value too so the affordance resolver path picks it up.
+	// Without this, a caller wiring WithACL(declarative) silently gets
+	// NopFieldVerdictResolver because Services.ACLDeclarative() returns nil.
+	d, _ := base.acl.(*acl.Declarative)
+	return base.acl, d, nil
+}
+
+// Assemble wires this base against one opened store into a [Services].
+//
+// Call it once per store. The base is reusable: every value it holds is
+// tenant-independent, and assembly only reads them (see the type doc). The
+// per-backend New recipes call this for you after opening their store; a
+// multi-store host calls it directly, once per store.
+//
+// The caller owns closing the returned [Services] — and only that Services.
+// [Services.Close] tears down the store and search closer it was assembled
+// with, never anything belonging to the base, so evicting one assembled
+// Services leaves the base and every sibling usable.
+//
+// visible may be nil: Assemble then derives the generic
+// search.NewVisible(searcher, st) wrapper, which is correct for every
+// in-process store. The postgres recipe passes its native implementation.
+func (b *SharedBase) Assemble(
+	st store.Store, searcher search.Searcher,
+	visible search.VisibleSearcher, searchCloser io.Closer,
+) (*Services, error) {
+	return assemble(b, st, searcher, visible, searchCloser)
+}
+
+// resolveVisibleSearcher derives an ACL-scoped searcher when the caller did not
+// supply one. A recipe may pass its own (the postgres build has a DB-backed
+// implementation); everything else gets the generic decorator.
+func resolveVisibleSearcher(
+	visible search.VisibleSearcher, searcher search.Searcher, st store.Store,
+) (search.VisibleSearcher, error) {
+	if visible != nil {
+		return visible, nil
+	}
+	v, err := search.NewVisible(searcher, st)
+	if err != nil {
+		return nil, fmt.Errorf("appbuild: derive VisibleSearcher: %w", err)
+	}
+	return v, nil
+}
+
+// backgroundServices holds the optional per-assembled subsystems and the stop
+// functions Services.Close tears down. Grouped so assemble stays readable as
+// more optional services are added — each is independently nil-able and none
+// may fail boot.
+type backgroundServices struct {
+	gcStop   func()
+	mailStop func()
+}
+
+// startBackgroundServices launches the optional per-store subsystems: the
+// data-migration gate and GC sweep, and the mail outbox worker.
+//
+// Neither may fail boot. Each returns a stop function that is always safe to
+// call, so Close needs no nil checks beyond the ones it already has.
+func startBackgroundServices(
+	base *SharedBase, st store.Store, stateKV state.KV, versions store.VersionService,
+) backgroundServices {
+	cfg := base.cfg
+
+	gcStop := startDataMigration(stateKV, base.meta, st, cfg.Audit, versions, cfg.Paths.CacheDir)
+
+	// Mail is optional and never fails boot. The outbox itself is discarded
+	// here: nothing can enqueue until the declarative layer (TKT-U2R7GU)
+	// lands, and storing a handle no code reads would look wired when it is
+	// not. Only the stop function is retained, because Close genuinely uses it.
+	_, mailStop := startMail(cfg.Paths)
+
+	return backgroundServices{
+		gcStop:   gcStop,
+		mailStop: mailStop,
+	}
+}
+
+// resolveACLAndRedactor resolves the ACL and derives the field redactor that
+// depends on it. They are returned together because the redactor is a function
+// of the resolved Declarative: splitting them invites a caller that has one
+// without the other, which is precisely the state that left three read paths
+// ungated (TKT-BUYEW1).
+func resolveACLAndRedactor(
+	base *SharedBase, st store.Store,
+) (acl.ACL, *acl.Declarative, visibility.FieldRedactor, error) {
+	resolvedACL, aclDeclarative, err := resolveACL(base, st)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	fieldRedactor, err := buildFieldRedactor(base.meta, st, aclDeclarative)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return resolvedACL, aclDeclarative, fieldRedactor, nil
+}
+
+// cascadeReadDeps builds the static lua.ReadDeps backing automation cascades.
+//
+// Cascade reads are ACL-BOUND to the ACTING USER (DEC-O59WM4, RR-XC0URX): an
+// automation fires in response to someone's write and runs on that person's
+// ctx, so it reads their view — symmetric with its write path, which already
+// gates through entitymanager and needs an explicit allow_acl_bypass to
+// elevate. Escalating reads is deliberately NOT a config default; it is
+// TKT-ACSBSA (an admin-handle extension), so a cascade that needs more must ask
+// for it in the open.
+//
+// Field-level `visible:` redaction applies here too (TKT-BUYEW1) — a Lua action
+// can send what it reads onward exactly as a scheduled job can, so it must not
+// see property values the same principal has redacted everywhere else.
+func cascadeReadDeps(
+	st store.Store, tr tracer.Tracer, searcher search.Searcher,
+	meta *metamodel.Metamodel, projectRoot string,
+	d *acl.Declarative, redactor visibility.FieldRedactor,
+) lua.ReadDeps {
+	return lua.ReadDeps{
+		VisibleReader: scriptEntityReader(st, d, redactor),
+		Tracer:        scriptTracer(tr, st, d, redactor),
+		Searcher:      searcher,
+		Meta:          meta,
+		ProjectRoot:   projectRoot,
+	}
+}
+
 func assemble(
-	base *buildBase, st store.Store, searcher search.Searcher,
+	base *SharedBase, st store.Store, searcher search.Searcher,
 	visible search.VisibleSearcher, searchCloser io.Closer,
 ) (*Services, error) {
 	cfg := base.cfg
 
-	if visible == nil {
-		v, err := search.NewVisible(searcher, st)
-		if err != nil {
-			return nil, fmt.Errorf("appbuild: derive VisibleSearcher: %w", err)
-		}
-		visible = v
+	visible, err := resolveVisibleSearcher(visible, searcher, st)
+	if err != nil {
+		return nil, err
 	}
 
-	// Now the store is open: build the Declarative ACL with a
-	// store-backed Graph. This is deferred from prepare because
-	// acl.Declarative needs the store. NopACL on missing policy; an
-	// error from the Declarative constructor is propagated (don't
-	// silently boot allow-all on a broken policy). If the caller
-	// injected an ACL via WithACL, base.acl is already set.
-	resolvedACL := base.acl
-	var aclDeclarative *acl.Declarative
-	if resolvedACL == nil {
-		var err error
-		resolvedACL, aclDeclarative, err = buildACL(base.aclPolicy, base.meta, st)
-		if err != nil {
-			return nil, err
-		}
-	} else if d, ok := resolvedACL.(*acl.Declarative); ok {
-		// RR-36UL: when WithACL was passed a *acl.Declarative,
-		// surface it on aclDeclarative too so the affordance
-		// resolver path picks it up. Without this, a caller wiring
-		// WithACL(declarative) silently gets NopFieldVerdictResolver
-		// because Services.ACLDeclarative() returns nil.
-		aclDeclarative = d
+	resolvedACL, aclDeclarative, fieldRedactor, err := resolveACLAndRedactor(base, st)
+	if err != nil {
+		return nil, err
 	}
 
 	autoEngine, cascadeRunner, err := buildAutomation(base.meta)
@@ -814,26 +1383,16 @@ func assemble(
 
 	// Build the static lua read deps once — the ScriptRunner (automation
 	// cascades) is constructed with these.
-	//
-	// Cascade reads are ACL-BOUND to the ACTING USER (DEC-O59WM4,
-	// RR-XC0URX): an automation fires in response to someone's write and
-	// runs on that person's ctx, so it reads their view — symmetric with
-	// its write path, which already gates through entitymanager and needs
-	// an explicit allow_acl_bypass to elevate. Escalating reads is
-	// deliberately NOT a config default; it is TKT-ACSBSA (an admin-handle
-	// extension), so a cascade that needs more must ask for it in the open.
-	readDeps := lua.ReadDeps{
-		VisibleReader:  scriptEntityReader(st, aclDeclarative, nil),
-		WritePrepStore: st,
-		Tracer:         scriptTracer(tr, st, aclDeclarative, nil),
-		Searcher:       searcher,
-		Meta:           base.meta,
-		ProjectRoot:    cfg.Paths.Root,
-	}
+	readDeps := cascadeReadDeps(st, tr, searcher, base.meta, cfg.Paths.Root,
+		aclDeclarative, fieldRedactor)
 
 	tw, err := CompileTransitions(base.meta, st, resolvedACL)
 	if err != nil {
 		return nil, fmt.Errorf("compile transitions: %w", err)
+	}
+	computedSet, err := computed.Compile(base.meta)
+	if err != nil {
+		return nil, fmt.Errorf("compile computed properties: %w", err)
 	}
 
 	// Content versioning is a separate injected service (pgstore only; nil
@@ -841,7 +1400,13 @@ func assemble(
 	// here and threaded into the recorders and the Services bundle.
 	versions := versionServiceFor(st)
 
+	stateKV, aliases, jobQueue, err := buildRuntimeServices(cfg.FS, cfg.Paths, base, stateKVFor(st))
+	if err != nil {
+		return nil, err
+	}
+
 	mgr, err := entitymanager.New(entitymanager.Deps{
+		AliasRewriter:           aliases,
 		Store:                   st,
 		Meta:                    base.meta,
 		Templater:               templater,
@@ -849,10 +1414,12 @@ func assemble(
 		ACL:                     resolvedACL,
 		Automations:             autoEngine,
 		Cascade:                 cascadeRunner,
-		ScriptRunner:            script.NewLuaScriptRunner(cfg.ScriptEngine, readDeps),
+		ScriptRunner:            cascadeScriptRunner(cfg.ScriptEngine, readDeps, st, cfg.Audit),
 		VersionRecorder:         versionRecorderFor(versions),
 		RelationVersionRecorder: relationVersionRecorderFor(versions),
 		Transitions:             tw.Enforcer,
+		Computed:                computedSet,
+		FieldGate:               entitymanager.AllowAllFieldGate{},
 		TransitionGuard:         tw.Guard,
 		TransitionGraph:         tw.Graph,
 	})
@@ -861,17 +1428,28 @@ func assemble(
 	}
 
 	val := validator.New(st, base.meta, readDeps)
-	stateKV, err := buildStateKV(cfg.FS, cfg.Paths)
-	if err != nil {
-		return nil, err
-	}
 
 	// Start the pgstore version-reconciliation sweep (postgres build only; a
 	// no-op elsewhere). It captures create/update versions for settled entities;
 	// rename/delete are captured synchronously via the entitymanager hook above.
 	startVersionSweepIfSupported(st, base.meta)
 
+	// Reconcile the derived schema (postgres build only; a no-op elsewhere):
+	// synthesize the metamodel's `unique: true` properties into partial unique
+	// indexes so uniqueness is enforced atomically, and publish the current
+	// unique pairs so a violation can be attributed to a property (TKT-3Q0GP1).
+	// Failures degrade to warnings — a derived-schema problem never fails boot.
+	reconcileDerivedSchemaIfSupported(context.Background(), st, base)
+
+	// Evaluate the data-migration gate (adopt compatible schema-shape
+	// changes, warn on incompatible ones) and start the drift GC sweep
+	// (TKT-0C57FS). Never fails boot; the stop func is torn down in Close —
+	// per-assembled, like the search closer.
+	background := startBackgroundServices(base, st, stateKV, versions)
+
 	return &Services{
+		gcStop:          background.gcStop,
+		mailStop:        background.mailStop,
 		fs:              cfg.FS,
 		paths:           cfg.Paths,
 		meta:            base.meta,
@@ -879,18 +1457,22 @@ func assemble(
 		versions:        versions,
 		searcher:        searcher,
 		visibleSearcher: visible,
+		userState:       newUserState(st, stateKV),
 		entityManager:   mgr,
 		tracer:          tr,
 		validator:       val,
 		templater:       templater,
 		cfgLoader:       cfgLoader,
 		stateKV:         stateKV,
+		jobQueue:        jobQueue,
+		caldavAliases:   aliases,
 		scriptEngine:    cfg.ScriptEngine,
 		searchCloser:    searchCloser,
 		acl:             resolvedACL,
 		aclDeclarative:  aclDeclarative,
 		aclPolicy:       base.aclPolicy,
 		audit:           cfg.Audit,
+		fieldRedactor:   fieldRedactor,
 	}, nil
 }
 
@@ -972,6 +1554,13 @@ func relationVersionRecorderFor(vs store.VersionService) entitymanager.RelationV
 // the pgstore reconciliation sweep, every other build no-ops — which keeps this
 // build-agnostic file free of any pgstore import. assemble calls it above.)
 
+// jobQueueShutdownTimeout bounds how long [Services.Close] waits for the job
+// queue to stop. A queue that will not drain must not wedge process shutdown.
+//
+// Build-agnostic on purpose: both tiers get the same shutdown budget, so it
+// lives here rather than once per build-tagged jobqueue_*.go file.
+const jobQueueShutdownTimeout = 5 * time.Second
+
 // Close releases resources held by Services: store first (so any
 // in-flight observer callbacks complete), then the search backend.
 //
@@ -981,6 +1570,17 @@ func relationVersionRecorderFor(vs store.VersionService) entitymanager.RelationV
 // failures are slog.Warn'd).
 func (s *Services) Close() error {
 	s.closeOnce.Do(func() {
+		// Mail first: the worker may still be delivering, and its drain is
+		// bounded, so stopping it before the store closes gives in-flight
+		// sends their best chance without risking a hung shutdown.
+		if s.mailStop != nil {
+			s.mailStop()
+			s.mailStop = nil
+		}
+		if s.gcStop != nil {
+			s.gcStop()
+			s.gcStop = nil
+		}
 		if s.store != nil {
 			if lc, ok := s.store.(store.Lifecycle); ok {
 				if err := lc.Close(); err != nil {
@@ -992,8 +1592,136 @@ func (s *Services) Close() error {
 			_ = s.searchCloser.Close()
 			s.searchCloser = nil
 		}
+		if s.jobQueue != nil {
+			// Bounded: a queue that will not drain must not wedge shutdown.
+			ctx, cancel := context.WithTimeout(context.Background(), jobQueueShutdownTimeout)
+			if err := s.jobQueue.Close(ctx); err != nil {
+				slog.Warn("appbuild: failed to close job queue", "error", err)
+			}
+			cancel()
+			s.jobQueue = nil
+		}
 	})
 	return s.closeErr
+}
+
+// buildJobQueue builds the background-job queue for this build.
+//
+// jobQueueFor is the per-tier choice: an ephemeral in-process queue by default,
+// a durable PostgreSQL-backed one under the postgres tag. Every assembled
+// Services gets one — a nil queue would surface as a panic at an enqueue site
+// rather than as a wiring error here.
+//
+// Called once per assembled Services, which in every current entry point means
+// once per process (see cmd/rela-server, cmd/rela-desktop, the CLI commands).
+// The queue owns a worker pool, and on postgres a connection pool, so it is a
+// process-scoped resource — not something to build per request.
+//
+// KNOWN COST: this is EAGER, and the scheduler is currently the only consumer
+// of Services.Jobs. So every short-lived CLI command (show, list, trace, …)
+// builds and starts a queue it never enqueues to. On the default build that is
+// cheap (~14µs and a few goroutines); on the postgres build it is not — neoq's
+// backend runs a golang-migrate check and opens a SECOND connection pool before
+// Start adds a LISTEN connection and its workers, all on the startup path of a
+// command that may only be reading one entity.
+//
+// Deliberately not made lazy here: deferring construction to the first Jobs()
+// call would move queue-construction errors from wiring time to first use,
+// which is a change to the accessor's contract rather than an optimization.
+// Worth doing if postgres CLI startup latency becomes a complaint.
+func buildJobQueue(base *SharedBase) (jobs.Queue, error) {
+	q, err := jobQueueFor(base)
+	if err != nil {
+		return nil, fmt.Errorf("appbuild: build job queue: %w", err)
+	}
+	// Started here rather than left to the first producer. An unstarted queue
+	// rejects every Enqueue with jobs.ErrNotStarted, so handing one out from
+	// Services.Jobs would be a trap: the accessor would look wired while
+	// every call through it failed.
+	//
+	// Handlers registered after Start still work — the dispatcher resolves
+	// them per job — so this does not constrain when subsystems register.
+	if err := q.Start(context.Background()); err != nil {
+		return nil, fmt.Errorf("appbuild: start job queue: %w", err)
+	}
+	return q, nil
+}
+
+// buildRuntimeServices builds the per-assembly runtime services that are not
+// derived from the store's contents: the state store, the CalDAV alias service
+// riding on it, and the background-job queue.
+//
+// Grouped into one call so assemble reads as composition rather than a run of
+// near-identical build-and-check blocks.
+func buildRuntimeServices(
+	fs storage.FS, paths *project.Context, base *SharedBase, backendKV state.KV,
+) (state.KV, *caldavalias.Service, jobs.Queue, error) {
+	stateKV, aliases, err := buildStateAndAliases(fs, paths, backendKV)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	jobQueue, err := buildJobQueue(base)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return stateKV, aliases, jobQueue, nil
+}
+
+// buildStateAndAliases builds the per-user state store and the CalDAV alias
+// service that rides on it.
+//
+// The alias service is its own injected concern (like the version service),
+// not a store capability. Both are built BEFORE the entitymanager because its
+// rename/delete hooks take the alias service: only the write choke-point knows
+// old->new, so an alias rewrite has to ride along with the write.
+//
+// backendKV, when non-nil, is a store-backed state store (pgstore's — see
+// stateKVFor) and wins over the filesystem. That is what makes the render
+// cache, user settings, the operator logo and the CalDAV alias table shared by
+// every process serving a schema instead of node-local (TKT-VC27L3). It is nil
+// on the fs/memory builds, where a project IS one directory on one machine and
+// the filesystem is the right home.
+func buildStateAndAliases(
+	fs storage.FS, paths *project.Context, backendKV state.KV,
+) (state.KV, *caldavalias.Service, error) {
+	stateKV := backendKV
+	if stateKV == nil {
+		var err error
+		stateKV, err = buildStateKV(fs, paths)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	aliases, err := caldavalias.New(context.Background(), stateKV)
+	if err != nil {
+		// A corrupt alias table must NOT be fatal here.
+		//
+		// This runs on EVERY appbuild path — `rela list`, `analyze`, the MCP
+		// server, the desktop app — the vast majority of which never serve
+		// CalDAV. Failing hard meant a truncated file in the gitignored cache
+		// dir killed every command on a project with no `caldav:` block at all,
+		// citing a subsystem the user had never enabled.
+		//
+		// The fail-loud reasoning (caldavalias.ErrCorrupt) is still right where
+		// it applies: starting CalDAV with an empty table makes every synced
+		// client re-create its entries as new entities, doubling a user's list.
+		// That check now lives at the serving boundary — registerCalDAVRoutes
+		// refuses to mount without a healthy table — so the failure lands on
+		// the path that can actually cause the damage.
+		// Name the right location: with a database-backed state store the
+		// aliases are a row, not a file, and pointing an operator at a path
+		// that does not exist would send them hunting for the wrong thing.
+		location := filepath.Join(paths.CacheDir, "caldav", "aliases.json")
+		if backendKV != nil {
+			location = "database state store, key caldav/aliases.json"
+		}
+		slog.Warn("caldav alias table unreadable; CalDAV will refuse to serve. "+
+			"Clear it to start fresh (synced clients will re-create their entries).",
+			"location", location,
+			"error", err)
+		return stateKV, nil, nil
+	}
+	return stateKV, aliases, nil
 }
 
 // buildStateKV returns a state.KV rooted at paths.CacheDir, or a

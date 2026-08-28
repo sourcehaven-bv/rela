@@ -45,7 +45,7 @@ user, a no-egress network policy) remains worthwhile defence in depth.
 
 ## Configuration
 
-Attachment policy lives in two places in `metamodel.yaml`: a global
+Attachment policy lives in two places in `schema.yaml`: a global
 `attachments:` block (the safety floor for every `file` property) and per-property
 overrides.
 
@@ -121,18 +121,63 @@ placeholder for the file; rela substitutes a path to a temp file it owns.
 
 ## Transforms (`transform`)
 
-`transform` is an ordered list of commands that **rewrite the bytes**. Each step
-is `{cmd: [...]}`. Use `{in}` for the input file and `{out}` for the output file
-rela should read back; if a command writes to stdout instead, omit `{out}`. The
-command's output becomes the stored bytes. Transforms are **opt-in per field** —
-they mutate bytes, so rela never applies one unless you ask.
+`transform` is an ordered list of steps that **rewrite the bytes**. Each step is
+one of two kinds — set exactly one per step:
+
+- `{cmd: [...]}` — an **external command**. Use `{in}` for the input file and
+  `{out}` for the output file rela should read back; if a command writes to
+  stdout instead, omit `{out}`. External commands are sandboxed (see
+  Safe-invocation guarantees).
+- `{image: {...}}` — a **native, in-process image transform**. No external tool,
+  no sandbox needed: rela decodes the upload with a memory-safe pure-Go decoder,
+  bakes in EXIF orientation, and re-encodes to a canonical format.
+
+Transforms are **opt-in per field** — they mutate bytes, so rela never applies
+one unless you ask.
 
 (Note the asymmetry with scanning: a **scan** is a gate judged by exit code; a
 **transform** is a filter whose output replaces the stream.)
 
+### Native image transform (`image`)
+
+The `image` step handles the common raster formats with no external dependency:
+
+```yaml
+avatar:
+  type: file
+  transform:
+    - image: { reencode: jpeg, quality: 85 }   # strip metadata, orient, normalize
+```
+
+- **Inputs:** PNG, JPEG, GIF, and WebP (decode). **Output:** `reencode: jpeg`
+  (the default) or `png` — there is no pure-Go WebP encoder, so a WebP upload is
+  re-encoded to JPEG/PNG. `quality` sets JPEG quality (ignored for PNG).
+- **EXIF orientation is always applied** — a phone photo tagged "rotate 90°" is
+  stored visually upright. There is no opt-out: storing sideways would be worse
+  than not processing.
+- **Metadata is stripped** as a side effect of re-encoding: EXIF, GPS, and any
+  trailing data are gone from the stored bytes.
+- **The stored file extension is updated** to match the output format (`.jpg`/
+  `.png`), so the download `Content-Type` stays consistent with the bytes.
+- **Why it needs no sandbox:** the Go decoders are memory-safe, so a crafted
+  image cannot achieve code execution — the residual risk is denial-of-service
+  only, which rela bounds with a pixel cap (rejects decompression bombs from the
+  header, before allocating), a decode timeout, and a process-wide concurrency
+  limit. Keep rela updated: the underlying `golang.org/x/image` decoders receive
+  periodic security fixes for malformed-input crashes (rela runs `govulncheck`
+  in CI to catch them).
+- **Not handled:** animated (multi-frame) GIF is **rejected** rather than
+  silently flattened to one frame — use a `cmd:` transform if you need to process
+  it. HEIC/AVIF/JPEG-XL/RAW and SVG are not supported by the native step; use a
+  `cmd:` transform (e.g. vips) for those.
+- **Available everywhere**, including `rela attach` on the CLI and on platforms
+  where the external-command sandbox is unavailable — because it runs in-process.
+
 ## Safe-invocation guarantees
 
-For every scan and transform command, rela:
+These apply to **external** scan and `cmd:` transform commands (the native
+`image:` transform runs in-process and needs none of them). For every such
+command, rela:
 
 - runs the binary **directly with array args** — no shell, so no injection;
 - substitutes `{in}`/`{out}` with **temp-file paths it owns** — your command

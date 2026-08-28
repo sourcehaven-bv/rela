@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"maps"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // PolicyReader is the policy-enforcing [Reader]: row-gate first, then
@@ -80,6 +83,40 @@ func (r *PolicyReader) Filter(ctx context.Context, candidates []*entity.Entity) 
 	for _, c := range candidates {
 		if c != nil && allowed[c.ID] {
 			out = append(out, r.redacted(ctx, c))
+		}
+	}
+	return out
+}
+
+// FilterHeaders implements [HeaderFilterer]: the [PolicyReader.Filter] contract applied
+// to content-free headers.
+//
+// Identical gating — one PermitsReadMany per distinct type, order preserved,
+// fresh slice, fail-closed on gate error — because it is the SAME policy on
+// the same (id, type) pairs. The row gate never consults an entity's body,
+// so dropping the body cannot change a verdict.
+//
+// Field redaction still runs per surviving row: "may read every row of this
+// type" is not "may see every property" (RR-OXE47R). Redacting a header
+// strips hidden property names exactly as it does for an entity, and records
+// them in Redacted, so a gated header read is never MORE revealing than a
+// gated entity read.
+func (r *PolicyReader) FilterHeaders(
+	ctx context.Context, candidates []store.EntityHeader,
+) []store.EntityHeader {
+	if len(candidates) == 0 {
+		return nil
+	}
+	byType := make(map[string][]string)
+	for _, c := range candidates {
+		byType[c.Type] = append(byType[c.Type], c.ID)
+	}
+	allowed := r.permittedIDs(ctx, byType)
+
+	out := make([]store.EntityHeader, 0, len(candidates))
+	for _, c := range candidates {
+		if allowed[c.ID] {
+			out = append(out, RedactHeader(ctx, r.redact, c))
 		}
 	}
 	return out
@@ -181,6 +218,13 @@ func (r *PolicyReader) redacted(ctx context.Context, e *entity.Entity) *entity.E
 // visible neighbor before deriving its display title (the RR-5N4K35
 // title-leak class). Redact performs NO row-gate of its own: callers own
 // that decision.
+//
+// PRECONDITION: e must be a raw store entity, never the output of a prior
+// Redact. On the nothing-hidden path the input is returned untouched, so a
+// stale [entity.Entity.Redacted] from an earlier pass would survive and
+// misreport as this redactor's verdict. Clearing it unconditionally would
+// cost the allocation-free identity guarantee above, so the contract is the
+// caller's to keep. No production caller stacks readers today (RR-Q1VCKR).
 func Redact(ctx context.Context, red FieldRedactor, e *entity.Entity) *entity.Entity {
 	if e == nil {
 		return nil
@@ -191,7 +235,39 @@ func Redact(ctx context.Context, red FieldRedactor, e *entity.Entity) *entity.En
 	}
 	out := *e
 	out.Properties = filterProps(e.Properties, hidden)
+	// Record WHICH properties were withheld so a consumer can render
+	// "[redacted]" instead of a blank that reads as "never set"
+	// (TKT-FJ6END). Names only — the values stay stripped above.
+	//
+	// Freshly allocated and sorted, never appended to e.Redacted: the
+	// shallow copy above aliases the original's slice header, so growing
+	// it in place could write into the caller's backing array.
+	out.Redacted = slices.Sorted(maps.Keys(hidden))
 	return &out
+}
+
+// RedactHeader is [Redact] for a content-free [store.EntityHeader].
+//
+// Verdicts are resolved from the entity TYPE and the ctx principal — the
+// production redactors read e.Type and never e.Content (affordances'
+// FieldVerdicts resolves against the metamodel's declared fields) — so a
+// header yields the same hidden set its entity would. The stand-in Entity
+// below exists only to satisfy the [FieldRedactor] signature.
+//
+// Mirrors Redact's copy semantics: nothing hidden returns the input
+// unchanged (no allocation on the no-policy path); otherwise Properties is
+// a fresh filtered map and Redacted a freshly sorted slice, never appended
+// to the input's (which may alias a caller's backing array).
+func RedactHeader(ctx context.Context, red FieldRedactor, h store.EntityHeader) store.EntityHeader {
+	probe := &entity.Entity{ID: h.ID, Type: h.Type, Properties: h.Properties}
+	hidden := red.HiddenProperties(ctx, probe)
+	if len(hidden) == 0 {
+		return h
+	}
+	out := h
+	out.Properties = filterProps(h.Properties, hidden)
+	out.Redacted = slices.Sorted(maps.Keys(hidden))
+	return out
 }
 
 // filterProps returns a fresh map of props minus hidden. Never mutates

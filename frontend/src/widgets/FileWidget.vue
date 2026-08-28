@@ -256,9 +256,10 @@ function onDrop(event: DragEvent) {
   background: var(--input-bg);
 }
 
+/* A surface tint, not a focus ring — stays translucent (see ConflictsView). */
 .file-dropzone.is-dragover {
   border-color: var(--accent-color, #6366f1);
-  background: rgba(99, 102, 241, 0.06);
+  background: color-mix(in srgb, var(--accent-color) 6%, transparent);
 }
 
 .file-dropzone.is-busy {

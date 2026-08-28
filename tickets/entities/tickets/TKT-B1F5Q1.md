@@ -4,7 +4,8 @@ type: ticket
 title: Relation field-level ACL redaction (visible:) — currently absent for relations, live and history
 kind: enhancement
 priority: medium
-status: backlog
+effort: m
+status: done
 ---
 
 ## Problem
@@ -47,13 +48,46 @@ TKT-92JL8P (RR-BZNL0S) at the same time.
 
 ## Interaction with TKT-73C6B2
 
-Freezing the visibility verdict at capture time (TKT-73C6B2) is the entity-side
-correctness fix for CONDITIONAL grants. If relation `visible:` grants can also
-be conditional, the same freeze applies — build these two with a shared design
-so relation history doesn't reintroduce the conditional-grant under-redaction
-hole.
+TKT-73C6B2 makes historical field redaction **fail closed** (deny-by-default;
+any grant whose subject-world inputs cannot be affirmed for a historical/deleted
+entity is hidden, revealed only by the `history:read-redacted` audit
+permission). Its earlier "freeze the visibility verdict at capture" framing was
+superseded 2026-07-27 (too magical). Relation `visible:` grants inherit the SAME
+rule for free: relation history fails closed, same reveal permission. Build
+73C6B2's deny-by-default machinery generically enough that relations plug in —
+do NOT build a relation-specific redaction path.
 
 ## Origin
 
 Confirmed as a gap in the TKT-92JL8P follow-up review — "acl does not allow
 field level stuff [for relations], seems like a gap we need to address."
+
+## Re-verification (2026-07-25, against develop dd0fe649)
+
+Premise STILL VALID — relations still have no read-time field-visibility
+redaction. Intervening ACL work (TKT-9E57 predicate-backed resolver, TKT-ZF2DTV
+ACL-bound script reads) strengthened the ENTITY side but added nothing for
+relations:
+
+- The policy schema still cannot express a relation `visible:` grant:
+`internal/acl/policy.go:271-277` `RelationGrant` has only
+`Relation`/`Create`/`Remove`/`Fields`/`When` — no `Visible`.
+- The live relation GET still emits properties raw:
+`internal/dataentry/api_v1.go:893,918,1043` all do `rel["meta"] =
+edge.Properties` with no stripping. `stripHiddenProperties` exists only for
+entities (`affordances.go:895`, called from `entityserializer.go:117,142`).
+- `RelationVerdict.Fields` gates WRITES only (`affordances.go:226-229`;
+consumers are the write-path validators `validateRelationMetaWrite` + `_actions`
+emission) — never a read-side redaction.
+
+CORRECTION to the Problem section: the claim "`entity.Relation.Inaccessible` …
+never populated (zero writers)" is now imprecise. `fsstore/markdown.go:349`
+(`buildInaccessibleRelation`) DOES write it — but only for git-crypt-encrypted
+relation files (reason `git-crypt`), a filesystem-encryption stand-in, NOT wired
+from any ACL verdict. So the substantive gap (no ACL-driven per-field relation
+redaction) is intact; only the "zero writers" phrasing is stale. Fix direction
+step 2 should say "populate from the ACL verdict" (distinct from the existing
+git-crypt writer).
+
+Still coupled to TKT-73C6B2 — see its re-verification note; design the
+capture-time freeze once and cover both.

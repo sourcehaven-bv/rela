@@ -56,6 +56,7 @@ func testMeta(t *testing.T) *metamodel.Metamodel {
 					"status":     {Type: metamodel.PropertyTypeEnum, Values: []string{"open", "review", "done"}},
 					"assignee":   {Type: metamodel.PropertyTypeString},
 					"priority":   {Type: metamodel.PropertyTypeInteger},
+					"due":        {Type: metamodel.PropertyTypeDate},
 					"tags":       {Type: metamodel.PropertyTypeString, List: true},
 					"is_blocked": {Type: metamodel.PropertyTypeBoolean},
 				},
@@ -94,10 +95,8 @@ func declFor(t *testing.T, p *acl.Policy) *acl.Declarative {
 }
 
 // ctxAs builds a request context for the named principal. user varies
-// across the table even where current tests happen to use one value;
-// keeping it explicit documents which principal each case exercises.
-//
-//nolint:unparam // user is intentionally explicit per-test
+// across the table (e.g. the TKT-73C6B2 historical tests exercise
+// "auditor"/"bob"), documenting which principal each case exercises.
 func ctxAs(user string) context.Context {
 	return principal.With(context.Background(),
 		principal.Principal{User: user, Tool: principal.ToolDataEntry})

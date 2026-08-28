@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"iter"
 	"os"
-	"sort"
 	"strings"
 	"time"
 
@@ -175,29 +174,35 @@ func (s *FSStore) PropertyValues(_ context.Context, property string, limit int) 
 		return []string{}, nil
 	}
 
-	type vc struct {
-		value string
-		count int
-	}
-	sorted := make([]vc, 0, len(counts))
-	for v, c := range counts {
-		sorted = append(sorted, vc{v, c})
-	}
-	sort.Slice(sorted, func(i, j int) bool {
-		if sorted[i].count != sorted[j].count {
-			return sorted[i].count > sorted[j].count
-		}
-		return sorted[i].value < sorted[j].value
-	})
-
-	result := make([]string, 0, limit)
-	for i := 0; i < len(sorted) && (limit == 0 || i < limit); i++ {
-		result = append(result, sorted[i].value)
-	}
-	return result, nil
+	return storeutil.TopValues(counts, limit), nil
 }
 
 // --- EntityWriter ---
+
+// idTaken reports whether any key of index case-folds to the same identity as
+// id. except is skipped so a rename can ask "does any OTHER entity claim this
+// identity?" without self-colliding.
+//
+// Scans the existing index on each call rather than maintaining a second
+// case-folded map: the entity index is mutated at several sites, and a
+// parallel index would silently drift at whichever one a future change
+// forgets to update. Runs only on create and rename, never on a read path.
+//
+// A free function rather than a method — FSStore is at its plimsoll
+// max-methods line, and this needs no receiver state beyond the index.
+// Callers must hold s.mu.
+func idTaken(index map[string]entityMeta, id, except string) bool {
+	folded := storeutil.FoldID(id)
+	for existing := range index {
+		if existing == except {
+			continue
+		}
+		if storeutil.FoldID(existing) == folded {
+			return true
+		}
+	}
+	return false
+}
 
 func (s *FSStore) createEntity(_ context.Context, e *entity.Entity) error {
 	if err := storeutil.ValidateID(e.ID); err != nil {
@@ -207,7 +212,10 @@ func (s *FSStore) createEntity(_ context.Context, e *entity.Entity) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, exists := s.entities[e.ID]; exists {
+	// Case-folded: on a case-insensitive filesystem (macOS, Windows) "ABC"
+	// and "abc" are the same file, so a byte-exact check here would let the
+	// write silently overwrite the existing entity (BUG-3RCWNS).
+	if idTaken(s.entities, e.ID, "") {
 		return store.ErrConflict
 	}
 
@@ -251,6 +259,18 @@ func (s *FSStore) updateEntity(_ context.Context, e *entity.Entity) error {
 	stored.UpdatedAt = time.Now()
 	if err := s.writeEntity(stored); err != nil {
 		return err
+	}
+
+	// The entity's type determines its file path, so a type change wrote the
+	// record at the NEW type's path — the file at the old path must go too,
+	// or it would resurrect the stale record on the next reload. Part of the
+	// type-change-on-update store contract (storetest UpdateChangesType).
+	if meta.Type != e.Type {
+		oldKey := s.entityFileKey(meta.Type, e.ID)
+		if err := s.rooted.Remove(oldKey); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		s.echoes.Forget(s.absPath(oldKey))
 	}
 
 	// Update index
@@ -376,7 +396,8 @@ func (s *FSStore) renameEntity(_ context.Context, oldID, newID string) (*store.R
 	if !ok {
 		return nil, store.ErrNotFound
 	}
-	if _, exists := s.entities[newID]; exists {
+	// except=oldID: an entity may change its own casing (abc -> ABC).
+	if idTaken(s.entities, newID, oldID) {
 		return nil, store.ErrConflict
 	}
 

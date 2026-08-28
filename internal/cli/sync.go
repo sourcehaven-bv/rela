@@ -5,6 +5,7 @@ import (
 
 	syncclient "github.com/Sourcehaven-BV/rela/internal/cli/sync"
 	relaerrors "github.com/Sourcehaven-BV/rela/internal/errors"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 // SyncCmd is the `rela sync` command group: push local changes to and pull
@@ -122,7 +123,39 @@ func buildSyncEngine(remote, token string, svc *writeServices) (*syncclient.Engi
 	if err != nil {
 		return nil, nil, "", err
 	}
+	// Wire the replica's own schema so the engine runs the compatibility
+	// handshake against the primary at the start of every run (TKT-8P1TM7):
+	// syncing two stores whose schemas have drifted is a corruption vector, so
+	// the run fails fast on divergence rather than mid-splice.
+	eng.SetLocalSchema(localSchemaFrom(svc.Meta))
 	return eng, idx, cacheDir, nil
+}
+
+// localSchemaFrom projects the local metamodel to the compatibility view the
+// sync handshake compares: per entity type its route plural + declared property
+// shapes (type + list-ness), and per relation type its property shapes.
+func localSchemaFrom(meta *metamodel.Metamodel) *syncclient.LocalSchema {
+	ls := &syncclient.LocalSchema{
+		Entities:  map[string]syncclient.LocalType{},
+		Relations: map[string]syncclient.LocalType{},
+	}
+	for name, def := range meta.Entities {
+		ls.Entities[name] = syncclient.LocalType{Plural: def.GetPlural(name), Properties: propShapes(def.Properties)}
+	}
+	for name, def := range meta.Relations {
+		ls.Relations[name] = syncclient.LocalType{Properties: propShapes(def.Properties)}
+	}
+	return ls
+}
+
+// propShapes maps a metamodel property set to the name→shape view the handshake
+// compares.
+func propShapes(props map[string]metamodel.PropertyDef) map[string]syncclient.LocalProp {
+	out := make(map[string]syncclient.LocalProp, len(props))
+	for name, def := range props {
+		out[name] = syncclient.LocalProp{Type: def.Type, List: def.List}
+	}
+	return out
 }
 
 // reportPush prints a push report and returns a non-zero exit error if any

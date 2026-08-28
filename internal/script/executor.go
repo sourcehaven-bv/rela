@@ -65,19 +65,35 @@ func (e *Engine) LuaCache() *lua.Cache {
 // pass context.Background() explicitly.
 func (e *Engine) ExecuteCode(ctx context.Context, code string, deps lua.WriteDeps,
 	newEntity, oldEntity *entity.Entity) error {
-	return e.execute(ctx, code, deps, "", newEntity, oldEntity)
+	return e.execute(ctx, code, deps, "", newEntity, oldEntity, lua.Capabilities{})
+}
+
+// ExecuteCodeWithCapabilities is [Engine.ExecuteCode] with an explicit ambient
+// capability grant (TKT-YH52OM). ExecuteCode itself grants NOTHING, so an
+// automation that needs http/ai/secrets must come through here with the grant
+// its `capabilities:` block declared.
+func (e *Engine) ExecuteCodeWithCapabilities(ctx context.Context, code string, deps lua.WriteDeps,
+	newEntity, oldEntity *entity.Entity, caps lua.Capabilities) error {
+	return e.execute(ctx, code, deps, "", newEntity, oldEntity, caps)
 }
 
 // ExecuteFile loads and runs a script file from the scripts/ directory.
 // The path must be a local path (no ".." or absolute paths) with .lua
-// extension. ctx semantics match [ExecuteCode].
+// extension. ctx semantics match ExecuteCode.
 func (e *Engine) ExecuteFile(ctx context.Context, path string, deps lua.WriteDeps,
 	newEntity, oldEntity *entity.Entity) error {
+	return e.ExecuteFileWithCapabilities(ctx, path, deps, newEntity, oldEntity, lua.Capabilities{})
+}
+
+// ExecuteFileWithCapabilities is [Engine.ExecuteFile] with an explicit ambient
+// capability grant (TKT-YH52OM). See [Engine.ExecuteCodeWithCapabilities].
+func (e *Engine) ExecuteFileWithCapabilities(ctx context.Context, path string, deps lua.WriteDeps,
+	newEntity, oldEntity *entity.Entity, caps lua.Capabilities) error {
 	scriptCode, err := loadScript(deps.ProjectRoot, path)
 	if err != nil {
 		return err
 	}
-	return e.execute(ctx, scriptCode, deps, path, newEntity, oldEntity)
+	return e.execute(ctx, scriptCode, deps, path, newEntity, oldEntity, caps)
 }
 
 // ExecuteDocument loads and runs a Lua script in document-rendering mode.
@@ -104,43 +120,39 @@ func (e *Engine) ExecuteDocument(
 	entryID string,
 	timeout time.Duration,
 ) error {
-	scriptCode, err := loadScript(deps.ProjectRoot, path)
-	if err != nil {
-		return err
-	}
-
 	// ctx + principal are threaded like execute()/ExecuteAction: the script
 	// runs under the CALLER's identity (rela.principal reflects the request
 	// principal, reads cancel with the request). Before TKT-L9Q669 this
 	// path ran on context.Background() with no principal — an export_render
 	// or document script could never be attributed or ACL-bound.
-	opts := []lua.Option{
-		lua.WithDocumentMode(documentID, entryID),
-		lua.WithCache(e.cache),
-		lua.WithContext(ctx),
-		lua.WithPrincipal(principal.From(ctx)),
-	}
-	if timeout > 0 {
-		opts = append(opts, lua.WithTimeout(timeout))
-	}
+	return e.runDocumentScript(ctx, path, deps, stdout,
+		lua.WithDocumentMode(documentID, entryID), entryID, timeout)
+}
 
-	runtime, err := NewWriterRuntime(deps, path, stdout, opts...)
-	if err != nil {
-		return err
-	}
-	defer runtime.Close()
-
-	// RunFileContent (not RunString) so gopher-lua receives the script
-	// path as the chunkname — that lands in the message handler's frame
-	// captures and lets ScriptError.Source populate from the right file.
-	// Doubles as the rela.cache.* namespace, so SetScriptPath is no
-	// longer needed alongside it.
-	//nolint:contextcheck // ctx threaded via WithContext above, same as execute()
-	if runErr := runtime.RunFileContent(path, []byte(scriptCode), nil); runErr != nil {
-		return wrapScriptError(lua.SurfaceDocument, scriptsDir, path, entryID,
-			runtime.ErrorFrames(), nil, runErr, deps.ProjectRoot)
-	}
-	return nil
+// ExecuteStandaloneDocument loads and runs a Lua script in document-rendering
+// mode for a STANDALONE document — one declared without an `entity_type:`,
+// whose content is company-wide rather than about one entity (TKT-M1AX6P).
+// Output handling is identical to [Engine.ExecuteDocument]; the difference is
+// that rela.document.entry_id is Lua nil.
+//
+// documentID is the key under documents: in data-entry.yaml (exposed as
+// rela.document.id). timeout overrides the default lua timeout when non-zero.
+//
+// A separate method rather than ExecuteDocument with an empty entryID, for the
+// reason [lua.WithStandaloneDocumentMode] gives: the absent entry id should be
+// structural, not an empty string a caller might forget to special-case. The
+// empty `subject` passed through to error wrapping is honest — there is no
+// entity this render is about.
+func (e *Engine) ExecuteStandaloneDocument(
+	ctx context.Context,
+	path string,
+	deps lua.WriteDeps,
+	stdout io.Writer,
+	documentID string,
+	timeout time.Duration,
+) error {
+	return e.runDocumentScript(ctx, path, deps, stdout,
+		lua.WithStandaloneDocumentMode(documentID), "", timeout)
 }
 
 // wrapScriptError builds a *lua.ScriptError from a runtime failure.
@@ -184,10 +196,13 @@ func wrapScriptError(surface lua.Surface, subdir, scriptPath, entityID string,
 // to Lua write bindings so downstream Manager calls receive the
 // caller's Principal / triggered_by values.
 func (e *Engine) execute(ctx context.Context, code string, deps lua.WriteDeps, scriptPath string,
-	newEntity, oldEntity *entity.Entity) error {
+	newEntity, oldEntity *entity.Entity, caps lua.Capabilities) error {
 	var output bytes.Buffer
 	runtime, err := NewWriterRuntime(deps, scriptPath, &output,
 		lua.WithCache(e.cache), lua.WithContext(ctx),
+		// Ambient capabilities are an explicit per-execution grant (TKT-YH52OM);
+		// the zero value denies http/ai/secrets/write_file.
+		lua.WithCapabilities(caps),
 		// Resolve identity here (the caller side) and pass it as a value, so
 		// the lua package never reads the principal from ctx (TKT-5U6NRR).
 		lua.WithPrincipal(principal.From(ctx)))

@@ -11,7 +11,7 @@ func init() {
 }
 
 // InverseSimplifyMigration renames "name" to "id" in inverse definitions and
-// simplifies to string form when the label matches the auto-derived label.
+// simplifies to string form when the label adds nothing over the id itself.
 type InverseSimplifyMigration struct{}
 
 func (m *InverseSimplifyMigration) Name() string {
@@ -87,9 +87,12 @@ func (m *InverseSimplifyMigration) Apply(doc *yaml.Node) error {
 		labelNode := GetMapValue(inverseNode, "label")
 		name := nameNode.Value
 
-		// Check if label matches auto-derived label
-		autoLabel := camelCaseToSpaced(name)
-		if labelNode == nil || labelNode.Value == autoLabel {
+		// Collapse to the simple string form only when the label adds nothing
+		// — i.e. it is absent, or identical to the id itself. A label that
+		// merely looks derivable (e.g. "addressed by" for `addressedBy`) is
+		// kept: labels are authored, never derived (DEC-6C1NAA), so dropping
+		// it would permanently downgrade the display text to the raw id.
+		if labelNode == nil || labelNode.Value == name {
 			// Convert to simple string form: replace mapping with scalar
 			inverseNode.Kind = yaml.ScalarNode
 			inverseNode.Tag = ""
@@ -102,32 +105,4 @@ func (m *InverseSimplifyMigration) Apply(doc *yaml.Node) error {
 	}
 
 	return nil
-}
-
-// camelCaseToSpaced converts camelCase/PascalCase to space-separated lowercase.
-// Examples: "addressedBy" → "addressed by", "implementedBy" → "implemented by"
-func camelCaseToSpaced(s string) string {
-	if s == "" {
-		return ""
-	}
-
-	const asciiCaseOffset = 'a' - 'A'   // 32, but as a named constant
-	result := make([]byte, 0, len(s)+4) // Extra space for inserted spaces
-
-	for i := range len(s) {
-		c := s[i]
-		isUpper := c >= 'A' && c <= 'Z'
-
-		switch {
-		case i > 0 && isUpper:
-			// Insert space before uppercase letters (except at start) and convert to lowercase
-			result = append(result, ' ', c+asciiCaseOffset)
-		case isUpper:
-			// First character - just convert to lowercase
-			result = append(result, c+asciiCaseOffset)
-		default:
-			result = append(result, c)
-		}
-	}
-	return string(result)
 }

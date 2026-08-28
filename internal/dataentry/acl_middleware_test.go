@@ -24,7 +24,7 @@ func TestACLMiddleware_FailLoudOnApi(t *testing.T) {
 	// when ForPrincipal fails.
 	called := false
 	next := http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) { called = true })
-	handler := attachACLRequest(next, d)
+	handler := attachACLRequest(next, d, false)
 
 	// Construct a request whose ctx has NO principal (the stamper bug
 	// case): principal.From returns the unknown/unknown default, which
@@ -57,7 +57,7 @@ func TestACLMiddleware_NonAPIPathsBypass(t *testing.T) {
 		called = true
 		w.WriteHeader(http.StatusOK)
 	})
-	handler := attachACLRequest(next, d)
+	handler := attachACLRequest(next, d, false)
 
 	for _, path := range []string{"/", "/index.html", "/static/app.js", "/assets/main.css"} {
 		t.Run(path, func(t *testing.T) {
@@ -147,7 +147,7 @@ func TestACLMiddleware_StampedPrincipalAttachesGate(t *testing.T) {
 		permitsTicket, _ = gate.PermitsRead(r.Context(), "ticket", "TKT-001")
 		permitsDoc, _ = gate.PermitsRead(r.Context(), "document", "DOC-001")
 	})
-	handler := attachACLRequest(next, d)
+	handler := attachACLRequest(next, d, false)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody)
 	req = req.WithContext(principal.With(req.Context(),

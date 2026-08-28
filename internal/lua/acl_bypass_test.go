@@ -22,6 +22,9 @@ func (r *recordingMutator) CreateEntity(context.Context, *entity.Entity, entity.
 func (r *recordingMutator) UpdateEntity(context.Context, *entity.Entity) (*entity.UpdateResult, error) {
 	return &entity.UpdateResult{}, nil
 }
+func (r *recordingMutator) PatchEntity(context.Context, string, entity.Patch) (*entity.UpdateResult, error) {
+	return &entity.UpdateResult{}, nil
+}
 func (r *recordingMutator) DeleteEntity(context.Context, string, bool) (*entity.DeleteResult, error) {
 	return &entity.DeleteResult{}, nil
 }

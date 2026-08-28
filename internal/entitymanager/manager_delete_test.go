@@ -26,6 +26,14 @@ func (s *failingDeleteStore) DeleteEntity(context.Context, string, bool) (*store
 	return nil, s.err
 }
 
+// Tx hands the callback THIS decorator, not the wrapped store. Without the
+// override the embedded Store's Tx would supply its own view and the
+// DeleteEntity override above would be invisible inside a transaction —
+// the fake would silently stop modeling the failure it exists to model.
+func (s *failingDeleteStore) Tx(_ context.Context, fn func(store.Store) error) error {
+	return fn(s)
+}
+
 // TestDeleteEntity_PropagatesStoreError pins issue #888: a real error from the
 // store's cascade delete must surface to the caller, not be swallowed. Before
 // the fix, Manager.DeleteEntity looped per-relation and `continue`d past I/O
@@ -40,6 +48,7 @@ func TestDeleteEntity_PropagatesStoreError(t *testing.T) {
 		Audit:       audit.Nop{},
 		ACL:         acl.NopACL{},
 		Transitions: statemachine.EmptySet(),
+		FieldGate:   entitymanager.AllowAllFieldGate{},
 	}
 	mgr, err := entitymanager.New(deps)
 	if err != nil {
@@ -79,6 +88,7 @@ func TestDeleteEntity_CascadeAuditsReportedRelations(t *testing.T) {
 		Audit:       mem,
 		ACL:         acl.NopACL{},
 		Transitions: statemachine.EmptySet(),
+		FieldGate:   entitymanager.AllowAllFieldGate{},
 	}
 	mgr, err := entitymanager.New(deps)
 	if err != nil {

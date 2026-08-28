@@ -65,6 +65,112 @@ Rules for new write affordances in the Vue SPA (`frontend/`):
   plus a `perItemVerbs`/`perCollectionVerbs` update, and (b) the inline
   `v-if` on the component. No ESLint enforcement; code review catches drift.
 
+## Documents (`documents:` + `/_documents/...`)
+
+Two kinds, discriminated by `DocumentConfig.IsStandalone()` (empty
+`entity_type:`). Rules for new code:
+
+- **Never let one URL shape serve the other kind.** `/_documents/{name}/{id}`
+  is entity-anchored, `/_documents/{name}` is standalone; each 400s on the
+  other. Do not "helpfully" fall back to rendering with an empty or guessed
+  entry id — that produces a document about the wrong thing, silently.
+- **`permission:` is an intent gate, NOT the confidentiality boundary —
+  UNLESS the document is elevated.** Document content is bounded by
+  `lua.ReadDeps.VisibleReader` like every other read path, so a principal who
+  cannot read the underlying entities renders an empty report regardless. That
+  is why documents are ungated by default
+  (`TestStandaloneDocument_UngatedByDefault` pins it) — don't "harden" it into
+  a required field. What it buys on an ordinary document is that a report
+  *claiming* a scope its reader cannot compute is withheld rather than served
+  as a smaller number that looks authoritative: misinformation, not disclosure.
+- **An elevated document (`allow_acl_bypass: read`) inverts that, and gets a
+  SECOND gate (TKT-Y3JVFK).** Its Lua reads through a raw handle, so nothing
+  downstream bounds the output and `permission:` becomes the whole boundary —
+  hence required at config load, and enforced by `authorizeElevatedDocument`, a
+  closed switch on the ACL IMPLEMENTATION. It must not be folded into
+  `gateDocumentPermission`: that consults the read gate, which returns
+  `nopReadGate` under NopACL *and* ReadOnlyACL with `HoldsPermission` ⇒ true, so
+  a read-gate predicate FAILS OPEN (the RR-CWWJGW shape, same as the nav filter
+  below). NopACL **denies** here, diverging from `authorizeCommand` — an
+  elevated document has no pre-ACL behavior to preserve, so granting would only
+  make the boundary inert while looking configured.
+- **Only `read` is accepted on a document; `write`/`read+write` are a config
+  error.** A render is served on a GET, so elevated writes there would break
+  idempotence under prefetch/refresh/retry and foreclose the caching an
+  elevated, principal-independent render is uniquely suited to (TKT-OGR566,
+  RR-P4E9GL). Elevated writes belong in an automation action or a schedule.
+- **This does NOT mean a render cannot mutate — it can, today.** Documents
+  render on a `WriterRuntime` and `registerBindings` has no `isDocument` guard,
+  so ordinary `rela.create_entity`/`update_entity`/`delete_entity`/`write_file`
+  are callable in a document script, bounded by the caller's ACL (pre-existing;
+  TKT-PX5YL7). Withholding the elevated Mutator narrows *elevation*; it does not
+  make the surface read-only. Don't write "a render cannot write" in a comment
+  or doc — say "cannot write past the ACL", which is what is true.
+- **The elevated script is TRUSTED CODE (RR-LWD8N3, accepted).** Nothing stops
+  it printing what it reads, so `permission:` grants "may read whatever this
+  script reads", not "may view this report". Review of the bypass block is the
+  mitigation; say so in docs rather than implying enforcement.
+- **Gate before the renderer anyway.** Content would be safe either way, but a
+  denied caller must not be able to trigger an expensive Lua aggregation.
+- **Deny with a 403 that NAMES the document and permission.** Do not disguise
+  it as the unknown-document 404: which documents exist is not a secret (they
+  are `data-entry.yaml` keys — see "The configuration is not a secret; the data
+  is" in the root CLAUDE.md), and an opaque denial is unsupportable at scale.
+  The uniform 404 is for **entity ids**, where existence genuinely is secret.
+- **Do NOT filter `/_config` per principal.** It serves the navigation tree
+  verbatim ("The configuration is not a secret; the data is"); an earlier draft
+  of TKT-M1AX6P filtered it and that was reverted — don't reintroduce it. The
+  *sidebar* and *dashboard* are a different matter: TKT-TXDK8U added an opt-in
+  `permission:` filter on nav entries and TKT-53KICM the same on dashboard
+  cards, each served by its own per-principal endpoint (see the section below).
+  A document with no `permission:` is still listed for everyone and 403s on
+  render.
+- **A standalone render has no entry entity, so it has no `ContentHash`,
+  `Entities`, or disk cache**, and it is script-only. Don't reintroduce those
+  by keying a cache on something else; there is nothing to invalidate against
+  (TKT-E1FO1 is the real fix).
+
+## Presentation filtering (`permission:` on a nav entry or dashboard card)
+
+`permitsGatedUIElement` (`views_handler.go`) is the ONE policy switch behind
+both surfaces: `permitsNavEntry` wraps it to omit entries from `/_sidebar`
+(TKT-TXDK8U), and `handleV1Dashboard` calls it to omit cards from
+`/_dashboard` (TKT-53KICM). Rules for new code:
+
+- **It is a UX filter, not a boundary.** Nothing downstream may rely on an
+  element being hidden. The target enforces what it always did — a hidden
+  card's query still returns its ACL-scoped rows through `_search`.
+  `TestNavPermission_FilterIsPresentationOnly` and
+  `TestDashboardPermission_FilterIsPresentationOnly` assert precisely that, in
+  both directions. Same rule as `_actions` above.
+- **Do NOT filter `/_config`.** It serves the navigation tree AND the
+  `dashboard:` block verbatim, on purpose (root CLAUDE.md, "The configuration
+  is not a secret; the data is"). Filtering it would be concealment-shaped, and
+  an earlier attempt at exactly that was reverted in TKT-M1AX6P.
+  `TestNavPermission_ConfigUnfiltered` and
+  `TestDashboardPermission_ConfigUnfiltered` pin it. This is *why* the
+  dashboard needed its own endpoint rather than a filtered `_config`.
+- **The ReadOnlyACL arm is load-bearing.** `readGateFromContext` returns
+  `nopReadGate` under ReadOnlyACL *and* NopACL, and its `HoldsPermission`
+  returns true — so a predicate written against the read gate alone fails OPEN
+  under `--read-only`. That is the RR-CWWJGW shape. Keep the explicit arm ahead
+  of the gate; `TestNavPermission_ReadOnlyArmIsExplicit` and
+  `TestDashboardPermission_ReadOnlyArmIsExplicit` are the canaries (each
+  attaches a deny-everything gate, so removing the arm fails them). Match value
+  **and** pointer forms — `AuthorizeWrite` has a value receiver.
+- **The switch stays closed.** A new `acl.ACL` implementation hides gated
+  elements until someone adds an arm; the failure mode of forgetting should be
+  a missing menu item, not an unintended one.
+- **Keep the grep guard's allow-lists short.** `TestNavFilterStaysPresentational`
+  greps two needles: `permitsNavEntry(` (one file) and `permitsGatedUIElement(`
+  (two). Adding a caller means widening a list, which is a deliberate argued
+  exception — not routine. If you need an authorization check, build one; see
+  `authorizeCommand`.
+- **A third gated surface shares the predicate, it does not copy it.** Copying
+  reintroduces the chance to get the read-only arm wrong, which was RR-XYO03L
+  (critical): the copy denied under ReadOnlyACL and so hid entries from
+  *everyone* based on a process-wide flag about writes.
+
 ## Custom apps (`apps/<id>/` + `_apps/{id}/...` + the bridge)
 
 User-authored apps served in a sandboxed iframe. An app is a **folder**
@@ -150,3 +256,73 @@ User-authored apps served in a sandboxed iframe. An app is a **folder**
   api-client call. Adding a capability = adding a named method, never a generic
   "fetch this path". Keep `appSDKMethods` (Go, in `apps_sdk.go`) in sync with
   `BRIDGE_METHODS` (the dispatcher).
+
+## Operator customisation (`custom/` + `/_custom/`)
+
+The operator's `custom/` project directory, served at `/_custom/<path>`.
+`custom.css` / `custom.js` there are referenced from the SPA shell; every other
+file (fonts, logos, images) is served as-is. Rules for new code:
+
+- **The SPA shell rewrite is the ONE server-side HTML rewrite in this codebase,
+  and it is deliberately scoped to rela's own shell.** The `apps/` rule below
+  ("served, not injected") still stands and is not weakened by it. The reason
+  the two differ is a *security boundary*, not ownership: an app's path-scoped
+  CSP **is** the entire boundary confining an untrusted installable app, so
+  injecting script into an app's index would require widening that CSP and
+  puncture it. The SPA shell has no CSP at all, so the rewrite crosses no
+  boundary. **TRIP-WIRE: if a CSP is ever added to the SPA route, that
+  reasoning lapses and the injection must be revisited.**
+- **Splice, don't parse.** `injectTags` does a targeted string insertion before
+  `</head>` / `</body>`. Do NOT swap in a `golang.org/x/net/html` parse+render
+  round-trip: it normalises the whole document (attribute quoting/order, entity
+  re-encoding) and would be the first `html.Render` in `internal/`. The shell is
+  our own embedded, known-shape output. x/net/html already being a dependency is
+  not a reason to use it.
+- **Four shells precomputed, existence re-checked per request.** Precomputing
+  removes the cache-population race; the per-request stat means adding
+  `custom.css` needs no restart. A file that is *served* at `/_custom/` but
+  never *referenced* in the shell is the confusing half-state this avoids.
+- **The containment boundary is `validCustomEntry` + a NESTED `os.OpenRoot`.**
+  TKT-IWMETE replaced the old two-name allowlist (which made traversal
+  impossible before touching the filesystem) with a served directory, so path
+  validation is now the primary boundary, not defence-in-depth.
+  **The nested root is security-critical**: a symlink inside `custom/` pointing
+  at `../metamodel.yaml` never leaves the project root, so a single
+  `os.OpenRoot(projectRoot)` would follow it. Only the second root scoped to
+  `custom/` refuses it — don't "simplify" it away
+  (`TestOpenCustomEntry_SymlinkInsideProject` pins this).
+- **Traversal is NEUTRALISED, not rejected.** `path.Clean` anchors
+  `../secret.txt` to `custom/secret.txt`, which may legitimately exist. Assert
+  *containment* (no file outside `custom/` is ever served), never "the request
+  errors" — a rejection-shaped test passes against a leaky implementation.
+- **The dot-segment rule is for operator accidents, not traversal.** It refuses
+  `.env`, `.git/config`, `.DS_Store`. It contributes ZERO traversal defence
+  (`path.Clean` resolves `..` before it runs) and is a filename heuristic, not a
+  secrets scanner — `notes.md` and `custom.css~` are served.
+- **Assets are delivered by `http.ServeContent`, not `w.Write`.** That is what
+  gives conditional requests, `Range` and correct `HEAD` in one call; before it,
+  a static webfont re-transferred on every navigation and a `HEAD` returned a
+  body. Two things must survive any change here: the explicit `Content-Type`
+  (ServeContent sniffs when it cannot infer one — the exact behaviour `nosniff`
+  exists to prevent) and the pre-read size gate, since ServeContent would
+  otherwise happily stream a file of any size.
+- **The ETag is modtime+size, deliberately not a content hash.** Hashing would
+  read the whole file per request — a read amplifier on an unauthenticated
+  route, and the cost ServeContent was adopted to avoid. `http.FileServer` makes
+  the same trade. The blind spot (an edit preserving both modtime and size) is
+  bounded by `Cache-Control: no-cache`, which forces revalidation anyway.
+- **`openCustomEntryFile` duplicates the containment chain** because it must
+  return a live handle, so it cannot delegate to `openCustomEntry`. A duplicated
+  security check drifts: `TestOpenCustomEntryFile_MatchesOpenCustomEntry` pins
+  that the two agree, and `TestOpenCustomEntryFile_NeverEscapes` attacks the new
+  path independently.
+- **`/_custom/` is PUBLIC and UNAUTHENTICATED** — not an `isAPIPath`, so outside
+  both the JWT gate and ACL, deliberately, so the shell loads before login. This
+  is a wider exposure than `apps/`, which this code otherwise copies. Every
+  failure collapses to one 404.
+- **`custom.js` is FULLY TRUSTED — the opposite posture from `apps/`.** It runs
+  same-origin in the SPA's document with no CSP, no sandbox, and unrestricted
+  API access. That is correct (the operator already controls metamodel, Lua and
+  ACL), but never reason "apps are sandboxed, therefore this is too."
+- **Token CSS must never be layered.** See `frontend/CLAUDE.md`;
+  `TestTokensCSSNeverLayered` pins both copies.

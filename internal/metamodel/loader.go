@@ -300,6 +300,14 @@ func validateEntitySemantics(m *Metamodel) []string {
 	for _, name := range entityNames {
 		def := m.Entities[name]
 
+		// The entity-type name is interpolated into backend DDL by the
+		// derived-schema reconciler (`... WHERE type = '<type>'`), so it must
+		// use the safe character set for the same DDL-injection reason as
+		// property names (TKT-3Q0GP1).
+		if err := ValidateSchemaName(name); err != nil {
+			errs = append(errs, fmt.Sprintf("entity %v", err))
+		}
+
 		if def.Label == "" {
 			errs = append(errs, fmt.Sprintf("entity %q: missing 'label'", name))
 		}
@@ -316,7 +324,7 @@ func validateEntitySemantics(m *Metamodel) []string {
 				"entity %q: 'id_caps' has no effect (only applies to 'id_type: short')", name))
 		}
 
-		errs = append(errs, validatePropertyDefs(fmt.Sprintf("entity %q", name), def.Properties, m, nil)...)
+		errs = append(errs, validatePropertyDefs(fmt.Sprintf("entity %q", name), def.Properties, m, nil, true)...)
 
 		errs = append(errs, validateDefaultSort(name, def)...)
 
@@ -595,7 +603,7 @@ func validateRelationProperties(m *Metamodel) []string {
 	relNames := sortedKeys(m.Relations)
 	for _, name := range relNames {
 		rel := m.Relations[name]
-		errs = append(errs, validatePropertyDefs(fmt.Sprintf("relation %q", name), rel.Properties, m, reservedRelProps)...)
+		errs = append(errs, validatePropertyDefs(fmt.Sprintf("relation %q", name), rel.Properties, m, reservedRelProps, false)...)
 		// Forbid users from declaring the managed order properties explicitly:
 		// rela owns these names, and a user-supplied PropertyDef would conflict
 		// with the auto-assigned float values written by the entity manager.
@@ -653,48 +661,91 @@ func sortedKeys[V any](m map[string]V) []string {
 // schemaName is used in error messages (e.g., "entity \"foo\"" or "relation \"bar\"").
 // reserved is an optional set of reserved property names (nil for entities).
 func validatePropertyDefs(
-	schemaName string, props map[string]PropertyDef, m *Metamodel, reserved map[string]bool,
+	schemaName string, props map[string]PropertyDef, m *Metamodel, reserved map[string]bool, allowComputed bool,
 ) []string {
-	var errs []string
-
+	errs := make([]string, 0, len(props))
 	for propName, propDef := range props {
-		// Check for reserved property names
-		if reserved != nil && reserved[propName] {
-			errs = append(errs, fmt.Sprintf(
-				"%s: property %q is reserved and cannot be used", schemaName, propName))
-			continue
-		}
+		errs = append(errs, validatePropertyDef(schemaName, propName, propDef, m, reserved, allowComputed)...)
+	}
+	return errs
+}
 
-		// Check property type is specified
-		if propDef.Type == "" {
-			errs = append(errs, fmt.Sprintf(
-				"%s: property %q has no type specified", schemaName, propName))
-			continue
-		}
-
-		// Check property type is known
-		if !isKnownPropertyType(propDef.Type, m) {
-			if propDef.Type == "number" || propDef.Type == "float" {
-				errs = append(errs, fmt.Sprintf(
-					"%s: property %q has type %q which is not supported; use \"integer\" instead",
-					schemaName, propName, propDef.Type))
-			} else {
-				errs = append(errs, fmt.Sprintf(
-					"%s: property %q has unknown type %q (not a built-in type and not defined in 'types')",
-					schemaName, propName, propDef.Type))
-			}
-		}
-
-		// Check enum has values
-		if propDef.Type == PropertyTypeEnum && len(propDef.Values) == 0 {
-			errs = append(errs, fmt.Sprintf(
-				"%s: property %q is type \"enum\" but has no 'values' list", schemaName, propName))
-		}
-
-		errs = append(errs, validateFilePropertyOptions(schemaName, propName, propDef)...)
+func validatePropertyDef(
+	schemaName, propName string, propDef PropertyDef, m *Metamodel, reserved map[string]bool, allowComputed bool,
+) []string {
+	if reserved != nil && reserved[propName] {
+		return []string{fmt.Sprintf("%s: property %q is reserved and cannot be used", schemaName, propName)}
+	}
+	// Property names reach backend DDL, so validate the safe character set at load.
+	if err := ValidateSchemaName(propName); err != nil {
+		return []string{fmt.Sprintf("%s: property %v", schemaName, err)}
+	}
+	if propDef.Type == "" {
+		return []string{fmt.Sprintf("%s: property %q has no type specified", schemaName, propName)}
 	}
 
+	var errs []string
+	if !isKnownPropertyType(propDef.Type, m) {
+		if propDef.Type == "number" || propDef.Type == "float" {
+			errs = append(errs, fmt.Sprintf(
+				"%s: property %q has type %q which is not supported; use \"integer\" instead",
+				schemaName, propName, propDef.Type))
+		} else {
+			errs = append(errs, fmt.Sprintf(
+				"%s: property %q has unknown type %q (not a built-in type and not defined in 'types')",
+				schemaName, propName, propDef.Type))
+		}
+	}
+	if propDef.Type == PropertyTypeEnum && len(propDef.Values) == 0 {
+		errs = append(errs, fmt.Sprintf(
+			"%s: property %q is type \"enum\" but has no 'values' list", schemaName, propName))
+	}
+	if propDef.Unique && !isStringValuedType(propDef.Type) {
+		errs = append(errs, fmt.Sprintf(
+			"%s: property %q has 'unique: true' on non-string type %q; "+
+				"unique is only supported on string-valued properties",
+			schemaName, propName, propDef.Type))
+	}
+	errs = append(errs, validateComputedProperty(schemaName, propName, propDef, allowComputed)...)
+	errs = append(errs, validateFilePropertyOptions(schemaName, propName, propDef)...)
 	return errs
+}
+
+func validateComputedProperty(schemaName, propName string, propDef PropertyDef, allowComputed bool) []string {
+	if propDef.Computed == "" {
+		return nil
+	}
+	var errs []string
+	if !allowComputed {
+		errs = append(errs, fmt.Sprintf("%s: property %q: computed is only supported on entity properties", schemaName, propName))
+	}
+	if propDef.List {
+		errs = append(errs, fmt.Sprintf("%s: property %q: computed list properties are not supported", schemaName, propName))
+	}
+	if propDef.Type == PropertyTypeFile {
+		errs = append(errs, fmt.Sprintf("%s: property %q: computed file properties are not supported", schemaName, propName))
+	}
+	if propDef.Default != "" {
+		errs = append(errs, fmt.Sprintf("%s: property %q: computed and default are mutually exclusive", schemaName, propName))
+	}
+	return errs
+}
+
+// isStringValuedType reports whether a property of this type stores its value
+// as a string (so the application uniqueness check, which reads values as
+// strings, can see it). The built-in string-ish types qualify; integer,
+// boolean, and file do not. Any non-built-in type name is a custom type
+// (enum/regex, defined in `types:`), whose values are strings, so it qualifies.
+func isStringValuedType(typeName string) bool {
+	switch typeName {
+	case PropertyTypeString, PropertyTypeDate, PropertyTypeDatetime, PropertyTypeEnum, PropertyTypeRrule:
+		return true
+	case PropertyTypeInteger, PropertyTypeBoolean, PropertyTypeFile:
+		return false
+	default:
+		// A custom type (declared in `types:`) — enum or regex-validated string.
+		return true
+	}
 }
 
 // validateFilePropertyOptions checks the attachment-only property options
@@ -707,6 +758,7 @@ func validateFilePropertyOptions(schemaName, propName string, propDef PropertyDe
 			"%s: property %q has max %d; must be >= 1", schemaName, propName, propDef.Max))
 	}
 	if propDef.Type == PropertyTypeFile {
+		errs = append(errs, validateTransformSteps(schemaName, propName, propDef.Transform)...)
 		return errs
 	}
 	// Below here the property is NOT a file: none of the attachment options apply.
@@ -721,6 +773,39 @@ func validateFilePropertyOptions(schemaName, propName string, propDef PropertyDe
 	}
 	if len(propDef.ScanCmd) > 0 || len(propDef.Transform) > 0 {
 		errs = append(errs, fileOnlyOptionErr(schemaName, propName, "scan_cmd/transform", propDef.Type))
+	}
+	return errs
+}
+
+// validImageReencodeTargets is the allowlist of native re-encode output
+// formats. Both are always within the default-safe MIME allowlist, so a native
+// image step's output cannot escape the allowlist (RR-4G5YBU).
+var validImageReencodeTargets = map[string]bool{"jpeg": true, "png": true}
+
+// validateTransformSteps checks each transform step is well-formed: exactly one
+// of cmd/image is set, and a native image step names a known re-encode target.
+func validateTransformSteps(schemaName, propName string, steps []TransformStep) []string {
+	var errs []string
+	for i, step := range steps {
+		switch step.Kind() {
+		case "cmd":
+			// Existing external-command step; validated at runtime, not here.
+		case "image":
+			if r := step.Image.Reencode; r != "" && !validImageReencodeTargets[r] {
+				errs = append(errs, fmt.Sprintf(
+					"%s: property %q transform step %d has unknown image reencode %q; want \"jpeg\" or \"png\"",
+					schemaName, propName, i, r))
+			}
+			if q := step.Image.Quality; q != 0 && (q < 1 || q > 100) {
+				errs = append(errs, fmt.Sprintf(
+					"%s: property %q transform step %d has image quality %d; must be 1..100 (0 = default)",
+					schemaName, propName, i, q))
+			}
+		default:
+			errs = append(errs, fmt.Sprintf(
+				"%s: property %q transform step %d must set exactly one of \"cmd\" or \"image\"",
+				schemaName, propName, i))
+		}
 	}
 	return errs
 }

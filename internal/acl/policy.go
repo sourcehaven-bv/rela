@@ -4,11 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
 // defaultMembershipRelation is the relation type the resolver walks
@@ -43,6 +46,33 @@ const EveryoneRole = "everyone"
 // "audit-everything-deleted" super-permission.
 const PermHistoryRead = "history:read"
 
+// PermHistoryReadRedacted is the global named permission that reveals fields a
+// historical snapshot would otherwise redact (TKT-73C6B2). Historical field
+// redaction fails CLOSED: any `visible:` grant whose subject-world inputs cannot
+// be affirmed for a historical/deleted entity (the live store no longer holds
+// the entity's as-of-version edges, so a conditional `has_relation` /
+// `count_relations` grant cannot be trusted) hides the field. A holder of this
+// permission sees ALL frozen fields — OVERRIDE semantics, the field-grained
+// sibling of [PermHistoryRead]'s all-or-nothing audit power. Granted via a
+// role's `permissions:` list like the delegate-X permissions and PermHistoryRead;
+// documented in docs/acl-security.md alongside it.
+const PermHistoryReadRedacted = "history:read-redacted"
+
+// BuiltinPermissions returns every global named permission rela itself ships
+// and consumes. These are granted through a role's `permissions:` list exactly
+// like the operator-defined delegate-X permissions, but — unlike those — they
+// are consumed by rela's own read paths, never by a
+// `role_relations.requires_permission` gate.
+//
+// It exists so consumers that reason about which permissions are *referenced*
+// (notably the `rela acl audit` dead-permission check) can tell a live
+// built-in from an operator's typo. A new global permission constant MUST be
+// added here; the alternative — each consumer hardcoding its own list — is
+// what let history:read be reported as dead config while it was in use.
+func BuiltinPermissions() []string {
+	return []string{PermHistoryRead, PermHistoryReadRedacted}
+}
+
 // Policy is the declarative ACL configuration parsed from `acl.yaml`
 // at the project root.
 //
@@ -63,7 +93,7 @@ const PermHistoryRead = "history:read"
 //   - [Policy.MembershipRelation] names the relation type the resolver
 //     walks from a principal to resolve group membership (TKT-Z8A62F).
 //     Blank/whitespace means the default ("member-of") — read the
-//     effective value via [Policy.membershipRelation], never the raw
+//     effective value via Policy.membershipRelation, never the raw
 //     field, since a blank type would otherwise match *all* relations.
 //   - [Policy.Roles] declares the named capability bundles. The
 //     built-in role name [EveryoneRole] ("everyone") is appended to
@@ -100,6 +130,68 @@ type Policy struct {
 	AssertedRoles       map[string]RoleList        `yaml:"asserted_role_assignments"`
 	RoleRelations       map[string]RoleRelationDef `yaml:"role_relations"`
 	InheritRolesThrough []string                   `yaml:"inherit_roles_through"`
+
+	// ClientBaselines and ScopeGrants implement client attenuation
+	// (TKT-IAC8TX): a ceiling that restricts a non-interactive client BELOW
+	// the user it acts as. Unlike every other field here, these can only
+	// REMOVE capability — see the package-level commentary in ceiling.go for
+	// the invariant and why it compiles at load time.
+	ClientBaselines map[string]ClientBaseline `yaml:"client_baselines"`
+	ScopeGrants     map[string]ScopeGrant     `yaml:"scope_grants"`
+
+	// RelationWriteGrants names, per relation type, the ACL permissions that
+	// may satisfy a relation write's source-type verb grant (TKT-K2VN9D).
+	// Keyed by RELATION type — unlike [RoleDef.Relations], which is keyed by
+	// entity type under a role. See [RelationWriteGrant].
+	RelationWriteGrants map[string]RelationWriteGrant `yaml:"relation_grants"`
+
+	// UnmatchedPrincipal decides what happens when a verified principal's
+	// identifier resolves to no [Policy.UserEntityType] entity (the
+	// principal_property lookup found no match). It governs the data-entry
+	// write path only; reads, and the CLI/MCP/scheduler entry points, are
+	// unaffected.
+	//
+	//   - "" / "anonymous" (default): the request proceeds as today — the
+	//     principal keeps its asserted roles but has no resolved user entity,
+	//     so anything keyed on that entity (local roles, ancestry) does not
+	//     apply.
+	//   - "reject": a graph-is-authority posture — the unknown identity's
+	//     WRITES are denied (403). Requires [Policy.PrincipalProperty] and
+	//     [Policy.UserEntityType] (else "unmatched" is undefined, since the
+	//     lookup is disabled and every principal looks unmatched); [Policy.Validate]
+	//     rejects "reject" without both.
+	//   - "provision": RESERVED for a future ticket (lazy stub creation). Accepted
+	//     at load so the vocabulary is stable, but currently behaves as
+	//     "anonymous" with a one-time warning.
+	UnmatchedPrincipal string `yaml:"unmatched_principal"`
+}
+
+// UnmatchedPrincipal modes — the values [Policy.UnmatchedPrincipal] accepts.
+const (
+	// UnmatchedAnonymous is the default: an unmatched verified principal
+	// proceeds with its asserted roles and no resolved entity.
+	UnmatchedAnonymous = "anonymous"
+	// UnmatchedReject denies an unmatched verified principal's writes.
+	UnmatchedReject = "reject"
+	// UnmatchedProvision is reserved for lazy stub provisioning (a future
+	// ticket). Accepted at load; behaves as anonymous until implemented.
+	UnmatchedProvision = "provision"
+)
+
+// effectiveUnmatchedPrincipal returns the mode with the empty default resolved
+// to [UnmatchedAnonymous], so callers read one value.
+func (p *Policy) effectiveUnmatchedPrincipal() string {
+	if p.UnmatchedPrincipal == "" {
+		return UnmatchedAnonymous
+	}
+	return p.UnmatchedPrincipal
+}
+
+// EffectiveUnmatchedPrincipal is the exported form of
+// Policy.effectiveUnmatchedPrincipal, for out-of-package callers (the
+// data-entry provision seam) that must branch on the resolved mode.
+func (p *Policy) EffectiveUnmatchedPrincipal() string {
+	return p.effectiveUnmatchedPrincipal()
 }
 
 // RoleList is a list of role names that accepts either a bare scalar or a
@@ -141,6 +233,15 @@ func (p *Policy) principalPropertyLookupEnabled() bool {
 		strings.TrimSpace(p.PrincipalProperty) != ""
 }
 
+// PrincipalPropertyLookupEnabled is the exported form of
+// Policy.principalPropertyLookupEnabled, for out-of-package callers that must
+// distinguish "the resolver attempted a lookup and found no entity" from "no
+// lookup was configured" — e.g. the data-entry middleware deciding whether a
+// no-match is a genuine unmatched principal.
+func (p *Policy) PrincipalPropertyLookupEnabled() bool {
+	return p.principalPropertyLookupEnabled()
+}
+
 // EffectiveMembershipRelation returns the relation type the resolver
 // walks for group membership: a space-trimmed [Policy.MembershipRelation]
 // when set, or [defaultMembershipRelation] ("member-of") when
@@ -168,11 +269,48 @@ func (p *Policy) EffectiveMembershipRelation() string {
 	return defaultMembershipRelation
 }
 
+// MembershipSelfPromotionOpen reports whether this policy leaves the
+// membership-relation self-promotion path open: at least one entry in
+// [Policy.Assignments] targets a declared, PRIVILEGED role while writes
+// to the effective membership relation carry no `requires_permission`
+// gate. When true, any principal who can write an edge of that relation
+// type can grant themselves the assigned role (RR-7O6Q) — see the
+// escalation-risk note on [RoleRelationDef].
+//
+// This is the single implementation of the "is membership gated?"
+// question. The aclaudit linter's A1-ungated-membership finding and the
+// boot-time startup warning both call it, so the advisory and the
+// enforcement view can never drift apart (TKT-T31NKT). It lives here,
+// beside [Policy.EffectiveMembershipRelation], for the same reason that
+// accessor does: a second hand-maintained copy of this predicate is a
+// silent over- or under-report waiting to happen.
+//
+// Privilege-gated deliberately, and symmetric with the linter's A2
+// check: a group assigned a READ-ONLY role is a visibility choice, not
+// an escalation path (RR-LXI3NW / RR-UR0LJU / RR-EG5D3E). Widening this
+// to "any assignment" would fire on read-only groups — the exact false
+// positive the audit design fought.
+//
+// An assignment naming an UNDECLARED role confers nothing and is
+// likewise not an escalation path; the linter reports that separately
+// as A4-assignment-unknown-role.
+func (p *Policy) MembershipSelfPromotionOpen() bool {
+	if p.RoleRelations[p.EffectiveMembershipRelation()].RequiresPermission != "" {
+		return false // gated — the delegate-X pattern is in place
+	}
+	for _, roleName := range p.Assignments {
+		if role, ok := p.Roles[roleName]; ok && role.IsPrivileged() {
+			return true
+		}
+	}
+	return false
+}
+
 // RoleDef is the capability bundle for a single role. The per-verb
 // mutation grants (Create / Update / Delete), Permissions, and the
 // affordance grants are honored by the write path and the affordances
 // resolver. Read drives the read-filtering path (see
-// [Declarative.ReadQuery]).
+// [Request.ReadQuery]).
 //
 // Per-verb mutation grants (TKT-4LQMWP): Create / Update / Delete each
 // list the entity types the role may create / update / delete (`"*"`
@@ -217,6 +355,18 @@ type RoleDef struct {
 	Visible   map[string][]FieldGrant    `yaml:"visible"`
 	Options   map[string][]OptionGrant   `yaml:"options"`
 	Relations map[string][]RelationGrant `yaml:"relations"`
+}
+
+// IsPrivileged reports whether the role confers escalation-relevant
+// power: it grants any write verb (Create/Update/Delete, including the
+// "*" wildcard) or holds any permission.
+//
+// Read grants are NOT privilege — a read-everything role is a
+// visibility choice, not an escalation path (RR-LXI3NW, RR-UR0LJU).
+// Exported so the aclaudit linter shares this definition rather than
+// keeping its own copy; its A2/A3 checks reference the same notion.
+func (r RoleDef) IsPrivileged() bool {
+	return len(r.Create) > 0 || len(r.Update) > 0 || len(r.Delete) > 0 || len(r.Permissions) > 0
 }
 
 // grantsVerb reports whether the role may perform op on entity type
@@ -267,13 +417,163 @@ type OptionGrant struct {
 // "unset" (use the grant's implied default of true — the grant
 // existing is itself the opt-in) is distinguishable from an explicit
 // false. Fields grants per-meta-field writability on links of this
-// type. When conditions the whole grant on a predicate.
+// type. Visible grants per-meta-field READ visibility (redaction) —
+// the read-side sibling of Fields, mirroring how RoleDef keeps entity
+// Fields (write) and Visible (read) as separate dimensions (TKT-B1F5Q1).
+// When conditions the whole grant on a predicate.
 type RelationGrant struct {
 	Relation string       `yaml:"relation"`
 	Create   *bool        `yaml:"create,omitempty"`
 	Remove   *bool        `yaml:"remove,omitempty"`
 	Fields   []FieldGrant `yaml:"fields,omitempty"`
+	Visible  []FieldGrant `yaml:"visible,omitempty"`
 	When     string       `yaml:"when,omitempty"`
+}
+
+// RelationWriteGrant declares, for ONE relation type, the ACL permission that
+// may satisfy each relation-write verb. It is the `relation_grants:` block in
+// acl.yaml:
+//
+//	relation_grants:
+//	  spawnt:
+//	    create: create-spawnt
+//	    update: edit-spawnt
+//	    delete: remove-spawnt
+//
+// [RelationWriteGrant.Permission] is a shorthand covering all three verbs; it
+// is mutually exclusive with the per-verb fields ([Policy.Validate] rejects
+// both). Values are permission names from [RoleDef.Permissions] — this block
+// CONSUMES permissions, it does not define them.
+//
+// # Not to be confused with RelationGrant
+//
+// Two similarly-named types live in this package and they are not
+// interchangeable:
+//
+//   - [RelationGrant] (`relations:` UNDER a role, keyed by ENTITY type) is an
+//     affordance grant. It is consumed only by internal/affordances, enforced
+//     only on the data-entry HTTP path, and is default-PERMISSIVE.
+//   - RelationWriteGrant (`relation_grants:` at policy top level, keyed by
+//     RELATION type) participates in the write gate itself, so it applies to
+//     every write path — CLI, Lua, MCP, sync, data-entry.
+//
+// # It is an ALTERNATIVE SATISFIER, never "sufficient"
+//
+// A relation write is authorized by a CONJUNCTION (see the unexported
+// Request.authorizeRelationWrite, which implements it):
+//
+//	allow = (delegate-X satisfied OR not configured)   // gate A
+//	      AND ceiling permits the verb on FromType      // gate B, ceiling
+//	      AND (source-type verb grant OR this block)    // gate B, roles
+//
+// This block widens ONLY the third conjunct. It can never satisfy the
+// delegate-X gate (which is what stops a `member-of` edge conferring a role to
+// its own writer, RR-7O6Q) and it can never escape the client ceiling (which
+// only ever narrows). A grant here is also inert when the source entity's type
+// could not be resolved: an empty FromType is a fail-closed sentinel, not a
+// wildcard.
+type RelationWriteGrant struct {
+	// Description is optional operator-facing prose, documentation only —
+	// never read by the write path. Mirrors [RoleDef.Description]; feeds the
+	// `rela docs` generator.
+	Description string `yaml:"description,omitempty"`
+
+	// Permission is the shorthand: one permission satisfying create, update
+	// AND delete. Mutually exclusive with the per-verb fields below.
+	Permission string `yaml:"permission,omitempty"`
+
+	Create string `yaml:"create,omitempty"`
+	Update string `yaml:"update,omitempty"`
+	Delete string `yaml:"delete,omitempty"`
+}
+
+// UnmarshalYAML rejects unknown verb keys rather than silently dropping them,
+// so a typo cannot masquerade as a grant. `read:` gets its own message: an
+// operator writing it has a coherent intent, so "unknown key" would read as an
+// oversight and invite a workaround. It is deliberately unsupported — see the
+// error text.
+func (g *RelationWriteGrant) UnmarshalYAML(unmarshal func(any) error) error {
+	var raw map[string]string
+	if err := unmarshal(&raw); err != nil {
+		return err
+	}
+	for _, k := range slices.Sorted(maps.Keys(raw)) {
+		switch k {
+		case "description", "permission", "create", "update", "delete":
+		case "read":
+			return errors.New(
+				"relation_grants: `read:` is not supported. Relation visibility is " +
+					"DERIVED — a relation is visible exactly when BOTH its endpoints " +
+					"are — so an independent read grant would reveal that an entity " +
+					"you cannot read exists. To hide edges, hide an endpoint")
+		default:
+			return fmt.Errorf(
+				"relation_grants: unknown key %q (want permission, create, update, delete)", k)
+		}
+	}
+	g.Description = raw["description"]
+	g.Permission = raw["permission"]
+	g.Create = raw["create"]
+	g.Update = raw["update"]
+	g.Delete = raw["delete"]
+	return nil
+}
+
+// permissionFor returns the permission name that may satisfy op for this
+// relation type, and false when the grant names none. The shorthand answers
+// for every write verb; otherwise the matching per-verb field is used.
+//
+// OpRename deliberately returns false rather than routing through Update the
+// way [grantsVerb] does: no caller pairs OpRename with a [RelationSubject]
+// (relations are re-keyed in bulk below the write gate by the store), so
+// silently accepting it here would invent a semantic no path exercises.
+func (g RelationWriteGrant) permissionFor(op Op) (string, bool) {
+	if g.Permission != "" {
+		switch op {
+		case OpCreate, OpUpdate, OpDelete:
+			return g.Permission, true
+		default:
+			return "", false
+		}
+	}
+	var perm string
+	switch op {
+	case OpCreate:
+		perm = g.Create
+	case OpUpdate:
+		perm = g.Update
+	case OpDelete:
+		perm = g.Delete
+	default:
+		return "", false
+	}
+	return perm, perm != ""
+}
+
+// RelationWriteGrantTypes lists the relation types covered by
+// `relation_grants:`, sorted. Empty when the block is absent.
+//
+// Exists so the WIRING site can log a positive confirmation that the block is
+// active: an older binary does not know the key and warn-and-ignores it, so
+// silence at load is otherwise indistinguishable from "loaded and enforcing" —
+// and an operator who believes the block is live might relax an entity-type
+// grant on the strength of it. Logging inside LoadPolicy would fire for every
+// read-only reporting command too, which trains operators to ignore it.
+func (p *Policy) RelationWriteGrantTypes() []string {
+	if len(p.RelationWriteGrants) == 0 {
+		return nil
+	}
+	return slices.Sorted(maps.Keys(p.RelationWriteGrants))
+}
+
+// relationPermissionFor reports the permission that may satisfy op on relation
+// type relType, if the policy declares one.
+func (p *Policy) relationPermissionFor(relType string, op Op) (string, bool) {
+	g, ok := p.RelationWriteGrants[relType]
+	if !ok {
+		return "", false
+	}
+	return g.permissionFor(op)
 }
 
 // HasAffordanceGrants reports whether any role in the policy declares
@@ -354,6 +654,10 @@ var knownPolicyKeys = map[string]bool{
 	"asserted_role_assignments": true,
 	"role_relations":            true,
 	"inherit_roles_through":     true,
+	"unmatched_principal":       true,
+	"client_baselines":          true,
+	"scope_grants":              true,
+	"relation_grants":           true,
 }
 
 // LoadPolicy reads and parses `acl.yaml` at the given path.
@@ -480,12 +784,113 @@ func (p *Policy) normalizeAssertedRoles() {
 	p.AssertedRoles = out
 }
 
+// normalizeRelationWriteGrants trims the relation-type keys and every
+// permission name in `relation_grants:`. A padded key ("spawnt ") would load
+// clean and then never match a real relation type, and a padded permission
+// would never match a granted one — both are silently-inert config, the
+// failure mode an operator is least likely to notice. Trimming first also
+// means [Policy.Validate]'s blank checks see "" rather than whitespace.
+func (p *Policy) normalizeRelationWriteGrants() {
+	if len(p.RelationWriteGrants) == 0 {
+		return
+	}
+	out := make(map[string]RelationWriteGrant, len(p.RelationWriteGrants))
+	for relType, g := range p.RelationWriteGrants {
+		g.Permission = strings.TrimSpace(g.Permission)
+		g.Create = strings.TrimSpace(g.Create)
+		g.Update = strings.TrimSpace(g.Update)
+		g.Delete = strings.TrimSpace(g.Delete)
+		out[strings.TrimSpace(relType)] = g
+	}
+	p.RelationWriteGrants = out
+}
+
+// validateRelationWriteGrants enforces the structural invariants of the
+// `relation_grants:` block. Everything here is checkable without a metamodel;
+// whether the relation type is DECLARED is checked in
+// [Policy.ValidateAgainstMetamodel], where the schema is available.
+func (p *Policy) validateRelationWriteGrants() error {
+	for _, relType := range slices.Sorted(maps.Keys(p.RelationWriteGrants)) {
+		g := p.RelationWriteGrants[relType]
+		if relType == "" {
+			return errors.New(
+				"relation_grants: relation type key must not be empty or whitespace")
+		}
+		if err := g.validate(relType); err != nil {
+			return err
+		}
+		if err := p.validateNotRoleConferring(relType); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateNotRoleConferring rejects a relation_grants entry on a relation type
+// whose creation CONFERS a role, in any of the three ways the policy allows.
+//
+// This is the load-bearing half of the delegate-X hardening (RR-7O6Q). A
+// relation permission satisfies the source-type verb grant, which is precisely
+// the conjunct that stands between a principal and a self-granted role edge —
+// so allowing it on a role-conferring type hands over the escalation primitive.
+//
+// Checking only role_relations would miss two mechanisms, and the miss is not
+// theoretical: the membership relation NEED NOT appear in role_relations at all
+// (it is a plain relation type by default), which is exactly the RR-7O6Q attack
+// shape.
+func (p *Policy) validateNotRoleConferring(relType string) error {
+	const hint = "a relation permission would satisfy the source-type grant, " +
+		"which is the only thing standing between a principal and a " +
+		"self-granted role — grant the entity-type verb instead"
+
+	if relType == p.EffectiveMembershipRelation() {
+		return fmt.Errorf(
+			"relation_grants.%s: %q is the membership relation (group roles are "+
+				"conferred by walking it), so it must not be grantable here; %s",
+			relType, relType, hint)
+	}
+	if slices.Contains(p.InheritRolesThrough, relType) {
+		return fmt.Errorf(
+			"relation_grants.%s: %q is listed in inherit_roles_through (local "+
+				"roles are conferred across it), so it must not be grantable here; %s",
+			relType, relType, hint)
+	}
+	if rr, ok := p.RoleRelations[relType]; ok && rr.RequiresPermission != "" {
+		return fmt.Errorf(
+			"relation_grants.%s: %q is a role-relation gated by requires_permission "+
+				"%q; a relation_grants entry cannot satisfy that gate and would only "+
+				"confuse which rule applies — remove one of the two",
+			relType, relType, rr.RequiresPermission)
+	}
+	return nil
+}
+
+// validate checks one relation type's grant. relType names it in errors.
+func (g RelationWriteGrant) validate(relType string) error {
+	perVerb := g.Create != "" || g.Update != "" || g.Delete != ""
+	if g.Permission != "" && perVerb {
+		return fmt.Errorf(
+			"relation_grants.%s: `permission` and the per-verb keys are mutually "+
+				"exclusive. The shorthand `permission: %s` means "+
+				"`create: %s, update: %s, delete: %s` — write those three "+
+				"explicitly and change the one you need",
+			relType, g.Permission, g.Permission, g.Permission, g.Permission)
+	}
+	if g.Permission == "" && !perVerb {
+		return fmt.Errorf(
+			"relation_grants.%s: grants nothing; name a permission under "+
+				"`permission:` (all verbs) or under create/update/delete",
+			relType)
+	}
+	return nil
+}
+
 // Validate enforces security-critical invariants on the parsed
 // policy. Run automatically by [LoadPolicy] / [LoadPolicyBytes].
 // Operators can also call it before persisting a generated policy.
 //
 // It also normalizes asserted_role_assignments keys in place (see
-// [Policy.normalizeAssertedRoles]) — the one mutation it performs, placed here
+// Policy.normalizeAssertedRoles) — the one mutation it performs, placed here
 // so it cannot be bypassed by a policy that reaches the resolver through a
 // path other than LoadPolicy.
 //
@@ -531,8 +936,50 @@ func (p *Policy) normalizeAssertedRoles() {
 // on-demand `rela acl audit` linter — see internal/aclaudit and
 // TKT-TS0J5K — which can rank findings by severity and cross-check the
 // metamodel, neither of which fits a boot gate.
+// validateUnmatchedPrincipal checks the unmatched_principal enum and its
+// dependency on the principal_property lookup. Extracted from [Policy.Validate]
+// to keep that function's cognitive complexity in bounds.
+func (p *Policy) validateUnmatchedPrincipal() error {
+	switch p.UnmatchedPrincipal {
+	case "", UnmatchedAnonymous, UnmatchedReject, UnmatchedProvision:
+		// ok
+	default:
+		return fmt.Errorf(
+			"unmatched_principal: %q is not a valid mode (want %q, %q, or %q)",
+			p.UnmatchedPrincipal, UnmatchedAnonymous, UnmatchedReject, UnmatchedProvision)
+	}
+	// reject and provision key off the principal_property lookup: "unmatched"
+	// only has meaning when the resolver maps an identifier to a user entity.
+	// Without the lookup enabled, ResolvePrincipal returns no-match for EVERY
+	// request, so every principal would look unmatched — a foot-gun that would
+	// reject (or provision for) everyone. Fail loud at load rather than mis-gate
+	// at runtime.
+	if p.UnmatchedPrincipal == UnmatchedReject || p.UnmatchedPrincipal == UnmatchedProvision {
+		if !p.principalPropertyLookupEnabled() {
+			return fmt.Errorf(
+				"unmatched_principal: %q requires both user_entity_type and "+
+					"principal_property to be set (else every principal is unmatched)",
+				p.UnmatchedPrincipal)
+		}
+	}
+	return nil
+}
+
 func (p *Policy) Validate() error {
 	p.normalizeAssertedRoles()
+	p.normalizeClientAttenuation()
+	p.normalizeRelationWriteGrants()
+
+	if err := p.validateUnmatchedPrincipal(); err != nil {
+		return err
+	}
+	if err := p.validateClientAttenuation(); err != nil {
+		return err
+	}
+	if err := p.validateRelationWriteGrants(); err != nil {
+		return err
+	}
+
 	for i, t := range p.InheritRolesThrough {
 		if isBlank(t) {
 			return fmt.Errorf("inherit_roles_through[%d]: relation type must not be empty or whitespace", i)
@@ -617,6 +1064,8 @@ type MetamodelView interface {
 	// PropertyInfo describes property on entityType (existence, unique,
 	// list). A missing type or property yields PropertyInfo{Exists:false}.
 	PropertyInfo(entityType, property string) PropertyInfo
+	// HasRelationType reports whether relationType is declared.
+	HasRelationType(relationType string) bool
 }
 
 // ValidateAgainstMetamodel enforces the schema-dependent invariants that
@@ -674,7 +1123,65 @@ func (p *Policy) ValidateAgainstMetamodel(meta MetamodelView) error {
 				prop, userType)
 		}
 	}
+	if err := p.validateRelationTypesDeclared(meta); err != nil {
+		return err
+	}
+	return p.validateProvisionerGrant(userType)
+}
+
+// validateRelationTypesDeclared rejects a `relation_grants:` key naming a
+// relation type the schema does not declare. A boot error rather than an audit
+// finding, matching how an undeclared user_entity_type is treated above: the
+// entry can never match a real write, so it is a grant the operator believes
+// they made and did not — and unlike a dead permission, nothing at runtime will
+// ever surface it.
+func (p *Policy) validateRelationTypesDeclared(meta MetamodelView) error {
+	for _, relType := range slices.Sorted(maps.Keys(p.RelationWriteGrants)) {
+		if !meta.HasRelationType(relType) {
+			return fmt.Errorf(
+				"acl: relation_grants.%s is not a declared relation type", relType)
+		}
+	}
 	return nil
+}
+
+// validateProvisionerGrant enforces that under `unmatched_principal: provision`
+// the provisioner system identity is actually granted create on the user entity
+// type (TKT-ANUJDS AC4). Without it the lazy stub create is ACL-denied and every
+// unmatched principal's first write fails at the provision step — a
+// misconfiguration this catches at LOAD rather than at the first unmatched
+// request. The `acl-provisioner-grant` migration injects the grant; this is the
+// guard that the operator ran it (or wrote an equivalent grant themselves).
+func (p *Policy) validateProvisionerGrant(userType string) error {
+	if p.effectiveUnmatchedPrincipal() != UnmatchedProvision {
+		return nil
+	}
+	// userType is guaranteed non-empty here: validateUnmatchedPrincipal (run by
+	// Validate) already rejects provision without the principal_property lookup,
+	// which requires user_entity_type.
+	if !p.principalGrantsCreate(principal.UserProvisioner, userType) {
+		return fmt.Errorf(
+			"acl: unmatched_principal: provision requires %q to be granted `create: [%s]` "+
+				"(run `rela db migrate` / the acl-provisioner-grant migration, or grant it manually); "+
+				"without it every unmatched principal's first write fails at provision",
+			principal.UserProvisioner, userType)
+	}
+	return nil
+}
+
+// principalGrantsCreate reports whether principalUser is assigned — via
+// `assignments` or `asserted_role_assignments` — a defined role that grants
+// create on target. Mirrors the resolution grantsVerb performs at write time,
+// but for the single provisioner-load check.
+func (p *Policy) principalGrantsCreate(principalUser, target string) bool {
+	roleGrants := func(roleName string) bool {
+		role, ok := p.Roles[roleName]
+		return ok && grantsVerb(role, OpCreate, target)
+	}
+	if roleName, ok := p.Assignments[principalUser]; ok && roleGrants(roleName) {
+		return true
+	}
+	return slices.ContainsFunc(p.AssertedRoles[principalUser], roleGrants)
 }
 
 func isBlank(s string) bool {

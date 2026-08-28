@@ -1,6 +1,7 @@
 package migration
 
 import (
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -102,7 +103,9 @@ func TestInverseSimplifyMigration_Apply(t *testing.T) {
 		expected string
 	}{
 		{
-			name: "converts name with auto-derived label to string form",
+			// DEC-6C1NAA: "addressed by" is no longer re-derivable from the id,
+			// so it must be preserved (with `name` renamed to `id`).
+			name: "keeps a derivable-looking label, renaming name to id",
 			input: `relations:
   addresses:
     inverse:
@@ -111,7 +114,9 @@ func TestInverseSimplifyMigration_Apply(t *testing.T) {
 `,
 			expected: `relations:
     addresses:
-        inverse: addressedBy
+        inverse:
+            id: addressedBy
+            label: addressed by
 `,
 		},
 		{
@@ -183,7 +188,9 @@ func TestInverseSimplifyMigration_Apply(t *testing.T) {
 `,
 			expected: `relations:
     addresses:
-        inverse: addressedBy
+        inverse:
+            id: addressedBy
+            label: addressed by
     implements:
         inverse:
             id: implementedBy
@@ -218,26 +225,76 @@ func TestInverseSimplifyMigration_Apply(t *testing.T) {
 	}
 }
 
-func TestInverseSimplifyMigration_camelCaseToSpaced(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected string
+// TestInverseSimplifyMigration_KeepsDerivableLookingLabels pins DEC-6C1NAA for
+// inverse relation labels. These labels used to be dropped because they matched
+// camelCaseToSpaced(id); since nothing re-derives them any more, dropping one
+// would permanently downgrade the display text to the raw camelCase id.
+func TestInverseSimplifyMigration_KeepsDerivableLookingLabels(t *testing.T) {
+	labels := []struct {
+		id    string
+		label string
 	}{
 		{"addressedBy", "addressed by"},
 		{"implementedBy", "implemented by"},
-		{"realizedBy", "realized by"},
 		{"dependencyOf", "dependency of"},
-		{"contains", "contains"},
-		{"ABC", "a b c"},
-		{"", ""},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			result := camelCaseToSpaced(tt.input)
-			if result != tt.expected {
-				t.Errorf("camelCaseToSpaced(%q) = %q, want %q", tt.input, result, tt.expected)
+	for _, tt := range labels {
+		t.Run(tt.id, func(t *testing.T) {
+			yamlStr := `relations:
+  addresses:
+    inverse:
+      name: ` + tt.id + `
+      label: ` + tt.label + `
+`
+			var doc yaml.Node
+			if err := yaml.Unmarshal([]byte(yamlStr), &doc); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+
+			m := &InverseSimplifyMigration{}
+			if err := m.Apply(&doc); err != nil {
+				t.Fatalf("Apply: %v", err)
+			}
+			out, err := yaml.Marshal(&doc)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if !strings.Contains(string(out), tt.label) {
+				t.Errorf("Apply() dropped inverse label %q; labels are authored, never derived\ngot:\n%s",
+					tt.label, out)
+			}
+			// The deprecated "name" key must still be renamed to "id".
+			if strings.Contains(string(out), "name:") {
+				t.Errorf("Apply() left deprecated \"name\" key\ngot:\n%s", out)
 			}
 		})
+	}
+}
+
+// TestInverseSimplifyMigration_CollapsesRedundantLabel confirms the migration
+// still collapses to the string form when the label adds nothing over the id.
+func TestInverseSimplifyMigration_CollapsesRedundantLabel(t *testing.T) {
+	yamlStr := `relations:
+  addresses:
+    inverse:
+      name: addressedBy
+      label: addressedBy
+`
+	var doc yaml.Node
+	if err := yaml.Unmarshal([]byte(yamlStr), &doc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	m := &InverseSimplifyMigration{}
+	if err := m.Apply(&doc); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	out, err := yaml.Marshal(&doc)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(out), "label:") {
+		t.Errorf("Apply() kept a label identical to the id\ngot:\n%s", out)
 	}
 }

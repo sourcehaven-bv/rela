@@ -141,12 +141,15 @@ forms:
           rejected: [captured]
     relations:
       - relation: related-idea
+        direction: outgoing
         widget: multi-select
         label: "Related Ideas"
       - relation: inspires
+        direction: outgoing
         widget: multi-select
       - relation: promotes-to
         label: "Promoted To"
+        direction: outgoing
     side_panel:
       traverse:
         - from: entry
@@ -206,6 +209,7 @@ forms:
         label: "Elaborates Ideas"
         widget: multi-select
         required: true
+        direction: outgoing
   edit_future_concept:
     entity_type: future-concept
     title: "Edit Future Concept"
@@ -238,16 +242,21 @@ forms:
       - relation: elaborates
         label: "Elaborates Ideas"
         widget: multi-select
+        direction: outgoing
       - relation: extends-concept
         label: "Extends Concepts"
         widget: multi-select
+        direction: outgoing
       - relation: enables
         label: "Would Enable Features"
         widget: multi-select
+        direction: outgoing
       - relation: replaces
         label: "Would Replace"
         widget: multi-select
+        direction: outgoing
       - relation: blocked-by-concept
+        direction: outgoing
         label: "Blocked By"
         widget: multi-select
     side_panel:
@@ -309,6 +318,7 @@ forms:
       - relation: requires
         label: "Requires Concepts"
         widget: multi-select
+        direction: outgoing
   edit_feature:
     entity_type: feature
     title: "Edit Feature"
@@ -333,7 +343,9 @@ forms:
       - relation: requires
         label: "Requires Concepts"
         widget: multi-select
+        direction: outgoing
       - relation: refines
+        direction: outgoing
     side_panel:
       traverse:
         - from: entry
@@ -395,10 +407,12 @@ forms:
       - relation: implements
         label: "Implements Feature"
         required: true
+        direction: outgoing
       - relation: affects
         label: "Affects Concepts"
         widget: multi-select
         required: true
+        direction: outgoing
   edit_ticket:
     entity_type: ticket
     title: "Edit Ticket"
@@ -423,23 +437,30 @@ forms:
     relations:
       - relation: implements
         label: "Implements Feature"
+        direction: outgoing
       - relation: affects
         label: "Affects Concepts"
         widget: multi-select
+        direction: outgoing
       - relation: depends-on
+        direction: outgoing
         widget: multi-select
       - relation: has-planning
         label: "Planning Checklist"
         inline_create: create_planning_checklist
+        direction: outgoing
       - relation: has-implementation
         label: "Implementation Checklist"
         inline_create: create_implementation_checklist
+        direction: outgoing
       - relation: has-review
         label: "Review Checklist"
         inline_create: create_review_checklist
+        direction: outgoing
       - relation: has-docs
         label: "Docs Checklist"
         inline_create: create_docs_checklist
+        direction: outgoing
   # ─────────────────────────────────────────────────
   # Bugs
   # ─────────────────────────────────────────────────
@@ -460,9 +481,11 @@ forms:
       - relation: fixes
         label: "Fixes Feature"
         required: true
+        direction: outgoing
       - relation: affects
         label: "Affects Concepts"
         widget: multi-select
+        direction: outgoing
   edit_bug:
     entity_type: bug
     title: "Edit Bug"
@@ -510,22 +533,29 @@ forms:
     relations:
       - relation: fixes
         label: "Fixes Feature"
+        direction: outgoing
       - relation: affects
         label: "Affects Concepts"
         widget: multi-select
+        direction: outgoing
       - relation: caused-by
+        direction: outgoing
         widget: multi-select
       - relation: adds-measure
         widget: multi-select
+        direction: outgoing
       - relation: has-bug-analysis
         label: "Analysis Checklist"
         inline_create: create_bug_analysis_checklist
+        direction: outgoing
       - relation: has-implementation
         label: "Implementation Checklist"
         inline_create: create_implementation_checklist
+        direction: outgoing
       - relation: has-review
         label: "Review Checklist"
         inline_create: create_review_checklist
+        direction: outgoing
   # ─────────────────────────────────────────────────
   # Concepts
   # ─────────────────────────────────────────────────
@@ -566,6 +596,7 @@ forms:
           deprecated: [stable]
     relations:
       - relation: concept-depends-on
+        direction: outgoing
         label: "Depends On"
         widget: multi-select
   # ─────────────────────────────────────────────────
@@ -589,6 +620,7 @@ forms:
         label: "Decides Concepts"
         widget: multi-select
         required: true
+        direction: outgoing
   edit_decision:
     entity_type: decision
     title: "Edit Decision"
@@ -612,7 +644,9 @@ forms:
       - relation: decides
         label: "Decides Concepts"
         widget: multi-select
+        direction: outgoing
       - relation: supersedes
+        direction: outgoing
   # ─────────────────────────────────────────────────
   # Workflow Checklists
   # ─────────────────────────────────────────────────
@@ -958,6 +992,7 @@ views:
       - heading: "Idea"
         source: entry
         display: properties
+        render: input
         fields:
           - property: category
           - property: status
@@ -969,11 +1004,13 @@ views:
       - heading: "Notes"
         source: entry
         display: properties
+        render: input
         fields:
           - property: notes
       - heading: "Related Ideas"
         source: related
         display: cards
+        render: input
         fields:
           - property: category
           - property: status
@@ -981,6 +1018,7 @@ views:
       - heading: "Inspires"
         source: inspires
         display: cards
+        render: input
         fields:
           - property: status
         empty_message: "Not linked to features or concepts"
@@ -995,6 +1033,7 @@ views:
       - heading: "Promoted To"
         source: promoted
         display: cards
+        render: input
         fields:
           - property: status
         empty_message: "Not yet promoted"
@@ -1022,6 +1061,7 @@ views:
       - heading: "Future Concept"
         source: entry
         display: properties
+        render: input
         fields:
           - property: status
           - property: effort
@@ -1031,21 +1071,25 @@ views:
       - heading: "Rationale"
         source: entry
         display: properties
+        render: input
         fields:
           - property: rationale
       - heading: "Challenges"
         source: entry
         display: properties
+        render: input
         fields:
           - property: challenges
       - heading: "Prerequisites"
         source: entry
         display: properties
+        render: input
         fields:
           - property: prerequisites
       - heading: "Based On Ideas"
         source: ideas
         display: cards
+        render: input
         fields:
           - property: category
           - property: status
@@ -1053,6 +1097,7 @@ views:
       - heading: "Extends Concepts"
         source: extends
         display: list
+        render: input
         fields:
           - property: layer
           - property: status
@@ -1060,18 +1105,21 @@ views:
       - heading: "Would Enable Features"
         source: enables
         display: list
+        render: input
         fields:
           - property: status
         empty_message: "No features would be enabled"
       - heading: "Would Replace"
         source: replaces
         display: list
+        render: input
         fields:
           - property: status
         empty_message: "Does not replace anything"
       - heading: "Blocked By"
         source: blockers
         display: cards
+        render: input
         fields:
           - property: status
         empty_message: "No blockers"
@@ -1099,6 +1147,7 @@ views:
       - heading: "Feature"
         source: entry
         display: properties
+        render: input
         fields:
           - property: status
           - property: priority
@@ -1108,6 +1157,7 @@ views:
       - heading: "Required Concepts"
         source: concepts
         display: list
+        render: input
         fields:
           - property: layer
           - property: status
@@ -1134,6 +1184,7 @@ views:
       - heading: "Tests"
         source: tests
         display: list
+        render: input
         fields:
           - property: kind
           - property: status
@@ -1141,6 +1192,7 @@ views:
       - heading: "Inspired By Ideas"
         source: ideas
         display: cards
+        render: input
         fields:
           - property: category
           - property: status
@@ -1169,6 +1221,7 @@ views:
       - heading: "Concept"
         source: entry
         display: properties
+        render: input
         fields:
           - property: layer
           - property: package
@@ -1179,6 +1232,7 @@ views:
       - heading: "Governed By Decisions"
         source: decisions
         display: cards
+        render: input
         fields:
           - property: status
           - property: date
@@ -1186,6 +1240,7 @@ views:
       - heading: "Required By Features"
         source: features
         display: list
+        render: input
         fields:
           - property: status
           - property: priority
@@ -1202,6 +1257,7 @@ views:
       - heading: "Test Coverage"
         source: tests
         display: list
+        render: input
         fields:
           - property: kind
           - property: status
@@ -1209,6 +1265,7 @@ views:
       - heading: "Future Extensions"
         source: future_extensions
         display: cards
+        render: input
         fields:
           - property: status
           - property: effort

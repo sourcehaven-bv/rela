@@ -19,9 +19,8 @@ var errWebhookActionMissing = errors.New("dataentry: configured webhook action n
 // WebhookClaims is the verified subset of an inbound webhook the receiver acts
 // on. It mirrors jwtauth.WebhookClaims but is declared HERE so the dataentry
 // package needn't import jwtauth (the inward-pointing layering rule — the same
-// reason JWTPrincipalResolver takes a local subjectVerifier interface). The
-// wiring layer, which may import both, adapts the concrete verifier to this
-// shape.
+// reason the JWT gate takes a local assertionVerifier interface). The wiring
+// layer, which may import both, adapts the concrete verifier to this shape.
 type WebhookClaims struct {
 	Event  string // the event name, e.g. "membership.created"
 	UserID string // the subject the event concerns
@@ -86,12 +85,12 @@ func (a *App) registerWebhookRoutes(mux *http.ServeMux) {
 		return
 	}
 	// The handler lives on the receiver; the App only supplies the dispatch
-	// closure (which needs App internals: scriptEngine, State, writeMu). This
+	// closure (which routes through the writeHandler: engine, schema, writeMu). This
 	// keeps the HTTP-flow logic off the (already large) App type.
 	rec := a.webhook
 	mux.HandleFunc("POST /webhooks/idp", func(w http.ResponseWriter, r *http.Request) {
 		rec.handle(w, r, func(ctx context.Context, claims WebhookClaims) error {
-			return dispatchWebhookAction(ctx, a, rec.actionID, claims)
+			return dispatchWebhookAction(ctx, a.write, rec.actionID, claims)
 		})
 	})
 }
@@ -149,10 +148,10 @@ func (rec *webhookReceiver) handle(
 // dispatchWebhookAction runs the provisioning action with the webhook's claims as
 // params, under the webhook-receiver principal. Serialized against other
 // mutations via writeMu (the action upserts an entity), matching handleV1Action.
-// A free function (not an App method) to keep the App type's method count down;
-// it still needs App internals, so it takes *App explicitly.
-func dispatchWebhookAction(ctx context.Context, a *App, actionID string, claims WebhookClaims) error {
-	s := a.State()
+// A free function taking the writeHandler explicitly (it is dispatch wiring,
+// not a route handler).
+func dispatchWebhookAction(ctx context.Context, h *writeHandler, actionID string, claims WebhookClaims) error {
+	s := h.schema()
 	action, ok := s.Cfg.Actions[actionID]
 	if !ok {
 		// Misconfiguration: the configured action id doesn't exist. Fail loud in
@@ -175,10 +174,18 @@ func dispatchWebhookAction(ctx context.Context, a *App, actionID string, claims 
 		"org_id":  claims.OrgID,
 	}
 
-	a.writeMu.Lock()
-	defer a.writeMu.Unlock()
+	h.writeMu.Lock()
+	defer h.writeMu.Unlock()
 
-	_, err := a.scriptEngine.ExecuteAction(ctx, action.Script, a.luaWriteDeps(),
+	// TKT-YH52OM: the webhook path resolves the SAME `actions:` entry as the
+	// HTTP endpoint, so it honors the same `capabilities:` declaration. This
+	// is the surface that most needs it to work: an IdP-sync action legitimately
+	// calls out over http with a named secret (see examples/idp-sync.lua), and
+	// it now must say so in config rather than receiving the whole secrets file
+	// by default.
+	deps := h.luaDeps()
+	deps.Capabilities = luaCapabilities(action.Capabilities)
+	_, err := h.engine().ExecuteAction(ctx, action.Script, deps,
 		nil, params, webhookActionTimeout, newCorrelationID())
 	return err
 }

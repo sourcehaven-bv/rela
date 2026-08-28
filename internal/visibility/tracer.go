@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 )
 
@@ -186,22 +187,15 @@ func (t *VisibleTracer) redactStepTitle(ctx context.Context, s *tracer.PathStep)
 }
 
 // FindOrphans implements [tracer.Tracer]: the base's orphan ids minus
-// the hidden ones. Each id's entity is loaded once (the type is needed
-// for the gate anyway); ids are gated with one PermitsReadMany per
-// distinct type (RR-MYLUSZ). A vanished entity drops fail-closed.
+// the hidden ones. Each id's TYPE is resolved (the gate needs it) via
+// VisibleTracer.typesOf, then ids are gated with one PermitsReadMany
+// per distinct type (RR-MYLUSZ). A vanished entity drops fail-closed.
 func (t *VisibleTracer) FindOrphans(ctx context.Context) ([]string, error) {
 	ids, err := t.base.FindOrphans(ctx)
 	if err != nil {
 		return nil, err
 	}
-	byType := map[string][]string{}
-	for _, id := range ids {
-		e, gerr := t.get.GetEntity(ctx, id)
-		if gerr != nil {
-			continue
-		}
-		byType[e.Type] = append(byType[e.Type], id)
-	}
+	byType := t.typesOf(ctx, ids)
 	visible := t.permittedIDs(ctx, byType)
 
 	out := make([]string, 0, len(ids))
@@ -211,6 +205,51 @@ func (t *VisibleTracer) FindOrphans(ctx context.Context) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// typesOf resolves each id's entity type, grouped for a per-type gate
+// probe.
+//
+// Prefers a batched header read: resolving 20k orphan ids one GetEntity at
+// a time loaded 20k full entities — bodies included — to read one string
+// field from each, which on a content-heavy project cost more than the
+// orphan scan itself (TKT-1ESTYJ). Headers carry Type and no body.
+//
+// Falls back to per-id GetEntity when the getter cannot list headers,
+// preserving the original behavior exactly. Both paths DROP an id whose
+// entity cannot be resolved, so a vanished entity stays fail-closed: it
+// never reaches byType, so permittedIDs never marks it visible.
+func (t *VisibleTracer) typesOf(ctx context.Context, ids []string) map[string][]string {
+	byType := map[string][]string{}
+	if len(ids) == 0 {
+		return byType
+	}
+
+	if er, ok := t.get.(store.EntityReader); ok {
+		for h, err := range store.ListEntityHeaders(ctx, er, store.EntityQuery{IDs: ids}) {
+			if err != nil {
+				// Fail closed: a partial scan must not silently narrow the
+				// orphan set to "whatever we managed to read". Fall back to
+				// the per-id path, which drops only the ids it cannot load.
+				return t.typesOfPerID(ctx, ids)
+			}
+			byType[h.Type] = append(byType[h.Type], h.ID)
+		}
+		return byType
+	}
+	return t.typesOfPerID(ctx, ids)
+}
+
+func (t *VisibleTracer) typesOfPerID(ctx context.Context, ids []string) map[string][]string {
+	byType := map[string][]string{}
+	for _, id := range ids {
+		e, gerr := t.get.GetEntity(ctx, id)
+		if gerr != nil {
+			continue
+		}
+		byType[e.Type] = append(byType[e.Type], id)
+	}
+	return byType
 }
 
 // HasCycle implements [tracer.Tracer]. A hidden (or missing, or

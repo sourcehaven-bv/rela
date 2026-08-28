@@ -47,6 +47,17 @@ func (DenyReader) ListEntities(
 	}
 }
 
+// ListEntityHeaders implements the script read surface: always refuses.
+// Fail-closed like every other DenyReader method — a reader that cannot
+// gate must not hand back rows, headers included.
+func (DenyReader) ListEntityHeaders(
+	context.Context, store.EntityQuery,
+) iter.Seq2[store.EntityHeader, error] {
+	return func(yield func(store.EntityHeader, error) bool) {
+		yield(store.EntityHeader{}, ErrReaderUnavailable)
+	}
+}
+
 // ListRelations implements the script read surface: always refuses.
 func (DenyReader) ListRelations(
 	context.Context, store.RelationQuery,
@@ -62,8 +73,20 @@ func (DenyReader) ListRelations(
 // traverse the whole graph.
 //
 // tracer.Tracer's methods return no error, so refusal is expressed as the
-// empty result each method already uses for "nothing found" — the failure
-// itself is surfaced by the loud log at the wiring site.
+// empty result each method already uses for "nothing found".
+//
+// CAVEAT — refusal is INVISIBLE to a script. The three traversals bound to
+// Lua (rela.trace_from, rela.trace_to, rela.find_path) are exactly the three
+// that cannot report failure, and a nil result is the same value a script
+// gets for a nonexistent ID. FindOrphans does return an error, but no script
+// can call it. So the `slog.Error` at the WIRING SITE is the only signal
+// that a traversal was refused rather than genuinely empty — correlate by
+// timestamp when a script reports an unexpectedly empty graph.
+//
+// This is accepted deliberately: seeing less than the truth is the safe
+// direction, and the alternative (traversing ungated) is the disclosure this
+// type exists to prevent. Surfacing it properly needs an error-returning
+// traversal on tracer.Tracer — an interface change, tracked separately.
 type DenyTracer struct{}
 
 // TraceFrom implements [tracer.Tracer]: always empty.

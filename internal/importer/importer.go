@@ -602,7 +602,6 @@ func parseCSV(r io.Reader) (*ImportData, error) {
 	return &ImportData{Entities: entities}, nil
 }
 
-// parseRelationsCSV parses a relations CSV file
 func (imp *Importer) parseRelationsCSV(path string) ([]RelationData, error) {
 	file, err := imp.source.Open(path)
 	if err != nil {

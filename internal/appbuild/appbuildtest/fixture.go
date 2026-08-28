@@ -38,6 +38,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/templating"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 	"github.com/Sourcehaven-BV/rela/internal/validator"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // Option configures a [*appbuild.Services] built via [New].
@@ -70,7 +71,7 @@ func WithStore(s store.Store) Option {
 
 // WithFS overrides the default in-memory filesystem and project
 // context with caller-supplied ones. Use this when a test wants to
-// seed project files (metamodel.yaml, templates, data-entry.yaml)
+// seed project files (schema.yaml, templates, data-entry.yaml)
 // or assert on paths the fixture's default location does not match.
 //
 // Without this option, [New] supplies a default in-memory FS rooted
@@ -174,15 +175,25 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 		panic(fmt.Sprintf("appbuildtest.New: compile transitions: %v", err))
 	}
 	mgr, err := entitymanager.New(entitymanager.Deps{
-		Store:           st,
-		Meta:            meta,
-		Templater:       templater,
-		Audit:           auditSink,
-		ACL:             aclImpl,
-		Automations:     autoEngine,
-		Cascade:         cascadeRunner,
-		ScriptRunner:    script.NewLuaScriptRunner(scriptEngine, readDeps),
+		Store:       st,
+		Meta:        meta,
+		Templater:   templater,
+		Audit:       auditSink,
+		ACL:         aclImpl,
+		Automations: autoEngine,
+		Cascade:     cascadeRunner,
+		// Mirrors the production wiring in appbuild.assemble: elevated reads
+		// are granted here so an integration test exercises the same
+		// capability set a real deployment has (TKT-ACSBSA). Still inert
+		// without an allow_acl_bypass action + an ElevatedProvider Mutator.
+		ScriptRunner: script.NewLuaScriptRunnerWithElevatedReads(
+			scriptEngine, readDeps, script.ReadElevation{
+				Reader:   visibility.Unrestricted(st),
+				Recorder: appbuild.NewElevationAuditor(auditSink),
+			},
+		),
 		Transitions:     tw.Enforcer,
+		FieldGate:       entitymanager.AllowAllFieldGate{},
 		TransitionGuard: tw.Guard,
 		TransitionGraph: tw.Graph,
 	})
@@ -295,12 +306,11 @@ func buildReadDeps(st store.Store, tr tracer.Tracer, searcher search.Searcher,
 	// Test fixture: unrestricted reads (no ACL wiring here). Production
 	// identity-bearing paths use Services.luaReadDepsFor instead.
 	return lua.ReadDeps{
-		VisibleReader:  st,
-		WritePrepStore: st,
-		Tracer:         tr,
-		Searcher:       searcher,
-		Meta:           meta,
-		ProjectRoot:    root,
+		VisibleReader: visibility.Unrestricted(st),
+		Tracer:        tr,
+		Searcher:      searcher,
+		Meta:          meta,
+		ProjectRoot:   root,
 	}
 }
 
@@ -308,7 +318,10 @@ func buildAutomation(meta *metamodel.Metamodel) (*automation.Engine, *autocascad
 	if len(meta.Automations) == 0 {
 		return nil, nil
 	}
-	autoEngine := automation.NewEngineFromMetamodel(meta, meta.Automations)
+	autoEngine, err := automation.NewEngineFromMetamodel(meta, meta.Automations)
+	if err != nil {
+		panic(fmt.Sprintf("appbuildtest.New: build automation engine: %v", err))
+	}
 	r, err := autocascade.New(autocascade.Deps{Engine: autoEngine})
 	if err != nil {
 		panic(fmt.Sprintf("appbuildtest.New: build autocascade runner: %v", err))

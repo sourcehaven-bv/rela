@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -40,6 +42,21 @@ type TaskConfig struct {
 	// A task whose principal has no read grants reads nothing: privileges
 	// are granted in acl.yaml, never inferred from task config.
 	RunAs string `yaml:"run_as"`
+
+	// Capabilities declares which ambient capabilities this task's script may
+	// reach — http, ai, write_file, named secrets (TKT-YH52OM). Omitting it
+	// grants none.
+	//
+	// This is the capability half of the same split RunAs documents for
+	// identity: RunAs says WHO the task is (and thus what it may read from the
+	// graph, via acl.yaml), Capabilities says what it may reach OUTSIDE the
+	// graph. Neither is inferred from the other — a task running as a
+	// privileged principal still reaches no network unless it says so here.
+	//
+	// schedules.yaml is operator-authored, but a scheduled task is not an
+	// operator SHELL: it runs unattended in the server process, so it gets the
+	// declared grant rather than the trusted default `rela script` uses.
+	Capabilities metamodel.Capabilities `yaml:"capabilities,omitempty"`
 }
 
 // Schedule represents a recurring schedule interval.

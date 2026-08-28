@@ -98,17 +98,23 @@ rela.output("nodes=" .. table.concat(walk(rela.trace_from("TKT-001", 2), {}), ",
 	}
 }
 
-// TestLuaWiring_WritePrepStoreStaysRaw pins the other half of the split at
-// the wiring level: the App must hand scripts a RAW write-prep handle, or
-// rela.update_entity would erase hidden properties on save.
-func TestLuaWiring_WritePrepStoreStaysRaw(t *testing.T) {
+// TestLuaWiring_NoRawReadHandleOnWriterDeps replaces the old
+// WritePrepStoreStaysRaw guard. That test asserted the App handed scripts a
+// RAW second store handle, because rela.update_entity read through it before
+// saving. Since TKT-80EWGM the binding patches through the manager instead,
+// so the correct invariant INVERTED: an ordinary writer runtime must carry
+// NO ungated read path at all.
+//
+// The property the old test protected — script reads are ACL-bound — is
+// still asserted here. What is gone is the hazard it was guarding: there is
+// no longer a second handle that could be pointed at the wrong reader.
+// Elevated reads remain available, but only via the explicitly opt-in
+// ElevatedReader (nil here, as this is not a bypass_acl runtime).
+func TestLuaWiring_NoRawReadHandleOnWriterDeps(t *testing.T) {
 	app := newTestAppV1(t)
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket",
 		Properties: map[string]any{"title": "T"}})
 
-	// With a Declarative ACL configured, the two handles must DIFFER: reads
-	// gated, write-prep raw. (Without a policy both are the raw store — the
-	// NopACL path — which is why this test configures one.)
 	d := mustNewACL(t, &acl.Policy{
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
@@ -116,15 +122,17 @@ func TestLuaWiring_WritePrepStoreStaysRaw(t *testing.T) {
 	app.acl = d
 
 	deps := app.luaWriteDeps()
-	if deps.WritePrepStore == nil {
-		t.Fatal("WritePrepStore is nil — rela.update_entity would fail")
-	}
-	if deps.WritePrepStore != app.store {
-		t.Errorf("WritePrepStore is not the raw store (%T) — a redacted "+
-			"read-before-write erases hidden properties on save", deps.WritePrepStore)
+	if deps.VisibleReader == nil {
+		t.Fatal("VisibleReader is nil — script reads would deny outright")
 	}
 	if deps.VisibleReader == lua.EntityReader(app.store) {
 		t.Error("VisibleReader IS the raw store under a configured policy — " +
 			"script reads are not ACL-bound")
+	}
+	// The elevated (raw) read path must stay opt-in: absent unless the
+	// runtime was built for an allow_acl_bypass action.
+	if deps.ElevatedReader != nil {
+		t.Error("ElevatedReader is set on an ordinary writer runtime — " +
+			"the ungated read path must remain opt-in")
 	}
 }

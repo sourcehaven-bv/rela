@@ -239,9 +239,9 @@ fi
 
 mkdir -p "$OUTPUT_DIR"/{entities/{requirement,decision,solution,component},relations,.rela}
 
-# --- Write metamodel.yaml ---
+# --- Write schema.yaml ---
 
-cat > "$OUTPUT_DIR/metamodel.yaml" << 'METAMODEL'
+cat > "$OUTPUT_DIR/schema.yaml" << 'METAMODEL'
 # Architecture Metamodel - Generated for testing
 # This file defines the entity types, relations, and validation rules.
 
@@ -607,7 +607,7 @@ fi
 echo ""
 echo "Test data generated successfully:"
 echo "  Directory:    $OUTPUT_DIR"
-echo "  Metamodel:    $OUTPUT_DIR/metamodel.yaml"
+echo "  Metamodel:    $OUTPUT_DIR/schema.yaml"
 echo "  Requirements: $NUM_REQ"
 echo "  Decisions:    $NUM_DEC"
 echo "  Solutions:    $NUM_SOL"

@@ -19,7 +19,7 @@ import (
 // call; since App.mu was deleted this is now just a direct call, but
 // keeping the helper avoids touching every test body in this file.
 func callAction(app *App, req *http.Request, rec *httptest.ResponseRecorder) {
-	app.handleV1Action(rec, req)
+	app.write.handleV1Action(rec, req)
 }
 
 // newActionTestApp builds a test App with a real project root containing

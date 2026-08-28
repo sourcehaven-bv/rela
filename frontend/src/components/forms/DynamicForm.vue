@@ -5,11 +5,19 @@ import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { readReturnTo } from '@/utils/returnPath'
 import { actionAllowed } from '@/utils/affordancesWarning'
-import { isFieldWritable, optionVerdictsFor as optionVerdictsForVerdict } from '@/utils/affordances'
+import {
+  isFieldWritable,
+  isPropertyRedacted,
+  optionVerdictsFor as optionVerdictsForVerdict,
+} from '@/utils/affordances'
 import { isClearedForType } from '@/utils/formValue'
 import { useEntityIDControls } from '@/composables/useEntityIDControls'
 import { useConfirm } from '@/composables/useConfirm'
+import { useHiddenFieldPolicy, clearWhenHiddenOf } from '@/composables/useHiddenFieldPolicy'
+import { useChangePolicy } from '@/composables/useChangePolicy'
+import type { ProposalOutcome } from '@/composables/useProposal'
 import type {
+  Entity,
   PropertyDef,
   FormFieldOrRelation,
   Template,
@@ -38,10 +46,39 @@ import FormFieldList from './FormFieldList.vue'
 import MarkdownEditor from './MarkdownEditor.vue'
 import SidePanel from './SidePanel.vue'
 import HelpModal from '@/components/ui/HelpModal.vue'
+import PendingButton from '@/components/common/PendingButton.vue'
+import { useDelayedPending } from '@/composables/useDelayedPending'
+import { PENDING_TIMINGS } from '@/composables/pendingTimings'
 
 const props = defineProps<{
   formId: string
   entityId?: string
+  /**
+   * Render as a nested form inside a host (the inline-create modal) rather
+   * than as a page (TKT-OMUD56).
+   *
+   * A second mounted DynamicForm would otherwise fight the first over
+   * process-global state: the document-level Cmd+Enter listener, the route
+   * guard (whose `useConfirm` is a singleton that returns ONE user decision to
+   * every concurrent caller), the `?step=` wizard query key, and the router
+   * itself — a `router.push` on create unmounts the host form and destroys its
+   * draft, which is the whole thing inline creation exists to avoid.
+   *
+   * So `embedded` suppresses every page-level side effect and replaces
+   * navigation with `inline-created` / `inline-cancelled`. It is read at setup
+   * time and never reactive afterwards.
+   */
+  embedded?: boolean
+}>()
+
+/**
+ * Deliberately namespaced. Declaring emits removes these names from `$attrs`,
+ * so a plain `created` / `cancel` would silently swallow a future mount's
+ * native listener of the same name (RR-P3CO33).
+ */
+const emit = defineEmits<{
+  'inline-created': [entity: Entity]
+  'inline-cancelled': []
 }>()
 
 const router = useRouter()
@@ -68,6 +105,12 @@ const relations = ref<Record<string, string[]>>({})
 // readonly + option-filter rendering and the F1 hidden-field filter
 // (TKT-G7N5).
 const fieldAffordances = ref<Record<string, FieldAffordance>>({})
+// Property names the server withheld by field-level ACL (`_redacted`,
+// DEC-T0XIWQ). This is the edit-mode hidden-field signal: previously the
+// filter inferred hiding from a key's absence in `properties`, which also
+// matches a property that was simply never set — so every unset property
+// became permanently unreachable (BUG-MLT9DE). Empty = nothing redacted.
+const redactedProps = ref<string[]>([])
 // Same for relation affordances. Drives RelationCards' +Add / x button
 // visibility and meta-field disable.
 const relationAffordances = ref<Record<string, RelationAffordance>>({})
@@ -105,6 +148,15 @@ const userTouched = ref<Set<string>>(new Set())
 const pickerTypes = ref<Record<string, Map<string, string>>>({})
 const content = ref('')
 const loading = ref(true)
+// Opening an edit form against a local server resolves in tens of
+// milliseconds, so an ungated spinner appears and vanishes before it can be
+// read while the form springs into place underneath. There is no previous
+// content to hold here (a form is either opening or it is not), so the
+// delay alone is the fix: below it, nothing is shown.
+const showBlockLoader = useDelayedPending(() => loading.value, {
+  delay: PENDING_TIMINGS.navDelayMs,
+  minDuration: PENDING_TIMINGS.navMinDurationMs,
+})
 // loadState is a stable, test-visible signal of whether the edit entity
 // actually loaded: 'pending' until the fetch settles, then 'loaded' or
 // 'error'. Stamped as data-testid on the form root so an out-of-process
@@ -176,7 +228,25 @@ const conditionBindings = (): Bindings => ({
   current_user: {},
 })
 
-const wizard = useFormWizard(formConfig, conditionBindings)
+// An embedded wizard keeps its step in memory: `?step=` is a single global key
+// that the host form already owns (see FormWizardOptions.syncUrl).
+const wizard = useFormWizard(formConfig, conditionBindings, { syncUrl: !props.embedded })
+
+// Field lookup by property, for reading per-field config (clear_when_hidden)
+// without re-scanning allFields at every call site.
+const fieldByProperty = computed(() => {
+  const map = new Map<string, FormFieldOrRelation>()
+  for (const f of allFields.value) {
+    if (f.property) map.set(f.property, f)
+  }
+  return map
+})
+
+// BUG-FB0LN8: the fate of a condition-hidden field's STORED value. Default is
+// to keep it — hiding is presentation, not a delete. See useHiddenFieldPolicy.
+const hiddenPolicy = useHiddenFieldPolicy({
+  policyFor: (property) => clearWhenHiddenOf(fieldByProperty.value.get(property)),
+})
 
 // Visible-step indices that currently have a validation error, so the stepper
 // can flag them. Recomputes as `errors` changes, so a pill's flag clears the
@@ -192,14 +262,19 @@ const stepsWithErrors = computed<Set<number>>(() => {
 
 const errorCount = computed(() => Object.keys(errors.value).length)
 
-// React to a conditional field/step becoming hidden (its `visible_when` flipped
-// false). Two effects, both keyed on a property leaving `activeProperties`:
-//   1. Always: drop any standing validation error for the now-hidden field, so
-//      a hidden field can't leave a phantom "N fields need attention" with no
-//      flagged, reachable step (RR-U9ERK).
-//   2. Edit mode only: unset its stored value (autosave) — the edit analogue of
-//      create's submit-time hidden-branch pruning, so a toggled-off branch
-//      doesn't linger on the entity.
+// React to a conditional field/step becoming hidden or revealed. TWO effects,
+// both NON-DESTRUCTIVE:
+//   1. Hiding: drop any standing validation error for a now-hidden field, so it
+//      can't leave a phantom "N fields need attention" with no flagged,
+//      reachable step (RR-U9ERK).
+//   2. Revealing: restore the retained value, so hide → reveal is lossless and
+//      needs no server round-trip.
+//
+// TKT-7S5735: the destructive effect (retain-then-`clear_when_hidden`) used to
+// live here too; it moved into `useChangePolicy`, which runs BEFORE the
+// mutation. This watcher is post-flush — it fires *because* `formData` already
+// changed — so it can observe a hide but never gate one.
+//
 // Skips the initial hydration (`loading`); only touches wizard-governed
 // (managed) fields, so a plain non-conditional field is never affected.
 watch(
@@ -208,57 +283,58 @@ watch(
     if (loading.value || !prevActive) return
     const managed = wizard.managedProperties.value
     let nextErrors: Record<string, string> | null = null
+
+    // Reveal: put back what we held while the branch was hidden.
+    for (const prop of active) {
+      if (prevActive.has(prop) || !managed.has(prop)) continue
+      if (!hiddenPolicy.hasRetained(prop)) continue
+      if (!isClearedForType(formData.value[prop], entityType.value?.properties?.[prop])) continue
+      formData.value[prop] = hiddenPolicy.retainedValue(prop)
+      hiddenPolicy.release(prop)
+    }
+
+    // Hiding: clear standing errors only. The value's fate was already decided
+    // in `proposeChange`, before the change that got us here was applied.
     for (const prop of prevActive) {
       if (active.has(prop) || !managed.has(prop)) continue // still shown / not governed
-      // Clear a standing error for the now-hidden field.
       if (errors.value[prop]) {
         nextErrors ??= { ...errors.value }
         delete nextErrors[prop]
-      }
-      // Edit mode: unset a stored value so the hidden branch doesn't persist.
-      if (
-        isEdit.value &&
-        autoSave.value &&
-        formData.value[prop] !== undefined &&
-        formData.value[prop] !== '' &&
-        formData.value[prop] !== null
-      ) {
-        delete formData.value[prop]
-        autoSave.value.scheduleUnset(prop)
       }
     }
     if (nextErrors) errors.value = nextErrors
   }
 )
 
-// TKT-G7N5 F1 / TKT-3I5U: filter the config-driven field list against
-// the entity's affordances. A property field is rendered only if it is
-// visible: either (a) it appears in `_fields` (server emitted a verdict,
-// including the implicit "writable default") or (b) the server treated
-// it as visible — in edit mode that's "present in `properties`"; in
-// create mode the staged dry-run reports visible props in
-// `stagedVisibleProps` (hidden fields are stripped server-side in both
-// cases). Relations / non-property fields are never filtered here.
-//
-// F19 flicker prevention: render the unfiltered list until affordances
-// are available — during initial `loading` (edit), and in create until
-// the first dry-run resolves (`stagedAffordancesReady`). Otherwise a
-// policy-hidden field would flash in then disappear. If a create-mode
-// dry-run never resolves (fail-open, RR-HUQ3) the form stays unfiltered
-// and usable; the commit gate is the real boundary.
-const fields = computed((): FormFieldOrRelation[] => {
-  const all = allFields.value
-  if (loading.value) return all
-  if (!isEdit.value && !stagedAffordancesReady.value) return all
-  const visibleProps = isEdit.value ? formData.value : undefined
-  return all.filter((f) => {
-    if (!f.property) return true // relations / non-property fields untouched
-    if (f.property in fieldAffordances.value) return true
-    if (visibleProps && f.property in visibleProps) return true
-    if (!isEdit.value && stagedVisibleProps.value.has(f.property)) return true
-    return false
-  })
-})
+// Apply `clear_when_hidden` to the fields that just hid. Called by the change
+// policy AFTER it has retained their pre-change values, so a reveal is lossless
+// whatever the policy says; only the server-side clear is per-field.
+function applyHidePolicy(toClear: string[]) {
+  if (!autoSave.value) {
+    // No write channel yet (the brief window before onMounted wires autosave).
+    // Retention already stands, so nothing is lost — but a clear the user
+    // explicitly approved would silently not happen. Drop the retained copy so
+    // the field does not later re-appear holding a value they asked to remove.
+    for (const prop of toClear) hiddenPolicy.release(prop)
+    return
+  }
+
+  // `toClear` is already the DECIDED set — the change policy resolved
+  // `clear_when_hidden` (including any dialog answer) before calling. Do not
+  // re-filter it here.
+  for (const prop of toClear) {
+    delete formData.value[prop]
+    hiddenPolicy.release(prop)
+    autoSave.value.scheduleUnset(prop)
+  }
+}
+
+// TKT-G7N5 F1 / TKT-3I5U / DEC-T0XIWQ: filter the config-driven field list
+// against the entity's affordances. Both render paths (this and the wizard's
+// `visibleStepFields`) delegate to the single `affordanceVisible` predicate
+// below — two hand-synced copies of this rule is how the wizard path silently
+// carried BUG-MLT9DE alongside the flat one.
+const fields = computed((): FormFieldOrRelation[] => allFields.value.filter(affordanceVisible))
 
 // TKT-G7N5 readonly helper: the rendered field is readonly if either
 // the config marks it so OR the server's _fields verdict reports
@@ -344,6 +420,14 @@ async function loadEntity(force = false) {
     // The EntityDetail Edit button already hides for the same
     // verdict, so this branch fires only for direct-URL navigation.
     notEditable.value = !actionAllowed(entity, 'update')
+    // Retained hidden values belong to the form state we are about to replace.
+    // Carrying them across a reload — or across an entity switch, since this
+    // component is not re-keyed per entity — would restore one entity's value
+    // onto another, or resurrect a value the server no longer has (BUG-FB0LN8).
+    // The stored value is safe on the server, so dropping the cache is lossless:
+    // a later reveal reads it back from `properties`.
+    hiddenPolicy.releaseAll()
+    formGeneration.value++
     formData.value = { ...entity.properties }
     relations.value = entity.relations ? { ...entity.relations } : {}
     content.value = entity.content || ''
@@ -352,6 +436,7 @@ async function loadEntity(force = false) {
     // default to empty maps so the filter / readonly / options paths
     // can treat absence as "default everything".
     fieldAffordances.value = entity._fields ?? {}
+    redactedProps.value = entity._redacted ?? []
     relationAffordances.value = entity._relations ?? {}
     attachments.value = entity._attachments ?? {}
     transitions.value = entity._transitions ?? {}
@@ -396,8 +481,14 @@ function initializeDefaults() {
 
   idControls.reset()
 
-  // Parse query params for pre-filling (prop.*, rel.*, link_*)
-  const query = route.query
+  // Parse query params for pre-filling (prop.*, rel.*, link_*).
+  //
+  // Embedded forms read an EMPTY query: they are mounted over whatever page
+  // the host is on, so `route.query` belongs to that page. Honouring it would
+  // pre-fill the nested entity from the host's parameters and — via link_* —
+  // auto-link it to the host's peer, both silently wrong. Field defaults and
+  // templates below still apply; only the URL-sourced overlay is dropped.
+  const query = props.embedded ? {} : route.query
   const queryProps: Record<string, string> = {}
   const queryRels: Record<string, string[]> = {}
 
@@ -688,16 +779,33 @@ function validate(scopeFields?: FormFieldOrRelation[], requiredProps?: Set<strin
   return scopeValid
 }
 
-// The affordance filter applied to flat forms in `fields`, reusable for a
-// wizard step's field list so policy-hidden fields are dropped consistently.
+// The single affordance filter for BOTH render paths — flat `fields` and the
+// wizard's `visibleStepFields`. Decides whether a config-declared field is
+// rendered at all (readonly/options are separate, see isFieldReadonly).
+//
+// Edit mode (DEC-T0XIWQ): a configured field renders unless the server
+// positively names it in `_redacted`. It previously rendered only if the key
+// was already in `properties`, which conflated "redacted" with "never set" and
+// made every unset property permanently unfillable (BUG-MLT9DE) — the field
+// could not be filled in because it did not render, and did not render because
+// it had never been filled in.
+//
+// Create mode is unchanged: the staged dry-run's candidate carries metamodel
+// defaults, so `stagedVisibleProps` is a genuine visible-set (it distinguishes
+// hidden from unset by construction) rather than an inference from absence.
+//
+// F19 flicker prevention: render unfiltered until affordances are available —
+// during initial `loading` (edit) and until the first dry-run resolves
+// (create). Otherwise a policy-hidden field would flash in then disappear. If a
+// create-mode dry-run never resolves (fail-open, RR-HUQ3) the form stays
+// unfiltered and usable; the commit gate is the real boundary.
 function affordanceVisible(f: FormFieldOrRelation): boolean {
   if (!f.property) return true // relations / non-property fields untouched
   if (loading.value) return true
-  if (!isEdit.value && !stagedAffordancesReady.value) return true
+  if (isEdit.value) return !isPropertyRedacted(f.property, redactedProps.value)
+  if (!stagedAffordancesReady.value) return true
   if (f.property in fieldAffordances.value) return true
-  if (isEdit.value && f.property in formData.value) return true
-  if (!isEdit.value && stagedVisibleProps.value.has(f.property)) return true
-  return false
+  return stagedVisibleProps.value.has(f.property)
 }
 
 // A wizard step's fields to render: per-field `visible_when` (wizard layer)
@@ -810,6 +918,13 @@ async function handleSubmit() {
   if (!formConfig.value) return
   // Edit mode has no explicit submit — autosave persists per field. Guard
   // against an Enter-key form submit doing anything (there's no Save button).
+  //
+  // This early return is load-bearing beyond the Enter-key case: because edit
+  // mode never bulk-submits, an untouched field can never reach a payload, so
+  // a redacted field's withheld value cannot be overwritten with empty
+  // (DEC-T0XIWQ). Everything below is therefore the CREATE path only. If you
+  // ever add a bulk edit submit here, you must first prune properties the
+  // server reported in `_redacted` that the user did not touch.
   if (isEdit.value) return
   const scope = submitScopeFields()
   if (!validate(scope, requiredWhenProps(scope))) {
@@ -883,72 +998,60 @@ async function handleSubmit() {
       content: content.value || undefined,
     }
 
-    if (isEdit.value && props.entityId) {
-      const updated = await entitiesStore.update(formConfig.value.entity, props.entityId, payload)
-      // After TKT-GFQK incoming-direction edits flow through the same
-      // unified PATCH (remapped to inverse body keys), so no second
-      // save channel is needed. Clear pending state.
-      pendingCardChanges.value.clear()
-      saveGeneration.value++
-      surfaceWarnings(updated.warnings)
-      uiStore.success('Entity updated successfully')
-    } else {
-      // Create path uses the same modern shape as edit. Cards never
-      // render in create mode (they require entityId), so
-      // pendingCardChanges is empty and relationsPayload is composed
-      // entirely from reshaped picker selections.
-      //
-      // TKT-3I5U: send only visible + writable property keys; the server
-      // fills hidden / read-only defaults after the affordance gate. For a
-      // wizard, also drop keys under a condition-hidden step/field — a
-      // `visible_when=false` branch wins over the affordance filter's
-      // userTouched-preserve rule, so a revealed-then-hidden field is not
-      // persisted (TKT-CHLAJ).
-      payload.properties = pruneWizardHidden(visibleWritablePropertiesForCommit())
-      Object.assign(payload, idControls.buildPayloadFields())
-      const entity = await entitiesStore.create(formConfig.value.entity, payload)
+    // Create only — the isEdit early return above means this is never an
+    // update. Cards never render in create mode (they require entityId), so
+    // pendingCardChanges is empty and relationsPayload is composed entirely
+    // from reshaped picker selections.
+    //
+    // TKT-3I5U: send only visible + writable property keys; the server
+    // fills hidden / read-only defaults after the affordance gate. For a
+    // wizard, also drop keys under a condition-hidden step/field — a
+    // `visible_when=false` branch wins over the affordance filter's
+    // userTouched-preserve rule, so a revealed-then-hidden field is not
+    // persisted (TKT-CHLAJ).
+    payload.properties = pruneWizardHidden(visibleWritablePropertiesForCommit())
+    Object.assign(payload, idControls.buildPayloadFields())
+    const entity = await entitiesStore.create(formConfig.value.entity, payload)
+    // DEC-HWZHA soft conditions ride the 200 create response; surface them or
+    // they are invisible. (Edit-mode warnings come through autosave's own
+    // response handling — this is the create channel.)
+    surfaceWarnings(entity.warnings)
 
-      // Handle auto-linking from link_* params (e.g., from custom view "Add" buttons)
-      // For link_as=to, the relation is already included in relations.value (pre-filled)
-      // For link_as=from, we need to create the reverse relation: peer --relation--> new_entity
-      if (linkParams.value && linkParams.value.as === 'from') {
-        try {
-          const { relation, peer } = linkParams.value
-          // Look up peer type from ID prefix
-          const peerType = getTypeFromId(peer)
-          if (peerType) {
-            await createRelation(peerType, peer, relation, entity.id)
-          }
-        } catch (linkErr) {
-          console.warn('Auto-link failed:', linkErr)
-          // Continue with navigation even if link fails
+    // Handle auto-linking from link_* params (e.g., from custom view "Add" buttons)
+    // For link_as=to, the relation is already included in relations.value (pre-filled)
+    // For link_as=from, we need to create the reverse relation: peer --relation--> new_entity
+    if (linkParams.value && linkParams.value.as === 'from') {
+      try {
+        const { relation, peer } = linkParams.value
+        // Look up peer type from ID prefix
+        const peerType = getTypeFromId(peer)
+        if (peerType) {
+          await createRelation(peerType, peer, relation, entity.id)
         }
+      } catch (linkErr) {
+        console.warn('Auto-link failed:', linkErr)
+        // Continue with navigation even if link fails
       }
-
-      uiStore.success('Entity created successfully')
-      dirty.value = false
-
-      // Navigate to return_to or entity detail
-      if (returnTo.value) {
-        router.push(returnTo.value)
-      } else {
-        router.push(`/entity/${formConfig.value.entity}/${entity.id}`)
-      }
-      return
     }
 
     dirty.value = false
-    originalData.value = JSON.stringify({
-      formData: formData.value,
-      relations: relations.value,
-      content: content.value,
-    })
 
-    // Navigate to return_to or back
+    // Embedded: hand the entity to the host and stop. No navigation (it would
+    // unmount the form that opened us, taking its draft with it) and no toast
+    // — the host reports the creation itself, next to the link step the user
+    // still has to complete.
+    if (props.embedded) {
+      emit('inline-created', entity)
+      return
+    }
+
+    uiStore.success('Entity created successfully')
+
+    // Navigate to return_to or entity detail
     if (returnTo.value) {
       router.push(returnTo.value)
     } else {
-      router.back()
+      router.push(`/entity/${formConfig.value.entity}/${entity.id}`)
     }
   } catch (err) {
     // Suppress cancellation errors from rapid navigation in Firefox
@@ -975,8 +1078,155 @@ async function handleSubmit() {
   }
 }
 
+/**
+ * Whether this SPA instance has somewhere in-app to go back to.
+ *
+ * `history.state.back` is written by vue-router on a push and is the only
+ * reliable signal here: a full page load (direct URL, bookmark, refresh)
+ * leaves it null no matter how deep the browser's history already is.
+ * `window.history.length` cannot be used for this — it counts entries from
+ * before the app was ever loaded, so it reads >= 2 even on a fresh open
+ * (BUG-ZE4354).
+ */
+function hasAppHistory(): boolean {
+  return (router.options.history.state as { back?: unknown } | null)?.back != null
+}
+
+/**
+ * Cancel/Back must land somewhere inside the app.
+ *
+ * `router.back()` alone is a browser-history operation with no route target,
+ * so on a directly-opened form there is no in-app entry behind it and back
+ * walks out of the SPA entirely — which reads to the user as "the button does
+ * nothing" (BUG-ZE4354). Resolution order mirrors `useBackTarget` and the
+ * submit path, which already honours `returnTo`.
+ */
 function handleCancel() {
-  router.back()
+  if (props.embedded) {
+    emit('inline-cancelled')
+    return
+  }
+  if (returnTo.value) {
+    router.push(returnTo.value)
+    return
+  }
+  if (hasAppHistory()) {
+    router.back()
+    return
+  }
+  // Opened cold: fall back to the entity type's list, or the dashboard when
+  // no list is configured for it.
+  const listId = formConfig.value ? schemaStore.findListIdForEntityType(formConfig.value.entity) : undefined
+  router.push(listId ? `/list/${listId}` : '/')
+}
+
+// TKT-7S5735 — the propose/commit seam.
+//
+// A widget edit arrives here as a PROPOSAL, not a write. The order is fixed and
+// load-bearing:
+//
+//   1. work out what the change would hide, against hypothetical bindings
+//   2. decide (policy)
+//   3. only then mutate formData and arm the write
+//
+// Steps 1-2 happen before any mutation, which is what the old code could not
+// do: `updateField` wrote `formData` on its first line, and since visibility is
+// a pure function of `formData`, "what would hide?" was only answerable after
+// the fact. Every BUG-FB0LN8 fix tried to reconstruct the prior state from that
+// position and produced a near-miss.
+//
+// Today every policy still resolves synchronously, so `proposeChange` always
+// returns 'applied' and no dialog can interleave. The seam exists so that an
+// interactive policy (`clear_when_hidden: confirm`) can return 'rejected'
+// without a single byte having changed — see useProposal.
+// Bumped whenever the form's underlying entity state is replaced wholesale, so
+// a dialog opened against the old state can be recognised as stale rather than
+// applied to the new one.
+const formGeneration = ref(0)
+
+// True while a clear-confirm dialog is open. `useConfirm` is a SINGLETON that
+// returns its in-flight promise to a concurrent caller, so a second `confirm()`
+// would receive THIS dialog's answer — the navigation guard would silently
+// inherit "yes, clear the field" as "yes, leave anyway". Guarding here is
+// cheaper and clearer than making the dialog re-entrant.
+const confirmingClear = ref(false)
+
+// Bumped to force the field widgets to re-read their values from `formData`.
+// Needed only on a DECLINED proposal: the widget already moved its own DOM,
+// and an unchanged bound value gives Vue nothing to patch back.
+const fieldsRenderKey = ref(0)
+
+const changePolicy = useChangePolicy({
+  bindings: conditionBindings,
+  activeNow: () => wizard.activeProperties.value,
+  activeFor: (b) => wizard.activePropertiesFor(b),
+  managed: () => wizard.managedProperties.value,
+  valueOf: (p) => formData.value[p],
+  retain: (p, v) => hiddenPolicy.retain(p, v),
+  apply: (proposal) => updateField(proposal.property, proposal.value),
+  onHidden: applyHidePolicy,
+  // Create has no stored value to lose — RR-O4SRG's drop-on-commit owns it.
+  enabled: () => isEdit.value,
+  policyFor: (p) => clearWhenHiddenOf(fieldByProperty.value.get(p)),
+  isEmpty: (p) => isClearedForType(formData.value[p], entityType.value?.properties?.[p]),
+  isUnreadable: (p) => isPropertyRedacted(p, redactedProps.value),
+  generation: () => formGeneration.value,
+  restore: () => {
+    // `formData` still holds the previous value — the decline wrote nothing.
+    // Only the widget's own DOM moved, and since the bound `model-value` is
+    // unchanged, Vue has no reason to patch it back: the control would keep
+    // displaying the value the user just declined.
+    //
+    // Bumping the render key remounts the field list, so every widget
+    // re-reads its value from `formData`. Deliberately NOT done by writing a
+    // sentinel through `formData` — that would fire the visibility watcher on
+    // a value that was never real.
+    fieldsRenderKey.value++
+  },
+  askToClear: async (properties) => {
+    confirmingClear.value = true
+    try {
+      return await confirm({
+        title: properties.length > 1 ? 'Clear these fields?' : 'Clear this field?',
+        message: clearConfirmMessage(properties),
+        confirmLabel: 'Clear',
+        danger: true,
+      })
+    } finally {
+      confirmingClear.value = false
+    }
+  },
+})
+
+/**
+ * Name each field and show what it currently holds, so the user can weigh the
+ * loss rather than guess at it. Values are already redaction-filtered — a
+ * property the principal cannot see is absent from `formData` entirely.
+ */
+/** Render a value for human eyes: arrays as a list, objects as JSON. */
+function describeValue(value: unknown): string {
+  if (Array.isArray(value)) return value.map((v) => String(v)).join(', ')
+  if (value && typeof value === 'object') return JSON.stringify(value)
+  return String(value)
+}
+
+function clearConfirmMessage(properties: string[]): string {
+  const lines = properties.map((p) => {
+    const label = fieldByProperty.value.get(p)?.label || p
+    return `• ${label}: ${describeValue(formData.value[p])}`
+  })
+  return [
+    'This change hides the following, which will be cleared:',
+    '',
+    ...lines,
+    '',
+    'Continue?',
+  ].join('\n')
+}
+
+/** Widget edits enter here. See useChangePolicy for why this is not a write. */
+async function proposeChange(property: string, value: unknown): Promise<ProposalOutcome> {
+  return changePolicy.propose(property, value, formData.value[property])
 }
 
 function updateField(property: string, value: unknown) {
@@ -1170,10 +1420,23 @@ function handleKeydown(e: KeyboardEvent) {
 onMounted(async () => {
   // Setup event listeners
   window.addEventListener('beforeunload', handleBeforeUnload)
-  document.addEventListener('keydown', handleKeydown)
+  // Embedded: the host modal owns Cmd+Enter. This listener is document-level
+  // with no target check, so two mounted forms would BOTH act on one keypress
+  // — the modal submitting while the page form behind it also submits (or
+  // silently advances a wizard step). beforeunload above is left registered:
+  // duplicate handlers there just mean the browser warns if either form is
+  // dirty, which is correct for a nested draft.
+  if (!props.embedded) {
+    document.addEventListener('keydown', handleKeydown)
+  }
 
-  // return_to is honoured in both modes — read it eagerly.
-  applyReturnToFromQuery()
+  // return_to is honoured in both modes — read it eagerly. Skipped when
+  // embedded: a nested form inherits the HOST page's query string, so it would
+  // otherwise adopt the parent's return_to (and, below, its prop.*/rel.*/link_*
+  // pre-fill) as if they were its own.
+  if (!props.embedded) {
+    applyReturnToFromQuery()
+  }
 
   // Load form data
   loading.value = true
@@ -1281,6 +1544,11 @@ onBeforeUnmount(() => {
   stagedUnmounted = true
   if (stagedDryRunTimer) clearTimeout(stagedDryRunTimer)
   stagedDryRunController?.abort()
+  // Supersede any proposal still awaiting a dialog. `useConfirm` resolves its
+  // pending promise on APP-shell unmount, not on ours, so a route change with
+  // the dialog open would otherwise resume the awaited continuation on a dead
+  // component and schedule a real PATCH against a form the user has left.
+  formGeneration.value++
 })
 
 // Returning a promise from the guard preserves the original navigation's
@@ -1291,33 +1559,70 @@ onBeforeUnmount(() => {
 // because there are no global beforeResolve guards that could cancel the
 // navigation downstream — if one were added, the assignment should move into
 // a router.afterEach hook gated on success.
-onBeforeRouteLeave(async () => {
-  // TKT-E6094: in edit mode, flush autosave before navigating away.
-  // On clean commit we proceed silently; on error or timeout we
-  // prompt the user to confirm.
-  if (autoSave.value) {
-    const result = await autoSave.value.commitImmediately()
-    if (result.settled && !result.error) {
-      dirty.value = false
-      return true
+//
+// Registration is skipped entirely when embedded. Two guards on one route
+// record both fire on a single navigation, and both call the SINGLETON
+// `confirm()` — whose in-flight promise is shared, so one dialog's answer is
+// returned to both callers. A "Leave" meant for the page would silently
+// discard the nested draft too. `props.embedded` is never reactive after
+// mount, so this setup-time conditional is sound; the host modal owns
+// discard-confirmation for the nested form.
+if (!props.embedded) {
+  onBeforeRouteLeave(async () => {
+    // A clear-confirm dialog is open. `useConfirm` is a singleton that hands a
+    // concurrent caller the SAME in-flight promise, so prompting here would
+    // return that dialog's answer: the user clicking "Clear" would also be
+    // answering "Leave anyway" without ever seeing the question. Block the
+    // navigation instead and let them finish the decision in front of them.
+    if (confirmingClear.value) return false
+
+    // TKT-E6094: in edit mode, flush autosave before navigating away.
+    // On clean commit we proceed silently; on error or timeout we
+    // prompt the user to confirm.
+    if (autoSave.value) {
+      const result = await autoSave.value.commitImmediately()
+      if (result.settled && !result.error) {
+        dirty.value = false
+        return true
+      }
+      return await confirm({
+        title: 'Unsaved changes',
+        message: result.error ?? 'Some changes are still saving.',
+        confirmLabel: 'Leave anyway',
+        danger: true,
+      })
     }
-    return await confirm({
+    // Create-mode / no autosave: original prompt.
+    if (!dirty.value) return true
+    const ok = await confirm({
       title: 'Unsaved changes',
-      message: result.error ?? 'Some changes are still saving.',
-      confirmLabel: 'Leave anyway',
+      message: 'You have unsaved changes. Are you sure you want to leave?',
+      confirmLabel: 'Leave',
       danger: true,
     })
-  }
-  // Create-mode / no autosave: original prompt.
-  if (!dirty.value) return true
-  const ok = await confirm({
-    title: 'Unsaved changes',
-    message: 'You have unsaved changes. Are you sure you want to leave?',
-    confirmLabel: 'Leave',
-    danger: true,
+    if (ok) dirty.value = false
+    return ok
   })
-  if (ok) dirty.value = false
-  return ok
+}
+
+/**
+ * Surface for a host that renders this form inside its own chrome (the
+ * inline-create modal).
+ *
+ * The host needs to know whether there is unsaved input and to trigger a
+ * submit. Both must be ASKED FOR, not inferred: sniffing bubbling `input` /
+ * `change` events off a wrapper element misses every non-native widget — a
+ * relation-picker selection, a wizard step, and the CodeMirror-backed markdown
+ * body all emit Vue events that do not bubble as DOM events, so a form with a
+ * written body would read as pristine and be discarded without a prompt.
+ */
+defineExpose({
+  /** True when the user has entered anything not yet persisted. */
+  isDirty: () => dirty.value,
+  /** True while a create request is in flight. */
+  isSaving: () => saving.value,
+  /** Submit the form, exactly as the Create button does. */
+  submit: () => handleSubmit(),
 })
 </script>
 
@@ -1328,8 +1633,10 @@ onBeforeRouteLeave(async () => {
     :class="{ 'with-sidepanel': isEdit }"
     :data-testid="`form-state-${loadState}`"
   >
-    <div class="dynamic-form">
-      <header class="form-header mobile-topbar">
+    <div class="dynamic-form" :class="{ embedded }">
+      <!-- The host modal supplies its own title and help affordance, so the
+           page header would be a duplicate heading inside the dialog. -->
+      <header v-if="!embedded" class="form-header mobile-topbar">
         <h1>{{ title }}</h1>
         <button
           type="button"
@@ -1355,10 +1662,11 @@ onBeforeRouteLeave(async () => {
         </button>
       </div>
 
-      <div v-if="loading" class="loading-state">
+      <div v-if="showBlockLoader" class="loading-state">
         <div class="spinner" />
-        <span>Loading...</span>
+        <span>Loading…</span>
       </div>
+      <div v-else-if="loading" class="form-loading-placeholder" />
 
       <div v-else-if="notEditable" class="not-editable-state">
         <h2>This entity is not editable</h2>
@@ -1428,6 +1736,7 @@ onBeforeRouteLeave(async () => {
           </p>
           <div class="form-fields">
             <FormFieldList
+              :key="fieldsRenderKey"
               :fields="visibleStepFields(wizard.currentStepDef.value)"
               :entity-type="formConfig.entity"
               :entity-id="entityId"
@@ -1441,7 +1750,7 @@ onBeforeRouteLeave(async () => {
               :is-field-readonly="isFieldReadonly"
               :option-verdicts-for="optionVerdictsFor"
               :transitions-for="transitionsFor"
-              @update-field="updateField"
+              @update-field="proposeChange"
               @attachment-changed="onAttachmentChanged"
               @update-relation="updateRelation"
               @update-relation-types="updateRelationTypes"
@@ -1514,14 +1823,16 @@ onBeforeRouteLeave(async () => {
           </template>
 
           <!-- Create only: the commit button, on the last (or only) step. -->
-          <button
+          <PendingButton
             v-if="!isEdit && wizard.isLastStep.value"
             type="submit"
             class="btn btn-primary"
-            :disabled="saving"
+            :pending="saving"
+            label="Create"
+            pending-label="Saving…"
           >
-            {{ saving ? 'Saving...' : 'Create' }} <kbd>&#8984;&#8629;</kbd>
-          </button>
+            <template #adornment><kbd>&#8984;&#8629;</kbd></template>
+          </PendingButton>
 
           <!-- Edit: ambient autosave status stands in for a Save button. -->
           <AutoSaveIndicator
@@ -1567,6 +1878,13 @@ onBeforeRouteLeave(async () => {
   max-width: 800px;
   min-width: 500px;
   width: 100%;
+}
+
+/* Embedded: the host dialog owns the width. The page min-width would
+   otherwise force the modal wider than a narrow viewport allows. */
+.dynamic-form.embedded {
+  max-width: none;
+  min-width: 0;
 }
 
 .form-header {
@@ -1727,16 +2045,55 @@ onBeforeRouteLeave(async () => {
   margin: 0 0 12px;
 }
 
+/* Same 12-column layout grid as the detail page (TKT-5V8704), so `span:` in
+ * data-entry.yaml means the same thing on a form as in a view section. Forms
+ * were already single-column via flex-column; the grid preserves that for
+ * unspanned fields while letting an author group related ones onto a row. */
 .form-fields {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 20px var(--space-xl);
+  /* Top-align, don't stretch. Grid items default to `stretch`, which makes
+     every field in a row as tall as the tallest — so one field with a
+     transitions panel or a long help text under it leaves its neighbours
+     with a void beneath their input. Aligning to the start keeps each
+     control tight to its own label. */
+  align-items: start;
+}
+
+/* EVERY direct child spans the full 12 by default, not just `.form-field`.
+ * FormFieldList also emits RelationCards / RelationPicker, which carry their
+ * own root class — without this they'd become auto-width grid items and the
+ * whole form would collapse into narrow columns.
+ *
+ * The var() fallback (not a bare `span 12`) is load-bearing: `.form-fields > *`
+ * and `.form-field` have equal specificity, so a plain `span 12` here would win
+ * on source order and silently swallow every authored span. Reading the same
+ * custom property means both rules agree, and the ONE default lives in the
+ * fallback. */
+.form-fields > * {
+  grid-column: span var(--field-span, 12);
+  min-width: 0;
 }
 
 .form-field {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  /* Grid items floor at min-content without this; a long placeholder or
+     option label would push its track wider than its share. */
+  min-width: 0;
+}
+
+@media (max-width: 640px) {
+  .form-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .form-fields > *,
+  .form-field {
+    grid-column: span 1;
+  }
 }
 
 .form-field label {

@@ -10,7 +10,7 @@ import (
 )
 
 // Compile-time check that StoreCounter satisfies TypeCounter.
-var _ TypeCounter = (*StoreCounter)(nil)
+var _ TypeCounter = NewStoreCounter(context.Background(), memstore.New())
 
 func TestStoreCounter_Analyze(t *testing.T) {
 	s := memstore.New()
@@ -36,7 +36,7 @@ func TestStoreCounter_Analyze(t *testing.T) {
 
 	// Run Analyze with StoreCounter — same metamodel as newTestMetamodel()
 	meta := newTestMetamodel()
-	counter := &StoreCounter{Store: s}
+	counter := NewStoreCounter(ctx, s)
 	result := Analyze(meta, counter, nil, 0)
 
 	// unused-type has no instances
@@ -83,7 +83,7 @@ func TestStoreCounter_LowUsage(t *testing.T) {
 		Types: map[string]metamodel.CustomType{},
 	}
 
-	counter := &StoreCounter{Store: s}
+	counter := NewStoreCounter(ctx, s)
 	result := Analyze(meta, counter, nil, 1)
 
 	// decision has 1 instance → low usage at threshold=1

@@ -4,11 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"path/filepath"
-	"strings"
 	"sync"
 
 	"gopkg.in/yaml.v3"
@@ -16,14 +15,15 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
+	"github.com/Sourcehaven-BV/rela/internal/caldavalias"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/git"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/migration"
-	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/openapi"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/script"
@@ -33,15 +33,13 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/userstate"
 	"github.com/Sourcehaven-BV/rela/internal/validator"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // ConfigFile is the conventional filename for data-entry configuration within a rela project.
 const ConfigFile = dataentryconfig.ConfigFile
-
-// uiStateFile is the filename for persisted UI state within the .rela directory.
-const uiStateFile = "ui-state.json"
 
 // userDefaultsFile is the filename for user-specific default values within the .rela directory.
 const userDefaultsFile = "user-defaults.yaml"
@@ -80,9 +78,38 @@ const userPaletteFile = "palette.yaml"
 // commandHandler (154 → 143); the attachment cluster (12 methods) moved to
 // attachmentHandler / package functions (143 → 131); the write nucleus —
 // entity/relation CRUD, clone, conflict-resolve, and the modern relations
-// reconciler (18 methods) — moved to writeHandler (131 → 114).
+// reconciler (18 methods) — moved to writeHandler (131 → 114); the Lua
+// action handler joined it (115 → 114, from a base that had absorbed the
+// DEC-O59WM4 script-read helpers), completing the write surface: every
+// writeMu write path now lives on or routes through writeHandler. The
+// views cluster — view traversal, section building, the /_views,
+// /_sidepanel, /_sidebar handlers, and the form-resolution helpers (16
+// methods) — moved to viewsHandler, three receiver-free helpers became
+// package functions, and the dead ungated server-rendered nav path (5
+// methods, #1043) was deleted (114 → 90).
 //
-//plimsoll:max-methods=115
+// The directive lags the real count (TKT-N0IKN9 tracks decomposing App); it is
+// a ratchet target, not a budget to spend. SetUserState took it from 98 to 99 —
+// it follows the existing SetSecurityConfig / SetJWTGate setter idiom rather
+// than becoming a 12th positional NewApp parameter — and the CalDAV alias
+// setter that landed alongside it took the count to 100, a later one to 101,
+// and redactedForSuggestion to 102 — the field-redaction seam the next-action
+// candidate path needs, which has to reach affordanceService.
+//
+// TKT-BDG8U9 adds [App.SetRemoteMCP] on the same terms — the public opt-in
+// setter for the remote MCP endpoint, matching that setter idiom. The rest of
+// that feature deliberately stays OFF App: `registerMCPRoute` takes its
+// handler as a parameter and `toolForPath` is a package function, so the
+// mount cost one method rather than three.
+//
+// TKT-N8XQ2R adds [App.SetNextActionMatchers] on the same terms (103 -> 104):
+// the predicate compiler backing a source's `condition:` lives above this
+// package, so it arrives through the same setter idiom rather than a 13th
+// positional NewApp parameter. The compiling and matching themselves stay OFF
+// App entirely — conditionlint owns them and appbuild bridges — so the feature
+// cost one method, not a subsystem.
+//
+//plimsoll:max-methods=104
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS
@@ -98,6 +125,12 @@ type App struct {
 	// sub-interface they need rather than type-asserting the store.
 	versions      store.VersionService
 	entityManager entitymanager.EntityManager
+
+	// caldavAliases links CalDAV resources to entities. Optional: nil when no
+	// alias service is wired, in which case the CalDAV routes are not served
+	// (a collection with no way to remember client-created resources would
+	// duplicate every to-do on the next sync).
+	caldavAliases *caldavalias.Service
 	searcher      search.Searcher
 	// visibleSearcher is the ACL-scoped search seam (TKT-BA8BSX):
 	// executeQuery routes free-text searches through it so /_search
@@ -106,6 +139,27 @@ type App struct {
 	// the regular searcher on fs/memory builds, pgstore-native on the
 	// postgres build.
 	visibleSearcher search.VisibleSearcher
+	// userState backs the next-action layer's per-user snooze / mute /
+	// cooldown records. NOT graph content: a snooze is a fact about one
+	// person's relationship to a suggestion, and storing it as an entity
+	// would flood the audit log and the postgres version sweep (cooldown
+	// alone writes on every render). Nil when the deployment wires no
+	// backend — the next-action endpoints then report "not configured"
+	// rather than silently forgetting what users asked to hide.
+	userState userstate.Store
+
+	// nextActionMatchers compiles a source's `condition:` into a predicate
+	// matcher. Injected because the compiler lives above this package (it
+	// needs predicatefns + the metamodel), the same way the composition root
+	// picks the userstate backend while consumers take the seam.
+	//
+	// Takes the live config + metamodel rather than a prebuilt lookup: both
+	// reload at runtime, and a lookup captured at boot would evaluate a stale
+	// condition after an operator edits data-entry.yaml. Nil when no
+	// deployment wired it — sources declaring a condition then fail engine
+	// construction rather than silently matching everything.
+	nextActionMatchers NextActionMatcherFunc
+
 	// visibleReader is the ACL-bounded entity-read seam (TKT-N26KLB): the
 	// entity-read analog of visibleSearcher. Read handlers gate single-GET
 	// and include-filtering through it so the read gate is applied
@@ -115,9 +169,18 @@ type App struct {
 	// reader is the ungated entity/relation read seam over the store. Extracted
 	// from App (TKT-N26KLB); a single-dep leaf shared by read/write/affordance
 	// paths. ACL scoping lives in visibleReader, not here.
-	reader    entityReader
-	tracer    tracer.Tracer
-	validator validator.Validator
+	reader entityReader
+	// viewReader is the row-gating + field-redacting read-out seam
+	// (visibility.PolicyReader, DEC-ZBI39P) for the view pipeline. executeView
+	// loads raw from the store during traversal (a where: filter may reference
+	// a hidden property, and edges are walked by id), then routes the assembled
+	// result through viewReader so section builders receive already-redacted
+	// entities — closing BUG-9QL9XV (property values) and BUG-R9EHKV (titles,
+	// via Redact's _title fallback) structurally rather than per-field in
+	// sections.go. Same wiring as the export handler's visReader.
+	viewReader visibility.Reader
+	tracer     tracer.Tracer
+	validator  validator.Validator
 	// analyze runs the read-only graph-analysis checks. Extracted from App
 	// (TKT-N26KLB M5.1); holds its own {store, tracer, validator} and takes
 	// the metamodel snapshot per call.
@@ -130,9 +193,6 @@ type App struct {
 	// App (TKT-N26KLB); pure transform — handlers pass the entity's already-
 	// loaded outgoing relations, the serializer does no loading.
 	serializer entitySerializer
-	// userState persists per-user UI state (UI state, defaults, palette)
-	// to the .rela/ KV store. Extracted from App (TKT-N26KLB M5.3).
-	userState userStateStore
 	// logo owns the user-uploaded sidebar logo — persistence AND the served
 	// in-memory cache — self-synchronized. Extracted from the schema snapshot so the
 	// logo no longer rides the App-wide snapshot + writeMu.
@@ -165,7 +225,11 @@ type App struct {
 
 	// write owns the entity/relation CRUD + clone + conflict-resolve write
 	// nucleus (TKT-R68TV8 M5.4); shares writeMu by pointer.
-	write     *writeHandler
+	write *writeHandler
+	// views owns the read-only view-assembly surface: view traversal,
+	// section building, and the /_views, /_sidepanel, /_sidebar endpoints
+	// (TKT-R68TV8). No writeMu — this surface never mutates.
+	views     *viewsHandler
 	templater templating.Templater
 	cfgLoader config.Loader
 	kv        state.KV
@@ -229,6 +293,17 @@ type App struct {
 	// with a header/env principal chain — cmd/rela-server refuses to start
 	// with both, so a JWT failure can never downgrade to a spoofable header.
 	jwtGate *JWTGateConfig
+
+	// mcpHandler, when non-nil, serves the remote MCP endpoint at
+	// [MCPPath]. Built once by SetRemoteMCP (before NewRouter) from an
+	// [MCPHandlerFactory]; nil means the route is not registered at
+	// all, so an upgraded server serves no MCP until an operator opts
+	// in. SetRemoteMCP refuses to enable it without jwtGate — see its
+	// doc comment for why.
+	//
+	// It is a plain http.Handler because `internal/mcp` is the only
+	// component allowed to import the MCP go-sdk (arch-lint).
+	mcpHandler http.Handler
 
 	// principalHeader is the name of the HTTP header that carries the
 	// principal identity (the --principal-header flag value), or ""
@@ -303,47 +378,204 @@ func (a *App) Meta() *metamodel.Metamodel { return a.State().Meta }
 // script, an export_render override, or an MCP-invoked script sees exactly
 // the caller's view — hidden entities absent, hidden properties redacted.
 // Identity resolves per call from the ctx, so one bundle serves every
-// request. WritePrepStore stays RAW so update_entity's read-before-write
-// cannot erase hidden properties (see lua.ReadDeps.WritePrepStore).
+// request. Note there is no raw read handle here at all: update_entity
+// patches through the manager, which does its own write-prep read
+// (TKT-80EWGM), so a redacted read can no longer feed a write.
 func (a *App) luaWriteDeps() lua.WriteDeps {
-	redactor := affRedactor{aff: func() affordanceService { return a.affordances }}
+	redactor := appRedactor(a)
 	return lua.WriteDeps{
 		ReadDeps: lua.ReadDeps{
-			VisibleReader:  a.scriptReader(redactor),
-			WritePrepStore: a.store,
-			Tracer:         a.scriptTracer(redactor),
-			Searcher:       a.searcher,
-			Meta:           a.Meta(),
-			ProjectRoot:    a.paths.Root,
+			VisibleReader: a.scriptReader(redactor),
+			Tracer:        a.scriptTracer(redactor),
+			Searcher:      a.searcher,
+			Meta:          a.Meta(),
+			ProjectRoot:   a.paths.Root,
 		},
 		EntityManager: a.entityManager,
 	}
 }
 
+// appRedactor returns the field-redaction seam over the affordance service
+// (visibility.FieldRedactor), closing over App.affordances via a closure so it
+// stays valid after test builders rebind the service. It is the one source of
+// the affRedactor used by the script reader, the export handler, and the view
+// pipeline. A package function rather than an App method so it doesn't add to
+// App's plimsoll method count (the type is at its load line — see the struct
+// doc; DRY here must not cost a ratchet).
+func appRedactor(a *App) visibility.FieldRedactor {
+	return affRedactor{aff: func() affordanceService { return a.affordances }}
+}
+
 // scriptReader returns the ACL-bound read-out handle for script runtimes,
 // or the raw store when no Declarative policy is configured (the NopACL
-// path — byte-identical to pre-ACL behavior). A construction fault
-// degrades to the raw store with a warning rather than breaking every
-// script; a genuine DENY is still a deny.
+// path — byte-identical to pre-ACL behavior, not a bypass).
+//
+// When a policy IS configured but the gate cannot be built, this REFUSES
+// (returns [visibility.DenyReader]) rather than degrading to the raw store
+// — matching appbuild's unattended-path wiring (RR-GKCZO5, rela#1198).
+//
+// This wiring was fail-open on the theory that its callers are interactive,
+// so a broken gate would surface as an immediate, human-visible outage.
+// That does not hold: of the three consumers of App.luaWriteDeps —
+// actions.go (interactive), document.go/export_render, and webhook.go — the
+// IdP webhook is unattended machine-to-machine, running as `webhook:<event>`
+// with nobody watching the log. An unattended job quietly reverting to
+// full-graph reads is an unbounded silent disclosure into whatever it sends
+// onward — the exact failure DenyReader exists to stop.
+//
+// Failing closed costs the interactive callers nothing they were promised:
+// [visibility.ErrReaderUnavailable] is a loud, immediate, diagnosable error,
+// which is what the fail-open argument actually wanted — just without the
+// ungated read. A genuine DENY remains a deny, distinct from this error.
+//
+// DELIBERATE DIVERGENCE from appbuild: that seam substitutes
+// [visibility.NopRedactor] for a nil redactor, because its callers
+// (scheduler, cascades) legitimately have no affordance resolver and row
+// gating alone is the best available there (RR-7408F5). Data-entry always
+// has one, so a nil redactor here is a WIRING BUG, not a capability gap —
+// silently swapping in NopRedactor would drop field-level redaction on a
+// path that is supposed to enforce it. Do not "align" these by copying
+// appbuild's guard: it would convert a caught bug into a silent downgrade,
+// and delete the fault path failclosed_test.go exercises.
 func (a *App) scriptReader(redactor visibility.FieldRedactor) lua.EntityReader {
-	d, ok := a.acl.(*acl.Declarative)
+	return gatedScriptReader(a.acl, a.store, redactor)
+}
+
+// lateGatedReader is a lua.EntityReader that resolves the gated reader from the
+// LIVE App on every call, so a reassignment of a.acl / a.fieldResolver (tests
+// rebind these after construction; a policy reload can too) is honored rather
+// than frozen at wiring time. The validator and analyzeService hold their reader
+// as a value, so a construction-time-captured reader would go stale — this
+// wrapper is the fix. It mirrors why luaWriteDeps is a method invoked per call.
+type lateGatedReader struct{ app *App }
+
+func (r lateGatedReader) reader() lua.EntityReader {
+	return r.app.scriptReader(appRedactor(r.app))
+}
+
+func (r lateGatedReader) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
+	return r.reader().GetEntity(ctx, id)
+}
+
+func (r lateGatedReader) ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error] {
+	return r.reader().ListEntities(ctx, q)
+}
+
+// ListEntityHeaders resolves the gated reader per call like the rest of this
+// type, then uses its header path when it has one.
+//
+// The type assertion is not a gate decision: every reader gatedScriptReader
+// can return (ScriptReader, UnrestrictedReader, DenyReader) implements the
+// header surface, so the fallback below is unreachable in production wiring
+// and exists only so a narrower test double stays valid. It degrades to
+// whole-entity gating — more data read, never less gating.
+func (r lateGatedReader) ListEntityHeaders(
+	ctx context.Context, q store.EntityQuery,
+) iter.Seq2[store.EntityHeader, error] {
+	reader := r.reader()
+	if hr, ok := reader.(interface {
+		ListEntityHeaders(context.Context, store.EntityQuery) iter.Seq2[store.EntityHeader, error]
+	}); ok {
+		return hr.ListEntityHeaders(ctx, q)
+	}
+	return func(yield func(store.EntityHeader, error) bool) {
+		for e, err := range reader.ListEntities(ctx, q) {
+			if err != nil {
+				yield(store.EntityHeader{}, err)
+				return
+			}
+			if !yield(store.HeaderOf(e), nil) {
+				return
+			}
+		}
+	}
+}
+
+func (r lateGatedReader) ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error] {
+	return r.reader().ListRelations(ctx, q)
+}
+
+// lateGatedTracer is the tracer.Tracer counterpart of lateGatedReader: it
+// resolves the gated tracer (scriptTracer, which prunes hidden nodes and fails
+// closed) from the LIVE App per call, so a rule's rela.trace_from/trace_to/
+// find_path cannot walk into entities the requester cannot see. Wired into the
+// validator's ReadDeps.Tracer so the traversal seam is gated by construction,
+// not left safe only because a Lua message never reaches the wire (code review).
+type lateGatedTracer struct{ app *App }
+
+func (t lateGatedTracer) tracer() tracer.Tracer {
+	return t.app.scriptTracer(appRedactor(t.app))
+}
+
+func (t lateGatedTracer) TraceFrom(ctx context.Context, id string, maxDepth int) *tracer.TraceResult {
+	return t.tracer().TraceFrom(ctx, id, maxDepth)
+}
+
+func (t lateGatedTracer) TraceTo(ctx context.Context, id string, maxDepth int) *tracer.TraceResult {
+	return t.tracer().TraceTo(ctx, id, maxDepth)
+}
+
+func (t lateGatedTracer) FindPath(ctx context.Context, fromID, toID string) []tracer.PathStep {
+	return t.tracer().FindPath(ctx, fromID, toID)
+}
+
+func (t lateGatedTracer) FindOrphans(ctx context.Context) ([]string, error) {
+	return t.tracer().FindOrphans(ctx)
+}
+
+func (t lateGatedTracer) HasCycle(ctx context.Context, startID string) bool {
+	return t.tracer().HasCycle(ctx, startID)
+}
+
+// elevationRecorder adapts the audit sink onto lua.ElevationRecorder for an
+// elevated document render (TKT-Y3JVFK).
+//
+// It exists for ONE reason: the nil conversion. audit.NewElevationRecorder
+// returns *audit.ElevationRecorder, and assigning a nil one straight into
+// lua's interface-typed field yields a TYPED nil, which is != nil — lua's
+// `ElevationRecorder == nil` guard would pass and the first elevated read
+// would nil-deref. Returning the INTERFACE type makes the nil a real nil.
+// Same trap, same fix as appbuild.NewElevationAuditor (RR-5QQL1Z); duplicated
+// rather than imported because dataentry must not depend on the wiring layer.
+//
+// auditSink is required and non-nil on a constructed App (callers pass
+// audit.Nop), so the nil branch is defense against a future construction path,
+// not a live case.
+func elevationRecorder(sink audit.Audit) lua.ElevationRecorder {
+	if sink == nil {
+		return nil
+	}
+	return audit.NewElevationRecorder(sink)
+}
+
+// gatedScriptReader builds the ACL-bound read-out handle from an acl
+// implementation directly (not App.acl), so it can be wired at CONSTRUCTION
+// time — before the App receiver exists — for the validator's read deps. Under
+// NopACL it degrades to the raw store (byte-identical to pre-ACL); under a
+// Declarative policy it row-gates + field-redacts, resolving the principal from
+// ctx per call; a construction fault REFUSES (DenyReader) rather than reading
+// ungated. Same policy the per-request App.scriptReader wraps.
+func gatedScriptReader(aclImpl acl.ACL, store store.Store, redactor visibility.FieldRedactor) lua.EntityReader {
+	d, ok := aclImpl.(*acl.Declarative)
 	if !ok || d == nil {
-		return a.store
+		// Named so the NopACL path is greppable alongside every other
+		// ungated read site (TKT-1WV50C).
+		return visibility.Unrestricted(store)
 	}
 	gate, err := visibility.NewDeclarativeGate(d)
 	if err != nil {
-		slog.Warn("dataentry: ACL gate unavailable; script reads stay unrestricted", "err", err)
-		return a.store
+		slog.Error("dataentry: ACL gate unavailable; script reads REFUSED", "err", err)
+		return visibility.DenyReader{}
 	}
-	reader, err := visibility.NewPolicyReader(gate, redactor, a.store)
+	reader, err := visibility.NewPolicyReader(gate, redactor, store)
 	if err != nil {
-		slog.Warn("dataentry: policy reader unavailable; script reads stay unrestricted", "err", err)
-		return a.store
+		slog.Error("dataentry: policy reader unavailable; script reads REFUSED", "err", err)
+		return visibility.DenyReader{}
 	}
-	sr, err := visibility.NewScriptReader(reader, a.store, gate)
+	sr, err := visibility.NewScriptReader(reader, store, gate)
 	if err != nil {
-		slog.Warn("dataentry: script reader unavailable; script reads stay unrestricted", "err", err)
-		return a.store
+		slog.Error("dataentry: script reader unavailable; script reads REFUSED", "err", err)
+		return visibility.DenyReader{}
 	}
 	return sr
 }
@@ -351,6 +583,10 @@ func (a *App) scriptReader(redactor visibility.FieldRedactor) lua.EntityReader {
 // scriptTracer wraps the tracer in the visibility decorator when a
 // Declarative policy is configured. Trace bindings are unchanged either
 // way — pruning happens inside the decorator.
+//
+// Construction faults REFUSE ([visibility.DenyTracer]) for the same reason
+// as App.scriptReader: traversal is a read, and an unattended caller must
+// not silently walk the whole graph.
 func (a *App) scriptTracer(redactor visibility.FieldRedactor) tracer.Tracer {
 	d, ok := a.acl.(*acl.Declarative)
 	if !ok || d == nil {
@@ -358,13 +594,13 @@ func (a *App) scriptTracer(redactor visibility.FieldRedactor) tracer.Tracer {
 	}
 	gate, err := visibility.NewDeclarativeGate(d)
 	if err != nil {
-		slog.Warn("dataentry: ACL gate unavailable; traversal stays unrestricted", "err", err)
-		return a.tracer
+		slog.Error("dataentry: ACL gate unavailable; traversal REFUSED", "err", err)
+		return visibility.DenyTracer{}
 	}
 	vt, err := visibility.NewVisibleTracer(a.tracer, gate, redactor, a.store)
 	if err != nil {
-		slog.Warn("dataentry: visible tracer unavailable; traversal stays unrestricted", "err", err)
-		return a.tracer
+		slog.Error("dataentry: visible tracer unavailable; traversal REFUSED", "err", err)
+		return visibility.DenyTracer{}
 	}
 	return vt
 }
@@ -390,6 +626,10 @@ func (a *App) SetSecurityConfig(cfg SecurityConfig) error {
 // `$RELA_DATAENTRY_USER` env var overrides any incoming header and
 // the header itself overrides the default. Passing nil restores
 // [defaultPrincipalResolver] behavior.
+// SetCalDAVAliases installs the CalDAV alias service. Without it the CalDAV
+// routes are not registered.
+func (a *App) SetCalDAVAliases(s *caldavalias.Service) { a.caldavAliases = s }
+
 func (a *App) SetPrincipalResolver(r PrincipalResolver) {
 	a.principalResolver = r
 }
@@ -457,6 +697,7 @@ func NewApp(
 	aclImpl acl.ACL,
 	fieldResolver FieldVerdictResolver,
 	auditSink audit.Audit,
+	stateKV state.KV,
 ) (*App, error) {
 	// Reject nil required collaborators up front rather than letting a
 	// downstream handler panic on the first request that exercises them.
@@ -487,34 +728,23 @@ func NewApp(
 	if auditSink == nil {
 		return nil, errors.New("dataentry.NewApp: auditSink is required (pass audit.Nop{} to opt out)")
 	}
+	if stateKV == nil {
+		return nil, errors.New("dataentry.NewApp: stateKV is required (wire appbuild's Services.State())")
+	}
 	// Construct reconstructible services from the primitives.
 	cfgLoader := config.NewFSLoader(fs, paths.Root)
-	kvRoot, err := storage.NewRootedFS(fs, paths.CacheDir)
-	if err != nil {
-		return nil, fmt.Errorf("dataentry: rooted fs for state kv: %w", err)
-	}
-	kv := state.NewFSKV(kvRoot)
+	// The state store comes from the caller (appbuild's Services.State()) rather
+	// than being rebuilt here: on the postgres build it is database-backed, so
+	// the render cache, user settings and the operator logo are shared by every
+	// process serving the schema. Rebuilding an FSKV here would silently pin
+	// those back to this node's .rela/ — the bug where an uploaded logo is
+	// visible only on whichever node served the POST (TKT-VC27L3).
+	kv := stateKV
 	trc := tracer.New(st)
 	templater := templating.NewFSTemplater(fs, paths)
-	// VALIDATOR: unrestricted reads, deliberately (DEC-O59WM4).
-	//
-	// The entity being validated does NOT come through this bundle — the
-	// validator loads it itself and passes it in as the `entity` global, so
-	// redacting here would not protect it anyway. What this bundle serves
-	// is a rule body's incidental cross-entity lookups, and redacting THOSE
-	// manufactures false violations: a rule asserting "every ticket links
-	// to a project" would fire on tickets whose project the current
-	// principal cannot see. Same reasoning the validator already applies to
-	// locked/unreadable entities, which it skips rather than mis-validates.
-	readDeps := lua.ReadDeps{
-		VisibleReader:  st,
-		WritePrepStore: st,
-		Tracer:         trc,
-		Searcher:       searcher,
-		Meta:           meta,
-		ProjectRoot:    paths.Root,
-	}
-	val := validator.New(st, meta, readDeps)
+	// The validator (val) is built AFTER app.affordances below — its reader is
+	// now GATED (TKT-3FL2S6, superseding DEC-O59WM4), which needs the redactor
+	// that closes over app.affordances.
 
 	// Load data-entry config from project root
 	cfgData, err := cfgLoader.Load(context.Background(), ConfigFile)
@@ -540,6 +770,11 @@ func NewApp(
 	if validationErr := ValidateConfig(cfgData, &cfg, meta); validationErr != nil {
 		return nil, fmt.Errorf("invalid %s: %w", ConfigFile, validationErr)
 	}
+
+	// Fill in calendar defaults. AFTER validation, deliberately: normalizing
+	// first would replace an author's invalid default_view with "month" and
+	// report nothing, turning a typo into silently different behavior.
+	dataentryconfig.NormalizeCalendars(&cfg)
 
 	// Non-fatal configuration warnings (e.g. a relation filter control whose
 	// incoming direction targets a type the relation never points to). Logged,
@@ -572,6 +807,10 @@ func NewApp(
 		}
 	}
 
+	if err := checkExportRenderScripts(cfg, paths.Root); err != nil {
+		return nil, err
+	}
+
 	entCount, _ := st.CountEntities(context.Background(), store.EntityQuery{})
 	relCount, _ := st.CountRelations(context.Background(), store.RelationQuery{})
 	slog.Info("loaded project", "entities", entCount, "relations", relCount)
@@ -591,12 +830,9 @@ func NewApp(
 		visibleReader:   newVisibleReader(st),
 		reader:          entityReader{store: st},
 		tracer:          trc,
-		validator:       val,
-		analyze:         analyzeService{store: st, tracer: trc, validator: val},
 		templater:       templater,
 		cfgLoader:       cfgLoader,
 		kv:              kv,
-		userState:       userStateStore{kv: kv},
 		acl:             aclImpl,
 		broker:          newEventBroker(),
 		scriptEngine:    scriptEngine,
@@ -606,7 +842,18 @@ func NewApp(
 	// documentService needs scriptEngine (for Lua renders) and a closure
 	// that yields fresh lua.WriteDeps (so metamodel reloads propagate).
 	// Constructed after app because luaWriteDeps is a method on App.
-	app.documents = newDocumentService(st, kv, paths.Root, scriptEngine, app.luaWriteDeps)
+	// The elevation bundle is resolved per render and applied ONLY to a
+	// document that declares allow_acl_bypass. visibility.Unrestricted names
+	// the ungated path so it appears in the grep that enumerates them
+	// (TKT-1WV50C), and the recorder makes elevated document reads land in
+	// the audit log exactly as cascade ones do.
+	app.documents = newDocumentService(st, kv, paths.Root, scriptEngine, app.luaWriteDeps,
+		func() documentElevation {
+			return documentElevation{
+				Reader:   visibility.Unrestricted(st),
+				Recorder: elevationRecorder(app.auditSink),
+			}
+		})
 
 	// affordanceService shares the App's acl/fieldResolver/store and takes the
 	// metamodel per-request via app.State(). The two relation-graph reads are
@@ -622,6 +869,44 @@ func NewApp(
 	}
 
 	app.serializer = entitySerializer{affordances: app.affordances}
+
+	// The validator and analyze reads are GATED per requesting principal
+	// (TKT-3FL2S6, superseding DEC-O59WM4): a rule cannot read data the requester
+	// cannot see, so a hidden value never reaches a validation message or an
+	// issue title — the leak closes by construction. gatedReader resolves the
+	// principal from ctx per call (one instance serves every request); under
+	// NopACL it is the raw store. The trigger entity the validator loads
+	// (validator.New's first arg) and its rule bodies' cross-entity lookups
+	// (ReadDeps.VisibleReader) both go through it.
+	gatedReader := lateGatedReader{app: app}
+	readDeps := lua.ReadDeps{
+		VisibleReader: gatedReader,
+		Tracer:        lateGatedTracer{app: app},
+		Searcher:      searcher,
+		Meta:          meta,
+		ProjectRoot:   paths.Root,
+	}
+	val := validator.New(gatedReader, meta, readDeps)
+	app.validator = val
+
+	// analyzeService entity reads route through the same gated reader; relation
+	// COUNTS stay raw (structural, cannot leak).
+	app.analyze = analyzeService{
+		reads:     gatedReader,
+		relCounts: st,
+		tracer:    lateGatedTracer{app: app},
+		validator: val,
+	}
+
+	// viewReader row-gates + field-redacts entities on their way out of the
+	// view pipeline (DEC-ZBI39P). Wired here — after app.affordances — because
+	// the redactor closes over it. Same construction as the export handler's
+	// visReader: ctx-resolved gate, affordance-backed redactor, raw store.
+	viewReader, viewReaderErr := visibility.NewPolicyReader(ctxRowGate{}, appRedactor(app), app.store)
+	if viewReaderErr != nil {
+		return nil, fmt.Errorf("dataentry: wire view reader: %w", viewReaderErr)
+	}
+	app.viewReader = viewReader
 
 	app.settings = newSettingsService(kv)
 
@@ -643,13 +928,34 @@ func NewApp(
 	}
 	app.logo = logo
 
-	// syncHandler owns the /api/sync/ route cluster (fs-client ↔ pg-server
-	// replication). It shares App's store (reads), entityManager (deletes), and
-	// — crucially — a POINTER to App's writeMu so sync pushes/deletes serialize
-	// against every other data-entry mutation. The manifest/applier capabilities
-	// are resolved once from the concrete store/manager (nil on fs/memory builds,
-	// where the sync endpoints degrade to 501).
-	app.sync = newSyncHandler(st, app.entityManager, &app.writeMu)
+	// syncHandler owns the /api/sync/manifest change feed (fs-client ↔ pg-server
+	// replication). The record read/write channel was retired in TKT-8P1TM7 (the
+	// sync client now uses /api/v1), so the handler holds only App's store (to
+	// resolve a relation entry's source type for the read gate); the manifest
+	// capability is resolved from the concrete store (nil on fs/memory builds,
+	// where the endpoint degrades to 501). It has no write path, so the
+	// unmatched_principal provision seam (TKT-ANUJDS) is wired only into the v1
+	// write handler now, not here.
+	app.sync = newSyncHandler(st)
+
+	// viewsHandler owns the read-only view-assembly surface (view traversal,
+	// section building, /_views, /_sidepanel, /_sidebar). Fixed service
+	// handles by value — none of these are swapped by tests — plus the schema
+	// snapshot / Services bundle as closures and App's shared read gate so
+	// the uniform-404 behavior can't drift from the entity read path.
+	app.views = &viewsHandler{
+		schema:      app.State,
+		store:       st,
+		reader:      app.reader,
+		serializer:  app.serializer,
+		affordances: app.affordances,
+		viewReader:  app.viewReader,
+		services:    app.Services,
+		logo:        logo,
+		gateRead:    app.gateReadOrNotFound,
+		// Late-bound: tests reassign app.acl after construction.
+		aclImpl: func() acl.ACL { return app.acl },
+	}
 
 	// commandHandler owns the user-configured command surface. Its
 	// collaborators are narrow closures over App: the schema snapshot (command/
@@ -659,7 +965,10 @@ func NewApp(
 		schema:      app.State,
 		services:    app.Services,
 		projectRoot: app.ProjectRoot,
-		executeView: app.executeView,
+		// Inline rather than an App method: its only consumer is this
+		// closure, and App is at its plimsoll method load line.
+		schemaFile:  func() string { return filepath.Base(app.paths.SchemaPath) },
+		executeView: app.views.executeView,
 		// Late-bound: tests reassign app.acl after construction.
 		aclImpl: func() acl.ACL { return app.acl },
 	}
@@ -734,6 +1043,7 @@ func NewApp(
 		fields:     func() FieldVerdictResolver { return app.fieldResolver },
 		gateRead:   app.gateReadOrNotFound,
 		writeMu:    &app.writeMu,
+		provision:  newProvisionSeam(app),
 	}
 
 	// writeHandler owns the entity/relation CRUD + clone + conflict-resolve
@@ -755,8 +1065,12 @@ func NewApp(
 		denyAfford:         app.denyAffordance,
 		computeETag:        app.computeEntityETag,
 		currentEdgesByPeer: app.currentEdgesByPeer,
+		engine:             func() *script.Engine { return app.scriptEngine },
+		luaDeps:            app.luaWriteDeps,
+		fullScriptDetail:   app.allowFullScriptDetail,
 		paths:              paths,
 		writeMu:            &app.writeMu,
+		provision:          newProvisionSeam(app),
 	}
 
 	// Nudge the operator to make a conscious virus-scan choice: if the
@@ -772,77 +1086,40 @@ func NewApp(
 	return app, nil
 }
 
-// NavItem is an enriched navigation entry that includes the entity type for client-side matching.
-type NavItem struct {
-	Label      string
-	List       string
-	Dashboard  bool
-	Kanban     string
-	EntityType string
-	Count      int
-}
-
-// NavGroup is an enriched navigation group containing resolved nav items.
-type NavGroup struct {
-	Group     string
-	Collapsed bool
-	Items     []NavItem
-}
-
-// NavElement is a union of either a direct NavItem or a NavGroup.
-// Exactly one of Item or Group is non-nil.
-type NavElement struct {
-	Item  *NavItem
-	Group *NavGroup
-}
-
-// enrichNavEntry resolves a single NavigationEntry into a NavItem with entity type and count.
-func (a *App) enrichNavEntry(ctx context.Context, nav NavigationEntry) NavItem {
-	item := NavItem{Label: nav.Label, List: nav.List, Dashboard: nav.Dashboard, Kanban: nav.Kanban}
-	if nav.Dashboard || nav.Kanban != "" {
-		return item
-	}
-	s := a.State()
-	if list, ok := s.Cfg.Lists[nav.List]; ok {
-		item.EntityType = list.EntityType
-		entities := listFromStoreByTypes(ctx, a.Services(), []string{list.EntityType})
-		entities = applyFilters(entities, list.Filters)
-		item.Count = len(entities)
-	}
-	return item
-}
-
-// navElements returns the navigation structure with groups and items resolved.
-// The activeList parameter is used to auto-expand the group containing the active item.
-func (a *App) navElements(ctx context.Context, activeList string) []NavElement {
-	uiState := a.userState.loadUIState(ctx)
-	cfgNav := a.State().Cfg.Navigation
-	elements := make([]NavElement, 0, len(cfgNav))
-	for _, nav := range cfgNav {
-		if nav.IsGroup() {
-			grp := NavGroup{Group: nav.Group}
-			// Determine collapsed state: UIState overrides config default
-			if override, ok := uiState.CollapsedGroups[nav.Group]; ok {
-				grp.Collapsed = override
-			} else {
-				grp.Collapsed = nav.Collapsed
-			}
-			grp.Items = make([]NavItem, len(nav.Items))
-			for i, child := range nav.Items {
-				grp.Items[i] = a.enrichNavEntry(ctx, child)
-				// Auto-expand group if it contains the active list
-				if child.List == activeList && activeList != "" {
-					grp.Collapsed = false
-				}
-			}
-			elements = append(elements, NavElement{Group: &grp})
-		} else {
-			item := a.enrichNavEntry(ctx, nav)
-			elements = append(elements, NavElement{Item: &item})
+// checkExportRenderScripts verifies every configured export render override
+// resolves to a real script under scripts/, for the same reason and by the
+// same mechanism as the documents:/actions: checks in NewApp — an operator
+// should learn about a typo'd path at boot, not on someone's first export.
+//
+// Both override kinds are checked. The per-type one (views.<type>.export_render)
+// went unverified until the per-list one was added, which was an oversight
+// rather than a decision.
+func checkExportRenderScripts(cfg Config, root string) error {
+	for id, list := range cfg.Lists {
+		if list.ExportRender == "" {
+			continue
+		}
+		if err := script.CheckDocumentScriptExists(root, list.ExportRender); err != nil {
+			return fmt.Errorf("invalid %s: list %q: export_render: %w", ConfigFile, id, err)
 		}
 	}
-	return elements
+	for id, view := range cfg.Views {
+		if view.ExportRender == "" {
+			continue
+		}
+		if err := script.CheckDocumentScriptExists(root, view.ExportRender); err != nil {
+			return fmt.Errorf("invalid %s: view %q: export_render: %w", ConfigFile, id, err)
+		}
+	}
+	return nil
 }
+
+// The server-rendered nav-enrichment path (NavItem/NavGroup/NavElement,
+// enrichNavEntry, navElements) and the active-list resolvers
+// (activeListForEntityType, activeListFromReferer, resolveActiveList) are
+// deleted: nothing outside their own tests called them since the SPA took
+// over navigation, and enrichNavEntry counted entities from the RAW store
+// — leaking existence counts of ACL-hidden entities (#1043).
 
 // coverage-ignore: requires running workspace, tested via e2e
 
@@ -859,138 +1136,6 @@ func firstNavTarget(nav []NavigationEntry) *NavigationEntry {
 		return &nav[i]
 	}
 	return nil
-}
-
-// editFormForType returns the first edit form ID configured for the given entity type,
-// or "" if no edit form is found. Forms with explicit mode="edit" are preferred.
-func (a *App) editFormForType(entityType string) string {
-	s := a.State()
-	ids := make([]string, 0, len(s.Cfg.Forms))
-	for id := range s.Cfg.Forms {
-		ids = append(ids, id)
-	}
-	natsort.Strings(ids)
-	// First pass: look for explicit edit mode
-	for _, id := range ids {
-		f := s.Cfg.Forms[id]
-		if f.EntityType == entityType && f.Mode == "edit" {
-			return id
-		}
-	}
-	// Second pass: fall back to forms with no mode specified
-	for _, id := range ids {
-		f := s.Cfg.Forms[id]
-		if f.EntityType == entityType && f.Mode == "" {
-			return id
-		}
-	}
-	return ""
-}
-
-// createFormForType returns the first form ID that can be used to create an entity
-// of the given type. It prefers forms with mode "create" or unset, but falls back
-// to edit-mode forms (which work for creation when no entity ID is provided).
-func (a *App) createFormForType(entityType string) string {
-	s := a.State()
-	ids := make([]string, 0, len(s.Cfg.Forms))
-	for id := range s.Cfg.Forms {
-		ids = append(ids, id)
-	}
-	natsort.Strings(ids)
-	fallback := ""
-	for _, id := range ids {
-		f := s.Cfg.Forms[id]
-		if f.EntityType != entityType {
-			continue
-		}
-		if f.Mode != "edit" {
-			return id
-		}
-		if fallback == "" {
-			fallback = id
-		}
-	}
-	return fallback
-}
-
-// resolveLinkTarget resolves a link configuration value to a URL.
-// Supported values:
-//   - "" or empty: no link (returns "")
-//   - "detail": link to entity detail view (/entity/{type}/{id})
-//   - "document/<name>": link to document preview (/document/<name>/{id})
-func (a *App) resolveLinkTarget(link, entityType, entityID string) string {
-	switch {
-	case link == "":
-		return ""
-	case link == "detail":
-		return "/entity/" + entityType + "/" + entityID
-	case strings.HasPrefix(link, "document/"):
-		docName := strings.TrimPrefix(link, "document/")
-		return "/document/" + docName + "/" + entityID
-	default:
-		return ""
-	}
-}
-
-// activeListForEntityType returns the first navigation list ID whose entity type
-// matches the given type, or "" if none match. Walks into groups.
-func (a *App) activeListForEntityType(entityType string) string {
-	s := a.State()
-	return a.findListByEntityType(s, s.Cfg.Navigation, entityType)
-}
-
-func (a *App) findListByEntityType(s *Schema, entries []NavigationEntry, entityType string) string {
-	for _, nav := range entries {
-		if nav.IsGroup() {
-			if found := a.findListByEntityType(s, nav.Items, entityType); found != "" {
-				return found
-			}
-			continue
-		}
-		if list, ok := s.Cfg.Lists[nav.List]; ok && list.EntityType == entityType {
-			return nav.List
-		}
-	}
-	return ""
-}
-
-// activeListFromReferer extracts a list ID from the Referer header path
-// (e.g. "/list/tickets" -> "tickets"). Returns "" if the referer doesn't
-// point to a known list.
-func (a *App) activeListFromReferer(r *http.Request) string {
-	ref := r.Header.Get("Referer")
-	if ref == "" {
-		return ""
-	}
-	parsed, err := url.Parse(ref)
-	if err != nil {
-		return ""
-	}
-	path := parsed.Path
-	if !strings.HasPrefix(path, "/list/") {
-		return ""
-	}
-	listID := strings.TrimPrefix(path, "/list/")
-	if _, ok := a.State().Cfg.Lists[listID]; ok {
-		return listID
-	}
-	return ""
-}
-
-// resolveActiveList returns the best active list for the sidebar.
-// It first checks for an explicit "from" query parameter (set when navigating
-// from a list), then tries matching by entity type, then falls back to the
-// Referer header.
-func (a *App) resolveActiveList(entityType string, r *http.Request) string {
-	if from := r.URL.Query().Get("from"); from != "" {
-		if _, ok := a.State().Cfg.Lists[from]; ok {
-			return from
-		}
-	}
-	if active := a.activeListForEntityType(entityType); active != "" {
-		return active
-	}
-	return a.activeListFromReferer(r)
 }
 
 // ProjectName returns the display name of the loaded project.

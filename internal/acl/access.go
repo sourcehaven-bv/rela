@@ -9,7 +9,7 @@ import (
 // Verb is a read-or-write access verb the who-can query asks about. It
 // widens [Op] (create/update/delete/rename) with read, which has no Op
 // because the write path never authorizes reads — the read path is
-// [Request.readQuery]. VerbRead routes through the read machinery;
+// Request.readQuery. VerbRead routes through the read machinery;
 // every other verb routes through the per-verb write grant.
 type Verb string
 
@@ -95,7 +95,7 @@ type AssertedGrant struct {
 }
 
 // AssertedGrants reports every asserted_role_assignments mapping that grants
-// verb on entityType. Uses the same grantForRole helper as [EveryoneGrants] and
+// verb on entityType. Uses the same grantForRole helper as [Declarative.EveryoneGrants] and
 // Request.AccessRoutes, so a reported grant can never disagree with an actual
 // authorization decision.
 //
@@ -209,17 +209,41 @@ func (r *Request) AccessRoutes(
 // The verb→predicate mapping is the same one the runtime uses
 // (roleGrantsRead / grantsVerb), so the routes it credits are the real
 // reasons access was granted.
+//
+// Create is intentionally computed with the concrete entityID, same as
+// every other write verb — NOT globals-only. This mirrors the production
+// create path: entitymanager.ApplyEntity authorizes create with
+// EntitySubject{ID: e.ID} (the new entity's id, which exists at authz
+// time), so authorizeEntityWrite takes its `s.ID != ""` branch and folds
+// in local-role-via-edge / via-ancestor routes. Collapsing create to
+// Globals here would report a false DENY for a principal the runtime WOULD
+// let create via an edge — the worst error class for an attestation tool.
+// The `s.ID == ""` globals-only branch exists for callers with no id yet;
+// this report always has one.
 func (r *Request) grantingAttributions(
 	ctx context.Context, verb Verb, entityType, entityID string,
 ) []RoleAttribution {
 	attrs := r.ForEntity(ctx, entityType, entityID)
 	op, isWrite := verb.op()
+
+	// An attestation tool must report EFFECTIVE access, so the client ceiling
+	// applies here exactly as it does at runtime. Reporting the un-attenuated
+	// role set would tell an operator a restricted client can do something it
+	// cannot — the worst error class for a tool whose whole job is answering
+	// "who can do what".
+	if isWrite && !r.ceiling.permitsVerb(op, entityType) {
+		return nil
+	}
+	if !isWrite && !r.ceiling.permitsRead(entityType) {
+		return nil
+	}
+
 	var out []RoleAttribution
 	for _, a := range attrs {
 		if a.Role == EveryoneRole {
 			continue
 		}
-		role, ok := r.d.policy.Roles[a.Role]
+		role, ok := r.roleFor(a.Role)
 		if !ok {
 			continue
 		}

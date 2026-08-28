@@ -36,6 +36,7 @@ func newRelationVersionManager(t *testing.T) (*entitymanager.Manager, *fakeRelat
 		Audit:                   audit.Nop{},
 		ACL:                     acl.NopACL{},
 		Transitions:             statemachine.EmptySet(),
+		FieldGate:               entitymanager.AllowAllFieldGate{},
 		RelationVersionRecorder: rec,
 	})
 	if err != nil {

@@ -1,15 +1,26 @@
 import { describe, it, expect } from 'vitest'
 import {
   getEditFormId,
-  listHeaderMarkdown,
-  listFooterMarkdown,
+  viewHeaderMarkdown,
+  viewFooterMarkdown,
   type FormConfig,
   type ListConfig,
+  type KanbanConfig,
 } from './config'
 
 const list = (over: Partial<ListConfig>): ListConfig => ({
   entity: 'risico',
   columns: [],
+  ...over,
+})
+
+// Lists opt into the legacy `description` → header alias; kanban does not.
+const ALIAS = { allowDescriptionAlias: true }
+
+const kanban = (over: Partial<KanbanConfig>): KanbanConfig => ({
+  entity: 'ticket',
+  column_property: 'status',
+  card: { title: 'title' },
   ...over,
 })
 
@@ -68,51 +79,90 @@ describe('config', () => {
     })
   })
 
-  describe('listHeaderMarkdown', () => {
+  describe('viewHeaderMarkdown', () => {
     it('returns header when set', () => {
-      expect(listHeaderMarkdown(list({ header: '# Hi' }))).toBe('# Hi')
+      expect(viewHeaderMarkdown(list({ header: '# Hi' }))).toBe('# Hi')
     })
 
     it('falls back to description (legacy alias) when header is unset', () => {
-      expect(listHeaderMarkdown(list({ description: 'legacy' }))).toBe('legacy')
+      expect(viewHeaderMarkdown(list({ description: 'legacy' }), ALIAS)).toBe('legacy')
     })
 
     it('prefers header over description when both are set', () => {
-      expect(listHeaderMarkdown(list({ header: 'new', description: 'legacy' }))).toBe('new')
+      expect(viewHeaderMarkdown(list({ header: 'new', description: 'legacy' }), ALIAS)).toBe('new')
     })
 
     it('ignores an empty header and falls back to description', () => {
-      expect(listHeaderMarkdown(list({ header: '', description: 'legacy' }))).toBe('legacy')
+      expect(viewHeaderMarkdown(list({ header: '', description: 'legacy' }), ALIAS)).toBe('legacy')
     })
 
     it('treats a whitespace-only header as unset and falls back to description', () => {
-      expect(listHeaderMarkdown(list({ header: '   \n', description: 'legacy' }))).toBe('legacy')
+      expect(viewHeaderMarkdown(list({ header: '   \n', description: 'legacy' }), ALIAS)).toBe('legacy')
     })
 
     it('returns empty string when both are whitespace-only', () => {
-      expect(listHeaderMarkdown(list({ header: '  ', description: '\t' }))).toBe('')
+      expect(viewHeaderMarkdown(list({ header: '  ', description: '\t' }), ALIAS)).toBe('')
+    })
+
+    it('ignores description when the alias is not opted into', () => {
+      // The alias is a per-call-site opt-in, NOT a consequence of the config
+      // type: types erase at runtime, so an object carrying `description` would
+      // otherwise leak it regardless of which config interface it claims to be.
+      expect(viewHeaderMarkdown(list({ description: 'legacy' }))).toBe('')
+    })
+
+    it('ignores description on a kanban-shaped object even if one is present', () => {
+      // Guards the RR-GNWJFO drift scenario: a future Go `Kanban.Description`
+      // field reaching the SPA must NOT silently switch on the list alias.
+      const boardWithStrayDescription = {
+        entity: 'ticket',
+        column_property: 'status',
+        description: 'must not render',
+      }
+      expect(viewHeaderMarkdown(boardWithStrayDescription)).toBe('')
     })
 
     it('returns empty string when neither is set', () => {
-      expect(listHeaderMarkdown(list({}))).toBe('')
+      expect(viewHeaderMarkdown(list({}))).toBe('')
     })
 
     it('returns empty string for an undefined list', () => {
-      expect(listHeaderMarkdown(undefined)).toBe('')
+      expect(viewHeaderMarkdown(undefined)).toBe('')
+    })
+
+    it('resolves a kanban header', () => {
+      expect(viewHeaderMarkdown(kanban({ header: '# Board' }))).toBe('# Board')
+    })
+
+    it('treats a whitespace-only kanban header as unset', () => {
+      expect(viewHeaderMarkdown(kanban({ header: '  \n' }))).toBe('')
+    })
+
+    it('returns empty string for a kanban with no header', () => {
+      // Kanban never opts into the alias, so there is no fallback to find.
+      expect(viewHeaderMarkdown(kanban({}))).toBe('')
     })
   })
 
-  describe('listFooterMarkdown', () => {
+  describe('viewFooterMarkdown', () => {
     it('returns footer when set', () => {
-      expect(listFooterMarkdown(list({ footer: 'bye' }))).toBe('bye')
+      expect(viewFooterMarkdown(list({ footer: 'bye' }))).toBe('bye')
     })
 
     it('returns empty string when unset', () => {
-      expect(listFooterMarkdown(list({}))).toBe('')
+      expect(viewFooterMarkdown(list({}))).toBe('')
     })
 
     it('returns empty string for an undefined list', () => {
-      expect(listFooterMarkdown(undefined)).toBe('')
+      expect(viewFooterMarkdown(undefined)).toBe('')
+    })
+
+    it('resolves a kanban footer', () => {
+      expect(viewFooterMarkdown(kanban({ footer: 'see the runbook' }))).toBe('see the runbook')
+    })
+
+    it('treats a whitespace-only kanban footer as unset', () => {
+      expect(viewFooterMarkdown(kanban({ footer: '\t' }))).toBe('')
     })
   })
 })

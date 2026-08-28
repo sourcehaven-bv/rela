@@ -1,0 +1,12 @@
+{
+  "text": ["string"],
+  "textarea": ["string"],
+  "number": ["integer"],
+  "checkbox": ["boolean"],
+  "date": ["date"],
+  "datetime": ["datetime"],
+  "select": ["enum", "string"],
+  "multi-select": ["enum", "string"],
+  "rrule": ["rrule"],
+  "file": ["file"]
+}

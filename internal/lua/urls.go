@@ -11,26 +11,39 @@ import (
 	glua "github.com/yuin/gopher-lua"
 )
 
-// registerURLModule installs the rela.url submodule. Each helper
-// corresponds to one SPA route kind and returns a string URL built from
-// the known shape.
+// urlHelpers implements the rela.url submodule: one helper per SPA route kind,
+// each returning a string URL built from the known shape.
+//
+// A type of its own rather than more methods on [Runtime], because URL building
+// needs NOTHING from the runtime — no store, no deps, no request context, not
+// even the Lua state (every helper receives the *glua.LState it is called
+// with). Hanging them off Runtime made a god-object out of what is really a
+// pure function group, and grouping by FILE does not help: the linter counts
+// methods per type, and so does anyone reading Runtime's API.
+//
+// Nil: the zero value is ready to use; it holds no state to initialize.
+type urlHelpers struct{}
+
+// registerURLModule installs the rela.url submodule.
 func (r *Runtime) registerURLModule(rela *glua.LTable) {
+	u := urlHelpers{}
 	tbl := r.L.NewTable()
 	// Form routes — split by mode so the author's intent is explicit.
-	r.L.SetField(tbl, "form_edit", r.L.NewFunction(r.luaURLFormEdit))
-	r.L.SetField(tbl, "form_create", r.L.NewFunction(r.luaURLFormCreate))
+	r.L.SetField(tbl, "form_edit", r.L.NewFunction(u.luaURLFormEdit))
+	r.L.SetField(tbl, "form_create", r.L.NewFunction(u.luaURLFormCreate))
 	// Parametrised routes.
-	r.L.SetField(tbl, "detail", r.L.NewFunction(r.luaURLDetail))
-	r.L.SetField(tbl, "list", r.L.NewFunction(r.luaURLList))
-	r.L.SetField(tbl, "view", r.L.NewFunction(r.luaURLView))
-	r.L.SetField(tbl, "kanban", r.L.NewFunction(r.luaURLKanban))
-	r.L.SetField(tbl, "document", r.L.NewFunction(r.luaURLDocument))
+	r.L.SetField(tbl, "detail", r.L.NewFunction(u.luaURLDetail))
+	r.L.SetField(tbl, "list", r.L.NewFunction(u.luaURLList))
+	r.L.SetField(tbl, "view", r.L.NewFunction(u.luaURLView))
+	r.L.SetField(tbl, "kanban", r.L.NewFunction(u.luaURLKanban))
+	r.L.SetField(tbl, "calendar", r.L.NewFunction(u.luaURLCalendar))
+	r.L.SetField(tbl, "document", r.L.NewFunction(u.luaURLDocument))
 	// Singleton routes — no params, optional query.
-	r.L.SetField(tbl, "home", r.L.NewFunction(r.luaURLHome))
-	r.L.SetField(tbl, "search", r.L.NewFunction(r.luaURLSearch))
-	r.L.SetField(tbl, "analyze", r.L.NewFunction(r.luaURLAnalyze))
-	r.L.SetField(tbl, "settings", r.L.NewFunction(r.luaURLSettings))
-	r.L.SetField(tbl, "conflicts", r.L.NewFunction(r.luaURLConflicts))
+	r.L.SetField(tbl, "home", r.L.NewFunction(u.luaURLHome))
+	r.L.SetField(tbl, "search", r.L.NewFunction(u.luaURLSearch))
+	r.L.SetField(tbl, "analyze", r.L.NewFunction(u.luaURLAnalyze))
+	r.L.SetField(tbl, "settings", r.L.NewFunction(u.luaURLSettings))
+	r.L.SetField(tbl, "conflicts", r.L.NewFunction(u.luaURLConflicts))
 
 	r.L.SetField(rela, "url", tbl)
 }
@@ -39,7 +52,7 @@ func (r *Runtime) registerURLModule(rela *glua.LTable) {
 // raw path, merges any existing query with the caller-supplied params
 // map, and returns the final string. All Go-side helpers (luaURLForm,
 // luaURLDetail, ...) assemble a raw path and delegate here.
-func (r *Runtime) buildURLWithExtra(rawPath string, extra *glua.LTable) (string, error) {
+func (u urlHelpers) buildURLWithExtra(rawPath string, extra *glua.LTable) (string, error) {
 	base, existingQuery, fragment := splitPathQueryFragment(rawPath)
 	values, err := existingQueryValues(existingQuery)
 	if err != nil {
@@ -73,7 +86,7 @@ func optionalTable(ls *glua.LState, n int) *glua.LTable {
 // luaURLFormEdit implements rela.url.form_edit(name, entity).
 // Builds /form/<name>/<entity.id>. `entity` is an entity-shaped table —
 // at minimum a string `id` field; rela.get_entity results satisfy this.
-func (r *Runtime) luaURLFormEdit(ls *glua.LState) int {
+func (u urlHelpers) luaURLFormEdit(ls *glua.LState) int {
 	name := ls.CheckString(1)
 	if name == "" {
 		ls.RaiseError("rela.url.form_edit: form name cannot be empty")
@@ -85,7 +98,7 @@ func (r *Runtime) luaURLFormEdit(ls *glua.LState) int {
 		ls.RaiseError(`rela.url.form_edit: entity must be a table with a string "id" field`)
 		return 0
 	}
-	return r.emitURL(ls, "/form/"+name+"/"+id, nil)
+	return u.emitURL(ls, "/form/"+name+"/"+id, nil)
 }
 
 // luaURLFormCreate implements rela.url.form_create(name, opts?).
@@ -98,14 +111,14 @@ func (r *Runtime) luaURLFormEdit(ls *glua.LState) int {
 //
 // and builds /form/<name>?<folded-query>. Bare rela.url.form_create("foo")
 // with no opts yields an empty create form.
-func (r *Runtime) luaURLFormCreate(ls *glua.LState) int {
+func (u urlHelpers) luaURLFormCreate(ls *glua.LState) int {
 	name := ls.CheckString(1)
 	if name == "" {
 		ls.RaiseError("rela.url.form_create: form name cannot be empty")
 		return 0
 	}
 	if ls.GetTop() < 2 || ls.Get(2) == glua.LNil {
-		return r.emitURL(ls, "/form/"+name, nil)
+		return u.emitURL(ls, "/form/"+name, nil)
 	}
 	opts := ls.CheckTable(2)
 	query, err := foldFormOpts(opts)
@@ -113,13 +126,13 @@ func (r *Runtime) luaURLFormCreate(ls *glua.LState) int {
 		ls.RaiseError("rela.url.form_create: %s", err.Error())
 		return 0
 	}
-	return r.emitURLFromMap(ls, "/form/"+name, query)
+	return u.emitURLFromMap(ls, "/form/"+name, query)
 }
 
 // luaURLDetail implements rela.url.detail(entity).
 // Returns /entity/<entity.type>/<entity.id> — the canonical detail page.
 // No form choice, so no ambiguity.
-func (r *Runtime) luaURLDetail(ls *glua.LState) int {
+func (u urlHelpers) luaURLDetail(ls *glua.LState) int {
 	entity := ls.CheckTable(1)
 	id := entityIDOf(entity)
 	typ := entityTypeOf(entity)
@@ -127,22 +140,22 @@ func (r *Runtime) luaURLDetail(ls *glua.LState) int {
 		ls.RaiseError(`rela.url.detail: entity must be a table with string "id" and "type" fields`)
 		return 0
 	}
-	return r.emitURL(ls, "/entity/"+typ+"/"+id, nil)
+	return u.emitURL(ls, "/entity/"+typ+"/"+id, nil)
 }
 
 // luaURLList implements rela.url.list(name, query?).
 // query is an optional table of extra query params.
-func (r *Runtime) luaURLList(ls *glua.LState) int {
+func (u urlHelpers) luaURLList(ls *glua.LState) int {
 	name := ls.CheckString(1)
 	if name == "" {
 		ls.RaiseError("rela.url.list: list name cannot be empty")
 		return 0
 	}
-	return r.emitURL(ls, "/list/"+name, optionalTable(ls, 2))
+	return u.emitURL(ls, "/list/"+name, optionalTable(ls, 2))
 }
 
 // luaURLView implements rela.url.view(name, entity).
-func (r *Runtime) luaURLView(ls *glua.LState) int {
+func (u urlHelpers) luaURLView(ls *glua.LState) int {
 	name := ls.CheckString(1)
 	if name == "" {
 		ls.RaiseError("rela.url.view: view name cannot be empty")
@@ -154,21 +167,31 @@ func (r *Runtime) luaURLView(ls *glua.LState) int {
 		ls.RaiseError(`rela.url.view: entity must be a table with a string "id" field`)
 		return 0
 	}
-	return r.emitURL(ls, "/view/"+name+"/"+id, nil)
+	return u.emitURL(ls, "/view/"+name+"/"+id, nil)
 }
 
 // luaURLKanban implements rela.url.kanban(name, query?).
-func (r *Runtime) luaURLKanban(ls *glua.LState) int {
+func (u urlHelpers) luaURLKanban(ls *glua.LState) int {
 	name := ls.CheckString(1)
 	if name == "" {
 		ls.RaiseError("rela.url.kanban: kanban name cannot be empty")
 		return 0
 	}
-	return r.emitURL(ls, "/kanban/"+name, optionalTable(ls, 2))
+	return u.emitURL(ls, "/kanban/"+name, optionalTable(ls, 2))
+}
+
+// luaURLCalendar implements rela.url.calendar(name, query?).
+func (u urlHelpers) luaURLCalendar(ls *glua.LState) int {
+	name := ls.CheckString(1)
+	if name == "" {
+		ls.RaiseError("rela.url.calendar: calendar name cannot be empty")
+		return 0
+	}
+	return u.emitURL(ls, "/calendar/"+name, optionalTable(ls, 2))
 }
 
 // luaURLDocument implements rela.url.document(name, entity).
-func (r *Runtime) luaURLDocument(ls *glua.LState) int {
+func (u urlHelpers) luaURLDocument(ls *glua.LState) int {
 	name := ls.CheckString(1)
 	if name == "" {
 		ls.RaiseError("rela.url.document: document name cannot be empty")
@@ -180,31 +203,31 @@ func (r *Runtime) luaURLDocument(ls *glua.LState) int {
 		ls.RaiseError(`rela.url.document: entity must be a table with a string "id" field`)
 		return 0
 	}
-	return r.emitURL(ls, "/document/"+name+"/"+id, nil)
+	return u.emitURL(ls, "/document/"+name+"/"+id, nil)
 }
 
 // Singleton routes — no path params. Each takes an optional query table
 // (e.g. rela.url.search({q = "pseudoniem"})). Named "home" because that's
 // how users refer to the dashboard; it maps to /dashboard under the hood.
 
-func (r *Runtime) luaURLHome(ls *glua.LState) int {
-	return r.emitURL(ls, "/dashboard", optionalTable(ls, 1))
+func (u urlHelpers) luaURLHome(ls *glua.LState) int {
+	return u.emitURL(ls, "/dashboard", optionalTable(ls, 1))
 }
 
-func (r *Runtime) luaURLSearch(ls *glua.LState) int {
-	return r.emitURL(ls, "/search", optionalTable(ls, 1))
+func (u urlHelpers) luaURLSearch(ls *glua.LState) int {
+	return u.emitURL(ls, "/search", optionalTable(ls, 1))
 }
 
-func (r *Runtime) luaURLAnalyze(ls *glua.LState) int {
-	return r.emitURL(ls, "/analyze", optionalTable(ls, 1))
+func (u urlHelpers) luaURLAnalyze(ls *glua.LState) int {
+	return u.emitURL(ls, "/analyze", optionalTable(ls, 1))
 }
 
-func (r *Runtime) luaURLSettings(ls *glua.LState) int {
-	return r.emitURL(ls, "/settings", optionalTable(ls, 1))
+func (u urlHelpers) luaURLSettings(ls *glua.LState) int {
+	return u.emitURL(ls, "/settings", optionalTable(ls, 1))
 }
 
-func (r *Runtime) luaURLConflicts(ls *glua.LState) int {
-	return r.emitURL(ls, "/conflicts", optionalTable(ls, 1))
+func (u urlHelpers) luaURLConflicts(ls *glua.LState) int {
+	return u.emitURL(ls, "/conflicts", optionalTable(ls, 1))
 }
 
 // -----------------------------------------------------------------------------
@@ -213,8 +236,8 @@ func (r *Runtime) luaURLConflicts(ls *glua.LState) int {
 
 // emitURL builds a URL from a helper-provided path + optional Lua
 // extra-query table and pushes it onto the Lua stack.
-func (r *Runtime) emitURL(ls *glua.LState, path string, extra *glua.LTable) int {
-	out, err := r.buildURLWithExtra(path, extra)
+func (u urlHelpers) emitURL(ls *glua.LState, path string, extra *glua.LTable) int {
+	out, err := u.buildURLWithExtra(path, extra)
 	if err != nil {
 		ls.RaiseError("%s", err.Error())
 		return 0
@@ -225,7 +248,7 @@ func (r *Runtime) emitURL(ls *glua.LState, path string, extra *glua.LTable) int 
 
 // emitURLFromMap is the same as emitURL but takes a pre-folded Go map —
 // used when a helper has already walked Lua tables (e.g. form_create).
-func (r *Runtime) emitURLFromMap(ls *glua.LState, path string, query map[string]string) int {
+func (u urlHelpers) emitURLFromMap(ls *glua.LState, path string, query map[string]string) int {
 	base, existingQuery, fragment := splitPathQueryFragment(path)
 	values, err := existingQueryValues(existingQuery)
 	if err != nil {

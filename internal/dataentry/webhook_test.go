@@ -47,7 +47,7 @@ func postWebhook(app *App, body string) *httptest.ResponseRecorder {
 	// in registerWebhookRoutes.
 	r := app.webhook
 	r.handle(rec, req, func(ctx context.Context, claims WebhookClaims) error {
-		return dispatchWebhookAction(ctx, app, r.actionID, claims)
+		return dispatchWebhookAction(ctx, app.write, r.actionID, claims)
 	})
 	return rec
 }
@@ -170,4 +170,37 @@ func TestSeenSet_TTLExpiry(t *testing.T) {
 func countEntities(t *testing.T, app *App, typ string) int {
 	t.Helper()
 	return len(entitiesByType(app, typ))
+}
+
+// TestWebhook_ReachableThroughRouter drives POST /webhooks/idp through the REAL
+// production router (NewRouter), not the handler directly. This is the gap that
+// let BUG-F3ADZO ship: every other webhook test calls rec.handle(...) straight,
+// so none of them route through the mux — and the route was registered on the
+// `inner` sub-mux, which is only mounted under /api/. A path that does not carry
+// the /api/ prefix therefore fell through to the SPA catch-all and returned
+// 200 HTML, so the webhook handler never ran.
+//
+// Oracle: the webhook handler answers a bodyless malformed request with a 4xx
+// (it cannot verify an empty JWT). The SPA catch-all answers 200 with an HTML
+// body. So "not 200, and not an HTML body" means the handler actually ran.
+func TestWebhook_ReachableThroughRouter(t *testing.T) {
+	app := newWebhookTestApp(t, "return true", stubWebhookVerifier{err: errStubReject})
+
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/idp", strings.NewReader("not-a-jwt"))
+	// Clear the host allowlist (the test app binds 127.0.0.1:8080). Without a
+	// matching Host the security layer 403s before routing, which would mask the
+	// routing bug this test exists to catch.
+	req.Host = "127.0.0.1:8080"
+	rec := httptest.NewRecorder()
+	app.NewRouter().ServeHTTP(rec, req)
+
+	if rec.Code == http.StatusOK {
+		t.Fatalf("POST /webhooks/idp returned 200 — it fell through to the SPA "+
+			"catch-all instead of reaching the webhook handler (BUG-F3ADZO). Body: %.80q",
+			rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "<!") || strings.Contains(rec.Body.String(), "<html") {
+		t.Fatalf("POST /webhooks/idp returned an HTML body — the SPA shell answered, "+
+			"not the webhook handler. Status %d", rec.Code)
+	}
 }

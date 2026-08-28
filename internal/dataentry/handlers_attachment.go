@@ -147,7 +147,7 @@ func (h *attachmentHandler) handleV1GetAttachment(
 func (h *attachmentHandler) handleV1PutAttachment(
 	w http.ResponseWriter, r *http.Request, typeName, plural, entityID, property string,
 ) {
-	h.writeMu.Lock()
+	r = h.enterWrite(r)
 	defer h.writeMu.Unlock()
 	ctx := r.Context()
 	// Capture the state snapshot once: the cap the handler enforces and the
@@ -324,7 +324,7 @@ func filePropertyDef(s *Schema, typeName, property string) metamodel.PropertyDef
 func (h *attachmentHandler) handleV1DeleteAttachment(
 	w http.ResponseWriter, r *http.Request, typeName, entityID, property, fileName string,
 ) {
-	h.writeMu.Lock()
+	r = h.enterWrite(r)
 	defer h.writeMu.Unlock()
 	ctx := r.Context()
 	s := h.schema()

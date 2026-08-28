@@ -2,7 +2,9 @@ package affordances
 
 import (
 	"context"
+	"math"
 	"strconv"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -65,7 +67,17 @@ type bindingContext struct {
 
 // outgoingCounts returns the entity's outgoing-edge counts, loading
 // and caching them on first call.
+//
+// For a HISTORICAL subject ([WithHistoricalSubject]) the live store cannot
+// answer the entity's as-of-version edges, so this returns an empty map
+// WITHOUT consulting the store: has_relation / count_relations then see no
+// edges, any conditional `visible:` grant that needs them evaluates false, and
+// the field fails CLOSED (TKT-73C6B2). Not consulting the store also avoids a
+// misleading live lookup on a since-deleted or drifted id.
 func (bc *bindingContext) outgoingCounts(ctx context.Context) map[string]int {
+	if isHistoricalSubject(ctx) {
+		return nil
+	}
 	if !bc.outgoingReady {
 		bc.outgoing = bc.lookup.OutgoingCounts(ctx, bc.entity.ID)
 		bc.outgoingReady = true
@@ -137,7 +149,7 @@ func coerceValue(prop metamodel.PropertyDef, raw any) predicate.Value {
 	if prop.List {
 		return coerceList(prop, raw)
 	}
-	return coerceScalar(prop.Type, raw)
+	return coerceScalar(&prop, raw)
 }
 
 // coerceList coerces a list-typed property. Surprising-but-deliberate
@@ -153,28 +165,38 @@ func coerceList(prop metamodel.PropertyDef, raw any) predicate.Value {
 	switch v := raw.(type) {
 	case []any:
 		for _, e := range v {
-			elems = append(elems, coerceScalar(prop.Type, e))
+			elems = append(elems, coerceScalar(&prop, e))
 		}
 	case nil:
 		// empty list
 	default:
 		// single scalar promoted to one-element list
-		elems = append(elems, coerceScalar(prop.Type, raw))
+		elems = append(elems, coerceScalar(&prop, raw))
 	}
 	return predicate.NewList(elems)
 }
 
-func coerceScalar(typeName string, raw any) predicate.Value {
+// coerceScalar coerces a stored scalar to the predicate Value whose type
+// matches predicatefns.ScalarTypeForProp (the shared adapter): integer ->
+// Int, date/datetime -> Date, boolean -> Bool, everything else -> String.
+// The declared type — not the raw Go type — drives the choice, so the
+// bound Value's type always matches the field's DECLARED predicate type
+// (RR-4189H: a Number bound to an IntType field, or a String to a
+// DateType field, would fail the runtime type check at Eval). Off-type or
+// unconvertible values bind as Nil (DR-C2, fail-soft).
+func coerceScalar(prop *metamodel.PropertyDef, raw any) predicate.Value {
 	if raw == nil {
 		return predicate.NewNil()
 	}
-	switch typeName {
+	switch prop.Type {
 	case metamodel.PropertyTypeInteger:
-		return coerceNumber(raw)
+		return coerceInt(raw)
+	case metamodel.PropertyTypeDate, metamodel.PropertyTypeDatetime:
+		return coerceDate(prop, raw)
 	case metamodel.PropertyTypeBoolean:
 		return coerceBool(raw)
 	default:
-		// string / enum / date / rrule / custom — string-valued.
+		// string / enum / rrule / custom — string-valued.
 		if s, ok := raw.(string); ok {
 			return predicate.NewString(s)
 		}
@@ -182,17 +204,45 @@ func coerceScalar(typeName string, raw any) predicate.Value {
 	}
 }
 
-func coerceNumber(raw any) predicate.Value {
+// coerceInt binds an integer field to a predicate Int. It preserves the
+// permissive coercion the pre-Phase-2 coerceNumber offered (RR-IRV2WJ,
+// pinned by TestResolver_OffTypeProperty_CoercesNotFails): int, int64,
+// an integral float64, and a string that parses as an integer all bind;
+// a fractional float or non-numeric string binds Nil. Fractional inputs
+// bind Nil rather than truncating — silent truncation would corrupt the
+// comparison, and IntType has no fractional value to hold.
+func coerceInt(raw any) predicate.Value {
 	switch v := raw.(type) {
 	case int:
-		return predicate.NewNumberFromInt(v)
+		return predicate.NewInt(int64(v))
 	case int64:
-		return predicate.NewNumber(float64(v))
+		return predicate.NewInt(v)
 	case float64:
-		return predicate.NewNumber(v)
+		if v == math.Trunc(v) {
+			return predicate.NewInt(int64(v))
+		}
 	case string:
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			return predicate.NewNumber(f)
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			return predicate.NewInt(n)
+		}
+	}
+	return predicate.NewNil()
+}
+
+// coerceDate binds a date/datetime field to a predicate Date. YAML
+// auto-decodes an unquoted date scalar to time.Time and a quoted one to
+// string, so BOTH must be handled (RR-WHMVLW: missing the time.Time case
+// silently binds Nil and flips ACL grants to deny). A string is parsed
+// via metamodel.ParseDateValue against the property's declared format —
+// the same parser filter.matchDate uses — never a hand-rolled layout.
+// Anything else binds Nil.
+func coerceDate(prop *metamodel.PropertyDef, raw any) predicate.Value {
+	switch v := raw.(type) {
+	case time.Time:
+		return predicate.NewDate(v)
+	case string:
+		if t, err := metamodel.ParseDateValue(v, prop); err == nil {
+			return predicate.NewDate(t)
 		}
 	}
 	return predicate.NewNil()

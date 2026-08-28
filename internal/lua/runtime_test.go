@@ -111,12 +111,11 @@ func (m *mockWorkspace) seedRelation(r *entity.Relation) {
 func (m *mockWorkspace) services(projectRoot string) WriteDeps {
 	return WriteDeps{
 		ReadDeps: ReadDeps{
-			VisibleReader:  m.store,
-			WritePrepStore: m.store,
-			Tracer:         tracer.New(m.store),
-			Searcher:       &mockSearcher{ws: m},
-			Meta:           m.meta,
-			ProjectRoot:    projectRoot,
+			VisibleReader: m.store,
+			Tracer:        tracer.New(m.store),
+			Searcher:      &mockSearcher{ws: m},
+			Meta:          m.meta,
+			ProjectRoot:   projectRoot,
 		},
 		EntityManager: &mockManager{ws: m},
 	}
@@ -192,6 +191,34 @@ func (m *mockManager) UpdateEntity(
 	}
 	return &entity.UpdateResult{Entity: e}, nil
 }
+
+// PatchEntity mirrors the real manager's targeted-write semantics
+// (read the STORED entity, merge, unset, then save) so binding tests
+// exercise the same preserve-what-you-did-not-name behavior they do
+// in production rather than a permissive stub.
+func (m *mockManager) PatchEntity(
+	ctx context.Context, id string, p entity.Patch,
+) (*entity.UpdateResult, error) {
+	stored, err := m.ws.store.GetEntity(ctx, id)
+	if err != nil {
+		// Structural marker, matching the production manager — the binding
+		// detects not-found via the interface, not the message.
+		return nil, fakeNotFoundError{id: id}
+	}
+	updated := stored.Clone()
+	p.Apply(updated)
+	if err := m.ws.store.UpdateEntity(ctx, updated); err != nil {
+		return nil, err
+	}
+	return &entity.UpdateResult{Entity: updated}, nil
+}
+
+// fakeNotFoundError mirrors the production entity-not-found error's structural
+// marker so the fake exercises the same detection path as production.
+type fakeNotFoundError struct{ id string }
+
+func (e fakeNotFoundError) Error() string        { return "entity not found: " + e.id }
+func (e fakeNotFoundError) EntityNotFound() bool { return true }
 
 func (m *mockManager) DeleteEntity(
 	ctx context.Context, id string, cascade bool,
@@ -521,7 +548,7 @@ func TestWriteFile(t *testing.T) {
 	var buf bytes.Buffer
 
 	projectRoot := t.TempDir()
-	r := NewWriter(ws.services(projectRoot), &buf)
+	r := NewWriter(ws.services(projectRoot), &buf, WithCapabilities(Capabilities{WriteFile: true}))
 	defer r.Close()
 
 	// Files are written to output/ directory
@@ -589,7 +616,7 @@ func TestWriteFile_PathTraversal(t *testing.T) {
 	var buf bytes.Buffer
 
 	projectRoot := t.TempDir()
-	r := NewWriter(ws.services(projectRoot), &buf)
+	r := NewWriter(ws.services(projectRoot), &buf, WithCapabilities(Capabilities{WriteFile: true}))
 	defer r.Close()
 
 	// Try to escape output/ using path traversal
@@ -616,7 +643,7 @@ func TestWriteFile_AbsolutePathOutside(t *testing.T) {
 	var buf bytes.Buffer
 
 	projectRoot := t.TempDir()
-	r := NewWriter(ws.services(projectRoot), &buf)
+	r := NewWriter(ws.services(projectRoot), &buf, WithCapabilities(Capabilities{WriteFile: true}))
 	defer r.Close()
 
 	// Try to write to absolute path (should be rejected)
@@ -633,7 +660,7 @@ func TestWriteFile_InOutputDir(t *testing.T) {
 	var buf bytes.Buffer
 
 	projectRoot := t.TempDir()
-	r := NewWriter(ws.services(projectRoot), &buf)
+	r := NewWriter(ws.services(projectRoot), &buf, WithCapabilities(Capabilities{WriteFile: true}))
 	defer r.Close()
 
 	// Write to output directory
@@ -1382,7 +1409,7 @@ func TestWriteFile_NestedDirectories(t *testing.T) {
 	var buf bytes.Buffer
 
 	projectRoot := t.TempDir()
-	r := NewWriter(ws.services(projectRoot), &buf)
+	r := NewWriter(ws.services(projectRoot), &buf, WithCapabilities(Capabilities{WriteFile: true}))
 	defer r.Close()
 
 	// Write to a deeply nested path within output/
@@ -1664,7 +1691,7 @@ func TestWriteFile_EnsureNewline(t *testing.T) {
 	var buf bytes.Buffer
 
 	projectRoot := t.TempDir()
-	r := NewWriter(ws.services(projectRoot), &buf)
+	r := NewWriter(ws.services(projectRoot), &buf, WithCapabilities(Capabilities{WriteFile: true}))
 	defer r.Close()
 
 	// Write without trailing newline, but with ensure_newline option
@@ -1691,7 +1718,7 @@ func TestWriteFile_EnsureNewline_AlreadyHasNewline(t *testing.T) {
 	var buf bytes.Buffer
 
 	projectRoot := t.TempDir()
-	r := NewWriter(ws.services(projectRoot), &buf)
+	r := NewWriter(ws.services(projectRoot), &buf, WithCapabilities(Capabilities{WriteFile: true}))
 	defer r.Close()
 
 	// Write with trailing newline and ensure_newline option - should not double
@@ -1718,7 +1745,7 @@ func TestWriteFile_EnsureNewline_EmptyContent(t *testing.T) {
 	var buf bytes.Buffer
 
 	projectRoot := t.TempDir()
-	r := NewWriter(ws.services(projectRoot), &buf)
+	r := NewWriter(ws.services(projectRoot), &buf, WithCapabilities(Capabilities{WriteFile: true}))
 	defer r.Close()
 
 	// Empty content should stay empty even with ensure_newline
@@ -2446,12 +2473,14 @@ func (s *ctxSpySearcher) Search(ctx context.Context, q search.Query) iter.Seq2[s
 func spiedDeps(realDeps WriteDeps, rec *ctxRecorder) WriteDeps {
 	return WriteDeps{
 		ReadDeps: ReadDeps{
-			VisibleReader:  &ctxSpyStore{Store: realDeps.WritePrepStore, rec: rec},
-			WritePrepStore: realDeps.WritePrepStore,
-			Tracer:         &ctxSpyTracer{inner: realDeps.Tracer, rec: rec},
-			Searcher:       &ctxSpySearcher{inner: realDeps.Searcher, rec: rec},
-			Meta:           realDeps.Meta,
-			ProjectRoot:    realDeps.ProjectRoot,
+			// The fixture's VisibleReader is backed by the mock store, so it
+			// satisfies store.Store; assert rather than carry a second raw
+			// handle just for the spy.
+			VisibleReader: &ctxSpyStore{Store: realDeps.VisibleReader.(store.Store), rec: rec},
+			Tracer:        &ctxSpyTracer{inner: realDeps.Tracer, rec: rec},
+			Searcher:      &ctxSpySearcher{inner: realDeps.Searcher, rec: rec},
+			Meta:          realDeps.Meta,
+			ProjectRoot:   realDeps.ProjectRoot,
 		},
 		EntityManager: realDeps.EntityManager,
 	}
@@ -2594,7 +2623,8 @@ func TestWithSecrets(t *testing.T) {
 		"api_key":  "sk-secret",
 		"base_url": "https://example.com",
 	}
-	r := NewWriter(ws.services("/tmp"), &buf, WithSecrets(sec))
+	r := NewWriter(ws.services("/tmp"), &buf, WithSecrets(sec),
+		WithCapabilities(Capabilities{Secrets: []string{"api_key", "base_url"}}))
 	defer r.Close()
 
 	script := `rela.output({k = rela.secrets.api_key, u = rela.secrets.base_url})`
@@ -2736,7 +2766,7 @@ func TestWriterRuntime_MutationBindingsPresent(t *testing.T) {
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
-	r := NewWriter(ws.services("/tmp"), &buf)
+	r := NewWriter(ws.services("/tmp"), &buf, WithCapabilities(Capabilities{WriteFile: true}))
 	defer r.Close()
 
 	mutators := []string{"create_entity", "update_entity", "delete_entity", "create_relation", "delete_relation", "write_file"}
@@ -3009,5 +3039,79 @@ func TestRunValidationString_StripsShebang(t *testing.T) {
 	}
 	if num != 42 {
 		t.Errorf("got %v, want 42", num)
+	}
+}
+
+// misreportingMutator returns a NON-404 hard error whose text embeds a
+// caller-supplied value — the exact shape internal/statemachine produces
+// for an illegal transition (`%s %q→%q is not a declared transition`).
+type misreportingMutator struct {
+	Mutator
+	err error
+}
+
+func (m misreportingMutator) PatchEntity(
+	context.Context, string, entity.Patch,
+) (*entity.UpdateResult, error) {
+	return nil, m.err
+}
+
+// TestUpdateEntity_NonNotFoundErrorIsNotMisreported is a regression test
+// for a bug found in code review.
+//
+// rela.update_entity briefly detected "entity not found" with
+// strings.Contains over the whole error text. That is unsafe: several hard
+// errors interpolate CALLER-SUPPLIED values, so a script setting a property
+// to the literal string "entity not found" had its illegal-transition
+// rejection reported as a missing entity. A script branching on that
+// message could then try to recreate a row that still exists.
+//
+// Detection is structural now (lua.NotFoundError). This pins that a
+// non-404 error carrying the magic substring is reported as itself.
+func TestUpdateEntity_NonNotFoundErrorIsNotMisreported(t *testing.T) {
+	t.Parallel()
+	ws := newMockWorkspace(t)
+	deps := ws.services(t.TempDir())
+
+	// Verbatim shape of statemachine's illegal-transition error, with the
+	// caller's own value ("entity not found") interpolated via %q.
+	deps.EntityManager = misreportingMutator{
+		err: fmt.Errorf(
+			"illegal transition: status %q→%q is not a declared transition",
+			"todo", "entity not found",
+		),
+	}
+
+	r := NewWriter(deps, io.Discard)
+	defer r.Close()
+
+	err := r.RunString(`rela.update_entity("TKT-001", {status = "entity not found"})`)
+	if err == nil {
+		t.Fatal("expected the illegal-transition error to surface")
+	}
+	if !strings.Contains(err.Error(), "not a declared transition") {
+		t.Errorf("the real error was lost; got: %v", err)
+	}
+	// The specific regression: it must NOT be dressed up as a 404.
+	if strings.HasPrefix(strings.TrimSpace(err.Error()), "entity not found:") {
+		t.Errorf("non-404 error misreported as entity-not-found: %v", err)
+	}
+}
+
+// TestUpdateEntity_NotFoundStillReported pins the other half: a genuine
+// missing entity keeps its original script-facing message, which existing
+// scripts match on.
+func TestUpdateEntity_NotFoundStillReported(t *testing.T) {
+	t.Parallel()
+	ws := newMockWorkspace(t)
+	r := NewWriter(ws.services(t.TempDir()), io.Discard)
+	defer r.Close()
+
+	err := r.RunString(`rela.update_entity("NOPE-999", {title = "x"})`)
+	if err == nil {
+		t.Fatal("expected an error for a missing entity")
+	}
+	if !strings.Contains(err.Error(), "entity not found: NOPE-999") {
+		t.Errorf("missing-entity message changed; got: %v", err)
 	}
 }

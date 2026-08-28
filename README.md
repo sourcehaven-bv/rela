@@ -87,6 +87,7 @@ go build -o rela ./cmd/rela
 | [Encrypting a rela repo with git-crypt](docs/git-crypt.md) | Use git-crypt for confidentiality when pushing to untrusted git hosts |
 | [Scheduled Tasks](docs/scheduled-tasks.md) | Run Lua scripts on recurring schedules |
 | [Audit Log](docs/audit-log.md) | Forensic JSONL log of every entity / relation write |
+| [Outbound Mail](docs/mail.md) | Configure outbound email — SMTP, branding, and what best-effort delivery means |
 | [PostgreSQL Backend](docs/postgres-backend.md) | Run rela-server and the CLI against PostgreSQL instead of markdown files |
 | [Attachment Security: Scanning, MIME Allowlist & Transforms](docs/attachment-security.md) | Virus scanning, a sniffed MIME allowlist, and byte transforms for uploaded attachments |
 | [Sync](docs/sync.md) | Two-way sync between a local fsstore project and a remote pgstore rela-server |
@@ -94,6 +95,9 @@ go build -o rela ./cmd/rela
 | [ACL: Authorization Overview](docs/acl-overview.md) | How rela's role-based authorization works end-to-end: from acl.yaml + the graph to a write decision and its audit attribution |
 | [ACL: Security Hardening](docs/acl-security.md) | Operator's hardening guide for rela's ACL system: group membership trust, fail-loud boot, audit-isolation invariants |
 | [Generated documentation: the rela docs language](docs/rela-docs.md) | Author a deployment manual in Markdown with embedded Lua islands that pull reference fragments (field tables, enum meanings, mermaid lifecycles, relation graphs, role matrices) straight from the schema. |
+| [CalDAV: syncing to-dos with Apple Reminders and other clients](docs/caldav.md) | Sync to-do collections two-way with Apple Reminders and other CalDAV clients |
+| [CalDAV to-do (VTODO) client compatibility](docs/caldav-clients.md) | Which task apps speak VTODO, and what each does with formatted descriptions |
+| [Data Migration](docs/data-migration.md) | Detect schema shape changes and migrate stored content with generated, reviewable migrations |
 
 ### Tutorials
 
@@ -122,7 +126,7 @@ After running `rela init`:
 
 ```text
 your-project/
-├── metamodel.yaml       # Entity types and relations config
+├── schema.yaml          # Entity types and relations config
 ├── entities/            # Markdown entity files (by type)
 │   ├── requirements/
 │   ├── decisions/

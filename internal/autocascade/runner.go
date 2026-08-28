@@ -173,7 +173,7 @@ func (r *Runner) runCreatedEntityAutomation(
 		return nil
 	}
 
-	newAutoResult := r.engine.Process(automation.Event{
+	newAutoResult := r.engine.Process(ctx, automation.Event{
 		Type:   automation.EventEntityCreated,
 		Entity: created,
 	})
@@ -269,12 +269,15 @@ func (r *Runner) executeScriptActions(
 
 		actionCtx := audit.WithTriggeredBy(ctx, "automation:"+action.AutomationName)
 		err := scripts.Run(actionCtx, ScriptAction{
-			Code:           action.Code,
-			FilePath:       action.FilePath,
-			Name:           action.AutomationName,
-			NewEntity:      newEntity,
-			OldEntity:      oldEntity,
-			AllowACLBypass: action.AllowACLBypass,
+			Code:      action.Code,
+			FilePath:  action.FilePath,
+			Name:      action.AutomationName,
+			NewEntity: newEntity,
+			OldEntity: oldEntity,
+			// Converted to a plain string: this package is schema-agnostic
+			// and may not import metamodel (see ScriptAction.AllowACLBypass).
+			AllowACLBypass: string(action.AllowACLBypass),
+			Capabilities:   scriptCapsFrom(action),
 		}, mutator)
 		if err == nil {
 			continue
@@ -365,4 +368,15 @@ func (r *Runner) createTriggerRelation(
 		return
 	}
 	outcome.RelationsCreated = append(outcome.RelationsCreated, rel)
+}
+
+// scriptCapsFrom reads an action's capability grant through the single
+// translation seam (metamodel.Capabilities.Fields, reached via the automation
+// accessor so this package needs no metamodel import). Adding a capability
+// changes that signature and breaks the build HERE, rather than silently
+// dropping the grant on the automation surface only — the failure mode that
+// produced the scheduler defect (TKT-YH52OM).
+func scriptCapsFrom(a automation.LuaToExecute) ScriptCapabilities {
+	http, ai, writeFile, secrets := a.CapabilityFields()
+	return ScriptCapabilities{HTTP: http, AI: ai, WriteFile: writeFile, Secrets: secrets}
 }

@@ -201,3 +201,47 @@ describe('FieldRenderer affordance plumbing', () => {
     wrapper.unmount()
   })
 })
+
+// DEC-6C1NAA — a label is authored, never derived.
+//
+// Every case above passes an explicit `label`, so before BUG-8N2WT2 the
+// fallback branch had never been executed in CI — and the fallback branch is
+// the ONLY one that runs after `rela migrate` strips a label. These pin it.
+describe('FieldRenderer label fallback', () => {
+  it('renders the raw property name when no label is configured', () => {
+    const wrapper = renderField({
+      field: { property: 'laatste_contact' },
+      propertyDef: { type: 'string' },
+      value: '',
+    })
+    const text = wrapper.find('label').text()
+    expect(text).toContain('laatste_contact')
+    // Never a title-cased guess: that is an English orthographic convention
+    // and this metamodel is language-neutral.
+    expect(text).not.toContain('Laatste Contact')
+    wrapper.unmount()
+  })
+
+  it('renders a kebab-case property raw', () => {
+    const wrapper = renderField({
+      field: { property: 'kebab-name' },
+      propertyDef: { type: 'string' },
+      value: '',
+    })
+    const text = wrapper.find('label').text()
+    expect(text).toContain('kebab-name')
+    expect(text).not.toContain('Kebab Name')
+    expect(text).not.toContain('Kebab-Name')
+    wrapper.unmount()
+  })
+
+  it('prefers an explicit label over the property name', () => {
+    const wrapper = renderField({
+      field: { property: 'laatste_contact', label: 'Laatste contact' },
+      propertyDef: { type: 'string' },
+      value: '',
+    })
+    expect(wrapper.find('label').text()).toContain('Laatste contact')
+    wrapper.unmount()
+  })
+})

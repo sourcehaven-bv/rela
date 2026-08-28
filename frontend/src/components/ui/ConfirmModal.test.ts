@@ -69,6 +69,17 @@ describe('ConfirmModal', () => {
       expect(document.querySelector('.modal p')).toBeNull()
     })
 
+    // A caller that lists items ("these fields will be cleared: …") separates
+    // them with newlines. Default `white-space` collapses those to spaces and
+    // the list renders as one run-on paragraph, which is unreadable exactly
+    // when the message matters most.
+    it('marks the message so authored line breaks survive', () => {
+      factory({ open: true, title: 'T', message: 'line one\nline two' })
+      const p = document.querySelector('.modal p')
+      expect(p?.classList.contains('modal-message')).toBe(true)
+      expect(p?.textContent).toBe('line one\nline two')
+    })
+
     it('uses default labels', () => {
       factory()
       const b = buttons()

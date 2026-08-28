@@ -203,7 +203,10 @@ func (c *AnalyzeCardinalityCmd) Run(ctx context.Context, analyzer *analysis.Serv
 	if err != nil {
 		return err
 	}
-	violations := analyzer.CheckCardinality(ctx, *opts)
+	violations, err := analyzer.CheckCardinality(ctx, *opts)
+	if err != nil {
+		return err
+	}
 	cardMsg := "All cardinality constraints satisfied"
 	if writeAnalysisJSON(len(violations), violations, cardMsg, "Found %d cardinality violations") {
 		return nil
@@ -527,7 +530,10 @@ func (c *AnalyzeAllCmd) Run(ctx context.Context, svc *readServices, analyzer *an
 	if err != nil {
 		return err
 	}
-	summary := analyzer.AnalyzeAll(ctx, *opts)
+	summary, err := analyzer.AnalyzeAll(ctx, *opts)
+	if err != nil {
+		return err
+	}
 	if out.Format == "json" {
 		return writeAnalyzeAllJSON(summary)
 	}
@@ -633,6 +639,10 @@ func runAnalyzeAllSections(
 	}
 	out.WriteMessage("")
 	out.WriteSectionHeader("Cardinality Analysis")
+	// Second full cardinality scan (the summary above already ran one).
+	// With a flaky backend the two runs can disagree — summary success
+	// followed by a section error here. Pre-existing shape; computing
+	// once and passing the violations down is the follow-up fix.
 	if err := (&AnalyzeCardinalityCmd{}).Run(ctx, analyzer); err != nil {
 		errs = append(errs, fmt.Errorf("cardinality analysis: %w", err))
 	}
@@ -667,7 +677,8 @@ func (c *AnalyzeSchemaCmd) Run(svc *readServices) error {
 		return stderrors.New("--threshold must be non-negative")
 	}
 	dataEntry := loadDataEntryConfig(svc)
-	analysisResult := schema.Analyze(svc.Meta, &schema.StoreCounter{Store: svc.Store}, dataEntry, c.Threshold)
+	counter := schema.NewStoreCounter(context.Background(), svc.Store)
+	analysisResult := schema.Analyze(svc.Meta, counter, dataEntry, c.Threshold)
 
 	if c.Cleanup {
 		return runSchemaCleanup(svc, analysisResult, c.DryRun)
@@ -688,7 +699,7 @@ func loadDataEntryConfig(svc *readServices) *dataentryconfig.Config {
 }
 
 func runSchemaCleanup(svc *readServices, analysisResult *schema.Analysis, dryRun bool) error {
-	plan := schema.PlanCleanup(analysisResult)
+	plan := schema.PlanCleanup(analysisResult, filepath.Base(svc.Paths.SchemaPath))
 	if plan.IsEmpty() {
 		if out.Format == "json" {
 			return out.WriteAnalysisResult(output.AnalysisResult{
@@ -729,8 +740,7 @@ func runSchemaCleanup(svc *readServices, analysisResult *schema.Analysis, dryRun
 		return nil
 	}
 
-	projectRoot := filepath.Dir(svc.Paths.MetamodelPath)
-	if err := schema.ExecuteCleanup(plan, projectRoot, false); err != nil {
+	if err := schema.ExecuteCleanup(plan, svc.Paths.SchemaPath, svc.Paths.Root, false); err != nil {
 		return err
 	}
 	out.WriteSuccess("Made %d changes", plan.TotalChanges())

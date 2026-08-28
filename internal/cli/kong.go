@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/alecthomas/kong"
@@ -164,9 +165,10 @@ func runKong() int {
 	var bundles *cliBundles
 	if requiresProject(ktx.Command()) {
 		var err error
-		// The postgres build reads its DSN from $RELA_DATABASE_URL inside
-		// Discover (env-only — no flag — so the credential never lands on a
-		// command line). The filesystem build ignores it.
+		// The postgres build resolves its DSN inside Discover, from
+		// $RELA_DATABASE_URL unless a caller supplies appbuild.WithDatabaseURL.
+		// Neither is a flag, so the credential never lands on a command line.
+		// The filesystem build ignores it.
 		svc, err = appbuild.Discover(projectPath, script.NewEngine())
 		if err != nil {
 			fmt.Fprintln(os.Stderr, relaerrors.WrapDiscoverError(err))
@@ -231,6 +233,16 @@ func requiresProject(cmd string) bool {
 		"sync", "history", "restore",
 		"relation-history", "relation-restore", "history-purge", "relation-history-purge":
 		return true
+	case "migrate":
+		// Bare `rela migrate` (config-file migration) deliberately gets NO
+		// services: it must work on a project too broken to boot. The
+		// data-migration subcommands need the store, so they are matched on
+		// the full command path.
+		switch firstTwoKongTokens(cmd) {
+		case "migrate status", "migrate gen", "migrate data", "migrate gc":
+			return true
+		}
+		return false
 	}
 	return false
 }
@@ -245,4 +257,18 @@ func firstKongToken(s string) string {
 		}
 	}
 	return s
+}
+
+// firstTwoKongTokens returns the first two whitespace-delimited tokens of
+// kong's Command() string ("migrate data --apply" -> "migrate data"), for
+// command families whose subcommands differ in service needs.
+func firstTwoKongTokens(s string) string {
+	first := firstKongToken(s)
+	rest := strings.TrimPrefix(s, first)
+	rest = strings.TrimLeft(rest, " ")
+	second := firstKongToken(rest)
+	if second == "" {
+		return first
+	}
+	return first + " " + second
 }

@@ -1,0 +1,37 @@
+-- pgstore schema, version 7: entity IDs are case-insensitive identities
+-- (BUG-3RCWNS).
+--
+-- entities.id is TEXT COLLATE "C" (byte-exact), so before this migration
+-- PostgreSQL treated "abc" and "ABC" as two distinct entities. fsstore, which
+-- writes "<id>.md", inherits the host filesystem's case behaviour and folds
+-- them onto ONE file on macOS and Windows.
+--
+-- That divergence is not cosmetic: entities move between backends. Migrating a
+-- project holding both IDs into fsstore silently drops one, and `rela sync`
+-- between a byte-exact and a case-folding store has no defined convergence.
+-- The backends must agree on identity for them to stay substitutable.
+--
+-- Enforced as a unique index on lower(id) rather than by changing the column
+-- collation or the primary key:
+--
+--   * The PK stays byte-exact, so foreign keys, the change-feed watermark, and
+--     every existing `WHERE id = $1` lookup keep their current semantics and
+--     index usage. Only the *uniqueness* rule widens.
+--   * Casing is still PRESERVED on the row — "TKT-001" stores and reads back as
+--     "TKT-001". This constrains which IDs may COEXIST, not how they are
+--     spelled. Generated IDs are uppercase by construction and manual IDs are
+--     lowercase slugs; both remain legal.
+--
+-- This migration FAILS if the target database already contains two entities
+-- whose IDs differ only by case. That is deliberate — such a pair cannot be
+-- represented in fsstore at all, so silently merging or dropping one here
+-- would be the same data loss this fixes, just moved earlier. An operator
+-- hitting this must rename one side first:
+--
+--   SELECT lower(id), array_agg(id) FROM entities
+--   GROUP BY lower(id) HAVING count(*) > 1;
+--
+-- No such pair exists in any known deployment (the rela project's own 2030
+-- entities were scanned and are clean).
+
+CREATE UNIQUE INDEX entities_id_lower_key ON entities (lower(id));

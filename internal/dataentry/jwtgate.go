@@ -23,8 +23,13 @@ const denialLogInterval = 10 * time.Second
 // [requireVerifiedJWT] and the principal-resolver chain is bypassed entirely for
 // those requests.
 type JWTGateConfig struct {
-	// Verifier checks the assertion. Required.
-	Verifier subjectVerifier
+	// Verifier checks the assertion and projects its claims. Required.
+	//
+	// It returns the full [AssertedIdentity] (subject + org + roles), not just
+	// the subject, so the gate can stamp asserted roles onto the Principal it
+	// installs. A subject-only verifier here would authenticate correctly but
+	// silently strip every asserted role before the ACL sees it (TKT-OJL2GN).
+	Verifier assertionVerifier
 	// HeaderName is the request header carrying the assertion. Required.
 	HeaderName string
 	// KeysUnavailable reports whether a verification error means the JWKS was
@@ -138,31 +143,49 @@ func requireVerifiedJWT(next http.Handler, cfg JWTGateConfig) http.Handler {
 			return
 		}
 
-		sub, err := cfg.Verifier.VerifySubject(r.Context(), raw)
+		id, err := cfg.Verifier.VerifyAssertion(r.Context(), raw)
 		if err != nil {
 			g.logFailure(r, err)
 			g.deny(w, r)
 			return
 		}
 
-		// Same input filtering as JWTPrincipalResolver: the subject is an opaque
-		// IdP-controlled id, but cap length and strip control characters so a
-		// hostile IdP cannot corrupt the audit JSONL stream. A control-only
-		// subject sanitizes to "" and is denied rather than silently downgraded.
-		user := sanitizeUser(sub)
-		if user == "" {
-			slog.InfoContext(r.Context(), "jwt gate: verified subject is unusable after sanitization",
-				"path", r.URL.Path, "method", r.Method, "remote_addr", r.RemoteAddr)
+		// Project the verified claims into the stamped Principal. verifiedPrincipal
+		// is shared with JWTPrincipalResolver so the gate and the deprecated
+		// resolver sanitize the subject and filter roles identically. A control-only
+		// subject sanitizes away and is denied rather than silently downgraded.
+		//
+		// This carries org_id/org_slug/roles onto the Principal — without it an
+		// asserted_role_assignments policy grants nothing on the production path
+		// (TKT-OJL2GN). The claims flow on to the ACL via attachACLRequest.
+		p, reason := verifiedPrincipal(id, toolForPath(r.URL.Path))
+		if !reason.ok() {
+			// Two distinct causes, logged apart because they call for different
+			// operator action: an unusable subject is an IdP/claims problem,
+			// whereas a reserved one (TKT-9PCL7D) means an IdP is issuing
+			// subjects in rela's internal `system:` namespace — a
+			// misconfiguration or an impersonation attempt.
+			//
+			// The reason comes back FROM verifiedPrincipal rather than being
+			// re-derived from id.Subject here. Re-deriving would classify on the
+			// raw subject while the decision was made on the sanitized one, so a
+			// control-char-prefixed name like "\x01system:scheduler" — denied
+			// correctly — would log as merely unusable and never produce the WARN
+			// operators are told to grep for (RR-OJRCNY).
+			if reason == rejectReserved {
+				slog.WarnContext(r.Context(), "jwt gate: rejected reserved principal in verified assertion",
+					"user", id.Subject,
+					"path", r.URL.Path, "method", r.Method, "remote_addr", r.RemoteAddr)
+			} else {
+				slog.InfoContext(r.Context(), "jwt gate: verified subject is unusable after sanitization",
+					"path", r.URL.Path, "method", r.Method, "remote_addr", r.RemoteAddr)
+			}
 			g.deny(w, r)
 			return
 		}
 
 		g.noteRecovery(r)
-		ctx := principal.With(r.Context(), principal.Principal{
-			User: user,
-			Tool: principal.ToolDataEntry,
-		})
-		next.ServeHTTP(w, r.WithContext(ctx))
+		next.ServeHTTP(w, r.WithContext(principal.With(r.Context(), p)))
 	})
 }
 

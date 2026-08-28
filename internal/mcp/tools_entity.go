@@ -4,9 +4,10 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"sort"
 
@@ -17,12 +18,13 @@ import (
 )
 
 func (s *Server) handleListEntities(
-	ctx context.Context, request mcp.CallToolRequest,
-) (*mcp.CallToolResult, error) {
-	entityType := request.GetString("type", "")
-	where := request.GetString("where", "")
-	limit := request.GetInt("limit", 0)
-	offset := request.GetInt("offset", 0)
+	ctx context.Context, request *mcpgo.CallToolRequest,
+) (*mcpgo.CallToolResult, error) {
+	args := newToolRequest(request)
+	entityType := args.GetString("type", "")
+	where := args.GetString("where", "")
+	limit := args.GetInt("limit", 0)
+	offset := args.GetInt("offset", 0)
 
 	st := s.deps.Store
 	q := store.EntityQuery{}
@@ -33,7 +35,7 @@ func (s *Server) handleListEntities(
 	entities := make([]*entity.Entity, 0)
 	for e, err := range st.ListEntities(ctx, q) {
 		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			return errorResult(err.Error()), nil
 		}
 		entities = append(entities, e)
 	}
@@ -42,7 +44,7 @@ func (s *Server) handleListEntities(
 	if where != "" {
 		filtered, filterErr := filterStoreEntities(entities, where)
 		if filterErr != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid filter: %v", filterErr)), nil
+			return errorResult(fmt.Sprintf("invalid filter: %v", filterErr)), nil
 		}
 		entities = filtered
 	}
@@ -67,43 +69,45 @@ func (s *Server) handleListEntities(
 	}
 	text, err := marshalJSON(summaries)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
-	return mcp.NewToolResultText(text), nil
+	return textResult(text), nil
 }
 
 func (s *Server) handleShowEntity(
-	ctx context.Context, request mcp.CallToolRequest,
-) (*mcp.CallToolResult, error) {
-	id, err := request.RequireString("id")
+	ctx context.Context, request *mcpgo.CallToolRequest,
+) (*mcpgo.CallToolResult, error) {
+	args := newToolRequest(request)
+	id, err := args.RequireString("id")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
 	id = trimID(id)
 
 	st := s.deps.Store
 	e, getErr := st.GetEntity(ctx, id)
 	if getErr != nil {
-		return mcp.NewToolResultError("entity not found: " + id), nil
+		return errorResult("entity not found: " + id), nil
 	}
 
 	text, err := convertStoreEntity(ctx, e, st, true)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
-	return mcp.NewToolResultText(text), nil
+	return textResult(text), nil
 }
 
 func (s *Server) handleSearchEntities(
-	ctx context.Context, request mcp.CallToolRequest,
-) (*mcp.CallToolResult, error) {
-	query, err := request.RequireString("query")
+	ctx context.Context, request *mcpgo.CallToolRequest,
+) (*mcpgo.CallToolResult, error) {
+	args := newToolRequest(request)
+	query, err := args.RequireString("query")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
-	entityType := request.GetString("type", "")
+	entityType := args.GetString("type", "")
 	const defaultSearchLimit = 20
-	limit := request.GetInt("limit", defaultSearchLimit)
+	limit := args.GetInt("limit", defaultSearchLimit)
 
 	q := search.Query{Text: query, Limit: limit}
 	if entityType != "" {
@@ -114,7 +118,7 @@ func (s *Server) handleSearchEntities(
 	summaries := make([]map[string]any, 0)
 	for hit, searchErr := range s.deps.Searcher.Search(ctx, q) {
 		if searchErr != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", searchErr)), nil
+			return errorResult(fmt.Sprintf("search failed: %v", searchErr)), nil
 		}
 		summary := map[string]any{"id": hit.ID, "type": hit.Type}
 		if hit.Title != "" {
@@ -130,25 +134,26 @@ func (s *Server) handleSearchEntities(
 
 	text, err := marshalJSON(summaries)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
-	return mcp.NewToolResultText(text), nil
+	return textResult(text), nil
 }
 
 func (s *Server) handleCreateEntity(
-	ctx context.Context, request mcp.CallToolRequest,
-) (*mcp.CallToolResult, error) {
-	typeName, err := request.RequireString("type")
+	ctx context.Context, request *mcpgo.CallToolRequest,
+) (*mcpgo.CallToolResult, error) {
+	args := newToolRequest(request)
+	typeName, err := args.RequireString("type")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
-	content := request.GetString("content", "")
-	customID := request.GetString("id", "")
+	content := args.GetString("content", "")
+	customID := args.GetString("id", "")
 
 	// Resolve type
 	resolvedType, _, resolveErr := s.resolveEntityType(typeName)
 	if resolveErr != nil {
-		return mcp.NewToolResultError(resolveErr.Error()), nil
+		return errorResult(resolveErr.Error()), nil
 	}
 
 	// Parse properties from the request
@@ -168,7 +173,7 @@ func (s *Server) handleCreateEntity(
 		entity.CreateOptions{ID: customID},
 	)
 	if createErr != nil {
-		return mcp.NewToolResultError(createErr.Error()), nil
+		return errorResult(createErr.Error()), nil
 	}
 	created := result.Entity
 
@@ -176,37 +181,38 @@ func (s *Server) handleCreateEntity(
 	e, _ := st.GetEntity(ctx, created.ID)
 	if e == nil {
 		// Fallback: return minimal info
-		return mcp.NewToolResultText(fmt.Sprintf("Created %s %s", resolvedType, created.ID)), nil
+		return textResult(fmt.Sprintf("Created %s %s", resolvedType, created.ID)), nil
 	}
 
 	text, err := convertStoreEntity(ctx, e, st, false)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
 	body := fmt.Sprintf("Created %s %s\n\n%s", resolvedType, created.ID, text)
-	return mcp.NewToolResultText(prefixWarnings(result.Warnings) + body), nil
+	return textResult(prefixWarnings(result.Warnings) + body), nil
 }
 
 func (s *Server) handleUpdateEntity(
-	ctx context.Context, request mcp.CallToolRequest,
-) (*mcp.CallToolResult, error) {
-	id, err := request.RequireString("id")
+	ctx context.Context, request *mcpgo.CallToolRequest,
+) (*mcpgo.CallToolResult, error) {
+	args := newToolRequest(request)
+	id, err := args.RequireString("id")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
 	id = trimID(id)
 
 	st := s.deps.Store
 	e, getErr := st.GetEntity(ctx, id)
 	if getErr != nil {
-		return mcp.NewToolResultError("entity not found: " + id), nil
+		return errorResult("entity not found: " + id), nil
 	}
 
 	properties := extractPropertiesAllowNil(request)
-	content := request.GetString("content", "")
+	content := args.GetString("content", "")
 
 	if len(properties) == 0 && content == "" {
-		return mcp.NewToolResultError("no updates specified"), nil
+		return errorResult("no updates specified"), nil
 	}
 
 	// Validate property names early for better error messages
@@ -214,34 +220,45 @@ func (s *Server) handleUpdateEntity(
 		return errResult, nil
 	}
 
-	// Apply property updates: nil deletes, anything else sets/overwrites.
+	// Translate the wire shape into a targeted patch: MCP's in-band nil
+	// sentinel means "delete", anything else upserts. Everything not named
+	// is preserved by PatchEntity, so this tool can no longer clobber a
+	// property it did not mention (TKT-80EWGM).
+	patch := entity.Patch{Properties: make(map[string]any, len(properties))}
 	for k, v := range properties {
 		if v == nil {
-			delete(e.Properties, k)
+			patch.MetaUnset = append(patch.MetaUnset, k)
 			continue
 		}
-		e.Properties[k] = v
+		patch.Properties[k] = v
 	}
+	// Deletion order does not affect the result, but a stable slice keeps
+	// audit summaries and test expectations deterministic.
+	slices.Sort(patch.MetaUnset)
+	// Deliberately NOT a pointer-to-"": MCP has no sentinel for "clear the
+	// body", and inventing one here would silently change the tool's
+	// contract. An empty content string means "leave the body alone", as
+	// the `content == ""` guard above already implies.
 	if content != "" {
-		e.Content = content
+		patch.Content = &content
 	}
 
-	updateResult, updateErr := s.deps.EntityManager.UpdateEntity(ctx, e)
+	updateResult, updateErr := s.deps.EntityManager.PatchEntity(ctx, id, patch)
 	if updateErr != nil {
-		return mcp.NewToolResultError(updateErr.Error()), nil
+		return errorResult(updateErr.Error()), nil
 	}
 
 	updated, _ := st.GetEntity(ctx, id)
 	if updated == nil {
-		return mcp.NewToolResultText(prefixWarnings(updateResult.Warnings) + "Updated " + id), nil
+		return textResult(prefixWarnings(updateResult.Warnings) + "Updated " + id), nil
 	}
 
 	text, convertErr := convertStoreEntity(ctx, updated, st, true)
 	if convertErr != nil {
-		return mcp.NewToolResultError(convertErr.Error()), nil
+		return errorResult(convertErr.Error()), nil
 	}
 	body := fmt.Sprintf("Updated %s\n\n%s", id, text)
-	return mcp.NewToolResultText(prefixWarnings(updateResult.Warnings) + body), nil
+	return textResult(prefixWarnings(updateResult.Warnings) + body), nil
 }
 
 // prefixWarnings formats DEC-HWZHA soft-validation warnings as a
@@ -272,33 +289,34 @@ func prefixWarnings(warnings []entity.Warning) string {
 }
 
 func (s *Server) handleDeleteEntity(
-	ctx context.Context, request mcp.CallToolRequest,
-) (*mcp.CallToolResult, error) {
-	id, err := request.RequireString("id")
+	ctx context.Context, request *mcpgo.CallToolRequest,
+) (*mcpgo.CallToolResult, error) {
+	args := newToolRequest(request)
+	id, err := args.RequireString("id")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
 	id = trimID(id)
-	cascade := request.GetBool("cascade", false)
+	cascade := args.GetBool("cascade", false)
 
 	st := s.deps.Store
 	e, getErr := st.GetEntity(ctx, id)
 	if getErr != nil {
-		return mcp.NewToolResultError("entity not found: " + id), nil
+		return errorResult("entity not found: " + id), nil
 	}
 
 	// Check for relations (for better error message)
 	if !cascade {
 		n, _ := st.CountRelations(ctx, store.RelationQuery{EntityID: id, Direction: store.DirectionBoth})
 		if n > 0 {
-			return mcp.NewToolResultError(
+			return errorResult(
 				fmt.Sprintf("entity %s has %d relation(s); set cascade=true to delete them too", id, n)), nil
 		}
 	}
 
 	result, delErr := s.deps.EntityManager.DeleteEntity(ctx, id, cascade)
 	if delErr != nil {
-		return mcp.NewToolResultError(delErr.Error()), nil
+		return errorResult(delErr.Error()), nil
 	}
 	_ = e // kept for the cascade relation-count check above
 
@@ -306,25 +324,26 @@ func (s *Server) handleDeleteEntity(
 	if cascade && len(result.DeletedRelations) > 0 {
 		msg += fmt.Sprintf(" and %d relation(s)", len(result.DeletedRelations))
 	}
-	return mcp.NewToolResultText(msg), nil
+	return textResult(msg), nil
 }
 
 func (s *Server) handleRenameEntity(
-	ctx context.Context, request mcp.CallToolRequest,
-) (*mcp.CallToolResult, error) {
-	oldID, err := request.RequireString("id")
+	ctx context.Context, request *mcpgo.CallToolRequest,
+) (*mcpgo.CallToolResult, error) {
+	args := newToolRequest(request)
+	oldID, err := args.RequireString("id")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
 	oldID = trimID(oldID)
 
-	newID, err := request.RequireString("new_id")
+	newID, err := args.RequireString("new_id")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
 	newID = trimID(newID)
 
-	dryRun := request.GetBool("dry_run", false)
+	dryRun := args.GetBool("dry_run", false)
 
 	// Pause watcher during rename
 	s.deps.Watcher.Pause()
@@ -333,14 +352,14 @@ func (s *Server) handleRenameEntity(
 	result, renameErr := s.deps.EntityManager.RenameEntity(
 		ctx, oldID, newID, entity.RenameOptions{DryRun: dryRun})
 	if renameErr != nil {
-		return mcp.NewToolResultError(renameErr.Error()), nil
+		return errorResult(renameErr.Error()), nil
 	}
 
 	verb := "Renamed"
 	if dryRun {
 		verb = "Dry run — would rename"
 	}
-	return mcp.NewToolResultText(
+	return textResult(
 		fmt.Sprintf("%s: %s → %s (%d relations updated)", verb, result.OldID, result.NewID, result.RelationsUpdated)), nil
 }
 

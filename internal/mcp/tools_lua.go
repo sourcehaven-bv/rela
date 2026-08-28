@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/script"
@@ -20,54 +20,65 @@ import (
 // scriptsDir is the directory where Lua scripts must be located for lua_run.
 const scriptsDir = "scripts"
 
-func toolLuaEval() mcp.Tool {
-	return mcp.NewTool("lua_eval",
-		mcp.WithDescription(
+func toolLuaEval() *mcpgo.Tool {
+	return newTool("lua_eval",
+		withDescription(
 			"Execute Lua code against the rela graph. "+
 				"Use rela.output(data) to return results as JSON. "+
 				"Available functions: get_entity, list_entities, search, create_entity, update_entity, "+
 				"delete_entity, get_relations, create_relation, delete_relation, trace_from, trace_to, "+
 				"find_path, refresh, write_file, get_entity_types, get_relation_types. "+
 				"Context: rela.project_root, rela.args."),
-		mcp.WithString("code", mcp.Required(),
-			mcp.Description("Lua code to execute")),
+		withString("code", required(),
+			description("Lua code to execute")),
 	)
 }
 
-func toolLuaRun() mcp.Tool {
-	return mcp.NewTool("lua_run",
-		mcp.WithDescription(
+func toolLuaRun() *mcpgo.Tool {
+	return newTool("lua_run",
+		withDescription(
 			"Execute a Lua script file against the rela graph. "+
 				"Scripts must be located in the 'scripts/' directory. "+
 				"Use rela.output(data) to return results as JSON."),
-		mcp.WithString("path", mcp.Required(),
-			mcp.Description("Script filename or path within scripts/ (e.g., 'export.lua' or 'reports/summary.lua')")),
-		mcp.WithArray("args",
-			mcp.Description("Arguments to pass to the script (available as rela.args)")),
+		withString("path", required(),
+			description("Script filename or path within scripts/ (e.g., 'export.lua' or 'reports/summary.lua')")),
+		withArray("args",
+			description("Arguments to pass to the script (available as rela.args)")),
 	)
 }
 
-func toolLuaList() mcp.Tool {
-	return mcp.NewTool("lua_list",
-		mcp.WithDescription(
+func toolLuaList() *mcpgo.Tool {
+	return newTool("lua_list",
+		withDescription(
 			"List available Lua scripts in the scripts/ directory. "+
 				"Only scripts in this directory can be executed via lua_run."),
 	)
 }
 
-func (s *Server) handleLuaEval(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	code, err := req.RequireString("code")
+func (s *Server) handleLuaEval(ctx context.Context, req *mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	in := newToolRequest(req)
+	code, err := in.RequireString("code")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
 
 	// Capture output
 	var output bytes.Buffer
 
+	// No capability grant (TKT-YH52OM): lua_eval executes code chosen by an
+	// MCP client, so it is the LEAST appropriate surface to hold http, ai or
+	// secrets — arbitrary attacker-influenceable code paired with the whole
+	// secrets file is precisely the exfiltration chain the ticket closes.
+	// Since TKT-BDG8U9 the MCP endpoint can also be mounted over HTTP, so this
+	// is reachable off-host rather than only over stdio — which raises the
+	// stakes rather than changing the answer.
+	// LuaWriteDeps.Capabilities is the zero value here and must stay that way;
+	// do not "fix" a script that fails with "attempt to index a nil value
+	// (global http)" by granting it here.
 	runtime, err := script.NewWriterRuntime(s.deps.LuaWriteDeps, "",
 		&output, lua.WithContext(ctx), lua.WithCache(s.deps.LuaCache))
 	if err != nil {
-		return mcp.NewToolResultError("config error: " + err.Error()), nil
+		return errorResult("config error: " + err.Error()), nil
 	}
 	defer runtime.Close()
 
@@ -93,27 +104,28 @@ func (s *Server) handleLuaEval(ctx context.Context, req mcp.CallToolRequest) (*m
 		result = "Script executed successfully (no output)"
 	}
 
-	return mcp.NewToolResultText(result), nil
+	return textResult(result), nil
 }
 
-func (s *Server) handleLuaRun(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	path, err := req.RequireString("path")
+func (s *Server) handleLuaRun(ctx context.Context, req *mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	in := newToolRequest(req)
+	path, err := in.RequireString("path")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
 
 	// Security: Validate path is local (no "..", no absolute paths)
 	if !filepath.IsLocal(path) {
-		return mcp.NewToolResultError("script path must be a local path (no '..' or absolute paths allowed)"), nil
+		return errorResult("script path must be a local path (no '..' or absolute paths allowed)"), nil
 	}
 
 	// Security: Must have .lua extension
 	if !strings.HasSuffix(path, ".lua") {
-		return mcp.NewToolResultError("script must have .lua extension"), nil
+		return errorResult("script must have .lua extension"), nil
 	}
 
 	// Parse args if provided
-	args := req.GetStringSlice("args", nil)
+	args := in.GetStringSlice("args", nil)
 
 	projectRoot := s.deps.ProjectRoot
 
@@ -121,37 +133,41 @@ func (s *Server) handleLuaRun(ctx context.Context, req mcp.CallToolRequest) (*mc
 	// Use os.Root for traversal-resistant path access
 	root, err := os.OpenRoot(projectRoot)
 	if err != nil {
-		return mcp.NewToolResultError("cannot open project root: " + err.Error()), nil
+		return errorResult("cannot open project root: " + err.Error()), nil
 	}
 	defer root.Close()
 
 	// Verify script exists using traversal-resistant API
 	scriptsRoot, err := root.OpenRoot(scriptsDir)
 	if err != nil {
-		return mcp.NewToolResultError("scripts directory not found: " + err.Error()), nil
+		return errorResult("scripts directory not found: " + err.Error()), nil
 	}
 	defer scriptsRoot.Close()
 
 	// Read script content using traversal-resistant API to prevent symlink escapes
 	scriptFile, err := scriptsRoot.Open(path)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("script not found: %s (scripts must be in the scripts/ directory)", path)), nil
+		return errorResult(fmt.Sprintf("script not found: %s (scripts must be in the scripts/ directory)", path)), nil
 	}
 	defer scriptFile.Close()
 
 	// Read script content
 	scriptContent, err := io.ReadAll(scriptFile)
 	if err != nil {
-		return mcp.NewToolResultError("cannot read script: " + err.Error()), nil
+		return errorResult("cannot read script: " + err.Error()), nil
 	}
 
 	// Capture output
 	var output bytes.Buffer
 
+	// No capability grant — see the note in lua_eval above (TKT-YH52OM).
+	// lua_run names a file under scripts/, but the CHOICE of file is the MCP
+	// client's, so this inherits the same posture rather than the operator-shell
+	// default `rela script` uses for the very same files.
 	runtime, err := script.NewWriterRuntime(s.deps.LuaWriteDeps, path,
 		&output, lua.WithContext(ctx), lua.WithCache(s.deps.LuaCache))
 	if err != nil {
-		return mcp.NewToolResultError("config error: " + err.Error()), nil
+		return errorResult("config error: " + err.Error()), nil
 	}
 	defer runtime.Close()
 
@@ -175,7 +191,7 @@ func (s *Server) handleLuaRun(ctx context.Context, req mcp.CallToolRequest) (*mc
 		result = "Script executed successfully (no output)"
 	}
 
-	return mcp.NewToolResultText(result), nil
+	return textResult(result), nil
 }
 
 // luaScriptErrorResult builds an MCP CallToolResult carrying a JSON-
@@ -187,7 +203,7 @@ func (s *Server) handleLuaRun(ctx context.Context, req mcp.CallToolRequest) (*mc
 // otherwise the source FS is rooted there so the envelope can include
 // ±N lines around the failing line.
 func luaScriptErrorResult(surface lua.Surface, envelopePath, projectRoot string,
-	frames []lua.StackFrame, capturedOutput []byte, runErr error) *mcp.CallToolResult {
+	frames []lua.StackFrame, capturedOutput []byte, runErr error) *mcpgo.CallToolResult {
 	in := lua.BuildInput{
 		Surface:        surface,
 		Path:           envelopePath,
@@ -209,12 +225,13 @@ func luaScriptErrorResult(surface lua.Surface, envelopePath, projectRoot string,
 	se := lua.BuildScriptError(in)
 	body, err := json.Marshal(se)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Lua error: %v (also failed to marshal envelope: %v)", se.Error(), err))
+		return errorResult(fmt.Sprintf("Lua error: %v (also failed to marshal envelope: %v)", se.Error(), err))
 	}
-	return mcp.NewToolResultError(string(body))
+	return errorResult(string(body))
 }
 
-func (s *Server) handleLuaList(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (s *Server) handleLuaList(_ context.Context, _ *mcpgo.CallToolRequest,
+) (*mcpgo.CallToolResult, error) {
 	projectRoot := s.deps.ProjectRoot
 
 	// Only search the scripts/ directory (security restriction)
@@ -243,7 +260,7 @@ func (s *Server) handleLuaList(_ context.Context, _ mcp.CallToolRequest) (*mcp.C
 	})
 
 	if len(scripts) == 0 {
-		return mcp.NewToolResultText("No Lua scripts found in scripts/ directory"), nil
+		return textResult("No Lua scripts found in scripts/ directory"), nil
 	}
 
 	var result strings.Builder
@@ -255,5 +272,5 @@ func (s *Server) handleLuaList(_ context.Context, _ mcp.CallToolRequest) (*mcp.C
 	}
 	result.WriteString("\nUse lua_run with the script name to execute.")
 
-	return mcp.NewToolResultText(result.String()), nil
+	return textResult(result.String()), nil
 }

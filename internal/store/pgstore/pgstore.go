@@ -17,7 +17,7 @@
 // In addition to the injected query pool, a store opened via [Open] owns a
 // change-feed listener (see feed.go / listener.go) holding its OWN dedicated
 // connection, started in Open and stopped in Close. Each committed write emits
-// a NOTIFY on a schema-scoped channel; the listener turns OTHER processes'
+// a NOTIFY on the shared feed channel; the listener turns OTHER processes'
 // notifications into store.Events on the same in-process Subscribe() fan-out as
 // local writes, so multiple processes against one database see each other's
 // changes. Store.Close stops the listener (closing its connection) before
@@ -41,6 +41,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -78,20 +79,64 @@ type DBTX interface {
 // store pattern this refactor removed. Consumers reach versioning through the
 // injected store.VersionService, never by asserting a capability on the store.
 //
-//plimsoll:max-exported-methods=33
-//plimsoll:max-methods=41
+// +1 for ListEntityHeaders (TKT-1ESTYJ): the store.HeaderReader capability,
+// which omits the content column from the SELECT so entity bodies never
+// leave the database on scans that only read ids and properties. It belongs
+// on *Store — unlike versioning, it is a plain read of the entities table,
+// not a separate service — and the whole point is the backend-native
+// projection, which cannot be delegated elsewhere.
+//
+// [Store.UserState] (TKT-CXD0A4) is +1 again, and is deliberately the SAME
+// shape as [Store.VersionStore]: a one-line factory handing the shared pool to
+// a separate type, called once by the composition root. The subsystem's API
+// lives on [UserStateStore]; only the factory is here, so the count grows by
+// one per subsystem rather than by its surface. Adding UserStateStore's nine
+// methods to *Store is what the paragraph above forbids.
+//
+// EntityTypeWatermark ([store.TypeWatermark]) is +1 for the row-property
+// reason, not the factory one: it reads `max(seq)` over this store's OWN
+// entities and deletions rows — the same tables every other method here touches
+// — so hoisting it into a service would mean a second handle over those two
+// tables for a single index lookup.
+//
+// That makes TWO capabilities admitted as row-properties (ListEntityHeaders and
+// EntityTypeWatermark). A THIRD should not raise these numbers again: extract
+// the row-property reads together, the way versioning and user-state were
+// extracted as subsystems.
+//
+// TryMigrationLock (TKT-CPCBR7) is +1 for the row-property reason too: it is
+// a session advisory lock that must be pinned to a connection from THIS
+// store's pool and schema-qualified with THIS store's schema — a lock handle
+// hoisted into a service would still need exactly this pool, gaining a type
+// but no separation.
+//
+//plimsoll:max-exported-methods=39
+//plimsoll:max-methods=49
 type Store struct {
 	db        DBTX
 	observers []store.EntityObserver // notified synchronously after committed entity writes
 
-	// Cross-process change feed (see feed.go / listener.go). originID identifies
-	// this store's own NOTIFY echoes so the listener can skip them; channel is
-	// the schema-scoped NOTIFY channel (empty => the producer is a no-op, e.g.
-	// for a New() store with no listener wiring). Both are set at construction.
+	// Cross-process change feed (see feed.go / listener.go). Every process
+	// LISTENs on one constant channel (feedChannel); these two fields are what
+	// route a notification. originID identifies this store's own NOTIFY echoes
+	// so the listener can skip them. schema is the schema this store's tables
+	// live in, stamped into each payload so receivers on other schemas ignore
+	// it — and doubling as the "feed is wired" flag: empty => the producer
+	// no-ops, as for a New() store with no listener wiring.
 	originID string
-	channel  string
+	schema   string
 	listener *listener // nil unless a listener was started (see startListener)
 	sweep    *sweep    // nil unless a version-reconciliation sweep was started
+
+	// uniqueSpecs, when set (at wiring, via SetUniqueSpecProvider), yields the
+	// current metamodel's (type, property) unique pairs. The write path uses it
+	// to map a derived-unique-index violation (SQLSTATE 23505 on a
+	// rela_derived_uniq__* index) back to the property name — see
+	// mapUniqueViolation. nil on a New() store: violations then degrade to a
+	// property-less UniquePropertyError (still a conflict), never a panic. Stored
+	// as an atomic.Pointer so a metamodel reload can swap it without a lock and
+	// the concurrent write path never sees a torn value.
+	uniqueSpecs atomic.Pointer[[]store.DerivedObjectSpec]
 
 	mu          sync.Mutex // guards subscribers + nextSubID only
 	subscribers map[int]chan store.Event
@@ -145,11 +190,11 @@ func New(db DBTX, opts ...Option) (*Store, error) {
 		originID:    newOriginID(),
 		subscribers: make(map[int]chan store.Event),
 	}
-	// The producer NOTIFY channel is left empty here (producer no-ops) until a
-	// listener is started via Open, which resolves the schema-scoped channel and
-	// sets s.channel for both producer and listener. A store built with New and
-	// no listener (e.g. the conformance harness) simply emits no cross-process
-	// notifications — its in-process watcher is unaffected.
+	// The producer's schema is left empty here (producer no-ops) until a
+	// listener is started via Open, which resolves it via resolveSchema. A
+	// store built with New and no listener (e.g. the conformance harness)
+	// simply emits no cross-process notifications — its in-process watcher is
+	// unaffected.
 	for _, opt := range opts {
 		opt(s)
 	}

@@ -17,11 +17,21 @@ export interface Config {
   lists: Record<string, ListConfig>
   views: Record<string, ViewConfig>
   kanbans: Record<string, KanbanConfig>
+  /** Optional: the Go side omits the key entirely when no calendar is configured. */
+  calendars?: Record<string, CalendarConfig>
   dashboard?: DashboardConfig
   actions?: Record<string, ActionConfig>
   navigation: NavigationEntry[]
   documents?: Record<string, DocumentConfig>
   apps?: Record<string, AppEntry>
+  /**
+   * Operator-declared priority tiers for next-action suggestions, so the UI
+   * can label a band rather than echo a raw id. The SOURCES are deliberately
+   * absent: a suggestion arrives fully resolved from /_next_action, and
+   * serving the rules would invite a client-side re-implementation of the
+   * engine (same reasoning as "no useACL() composable").
+   */
+  next_action_bands?: NextActionBand[]
 }
 
 /** A custom app surfaced in the SPA (HTML fetched from /api/v1/_apps/{id}). */
@@ -79,6 +89,20 @@ export interface FormStep {
   relations?: FormFieldOrRelation[]
 }
 
+/**
+ * What happens to a field's STORED value when its `visible_when` turns false
+ * (BUG-FB0LN8). Hiding is presentation; the default does not touch data.
+ *
+ * - `no` (default) — keep the value; hide/reveal is lossless.
+ * - `yes`          — clear it when the branch hides.
+ *
+ * `confirm` asks before clearing and undoes the TRIGGERING change on decline —
+ * it is not merely `yes` with a prompt. It requires the propose/commit seam
+ * (TKT-7S5735): the decision happens before anything is applied, so a decline
+ * is a true no-op rather than a rollback.
+ */
+export type ClearWhenHidden = 'no' | 'yes' | 'confirm'
+
 export interface FormField {
   property?: string
   widget?: string
@@ -92,6 +116,14 @@ export interface FormField {
   visible_when?: string
   /** Condition expression; the field is required only when it evaluates true. */
   required_when?: string
+  /** Fate of the stored value when `visible_when` turns false. Default `no`. */
+  clear_when_hidden?: ClearWhenHidden
+  /**
+   * Width on the 12-column form grid (TKT-5V8704). Absent means full width —
+   * one field per row, the default. Same semantics as a view section field's
+   * span, so an author learns the model once.
+   */
+  span?: number
 }
 
 export interface RelationProperty {
@@ -107,8 +139,6 @@ export interface FormRelation {
   label?: string
   required?: boolean
   widget?: string
-  allow_create?: boolean
-  create_form?: string
   properties?: RelationProperty[]
   /** Condition expression; the relation widget is hidden when it evaluates false. */
   visible_when?: string
@@ -129,15 +159,30 @@ export interface FormFieldOrRelation {
   direction?: 'outgoing' | 'incoming'
   target_type?: string
   required?: boolean
-  allow_create?: boolean
-  create_form?: string
   properties?: RelationProperty[]
   // Common props
   label?: string
   widget?: string
+  /**
+   * Width on the 12-column form grid; absent = full width. See FormField.
+   *
+   * Only meaningful on the FIELD half of this union. A relation entry renders
+   * via RelationCards / RelationPicker, which do not read it — those widgets
+   * (a card list, a searchable multi-select) have a natural minimum width that
+   * a narrow column would break. The config validator rejects a span on a
+   * relation so an author is told rather than left wondering.
+   */
+  span?: number
   // Wizard conditions (see FormField / FormRelation)
   visible_when?: string
   required_when?: string
+  /**
+   * Fate of the stored value when `visible_when` turns false. Default `no`.
+   * Property fields only — a relation's hidden-branch handling is the separate
+   * `pruneWizardHiddenRelations` mechanism, and steps have no such key (a step
+   * hiding is just "all its fields hid", each honoring its own setting).
+   */
+  clear_when_hidden?: ClearWhenHidden
 }
 
 export interface ListConfig {
@@ -160,19 +205,32 @@ export interface ListConfig {
 }
 
 /**
- * Resolve the raw markdown for a list's top info region. `header` is canonical;
- * `description` is a fallback — the field predates this feature but was never
- * rendered, so we adopt it as an alias rather than require every config to be
- * rewritten. Returns '' when neither is set (a blank/whitespace-only value is
- * treated as unset). The caller passes the result through renderMarkdown.
+ * Resolve the raw markdown for a view's top info region. `header` is canonical.
+ * Returns '' when unset (a blank/whitespace-only value counts as unset). The
+ * caller passes the result through renderMarkdown.
+ *
+ * `description` is an OPT-IN legacy alias, enabled per call site via
+ * `allowDescriptionAlias`. Only lists pass it: there the field predated this
+ * feature and was never rendered, so adopting it as an alias avoided rewriting
+ * every existing config. Kanban deliberately has no such fallback (TKT-6S331G).
+ *
+ * The opt-in is a flag rather than a type constraint because TypeScript erases
+ * at runtime: a structural parameter would happily read `description` off any
+ * object carrying one, and these configs are parsed from the /_config response.
+ * Relying on `KanbanConfig` merely lacking the field would make the policy a
+ * comment that a later Go `Kanban.Description` field could silently void.
  */
-export function listHeaderMarkdown(list: ListConfig | undefined): string {
-  return list?.header?.trim() || list?.description?.trim() || ''
+export function viewHeaderMarkdown(
+  view: { header?: string; description?: string } | undefined,
+  opts: { allowDescriptionAlias?: boolean } = {}
+): string {
+  const alias = opts.allowDescriptionAlias ? view?.description?.trim() : ''
+  return view?.header?.trim() || alias || ''
 }
 
-/** Resolve the raw markdown for a list's bottom info region ('' when unset). */
-export function listFooterMarkdown(list: ListConfig | undefined): string {
-  return list?.footer?.trim() || ''
+/** Resolve the raw markdown for a view's bottom info region ('' when unset). */
+export function viewFooterMarkdown(view: { footer?: string } | undefined): string {
+  return view?.footer?.trim() || ''
 }
 
 // Helper to get edit form for an entity type
@@ -240,6 +298,14 @@ export interface ViewSection {
 export interface KanbanConfig {
   entity: string
   title?: string
+  /** Markdown rendered above the board. */
+  header?: string
+  /** Markdown rendered below the board. */
+  footer?: string
+  // Deliberately no `description`: unlike ListConfig, kanban has no legacy field
+  // to adopt as a header alias. Enforced at the call site, which does NOT pass
+  // viewHeaderMarkdown's `allowDescriptionAlias` — not by this field's absence,
+  // which types alone cannot guarantee at runtime.
   column_property: string
   columns?: KanbanColumn[]
   swimlane_property?: string
@@ -255,18 +321,133 @@ export interface KanbanColumn {
   value: string
   label?: string
   color?: string
+  /**
+   * Name of an icon from the shared registry (see utils/icons.ts), rendered
+   * beside the label. A NAME, never a glyph: an emoji written into `label`
+   * renders verbatim, and the SPA never parses one back out of label text.
+   */
+  icon?: string
 }
 
 export interface KanbanSwimlane {
   value: string
   label?: string
+  /** Icon name; see KanbanColumn.icon. */
+  icon?: string
 }
 
+/**
+ * One line of detail on a kanban card or a calendar event chip.
+ *
+ * Shared by both surfaces deliberately: they render the same thing — a label
+ * and a value routed through the dense widget registry — so they take the same
+ * config rather than two spellings of it.
+ */
 export interface KanbanCardField {
   property?: string
   relation?: string
   direction?: 'outgoing' | 'incoming'
+  /** Overrides the displayed name; derived from property/relation when unset. */
   label?: string
+  /** Renders the label before the value. Defaults to true when unset. */
+  show_label?: boolean
+}
+
+/**
+ * The label to render for a field.
+ *
+ * Resolution order: the field's explicit `label:`, then — for a relation — the
+ * label authored on the relation type in schema.yaml, then the raw name.
+ *
+ * The relation lookup matters because a relation id reads like a field name:
+ * `belongs-to` on a chip looks like a bug, while the metamodel already carries
+ * "belongs to" one lookup away. Properties have no such authored label, and
+ * this deliberately does NOT invent one by title-casing `assignee` — labels are
+ * authored, never derived (DEC-6C1NAA), so an operator who wants "Assignee"
+ * writes it.
+ *
+ * Nil: `relationLabel` may be omitted; callers without schema access simply get
+ * the raw relation name, as before.
+ */
+export function cardFieldLabel(
+  field: KanbanCardField,
+  relationLabel?: (relation: string) => string | undefined
+): string {
+  if (field.label) return field.label
+  if (field.relation) return relationLabel?.(field.relation) || field.relation
+  return field.property || ''
+}
+
+/** Whether a field's label renders. Unset means true: an unlabelled ambiguous
+ * value is worse than a redundant label. */
+export function cardFieldLabelShown(field: KanbanCardField): boolean {
+  return field.show_label !== false
+}
+
+/**
+ * CalendarConfig is a month/week grid over date-bearing entities.
+ *
+ * Unlike a kanban it takes a LIST of sources: several entity types on one grid
+ * is the point of a calendar, whereas a board groups one type by one property.
+ *
+ * Defaults (default_view, week_start, day_start, day_end, max_events_per_day,
+ * and each source's max_span) are filled in server-side at config load, so the
+ * SPA never has to re-implement them and the wire value is never empty.
+ */
+export interface CalendarConfig {
+  title?: string
+  /** Markdown rendered above the grid. */
+  header?: string
+  /** Markdown rendered below the grid. */
+  footer?: string
+  default_view: CalendarViewKind
+  week_start: CalendarWeekStart
+  sources: CalendarSourceConfig[]
+  /** Extra fields on an event chip. Absent means title only. */
+  event?: CalendarEventConfig
+  /** Bounds of the week-view hour axis, "HH:MM". */
+  day_start: string
+  day_end: string
+  /** Chips per month-view day cell before collapsing into "+N more". */
+  max_events_per_day: number
+  edit_form?: string
+  create_form?: string
+  filter_controls?: FilterControl[]
+}
+
+export type CalendarViewKind = 'month' | 'week'
+export type CalendarWeekStart = 'monday' | 'sunday'
+
+/** A named palette token; the theme owns what the colour actually is. */
+export type CalendarColor = 'blue' | 'green' | 'amber' | 'red' | 'violet' | 'slate'
+
+/**
+ * CalendarSourceConfig projects one entity type onto the grid.
+ *
+ * Field names match a feed source so a single YAML anchor can serve both a
+ * calendar and an ICS feed; `entity` carries the same yaml/json asymmetry as
+ * lists and kanbans (yaml `entity_type`, json `entity`).
+ */
+export interface CalendarSourceConfig {
+  entity: string
+  /** Name shown in the legend that toggles this source; defaults to `entity`. */
+  label?: string
+  where?: string[]
+  /** Date- or datetime-typed property placing the event on the grid. */
+  date: string
+  /** Optional end property; always the same kind as `date`. */
+  end_date?: string
+  summary?: string
+  description?: string
+  color?: CalendarColor
+  /** Days to look back for events starting before the window (with end_date). */
+  max_span: number
+}
+
+/** CalendarEventConfig is the kanban `card:` analogue for an event chip. It has
+ * no title field: the source's `summary` already names the title property. */
+export interface CalendarEventConfig {
+  fields?: KanbanCardField[]
 }
 
 export interface KanbanCard {
@@ -289,7 +470,111 @@ export interface DashboardCard {
   columns?: Array<{ property?: string; relation?: string; label?: string; link?: string }>
   sort?: Array<{ property: string; direction: 'asc' | 'desc' }>
   limit?: number
+  /**
+   * Optional ACL permission gating this card's visibility (TKT-53KICM).
+   *
+   * The SPA does not act on this: the server already omits cards the principal
+   * cannot use from `/_dashboard`. It appears here only because `/_config`
+   * serves the `dashboard:` block verbatim to everyone, so the type has to
+   * describe what arrives. Never filter on it client-side — the SPA reads
+   * booleans the server computed, it does not evaluate ACL.
+   */
+  permission?: string
 }
+
+/**
+ * The per-principal dashboard payload from `/_dashboard`.
+ *
+ * Distinct from {@link DashboardConfig}, which is the verbatim config block on
+ * `/_config`. `cards` is always an array — a project with no dashboard, an
+ * empty `cards:`, and an all-filtered dashboard all arrive as `[]`.
+ */
+export interface DashboardResponse {
+  title?: string
+  description?: string
+  cards: DashboardCard[]
+}
+
+/**
+ * One priority tier, declared by the operator. List order IS priority order.
+ * Served by /_config so the UI can label a band rather than echo a raw id.
+ */
+/**
+ * How much a band's suggestion interrupts. A closed vocabulary rather than
+ * styling knobs: the operator declares the volume, the UI decides what that
+ * looks like.
+ *
+ * The levels differ in what the user must do to clear it, not in decoration:
+ *
+ * - `banner`    must be dealt with — act, snooze or mute. Onboarding, urgent.
+ * - `notice`    same place, much quieter; easy to read past on purpose.
+ * - `statusbar` you must go looking: a chip that expands on click. The default.
+ */
+export type NextActionProminence = 'banner' | 'notice' | 'statusbar'
+
+export interface NextActionBand {
+  id: string
+  label?: string
+  /** Defaults to 'statusbar' when unset. */
+  prominence?: NextActionProminence
+}
+
+/**
+ * One affordance on a suggestion: a discriminated union where exactly one of
+ * action/set/navigate/snooze/dismiss/acknowledge is set. The server validates
+ * that invariant, so the UI can switch on whichever field is present.
+ */
+/** One choice in a pick_one affordance, resolved server-side at render time. */
+export interface NextActionPickOption {
+  entity_id: string
+  label: string
+}
+
+export interface NextActionOffer {
+  label?: string
+  /**
+   * A render-time option list. The offer carries only the operator's config;
+   * the live options arrive in the suggestion's `pick_options`, keyed by this
+   * offer's index — the server resolves them through the same ACL-gated path
+   * as the suggestion itself.
+   */
+  pick_one?: { query: string; limit?: number; action: string }
+  action?: string
+  set?: Record<string, string>
+  confirm?: boolean
+  navigate?: string
+  snooze?: string[]
+  dismiss?: boolean
+  acknowledge?: boolean
+}
+
+/**
+ * The one suggestion to show. Arrives FULLY RESOLVED — message already
+ * interpolated, affordances attached — so the UI renders it rather than
+ * re-deriving anything. The rules themselves are deliberately not served.
+ */
+export interface NextActionSuggestion {
+  source: string
+  band: string
+  entity_id?: string
+  /**
+   * Opaque key component from the source's key_props. Echo it back verbatim
+   * on feedback — it is part of the suggestion key, so omitting it stores a
+   * snooze under a key the server never checks.
+   */
+  variant?: string
+  message: string
+  actions?: NextActionOffer[]
+  /** Live pick_one options, keyed by the offer's index in `actions`. */
+  pick_options?: Record<string, NextActionPickOption[]>
+}
+
+export interface NextActionResponse {
+  suggestion: NextActionSuggestion | null
+}
+
+/** How a user answered a suggestion. */
+export type NextActionFeedbackKind = 'snooze' | 'dismiss' | 'mute' | 'unmute' | 'shown'
 
 export interface AnalyzeIssue {
   entityId: string
@@ -319,6 +604,16 @@ export interface AnalyzeResult {
   warnings: number
   issues: AnalyzeIssue[]
   byCheck: Record<string, number>
+
+  /**
+   * Names of checks that found MORE issues than they returned. Each check
+   * is capped server-side (TKT-1ESTYJ), so `byCheck` for a listed check is
+   * the cap, not the true total.
+   *
+   * Omitted by the server when nothing was truncated, so it is optional —
+   * and older servers never send it at all.
+   */
+  truncatedChecks?: string[]
 }
 
 export interface NavigationEntry {
@@ -327,7 +622,17 @@ export interface NavigationEntry {
   list?: string
   dashboard?: boolean
   kanban?: string
+  calendar?: string
+  search?: boolean
+  settings?: boolean
   action?: string
+  /** Names a standalone document (one configured without an entity_type). */
+  document?: string
+  /** Global named permission required for this entry to appear in the sidebar.
+   *  The SPA does not act on it — the server already omits filtered entries
+   *  from /_sidebar, which is what the menu is built from. Present here only
+   *  because /_config serves the navigation tree verbatim. */
+  permission?: string
   icon?: string
   // Group fields
   group?: string
@@ -335,12 +640,11 @@ export interface NavigationEntry {
   items?: NavigationEntry[]
 }
 
-// Sidebar API types (denormalized navigation with counts)
+// Sidebar API types (denormalized navigation)
 export interface SidebarItem {
   label: string
   href?: string
   icon?: string
-  count?: number
   action?: string
 }
 
@@ -356,18 +660,42 @@ export interface SidebarData {
   /** URL of the user-uploaded sidebar logo (with cache-busting query
    *  parameter), or null/undefined when no logo is set. */
   logoUrl?: string | null
+  /**
+   * Entity type → form id for inline creation from a relation field.
+   * A type is present only when the principal may create it AND a create
+   * form resolves for it, so presence alone is the affordance — no
+   * client-side permission arithmetic, and no reimplementation of the
+   * server's form-resolution ordering.
+   *
+   * Rides on the sidebar because it is the one boot-time payload that is
+   * principal-scoped (`_config` is pinned principal-independent;
+   * `_schema` is a pure metamodel projection).
+   *
+   * A UI hint only: the create POST re-authorizes.
+   */
+  inline_create?: Record<string, string>
 }
 
-// Document config for external rendering via shell commands
+// Document config, mirroring the Go `dataentryconfig.DocumentConfig` that
+// /_config serves verbatim. Exactly one of `command` / `script` is set
+// (enforced server-side).
 export interface DocumentConfig {
   title?: string
-  entity_type?: string // Entity type this document applies to (for frontend filtering)
-  command: string
+  /** Entity type this document applies to (for frontend filtering).
+   *  ABSENT means a standalone document: it renders at /document/:name with
+   *  no entry entity, rather than being attached to one. */
+  entity_type?: string
+  command?: string
+  script?: string
   timeout?: number
+  /** Global named permission required to render this document, if any.
+   *  Present here because the config is not secret; the SPA does not act on
+   *  it — the render endpoint enforces it and returns 403. */
+  permission?: string
   edit?: DocumentEdit
 }
 
-// DocumentEdit configures the Edit button on the standalone document view.
+// DocumentEdit configures the Edit button on the full-page document view.
 // Both fields are required when the parent block is present (validated server-side).
 export interface DocumentEdit {
   form: string

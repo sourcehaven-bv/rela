@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useSchemaStore } from '@/stores'
+import NextActionCard from '@/components/NextActionCard.vue'
 import { searchEntities, analyze } from '@/api'
 import type { Entity, DashboardCard, AnalyzeResult } from '@/types'
 
@@ -8,8 +9,28 @@ const schemaStore = useSchemaStore()
 
 // State
 const loading = ref(true)
-const cardData = ref<Map<number, { entities: Entity[]; count: number }>>(new Map())
+// Keyed by cardKey(), not by array index: the card list is per-principal
+// (TKT-53KICM), so its length and contents can differ between loads. An
+// index-keyed map survives such a change and binds one card's rows to
+// another's tile — e.g. dropping the first of two cards leaves the survivor
+// rendering the dropped card's count.
+const cardData = ref<Map<string, { entities: Entity[]; count: number }>>(new Map())
 const analysisResult = ref<AnalyzeResult | null>(null)
+
+/**
+ * A stable identity for a card, derived from its content.
+ *
+ * Cards have no configured id, so this is the best available substitute:
+ * `title` alone is not guaranteed unique, and `query` alone is genuinely
+ * shared by cards that display the same data differently.
+ *
+ * JSON.stringify rather than string concatenation, so the parts cannot run
+ * together: `{title:'a b', query:'c'}` and `{title:'a', query:'b c'}` must not
+ * collide into one key.
+ */
+function cardKey(card: DashboardCard): string {
+  return JSON.stringify([card.title, card.query, card.display])
+}
 
 // Computed
 const dashboardConfig = computed(() => schemaStore.dashboard)
@@ -23,9 +44,9 @@ async function loadData() {
 
   try {
     // Load card data in parallel
-    const cardPromises = cards.value.map(async (card, index) => {
+    const cardPromises = cards.value.map(async (card) => {
       const response = await searchEntities(card.query)
-      cardData.value.set(index, {
+      cardData.value.set(cardKey(card), {
         entities: response.data,
         count: response.meta.total,
       })
@@ -42,19 +63,25 @@ async function loadData() {
   }
 }
 
-function getCardCount(index: number): number {
-  return cardData.value.get(index)?.count || 0
+type Breakdown = Array<{ value: string; count: number; percentage: number }>
+
+/** One rendered tile: the card plus everything the template needs derived. */
+interface CardView {
+  card: DashboardCard
+  key: string
+  count: number
+  breakdown: Breakdown
+  rows: Entity[]
 }
 
-function getBreakdown(card: DashboardCard, index: number): Array<{ value: string; count: number; percentage: number }> {
-  const data = cardData.value.get(index)
-  if (!data || !card.group_by) return []
+function buildBreakdown(card: DashboardCard, entities: Entity[]): Breakdown {
+  if (!card.group_by) return []
 
   const groupBy = card.group_by
   const counts: Record<string, number> = {}
   let total = 0
 
-  for (const entity of data.entities) {
+  for (const entity of entities) {
     const value = String(entity.properties[groupBy] || 'Unknown')
     counts[value] = (counts[value] || 0) + 1
     total++
@@ -69,16 +96,12 @@ function getBreakdown(card: DashboardCard, index: number): Array<{ value: string
     .sort((a, b) => b.count - a.count)
 }
 
-function getTableRows(card: DashboardCard, index: number): Entity[] {
-  const data = cardData.value.get(index)
-  if (!data) return []
+function buildRows(card: DashboardCard, entities: Entity[]): Entity[] {
+  const sorted = [...entities]
 
-  let entities = [...data.entities]
-
-  // Apply sort
   if (card.sort?.length) {
     const sort = card.sort[0]
-    entities.sort((a, b) => {
+    sorted.sort((a, b) => {
       const aVal = String(a.properties[sort.property] || '')
       const bVal = String(b.properties[sort.property] || '')
       const cmp = aVal.localeCompare(bVal)
@@ -86,13 +109,44 @@ function getTableRows(card: DashboardCard, index: number): Entity[] {
     })
   }
 
-  // Apply limit
-  if (card.limit) {
-    entities = entities.slice(0, card.limit)
-  }
-
-  return entities
+  return card.limit ? sorted.slice(0, card.limit) : sorted
 }
+
+/**
+ * The rendered tiles, with each card's display data derived exactly once
+ * (TKT-ERHWL0).
+ *
+ * The template used to call `getBreakdown(card)` / `getTableRows(card)` twice
+ * per card — once for `v-if="…length"`, once for `v-for` — and both are O(N)
+ * or worse over the card's whole result set (a group-by; a copy plus a
+ * `localeCompare` sort). Deriving into the view model the template iterates
+ * means each derivation has exactly one call site, structurally, rather than
+ * being deduplicated by a cache.
+ *
+ * One entry per card BY POSITION, deliberately not a Map keyed by `cardKey()`.
+ * `cardKey` covers `[title, query, display]`, which is right for `cardData` —
+ * two cards with the same query legitimately share one fetch — but wrong here,
+ * because `group_by` / `sort` / `limit` change the derivation without changing
+ * the key. Keying the derived data by `cardKey` let a "by status" card render a
+ * "by priority" card's breakdown: the exact one-card's-data-on-another's-tile
+ * bug `cardKey` was introduced (TKT-53KICM) to prevent.
+ *
+ * Deriving only for the display mode that renders it also keeps a count card
+ * from paying for a table copy of a result set nothing shows.
+ */
+const cardViews = computed<CardView[]>(() =>
+  cards.value.map((card) => {
+    const key = cardKey(card)
+    const entities = cardData.value.get(key)?.entities ?? []
+    return {
+      card,
+      key,
+      count: cardData.value.get(key)?.count || 0,
+      breakdown: card.display === 'breakdown' ? buildBreakdown(card, entities) : [],
+      rows: card.display === 'table' ? buildRows(card, entities) : [],
+    }
+  })
+)
 
 function getColumnLabel(col: { property?: string; label?: string }): string {
   return col.label || col.property || ''
@@ -111,8 +165,17 @@ function getCellLink(entity: Entity, col: { link?: string }): string | undefined
 }
 
 // Lifecycle
-onMounted(() => {
-  loadData()
+onMounted(async () => {
+  // Belt-and-braces, NOT the thing preventing the empty-state flash: App.vue
+  // renders <RouterView/> only after the store has loaded, so this view cannot
+  // normally mount with `loaded === false`. It matters only if the boot
+  // sequence changes, or when this component is mounted directly (as its unit
+  // tests do). Without a gate somewhere, "No dashboard cards to show" — which
+  // is indistinguishable from the all-filtered state — would flash on load.
+  if (!schemaStore.loaded) {
+    await schemaStore.load()
+  }
+  await loadData()
 })
 </script>
 
@@ -129,16 +192,30 @@ onMounted(() => {
     </div>
 
     <template v-else>
-      <div class="dashboard-grid">
+      <!-- Above the cards, and independent of them: a suggestion is worth
+           showing even on a dashboard with nothing else on it. -->
+      <NextActionCard />
+
+      <!--
+        No cards to show. Deliberately one state for three causes: no
+        `dashboard:` configured, an empty `cards:`, and every card filtered out
+        by `permission:` (TKT-53KICM). Distinguishing them would tell a user
+        about cards they cannot use, which is the opposite of the point.
+      -->
+      <p v-if="cards.length === 0" class="no-data dashboard-empty">
+        No dashboard cards to show.
+      </p>
+
+      <div v-else class="dashboard-grid">
         <div
-          v-for="(card, index) in cards"
-          :key="index"
+          v-for="view in cardViews"
+          :key="view.key"
           class="dashboard-card"
         >
           <div class="card-header">
-            <h3>{{ card.title }}</h3>
+            <h3>{{ view.card.title }}</h3>
             <router-link
-              :to="`/search?q=${encodeURIComponent(card.query)}`"
+              :to="`/search?q=${encodeURIComponent(view.card.query)}`"
               class="card-link"
               title="View in search"
             >
@@ -147,14 +224,14 @@ onMounted(() => {
           </div>
 
           <!-- Count display -->
-          <div v-if="card.display === 'count'" class="card-count">
-            <span class="count-number">{{ getCardCount(index) }}</span>
+          <div v-if="view.card.display === 'count'" class="card-count">
+            <span class="count-number">{{ view.count }}</span>
           </div>
 
           <!-- Breakdown display -->
-          <div v-else-if="card.display === 'breakdown'" class="card-breakdown">
+          <div v-else-if="view.card.display === 'breakdown'" class="card-breakdown">
             <div
-              v-for="item in getBreakdown(card, index)"
+              v-for="item in view.breakdown"
               :key="item.value"
               class="breakdown-row"
             >
@@ -167,24 +244,24 @@ onMounted(() => {
               </div>
               <span class="breakdown-count">{{ item.count }}</span>
             </div>
-            <div v-if="getBreakdown(card, index).length === 0" class="no-data">
+            <div v-if="view.breakdown.length === 0" class="no-data">
               No data
             </div>
           </div>
 
           <!-- Table display -->
-          <div v-else-if="card.display === 'table'" class="card-table">
-            <table v-if="getTableRows(card, index).length > 0">
+          <div v-else-if="view.card.display === 'table'" class="card-table">
+            <table v-if="view.rows.length > 0">
               <thead>
                 <tr>
-                  <th v-for="col in card.columns" :key="col.property">
+                  <th v-for="col in view.card.columns" :key="col.property">
                     {{ getColumnLabel(col) }}
                   </th>
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="entity in getTableRows(card, index)" :key="entity.id">
-                  <td v-for="col in card.columns" :key="col.property">
+                <tr v-for="entity in view.rows" :key="entity.id">
+                  <td v-for="col in view.card.columns" :key="col.property">
                     <router-link
                       v-if="getCellLink(entity, col)"
                       :to="getCellLink(entity, col)!"
@@ -257,7 +334,7 @@ onMounted(() => {
 .loading-state {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-md);
   padding: 48px;
   color: var(--muted-text);
 }
@@ -267,14 +344,8 @@ onMounted(() => {
   height: 24px;
   border: 3px solid var(--border-color);
   border-top-color: var(--accent-color);
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 .dashboard-grid {
@@ -287,7 +358,7 @@ onMounted(() => {
 .dashboard-card {
   background: var(--card-bg);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   padding: 16px;
 }
 
@@ -308,7 +379,7 @@ onMounted(() => {
 .card-link {
   color: var(--muted-text);
   text-decoration: none;
-  font-size: 14px;
+  font-size: var(--font-size-base);
 }
 
 .card-link:hover {
@@ -330,18 +401,18 @@ onMounted(() => {
 .card-breakdown {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-md);
 }
 
 .breakdown-row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-md);
 }
 
 .breakdown-label {
   min-width: 80px;
-  font-size: 13px;
+  font-size: var(--font-size-dense);
   color: var(--muted-text);
 }
 
@@ -349,21 +420,21 @@ onMounted(() => {
   flex: 1;
   height: 8px;
   background: var(--hover-bg);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
 }
 
 .breakdown-bar-fill {
   height: 100%;
   background: var(--accent-color, #6366f1);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   transition: width 0.3s ease;
 }
 
 .breakdown-count {
   min-width: 32px;
   text-align: right;
-  font-size: 13px;
+  font-size: var(--font-size-dense);
   font-weight: 600;
   color: var(--text-color);
 }
@@ -376,7 +447,7 @@ onMounted(() => {
 .card-table table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: var(--font-size-dense);
 }
 
 .card-table th {
@@ -404,7 +475,7 @@ onMounted(() => {
 
 .no-data {
   color: var(--muted-text);
-  font-size: 13px;
+  font-size: var(--font-size-dense);
   padding: 8px 0;
 }
 
@@ -412,26 +483,26 @@ onMounted(() => {
 .validation-card {
   background: var(--card-bg);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   padding: 16px;
 }
 
 .validation-content {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-md);
 }
 
 .validation-success {
   color: var(--success-color);
   font-weight: 600;
-  font-size: 14px;
+  font-size: var(--font-size-base);
 }
 
 .badge {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   padding: 4px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-weight: 500;
 }
 
@@ -447,7 +518,7 @@ onMounted(() => {
 
 .view-details {
   margin-left: auto;
-  font-size: 13px;
+  font-size: var(--font-size-dense);
   color: var(--accent-color);
   text-decoration: none;
   font-weight: 500;
@@ -462,7 +533,7 @@ onMounted(() => {
      mobile-bars.css. Override only typography and hide the description
      to keep the bar compact. */
   .dashboard-header h1 {
-    font-size: 18px;
+    font-size: var(--font-size-lg);
     margin: 0;
   }
 
@@ -472,7 +543,7 @@ onMounted(() => {
 
   .dashboard-grid {
     grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 12px;
+    gap: var(--space-md);
   }
 
   .dashboard-card {
@@ -491,16 +562,16 @@ onMounted(() => {
   }
 
   .count-number {
-    font-size: 32px;
+    font-size: var(--font-size-3xl);
   }
 
   .breakdown-label {
     min-width: 60px;
-    font-size: 12px;
+    font-size: var(--font-size-sm);
   }
 
   .breakdown-row {
-    gap: 8px;
+    gap: var(--space-sm);
   }
 }
 

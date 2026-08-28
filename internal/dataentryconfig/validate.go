@@ -27,13 +27,18 @@ var validTopLevelKeys = map[string]bool{
 	"views":        true,
 	"entity_views": true,
 	"kanbans":      true,
+	"calendars":    true,
 	"documents":    true,
 	"feeds":        true,
+	"caldav":       true,
 	"dashboard":    true,
 	"commands":     true,
 	"actions":      true,
 	"navigation":   true,
 	"palette":      true,
+
+	"next_action_bands": true,
+	"next_actions":      true,
 }
 
 // Known typos with suggestions
@@ -42,6 +47,7 @@ var knownTypos = map[string]string{
 	"list":        "lists",
 	"view":        "views",
 	"kanban":      "kanbans",
+	"calendar":    "calendars",
 	"command":     "commands",
 	"style":       "styles",
 	"nav":         "navigation",
@@ -67,7 +73,6 @@ var validFilterOperators = map[string]bool{
 	"in": true, // comma-separated list, matches any
 }
 
-// Valid sort directions
 var validSortDirections = map[string]bool{
 	"":     true, // default (asc)
 	"asc":  true,
@@ -84,6 +89,207 @@ var validSectionDisplayModes = map[string]bool{
 	"breakdown":  true,
 }
 
+// Valid render modes for a view section and its fields (TKT-HOIX1). Empty is
+// also accepted everywhere and means "inherit", resolving to RenderDisplay.
+var validSectionRenderModes = map[string]bool{
+	RenderDisplay: true,
+	RenderInput:   true,
+}
+
+// Section display modes that actually render `fields`. `render` on any other
+// mode is inert — warned about, not rejected (RR-675AA0), so switching a
+// section's display mode mid-edit isn't a hard config-load failure.
+//
+// `content` is deliberately absent even though the server BUILDS fields for it:
+// a traverse-sourced content section shares a builder arm with `cards`
+// (`sections.go`, `case "content", "cards":`), so its rows carry resolved
+// SectionFieldData on the wire. The SPA's content-card template renders only
+// the markdown body and ignores them, so those fields are inert payload. This
+// map tracks what is RENDERED, which is what an operator setting `render:`
+// cares about — not what the builder happens to populate. Do not "fix" the
+// mismatch by adding `content` here; that would suppress a warning the
+// operator needs.
+var sectionDisplayModesRenderingFields = map[string]bool{
+	"properties": true,
+	"list":       true,
+	"cards":      true,
+}
+
+// sectionFieldWidgetTypes is the widget → accepted-property-types table for a
+// view section field's `widget:` override (TKT-3R7RF3).
+//
+// This is an INDEPENDENT literal, deliberately not derived from
+// Metamodel.ResolveWidgetFromType (RR-Z0GGTO). That function is the table-cell
+// resolver and has no `file` case — deriving from it would reject
+// `widget: file` on a `file` property, which is legal here. It also predates
+// the list/values precedence the SPA applies. Its godoc calls itself the single
+// source of truth for type→widget; on the section path that is not accurate,
+// and the two have already drifted.
+//
+// The authority this DOES mirror is the SPA registry's supportedPropertyTypes
+// (frontend/src/widgets/registry.ts). The two are kept honest by a paired
+// fixture asserted from both languages — see widgetTableFixture in
+// widget_table_test.go and the matching Vitest test.
+//
+// This map is only the TYPE half of the rule. It is NOT sufficient on its own:
+// the SPA's defaultWidgetFor dispatches on (list, values, type) IN THAT ORDER
+// (registry.ts:19-28, an order its own comment marks load-bearing per
+// RR-0Z1P6), so a table keyed on type alone is narrower than the dispatch it
+// claims to mirror. widgetAcceptsProperty applies the higher-precedence rules
+// first; see its godoc.
+var sectionFieldWidgetTypes = map[string][]string{
+	WidgetText:        {metamodel.PropertyTypeString},
+	WidgetTextarea:    {metamodel.PropertyTypeString},
+	WidgetNumber:      {metamodel.PropertyTypeInteger},
+	WidgetCheckbox:    {metamodel.PropertyTypeBoolean},
+	WidgetDate:        {metamodel.PropertyTypeDate},
+	WidgetDatetime:    {metamodel.PropertyTypeDatetime},
+	WidgetSelect:      {metamodel.PropertyTypeEnum, metamodel.PropertyTypeString},
+	WidgetMultiSelect: {metamodel.PropertyTypeEnum, metamodel.PropertyTypeString},
+	WidgetRrule:       {metamodel.PropertyTypeRrule},
+	WidgetFile:        {metamodel.PropertyTypeFile},
+}
+
+// widgetAcceptsProperty reports whether a widget can render a property, and if
+// not, why — the reason becomes the operator's error message.
+//
+// The order of the checks mirrors the SPA's defaultWidgetFor dispatch
+// (registry.ts:19-28), because a validator that models a narrower key than the
+// renderer will accept config the renderer then handles differently:
+//
+//  1. `list: true` → only multi-select. This is the highest-precedence rule in
+//     the SPA and the one with teeth: a list property rendered through, say,
+//     TextareaWidget goes through useStringValue, so the array is flattened to
+//     a string and the auto-save PATCHes a SCALAR over a list. That is silent
+//     data corruption authorized by a config line the server called valid.
+//  2. a value set (`values:`, or a custom type with values) → only the
+//     select-family. A free-text widget over a constrained set lets an operator
+//     type anything; the write validator would reject it later, but the config
+//     should not have promised the control in the first place.
+//  3. otherwise the plain type table above.
+//
+// Custom types are resolved by LOOKUP in meta.Types, not by excluding a
+// hardcoded list of built-ins. An earlier version negated a builtin-name list,
+// which accepted any undeclared type name as enum-like and could not tell a
+// value-less custom type from a real enum.
+func widgetAcceptsProperty(
+	widget string, pd metamodel.PropertyDef, meta *metamodel.Metamodel,
+) (ok bool, reason string) {
+	if pd.List {
+		if widget == WidgetMultiSelect {
+			return true, ""
+		}
+		return false, fmt.Sprintf(
+			"%q is a list property, which only %q can render", widget, WidgetMultiSelect)
+	}
+	if widgetPropertyHasValues(pd, meta) {
+		if widget == WidgetSelect || widget == WidgetMultiSelect {
+			return true, ""
+		}
+		return false, fmt.Sprintf(
+			"the property has a fixed value set, which only %q or %q can render",
+			WidgetSelect, WidgetMultiSelect)
+	}
+	accepted := sectionFieldWidgetTypes[widget]
+	if slices.Contains(accepted, pd.Type) {
+		return true, ""
+	}
+	return false, fmt.Sprintf("widget %q accepts: %s", widget, strings.Join(accepted, ", "))
+}
+
+// widgetPropertyHasValues reports whether a property is constrained to a fixed
+// value set — either inline (`values:`) or via a custom type declared under
+// `types:` that carries values. Mirrors ResolveWidgetFromType's own membership
+// test (schema_output.go), which likewise requires len(Values) > 0 so a
+// value-less custom type is not mistaken for an enum.
+func widgetPropertyHasValues(pd metamodel.PropertyDef, meta *metamodel.Metamodel) bool {
+	if len(pd.Values) > 0 {
+		return true
+	}
+	if meta == nil {
+		return false
+	}
+	ct, ok := meta.Types[pd.Type]
+	return ok && len(ct.Values) > 0
+}
+
+// validateSectionFieldWidget checks each field's `widget:` override: the name
+// must be registered, and it must accept the property's declared type.
+//
+// Called OUTSIDE the source-resolution guards for the name check, which needs
+// no metamodel knowledge (the RR-4ICH8M lesson). The type-compatibility half
+// necessarily needs the property's definition, so it is skipped — not failed —
+// when the property is unknown; inertWidgetWarnings reports that case instead.
+//
+// `widget: file` is additionally rejected outside a `properties` section
+// (RR-NGY84F): only the entry mount site passes `:attachments` to
+// SectionEditForm, so a FileWidget forced into a cards/list row would render
+// with no attachments at all. Failing at config load beats rendering a widget
+// that cannot work.
+func validateSectionFieldWidget(
+	viewID string, i int, s ViewSection, eDef *metamodel.EntityDef,
+	meta *metamodel.Metamodel,
+) []string {
+	var errs []string
+	for j, f := range s.Fields {
+		if f.Widget == "" {
+			continue
+		}
+		if _, known := sectionFieldWidgetTypes[f.Widget]; !known {
+			errs = append(errs, fmt.Sprintf(
+				"view %q: section[%d] field[%d] has invalid widget %q (valid: %s)",
+				viewID, i, j, f.Widget, strings.Join(sortedMapKeys(sectionFieldWidgetTypes), ", ")))
+			continue
+		}
+		// Property compatibility BEFORE the display-mode rule: a field can
+		// violate both, and reporting the surface rule first would send the
+		// operator to fix the display mode only to hit a second, different
+		// error on the next load.
+		var typeErr string
+		if eDef != nil {
+			if pd, ok := eDef.Properties[f.Property]; ok {
+				if accepted, reason := widgetAcceptsProperty(f.Widget, pd, meta); !accepted {
+					typeErr = fmt.Sprintf(
+						"view %q: section[%d] field[%d] sets widget %q on property %q of type %q: %s",
+						viewID, i, j, f.Widget, f.Property, pd.Type, reason)
+				}
+			}
+			// An unknown property is NOT an error here — inertWidgetWarnings
+			// reports it, since there is no type to check against.
+		}
+		if typeErr != "" {
+			errs = append(errs, typeErr)
+			continue
+		}
+		if f.Widget == WidgetFile && s.Display != "properties" {
+			errs = append(errs, fmt.Sprintf(
+				"view %q: section[%d] field[%d] sets widget: file on display mode %q; "+
+					"the file widget is only supported on display: properties",
+				viewID, i, j, s.Display))
+		}
+	}
+	return errs
+}
+
+// validateSectionRender checks the section-level `render:` and each field's,
+// independently of whether the section's source resolves (RR-4ICH8M).
+func validateSectionRender(viewID string, i int, s ViewSection) []string {
+	var errs []string
+	if s.Render != "" && !validSectionRenderModes[s.Render] {
+		errs = append(errs, fmt.Sprintf(
+			"view %q: section[%d] has invalid render mode %q (valid: %s)",
+			viewID, i, s.Render, joinMapKeys(validSectionRenderModes)))
+	}
+	for j, f := range s.Fields {
+		if f.Render != "" && !validSectionRenderModes[f.Render] {
+			errs = append(errs, fmt.Sprintf(
+				"view %q: section[%d] field[%d] has invalid render mode %q (valid: %s)",
+				viewID, i, j, f.Render, joinMapKeys(validSectionRenderModes)))
+		}
+	}
+	return errs
+}
+
 // Valid display modes for dashboard cards
 var validDashboardDisplayModes = map[string]bool{
 	"count":     true,
@@ -91,7 +297,6 @@ var validDashboardDisplayModes = map[string]bool{
 	"breakdown": true,
 }
 
-// Valid command contexts
 var validCommandContexts = map[string]bool{
 	"entity": true,
 	"list":   true,
@@ -99,14 +304,12 @@ var validCommandContexts = map[string]bool{
 	"global": true,
 }
 
-// Valid relation directions
 var validRelationDirections = map[Direction]bool{
 	"":                true, // default (outgoing)
 	DirectionOutgoing: true,
 	DirectionIncoming: true,
 }
 
-// Valid relation widgets
 var validRelationWidgets = map[string]bool{
 	"":                true, // default (auto-detect from cardinality)
 	WidgetSelect:      true,
@@ -130,13 +333,16 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateViews(cfg, meta)...)
 	errs = append(errs, validateEntityViews(cfg, meta)...)
 	errs = append(errs, validateKanbans(cfg, meta)...)
+	errs = append(errs, validateCalendars(cfg, meta)...)
 	errs = append(errs, validateDashboard(cfg, meta)...)
 	errs = append(errs, validateCommands(cfg, meta)...)
 	errs = append(errs, validateActions(cfg, meta)...)
 	errs = append(errs, validateApp(cfg)...)
 	errs = append(errs, validateDocuments(cfg)...)
 	errs = append(errs, validateFeeds(cfg, meta)...)
+	errs = append(errs, validateCalDAV(cfg, meta)...)
 	errs = append(errs, validateStyles(cfg, meta)...)
+	errs = append(errs, validateNextActions(cfg, meta)...)
 	errs = append(errs, validateCrossReferences(cfg)...)
 
 	if len(errs) > 0 {
@@ -156,6 +362,20 @@ func checkUnknownKeys(data []byte) []string {
 	var errs []string
 	for key := range raw {
 		if validTopLevelKeys[key] {
+			continue
+		}
+		// An underscore-prefixed key holds a YAML anchor and is not config.
+		// Strict key checking is what makes config typos loud, but it also
+		// rejects the only place an author can PUT a shared anchor: YAML
+		// resolves anchors at parse time, so the definition has to live
+		// somewhere in the document, and every real key is already claimed.
+		// The underscore marks intent explicitly rather than inferring it.
+		//
+		// Narrowed to keys that do NOT shadow a real section name: `_kanbans`
+		// is far more likely to be a block someone commented out by prefixing
+		// it than an anchor holder, and silently ignoring that would defeat
+		// the check it is an exception to.
+		if strings.HasPrefix(key, "_") && !validTopLevelKeys[strings.TrimPrefix(key, "_")] {
 			continue
 		}
 		if suggestion, ok := knownTypos[key]; ok {
@@ -195,6 +415,14 @@ func validateNavigation(cfg *Config) []string {
 func validateNavEntry(nav NavigationEntry, cfg *Config) []string {
 	var errs []string
 
+	// The name itself is checked for groups too, so a typo is reported even on
+	// an entry that will also be rejected for having an icon at all.
+	label := nav.Label
+	if label == "" {
+		label = nav.Group
+	}
+	errs = append(errs, validateIconName(nav.Icon, fmt.Sprintf("navigation %q", label))...)
+
 	if nav.List != "" {
 		if _, ok := cfg.Lists[nav.List]; !ok {
 			errs = append(errs, fmt.Sprintf(
@@ -208,6 +436,12 @@ func validateNavEntry(nav NavigationEntry, cfg *Config) []string {
 				"navigation: references unknown kanban %q", nav.Kanban))
 		}
 	}
+	if nav.Calendar != "" {
+		if _, ok := cfg.Calendars[nav.Calendar]; !ok {
+			errs = append(errs, fmt.Sprintf(
+				"navigation: references unknown calendar %q", nav.Calendar))
+		}
+	}
 
 	if nav.Action != "" {
 		if _, ok := cfg.Actions[nav.Action]; !ok {
@@ -216,12 +450,65 @@ func validateNavEntry(nav NavigationEntry, cfg *Config) []string {
 		}
 	}
 
+	if nav.Document != "" {
+		doc, ok := cfg.Documents[nav.Document]
+		switch {
+		case !ok:
+			errs = append(errs, fmt.Sprintf(
+				"navigation: references unknown document %q", nav.Document))
+		case !doc.IsStandalone():
+			// An entity-anchored document needs an entry id in its URL, and a
+			// sidebar entry has no entity to supply one. Rejecting at config
+			// load beats emitting a link that always 400s.
+			errs = append(errs, fmt.Sprintf(
+				"navigation: document %q has entity_type %q so it cannot be a navigation entry "+
+					"(only documents without entity_type can; they render at /document/%s)",
+				nav.Document, doc.EntityType, nav.Document))
+		}
+	}
+
 	if nav.IsGroup() {
+		// A group is a container, not a destination — there is nothing for a
+		// permission to gate, and a gated group would be ambiguous with the
+		// empty-group rule (a group disappears on its own once every child is
+		// filtered out). Rejecting is clearer than silently ignoring it.
+		// Same reasoning as permission: a group renders as a bare section
+		// title with no icon slot, so an icon here would be silently dropped.
+		if nav.Icon != "" {
+			errs = append(errs, fmt.Sprintf(
+				"navigation: group %q cannot have an icon (a group renders as a section "+
+					"title; set icon on its items instead)", nav.Group))
+		}
+		if nav.Permission != "" {
+			errs = append(errs, fmt.Sprintf(
+				"navigation: group %q cannot have a permission (set it on the items instead; "+
+					"a group is hidden automatically when all its items are)", nav.Group))
+		}
 		for _, child := range nav.Items {
 			errs = append(errs, validateNavEntry(child, cfg)...)
 		}
 	}
 
+	return errs
+}
+
+// validateSidePanelSpans checks `span` on a form's side-panel section fields.
+//
+// Side panels reuse ViewSection/ViewSectionField and render through the same
+// buildSections path as a view, so a span authored there reaches the wire — but
+// no other validator descends into form.SidePanel, so it would otherwise go
+// unchecked. Nil panel is the common case and yields nothing.
+func validateSidePanelSpans(formID string, panel *SidePanelConfig) []string {
+	if panel == nil {
+		return nil
+	}
+	var errs []string
+	for i, sec := range panel.Sections {
+		for j, f := range sec.Fields {
+			errs = append(errs, validateSpan(f.Span,
+				fmt.Sprintf("form %q: side_panel section[%d] field[%d]", formID, i, j))...)
+		}
+	}
 	return errs
 }
 
@@ -246,10 +533,10 @@ func validateForms(cfg *Config, meta *metamodel.Metamodel) []string {
 
 		// Flat (single-page) fields/relations.
 		for i, f := range form.Fields {
-			errs = append(errs, validateFormField(formID, "", i, f, form.EntityType, entDef, meta)...)
+			errs = append(errs, validateFormField(formID, "", i, f, form.EntityType, entDef, meta, false)...)
 		}
 		for i, r := range form.Relations {
-			errs = append(errs, validateFormRelation(cfg, formID, "", i, r, form.EntityType, meta)...)
+			errs = append(errs, validateFormRelation(formID, "", i, r, form.EntityType, meta)...)
 		}
 
 		// Wizard steps: each step's fields/relations reuse the same checks.
@@ -259,12 +546,26 @@ func validateForms(cfg *Config, meta *metamodel.Metamodel) []string {
 				errs = append(errs, fmt.Sprintf("form %q: %shas no title", formID, ctx))
 			}
 			for i, f := range step.Fields {
-				errs = append(errs, validateFormField(formID, ctx, i, f, form.EntityType, entDef, meta)...)
+				errs = append(errs, validateFormField(
+					formID, ctx, i, f, form.EntityType, entDef, meta, step.VisibleWhen != "")...)
 			}
 			for i, r := range step.Relations {
-				errs = append(errs, validateFormRelation(cfg, formID, ctx, i, r, form.EntityType, meta)...)
+				errs = append(errs, validateFormRelation(formID, ctx, i, r, form.EntityType, meta)...)
 			}
 		}
+
+		// Side-panel sections carry ViewSectionField, the same struct used by
+		// views — so they carry `span` too, and executeSidePanel renders them
+		// through the same buildSections path. Nothing else in this file
+		// descends into form.SidePanel, so without this a bad span there is
+		// accepted in silence: exactly the failure validateSpan exists to
+		// prevent, on a real config path.
+		//
+		// Scoped to span deliberately. Side-panel property names have never
+		// been validated either, and fixing that is a wider behavior change
+		// (it could start rejecting configs that load today) that belongs in
+		// its own ticket rather than riding along with a layout PR.
+		errs = append(errs, validateSidePanelSpans(formID, form.SidePanel)...)
 	}
 
 	return errs
@@ -273,9 +574,12 @@ func validateForms(cfg *Config, meta *metamodel.Metamodel) []string {
 // validateFormField checks one form field against the metamodel. ctx is an
 // optional location prefix (e.g. "step[0] ") so wizard and flat forms share
 // the rule set while keeping distinct error messages.
+// stepConditional reports whether the field's enclosing wizard step carries a
+// `visible_when`. A field on a conditional step can be hidden without a
+// `visible_when` of its own, so `clear_when_hidden` still applies to it.
 func validateFormField(
 	formID, ctx string, i int, f FormField, entityType string,
-	entDef *metamodel.EntityDef, meta *metamodel.Metamodel,
+	entDef *metamodel.EntityDef, meta *metamodel.Metamodel, stepConditional bool,
 ) []string {
 	var errs []string
 	if _, ok := entDef.Properties[f.Property]; !ok {
@@ -288,24 +592,69 @@ func validateFormField(
 			errs = append(errs, validateTransitions(formID, i, f, propDef, meta)...)
 		}
 	}
+	// clear_when_hidden is allowlist-validated: a typo must not silently
+	// resolve to a destructive default. Note YAML `no`/`yes` decode to the
+	// literal strings "no"/"yes" here (the field is typed string, and yaml.v3
+	// uses the YAML 1.2 core schema), so they land in the allowlist as
+	// written; `off`/`false` do not and are rejected.
+	if f.ClearWhenHidden != "" && !ValidClearWhenHidden[f.ClearWhenHidden] {
+		errs = append(errs, fmt.Sprintf(
+			"form %q: %sfield[%d] property %q has invalid clear_when_hidden %q (valid: %s)",
+			formID, ctx, i, f.Property, f.ClearWhenHidden,
+			strings.Join(sortedMapKeys(ValidClearWhenHidden), ", ")))
+	}
+	// A field can be hidden by its own `visible_when` OR by its enclosing
+	// wizard step's. With neither, `clear_when_hidden` could never fire — that
+	// is an author mistake worth reporting rather than a silently inert key.
+	if f.ClearWhenHidden != "" && f.VisibleWhen == "" && !stepConditional {
+		errs = append(errs, fmt.Sprintf(
+			"form %q: %sfield[%d] property %q sets clear_when_hidden but neither it nor its step has a visible_when (it would never apply)",
+			formID, ctx, i, f.Property))
+	}
+	errs = append(errs, validateSpan(f.Span, fmt.Sprintf("form %q: %sfield[%d]", formID, ctx, i))...)
 	return errs
 }
 
 // validateFormRelation checks one form relation against the metamodel. ctx is
 // an optional location prefix (see validateFormField).
 func validateFormRelation(
-	cfg *Config, formID, ctx string, i int, r FormRelation, entityType string, meta *metamodel.Metamodel,
+	formID, ctx string, i int, r FormRelation, entityType string, meta *metamodel.Metamodel,
 ) []string {
 	var errs []string
+
+	// A span on a relation is a config mistake, not a layout instruction:
+	// RelationCards / RelationPicker never read it, so it would be silently
+	// discarded. Saying so beats leaving the author to conclude the feature
+	// is broken. See FormRelation.Span.
+	if r.Span != 0 {
+		errs = append(errs, fmt.Sprintf(
+			"form %q: %srelation[%d] cannot have a span (relation widgets always take the full row)",
+			formID, ctx, i))
+	}
 
 	relDef, ok := meta.GetRelationDef(r.Relation)
 	switch {
 	case ok:
+		// An absent `direction:` is inferred from the metamodel when the form's
+		// entity type sits on exactly one side. When it sits on BOTH (a
+		// self-referencing relation like `depends-on`), outgoing and incoming
+		// are both meaningful and mean opposite things, so the author must say
+		// which — there is no safe default to fall back on.
+		_, res := InferDirection(entityType, r.Relation, meta)
+		ambiguous := r.Direction == "" && res == DirectionAmbiguous
+		if ambiguous {
+			errs = append(errs, AmbiguousDirectionError(
+				fmt.Sprintf("form %q: %srelation[%d]", formID, ctx, i), entityType, r.Relation))
+		}
 		// Canonical name resolved — check that the form's entity type is on
 		// the correct side of the edge for the chosen direction. Wrong-side
 		// configs are silently broken otherwise: the widget searches the wrong
-		// target type and never shows existing edges.
-		errs = append(errs, validateFormRelationSide(formID, i, entityType, r, relDef)...)
+		// target type and never shows existing edges. Skipped when ambiguous:
+		// without a direction there is no side to check against, and the error
+		// above is the actionable one.
+		if !ambiguous {
+			errs = append(errs, validateFormRelationSide(formID, i, entityType, r, relDef, meta)...)
+		}
 	default:
 		if canonical, isInverse := meta.InverseOwner(r.Relation); isInverse {
 			errs = append(errs, fmt.Sprintf(
@@ -330,34 +679,39 @@ func validateFormRelation(
 			formID, ctx, i, r.Widget))
 	}
 
-	if r.CreateForm != "" {
-		if _, ok := cfg.Forms[r.CreateForm]; !ok {
-			errs = append(errs, fmt.Sprintf(
-				"form %q: %srelation[%d] references unknown create_form %q",
-				formID, ctx, i, r.CreateForm))
-		}
-	}
-
 	return errs
 }
 
 // validateFormRelationSide checks that the form's entity type sits on
 // the side of the relation that matches the chosen direction. An
 // outgoing relation must be authored from a `From:` type; an incoming
-// one must be authored from a `To:` type. Mismatch returns an error;
-// when the entity is on the opposite side the message hints at
-// flipping the direction.
+// one must be authored from a `To:` type.
+//
+// The direction it checks against comes from InferDirection — the single
+// shared rule — so an absent key resolves the same way here as it does in the
+// server's config handler and the migration. Do not re-derive the side test
+// locally: a second copy that drifts silently binds the wrong side, which is
+// the exact bug class this file exists to prevent.
+//
+// When the author wrote an explicit direction and picked the wrong one, the
+// message hints at flipping it. (For an ABSENT direction no hint is possible:
+// inference already resolved it to whichever side the entity type is on, so a
+// wrong-side error there means the type is on neither side and flipping would
+// not help.)
 func validateFormRelationSide(
-	formID string, i int, entityType string, r FormRelation, relDef *metamodel.RelationDef,
+	formID string, i int, entityType string, r FormRelation, relDef *metamodel.RelationDef, meta *metamodel.Metamodel,
 ) []string {
 	if entityType == "" {
 		return nil
 	}
-	incoming := r.Direction.IsIncoming()
+	dir := r.Direction
+	if dir == "" {
+		dir, _ = InferDirection(entityType, r.Relation, meta)
+	}
 	expected, opposite := relDef.From, relDef.To
 	expectedSide, oppositeSide := "from", "to"
 	flipDir := DirectionIncoming
-	if incoming {
+	if dir.IsIncoming() {
 		expected, opposite = relDef.To, relDef.From
 		expectedSide, oppositeSide = "to", "from"
 		flipDir = DirectionOutgoing
@@ -366,7 +720,7 @@ func validateFormRelationSide(
 		return nil
 	}
 	hint := ""
-	if r.Direction == "" && slices.Contains(opposite, entityType) {
+	if r.Direction != "" && slices.Contains(opposite, entityType) {
 		hint = fmt.Sprintf(" (set `direction: %s` to bind the %s side of %q)", flipDir, oppositeSide, r.Relation)
 	}
 	return []string{fmt.Sprintf(
@@ -452,6 +806,30 @@ func validateEntityViews(cfg *Config, meta *metamodel.Metamodel) []string {
 	return errs
 }
 
+// validateExportRenderShape validates an `export_render:` script path's shape.
+// Shape only — whether the file exists on disk is checked at app construction,
+// which is where the project root is known (see dataentry.NewApp).
+//
+// Shared by the list and view overrides so the two cannot fail differently:
+// before this, a typo'd list path failed here while the identical typo on a
+// view fell through to a generic loader error at boot. kind/id name the owner
+// for the message ("list"/"view").
+func validateExportRenderShape(kind, id, path string) []string {
+	if path == "" {
+		return nil
+	}
+	var errs []string
+	if !strings.HasSuffix(path, ".lua") {
+		errs = append(errs, fmt.Sprintf(
+			"%s %q: export_render must be a .lua script path, got %q", kind, id, path))
+	}
+	if !filepath.IsLocal(path) {
+		errs = append(errs, fmt.Sprintf(
+			"%s %q: export_render must be a local path under scripts/, got %q", kind, id, path))
+	}
+	return errs
+}
+
 // validateLists validates list definitions.
 //
 //nolint:gocognit // linear validation dispatcher: one independent config-vs-metamodel check per branch; splitting would scatter the rule set without lowering real complexity.
@@ -465,6 +843,8 @@ func validateLists(cfg *Config, meta *metamodel.Metamodel) []string {
 			continue
 		}
 
+		errs = append(errs, validateExportRenderShape("list", listID, list.ExportRender)...)
+
 		// Validate columns
 		for i, c := range list.Columns {
 			if c.Relation != "" {
@@ -473,6 +853,9 @@ func validateLists(cfg *Config, meta *metamodel.Metamodel) []string {
 						"list %q: column[%d] references unknown relation %q",
 						listID, i, c.Relation))
 				}
+				errs = append(errs, CheckAmbiguousDirection(
+					fmt.Sprintf("list %q: column[%d]", listID, i),
+					list.EntityType, c.Relation, c.Direction, meta)...)
 			} else if c.Property != "" {
 				if _, ok := entDef.Properties[c.Property]; !ok {
 					errs = append(errs, fmt.Sprintf(
@@ -534,6 +917,9 @@ func validateLists(cfg *Config, meta *metamodel.Metamodel) []string {
 						"list %q: filter_controls[%d] references unknown relation %q",
 						listID, i, fc.Relation))
 				}
+				errs = append(errs, CheckAmbiguousDirection(
+					fmt.Sprintf("list %q: filter_controls[%d]", listID, i),
+					list.EntityType, fc.Relation, fc.Direction, meta)...)
 			}
 		}
 	}
@@ -583,7 +969,204 @@ func CollectConfigWarnings(cfg *Config, meta *metamodel.Metamodel) []string {
 	warnings = append(warnings, conflictingRelationDirectionWarnings(cfg)...)
 	warnings = append(warnings, relationPropertyNameCollisionWarnings(cfg, meta)...)
 	warnings = append(warnings, viewCommandPermissionWarnings(cfg)...)
+	warnings = append(warnings, inertSectionRenderWarnings(cfg)...)
+	warnings = append(warnings, inertWidgetWarnings(cfg, meta)...)
 	return warnings
+}
+
+// inertSectionRenderWarnings flags `render:` on a section whose display mode
+// does not render fields at all (`table` uses `columns:`; `content` renders the
+// body) — the key is silently inert there (RR-675AA0). Warn rather than error,
+// for the same reason as viewCommandPermissionWarnings: the config is not
+// wrong, and switching a section's display mode should not be a hard failure.
+func inertSectionRenderWarnings(cfg *Config) []string {
+	var warnings []string
+	viewIDs := make([]string, 0, len(cfg.Views))
+	for id := range cfg.Views {
+		viewIDs = append(viewIDs, id)
+	}
+	sort.Strings(viewIDs)
+	for _, viewID := range viewIDs {
+		for i, s := range cfg.Views[viewID].Sections {
+			if sectionDisplayModesRenderingFields[s.Display] {
+				continue
+			}
+			// Name the precise origin — section-level, or the first offending
+			// field index — so the operator isn't left scanning a long
+			// `fields:` list. Matches the precision validateSectionRender's
+			// errors already set.
+			origin := ""
+			if s.Render != "" {
+				origin = fmt.Sprintf("section[%d]", i)
+			} else {
+				for j, f := range s.Fields {
+					if f.Render != "" {
+						origin = fmt.Sprintf("section[%d] field[%d]", i, j)
+						break
+					}
+				}
+			}
+			if origin == "" {
+				continue
+			}
+			warnings = append(warnings, fmt.Sprintf(
+				"view %q: %s sets render: on display mode %q, which does not render fields; "+
+					"the setting has no effect (it applies to: %s)",
+				viewID, origin, s.Display, joinMapKeys(sectionDisplayModesRenderingFields)))
+		}
+	}
+	return warnings
+}
+
+// inertWidgetWarnings flags a `widget:` override that cannot take effect
+// (TKT-3R7RF3). Two inert cases, both warned rather than errored for the same
+// reason as inertSectionRenderWarnings — the config is not wrong, just
+// ineffective, and a display-mode switch should not be a hard load failure:
+//
+//   - a display mode that renders no fields at all (`table`, `content`), the
+//     exact case sectionDisplayModesRenderingFields already describes;
+//   - a property the metamodel does not declare. Such a field renders through
+//     the SPA's routing-hint path, which resolves a widget from the value's
+//     shape and takes no override name (RR-2GBB0V). Note this is NOT because
+//     the field is read-only — an unschema'd field IS editable, since a
+//     missing ACL verdict reads as writable. It is because there is no
+//     PropertyDef to type-check the override against, so honoring it would
+//     push an unvalidated widget into a live edit control.
+//
+// A third inert case is deliberately NOT warned: a state-machine field on
+// `render: input`, where the SPA's StatusControl owns the field and ignores
+// the widget. Machine-ness is a runtime, per-entity, per-principal fact
+// (computeTransitions, gated on a TransitionResolver the config layer cannot
+// see), so the warning is unbuildable here rather than merely unwritten
+// (RR-66MT0D). It is documented in docs/data-entry.md instead. That same field
+// on `render: display` DOES honor the widget, so the interaction is two-axis.
+func inertWidgetWarnings(cfg *Config, meta *metamodel.Metamodel) []string {
+	var warnings []string
+	viewIDs := make([]string, 0, len(cfg.Views))
+	for id := range cfg.Views {
+		viewIDs = append(viewIDs, id)
+	}
+	sort.Strings(viewIDs)
+	for _, viewID := range viewIDs {
+		view := cfg.Views[viewID]
+		collections := viewCollectionTypes(view, meta)
+		for i, s := range view.Sections {
+			renders := sectionDisplayModesRenderingFields[s.Display]
+			eDef, sourceType := widgetSectionDef(s, collections, meta)
+			for j, f := range s.Fields {
+				if f.Widget == "" {
+					continue
+				}
+				if !renders {
+					warnings = append(warnings, fmt.Sprintf(
+						"view %q: section[%d] field[%d] sets widget: on display mode %q, "+
+							"which does not render fields; the setting has no effect "+
+							"(it applies to: %s)",
+						viewID, i, j, s.Display,
+						joinMapKeys(sectionDisplayModesRenderingFields)))
+					continue
+				}
+				if eDef == nil {
+					// A collection whose target type cannot be determined
+					// statically (a relation with several `to:` types) is
+					// legal config — ValidateConfig does NOT error on it — so
+					// unlike an unknown collection this case has no other
+					// signal at all. The override is accepted unvalidated and
+					// works or not depending on the runtime entity type.
+					if ambiguousWidgetSource(s, collections) {
+						warnings = append(warnings, fmt.Sprintf(
+							"view %q: section[%d] field[%d] sets widget %q, but collection %q "+
+								"resolves to several entity types, so the widget cannot be "+
+								"checked against the property's type at load",
+							viewID, i, j, f.Widget, s.Source))
+					}
+					continue
+				}
+				if _, ok := eDef.Properties[f.Property]; !ok {
+					warnings = append(warnings, fmt.Sprintf(
+						"view %q: section[%d] field[%d] sets widget %q on property %q, "+
+							"which type %q does not declare; the override is ignored "+
+							"(a widget can only be applied to a declared property)",
+						viewID, i, j, f.Widget, f.Property, sourceType))
+				}
+			}
+		}
+	}
+	return warnings
+}
+
+// widgetSectionDef resolves the entity def whose properties a section's fields
+// name, or nil when the source does not resolve.
+//
+// Three distinct situations return nil, and they are NOT equivalent:
+//   - no source at all — nothing to resolve;
+//   - an unknown collection — ValidateConfig already errors, so staying
+//     silent here avoids a duplicate report;
+//   - a known collection with no statically-determinable type (a relation with
+//     several `to:` types) — legal config that ValidateConfig does NOT error
+//     on, so it is the one case with no other signal. ambiguousWidgetSource
+//     distinguishes it and inertWidgetWarnings reports it.
+func widgetSectionDef(
+	s ViewSection, collections map[string]string, meta *metamodel.Metamodel,
+) (def *metamodel.EntityDef, entityType string) {
+	if meta == nil || s.Source == "" {
+		return nil, ""
+	}
+	sourceType, ok := collections[s.Source]
+	if !ok || sourceType == "" {
+		return nil, ""
+	}
+	d, ok := meta.GetEntityDef(sourceType)
+	if !ok {
+		return nil, ""
+	}
+	return d, sourceType
+}
+
+// viewCollectionTypes builds the collection-name → entity-type map a view's
+// `traverse:` block defines, plus the implicit "entry" collection.
+//
+// ValidateConfig builds the same map inline while also reporting errors, and
+// an earlier version of this function was a hand-copy of that loop — which
+// promptly diverged by omitting "entry", silently skipping every
+// `source: entry` section. Prefer this one function; if ValidateConfig's
+// building half is ever factored out, delete this and call that instead.
+//
+// A traversal whose relation type is unknown, or whose target cannot be
+// determined statically (several `to:` types), yields an empty target type.
+// Callers must treat empty as unresolvable rather than as an error — see
+// ambiguousWidgetSource.
+func viewCollectionTypes(view ViewConfig, meta *metamodel.Metamodel) map[string]string {
+	out := make(map[string]string, len(view.Traverse)+1)
+	if view.Entry.Type != "" {
+		out["entry"] = view.Entry.Type
+	}
+	for _, t := range view.Traverse {
+		if t.CollectAs == "" {
+			continue
+		}
+		// Match ValidateConfig's precedence exactly: it assigns Follow then
+		// overwrites with FollowIncoming, so the incoming name wins when an
+		// author sets both (itself a separate error).
+		relName := t.Follow
+		if t.FollowIncoming != "" {
+			relName = t.FollowIncoming
+		}
+		out[t.CollectAs] = determineTargetType(t, relName, meta)
+	}
+	return out
+}
+
+// ambiguousWidgetSource reports whether a section names a collection that
+// EXISTS but whose entity type is not statically determinable. Distinguishes
+// that from an unknown collection (already a hard error) and from a section
+// with no source at all.
+func ambiguousWidgetSource(s ViewSection, collections map[string]string) bool {
+	if s.Source == "" {
+		return false
+	}
+	t, ok := collections[s.Source]
+	return ok && t == ""
 }
 
 // viewCommandPermissionWarnings flags `permission:` on a `context: view`
@@ -746,6 +1329,11 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 	}
 
 	for viewID, view := range cfg.Views {
+		// Before the entry-type check, which continues on failure: a bad
+		// export_render path is worth reporting even on a view whose entry
+		// type is also wrong.
+		errs = append(errs, validateExportRenderShape("view", viewID, view.ExportRender)...)
+
 		// Validate entry type
 		entDef, ok := meta.GetEntityDef(view.Entry.Type)
 		if !ok {
@@ -848,6 +1436,35 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 					"view %q: section[%d] has invalid display mode %q (valid: %s)",
 					viewID, i, s.Display, joinMapKeys(validSectionDisplayModes)))
 			}
+
+			// Spans are checked unconditionally — deliberately NOT inside the
+			// `sourceType != ""` guard below, which only runs when the source
+			// collection resolves. A bad span is wrong regardless of whether
+			// the section's source is valid, and hiding it behind an unrelated
+			// error would surface it only after the first one was fixed.
+			for j, f := range s.Fields {
+				errs = append(errs, validateSpan(f.Span,
+					fmt.Sprintf("view %q: section[%d] field[%d]", viewID, i, j))...)
+			}
+
+			// Validate render modes (TKT-HOIX1). Deliberately OUTSIDE the
+			// source-resolution guards below: `render` is a closed enum needing
+			// no metamodel knowledge, so a section whose source doesn't resolve
+			// must still have it checked (RR-4ICH8M). The per-field loops below
+			// also never see the section-level value.
+			errs = append(errs, validateSectionRender(viewID, i, s)...)
+
+			// Validate widget overrides (TKT-3R7RF3), outside the guard for the
+			// same reason: an unregistered widget name is checkable without the
+			// metamodel. The type-compatibility half needs the entity def, so
+			// it is passed when resolvable and skipped (never failed) when not.
+			var widgetDef *metamodel.EntityDef
+			if sourceType != "" {
+				if d, ok := meta.GetEntityDef(sourceType); ok {
+					widgetDef = d
+				}
+			}
+			errs = append(errs, validateSectionFieldWidget(viewID, i, s, widgetDef, meta)...)
 
 			// Validate fields (if source type is known)
 			if sourceType != "" { //nolint:nestif // nested guards each check a distinct optional field of the source config.
@@ -1001,6 +1618,19 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 			}
 		}
 
+		// Icon names are checked unconditionally — deliberately NOT inside the
+		// enum guards above, which only run when column_property resolves to an
+		// enum. A bad icon name is wrong regardless, and burying it behind an
+		// unrelated error would surface it only after the first one was fixed.
+		for i, col := range kanban.Columns {
+			errs = append(errs, validateIconName(col.Icon,
+				fmt.Sprintf("kanban %q: columns[%d]", kanbanID, i))...)
+		}
+		for i, lane := range kanban.Swimlanes {
+			errs = append(errs, validateIconName(lane.Icon,
+				fmt.Sprintf("kanban %q: swimlanes[%d]", kanbanID, i))...)
+		}
+
 		// Validate swimlane_property if specified
 		if kanban.SwimlaneProperty != "" { //nolint:nestif // nested guards each check a distinct optional field of the kanban config.
 			propDef, ok := entDef.Properties[kanban.SwimlaneProperty]
@@ -1049,6 +1679,9 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 						"kanban %q: card.fields[%d] references unknown relation %q",
 						kanbanID, i, f.Relation))
 				}
+				errs = append(errs, CheckAmbiguousDirection(
+					fmt.Sprintf("kanban %q: card.fields[%d]", kanbanID, i),
+					kanban.EntityType, f.Relation, f.Direction, meta)...)
 				continue
 			}
 			if f.Property != "" && f.Property != "title" && f.Property != "id" {
@@ -1096,6 +1729,9 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 						"kanban %q: filter_controls[%d] references unknown relation %q",
 						kanbanID, i, fc.Relation))
 				}
+				errs = append(errs, CheckAmbiguousDirection(
+					fmt.Sprintf("kanban %q: filter_controls[%d]", kanbanID, i),
+					kanban.EntityType, fc.Relation, fc.Direction, meta)...)
 			}
 		}
 
@@ -1358,11 +1994,21 @@ func validateDocuments(cfg *Config) []string {
 	var errs []string
 
 	for docID, doc := range cfg.Documents {
-		if doc.EntityType == "" {
-			errs = append(errs, fmt.Sprintf("document %q: entity_type is required", docID))
+		// entity_type is NOT required: omitting it declares a standalone
+		// document (DocumentConfig.IsStandalone). What a standalone document
+		// cannot have is an edit: block — that button navigates to a form for
+		// the document's entity, and there is no entity. Checked here rather
+		// than left to render time so the author learns at config load.
+		//
+		// The nil-vs-{} caveat on Edit (see its godoc) does not matter here:
+		// both shapes mean "no button", and only a non-nil Edit is an error.
+		if doc.IsStandalone() && doc.Edit != nil {
+			errs = append(errs, fmt.Sprintf(
+				"document %q: edit is not supported without entity_type (a standalone document has no entity to edit)",
+				docID))
 		}
 
-		hasCmd := doc.Command != ""
+		hasCmd := len(doc.Command) > 0
 		hasScript := doc.Script != ""
 		switch {
 		case hasCmd && hasScript:
@@ -1371,6 +2017,24 @@ func validateDocuments(cfg *Config) []string {
 		case !hasCmd && !hasScript:
 			errs = append(errs, fmt.Sprintf(
 				"document %q: one of command or script must be set", docID))
+		}
+
+		errs = append(errs, validateDocumentElevation(docID, doc, hasScript)...)
+
+		// {id} / {id_lower} were removed in TKT-QGHNVA: they spliced a
+		// request-derived value into a shell string. Fail at config load with
+		// the replacement named, rather than silently passing the literal
+		// "{id}" through to the renderer — a silent pass would look like a
+		// working config that produces a document about the wrong thing.
+		for _, arg := range doc.Command {
+			if strings.Contains(arg, "{id}") || strings.Contains(arg, "{id_lower}") {
+				errs = append(errs, fmt.Sprintf(
+					"document %q: {id}/{id_lower} are no longer supported; "+
+						"use {in}, the entry entity's markdown file whose frontmatter carries `id:` "+
+						"(commands now run without a shell, so the id never reaches the command line)",
+					docID))
+				break
+			}
 		}
 
 		if doc.Edit != nil { //nolint:nestif // nested branches validate distinct doc.Edit sub-fields.
@@ -1533,4 +2197,49 @@ func joinMapKeys(m map[string]bool) string {
 	}
 	natsort.Strings(keys)
 	return strings.Join(keys, ", ")
+}
+
+// validateDocumentElevation checks the allow_acl_bypass declaration on a
+// document (TKT-Y3JVFK). Three rules, each failing at config load rather than
+// at render time so the author learns before deploying:
+//
+//  1. Only `read` is accepted. A document render is a GET; see the
+//     DocumentConfig.AllowACLBypass godoc for why writes belong in an
+//     automation action or a schedule instead.
+//  2. Elevation REQUIRES permission:. Without it the render publishes whatever
+//     the script reads to every principal. This is the one place a document's
+//     permission: is mandatory — see the DocumentConfig.Permission godoc for
+//     why it is optional otherwise.
+//  3. Elevation only means something for a script: renderer. A command:
+//     renderer is an external process that never sees the Lua bindings, so
+//     allow_acl_bypass on one would be config naming a capability that cannot
+//     apply — which "appears to work" and is worse than a missing field.
+func validateDocumentElevation(docID string, doc DocumentConfig, hasScript bool) []string {
+	if !doc.AllowACLBypass.Enabled() {
+		return nil
+	}
+
+	var errs []string
+
+	if doc.AllowACLBypass != metamodel.ACLBypassRead {
+		errs = append(errs, fmt.Sprintf(
+			"document %q: allow_acl_bypass must be %q on a document (got %q); a render is a GET, "+
+				"so it must not mutate — use an automation action or a schedule for elevated writes",
+			docID, metamodel.ACLBypassRead, doc.AllowACLBypass))
+	}
+
+	if doc.Permission == "" {
+		errs = append(errs, fmt.Sprintf(
+			"document %q: permission is required when allow_acl_bypass is set; an elevated render "+
+				"reads past the caller's ACL, so without a permission it serves that data to every principal",
+			docID))
+	}
+
+	if !hasScript {
+		errs = append(errs, fmt.Sprintf(
+			"document %q: allow_acl_bypass applies only to a script renderer; a command renderer "+
+				"is an external process and never receives the Lua bindings it unlocks", docID))
+	}
+
+	return errs
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // compile-time: declarativeFeed satisfies feedProvider.
@@ -70,7 +71,16 @@ func testLinker(t, id string) string { return "/entity/" + t + "/" + id }
 
 func newTestFeed(t *testing.T, cfg dataentryconfig.Feed, src entitySource) *declarativeFeed {
 	t.Helper()
-	d, err := newDeclarativeFeed("cal", cfg, feedTestMeta(), src, testLinker)
+	// nil redactor: these tests exercise mapping and filtering with no ACL
+	// policy, which is the no-policy parity case (nothing hidden).
+	return newTestFeedWithRedactor(t, cfg, src, nil)
+}
+
+func newTestFeedWithRedactor(
+	t *testing.T, cfg dataentryconfig.Feed, src entitySource, r visibility.FieldRedactor,
+) *declarativeFeed {
+	t.Helper()
+	d, err := newDeclarativeFeed("cal", cfg, feedTestMeta(), src, testLinker, r)
 	if err != nil {
 		t.Fatalf("newDeclarativeFeed: %v", err)
 	}
@@ -464,5 +474,107 @@ func TestSplitFeedUID(t *testing.T) {
 		if !ok || typ != tc.typ || id != tc.id {
 			t.Errorf("round-trip feedUID(%q,%q) = (%q,%q,%v)", tc.typ, tc.id, typ, id, ok)
 		}
+	}
+}
+
+// feedFakeRedactor hides a fixed set of property names.
+type feedFakeRedactor struct{ hide []string }
+
+func (f feedFakeRedactor) HiddenProperties(context.Context, *entity.Entity) map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, h := range f.hide {
+		out[h] = struct{}{}
+	}
+	return out
+}
+
+// TestDeclarativeFeed_RedactsHiddenProperties pins that field-level `visible:`
+// ACL reaches the ICS feed.
+//
+// listType gates ROWS — an entity the principal cannot read never reaches the
+// mapper. It does not touch FIELDS, and docs/acl-security.md commits to
+// redaction on "every HTTP read shape". The feed was one that skipped it: a
+// source mapping `description: notes` served that property verbatim to a
+// principal whose role redacts it.
+func TestDeclarativeFeed_RedactsHiddenProperties(t *testing.T) {
+	cfg := dataentryconfig.Feed{Sources: []dataentryconfig.FeedSource{{
+		EntityType: "task", Date: "due", Summary: "title", Description: "notes",
+	}}}
+	task := mkTask("TSK-1", "Buy milk", "todo", "2026-08-12", time.Now())
+	task.Properties["notes"] = "classified"
+	src := fakeSource{byType: map[string][]*entity.Entity{"task": {task}}}
+
+	// Precondition: with nothing hidden the value IS rendered, so the assertion
+	// below cannot pass for an unrelated reason.
+	open, _, err := newTestFeed(t, cfg, src).List(t.Context(), feedListOpts{})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(open) != 1 || open[0].Description != "classified" {
+		t.Fatalf("precondition: description not rendered at all: %+v", open)
+	}
+
+	d := newTestFeedWithRedactor(t, cfg, src, feedFakeRedactor{hide: []string{"notes"}})
+	got, _, err := d.List(t.Context(), feedListOpts{})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 event, got %d", len(got))
+	}
+	if got[0].Description != "" {
+		t.Errorf("a `visible:`-hidden property reached the feed: %q", got[0].Description)
+	}
+	if got[0].Summary != "Buy milk" {
+		t.Errorf("a visible property was dropped: %q", got[0].Summary)
+	}
+}
+
+// TestDeclarativeFeed_RedactionDoesNotChangeMembership pins the ORDER: the
+// `where:` filter runs against the raw entity, before redaction.
+//
+// Redacting first would make a hidden property read as empty inside the filter,
+// so the same feed would contain different EVENTS for different readers — an
+// entity silently dropping off the calendar because a field the reader cannot
+// see was filtered on. Which entities a feed selects is operator-authored; what
+// their fields say is the reader's business.
+func TestDeclarativeFeed_RedactionDoesNotChangeMembership(t *testing.T) {
+	cfg := dataentryconfig.Feed{Sources: []dataentryconfig.FeedSource{{
+		EntityType: "task", Date: "due", Summary: "title",
+		Where: []string{"status = todo"},
+	}}}
+	src := fakeSource{byType: map[string][]*entity.Entity{"task": {
+		mkTask("TSK-1", "Buy milk", "todo", "2026-08-12", time.Now()),
+	}}}
+
+	// `status` is the filtered property AND hidden from this reader.
+	d := newTestFeedWithRedactor(t, cfg, src, feedFakeRedactor{hide: []string{"status"}})
+	got, _, err := d.List(t.Context(), feedListOpts{})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("hiding the filtered property changed feed membership: got %d events, want 1", len(got))
+	}
+}
+
+// TestDeclarativeFeed_RedactionCopies pins that redaction never mutates the
+// shared store entity. The snapshot is process-wide, so an in-place delete would
+// redact for every other reader — including write-prep reads, where a missing
+// property is an ERASURE.
+func TestDeclarativeFeed_RedactionCopies(t *testing.T) {
+	task := mkTask("TSK-1", "Buy milk", "todo", "2026-08-12", time.Now())
+	task.Properties["notes"] = "classified"
+	cfg := dataentryconfig.Feed{Sources: []dataentryconfig.FeedSource{{
+		EntityType: "task", Date: "due", Summary: "title", Description: "notes",
+	}}}
+	src := fakeSource{byType: map[string][]*entity.Entity{"task": {task}}}
+
+	d := newTestFeedWithRedactor(t, cfg, src, feedFakeRedactor{hide: []string{"notes"}})
+	if _, _, err := d.List(t.Context(), feedListOpts{}); err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if task.Properties["notes"] != "classified" {
+		t.Error("redaction mutated the shared store entity")
 	}
 }

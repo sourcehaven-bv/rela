@@ -1714,7 +1714,7 @@ func TestV1SidePanelMethodNotAllowed(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/_sidepanel/ticket/TKT-001", http.NoBody)
 	rec := httptest.NewRecorder()
 
-	app.handleV1SidePanel(rec, req)
+	app.views.handleV1SidePanel(rec, req)
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected status 405, got %d", rec.Code)
@@ -1727,7 +1727,7 @@ func TestV1SidePanelInvalidPath(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_sidepanel/invalid", http.NoBody)
 	rec := httptest.NewRecorder()
 
-	app.handleV1SidePanel(rec, req)
+	app.views.handleV1SidePanel(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected status 400, got %d", rec.Code)
@@ -1740,7 +1740,7 @@ func TestV1SidePanelFormNotFound(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_sidepanel/nonexistent/TKT-001", http.NoBody)
 	rec := httptest.NewRecorder()
 
-	app.handleV1SidePanel(rec, req)
+	app.views.handleV1SidePanel(rec, req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("expected status 404, got %d", rec.Code)
@@ -1757,7 +1757,7 @@ func TestV1SidePanelNoConfig(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_sidepanel/ticket/TKT-001", http.NoBody)
 	rec := httptest.NewRecorder()
 
-	app.handleV1SidePanel(rec, req)
+	app.views.handleV1SidePanel(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
@@ -1944,7 +1944,7 @@ func TestV1SidebarEndpoint(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_sidebar", http.NoBody)
 	rec := httptest.NewRecorder()
 
-	app.handleV1Sidebar(rec, req)
+	app.views.handleV1Sidebar(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
@@ -1957,7 +1957,7 @@ func TestV1SidebarMethodNotAllowed(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/_sidebar", http.NoBody)
 	rec := httptest.NewRecorder()
 
-	app.handleV1Sidebar(rec, req)
+	app.views.handleV1Sidebar(rec, req)
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected status 405, got %d", rec.Code)
@@ -1990,7 +1990,7 @@ func TestV1SidebarWithNavigation(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_sidebar", http.NoBody)
 	rec := httptest.NewRecorder()
 
-	app.handleV1Sidebar(rec, req)
+	app.views.handleV1Sidebar(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
@@ -2006,124 +2006,45 @@ func TestV1SidebarWithNavigation(t *testing.T) {
 	}
 }
 
-// TestV1SidebarAppliesListFilters verifies that sidebar counts for a list
-// respect the list's configured filters, not just the entity-type total.
-// Regression guard for the bug where "Open Tickets" (filter status=open)
-// showed the same count as "All Tickets".
-func TestV1SidebarAppliesListFilters(t *testing.T) {
+// TestV1SidebarDocumentEntry pins the href a `document:` navigation entry
+// produces (TKT-M1AX6P). The kind→href mapping lives server-side, so this is
+// where the /document/<name> contract with the SPA router is asserted.
+func TestV1SidebarDocumentEntry(t *testing.T) {
 	app := newTestAppV1(t)
 
-	seedEntity(app, &entity.Entity{
-		ID: "TKT-001", Type: "ticket",
-		Properties: map[string]any{"title": "Open A", "status": "open"},
-	})
-	seedEntity(app, &entity.Entity{
-		ID: "TKT-002", Type: "ticket",
-		Properties: map[string]any{"title": "Open B", "status": "open"},
-	})
-	seedEntity(app, &entity.Entity{
-		ID: "TKT-003", Type: "ticket",
-		Properties: map[string]any{"title": "Closed", "status": "closed"},
-	})
-
-	app.Cfg().Lists = map[string]dataentryconfig.List{
-		"all_tickets": {
-			EntityType: "ticket",
-			Title:      "All Tickets",
-		},
-		"open_tickets": {
-			EntityType: "ticket",
-			Title:      "Open Tickets",
-			Filters: []dataentryconfig.FilterConfig{
-				{Property: "status", Operator: "=", Value: "open"},
-			},
-		},
+	app.Cfg().Documents = map[string]dataentryconfig.DocumentConfig{
+		"sales_review": {Title: "Verkooprapportage", Script: "docs/sales.lua"},
 	}
 	app.Cfg().Navigation = []dataentryconfig.NavigationEntry{
-		{Label: "All Tickets", List: "all_tickets"},
-		{Label: "Open Tickets", List: "open_tickets"},
+		{Label: "Verkooprapportage", Document: "sales_review"},
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_sidebar", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Sidebar(rec, req)
+	app.views.handleV1Sidebar(rec, req)
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
+		t.Fatalf("expected status 200, got %d", rec.Code)
 	}
 
 	var resp v1.SidebarResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(resp.Navigation) != 1 || len(resp.Navigation[0].Items) != 1 {
+		t.Fatalf("expected 1 group with 1 item, got %+v", resp.Navigation)
 	}
 
-	counts := map[string]int{}
-	for _, group := range resp.Navigation {
-		for _, item := range group.Items {
-			if item.Count != nil {
-				counts[item.Label] = *item.Count
-			}
-		}
+	item := resp.Navigation[0].Items[0]
+	if item.Href != "/document/sales_review" {
+		t.Errorf("expected href /document/sales_review, got %q", item.Href)
 	}
-
-	if counts["All Tickets"] != 3 {
-		t.Errorf("All Tickets count = %d, want 3", counts["All Tickets"])
+	if item.Label != "Verkooprapportage" {
+		t.Errorf("expected label Verkooprapportage, got %q", item.Label)
 	}
-	if counts["Open Tickets"] != 2 {
-		t.Errorf("Open Tickets count = %d, want 2 (status=open); filter not applied",
-			counts["Open Tickets"])
-	}
-}
-
-// TestV1SidebarAppliesKanbanFilters is the kanban counterpart to
-// TestV1SidebarAppliesListFilters.
-func TestV1SidebarAppliesKanbanFilters(t *testing.T) {
-	app := newTestAppV1(t)
-
-	seedEntity(app, &entity.Entity{
-		ID: "TKT-001", Type: "ticket",
-		Properties: map[string]any{"title": "P0 open", "status": "open", "priority": "high"},
-	})
-	seedEntity(app, &entity.Entity{
-		ID: "TKT-002", Type: "ticket",
-		Properties: map[string]any{"title": "P0 closed", "status": "closed", "priority": "high"},
-	})
-	seedEntity(app, &entity.Entity{
-		ID: "TKT-003", Type: "ticket",
-		Properties: map[string]any{"title": "P1 open", "status": "open", "priority": "low"},
-	})
-
-	app.Cfg().Kanbans = map[string]dataentryconfig.Kanban{
-		"open_board": {
-			EntityType: "ticket",
-			Filters: []dataentryconfig.FilterConfig{
-				{Property: "status", Operator: "=", Value: "open"},
-			},
-		},
-	}
-	app.Cfg().Navigation = []dataentryconfig.NavigationEntry{
-		{Label: "Open Board", Kanban: "open_board"},
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/_sidebar", http.NoBody)
-	rec := httptest.NewRecorder()
-	app.handleV1Sidebar(rec, req)
-
-	var resp v1.SidebarResponse
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-
-	var openCount int
-	for _, group := range resp.Navigation {
-		for _, item := range group.Items {
-			if item.Label == "Open Board" && item.Count != nil {
-				openCount = *item.Count
-			}
-		}
-	}
-	if openCount != 2 {
-		t.Errorf("Open Board count = %d, want 2 (filter not applied)", openCount)
+	// A document entry is a link, not an action button.
+	if item.Action != "" {
+		t.Errorf("expected no action, got %q", item.Action)
 	}
 }
 
@@ -3506,7 +3427,7 @@ func TestHandleV1Documents_EntityTypeMismatch(t *testing.T) {
 	app.State().Cfg.Documents = map[string]dataentryconfig.DocumentConfig{
 		"feature-notes": {
 			EntityType: "feature",
-			Command:    "echo hello",
+			Command:    []string{"echo", "hello"},
 		},
 	}
 
@@ -3539,7 +3460,7 @@ func TestHandleV1Documents_EntityTypeMatch(t *testing.T) {
 	app.State().Cfg.Documents = map[string]dataentryconfig.DocumentConfig{
 		"ticket-summary": {
 			EntityType: "ticket",
-			Command:    "echo hello",
+			Command:    []string{"echo", "hello"},
 		},
 	}
 
@@ -3590,7 +3511,7 @@ func TestHandleV1Documents_CacheInvariance(t *testing.T) {
 	app.State().Cfg.Documents = map[string]dataentryconfig.DocumentConfig{
 		"cache-test": {
 			EntityType: "ticket",
-			Command:    `echo '[Detail](/entity/ticket/TKT-001)'`,
+			Command:    []string{"echo", "[Detail](/entity/ticket/TKT-001)"},
 		},
 	}
 
@@ -3646,7 +3567,7 @@ func TestHandleV1Documents_EntityNotFound(t *testing.T) {
 	app.State().Cfg.Documents = map[string]dataentryconfig.DocumentConfig{
 		"notes": {
 			EntityType: "ticket",
-			Command:    "echo hi",
+			Command:    []string{"echo", "hi"},
 		},
 	}
 
@@ -3992,7 +3913,7 @@ func TestV1Views_DefaultViewForUnconfiguredType(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_views/ticket/TKT-001", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Views(rec, req)
+	app.views.handleV1Views(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: want 200, got %d (body: %s)", rec.Code, rec.Body.String())
@@ -4037,7 +3958,7 @@ func TestV1Views_ConfiguredViewForType(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_views/ticket/TKT-001", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Views(rec, req)
+	app.views.handleV1Views(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: want 200, got %d (body: %s)", rec.Code, rec.Body.String())
@@ -4150,7 +4071,7 @@ func TestV1Views_NoAddOrLinkInfoOnSections(t *testing.T) {
 
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/_views/"+entryType+"/"+entryID, http.NoBody)
 			rec := httptest.NewRecorder()
-			app.handleV1Views(rec, req)
+			app.views.handleV1Views(rec, req)
 
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status: want 200, got %d (body: %s)", rec.Code, rec.Body.String())
@@ -4165,7 +4086,7 @@ func TestV1Views_UnknownEntityType(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_views/nonexistent/X-1", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Views(rec, req)
+	app.views.handleV1Views(rec, req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status: want 404, got %d", rec.Code)
@@ -4177,7 +4098,7 @@ func TestV1Views_UnknownEntityID(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_views/ticket/MISSING", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Views(rec, req)
+	app.views.handleV1Views(rec, req)
 
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Errorf("status: want 422 for missing entity, got %d", rec.Code)
@@ -4199,7 +4120,7 @@ func TestV1Views_BadPath(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, tt.path, http.NoBody)
 			rec := httptest.NewRecorder()
-			app.handleV1Views(rec, req)
+			app.views.handleV1Views(rec, req)
 			if rec.Code != http.StatusBadRequest {
 				t.Errorf("status: want 400, got %d", rec.Code)
 			}
@@ -4212,7 +4133,7 @@ func TestV1Views_MethodNotAllowed(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/_views/ticket/TKT-001", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Views(rec, req)
+	app.views.handleV1Views(rec, req)
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("status: want 405, got %d", rec.Code)
@@ -4242,7 +4163,7 @@ func TestV1Views_MentionsPopulated(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_views/ticket/TKT-001", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Views(rec, req)
+	app.views.handleV1Views(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: want 200, got %d (body: %s)", rec.Code, rec.Body.String())
@@ -4273,7 +4194,7 @@ func TestV1Views_MentionsAbsentWhenNoRefs(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_views/ticket/TKT-001", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Views(rec, req)
+	app.views.handleV1Views(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: want 200, got %d", rec.Code)
@@ -4355,6 +4276,104 @@ func TestV1Affordance_PerEntityGet_NoneProfile(t *testing.T) {
 // resolver populates the expected sparse fixture verdicts. Uses a
 // hand-rolled fixture resolver to keep the test independent of the
 // project's real metamodel (which doesn't have all the demo fields).
+// TestV1Affordance_PerEntityGet_RedactedNamesHiddenFields is the wire half of
+// BUG-MLT9DE / DEC-T0XIWQ. Before `_redacted`, a hidden property and a
+// never-set one were byte-identical on the wire — both simply absent from
+// `properties`, both absent from the sparse `_fields`. A write surface could
+// only guess which it was looking at, and guessing "hidden" made every unset
+// property permanently unfillable in the edit form.
+//
+// This pins the disambiguation end-to-end: hidden VALUES stay withheld, hidden
+// NAMES are stated, and an unset property is named nowhere — so the client can
+// tell the three cases apart without inferring anything from absence.
+func TestV1Affordance_PerEntityGet_RedactedNamesHiddenFields(t *testing.T) {
+	app := newTestAppV1(t)
+	app.fieldResolver = fakeResolver{
+		fv: FieldVerdicts{Visible: map[string]bool{"title": false}},
+	}
+	// `status` is stored; `title` is stored but hidden; the ticket type's other
+	// declared properties are simply unset — the BUG-MLT9DE case.
+	seedEntity(app, &entity.Entity{
+		ID:         "TKT-001",
+		Type:       "ticket",
+		Properties: map[string]any{"title": "secret", "status": "open"},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	raw := rec.Body.String()
+
+	var got v1.Entity
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	// The value stays secret — that part of the contract is unchanged.
+	if strings.Contains(raw, "secret") {
+		t.Errorf("hidden VALUE must never reach the wire; got: %s", raw)
+	}
+	if _, present := got.Properties["title"]; present {
+		t.Errorf("hidden field must be absent from properties; got: %s", raw)
+	}
+
+	// The name is now stated, so the client never has to infer.
+	if got.Redacted == nil {
+		t.Fatalf("_redacted must be present on a per-entity GET; got: %s", raw)
+	}
+	if len(*got.Redacted) != 1 || (*got.Redacted)[0] != "title" {
+		t.Errorf("_redacted: got %v, want exactly [title]", *got.Redacted)
+	}
+
+	// And an UNSET property is named nowhere — not in properties, not in
+	// _fields, not in _redacted. That absence-without-redaction is exactly
+	// what the edit form must render rather than hide.
+	if _, present := got.Properties["effort"]; present {
+		t.Fatalf("precondition: 'effort' should be unset on this fixture")
+	}
+	for _, name := range *got.Redacted {
+		if name == "effort" {
+			t.Errorf("an unset property must NOT be reported as redacted")
+		}
+	}
+}
+
+// TestV1Affordance_PerEntityGet_RedactedEmptyWhenNothingHidden pins the
+// closed-world half: under the permissive default `_redacted` is present and
+// EMPTY ("evaluated, nothing hidden"), not absent. An absent list would be
+// indistinguishable from "this server does not report redaction", which is the
+// ambiguity the field exists to remove.
+func TestV1Affordance_PerEntityGet_RedactedEmptyWhenNothingHidden(t *testing.T) {
+	app := newTestAppV1(t)
+	app.fieldResolver = NopFieldVerdictResolver{}
+	seedEntity(app, &entity.Entity{
+		ID:         "TKT-001",
+		Type:       "ticket",
+		Properties: map[string]any{"title": "Test Ticket", "status": "open"},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	var got v1.Entity
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Redacted == nil {
+		t.Fatal("_redacted pointer should be non-nil (closed-world signal)")
+	}
+	if len(*got.Redacted) != 0 {
+		t.Errorf("_redacted: got %v, want empty under the permissive default", *got.Redacted)
+	}
+}
+
 func TestV1Affordance_PerEntityGet_DemoFixture(t *testing.T) {
 	app := newTestAppV1(t)
 	falseVal := false
@@ -4483,9 +4502,29 @@ func TestV1Affordance_PatchEcho_StripsHidden(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PATCH returned %d: %s", rec.Code, rec.Body.String())
 	}
+	// The invariant is about the VALUE: a stale client must not be able to
+	// read a hidden property out of its own write response. The NAME is a
+	// different matter — since DEC-T0XIWQ the response deliberately lists
+	// hidden names in `_redacted` so a write surface can tell "hidden" from
+	// "never set" (property names are already public via the metamodel; only
+	// values are secret). So assert on the value and on `properties`, not on
+	// a whole-body substring match for the name.
 	body := rec.Body.String()
-	if strings.Contains(body, `"title"`) || strings.Contains(body, "secret") {
-		t.Errorf("PATCH echo must NOT contain hidden field; got: %s", body)
+	if strings.Contains(body, "secret") {
+		t.Errorf("PATCH echo must NOT contain the hidden VALUE; got: %s", body)
+	}
+	var echoed v1.Entity
+	if err := json.Unmarshal(rec.Body.Bytes(), &echoed); err != nil {
+		t.Fatalf("decode echo: %v", err)
+	}
+	if _, present := echoed.Properties["title"]; present {
+		t.Errorf("hidden field must be absent from properties; got: %s", body)
+	}
+	if echoed.Redacted == nil {
+		t.Fatalf("_redacted must be present on a per-entity response; got: %s", body)
+	}
+	if len(*echoed.Redacted) != 1 || (*echoed.Redacted)[0] != "title" {
+		t.Errorf("_redacted must name the hidden field; got %v", *echoed.Redacted)
 	}
 }
 
@@ -5403,6 +5442,11 @@ func TestV1Affordance_CollectionGet_NoFieldVerdicts(t *testing.T) {
 	}
 	if strings.Contains(body, `"_relations"`) {
 		t.Errorf("collection response must NOT contain _relations; got: %s", body)
+	}
+	// `_redacted` rides the same per-entity boundary (DEC-T0XIWQ): list rows
+	// carry no write affordances, so they carry no redaction list either.
+	if strings.Contains(body, `"_redacted"`) {
+		t.Errorf("collection response must NOT contain _redacted; got: %s", body)
 	}
 }
 

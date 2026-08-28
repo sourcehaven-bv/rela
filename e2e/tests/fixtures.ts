@@ -11,6 +11,59 @@ import * as net from "net";
 
 const PROJECT_ROOT = path.resolve(__dirname, "../..");
 const SERVER_BINARY = path.join(PROJECT_ROOT, "bin", "rela-server");
+// The PostgreSQL-backed server (go build -tags postgres ./cmd/rela-server). Used
+// only by the opt-in `postgresTest` fixture for specs that exercise pgstore-only
+// features (relation/entity content history). Built to a distinct path so it
+// never collides with the default fsstore binary.
+const PG_SERVER_BINARY = path.join(PROJECT_ROOT, "bin", "rela-server-postgres");
+
+// RELA_E2E_DATABASE_URL is the admin DSN for the postgres-backed e2e specs (a
+// database the runner may CREATE/DROP schemas in). When unset, postgresTest specs
+// SKIP — mirroring the pgstore Go suite's RELA_TEST_DATABASE_URL gating, so the
+// default fsstore e2e run and any environment without a database stay green.
+const PG_ADMIN_DSN = process.env.RELA_E2E_DATABASE_URL ?? "";
+export const POSTGRES_E2E_ENABLED = PG_ADMIN_DSN !== "";
+
+let pgSchemaCounter = 0;
+
+/** Run a SQL statement against the admin DSN via psql (no node pg dependency).
+ *  psql is present in CI's postgres service and in local Postgres installs. */
+function psqlExec(sql: string): void {
+  execFileSync("psql", [PG_ADMIN_DSN, "-v", "ON_ERROR_STOP=1", "-c", sql], {
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+}
+
+/** Create a fresh isolated schema and return its name. Each postgres-backed test
+ *  gets its own schema so runs never cross-contaminate (mirrors the pgstore Go
+ *  conformance harness's per-schema isolation). Uniqueness rests on Playwright
+ *  running each worker as a SEPARATE OS PROCESS: `process.pid` disambiguates
+ *  workers and the per-process counter disambiguates tests within a worker. */
+function createPgSchema(): string {
+  const schema = `relae2e_${process.pid}_${++pgSchemaCounter}`;
+  psqlExec(`CREATE SCHEMA "${schema}"`);
+  return schema;
+}
+
+function dropPgSchema(schema: string): void {
+  try {
+    psqlExec(`DROP SCHEMA "${schema}" CASCADE`);
+  } catch (e) {
+    console.warn(`Failed to drop e2e schema ${schema}: ${String(e)}`);
+  }
+}
+
+/** Build the server's RELA_DATABASE_URL from the admin DSN, pinned to `schema`
+ *  via search_path (keeping public for the pg_trgm extension). The postgres
+ *  server auto-migrates the schema on first open. NOTE: this OVERRIDES any
+ *  pre-existing `options` param in the admin DSN — the e2e admin DSN is not
+ *  expected to carry one. */
+function pgDsnForSchema(schema: string): string {
+  const u = new URL(PG_ADMIN_DSN);
+  // libpq options: -c search_path=<schema>,public. Encode the space + comma.
+  u.searchParams.set("options", `-c search_path=${schema},public`);
+  return u.toString();
+}
 // Resolve symlinks once — macOS $TMPDIR is typically /var/folders/... which
 // canonicalises to /private/var/folders/.... Tests that compare paths want
 // the canonical form. (review-response RR-F3IA3)
@@ -137,6 +190,41 @@ export interface ApiHelpers {
     relation: string,
     toId: string,
   ): Promise<void>;
+  /** Create-or-update a relation edge's meta (relation-property values) via a
+   *  modern relations PATCH on the FROM entity. Upserts, so calling it repeatedly
+   *  with different meta produces successive relation states — used to drive
+   *  relation version capture in the relation-history e2e. */
+  setRelationMeta(
+    fromPlural: string,
+    fromId: string,
+    relation: string,
+    toType: string,
+    toId: string,
+    meta: Record<string, unknown>,
+  ): Promise<void>;
+  /** Poll the relation-history timeline until it has at least `count` versions.
+   *  Relation versioning is pgstore-only and create/update capture is async (the
+   *  reconciliation sweep), so seed-then-assert flows must wait for capture.
+   *  `fromType` is the singular entity type (the _relation_history path needs it);
+   *  passed explicitly rather than derived, so a new type never silently 404s. */
+  waitForRelationVersions(
+    fromType: string,
+    fromId: string,
+    relation: string,
+    toId: string,
+    count: number,
+    options?: { timeout?: number },
+  ): Promise<void>;
+  /** Poll the entity-history timeline until it has at least `count` versions.
+   *  The entity counterpart of waitForRelationVersions — same async-sweep
+   *  caveat, same pgstore-only restriction. `type` is the singular entity type
+   *  the _history path expects (e.g. "feature", not "features"). */
+  waitForEntityVersions(
+    type: string,
+    id: string,
+    count: number,
+    options?: { timeout?: number },
+  ): Promise<void>;
   /** Returns the current set of outgoing relation edges of the given type for an entity.
    *  Each edge exposes `id` (target entity) and `meta` (relation-property values). */
   listRelations(
@@ -235,7 +323,7 @@ async function waitForExit(
  *  don't race each other writing the same output file (RR-BZUH5). In CI the
  *  fixture should never fire because the binary is pre-built in a prior step;
  *  we fail loudly there to surface misconfiguration. */
-function buildIfMissing(binaryPath: string, target: string): string {
+function buildIfMissing(binaryPath: string, ...buildArgs: string[]): string {
   if (fs.existsSync(binaryPath)) return binaryPath;
   if (process.env.CI) {
     throw new Error(
@@ -274,7 +362,7 @@ function buildIfMissing(binaryPath: string, target: string): string {
     // execFileSync with an args array: no shell, so the absolute paths can't
     // be interpreted as shell syntax (CodeQL js/shell-command-injection-from-
     // environment; also just breaks on checkout paths containing spaces).
-    execFileSync("go", ["build", "-o", binaryPath, target], {
+    execFileSync("go", ["build", ...buildArgs, "-o", binaryPath], {
       cwd: PROJECT_ROOT,
       stdio: "inherit",
     });
@@ -286,7 +374,7 @@ function buildIfMissing(binaryPath: string, target: string): string {
 
 function createTestProject(): string {
   const tmpDir = fs.mkdtempSync(path.join(TMPDIR, "rela-e2e-"));
-  fs.writeFileSync(path.join(tmpDir, "metamodel.yaml"), METAMODEL_YAML);
+  fs.writeFileSync(path.join(tmpDir, "schema.yaml"), METAMODEL_YAML);
   fs.writeFileSync(path.join(tmpDir, "data-entry.yaml"), DATA_ENTRY_YAML);
   fs.mkdirSync(path.join(tmpDir, "entities", "features"), { recursive: true });
   fs.mkdirSync(path.join(tmpDir, "entities", "bugs"), { recursive: true });
@@ -313,10 +401,21 @@ function createTestProject(): string {
 
 /** Spawn rela-server on a free port with retry-on-startup-failure: the port
  *  we pick from findFreePort may have been reassigned by the kernel before the
- *  child binds it, under load (RR-B8GJT). Up to 3 attempts. */
+ *  child binds it, under load (RR-B8GJT). Up to 3 attempts.
+ *
+ *  A server that DIES during startup fails fast rather than waiting out
+ *  waitForServer's timeout, and its stderr travels in the thrown error. Both
+ *  matter: without them a server that refused to start (a bad DSN, a failed
+ *  migration) surfaced only as "Test timeout of 30000ms exceeded while setting
+ *  up serverUrl", with the real reason — which the child had already printed —
+ *  discarded. A spawn failure is also an 'error' EVENT, not a throw; with no
+ *  listener Node re-raises it as an unhandled error out of band, which is how
+ *  a failed startup came to be reported as a bare, and entirely misleading,
+ *  `spawn ... ENOENT`. (BUG-YJEIFH) */
 async function spawnServer(
   serverBinary: string,
   cwd: string,
+  extraEnv: NodeJS.ProcessEnv = {},
 ): Promise<{ proc: ChildProcess; url: string; logs: () => string }> {
   const attempts = 3;
   let lastErr: unknown;
@@ -326,15 +425,38 @@ async function spawnServer(
     const proc: ChildProcess = spawn(
       serverBinary,
       ["-port", String(port), "-allowed-origin", url],
-      { cwd, env: process.env, stdio: ["ignore", "pipe", "pipe"] },
+      {
+        cwd,
+        env: { ...process.env, ...extraEnv },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
     );
     let stdout = "";
     let stderr = "";
     proc.stdout?.on("data", (d) => (stdout += d.toString()));
     proc.stderr?.on("data", (d) => (stderr += d.toString()));
 
+    // Resolves as soon as the child is known to be unusable, so a server that
+    // exits immediately is not waited out for the full readiness timeout.
+    const died = new Promise<never>((_, reject) => {
+      proc.once("error", (e) =>
+        reject(new Error(`could not spawn ${serverBinary}: ${String(e)}`)),
+      );
+      proc.once("exit", (code, signal) =>
+        reject(
+          new Error(
+            `server exited during startup (code ${code}, signal ${signal})\n` +
+              `--- stderr ---\n${stderr.trim() || "(empty)"}`,
+          ),
+        ),
+      );
+    });
+    // The rejection is always consumed below, but only once the race settles;
+    // mark it handled now so a loser never trips unhandledRejection.
+    died.catch(() => {});
+
     try {
-      await waitForServer(url, url);
+      await Promise.race([waitForServer(url, url), died]);
       return {
         proc,
         url,
@@ -471,6 +593,33 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   api: async ({ serverUrl, appPage }, use) => {
     const request: APIRequestContext = appPage.request;
 
+    /** Poll a `_history` / `_relation_history` listing until it reports at
+     *  least `count` versions. Shared by the entity and relation waiters —
+     *  both face the same async reconciliation sweep, so a seed-then-assert
+     *  flow has to wait for capture rather than read straight after writing.
+     *  `subject` only labels the timeout error. */
+    async function pollForVersions(
+      get: typeof call,
+      apiPath: string,
+      count: number,
+      subject: string,
+      options?: { timeout?: number },
+    ): Promise<void> {
+      const timeout = options?.timeout ?? 20000;
+      const start = Date.now();
+      while (Date.now() - start < timeout) {
+        const resp = await get("GET", apiPath).catch(() => null);
+        if (resp && resp.ok()) {
+          const body = (await resp.json()) as { versions?: unknown[] };
+          if ((body.versions?.length ?? 0) >= count) return;
+        }
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      throw new Error(
+        `${subject} did not reach ${count} version(s) within ${timeout}ms`,
+      );
+    }
+
     async function call(method: string, apiPath: string, data?: unknown) {
       const options: Record<string, unknown> = {
         method,
@@ -510,10 +659,38 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         const p = query ? `${plural}?${query}` : plural;
         return (await call("GET", p)).json();
       },
+      async setRelationMeta(fromPlural, fromId, relation, toType, toId, meta) {
+        // Modern JSON:API relations body: upsert the edge with its meta. A PATCH
+        // that includes the edge again with new meta updates it in place.
+        await call("PATCH", `${fromPlural}/${fromId}`, {
+          relations: {
+            [relation]: { data: [{ type: toType, id: toId, meta }] },
+          },
+        });
+      },
       async createRelation(fromPlural, fromId, relation, toId) {
         await call("POST", `${fromPlural}/${fromId}/relations/${relation}`, {
           id: toId,
         });
+      },
+      async waitForRelationVersions(fromType, fromId, relation, toId, count, options) {
+        await pollForVersions(
+          call,
+          `_relation_history/${encodeURIComponent(fromType)}/${encodeURIComponent(fromId)}` +
+            `/${encodeURIComponent(relation)}/${encodeURIComponent(toId)}`,
+          count,
+          `relation ${fromId}--${relation}--${toId}`,
+          options,
+        );
+      },
+      async waitForEntityVersions(type, id, count, options) {
+        await pollForVersions(
+          call,
+          `_history/${encodeURIComponent(type)}/${encodeURIComponent(id)}`,
+          count,
+          `entity ${id}`,
+          options,
+        );
       },
       async listRelations(plural, id, relation) {
         const resp = await call("GET", `${plural}/${id}/relations/${relation}`);
@@ -558,6 +735,71 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         );
       },
     });
+  },
+});
+
+/**
+ * postgresTest is the opt-in fixture for specs that need pgstore-only features
+ * (entity/relation content history). It spawns `rela-server-postgres` against a
+ * per-test isolated schema instead of the default fsstore server; `appPage` and
+ * `api` are inherited unchanged and transparently talk to the postgres backend
+ * via the overridden `serverUrl`.
+ *
+ * Specs MUST guard with `postgresTest.skip(!POSTGRES_E2E_ENABLED, ...)` (or the
+ * describe-level equivalent) so they skip cleanly when RELA_E2E_DATABASE_URL is
+ * unset — the default e2e run has no database.
+ */
+export const postgresTest = test.extend<
+  { pgSchema: string },
+  { serverBinary: string }
+>({
+  // Worker-scoped: the postgres server binary (built by CI, or on demand locally).
+  serverBinary: [
+    // eslint-disable-next-line no-empty-pattern
+    async ({}, use) => {
+      await use(
+        buildIfMissing(
+          PG_SERVER_BINARY,
+          "-tags",
+          "postgres",
+          "./cmd/rela-server",
+        ),
+      );
+    },
+    { scope: "worker" },
+  ],
+
+  // A fresh isolated schema per test, dropped afterwards.
+  // eslint-disable-next-line no-empty-pattern
+  pgSchema: async ({}, use) => {
+    const schema = createPgSchema();
+    try {
+      await use(schema);
+    } finally {
+      dropPgSchema(schema);
+    }
+  },
+
+  // Override serverUrl to spawn the postgres server with a schema-pinned DSN.
+  serverUrl: async (
+    { testProject, serverBinary, pgSchema },
+    use,
+    testInfo,
+  ) => {
+    const { proc, url, logs } = await spawnServer(serverBinary, testProject, {
+      RELA_DATABASE_URL: pgDsnForSchema(pgSchema),
+    });
+    try {
+      await use(url);
+    } finally {
+      if (testInfo.status !== testInfo.expectedStatus) {
+        await testInfo.attach("rela-server-postgres.log", {
+          body: logs(),
+          contentType: "text/plain",
+        });
+      }
+      await waitForExit(proc);
+    }
   },
 });
 
@@ -632,6 +874,10 @@ entities:
         type: string
       done:
         type: boolean
+      # BUG-FB0LN8: lets a fixture hide a default-policy field alongside a
+      # clear-policy one in a single pass.
+      note:
+        type: string
 
   # TKT-E7NNM fixtures: covers manual-ID, multi-prefix, and the combinations
   # we want to exercise in forms.spec.ts. Keep names short and orthogonal
@@ -771,6 +1017,7 @@ forms:
         widget: textarea
     relations:
       - relation: tagged
+        direction: outgoing
         widget: cards
         properties:
           - property: added_by
@@ -877,6 +1124,39 @@ forms:
         visible_when: "form.done == true"
         required_when: "form.done == true"
 
+  # BUG-FB0LN8: clear_when_hidden "yes" opts back in to clearing a hidden
+  # branch's stored value — the behavior that used to be unconditional. Keeps
+  # the old semantics pinned now that the default is to KEEP the value.
+  task_clear_when_hidden:
+    entity_type: task
+    title: "Task (clears on hide)"
+    fields:
+      - property: title
+        required: true
+      - property: done
+        widget: checkbox
+      - property: assignee
+        visible_when: "form.done == true"
+        clear_when_hidden: "yes"
+
+  # MIXED policies hidden by ONE trigger, via a SELECT. A keep-policy and a
+  # clear-policy field hide in the same pass, so each must honor its own
+  # setting rather than the batch taking one decision for all of them.
+  task_mixed_policies:
+    entity_type: task
+    title: "Task (mixed clear policies, one trigger)"
+    fields:
+      - property: title
+        required: true
+      - property: status
+      - property: note
+        visible_when: "form.status == 'approved'"
+      - property: assignee
+        visible_when: "form.status == 'approved'"
+      - property: done
+        visible_when: "form.status == 'approved'"
+        clear_when_hidden: "yes"
+
   tag:
     entity_type: tag
     title: "Tag"
@@ -969,15 +1249,42 @@ views:
       - heading: "Task"
         source: entry
         display: properties
+        # Deliberately left at the display default (TKT-HOIX1) so the suite
+        # exercises BOTH render modes on one page: this entry section renders
+        # display values while the "Implements" list section below is inline-
+        # editable. A future spec asserting an editable form here must add
+        # render: input rather than assume the pre-TKT-HOIX1 default.
         fields:
           - property: status
           - property: assignee
+      # TKT-3R7RF3: a section whose fields opt into inline edit AND override
+      # which widget renders them. The done property is a boolean, so its type
+      # default is already checkbox; title is the load-bearing case — a string
+      # would default to TextWidget, and only a widget override makes it a
+      # textarea. Keeps the override honest: if the plumbing silently dropped,
+      # the textarea assertion fails even though the checkbox one would pass.
+      # (No backticks in this comment: it lives inside a TS template literal.)
+      - heading: "Progress"
+        source: entry
+        display: properties
+        render: input
+        fields:
+          - property: done
+            widget: checkbox
+          - property: title
+            widget: textarea
       - heading: "Implements"
         source: implemented
         display: list
+        # render: input is REQUIRED for this section to mount a
+        # SectionEditForm — fields render as display by default (TKT-HOIX1).
+        # Without it the #997 unmount-crash guard silently stops exercising
+        # the DOM shape it exists to guard.
         fields:
           - property: status
+            render: input
           - property: priority
+            render: input
         empty_message: "No implemented features"
 
 kanbans:
@@ -1034,7 +1341,10 @@ documents:
   feature_summary:
     title: "Feature Summary"
     entity_type: feature
-    command: "printf '# Summary for %s\\n\\nDocument body.' {id}"
+    # argv array, no shell (TKT-QGHNVA). {in} is the entry entity's markdown
+    # file; its frontmatter carries the id, so cat emits a document naming the
+    # entity without the id ever reaching the command line.
+    command: ["cat", "{in}"]
     edit:
       # Reusing the shared 'feature' form rather than adding a dedicated
       # edit-mode form: adding feature_edit would shift the form count
@@ -1047,7 +1357,7 @@ documents:
   feature_readonly:
     title: "Feature Readonly"
     entity_type: feature
-    command: "printf '# Read-only view of %s' {id}"
+    command: ["cat", "{in}"]
 
 navigation:
   - label: "Dashboard"
@@ -1234,6 +1544,7 @@ type: task
 title: Write unit tests
 status: draft
 assignee: Alice
+done: false
 ---
 
 Write unit tests for auth module.

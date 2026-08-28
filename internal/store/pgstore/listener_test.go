@@ -24,7 +24,7 @@ func dsnForSchema(t *testing.T, schema string) string {
 	t.Helper()
 	base := os.Getenv(testDBEnv)
 	if base == "" {
-		t.Skipf("%s not set; skipping multi-writer tests", testDBEnv)
+		skipOrFailWithoutDSN(t)
 	}
 	u, err := url.Parse(base)
 	require.NoError(t, err)
@@ -158,18 +158,40 @@ func TestCatchUpRecoversMissedEvents(t *testing.T) {
 // allowed to re-emit recent rows; that's why the guarantee is on the
 // notification path, not "exactly once ever".)
 func TestSelfNotificationFiltered(t *testing.T) {
-	selfPayload := pgstore.FeedPayloadForTest("origin-self", store.EventEntityCreated, "DEC-1")
-	require.False(t, pgstore.NotificationEmitsForTest(t, "origin-self", selfPayload),
+	const schema = "s1"
+	selfPayload := pgstore.FeedPayloadForTest("origin-self", schema, store.EventEntityCreated, "DEC-1")
+	require.False(t, pgstore.NotificationEmitsForTest(t, "origin-self", schema, selfPayload),
 		"self-origin notification must be filtered (already emitted in-process)")
 
-	remotePayload := pgstore.FeedPayloadForTest("origin-other", store.EventEntityCreated, "FEAT-2")
-	require.True(t, pgstore.NotificationEmitsForTest(t, "origin-self", remotePayload),
+	remotePayload := pgstore.FeedPayloadForTest("origin-other", schema, store.EventEntityCreated, "FEAT-2")
+	require.True(t, pgstore.NotificationEmitsForTest(t, "origin-self", schema, remotePayload),
 		"remote-origin notification must be emitted")
 }
 
+// TestForeignSchemaNotificationFiltered pins the schema filter directly, without
+// feed/DB timing. Every schema on a database shares one channel (feedChannel),
+// so a notification from another schema DOES arrive here and must be dropped:
+// it describes rows this store cannot see, and emitting it would fabricate an
+// event for an entity that does not exist in this schema.
+//
+// The remote-origin case is the load-bearing one — a same-origin foreign-schema
+// payload would be dropped by the origin filter anyway, so it cannot tell
+// whether the schema filter works.
+func TestForeignSchemaNotificationFiltered(t *testing.T) {
+	foreign := pgstore.FeedPayloadForTest("origin-other", "schema-b", store.EventEntityCreated, "FEAT-B")
+	require.False(t, pgstore.NotificationEmitsForTest(t, "origin-self", "schema-a", foreign),
+		"a notification from another schema must not be emitted")
+
+	own := pgstore.FeedPayloadForTest("origin-other", "schema-a", store.EventEntityCreated, "FEAT-A")
+	require.True(t, pgstore.NotificationEmitsForTest(t, "origin-self", "schema-a", own),
+		"a remote-origin notification for our own schema must be emitted")
+}
+
 // TestChannelIsolationAcrossSchemas (AC7): two writers on DIFFERENT schemas in
-// the same database do NOT see each other's notifications (schema-scoped
-// channel). This is what keeps parallel tests from cross-talking.
+// the same database do NOT see each other's notifications. Since TKT-9TOEBH
+// they share one channel, so the isolation now comes from the payload's schema
+// field being filtered on receipt rather than from distinct channel names —
+// this test pins the end-to-end guarantee either way.
 func TestChannelIsolationAcrossSchemas(t *testing.T) {
 	schemaX := freshFeedSchema(t)
 	schemaY := freshFeedSchema(t)
@@ -180,13 +202,14 @@ func TestChannelIsolationAcrossSchemas(t *testing.T) {
 	defer cancelX()
 
 	ctx := context.Background()
-	// Write on Y; X must NOT receive it (different schema => different channel).
+	// Write on Y; X must NOT receive it. The NOTIFY does reach X's listener (one
+	// shared channel), so this exercises the payload schema filter for real.
 	require.NoError(t, y.CreateEntity(ctx, entity.New("FEAT-Y", "feature")))
 
 	select {
 	case ev := <-chX:
 		if ev.EntityID == "FEAT-Y" {
-			t.Fatalf("schema X received schema Y's notification — channel not isolated: %+v", ev)
+			t.Fatalf("schema X received schema Y's notification — schema filter not applied: %+v", ev)
 		}
 	case <-time.After(1500 * time.Millisecond):
 		// good — isolated
@@ -284,7 +307,7 @@ func TestMalformedNotificationTriggersCatchUp(t *testing.T) {
 		"INSERT INTO "+pgQuoteIdent(schema)+".entities (id, type) VALUES ('GAR-1', 'ticket')")
 	require.NoError(t, err)
 	_, err = admin.Exec(ctx,
-		"SELECT pg_notify('rela_changed_'||$1, 'not-a-valid-payload')", schema)
+		"SELECT pg_notify($1, 'not-a-valid-payload')", pgstore.FeedChannelForTest)
 	require.NoError(t, err)
 
 	ev := waitForEntityEvent(t, ch, "GAR-1", 5*time.Second)

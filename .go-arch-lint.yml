@@ -9,6 +9,11 @@ exclude:
   - internal/store/storetest
   - internal/entitymanager/entitymanagertest
   - internal/visibility/visibilitytest
+  - internal/state/statetest
+  - internal/jobs/jobstest
+  - internal/mail/mailtest
+  - internal/userstate/userstatetest
+  - internal/schedulerstate/schedulerstatetest
   - frontend
   - e2e
   - .claude
@@ -45,6 +50,7 @@ components:
   app:              { in: internal/app }
   appbuild:         { in: internal/appbuild }
   appbuildtest:     { in: internal/appbuild/appbuildtest }
+  backendtest:      { in: internal/appbuild/backendtest }
 
   # Domain services
   analysis:         { in: internal/analysis }
@@ -54,8 +60,13 @@ components:
   autocascade:      { in: internal/autocascade }
   automation:       { in: internal/automation }
   calfeed:          { in: internal/calfeed }
+  mailrender:       { in: internal/mailrender }
+  caldavalias:      { in: internal/caldavalias }
   conflict:         { in: internal/conflict }
+  computed:         { in: internal/computed }
+  datamigration:    { in: internal/datamigration }
   entitymanager:    { in: internal/entitymanager }
+  imgproc:          { in: internal/imgproc }
   importer:         { in: internal/importer }
   renametype:       { in: internal/renametype }
   mermaid:          { in: internal/mermaid }
@@ -75,6 +86,7 @@ components:
   # data-entry server and a future native bridge consume it.
   apiwire:          { in: internal/apiwire/** }
   lua:              { in: internal/lua }
+  jobs:             { in: internal/jobs }
   scheduler:        { in: internal/scheduler }
   script:           { in: internal/script }
   metamodel:        { in: internal/metamodel }
@@ -84,6 +96,14 @@ components:
   sync:             { in: internal/sync }
   frontmatter:      { in: internal/frontmatter }
   filter:           { in: internal/filter }
+  queryplan:        { in: internal/queryplan }
+  propmatch:        { in: internal/propmatch }
+  userstate:        { in: internal/userstate }
+  nextaction:       { in: internal/nextaction }
+  memuserstate:     { in: internal/userstate/memuserstate }
+  kvuserstate:      { in: internal/userstate/kvuserstate }
+  schedulerstate:   { in: internal/schedulerstate }
+  kvschedstate:     { in: internal/schedulerstate/kvstate }
   pattern:          { in: internal/pattern }
   search:           { in: internal/search }
   bleveindex:       { in: internal/search/bleveindex }
@@ -93,6 +113,7 @@ components:
   memstore:         { in: internal/store/memstore }
   graphquerynaive:  { in: internal/store/graphquerynaive }
   pgstore:          { in: internal/store/pgstore }
+  sqlitestore:      { in: internal/store/sqlitestore }
   storeutil:        { in: internal/store/storeutil }
 
   # Project bootstrap utilities
@@ -105,6 +126,7 @@ components:
   affordances:      { in: internal/affordances }
   visibility:       { in: internal/visibility }
   ai:               { in: internal/ai }
+  mail:             { in: internal/mail }
   audit:            { in: internal/audit }
   jwtauth:          { in: internal/jwtauth }
   principal:        { in: internal/principal }
@@ -126,6 +148,16 @@ components:
 vendors:
   bleve:       { in: github.com/blevesearch/bleve/** }
   kong:        { in: github.com/alecthomas/kong }
+  # Background job queue (TKT-YOED3R). Granted ONLY to internal/jobs, which
+  # is the seam that contains it: the memory backend serves the fs/desktop
+  # tier and the postgres backend (build-tagged) the networked one. Keeping
+  # the grant this narrow is what stops a consumer importing neoq types
+  # directly and re-coupling every producer to the queue implementation.
+  neoq:        { in: [github.com/acaloiaro/neoq, github.com/acaloiaro/neoq/**] }
+  # uuid: the per-job fingerprint when a caller supplies no IdempotencyKey.
+  # A random fingerprint is what DISABLES neoq's payload-equality dedup, so
+  # two identical-payload jobs both run unless dedup was asked for by name.
+  uuid:        { in: github.com/google/uuid }
   # x/sys/unix: prlimit(2) for the per-command resource ceilings in cmdexec.
   # Go's syscall.SysProcAttr exposes no Rlimits field on Linux, so this is the
   # only way to bound a child's memory/PIDs/file size without a re-exec.
@@ -133,6 +165,27 @@ vendors:
   glamour:     { in: github.com/charmbracelet/glamour }
   huh:         { in: github.com/charmbracelet/huh }
   yaml:        { in: gopkg.in/yaml.v3 }
+  # CalDAV protocol surface (TKT-MF1CWZ). Granted ONLY to dataentry, which
+  # contains it in the caldav_* adapter files: calfeed stays the domain model
+  # and *ical.Calendar must not escape that boundary.
+  webdav:
+    in:
+      - github.com/emersion/go-webdav
+      - github.com/emersion/go-webdav/**
+  goical:      { in: github.com/emersion/go-ical }
+  # Outbound mail (TKT-332QZY). net/smtp is frozen and covers only the wire
+  # protocol; go-mail owns RFC 5322 assembly — header folding, encoded-words,
+  # quoted-printable, multipart — which is the part that is easy to get subtly
+  # wrong. Granted only to mail.
+  gomail:      { in: github.com/wneessen/go-mail }
+  # HTML sanitize + CSS inline for mail bodies. Both granted only to
+  # mailrender; the ORDER they run in is a security property documented on that
+  # package (sanitize the untrusted fragment, inline last).
+  bluemonday:  { in: github.com/microcosm-cc/bluemonday }
+  douceur:
+    in:
+      - github.com/aymerick/douceur
+      - github.com/aymerick/douceur/**
   goldmark:
     in:
       - github.com/yuin/goldmark
@@ -144,7 +197,9 @@ vendors:
   chromedp:    { in: [github.com/chromedp/chromedp, github.com/chromedp/chromedp/**, github.com/chromedp/cdproto, github.com/chromedp/cdproto/**] }
   runewidth:   { in: github.com/mattn/go-runewidth }
   rrulego:     { in: github.com/teambition/rrule-go }
-  mcpgo:       { in: github.com/mark3labs/mcp-go/** }
+  mcpgo:
+    in:
+      - github.com/modelcontextprotocol/go-sdk/**
   wails:       { in: github.com/wailsapp/wails/** }
   tablewriter:
     in:
@@ -153,7 +208,13 @@ vendors:
   color:       { in: github.com/fatih/color }
   fsnotify:    { in: github.com/fsnotify/fsnotify }
   pgx:         { in: github.com/jackc/pgx/** }
+  # modernc.org/sqlite: the pure-Go (no cgo) SQLite driver. Granted ONLY to
+  # sqlitestore, so the default and postgres builds cannot link it — the same
+  # isolation rule pgx and bleve carry.
+  sqlite:      { in: modernc.org/sqlite }
   singleflight: { in: golang.org/x/sync/singleflight }
+  semaphore:   { in: golang.org/x/sync/semaphore }
+  ximage:      { in: [golang.org/x/image, golang.org/x/image/**] }
   http2:
     in:
       - golang.org/x/net/http2
@@ -196,6 +257,11 @@ deps:
       - script
     canUse:
       - kong
+  # cmdServer is a composition root, so it may name both the transport
+  # (dataentry) and the protocol server it mounts inside it (mcp) — the same
+  # pairing `cli` already has for the stdio transport. Keeping the MCP wiring
+  # here is what lets `dataentry` take a plain http.Handler and stay off the
+  # go-sdk (TKT-BDG8U9).
   cmdServer:
     mayDependOn:
       - acl
@@ -204,6 +270,7 @@ deps:
       - cmdexec
       - dataentry
       - jwtauth
+      - mcp
       - principal
       - scheduler
       - script
@@ -247,6 +314,7 @@ deps:
       - cmdexec
       - config
       - dataentryconfig
+      - datamigration
       - entitymanager
       - filter
       - importer
@@ -257,9 +325,12 @@ deps:
       - metamodel
       - output
       - pgstore
+      - predicate
+      - predicatefns
       - principal
       - project
       - projectsetup
+      - queryplan
       - renametype
       - scheduler
       - schema
@@ -300,12 +371,18 @@ deps:
       - dataentryconfig
   dataentry:
     mayDependOn:
+      # The next-action engine and its per-user state. dataentry supplies the
+      # ACL-gated CandidateFunc; it does NOT choose a userstate backend —
+      # that is a wiring-site decision, like the store backend.
+      - nextaction
+      - userstate
       - acl
       - affordances
       - apiwire
       - attachment
       - audit
       - calfeed
+      - caldavalias
       - canonical
       - cmdexec
       - config
@@ -322,6 +399,7 @@ deps:
       - migration
       - openapi
       - project
+      - queryplan
       - script
       - search
       - searchparser
@@ -341,6 +419,8 @@ deps:
       - nethtml
       - rrulego
       - singleflight
+      - webdav
+      - goical
   dataentryconfig:
     mayDependOn:
       - filter
@@ -351,11 +431,20 @@ deps:
   # conditionlint reuses the predicate parser to sanity-check wizard-form
   # condition expressions at author time. It sits above dataentryconfig so the
   # config package stays free of the predicate dependency.
+  #
+  # It also COMPILES next-action `condition:` expressions (TKT-N8XQ2R). Those
+  # are evaluated server-side by predicatefns, not by the SPA, so unlike the
+  # wizard-form checks this one is authoritative rather than a superset: it
+  # must see the same host functions (days_between, today, ...) the runtime
+  # will, hence predicatefns. searchparser is needed to read the entity types
+  # out of the source's `query:`, which is what a condition compiles against.
   conditionlint:
     mayDependOn:
       - dataentryconfig
       - metamodel
       - predicate
+      - predicatefns
+      - searchparser
   desktop:
     canUse:
       - wails
@@ -406,19 +495,48 @@ deps:
   # any tag, so both backends' deps must be allow-listed here.
   appbuild:
     mayDependOn:
+      # Mail is optional infrastructure the composition root wires and owns the
+      # lifecycle of (start in assemble, stop in Close), exactly like the
+      # data-migration GC sweep. Consumers take the mail.Sender seam, not this
+      # edge.
+      - mail
+      # The composition root picks the userstate backend, the same way it
+      # picks the store backend. Consumers take the userstate.Store seam.
+      - userstate
+      - memuserstate
+      - kvuserstate
+      - datamigration
+      # Bridges conditionlint's next-action condition compiler to the seam
+      # dataentry declares, so the app never imports the predicate engine.
+      - conditionlint
+      - computed
+      - dataentryconfig
+      - nextaction
       - acl
+      # appbuild constructs the affordance resolver so the field write gate
+      # and the two gated-read bundles can share ONE instance (TKT-0XL8MF).
+      # Safe as a dependency edge: affordances is a near-leaf (acl, entity,
+      # metamodel, predicate*, principal, statemachine) and imports no
+      # wiring package, so this cannot close a cycle.
+      - affordances
       - app
       - audit
+      - caldavalias
       - autocascade
       - automation
       - bleveindex
       - config
       - entitymanager
+      # The composition root picks the job-queue backend per tier, the same way
+      # it picks the store: ephemeral in-process by default, durable PostgreSQL
+      # under the postgres tag. Consumers take the jobs.Queue seam.
+      - jobs
       - lua
       - memstore
       - metamodel
       - pgstore
       - project
+      - queryplan
       - script
       - search
       - state
@@ -429,6 +547,14 @@ deps:
       - tracer
       - validator
       - visibility
+  # backendtest supplies each build's test backend. The pgx dependency is
+  # confined to its postgres-tagged file, which the default build does not
+  # compile — the same arrangement pgstore uses.
+  backendtest:
+    mayDependOn:
+      - appbuild
+    canUse:
+      - pgx
   appbuildtest:
     mayDependOn:
       - acl
@@ -452,9 +578,13 @@ deps:
       - templating
       - tracer
       - validator
+      # visibility: only for visibility.Unrestricted, which NAMES the
+      # fixture's deliberately ungated reads (TKT-1WV50C).
+      - visibility
   projectsetup:
     mayDependOn:
       - conditionlint
+      - computed
       - dataentryconfig
       - metamodel
       - migration
@@ -479,6 +609,7 @@ deps:
     mayDependOn:
       - cmdexec
       - entitymanager
+      - imgproc
       - metamodel
       - store
   # transform: view-export engine. Depends only on the safe-exec core (cmdexec)
@@ -489,6 +620,34 @@ deps:
     mayDependOn:
       - cmdexec
       - metamodel
+  # Pure-Go, in-process image normalize (decode/orient/re-encode). A leaf: no
+  # domain imports, only the image codecs and a concurrency semaphore.
+  imgproc:
+    canUse:
+      - ximage
+      - semaphore
+  # Message model -> branded HTML + text/plain. A leaf in the calfeed sense: no
+  # internal deps at all, so it takes a plain map of colour tokens rather than
+  # dataentryconfig.ResolvedPalette (which would drag in filter/git/metamodel
+  # and make "leaf" a fiction).
+  mailrender:
+    canUse:
+      - goldmark
+      - bluemonday
+      - douceur
+  # Sender seam, transports, config and the best-effort outbox. Depends on
+  # mailrender for the body model only; it reaches the store through a narrow
+  # structural interface at the wiring site, never by importing appbuild.
+  mail:
+    mayDependOn:
+      - mailrender
+      # The SMTP password lives in .rela/secrets.yaml under smtp_password, the
+      # same store Lua scripts read: an SMTP credential is no different in kind
+      # from the API tokens already kept there, and TKT-DS1CR6 makes mail a
+      # script consumer anyway.
+      - secrets
+    canUse:
+      - gomail
   acl:
     mayDependOn:
       - entity
@@ -509,6 +668,7 @@ deps:
       - entity
       - metamodel
       - predicate
+      - predicatefns
       - principal
       - statemachine
   # Read-side ACL enforcement seam (DEC-ZBI39P): visibility wrappers over
@@ -547,6 +707,8 @@ deps:
     mayDependOn:
       - filter
       - metamodel
+      - predicate
+      - predicatefns
   conflict:
     mayDependOn:
       - markdown
@@ -557,6 +719,10 @@ deps:
       - acl
       - entity
       - lua
+      # visibility: only for visibility.Unrestricted, which NAMES the
+      # docs runtime's deliberately ungated reads (TKT-1WV50C). It reads a
+      # throwaway memstore the doc build just seeded itself.
+      - visibility
       - mermaid
       - metamodel
       - store
@@ -585,12 +751,32 @@ deps:
       - docscapture
       - metamodel
       - project
+  datamigration:
+    mayDependOn:
+      - audit
+      - computed
+      - entity
+      - metamodel
+      - principal
+      - schema
+      - state
+      - store
+    canUse:
+      # The lua: migration step runs a sandboxed pure transform on a bare
+      # gopher-lua state (no rela.* bindings) — see luastep.go.
+      - gopherlua
+  computed:
+    mayDependOn:
+      - metamodel
+      - predicate
+      - predicatefns
   entitymanager:
     mayDependOn:
       - acl
       - audit
       - autocascade
       - automation
+      - computed
       - metamodel
       - principal
       - statemachine
@@ -639,6 +825,8 @@ deps:
       - lua
       - markdown
       - metamodel
+      - predicate
+      - predicatefns
     canUse:
       - gopherlua
   validator:
@@ -667,10 +855,47 @@ deps:
     mayDependOn:
       - entity
       - markdown
+  # userstate is the per-user next-action state seam (snooze/mute/cooldown).
+  # Deliberately NOT dependent on store: this state is not graph content, and
+  # letting it reach the store would invite exactly the "just put it in the
+  # graph" shortcut the design rejects.
+  memuserstate:
+    mayDependOn:
+      - userstate
+  # The durable backend rides the existing per-user state seam (state.KV),
+  # the same one the scheduler and document cache use.
+  kvuserstate:
+    mayDependOn:
+      - state
+      - userstate
+  # schedulerstate is the per-task scheduler bookkeeping seam (last successful
+  # run, failure count, next retry). Deliberately NOT dependent on store: a
+  # last-run stamp is a fact about a deployment's operation, not graph content,
+  # and a write per tick would land in the audit log and the version sweep.
+  # (schedulerstate itself is a pure leaf — no deps entry, like entity.)
+  # The filesystem/desktop backend rides state.KV, the same seam the document
+  # cache and user settings use.
+  kvschedstate:
+    mayDependOn:
+      - state
+      - schedulerstate
+  # nextaction is the resolution engine. It depends on NO store, searcher or
+  # ACL type: candidates arrive through a consumer-side CandidateFunc that the
+  # wiring site supplies already read-gated. That is what keeps the engine
+  # testable without a graph, and what stops read-path ACL leaking in here.
+  nextaction:
+    mayDependOn:
+      - dataentryconfig
+      - entity
+      - userstate
+  # propmatch is a PURE LEAF (stdlib only) on purpose — it is imported by
+  # both filter (a branch) and the store layer, so anything added to it
+  # lands inside the store too. Do not give it dependencies.
   filter:
     mayDependOn:
       - metamodel
       - pattern
+      - propmatch
   lua:
     mayDependOn:
       - ai
@@ -686,9 +911,18 @@ deps:
       - gopherlua
       - runewidth
       - rrulego
+  # The job seam. Deliberately a near-leaf: it must NOT depend on store,
+  # entitymanager, or any subsystem that produces jobs, or the seam becomes
+  # a cycle. Commit deferral is driven by a ctx collector the transaction
+  # seam populates, which is why no store import is needed here.
+  jobs:
+    canUse:
+      - neoq
+      - uuid
   scheduler:
     mayDependOn:
       - audit
+      - jobs
       - config
       - lua
       - metamodel
@@ -719,6 +953,13 @@ deps:
   searchparser:
     mayDependOn:
       - filter
+  queryplan:
+    mayDependOn:
+      - dataentryconfig
+      - filter
+      - metamodel
+      - searchparser
+      - store
   store:
     mayDependOn:
       - metamodel
@@ -739,9 +980,14 @@ deps:
   graphquerynaive:
     mayDependOn:
       - entity
+      - propmatch
       - store
   pgstore:
     mayDependOn:
+      # The postgres build carries its own next-action state backend: it is the
+      # only one safe for a multi-process deployment, and it rides the pool
+      # this package already owns rather than opening a second one.
+      - userstate
       - canonical
       - graphquerynaive
       - search
@@ -750,6 +996,21 @@ deps:
       - sync
     canUse:
       - pgx
+  sqlitestore:
+    mayDependOn:
+      # Deliberately narrower than pgstore: no userstate, no sync, no canonical.
+      # This backend is the conformance-passing minimal store (DEC-LFSYNY stage
+      # 3); versioning, state and the sync manifest are later stages, and each
+      # should have to justify widening this list.
+      - entity
+      - graphquerynaive
+      - store
+      - storeutil
+    canUse:
+      - sqlite
+      # x/sys for flock/LockFileEx: the single-writer sidecar lock. Go's stdlib
+      # exposes no portable advisory file lock.
+      - xsys
   storeutil:
     mayDependOn:
       - store
@@ -775,6 +1036,10 @@ deps:
   project:
     mayDependOn:
       - storage
+  caldavalias:
+    mayDependOn:
+      - state
+
   state:
     mayDependOn:
       - storage

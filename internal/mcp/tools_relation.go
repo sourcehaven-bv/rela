@@ -6,20 +6,21 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 func (s *Server) handleListRelations(
-	ctx context.Context, request mcp.CallToolRequest,
-) (*mcp.CallToolResult, error) {
-	relType := request.GetString("type", "")
-	from := request.GetString("from", "")
-	to := request.GetString("to", "")
-	limit := request.GetInt("limit", 0)
-	offset := request.GetInt("offset", 0)
+	ctx context.Context, request *mcpgo.CallToolRequest,
+) (*mcpgo.CallToolResult, error) {
+	args := newToolRequest(request)
+	relType := args.GetString("type", "")
+	from := args.GetString("from", "")
+	to := args.GetString("to", "")
+	limit := args.GetInt("limit", 0)
+	offset := args.GetInt("offset", 0)
 
 	st := s.deps.Store
 	q := store.RelationQuery{Type: relType, From: from, To: to}
@@ -27,7 +28,7 @@ func (s *Server) handleListRelations(
 	all := make([]*entity.Relation, 0)
 	for r, err := range st.ListRelations(ctx, q) {
 		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			return errorResult(err.Error()), nil
 		}
 		all = append(all, r)
 	}
@@ -48,27 +49,28 @@ func (s *Server) handleListRelations(
 
 	text, err := convertStoreRelationsList(all)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
-	return mcp.NewToolResultText(text), nil
+	return textResult(text), nil
 }
 
 func (s *Server) handleCreateRelation(
-	ctx context.Context, request mcp.CallToolRequest,
-) (*mcp.CallToolResult, error) {
-	fromID, err := request.RequireString("from")
+	ctx context.Context, request *mcpgo.CallToolRequest,
+) (*mcpgo.CallToolResult, error) {
+	args := newToolRequest(request)
+	fromID, err := args.RequireString("from")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
 	fromID = trimID(fromID)
-	relType, err := request.RequireString("type")
+	relType, err := args.RequireString("type")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
 	relType = strings.TrimSpace(relType)
-	toID, err := request.RequireString("to")
+	toID, err := args.RequireString("to")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
 	toID = trimID(toID)
 
@@ -78,47 +80,48 @@ func (s *Server) handleCreateRelation(
 	// no-content-meant-empty case in practice.
 	opts := entity.RelationOptions{
 		Properties: extractProperties(request),
-		Content:    nilIfEmpty(request.GetString("content", "")),
+		Content:    nilIfEmpty(args.GetString("content", "")),
 	}
 
 	if _, createErr := s.deps.EntityManager.CreateRelation(ctx, fromID, relType, toID, opts); createErr != nil {
-		return mcp.NewToolResultError(createErr.Error()), nil
+		return errorResult(createErr.Error()), nil
 	}
 
-	return mcp.NewToolResultText(
+	return textResult(
 		fmt.Sprintf("Created link: %s --%s--> %s", fromID, relType, toID)), nil
 }
 
 func (s *Server) handleDeleteRelation(
-	ctx context.Context, request mcp.CallToolRequest,
-) (*mcp.CallToolResult, error) {
-	fromID, err := request.RequireString("from")
+	ctx context.Context, request *mcpgo.CallToolRequest,
+) (*mcpgo.CallToolResult, error) {
+	args := newToolRequest(request)
+	fromID, err := args.RequireString("from")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
 	fromID = trimID(fromID)
-	relType, err := request.RequireString("type")
+	relType, err := args.RequireString("type")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
 	relType = strings.TrimSpace(relType)
-	toID, err := request.RequireString("to")
+	toID, err := args.RequireString("to")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
 	toID = trimID(toID)
 
 	st := s.deps.Store
 	if _, getErr := st.GetRelation(ctx, fromID, relType, toID); getErr != nil {
-		return mcp.NewToolResultError(
+		return errorResult(
 			fmt.Sprintf("relation not found: %s --%s--> %s", fromID, relType, toID)), nil
 	}
 
 	if delErr := s.deps.EntityManager.DeleteRelation(ctx, fromID, relType, toID); delErr != nil {
-		return mcp.NewToolResultError(delErr.Error()), nil
+		return errorResult(delErr.Error()), nil
 	}
 
-	return mcp.NewToolResultText(
+	return textResult(
 		fmt.Sprintf("Removed link: %s --%s--> %s", fromID, relType, toID)), nil
 }
 

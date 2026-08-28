@@ -47,6 +47,7 @@ import (
 	"context"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // RowGate answers entity-level read-permission questions for the principal
@@ -106,4 +107,22 @@ type Reader interface {
 	// or a missing endpoint. Relations carry no field-level redaction
 	// today; row-gating is the whole contract.
 	FilterRelations(ctx context.Context, rels []*entity.Relation) []*entity.Relation
+}
+
+// HeaderFilterer is [Reader.Filter] for content-free [store.EntityHeader] values
+// (TKT-1ESTYJ).
+//
+// OPTIONAL, kept off [Reader] so a third-party or test Reader need not
+// implement it to stay valid. That optionality is safe ONLY because the
+// absence of this method degrades to loading whole entities and using
+// Filter — strictly more data, never less gating. A Reader that cannot
+// filter headers must therefore never be handed headers ungated:
+// [ScriptReader.ListEntityHeaders] is the sanctioned entry point, and it
+// falls back to whole-entity gating rather than passing rows through.
+type HeaderFilterer interface {
+	// FilterHeaders drops headers the ctx principal may not read and
+	// redacts the survivors, with [Reader.Filter]'s contract: order
+	// preserved, fresh slice, fail-closed on gate error, nil for empty
+	// input.
+	FilterHeaders(ctx context.Context, candidates []store.EntityHeader) []store.EntityHeader
 }

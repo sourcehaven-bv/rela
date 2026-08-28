@@ -8,7 +8,7 @@
 //
 // Two layers meet here:
 //
-//   - A [Registry] of named [Def]s. Each Def is a `from: markdown` → format byte
+//   - A [Registry] of named [Def] entries. Each Def is a `from: markdown` → format byte
 //     shuttle: an argv command template (with {in}/{out} placeholders) plus the
 //     produced content-type. Defs know nothing about entities, Lua, or the web
 //     app — pure byte conversion, executed via [github.com/Sourcehaven-BV/rela/internal/cmdexec].

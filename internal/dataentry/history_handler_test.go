@@ -40,9 +40,14 @@ func (h historyStore) GetVersion(_ context.Context, id string, version int) (*st
 	return &s, nil
 }
 
-func snapshot(version int, typ, content string, props map[string]any) store.VersionSnapshot {
+// snapshot builds a version-1 create snapshot. Version is fixed at 1 (every
+// caller uses a single-version timeline); typ stays an explicit parameter to
+// document each case's entity type and keep the cross-type test readable.
+//
+//nolint:unparam // typ is intentionally explicit per-test
+func snapshot(typ, content string, props map[string]any) store.VersionSnapshot {
 	return store.VersionSnapshot{
-		VersionMeta: store.VersionMeta{Version: version, Op: store.VersionOpCreate, Type: typ},
+		VersionMeta: store.VersionMeta{Version: 1, Op: store.VersionOpCreate, Type: typ},
 		Content:     content,
 		Properties:  props,
 		Projection:  []byte(`{}`),
@@ -129,7 +134,7 @@ func TestHandleV1History_CrossTypeIs404(t *testing.T) {
 	app := newAppFromParts(nil, testMeta(), f)
 	app.versions = historyStore{
 		versions: map[string][]store.VersionSnapshot{
-			"TKT-SECRET": {snapshot(1, "ticket", "body", map[string]any{"title": "secret ticket"})},
+			"TKT-SECRET": {snapshot("ticket", "body", map[string]any{"title": "secret ticket"})},
 		},
 	}
 

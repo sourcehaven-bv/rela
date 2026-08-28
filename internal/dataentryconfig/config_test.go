@@ -230,9 +230,18 @@ func TestDirection_UnmarshalYAML(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name: "empty defaults to outgoing",
+			// A written-but-empty value must stay empty, NOT collapse to
+			// outgoing: empty means "infer from the metamodel", and collapsing
+			// it here would let `direction: ""` bypass the ambiguity check on
+			// a self-referencing relation.
+			name: "empty stays empty so inference owns the decision",
 			yaml: `direction: ""`,
-			want: DirectionOutgoing,
+			want: "",
+		},
+		{
+			name: "bare key stays empty",
+			yaml: `direction:`,
+			want: "",
 		},
 		{
 			name: "outgoing",
@@ -367,6 +376,56 @@ func TestList_EmptyHeaderFooterOmittedFromJSON(t *testing.T) {
 	// omitempty keeps the wire payload clean when no info regions are set, so
 	// the SPA renders nothing and legacy lists are unaffected.
 	data, err := json.Marshal(List{EntityType: "risico", Title: "Risicoregister"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(data), "header") || strings.Contains(string(data), "footer") {
+		t.Errorf("expected no header/footer keys, got %s", data)
+	}
+}
+
+func TestKanbanHeaderFooter_YAMLAndJSON(t *testing.T) {
+	// Kanban info regions mirror the list ones: they decode from YAML and reach
+	// the SPA over _config, which resolves and renders them client-side.
+	const src = `
+entity_type: ticket
+title: Ticket Board
+column_property: status
+header: |
+  Cards move **left to right**.
+footer: Ask the maintainers before reopening a done ticket.
+`
+	var board Kanban
+	if err := yaml.Unmarshal([]byte(src), &board); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got, want := board.Header, "Cards move **left to right**.\n"; got != want {
+		t.Errorf("header: got %q, want %q", got, want)
+	}
+	if got, want := board.Footer, "Ask the maintainers before reopening a done ticket."; got != want {
+		t.Errorf("footer: got %q, want %q", got, want)
+	}
+
+	data, err := json.Marshal(board)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatalf("unmarshal json: %v", err)
+	}
+	if _, ok := out["header"]; !ok {
+		t.Errorf("json missing header key: %s", data)
+	}
+	if _, ok := out["footer"]; !ok {
+		t.Errorf("json missing footer key: %s", data)
+	}
+}
+
+func TestKanban_EmptyHeaderFooterOmittedFromJSON(t *testing.T) {
+	// omitempty keeps the wire payload clean when no info regions are set, so
+	// existing boards render exactly as before.
+	data, err := json.Marshal(Kanban{EntityType: "ticket", Title: "Ticket Board"})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}

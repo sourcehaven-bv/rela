@@ -28,7 +28,15 @@ const actionTimeout = 5 * time.Second
 // v1ActionRequest is the optional JSON body for action invocation.
 // When entity_id is provided, the script context includes the entity.
 type v1ActionRequest struct {
-	EntityID   string `json:"entity_id"`
+	EntityID string `json:"entity_id"`
+	// EntityType is ACCEPTED AND IGNORED. The SPA still sends it, so it stays
+	// on the wire for compatibility, but the server must never authorize
+	// against it: a caller-supplied type is forgeable, and gating on it is a
+	// cross-type escalation (claim a type you may read, name an id of a type
+	// you may not). The stored type is the only one that means anything —
+	// visibility.ScriptReader.GetEntity reads it from the row itself.
+	// TestAction_EntityTypeIsIgnored pins that this field cannot influence the
+	// outcome. Do not "notice it's unused" and wire it back in.
 	EntityType string `json:"entity_type"`
 }
 
@@ -42,7 +50,7 @@ type v1ActionRequest struct {
 // Action scripts may mutate the workspace, so we serialize them via
 // writeMu for the duration of script execution. Concurrent reloads,
 // other mutations, and other action scripts wait for writeMu.
-func (a *App) handleV1Action(w http.ResponseWriter, r *http.Request) {
+func (h *writeHandler) handleV1Action(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -56,7 +64,7 @@ func (a *App) handleV1Action(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s := a.State()
+	s := h.schema()
 	action, ok := s.Cfg.Actions[id]
 	if !ok {
 		writeV1Error(w, r, http.StatusNotFound, "action_not_found", "Action not found", "")
@@ -75,29 +83,66 @@ func (a *App) handleV1Action(w http.ResponseWriter, r *http.Request) {
 
 	correlationID := newCorrelationID()
 
-	// Serialize action script execution against other mutations and
-	// against workspace reloads via writeMu.
-	a.writeMu.Lock()
-	defer a.writeMu.Unlock()
-
-	// Resolve entity if provided in the request.
+	// Resolve the caller-supplied entity_id through the SCRIPT READER, before
+	// taking writeMu and before it reaches the script.
+	//
+	// `entity_id` names an entity the script receives as the global `entity`
+	// (script.Engine.ExecuteAction), so resolving it through the raw store made
+	// this endpoint a read-side ACL bypass: any caller who may POST an action
+	// could name any id and have its properties land in script scope, echoed
+	// back through the action's own response.
+	//
+	// visibility.ScriptReader is the seam that answers all of this correctly,
+	// and reusing it beats hand-rolling a gate here:
+	//
+	//   - it gates on the STORED type, so a caller cannot claim a type they may
+	//     read to reach an id of a type they may not (BUG-ZWTDH9's defect);
+	//   - it REDACTS `visible:`-hidden fields, which a row-level PermitsRead
+	//     check does not — the script must not see values the caller cannot;
+	//   - a denied entity comes back as store.ErrNotFound, indistinguishable
+	//     from a genuine miss, so this endpoint is not an existence oracle.
+	//
+	// A denied or absent id therefore leaves ent nil and the action still RUNS,
+	// exactly as when no entity_id was supplied. That is deliberate: entity_id
+	// is an optional parameter, not the resource. Refusing the whole request
+	// would break list actions whose script ignores `entity` — the SPA sends an
+	// id for every selected row, so one unreadable row in a selection would
+	// otherwise fail an operation the caller is fully entitled to perform.
+	//
+	// deps is hoisted so the reader that authorizes the lookup is the same one
+	// the script runs with, and so luaDeps() builds one gate/reader/redactor
+	// chain per request rather than two.
+	deps := h.luaDeps()
+	// TKT-YH52OM: the action's declared `capabilities:` block is the ONLY
+	// source of ambient capability for this script. An action with no block
+	// gets no http, no ai, no secrets and no write_file — this endpoint is
+	// reachable by anyone who may POST an action, so it is not an
+	// operator-shell surface and must not inherit a trusted default.
+	deps.Capabilities = luaCapabilities(action.Capabilities)
 	var ent *entity.Entity
 	if req.EntityID != "" {
-		if e, err := a.store.GetEntity(r.Context(), req.EntityID); err == nil {
+		if e, err := deps.VisibleReader.GetEntity(r.Context(), req.EntityID); err == nil {
 			ent = e
 		}
 	}
 
-	// Reuse the App's long-lived engine so rela.cache state persists
+	// Serialize action script execution against other mutations and
+	// against workspace reloads via writeMu. Provision under the lock (a no-op
+	// unless unmatched_principal: provision fired) so an action-triggered write
+	// by an unmatched verified principal is covered like CRUD.
+	r = h.enterWrite(r)
+	defer h.writeMu.Unlock()
+
+	// Reuse App's long-lived engine so rela.cache state persists
 	// across action invocations. Constructing a fresh engine per
 	// request would reset the cache each time and defeat memoization.
-	resp, err := a.scriptEngine.ExecuteAction(r.Context(), action.Script, a.luaWriteDeps(),
+	resp, err := h.engine().ExecuteAction(r.Context(), action.Script, deps,
 		ent, action.Params, actionTimeout, correlationID)
 	if err != nil {
 		slog.Warn("action failed", "action", id, "correlation", correlationID, "error", err)
 		var se *lua.ScriptError
 		if errors.As(err, &se) {
-			writeV1ScriptError(w, se, a.allowFullScriptDetail(r), correlationID)
+			writeV1ScriptError(w, se, h.fullScriptDetail(r), correlationID)
 			return
 		}
 		// Non-Lua failure (script-not-found, contract failure from

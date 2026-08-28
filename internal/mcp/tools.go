@@ -1,8 +1,6 @@
 package mcp
 
-import (
-	"github.com/mark3labs/mcp-go/mcp"
-)
+import mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
 func (s *Server) registerTools() {
 	// Entity tools
@@ -33,7 +31,8 @@ func (s *Server) registerTools() {
 	s.mcp.AddTool(toolAnalyzeSchema(), s.handleAnalyzeSchema)
 
 	// Schema tools
-	s.mcp.AddTool(toolGetMetamodel(), s.handleGetMetamodel)
+	s.mcp.AddTool(toolGetSchema(), s.handleGetSchema)
+	s.mcp.AddTool(toolGetMetamodel(), s.handleGetSchema)
 	s.mcp.AddTool(toolListEntityTypes(), s.handleListEntityTypes)
 	s.mcp.AddTool(toolListRelationTypes(), s.handleListRelationTypes)
 
@@ -48,29 +47,29 @@ func (s *Server) registerTools() {
 
 // --- Tool Definitions ---
 
-func toolListEntities() mcp.Tool {
-	return mcp.NewTool("list_entities",
-		mcp.WithDescription("List entities, optionally filtered by type and property expressions"),
-		mcp.WithString("type", mcp.Description("Entity type to filter by (e.g. requirement, decision)")),
-		mcp.WithString("where", mcp.Description("Filter expression (e.g. status=accepted, priority!=low)")),
-		mcp.WithNumber("limit", mcp.Description("Maximum number of results to return")),
-		mcp.WithNumber("offset", mcp.Description("Number of results to skip")),
+func toolListEntities() *mcpgo.Tool {
+	return newTool("list_entities",
+		withDescription("List entities, optionally filtered by type and property expressions"),
+		withString("type", description("Entity type to filter by (e.g. requirement, decision)")),
+		withString("where", description("Filter expression (e.g. status=accepted, priority!=low)")),
+		withNumber("limit", description("Maximum number of results to return")),
+		withNumber("offset", description("Number of results to skip")),
 	)
 }
 
-func toolShowEntity() mcp.Tool {
-	return mcp.NewTool("show_entity",
-		mcp.WithDescription("Get full entity details including properties, content, and relations"),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Entity ID (e.g. REQ-001)")),
+func toolShowEntity() *mcpgo.Tool {
+	return newTool("show_entity",
+		withDescription("Get full entity details including properties, content, and relations"),
+		withString("id", required(), description("Entity ID (e.g. REQ-001)")),
 	)
 }
 
-func toolSearchEntities() mcp.Tool {
-	return mcp.NewTool("search_entities",
-		mcp.WithDescription("Full-text search across entity titles and properties"),
-		mcp.WithString("query", mcp.Required(), mcp.Description("Search query string")),
-		mcp.WithString("type", mcp.Description("Restrict search to entity type")),
-		mcp.WithNumber("limit", mcp.Description("Maximum number of results (default 20)")),
+func toolSearchEntities() *mcpgo.Tool {
+	return newTool("search_entities",
+		withDescription("Full-text search across entity titles and properties"),
+		withString("query", required(), description("Search query string")),
+		withString("type", description("Restrict search to entity type")),
+		withNumber("limit", description("Maximum number of results (default 20)")),
 	)
 }
 
@@ -84,168 +83,177 @@ const warningsConvention = " The result text begins with `WARNINGS (n):` " +
 	"succeeded; warnings are advisory. Hard errors (unknown entity " +
 	"type, bad ID prefix) still come back via the standard error channel."
 
-func toolCreateEntity() mcp.Tool {
-	return mcp.NewTool("create_entity",
-		mcp.WithDescription("Create a new entity of the specified type."+warningsConvention),
-		mcp.WithString("type", mcp.Required(), mcp.Description("Entity type (e.g. requirement, decision)")),
-		mcp.WithObject("properties", mcp.Required(),
-			mcp.Description("Property map (e.g. {\"title\": \"...\", \"status\": \"draft\"})")),
-		mcp.WithString("content", mcp.Description("Markdown body content")),
-		mcp.WithString("id", mcp.Description("Custom entity ID (only valid when the type's id_type is manual; auto-generated otherwise)")),
+func toolCreateEntity() *mcpgo.Tool {
+	return newTool("create_entity",
+		withDescription("Create a new entity of the specified type."+warningsConvention),
+		withString("type", required(), description("Entity type (e.g. requirement, decision)")),
+		withObject("properties", required(),
+			description("Property map (e.g. {\"title\": \"...\", \"status\": \"draft\"})")),
+		withString("content", description("Markdown body content")),
+		withString("id", description("Custom entity ID (only valid when the type's id_type is manual; auto-generated otherwise)")),
 	)
 }
 
-func toolUpdateEntity() mcp.Tool {
+func toolUpdateEntity() *mcpgo.Tool {
 	const propsDesc = "Properties to set or update. Set a property to null to remove it from the entity. " +
 		"Empty string is treated as no value (silently ignored — use null to delete). " +
 		"Clearing a required property succeeds with a warning per DEC-HWZHA; the " +
 		"entity persists in a temporarily invalid state."
-	return mcp.NewTool("update_entity",
-		mcp.WithDescription("Update an existing entity's properties or content. "+
+	return newTool("update_entity",
+		withDescription("Update an existing entity's properties or content. "+
 			"Set a property to null in `properties` to remove it from the entity. "+
 			"Empty string is treated as no value (silently ignored — use null to delete). "+
 			"Clearing a required property succeeds with a warning per DEC-HWZHA."+warningsConvention),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Entity ID to update")),
-		mcp.WithObject("properties", mcp.Description(propsDesc)),
-		mcp.WithString("content", mcp.Description("New markdown body content")),
+		withString("id", required(), description("Entity ID to update")),
+		withObject("properties", description(propsDesc)),
+		withString("content", description("New markdown body content")),
 	)
 }
 
-func toolDeleteEntity() mcp.Tool {
-	return mcp.NewTool("delete_entity",
-		mcp.WithDescription("Delete an entity and optionally its relations"),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Entity ID to delete")),
-		mcp.WithBoolean("cascade", mcp.Description("Also delete all relations (default false)")),
+func toolDeleteEntity() *mcpgo.Tool {
+	return newTool("delete_entity",
+		withDescription("Delete an entity and optionally its relations"),
+		withString("id", required(), description("Entity ID to delete")),
+		withBoolean("cascade", description("Also delete all relations (default false)")),
 	)
 }
 
-func toolRenameEntity() mcp.Tool {
-	return mcp.NewTool("rename_entity",
-		mcp.WithDescription("Rename an entity's ID, updating all relations that reference it"),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Current entity ID")),
-		mcp.WithString("new_id", mcp.Required(), mcp.Description("New entity ID")),
-		mcp.WithBoolean("dry_run", mcp.Description("Preview changes without applying (default false)")),
+func toolRenameEntity() *mcpgo.Tool {
+	return newTool("rename_entity",
+		withDescription("Rename an entity's ID, updating all relations that reference it"),
+		withString("id", required(), description("Current entity ID")),
+		withString("new_id", required(), description("New entity ID")),
+		withBoolean("dry_run", description("Preview changes without applying (default false)")),
 	)
 }
 
-func toolListRelations() mcp.Tool {
-	return mcp.NewTool("list_relations",
-		mcp.WithDescription("List relations, optionally filtered by type, source, or target"),
-		mcp.WithString("type", mcp.Description("Relation type to filter by")),
-		mcp.WithString("from", mcp.Description("Source entity ID")),
-		mcp.WithString("to", mcp.Description("Target entity ID")),
-		mcp.WithNumber("limit", mcp.Description("Maximum number of results to return")),
-		mcp.WithNumber("offset", mcp.Description("Number of results to skip")),
+func toolListRelations() *mcpgo.Tool {
+	return newTool("list_relations",
+		withDescription("List relations, optionally filtered by type, source, or target"),
+		withString("type", description("Relation type to filter by")),
+		withString("from", description("Source entity ID")),
+		withString("to", description("Target entity ID")),
+		withNumber("limit", description("Maximum number of results to return")),
+		withNumber("offset", description("Number of results to skip")),
 	)
 }
 
-func toolCreateRelation() mcp.Tool {
-	return mcp.NewTool("create_relation",
-		mcp.WithDescription("Create a relation between two entities"),
-		mcp.WithString("from", mcp.Required(), mcp.Description("Source entity ID")),
-		mcp.WithString("type", mcp.Required(), mcp.Description("Relation type (e.g. addresses, implements)")),
-		mcp.WithString("to", mcp.Required(), mcp.Description("Target entity ID")),
-		mcp.WithString("content", mcp.Description("Markdown content for the relation")),
-		mcp.WithObject("properties", mcp.Description("Property map for the relation (e.g. {\"weight\": \"high\"})")),
+func toolCreateRelation() *mcpgo.Tool {
+	return newTool("create_relation",
+		withDescription("Create a relation between two entities"),
+		withString("from", required(), description("Source entity ID")),
+		withString("type", required(), description("Relation type (e.g. addresses, implements)")),
+		withString("to", required(), description("Target entity ID")),
+		withString("content", description("Markdown content for the relation")),
+		withObject("properties", description("Property map for the relation (e.g. {\"weight\": \"high\"})")),
 	)
 }
 
-func toolDeleteRelation() mcp.Tool {
-	return mcp.NewTool("delete_relation",
-		mcp.WithDescription("Delete a relation between two entities"),
-		mcp.WithString("from", mcp.Required(), mcp.Description("Source entity ID")),
-		mcp.WithString("type", mcp.Required(), mcp.Description("Relation type")),
-		mcp.WithString("to", mcp.Required(), mcp.Description("Target entity ID")),
+func toolDeleteRelation() *mcpgo.Tool {
+	return newTool("delete_relation",
+		withDescription("Delete a relation between two entities"),
+		withString("from", required(), description("Source entity ID")),
+		withString("type", required(), description("Relation type")),
+		withString("to", required(), description("Target entity ID")),
 	)
 }
 
-func toolTraceFrom() mcp.Tool {
-	return mcp.NewTool("trace_from",
-		mcp.WithDescription("Trace all dependencies from an entity (both outgoing and incoming edges)"),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Entity ID to trace from")),
-		mcp.WithNumber("max_depth", mcp.Description("Maximum trace depth (0 = unlimited)")),
+func toolTraceFrom() *mcpgo.Tool {
+	return newTool("trace_from",
+		withDescription("Trace all dependencies from an entity (both outgoing and incoming edges)"),
+		withString("id", required(), description("Entity ID to trace from")),
+		withNumber("max_depth", description("Maximum trace depth (0 = unlimited)")),
 	)
 }
 
-func toolTraceTo() mcp.Tool {
-	return mcp.NewTool("trace_to",
-		mcp.WithDescription("Trace upstream dependencies to an entity (following incoming edges)"),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Entity ID to trace to")),
-		mcp.WithNumber("max_depth", mcp.Description("Maximum trace depth (0 = unlimited)")),
+func toolTraceTo() *mcpgo.Tool {
+	return newTool("trace_to",
+		withDescription("Trace upstream dependencies to an entity (following incoming edges)"),
+		withString("id", required(), description("Entity ID to trace to")),
+		withNumber("max_depth", description("Maximum trace depth (0 = unlimited)")),
 	)
 }
 
-func toolFindPath() mcp.Tool {
-	return mcp.NewTool("find_path",
-		mcp.WithDescription("Find the shortest path between two entities"),
-		mcp.WithString("from", mcp.Required(), mcp.Description("Source entity ID")),
-		mcp.WithString("to", mcp.Required(), mcp.Description("Target entity ID")),
+func toolFindPath() *mcpgo.Tool {
+	return newTool("find_path",
+		withDescription("Find the shortest path between two entities"),
+		withString("from", required(), description("Source entity ID")),
+		withString("to", required(), description("Target entity ID")),
 	)
 }
 
-func toolAnalyzeOrphans() mcp.Tool {
-	return mcp.NewTool("analyze_orphans",
-		mcp.WithDescription("Find entities with no connections (orphans)"),
-		mcp.WithString("type", mcp.Description("Filter by entity type")),
+func toolAnalyzeOrphans() *mcpgo.Tool {
+	return newTool("analyze_orphans",
+		withDescription("Find entities with no connections (orphans)"),
+		withString("type", description("Filter by entity type")),
 	)
 }
 
-func toolAnalyzeCardinality() mcp.Tool {
-	return mcp.NewTool("analyze_cardinality",
-		mcp.WithDescription("Check relation cardinality constraints defined in the metamodel"),
+func toolAnalyzeCardinality() *mcpgo.Tool {
+	return newTool("analyze_cardinality",
+		withDescription("Check relation cardinality constraints defined in the metamodel"),
 	)
 }
 
-func toolAnalyzeUnique() mcp.Tool {
-	return mcp.NewTool("analyze_unique",
-		mcp.WithDescription("Find entities that violate a `unique: true` property constraint "+
+func toolAnalyzeUnique() *mcpgo.Tool {
+	return newTool("analyze_unique",
+		withDescription("Find entities that violate a `unique: true` property constraint "+
 			"(same-type entities sharing a value for a unique property) — e.g. pre-existing "+
 			"duplicates that predate the constraint"),
 	)
 }
 
-func toolAnalyzeProperties() mcp.Tool {
-	return mcp.NewTool("analyze_properties",
-		mcp.WithDescription("Validate entity property values against the metamodel schema"),
+func toolAnalyzeProperties() *mcpgo.Tool {
+	return newTool("analyze_properties",
+		withDescription("Validate entity property values against the metamodel schema"),
 	)
 }
 
-func toolAnalyzeValidations() mcp.Tool {
-	return mcp.NewTool("analyze_validations",
-		mcp.WithDescription("Run custom validation rules defined in the metamodel"),
+func toolAnalyzeValidations() *mcpgo.Tool {
+	return newTool("analyze_validations",
+		withDescription("Run custom validation rules defined in the metamodel"),
 	)
 }
 
-func toolAnalyzeSchema() mcp.Tool {
-	return mcp.NewTool("analyze_schema",
-		mcp.WithDescription("Analyze metamodel schema usage to find unused entity types, relation types, and custom types"),
-		mcp.WithNumber("threshold", mcp.Description("Show types with instance count <= threshold (0 = only unused, default 0)")),
+func toolAnalyzeSchema() *mcpgo.Tool {
+	return newTool("analyze_schema",
+		withDescription("Analyze metamodel schema usage to find unused entity types, relation types, and custom types"),
+		withNumber("threshold", description("Show types with instance count <= threshold (0 = only unused, default 0)")),
 	)
 }
 
-func toolGetMetamodel() mcp.Tool {
-	return mcp.NewTool("get_metamodel",
-		mcp.WithDescription("Get the full metamodel definition (entity types, relations, properties, validations)"),
+func toolGetSchema() *mcpgo.Tool {
+	return newTool("get_schema",
+		withDescription("Get the full schema definition (entity types, relations, properties, validations)"),
 	)
 }
 
-func toolListEntityTypes() mcp.Tool {
-	return mcp.NewTool("list_entity_types",
-		mcp.WithDescription("List available entity types with their property schemas"),
+// toolGetMetamodel is the pre-rename alias for get_schema, kept registered
+// because MCP clients pin tool names in their own config files — dropping it
+// would break every existing client on upgrade. Deprecated: use get_schema.
+func toolGetMetamodel() *mcpgo.Tool {
+	return newTool("get_metamodel",
+		withDescription("Deprecated alias for get_schema."),
 	)
 }
 
-func toolListRelationTypes() mcp.Tool {
-	return mcp.NewTool("list_relation_types",
-		mcp.WithDescription("List available relation types with their constraints"),
+func toolListEntityTypes() *mcpgo.Tool {
+	return newTool("list_entity_types",
+		withDescription("List available entity types with their property schemas"),
 	)
 }
 
-func toolExport() mcp.Tool {
-	return mcp.NewTool("export",
-		mcp.WithDescription("Export entities and relations in JSON, YAML, or CSV format"),
-		mcp.WithString("format", mcp.Required(),
-			mcp.Description("Output format"), mcp.Enum("json", "yaml", "csv")),
-		mcp.WithString("type", mcp.Description("Entity type to export (omit for all)")),
+func toolListRelationTypes() *mcpgo.Tool {
+	return newTool("list_relation_types",
+		withDescription("List available relation types with their constraints"),
+	)
+}
+
+func toolExport() *mcpgo.Tool {
+	return newTool("export",
+		withDescription("Export entities and relations in JSON, YAML, or CSV format"),
+		withString("format", required(),
+			description("Output format"), enum("json", "yaml", "csv")),
+		withString("type", description("Entity type to export (omit for all)")),
 	)
 }

@@ -32,25 +32,20 @@ documents:
     entity_type: category
     script: docs/category_report.lua
     timeout: 10
+  # Standalone: no entity_type, so it renders at /document/status_review and
+  # is reachable from the navigation entry below rather than an entity page.
+  status_review:
+    title: "Status Review"
+    script: docs/status_review.lua
+    timeout: 10
+  # Renders through Lua, not a shell. The inline `command:` this replaced
+  # spliced {id} into a shell string (TKT-QGHNVA); `command:` is now an argv
+  # array with no shell, and a renderer that needs the entity reads the graph
+  # directly rather than shelling out to the CLI.
   ticket_summary:
     title: "Ticket Summary"
     entity_type: ticket
-    command: |
-      export PATH=".rela/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
-      TITLE=$(rela show {id} -o json | jq -r '.entity.properties.title // "Untitled"')
-      STATUS=$(rela show {id} -o json | jq -r '.entity.properties.status // "unknown"')
-      PRIORITY=$(rela show {id} -o json | jq -r '.entity.properties.priority // "medium"')
-      ASSIGNEE=$(rela show {id} -o json | jq -r '.entity.properties.assignee // "unassigned"')
-      DESC=$(rela show {id} -o json | jq -r '.entity.properties.description // ""')
-      echo "# $TITLE"
-      echo ""
-      echo "**Status:** $STATUS | **Priority:** $PRIORITY | **Assignee:** $ASSIGNEE"
-      echo ""
-      if [ -n "$DESC" ]; then
-        echo "## Description"
-        echo ""
-        echo "$DESC"
-      fi
+    script: docs/ticket_summary.lua
     timeout: 30
 forms:
   create_ticket:
@@ -65,58 +60,78 @@ forms:
       - property: description
         widget: textarea
         help: "Detailed description of the issue"
+      # Title and description stay full width — a summary line and a textarea
+      # both want the room. The short fields pair up on the 12-column grid.
+      #
+      # The same grouping is authored on edit_ticket and the ticket view, so
+      # the three ticket surfaces line up with each other. Keep them in step:
+      # a field that moves here should move there too.
       - property: priority
+        span: 4
       - property: reporter
         label: "Reported by"
         placeholder: "your.name"
+        span: 4
       - property: assignee
         label: "Assign to"
         placeholder: "assignee.name"
+        span: 4
       - property: due_date
+        span: 4
       - property: estimated_hours
+        span: 4
       - property: status
         hidden: true
     relations:
       - relation: belongs-to
+        direction: outgoing
         required: true
-        allow_create: true
-        create_form: create_category
       - relation: tagged
+        direction: outgoing
         widget: multi-select
-        allow_create: true
-        create_form: create_label
   edit_ticket:
     entity_type: ticket
     title: "Edit Ticket"
     mode: edit
     body: true
     fields:
+      # Same grouping as create_ticket and the ticket view: title and
+      # description full width, the three classification fields across one
+      # row, then the two numbers. Editing a ticket should feel like the
+      # screen you were just reading.
       - property: title
       - property: description
         widget: textarea
-      - property: priority
+      # status keeps a full row of its own: the transitions panel below it is
+      # ~180px tall, and a grid row is as tall as its tallest item — so pairing
+      # it with short fields leaves them floating above a large void. A field
+      # that carries a blurb wants its own row.
       - property: status
         transitions:
           open: [in-progress, closed]
           in-progress: [open, resolved]
           resolved: [closed, in-progress]
           closed: [open]
+      - property: priority
+        span: 4
       - property: assignee
         label: "Assign to"
+        span: 4
       - property: reporter
         label: "Reported by"
+        span: 4
       - property: due_date
+        span: 6
       - property: estimated_hours
+        span: 6
       - property: is_blocked
     relations:
       - relation: belongs-to
+        direction: outgoing
         required: true
-        allow_create: true
-        create_form: create_category
       - relation: tagged
+        direction: outgoing
         widget: cards
-        allow_create: true
-        create_form: create_label
         properties:
           - property: added_by
             label: "Added By"
@@ -369,6 +384,7 @@ views:
       - heading: "Category"
         source: entry
         display: properties
+        render: input
         fields:
           - property: name
           - property: description
@@ -398,6 +414,7 @@ views:
       - heading: "Labels Used"
         source: labels
         display: list
+        render: input
         fields:
           - property: name
         empty_message: "No labels applied"
@@ -423,13 +440,50 @@ views:
       - heading: "Ticket"
         source: entry
         display: properties
+        render: input
         fields:
+          # `span` places a field on the 12-column grid; omit it for full
+          # width (the default). Grouping is DECLARED here, not left to
+          # whatever the viewport happens to fit.
+          #
+          # Widths follow what each field actually holds, which is the point
+          # of authoring them per surface rather than taking a uniform grid.
+          #
+          # Row 1 — the two enums that answer "where is this and how urgent":
+          # short values, so a third each, with the wider assignee alongside.
+          # Row 2 — two names side by side, equal weight.
+          # Row 3 — a date and a number, both narrow; the row deliberately
+          # stops at 8/12 rather than stretching to fill. An empty remainder
+          # is better than a date input the width of a paragraph.
           - property: status
+            span: 3
           - property: priority
+            span: 3
           - property: assignee
+            span: 6
           - property: reporter
+            span: 6
           - property: due_date
+            span: 6
           - property: estimated_hours
+            span: 4
+          # TKT-3R7RF3 — `widget:` overrides which widget renders a property,
+          # independently of its type.
+          #
+          # is_blocked is a boolean, so a checkbox is already its default; it
+          # is spelled out here because with `render: input` above it is the
+          # payoff case — tick it and the value saves, no form round-trip.
+          #
+          # description is a string, whose default is a single-line text
+          # input. `widget: textarea` is the case that only config can reach:
+          # nothing about the type says this field holds a paragraph.
+          - property: is_blocked
+            widget: checkbox
+            span: 4
+          - property: description
+            widget: textarea
+            span: 12
+
       # Ticket body (markdown content)
       - source: entry
         display: content
@@ -446,6 +500,7 @@ views:
       - heading: "Blocked By"
         source: blocked_by
         display: cards
+        render: input
         fields:
           - property: status
           - property: priority
@@ -455,6 +510,7 @@ views:
       - heading: "Labels"
         source: labels
         display: list
+        render: input
         fields:
           - property: name
         empty_message: "No labels"
@@ -548,12 +604,20 @@ kanbans:
     title: "Ticket Board"
     column_property: status
     columns:
+      # `icon:` names an icon from the shared registry; the label stays plain
+      # text. Emoji used to live inside the label string, which meant they
+      # ignored the theme, rendered differently per OS, and could not be
+      # styled — and the SPA had no way to tell an intentional emoji in a
+      # label apart from one meant as an icon.
       - value: open
-        label: "\U0001F4E5 To Do"
+        label: "To Do"
+        icon: inbox
       - value: in-progress
-        label: "\U0001F527 In Progress"
+        label: "In Progress"
+        icon: wrench
       - value: resolved
-        label: "✅ Done"
+        label: "Done"
+        icon: done
     card:
       title: title
       fields:
@@ -586,12 +650,19 @@ kanbans:
 navigation:
   - label: "Dashboard"
     dashboard: true
+  - label: "Status Review"
+    document: status_review
   - group: "Tickets"
     items:
+      # Without `icon:` all three lists get the same derived glyph, so the
+      # sidebar reads as three identical rows distinguished only by their
+      # labels. An authored icon gives each one a shape you can aim for.
       - label: "My Tickets"
         list: my_tickets
+        icon: inbox
       - label: "Open Tickets"
         list: open_tickets
+        icon: status
       - label: "All Tickets"
         list: all_tickets
       - label: "Ticket Board"

@@ -6,6 +6,7 @@ import { getErrorMessage, ApiError } from '@/api/errors'
 import { listVersions, getVersion, restoreVersion, type VersionMeta } from '@/api/history'
 import { getEntity as fetchEntity } from '@/api/entities'
 import { lineDiff, propertyDiff, type DiffLine, type PropertyChange } from '@/utils/lineDiff'
+import { useVersionSelectionSync, type Side } from '@/composables/useVersionSelectionSync'
 import { isEnumPropertyDef } from '@/utils/format'
 import Badge from '@/components/common/Badge.vue'
 import type { Entity } from '@/types'
@@ -26,11 +27,32 @@ const current = ref<Entity | null>(null)
 
 // A comparison side is either a version ordinal (number) or 'current' (the live
 // entity). 'current' is the sentinel for the working state, so a user can diff
-// any past version against another OR against the live entity.
-type Side = number | 'current'
+// any past version against another OR against the live entity. The pair is
+// mirrored into `?base=`/`?target=` so a diff can be linked to — see
+// useVersionSelectionSync.
+const {
+  base: baseSel,
+  target: targetSel,
+  seedFromUrl,
+  resetToDefaults,
+  select,
+  swap: swapSides,
+  publish: publishSelection,
+} = useVersionSelectionSync({
+  validVersions: () => versions.value.map((m) => m.version),
+  defaults: () => defaultSelection(),
+  onChange: () => void recompute(),
+})
 
-const baseSel = ref<Side>('current')
-const targetSel = ref<Side>('current')
+// Default: the most recent version → current, preserving the "what changed
+// since this version" reading the screen opened with. Extracted (rather than
+// inlined in `defaults`) so the post-restore reset uses the same expression and
+// the two can't drift.
+function defaultSelection(): { base: Side; target: Side } {
+  if (!versions.value.length) return { base: 'current', target: 'current' }
+  return { base: versions.value[versions.value.length - 1].version, target: 'current' }
+}
+
 const contentDiff = ref<DiffLine[]>([])
 const propDiff = ref<PropertyChange[]>([])
 const restoring = ref(false)
@@ -51,11 +73,10 @@ const canRestore = computed(() => current.value?._actions?.update !== false)
 const typeDef = computed(() => schemaStore.getEntityType(entityType.value))
 
 // Property labels are not carried on PropertyDef (they live on form/view field
-// config); for a raw property diff, humanize the property name — "display_name"
-// → "Display name".
+// config), so a raw property diff shows the property name as-is. Humanizing it
+// here would be a derived label, which DEC-6C1NAA rules out.
 function propertyLabel(name: string): string {
-  const spaced = name.replace(/[_-]+/g, ' ').trim()
-  return spaced.charAt(0).toUpperCase() + spaced.slice(1)
+  return name
 }
 
 // Whether a property should render as a Badge (enum types), reusing the same
@@ -71,7 +92,11 @@ function displayValue(v: unknown): string {
   return String(v)
 }
 
-async function load() {
+// `fromUrl` re-reads `?base=`/`?target=` now that the version list is known and
+// params can be validated against real ordinals. A reload after a RESTORE
+// passes false: the version list has changed underneath, so re-seeding would
+// resurrect a pair the user chose against the old list.
+async function load(fromUrl = true) {
   loading.value = true
   error.value = ''
   try {
@@ -81,13 +106,18 @@ async function load() {
     ])
     versions.value = vs
     current.value = ent
-    // Default comparison: the most recent version → current, preserving the
-    // "what changed since this version" reading the screen opened with.
-    if (vs.length) {
-      baseSel.value = vs[vs.length - 1].version
-      targetSel.value = 'current'
-      await recompute()
+    if (fromUrl) {
+      seedFromUrl()
+    } else {
+      resetToDefaults()
     }
+    if (vs.length) await recompute()
+    // Publish the resolved pair so a bare URL becomes an explicit, shareable one
+    // (and so a post-restore reset is reflected in the address bar). Runs even
+    // with NO versions: that is exactly when the URL is most likely to carry a
+    // stale ordinal, and leaving it there would let a bookmark re-apply it once
+    // the sweep captures versions later.
+    publishSelection()
   } catch (err) {
     if (err instanceof ApiError && err.status === 501) {
       unsupported.value = true
@@ -145,16 +175,20 @@ async function recompute() {
   }
 }
 
-// Clicking a timeline row sets the BASE (before) side and recomputes.
+// Clicking a timeline row sets the BASE (before) side.
 function selectVersion(v: number) {
-  baseSel.value = v
-  void recompute()
+  select({ base: v })
 }
 
-// Swap the two sides (reverse the diff direction).
-function swapSides() {
-  ;[baseSel.value, targetSel.value] = [targetSel.value, baseSel.value]
-  void recompute()
+// The dropdowns bind v-model directly, so `select` re-publishes the value the
+// ref already holds; passing it explicitly keeps one write path for all four
+// mutation sources (dropdown, timeline row, swap, external nav).
+function onBaseChange() {
+  select({ base: baseSel.value })
+}
+
+function onTargetChange() {
+  select({ target: targetSel.value })
 }
 
 async function restore(v: number) {
@@ -163,7 +197,7 @@ async function restore(v: number) {
   try {
     await restoreVersion(entityType.value, entityId.value, v)
     uiStore.showToast('success', `Restored to version ${v}`)
-    await load()
+    await load(false)
   } catch (err) {
     uiStore.showToast('error', getErrorMessage(err, 'Restore failed'))
   } finally {
@@ -219,6 +253,7 @@ onMounted(load)
             :key="m.version"
             class="timeline-item"
             :class="{ selected: selectedVersion === m.version }"
+            :data-version="m.version"
           >
             <button type="button" class="timeline-select" @click="selectVersion(m.version)">
               <span class="timeline-badge" :data-op="m.op">{{ m.op }}</span>
@@ -245,7 +280,7 @@ onMounted(load)
       <section class="card diff-card">
         <div class="compare-bar">
           <span class="compare-label">Compare</span>
-          <select v-model="baseSel" class="compare-select" @change="recompute">
+          <select v-model="baseSel" class="compare-select" @change="onBaseChange">
             <option value="current">current</option>
             <option v-for="m in versionsNewestFirst" :key="m.version" :value="m.version">
               v{{ m.version }} · {{ m.op }}
@@ -259,7 +294,7 @@ onMounted(load)
           >
             ⇄
           </button>
-          <select v-model="targetSel" class="compare-select" @change="recompute">
+          <select v-model="targetSel" class="compare-select" @change="onTargetChange">
             <option value="current">current</option>
             <option v-for="m in versionsNewestFirst" :key="m.version" :value="m.version">
               v{{ m.version }} · {{ m.op }}

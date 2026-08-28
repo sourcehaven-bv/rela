@@ -10,6 +10,9 @@ import { renderMermaidDiagrams, renderPlantUMLDiagrams } from '@/utils/markdown'
 import type { DocumentConfig } from '@/types'
 import { getErrorMessage, getScriptError } from '@/api/errors'
 import DOMPurify from 'dompurify'
+import { useDelayedPending } from '@/composables/useDelayedPending'
+import { PENDING_TIMINGS } from '@/composables/pendingTimings'
+
 
 const props = defineProps<{
   entityType: string
@@ -32,6 +35,15 @@ const handleContentClick = createDocumentClickHandler(router)
 const selectedDoc = ref<string | null>(null)
 const docContent = ref<string>('')
 const loading = ref(false)
+
+// Cold-load only (the `!docContent` half): a re-render keeps the previous
+// document on screen rather than blanking it. The gate adds the other half
+// — a render quicker than the threshold shows nothing at all.
+const showBlockLoader = useDelayedPending(() => loading.value && !docContent.value, {
+  delay: PENDING_TIMINGS.navDelayMs,
+  minDuration: PENDING_TIMINGS.navMinDurationMs,
+})
+
 const isCached = ref(false)
 const docBody = useTemplateRef<HTMLElement>('docBody')
 
@@ -49,12 +61,20 @@ watch(sanitizedContent, async () => {
   }
 })
 
-// Find documents that apply to this entity type
+// Find documents that apply to this entity type.
+//
+// Standalone documents (no entity_type) are excluded by construction: their
+// entity_type is undefined, which never equals a real type. They render at
+// /document/:name from a navigation entry and have no entity to attach to.
+//
+// Documents gated by `permission:` ARE listed here, and render a 403 if the
+// user lacks it. That matches the sidebar, which is principal-independent by
+// design (docs/acl-security.md) — the config is not a secret, so we show what
+// is configured and let the server answer authoritatively.
 const availableDocuments = computed(() => {
   const docs: Array<{ name: string; config: DocumentConfig }> = []
   for (const [name, config] of schemaStore.documents) {
-    const targetType = config.entity_type
-    if (targetType === props.entityType) {
+    if (config.entity_type && config.entity_type === props.entityType) {
       docs.push({ name, config })
     }
   }
@@ -64,15 +84,19 @@ const availableDocuments = computed(() => {
 // Seed selectedDoc from the URL's ?doc= query so form-submit redirects
 // land on the same tab the user was viewing, and bookmarks / shared
 // links preserve panel state. Auto-select the first document otherwise.
-watch(availableDocuments, (docs) => {
-  if (docs.length === 0) return
-  const fromQuery = typeof route.query.doc === 'string' ? route.query.doc : null
-  if (fromQuery && docs.some((d) => d.name === fromQuery)) {
-    selectedDoc.value = fromQuery
-  } else if (!selectedDoc.value) {
-    selectedDoc.value = docs[0].name
-  }
-}, { immediate: true })
+watch(
+  availableDocuments,
+  (docs) => {
+    if (docs.length === 0) return
+    const fromQuery = typeof route.query.doc === 'string' ? route.query.doc : null
+    if (fromQuery && docs.some((d) => d.name === fromQuery)) {
+      selectedDoc.value = fromQuery
+    } else if (!selectedDoc.value) {
+      selectedDoc.value = docs[0].name
+    }
+  },
+  { immediate: true }
+)
 
 // Keep ?doc= in sync with the selected tab without pushing history
 // entries — we want Back to leave the entity page, not cycle through
@@ -83,11 +107,15 @@ watch(selectedDoc, (name) => {
 })
 
 // Load document when selection changes
-watch([selectedDoc, () => props.entityId], async () => {
-  if (selectedDoc.value && props.entityId) {
-    await loadDocument()
-  }
-}, { immediate: true })
+watch(
+  [selectedDoc, () => props.entityId],
+  async () => {
+    if (selectedDoc.value && props.entityId) {
+      await loadDocument()
+    }
+  },
+  { immediate: true }
+)
 
 async function loadDocument(refresh = false) {
   if (!selectedDoc.value) return
@@ -141,8 +169,10 @@ onUnmounted(() => {
   off('entity:changed', handleEntityChange)
 })
 
+// An authored `title:` wins; otherwise the document id is shown as-is.
+// Deriving a title from the id would be an English-only guess (DEC-6C1NAA).
 function getDocTitle(name: string, config: DocumentConfig): string {
-  return config.title || name.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())
+  return config.title || name
 }
 </script>
 
@@ -151,16 +181,8 @@ function getDocTitle(name: string, config: DocumentConfig): string {
     <header class="panel-header">
       <h2>Documents</h2>
       <div class="header-controls">
-        <select
-          v-if="availableDocuments.length > 1"
-          v-model="selectedDoc"
-          class="doc-select"
-        >
-          <option
-            v-for="doc in availableDocuments"
-            :key="doc.name"
-            :value="doc.name"
-          >
+        <select v-if="availableDocuments.length > 1" v-model="selectedDoc" class="doc-select">
+          <option v-for="doc in availableDocuments" :key="doc.name" :value="doc.name">
             {{ getDocTitle(doc.name, doc.config) }}
           </option>
         </select>
@@ -176,14 +198,19 @@ function getDocTitle(name: string, config: DocumentConfig): string {
       </div>
     </header>
 
-    <div v-if="loading && !docContent" class="loading-state">
+    <div v-if="showBlockLoader" class="loading-state">
       <div class="spinner" />
       <span>Rendering document...</span>
     </div>
 
     <div v-else-if="docContent" class="document-content">
       <div v-if="isCached" class="cached-badge">cached</div>
-      <div ref="docBody" class="document-body md-body" @click="handleContentClick" v-html="sanitizedContent" />
+      <div
+        ref="docBody"
+        class="document-body md-body"
+        @click="handleContentClick"
+        v-html="sanitizedContent"
+      />
     </div>
 
     <div v-else class="empty-state">
@@ -234,7 +261,9 @@ function getDocTitle(name: string, config: DocumentConfig): string {
 .doc-select:focus {
   outline: none;
   border-color: var(--accent-color);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  box-shadow:
+    0 0 0 2px var(--focus-ring-gap),
+    0 0 0 4px var(--focus-ring);
 }
 
 .btn {
@@ -296,12 +325,6 @@ function getDocTitle(name: string, config: DocumentConfig): string {
   animation: spin 1s linear infinite;
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 .document-content {
   position: relative;
   padding: 24px;
@@ -323,4 +346,14 @@ function getDocTitle(name: string, config: DocumentConfig): string {
    pre, blockquote, hr, img, links, tables) is shared across every markdown
    surface via the `.md-body` class on the `.document-body` container — see
    styles/markdown-content.css. */
+
+/* Reduced motion. This is a SCOPED style, so styles/pending.css cannot
+   reach .spinner-sm — a scoped selector carries a [data-v-*] attribute and
+   outranks an unscoped rule. The suppression has to live beside the
+   declaration. */
+@media (prefers-reduced-motion: reduce) {
+  .spinner-sm {
+    animation: none;
+  }
+}
 </style>

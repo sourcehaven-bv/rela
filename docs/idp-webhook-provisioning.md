@@ -34,7 +34,7 @@ whose operator API is HMAC-signed. A different proxy would use a different actio
 The action upserts a `person`, so the type must exist. Minimal shape:
 
 ```yaml
-# metamodel.yaml
+# schema.yaml
 entities:
   person:
     label: Person
@@ -61,7 +61,20 @@ actions:
   idp-sync:
     label: "Sync a user from the IdP"
     script: idp-sync.lua
+    capabilities:
+      http: true
+      secrets: [idp_operator_url, idp_operator_key]
 ```
+
+The `capabilities:` block is **required**. Scripts reach no ambient capability
+unless they declare it: without `http: true` the script fails with `attempt to
+index a nil value (global 'http')`, and without the two `secrets:` names
+`rela.secrets.idp_operator_url` is `nil`.
+
+Note that `secrets:` names individual keys rather than being a boolean. This
+action needs the IdP credential and nothing else, so it does not receive the
+rest of `.rela/secrets.yaml` — your database DSN and unrelated API keys stay out
+of a script that makes outbound HTTP calls.
 
 The action reads `rela.params.user_id` / `.org_id` (set by the webhook receiver
 from the verified claims) and `rela.secrets` (below). It signs a Pratique

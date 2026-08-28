@@ -12,10 +12,15 @@ import { buildReturnTo } from '@/utils/returnPath'
 import { getErrorMessage, getScriptError } from '@/api/errors'
 import BackButton from '@/components/common/BackButton.vue'
 import DOMPurify from 'dompurify'
+import { useDelayedPending } from '@/composables/useDelayedPending'
+import { PENDING_TIMINGS } from '@/composables/pendingTimings'
+
 
 const props = defineProps<{
   name: string
-  entityId: string
+  /** Absent for a standalone document (route `/document/:name`), which
+   *  renders company-wide content with no entry entity. */
+  entityId?: string
 }>()
 
 const route = useRoute()
@@ -28,6 +33,15 @@ const { on, off } = useEvents()
 // State
 const docContent = ref<string>('')
 const loading = ref(true)
+
+// Cold-load only (the `!docContent` half): a re-render keeps the previous
+// document on screen rather than blanking it. The gate adds the other half
+// — a render quicker than the threshold shows nothing at all.
+const showBlockLoader = useDelayedPending(() => loading.value && !docContent.value, {
+  delay: PENDING_TIMINGS.navDelayMs,
+  minDuration: PENDING_TIMINGS.navMinDurationMs,
+})
+
 const isCached = ref(false)
 
 // Sanitized content for safe rendering
@@ -49,10 +63,8 @@ watch(sanitizedContent, async () => {
 
 // Get document config
 const docConfig = computed(() => schemaStore.documents.get(props.name))
-const docTitle = computed(() => {
-  if (docConfig.value?.title) return docConfig.value.title
-  return props.name.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())
-})
+// Authored `title:` wins; otherwise the raw document id — DEC-6C1NAA.
+const docTitle = computed(() => docConfig.value?.title || props.name)
 
 // Back affordance — follows return_to > from precedence. See TKT-JIEKC.
 // Renders no button when neither is present (e.g. deep-linked arrival).
@@ -62,7 +74,12 @@ const backTarget = useBackTarget()
 // data-entry.yaml). Absent = no button. Server-side validation guarantees
 // `form` references a real form and `label` is non-empty when the block
 // is present.
-const editConfig = computed(() => docConfig.value?.edit)
+//
+// Requires an entityId: the button navigates to a form for THIS document's
+// entity, and a standalone document has none. Config validation already
+// rejects `edit:` on a standalone document, so this guard is belt-and-braces
+// against a hand-edited or hot-reloaded config reaching the view.
+const editConfig = computed(() => (props.entityId ? docConfig.value?.edit : undefined))
 
 // editEntity navigates to the configured edit form for this entity. Unlike
 // EntityDetail.vue's edit button (which relies on router.back() because the
@@ -115,15 +132,21 @@ const handleContentClick = createDocumentClickHandler(router)
 
 // Handle entity change events via centralized SSE. Type-scoped feed (no
 // entity id, TKT-POT9GQ) → re-render the document on any entity change;
-// the re-render is cheap and server-gated.
+// the re-render is cheap and server-gated. This also covers standalone
+// documents, whose aggregate content can change with any entity — the feed
+// carries no id to filter on either way.
 function handleEntityChange() {
   loadDocument(true)
 }
 
 // Load on mount and watch for prop changes
-watch([() => props.name, () => props.entityId], () => {
-  loadDocument()
-}, { immediate: true })
+watch(
+  [() => props.name, () => props.entityId],
+  () => {
+    loadDocument()
+  },
+  { immediate: true }
+)
 
 onMounted(() => {
   on('entity:changed', handleEntityChange)
@@ -140,39 +163,45 @@ onUnmounted(() => {
       <div class="header-left">
         <BackButton v-if="backTarget" :target="backTarget" />
       </div>
-      <h1>{{ docTitle }}: {{ entityId }}</h1>
+      <!-- The ": <id>" suffix is entity-anchored only; a standalone document
+           has no id, and an unconditional colon renders as "Title:". -->
+      <h1>{{ entityId ? `${docTitle}: ${entityId}` : docTitle }}</h1>
       <div class="header-right">
-        <button
-          v-if="editConfig"
-          class="btn btn-secondary"
-          @click="editEntity"
-        >
+        <button v-if="editConfig" class="btn btn-secondary" @click="editEntity">
           {{ editConfig.label }}
         </button>
-        <button
-          class="btn btn-secondary"
-          :disabled="loading"
-          @click="loadDocument(true)"
-        >
+        <button class="btn btn-secondary" :disabled="loading" @click="loadDocument(true)">
           <span v-if="loading" class="spinner-sm" />
           <span v-else>Refresh</span>
         </button>
       </div>
     </header>
 
-    <div v-if="loading && !docContent" class="loading-state">
+    <div v-if="showBlockLoader" class="loading-state">
       <div class="spinner" />
       <span>Rendering document...</span>
     </div>
 
     <div v-else-if="docContent" class="document-content">
       <div v-if="isCached" class="cached-badge">cached</div>
-      <div ref="docBody" class="document-body md-body" @click="handleContentClick" v-html="sanitizedContent" />
+      <div
+        ref="docBody"
+        class="document-body md-body"
+        @click="handleContentClick"
+        v-html="sanitizedContent"
+      />
     </div>
 
     <div v-else class="empty-state">
       <p>No document content available</p>
-      <p class="muted">Document "{{ name }}" may not be configured or the entity "{{ entityId }}" may not exist.</p>
+      <!-- Standalone documents have no entity, so naming one would be a
+           misleading hint about what went wrong. -->
+      <p v-if="entityId" class="muted">
+        Document "{{ name }}" may not be configured or the entity "{{ entityId }}" may not exist.
+      </p>
+      <p v-else class="muted">
+        Document "{{ name }}" may not be configured, or its renderer produced no output.
+      </p>
     </div>
   </div>
 </template>
@@ -332,12 +361,6 @@ onUnmounted(() => {
   animation: spin 1s linear infinite;
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 .document-content {
   position: relative;
   background: var(--card-bg);
@@ -361,4 +384,14 @@ onUnmounted(() => {
    pre, blockquote, hr, img, links, tables, kbd) is shared across every
    markdown surface via the `.md-body` class on the `.document-body` container
    — see styles/markdown-content.css. */
+
+/* Reduced motion. This is a SCOPED style, so styles/pending.css cannot
+   reach .spinner-sm — a scoped selector carries a [data-v-*] attribute and
+   outranks an unscoped rule. The suppression has to live beside the
+   declaration. */
+@media (prefers-reduced-motion: reduce) {
+  .spinner-sm {
+    animation: none;
+  }
+}
 </style>

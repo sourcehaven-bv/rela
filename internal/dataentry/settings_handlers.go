@@ -20,6 +20,19 @@ type APIAnalysisResult struct {
 	Warnings int            `json:"warnings"`
 	Issues   []APIIssue     `json:"issues"`
 	ByCheck  map[string]int `json:"byCheck"`
+
+	// TruncatedChecks names the checks that found more issues than they
+	// returned, so the UI can mark those lists as incomplete (TKT-1ESTYJ).
+	//
+	// Per-CHECK rather than one global flag: "duplicates is truncated" is
+	// actionable where "something was truncated" is not, and the response
+	// is a flat issue list, so the section-level flag would otherwise be
+	// lost. Empty (omitted) when every check reported in full.
+	//
+	// Counts in ByCheck are counts of RETURNED issues; for a truncated
+	// check that is the cap, not the true total, which is deliberately
+	// not computed.
+	TruncatedChecks []string `json:"truncatedChecks,omitempty"`
 }
 
 // APIIssue is the JSON representation of a single analysis issue.
@@ -237,7 +250,14 @@ func (a *App) handleAPIGetSettings(w http.ResponseWriter, r *http.Request) {
 		if len(relDef.To) > 0 {
 			rd.TargetType = relDef.To[0]
 			for _, targetType := range relDef.To {
-				for _, e := range listFromStoreByTypes(r.Context(), a.Services(), []string{targetType}) {
+				// Route candidates through the read gate + redactor (DEC-ZBI39P):
+				// listFromStoreByTypes is ungated, so without Filter this picker
+				// leaked every target entity's title — including unreadable ones
+				// and hidden display properties (BUG-R9EHKV, the worst surface: no
+				// gate at all). Filter drops unreadable targets and redacts the
+				// rest so DisplayTitle falls back to the id.
+				candidates := listFromStoreByTypes(r.Context(), a.Services(), []string{targetType})
+				for _, e := range a.viewReader.Filter(r.Context(), candidates) {
 					rd.Targets = append(rd.Targets, APIRelationTarget{
 						ID:    e.ID,
 						Title: s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),

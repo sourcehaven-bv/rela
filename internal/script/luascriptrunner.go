@@ -7,6 +7,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 // Executor is the consumer-side interface the [LuaScriptRunner] needs
@@ -16,6 +17,15 @@ import (
 type Executor interface {
 	ExecuteCode(ctx context.Context, code string, deps lua.WriteDeps, newEntity, oldEntity *entity.Entity) error
 	ExecuteFile(ctx context.Context, path string, deps lua.WriteDeps, newEntity, oldEntity *entity.Entity) error
+
+	// The WithCapabilities variants carry the action's `capabilities:` grant
+	// (TKT-YH52OM). The runner always calls these; the two above remain on the
+	// interface because other callers still use them and because a stub that
+	// implements only them would silently lose the grant.
+	ExecuteCodeWithCapabilities(ctx context.Context, code string, deps lua.WriteDeps,
+		newEntity, oldEntity *entity.Entity, caps lua.Capabilities) error
+	ExecuteFileWithCapabilities(ctx context.Context, path string, deps lua.WriteDeps,
+		newEntity, oldEntity *entity.Entity, caps lua.Capabilities) error
 }
 
 // LuaScriptRunner adapts a Lua-based [Executor] to the
@@ -27,7 +37,7 @@ type Executor interface {
 // of lua.WriteDeps — [lua.ReadDeps] (Store/Tracer/Searcher/Meta/
 // ProjectRoot) — captured at construction. The **dynamic** half — the
 // [autocascade.Mutator] that scripts call back into for graph writes —
-// is passed per-call via [Run]. That split is how the construction
+// is passed per-call via [LuaScriptRunner.Run]. That split is how the construction
 // cycle between EntityManager and the Lua write-deps bundle is broken:
 // Runner is built before EntityManager exists; EntityManager
 // (a Mutator) supplies itself when dispatching.
@@ -44,17 +54,78 @@ type Executor interface {
 type LuaScriptRunner struct {
 	exec     Executor
 	readDeps lua.ReadDeps
+
+	// elevatedReader is the raw read capability handed to a bypass_acl
+	// closure (TKT-ACSBSA). Nil means this wiring scope grants no read
+	// elevation: admin.get_entity et al. raise rather than degrading to the
+	// caller's gated view.
+	elevatedReader lua.EntityReader
+
+	// elevationRecorder receives the post-closure notification when elevated
+	// reads occurred. Travels WITH elevatedReader — granting the capability
+	// without the trace is what the audit gap looked like before TKT-ACSBSA.
+	elevationRecorder lua.ElevationRecorder
+}
+
+// ReadElevation is the read-side capability a wiring site grants to
+// rela.bypass_acl closures (TKT-ACSBSA): the raw reader plus the audit sink
+// that records its use.
+//
+// The two are one struct because they must be decided together. A Reader
+// without a Recorder is ungated access that leaves no trace — the audit
+// asymmetry the ticket exists to close — so the pairing is visible at every
+// wiring site rather than being two independent arguments one of which is
+// easy to forget.
+type ReadElevation struct {
+	// Reader must be UNGATED — the point of elevation is to see past the
+	// acting principal's view. A gated reader here produces a closure that
+	// looks elevated and silently is not, which is the one failure mode
+	// worse than no elevation at all. Wiring sites name it through
+	// visibility.Unrestricted so `grep -rn visibility.Unrestricted`
+	// enumerates this path with every other ungated read (TKT-1WV50C).
+	Reader lua.EntityReader
+
+	// Recorder is notified once per closure that used Reader. Nil is
+	// permitted (a deployment may genuinely have no audit sink) but is a
+	// deliberate choice, not a default — see the field godoc on
+	// lua.WriteDeps.ElevationRecorder.
+	Recorder lua.ElevationRecorder
 }
 
 // NewLuaScriptRunner returns a LuaScriptRunner bound to exec and the
-// static read deps. Returns nil if exec is nil — Runner records each
-// scripted action as an error when ScriptRunner is nil, which is the
-// right behavior for misconfigured deployments.
+// static read deps, granting NO read elevation. Returns nil if exec is
+// nil — Runner records each scripted action as an error when ScriptRunner
+// is nil, which is the right behavior for misconfigured deployments.
+//
+// Use [NewLuaScriptRunnerWithElevatedReads] to additionally grant the
+// bypass_acl closure a raw read handle. Since TKT-ACSBSA both production
+// wiring sites (appbuild.assemble, appbuildtest) use that one, so this
+// constructor has no production callers today — it is kept because
+// "no read elevation" is a real configuration a wiring site may want, and
+// the tests that pin the withheld-capability behavior need it.
 func NewLuaScriptRunner(exec Executor, readDeps lua.ReadDeps) *LuaScriptRunner {
+	return NewLuaScriptRunnerWithElevatedReads(exec, readDeps, ReadElevation{})
+}
+
+// NewLuaScriptRunnerWithElevatedReads is [NewLuaScriptRunner] plus the read
+// capability backing admin.get_entity / list_entities / get_relations inside
+// a rela.bypass_acl closure (TKT-ACSBSA).
+//
+// The capability is inert until BOTH TKT-D8T148 keys turn: the action must
+// be allow_acl_bypass and the per-cascade Mutator must offer
+// ElevatedProvider. Passing an elevation here grants nothing on its own.
+func NewLuaScriptRunnerWithElevatedReads(
+	exec Executor, readDeps lua.ReadDeps, elevation ReadElevation,
+) *LuaScriptRunner {
 	if exec == nil {
 		return nil
 	}
-	return &LuaScriptRunner{exec: exec, readDeps: readDeps}
+	return &LuaScriptRunner{
+		exec:              exec,
+		readDeps:          readDeps,
+		elevatedReader:    elevation.Reader,
+		elevationRecorder: elevation.Recorder,
+	}
 }
 
 // Run dispatches the action to the underlying executor. The mutator
@@ -83,22 +154,52 @@ func (l *LuaScriptRunner) Run(ctx context.Context, action autocascade.ScriptActi
 		// "interfaces at the call site".
 		EntityManager: m,
 	}
-	// TKT-D8T148: when the action is allow_acl_bypass AND the mutator offers
-	// the elevated capability, expose an elevated write handle so the script
+	// TKT-D8T148: when the action declares allow_acl_bypass AND the mutator
+	// offers the elevated capability, expose the elevated handles so the script
 	// can call rela.bypass_acl(fn). Both conditions are required: operator opt-in
-	// (the flag) and a Mutator that chooses to provide elevation. A Mutator
-	// without ElevatedProvider (e.g. a restricted double) simply can't elevate.
-	if action.AllowACLBypass {
+	// (the config value) and a Mutator that chooses to provide elevation. A
+	// Mutator without ElevatedProvider (e.g. a restricted double) can't elevate.
+	//
+	// TKT-Y3JVFK: the value is an enum, so read and write are granted
+	// SEPARATELY here. `read` yields a handle with no write methods at all.
+	// Note the ElevatedProvider check still gates BOTH: on the cascade path a
+	// Mutator that declines to offer elevation withholds read elevation too,
+	// preserving the original two-key property for every automation action.
+	// A read-only surface with no Mutator at all (a document render) does not
+	// route through this runner — it wires lua.WriteDeps directly.
+	// autocascade carries the value as a plain string (it may not import
+	// metamodel); convert once here so the read/write semantics live in
+	// exactly one place rather than being re-derived by string comparison.
+	bypass := metamodel.ACLBypass(action.AllowACLBypass)
+	if bypass.Enabled() {
 		if ep, ok := m.(autocascade.ElevatedProvider); ok {
-			deps.ElevatedManager = ep.Elevated()
+			if bypass.AllowsWrite() {
+				deps.ElevatedManager = ep.Elevated()
+			}
+			// elevatedReader is supplied by the wiring site (nil when that site
+			// chose not to grant read elevation), exactly as the elevated WRITE
+			// handle comes from the caller's Mutator rather than being minted
+			// here. This package does not construct the capability; it only
+			// decides when to hand over one it was given.
+			if bypass.AllowsRead() {
+				deps.ElevatedReader = l.elevatedReader
+			}
+			deps.ElevationRecorder = l.elevationRecorder
 		}
 	}
+	// TKT-YH52OM: translate the action's declared capability grant. An
+	// automation runs on the write path of an ordinary HTTP request, so it is
+	// NOT an operator-shell surface: an undeclared capability stays absent.
+	http, ai, writeFile, secrets := action.Capabilities.Fields()
+	caps := lua.Capabilities{HTTP: http, AI: ai, WriteFile: writeFile, Secrets: secrets}
 	var err error
 	switch {
 	case action.Code != "":
-		err = l.exec.ExecuteCode(ctx, action.Code, deps, action.NewEntity, action.OldEntity)
+		err = l.exec.ExecuteCodeWithCapabilities(ctx, action.Code, deps,
+			action.NewEntity, action.OldEntity, caps)
 	case action.FilePath != "":
-		err = l.exec.ExecuteFile(ctx, action.FilePath, deps, action.NewEntity, action.OldEntity)
+		err = l.exec.ExecuteFileWithCapabilities(ctx, action.FilePath, deps,
+			action.NewEntity, action.OldEntity, caps)
 	}
 	if err == nil {
 		return nil

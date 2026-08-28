@@ -1,1 +1,1 @@
-CompileError	unary minus is not allowed
+CompileError	unary minus is allowed only on a numeric literal

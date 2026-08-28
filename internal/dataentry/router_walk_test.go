@@ -24,6 +24,13 @@ import (
 // handlers block until context cancellation and have dedicated tests
 // (TestNewRouterSSEEndpoint, TestHandleSSE*).
 //
+// POST /webhooks/idp is also excluded, but for a different reason: it is NOT an
+// /api/ path, so this test's oracle (unregistered → stdlib 404) cannot see it —
+// an unregistered non-/api/ path falls through to the SPA catch-all and returns
+// 200 HTML, which reads as "reachable" here. That exact blind spot let BUG-F3ADZO
+// ship. Its reachability is pinned by TestWebhook_ReachableThroughRouter, whose
+// oracle is "not the SPA shell" instead.
+//
 // When registering a new route, add a probe here — the registration
 // sites in router.go and api_v1.go carry pointer comments.
 //
@@ -57,6 +64,7 @@ func TestRouterWalk_AllAPIRoutesReachHandlers(t *testing.T) {
 		{http.MethodGet, "/api/v1/_search?q=ticket", 0},
 		{http.MethodGet, "/api/v1/_position?type=ticket&id=TKT-001", 0},
 		{http.MethodGet, "/api/v1/_analyze", 0},
+		{http.MethodGet, "/api/v1/_next_action", http.StatusOK}, // no sources configured → empty suggestion
 		{http.MethodGet, "/api/v1/_git/status", 0},
 		{http.MethodPost, "/api/v1/_git/sync", 0},
 		{http.MethodGet, "/api/v1/_settings", 0},
@@ -66,6 +74,7 @@ func TestRouterWalk_AllAPIRoutesReachHandlers(t *testing.T) {
 		{http.MethodPost, "/api/v1/_theme/import", 0},
 		{http.MethodGet, "/api/v1/_sidepanel/ticket/TKT-001", 0},
 		{http.MethodGet, "/api/v1/_sidebar", http.StatusOK},
+		{http.MethodGet, "/api/v1/_dashboard", http.StatusOK},
 		{http.MethodGet, "/api/v1/_conflicts", 0},
 		{http.MethodGet, "/api/v1/_conflicts/some-id", 0},
 		{http.MethodGet, "/api/v1/_documents/readme", 0},
@@ -81,10 +90,10 @@ func TestRouterWalk_AllAPIRoutesReachHandlers(t *testing.T) {
 		{http.MethodGet, "/api/v1/tickets/TKT-001", http.StatusOK},
 		{http.MethodGet, "/api/v1/tickets/TKT-001/relations", 0},
 
-		// Sync API (sync.go) — manifest is 501 on the non-pg test backend;
-		// record GET resolves to a handler answer (200 for the seeded entity).
+		// Sync API (sync.go) — only the manifest remains (501 on the non-pg test
+		// backend); the record read/write routes were retired in TKT-8P1TM7 (sync
+		// uses /api/v1 now).
 		{http.MethodGet, "/api/sync/manifest", http.StatusNotImplemented},
-		{http.MethodGet, "/api/sync/entities/TKT-001", http.StatusOK},
 
 		// Attachment download route. Probe with POST so the handler answers
 		// 405 (a JSON error) rather than a 404 — a GET against the fixture

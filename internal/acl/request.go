@@ -37,6 +37,14 @@ type Request struct {
 	principal     principal.Principal
 	globals       GlobalRoles
 	globalsLoaded bool
+
+	// ceiling is the client attenuation resolved from the principal's verified
+	// principal_type + scope claims (TKT-IAC8TX). Computed once at
+	// construction: it depends only on the bound principal and the immutable
+	// policy, so there is nothing to invalidate and no reason to recompute it
+	// per call. Inactive (and fully transparent) for an interactive user or any
+	// principal whose type no baseline covers.
+	ceiling compiledCeiling
 }
 
 // ForPrincipal opens a Request scope for `p`. Returns
@@ -48,7 +56,31 @@ func (d *Declarative) ForPrincipal(p principal.Principal) (*Request, error) {
 	if isUnstamped(p) {
 		return nil, fmt.Errorf("%w: User=%q Tool=%q", ErrUnstampedPrincipal, p.User, p.Tool)
 	}
-	return &Request{d: d, principal: p}, nil
+	return &Request{
+		d:         d,
+		principal: p,
+		ceiling:   d.policy.ceilingFor(p.PrincipalType(), p.Scopes()),
+	}, nil
+}
+
+// roleFor resolves a declared role name to its definition, NARROWED by the
+// request's client ceiling.
+//
+// This is THE clamp point for client attenuation. Every evaluation path in this
+// package resolves a role name and then asks a predicate of the result, so
+// narrowing here means read gating, write authorization and permission checks
+// all inherit the ceiling without any of them knowing it exists. Reaching into
+// `r.d.policy.Roles[...]` directly from an evaluation path BYPASSES the ceiling
+// — use this instead. Pinned by TestNoDirectRoleLookupInEvaluationPaths.
+//
+// The returned RoleDef holds plain allowlists; the runtime never learns the
+// word "deny". See ceiling.go for why that is load-bearing.
+func (r *Request) roleFor(name string) (RoleDef, bool) {
+	role, ok := r.d.policy.Roles[name]
+	if !ok {
+		return RoleDef{}, false
+	}
+	return r.ceiling.clamp(role), true
 }
 
 // Globals returns the principal's global role set, computing it on
@@ -181,6 +213,50 @@ func FromContext(ctx context.Context) *Request {
 	}
 	r, _ := ctx.Value(ctxKey{}).(*Request)
 	return r
+}
+
+// unmatchedVerifiedKey is the ctx key for the "verified-but-unmatched" flag.
+type unmatchedVerifiedKey struct{}
+
+// WithUnmatchedVerified marks ctx to record that the request's principal was
+// CRYPTOGRAPHICALLY VERIFIED but resolved to no user entity (the
+// principal_property lookup found no match).
+//
+// It is set by the data-entry middleware, which is the only layer that knows
+// both facts: that a verified-JWT gate is the identity source (wiring state,
+// not a per-principal marker — a JWT and a proxy-header principal are
+// indistinguishable on the Principal), and that resolution found no entity. The
+// flag lets [Declarative.AuthorizeWrite] — the single point every entity write
+// funnels through — enforce `unmatched_principal: reject` uniformly across
+// every data-entry write path (CRUD, sync, action, attachment) without the
+// write layer learning about transports.
+//
+// A boolean fact on ctx, set on the read path; it performs no write and is
+// gone when the request ends. CLI/MCP/scheduler/header requests never set it.
+func WithUnmatchedVerified(ctx context.Context) context.Context {
+	return context.WithValue(ctx, unmatchedVerifiedKey{}, true)
+}
+
+// WithMatchedVerified CLEARS the unmatched-verified flag on ctx, marking that a
+// principal which arrived unmatched now resolves to a real user entity. Lazy
+// provisioning (`unmatched_principal: provision`, TKT-ANUJDS) calls this after
+// it creates the stub and re-stamps ctx to the resolved entity: the principal is
+// no longer unmatched, so [Declarative.AuthorizeWrite] must judge the triggering
+// write on the resolved identity's roles, NOT re-enter the unmatched gate. It
+// overrides the key with false so [UnmatchedVerifiedFrom] reports false even
+// though an ancestor ctx set it true.
+func WithMatchedVerified(ctx context.Context) context.Context {
+	return context.WithValue(ctx, unmatchedVerifiedKey{}, false)
+}
+
+// UnmatchedVerifiedFrom reports whether ctx was marked by
+// [WithUnmatchedVerified] and not subsequently cleared by [WithMatchedVerified].
+func UnmatchedVerifiedFrom(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	v, _ := ctx.Value(unmatchedVerifiedKey{}).(bool)
+	return v
 }
 
 // isUnstamped reports whether the principal looks like a default /

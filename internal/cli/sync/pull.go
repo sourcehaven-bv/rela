@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/canonical"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -77,6 +77,9 @@ type PullReport struct {
 func (e *Engine) Pull(ctx context.Context) (*PullReport, error) {
 	if e.applier == nil {
 		return nil, errRemoteApplierRequired
+	}
+	if err := e.ensureSchema(ctx); err != nil {
+		return nil, err
 	}
 	man, err := e.client.Manifest(ctx, e.idx.Cursor)
 	if err != nil {
@@ -160,10 +163,14 @@ func (e *Engine) Pull(ctx context.Context) (*PullReport, error) {
 // classifyPull decides whether a manifest entry is a skip (remote == index) or a
 // conflict (remote differs AND local also dirty). Returns (conflict, skip);
 // both false means "apply it".
+//
+// Local dirtiness compares the working record's canonical hash to the index's
+// Local token (the replica's own change-detector), NOT to the primary's opaque
+// Server ETag — the two are different value spaces (see Baseline).
 func (e *Engine) classifyPull(ch ManifestChange, snap *LocalSnapshot) (conflict, skip bool) {
-	base, indexed := e.idx.Hash(ch.ID)
+	base, indexed := e.idx.Baseline(ch.ID)
 	local, localPresent := snap.Records[ch.ID]
-	localDirty := (localPresent && (!indexed || local.Hash != base)) || (!localPresent && indexed)
+	localDirty := (localPresent && (!indexed || local.Hash != base.Local)) || (!localPresent && indexed)
 
 	if ch.Deleted {
 		// Remote tombstone. If the index already has no record, it's a no-op.
@@ -192,6 +199,13 @@ func (e *Engine) classifyPull(ch ManifestChange, snap *LocalSnapshot) (conflict,
 // applyOne fetches and applies a single remote upsert, or mirrors a delete. It
 // re-checks the fetched hash against the index so an unchanged record (remote
 // moved then moved back, or a manifest replay) is a cheap skip, not a rewrite.
+//
+// RR-SYNCR3: a local delete is mirrored ONLY on an explicit manifest tombstone
+// (ch.Deleted). A bare GET 404 for a NON-tombstone entry means the row became
+// unreadable between the feed and the fetch (an ACL/visibility flip, or a
+// transient race), NOT that it was deleted — the replica must NOT delete its
+// local copy on that signal. It is skipped and the cursor advances (the change
+// remains in the feed if it is real and re-surfaces).
 func (e *Engine) applyOne(ctx context.Context, ch ManifestChange, kind Kind) (*PullRecordResult, error) {
 	if ch.Deleted {
 		if err := e.deleteLocal(ctx, kind, ch.ID); err != nil {
@@ -200,58 +214,70 @@ func (e *Engine) applyOne(ctx context.Context, ch ManifestChange, kind Kind) (*P
 		e.idx.Delete(ch.ID)
 		return &PullRecordResult{Key: ch.ID, Outcome: OutcomePulledDelete}, nil
 	}
-	return e.applyRemote(ctx, kind, ch.ID)
+	res, err := e.applyRemote(ctx, kind, ch.ID, ch.Typ)
+	if errors.Is(err, errRemoteAbsent) {
+		// Became-hidden-after-feed (or transient): skip, never mirror a delete.
+		return &PullRecordResult{
+			Key: ch.ID, Outcome: OutcomePullSkipped,
+			Detail: "changed in feed but not readable on fetch (now hidden or transient); left local copy intact",
+		}, nil
+	}
+	return res, err
 }
 
 // applyRemote fetches a remote record and applies it locally via the
 // id-preserving applier, then re-baselines the index to the remote hash. A 404
 // surfaces as errRemoteAbsent so the caller can mirror a delete.
-func (e *Engine) applyRemote(ctx context.Context, kind Kind, key string) (*PullRecordResult, error) {
+func (e *Engine) applyRemote(ctx context.Context, kind Kind, key, typ string) (*PullRecordResult, error) {
 	switch kind {
 	case KindEntity:
-		fe, err := e.client.GetEntity(ctx, key)
+		plural, err := e.pluralFor(typ)
+		if err != nil {
+			return nil, err
+		}
+		fe, err := e.client.GetEntity(ctx, plural, key)
 		if err != nil {
 			if isNotFound(err) {
 				return nil, errRemoteAbsent
 			}
 			return nil, err
 		}
-		if cur, ok := e.idx.Hash(key); ok && cur == fe.Hash {
+		if cur, ok := e.idx.Baseline(key); ok && cur.Server == fe.Hash {
 			return &PullRecordResult{Key: key, Outcome: OutcomePullSkipped}, nil
 		}
-		ent := &entity.Entity{
-			ID: fe.Body.ID, Type: fe.Body.Type, Properties: fe.Body.Properties, Content: fe.Body.Content,
+		applied, err := e.spliceEntity(ctx, key, fe)
+		if err != nil {
+			return nil, err
 		}
-		if ent.ID == "" {
-			ent.ID = key
-		}
-		if _, err := e.applier.ApplyEntity(ctx, ent); err != nil {
-			return nil, fmt.Errorf("apply entity %s: %w", key, err)
-		}
-		e.idx.Set(key, fe.Hash)
+		// server = the primary's opaque ETag; local = the canonical hash of the
+		// record we actually landed (post-splice), the replica's own baseline for
+		// future dirty-detection.
+		e.idx.Set(key, fe.Hash, canonical.HashEntity(*applied), typ)
 		return &PullRecordResult{Key: key, Outcome: OutcomePulled}, nil
 	default:
 		from, relType, to, ok := splitRelationKey(key)
 		if !ok {
 			return nil, fmt.Errorf("internal: malformed relation key %q", key)
 		}
-		fr, err := e.client.GetRelation(ctx, from, relType, to)
+		fromPlural, err := e.pluralForRelationFrom(ctx, from)
+		if err != nil {
+			return nil, err
+		}
+		fr, err := e.client.GetRelation(ctx, fromPlural, from, relType, to)
 		if err != nil {
 			if isNotFound(err) {
 				return nil, errRemoteAbsent
 			}
 			return nil, err
 		}
-		if cur, ok := e.idx.Hash(key); ok && cur == fr.Hash {
+		if cur, ok := e.idx.Baseline(key); ok && cur.Server == fr.Hash {
 			return &PullRecordResult{Key: key, Outcome: OutcomePullSkipped}, nil
 		}
-		rel := &entity.Relation{
-			From: from, Type: relType, To: to, Properties: fr.Body.Properties, Content: fr.Body.Content,
+		applied, err := e.spliceRelation(ctx, from, relType, to, fr)
+		if err != nil {
+			return nil, err
 		}
-		if _, err := e.applier.ApplyRelation(ctx, rel); err != nil {
-			return nil, fmt.Errorf("apply relation %s: %w", key, err)
-		}
-		e.idx.Set(key, fr.Hash)
+		e.idx.Set(key, fr.Hash, canonical.HashRelation(*applied), typ)
 		return &PullRecordResult{Key: key, Outcome: OutcomePulled}, nil
 	}
 }

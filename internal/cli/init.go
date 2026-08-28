@@ -22,7 +22,7 @@ func (c *InitCmd) Run() error {
 	}
 
 	out.WriteSuccess("Initialized rela project in %s", result.Root)
-	out.WriteMessage("  Created metamodel.yaml")
+	out.WriteMessage("  Created schema.yaml")
 	out.WriteMessage("  Created entities/ directory")
 	out.WriteMessage("  Created relations/ directory")
 	out.WriteMessage("  Created .rela/ directory (gitignored)")

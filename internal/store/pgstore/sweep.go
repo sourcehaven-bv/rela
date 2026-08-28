@@ -71,7 +71,23 @@ type sweep struct {
 	cfg      SweepConfig
 	cancel   context.CancelFunc
 	done     chan struct{}
+	// consecutiveSkips counts ticks that could not take the lock, so sustained
+	// starvation escalates to a warning. Touched only from the run goroutine
+	// (tick is never called concurrently), so it needs no locking.
+	consecutiveSkips int
 }
+
+// sweepSkipWarnAfter is how many consecutive lock-acquisition failures turn the
+// routine debug line into a warning.
+//
+// A skipped tick is normally harmless — another process is sweeping the same
+// schema and covers the same rows — so a handful is not worth reporting. But a
+// silent skip is exactly what hid the database-global lock bug: this schema's
+// create/update versions simply stopped being captured, with no error, no
+// warning and no metric. Sustained skipping means this schema IS being starved
+// (a runner that never finishes, or a lock that is not as scoped as intended),
+// which is worth surfacing.
+const sweepSkipWarnAfter = 10
 
 // StartVersionSweep starts the periodic version-reconciliation sweep for this
 // store, capturing create/update versions for settled entities. The wiring
@@ -161,9 +177,25 @@ func (s *sweep) tick(ctx context.Context) error {
 		return err
 	}
 	if !locked {
-		// Another process is sweeping — skip this tick.
+		// Another process is sweeping THIS schema — skip; its run covers the same
+		// rows, and candidate selection is state-based, so the next tick retries
+		// and nothing is lost. Non-fatal because same-schema multi-process
+		// contention is the legitimate case this lock exists for.
+		//
+		// Escalate when it persists: a skip that never resolves means this
+		// schema's versions are silently not being captured, which is the failure
+		// mode a database-global lock produced. See sweepSkipWarnAfter.
+		s.consecutiveSkips++
+		if s.consecutiveSkips >= sweepSkipWarnAfter {
+			slog.WarnContext(ctx, "pgstore: version sweep starved; another runner has held the lock "+
+				"for many consecutive ticks, so this schema's create/update versions are not being captured",
+				"consecutive_skips", s.consecutiveSkips)
+		} else {
+			slog.DebugContext(ctx, "pgstore: version sweep tick skipped; another runner holds the lock")
+		}
 		return nil
 	}
+	s.consecutiveSkips = 0
 	// Unlock on a context detached from cancellation: when Close cancels the
 	// tick ctx mid-tick, the deferred unlock must still run its statement, or
 	// the session-scoped advisory lock rides the pooled connection back into the
@@ -457,13 +489,24 @@ func (s *sweep) captureRelation(
 // tryAdvisoryLock takes a non-blocking session advisory lock on conn, returning
 // whether it was acquired. Session-scoped: released by advisoryUnlock or when
 // the connection closes.
+//
 // key is always sweepAdvisoryLockKey — there is exactly ONE version lock, shared
 // by the reconciliation sweep and version purge so they are mutually exclusive
 // (a purge racing a sweep capture-insert would lose the erasure). It is a
 // parameter only so the lock/unlock pair reads symmetrically.
+//
+// The lock is SCHEMA-SCOPED via the two-key form
+// pg_try_advisory_lock(key, hashtext(current_schema())): advisory locks are
+// database-GLOBAL, but many schemas can share one database (the conformance
+// harness and the postgres e2e both run isolated schemas on one DB), and a
+// per-schema sweep must not starve another schema's sweep. Folding the schema
+// hash into the second key makes each schema's version lock independent while
+// keeping sweep⇔purge mutual exclusion WITHIN a schema. purge must use the
+// identical two-key form (see purge.go) or the two would stop excluding.
 func tryAdvisoryLock(ctx context.Context, conn *pgxpool.Conn, key int64) (bool, error) {
 	var ok bool
-	err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock($1)`, key).Scan(&ok)
+	err := conn.QueryRow(ctx,
+		`SELECT pg_try_advisory_lock($1::int, hashtext(current_schema()))`, key).Scan(&ok)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
@@ -475,7 +518,8 @@ func advisoryUnlock(ctx context.Context, conn *pgxpool.Conn, key int64) {
 	// during shutdown, explicitly releasing the session-scoped lock. If the
 	// connection is already closing (shutdown race), the lock releases with the
 	// connection anyway — that specific failure is expected, so don't warn on it.
-	_, err := conn.Exec(ctx, `SELECT pg_advisory_unlock($1)`, key)
+	// Two-key form must match tryAdvisoryLock's (schema-scoped).
+	_, err := conn.Exec(ctx, `SELECT pg_advisory_unlock($1::int, hashtext(current_schema()))`, key)
 	if err == nil || strings.Contains(err.Error(), "conn closed") {
 		// A closing connection releases the lock with itself — expected during
 		// shutdown, not worth a warning.

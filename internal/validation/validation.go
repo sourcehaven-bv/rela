@@ -5,11 +5,14 @@ package validation
 
 import (
 	"context"
+	"fmt"
+	"sync"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 )
 
 // Violation represents a custom validation rule violation.
@@ -67,6 +70,106 @@ func (r Result) HasErrors() bool {
 type Service struct {
 	deps  lua.ReadDeps
 	cache *lua.Cache
+
+	// ev is the predicate condition engine for `When:`/`Then:` rules
+	// (TKT-J4IR1G): filter clauses are transpiled + compiled once (cached
+	// in the Evaluator) and evaluated per entity. Built lazily against
+	// deps.Meta.
+	evOnce sync.Once
+	ev     *predicatefns.Evaluator
+}
+
+// evaluator returns the predicate Evaluator bound to the service's
+// metamodel, built once.
+func (s *Service) evaluator() *predicatefns.Evaluator {
+	s.evOnce.Do(func() {
+		s.ev = predicatefns.NewEvaluator(s.deps.Meta)
+	})
+	return s.ev
+}
+
+// compileRuleConditions compiles the rule's condition expressions against
+// every entity type it could apply to, returning a LoadError per failure.
+//
+// Compiling here (once per rule) rather than per entity is what makes a
+// malformed expression visible: per-entity it would surface as "no
+// match", which for `when_condition:` is indistinguishable from "no
+// entity qualified".
+func (s *Service) compileRuleConditions(
+	rule metamodel.ValidationRule, candidates []*entity.Entity,
+) []LoadError {
+	sources := make([]string, 0, 2)
+	if rule.WhenCondition != "" {
+		sources = append(sources, rule.WhenCondition)
+	}
+	if rule.ThenCondition != "" {
+		sources = append(sources, rule.ThenCondition)
+	}
+	if len(sources) == 0 {
+		return nil
+	}
+
+	// The env is per entity type, so compile against each type actually
+	// present in the candidate set. A rule with `entity_type:` set has
+	// one; an unscoped rule may span several.
+	//
+	// Consequence worth knowing: a rule scoped to a type with ZERO
+	// entities compiles nothing, so a malformed condition on it stays
+	// unreported until the first entity of that type exists. Accepted —
+	// the alternative is compiling against every declared type in the
+	// metamodel on every Check, which costs far more than it catches.
+	seen := make(map[string]bool, len(candidates))
+	var errs []LoadError
+	for _, e := range candidates {
+		if seen[e.Type] {
+			continue
+		}
+		seen[e.Type] = true
+		for _, src := range sources {
+			if _, err := s.evaluator().Compile(e.Type, src); err != nil {
+				errs = append(errs, LoadError{
+					RuleName: rule.Name,
+					Message: fmt.Sprintf("condition %q on %q: %v",
+						src, e.Type, err),
+				})
+			}
+		}
+	}
+	return errs
+}
+
+// matchCondition compiles and evaluates a predicate expression against
+// one entity. Unlike matchFilters there is no legacy fallback: an
+// expression has only ever had one meaning, so a compile failure is a
+// real error rather than a dialect mismatch.
+func (s *Service) matchCondition(e *entity.Entity, source string) (bool, error) {
+	prog, err := s.evaluator().Compile(e.Type, source)
+	if err != nil {
+		return false, err
+	}
+	return s.evaluator().Matches(context.Background(), prog, e.Type, e.ID, e.Properties)
+}
+
+// matchFilters evaluates an ANDed set of filter clauses against an
+// entity through the predicate condition engine. If any clause is
+// untranspilable (e.g. fuzzy-with-wildcard), it falls back to the exact
+// legacy filter.MatchAll evaluation for the whole set rather than
+// erroring — a transpile error must NOT turn into a forced violation or
+// a silently-skipped rule (RR-FI4DYL). A genuine eval error is returned
+// so the caller treats it as "does not apply / does not satisfy",
+// matching the prior filter.MatchAll error contract.
+func (s *Service) matchFilters(e *entity.Entity, filters []*filter.Filter) (bool, error) {
+	prog, err := s.evaluator().CompileFilter(e.Type, filters)
+	if err != nil {
+		// Untranspilable — reproduce the legacy verdict exactly.
+		entityDef, ok := s.deps.Meta.GetEntityDef(e.Type)
+		if !ok {
+			return false, nil
+		}
+		rec := filter.Record{ID: e.ID, Type: e.Type, Properties: e.Properties}
+		return filter.MatchAll(rec, filters, entityDef, s.deps.Meta)
+	}
+	return s.evaluator().Matches(context.Background(), prog, e.Type, e.ID, e.Properties)
 }
 
 // New creates a validation service for the given metamodel.
@@ -176,6 +279,19 @@ func (s *Service) CheckRule(
 	// every entity. luaCtx is nil when the rule has no Lua at all.
 	var luaCtx *luaRuleContext
 	var result Result
+
+	// Compile the condition expressions once per rule, before touching
+	// any entity. A malformed expression is an operator mistake that must
+	// be REPORTED: `when_condition:` failing per-entity would silently
+	// select nothing, so the rule would check nothing and pass — the
+	// silent-skip this key exists to eliminate. Reported as a LoadError,
+	// the same channel a broken `lua_file:` uses, and the rule is
+	// abandoned rather than run in a half-understood state.
+	if loadErrs := s.compileRuleConditions(rule, candidates); len(loadErrs) > 0 {
+		result.LoadErrors = append(result.LoadErrors, loadErrs...)
+		return result
+	}
+
 	hasLua := rule.Lua != "" || rule.LuaFile != ""
 	if hasLua {
 		built, loadErr := s.buildLuaRuleContext(ctx, rule)
@@ -266,25 +382,41 @@ func (s *Service) checkEntityAgainstRule(
 	whenFilters, thenFilters []*filter.Filter,
 	luaCtx *luaRuleContext,
 ) entityResult {
-	entityDef, ok := s.deps.Meta.GetEntityDef(e.Type)
-	if !ok {
+	// An unknown entity type has no rules to apply.
+	if _, ok := s.deps.Meta.GetEntityDef(e.Type); !ok {
 		return entityResult{}
 	}
 
-	rec := filter.Record{ID: e.ID, Type: e.Type, Properties: e.Properties}
-
-	// Check 'when' conditions - if they don't match, rule doesn't apply
+	// Check 'when' conditions - if they don't match, rule doesn't apply.
+	// Evaluated through the predicate condition engine (TKT-J4IR1G): the
+	// filter clauses are transpiled + compiled once and cached.
 	if len(whenFilters) > 0 {
-		matches, err := filter.MatchAll(rec, whenFilters, entityDef, s.deps.Meta)
-		if err != nil || !matches {
+		if matches, err := s.matchFilters(e, whenFilters); err != nil || !matches {
+			return entityResult{}
+		}
+	}
+	// `when_condition:` is a predicate EXPRESSION, ANDed with the filter
+	// clauses above. It is kept as source and compiled as written —
+	// routing it through filter.Parse would silently reinterpret it as a
+	// filter on a nonexistent property and select nothing.
+	if rule.WhenCondition != "" {
+		if matches, err := s.matchCondition(e, rule.WhenCondition); err != nil || !matches {
 			return entityResult{}
 		}
 	}
 
-	// Check 'then' conditions - if they don't satisfy, it's a violation
+	// Check 'then' conditions - if they don't satisfy, it's a violation.
 	if len(thenFilters) > 0 {
-		satisfies, err := filter.MatchAll(rec, thenFilters, entityDef, s.deps.Meta)
-		if err != nil || !satisfies {
+		if satisfies, err := s.matchFilters(e, thenFilters); err != nil || !satisfies {
+			return entityResult{Violations: []Violation{newViolation(rule, e, rule.Description)}}
+		}
+	}
+	if rule.ThenCondition != "" {
+		// An eval error means the assertion could not be shown to hold,
+		// so it is a violation — the same direction as a `then:` clause
+		// that fails to match. A malformed expression never reaches
+		// here: compileRuleConditions abandons the rule first.
+		if satisfies, err := s.matchCondition(e, rule.ThenCondition); err != nil || !satisfies {
 			return entityResult{Violations: []Violation{newViolation(rule, e, rule.Description)}}
 		}
 	}

@@ -1,17 +1,24 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, type Component } from 'vue'
 import { useRouter } from 'vue-router'
 import { useQuery, useMutation, useQueryCache } from '@pinia/colada'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { listAllEntities, updateEntity, getErrorMessage } from '@/api'
 import { entityKeys } from '@/queries/entities'
 import { beginOptimistic, rollbackOptimistic, settleOptimistic } from '@/queries/optimisticList'
-import type { Entity, KanbanConfig, KanbanCardField } from '@/types'
-import Badge from '@/components/common/Badge.vue'
+import type { Entity, KanbanConfig, KanbanCardField, KanbanColumn, KanbanSwimlane } from '@/types'
+import { viewHeaderMarkdown, viewFooterMarkdown } from '@/types'
 import BackButton from '@/components/common/BackButton.vue'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { actionAllowed } from '@/utils/affordancesWarning'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
+import { renderMarkdown } from '@/utils/markdown'
+import { resolveIcon } from '@/utils/icons'
+import { formatCellValue } from '@/utils/format'
+import { densePropertyRoutingHint } from '@/widgets/viewRouting'
+import CardFieldList, { type ResolvedCardField } from '@/components/common/CardFieldList.vue'
+import { defaultRegistry } from '@/widgets/registry'
+import type { DenseRoutingHint } from '@/widgets/viewRouting'
 
 const props = defineProps<{
   id: string
@@ -97,6 +104,12 @@ const loadError = computed(() => {
   return getErrorMessage(err, 'Failed to load board')
 })
 
+// Admin-authored info regions from data-entry.yaml, rendered as sanitized
+// markdown (renderMarkdown) above and below the board. Shares its resolvers and
+// its .view-info styles with EntityList so both views behave identically.
+const headerHtml = computed(() => renderMarkdown(viewHeaderMarkdown(kanbanConfig.value)))
+const footerHtml = computed(() => renderMarkdown(viewFooterMarkdown(kanbanConfig.value)))
+
 const entityType = computed(() => {
   if (!kanbanConfig.value) return undefined
   return schemaStore.getEntityType(kanbanConfig.value.entity)
@@ -117,7 +130,7 @@ const columns = computed(() => {
     const val = String(entity.properties[property] || '')
     if (val) values.add(val)
   }
-  return Array.from(values).map((v) => ({ value: v, label: v }))
+  return Array.from(values).map((v): KanbanColumn => ({ value: v, label: v }))
 })
 
 const filteredEntities = computed(() => {
@@ -167,7 +180,7 @@ const swimlanes = computed(() => {
     const val = String(entity.properties[property] || '')
     if (val) values.add(val)
   }
-  return Array.from(values).sort().map((v) => ({ value: v, label: v }))
+  return Array.from(values).sort().map((v): KanbanSwimlane => ({ value: v, label: v }))
 })
 
 const hasSwimmlanes = computed(() => swimlanes.value.length > 0)
@@ -342,29 +355,92 @@ function getCardFieldValue(entity: Entity, field: KanbanCardField): string {
       .join(', ')
   }
   if (!field.property) return ''
-  return String(entity.properties[field.property] || '')
-}
-
-// Card fields with an unset value are dropped entirely: a dangling
-// "effort:" label next to an empty Badge pill (enum fields render a
-// styled chip even for "") is noise on every card that hasn't set the
-// property, worst on mobile where card space is scarce.
-function visibleCardFields(entity: Entity): KanbanCardField[] {
-  return (kanbanConfig.value?.card.fields ?? []).filter(
-    (field) => getCardFieldValue(entity, field) !== ''
+  // Formatted via the shared cell formatter so cards agree with list cells
+  // (dates render human-readably, booleans as Yes/No, rrules as text). This
+  // used to be a bare String(v || ''), which showed raw ISO datetimes and
+  // "true" on cards -- see TKT-S9C14S.
+  return formatCellValue(
+    entity.properties[field.property],
+    field.property,
+    entityType.value,
+    uiStore.effectiveTimezone
   )
 }
 
-function getCardFieldLabel(field: KanbanCardField): string {
-  if (field.label) return field.label
-  return field.relation || field.property || ''
+// The stored property value, unformatted. PROPERTY fields only -- a relation
+// field has no stored property and callers must use getCardFieldValue for it.
+// (An earlier version returned the joined relation string from here, which
+// made a function named "raw" hand pre-formatted text to a widget the moment
+// anyone added a relation widget.)
+function getCardFieldStoredValue(entity: Entity, field: KanbanCardField): unknown {
+  if (!field.property) return undefined
+  return entity.properties[field.property]
 }
 
-// Relation fields never render as enum badges — only scalar enum properties do.
-function isEnumField(field: KanbanCardField): boolean {
-  if (field.relation || !field.property || !entityType.value) return false
-  const propDef = entityType.value.properties[field.property]
-  return propDef?.type === 'enum' || (propDef?.values?.length ?? 0) > 0
+
+
+// Widget resolution for property card-fields, computed once per configured
+// field rather than per card (RR-UD2A). Relation fields are absent on
+// purpose: they have no PropertyDef and no relation widget, so they keep the
+// joined-titles string path.
+const cardFieldWidgets = computed(() => {
+  const byProperty = new Map<string, { component: Component; hint: DenseRoutingHint }>()
+  const type = entityType.value
+  if (!type) return byProperty
+  for (const field of kanbanConfig.value?.card.fields ?? []) {
+    if (!field.property || field.relation || byProperty.has(field.property)) continue
+    const hint = densePropertyRoutingHint(type.properties[field.property], field.property)
+    byProperty.set(field.property, { component: defaultRegistry.resolveFromHint(hint), hint })
+  }
+  return byProperty
+})
+
+// One resolved card field: the widget plus the value shaped the way it wants.
+// undefined means render the plain string span (relation fields, or a
+// property with no widget entry).
+//
+// Unlike EntityList this needs no empty-value guard: visibleCardFields has
+// already dropped empty fields before the template renders, so a widget's
+// "no value" placeholder (MultiSelectWidget's em-dash, RR-UD2C) is
+// unreachable here.
+/**
+ * Every visible field for one card, resolved once.
+ *
+ * The template used to call `resolveCardField` three times per field per card
+ * (once for `v-if`, once for the component, once for each bound prop), so a
+ * board of 50 cards with 3 fields did 450 resolutions per render where 150
+ * would do — and each one re-derives a value the widget map already holds.
+ *
+ * Empty fields are dropped here rather than in the renderer, keeping the
+ * dense-surface rule (empty renders as nothing, not a placeholder) with the
+ * code that knows how a value is formatted.
+ */
+function resolvedCardFields(entity: Entity): ResolvedCardField[] {
+  const out: ResolvedCardField[] = []
+
+  for (const field of kanbanConfig.value?.card.fields ?? []) {
+    const text = getCardFieldValue(entity, field)
+    if (text === '') continue
+
+    // Relation fields have no PropertyDef and so no widget: they render as
+    // joined target titles, the contract shared with list relation columns.
+    const entry = field.property && !field.relation
+      ? cardFieldWidgets.value.get(field.property)
+      : undefined
+
+    out.push({
+      field,
+      component: entry?.component,
+      propertyName: entry?.hint.propertyName,
+      modelValue: entry
+        ? entry.hint.preformatted
+          ? text
+          : getCardFieldStoredValue(entity, field)
+        : undefined,
+      text,
+    })
+  }
+  return out
 }
 
 function onDragStart(event: DragEvent, entity: Entity) {
@@ -469,6 +545,9 @@ function createNew() {
       </div>
     </div>
 
+    <!-- eslint-disable-next-line vue/no-v-html -- sanitized by renderMarkdown -->
+    <div v-if="headerHtml" class="view-info view-info--top" v-html="headerHtml"/>
+
     <div v-if="truncated" class="truncation-banner" role="alert">
       Showing {{ entities.length }} of {{ totalCount }} items — the board is incomplete.
     </div>
@@ -492,6 +571,13 @@ function createNew() {
         @drop="onDrop($event, column.value)"
       >
         <div class="column-header">
+          <component
+            :is="resolveIcon(column.icon)"
+            v-if="column.icon"
+            class="column-icon"
+            :size="16"
+            aria-hidden="true"
+          />
           <span class="column-title">{{ columnTitle(column) }}</span>
           <span class="column-count">{{ entitiesByColumn[column.value]?.length || 0 }}</span>
         </div>
@@ -508,22 +594,10 @@ function createNew() {
           >
             <div class="card-id">{{ entity.id }}</div>
             <div class="card-title text-wrap-anywhere">{{ getCardTitle(entity) }}</div>
-            <div v-if="visibleCardFields(entity).length" class="card-fields">
-              <div
-                v-for="(field, fieldIndex) in visibleCardFields(entity)"
-                :key="field.relation || field.property || fieldIndex"
-                class="card-field"
-              >
-                <span class="field-label">{{ getCardFieldLabel(field) }}:</span>
-                <Badge
-                  v-if="isEnumField(field)"
-                  :value="getCardFieldValue(entity, field)"
-                  :property="field.property"
-                  :entity-type="entityType"
-                />
-                <span v-else class="field-value">{{ getCardFieldValue(entity, field) }}</span>
-              </div>
-            </div>
+            <CardFieldList
+              :fields="resolvedCardFields(entity)"
+              :entity-type="kanbanConfig?.entity"
+            />
           </div>
 
           <div v-if="!entitiesByColumn[column.value]?.length" class="empty-column">
@@ -543,6 +617,13 @@ function createNew() {
           :key="column.value"
           class="swimlane-column-header"
         >
+          <component
+            :is="resolveIcon(column.icon)"
+            v-if="column.icon"
+            class="column-icon"
+            :size="16"
+            aria-hidden="true"
+          />
           <span class="column-title">{{ columnTitle(column) }}</span>
         </div>
       </div>
@@ -554,6 +635,13 @@ function createNew() {
         class="swimlane-row"
       >
         <div class="swimlane-label-cell">
+          <component
+            :is="resolveIcon(swimlane.icon)"
+            v-if="swimlane.icon"
+            class="column-icon"
+            :size="16"
+            aria-hidden="true"
+          />
           <span class="swimlane-label">{{ swimlane.label || swimlane.value }}</span>
         </div>
         <div
@@ -574,22 +662,10 @@ function createNew() {
           >
             <div class="card-id">{{ entity.id }}</div>
             <div class="card-title text-wrap-anywhere">{{ getCardTitle(entity) }}</div>
-            <div v-if="visibleCardFields(entity).length" class="card-fields">
-              <div
-                v-for="(field, fieldIndex) in visibleCardFields(entity)"
-                :key="field.relation || field.property || fieldIndex"
-                class="card-field"
-              >
-                <span class="field-label">{{ getCardFieldLabel(field) }}:</span>
-                <Badge
-                  v-if="isEnumField(field)"
-                  :value="getCardFieldValue(entity, field)"
-                  :property="field.property"
-                  :entity-type="entityType"
-                />
-                <span v-else class="field-value">{{ getCardFieldValue(entity, field) }}</span>
-              </div>
-            </div>
+            <CardFieldList
+              :fields="resolvedCardFields(entity)"
+              :entity-type="kanbanConfig?.entity"
+            />
           </div>
           <div v-if="!(entitiesByCell[column.value]?.[swimlane.value]?.length)" class="empty-cell">
             —
@@ -597,13 +673,22 @@ function createNew() {
         </div>
       </div>
     </div>
+
+    <!-- Sits after every board branch (loading/error/simple/swimlane) so it
+         renders once regardless of state, and outside the board's horizontal
+         scroll container so it stays visible on a wide board. -->
+    <!-- eslint-disable-next-line vue/no-v-html -- sanitized by renderMarkdown -->
+    <div v-if="footerHtml" class="view-info view-info--bottom" v-html="footerHtml"/>
   </div>
 </template>
 
 <style scoped>
+/* The horizontal scroll belongs to the board containers, NOT this page wrapper.
+   With overflow-x here, a board wider than the viewport dragged the page title,
+   filter bar, truncation banner, and info regions sideways along with the
+   columns. Scoping it to the boards keeps page furniture fixed. */
 .kanban-view {
   max-width: 100%;
-  overflow-x: auto;
 }
 
 .page-header {
@@ -620,18 +705,18 @@ function createNew() {
 .header-left {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-md);
 }
 
 .header-actions {
   display: flex;
-  gap: 12px;
+  gap: var(--space-md);
 }
 
 .btn {
   padding: 8px 16px;
-  border-radius: 6px;
-  font-size: 14px;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-base);
   font-weight: 500;
   cursor: pointer;
   border: none;
@@ -649,21 +734,21 @@ function createNew() {
 
 .filter-bar {
   display: flex;
-  gap: 16px;
+  gap: var(--space-lg);
   margin-bottom: 20px;
   padding: 12px 16px;
   background: var(--card-bg);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
 }
 
 .filter-group {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2xs);
 }
 
 .filter-group label {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 500;
   color: var(--muted-text);
   text-transform: uppercase;
@@ -672,8 +757,8 @@ function createNew() {
 .filter-group select {
   padding: 6px 10px;
   border: 1px solid var(--border-color);
-  border-radius: 6px;
-  font-size: 14px;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-base);
   min-width: 120px;
   background: var(--input-bg);
   color: var(--text-color);
@@ -683,16 +768,16 @@ function createNew() {
   padding: 10px 16px;
   margin-bottom: 16px;
   border: 1px solid #f59e0b;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: rgba(245, 158, 11, 0.12);
   color: var(--text-color);
-  font-size: 14px;
+  font-size: var(--font-size-base);
 }
 
 .loading-state {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-md);
   padding: 48px;
   color: var(--muted-text);
 }
@@ -702,21 +787,23 @@ function createNew() {
   height: 24px;
   border: 3px solid var(--border-color);
   border-top-color: var(--accent-color);
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 .kanban-board {
   display: flex;
-  gap: 16px;
+  gap: var(--space-lg);
   min-height: 500px;
   padding-bottom: 20px;
+  /* Per CSS spec a non-visible overflow on one axis coerces the other from
+     `visible` to `auto`, so this box now ALSO clips vertically — `overflow-y:
+     visible` cannot opt out. Safe today: the card hover box-shadow (8px blur)
+     is inset by .column-cards' 12px padding, and padding-bottom cushions the
+     last card. Anything that must escape a card's box vertically (drag ghost,
+     tooltip, popover, sticky column header) will be clipped here — that is the
+     accepted cost of scoping the horizontal scroll to the board. */
+  overflow-x: auto;
 }
 
 .kanban-column {
@@ -724,7 +811,7 @@ function createNew() {
   min-width: 280px;
   max-width: 350px;
   background: var(--hover-bg);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   display: flex;
   flex-direction: column;
 }
@@ -737,8 +824,16 @@ function createNew() {
   border-bottom: 1px solid var(--border-color);
 }
 
+/* Config-authored icon beside a column or swimlane label. Inherits
+ * currentColor, so it follows the theme — the emoji it replaces could not. */
+.column-icon {
+  flex-shrink: 0;
+  margin-right: var(--space-xs);
+  vertical-align: text-bottom;
+}
+
 .column-title {
-  font-size: 14px;
+  font-size: var(--font-size-base);
   font-weight: 600;
   color: var(--text-color);
 }
@@ -747,8 +842,8 @@ function createNew() {
   background: var(--border-color);
   color: var(--muted-text);
   padding: 2px 8px;
-  border-radius: 12px;
-  font-size: 12px;
+  border-radius: var(--radius-xl);
+  font-size: var(--font-size-sm);
   font-weight: 500;
 }
 
@@ -757,14 +852,14 @@ function createNew() {
   padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-sm);
   overflow-y: auto;
 }
 
 .kanban-card {
   background: var(--card-bg);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   padding: 12px;
   cursor: grab;
   transition: all 0.15s;
@@ -781,13 +876,13 @@ function createNew() {
 
 .card-id {
   font-family: monospace;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--muted-text);
   margin-bottom: 4px;
 }
 
 .card-title {
-  font-size: 14px;
+  font-size: var(--font-size-base);
   font-weight: 500;
   color: var(--text-color);
   margin-bottom: 8px;
@@ -796,13 +891,13 @@ function createNew() {
 .card-fields {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2xs);
 }
 
 .card-field {
   display: flex;
-  gap: 4px;
-  font-size: 12px;
+  gap: var(--space-2xs);
+  font-size: var(--font-size-sm);
 }
 
 .field-label {
@@ -815,7 +910,7 @@ function createNew() {
 
 .empty-column {
   color: var(--muted-text);
-  font-size: 13px;
+  font-size: var(--font-size-dense);
   text-align: center;
   padding: 24px;
 }
@@ -827,8 +922,11 @@ function createNew() {
   gap: 1px;
   background: var(--border-color);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
-  overflow: hidden;
+  border-radius: var(--radius-lg);
+  /* Two-value form: scroll horizontally when the grid is wider than the
+     viewport, while keeping the vertical `hidden` that clips cells to the
+     rounded border. A bare `overflow-x: auto` would drop that clipping. */
+  overflow: auto hidden;
   min-height: 400px;
 }
 
@@ -850,7 +948,7 @@ function createNew() {
   padding: 12px 16px;
   text-align: center;
   font-weight: 600;
-  font-size: 14px;
+  font-size: var(--font-size-base);
 }
 
 .swimlane-row {
@@ -859,7 +957,7 @@ function createNew() {
 
 .swimlane-label {
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--font-size-dense);
   color: var(--text-color);
   writing-mode: horizontal-tb;
 }
@@ -869,7 +967,7 @@ function createNew() {
   padding: 8px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-sm);
   min-height: 100px;
   overflow-y: auto;
 }
@@ -880,7 +978,7 @@ function createNew() {
 
 .empty-cell {
   color: var(--muted-text);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   text-align: center;
   padding: 8px;
   opacity: 0.5;
@@ -888,7 +986,7 @@ function createNew() {
 
 @media (max-width: 768px) {
   .kanban-board {
-    gap: 12px;
+    gap: var(--space-md);
     min-height: 300px;
   }
 

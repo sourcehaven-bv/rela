@@ -3,9 +3,10 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
@@ -47,7 +48,7 @@ func (s *Server) resolveEntityType(typeName string) (string, *metamodel.EntityDe
 
 // extractProperties parses the `properties` argument and filters out both nil
 // and empty-string entries (both treated as "no value"). Used by create paths.
-func extractProperties(request mcp.CallToolRequest) map[string]any {
+func extractProperties(request *mcpgo.CallToolRequest) map[string]any {
 	props, ok := parsePropertiesArg(request)
 	if !ok {
 		return nil
@@ -59,7 +60,7 @@ func extractProperties(request mcp.CallToolRequest) map[string]any {
 // entries so update_entity can use them as a delete sentinel. Empty strings are
 // still filtered (kept as a no-op for consistency with the create path).
 // Returns nil iff the argument is missing/malformed or contains only empty strings.
-func extractPropertiesAllowNil(request mcp.CallToolRequest) map[string]any {
+func extractPropertiesAllowNil(request *mcpgo.CallToolRequest) map[string]any {
 	props, ok := parsePropertiesArg(request)
 	if !ok {
 		return nil
@@ -70,8 +71,8 @@ func extractPropertiesAllowNil(request mcp.CallToolRequest) map[string]any {
 // parsePropertiesArg extracts the raw properties map from a tool request, handling
 // both the native map argument and the JSON-encoded string fallback. Returns
 // (nil, false) when the argument is missing, of an unsupported type, or malformed/null JSON.
-func parsePropertiesArg(request mcp.CallToolRequest) (map[string]any, bool) {
-	args := request.GetArguments()
+func parsePropertiesArg(request *mcpgo.CallToolRequest) (map[string]any, bool) {
+	args := newToolRequest(request).GetArguments()
 	propsRaw, ok := args["properties"]
 	if !ok {
 		return nil, false
@@ -123,7 +124,7 @@ func filterProperties(props map[string]any, keepNil bool) map[string]any {
 // (a nil value means "delete" in update_entity; deleting a required property would leave
 // the entity invalid, so we surface that as an actionable error rather than a misleading
 // success that analyze_validations later catches).
-func (s *Server) validatePropertyNames(entityType string, properties map[string]any) *mcp.CallToolResult {
+func (s *Server) validatePropertyNames(entityType string, properties map[string]any) *mcpgo.CallToolResult {
 	if properties == nil {
 		return nil
 	}
@@ -134,11 +135,15 @@ func (s *Server) validatePropertyNames(entityType string, properties map[string]
 		return nil // Type validation will catch this
 	}
 
-	var unknown, requiredDeletes []string
+	var unknown, requiredDeletes, computed []string
 	for propName, v := range properties {
 		def, exists := entityDef.Properties[propName]
 		if !exists {
 			unknown = append(unknown, propName)
+			continue
+		}
+		if def.Computed != "" {
+			computed = append(computed, propName)
 			continue
 		}
 		if v == nil && def.Required {
@@ -151,15 +156,21 @@ func (s *Server) validatePropertyNames(entityType string, properties map[string]
 		for name := range entityDef.Properties {
 			valid = append(valid, name)
 		}
-		return mcp.NewToolResultError(fmt.Sprintf(
+		return errorResult(fmt.Sprintf(
 			"unknown properties for %s: %s (valid: %s)",
 			entityType, strings.Join(unknown, ", "), strings.Join(valid, ", ")))
 	}
 
 	if len(requiredDeletes) > 0 {
-		return mcp.NewToolResultError(fmt.Sprintf(
+		return errorResult(fmt.Sprintf(
 			"cannot delete required properties for %s: %s (set a new value instead)",
 			entityType, strings.Join(requiredDeletes, ", ")))
+	}
+	if len(computed) > 0 {
+		slices.Sort(computed)
+		return errorResult(fmt.Sprintf(
+			"computed properties are read-only for %s: %s",
+			entityType, strings.Join(computed, ", ")))
 	}
 
 	return nil

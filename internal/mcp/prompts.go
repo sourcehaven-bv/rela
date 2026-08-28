@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -20,46 +20,48 @@ func (s *Server) registerPrompts() {
 	s.mcp.AddPrompt(promptReviewEntity(), s.handleReviewEntityPrompt)
 }
 
-func promptAnalyzeTraceability() mcp.Prompt {
-	return mcp.NewPrompt("analyze-traceability",
-		mcp.WithPromptDescription("Analyze traceability coverage for an entity"),
-		mcp.WithArgument("id",
-			mcp.RequiredArgument(),
-			mcp.ArgumentDescription("Entity ID to analyze (e.g. REQ-001)"),
-		),
-	)
+func promptAnalyzeTraceability() *mcpgo.Prompt {
+	return &mcpgo.Prompt{
+		Name:        "analyze-traceability",
+		Description: "Analyze traceability coverage for an entity",
+		Arguments: []*mcpgo.PromptArgument{
+			{Name: "id", Description: "Entity ID to analyze (e.g. REQ-001)", Required: true},
+		},
+	}
 }
 
-func promptReviewOrphans() mcp.Prompt {
-	return mcp.NewPrompt("review-orphans",
-		mcp.WithPromptDescription("Review orphan entities and suggest connections"),
-		mcp.WithArgument("type",
-			mcp.ArgumentDescription("Filter by entity type (optional)"),
-		),
-	)
+func promptReviewOrphans() *mcpgo.Prompt {
+	return &mcpgo.Prompt{
+		Name:        "review-orphans",
+		Description: "Review orphan entities and suggest connections",
+		Arguments: []*mcpgo.PromptArgument{
+			{Name: "type", Description: "Filter by entity type (optional)"},
+		},
+	}
 }
 
-func promptSummarizeProject() mcp.Prompt {
-	return mcp.NewPrompt("summarize-project",
-		mcp.WithPromptDescription("Generate a project overview from the entity graph"),
-	)
+func promptSummarizeProject() *mcpgo.Prompt {
+	return &mcpgo.Prompt{
+		Name:        "summarize-project",
+		Description: "Generate a project overview from the entity graph",
+	}
 }
 
-func promptReviewEntity() mcp.Prompt {
-	return mcp.NewPrompt("review-entity",
-		mcp.WithPromptDescription("Review an entity for completeness and quality"),
-		mcp.WithArgument("id",
-			mcp.RequiredArgument(),
-			mcp.ArgumentDescription("Entity ID to review (e.g. REQ-001)"),
-		),
-	)
+func promptReviewEntity() *mcpgo.Prompt {
+	return &mcpgo.Prompt{
+		Name:        "review-entity",
+		Description: "Review an entity for completeness and quality",
+		Arguments: []*mcpgo.PromptArgument{
+			{Name: "id", Description: "Entity ID to review (e.g. REQ-001)", Required: true},
+		},
+	}
 }
 
 // --- Prompt Handlers ---
 
 func (s *Server) handleAnalyzeTraceabilityPrompt(
-	ctx context.Context, request mcp.GetPromptRequest,
-) (*mcp.GetPromptResult, error) {
+	ctx context.Context, request *mcpgo.GetPromptRequest,
+) (*mcpgo.GetPromptResult, error) {
 	id := request.Params.Arguments["id"]
 	if id == "" {
 		return nil, errors.New("id argument is required")
@@ -114,17 +116,17 @@ Please analyze:
 5. Suggest specific relations that should be created to improve coverage.`,
 		id, entityText, traceFromText, traceToText)
 
-	return &mcp.GetPromptResult{
+	return &mcpgo.GetPromptResult{
 		Description: "Traceability analysis for " + id,
-		Messages: []mcp.PromptMessage{
-			mcp.NewPromptMessage(mcp.RoleUser, mcp.NewTextContent(content)),
+		Messages: []*mcpgo.PromptMessage{
+			{Role: "user", Content: &mcpgo.TextContent{Text: content}},
 		},
 	}, nil
 }
 
 func (s *Server) handleReviewOrphansPrompt(
-	ctx context.Context, request mcp.GetPromptRequest,
-) (*mcp.GetPromptResult, error) {
+	ctx context.Context, request *mcpgo.GetPromptRequest,
+) (*mcpgo.GetPromptResult, error) {
 	entityType := request.Params.Arguments["type"]
 
 	orphanIDs, _ := s.deps.Tracer.FindOrphans(ctx)
@@ -194,17 +196,17 @@ For each orphan entity:
 4. If an entity truly doesn't need connections, explain why it's acceptable as an orphan`,
 		len(summaries), orphanText, relInfo.String())
 
-	return &mcp.GetPromptResult{
+	return &mcpgo.GetPromptResult{
 		Description: "Review orphan entities",
-		Messages: []mcp.PromptMessage{
-			mcp.NewPromptMessage(mcp.RoleUser, mcp.NewTextContent(content)),
+		Messages: []*mcpgo.PromptMessage{
+			{Role: "user", Content: &mcpgo.TextContent{Text: content}},
 		},
 	}, nil
 }
 
 func (s *Server) handleSummarizeProjectPrompt(
-	ctx context.Context, _ mcp.GetPromptRequest,
-) (*mcp.GetPromptResult, error) {
+	ctx context.Context, _ *mcpgo.GetPromptRequest,
+) (*mcpgo.GetPromptResult, error) {
 	// Entity counts by type
 	meta := s.deps.Meta
 	st := s.deps.Store
@@ -268,17 +270,17 @@ Please provide:
 		meta.GetVersion(), meta.GetNamespace(),
 		len(entityTypes), len(relTypes))
 
-	return &mcp.GetPromptResult{
+	return &mcpgo.GetPromptResult{
 		Description: "Project summary",
-		Messages: []mcp.PromptMessage{
-			mcp.NewPromptMessage(mcp.RoleUser, mcp.NewTextContent(content)),
+		Messages: []*mcpgo.PromptMessage{
+			{Role: "user", Content: &mcpgo.TextContent{Text: content}},
 		},
 	}, nil
 }
 
 func (s *Server) handleReviewEntityPrompt(
-	ctx context.Context, request mcp.GetPromptRequest,
-) (*mcp.GetPromptResult, error) {
+	ctx context.Context, request *mcpgo.GetPromptRequest,
+) (*mcpgo.GetPromptResult, error) {
 	id := request.Params.Arguments["id"]
 	if id == "" {
 		return nil, errors.New("id argument is required")
@@ -338,10 +340,10 @@ Please review this entity for:
 4. Suggestions: What improvements would you recommend?`,
 		id, entityText, entity.Type, schemaText, validationText)
 
-	return &mcp.GetPromptResult{
+	return &mcpgo.GetPromptResult{
 		Description: "Entity review for " + id,
-		Messages: []mcp.PromptMessage{
-			mcp.NewPromptMessage(mcp.RoleUser, mcp.NewTextContent(content)),
+		Messages: []*mcpgo.PromptMessage{
+			{Role: "user", Content: &mcpgo.TextContent{Text: content}},
 		},
 	}, nil
 }

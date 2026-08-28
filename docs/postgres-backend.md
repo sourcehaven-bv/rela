@@ -19,7 +19,7 @@ deployments with **multiple server processes** sharing one database (see
 PostgreSQL backs **data only**. The project's schema and configuration
 are still read from the filesystem, exactly as in the default build:
 
-- `metamodel.yaml` — the entity/relation schema.
+- `schema.yaml` — the entity/relation schema.
 - `templates/` — optional entity/relation templates.
 - `.rela/` — the per-machine cache and audit log.
 
@@ -82,6 +82,68 @@ rela's tables are created in the connection's default schema (typically
 `public`). Point rela at a database it owns; if you share a schema with
 another application, rela's tables sit alongside it.
 
+## Derived schema (constraints and query indexes)
+
+Some things you declare in the metamodel are enforced not only in the
+application but by the **database itself** on the PostgreSQL backend. Today
+that means `unique: true` properties: for each one, rela maintains a partial
+unique index (named `rela_derived_uniq__…`) so a duplicate value is rejected
+atomically at write time, even across two server processes writing at once.
+On the filesystem backend the same rule is enforced by an application-level
+check, which is race-free enough for a single process; the database index is
+what makes it safe for a multi-writer PostgreSQL deployment.
+
+These indexes are **derived from the metamodel, not from a migration**. rela
+reconciles them at every start: it compares what `schema.yaml` declares
+against the indexes actually present and creates the missing ones, dropping
+any it previously created for a rule you have since removed. This is
+idempotent and self-correcting — a hand-dropped index is recreated on the
+next start — and in the steady state (nothing changed) it does no work.
+
+PostgreSQL also derives ordinary B-tree indexes from eligible static queries in
+`data-entry.yaml`. Dashboard cards, global next-action queries, and `pick_one`
+option queries qualify when they target exactly one entity type and all pushed
+filters are non-empty equality checks on declared, scalar string properties.
+rela creates one composite `rela_derived_query__…` index for the complete set
+of properties in each query shape. Equivalent queries share an index even when
+their literal values or filter order differ.
+
+Runtime and URL queries are not observed. Free text, relations, sorting, glob,
+not-equal, empty-value, list-valued, and non-string filters do not produce an
+index. Query indexes are recalculated only at startup or by `rela db reconcile`,
+so restart or reconcile after changing static query configuration. A missing
+`data-entry.yaml` is valid; an invalid or unreadable file aborts reconciliation
+without dropping existing rela-owned query indexes.
+
+### When a constraint can't be enforced
+
+Adding `unique: true` to a property whose existing rows already contain
+duplicate values cannot create the index — PostgreSQL rejects it. rela treats
+this as a **warning, not a fatal error**: the server still starts, the
+property is simply left unenforced at the database level (the application
+check still runs), and a message tells you which property and how many
+duplicate value groups are blocking it. This is deliberate: a configuration
+edit must never turn existing data into a startup outage. Clean up the
+duplicates and the constraint is enforced on the next reconcile.
+
+### Inspecting and reconciling explicitly
+
+Like migrations, reconciliation runs automatically at startup, but you can
+also drive it as an explicit step:
+
+```bash
+rela db status              # also reports any derived-schema drift (always exit 0 for drift)
+rela db reconcile           # create/drop derived objects to match the metamodel
+rela db reconcile --dry-run # show what WOULD change; non-zero exit if anything would — a CI/pre-deploy gate
+```
+
+`rela db reconcile --dry-run` is the pre-flight: run it against your live
+database before shipping a configuration change to see exactly which constraints
+would be created, dropped, or left unenforced (and, with `--show-values`, a
+sample of the blocking values — this prints entity data, so it is opt-in and
+operator-only). Because the dry-run and the real startup reconcile share one
+planner, what the dry-run predicts is what startup does.
+
 ## Search
 
 In the PostgreSQL build, search runs **in the database** (a `tsvector`
@@ -104,25 +166,53 @@ What you need to know to run it:
 - Each process opens **one extra connection** to receive change notifications.
   If it can't, the process still works normally; only the live cross-server
   updates are unavailable (a warning is logged).
+- That is **one connection per process, not per schema**. All processes LISTEN
+  on a single shared channel (`rela_changed`) and the writing schema travels in
+  the notification payload, so a process serving several schemas on one database
+  still needs only the one connection. Notifications from a schema a store does
+  not read are discarded on arrival.
 - Live updates cover **entity** create/update/delete. Relation and attachment
   edits are reflected on the next page load rather than pushed live.
+- **Durable UI state is shared too.** The document render cache, user settings,
+  the operator logo/theme and the CalDAV alias table live in the database on
+  this build, not in each node's `.rela/` directory. Upload a logo on one node
+  and every node serves it; a document rendered on one node is not re-rendered
+  on the next. (On the filesystem build this state stays under `.rela/`, which
+  is correct for a single-process deployment.)
+- **Run `rela scheduler` on exactly one node.** Scheduled tasks execute through
+  the background-job queue, and the queue itself is multi-process safe: a task
+  is submitted under an idempotency key backed by a unique index, so two nodes
+  ticking at the same moment cannot both queue it, and PostgreSQL — not the
+  application — decides which one wins. What is *not* yet shared is the
+  scheduler's bookkeeping. Last-run times and the retry ladder still live in
+  each node's `.rela/scheduler-state.json`, so two schedulers keep diverging
+  views of what is due; and because any node's worker may claim any job, a task
+  executed on one node can be recorded as a *failure* on the node that queued
+  it. Neither costs you a duplicate run, but both corrupt the schedule's
+  history. Tracked as TKT-7XLVP7.
 
 ### Write transactions
 
 The store exposes a write-transaction contract (`store.Store.Tx`,
 DEC-8UIL0). On PostgreSQL a `Tx` callback runs inside one real database
-transaction, serialized **deployment-wide** by a transaction-scoped
-advisory lock (its own key, distinct from the migration and
-version-sweep locks): every process of the deployment executes write
-transactions one at a time. An error rolls the whole callback back —
-no rows, no cross-process NOTIFYs, and no in-process events are
-delivered (event fan-out is buffered until commit). On the filesystem
-backend the same contract degrades to a process-local write mutex with
-no rollback — acceptable for its single-user deployments.
+transaction, serialized **across the processes sharing a schema** by a
+transaction-scoped advisory lock (its own key, distinct from the
+migration and version-sweep locks): every process serving that schema
+executes write transactions one at a time. An error rolls the whole
+callback back — no rows, no cross-process NOTIFYs, and no in-process
+events are delivered (event fan-out is buffered until commit). On the
+filesystem backend the same contract degrades to a process-local write
+mutex with no rollback — acceptable for its single-user deployments.
 
-Because the advisory lock is deployment-wide, a slow transaction stalls
-every writer. Keep `Tx` callbacks short and never perform external I/O
-inside one.
+Because the advisory lock covers the whole schema, a slow transaction
+stalls every writer against it. Keep `Tx` callbacks short and never
+perform external I/O inside one.
+
+All three of rela's advisory locks — migration, version sweep, and
+write — are keyed by the schema they act on. PostgreSQL advisory locks
+are otherwise database-global, so without this two rela schemas sharing
+one database would migrate, sweep, and write behind each other's locks
+despite being entirely independent deployments.
 
 ## Version history (time machine)
 
@@ -183,6 +273,25 @@ rela restore TKT-42 3              # restore the entity to version 3
 The data-entry web UI shows the same timeline, an in-page diff, and a restore
 button (gated by your write permission) on each entity's detail page.
 
+**Sharing a diff.** The two compared versions live in the URL as `?base=` and
+`?target=`, so a specific diff can be linked, bookmarked, or reopened after a
+reload:
+
+```text
+/history/feature/FEAT-42?base=3&target=7          # v3 → v7
+/history/feature/FEAT-42?base=3&target=current    # what changed since v3
+```
+
+Either side takes a version ordinal or `current`. Note that `current` is
+**live-relative**: a link with `target=current` shows the diff against the
+entity as it stands when the recipient opens it, not as it stood when the link
+was made. Link two ordinals for a diff that is frozen. Omit the params for the
+default view, and a value that names no existing version (a stale link, a typo)
+falls back to that default rather than erroring — the address bar is rewritten
+to the pair actually being shown, so a corrected link is what you copy. A
+shared link is not a capability — the recipient still needs their own read
+permission on the entity, and sees the same 404 they would without the link.
+
 Access control: reading the history of a **live** entity requires the same read
 permission as reading the entity itself. Reading the history of a **deleted**
 entity requires the global `history:read` permission — see
@@ -227,6 +336,15 @@ global `history:read`). In the web UI, a relation's history is owned by its
 a History affordance. Restore goes through the normal write path; re-creating a
 relation whose endpoint entity no longer exists is refused (409).
 
+Relation diffs are shareable the same way, with `?base=`/`?target=` on the
+relation-history URL — though here `current` resolves to the newest captured
+version (labelled *latest*), since a relation has no separate live-read
+endpoint:
+
+```text
+/relation-history/ticket/TKT-42/blocks/TKT-99?base=1&target=3
+```
+
 ### Purging history for compliance
 
 History is append-only by design. When you must actually **remove** content from
@@ -267,6 +385,32 @@ Two guardrails you will hit:
 the primary database; a value may still survive in your PITR/base backups and WAL
 until their retention expires — accounting for the backup lifecycle is the
 operator's separate responsibility.
+
+## Data migration (schema shape changes)
+
+Each schema (tenant) tracks the shape of the metamodel its DATA conforms to
+in its own `state_kv` rows, so tenants at different points migrate
+independently: `rela migrate data` resolves each store's own chain (see the
+[data-migration guide](data-migration.md)). Postgres-specific behavior:
+
+- Migrated content lands in the version history: create/update rewrites are
+  captured by the version sweep (attributed to the operator with the
+  `data-migration` tool via `store.WithAttribution`), and destructive steps
+  (`drop_entities`, `drop_relations`, `rename_relation_type`, GC deletions)
+  capture pre-delete snapshots **synchronously** — the sweep cannot
+  reconstruct a row that is already gone.
+- `rename_relation_type` recreates relations under the new type, so relation
+  history starts a fresh lifetime (`rel_record_id`); the old lifetime is
+  closed with a delete capture.
+- The drift GC sweep runs in each process that assembles services, one
+  goroutine per store; runs are serialized against writers through the
+  store's transaction contract. `RELA_DATA_GC=off` disables it (e.g. on
+  read-mostly replicas where one designated process should own GC).
+- Migration and GC applies (and gate marker writes) are mutually excluded
+  across processes by a schema-scoped **advisory migration lock** — a
+  session lock held on one pool connection for the duration of the run, so
+  two `migrate data --apply` invocations against the same schema cannot
+  interleave, while different schemas stay independent.
 
 ## Other scope notes
 
