@@ -72,6 +72,11 @@ func (dr *docRuntime) luaAPI(ls *lua.LState) int {
 		return dr.luaFail(ls, `api: expects a table, e.g. api{path="/api/v1/entities/policy/POL-1", status=200}`)
 	}
 
+	if rejectUnknownKeys(dr, ls, "api", tbl,
+		"path", "method", "as", "body", "status", "error", "identical_to") {
+		return 0
+	}
+
 	path := fieldString(ls, tbl, "path")
 	if path == "" {
 		return dr.luaFail(ls, "api: `path` is required")
@@ -115,6 +120,9 @@ func (dr *docRuntime) luaAPI(ls *lua.LState) int {
 			Path:       fieldStringOf(identicalTo, "path"),
 			As:         fieldStringOf(identicalTo, "as"),
 			Body:       fieldStringOf(identicalTo, "body"),
+		}
+		if rejectUnknownKeys(dr, ls, "api identical_to", identicalTo, "path", "method", "as", "body") {
+			return 0
 		}
 		if other.Path == "" {
 			return dr.luaFail(ls, "api{path=%q}: identical_to needs its own `path`", path)

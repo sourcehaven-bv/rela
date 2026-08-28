@@ -198,3 +198,76 @@ shows{type="maatregel", exactly={"maatregel-1"}}`,
 		})
 	}
 }
+
+// TestUnknownKeysAreRefused: a misspelled claim beside a VALID one is the
+// dangerous case — the call passes on the strength of the correct claim while
+// the author believes both are checked. The claimless-call rule cannot catch
+// this, because the call does assert something.
+func TestUnknownKeysAreRefused(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		wantErr string
+	}{
+		{
+			name:    "shows: a typo beside a valid claim",
+			body:    `shows{type="risico", contains={"risico-1"}, absnt={"risico-2"}}`,
+			wantErr: "unknown key absnt",
+		},
+		{
+			name:    "shows: the message lists the known keys",
+			body:    `shows{type="risico", exactl={}}`,
+			wantErr: "Known keys: absent, contains, exactly, type",
+		},
+		{
+			name:    "shows: several typos are reported together",
+			body:    `shows{type="risico", contains={"a"}, absnt={}, exactl={}}`,
+			wantErr: "unknown keys absnt, exactl",
+		},
+		{
+			name:    "refuses: a typo beside a valid claim",
+			body:    `refuses{who="vi", op="update", type="risico", becuase="x"}`,
+			wantErr: "unknown key becuase",
+		},
+		{
+			name:    "api: a typo beside a valid claim",
+			body:    `api{path="/a", status=200, eror="x"}`,
+			wantErr: "unknown key eror",
+		},
+		{
+			name:    "api: a typo inside identical_to",
+			body:    `api{path="/a", status=200, identical_to={path="/b", ass="viewer"}}`,
+			wantErr: "identical_to: unknown key ass",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			src := "```rela\n" + tc.body + "\n```\n"
+			opts := Options{Meta: fixtureMeta(t), Policy: aclFixturePolicy()}
+			if strings.HasPrefix(tc.body, "api") {
+				opts.APIClient = &fakeAPI{responses: map[string]APIResponse{
+					"/a": {Status: 200}, "/b": {Status: 200},
+				}}
+			}
+			_, err := Build(context.Background(), src, opts)
+			if err == nil {
+				t.Fatalf("want failure containing %q, got success", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error does not contain %q:\n%v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
+// A correctly-spelled call must still build — the guard must not reject valid
+// keys, which would make every assertion unusable.
+func TestKnownKeysAreAccepted(t *testing.T) {
+	src := "```rela\n" + `create("risico", {titel="a", kans=1, impact=1, status="todo"})
+shows{type="risico", contains={"risico-1"}, absent={"risico-9"}, exactly={"risico-1"}}
+refuses{who="vi", op="update", type="risico", because="role-grant"}` + "\n```\n"
+	if _, err := Build(context.Background(), src, Options{Meta: fixtureMeta(t), Policy: aclFixturePolicy()}); err != nil {
+		t.Fatalf("a call using every known key must build: %v", err)
+	}
+}

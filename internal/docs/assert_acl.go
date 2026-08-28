@@ -44,6 +44,10 @@ func (dr *docRuntime) luaAuthz(ls *lua.LState, wantAllow bool) int {
 		return dr.luaFail(ls, `%s: expects a table, e.g. %s{who="auditor", op="update", type="policy"}`, verb, verb)
 	}
 
+	if rejectUnknownKeys(dr, ls, verb, tbl, "who", "op", "type", "id", "because") {
+		return 0
+	}
+
 	who := fieldString(ls, tbl, "who")
 	op := fieldString(ls, tbl, "op")
 	typ := fieldString(ls, tbl, "type")

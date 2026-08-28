@@ -49,6 +49,10 @@ func (dr *docRuntime) luaShows(ls *lua.LState) int {
 		return dr.luaFail(ls, "shows: `type` is required — it names the set being asserted about")
 	}
 
+	if rejectUnknownKeys(dr, ls, "shows", tbl, "type", "contains", "absent", "exactly") {
+		return 0
+	}
+
 	contains := fieldStringSlice(ls, tbl, "contains")
 	absent := fieldStringSlice(ls, tbl, "absent")
 	exactly := fieldStringSlice(ls, tbl, "exactly")
@@ -169,4 +173,50 @@ func dedupe(in []string) []string {
 // has no entities" — and must not be read as "no exactly claim given".
 func hasField(tbl *lua.LTable, key string) bool {
 	return tbl.RawGetString(key) != lua.LNil
+}
+
+// rejectUnknownKeys fails when a table carries a key the verb does not know.
+//
+// A misspelled claim is INVISIBLE otherwise: `shows{type="x", contains={...},
+// absnt={"y"}}` silently drops `absnt` and passes on the strength of the claim
+// that WAS spelled correctly, so the author believes two things are checked
+// when only one is. The "asserts nothing is an error" rule catches this only
+// when the typo is the sole claim; this catches it when it hides beside a
+// valid one, which is the harder case to notice.
+//
+// Rejecting unknown keys is safe here because these tables are a closed
+// vocabulary — an assertion has no user-extensible options.
+func rejectUnknownKeys(dr *docRuntime, ls *lua.LState, verb string, tbl *lua.LTable, known ...string) bool {
+	allowed := make(map[string]bool, len(known))
+	for _, k := range known {
+		allowed[k] = true
+	}
+	var unknown []string
+	tbl.ForEach(func(k, _ lua.LValue) {
+		name, ok := k.(lua.LString)
+		if !ok {
+			return
+		}
+		if !allowed[string(name)] {
+			unknown = append(unknown, string(name))
+		}
+	})
+	if len(unknown) == 0 {
+		return false
+	}
+	sort.Strings(unknown)
+	sortedKnown := append([]string(nil), known...)
+	sort.Strings(sortedKnown)
+	dr.luaFail(ls, "%s: unknown %s %s — a misspelled claim would be silently "+
+		"dropped, so it is refused. Known keys: %s",
+		verb, pluralize("key", len(unknown)), strings.Join(unknown, ", "),
+		strings.Join(sortedKnown, ", "))
+	return true
+}
+
+func pluralize(word string, n int) string {
+	if n == 1 {
+		return word
+	}
+	return word + "s"
 }
