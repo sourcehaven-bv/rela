@@ -136,7 +136,10 @@ not.
 ```
 
 Each token is the first 4 bytes of `sha256(entityID | type | fieldKey | value)`,
-hex-encoded — the same per-key material the ETag already folds, salted with the
+hex-encoded (the existing whole-entity ETag truncates to 8 bytes; 4 is proposed
+per field because a token guards one field over one edit session rather than the
+whole entity, and the failure mode is benign — see the collision note below.
+Widen to 8 if review prefers uniformity, the cost is 4 bytes per property) — the same per-key material the ETag already folds, salted with the
 key so two fields holding the same value get different tokens. Only
 **non-redacted** keys appear: `_versions.properties` is built from the same
 post-redaction map the wire entity carries, so a client cannot learn that a
