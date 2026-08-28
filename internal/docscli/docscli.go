@@ -53,6 +53,10 @@ type BuildCmd struct {
 	// the "no browser" path deterministically without a shared global (and stay
 	// t.Parallel()-safe).
 	newCapturer func() (docs.Capturer, error)
+
+	// newAPIClient resolves the api{} client; nil means the build-tagged
+	// package NewAPIClient. Injected in tests.
+	newAPIClient func(string) (docs.APIClient, error)
 }
 
 // capturer returns the resolved capturer factory: the injected test seam if set,
@@ -62,6 +66,15 @@ func (c *BuildCmd) capturer() func() (docs.Capturer, error) {
 		return c.newCapturer
 	}
 	return NewCapturer
+}
+
+// apiClient resolves the api{} client, defaulting to the build-tagged
+// NewAPIClient. Overridable in tests, like newCapturer.
+func (c *BuildCmd) apiClient() func(string) (docs.APIClient, error) {
+	if c.newAPIClient != nil {
+		return c.newAPIClient
+	}
+	return NewAPIClient
 }
 
 // outputDir is the directory screenshot{} PNGs are written into: the output
@@ -116,6 +129,13 @@ func (c *BuildCmd) Run(ctx context.Context, proj Project) error {
 		opts.Capturer = capturer
 	} else {
 		opts.CapturerErr = capErr.Error()
+	}
+	// Same contract for api{} assertions: available or loudly absent, never
+	// silently skipped. A skipped assertion looks exactly like a passing one.
+	if client, apiErr := c.apiClient()(proj.Paths().Root); apiErr == nil {
+		opts.APIClient = client
+	} else {
+		opts.APIClientErr = apiErr.Error()
 	}
 
 	rendered, err := docs.Build(ctx, string(src), opts)

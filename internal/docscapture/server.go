@@ -62,9 +62,15 @@ func (p *project) syncSeed(ctx context.Context, seed []docs.SeedOp) error {
 // it by replaying the manual's create/link ops against the fsstore, and starts
 // an httptest server for the SPA. The server's principal resolver maps the
 // per-request role header to a principal assigned that role in acl.yaml.
-func standUp(ctx context.Context, projectDir string, seed []docs.SeedOp) (*project, error) {
-	if err := dataentry.CheckEmbeddedSPA(); err != nil {
-		return nil, fmt.Errorf("data-entry SPA not built (run `just build-frontend`): %w", err)
+// needSPA distinguishes the two callers: a screenshot renders the Vue app and
+// cannot work without a built frontend, while an api{} assertion only reaches
+// /api/v1 handlers and must NOT be blocked by a missing bundle — that is what
+// lets api{} gate CI unconditionally.
+func standUp(ctx context.Context, projectDir string, seed []docs.SeedOp, needSPA bool) (*project, error) {
+	if needSPA {
+		if err := dataentry.CheckEmbeddedSPA(); err != nil {
+			return nil, fmt.Errorf("data-entry SPA not built (run `just build-frontend`): %w", err)
+		}
 	}
 
 	tmp, err := os.MkdirTemp("", "rela-docscapture-*")

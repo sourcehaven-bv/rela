@@ -46,6 +46,7 @@ func (dr *docRuntime) registerModule() {
 		"shows":   dr.luaShows,
 		"refuses": dr.luaRefuses,
 		"permits": dr.luaPermits,
+		"api":     dr.luaAPI,
 	}
 	for name, fn := range fns {
 		nf := L.NewFunction(fn)

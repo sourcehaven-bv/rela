@@ -58,6 +58,7 @@ available without the `doc.` prefix.
 | `description()` | the metamodel's top-level `description:` (echo-friendly) |
 | `shows{type, contains\|absent\|exactly}` | **asserts** which entities of a type exist (emits nothing) |
 | `refuses{who, op, type, because}` / `permits{...}` | **asserts** an authorization outcome (emits nothing) |
+| `api{path, status, error, as, identical_to}` | **asserts** an API contract against a real server (emits nothing) |
 | `h1/h2/h3(text)`, `md(text)` | structural Markdown emitted from Lua |
 
 ### Relation graphs
@@ -146,6 +147,50 @@ the gate were never consulted. This is the deliberate exception to the
 claim about real behaviour. Add `because = "..."` to also pin *why* a decision
 came out that way — a deny arriving from an unintended rule is a green check
 over a real regression.
+
+### API assertions
+
+`api{}` issues a real request against the documented project's API, served over
+a throwaway temp copy seeded with the manual's own fixtures:
+
+```rela
+create("ticket", { id = "TKT-1", title = "Login 500s", status = "open" })
+
+api{ path = "/api/v1/tickets/TKT-1", as = "editor", status = 200 }
+api{ path = "/api/v1/tickets/NOPE", as = "editor", error = "https://rela.dev/errors/not_found" }
+```
+
+`error=` claims the **machine-readable code**, not the prose title: a message
+gets reworded, the code is the contract. Asserting the message gives a check
+that fails on a copy edit and passes on a real behaviour change.
+
+`as=` names a role from `acl.yaml`, so an ACL claim can be stated as the
+response a real caller gets.
+
+Unlike `screenshot{}`, `api{}` needs no browser and no built frontend — it only
+reaches the `/api/v1` handlers, so it can gate CI unconditionally. Like
+`screenshot{}` it is unavailable on the `postgres` build, where seeding a
+"throwaway" project would write into the live database.
+
+#### `identical_to` — the existence-oracle property
+
+Some properties are not about one response but about two being the **same**.
+"A denied read is indistinguishable from a missing entity" cannot be stated by
+asserting a status, because the whole claim is that two requests answer alike:
+
+```rela
+api{
+  path = "/api/v1/tickets/HIDDEN", as = "viewer", status = 404,
+  identical_to = { path = "/api/v1/tickets/NO-SUCH-THING", as = "viewer" },
+}
+```
+
+The comparison covers status and body but **excludes** the problem-details
+`instance` member, which echoes the requested URL: two requests to different
+urls necessarily differ there, so including it would make the check fail on
+every pair — a check that never passes is not checking anything. `instance`
+reflects only what the caller already typed, so it leaks nothing; every other
+field must match exactly.
 
 ## Building
 

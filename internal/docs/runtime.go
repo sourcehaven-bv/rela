@@ -27,6 +27,11 @@ const buildTimeout = 30 * time.Second
 // screenshotBuildTimeout is the wider ceiling for a build that captures
 // screenshots — browser launch + per-island navigate/capture need more than the
 // Tier-A 30s.
+// apiBuildTimeout bounds a build with api{} islands. Longer than the bare
+// buildTimeout because the first api{} stands up a temp project and server, but
+// far below the screenshot ceiling: there is no browser to launch.
+const apiBuildTimeout = 2 * time.Minute
+
 const screenshotBuildTimeout = 5 * time.Minute
 
 // Options controls a manual build.
@@ -47,6 +52,14 @@ type Options struct {
 	// CapturerErr is the reason a Capturer could not be built (e.g. no Chrome);
 	// surfaced in the screenshot{} fail-loud message when Capturer is nil.
 	CapturerErr string
+
+	// APIClient serves api{} islands. Injected by the CLI for the same reason
+	// as Capturer — it stands up a server, which the core docs package must
+	// not depend on.
+	APIClient APIClient
+	// APIClientErr is why an APIClient could not be built; surfaced in the
+	// api{} fail-loud message when APIClient is nil.
+	APIClientErr string
 	// ProjectDir is the documented project root; screenshot{} copies its schema/
 	// config into the temp project the SPA renders.
 	ProjectDir string
@@ -93,6 +106,14 @@ type docRuntime struct {
 	// Chrome), surfaced in the fail-loud message when a screenshot{} needs it.
 	capturerErr string
 
+	// apiClient serves api{} islands. nil ⇒ api{} fails loud, for the same
+	// reason a nil capturer does: a skipped assertion looks exactly like a
+	// passing one. Unlike the capturer it needs no browser or built frontend.
+	apiClient APIClient
+	// apiClientErr is why the client could not be constructed, surfaced in the
+	// fail-loud message.
+	apiClientErr string
+
 	// projectDir is the documented project's root (schema/config copied into the
 	// screenshot temp project). Empty in a schema-only build.
 	projectDir string
@@ -122,6 +143,10 @@ func Build(ctx context.Context, src string, opts Options) (string, error) {
 	// If the caller already set an earlier deadline, that one wins. Screenshot
 	// builds get a longer ceiling (browser launch + navigate + capture).
 	deadline := buildTimeout
+	if opts.APIClient != nil {
+		deadline = apiBuildTimeout
+	}
+	// A screenshot build also stands up a server, so its (longer) ceiling wins.
 	if opts.Capturer != nil {
 		deadline = screenshotBuildTimeout
 	}
@@ -133,20 +158,25 @@ func Build(ctx context.Context, src string, opts Options) (string, error) {
 	if opts.Capturer != nil {
 		defer func() { _ = opts.Capturer.Close() }()
 	}
+	if opts.APIClient != nil {
+		defer func() { _ = opts.APIClient.Close() }()
+	}
 
 	st := memstore.New()
 	dr := &docRuntime{
-		meta:        opts.Meta,
-		policy:      opts.Policy,
-		store:       st,
-		tracer:      tracer.New(st),
-		strict:      opts.Strict,
-		out:         &strings.Builder{},
-		ctx:         ctx,
-		capturer:    opts.Capturer,
-		capturerErr: opts.CapturerErr,
-		projectDir:  opts.ProjectDir,
-		outDir:      opts.OutDir,
+		meta:         opts.Meta,
+		policy:       opts.Policy,
+		apiClient:    opts.APIClient,
+		apiClientErr: opts.APIClientErr,
+		store:        st,
+		tracer:       tracer.New(st),
+		strict:       opts.Strict,
+		out:          &strings.Builder{},
+		ctx:          ctx,
+		capturer:     opts.Capturer,
+		capturerErr:  opts.CapturerErr,
+		projectDir:   opts.ProjectDir,
+		outDir:       opts.OutDir,
 	}
 
 	// A reader runtime gives us the sandbox (no io/os) plus rela.* read bindings;

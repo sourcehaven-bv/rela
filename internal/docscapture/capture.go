@@ -104,7 +104,7 @@ func (c *Capturer) Capture(ctx context.Context, spec docs.CaptureSpec) (string, 
 // ensure lazily stands up the temp-project server (once) and the browser (once).
 func (c *Capturer) ensure(ctx context.Context, spec docs.CaptureSpec) error {
 	if c.proj == nil {
-		p, err := standUp(ctx, spec.ProjectDir, spec.Seed)
+		p, err := standUp(ctx, spec.ProjectDir, spec.Seed, true)
 		if err != nil {
 			return err
 		}
