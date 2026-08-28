@@ -1363,6 +1363,41 @@ func cascadeReadDeps(
 	}
 }
 
+// buildEntityManager wires the entity manager from the services assemble has
+// already resolved. Split out of assemble purely to keep that function within
+// the funlen budget; the grouping is the entitymanager's dependency set.
+func buildEntityManager(
+	base *SharedBase, st store.Store, aliases entitymanager.AliasRewriter,
+	templater templating.Templater, readDeps lua.ReadDeps,
+	resolvedACL acl.ACL, autoEngine *automation.Engine,
+	cascadeRunner *autocascade.Runner, versions store.VersionService,
+	tw TransitionWiring, computedSet *computed.Set,
+) (*entitymanager.Manager, error) {
+	cfg := base.cfg
+	mgr, err := entitymanager.New(entitymanager.Deps{
+		AliasRewriter:           aliases,
+		Store:                   st,
+		Meta:                    base.meta,
+		Templater:               templater,
+		Audit:                   cfg.Audit,
+		ACL:                     resolvedACL,
+		Automations:             autoEngine,
+		Cascade:                 cascadeRunner,
+		ScriptRunner:            cascadeScriptRunner(cfg.ScriptEngine, readDeps, st, cfg.Audit),
+		VersionRecorder:         versionRecorderFor(versions),
+		RelationVersionRecorder: relationVersionRecorderFor(versions),
+		Transitions:             tw.Enforcer,
+		Computed:                computedSet,
+		FieldGate:               entitymanager.AllowAllFieldGate{},
+		TransitionGuard:         tw.Guard,
+		TransitionGraph:         tw.Graph,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("build entitymanager: %w", err)
+	}
+	return mgr, nil
+}
+
 func assemble(
 	base *SharedBase, st store.Store, searcher search.Searcher,
 	visible search.VisibleSearcher, searchCloser io.Closer,
@@ -1412,26 +1447,10 @@ func assemble(
 		return nil, err
 	}
 
-	mgr, err := entitymanager.New(entitymanager.Deps{
-		AliasRewriter:           aliases,
-		Store:                   st,
-		Meta:                    base.meta,
-		Templater:               templater,
-		Audit:                   cfg.Audit,
-		ACL:                     resolvedACL,
-		Automations:             autoEngine,
-		Cascade:                 cascadeRunner,
-		ScriptRunner:            cascadeScriptRunner(cfg.ScriptEngine, readDeps, st, cfg.Audit),
-		VersionRecorder:         versionRecorderFor(versions),
-		RelationVersionRecorder: relationVersionRecorderFor(versions),
-		Transitions:             tw.Enforcer,
-		Computed:                computedSet,
-		FieldGate:               entitymanager.AllowAllFieldGate{},
-		TransitionGuard:         tw.Guard,
-		TransitionGraph:         tw.Graph,
-	})
+	mgr, err := buildEntityManager(base, st, aliases, templater, readDeps,
+		resolvedACL, autoEngine, cascadeRunner, versions, tw, computedSet)
 	if err != nil {
-		return nil, fmt.Errorf("build entitymanager: %w", err)
+		return nil, err
 	}
 
 	val := validator.New(st, base.meta, readDeps)
