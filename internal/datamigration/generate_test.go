@@ -93,6 +93,34 @@ func TestGenerate_DeletionsOnlyCommented(t *testing.T) {
 	}
 }
 
+func TestGenerate_ComputedChangesRecomputeEntityOnce(t *testing.T) {
+	from := metaV1()
+	from.Entities["task"].Properties["effort"] = metamodel.PropertyDef{Type: "integer"}
+	live := metaV1()
+	live.Entities["task"].Properties["effort"] = metamodel.PropertyDef{Type: "integer"}
+	live.Entities["task"].Properties["doubled"] = metamodel.PropertyDef{
+		Type: "integer", Computed: "entity.effort * 2",
+	}
+	live.Entities["task"].Properties["quadrupled"] = metamodel.PropertyDef{
+		Type: "integer", Computed: "entity.doubled * 2",
+	}
+
+	d, err := Generate(from.ShapeProjection(), live.ShapeProjection(), nil, "add computed values")
+	if err != nil || d == nil {
+		t.Fatalf("Generate: %v, %v", d, err)
+	}
+	content := string(d.Content)
+	if got := strings.Count(content, "recompute_computed: {entity: task}"); got != 1 {
+		t.Fatalf("recompute step count = %d, want 1:\n%s", got, content)
+	}
+	if d.Report.Tier() != metamodel.TierDrift {
+		t.Fatalf("computed addition tier = %v, want drift", d.Report.Tier())
+	}
+	if got := len(mustParse(t, d.FileName, d.Content).Steps); got != 1 {
+		t.Fatalf("parsed step count = %d, want 1", got)
+	}
+}
+
 func TestGenerate_NextIndexSkipsGaps(t *testing.T) {
 	existing := []*File{{Name: "0001-a.yaml"}, {Name: "0007-b.yaml"}}
 	d, err := Generate(metaV1().ShapeProjection(), metaV2().ShapeProjection(), existing, "")

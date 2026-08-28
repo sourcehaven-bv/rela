@@ -2,6 +2,7 @@ package projectsetup_test
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/projectsetup"
@@ -53,6 +54,33 @@ func TestValidateWithFS_ValidatesScheduledMailReferences(t *testing.T) {
 	}
 	if result.SchedulesError == nil {
 		t.Fatalf("expected unknown template error; metamodel=%v mail=%v", result.MetamodelError, result.MailTemplatesError)
+	}
+}
+
+func TestValidateWithFS_ComputedCycle(t *testing.T) {
+	fs := storage.NewMemFS()
+	root := "/proj"
+	if _, err := projectsetup.InitializeWithFS(root, fs); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	const schema = `version: "1.0"
+entities:
+  item:
+    label: Item
+    id_prefix: ITEM-
+    properties:
+      a: {type: integer, computed: "entity.b + 1"}
+      b: {type: integer, computed: "entity.a + 1"}
+`
+	if err := fs.WriteFile(filepath.Join(root, "schema.yaml"), []byte(schema), 0o644); err != nil {
+		t.Fatalf("write schema: %v", err)
+	}
+	result, err := projectsetup.ValidateWithFS(root, fs)
+	if err != nil {
+		t.Fatalf("ValidateWithFS: %v", err)
+	}
+	if result.MetamodelError == nil || !strings.Contains(result.MetamodelError.Error(), "cycle") {
+		t.Fatalf("MetamodelError = %v, want computed cycle", result.MetamodelError)
 	}
 }
 

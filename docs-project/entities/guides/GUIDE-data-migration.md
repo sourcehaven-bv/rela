@@ -22,7 +22,7 @@ Both of those run before anything described here.
 
 The unit of identity is the **shape hash**: a content hash of the
 data-shape-relevant slice of the metamodel — entity properties (type,
-required, list, format, values, default), named enum value lists, and
+required, list, format, values, default, computed expression), named enum value lists, and
 relation types (endpoints, cardinality, symmetry, content flag, relation
 properties). Everything else — labels, descriptions, colors, views, forms,
 automations, validations, id prefixes — is excluded, so cosmetic edits never
@@ -42,7 +42,7 @@ compares the marker against the live schema and classifies each difference:
 | Tier | Examples | What happens |
 |---|---|---|
 | **additive** | new entity/relation type, new optional property, new enum value, loosened cardinality, default changes | adopted silently |
-| **drift** | deleted property, deleted entity/relation type, deleted enum value, new *required* property | adopted, with a logged notice per delta |
+| **drift** | deleted property, deleted entity/relation type, deleted enum value, new *required* or computed property, changed computed expression | adopted, with a logged notice per delta |
 | **needs-migration** | property type/format change, `list` flip, enum value replacement, endpoint/cardinality narrowing, symmetry flip | **not** adopted — the gate warns and points at `rela migrate gen` |
 
 A store with no marker adopts the current shape as its baseline silently —
@@ -95,6 +95,7 @@ recovery mechanism, so a step that finds nothing left to do does nothing.
 | `rename_relation_type: {from, to}` | recreates each relation under the new type, then deletes the old (relation history starts a new lifetime) |
 | `map_values: {entity, property, mapping}` | remaps enum values (scalar and list properties); unmapped values are left and reported |
 | `set_default: {entity, property, value, only_missing}` | backfills a value (`only_missing` defaults to true) |
+| `recompute_computed: {entity}` | recomputes all materialized computed properties for an entity type in dependency order |
 | `convert: {entity, property, to_type, from_format?, to_format?}` | coerces values to `string`/`integer`/`boolean`/`date`/`datetime`, restructuring scalar↔list to match the schema; unconvertible values are **left in place** and reported |
 | `drop_property: {entity, property}` | deletes orphaned values (only for properties the new schema no longer declares) |
 | `drop_entities: {type}` / `drop_relations: {type}` | deletes records of a type the new schema no longer declares |
@@ -104,11 +105,14 @@ Step targets are validated against the embedded projections when the file is
 parsed: a typo'd entity type or property is an error, never a silent no-op.
 Deletes are first-class steps — putting one in a reviewed migration file *is*
 the operator consent — but the generator only ever emits them commented out.
+Adding or changing a computed property emits one active
+`recompute_computed` step per affected entity type. The step refreshes the
+whole graph, so dependent computed properties cannot retain stale values.
 
 ### The Lua escape hatch
 
 For transforms no declarative step covers (splitting one property into two,
-computed values), a `lua:` step runs an operator-authored **pure transform**:
+cross-record derivations), a `lua:` step runs an operator-authored **pure transform**:
 
 ```lua
 -- migrations/0002-split-name.lua

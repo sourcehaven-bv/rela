@@ -272,10 +272,14 @@ func compareProperties(r *ShapeReport, owner string, from, to map[string]Propert
 			continue
 		}
 		added := to[pname]
-		if added.Required {
+		switch {
+		case added.Computed != "" && subjectFn == nil:
+			r.add(TierDrift, "computed_property_added", subject(pname),
+				fmt.Sprintf("computed property %s added: existing records must be materialized", subject(pname)))
+		case added.Required:
 			r.add(TierDrift, "required_property_added", subject(pname),
 				fmt.Sprintf("required property %s added: existing records lack it (soft warnings) until backfilled", subject(pname)))
-		} else {
+		default:
 			r.add(TierAdditive, "property_added", subject(pname), fmt.Sprintf("property %s added", subject(pname)))
 		}
 		// Rename spelled as delete+add?
@@ -320,6 +324,10 @@ func comparePropertyShape(r *ShapeReport, subject string, from, to PropertyShape
 		// Defaults only affect future creates, never stored data (A7).
 		r.add(TierAdditive, "property_default_changed", subject,
 			fmt.Sprintf("property %s default changed %q → %q (future creates only)", subject, from.Default, to.Default))
+	}
+	if from.Computed != to.Computed {
+		r.add(TierDrift, "property_computed_changed", subject,
+			fmt.Sprintf("property %s computed expression changed: stored values must be recomputed", subject))
 	}
 	compareValueList(r, subject, from.Values, to.Values)
 }
@@ -388,7 +396,7 @@ func compareNamedTypes(r *ShapeReport, from, to map[string][]string) {
 // samePropertyKernel reports whether two property shapes agree on the fields
 // that make a delete+add pair look like a rename (type, list, format).
 func samePropertyKernel(a, b PropertyShape) bool {
-	return a.Type == b.Type && a.List == b.List && a.Format == b.Format
+	return a.Type == b.Type && a.List == b.List && a.Format == b.Format && a.Computed == b.Computed
 }
 
 // propertyShapesSimilar reports whether two property maps share at least half

@@ -225,3 +225,42 @@ export function stringifyFilterQuery(query: LocationQuery): string {
   entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
   return JSON.stringify(entries)
 }
+
+/** One parsed `where:` clause from a calendar source. */
+export interface WhereClause {
+  property: string
+  /** A UI operator symbol, as written in config (`=`, `!=`, `>=`, …). */
+  operator: string
+  value: string
+}
+
+// Longest-first so `>=` is matched before `>`, and `!=`/`==` before `=`.
+const WHERE_OPERATORS = ['>=', '<=', '!=', '==', '=~', '>', '<', '=', '~']
+
+/**
+ * Parse a config `where:` clause of the form `property operator value`.
+ *
+ * This is the string form used by `feeds:` and calendar `sources:`, mirrored
+ * from the Go `internal/filter` syntax. It is deliberately minimal: the server
+ * evaluates the clause, so this only has to split it into the three parts a
+ * `filter[prop][op]=value` query param needs.
+ *
+ * Nil: returns null for a clause it cannot split, so the caller can refuse to
+ * apply a filter it did not understand rather than silently widening the query.
+ * Config is validated server-side at load, so an unparseable clause here means
+ * the two parsers disagree — which must not fail open.
+ */
+export function parseWhereClause(clause: string): WhereClause | null {
+  const trimmed = clause.trim()
+  if (!trimmed) return null
+
+  for (const op of WHERE_OPERATORS) {
+    const idx = trimmed.indexOf(op)
+    if (idx <= 0) continue
+    const property = trimmed.slice(0, idx).trim()
+    const value = trimmed.slice(idx + op.length).trim()
+    if (!property) return null
+    return { property, operator: op, value }
+  }
+  return null
+}

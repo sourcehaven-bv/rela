@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { navigationPending } from '@/router'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { getErrorMessage } from '@/api'
 import {
@@ -12,6 +13,7 @@ import {
 } from '@/composables'
 import { useConfirmHost } from '@/composables/useConfirm'
 import { useBackTarget } from '@/composables/useBackTarget'
+import ActivityBar from '@/components/common/ActivityBar.vue'
 import Sidebar from '@/components/common/Sidebar.vue'
 import StatusBar from '@/components/common/StatusBar.vue'
 import Toast from '@/components/common/Toast.vue'
@@ -118,6 +120,13 @@ watch(
 </script>
 
 <template>
+  <!--
+    Outside the loading/error/app branches on purpose: a navigation can be
+    in flight in any of them, and re-mounting the bar per branch would
+    restart its fade. Fixed-position, so it costs no layout in any state.
+  -->
+  <ActivityBar :active="navigationPending.isNavigating.value" />
+
   <div v-if="loading" class="loading-screen">
     <div class="spinner"/>
     <p>Loading...</p>
@@ -237,12 +246,6 @@ body {
   border-top-color: var(--accent-color);
   border-radius: 50%;
   animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 .error-screen h1 {
@@ -423,9 +426,22 @@ button kbd {
   white-space: nowrap;
 }
 
-.btn:disabled {
+.btn:disabled,
+.btn[aria-disabled='true'] {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+/* A pending button carries aria-disabled rather than native disabled (so
+   focus is not dropped mid-interaction), which means `:disabled` alone
+   would leave it looking fully live while it silently swallows clicks —
+   a worse affordance than the greyed-out button it replaced. Hover and
+   active feedback go too: they imply the click will do something. */
+.btn[aria-disabled='true']:hover,
+.btn[aria-disabled='true']:active {
+  opacity: 0.6;
+  transform: none;
+  filter: none;
 }
 
 .btn-sm {

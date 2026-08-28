@@ -106,6 +106,12 @@ func planEntityTypeCascade(plan *CleanupPlan, usage TypeUsage) {
 				Action: "remove_kanban",
 				Target: extractName(ref.Section, "kanbans."),
 			})
+		case "calendar":
+			plan.DataEntryChanges = append(plan.DataEntryChanges, Change{
+				File:   ref.File,
+				Action: "remove_calendar",
+				Target: extractName(ref.Section, "calendars."),
+			})
 		case "view":
 			plan.DataEntryChanges = append(plan.DataEntryChanges, Change{
 				File:   ref.File,
@@ -289,6 +295,11 @@ func applyDataEntryChanges(path string, changes []Change, dryRun bool) error {
 			kanbans := migration.GetMapValue(root, "kanbans")
 			if kanbans != nil {
 				migration.DeleteMapKey(kanbans, change.Target)
+			}
+		case "remove_calendar":
+			calendars := migration.GetMapValue(root, "calendars")
+			if calendars != nil {
+				migration.DeleteMapKey(calendars, change.Target)
 			}
 		case "remove_data_entry_view":
 			views := migration.GetMapValue(root, "views")

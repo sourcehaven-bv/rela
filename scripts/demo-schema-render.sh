@@ -148,11 +148,17 @@ say "rela schema --graphviz (DOT to stdout, first 20 lines)"
 "${BIN}" schema --graphviz | sed -n '1,20p'
 step "(truncated)"
 
+# Matching uses a here-string, never `... | grep -q`: grep exits the instant it
+# matches, so a writer still writing dies of SIGPIPE (141) and `set -o pipefail`
+# turns that into a failed pipeline — the assertion then fails BECAUSE the
+# pattern was found. It only fires once output outgrows the 64K pipe buffer,
+# which makes it a latent, size-dependent flake (see demo-acl-audit.sh, where it
+# went red in CI while passing locally).
 check() {
     local label="$1"
     local out="$2"
     local pattern="$3"
-    if printf '%s' "$out" | grep -qE "$pattern"; then
+    if grep -qE "$pattern" <<<"$out"; then
         step "✓ ${label}"
     else
         step "✗ ${label} (missing pattern: ${pattern})"
@@ -165,7 +171,7 @@ refute() {
     local label="$1"
     local out="$2"
     local pattern="$3"
-    if printf '%s' "$out" | grep -qE "$pattern"; then
+    if grep -qE "$pattern" <<<"$out"; then
         step "✗ ${label} (unexpected pattern: ${pattern})"
         echo "--- full DOT ---"
         printf '%s\n' "$out"

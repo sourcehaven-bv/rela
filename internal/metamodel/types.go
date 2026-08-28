@@ -290,6 +290,11 @@ type PropertyDef struct {
 	Description string            `yaml:"description,omitempty"` // Documentation for the property
 	Format      string            `yaml:"format,omitempty"`      // Date format (Go layout, e.g., "2006-01-02")
 	List        bool              `yaml:"list,omitempty"`        // True for multi-select properties (allows multiple values)
+	// Computed is a pure Lua-compatible scalar expression evaluated from the
+	// entity's other properties on every write. Computed properties are
+	// materialized but never caller-authored. Entity-local dependencies are
+	// inferred from the compiled expression.
+	Computed string `yaml:"computed,omitempty" json:"Computed,omitempty"`
 	// Unique constrains the property to a natural key: no two entities of
 	// the same type may carry the same non-empty value. Enforced at write
 	// time by the entitymanager (a colliding create/update is rejected as

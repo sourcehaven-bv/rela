@@ -61,6 +61,30 @@ func TestUniqueIndexName_NoSeparatorCollision(t *testing.T) {
 	}
 }
 
+func TestQueryIndexNameAndDDL(t *testing.T) {
+	props := []string{"owner", "status"}
+	name := queryIndexName("task", props)
+	if !strings.HasPrefix(name, derivedQueryPrefix) || len(name) > 63 {
+		t.Fatalf("query index name = %q", name)
+	}
+	if name == queryIndexName("task", []string{"owner"}) {
+		t.Fatal("different query shapes collided")
+	}
+	dll := createQueryIndexDDL(name, store.DerivedObjectSpec{
+		Kind: store.DerivedQueryIndex, Type: "task", Properties: props,
+	})
+	for _, want := range []string{
+		`CREATE INDEX IF NOT EXISTS "rela_derived_query__`,
+		`(properties->>'owner'), (properties->>'status')`,
+		`type = 'task'`,
+		`jsonb_typeof(properties->'owner') = 'string'`,
+	} {
+		if !strings.Contains(dll, want) {
+			t.Errorf("DDL %q missing %q", dll, want)
+		}
+	}
+}
+
 func TestMapUniqueViolation(t *testing.T) {
 	pairs := []store.DerivedObjectSpec{
 		{Kind: store.DerivedUnique, Type: "persoon", Property: "email"},

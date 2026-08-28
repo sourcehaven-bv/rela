@@ -473,6 +473,27 @@ func TestComputeFieldAffordances_NopResolver_EmitsEmptyMap(t *testing.T) {
 	}
 }
 
+func TestComputeFieldAffordances_ComputedIsAlwaysReadOnly(t *testing.T) {
+	meta := &metamodel.Metamodel{Entities: map[string]metamodel.EntityDef{
+		"ticket": {Properties: map[string]metamodel.PropertyDef{
+			"score": {Type: metamodel.PropertyTypeInteger, Computed: "entity.impact * entity.likelihood"},
+		}},
+	}}
+	svc := affordanceService{
+		resolver: func() FieldVerdictResolver { return NopFieldVerdictResolver{} },
+		meta:     func() *metamodel.Metamodel { return meta },
+	}
+	e := &entity.Entity{Type: "ticket", Properties: map[string]any{"score": 12}}
+	got := svc.computeFieldAffordances(context.Background(), e)
+	score, ok := got["score"]
+	if !ok || score.Writable == nil || *score.Writable {
+		t.Fatalf("score affordance = %+v, want writable=false", score)
+	}
+	if denial := svc.validateFieldWrite(context.Background(), e, map[string]any{"score": 99}, nil); denial == nil || denial.Rule != RuleFieldReadOnly {
+		t.Fatalf("computed write denial = %+v", denial)
+	}
+}
+
 func TestComputeFieldAffordances_SparseWritable(t *testing.T) {
 	// title=true is the default (writable) and must NOT appear in
 	// output; kind=false deviates and must be emitted.

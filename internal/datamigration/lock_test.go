@@ -85,12 +85,6 @@ func TestFSLock_BreaksStaleAndUnparseable(t *testing.T) {
 			if err := os.WriteFile(path, tc.payload, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			// A malformed file is breakable only after the create-then-write
-			// window has passed; a fresh empty file may be a live acquisition.
-			old := time.Now().Add(-2 * malformedLockGrace)
-			if err := os.Chtimes(path, old, old); err != nil {
-				t.Fatal(err)
-			}
 			l := newFSLock(dir)
 			release, err := l.TryAcquire(t.Context())
 			if err != nil {

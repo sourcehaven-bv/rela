@@ -356,6 +356,9 @@ func navEntryToSidebarItem(entry dataentryconfig.NavigationEntry) v1.SidebarItem
 	case entry.Kanban != "":
 		item.Href = "/kanban/" + entry.Kanban
 		item.Icon = "kanban"
+	case entry.Calendar != "":
+		item.Href = "/calendar/" + entry.Calendar
+		item.Icon = "calendar"
 	case entry.Dashboard:
 		item.Href = "/"
 		item.Icon = "dashboard"

@@ -49,11 +49,30 @@ import {
 } from './sectionEditFields'
 import type { AutoSaveErrorInfo } from '@/composables/useAutoSave'
 import { useConfirm, withConfirmError } from '@/composables/useConfirm'
+import { useDelayedPending } from '@/composables/useDelayedPending'
+import { beginRouteLoad } from '@/composables/useNavigationPending'
+import { PENDING_TIMINGS } from '@/composables/pendingTimings'
 
-const props = defineProps<{
-  entityType: string
-  entityId: string
-}>()
+const props = withDefaults(
+  defineProps<{
+    entityType: string
+    entityId: string
+    /**
+     * Hide the header action toolbar (commands, Edit, History, Delete).
+     *
+     * For embedding this component as a READ surface — the calendar's preview
+     * modal — where the host supplies its own actions. Without it the modal
+     * shows two Edit buttons and a destructive Delete one click from a
+     * calendar chip, which is not what a preview is for.
+     *
+     * Suppresses the buttons only. Permission checks, keyboard handlers and
+     * every other behaviour are untouched, so this cannot widen what a
+     * principal may do.
+     */
+    hideActions?: boolean
+  }>(),
+  { hideActions: false }
+)
 
 const router = useRouter()
 const schemaStore = useSchemaStore()
@@ -71,6 +90,23 @@ const backTarget = useBackTarget()
 const loading = ref(true)
 const error = ref<string | null>(null)
 const viewData = ref<ViewResponse | null>(null)
+
+// Prev/next within a list re-fetches this component in place. Blanking the
+// page to a centred spinner on every step was the worst layout shift in
+// the app — the article collapsed to ~140px and sprang back — and on a
+// fast connection it read as a flicker, not a loading state.
+//
+// Two rules apply, in order. (1) Keep previous content: while an entity is
+// already on screen, stepping to a neighbour holds it until the next
+// resolves, so nothing is shown at all. (2) On a genuine cold load, the
+// gate still suppresses anything quicker than the navigation delay.
+const showBlockLoader = useDelayedPending(
+  () => loading.value && !viewData.value,
+  {
+    delay: PENDING_TIMINGS.navDelayMs,
+    minDuration: PENDING_TIMINGS.navMinDurationMs,
+  }
+)
 const commands = ref<Command[]>([])
 const showOverflowMenu = ref(false)
 
@@ -339,6 +375,24 @@ function runCommand(cmd: Command) {
 async function loadView() {
   loading.value = true
   error.value = null
+  // Report EVERY load to the global activity bar, including the ones where
+  // previous content stays on screen.
+  //
+  // Holding the old entity is what stops the page collapsing, but it also
+  // means a prev/next step looks like NOTHING happened until the new data
+  // lands — the click reads as ignored. Stale content with no indicator is
+  // the failure mode; the bar is what distinguishes "showing you the
+  // previous one while the next loads" from "frozen".
+  //
+  // A bar is the right shape for that precisely because it does not
+  // contradict the content: it is peripheral and additive, where a spinner
+  // replacing the article would assert there is nothing to see.
+  //
+  // The route itself settles in ~99ms while this fetch runs ~2s, so without
+  // reporting here the bar would never cover the part that actually takes
+  // time. The 250ms gate still suppresses it entirely when the fetch is
+  // quick.
+  const settleRouteLoad = beginRouteLoad()
   try {
     viewData.value = await fetchView(props.entityType, props.entityId)
     if (viewData.value?.entry) {
@@ -354,6 +408,7 @@ async function loadView() {
     console.error('Failed to load entity view:', err)
   } finally {
     loading.value = false
+    settleRouteLoad?.()
   }
 }
 
@@ -701,10 +756,14 @@ watch(
 
 <template>
   <div class="entity-detail">
-    <div v-if="loading" class="loading-state">
+    <!-- Deliberately empty while loading below the threshold: no spinner,
+         no reserved block, no layout spring. The ActivityBar carries the
+         navigation case; this only paints for a slow cold load. -->
+    <div v-if="showBlockLoader" class="loading-state">
       <div class="spinner" />
-      <span>Loading...</span>
+      <span>Loading…</span>
     </div>
+    <div v-else-if="loading && !entry" class="entity-detail-placeholder" />
 
     <div v-else-if="error" class="error-state">
       <h2>Error</h2>
@@ -739,7 +798,7 @@ watch(
           <h1 class="text-wrap-anywhere">{{ entryTitle }}</h1>
         </div>
         <!-- Desktop actions -->
-        <div class="header-actions desktop-actions">
+        <div v-if="!props.hideActions" class="header-actions desktop-actions">
           <button
             v-for="cmd in commands"
             :key="cmd.id"
@@ -763,7 +822,7 @@ watch(
         </div>
 
         <!-- Mobile actions: Edit primary, delete icon, overflow menu for commands -->
-        <div class="header-actions mobile-actions">
+        <div v-if="!props.hideActions" class="header-actions mobile-actions">
           <button
             v-if="editFormId && !isInaccessible && canUpdate"
             class="btn btn-secondary"

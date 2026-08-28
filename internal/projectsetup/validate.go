@@ -8,6 +8,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Sourcehaven-BV/rela/internal/computed"
 	"github.com/Sourcehaven-BV/rela/internal/conditionlint"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/mailtemplate"
@@ -60,8 +61,12 @@ func ValidateWithFS(startDir string, fs storage.FS) (*ValidateResult, error) {
 	if err != nil {
 		result.MetamodelError = err
 	} else {
-		result.MetamodelValid = true
-		result.Metamodel = mm
+		if _, compileErr := computed.Compile(mm); compileErr != nil {
+			result.MetamodelError = compileErr
+		} else {
+			result.MetamodelValid = true
+			result.Metamodel = mm
+		}
 	}
 
 	// Validate data-entry.yaml if it exists

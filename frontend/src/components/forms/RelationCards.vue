@@ -830,9 +830,15 @@ function onDragEnd() {
   opacity: 0.5;
 }
 
+/* A drop-target highlight, NOT a focus ring — so it deliberately does not use
+   --focus-ring. It was authored at 25% alpha (heavier than the 0.1 focus
+   rings), and the TKT-FRING7 sweep briefly converted it because it matched the
+   same rgba literal, which made a pointer-drag state render as "focused". It
+   keeps its own translucent weight, derived from the accent so it still
+   follows the theme. */
 .relation-card.card-drag-over {
   border-color: var(--accent-color, #6366f1);
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.25);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color) 25%, transparent);
 }
 
 .drag-handle {
@@ -961,7 +967,9 @@ function onDragEnd() {
 .inline-select:focus {
   outline: none;
   border-color: var(--accent-color, #6366f1);
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
+  box-shadow:
+    0 0 0 2px var(--focus-ring-gap),
+    0 0 0 4px var(--focus-ring);
 }
 
 /* The `.inline-edit-checkbox` rules that used to live here are gone: both
@@ -1004,26 +1012,33 @@ function onDragEnd() {
 .search-input:focus {
   outline: none;
   border-color: var(--accent-color, #6366f1);
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
+  box-shadow:
+    0 0 0 2px var(--focus-ring-gap),
+    0 0 0 4px var(--focus-ring);
 }
 
 .search-spinner {
   position: absolute;
   right: 12px;
   top: 50%;
-  transform: translateY(-50%);
+  /* Centred with a negative margin rather than translateY(-50%), so
+     `transform` is free for the rotation alone. An animated transform
+     REPLACES the static one for the animation's duration, so the old
+     translate-based centring only worked because this component carried
+     private keyframes that re-applied it (`translateY(-50%) rotate(...)`).
+     Those keyframes are now shared from styles/pending.css and rotate
+     only — keeping the translate here would drop the spinner half its
+     height the moment it started.
+
+     -8px is half the box: `box-sizing: border-box` is global (App.vue), so
+     the 16px height already includes the 2px borders. */
+  margin-top: -8px;
   width: 16px;
   height: 16px;
   border: 2px solid var(--border-color);
   border-top-color: var(--accent-color);
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: translateY(-50%) rotate(360deg);
-  }
 }
 
 .search-results {
@@ -1146,7 +1161,9 @@ function onDragEnd() {
 .form-field select:focus {
   outline: none;
   border-color: var(--accent-color, #6366f1);
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
+  box-shadow:
+    0 0 0 2px var(--focus-ring-gap),
+    0 0 0 4px var(--focus-ring);
 }
 
 .required {
@@ -1255,9 +1272,11 @@ function onDragEnd() {
   font-size: 13px;
 }
 
+/* A surface tint behind error text — stays translucent, so it derives from
+   --error-color directly rather than using the opaque --error-ring token. */
 .error-message {
   padding: 10px 12px;
-  background: rgba(239, 68, 68, 0.1);
+  background: color-mix(in srgb, var(--error-color) 10%, transparent);
   border: 1px solid var(--error-color, #ef4444);
   border-radius: 6px;
   color: var(--error-color, #ef4444);
@@ -1289,6 +1308,16 @@ function onDragEnd() {
     min-width: 0;
   }
 }
+/* Reduced motion. This is a SCOPED style, so styles/pending.css cannot
+   reach .search-spinner — a scoped selector carries a [data-v-*] attribute and
+   outranks an unscoped rule. The suppression has to live beside the
+   declaration. */
+@media (prefers-reduced-motion: reduce) {
+  .search-spinner {
+    animation: none;
+  }
+}
+
 </style>
 
 <style>
@@ -1304,7 +1333,9 @@ function onDragEnd() {
 
 .relation-cards .ss-main:focus-within {
   border-color: var(--accent-color, #6366f1);
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
+  box-shadow:
+    0 0 0 2px var(--focus-ring-gap),
+    0 0 0 4px var(--focus-ring);
 }
 
 /* .ss-content is portaled to <body>, so we need !important */

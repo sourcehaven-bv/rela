@@ -167,6 +167,148 @@ exist — or one your data doesn't populate — the walk finds no edges and grou
 roles silently never resolve. There's no separate "is this a real relation"
 check; the relation simply has to be there.
 
+## Granting relation writes without entity-create
+
+A relation write is gated on the verb grant for the **source entity's type**.
+`alice --spawnt--> TAAK-1` is a *create* checked against `terugkerend` — so the
+only way to let a principal add that edge used to be granting it
+`create: [terugkerend]`, i.e. authority to create `terugkerend` entities it was
+never meant to have.
+
+`relation_grants:` names a permission per relation type instead:
+
+```yaml
+relation_grants:
+  spawnt:
+    create: create-spawnt
+    update: edit-spawnt
+    delete: remove-spawnt
+
+roles:
+  scheduler-system:
+    read: ["*"]
+    create: [taak]          # entities it may create
+    update: [taak, terugkerend]
+    permissions: [create-spawnt]   # edges it may add
+```
+
+The scheduler can now write `spawnt` edges and still cannot create
+`terugkerend` entities.
+
+A shorthand covers all three verbs:
+
+```yaml
+relation_grants:
+  spawnt:
+    permission: manage-spawnt
+```
+
+The shorthand and the per-verb keys are mutually exclusive — a policy setting
+both is rejected at load, with the expansion spelled out so you can paste it in
+and change the one verb you meant.
+
+### It only ever widens one thing
+
+A `relation_grants:` permission is an **alternative satisfier of the source-type
+verb grant**, never a bypass. The full decision is a conjunction:
+
+```text
+allow = (delegate-X satisfied, or not configured)
+      AND the client ceiling permits the verb
+      AND (a role grants the verb on the source type OR this block does)
+```
+
+So it cannot let a client escape a `client_baselines:` ceiling, and it cannot
+satisfy a `requires_permission:` delegate gate. It is also inert when the source
+entity's type cannot be resolved (a missing or unreadable source): an
+unresolvable source stays a denial rather than becoming a free pass.
+
+### Role-conferring relation types are refused
+
+Creating some edges *grants roles*, so a permission to write them is a
+permission to promote yourself. The policy refuses to load if
+`relation_grants:` names one of:
+
+- the membership relation (`member-of`, or whatever `membership_relation:` says)
+  — group roles come from walking it;
+- anything in `inherit_roles_through:` — local roles are conferred across it;
+- a `role_relations:` entry with `requires_permission:` — that gate is the
+  tamper-resistance, and a second rule about the same type only obscures which
+  one applies.
+
+Grant the entity-type verb for those, so the existing delegate-X hardening still
+does its job.
+
+### There is no `read:`
+
+Relation visibility is *derived*: a relation is visible exactly when **both** its
+endpoints are. An independent read grant would let someone see that an edge
+exists — and therefore that an entity they cannot read exists. `read:` is
+rejected at load. To hide edges, hide an endpoint.
+
+### Cascade delete needs the relation grants too
+
+Deleting an entity with `cascade` destroys its incident edges, so the principal
+must be allowed to delete each of them — otherwise deleting an entity would be a
+back door to removing edge types you hold no `delete` grant on.
+
+A single denial fails the **whole** delete; nothing is written:
+
+```console
+$ rela delete REQ-1 --cascade
+cannot delete REQ-1: its incoming addresses relation from DEC-1:
+forbidden: no role grants delete on relations from type "decision"
+```
+
+Two consequences worth knowing:
+
+- An entity delete can now fail on a *relation* grant. If a cascade that used to
+  work starts failing, the fix is a `delete:` grant (or a `relation_grants:`
+  entry) for the relation type named in the error — not a broader entity grant.
+- Each relation is checked against **its own source type**, the same subject you
+  would face deleting that edge directly. An incoming edge is therefore checked
+  against the type at the *other* end, not against the entity being deleted.
+
+The check runs inside the store transaction that performs the delete, so an edge
+created concurrently cannot slip past it.
+
+### Checking it
+
+Ask the gate directly:
+
+```console
+$ rela acl can-relation system:scheduler create spawnt --from TERUG-1
+ALLOW: system:scheduler can create a spawnt edge from TERUG-1 (terugkerend).
+      via relation_grants — permission "create-spawnt"
+```
+
+A deny names the gate that refused and quotes its reason, which matters because
+each one needs a different fix:
+
+```console
+$ rela acl can-relation system:scheduler create spawnt --from TERUG-1
+DENY: system:scheduler cannot create a spawnt edge from TERUG-1 (terugkerend).
+      no role grants create on relations from type "terugkerend"
+      (rule_kind=role-grant rule_id=-)
+```
+
+| `rule_kind` | What refused | Fix |
+| --- | --- | --- |
+| `delegate-permission` | the `requires_permission` gate on a role-relation | grant that permission |
+| `client-ceiling` | a `client_baselines:` attenuation | widen the baseline, or use a scope |
+| `role-grant` | no source-type verb grant, and no relation permission held | grant the permission named in the reason |
+
+It exits non-zero on deny, so it works as a CI gate. There is no `read` verb —
+relation visibility is derived from both endpoints.
+
+`relation_grants:` names permissions but does not grant them, so a block no role
+backs is **inert**: writes silently fall back to the source-type verb grant.
+`rela acl audit` reports that as `A6b-inert-relation-grant`.
+
+One caveat when upgrading: an older binary does not know the `relation_grants:`
+key and warn-and-ignores it. `rela acl can-relation` is the reliable check that
+the grants are actually being enforced by the binary you are running.
+
 ## Resolving the principal to a user entity
 
 By default `principal.User` is whatever the entry point stamped — for the
@@ -459,7 +601,8 @@ must never reach a client class, do not write a scope grant naming it.
   mechanism invites leaning on the weak one.
 - **Relation *meta* fields are not attenuated.** A ceiling's `visible:` /
   `redact:` cover entity properties. Per-relation meta-field visibility
-  is a separate grant vocabulary (`relations:` on a role), and a client
+  is a separate grant vocabulary (`relations:` on a role — not the top-level
+  `relation_grants:` block, which gates relation *writes*), and a client
   ceiling has no equivalent — so a restricted client sees the same
   relation meta a role grants it. Row-level `deny_read` still applies to
   both endpoints, so a hidden entity's edges stay hidden.

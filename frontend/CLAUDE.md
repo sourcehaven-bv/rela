@@ -127,6 +127,106 @@ ESLint flat config with:
 - `max-lines: 500` warning for Vue files (catches god components)
 - Relaxed rules for test files (`no-explicit-any`, `no-non-null-assertion` allowed)
 
+## Pending and loading indicators
+
+Three indicators, one per class, with no overlap (TKT-TFSNBY). The class is
+decided by **who started the operation and whether the user needs to know it
+finished** — not by whether it blocks.
+
+| Class | Use | Delay / min |
+|---|---|---|
+| Navigation | `<ActivityBar>` in `App.vue` (already wired) | 250 / 300ms |
+| Explicit action (Save, Create, Search, Refresh) | `<PendingButton>` | 500 / 400ms |
+| Ambient (autosave) | `AutoSaveIndicator` + `useAutoSave` | see below |
+| Background revalidation (SSE refetch) | **nothing** | — |
+
+**The governing rule:** if an operation completes before its indicator's delay
+elapses, nothing is ever shown. rela normally talks to a local or
+well-connected server, so the common case is well under 100ms — meaning the
+app shows no loading UI at all most of the time. That is the intended
+behaviour, not a bug.
+
+**Delay scales with how invasive the indicator is**, not with how slow the
+request is. A peripheral bar that fades in can appear at 250ms; a button
+label mutating under the cursor waits 500ms. This is why published figures
+like Spectrum's and Primer's 1000ms exist — they are calibrated for a
+*spinner on a button*, and are wrong applied to a top bar.
+
+Timings live in `composables/pendingTimings.ts` (JS) and `styles/scales.css`
+(`--pending-fade`). They are tuned by feel; change them there, not at a call
+site.
+
+### Rules for new code
+
+- **Never wire an indicator straight to a boolean.** Put it behind
+  `useDelayedPending(source, {delay, minDuration})`. Without the gate a 40ms
+  request flashes for a few frames, which is the defect this replaced.
+- **Use `<PendingButton>` for any button that triggers a request.**
+  `pendingLabel` is required and must never be derived from `label` by string
+  munging — that breaks on the first irregular verb or translated string.
+  Use `…` (U+2026), not `...`.
+- **No spinners inside buttons, and no skeletons anywhere.** A label swap says
+  *what* is happening, survives `prefers-reduced-motion` with no fallback
+  needed, and is its own screen-reader announcement. Skeletons belong to the
+  1-10s band and never earn their place at a 1-2s worst case.
+- **Keep previous content rather than showing an indicator.** For pagination
+  and entity-to-entity navigation the right answer is usually *no* indicator:
+  hold what is on screen until the new data lands. Pinia Colada does this via
+  `placeholderData: (prev) => prev`; gate the template on `isPending` ("no
+  data yet"), never `isFetching` ("a request is in flight"), or SSE
+  revalidation will flash the spinner on every background refresh.
+  `DocumentView` / `DocumentsPanel` do the same by hand with
+  `v-if="loading && !docContent"` — **preserve that guard.**
+- **One indicator per user act.** A save shows the button state, never the
+  bar. Create-then-redirect is sequential: the button owns the save, the bar
+  takes over at the route change.
+- **`@keyframes spin` lives once, in `styles/pending.css`.** Do not
+  re-declare it in a component; it was previously copied ten times.
+- **A new spinner needs its OWN `prefers-reduced-motion` rule unless it is
+  unscoped.** `pending.css` suppresses `.spinner` because that class is
+  declared in App.vue's unscoped `<style>`. A class declared in a *scoped*
+  component `<style>` compiles to a `[data-v-*]` selector that outranks any
+  unscoped rule, so adding it to `pending.css` would silently do nothing —
+  put the rule beside the declaration instead, as `.spinner-sm`,
+  `.search-spinner`, `.cmdk-spinner` and `.entity-picker-spinner` now do.
+
+### Two sanctioned exceptions
+
+- **`ConfirmModal` keeps its own treatment.** It appends one character to a
+  caller-supplied `confirmLabel` (optional, defaults to `'Confirm'`) rather
+  than swapping verbs. Migrating it would push a required `pendingLabel`
+  through every `useConfirm()` caller to replace behaviour that is already
+  minimal-shift. This is a decision, not an oversight.
+- **`useAutoSave` has no entry delay, deliberately.** Its 0ms is measured
+  from *request start*, and its 800ms debounce has already filtered out the
+  fast and transient cases — **the debounce IS that class's delay.** Do not
+  "harmonise" it with the other two by adding one; you would make autosave
+  feel broken. It keeps its own `MIN_SAVING_VISIBLE_MS` / `SAVED_INDICATOR_MS`.
+
+### Accessibility
+
+`aria-disabled`, not native `disabled`, on a **primary** action while
+pending — native `disabled` drops focus to `<body>` mid-interaction.
+Secondary/Cancel buttons keep native `disabled`, because `aria-disabled`
+leaves a control activatable and "cancel an in-flight action" has no defined
+meaning. Since `aria-disabled` does not prevent activation, suppression is
+the component's job and must cover **keyboard as well as pointer** — on a
+destructive action a second activation is a second DELETE.
+
+### Testing
+
+jsdom has no layout engine, so the width-reservation guarantee cannot be
+asserted there. Unit tests assert the structural preconditions (both labels
+in the DOM, the inactive one hidden by `visibility` rather than removed);
+`e2e/tests/pending-indicators.spec.ts` measures the actual pixels. Both
+halves are mutation-verified — swapping `visibility: hidden` for
+`display: none` fails the e2e width tests, and replacing the navigation
+tracker with a counter fails `useNavigationPending.test.ts`.
+
+When asserting a computed style in e2e, remember the scoping rule above: a
+probe element built with `document.createElement` only picks up *unscoped*
+CSS, so it can verify `.spinner` but not any scoped class.
+
 ## CSS Architecture
 
 Global styles in `App.vue` use CSS custom properties for theming:
@@ -149,6 +249,44 @@ itself as theme-tokens-only, so dimension scales do **not** belong there.
 `var(--radius-md)`, `var(--font-size-base)`, `var(--shadow-sm)` over raw px.
 Before this existed the SPA had 10 distinct border-radius values and 17 font
 sizes chosen per-component, so nothing lined up between components.
+
+**Focus rings are two shadows and a token, never a hand-written colour**
+(TKT-FRING7). The pattern is:
+
+```css
+.thing:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--focus-ring-gap),
+    0 0 0 4px var(--focus-ring);
+}
+```
+
+Use `--error-ring` in place of `--focus-ring` for a validation-failed field.
+Three things this encodes, each of which was a live bug before:
+
+- **A literal cannot follow the theme.** 26 rings were written as
+  `rgba(99, 102, 241, 0.1)` — an indigo that is not this app's accent, is
+  wrong in dark mode, and is unreachable by an operator's `custom.css`.
+- **The ring is opaque on purpose.** Every translucent value fails WCAG 2.2
+  §1.4.11's 3:1 minimum for non-text UI — the old ring measured 1.13:1. Don't
+  "soften" it back to a tint.
+- **The inner gap band is load-bearing, not decoration.** Focus rules usually
+  also set `border-color: var(--accent-color)`, which is the same colour as
+  the ring, so a single shadow abuts its own border at 1:1 and reads as one
+  thick band. A checked `CheckboxWidget` is the extreme case: accent ring on
+  an accent fill, i.e. invisible.
+
+`styles/focus-ring.css` restores a real `outline` under
+`@media (forced-colors: active)`, where Windows High Contrast discards
+`box-shadow` and would otherwise leave no focus indicator at all. It needs
+`!important` — a bare `:focus-visible` (0,1,0) loses to every
+`input:focus { outline: none }` (0,1,1) it must override. That is the one
+sanctioned `!important` in the tree; don't copy the pattern for styling.
+
+`styles/focusRing.test.ts` enforces all of this by reading the source, because
+Vitest does not apply scoped SFC styles — a mounted-component assertion on
+ring colour passes against no CSS at all.
 
 **`--font-size-{sm,base,lg,xl}` is a frozen cross-boundary contract.** The same
 four names and values are declared in Go, in `appTypographyCSS`

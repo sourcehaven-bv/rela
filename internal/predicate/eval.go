@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"math"
 	"time"
 )
 
@@ -68,9 +69,127 @@ func (s *evalState) eval(ctx context.Context, n node) (Value, error) {
 		return s.evalLogical(ctx, x)
 	case *notNode:
 		return s.evalNot(ctx, x)
+	case *arithmeticNode:
+		return s.evalArithmetic(ctx, x)
+	case *unaryMinusNode:
+		return s.evalUnaryMinus(ctx, x)
+	case *concatNode:
+		return s.evalConcat(ctx, x)
 	default:
 		return nil, &EvalError{Reason: fmt.Sprintf("internal: unknown IR node %T", n)}
 	}
+}
+
+func (s *evalState) evalArithmetic(ctx context.Context, n *arithmeticNode) (Value, error) {
+	lhs, err := s.eval(ctx, n.lhs)
+	if err != nil {
+		return nil, err
+	}
+	rhs, err := s.eval(ctx, n.rhs)
+	if err != nil {
+		return nil, err
+	}
+	if a, ok := lhs.(Int); ok {
+		b, ok := rhs.(Int)
+		if !ok {
+			return nil, &EvalError{Reason: "arithmetic operands do not match compiled int type"}
+		}
+		return evalIntArithmetic(n.op, a.v, b.v)
+	}
+	a, aok := lhs.(Number)
+	b, bok := rhs.(Number)
+	if !aok || !bok {
+		return nil, &EvalError{Reason: "arithmetic operands do not match compiled numeric type"}
+	}
+	switch n.op {
+	case "+":
+		return NewNumber(a.v + b.v), nil
+	case "-":
+		return NewNumber(a.v - b.v), nil
+	case "*":
+		return NewNumber(a.v * b.v), nil
+	case "/":
+		if b.v == 0 {
+			return nil, &EvalError{Reason: "number division by zero"}
+		}
+		return NewNumber(a.v / b.v), nil
+	case "%":
+		if b.v == 0 {
+			return nil, &EvalError{Reason: "number modulo by zero"}
+		}
+		return NewNumber(math.Mod(a.v, b.v)), nil
+	case "^":
+		return NewNumber(math.Pow(a.v, b.v)), nil
+	default:
+		return nil, &EvalError{Reason: "internal: unsupported arithmetic operator " + n.op}
+	}
+}
+
+func evalIntArithmetic(op string, a, b int64) (Value, error) {
+	var out int64
+	switch op {
+	case "+":
+		out = a + b
+		if (b > 0 && out < a) || (b < 0 && out > a) {
+			return nil, &EvalError{Reason: "integer addition overflow"}
+		}
+	case "-":
+		out = a - b
+		if (b < 0 && out < a) || (b > 0 && out > a) {
+			return nil, &EvalError{Reason: "integer subtraction overflow"}
+		}
+	case "*":
+		if (a == math.MinInt64 && b == -1) || (b == math.MinInt64 && a == -1) {
+			return nil, &EvalError{Reason: "integer multiplication overflow"}
+		}
+		out = a * b
+		if b != 0 && out/b != a {
+			return nil, &EvalError{Reason: "integer multiplication overflow"}
+		}
+	case "%":
+		if b == 0 {
+			return nil, &EvalError{Reason: "integer modulo by zero"}
+		}
+		out = a % b
+	default:
+		return nil, &EvalError{Reason: "internal: unsupported int arithmetic operator " + op}
+	}
+	return NewInt(out), nil
+}
+
+func (s *evalState) evalUnaryMinus(ctx context.Context, n *unaryMinusNode) (Value, error) {
+	v, err := s.eval(ctx, n.expr)
+	if err != nil {
+		return nil, err
+	}
+	switch x := v.(type) {
+	case Int:
+		if x.v == math.MinInt64 {
+			return nil, &EvalError{Reason: "integer negation overflow"}
+		}
+		return NewInt(-x.v), nil
+	case Number:
+		return NewNumber(-x.v), nil
+	default:
+		return nil, &EvalError{Reason: "unary minus operand is not numeric"}
+	}
+}
+
+func (s *evalState) evalConcat(ctx context.Context, n *concatNode) (Value, error) {
+	lhs, err := s.eval(ctx, n.lhs)
+	if err != nil {
+		return nil, err
+	}
+	rhs, err := s.eval(ctx, n.rhs)
+	if err != nil {
+		return nil, err
+	}
+	a, aok := lhs.(String)
+	b, bok := rhs.(String)
+	if !aok || !bok {
+		return nil, &EvalError{Reason: "string concatenation operand is nil or off-type"}
+	}
+	return NewString(a.v + b.v), nil
 }
 
 func (s *evalState) evalVar(n *varNode) (Value, error) {

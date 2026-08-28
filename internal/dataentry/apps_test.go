@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -726,5 +727,69 @@ func TestValidateBridgeVersion(t *testing.T) {
 	// Older-than-current is allowed (forward compatibility) once we're past v1.
 	if currentBridgeVersion > 1 && validateBridgeVersion(1) != "" {
 		t.Error("older (but supported) version should be allowed")
+	}
+}
+
+// TestPaletteCarriesEveryDefaultToken pins the two renderers of the token
+// contract against each other.
+//
+// There are two, and only one of them is obvious. The default path serves the
+// embedded apps_tokens.css (byte-identical to the SPA's tokens.css, pinned by
+// TestAppTokensCSSInSyncWithFrontend). The PALETTE path throws that block away
+// and rebuilds :root from dataentryconfig.deriveTheme's hand-maintained map.
+// So a token added to tokens.css and not to deriveTheme exists for default
+// projects and silently does not exist for palette-configured ones — every
+// rule referencing it resolves to nothing, with no error anywhere.
+//
+// TKT-FRING7 shipped exactly that for one review cycle: --focus-ring et al
+// were added to tokens.css only, so a custom app under a palette rendered NO
+// focus ring — worse than the hardcoded color the ticket replaced. The
+// existing tests could not see it: TestAppCSSSource only exercises the nil
+// path, and TestAppCSSSourceUsesResolvedPalette asserts specific colors
+// rather than completeness.
+//
+// Asserting the SET rather than any particular name is what makes this catch
+// the next token too, without needing to be updated.
+func TestPaletteCarriesEveryDefaultToken(t *testing.T) {
+	tokenNames := func(css string) map[string]bool {
+		names := map[string]bool{}
+		// Only the :root block — :root.dark repeats the same names.
+		root, _, _ := strings.Cut(css, ":root.dark")
+		for line := range strings.SplitSeq(root, "\n") {
+			line = strings.TrimSpace(line)
+			if !strings.HasPrefix(line, "--") {
+				continue
+			}
+			if name, _, ok := strings.Cut(line, ":"); ok {
+				names[strings.TrimSpace(name)] = true
+			}
+		}
+		return names
+	}
+
+	defaults := tokenNames(appCSSSource(nil))
+	if len(defaults) == 0 {
+		t.Fatal("parsed no tokens from the default path — the parser, not the code, is wrong")
+	}
+
+	resolved := ResolvePalette(&PaletteConfig{
+		PaletteColors: PaletteColors{
+			Base: "#1f0e1c", Surface: "#f5edba", Accent: "#e4943a", Text: "#3e2137",
+			Success: "#34859d", Error: "#d26471", Warning: "#c0c741", Info: "#17434b",
+		},
+	}, nil)
+	palette := tokenNames(appCSSSource(resolved))
+
+	var missing []string
+	for name := range defaults {
+		if !palette[name] {
+			missing = append(missing, name)
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Errorf("palette path drops %d token(s) the default path defines: %v\n"+
+			"Add them to dataentryconfig.deriveTheme — a rule using one of these "+
+			"renders nothing for every palette-configured project.", len(missing), missing)
 	}
 }

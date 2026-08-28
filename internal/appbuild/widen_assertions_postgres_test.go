@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/store/pgstore"
@@ -39,6 +41,15 @@ func newFakeStore(t *testing.T) fakeStore {
 	return fakeStore{Store: m}
 }
 
+func derivedTestBase(meta *metamodel.Metamodel) *SharedBase {
+	fs := storage.NewMemFS()
+	_ = fs.MkdirAll("/project", 0o700)
+	return &SharedBase{
+		cfg:  Config{FS: fs, Paths: &project.Context{Root: "/project"}},
+		meta: meta,
+	}
+}
+
 type fakeUserStateStore struct {
 	fakeStore
 	called bool
@@ -58,6 +69,7 @@ func (f *fakeUserStateStore) UserState() (userstate.Store, error) {
 type fakeReconciler struct {
 	fakeStore
 	specsPublished []store.DerivedObjectSpec
+	desired        []store.DerivedObjectSpec
 	reconcileCalls int
 	reconcileErr   error
 
@@ -76,6 +88,7 @@ func (f *fakeReconciler) Reconcile(
 	_ context.Context, desired []store.DerivedObjectSpec, _ store.ReconcileOptions,
 ) ([]store.DerivedObjectOutcome, error) {
 	f.reconcileCalls++
+	f.desired = append([]store.DerivedObjectSpec(nil), desired...)
 	f.calls = append(f.calls, "Reconcile")
 	if f.reconcileErr != nil {
 		return nil, f.reconcileErr
@@ -130,7 +143,7 @@ func TestCapabilitiesDiscoveredByInterface_NotConcreteType(t *testing.T) {
 
 	t.Run("derived schema reconciler", func(t *testing.T) {
 		f := &fakeReconciler{fakeStore: newFakeStore(t)}
-		reconcileDerivedSchemaIfSupported(t.Context(), f, meta)
+		reconcileDerivedSchemaIfSupported(t.Context(), f, derivedTestBase(meta))
 		if f.reconcileCalls != 1 {
 			t.Fatalf("Reconcile called %d times, want 1", f.reconcileCalls)
 		}
@@ -154,7 +167,7 @@ func TestDerivedSchemaPublishesSpecsBeforeReconciling(t *testing.T) {
 		fakeStore:    newFakeStore(t),
 		reconcileErr: errors.New("reconcile unavailable"),
 	}
-	reconcileDerivedSchemaIfSupported(t.Context(), f, nil)
+	reconcileDerivedSchemaIfSupported(t.Context(), f, derivedTestBase(nil))
 
 	// Order is the assertion. An earlier draft tested
 	// `specsPublished == nil && len(specsPublished) != 0`, which is
@@ -165,6 +178,55 @@ func TestDerivedSchemaPublishesSpecsBeforeReconciling(t *testing.T) {
 		t.Errorf("call order = %v, want %v (specs must be published before "+
 			"reconciling, so a violation of an existing index still maps to a "+
 			"property when reconcile degrades)", f.calls, want)
+	}
+}
+
+func TestDerivedSchemaIncludesValidatedStaticQueryIndexes(t *testing.T) {
+	meta := &metamodel.Metamodel{Entities: map[string]metamodel.EntityDef{
+		"task": {Properties: map[string]metamodel.PropertyDef{
+			"status": {Type: metamodel.PropertyTypeString},
+		}},
+	}}
+	base := derivedTestBase(meta)
+	data := []byte(`version: "1.0"
+app: {name: Test}
+dashboard:
+  title: Test
+  cards:
+    - title: Open
+      query: "type:task prop:status=open"
+      display: count
+`)
+	if err := base.cfg.FS.WriteFile("/project/data-entry.yaml", data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f := &fakeReconciler{fakeStore: newFakeStore(t)}
+	reconcileDerivedSchemaIfSupported(t.Context(), f, base)
+
+	want := store.DerivedObjectSpec{
+		Kind: store.DerivedQueryIndex, Type: "task", Properties: []string{"status"},
+	}
+	if !slices.ContainsFunc(f.desired, func(got store.DerivedObjectSpec) bool {
+		return got.Kind == want.Kind && got.Type == want.Type && slices.Equal(got.Properties, want.Properties)
+	}) {
+		t.Fatalf("desired = %#v, missing %#v", f.desired, want)
+	}
+	if slices.ContainsFunc(f.specsPublished, func(got store.DerivedObjectSpec) bool {
+		return got.Kind == store.DerivedQueryIndex
+	}) {
+		t.Fatalf("query specs leaked into unique-violation provider: %#v", f.specsPublished)
+	}
+}
+
+func TestDerivedSchemaInvalidConfigDoesNotReconcilePartialSet(t *testing.T) {
+	base := derivedTestBase(&metamodel.Metamodel{})
+	if err := base.cfg.FS.WriteFile("/project/data-entry.yaml", []byte("dashboard: ["), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f := &fakeReconciler{fakeStore: newFakeStore(t)}
+	reconcileDerivedSchemaIfSupported(t.Context(), f, base)
+	if f.reconcileCalls != 0 {
+		t.Fatal("invalid config reconciled a partial desired set")
 	}
 }
 
@@ -193,7 +255,7 @@ func TestResolversReturnUntypedNilWithoutCapability(t *testing.T) {
 
 	// Must not panic, and must not start a sweep.
 	startVersionSweepIfSupported(plain, nil)
-	reconcileDerivedSchemaIfSupported(t.Context(), plain, nil)
+	reconcileDerivedSchemaIfSupported(t.Context(), plain, derivedTestBase(nil))
 }
 
 // TestCapabilityPresentButHandleNilYieldsUntypedNil is the branch the
