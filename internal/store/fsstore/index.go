@@ -42,7 +42,7 @@ func (s *FSStore) loadPersistedIndex() *persistedIndex {
 	if s.cacheKey == "" {
 		return nil
 	}
-	data, err := s.readDataFile(path.Join(s.cacheKey, indexFile))
+	data, err := s.codec.readDataFile(path.Join(s.cacheKey, indexFile))
 	if err != nil {
 		return nil
 	}

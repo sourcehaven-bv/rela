@@ -95,11 +95,11 @@ type attachMeta struct {
 
 // FSStore is a filesystem-backed store implementation.
 //
-// TODO(TKT-N0IKN9): FSStore is over the 40-method load line (89 methods).
+// TODO(TKT-N0IKN9): FSStore is over the 40-method load line (81 methods).
 // Decompose; ratchet this number down as responsibilities move out.
 // (84 → 95 with the Tx contract, TKT-GXHI8: each write method split into
 // an exported txMu wrapper + unexported core so Tx callbacks can re-enter;
-// 95 → 89 with the fileLayout extraction, TKT-Y683LJ.)
+// 95 → 81 with the fileLayout + mdCodec extractions, TKT-Y683LJ.)
 //
 // The exported surface (33) is mostly the mandated store.Store interface (~28
 // methods incl. Tx) plus the Formatter and watcher side-interfaces; consumers
@@ -107,7 +107,7 @@ type attachMeta struct {
 // the interface size as the non-interface public methods
 // (FormatEntity/Relation, Start/StopWatching) move to composed helpers.
 //
-//plimsoll:max-methods=89
+//plimsoll:max-methods=81
 //plimsoll:max-exported-methods=33
 type FSStore struct {
 	// rooted is the validated-key I/O surface. Every read, write,
@@ -128,6 +128,10 @@ type FSStore struct {
 	// layout resolves file keys, plural directory names, and property
 	// order from the immutable path/key/schema configuration.
 	layout fileLayout
+
+	// codec reads and writes entity/relation markdown files (including
+	// git-crypt inaccessible-shell handling).
+	codec mdCodec
 
 	// Keys (root-relative forward-slash) for the non-layout subtrees.
 	attachKey string
@@ -202,25 +206,28 @@ func New(cfg Config) (*FSStore, error) {
 		return nil, errors.New("fsstore: Config.Schemas must be populated from the metamodel; an empty map indicates a bootstrap-ordering bug")
 	}
 
+	layout := fileLayout{
+		entitiesKey:  cfg.EntitiesKey,
+		relationsKey: cfg.RelationsKey,
+		schemas:      cfg.Schemas,
+		rooted:       cfg.Rooted,
+	}
+
 	s := &FSStore{
 		rooted:             cfg.Rooted,
 		rawReader:          cfg.FS,
 		streamingSupported: cfg.Rooted.SupportsStreaming(),
-		layout: fileLayout{
-			entitiesKey:  cfg.EntitiesKey,
-			relationsKey: cfg.RelationsKey,
-			schemas:      cfg.Schemas,
-			rooted:       cfg.Rooted,
-		},
-		attachKey:   cfg.AttachmentsKey,
-		cacheKey:    cfg.CacheKey,
-		observers:   cfg.Observers,
-		entities:    make(map[string]entityMeta),
-		relations:   make(map[string]relationMeta),
-		attachments: make(map[string]attachMeta),
-		propCache:   make(map[string]map[string]int),
-		subscribers: make(map[int]chan store.Event),
-		echoes:      newEchoTracker(recentHashCapacity),
+		layout:             layout,
+		codec:              mdCodec{rooted: cfg.Rooted, layout: layout},
+		attachKey:          cfg.AttachmentsKey,
+		cacheKey:           cfg.CacheKey,
+		observers:          cfg.Observers,
+		entities:           make(map[string]entityMeta),
+		relations:          make(map[string]relationMeta),
+		attachments:        make(map[string]attachMeta),
+		propCache:          make(map[string]map[string]int),
+		subscribers:        make(map[int]chan store.Event),
+		echoes:             newEchoTracker(recentHashCapacity),
 	}
 
 	s.cleanupTempFiles()

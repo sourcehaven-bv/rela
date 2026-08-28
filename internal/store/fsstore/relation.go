@@ -239,5 +239,5 @@ func (s *FSStore) deleteRelation(_ context.Context, from, relType, to string) er
 
 // writeRelation writes a relation to disk using temp-file + rename.
 func (s *FSStore) writeRelation(r *entity.Relation) error {
-	return s.writeRelationFile(r)
+	return s.codec.writeRelationFile(r)
 }

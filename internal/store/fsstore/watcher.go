@@ -338,7 +338,7 @@ func (s *FSStore) parseEntityFromPath(data []byte, path string) (*entity.Entity,
 			return nil, errors.New("encrypted entity file: cannot derive id/type from path")
 		}
 		key := s.layout.entityFileKey(entityType, id)
-		return s.buildInaccessibleEntity(key, id, entityType, entity.InaccessibleReasonGitCrypt), nil
+		return s.codec.buildInaccessibleEntity(key, id, entityType, entity.InaccessibleReasonGitCrypt), nil
 	}
 	doc, err := parseDocument(string(data))
 	if err != nil {
