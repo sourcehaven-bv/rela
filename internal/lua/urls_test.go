@@ -216,6 +216,27 @@ func TestURLKanban(t *testing.T) {
 	}
 }
 
+func TestURLCalendar(t *testing.T) {
+	t.Parallel()
+	r := newURLWriter(t)
+	got := evalString(t, r, `rela.url.calendar("schedule")`)
+	if got != "/calendar/schedule" {
+		t.Errorf("got %q, want /calendar/schedule", got)
+	}
+}
+
+// TestURLCalendarWithQuery covers the optional query table, which is how a
+// script deep-links to a specific period rather than the calendar's default.
+func TestURLCalendarWithQuery(t *testing.T) {
+	t.Parallel()
+	r := newURLWriter(t)
+	got := evalString(t, r, `rela.url.calendar("schedule", {view="week", date="2026-08-22"})`)
+	want := "/calendar/schedule?date=2026-08-22&view=week"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
 func TestURLDocument(t *testing.T) {
 	t.Parallel()
 	r := newURLWriter(t)

@@ -108,8 +108,14 @@ func TestUnrestricted_IsPassThrough(t *testing.T) {
 // a single write method was bolted on. Enumerating is the stricter check —
 // adding ANY method fails this test and forces a deliberate decision.
 func TestUnrestricted_ExposesOnlyTheReadSurface(t *testing.T) {
+	// ListEntityHeaders was admitted deliberately (TKT-1ESTYJ): it is a
+	// READ that returns strictly LESS than ListEntities — the same rows
+	// with the body projected away — so it cannot widen a wiring site's
+	// capability. Anything that is not a strict narrowing of an existing
+	// read method still belongs outside this set.
 	want := map[string]bool{
 		"GetEntity": true, "ListEntities": true, "ListRelations": true,
+		"ListEntityHeaders": true,
 	}
 
 	typ := reflect.TypeOf(visibility.Unrestricted(seedStore(t)))

@@ -22,9 +22,9 @@ func TestInitializeWithFS_CreatesProject(t *testing.T) {
 	if result.Root != target {
 		t.Errorf("Root = %q, want %q", result.Root, target)
 	}
-	want := filepath.Join(target, project.MetamodelFile)
-	if result.MetamodelPath != want {
-		t.Errorf("MetamodelPath = %q, want %q", result.MetamodelPath, want)
+	want := filepath.Join(target, project.SchemaFile)
+	if result.SchemaPath != want {
+		t.Errorf("SchemaPath = %q, want %q", result.SchemaPath, want)
 	}
 
 	data, err := fs.ReadFile(want)

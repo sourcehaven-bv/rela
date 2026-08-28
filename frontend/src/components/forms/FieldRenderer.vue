@@ -72,6 +72,7 @@ const currentValue = computed(() => (props.value == null ? '' : String(props.val
     :help="help"
     :error="error"
     :label-position="isCheckbox ? 'after' : 'before'"
+    :span="field.span"
   >
     <StatusControl
       v-if="isMachineField"

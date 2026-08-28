@@ -137,7 +137,7 @@ The metamodel is your project's schema. It defines:
 - What properties each type has
 - What relations are allowed between types
 
-This is stored in `metamodel.yaml`. See [Metamodel Reference](metamodel.md) for
+This is stored in `schema.yaml`. See [Metamodel Reference](metamodel.md) for
 details.
 
 ## Audit Log

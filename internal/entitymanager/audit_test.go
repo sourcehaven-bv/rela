@@ -31,6 +31,7 @@ func newManagerWithAudit(
 		Audit:       sink,
 		ACL:         acl.NopACL{},
 		Transitions: statemachine.EmptySet(),
+		FieldGate:   entitymanager.AllowAllFieldGate{},
 	}
 	if automations != nil {
 		engine := automation.NewEngine(automations)

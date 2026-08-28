@@ -101,9 +101,22 @@ test-verbose:
 # Requires RELA_TEST_DATABASE_URL, e.g.:
 #   RELA_TEST_DATABASE_URL=postgres://user@127.0.0.1:5432/rela_test?sslmode=disable just test-postgres
 # Without it, the pgstore conformance suite skips (so this stays a no-op-safe target).
+#
+# Set RELA_TEST_DATABASE_REQUIRED=1 to turn that skip into a hard failure —
+# use it anywhere "pgstore is green" is treated as a gate rather than a
+# convenience, since a skip and a pass look identical in the exit code. CI's
+# Postgres Backend job sets it. This suite is the ONLY enforcement of the
+# backend-parity rule, so if you are changing store behaviour, run it.
+#
+# It covers internal/jobs too, for the same reason: the job queue's memory and
+# postgres backends must satisfy one conformance suite, and a memory-only run
+# cannot see backend-specific breakage. Two such bugs were caught this way — a
+# NUL byte in the dedupe fingerprint that PostgreSQL rejects outright, and an
+# attempt counter kept in the job payload, which the memory backend preserves
+# and postgres discards (so RetryNever ran four times).
 test-postgres:
     @echo "Running postgres-tagged tests (needs RELA_TEST_DATABASE_URL)..."
-    go test -race -tags postgres ./internal/store/pgstore/...
+    go test -race -tags postgres ./internal/store/pgstore/... ./internal/jobs/...
 
 # Verify the binaries compile under every backend build tag. Cheap guard
 # that no build-tag seam drifted; mirrors the CI compile matrix.
@@ -250,8 +263,35 @@ vet:
 
 # ── CI & Checks ──
 
+# Comment discipline. The gate (commented-code) is clean and enforced in CI;
+# the report surfaces the advisory rules whose backlog is still being worked
+# down. Keep commentlint_version in sync with .github/workflows/ci.yml.
+commentlint_version := "v0.3.1"
+comment-lint:
+    @echo "==> commentlint (gate)"
+    go run github.com/sourcehaven-bv/commentlint@{{commentlint_version}} -rules commented-code,doclink ./internal ./cmd
+
+# One invocation per rule, because the cross-comment rules replace the
+# per-comment output rather than adding to it — a single run would silently
+# report only one of them.
+#
+# Advisory comment findings, worst-first. Never fails; this is a worklist.
+comment-report rule="":
+    #!/usr/bin/env bash
+    set -uo pipefail
+    if [ -n "{{rule}}" ]; then
+        go run github.com/sourcehaven-bv/commentlint@{{commentlint_version}} \
+            -rules "{{rule}}" -rank -top 40 ./internal ./cmd
+        exit 0
+    fi
+    for rule in restatement param-contract nil-contract duplication; do
+        echo "==> commentlint $rule"
+        go run github.com/sourcehaven-bv/commentlint@{{commentlint_version}} \
+            -rules "$rule" -rank -top 40 ./internal ./cmd || true
+    done
+
 # Run all checks (lint + arch-lint + lint-md + test)
-check: lint arch-lint plimsoll lint-md test
+check: lint arch-lint plimsoll comment-lint lint-md test
 
 # Generate docs from rela entities via mdcomp
 docs: build-cli

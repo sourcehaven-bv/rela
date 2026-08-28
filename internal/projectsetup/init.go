@@ -1,7 +1,6 @@
 package projectsetup
 
 import (
-	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -14,7 +13,7 @@ import (
 // InitResult contains information about what was created during initialization.
 type InitResult struct {
 	Root            string
-	MetamodelPath   string
+	SchemaPath      string
 	GitignoreUpdate bool
 }
 
@@ -39,17 +38,26 @@ func InitializeWithFS(targetDir string, fs storage.FS) (*InitResult, error) {
 		targetDir = cwd
 	}
 
-	metamodelPath := filepath.Join(targetDir, project.MetamodelFile)
-
-	// Check if already initialized
-	if _, err := fs.Stat(metamodelPath); err == nil {
-		return nil, errors.New("project already initialized (metamodel.yaml exists)")
+	// Refuse if EITHER schema name is present. Checking only the new name
+	// would treat a legacy project as an empty directory and write a default
+	// schema.yaml next to the operator's real metamodel.yaml; since discovery
+	// prefers the new name, the project would then come up on the empty
+	// default with the real schema silently ignored.
+	if existing, isLegacy, found := project.SchemaFileAt(targetDir, fs); found {
+		if isLegacy {
+			return nil, fmt.Errorf(
+				"project already initialized (%s exists) — run `rela migrate` to rename it to %s",
+				filepath.Base(existing), project.SchemaFile)
+		}
+		return nil, fmt.Errorf("project already initialized (%s exists)", project.SchemaFile)
 	}
+
+	schemaPath := filepath.Join(targetDir, project.SchemaFile)
 
 	// Create project context with all paths
 	ctx := &project.Context{
 		Root:                 targetDir,
-		MetamodelPath:        metamodelPath,
+		SchemaPath:           schemaPath,
 		CacheDir:             filepath.Join(targetDir, project.CacheDir),
 		EntitiesDir:          filepath.Join(targetDir, project.EntitiesDir),
 		RelationsDir:         filepath.Join(targetDir, project.RelationsDir),
@@ -64,13 +72,13 @@ func InitializeWithFS(targetDir string, fs storage.FS) (*InitResult, error) {
 	}
 
 	// Write default metamodel
-	if err := fs.WriteFile(metamodelPath, []byte(metamodel.DefaultMetamodelYAML()), 0644); err != nil {
+	if err := fs.WriteFile(schemaPath, []byte(metamodel.DefaultMetamodelYAML()), 0644); err != nil {
 		return nil, fmt.Errorf("write metamodel: %w", err)
 	}
 
 	result := &InitResult{
-		Root:          targetDir,
-		MetamodelPath: metamodelPath,
+		Root:       targetDir,
+		SchemaPath: schemaPath,
 	}
 
 	// Add .rela to .gitignore if it exists

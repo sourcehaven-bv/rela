@@ -160,6 +160,19 @@ type AssertionClaims struct {
 	OrgID   string   // the "org_id" claim — the tenant the session is scoped to
 	OrgSlug string   // the "org_slug" claim — human-readable tenant name
 	Roles   []string // the "roles" claim — bare role names, scoped to OrgID
+
+	// PrincipalType is the "principal_type" claim — what KIND of caller this
+	// is (Pratique mints "user"/"app"/"pat"/"service"). Unlike Roles, which
+	// ADD capability, this selects a client-attenuation baseline that only
+	// ever REMOVES it (TKT-IAC8TX). Empty for a proxy that doesn't model it,
+	// which means "no baseline matches" — i.e. unrestricted.
+	PrincipalType string
+
+	// Scopes is the "scope" claim, split on whitespace per RFC 6749 §3.3
+	// (the claim is a space-delimited string, NOT an array — that is why it
+	// does not go through stringSliceClaim). Each scope may re-open capability
+	// the baseline closed, always bounded by what the acting user holds.
+	Scopes []string
 }
 
 // Claim-projection bounds. A verified signature proves the IdP asserted these
@@ -171,12 +184,20 @@ type AssertionClaims struct {
 const (
 	maxRoles     = 32
 	maxRoleRunes = 256
+
+	// Scopes are bounded for the same reason roles are, and separately because
+	// a scope list is attacker-influenceable in a way a role list is not: a
+	// client asks for its own scopes at token-issue time. The ceiling only ever
+	// narrows, so an unbounded scope list cannot escalate — but it can still
+	// cost per-scope work on every request.
+	maxScopes     = 32
+	maxScopeRunes = 256
 )
 
 // VerifyAssertion verifies a request assertion and projects the identity claims
 // the principal resolver needs. Any signature/issuer/audience/expiry failure, or
 // an empty subject, yields an error wrapping either [ErrInvalid] or
-// [ErrKeysUnavailable] — identical to [VerifySubject], which this widens rather
+// [ErrKeysUnavailable] — identical to [Verifier.VerifySubject], which this widens rather
 // than replaces. See classify for why the distinction matters.
 //
 // Absent org/role claims are NOT an error (see [AssertionClaims]). Roles are
@@ -195,11 +216,13 @@ func (v *Verifier) VerifyAssertion(ctx context.Context, raw string) (AssertionCl
 		return AssertionClaims{}, ErrInvalid
 	}
 	return AssertionClaims{
-		Subject: sub,
-		Email:   stringClaim(claims, "email"),
-		OrgID:   stringClaim(claims, "org_id"),
-		OrgSlug: stringClaim(claims, "org_slug"),
-		Roles:   stringSliceClaim(claims, "roles"),
+		Subject:       sub,
+		Email:         stringClaim(claims, "email"),
+		OrgID:         stringClaim(claims, "org_id"),
+		OrgSlug:       stringClaim(claims, "org_slug"),
+		Roles:         stringSliceClaim(claims, "roles"),
+		PrincipalType: stringClaim(claims, "principal_type"),
+		Scopes:        scopeClaim(claims, "scope"),
 	}, nil
 }
 
@@ -332,6 +355,54 @@ func stringSliceClaim(claims jwt.MapClaims, key string) []string {
 	if truncated {
 		slog.Warn("jwtauth: claim truncated",
 			"claim", key, "limit", maxRoles, "received", len(raw))
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// scopeClaim reads an OAuth `scope` claim: a SPACE-DELIMITED STRING, per
+// RFC 6749 §3.3 — not a JSON array. That is the whole reason it cannot reuse
+// stringSliceClaim.
+//
+// Tolerant of the shapes real providers emit: any run of whitespace separates,
+// and leading/trailing whitespace is ignored, so "a  b " yields ["a","b"]. A
+// non-string claim is treated as absent, matching stringClaim's rationale.
+//
+// As a concession to providers that DO send an array despite the RFC, an array
+// value is accepted too — dropping a caller's scopes because their IdP picked
+// the other encoding would silently over-restrict, and a scope only ever
+// re-opens capability the acting user already holds.
+func scopeClaim(claims jwt.MapClaims, key string) []string {
+	var fields []string
+	switch v := claims[key].(type) {
+	case string:
+		fields = strings.Fields(v)
+	case []any:
+		for _, elem := range v {
+			s, ok := elem.(string)
+			if !ok {
+				continue
+			}
+			fields = append(fields, strings.Fields(s)...)
+		}
+	default:
+		return nil
+	}
+
+	out := make([]string, 0, min(len(fields), maxScopes))
+	truncated := false
+	for _, f := range fields {
+		if len(out) >= maxScopes {
+			truncated = true
+			break
+		}
+		out = append(out, truncateRunes(f, maxScopeRunes))
+	}
+	if truncated {
+		slog.Warn("jwtauth: claim truncated",
+			"claim", key, "limit", maxScopes, "received", len(fields))
 	}
 	if len(out) == 0 {
 		return nil

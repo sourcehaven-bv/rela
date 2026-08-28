@@ -137,15 +137,24 @@ have.
 
 Notes:
 
+- **`system:` identities cannot be asserted over the API.** The grant above
+  is reachable only by the scheduler process itself. rela reserves the whole
+  `system:` namespace at the HTTP boundary: a proxy header, a
+  `RELA_DATAENTRY_USER` value, or even a validly signed identity assertion
+  naming `system:scheduler` is refused with a 403 and logged, so a wide
+  `read: ["*"]` grant here cannot be borrowed by a web or MCP caller. `run_as`
+  in this file is unaffected — it is operator-authored config, read
+  in-process, and may name any `system:` identity you like.
 - **An identity with no assignment reads nothing.** If `run_as` names a
   principal that `acl.yaml` never assigns a role, the task's reads come back
   empty. A typo produces a silently empty job, so check the identity against
   your assignments when a task stops finding data.
-- **Field-level redaction does not apply to scheduled tasks yet.** Row-level
-  access is enforced (an entity your identity cannot read stays invisible),
-  but `visible:` field policy is *not* applied on this path — a task that may
-  read an entity type receives all of its properties. Do not rely on field
-  policy to hide values from a scheduled script.
+- **Both row- and field-level policy apply.** An entity your identity cannot
+  read stays invisible, and `visible:` field policy redacts hidden property
+  values on the entities it does return — a scheduled task sees the same
+  redacted view a person with that identity sees in the UI. (Field redaction
+  on this path landed in TKT-0XL8MF; before that, row access was enforced but
+  every property of a readable entity came through.)
 - Writes are unaffected: they go through the normal ACL, exactly as before.
 
 ### Schedule Values
@@ -155,7 +164,7 @@ Notes:
 | `day`        | Once per day — runs after local midnight                   |
 | `monday`     | Once per week on Mondays (after midnight local time)       |
 | `friday`     | Once per week on Fridays                                   |
-| `week`       | Alias for `monday`                                         |
+| `week`       | Alias for `monday` — fires on Mondays, not ISO-week change |
 | `30m`        | Every 30 minutes                                           |
 | `2h`         | Every 2 hours                                              |
 | `1h30m`      | Every 90 minutes (any valid Go duration)                   |
@@ -232,7 +241,7 @@ was missed and executes the task immediately before entering the normal schedule
 This applies to all schedule types:
 
 - **Day tasks**: missed if the day changed since the last run
-- **Week tasks**: missed if the ISO week changed since the last run
+- **Weekday tasks**: missed if the target weekday has occurred since the last run
 - **Interval tasks**: missed if more than the interval has elapsed
 
 ### First Run
@@ -311,8 +320,55 @@ level=INFO msg="task completed" name=daily-check duration=45.2ms
 level=INFO msg="scheduler started" tasks=1
 ```
 
-Failed tasks are logged at ERROR level with the error message. The scheduler continues
-running — a failed task does not stop other tasks from executing.
+Failed tasks are logged with the error message, at WARN for the first few
+consecutive failures and escalating to ERROR once retries are clearly not
+helping. The scheduler continues running — a failed task does not stop other
+tasks from executing.
+
+## Failure Handling and Retries
+
+When a task fails, it is retried on a fixed backoff ladder:
+
+```text
+5m → 10m → 20m → 40m → 80m → every 2h
+```
+
+Each consecutive failure moves one rung down; once the ladder reaches 2 hours it
+stays there, retrying every 2 hours until the task succeeds.
+
+**While a task is failing, the ladder replaces its schedule.** The task fires
+only on retry steps, never on its normal cadence. This means the ladder is the
+same for every schedule, but its effect differs:
+
+- A **daily** task that fails at 09:00 retries at 09:05, 09:15, 09:35, 10:15,
+  11:35, then every 2 hours — recovering from an intermittent failure without
+  waiting a full day.
+- A **`5m`** task that fails **slows down** to the same ladder instead of
+  hammering every 5 minutes while it is broken.
+
+A successful run is the only thing that resets the ladder. Elapsed scheduled
+slots do not: for a short-interval task a slot passes faster than the ladder
+climbs, so resetting on slots would prevent it from ever backing off.
+
+Note that a retry *is* the run for that period, not an extra one. A daily task
+that fails at 09:00 and succeeds on the 11:35 retry has run for that day, and
+will not run again until the next day — so a recovered run can land some hours
+after its nominal slot.
+
+Retry state is persisted in `.rela/scheduler-state.json` alongside the last-run
+timestamps, so a task mid-backoff keeps its position across a scheduler restart.
+
+```text
+level=WARN msg="task failed" name=daily-check duration=4.4ms failures=1 \
+  retry_in=5m0s retry_at=2026-08-13T23:12:04+02:00 error="..."
+level=INFO msg="retrying failed task" name=daily-check failures=1 scheduled_for=...
+level=ERROR msg="task failed" name=daily-check duration=4.1ms failures=4 \
+  retry_in=40m0s retry_at=2026-08-14T00:15:00+02:00 error="..."
+```
+
+If the scheduler finds a retry time further out than the 2-hour maximum — a
+symptom of a clock jump or a hand-edited state file — it logs a WARN and retries
+immediately rather than leaving the task stuck indefinitely.
 
 ## Examples
 

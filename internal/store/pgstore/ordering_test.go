@@ -25,9 +25,15 @@ func TestListOrderIsByteWise(t *testing.T) {
 	ctx := context.Background()
 
 	// IDs whose byte order differs from en_US.UTF-8 collation order. Under
-	// en_US.UTF-8, 'a-2' sorts before 'A-2'/'B-1'; under byte order (C / Go),
-	// uppercase precedes lowercase so 'a-2' sorts last.
-	ids := []string{"A-10", "a-2", "B-1", "A-2"}
+	// en_US.UTF-8, 'a-9' sorts among the 'A-' ids; under byte order (C / Go),
+	// uppercase precedes lowercase so 'a-9' sorts last.
+	//
+	// The lowercase id is deliberately NOT a case-variant of any other id
+	// here: entity IDs are one identity per case-folding (BUG-3RCWNS), so a
+	// fixture containing both 'a-2' and 'A-2' would now be rejected as a
+	// conflict and could never be created. Mixed CASE across DISTINCT ids is
+	// what this test needs, and that is still legal.
+	ids := []string{"A-10", "a-9", "B-1", "A-2"}
 	for _, id := range ids {
 		require.NoError(t, s.CreateEntity(ctx, entity.New(id, "ticket")))
 	}

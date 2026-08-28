@@ -318,7 +318,7 @@ func TestBuildViewInput(t *testing.T) {
 			{From: "entry", Follow: "belongs_to", CollectAs: "components"},
 		},
 	}
-	vr, err := app.executeView(context.Background(), view, "TKT-001")
+	vr, err := app.views.executeView(context.Background(), view, "TKT-001")
 	if err != nil {
 		t.Fatalf("executeView: %v", err)
 	}
@@ -967,8 +967,9 @@ func TestOpenFileCommand(t *testing.T) {
 		path     string
 		wantArgs []string // expected args including argv[0]
 	}{
-		{"darwin open", "darwin", "open", "/tmp/x.pdf", []string{"open", "/tmp/x.pdf"}},
-		{"darwin reveal", "darwin", "reveal", "/tmp/x.pdf", []string{"open", "-R", "/tmp/x.pdf"}},
+		// `--` terminates open(1) flag parsing so a path can never be read as a flag.
+		{"darwin open", "darwin", "open", "/tmp/x.pdf", []string{"open", "--", "/tmp/x.pdf"}},
+		{"darwin reveal", "darwin", "reveal", "/tmp/x.pdf", []string{"open", "-R", "--", "/tmp/x.pdf"}},
 		{"linux open", "linux", "open", "/tmp/x.pdf", []string{"xdg-open", "/tmp/x.pdf"}},
 		{"linux reveal", "linux", "reveal", "/tmp/sub/x.pdf", []string{"xdg-open", "/tmp/sub"}},
 		{"windows open", "windows", "open", `C:\x.pdf`, []string{"cmd", "/c", "start", "", `C:\x.pdf`}},
@@ -998,7 +999,7 @@ func TestOpenURLCommand(t *testing.T) {
 		url      string
 		wantArgs []string
 	}{
-		{"darwin", "darwin", "https://example.com", []string{"open", "https://example.com"}},
+		{"darwin", "darwin", "https://example.com", []string{"open", "--", "https://example.com"}},
 		{"linux", "linux", "https://example.com", []string{"xdg-open", "https://example.com"}},
 		{"windows", "windows", "https://example.com", []string{"cmd", "/c", "start", "", "https://example.com"}},
 	}
@@ -1389,4 +1390,42 @@ func TestCommandCancelOwnerBound(t *testing.T) {
 			t.Errorf("owner canceling own command: expected 200, got %d", code)
 		}
 	})
+}
+
+// TestBuildEntityInput_CarriesRedactedNames pins the command-stdin contract
+// for ACL-redacted properties (RR-TD74AU). commandInput embeds the DOMAIN
+// entity, so `redacted` ships on stdin alongside the pre-existing
+// `inaccessible`. That is deliberate — a command hitting a stripped property
+// otherwise cannot tell "withheld" from "never set" — and it discloses names
+// only, matching the `_redacted` wire field and the Lua binding.
+func TestBuildEntityInput_CarriesRedactedNames(t *testing.T) {
+	app, entities := testAppInstance()
+	bindRepo(app, "/test/project")
+
+	e := entities.ticket1.Clone()
+	delete(e.Properties, "status")
+	e.Redacted = []string{"status"}
+
+	input := app.commands.buildEntityInput(context.Background(), e)
+
+	data, err := json.Marshal(input)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+	var decoded struct {
+		Entity struct {
+			Properties map[string]any `json:"properties"`
+			Redacted   []string       `json:"redacted"`
+		} `json:"entity"`
+	}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+
+	if len(decoded.Entity.Redacted) != 1 || decoded.Entity.Redacted[0] != "status" {
+		t.Errorf("redacted names missing from stdin payload: %v", decoded.Entity.Redacted)
+	}
+	if _, present := decoded.Entity.Properties["status"]; present {
+		t.Error("redacted property VALUE reached the command payload")
+	}
 }

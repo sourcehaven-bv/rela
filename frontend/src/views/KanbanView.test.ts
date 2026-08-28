@@ -43,7 +43,10 @@ function makeTicket(id: string): Entity {
 // seedSchema installs a kanban config whose card renders the given fields,
 // plus a `verantwoordelijk_voor` relation type with a declared inverse so the
 // incoming-direction path resolves via getInverseName.
-function seedSchema(fields: Array<Record<string, unknown>>) {
+function seedSchema(
+  fields: Array<Record<string, unknown>>,
+  configOverrides: Record<string, unknown> = {}
+) {
   const schemaStore = useSchemaStore()
   schemaStore.kanbans.set(KANBAN_ID, {
     entity: ENTITY_TYPE,
@@ -51,6 +54,7 @@ function seedSchema(fields: Array<Record<string, unknown>>) {
     column_property: 'status',
     columns: [{ value: 'todo', label: 'Todo' }],
     card: { title: 'title', fields },
+    ...configOverrides,
   } as never)
   schemaStore.entityTypes.set(ENTITY_TYPE, {
     name: ENTITY_TYPE,
@@ -95,8 +99,13 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-async function mountBoard(fields: Array<Record<string, unknown>>, entities: Entity[], included: Record<string, Entity> = {}) {
-  seedSchema(fields)
+async function mountBoard(
+  fields: Array<Record<string, unknown>>,
+  entities: Entity[],
+  included: Record<string, Entity> = {},
+  configOverrides: Record<string, unknown> = {}
+) {
+  seedSchema(fields, configOverrides)
   seedBoard(entities, included)
   const wrapper = mount(KanbanView, {
     props: { id: KANBAN_ID },
@@ -327,6 +336,113 @@ describe('KanbanView card fields with unset values', () => {
     const labels = card.findAll('.field-label').map((n) => n.text())
     expect(labels).toContain('effort:')
     expect(card.text()).toContain('m')
+    wrapper.unmount()
+  })
+})
+
+// Admin-authored header/footer info regions (TKT-6S331G). These mirror the
+// list-view regions and share both the resolvers (viewHeaderMarkdown /
+// viewFooterMarkdown) and the .view-info styles with EntityList.
+describe('KanbanView info regions (header/footer)', () => {
+  it('renders header markdown above the board', async () => {
+    const wrapper = await mountBoard([], [makeTicket('T-1')], {}, {
+      header: 'Cards move **left to right**.',
+    })
+
+    const header = wrapper.find('.view-info--top')
+    expect(header.exists()).toBe(true)
+    expect(header.html()).toContain('<strong>left to right</strong>')
+    wrapper.unmount()
+  })
+
+  it('renders footer markdown below the board', async () => {
+    const wrapper = await mountBoard([], [makeTicket('T-1')], {}, {
+      footer: 'See the [runbook](https://example.test/runbook).',
+    })
+
+    const footer = wrapper.find('.view-info--bottom')
+    expect(footer.exists()).toBe(true)
+    expect(footer.html()).toContain('href="https://example.test/runbook"')
+    wrapper.unmount()
+  })
+
+  it('routes admin markdown through the sanitizer before v-html', async () => {
+    const wrapper = await mountBoard([], [makeTicket('T-1')], {}, {
+      // Two separate payloads on purpose — see the note below. The header
+      // proves markdown is processed; the footer proves scripts are stripped.
+      header: '**bold**',
+      footer: '<script>alert(3)</script>',
+    })
+
+    // What this proves: renderMarkdown (marked + DOMPurify) is actually IN the
+    // path between data-entry.yaml and v-html — the markdown was processed
+    // (<strong> exists, so the config string was not raw-passed to v-html) and
+    // a script element did not survive.
+    //
+    // What this deliberately does NOT assert: inline event handlers and
+    // javascript: hrefs. Under this suite's happy-dom environment DOMPurify
+    // leaves BOTH intact when the input parses to multiple nodes
+    // (`<p>x</p>\n<img onerror=...>` keeps onerror; `<a href="javascript:...">`
+    // keeps the href) — and for the same reason it also keeps a script when one
+    // follows inline content (`**bold** <script>` survives, a bare `<script>`
+    // does not, which is why the two payloads above are kept apart). That is a
+    // happy-dom DOM defect, not a renderMarkdown bug: every one of those
+    // payloads through DOMPurify under jsdom, and in a real browser, comes back
+    // sanitized. Asserting them here would fail for an environment reason while
+    // proving nothing about production, so the real coverage for handler/href
+    // stripping is DOMPurify's own suite plus manual browser verification.
+    const html = wrapper.html()
+    expect(html).toContain('<strong>bold</strong>')
+    expect(html).not.toContain('<script>')
+    expect(wrapper.find('.view-info--top script').exists()).toBe(false)
+    expect(wrapper.find('.view-info--bottom script').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('renders neither region when header and footer are unset', async () => {
+    const wrapper = await mountBoard([], [makeTicket('T-1')])
+
+    expect(wrapper.find('.view-info--top').exists()).toBe(false)
+    expect(wrapper.find('.view-info--bottom').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('treats whitespace-only header/footer as unset', async () => {
+    const wrapper = await mountBoard([], [makeTicket('T-1')], {}, {
+      header: '   \n',
+      footer: '\t',
+    })
+
+    expect(wrapper.find('.view-info--top').exists()).toBe(false)
+    expect(wrapper.find('.view-info--bottom').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('renders the footer outside the scrolling board container', async () => {
+    // AC6: the footer must not live inside .kanban-board, which owns the
+    // horizontal scroll — otherwise it scrolls off-screen on a wide board.
+    // jsdom does not lay out, so this asserts containment structurally.
+    const wrapper = await mountBoard([], [makeTicket('T-1')], {}, {
+      footer: 'stays put',
+    })
+
+    expect(wrapper.find('.kanban-board .view-info--bottom').exists()).toBe(false)
+    expect(wrapper.find('.view-info--bottom').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('renders the footer even when the board fails to load', async () => {
+    seedSchema([], { footer: 'still here' })
+    listAllEntitiesMock.mockRejectedValue(new Error('boom'))
+    const wrapper = mount(KanbanView, {
+      props: { id: KANBAN_ID },
+      attachTo: document.body,
+      global: { plugins: [pinia, PiniaColada] },
+    })
+    await flushPromises()
+
+    expect(wrapper.find('.error-state').exists()).toBe(true)
+    expect(wrapper.find('.view-info--bottom').exists()).toBe(true)
     wrapper.unmount()
   })
 })

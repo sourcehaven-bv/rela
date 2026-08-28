@@ -85,9 +85,13 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_schema/", a.handleV1SchemaRoutes)
 	mux.HandleFunc("/api/v1/_config", a.handleV1Config)
 	mux.HandleFunc("/api/v1/_feeds/", a.handleV1Feed)
+	if routes := newCalDAVRoutes(a); routes != nil {
+		routes.register(mux)
+	}
 	mux.HandleFunc("/api/v1/_search", a.handleV1Search)
 	mux.HandleFunc("/api/v1/_position", a.handleV1EntityPosition)
 	mux.HandleFunc("/api/v1/_analyze", a.handleV1Analyze)
+	mux.HandleFunc("/api/v1/_next_action", a.handleV1NextAction)
 	mux.HandleFunc("/api/v1/_git/status", a.handleGitStatus)
 	mux.HandleFunc("/api/v1/_git/sync", a.handleGitSync)
 	mux.HandleFunc("/api/v1/_settings", a.handleAPISettingsCRUD)
@@ -95,8 +99,9 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_theme/logo", a.handleAPIThemeLogo)
 	mux.HandleFunc("/api/v1/_theme/export", a.handleAPIThemeExport)
 	mux.HandleFunc("/api/v1/_theme/import", a.handleAPIThemeImport)
-	mux.HandleFunc("/api/v1/_sidepanel/", a.handleV1SidePanel)
-	mux.HandleFunc("/api/v1/_sidebar", a.handleV1Sidebar)
+	mux.HandleFunc("/api/v1/_sidepanel/", a.views.handleV1SidePanel)
+	mux.HandleFunc("/api/v1/_sidebar", a.views.handleV1Sidebar)
+	mux.HandleFunc("/api/v1/_dashboard", a.views.handleV1Dashboard)
 	mux.HandleFunc("/api/v1/_conflicts", a.handleV1Conflicts)
 	mux.HandleFunc("/api/v1/_conflicts/", a.handleV1ConflictRoutes)
 	mux.HandleFunc("/api/v1/_documents/", a.handleV1Documents)
@@ -107,7 +112,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_commands", a.handleV1Commands)
 	mux.HandleFunc("/api/v1/_transforms", a.export.handleV1Transforms)
 	mux.HandleFunc("/api/v1/_templates/", a.handleV1Templates)
-	mux.HandleFunc("/api/v1/_views/", a.handleV1Views)
+	mux.HandleFunc("/api/v1/_views/", a.views.handleV1Views)
 	mux.HandleFunc("/api/v1/_action/", a.write.handleV1Action)
 	mux.HandleFunc("/api/v1/_apps/", a.handleV1App)
 
@@ -881,6 +886,15 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 	// Orderable mode. Empty string disables sorting for that group.
 	groupSortProp := make(map[string]string)
 
+	// pendingStrips defers per-edge relation-meta redaction (TKT-B1F5Q1) until
+	// AFTER sortRelationGroup runs (see relationMetaStrip). Each strip also carries
+	// the relation type so the redaction resolves the right grant block.
+	type typedStrip struct {
+		relationMetaStrip
+		relType string
+	}
+	var pendingStrips []typedStrip
+
 	for _, edge := range outgoing {
 		if !visibleNeighbors[edge.To] {
 			continue
@@ -892,6 +906,9 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 		}
 		if len(edge.Properties) > 0 {
 			rel["meta"] = edge.Properties
+			pendingStrips = append(pendingStrips, typedStrip{
+				relationMetaStrip: relationMetaStrip{rel: rel}, relType: edge.Type,
+			})
 		}
 		relations[edge.Type] = append(relations[edge.Type], rel)
 		if relDef, ok := s.Meta.Relations[edge.Type]; ok {
@@ -917,6 +934,12 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 		}
 		if len(edge.Properties) > 0 {
 			rel["meta"] = edge.Properties
+			// The relation grant lives on the SOURCE entity type (edge.From for an
+			// incoming edge — the peer). Resolved fail-closed at strip time.
+			pendingStrips = append(pendingStrips, typedStrip{
+				relationMetaStrip: relationMetaStrip{rel: rel, incoming: true, peerID: edge.From},
+				relType:           edge.Type,
+			})
 		}
 		relations[inverseName] = append(relations[inverseName], rel)
 		if p := relDef.IncomingOrderProperty(); p != "" {
@@ -933,7 +956,58 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 		sortRelationGroup(relations[groupName], prop)
 	}
 
+	// Redact hidden relation meta AFTER sorting, through the shared chokepoint.
+	for _, ps := range pendingStrips {
+		a.affordances.redactRelationMetaStrip(r.Context(), ps.relationMetaStrip, entity, ps.relType)
+	}
+
 	writeV1JSON(w, http.StatusOK, relations)
+}
+
+// relationMetaStrip is a deferred relation-meta redaction (TKT-B1F5Q1): the built
+// wire `rel` map plus what is needed to resolve the source's `visible:` grants.
+// The strip runs AFTER sortRelationGroup because the sort reads the managed order
+// property out of `meta`, so redacting a (possibly hidden) order key first would
+// break ordering. An outgoing edge's source is the path entity; an incoming edge's
+// source is the peer (peerID), resolved fail-closed at strip time.
+type relationMetaStrip struct {
+	rel      map[string]any
+	incoming bool
+	peerID   string // incoming only: the source (from) entity id
+}
+
+// buildRelationTypeRows builds the single-relation-type wire rows (id/type[/meta])
+// for the visible edges of relType in the given direction, plus the deferred meta
+// strips. It is the shared build step for handleV1GetRelationType; the caller
+// sorts then applies App.redactRelationMetaStrip.
+func buildRelationTypeRows(
+	ctx context.Context, reader entityReader, edges []*entityPkg.Relation,
+	relType string, incoming bool, visibleNeighbors map[string]bool,
+) (rows []map[string]any, strips []relationMetaStrip) {
+	rows = make([]map[string]any, 0, len(edges))
+	for _, edge := range edges {
+		if edge.Type != relType {
+			continue
+		}
+		peerID := edge.To
+		if incoming {
+			peerID = edge.From
+		}
+		if !visibleNeighbors[peerID] {
+			continue
+		}
+		rel := map[string]any{"id": peerID, "type": reader.entityType(ctx, peerID)}
+		if len(edge.Properties) > 0 {
+			rel["meta"] = edge.Properties
+			s := relationMetaStrip{rel: rel, incoming: incoming}
+			if incoming {
+				s.peerID = peerID
+			}
+			strips = append(strips, s)
+		}
+		rows = append(rows, rel)
+	}
+	return rows, strips
 }
 
 // sortRelationGroup sorts a relation group in place by a numeric meta key.
@@ -1023,28 +1097,7 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 	}
 	visibleNeighbors := visibleRelationIDs(r.Context(), a.reader, a.visibleReader, peerIDs)
 
-	relations := make([]map[string]any, 0, len(edges))
-
-	for _, edge := range edges {
-		if edge.Type != relType {
-			continue
-		}
-		peerID := edge.To
-		if incoming {
-			peerID = edge.From
-		}
-		if !visibleNeighbors[peerID] {
-			continue
-		}
-		rel := map[string]any{
-			"id":   peerID,
-			"type": a.reader.entityType(r.Context(), peerID),
-		}
-		if len(edge.Properties) > 0 {
-			rel["meta"] = edge.Properties
-		}
-		relations = append(relations, rel)
-	}
+	relations, pendingStrips := buildRelationTypeRows(r.Context(), a.reader, edges, relType, incoming, visibleNeighbors)
 
 	// Apply orderable sort when the type declares the relevant side.
 	if relDef, ok := a.State().Meta.Relations[relType]; ok {
@@ -1059,6 +1112,11 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 		}
 	}
 
+	// Redact hidden relation meta after sorting (see relationMetaStrip).
+	for _, ps := range pendingStrips {
+		a.affordances.redactRelationMetaStrip(r.Context(), ps, entity, relType)
+	}
+
 	writeV1JSON(w, http.StatusOK, relations)
 }
 
@@ -1066,6 +1124,10 @@ func (a *App) handleV1RelationTarget(
 	w http.ResponseWriter, r *http.Request, typeName, entityID, relType, targetID string,
 ) {
 	switch r.Method {
+	case http.MethodGet:
+		// Single-relation body read for sync (RR-SYNCR1): meta + content +
+		// _redacted + a relation-level ETag, dual-endpoint gated.
+		handleV1GetRelationTarget(a, w, r, typeName, entityID, relType, targetID)
 	case http.MethodPatch:
 		a.write.handleV1UpdateRelation(w, r, typeName, entityID, relType, targetID)
 	case http.MethodDelete:
@@ -1210,10 +1272,22 @@ func (a *App) handleV1SchemaRoutes(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// resolveRelationWidgets returns a copy of rels with any empty Widget set to
-// "cards" when the relation type has edge properties/content. Shared by the
-// flat and wizard-step relation lists in handleV1Config.
-func (a *App) resolveRelationWidgets(s *Schema, rels []dataentryconfig.FormRelation) []dataentryconfig.FormRelation {
+// resolveFormRelations returns a copy of rels with server-derived defaults
+// filled in, for both the flat and wizard-step relation lists in handleV1Config.
+//
+// Widget: an empty Widget becomes "cards" when the relation type has edge
+// properties/content.
+//
+// Direction: an absent `direction:` is inferred from the metamodel — the SPA
+// widgets test `direction === 'incoming'` literally (RelationCards.vue,
+// RelationPicker.vue), so the inference MUST happen here rather than in the
+// browser, or a to-side binding would validate clean on the server and still
+// render the wrong side. Resolving once on the way out keeps the two consumers
+// agreeing by construction. The ambiguous case (entity type on both sides) is
+// rejected by ValidateConfig at load, so it cannot reach this point.
+func resolveFormRelations(
+	s *Schema, entityType string, rels []dataentryconfig.FormRelation,
+) []dataentryconfig.FormRelation {
 	resolved := make([]dataentryconfig.FormRelation, len(rels))
 	copy(resolved, rels)
 	for i := range resolved {
@@ -1222,8 +1296,157 @@ func (a *App) resolveRelationWidgets(s *Schema, rels []dataentryconfig.FormRelat
 				resolved[i].Widget = WidgetCards
 			}
 		}
+		resolved[i].Direction = resolveConfigDirection(
+			s, entityType, resolved[i].Relation, resolved[i].Direction)
 	}
 	return resolved
+}
+
+// resolveConfigDirection fills in an absent `direction:` from the metamodel,
+// for any relation binding anchored to entityType.
+//
+// Unrelated to [resolveDirection], which maps a PATCH wire key to a canonical
+// relation name; this one is about config bindings served to the SPA.
+//
+// Every SPA consumer of a direction tests the literal string (`direction ===
+// 'incoming'` in RelationCards, RelationPicker, FilterBar, EntityList and
+// KanbanView), so an inferred direction has to be materialized here or the
+// browser silently falls back to outgoing. Validation rejects the ambiguous
+// case at load, so only Resolved changes anything; everything else keeps the
+// historical reading, which is also what the SPA would have assumed.
+func resolveConfigDirection(
+	s *Schema, entityType, relation string, dir dataentryconfig.Direction,
+) dataentryconfig.Direction {
+	if dir != "" || relation == "" {
+		return dir
+	}
+	inferred, res := dataentryconfig.InferDirection(entityType, relation, s.Meta)
+	switch res {
+	case dataentryconfig.DirectionResolved:
+		return inferred
+	case dataentryconfig.DirectionAmbiguous:
+		// ValidateConfig rejects an ambiguous binding at load, so the app
+		// should not have started. Reaching here means that gate was bypassed;
+		// say so rather than silently picking a side.
+		slog.Warn("relation binding direction is ambiguous but reached the config handler; serving outgoing",
+			"entity_type", entityType, "relation", relation)
+	case dataentryconfig.DirectionNoSide, dataentryconfig.DirectionUnknown:
+		// A wrong-side or unreadable binding — both already reported by
+		// validation. Serve the historical reading rather than inventing one;
+		// the SPA needs a non-empty value either way.
+	}
+	return dataentryconfig.DirectionOutgoing
+}
+
+// resolveListDirections returns a copy of lists with relation-column and
+// filter-control directions materialized. Copy-on-serve, like
+// resolveFormRelations: the in-memory config keeps what the operator wrote.
+func resolveListDirections(s *Schema, lists map[string]dataentryconfig.List) map[string]dataentryconfig.List {
+	out := make(map[string]dataentryconfig.List, len(lists))
+	for id, list := range lists {
+		l := list
+		if len(l.Columns) > 0 {
+			cols := make([]dataentryconfig.ListColumn, len(l.Columns))
+			copy(cols, l.Columns)
+			for i := range cols {
+				cols[i].Direction = resolveConfigDirection(s, l.EntityType, cols[i].Relation, cols[i].Direction)
+			}
+			l.Columns = cols
+		}
+		l.FilterControls = resolveFilterControlDirections(s, l.EntityType, l.FilterControls)
+		out[id] = l
+	}
+	return out
+}
+
+// resolveFilterControlDirections materializes directions on a filter-control
+// list. Shared by lists and kanbans, which carry the same control type.
+func resolveFilterControlDirections(
+	s *Schema, entityType string, controls []dataentryconfig.FilterControl,
+) []dataentryconfig.FilterControl {
+	if len(controls) == 0 {
+		return controls
+	}
+	out := make([]dataentryconfig.FilterControl, len(controls))
+	copy(out, controls)
+	for i := range out {
+		out[i].Direction = resolveConfigDirection(s, entityType, out[i].Relation, out[i].Direction)
+	}
+	return out
+}
+
+// resolveKanbanDirections returns a copy of kanbans with card-field and
+// filter-control directions materialized.
+func resolveKanbanDirections(s *Schema, kanbans map[string]dataentryconfig.Kanban) map[string]dataentryconfig.Kanban {
+	out := make(map[string]dataentryconfig.Kanban, len(kanbans))
+	for id, kanban := range kanbans {
+		k := kanban
+		if len(k.Card.Fields) > 0 {
+			fields := make([]dataentryconfig.KanbanCardField, len(k.Card.Fields))
+			copy(fields, k.Card.Fields)
+			for i := range fields {
+				fields[i].Direction = resolveConfigDirection(s, k.EntityType, fields[i].Relation, fields[i].Direction)
+			}
+			k.Card.Fields = fields
+		}
+		k.FilterControls = resolveFilterControlDirections(s, k.EntityType, k.FilterControls)
+		out[id] = k
+	}
+	return out
+}
+
+// resolveCalendarDirections fills in each calendar's relation directions, the
+// same treatment resolveKanbanDirections gives a board (TKT-QXY8CQ).
+//
+// Calendars need it for the same reason: an event chip's relation field is
+// resolved client-side against the relation's inverse key, and an unresolved
+// direction leaves the SPA computing the wrong key and rendering nothing. The
+// per-source entity type is what a field resolves against, so a chip field is
+// resolved once per source rather than once per calendar — a calendar may
+// project several types, and a relation's direction is only meaningful
+// relative to one of them.
+func resolveCalendarDirections(
+	s *Schema, calendars map[string]dataentryconfig.Calendar,
+) map[string]dataentryconfig.Calendar {
+	out := make(map[string]dataentryconfig.Calendar, len(calendars))
+	for id, calendar := range calendars {
+		c := calendar
+		// A field's direction depends on the type it hangs off, so resolve
+		// against the first source that actually declares the relation.
+		if len(c.Event.Fields) > 0 {
+			fields := make([]dataentryconfig.KanbanCardField, len(c.Event.Fields))
+			copy(fields, c.Event.Fields)
+			for i := range fields {
+				fields[i].Direction = resolveCalendarFieldDirection(s, c.Sources, fields[i])
+			}
+			c.Event = dataentryconfig.CalendarEvent{Fields: fields}
+		}
+		if len(c.Sources) > 0 && len(c.FilterControls) > 0 {
+			c.FilterControls = resolveFilterControlDirections(s, c.Sources[0].EntityType, c.FilterControls)
+		}
+		out[id] = c
+	}
+	return out
+}
+
+// resolveCalendarFieldDirection resolves one chip field's direction against the
+// calendar's sources, taking the first that yields a direction.
+//
+// Nil: an empty result is returned unchanged when no source declares the
+// relation — the field simply renders nothing for those sources, which is the
+// documented best-effort behavior for a heterogeneous calendar.
+func resolveCalendarFieldDirection(
+	s *Schema, sources []dataentryconfig.CalendarSource, field dataentryconfig.KanbanCardField,
+) dataentryconfig.Direction {
+	if field.Relation == "" {
+		return field.Direction
+	}
+	for _, src := range sources {
+		if d := resolveConfigDirection(s, src.EntityType, field.Relation, field.Direction); d != "" {
+			return d
+		}
+	}
+	return field.Direction
 }
 
 // aboutDescription is the deployment description shown by the SPA's global
@@ -1257,12 +1480,12 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 	forms := make(map[string]dataentryconfig.Form, len(s.Cfg.Forms))
 	for id, form := range s.Cfg.Forms {
 		f := form
-		f.Relations = a.resolveRelationWidgets(s, f.Relations)
+		f.Relations = resolveFormRelations(s, form.EntityType, f.Relations)
 		if len(f.Steps) > 0 {
 			steps := make([]dataentryconfig.FormStep, len(f.Steps))
 			copy(steps, f.Steps)
 			for i := range steps {
-				steps[i].Relations = a.resolveRelationWidgets(s, steps[i].Relations)
+				steps[i].Relations = resolveFormRelations(s, form.EntityType, steps[i].Relations)
 			}
 			f.Steps = steps
 		}
@@ -1270,6 +1493,7 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 	}
 
 	config := v1.Config{
+		NextActionBands: s.Cfg.NextActionBands,
 		App: v1.AppConfig{
 			Name:              s.Cfg.App.Name,
 			Description:       s.Cfg.App.Description,
@@ -1278,10 +1502,11 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 		AboutDescription: aboutDescription(s),
 		Styles:           s.StyleMap,
 		Forms:            forms,
-		Lists:            s.Cfg.Lists,
+		Lists:            resolveListDirections(s, s.Cfg.Lists),
 		Views:            s.Cfg.Views,
 		EntityViews:      s.Cfg.EntityViews,
-		Kanbans:          s.Cfg.Kanbans,
+		Kanbans:          resolveKanbanDirections(s, s.Cfg.Kanbans),
+		Calendars:        resolveCalendarDirections(s, s.Cfg.Calendars),
 		Dashboard:        s.Cfg.Dashboard,
 		Actions:          s.Cfg.Actions,
 		Navigation:       s.Cfg.Navigation,
@@ -1368,6 +1593,14 @@ func (a *App) handleV1Analyze(w http.ResponseWriter, r *http.Request) {
 	result := APIAnalysisResult{
 		Issues:  make([]APIIssue, 0, len(visible)),
 		ByCheck: make(map[string]int),
+	}
+
+	// Carry each section's truncation flag onto the flat response, so a
+	// capped check is visibly incomplete rather than silently short.
+	for _, section := range analysisResult.Sections {
+		if section.Truncated {
+			result.TruncatedChecks = append(result.TruncatedChecks, section.Name)
+		}
 	}
 
 	// Loopback gate: same policy as action / document surfaces.
@@ -1866,307 +2099,7 @@ func writeV1Error(w http.ResponseWriter, r *http.Request, status int, errType, t
 
 // --- Side Panel API ---
 
-// handleV1SidePanel handles GET /api/v1/_sidepanel/{formId}/{entityId}.
-func (a *App) handleV1SidePanel(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
-		return
-	}
-
-	// Parse path: /api/v1/_sidepanel/{formId}/{entityId}
-	path := strings.TrimPrefix(r.URL.Path, "/api/v1/_sidepanel/")
-	parts := strings.SplitN(path, "/", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		writeV1Error(w, r, http.StatusBadRequest, "invalid_path", "Path must be /_sidepanel/{formId}/{entityId}", "")
-		return
-	}
-
-	formID := parts[0]
-	entityID := parts[1] // Get form config
-	s := a.State()
-	form, ok := s.Cfg.Forms[formID]
-	if !ok {
-		writeV1Error(w, r, http.StatusNotFound, "form_not_found", "Form not found", "")
-		return
-	}
-
-	// Check if form has side panel
-	if form.SidePanel == nil {
-		writeV1JSON(w, http.StatusOK, []v1.SidePanelSection{})
-		return
-	}
-
-	// ACL gate (TKT-6N9O1Y): the side panel reveals the entry entity and its
-	// traversal neighbors. Gate the entry read BEFORE getEntity/executeSidePanel
-	// so a principal who cannot read it gets a 404 indistinguishable from a
-	// missing id, and the traversal never runs for a denied caller.
-	if !a.gateReadOrNotFound(w, r, form.EntityType, entityID) {
-		return
-	}
-
-	// Get the entry entity
-	entry, found := a.reader.getEntity(r.Context(), entityID)
-	if !found {
-		writeV1Error(w, r, http.StatusNotFound, "entity_not_found", "Entity not found", "")
-		return
-	}
-
-	// Execute side panel traversal
-	sections := a.executeSidePanel(r.Context(), form.SidePanel, entityID, form.EntityType)
-	if sections == nil {
-		writeV1JSON(w, http.StatusOK, []v1.SidePanelSection{})
-		return
-	}
-
-	// Build a synthetic ViewConfig to resolve add/link buttons
-	viewConfig := ViewConfig{
-		Entry:    ViewEntry{Type: form.EntityType},
-		Traverse: form.SidePanel.Traverse,
-		Sections: form.SidePanel.Sections,
-	}
-	a.resolveSectionButtonsWithTraverse(viewConfig, sections, entry)
-
-	// Convert to API response format
-	result := make([]v1.SidePanelSection, 0, len(sections))
-	for _, sec := range sections {
-		apiSec := v1.SidePanelSection{
-			Heading:      sec.Heading,
-			SectionID:    sec.SectionID,
-			Display:      sec.Display,
-			IsEmpty:      sec.IsEmpty,
-			EmptyMessage: sec.EmptyMessage,
-		}
-
-		// Convert fields
-		for _, f := range sec.Fields {
-			apiSec.Fields = append(apiSec.Fields, v1.SectionField(f))
-		}
-
-		// Convert entities
-		for _, e := range sec.Entities {
-			apiEnt := v1.SidePanelEntity{
-				ID:         e.ID,
-				Title:      e.Title,
-				Type:       e.Type,
-				EditFormID: e.EditFormID,
-				Content:    e.Content,
-				HasContent: e.HasContent,
-			}
-			for _, f := range e.Fields {
-				apiEnt.Fields = append(apiEnt.Fields, v1.SectionField(f))
-			}
-			apiSec.Entities = append(apiSec.Entities, apiEnt)
-		}
-
-		// Convert add/link info
-		if sec.AddInfo != nil {
-			apiSec.AddInfo = &v1.ViewAddInfo{
-				Relation: sec.AddInfo.Relation,
-				LinkAs:   sec.AddInfo.LinkAs,
-				PeerID:   sec.AddInfo.PeerID,
-			}
-			for _, t := range sec.AddInfo.Targets {
-				apiSec.AddInfo.Targets = append(apiSec.AddInfo.Targets, v1.ViewAddTarget(t))
-			}
-		}
-		if sec.LinkInfo != nil {
-			apiSec.LinkInfo = &v1.ViewLinkInfo{
-				Relation:    sec.LinkInfo.Relation,
-				LinkAs:      sec.LinkInfo.LinkAs,
-				PeerID:      sec.LinkInfo.PeerID,
-				EntityTypes: sec.LinkInfo.EntityTypes,
-			}
-		}
-
-		result = append(result, apiSec)
-	}
-
-	writeV1JSON(w, http.StatusOK, result)
-}
-
 // --- Sidebar API ---
-
-// handleV1Sidebar returns denormalized sidebar data with entity counts.
-func (a *App) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
-		return
-	}
-	s := a.State()
-
-	counts := sidebarCounts{
-		filterCache: make(map[string]int),
-		app:         a,
-	}
-
-	// Build navigation with counts
-	navigation := make([]v1.SidebarGroup, 0)
-
-	for _, entry := range s.Cfg.Navigation {
-		if entry.IsGroup() {
-			group := v1.SidebarGroup{
-				Group:     entry.Group,
-				Collapsed: entry.Collapsed,
-				Items:     make([]v1.SidebarItem, 0),
-			}
-			for _, item := range entry.Items {
-				sidebarItem := a.navEntryToSidebarItem(r.Context(), item, counts)
-				group.Items = append(group.Items, sidebarItem)
-			}
-			navigation = append(navigation, group)
-		} else {
-			// Top-level item without group
-			item := a.navEntryToSidebarItem(r.Context(), entry, counts)
-			navigation = append(navigation, v1.SidebarGroup{
-				Items: []v1.SidebarItem{item},
-			})
-		}
-	}
-
-	resp := v1.SidebarResponse{
-		App: v1.AppConfig{
-			Name:        s.Cfg.App.Name,
-			Description: s.Cfg.App.Description,
-		},
-		Navigation: navigation,
-	}
-	resp.LogoURL = a.logo.URL()
-
-	writeV1JSON(w, http.StatusOK, resp)
-}
-
-// sidebarCounts caches sidebar entity counts, applying list- or kanban-
-// level filters when present. Every count flows through the ACL read
-// scope (TKT-VMD8) — one code path regardless of NopACL vs. Declarative
-// (RR-2O27), so the sidebar can never disagree with the list it links
-// to. filterCache is a within-request memo keyed by list/kanban id; it
-// is safe precisely because a sidebarCounts value lives for one request
-// (one principal) — a longer-lived cache would alias counts across
-// principals (RR-BZ4M).
-type sidebarCounts struct {
-	filterCache map[string]int // key: "list:<id>" or "kanban:<id>"
-	app         *App
-}
-
-// listCount returns the entity count for the given list, applying any
-// configured filters. Results are cached per call.
-func (c *sidebarCounts) listCount(ctx context.Context, listID string, list dataentryconfig.List) int {
-	key := "list:" + listID
-	if n, ok := c.filterCache[key]; ok {
-		return n
-	}
-	n := c.countWithFilters(ctx, list.EntityType, list.Filters)
-	c.filterCache[key] = n
-	return n
-}
-
-// kanbanCount returns the entity count for the given kanban, applying
-// any configured filters. Results are cached per call.
-func (c *sidebarCounts) kanbanCount(ctx context.Context, kanbanID string, kanban dataentryconfig.Kanban) int {
-	key := "kanban:" + kanbanID
-	if n, ok := c.filterCache[key]; ok {
-		return n
-	}
-	n := c.countWithFilters(ctx, kanban.EntityType, kanban.Filters)
-	c.filterCache[key] = n
-	return n
-}
-
-// countWithFilters returns the count of entities of the given type that
-// are visible to the requesting principal AND pass the supplied config
-// filters. Ordering is ACL → config filter → count (TKT-VMD8 AC7).
-//
-// Without config filters the count comes straight from GraphCount —
-// identical cost to the old Store.CountEntities for the AllowAll case.
-// With config filters the visible entities are loaded and filtered
-// in-memory; performance scales with the visible-set size (RR-REQW —
-// for visible sets >10k prefer pre-filtering via entity_type in nav
-// config, or file the follow-up that pushes filters into GraphQuery).
-//
-// Backend errors degrade to 0 with a warning — parity with the old
-// CountEntities error path: a broken sidebar count must not take the
-// whole sidebar down, and the list endpoint surfaces the real error.
-//
-// ReadQuery (one member-of walk reuse via the request-scoped
-// acl.Request) and the GraphQuery/GraphCount run once per nav item —
-// two lists over the same type recompute rather than share. Accepted:
-// filterCache keys on list/kanban id, not (type, filters); a
-// (type, filters)-keyed memo is the obvious upgrade if sidebar
-// latency ever warrants it.
-func (c *sidebarCounts) countWithFilters(
-	ctx context.Context, entityType string, filters []dataentryconfig.FilterConfig,
-) int {
-	rqr := readGateFromContext(ctx).ReadQuery(ctx, entityType)
-	if rqr.DenyAll {
-		return 0
-	}
-	q := store.GraphQuery{EntityType: entityType}
-	if rqr.Query != nil {
-		q = *rqr.Query
-	}
-
-	if len(filters) == 0 {
-		matched, _, err := c.app.Services().Store.GraphCount(ctx, q)
-		if err != nil {
-			slog.Warn("sidebar: GraphCount failed; count degraded to 0",
-				"entity_type", entityType, "error", err)
-			return 0
-		}
-		return matched
-	}
-
-	var entities []*entityPkg.Entity
-	for e, err := range c.app.Services().Store.GraphQuery(ctx, q) {
-		if err != nil {
-			slog.Warn("sidebar: GraphQuery failed; count degraded to 0",
-				"entity_type", entityType, "error", err)
-			return 0
-		}
-		entities = append(entities, e)
-	}
-	return len(applyFilters(entities, filters))
-}
-
-// navEntryToSidebarItem converts a navigation entry to a sidebar item with count.
-func (a *App) navEntryToSidebarItem(
-	ctx context.Context, entry dataentryconfig.NavigationEntry, counts sidebarCounts,
-) v1.SidebarItem {
-	s := a.State()
-	item := v1.SidebarItem{
-		Label: entry.Label,
-	}
-
-	switch {
-	case entry.List != "":
-		item.Href = "/list/" + entry.List
-		item.Icon = "list"
-		if list, ok := s.Cfg.Lists[entry.List]; ok {
-			count := counts.listCount(ctx, entry.List, list)
-			item.Count = &count
-		}
-	case entry.Kanban != "":
-		item.Href = "/kanban/" + entry.Kanban
-		item.Icon = "kanban"
-		if kanban, ok := s.Cfg.Kanbans[entry.Kanban]; ok {
-			count := counts.kanbanCount(ctx, entry.Kanban, kanban)
-			item.Count = &count
-		}
-	case entry.Dashboard:
-		item.Href = "/"
-		item.Icon = "dashboard"
-	case entry.Search:
-		item.Href = "/search"
-		item.Icon = "search"
-	case entry.Settings:
-		item.Href = "/settings"
-		item.Icon = "settings"
-	case entry.Action != "":
-		item.Action = entry.Action
-		// Href stays empty — frontend renders this as a button
-	}
-
-	return item
-}
 
 // --- Conflicts API ---
 
@@ -2292,24 +2225,45 @@ func conflictAuditSubject(e *entityPkg.Entity, rel *entityPkg.Relation) *audit.S
 
 // --- Documents API ---
 
-// handleV1Documents handles GET /api/v1/_documents/{docName}/{entityId}.
-// Returns JSON with rendered HTML content for Vue SPA consumption.
+// handleV1Documents handles GET /api/v1/_documents/{docName}/{entityId} and
+// GET /api/v1/_documents/{docName}. Returns JSON with rendered HTML content
+// for Vue SPA consumption.
+//
+// The two path shapes serve the two document kinds
+// (dataentryconfig.DocumentConfig): the two-segment form renders an
+// entity-anchored document, the one-segment form a standalone one. Each shape
+// REJECTS the other kind rather than inventing or ignoring an entry id — see
+// handleV1StandaloneDocument.
 func (a *App) handleV1Documents(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 		return
 	}
 
-	// Parse path: /api/v1/_documents/{docName}/{entityId}
+	// Parse path: /api/v1/_documents/{docName}[/{entityId}], then dispatch on
+	// the shape. The two branches live in separate functions so neither grows
+	// the other's guards by accident — they differ in their ACL story, not
+	// just in whether an id is present.
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/_documents/")
 	parts := strings.SplitN(path, "/", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+	if len(parts) == 1 || parts[1] == "" {
+		handleV1StandaloneDocument(a, w, r, parts[0])
+		return
+	}
+	if parts[0] == "" {
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_path", "Path must be /_documents/{docName}/{entityId}", "")
 		return
 	}
+	handleV1AnchoredDocument(a, w, r, parts[0], parts[1])
+}
 
-	docName, entityID := parts[0], parts[1]
-
+// handleV1AnchoredDocument serves GET /api/v1/_documents/{docName}/{entityId}
+// — a document declared WITH an `entity_type:`, rendered about one entity.
+//
+// Gate ordering here is load-bearing; see the comments inline. A plain
+// function taking *App for the same reason handleV1StandaloneDocument is one:
+// App sits on its plimsoll load line.
+func handleV1AnchoredDocument(a *App, w http.ResponseWriter, r *http.Request, docName, entityID string) {
 	// Both segments flow into the on-disk document cache filename
 	// (workspace/document.go). Reject anything that could escape the cache
 	// directory before any filesystem work happens.
@@ -2322,6 +2276,16 @@ func (a *App) handleV1Documents(w http.ResponseWriter, r *http.Request) {
 	docCfg, ok := a.State().Cfg.Documents[docName]
 	if !ok {
 		writeV1Error(w, r, http.StatusNotFound, "document_not_found", "Document config not found", "")
+		return
+	}
+
+	// A standalone document has no entry entity, so an entity-anchored
+	// request for one is a category error, not a document to render against
+	// the supplied id. Reject rather than silently ignoring the id.
+	if docCfg.IsStandalone() {
+		writeV1Error(w, r, http.StatusBadRequest, "document_kind_mismatch",
+			fmt.Sprintf("document %q has no entity_type; request it at /_documents/%s without an entity id",
+				docName, docName), "")
 		return
 	}
 
@@ -2344,6 +2308,21 @@ func (a *App) handleV1Documents(w http.ResponseWriter, r *http.Request) {
 	// BEFORE any rendering runs — a denied caller must never trigger the
 	// (possibly Lua) renderer.
 	if !a.gateReadOrNotFound(w, r, docCfg.EntityType, entityID) {
+		return
+	}
+
+	// A doc-level `permission:` applies IN ADDITION to the per-entity gate
+	// above — it narrows, never widens (a holder still needs to pass the
+	// entity read gate). Same uniform-404 treatment for the same reason.
+	if !gateDocumentPermission(w, r, docName, docCfg) {
+		return
+	}
+
+	// An entity-anchored document may also be elevated (TKT-Y3JVFK), in which
+	// case BOTH this and the per-entity gate above must pass. The entity gate
+	// governs the entry entity; elevation governs what the script may read
+	// BEYOND it, so neither subsumes the other.
+	if !gateElevatedDocument(w, r, a.acl, docName, docCfg) {
 		return
 	}
 
@@ -2534,185 +2513,4 @@ func sectionEntityToV1(e SectionEntityData) v1.ViewEntity {
 		v1Ent.FieldAffordances = &fa
 	}
 	return v1Ent
-}
-
-// handleV1Views handles GET /api/v1/_views/{entityType}/{entityId}.
-// Returns JSON with executed view data including entry and sections.
-//
-// View configs are looked up by entry.type. When no explicit ViewConfig
-// is registered for entityType, a default is synthesized from the
-// metamodel (see buildDefaultViewConfig) and executed through the same
-// pipeline so the response shape is identical.
-//
-//nolint:gocognit,funlen // routes the views sub-API over method and path shape; each branch is a distinct view endpoint, not shared logic to factor out.
-func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
-		return
-	}
-
-	// Parse path: /api/v1/_views/{entityType}/{entityId}
-	path := strings.TrimPrefix(r.URL.Path, "/api/v1/_views/")
-	parts := strings.SplitN(path, "/", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		writeV1Error(w, r, http.StatusBadRequest, "invalid_path", "Path must be /_views/{entityType}/{entityId}", "")
-		return
-	}
-
-	entityType, entityID := parts[0], parts[1]
-	s := a.State()
-
-	if _, ok := s.Meta.GetEntityDef(entityType); !ok {
-		writeV1Error(w, r, http.StatusNotFound, "entity_type_not_found", "Entity type not found", entityType)
-		return
-	}
-
-	// ACL gate (TKT-BNX2PN): _views is an entity-read chokepoint just like
-	// GET /{plural}/{id} — it serves _title, properties, and content body via
-	// executeView + serializeEntityForWire. Gate BEFORE executeView so a hidden
-	// id is indistinguishable from a missing one (404, no oracle) and the view
-	// pipeline never runs for a denied principal.
-	if !a.gateReadOrNotFound(w, r, entityType, entityID) {
-		return
-	}
-
-	viewCfg, ok := findViewByEntityType(s.Cfg.Views, entityType)
-	if !ok {
-		viewCfg, ok = buildDefaultViewConfig(s.Meta, entityType)
-		if !ok {
-			// Cannot happen — entity type already validated above —
-			// but handled defensively to keep the contract clear.
-			writeV1Error(w, r, http.StatusNotFound, "entity_type_not_found", "Entity type not found", entityType)
-			return
-		}
-	}
-
-	// Execute view
-	result, err := a.executeView(r.Context(), viewCfg, entityID)
-	if err != nil {
-		writeV1Error(w, r, http.StatusUnprocessableEntity, "view_execution_failed", "View execution failed", err.Error())
-		return
-	}
-
-	// Build sections
-	sections := a.buildSections(r.Context(), viewCfg.Sections, result)
-
-	// Build response
-	entityDef := s.Meta.Entities[result.Entry.Type]
-	plural := entityDef.GetPlural(result.Entry.Type)
-
-	entryRels := a.reader.outgoingRelations(r.Context(), result.Entry.ID)
-	resp := v1.ViewResponse{
-		Entry:    a.serializer.forWire(r.Context(), result.Entry, entryRels, a.Meta(), plural),
-		Sections: make([]v1.ViewSection, 0, len(sections)),
-	}
-
-	for _, sec := range sections {
-		v1Sec := v1.ViewSection{
-			Heading:      sec.Heading,
-			SectionID:    sec.SectionID,
-			Display:      sec.Display,
-			IsEmpty:      sec.IsEmpty,
-			EmptyMessage: sec.EmptyMessage,
-			IsGrouped:    sec.IsGrouped,
-			Content:      sec.Content,
-			HasContent:   sec.HasContent,
-		}
-
-		// Convert fields
-		for _, f := range sec.Fields {
-			v1Sec.Fields = append(v1Sec.Fields, v1.SectionField(f))
-		}
-
-		// Convert entities
-		for _, e := range sec.Entities {
-			v1Sec.Entities = append(v1Sec.Entities, sectionEntityToV1(e))
-		}
-
-		// Convert columns
-		for _, col := range sec.Columns {
-			v1Sec.Columns = append(v1Sec.Columns, v1.ViewColumn{
-				Property: col.Property,
-				Label:    col.Label,
-				Relation: col.Relation,
-				Link:     col.Link,
-			})
-		}
-
-		// Convert rows
-		for _, row := range sec.Rows {
-			v1Row := v1.ViewRow{
-				EntityID:   row.EntityID,
-				EntityType: row.EntityType,
-				EditFormID: row.EditFormID,
-				Content:    row.Content,
-			}
-			for _, cell := range row.Cells {
-				v1Row.Cells = append(v1Row.Cells, v1.ViewCell(cell))
-			}
-			v1Sec.Rows = append(v1Sec.Rows, v1Row)
-		}
-
-		// Convert groups
-		for _, grp := range sec.Groups {
-			v1Grp := v1.ViewGroup{
-				GroupName: grp.GroupName,
-			}
-			for _, row := range grp.Rows {
-				v1Row := v1.ViewRow{
-					EntityID:   row.EntityID,
-					EntityType: row.EntityType,
-					EditFormID: row.EditFormID,
-					Content:    row.Content,
-				}
-				for _, cell := range row.Cells {
-					v1Row.Cells = append(v1Row.Cells, v1.ViewCell(cell))
-				}
-				v1Grp.Rows = append(v1Grp.Rows, v1Row)
-			}
-			for _, e := range grp.Entities {
-				v1Grp.Entities = append(v1Grp.Entities, sectionEntityToV1(e))
-			}
-			v1Sec.Groups = append(v1Sec.Groups, v1Grp)
-		}
-
-		resp.Sections = append(resp.Sections, v1Sec)
-	}
-
-	resp.Mentions = collectMentions(
-		r.Context(), a.store, a.viewReader, s.Meta, viewContentBlobs(result.Entry, sections)...)
-
-	writeV1JSON(w, http.StatusOK, resp)
-}
-
-// viewContentBlobs gathers every markdown body that will be rendered by
-// the SPA for a single view response: the entry's content, every section's
-// own content, and every entity card's content (sections with display
-// "content"/"cards" surface related entities, each carrying its own
-// `Content` markdown that EntityDetail.vue renders with the same
-// `refResolver`). Used to scope the mentions scan to text the user
-// actually sees on this screen.
-func viewContentBlobs(entry *entityPkg.Entity, sections []SectionData) []string {
-	blobs := make([]string, 0, 1+len(sections))
-	if entry != nil && entry.Content != "" {
-		blobs = append(blobs, entry.Content)
-	}
-	for _, sec := range sections {
-		if sec.HasContent && sec.Content != "" {
-			blobs = append(blobs, sec.Content)
-		}
-		for _, ent := range sec.Entities {
-			if ent.HasContent && ent.Content != "" {
-				blobs = append(blobs, ent.Content)
-			}
-		}
-		for _, grp := range sec.Groups {
-			for _, ent := range grp.Entities {
-				if ent.HasContent && ent.Content != "" {
-					blobs = append(blobs, ent.Content)
-				}
-			}
-		}
-	}
-	return blobs
 }

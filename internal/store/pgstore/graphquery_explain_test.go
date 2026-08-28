@@ -26,7 +26,7 @@ import (
 // The assertion is index-positive (the index name appears in the
 // plan) rather than seq-scan-negative — the planner is allowed to
 // pick seq scans for the outer SELECT at small scale when its
-// selectivity estimates favour them. Only the per-iteration CTE
+// selectivity estimates favor them. Only the per-iteration CTE
 // recursion needs to be index-backed; that's where blast radius is
 // non-linear in graph size.
 //
@@ -51,7 +51,7 @@ func TestGraphQueryExplainUsesIndex(t *testing.T) {
 		id := fmt.Sprintf("TKT-%06d", i)
 		require.NoError(t, s.CreateEntity(ctx, entity.New(id, "ticket")))
 		if i%10 == 0 {
-			_, err := s.CreateRelation(ctx, "engineering", "owns", id, nil)
+			_, err = s.CreateRelation(ctx, "engineering", "owns", id, nil)
 			require.NoError(t, err)
 		}
 	}
@@ -76,9 +76,48 @@ func TestGraphQueryExplainUsesIndex(t *testing.T) {
 
 	// The recursive CTE must use the composite index for the
 	// per-iteration rel_type lookup.
-	if !strings.Contains(plan, "Index Scan using relations_type_from_idx") &&
-		!strings.Contains(plan, "Bitmap Index Scan on relations_type_from_idx") {
-		t.Errorf("composite index relations_type_from_idx is not used in the plan; the CTE will degrade per-iteration:\n%s", plan)
+	// Either access method is fine; both are index-backed.
+	indexed := strings.Contains(plan, "Index Scan using relations_type_from_idx") ||
+		strings.Contains(plan, "Bitmap Index Scan on relations_type_from_idx")
+	if !indexed {
+		t.Errorf("composite index relations_type_from_idx is not used in the plan; "+
+			"the CTE will degrade per-iteration:\n%s", plan)
+	}
+}
+
+func TestGraphQueryExplainUsesDerivedStaticQueryIndex(t *testing.T) {
+	const n = 5000
+	pool := newScopedPool(t)
+	s, err := pgstore.New(pool)
+	require.NoError(t, err)
+	ctx := context.Background()
+	spec := []store.DerivedObjectSpec{{
+		Kind: store.DerivedQueryIndex, Type: "task", Properties: []string{"status"},
+	}}
+	_, err = s.Reconcile(ctx, spec, store.ReconcileOptions{})
+	require.NoError(t, err)
+
+	for i := range n {
+		status := "closed"
+		if i == n-1 {
+			status = "open"
+		}
+		e := entity.New(fmt.Sprintf("TASK-%06d", i), "task")
+		e.Properties["status"] = status
+		require.NoError(t, s.CreateEntity(ctx, e))
+	}
+	_, err = pool.Exec(ctx, "ANALYZE entities")
+	require.NoError(t, err)
+
+	plan := explainGraphQuery(t, pool, store.GraphQuery{
+		EntityType: "task",
+		Props: []store.PropPredicate{{
+			Property: "status", Op: store.PropEqual, Value: "open", Scalar: true,
+		}},
+	})
+	t.Logf("plan:\n%s", plan)
+	if !strings.Contains(plan, "rela_derived_query__") {
+		t.Fatalf("derived static-query index is not used:\n%s", plan)
 	}
 }
 

@@ -26,10 +26,24 @@ override:
   - path: ^internal/visibility$
     threshold: 85
 
+  # Outbound mail (TKT-332QZY). Both are security-relevant — mailrender is
+  # the sanitize/inline pipeline whose ORDER is a security property, and mail
+  # owns header-injection validation — so they are pinned above the default
+  # floor rather than left to it.
+  - path: ^internal/mailrender$
+    threshold: 85
+  - path: ^internal/mail$
+    threshold: 85
+
   # Below the default floor — explicit lower floors so the gap is
   # visible. Raise these as tests are added; don't lower without reason.
   - path: ^internal/git$
     threshold: 30
+  # The seam and its memory backend are well covered; the postgres backend is
+  # build-tagged and only compiles under -tags postgres, so it reads as
+  # uncovered in the default run — same situation as pgstore.
+  - path: ^internal/jobs$
+    threshold: 75
   - path: ^internal/cli$
     threshold: 30
   - path: ^internal/search$
@@ -64,6 +78,8 @@ override:
     threshold: 70
   - path: ^internal/lua$
     threshold: 80
+  - path: ^internal/imgproc$
+    threshold: 78 # native image decode/orient/re-encode; security-critical, keep well-covered
 
 # Exclude packages that are not meaningful to coverage-check
 exclude:
@@ -72,6 +88,12 @@ exclude:
     - ^internal/testutil       # test helpers
     - ^internal/store/storetest # shared conformance test kit (exercised via backends)
     - ^internal/visibility/visibilitytest # shared conformance test kit (exercised via visibility + future wirings)
+    - ^internal/state/statetest # shared conformance test kit (exercised via FSKV + pgstore's StateKV)
+    - ^internal/jobs/jobstest # shared conformance test kit (exercised via the memory + postgres queues)
+    - ^internal/mail/mailtest # shared conformance test kit (exercised via the smtp + memory transports)
+    - ^internal/schedulerstate/schedulerstatetest # shared conformance test kit (exercised via scheduler-state backends)
+    - ^internal/userstate/userstatetest # shared conformance test kit (exercised via mem/kv/pgstore backends)
+    - ^internal/appbuild/backendtest # build-tagged test backend supplier; the postgres half only compiles under -tags postgres
     - ^internal/store/pgstore  # covered by the dedicated postgres CI job (needs a live DB; skipped without RELA_TEST_DATABASE_URL)
     - ^internal/entitymanager/entitymanagertest # shared test doubles (PanicOnUse etc.), exercised via consumers
     - ^internal/store/graphquerynaive # exercised through every backend's graphquery tests; cross-package coverage isn't attributed without -coverpkg, so its own number reads 0

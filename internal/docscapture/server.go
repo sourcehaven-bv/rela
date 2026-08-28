@@ -87,7 +87,7 @@ func standUp(ctx context.Context, projectDir string, seed []docs.SeedOp) (*proje
 	// Seed the temp project's store (raw — no entitymanager, so automations can't
 	// mutate the fixture); the same ops already ran against the in-mem store.
 	if serr := docs.ApplySeed(ctx, svc.Store(), seed); serr != nil {
-		svc.Close()
+		svc.Close() //nolint:contextcheck // teardown is not request-scoped; Close takes no ctx
 		_ = os.RemoveAll(tmp)
 		return nil, fmt.Errorf("seed temp project: %w", serr)
 	}
@@ -99,9 +99,10 @@ func standUp(ctx context.Context, projectDir string, seed []docs.SeedOp) (*proje
 		svc.EntityManager(), svc.Searcher(), svc.VisibleSearcher(), svc.ACL(),
 		dataentry.NopFieldVerdictResolver{},
 		svc.Audit(),
+		svc.State(),
 	)
 	if err != nil {
-		svc.Close()
+		svc.Close() //nolint:contextcheck // teardown is not request-scoped; Close takes no ctx
 		_ = os.RemoveAll(tmp)
 		return nil, fmt.Errorf("build data-entry app: %w", err)
 	}
@@ -140,7 +141,13 @@ func copyProjectSchema(src, dst string) error {
 		return err
 	}
 	// Files and dirs that carry schema/config/presentation (NOT entities/relations).
-	for _, name := range []string{"metamodel.yaml", "data-entry.yaml", "acl.yaml", "schedules.yaml"} {
+	// Both schema names are listed; copyIfExists skips whichever is absent.
+	// Literals rather than the project package constants: arch-lint forbids
+	// docscapture -> project, and a local type here already binds the name.
+	for _, name := range []string{
+		"schema.yaml", "metamodel.yaml",
+		"data-entry.yaml", "acl.yaml", "schedules.yaml",
+	} {
 		if err := copyIfExists(filepath.Join(src, name), filepath.Join(dst, name)); err != nil {
 			return err
 		}
@@ -155,6 +162,12 @@ func copyProjectSchema(src, dst string) error {
 	return nil
 }
 
+// copyIfExists copies src to dst, treating a missing src as a no-op.
+//
+// Both paths are built by copyProjectSchema from a fixed set of literal
+// filenames: dst under a temp dir this process just created, src under the
+// operator's --project root. No caller- or manual-supplied string reaches
+// either, so there is no traversal surface here.
 func copyIfExists(src, dst string) error {
 	data, err := os.ReadFile(src)
 	if os.IsNotExist(err) {
@@ -163,6 +176,8 @@ func copyIfExists(src, dst string) error {
 	if err != nil {
 		return err
 	}
+	// #nosec G703 -- dst is filepath.Join(<os.MkdirTemp dir>, <literal name>);
+	// the only non-constant part is a temp dir this process created.
 	return os.WriteFile(dst, data, 0o644)
 }
 

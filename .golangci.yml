@@ -125,15 +125,38 @@ linters:
         - G204
         - G304
         - G306
-        # Taint-analysis checks (gosec v2) surface hardening work that
-        # belongs in FEAT-ESLP (data-entry server hardening). Deferring
+        # Remaining taint-analysis checks (gosec v2) surface hardening work
+        # that belongs in FEAT-ESLP (data-entry server hardening). Deferring
         # these so the v2 migration doesn't block on threat-model decisions;
         # track the work under that feature instead.
-        - G702  # command injection via taint analysis
-        - G703  # path traversal via taint analysis
-        - G704  # SSRF via taint analysis
-        - G705  # XSS via taint analysis
-        - G706  # log injection via taint analysis
+        #
+        # G702 is ENABLED: every external-command site has been reviewed and
+        # is either argv-array (no shell) or a shell snippet that comes from
+        # the operator-authored data-entry.yaml rather than request input.
+        # The reviewed exceptions carry narrow, per-line `#nosec G702`
+        # comments naming their trust boundary — see internal/dataentry
+        # commands.go and document.go. Keep it enabled: it is what catches a
+        # new exec site that splices request data into a shell.
+        #
+        # G703 (path traversal) is ENABLED: its findings are resolved, and the
+        # remaining safe-by-design write sites carry narrow `#nosec G703`
+        # annotations naming their trust boundary. Do not re-add it here — a
+        # new G703 finding is a real path-containment question.
+        #
+        # G704 (SSRF) is ENABLED: its two findings were reviewed and are
+        # operator-configured destinations (.rela/ai.yaml base_url; the
+        # `rela sync --remote` flag), annotated with narrow nolint
+        # directives naming the trust boundary at each call site.
+        #
+        # G705 (XSS) is ENABLED: the data-entry HTML/feed sinks were audited
+        # and fixed — the entity-help fragment now renders through
+        # html/template (contextual auto-escaping) instead of fmt.Fprintf,
+        # and the calendar feeds serve escaped non-HTML bodies under nosniff.
+        # Remaining G705 sites carry a narrow #nosec with the reason.
+        #
+        # G706 (log injection) is ENABLED — it is enforced everywhere except
+        # internal/dataentry, which is excluded by path below with a pinned
+        # structural invariant. See that exclusion for the rationale.
       config:
         global:
           audit: true
@@ -251,6 +274,63 @@ linters:
       - linters:
           - usetesting
         path: internal/testutil/.*\.go
+      # G706 (log injection) in internal/dataentry: false positives.
+      #
+      # gosec's taint analysis treats slog.Info/Warn/Error/Debug as a sink and
+      # flags any request-derived value reaching one, without distinguishing the
+      # log MESSAGE from a structured ATTRIBUTE, and without following the value
+      # into the handler that encodes it. Injection requires an attacker newline
+      # to reach the output unescaped; neither is possible here:
+      #
+      #   1. Every slog message in the package is a compile-time constant —
+      #      user data travels only as a key/value attribute. Enforced by
+      #      TestSlogMessagesAreConstant (internal/dataentry/loginjection_test.go),
+      #      which fails the build on a dynamic message.
+      #   2. Attribute values are escaped by slog.NewTextHandler, installed at
+      #      every entry point (internal/cli/kong.go, cmd/rela-server,
+      #      cmd/rela-desktop). It quotes values containing control characters
+      #      via strconv.Quote — which gosec itself accepts as a G706 sanitizer,
+      #      but cannot see through the handler indirection. Pinned by
+      #      TestSlogTextHandlerEscapesNewlines.
+      #
+      # This is a path exclusion rather than ~20 //nosec comments so the
+      # reasoning lives in one place and the guarantee is tested, not asserted.
+      # If either test fails, fix the log call — do not widen this exclusion.
+      - linters:
+          - gosec
+        path: internal/dataentry/
+        text: G706
+      # contextcheck in internal/dataentry write handlers: false positives from
+      # the provision re-stamp seam (TKT-ANUJDS).
+      #
+      # The write handlers acquire writeMu and re-stamp the request context via
+      # enterWrite: `r = h.enterWrite(r)`, where the new context is derived from
+      # r.Context() (principal.With + acl.WithRequest + withReadGate — all
+      # context.WithValue). The context MUST ride on r, not just thread to the
+      # manager, because the downstream read gate is consulted through helpers
+      # (h.gateRead, the serializer/reader) that read r.Context() internally; a
+      # bare threaded context would leave those reads on the stale unmatched
+      # principal and redact the just-provisioned entity from its own response.
+      #
+      # contextcheck flags every r.Context() after the reassignment as
+      # "non-inherited" — it cannot trace the derivation through the *http.Request
+      # swap — and propagates that up to the dispatchers that call these handlers
+      # (api_v1.go, sync.go). The seam is pinned structurally by
+      # TestProvisionSeam_EveryWriteHandlerUsesEnterWrite and end-to-end by the
+      # provision e2e tests, so the guarantee is tested, not asserted. Path
+      # exclusion rather than ~15 //nolint comments so the reasoning lives in one
+      # place. If those tests fail, fix the seam — do not widen this exclusion.
+      #
+      # Two scopes: the write-handler files (where the reassignment happens) are
+      # path-excluded; the dispatchers/tests that call them are message-scoped to
+      # the specific enterWrite handlers so the rest of those files stays checked.
+      - linters:
+          - contextcheck
+        path: internal/dataentry/(write_handler|actions|sync_handler|sync_handlers|attachment_handler|handlers_attachment)\.go
+      - linters:
+          - contextcheck
+        path: internal/dataentry/(api_v1|sync|acl_write_test|handlers_attachment_write_test)\.go
+        text: handleV1(CreateEntity|UpdateEntity|DeleteEntity|CreateRelation|UpdateRelation|DeleteRelation|CloneEntity|Action|ConflictResolve|PutAttachment|DeleteAttachment)|handleSyncDelete|handleSyncPut
       - linters:
           - dupl
           - errcheck

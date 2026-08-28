@@ -86,7 +86,7 @@ func TestBuildSectionEntityData_PopulatesPropsAndFieldVerdicts(t *testing.T) {
 		{Property: "title"},
 		{Property: "status"},
 	}
-	sed := app.buildSectionEntityData(context.Background(), e, secFields, eDef)
+	sed := app.views.buildSectionEntityData(context.Background(), e, secFields, eDef, "")
 
 	// Props carries the typed values.
 	if !reflect.DeepEqual(sed.Props, map[string]any{"title": "First", "status": "open"}) {
@@ -119,7 +119,7 @@ func TestBuildSectionEntityData_HiddenAbsentFromBothMaps(t *testing.T) {
 		Properties: map[string]any{"title": "First", "status": "open"},
 	}
 	eDef, _ := st.Meta.GetEntityDef(e.Type)
-	sed := app.buildSectionEntityData(context.Background(), e, nil, eDef)
+	sed := app.views.buildSectionEntityData(context.Background(), e, nil, eDef, "")
 	if _, ok := sed.Props["status"]; ok {
 		t.Errorf("hidden 'status' must not appear in Props; got %+v", sed.Props)
 	}
@@ -144,7 +144,7 @@ func TestBuildSectionEntityData_KeySetInvariant(t *testing.T) {
 		},
 	}
 	eDef, _ := st.Meta.GetEntityDef(e.Type)
-	sed := app.buildSectionEntityData(context.Background(), e, nil, eDef)
+	sed := app.views.buildSectionEntityData(context.Background(), e, nil, eDef, "")
 
 	hidden := app.affordances.hiddenProperties(context.Background(), e)
 	for k := range sed.Props {
@@ -215,5 +215,39 @@ func TestSectionEntityToV1_EmptyFieldVerdicts_EmitsPresentButEmpty(t *testing.T)
 	}
 	if len(*got.FieldAffordances) != 0 {
 		t.Errorf("*FieldAffordances: got %+v, want empty map", *got.FieldAffordances)
+	}
+}
+
+// TestBuildSectionEntityData_LabelIsAuthoredNeverDerived pins DEC-6C1NAA for
+// server-rendered view sections. This path used to fill an empty label with
+// titleCase(f.Property) — an English orthographic guess in a language-neutral
+// metamodel. It now shows the raw property name, and an authored label wins.
+//
+// Note the derivation was previously untested here entirely, which is part of
+// why BUG-8N2WT2 went unnoticed.
+func TestBuildSectionEntityData_LabelIsAuthoredNeverDerived(t *testing.T) {
+	app := testViewApp()
+	st := app.State()
+	e := &entity.Entity{
+		ID:         "TKT-001",
+		Type:       "ticket",
+		Properties: map[string]any{"title": "First", "status": "open"},
+	}
+	eDef, _ := st.Meta.GetEntityDef(e.Type)
+
+	secFields := []ViewSectionField{
+		{Property: "title"},                         // no label -> raw
+		{Property: "status", Label: "Eigen status"}, // authored -> preserved
+	}
+	sed := app.views.buildSectionEntityData(context.Background(), e, secFields, eDef, "")
+
+	if len(sed.Fields) != 2 {
+		t.Fatalf("Fields: got %d, want 2", len(sed.Fields))
+	}
+	if got := sed.Fields[0].Label; got != "title" {
+		t.Errorf("unlabelled field: got Label %q, want the raw property %q", got, "title")
+	}
+	if got := sed.Fields[1].Label; got != "Eigen status" {
+		t.Errorf("authored label: got %q, want %q", got, "Eigen status")
 	}
 }

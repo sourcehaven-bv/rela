@@ -18,7 +18,7 @@ const DATE_ONLY_RE = /^(\d{4})-(\d{2})-(\d{2})$/
 // `2024-01-15` renders as Jan 15 in every timezone, not Jan 14
 // in zones west of UTC. Other formats (ISO datetime, etc.) fall
 // through to the standard Date constructor.
-function parseDate(value: string): Date {
+export function parseDate(value: string): Date {
   const m = DATE_ONLY_RE.exec(value)
   if (m) {
     const y = Number(m[1])

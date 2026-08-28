@@ -43,6 +43,12 @@ type EntityManager interface {
 	// The caller passes the modified entity; the manager detects changes.
 	UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.UpdateResult, error)
 
+	// PatchEntity applies a targeted set of property changes, preserving
+	// everything the patch does not name. Prefer this over UpdateEntity for
+	// any partial write: the caller never holds the whole entity, so it
+	// cannot erase properties it could not read (TKT-80EWGM).
+	PatchEntity(ctx context.Context, id string, p entity.Patch) (*entity.UpdateResult, error)
+
 	// DeleteEntity removes an entity and optionally cascades to its relations.
 	DeleteEntity(ctx context.Context, id string, cascade bool) (*entity.DeleteResult, error)
 

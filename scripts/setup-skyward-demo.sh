@@ -48,8 +48,8 @@ if [ -f "$SCRIPT_DIR/../bin/rela" ]; then
     cp "$SCRIPT_DIR/../bin/rela" .rela/bin/
 fi
 
-# metamodel.yaml
-cat > metamodel.yaml << 'METAMODEL_EOF'
+# schema.yaml
+cat > schema.yaml << 'METAMODEL_EOF'
 version: "1.0"
 
 types:

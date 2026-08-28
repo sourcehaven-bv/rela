@@ -25,6 +25,21 @@ const displayValue = computed(() => {
   return formatDate(stringValue.value) ?? stringValue.value
 })
 
+// `<input type="date">` accepts ONLY `YYYY-MM-DD` and silently renders blank
+// for anything else — including the RFC3339 timestamps the API returns for
+// `date` properties (`2026-09-15T00:00:00Z`). Binding the raw string therefore
+// showed an empty input over a stored value, which reads as "my data is gone".
+// Narrow to the date part; pass through anything already in the right shape,
+// and leave un-parseable input alone so the user's in-progress typing is never
+// swallowed.
+const inputValue = computed(() => {
+  const raw = stringValue.value
+  if (!raw) return ''
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw
+  const match = /^(\d{4}-\d{2}-\d{2})T/.exec(raw)
+  return match ? match[1] : raw
+})
+
 function onInput(event: Event) {
   emit('update:modelValue', (event.target as HTMLInputElement).value)
 }
@@ -37,7 +52,7 @@ function onInput(event: Event) {
     :id="id"
     type="date"
     :class="{ 'is-error': !!error }"
-    :value="stringValue"
+    :value="inputValue"
     :placeholder="placeholder"
     :disabled="disabled"
     @input="onInput"
@@ -58,7 +73,9 @@ input {
 input:focus {
   outline: none;
   border-color: var(--accent-color, #6366f1);
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
+  box-shadow:
+    0 0 0 2px var(--focus-ring-gap),
+    0 0 0 4px var(--focus-ring);
 }
 
 input:disabled {
@@ -71,6 +88,6 @@ input.is-error {
 }
 
 input.is-error:focus {
-  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.1);
+  box-shadow: 0 0 0 2px var(--error-ring);
 }
 </style>

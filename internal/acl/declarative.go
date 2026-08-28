@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
+	"sync"
 
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -30,13 +32,19 @@ import (
 //     declared permission. See [RoleRelationDef.RequiresPermission].
 //   - **Unstamped principals are hard-denied.** A principal with
 //     User="" / User="unknown" or Tool="" / Tool="unknown" fails the
-//     [ForPrincipal] check; the deny surfaces as RuleKind="role-grant"
+//     [Declarative.ForPrincipal] check; the deny surfaces as RuleKind="role-grant"
 //     with a Reason that names ErrUnstampedPrincipal.
 type Declarative struct {
 	policy          *Policy
 	graph           Graph              // required: NewDeclarative rejects nil
 	graphQueryer    store.GraphQueryer // required: needed by Request.PermitsRead / PermitsReadMany
 	principalLookup PrincipalLookup    // optional: required only when principal_property lookup is enabled
+
+	// provisionWarn logs "provision not yet implemented" at most once per
+	// Declarative (i.e. per policy load), so a `unmatched_principal: provision`
+	// deployment isn't silently treated as anonymous but also isn't a per-request
+	// log flood. Remove when provision lands (its own ticket).
+	provisionWarn sync.Once
 }
 
 // DeclarativeOption configures optional [Declarative] collaborators.
@@ -170,6 +178,40 @@ func (d *Declarative) Policy() *Policy { return d.policy }
 // [Request.AuthorizeWrite] which dispatches on Subject variant. An
 // unstamped principal short-circuits to a structured deny.
 func (d *Declarative) AuthorizeWrite(ctx context.Context, req WriteRequest) Decision {
+	// unmatched_principal gate: a verified principal that resolved to no user
+	// entity (flagged by the data-entry middleware) is denied its writes when
+	// the policy is `reject`. This runs before role evaluation because it is a
+	// deployment posture ("unknown identities don't mutate"), not a role
+	// decision — and because it is the single write-authz point every entity
+	// write reaches, so it covers CRUD, sync, action, and attachment writes
+	// uniformly (TKT-0C3II2).
+	if UnmatchedVerifiedFrom(ctx) {
+		switch d.policy.effectiveUnmatchedPrincipal() {
+		case UnmatchedReject:
+			return Decision{
+				Allow:    false,
+				RuleKind: "unmatched-principal",
+				RuleID:   UnmatchedReject,
+				Reason:   "verified principal resolves to no user entity; writes are rejected",
+			}
+		case UnmatchedProvision:
+			// Provision is implemented at the data-entry write seam (maybeProvision,
+			// TKT-ANUJDS): a successful provision re-stamps ctx to the resolved
+			// entity and CLEARS this flag (acl.WithMatchedVerified), so the write
+			// never reaches here still-flagged. Arriving here under provision means
+			// provisioning did NOT fire or failed — a non-data-entry transport (this
+			// gate is transport-agnostic), or a create/re-resolve error the seam
+			// logged. Fall through to normal role evaluation (the principal's
+			// asserted roles still apply, TKT-RP3X3Q); warn once so a stuck
+			// provision deployment is visible without a per-request flood.
+			d.provisionWarn.Do(func() {
+				slog.Warn("acl: unmatched_principal: provision reached the write-authz gate " +
+					"still unmatched; provisioning did not fire (non-data-entry transport) or " +
+					"failed (see earlier provision warnings) — treating as anonymous")
+			})
+		}
+	}
+
 	r, err := d.ForPrincipal(principal.From(ctx))
 	if err != nil {
 		return Decision{

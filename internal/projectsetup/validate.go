@@ -8,6 +8,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Sourcehaven-BV/rela/internal/computed"
 	"github.com/Sourcehaven-BV/rela/internal/conditionlint"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -49,12 +50,16 @@ func ValidateWithFS(startDir string, fs storage.FS) (*ValidateResult, error) {
 	result := &ValidateResult{}
 
 	// Validate metamodel
-	mm, _, err := metamodel.Load(ctx.MetamodelPath, fs)
+	mm, _, err := metamodel.Load(ctx.SchemaPath, fs)
 	if err != nil {
 		result.MetamodelError = err
 	} else {
-		result.MetamodelValid = true
-		result.Metamodel = mm
+		if _, compileErr := computed.Compile(mm); compileErr != nil {
+			result.MetamodelError = compileErr
+		} else {
+			result.MetamodelValid = true
+			result.Metamodel = mm
+		}
 	}
 
 	// Validate data-entry.yaml if it exists
@@ -103,6 +108,15 @@ func validateDataEntry(path string, mm *metamodel.Metamodel, fs storage.FS) erro
 	// `rela validate` time instead of silently misbehaving in the browser.
 	if issues := conditionlint.Lint(&cfg, mm); len(issues) > 0 {
 		return fmt.Errorf("condition errors:\n  %s", strings.Join(issues, "\n  "))
+	}
+
+	// Next-action `condition:` expressions are compiled here for real — they
+	// are evaluated server-side by the same Env, so this is authoritative
+	// rather than a sanity check. Failing at validate/startup is the point: a
+	// condition that does not compile would otherwise suppress its suggestion
+	// forever with no diagnostic.
+	if _, issues := conditionlint.CompileNextActions(&cfg, mm); len(issues) > 0 {
+		return fmt.Errorf("next-action condition errors:\n  %s", strings.Join(issues, "\n  "))
 	}
 	return nil
 }

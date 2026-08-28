@@ -44,7 +44,7 @@ export function useEntityIDControls(
   }
 
   // Auto-reset when the entity type identity changes — DynamicForm and
-  // InlineCreateModal can be reused across form-id navigations without
+  // the inline-create modal can be reused across form-id navigations without
   // remounting, which would otherwise leave stale manualId/selectedPrefix
   // visible against the new type. See code-review #9 (RR-…).
   watch(

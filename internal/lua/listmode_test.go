@@ -142,6 +142,69 @@ func TestDocumentMode_EntryIDStillPresent(t *testing.T) {
 	}
 }
 
+// TestStandaloneDocumentMode_EntryIDAbsent is the standalone-document sibling
+// of TestListDocumentMode_EntryIDAbsent (TKT-M1AX6P): a document declared
+// without an entity_type has no entry entity, so entry_id must be Lua nil for
+// the same truthiness reasons.
+func TestStandaloneDocumentMode_EntryIDAbsent(t *testing.T) {
+	t.Parallel()
+
+	ws := newMockWorkspace(t)
+	var buf bytes.Buffer
+	r := NewReader(ws.readDeps(t.TempDir()), &buf, WithStandaloneDocumentMode("sales_review"))
+	defer r.Close()
+
+	if err := r.RunString(`
+print("mode=" .. rela.mode)
+print("id=" .. rela.document.id)
+print("type=" .. type(rela.document.entry_id))
+print("guard=" .. tostring(rela.document.entry_id ~= nil))
+print("default=" .. (rela.document.entry_id or "fallback"))
+`); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	got := buf.String()
+	for _, want := range []string{
+		"mode=document",
+		"id=sales_review",
+		"type=nil",
+		"guard=false",
+		"default=fallback",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in output:\n%s", want, got)
+		}
+	}
+}
+
+// TestStandaloneDocumentMode_NoListBindings pins that a standalone document
+// gets none of the list-render row/query surface — it has no driving list, and
+// exposing empty row accessors would invite scripts to iterate nothing.
+func TestStandaloneDocumentMode_NoListBindings(t *testing.T) {
+	t.Parallel()
+
+	ws := newMockWorkspace(t)
+	var buf bytes.Buffer
+	r := NewReader(ws.readDeps(t.TempDir()), &buf, WithStandaloneDocumentMode("sales_review"))
+	defer r.Close()
+
+	if err := r.RunString(`
+print("rows=" .. type(rela.document.rows))
+print("query=" .. type(rela.document.query))
+print("list_id=" .. type(rela.document.list_id))
+`); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	got := buf.String()
+	for _, want := range []string{"rows=nil", "query=nil", "list_id=nil"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in output:\n%s", want, got)
+		}
+	}
+}
+
 // TestListDocumentMode_RowAccess covers row(i) bounds and 1-based indexing.
 func TestListDocumentMode_RowAccess(t *testing.T) {
 	t.Parallel()

@@ -142,18 +142,16 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	// app.affordances being rebound below.
 	gatedReader := lateGatedReader{app: app}
 	app.validator = validator.New(gatedReader, svc.Meta(), lua.ReadDeps{
-		VisibleReader:  gatedReader,
-		WritePrepStore: svc.Store(),
-		Tracer:         lateGatedTracer{app: app},
-		Searcher:       svc.Searcher(),
-		Meta:           svc.Meta(),
-		ProjectRoot:    paths.Root,
+		VisibleReader: gatedReader,
+		Tracer:        lateGatedTracer{app: app},
+		Searcher:      svc.Searcher(),
+		Meta:          svc.Meta(),
+		ProjectRoot:   paths.Root,
 	})
 	app.analyze = analyzeService{reads: gatedReader, relCounts: svc.Store(), tracer: lateGatedTracer{app: app}, validator: app.validator}
 	app.templater = svc.Templater()
 	app.cfgLoader = svc.Config()
 	app.kv = svc.State()
-	app.userState = userStateStore{kv: svc.State()}
 	// logo + palette stores over the same kv; fresh fixtures have nothing on
 	// disk so the loads can't error (nil-returns match production's clean-boot
 	// path). Callers that need a specific project palette resolved re-wire
@@ -167,7 +165,16 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	// handler. Script engine can be the real one (tests that use script:
 	// configs will need to seed scripts on disk).
 	if app.scriptEngine != nil {
-		app.documents = newDocumentService(app.store, app.kv, "/", app.scriptEngine, app.luaWriteDeps)
+		// Elevation wired exactly as production does (NewApp): an elevated
+		// document test that got a nil bundle here would silently render
+		// WITHOUT bypass_acl and the test would pass for the wrong reason.
+		app.documents = newDocumentService(app.store, app.kv, "/", app.scriptEngine, app.luaWriteDeps,
+			func() documentElevation {
+				return documentElevation{
+					Reader:   visibility.Unrestricted(app.store),
+					Recorder: elevationRecorder(app.auditSink),
+				}
+			})
 	}
 	app.affordances = affordanceService{
 		acl:                func() acl.ACL { return app.acl },
@@ -183,10 +190,24 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	// on nil args, which the literals above cannot produce — same clean-boot
 	// swallow as the logo/palette stores.
 	app.viewReader, _ = visibility.NewPolicyReader(ctxRowGate{}, appRedactor(app), svc.Store())
-	// Rebuild the sync handler over the rebound store/manager. writeMu is App's
-	// own, so sync writes serialize with the other mutation handlers just as in
-	// production.
-	app.sync = newSyncHandler(svc.Store(), svc.EntityManager(), &app.writeMu)
+	// Rebuild the sync handler (manifest-only) over the rebound store. The record
+	// write path was retired in TKT-8P1TM7, so there is no writeMu/provision here.
+	app.sync = newSyncHandler(svc.Store())
+	// viewsHandler mirrors production wiring (see NewApp): fixed service
+	// handles by value, schema/services closures, and App's shared read gate.
+	app.views = &viewsHandler{
+		schema:      app.State,
+		store:       svc.Store(),
+		reader:      app.reader,
+		serializer:  app.serializer,
+		affordances: app.affordances,
+		viewReader:  app.viewReader,
+		services:    app.Services,
+		logo:        app.logo,
+		gateRead:    app.gateReadOrNotFound,
+		// Late-bound, as in NewApp: tests reassign app.acl after construction.
+		aclImpl: func() acl.ACL { return app.acl },
+	}
 	// commandHandler holds closures over App methods, which read the fields
 	// rebound above — so it stays valid after this rebind. (Rebuilt rather than
 	// relying on a nil zero value, since newHandlerTestApp bypasses NewApp.)
@@ -194,7 +215,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		schema:      app.State,
 		services:    app.Services,
 		projectRoot: app.ProjectRoot,
-		executeView: app.executeView,
+		executeView: app.views.executeView,
 		// Late-bound like production: ACL-gating tests reassign app.acl after
 		// this rebind.
 		aclImpl: func() acl.ACL { return app.acl },
@@ -214,6 +235,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		fields:     func() FieldVerdictResolver { return app.fieldResolver },
 		gateRead:   app.gateReadOrNotFound,
 		writeMu:    &app.writeMu,
+		provision:  newProvisionSeam(app),
 	}
 
 	// Export handler over the app's current services (mirrors NewApp).
@@ -245,6 +267,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		fullScriptDetail:   app.allowFullScriptDetail,
 		paths:              paths,
 		writeMu:            &app.writeMu,
+		provision:          newProvisionSeam(app),
 	}
 }
 
@@ -254,7 +277,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 // inject a fake manifest/apply source must call this so the handler re-resolves
 // against the swapped store.
 func rebindSyncHandler(app *App) {
-	app.sync = newSyncHandler(app.store, app.entityManager, &app.writeMu)
+	app.sync = newSyncHandler(app.store)
 }
 
 // rebindVisibleSearcher re-derives the generic visible-search wrapper

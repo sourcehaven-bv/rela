@@ -26,6 +26,7 @@ type recordedExec struct {
 	path      string
 	newEntity *entity.Entity
 	oldEntity *entity.Entity
+	caps      lua.Capabilities
 }
 
 func (r *recordingScriptExecutor) ExecuteCode(_ context.Context, code string, _ lua.WriteDeps, newEntity, oldEntity *entity.Entity) error {
@@ -35,6 +36,22 @@ func (r *recordingScriptExecutor) ExecuteCode(_ context.Context, code string, _ 
 
 func (r *recordingScriptExecutor) ExecuteFile(_ context.Context, path string, _ lua.WriteDeps, newEntity, oldEntity *entity.Entity) error {
 	r.fileCalls = append(r.fileCalls, recordedExec{path: path, newEntity: newEntity, oldEntity: oldEntity})
+	return r.err
+}
+
+// The WithCapabilities variants are what LuaScriptRunner actually calls
+// (TKT-YH52OM); they record the grant alongside the arguments.
+func (r *recordingScriptExecutor) ExecuteCodeWithCapabilities(_ context.Context, code string,
+	_ lua.WriteDeps, newEntity, oldEntity *entity.Entity, caps lua.Capabilities) error {
+	r.codeCalls = append(r.codeCalls,
+		recordedExec{code: code, newEntity: newEntity, oldEntity: oldEntity, caps: caps})
+	return r.err
+}
+
+func (r *recordingScriptExecutor) ExecuteFileWithCapabilities(_ context.Context, path string,
+	_ lua.WriteDeps, newEntity, oldEntity *entity.Entity, caps lua.Capabilities) error {
+	r.fileCalls = append(r.fileCalls,
+		recordedExec{path: path, newEntity: newEntity, oldEntity: oldEntity, caps: caps})
 	return r.err
 }
 
@@ -167,5 +184,63 @@ func TestLuaScriptRunner_RejectsNilMutator(t *testing.T) {
 	if err := r.Run(context.Background(),
 		autocascade.ScriptAction{}, nil); err != nil {
 		t.Errorf("empty action: expected no-op, got %v", err)
+	}
+}
+
+// TestLuaScriptRunner_CapabilitiesFlowFromAction pins that an automation
+// action's `capabilities:` block reaches the Lua runtime, and — more
+// importantly — that omitting it grants NOTHING (TKT-YH52OM).
+//
+// Automations run on the write path of an ordinary HTTP request, so they are
+// not an operator-shell surface: before this ticket every automation script
+// held http, ai and the entire .rela/secrets.yaml unconditionally.
+func TestLuaScriptRunner_CapabilitiesFlowFromAction(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		caps autocascade.ScriptCapabilities
+		want lua.Capabilities
+	}{
+		{
+			name: "undeclared grants nothing",
+			want: lua.Capabilities{},
+		},
+		{
+			name: "declared grant is carried through verbatim",
+			caps: autocascade.ScriptCapabilities{HTTP: true, Secrets: []string{"slack"}},
+			want: lua.Capabilities{HTTP: true, Secrets: []string{"slack"}},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			rec := &recordingScriptExecutor{}
+			runner := NewLuaScriptRunner(rec, lua.ReadDeps{})
+
+			err := runner.Run(context.Background(), autocascade.ScriptAction{
+				Code:         "return 1",
+				Name:         "cap-test",
+				Capabilities: tc.caps,
+			}, stubMutator{})
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if len(rec.codeCalls) != 1 {
+				t.Fatalf("expected 1 code call, got %d", len(rec.codeCalls))
+			}
+			got := rec.codeCalls[0].caps
+			if got.HTTP != tc.want.HTTP || got.AI != tc.want.AI || got.WriteFile != tc.want.WriteFile {
+				t.Errorf("capability flags: got %+v, want %+v", got, tc.want)
+			}
+			if len(got.Secrets) != len(tc.want.Secrets) {
+				t.Errorf("secrets: got %v, want %v", got.Secrets, tc.want.Secrets)
+			}
+			// The elevated-secrets guarantee: an action that named one secret
+			// must not receive a runtime that can read the whole file.
+			if got.AllSecrets {
+				t.Error("AllSecrets must never be set from config — that is the " +
+					"operator-shell-only grant")
+			}
+		})
 	}
 }

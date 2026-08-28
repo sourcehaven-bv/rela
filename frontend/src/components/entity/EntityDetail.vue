@@ -49,11 +49,30 @@ import {
 } from './sectionEditFields'
 import type { AutoSaveErrorInfo } from '@/composables/useAutoSave'
 import { useConfirm, withConfirmError } from '@/composables/useConfirm'
+import { useDelayedPending } from '@/composables/useDelayedPending'
+import { beginRouteLoad } from '@/composables/useNavigationPending'
+import { PENDING_TIMINGS } from '@/composables/pendingTimings'
 
-const props = defineProps<{
-  entityType: string
-  entityId: string
-}>()
+const props = withDefaults(
+  defineProps<{
+    entityType: string
+    entityId: string
+    /**
+     * Hide the header action toolbar (commands, Edit, History, Delete).
+     *
+     * For embedding this component as a READ surface — the calendar's preview
+     * modal — where the host supplies its own actions. Without it the modal
+     * shows two Edit buttons and a destructive Delete one click from a
+     * calendar chip, which is not what a preview is for.
+     *
+     * Suppresses the buttons only. Permission checks, keyboard handlers and
+     * every other behaviour are untouched, so this cannot widen what a
+     * principal may do.
+     */
+    hideActions?: boolean
+  }>(),
+  { hideActions: false }
+)
 
 const router = useRouter()
 const schemaStore = useSchemaStore()
@@ -71,6 +90,23 @@ const backTarget = useBackTarget()
 const loading = ref(true)
 const error = ref<string | null>(null)
 const viewData = ref<ViewResponse | null>(null)
+
+// Prev/next within a list re-fetches this component in place. Blanking the
+// page to a centred spinner on every step was the worst layout shift in
+// the app — the article collapsed to ~140px and sprang back — and on a
+// fast connection it read as a flicker, not a loading state.
+//
+// Two rules apply, in order. (1) Keep previous content: while an entity is
+// already on screen, stepping to a neighbour holds it until the next
+// resolves, so nothing is shown at all. (2) On a genuine cold load, the
+// gate still suppresses anything quicker than the navigation delay.
+const showBlockLoader = useDelayedPending(
+  () => loading.value && !viewData.value,
+  {
+    delay: PENDING_TIMINGS.navDelayMs,
+    minDuration: PENDING_TIMINGS.navMinDurationMs,
+  }
+)
 const commands = ref<Command[]>([])
 const showOverflowMenu = ref(false)
 
@@ -339,6 +375,24 @@ function runCommand(cmd: Command) {
 async function loadView() {
   loading.value = true
   error.value = null
+  // Report EVERY load to the global activity bar, including the ones where
+  // previous content stays on screen.
+  //
+  // Holding the old entity is what stops the page collapsing, but it also
+  // means a prev/next step looks like NOTHING happened until the new data
+  // lands — the click reads as ignored. Stale content with no indicator is
+  // the failure mode; the bar is what distinguishes "showing you the
+  // previous one while the next loads" from "frozen".
+  //
+  // A bar is the right shape for that precisely because it does not
+  // contradict the content: it is peripheral and additive, where a spinner
+  // replacing the article would assert there is nothing to see.
+  //
+  // The route itself settles in ~99ms while this fetch runs ~2s, so without
+  // reporting here the bar would never cover the part that actually takes
+  // time. The 250ms gate still suppresses it entirely when the fetch is
+  // quick.
+  const settleRouteLoad = beginRouteLoad()
   try {
     viewData.value = await fetchView(props.entityType, props.entityId)
     if (viewData.value?.entry) {
@@ -354,6 +408,7 @@ async function loadView() {
     console.error('Failed to load entity view:', err)
   } finally {
     loading.value = false
+    settleRouteLoad?.()
   }
 }
 
@@ -420,6 +475,26 @@ function getPropertyDef(entityType: string, propertyName: string): PropertyDef |
   return et?.properties?.[propertyName]
 }
 
+// entryDisplayValue: the entry-section analogue of `rowDisplayValue` below —
+// prefer the live `entry.properties` over the display-stringified
+// `fields[i].values` server mirror, which `handlePropertyApplied` never
+// updates (it rewrites `entry.properties` only).
+//
+// Before TKT-HOIX1 the entry display path was reachable only when the ACL
+// denied EVERY field in the section, so nothing could edit those values and
+// the mirror could not go stale. With `render` defaulting to display, a
+// display-rendered section is now the common case and can sit alongside a
+// `render: input` section editing the same property — at which point the
+// display section would show last-loadView's string forever. Same bug class
+// as RR-FC1C, same fix.
+function entryDisplayValue(field: ViewSectionField): unknown {
+  const props = entry.value?.properties
+  if (field.property && props && field.property in props) {
+    return props[field.property]
+  }
+  return field.values ?? []
+}
+
 function mapFieldsToProperties(fields: ViewSectionField[] | undefined): PropertyItem[] {
   if (!fields) return []
   // Pre-resolve PropertyDef for the entry entity once (RR-UD1H). For
@@ -437,9 +512,10 @@ function mapFieldsToProperties(fields: ViewSectionField[] | undefined): Property
     return {
       name,
       label: field.label,
-      value: field.values ?? [],
+      value: entryDisplayValue(field),
       propType: field.propType,
       propertyDef: def,
+      span: field.span,
       inaccessible: field.inaccessible ?? false,
       inaccessibleReason: field.property ? inaccessibleByName.value.get(field.property) : undefined,
       attachments: field.property ? entry.value?._attachments?.[field.property] : undefined,
@@ -680,10 +756,14 @@ watch(
 
 <template>
   <div class="entity-detail">
-    <div v-if="loading" class="loading-state">
+    <!-- Deliberately empty while loading below the threshold: no spinner,
+         no reserved block, no layout spring. The ActivityBar carries the
+         navigation case; this only paints for a slow cold load. -->
+    <div v-if="showBlockLoader" class="loading-state">
       <div class="spinner" />
-      <span>Loading...</span>
+      <span>Loading…</span>
     </div>
+    <div v-else-if="loading && !entry" class="entity-detail-placeholder" />
 
     <div v-else-if="error" class="error-state">
       <h2>Error</h2>
@@ -718,7 +798,7 @@ watch(
           <h1 class="text-wrap-anywhere">{{ entryTitle }}</h1>
         </div>
         <!-- Desktop actions -->
-        <div class="header-actions desktop-actions">
+        <div v-if="!props.hideActions" class="header-actions desktop-actions">
           <button
             v-for="cmd in commands"
             :key="cmd.id"
@@ -742,7 +822,7 @@ watch(
         </div>
 
         <!-- Mobile actions: Edit primary, delete icon, overflow menu for commands -->
-        <div class="header-actions mobile-actions">
+        <div v-if="!props.hideActions" class="header-actions mobile-actions">
           <button
             v-if="editFormId && !isInaccessible && canUpdate"
             class="btn btn-secondary"
@@ -1213,12 +1293,12 @@ watch(
 .inaccessible-banner {
   display: flex;
   align-items: flex-start;
-  gap: 12px;
+  gap: var(--space-md);
   margin-bottom: 24px;
   padding: 12px 16px;
   border: 1px solid var(--color-border, #ccc);
   border-left: 4px solid var(--color-warning, #d9970e);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--color-surface, #fafafa);
 }
 
@@ -1229,7 +1309,7 @@ watch(
 
 .inaccessible-banner p {
   margin: 4px 0 0;
-  font-size: 14px;
+  font-size: var(--font-size-base);
   line-height: 1.5;
 }
 
@@ -1247,19 +1327,19 @@ watch(
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
+  gap: var(--space-lg);
   margin-bottom: 24px;
 }
 
 .header-info {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-sm);
 }
 
 .entity-type-badge {
   display: inline-block;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -1275,7 +1355,7 @@ watch(
 
 .header-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-sm);
 }
 
 .header-actions kbd {
@@ -1324,7 +1404,7 @@ watch(
 }
 
 .mobile-overflow-btn {
-  font-size: 18px;
+  font-size: var(--font-size-lg);
   line-height: 1;
   padding: 6px 12px;
 }
@@ -1335,8 +1415,8 @@ watch(
   top: calc(100% + 4px);
   background: var(--card-bg);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
-  box-shadow: 0 4px 12px rgb(0 0 0 / 12%);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
   min-width: 160px;
   z-index: 50;
 }
@@ -1348,7 +1428,7 @@ watch(
   background: none;
   border: none;
   text-align: left;
-  font-size: 14px;
+  font-size: var(--font-size-base);
   color: var(--text-color);
   cursor: pointer;
 }
@@ -1362,12 +1442,12 @@ watch(
 .scope-nav {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-md);
   margin-bottom: 20px;
 }
 
 .scope-nav-progress {
-  font-size: 13px;
+  font-size: var(--font-size-dense);
   font-weight: 600;
   color: var(--text-color);
   font-family: monospace;
@@ -1375,7 +1455,7 @@ watch(
 
 .scope-nav-label {
   flex: 1;
-  font-size: 13px;
+  font-size: var(--font-size-dense);
   color: var(--muted-text);
 }
 
@@ -1383,7 +1463,7 @@ watch(
 .jump-bar {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-sm);
   padding: 12px 0;
   border-bottom: 1px solid var(--border-color);
   margin-bottom: 24px;
@@ -1393,8 +1473,8 @@ watch(
   padding: 6px 12px;
   background: var(--hover-bg);
   border: 1px solid var(--border-color);
-  border-radius: 4px;
-  font-size: 13px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-dense);
   color: var(--text-color);
   cursor: pointer;
   transition: all 0.15s;
@@ -1410,7 +1490,7 @@ watch(
 .sections {
   display: flex;
   flex-direction: column;
-  gap: 32px;
+  gap: var(--space-2xl);
 }
 
 .view-section {
@@ -1421,7 +1501,7 @@ watch(
    .section-heading` (RR-ZE29PY): the properties inline-edit section renders
    its heading inside that component, which can't reach these scoped styles. */
 .section-heading {
-  font-size: 18px;
+  font-size: var(--font-size-lg);
   font-weight: 600;
   margin: 0 0 16px;
   padding-bottom: 8px;
@@ -1430,7 +1510,7 @@ watch(
 }
 
 .cb-stats {
-  font-size: 14px;
+  font-size: var(--font-size-base);
   font-weight: 500;
   color: var(--muted-text);
   margin-left: 8px;
@@ -1441,7 +1521,7 @@ watch(
   text-align: center;
   color: var(--muted-text);
   background: var(--hover-bg);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   font-style: italic;
 }
 
@@ -1457,26 +1537,26 @@ watch(
   padding: 16px;
   background: var(--card-bg);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
 }
 
 .content-cards {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-lg);
 }
 
 .content-card {
   padding: 16px;
   background: var(--card-bg);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
 }
 
 .content-card .card-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-sm);
   margin-bottom: 12px;
   cursor: pointer;
 }
@@ -1489,14 +1569,14 @@ watch(
 .cards-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 16px;
+  gap: var(--space-lg);
 }
 
 .entity-card {
   padding: 16px;
   background: var(--card-bg);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   transition: border-color 0.15s;
 }
@@ -1508,7 +1588,7 @@ watch(
 .card-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-sm);
   margin-bottom: 12px;
 }
 
@@ -1528,7 +1608,7 @@ watch(
 }
 
 .entity-id {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-family: monospace;
   color: var(--muted-text);
 }
@@ -1540,7 +1620,7 @@ watch(
   font-size: 16px;
   cursor: pointer;
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .edit-btn:hover {
@@ -1551,14 +1631,14 @@ watch(
 .card-fields {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2xs);
 }
 
 .card-field {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
+  gap: var(--space-xs);
+  font-size: var(--font-size-dense);
 }
 
 .field-label {
@@ -1576,24 +1656,24 @@ watch(
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-sm);
 }
 
 .list-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-md);
   padding: 8px 12px;
   background: var(--card-bg);
   border: 1px solid var(--border-color);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .list-link {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-sm);
   cursor: pointer;
   flex: 1;
 }
@@ -1604,7 +1684,7 @@ watch(
 
 .list-fields {
   display: flex;
-  gap: 6px;
+  gap: var(--space-xs);
 }
 
 /* AutoSaveIndicator slot for inline-edit rows (TKT-IHC7C). Rendered inline
@@ -1630,7 +1710,7 @@ watch(
 }
 
 .group-heading {
-  font-size: 14px;
+  font-size: var(--font-size-base);
   font-weight: 600;
   color: var(--muted-text);
   margin: 0 0 8px;
@@ -1641,7 +1721,7 @@ watch(
 .data-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 14px;
+  font-size: var(--font-size-base);
 }
 
 .data-table th,
@@ -1688,8 +1768,8 @@ watch(
   color: var(--muted-text);
   cursor: pointer;
   padding: 4px 8px;
-  font-size: 14px;
-  border-radius: 4px;
+  font-size: var(--font-size-base);
+  border-radius: var(--radius-sm);
 }
 
 .icon-btn:hover {
@@ -1719,7 +1799,7 @@ watch(
      above. */
   .mobile-actions {
     display: flex;
-    gap: 8px;
+    gap: var(--space-sm);
     align-items: center;
   }
 
@@ -1732,7 +1812,7 @@ watch(
   }
 
   .header-info h1 {
-    font-size: 22px;
+    font-size: var(--font-size-xl);
   }
 
   .detail-section {

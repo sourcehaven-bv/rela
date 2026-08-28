@@ -3,7 +3,18 @@ name: CI
 on:
   push:
     branches: [main, develop]
+  # No `branches:` filter on pull_request, deliberately. The filter matches the
+  # TARGET branch, so a stacked PR (one opened against another feature branch
+  # rather than develop) matched nothing and ran ZERO checks — while the PR page
+  # showed no failures, which reads identically to "everything passed". A
+  # security-relevant endpoint was reviewed that way before this was caught.
+  # Every PR gets CI regardless of what it targets.
   pull_request:
+  # Required for the merge queue: entries are tested on an ephemeral
+  # `gh-readonly-queue/...` ref, and a required check that never runs there
+  # leaves the entry queued forever. Every check listed as required on
+  # develop must therefore also report on merge_group.
+  merge_group:
     branches: [main, develop]
 
 permissions:
@@ -24,7 +35,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
+          go-version: '1.26.6'
 
       - name: Download dependencies
         run: go mod download
@@ -49,7 +60,7 @@ jobs:
         run: go test -v -race -shuffle=on -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Check coverage thresholds
-        uses: vladopajic/go-test-coverage@v2.18.9
+        uses: vladopajic/go-test-coverage@v2.19.0
         with:
           config: .testcoverage.yml
           github-action-output: true
@@ -125,7 +136,7 @@ jobs:
         if: steps.detect.outputs.changed == 'true'
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
+          go-version: '1.26.6'
 
       - name: Run govulncheck
         if: steps.detect.outputs.changed == 'true'
@@ -142,7 +153,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
+          go-version: '1.26.6'
 
       - name: Install golangci-lint
         # Build from source against the active Go toolchain so the linter can
@@ -161,7 +172,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
+          go-version: '1.26.6'
 
       - name: Install go-arch-lint
         # Keep in sync with go_arch_lint_version in the justfile.
@@ -179,7 +190,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
+          go-version: '1.26.6'
 
       - name: Install plimsoll
         # Keep in sync with plimsoll_version in the justfile.
@@ -187,6 +198,42 @@ jobs:
 
       - name: Check type load lines
         run: plimsoll ./...
+
+  comment-lint:
+    name: Comment lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.6'
+
+      - name: Install commentlint
+        # Keep in sync with commentlint_version in the justfile.
+        run: go install github.com/sourcehaven-bv/commentlint@v0.3.1
+
+      # Gate: clean today, so a regression fails the build. Rules are promoted
+      # here from the advisory step once their backlog reaches zero.
+      - name: Check comments (gate)
+        run: commentlint -rules commented-code,doclink ./internal ./cmd
+
+      # Advisory: real findings with a backlog being worked down. Visible in
+      # the log, never red — see .commentlint.yml for why each rule is here.
+      #
+      # One invocation PER RULE, deliberately: the cross-comment rules
+      # (duplication, nil-contract, doclink, param-contract) each have their
+      # own output shape and replace the per-comment output rather than adding
+      # to it, so a single run would silently report only one of them.
+      - name: Comment report (advisory)
+        continue-on-error: true
+        run: |
+          for rule in restatement param-contract nil-contract duplication; do
+            echo "::group::commentlint $rule"
+            commentlint -rules "$rule" -rank -top 30 ./internal ./cmd || true
+            echo "::endgroup::"
+          done
 
   lint-markdown:
     name: Lint Markdown
@@ -200,7 +247,7 @@ jobs:
           node-version: '20'
 
       - name: Run markdownlint
-        uses: DavidAnson/markdownlint-cli2-action@v24.1.0
+        uses: DavidAnson/markdownlint-cli2-action@v24.2.0
         with:
           globs: "**/*.md"
 
@@ -252,7 +299,12 @@ jobs:
 
   e2e:
     name: E2E
-    runs-on: ubuntu-latest
+    # 26.04, not ubuntu-latest — same reason as the `test` job above: the
+    # command sandbox needs unprivileged user namespaces, which earlier images
+    # restrict via AppArmor. This job only started needing a working sandbox
+    # when document `command:` renderers moved off `sh -c` onto cmdexec
+    # (TKT-QGHNVA), which fails closed rather than running unconfined.
+    runs-on: ubuntu-26.04
     # A postgres service backs the pgstore-only e2e specs (relation/entity
     # content history). The default fsstore specs ignore it; the postgres specs
     # skip when RELA_E2E_DATABASE_URL is unset, so this is what turns them on.
@@ -278,7 +330,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
+          go-version: '1.26.6'
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -286,6 +338,13 @@ jobs:
           node-version: '20'
           cache: 'npm'
           cache-dependency-path: e2e/package-lock.json
+
+      # Document `command:` renderers run confined via internal/cmdexec, which
+      # FAILS CLOSED when no sandbox is available (TKT-QGHNVA moved them off
+      # `sh -c`). Without bubblewrap the fixture documents never render and the
+      # document specs fail. Same rationale as the `test` job above.
+      - name: Install bubblewrap (command sandbox)
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
 
       - name: Install frontend dependencies
         working-directory: frontend
@@ -354,7 +413,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
+          go-version: '1.26.6'
 
       - name: Run fuzz tests
         run: |
@@ -419,6 +478,14 @@ jobs:
     env:
       POSTGRES_USER: rela
       POSTGRES_DB: rela_test
+      # This job's entire purpose is proving the postgres backend matches the
+      # default one, and the pgstore suite SKIPS itself when the DSN is absent
+      # — a skip that is indistinguishable from a pass in the exit code and the
+      # CI summary. Without this, a dropped env var or a renamed service
+      # container silently turns the backend-parity gate into a no-op and
+      # nothing goes red. Setting it makes the suite hard-fail instead of
+      # skipping (see requireDBEnv in internal/store/pgstore/testdb_test.go).
+      RELA_TEST_DATABASE_REQUIRED: "1"
     services:
       postgres:
         image: postgres:16
@@ -441,7 +508,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
+          go-version: '1.26.6'
 
       # Trust auth: no password in the DSN. The DB is ephemeral and
       # runner-local, so there is no credential to keep out of the log.
@@ -476,8 +543,92 @@ jobs:
           go build -tags memorybackend ./...
           go build -tags postgres ./...
 
+      # RELA_TEST_DATABASE_REQUIRED (job env) makes the suite hard-fail rather
+      # than skip if the DSN is missing. The grep below is the second, blunter
+      # half of the same guard: it catches a suite that skipped for any OTHER
+      # reason — a future build tag, a t.Skip added inside a subtest, a
+      # conformance case quietly excluded — which the env var alone would not
+      # notice. Both are cheap; the failure they prevent (silent backend
+      # divergence) is not.
       - name: Run pgstore conformance + fuzz seeds (race) against PostgreSQL
-        run: go test -race -tags postgres ./internal/store/pgstore/...
+        run: |
+          set -euo pipefail
+          go test -race -tags postgres -v ./internal/store/pgstore/... 2>&1 | tee pgstore-test.log
+          if grep -q -- '--- SKIP' pgstore-test.log; then
+            echo "::error::pgstore tests SKIPPED in the Postgres Backend job."
+            echo "This job exists to prove backend parity; a skipped suite is not a pass."
+            grep -- '--- SKIP' pgstore-test.log
+            exit 1
+          fi
+          echo "OK: pgstore suite ran against PostgreSQL with no skips."
+
+      # The job-queue conformance suite is DB-gated the same way, and the same
+      # argument applies: a memory-only run cannot see backend divergence, and
+      # one such bug already shipped (a NUL byte in the idempotency fingerprint
+      # that Go and the memory backend accept and PostgreSQL rejects outright).
+      # `just test-postgres` has always included this package; CI did not, so
+      # the durable tier was unpinned here despite the local recipe covering it.
+      - name: Run job-queue conformance (race) against PostgreSQL
+        run: |
+          set -euo pipefail
+          go test -race -tags postgres -v ./internal/jobs/... 2>&1 | tee jobs-test.log
+          if grep -q -- '--- SKIP' jobs-test.log; then
+            echo "::error::job-queue tests SKIPPED in the Postgres Backend job."
+            echo "A skipped conformance suite is not a pass."
+            grep -- '--- SKIP' jobs-test.log
+            exit 1
+          fi
+          echo "OK: job-queue suite ran against PostgreSQL with no skips."
+
+      # The step above covers the STORE under -tags postgres. Nothing covered
+      # the WIRING: `internal/appbuild` and `internal/cli` were compiled with
+      # the tag but never run with it, so every build-agnostic composition-root
+      # test in them (Services fully populated, Close idempotent, acl.yaml
+      # loaded, corrupt CalDAV cache non-fatal) silently regressed on the
+      # postgres build and stayed invisible until someone ran the tagged suite
+      # by hand.
+      #
+      # These are not backend tests — they assert wiring that must hold on
+      # every backend — so they run against the same database rather than
+      # being excluded. backendtest gives each one a private migrated schema.
+      #
+      # Skips are tolerated here, unlike the pgstore step: a few cases
+      # deliberately assert boot failures that occur before any store opens and
+      # legitimately need no database. RELA_TEST_DATABASE_REQUIRED (job env)
+      # still turns a MISSING DSN into a hard failure, which is the regression
+      # that actually matters.
+      #
+      # internal/cli and internal/dataentry are scoped with -run rather than run
+      # whole. Both hold tests that shell out through internal/cmdexec, which
+      # fails closed without a working sandbox — and bubblewrap cannot set up its
+      # loopback device on this job's runner ("RTM_NEWADDR: Operation not
+      # permitted"), even with the package installed, unlike the `test` job.
+      # Those tests are backend-independent and already covered there; running
+      # them here would gate the postgres wiring on an unrelated sandbox
+      # capability. The `test` job remains the owner of full-package coverage.
+      #
+      # THE LIST BELOW MUST COVER EVERY PACKAGE WITH A postgres-TAGGED FILE.
+      # That is the rule this step exists to enforce: the original defect
+      # (BUG-3KQW7P) was tag coverage scoped to the package that motivated the
+      # tag (the store) rather than to everything the tag changes, so tagged code
+      # elsewhere compiled on every PR and never ran. Find the current set with:
+      #
+      #   grep -rl '^//go:build postgres' --include='*.go' internal/ cmd/ \
+      #     | xargs -n1 dirname | sort -u
+      #
+      # internal/dataentry earns its place: store_bridge_postgres_test.go holds
+      # TestStoreEventBridgeCrossProcessSSE, the ONLY end-to-end proof that a
+      # write in one process reaches another's SSE feed over LISTEN/NOTIFY —
+      # TKT-WZYWM9's headline feature, and the path TKT-9TOEBH changed the wire
+      # format of. Verified non-vacuous: with remote emission disabled it fails.
+      - name: Run composition-root wiring tests against PostgreSQL
+        run: |
+          set -euo pipefail
+          go test -race -tags postgres ./internal/appbuild/...
+          go test -race -tags postgres -run 'TestNewMCPServices|TestMCPServices|TestMCPWatcher' \
+            ./internal/cli/
+          go test -race -tags postgres -run 'TestStoreEventBridge' ./internal/dataentry/
+          go test -race -tags postgres ./internal/docscli/
 
   # Cross-compile every (GOOS, build-tag) combination GoReleaser ships so a
   # platform-specific compile break (e.g. a unix-only syscall used without a
@@ -499,7 +650,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
+          go-version: '1.26.6'
 
       # CGO off matches the GoReleaser builds for rela / rela-server; this is a
       # pure cross-compile, so no per-OS C toolchain is needed.
@@ -526,7 +677,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
+          go-version: '1.26.6'
 
       # Compile-only gate. Release binaries come from GoReleaser in
       # release.yml, so there is no artifact to upload here — a per-run copy
@@ -554,7 +705,25 @@ jobs:
           # through — a chore branch merged a stale `ready` ticket). They are only
           # exempt from the "must reference a ticket" requirement, since a pure
           # chore may legitimately touch no ticket.
-          if [[ "$EVENT_NAME" != "pull_request" ]] \
+          if [[ "$EVENT_NAME" == "push" || "$EVENT_NAME" == "merge_group" ]]; then
+            # Post-merge safety net, and the merge-queue check.
+            #
+            # push: the PR-time gate can only see the PR's own diff, so a rule
+            # that starts failing because of what ALREADY landed (or because a
+            # rule/entity elsewhere changed) reaches develop unnoticed and then
+            # fails the next unrelated PR. Validating on push pins the blame to
+            # the merge that actually broke it.
+            #
+            # merge_group: this is the last gate before the commit lands, run
+            # against the queued combination rather than the PR in isolation —
+            # exactly where a cross-PR ticket conflict shows up. Reporting a
+            # hollow success here would make the queue's guarantee worthless.
+            #
+            # Neither has a ticket to add, so `require_new` stays false.
+            echo "applies=true" >> "$GITHUB_OUTPUT"
+            echo "require_new=false" >> "$GITHUB_OUTPUT"
+            echo "$EVENT_NAME on ${GITHUB_REF_NAME:-?}: validating tickets."
+          elif [[ "$EVENT_NAME" != "pull_request" ]] \
              || [[ "$HEAD_REF" == dependabot/* ]]; then
             echo "applies=false" >> "$GITHUB_OUTPUT"
             echo "require_new=false" >> "$GITHUB_OUTPUT"
@@ -577,7 +746,7 @@ jobs:
         if: steps.gate.outputs.applies == 'true'
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
+          go-version: '1.26.6'
 
       - name: Build rela
         if: steps.gate.outputs.applies == 'true'
@@ -647,6 +816,45 @@ jobs:
           echo "Found work-item entities:"
           echo "$CHANGED_ENTITIES"
 
+      - name: Entities all parse
+        if: steps.gate.outputs.applies == 'true'
+        run: |
+          set -euo pipefail
+          cd tickets
+
+          # An entity whose frontmatter does not parse is SKIPPED by the store
+          # rather than failing it: the loader logs the error and carries on, so
+          # `rela validate` then happily reports success over a graph that is
+          # quietly missing entities. That is not hypothetical — it is how the
+          # 10 violations this guard was written for reached develop (#1338
+          # logged the warning and passed). Every workflow gate is only as
+          # strong as the parser feeding it, so fail loudly on any parse error
+          # before trusting a single validation result.
+          echo "Checking every entity parses..."
+          if ! err=$(../bin/rela list 2>&1 >/dev/null); then
+            echo "$err"
+            echo ""
+            echo "ERROR: rela could not list entities."
+            exit 1
+          fi
+
+          if printf '%s' "$err" | grep -q "failed to parse frontmatter"; then
+            echo "$err"
+            echo ""
+            echo "ERROR: some entities have unparseable frontmatter."
+            echo ""
+            echo "These entities are SILENTLY SKIPPED by validation, so the"
+            echo "checks below would pass while not actually checking them."
+            echo "Fix the YAML before relying on any validation result."
+            echo ""
+            echo "Most common cause: an unquoted scalar containing ': ' or"
+            echo "starting with a character YAML treats specially. Quote it:"
+            echo "  title: 'Something: with a colon'"
+            exit 1
+          fi
+
+          echo "✓ All entities parse."
+
       - name: Run rela validate
         if: steps.gate.outputs.applies == 'true'
         run: |
@@ -659,8 +867,11 @@ jobs:
           echo ""
           echo "All rela checks passed!"
 
+      # PR-only: it diffs against the PR base to find what THIS PR touched.
+      # On push that base does not exist, and the question is meaningless
+      # anyway — the merge already happened.
       - name: Ticket done-before-merge check
-        if: steps.gate.outputs.applies == 'true'
+        if: steps.gate.outputs.applies == 'true' && github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
@@ -719,7 +930,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
+          go-version: '1.26.6'
 
       - name: Install graphviz
         run: sudo apt-get update && sudo apt-get install -y graphviz
@@ -762,7 +973,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
+          go-version: '1.26.6'
 
       - name: Build rela
         run: go build -o bin/rela ./cmd/rela

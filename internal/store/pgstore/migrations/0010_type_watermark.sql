@@ -1,0 +1,38 @@
+-- pgstore schema, version 10: composite (type, seq) indexes for the entity-type
+-- watermark.
+--
+-- store.TypeWatermark answers "has anything of this type changed?" with
+--
+--     SELECT COALESCE(MAX(seq), 0) FROM (
+--         SELECT seq FROM entities  WHERE type = $1
+--         UNION ALL
+--         SELECT seq FROM deletions WHERE kind = 'e' AND typ = $1
+--     ) t
+--
+-- so it can replace a full collection render on every CalDAV getctag poll. That
+-- only holds if the query is index-only. The existing indexes do not deliver it:
+--
+--   * entities_type_idx (type)  — finds the type's rows, then reads EVERY one to
+--                                 find the max seq. O(rows of that type) per poll.
+--   * entities_seq_idx  (seq)   — ordered by seq but not filtered by type, so a
+--                                 backwards scan reads rows of other types until
+--                                 it happens on one of this type. Unbounded when
+--                                 the type is a small minority of the table.
+--   * deletions has no type index at all — the tombstone half was a seqscan.
+--
+-- A composite (type, seq) index makes each half an index-only backwards scan
+-- that stops at the FIRST row: MAX(seq) for a given type is the leading edge of
+-- that type's index range. Both halves become O(1) lookups regardless of table
+-- size, which is the whole point of the capability.
+--
+-- The tombstone index includes `kind` because deletions holds entity AND
+-- relation rows in one table, and the entity watermark must not be moved by a
+-- relation delete.
+--
+-- LOCK NOTE: as with 0003, pgstore.Migrate runs every migration in ONE
+-- transaction under an advisory lock, so CREATE INDEX CONCURRENTLY is not
+-- available here. On a large entities table this takes a SHARE lock that blocks
+-- writes while the index builds — apply during a maintenance window on a big
+-- dataset. deletions is typically far smaller (one row per delete ever).
+CREATE INDEX entities_type_seq_idx  ON entities  (type, seq);
+CREATE INDEX deletions_kind_typ_seq_idx ON deletions (kind, typ, seq);

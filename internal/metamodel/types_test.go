@@ -1336,14 +1336,15 @@ func TestInverseDef_GetLabel(t *testing.T) {
 			want: "is addressed by",
 		},
 		{
-			name: "auto-derived from camelCase",
+			// DEC-6C1NAA: no derivation — the raw id is the fallback.
+			name: "falls back to raw camelCase id",
 			inv:  InverseDef{ID: "addressedBy"},
-			want: "addressed by",
+			want: "addressedBy",
 		},
 		{
-			name: "auto-derived from PascalCase",
+			name: "falls back to raw PascalCase id",
 			inv:  InverseDef{ID: "ImplementedBy"},
-			want: "implemented by",
+			want: "ImplementedBy",
 		},
 		{
 			name: "empty ID returns empty",

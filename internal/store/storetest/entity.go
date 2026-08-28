@@ -33,6 +33,29 @@ func RunEntityTests(t *testing.T, f Factory) {
 		assert.ErrorIs(t, err, store.ErrNotFound)
 	})
 
+	// Entity.Redacted is a per-reader ACL artifact, not content: it must
+	// never survive a write. Backend-agnostic because memstore may hold
+	// structs directly rather than serializing through markdown, so a
+	// markdown-only assertion would not cover it (RR-KBWJPV).
+	//
+	// A redacted entity should never reach a write path at all — write-prep
+	// reads go through entitymanager.PatchEntity, which merges against the
+	// raw stored entity — but the whole design rests on that separation, so
+	// it is worth one cheap assertion that a slip does not persist someone's
+	// per-principal view.
+	t.Run("RedactedNotPersisted", func(t *testing.T) {
+		s := f(t)
+		e := entity.New("FEAT-002", "feature")
+		e.SetString("title", "Login")
+		e.Redacted = []string{"salary"}
+
+		require.NoError(t, s.CreateEntity(ctx(), e))
+
+		got, err := s.GetEntity(ctx(), "FEAT-002")
+		require.NoError(t, err)
+		assert.Empty(t, got.Redacted, "Redacted is a read-out artifact and must not round-trip")
+	})
+
 	t.Run("CreateConflict", func(t *testing.T) {
 		s := f(t)
 		e := entity.New("FEAT-001", "feature")
@@ -86,6 +109,33 @@ func RunEntityTests(t *testing.T, f Factory) {
 		s := f(t)
 		err := s.UpdateEntity(ctx(), entity.New("NOPE", "ticket"))
 		assert.ErrorIs(t, err, store.ErrNotFound)
+	})
+
+	// Type-change-on-update is a store contract (TKT-0C57FS amendment A3):
+	// the data-migration rename_entity_type step is a plain UpdateEntity
+	// with a new Type, so the record must fully RELOCATE — readable under
+	// the new type, gone from the old type's listings, and (on path-keyed
+	// backends like fsstore) leaving no orphan record at the old location.
+	t.Run("UpdateChangesType", func(t *testing.T) {
+		s := f(t)
+		e := entity.New("T-1", "ticket")
+		e.SetString("title", "v1")
+		require.NoError(t, s.CreateEntity(ctx(), e))
+
+		moved := entity.New("T-1", "issue")
+		moved.SetString("title", "v1")
+		require.NoError(t, s.UpdateEntity(ctx(), moved))
+
+		got, err := s.GetEntity(ctx(), "T-1")
+		require.NoError(t, err)
+		assert.Equal(t, "issue", got.Type)
+
+		oldCount, err := s.CountEntities(ctx(), store.EntityQuery{Type: "ticket"})
+		require.NoError(t, err)
+		assert.Equal(t, 0, oldCount, "old type still lists the entity")
+		newCount, err := s.CountEntities(ctx(), store.EntityQuery{Type: "issue"})
+		require.NoError(t, err)
+		assert.Equal(t, 1, newCount, "new type does not list the entity")
 	})
 
 	t.Run("Delete", func(t *testing.T) {

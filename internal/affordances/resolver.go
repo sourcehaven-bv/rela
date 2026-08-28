@@ -109,7 +109,7 @@ type compiledGrants struct {
 // The policy is read from `declarative.Policy()` — the same object
 // the resolver uses for role attribution — so the two cannot drift
 // (RR-WTLD). Callers that want an all-permissive resolver wire
-// [NopFieldVerdictResolver] at the dispatch boundary instead.
+// NopFieldVerdictResolver at the dispatch boundary instead.
 //
 // The full *metamodel.Metamodel is required (not a narrower slice):
 // the resolver can be asked about any entity type at runtime, and for
@@ -168,7 +168,7 @@ func New(
 // CONCURRENCY: this is the one mutator on an otherwise-immutable-after-[New]
 // resolver, so the "safe for concurrent use" guarantee holds only if it is
 // called during single-threaded wiring, BEFORE the resolver is shared — which
-// is the sole production call site ([ResolverFromProfile], synchronous, before
+// is the sole production call site (ResolverFromProfile, synchronous, before
 // the resolver escapes). It is a setter rather than a [New] parameter
 // deliberately: machines are optional and adding a required arg would churn all
 // [New] callers. Never call WithMachines concurrently with TransitionVerdicts.
@@ -272,7 +272,6 @@ func (r *PolicyResolver) compileFieldBlock(
 	return errs
 }
 
-// compileOptionBlock validates + compiles an options block.
 func (r *PolicyResolver) compileOptionBlock(
 	roleName, entityType string, grants []acl.OptionGrant, out *[]compiledOptionGrant,
 ) []error {
@@ -321,6 +320,16 @@ func (r *PolicyResolver) compileRelationGrant(
 			continue
 		}
 		cr.fields = append(cr.fields, compiledFieldGrant{field: fg.Field, program: fprog})
+	}
+	for j, fg := range rg.Visible {
+		fprog, ferr := r.compile(roleName, entityType,
+			fmt.Sprintf("relations[%d].visible", i), j, fg.When)
+		if ferr != nil {
+			errs = append(errs, ferr)
+			metaFailed = true
+			continue
+		}
+		cr.visible = append(cr.visible, compiledFieldGrant{field: fg.Field, program: fprog})
 	}
 	// Append the grant only when it compiled cleanly end-to-end. A
 	// grant that lost a meta field to a compile error must not be
@@ -403,6 +412,14 @@ func (r *PolicyResolver) FieldVerdicts(ctx context.Context, e *entity.Entity) Fi
 		}
 	}
 
+	// Client attenuation, field axis (TKT-IAC8TX). Applied AFTER every role
+	// grant because a ceiling only ever removes: whatever the roles allowed,
+	// this can subtract from, and nothing here can add. Applied BEFORE the
+	// universe is resolved so a `visible:` ceiling gets the same closed-world
+	// treatment a role-declared block does — which is what makes a property
+	// added to the metamodel later hidden from a restricted client by default.
+	r.applyClientCeiling(ctx, e.Type, visible)
+
 	fieldUniverse := r.declaredFields(e.Type)
 	out.Writable, out.Attribution = writable.deny(fieldUniverse, out.Attribution)
 	visMap, attr := visible.deny(fieldUniverse, out.Attribution)
@@ -476,6 +493,66 @@ func (r *PolicyResolver) RelationVerdicts(ctx context.Context, e *entity.Entity)
 	return out
 }
 
+// RelationFieldVerdicts computes the sparse per-meta-field READ-visibility
+// verdict for one relation edge: relType links FROM the entity `from`, and
+// metaKeys are the property names actually present on the edge about to be
+// serialized. The result is a sparse map keyed by meta field name; an absent
+// key means visible (the permissive default), a `false` value means hidden.
+// This is the relation-side analog of [PolicyResolver.FieldVerdicts]'s Visible
+// dimension, resolved against the SAME bindings so has_relation / count_relations
+// / has_role behave identically (TKT-B1F5Q1).
+//
+// Role grants are keyed by the FROM entity type (the source owns the relation
+// grant block, matching [PolicyResolver.RelationVerdicts]). A relation
+// `visible:` field is visible only when BOTH the whole relation grant's `when:`
+// AND the field's own `when:` pass — a field can be more restrictive than its
+// grant, never less (same rule as write-side metaFieldResults).
+//
+// The deny universe is metaKeys (the edge's actual property names) plus any
+// grant-mentioned candidate — so redaction covers exactly what would otherwise
+// reach the wire, including free-form meta keys not declared in the metamodel.
+//
+// This is always resolved against a LIVE source entity: the live relation GET,
+// and relation history's live-source case (a deleted-source relation history
+// serves no meta at all, so it never reaches here — IB-review #1). There is
+// therefore no historical-subject / fail-closed-reconstruct handling on this
+// path; redaction is simply "today's policy against the live source."
+func (r *PolicyResolver) RelationFieldVerdicts(
+	ctx context.Context, from *entity.Entity, relType string, metaKeys []string,
+) map[string]bool {
+	if from == nil || r.policy == nil {
+		return nil
+	}
+
+	visible := newDimension()
+	bc, roles := r.bindingFor(ctx, from)
+	if bc != nil {
+		for _, role := range roles {
+			g := r.grants[grantKey{role, from.Type}]
+			if g == nil || !g.declaredRelations {
+				continue
+			}
+			for _, rg := range g.relations {
+				if rg.relation != relType || len(rg.visible) == 0 {
+					continue
+				}
+				visible.optIn("hidden")
+				grantPassed := r.passes(ctx, bc, rg.program, role)
+				for _, fg := range rg.visible {
+					if grantPassed && r.passes(ctx, bc, fg.program, role) {
+						visible.allow(fg.field)
+					} else {
+						visible.observeDeny(fg.field, role)
+					}
+				}
+			}
+		}
+	}
+
+	denied, _ := visible.deny(metaKeys, nil)
+	return denied
+}
+
 // TransitionVerdicts resolves, per state-machine-typed property on e, the
 // transitions the ctx principal can perform right now — guard held
 // (subject-aware) AND `when:` precondition met — plus, for blocked edges, which
@@ -547,7 +624,7 @@ func (r *PolicyResolver) transitionGuard(ctx context.Context) statemachine.Guard
 
 // requestGuard evaluates a transition guard against an acl.Request. A nil
 // request (unresolved/unstamped principal) holds no permission → guarded edges
-// resolve as not-performable (fail closed). See [PolicyResolver.transitionGuard]
+// resolve as not-performable (fail closed). See PolicyResolver.transitionGuard
 // for why there is no inert tier.
 type requestGuard struct{ req *acl.Request }
 
@@ -563,7 +640,7 @@ func (g requestGuard) HoldsPermission(ctx context.Context, subjectID, permission
 // this call. Returns nil bc when no policy roles apply.
 //
 // Role resolution flows through [acl.Declarative.ForPrincipal] /
-// [Request.ForEntity], which includes group expansion and containment
+// Request.ForEntity, which includes group expansion and containment
 // inheritance.
 func (r *PolicyResolver) bindingFor(ctx context.Context, e *entity.Entity) (bc *bindingContext, roles []string) {
 	p := principal.From(ctx)
@@ -585,6 +662,66 @@ func (r *PolicyResolver) bindingFor(ctx context.Context, e *entity.Entity) (bc *
 		resolver:    r,
 	}
 	return bc, roles
+}
+
+// applyClientCeiling subtracts the request's client-attenuation field ceiling
+// (TKT-IAC8TX) from the visible dimension.
+//
+// It runs after every role grant and can only REMOVE — a ceiling never grants,
+// so a field no role made visible cannot become visible here.
+//
+// The two spellings map onto the dimension's existing vocabulary rather than a
+// parallel mechanism:
+//
+//   - `visible:` opts the dimension into CLOSED WORLD and allows exactly the
+//     named fields, so everything else on the type — including a property added
+//     to the metamodel tomorrow — is hidden. Same machinery, same semantics as
+//     a role-declared `visible:` block.
+//   - `redact:` denies the named fields only, leaving the rest alone.
+//
+// A denial attributed to the ceiling names the baseline rather than a role, so
+// an operator debugging a hidden field can tell "no role grants this" apart
+// from "this client is attenuated".
+func (r *PolicyResolver) applyClientCeiling(ctx context.Context, entityType string, visible *dimension) {
+	// Reuse the per-request scope when one is attached, else open a fresh
+	// Request — mirroring resolveViaDeclarative below.
+	//
+	// The fallback is load-bearing, not defensive. Returning early here (the
+	// original shape) made the ceiling depend on upstream wiring: role
+	// resolution opened its own Request and the ceiling did not, so on a ctx
+	// carrying a principal but no Request the roles applied and the
+	// attenuation silently did NOT. That is the fail-open direction — a
+	// restricted client keeping its user's full field visibility — and it is
+	// invisible, because nothing errors and the roles still resolve.
+	// visibility.PolicyRedactor forwards whatever ctx it is handed and binds
+	// nothing itself, so the guarantee must live here.
+	req := acl.FromContext(ctx)
+	if req == nil {
+		var err error
+		req, err = r.declarative.ForPrincipal(principal.From(ctx))
+		if err != nil {
+			// Unstamped: no verified principal_type, so no baseline can match.
+			// A ceiling only ever narrows, so there is nothing to narrow toward
+			// and returning is correct — unlike the stamped-but-unbound case
+			// above, which this recovers.
+			return
+		}
+	}
+	fc := req.FieldCeilingFor(entityType)
+	if !fc.Constrains() {
+		return
+	}
+	rule := "client-ceiling:" + fc.Baseline
+	universe := r.declaredFields(entityType)
+
+	if fc.Visible != nil {
+		// Closed world. restrictTo INTERSECTS rather than unions — a field some
+		// role already denied stays denied even though the ceiling names it,
+		// because a ceiling may only remove.
+		visible.restrictTo(fc.Visible, universe, rule)
+		return
+	}
+	visible.redact(fc.Redact, universe, rule)
 }
 
 // resolveViaDeclarative resolves the effective role set for

@@ -106,6 +106,9 @@ func TestTypedComparison_CoercionErrors(t *testing.T) {
 		{"non-integer literal on int field", "entity.count > 1.5"},
 		// A literal beyond 2^53 can't coerce to an exact int64 (RR-O0LM1).
 		{"int literal beyond 2^53", "entity.count > 9007199254740993"},
+		// The negative-literal fold must still hit the symmetric range
+		// guard (RR-CLYVDL): a too-large negative literal is rejected.
+		{"negative int literal beyond -2^53", "entity.count > -9007199254740993"},
 		// Hex literals are capped at 53 bits at parse (exact-float64
 		// invariant); a 64-bit one is rejected before coercion.
 		{"hex literal beyond 2^53", "entity.count > 0xFFFFFFFFFFFFFFFF"},
@@ -119,5 +122,62 @@ func TestTypedComparison_CoercionErrors(t *testing.T) {
 				t.Errorf("compile %q: expected error, got nil", tc.src)
 			}
 		})
+	}
+}
+
+// TestNegativeLiterals pins RR-G3Y70: a negative numeric literal is
+// allowed (folded to a negative constant) so signed comparisons work;
+// general unary minus on an expression stays rejected.
+func TestNegativeLiterals(t *testing.T) {
+	env := predicate.NewEnv()
+	if err := env.DeclareVar("entity", predicate.RecordType{
+		"balance": predicate.IntType,
+		"score":   predicate.NumberType,
+	}); err != nil {
+		t.Fatalf("declare: %v", err)
+	}
+
+	bind := func(balance int64, score float64) *predicate.Bindings {
+		b := predicate.NewBindings()
+		_ = b.SetVar("entity", predicate.NewRecord(map[string]predicate.Value{
+			"balance": predicate.NewInt(balance),
+			"score":   predicate.NewNumber(score),
+		}))
+		return b
+	}
+
+	ok := []struct {
+		src     string
+		balance int64
+		score   float64
+		want    bool
+	}{
+		{"entity.balance > -100", -50, 0, true},   // int coercion of -100
+		{"entity.balance > -100", -150, 0, false}, // below
+		{"entity.balance == -50", -50, 0, true},
+		{"entity.score < -1.5", 0, -2.0, true}, // float negative literal
+		{"entity.score < -1.5", 0, -1.0, false},
+	}
+	for _, tc := range ok {
+		t.Run(tc.src, func(t *testing.T) {
+			prog, err := predicate.Compile(env, tc.src)
+			if err != nil {
+				t.Fatalf("compile %q: %v", tc.src, err)
+			}
+			v, err := prog.Eval(context.Background(), bind(tc.balance, tc.score))
+			if err != nil {
+				t.Fatalf("eval: %v", err)
+			}
+			if got := v.(predicate.Bool).Bool(); got != tc.want {
+				t.Errorf("%q = %v, want %v", tc.src, got, tc.want)
+			}
+		})
+	}
+
+	// General unary minus on a non-literal stays rejected.
+	for _, bad := range []string{"entity.balance > -entity.score", "-entity.balance == 0"} {
+		if _, err := predicate.Compile(env, bad); err == nil {
+			t.Errorf("compile %q: expected error (unary minus on expression), got nil", bad)
+		}
 	}
 }

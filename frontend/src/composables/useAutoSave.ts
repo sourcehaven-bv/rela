@@ -260,7 +260,7 @@ export function useAutoSave(opts: AutoSaveOptions) {
     if (!(property in pending)) pendingCount.value++
     pending[property] = { value, enqueuedAt: Date.now() }
     if (timers[property]) clearTimeout(timers[property])
-    timers[property] = setTimeout(() => fireProperty(property), fieldDebounceMs)
+    timers[property] = setTimeout(() => fireDue(property), fieldDebounceMs)
   }
 
   function scheduleUnset(property: string) {
@@ -268,7 +268,7 @@ export function useAutoSave(opts: AutoSaveOptions) {
     if (!(property in pending)) pendingCount.value++
     pending[property] = { value: UNSET, enqueuedAt: Date.now() }
     if (timers[property]) clearTimeout(timers[property])
-    timers[property] = setTimeout(() => fireProperty(property), fieldDebounceMs)
+    timers[property] = setTimeout(() => fireDue(property), fieldDebounceMs)
   }
 
   function scheduleContentSave(content: string) {
@@ -286,21 +286,79 @@ export function useAutoSave(opts: AutoSaveOptions) {
     relationsTimer = setTimeout(() => fireRelations(), relationsDebounceMs)
   }
 
-  function fireProperty(property: string) {
-    const entry = pending[property]
-    if (!entry) return
-    delete timers[property]
-    delete pending[property]
-    pendingCount.value = Math.max(0, pendingCount.value - 1)
+  /**
+   * Fire `property` together with every other property whose debounce has
+   * already elapsed, as ONE patch (TKT-7S5735 AC4).
+   *
+   * Merging is not an optimization here, it is a correctness property. An
+   * accepted `clear_when_hidden` decision is a set of changes the user approved
+   * together — the trigger's new value plus the unset of what it hid. Emitting
+   * them as separate requests leaves a window in which the entity holds a state
+   * the user never approved (trigger changed, dependent field still populated),
+   * and if the second request fails that state is what persists.
+   *
+   * Scope note: this makes an approved DECISION atomic. It does not freeze the
+   * form — an unrelated field edited while a confirm dialog is open still
+   * debounces and saves on its own, because the gated proposal is not in
+   * `pending` yet (that is the whole design). That write is independent of the
+   * decision, so it is not part of the set being made atomic.
+   *
+   * Per-property semantics are preserved inside the batch:
+   * - **no-op suppression** is evaluated per entry while building, and a batch
+   *   in which every entry is suppressed sends nothing at all (rather than an
+   *   empty `{properties:{}}` PATCH, which would be a new write where the
+   *   unbatched code made none);
+   * - **set/unset of the same property** cannot both appear, because `pending`
+   *   is keyed by property and holds one entry — last write wins;
+   * - **error attribution** fans out to every property in the batch. This is a
+   *   real widening: one 422 now marks N fields. It is the accepted cost of
+   *   atomicity, and the alternative (parsing the server's per-field paths back
+   *   onto the batch) is what `categorizeWarnings` already does for warnings.
+   */
+  function fireDue(property: string, flushAll = false) {
+    if (!pending[property]) return
 
-    // No-op suppression
-    if (entry.value !== UNSET && deepEqual(entry.value, lastSeenServer[property])) {
-      return
+    // Collect this property plus every other one that is DUE.
+    //
+    // Due means "its debounce window has elapsed", not "its timer has already
+    // run". Two properties scheduled in the same tick both still hold live
+    // timers when the first one fires, so keying off `timers[key]` would never
+    // merge them — which is the common case this exists for (an accepted
+    // clear_when_hidden decision schedules the trigger and the unset together).
+    //
+    // A property still absorbing keystrokes has a later deadline and is left
+    // alone; pulling it in early would defeat the debounce it is waiting on.
+    // `flushAll` overrides that for commitImmediately, where the user is
+    // leaving and every pending edit must go out — as ONE patch, so navigating
+    // away cannot half-apply a set of changes either.
+    const now = Date.now()
+    const batch: Array<{ property: string; entry: PendingEntry }> = []
+    for (const key of Object.keys(pending)) {
+      const entry = pending[key]
+      if (!flushAll && key !== property && entry.enqueuedAt + fieldDebounceMs > now) continue
+      batch.push({ property: key, entry })
     }
 
-    const enqueuedAt = entry.enqueuedAt
-    const isUnset = entry.value === UNSET
-    const propertyValue = entry.value
+    for (const { property: key } of batch) {
+      if (timers[key]) {
+        clearTimeout(timers[key])
+        delete timers[key]
+      }
+      delete pending[key]
+      pendingCount.value = Math.max(0, pendingCount.value - 1)
+    }
+
+    // No-op suppression, per entry.
+    const live = batch.filter(
+      ({ property: key, entry }) =>
+        entry.value === UNSET || !deepEqual(entry.value, lastSeenServer[key])
+    )
+    if (!live.length) return // every entry suppressed → no request at all
+
+    const properties = live.filter(({ entry }) => entry.value !== UNSET)
+    const unsets = live.filter(({ entry }) => entry.value === UNSET).map((e) => e.property)
+    const enqueuedAtOf = new Map(live.map(({ property: key, entry }) => [key, entry.enqueuedAt]))
+    const keys = live.map((e) => e.property)
 
     queueTail = queueTail.then(runPatch, runPatch)
 
@@ -310,9 +368,13 @@ export function useAutoSave(opts: AutoSaveOptions) {
       inFlightCount.value++
       setStatus('saving')
       try {
-        const patch: EntityPatch = isUnset
-          ? { properties_unset: [property] }
-          : { properties: { [property]: propertyValue } }
+        const patch: EntityPatch = {}
+        if (properties.length) {
+          patch.properties = Object.fromEntries(
+            properties.map(({ property: key, entry }) => [key, entry.value])
+          )
+        }
+        if (unsets.length) patch.properties_unset = unsets
         // Bundle relations if dirty (C2: relations bundling table).
         attachRelations(patch)
         const response = await entitiesStore.update(
@@ -324,21 +386,39 @@ export function useAutoSave(opts: AutoSaveOptions) {
           relationsDirty = false
           if (relationsTimer) { clearTimeout(relationsTimer); relationsTimer = null }
         }
-        lastCommitAt[property] = Date.now()
-        if (fieldErrors.value[property]) {
-          const next = { ...fieldErrors.value }
-          delete next[property]
-          fieldErrors.value = next
+        const now = Date.now()
+        let nextErrors: Record<string, string> | null = null
+        for (const key of keys) {
+          lastCommitAt[key] = now
+          if (fieldErrors.value[key]) {
+            nextErrors ??= { ...fieldErrors.value }
+            delete nextErrors[key]
+          }
         }
+        if (nextErrors) fieldErrors.value = nextErrors
         setStatus('saved')
       } catch (err: unknown) {
         const message = getErrorMessage(err, 'Save failed')
-        const newer = pending[property]
-        const isLatestIntent = !newer || newer.enqueuedAt <= enqueuedAt
-        if (isLatestIntent) {
-          fieldErrors.value = { ...fieldErrors.value, [property]: message }
+        // Attribute to every property in the batch whose intent is still the
+        // latest — a field re-edited while this request was in flight has a
+        // newer intent and must not be marked for this failure.
+        let nextErrors: Record<string, string> | null = null
+        let attributed: string | undefined
+        for (const key of keys) {
+          const newer = pending[key]
+          if (newer && newer.enqueuedAt > (enqueuedAtOf.get(key) ?? 0)) continue
+          nextErrors ??= { ...fieldErrors.value }
+          nextErrors[key] = message
+          attributed ??= key
+        }
+        if (nextErrors) {
+          fieldErrors.value = nextErrors
           setStatus('error', message)
-          opts.onError(message, { status: getErrorStatus(err), property, channel: 'property' })
+          opts.onError(message, {
+            status: getErrorStatus(err),
+            property: attributed,
+            channel: 'property',
+          })
         }
       } finally {
         inFlightCount.value--
@@ -431,7 +511,7 @@ export function useAutoSave(opts: AutoSaveOptions) {
     }
   }
 
-  // attachRelations is called from fireProperty/fireContent to bundle
+  // attachRelations is called from fireDue/fireContent to bundle
   // the relations body when relationsDirty is set. Mutates `patch` in
   // place. Cleanup of `relationsDirty` happens in the runPatch caller
   // after the response is processed.
@@ -533,6 +613,34 @@ export function useAutoSave(opts: AutoSaveOptions) {
     }
   }
 
+  // Drop a not-yet-sent write for `property` WITHOUT touching form state.
+  //
+  // `revertField` also restores `lastSeenServer` into the form, which is the
+  // wrong baseline when the caller already knows the exact value to restore
+  // (it can be older than an intermediate edit the user accepted). Callers
+  // that own the restore need only the cancellation half. Returns true if a
+  // pending write was dropped; false means it had already fired and the caller
+  // must re-save.
+  //
+  // Currently exercised only by tests: its consumer was the interactive
+  // clear-confirm path, deferred to the propose/commit refactor (BUG-FB0LN8).
+  // Kept because "cancel a staged write without side effects" is the primitive
+  // that refactor needs, and it is cheap and covered.
+  function cancelPendingField(property: string): boolean {
+    let cancelled = false
+    if (timers[property]) {
+      clearTimeout(timers[property])
+      delete timers[property]
+      cancelled = true
+    }
+    if (property in pending) {
+      delete pending[property]
+      pendingCount.value = Math.max(0, pendingCount.value - 1)
+      cancelled = true
+    }
+    return cancelled
+  }
+
   function revertField(property: string) {
     if (timers[property]) {
       clearTimeout(timers[property])
@@ -571,10 +679,16 @@ export function useAutoSave(opts: AutoSaveOptions) {
   // in-flight saves on timeout.
   function commitImmediately(timeoutMs = 10_000): Promise<CommitResult> {
     // Flush per-property timers, content timer, relations timer.
+    //
+    // fireDue drains every ripe property in one batch, so the FIRST iteration
+    // typically consumes them all and the rest no-op on its `!pending[p]`
+    // guard. The loop is kept (over a key snapshot, so mutation during
+    // iteration is safe) because a property enqueued by a merge callback would
+    // otherwise be missed.
     for (const p of Object.keys(timers)) {
       const t = timers[p]
       if (t) clearTimeout(t)
-      fireProperty(p)
+      fireDue(p, true)
     }
     if (contentTimer) {
       clearTimeout(contentTimer)
@@ -622,6 +736,7 @@ export function useAutoSave(opts: AutoSaveOptions) {
     scheduleRelationsChange,
     commitImmediately,
     revertField,
+    cancelPendingField,
     revertContent,
     recordServerSnapshot,
     mergeServerResponse,

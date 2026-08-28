@@ -3,18 +3,27 @@
 // required asterisk), help text, error text, and the .form-field layout.
 // Widgets render only their input control. labelPosition handles the
 // checkbox case where the label follows the control.
-defineProps<{
+import { computed } from 'vue'
+import { fieldSpanStyle } from '@/utils/fieldSpan'
+
+const props = defineProps<{
   fieldId?: string
   label?: string
   required?: boolean
   help?: string
   error?: string
   labelPosition?: 'before' | 'after'
+  // Authored width on the 12-column form grid (TKT-5V8704); undefined = full
+  // width. FieldShell owns the .form-field element, so it is the only place
+  // that can set the grid column.
+  span?: number
 }>()
+
+const spanStyle = computed(() => fieldSpanStyle(props.span))
 </script>
 
 <template>
-  <div class="form-field" :class="{ 'has-error': error }">
+  <div class="form-field" :class="{ 'has-error': error }" :style="spanStyle">
     <template v-if="labelPosition === 'after'">
       <div class="checkbox-wrapper">
         <slot />

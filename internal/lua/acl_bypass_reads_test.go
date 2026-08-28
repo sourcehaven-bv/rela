@@ -391,23 +391,77 @@ func TestElevatedRead_RejectsEmptyArguments(t *testing.T) {
 	}
 }
 
-// TestElevatedRead_AbsentWithoutBypassBinding pins the outer gate: no
-// allow_acl_bypass action means no rela.bypass_acl, so an ElevatedReader
-// sitting in the deps grants a script nothing. Elevation needs BOTH keys.
-func TestElevatedRead_AbsentWithoutBypassBinding(t *testing.T) {
+// TestElevatedRead_AbsentWithoutAnyHandle pins the outer gate: elevation is
+// never ambient. With NEITHER elevated handle wired there is no
+// rela.bypass_acl at all, so a script cannot elevate however it is written.
+//
+// This test formerly asserted that an ElevatedReader ALONE also registered
+// nothing ("read elevation must not be a second, independent key"). TKT-Y3JVFK
+// deliberately changed that: a reader-only elevation is now a first-class
+// posture, because a document render must aggregate over rows its caller
+// cannot see while being structurally unable to mutate. The concern behind the
+// original assertion — that elevation never appears by accident — is unchanged
+// and still enforced: the reader is nil on every runtime except the ones a
+// wiring site explicitly grants it to. See TestElevatedRead_ReaderOnlyHandle
+// for the new contract.
+func TestElevatedRead_AbsentWithoutAnyHandle(t *testing.T) {
 	t.Parallel()
 	ws := newMockWorkspace(t)
 	deps := ws.services("/tmp")
 	deps.VisibleReader = gatedReader{raw: ws.store}
-	deps.ElevatedReader = ws.store // read capability present...
-	deps.ElevatedManager = nil     // ...but no elevated Mutator: no binding.
+	deps.ElevatedReader = nil  // neither capability wired...
+	deps.ElevatedManager = nil // ...so the binding must not exist.
 	var buf bytes.Buffer
 	r := NewWriter(deps, &buf)
 	defer r.Close()
 
 	if err := r.RunString(`if rela.bypass_acl ~= nil then error("bypass_acl present") end`); err != nil {
-		t.Errorf("an ElevatedReader alone registered rela.bypass_acl (%v) -- read "+
-			"elevation must not be a second, independent key to the closure", err)
+		t.Errorf("rela.bypass_acl was registered with no elevated handle at all (%v) -- "+
+			"elevation must never be ambient", err)
+	}
+}
+
+// TestElevatedRead_ReaderOnlyHandle pins the TKT-Y3JVFK contract: an
+// ElevatedReader with no ElevatedManager yields a READ-ONLY admin handle.
+//
+// The write methods must be ABSENT rather than present-and-raising. A document
+// render is read-only by construction (it never had writes to lose), so
+// `admin.delete_entity == nil` is the honest contract and makes "a render
+// cannot mutate" structural. Contrast the nil-reader case, where the methods
+// are present and raise, because there a missing reader means a
+// MISCONFIGURATION worth naming rather than a deliberate posture.
+func TestElevatedRead_ReaderOnlyHandle(t *testing.T) {
+	t.Parallel()
+	ws := newMockWorkspace(t)
+	deps := ws.services("/tmp")
+	deps.VisibleReader = gatedReader{raw: ws.store}
+	deps.ElevatedReader = ws.store // read capability only...
+	deps.ElevatedManager = nil     // ...no elevated Mutator.
+	var buf bytes.Buffer
+	r := NewWriter(deps, &buf)
+	defer r.Close()
+
+	if err := r.RunString(`if rela.bypass_acl == nil then error("bypass_acl absent") end`); err != nil {
+		t.Fatalf("an ElevatedReader alone did not register rela.bypass_acl: %v", err)
+	}
+
+	for _, method := range []string{"create_relation", "delete_relation", "delete_entity"} {
+		script := `rela.bypass_acl(function(admin)
+			if admin.` + method + ` ~= nil then error("` + method + ` present") end
+		end)`
+		if err := r.RunString(script); err != nil {
+			t.Errorf("read-only handle exposed %s (%v) -- a render must not be able to mutate",
+				method, err)
+		}
+	}
+
+	// The read methods ARE present and functional on the same handle.
+	if err := r.RunString(`rela.bypass_acl(function(admin)
+		if admin.get_entity == nil then error("get_entity absent") end
+		if admin.list_entities == nil then error("list_entities absent") end
+		if admin.get_relations == nil then error("get_relations absent") end
+	end)`); err != nil {
+		t.Errorf("read-only handle is missing a read method: %v", err)
 	}
 }
 

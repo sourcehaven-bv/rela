@@ -11,7 +11,7 @@ import (
 // resolver needs for `principal_property` substitution — declared here
 // (not next to the store) per CLAUDE.md's "interfaces at the call site"
 // rule. The wiring site supplies a store-backed implementation
-// ([StorePrincipalLookup]).
+// (StorePrincipalLookup).
 //
 // The method returns EVERY matching entity ID so the resolver can
 // distinguish the three outcomes it cares about: zero (no match — keep

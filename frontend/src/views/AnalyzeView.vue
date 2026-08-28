@@ -7,6 +7,7 @@ import BackButton from '@/components/common/BackButton.vue'
 import PageLayout from '@/components/common/PageLayout.vue'
 import PageTitle from '@/components/common/PageTitle.vue'
 import IssuesTable from '@/components/common/IssuesTable.vue'
+import PendingButton from '@/components/common/PendingButton.vue'
 
 const backTarget = useBackTarget()
 
@@ -89,6 +90,15 @@ function getCheckCount(checkKey: string): number {
   return result.value?.byCheck[checkKey] || 0
 }
 
+// Whether a check reported fewer issues than it found. The server caps each
+// check, so for a truncated one the count above is the cap, not the total —
+// which is why the count renders as "100+" and the card says the list is
+// partial. Without this an operator fixes all 100, re-runs, sees 100 again,
+// and concludes analysis is broken.
+function isTruncated(checkKey: string): boolean {
+  return result.value?.truncatedChecks?.includes(checkKey) ?? false
+}
+
 // Get filtered issues for a check type
 function getFilteredIssuesForCheck(checkKey: string): AnalyzeIssue[] {
   return issuesByCheck.value[checkKey] || []
@@ -129,9 +139,13 @@ onMounted(() => {
     </template>
 
     <template #actions>
-      <button class="btn btn-secondary" :disabled="loading" @click="loadAnalysis">
-        {{ loading ? 'Refreshing...' : 'Refresh' }}
-      </button>
+      <PendingButton
+        class="btn btn-secondary"
+        :pending="loading"
+        label="Refresh"
+        pending-label="Refreshing…"
+        @click="loadAnalysis"
+      />
     </template>
 
     <div v-if="loading" class="loading-state">
@@ -157,11 +171,16 @@ onMounted(() => {
             <h3 class="check-title">
               {{ checkType.label }}
               <span class="check-count" :class="{ 'has-issues': getCheckCount(checkType.key) > 0 }">
-                {{ getCheckCount(checkType.key) }}
+                {{ getCheckCount(checkType.key) }}{{ isTruncated(checkType.key) ? '+' : '' }}
               </span>
             </h3>
             <p class="check-description">{{ checkType.description }}</p>
           </div>
+
+          <p v-if="isTruncated(checkType.key)" class="check-truncated" role="status">
+            Showing the first {{ getCheckCount(checkType.key) }} issues &mdash; this check found
+            more. Fix these and re-run to see the rest.
+          </p>
 
           <div v-if="getCheckCount(checkType.key) === 0" class="no-issues">
             <span class="check-icon">&#10003;</span>
@@ -227,12 +246,6 @@ onMounted(() => {
   border-top-color: var(--accent-color);
   border-radius: 50%;
   animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 /* Summary badge */
@@ -305,6 +318,16 @@ onMounted(() => {
 
 .check-description {
   margin: 0;
+  font-size: 13px;
+  color: var(--muted-text);
+}
+
+.check-truncated {
+  margin: 8px 0 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--warning-color);
+  background: var(--hover-bg);
+  border-radius: 4px;
   font-size: 13px;
   color: var(--muted-text);
 }

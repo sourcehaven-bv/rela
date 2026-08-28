@@ -18,10 +18,16 @@ const sseWaitTimeout = 5 * time.Second
 
 // waitForEntityChange reads from the broker channel until it finds an
 // entity-change event for the given type, or fails after sseWaitTimeout.
-// entityType varies across callers (incl. the postgres-tagged bridge
-// test, invisible to the default-build linter).
 //
-//nolint:unparam // entityType varies in the postgres-tagged caller
+// entityType looks constant to the default-build linter — every caller in this
+// file passes "ticket" — but the postgres-tagged bridge test passes "feature".
+// Neither `unparam` nor `nolintlint` can see both builds at once: suppressing
+// unparam leaves an "unused directive" under -tags postgres, and dropping the
+// directive fails unparam on the default build. The parameter is genuinely
+// varying, so it is left in place and the suppression is applied to both
+// linters, whichever one the current build actually raises.
+//
+//nolint:unparam,nolintlint // entityType varies in the postgres-tagged caller; see above
 func waitForEntityChange(t *testing.T, ch <-chan sseEvent, entityType string) sseEvent {
 	t.Helper()
 	deadline := time.After(sseWaitTimeout)

@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // AllowAllReader is the explicit pass-through [Reader] capability for
@@ -49,6 +50,15 @@ func (r *AllowAllReader) Get(ctx context.Context, entityType, id string) (*entit
 
 // Filter implements [Reader]: pass-through, input returned unchanged.
 func (r *AllowAllReader) Filter(_ context.Context, candidates []*entity.Entity) []*entity.Entity {
+	return candidates
+}
+
+// FilterHeaders implements [HeaderFilterer]: pass-through, input returned
+// unchanged — the same allow-all capability [AllowAllReader.Filter] grants, applied to
+// content-free headers.
+func (r *AllowAllReader) FilterHeaders(
+	_ context.Context, candidates []store.EntityHeader,
+) []store.EntityHeader {
 	return candidates
 }
 

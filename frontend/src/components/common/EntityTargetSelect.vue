@@ -22,7 +22,7 @@
  * from clobbering mid-type input.
  *
  * This component deliberately carries NONE of RelationPicker's write-path
- * machinery (incoming-changed, verdicts, InlineCreateModal, update:types,
+ * machinery (incoming-changed, verdicts, inline create, update:types,
  * multi-select). It is presentational: candidates in, one title out.
  */
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
@@ -271,7 +271,9 @@ onBeforeUnmount(() => {
 .entity-target-select select:focus {
   outline: none;
   border-color: var(--accent-color);
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
+  box-shadow:
+    0 0 0 2px var(--focus-ring-gap),
+    0 0 0 4px var(--focus-ring);
 }
 
 .clear-selection {

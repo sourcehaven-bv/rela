@@ -9,6 +9,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/app"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild/backendtest"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/script"
@@ -110,7 +111,7 @@ func TestDiscover_MalformedACL_FailsBoot(t *testing.T) {
 	writeMetamodel(t, root)
 	writePolicy(t, root, "roles:\n  admin:\n    create: [not-closed\n")
 
-	svc, err := appbuildOnDisk(t, root)
+	svc, err := appbuildOnDiskNoBackend(t, root)
 	if err == nil {
 		svc.Close()
 		t.Fatalf("appbuild.New: expected error on malformed acl.yaml, got nil")
@@ -161,7 +162,7 @@ func TestDiscover_PrincipalPropertyUnknown_FailsBoot(t *testing.T) {
 	writeMetamodelBody(t, root, principalPropertyMetamodel)
 	writePolicy(t, root, "user_entity_type: persoon\nprincipal_property: ghost\n")
 
-	svc, err := appbuildOnDisk(t, root)
+	svc, err := appbuildOnDiskNoBackend(t, root)
 	if err == nil {
 		svc.Close()
 		t.Fatalf("expected boot to fail on unknown principal_property, got nil")
@@ -218,12 +219,44 @@ func writePolicy(t *testing.T, root, body string) {
 // appbuildOnDisk builds a Services bundle from a real on-disk project
 // rooted at root. Uses appbuild.New directly so we can supply our own
 // audit sink without disturbing the test filesystem.
+//
+// The backend comes from backendtest, so on the postgres build this needs — and
+// waits for — a database. Use [appbuildOnDiskNoBackend] for a case that asserts
+// boot FAILS before any store is opened; it must not be gated on a database it
+// never reaches.
 func appbuildOnDisk(t *testing.T, root string) (*appbuild.Services, error) {
 	t.Helper()
 	return appbuildOnDiskWithOpts(t, root)
 }
 
 func appbuildOnDiskWithOpts(t *testing.T, root string, opts ...appbuild.Option) (*appbuild.Services, error) {
+	t.Helper()
+	// backendtest.DSN supplies whatever the current build needs to reach a store
+	// — "" on fs/memory, a private migrated schema on postgres. These are
+	// ACL-wiring assertions, not backend assertions, so they must not hard-code
+	// one.
+	//
+	// DSN rather than Options because this path calls appbuild.New, which reads
+	// Config.DatabaseURL and ignores WithDatabaseURL by design.
+	return newOnDisk(t, backendtest.DSN(t), root, opts...)
+}
+
+// appbuildOnDiskNoBackend builds without asking backendtest for a backend.
+//
+// The config-validation gates (malformed acl.yaml, an unknown
+// principal_property) reject the project BEFORE the recipe opens a store, so
+// they assert the same thing on every build with no database present. Routing
+// them through appbuildOnDisk would turn genuine coverage into a skip whenever
+// the postgres build runs without a server — the tests would still be green,
+// but they would no longer be checking anything.
+func appbuildOnDiskNoBackend(t *testing.T, root string) (*appbuild.Services, error) {
+	t.Helper()
+	return newOnDisk(t, "", root)
+}
+
+// newOnDisk builds a Services over the project at root. dsn is empty on the
+// fs/memory builds, where the recipe ignores Config.DatabaseURL entirely.
+func newOnDisk(t *testing.T, dsn, root string, opts ...appbuild.Option) (*appbuild.Services, error) {
 	t.Helper()
 	fs := storage.NewSafeFS(storage.NewOsFS())
 	paths, err := project.Discover(root, fs)
@@ -238,5 +271,6 @@ func appbuildOnDiskWithOpts(t *testing.T, root string, opts ...appbuild.Option) 
 		Paths:        paths,
 		ScriptEngine: script.NewEngine(),
 		Audit:        audit.Nop{},
+		DatabaseURL:  dsn,
 	}, opts...)
 }

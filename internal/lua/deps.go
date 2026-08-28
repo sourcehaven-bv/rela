@@ -2,6 +2,7 @@ package lua
 
 import (
 	"context"
+	"errors"
 	"iter"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -43,22 +44,19 @@ type ReadDeps struct {
 	// scripts can see.
 	//
 	// A nil VisibleReader DENIES (the binding raises); it never falls back
-	// to WritePrepStore. A forgotten wiring must not become an ACL bypass
+	// to a raw handle. A forgotten wiring must not become an ACL bypass
 	// (RR-X9NVHI).
-	VisibleReader EntityReader
-
-	// WritePrepStore is the RAW, ungated store handle, used by exactly one
-	// binding: rela.update_entity's read-before-write.
 	//
-	// DO NOT route read-outs through this, and DO NOT "tidy" it away by
-	// pointing update_entity at VisibleReader. update_entity does
-	// GetEntity → Clone → merge → save, so reading a REDACTED entity there
-	// would drop the caller's hidden properties from the clone and ERASE
-	// THEM ON SAVE — silent data destruction. This is the read-out /
-	// write-prep boundary DEC-ZBI39P calls out; the two fields are separate
-	// so the wrong choice is visible at the call site. Nil on reader
-	// runtimes (NewReader), which have no write bindings.
-	WritePrepStore store.Store
+	// There is deliberately NO second, raw store field beside this one.
+	// rela.update_entity used to need one for its read-before-write — and
+	// that field was a standing hazard, since pointing it at VisibleReader
+	// by mistake made the save erase whatever the caller could not see.
+	// The binding now builds an [entity.Patch] and lets the manager merge
+	// against the raw stored entity internally (TKT-80EWGM), so no Lua
+	// binding holds an ungated read path and the mistake is unavailable.
+	// Elevated reads are the sole exception and stay explicitly opt-in via
+	// [WriteDeps.ElevatedReader].
+	VisibleReader EntityReader
 
 	// Tracer is the graph-traversal surface. Wiring injects either the
 	// plain tracer or a visibility decorator over it; the trace bindings
@@ -76,6 +74,27 @@ type ReadDeps struct {
 
 	Meta        *metamodel.Metamodel
 	ProjectRoot string
+
+	// Capabilities declares the ambient, non-graph capabilities a runtime
+	// built from these deps may reach — outbound HTTP, the AI provider, named
+	// secrets, and rela.write_file (TKT-YH52OM).
+	//
+	// The zero value grants NOTHING, which is the point: before this existed
+	// every runtime on every surface held http, ai and the entire contents of
+	// .rela/secrets.yaml, so any script could read a secret and POST it out in
+	// two calls. A forgotten wiring must deny, exactly as a nil VisibleReader
+	// denies rather than falling back to a raw handle (RR-X9NVHI).
+	//
+	// It lives on ReadDeps rather than WriteDeps because READ-only surfaces
+	// (validation rules, document renders) had the same exposure — they cannot
+	// mutate the graph, but they could still exfiltrate.
+	//
+	// Precedence: a NON-EMPTY [WithCapabilities] overrides this; an empty one
+	// leaves it alone. Engine.execute passes that option unconditionally, so
+	// treating an empty grant as a revocation silently erased this field for
+	// every plain ExecuteCode/ExecuteFile caller — which is how the scheduler
+	// runs. See the WithCapabilities godoc.
+	Capabilities Capabilities
 }
 
 // Mutator is the consumer-side write surface Lua bindings call into
@@ -85,16 +104,47 @@ type ReadDeps struct {
 // site supplies an implementation (the production one being the
 // project's EntityManager).
 //
-// Five methods — RenameEntity and UpdateRelation are intentionally
+// Six methods — RenameEntity and UpdateRelation are intentionally
 // absent because no Lua binding invokes them. Narrowed from the
 // wider EntityManager interface in TKT-IF37 to drop lua's transitive
 // dependency on internal/entitymanager.
+//
+// PatchEntity is what rela.update_entity is built on: the binding names
+// the properties the script touched and nothing else, so it needs no raw
+// store handle of its own to read-modify-write through (TKT-80EWGM).
 type Mutator interface {
 	CreateEntity(ctx context.Context, e *entity.Entity, opts entity.CreateOptions) (*entity.CreateResult, error)
 	UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.UpdateResult, error)
+	PatchEntity(ctx context.Context, id string, p entity.Patch) (*entity.UpdateResult, error)
 	DeleteEntity(ctx context.Context, id string, cascade bool) (*entity.DeleteResult, error)
 	CreateRelation(ctx context.Context, from, relType, to string, opts entity.RelationOptions) (*entity.Relation, error)
 	DeleteRelation(ctx context.Context, from, relType, to string) error
+}
+
+// NotFoundError is an OPTIONAL capability a [Mutator]'s returned error may
+// implement to say "the target entity does not exist". Declared here at the
+// consumer so lua needs no dependency on internal/entitymanager (same
+// rationale as [Mutator] itself); the production error type satisfies it.
+//
+// Why this exists rather than a string match: several hard errors embed
+// caller-supplied values. An illegal state-machine transition formats the
+// attempted value with %q, so `strings.Contains(err.Error(), "entity not
+// found")` misreports a *rejected transition* as a *missing entity* when a
+// script sets a property to that literal text — and a script branching on
+// that message could try to recreate a row that still exists. Structural
+// beats textual.
+type NotFoundError interface {
+	error
+	// EntityNotFound reports that the write failed because the target
+	// entity does not exist, as opposed to any other hard error.
+	EntityNotFound() bool
+}
+
+// isEntityNotFound reports whether err (or anything it wraps) declares
+// itself an entity-not-found condition.
+func isEntityNotFound(err error) bool {
+	var nfe NotFoundError
+	return errors.As(err, &nfe) && nfe.EntityNotFound()
 }
 
 // WriteDeps is the capability bundle required to run a read-write Lua runtime.
@@ -106,9 +156,13 @@ type WriteDeps struct {
 
 	// ElevatedManager, when non-nil, is a write handle whose mutations skip
 	// the ACL deny (TKT-D8T148). It is set ONLY for an allow_acl_bypass
-	// automation action; its presence is what makes the runtime register
-	// rela.bypass_acl(fn). Nil on every other runtime, so rela.bypass_acl is
-	// absent and a script cannot elevate.
+	// automation action.
+	//
+	// Since TKT-Y3JVFK it is no longer the sole key to rela.bypass_acl:
+	// EITHER this or ElevatedReader registers the binding. What each handle
+	// controls is which METHODS the `admin` table carries — with this nil the
+	// write methods are absent entirely, so a reader-only elevation cannot
+	// mutate. Both nil ⇒ no binding, and a script cannot elevate at all.
 	ElevatedManager Mutator
 
 	// ElevatedReader, when non-nil, is the RAW read handle backing the
@@ -117,13 +171,18 @@ type WriteDeps struct {
 	// ungated — the closure is the boundary, so a half-elevated read would
 	// be a confusing contract.
 	//
-	// SEPARATE from WritePrepStore on purpose, even though production wires
-	// both from the same raw store. WritePrepStore is present on EVERY
-	// writer runtime (update_entity's read-before-write needs it); routing
-	// elevated reads through it would hand every writer runtime an ungated
-	// read path and dissolve the two-key gate that makes elevation
-	// opt-in. This field is set at the same site, under the same two
-	// conditions, as ElevatedManager.
+	// This is now the ONLY raw read handle a writer runtime can carry, and
+	// it is opt-in. Previously a second raw field (WritePrepStore) was
+	// present on EVERY writer runtime for update_entity's read-before-write;
+	// removing it (TKT-80EWGM) means an ungated read path now exists only
+	// where elevation was explicitly requested.
+	//
+	// It may be set WITHOUT ElevatedManager (TKT-Y3JVFK) — a READ-ONLY
+	// elevation, which is how a document render aggregates over rows its
+	// caller cannot see while remaining structurally unable to mutate (the
+	// `admin` table simply has no write methods). On the cascade path both
+	// handles are still set together, at the same site under the same two
+	// conditions.
 	//
 	// Nil is a DENY, not a fallback: admin.get_entity raises rather than
 	// silently reading through the gated VisibleReader. Elevation that

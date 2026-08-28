@@ -34,6 +34,31 @@ type Entity struct {
 	// per-entity GET responses. Same pointer / closed-world semantics
 	// as FieldAffordances.
 	RelationAffordances *map[string]RelationAffordance `json:"_relations,omitempty"`
+	// Redacted names the properties withheld from `Properties` by
+	// field-level ACL (`visible:`) on THIS response (DEC-T0XIWQ). It is the
+	// field-level sibling of Inaccessible, which says the same thing
+	// ("exists, value unreadable") for git-crypt-locked content.
+	//
+	// It exists because absence from `Properties` is ambiguous — a key can be
+	// missing because it was redacted OR because it was never set — and a
+	// WRITE surface has to tell those apart to know which inputs it may
+	// offer. Read-out surfaces are happy to conflate them; an edit form is
+	// not. Clients MUST NOT infer redaction from absence: consult this list.
+	//
+	// Disclosure boundary: this leaks property NAMES, never VALUES. That is
+	// not a new disclosure — the metamodel endpoint already serves the
+	// declared property names per type, and `visible:` redaction is defined
+	// as hiding values only, making no claim to conceal which properties
+	// exist. Row-level ACL is unaffected: whether an ENTITY exists remains a
+	// genuine secret, and this list only ever rides a response the caller was
+	// already authorized to read.
+	//
+	// Same pointer / closed-world semantics as FieldAffordances: present
+	// (possibly empty) on per-entity responses — `[]` meaning "evaluated,
+	// nothing redacted" — and nil on list rows and other non-per-entity
+	// shapes, which carry no write affordances. Names are sorted for a
+	// deterministic wire.
+	Redacted *[]string `json:"_redacted,omitempty"`
 	// Attachments maps a `file`-type property name to the LIST of files
 	// currently attached to it (a property may hold several when its
 	// metamodel `max` > 1). The value is always an array — even a
@@ -233,12 +258,24 @@ type Config struct {
 	Views            map[string]dataentryconfig.ViewConfig       `json:"views"`
 	EntityViews      map[string]dataentryconfig.EntityViewConfig `json:"entity_views,omitempty"`
 	Kanbans          map[string]dataentryconfig.Kanban           `json:"kanbans"`
+	Calendars        map[string]dataentryconfig.Calendar         `json:"calendars,omitempty"`
 	Dashboard        *dataentryconfig.DashboardConfig            `json:"dashboard,omitempty"`
 	Actions          map[string]dataentryconfig.Action           `json:"actions,omitempty"`
 	Navigation       []dataentryconfig.NavigationEntry           `json:"navigation"`
 	Documents        map[string]dataentryconfig.DocumentConfig   `json:"documents,omitempty"`
 	Apps             map[string]App                              `json:"apps,omitempty"`
 	Palette          *dataentryconfig.ResolvedPalette            `json:"palette,omitempty"`
+
+	// NextActionBands is the operator's ordered priority vocabulary, so the
+	// SPA can label a suggestion's band ("Someone is waiting") rather than
+	// echoing a raw id.
+	//
+	// The SOURCES are deliberately NOT here. A suggestion arrives fully
+	// resolved from /_next_action — message already interpolated, affordances
+	// attached — so the SPA never needs the rules, and shipping them would
+	// invite a client-side re-implementation of the engine. Same reasoning as
+	// "no useACL() composable": the SPA renders what the server computed.
+	NextActionBands []dataentryconfig.NextActionBand `json:"next_action_bands,omitempty"`
 }
 
 // App is the client-facing view of a custom app. It deliberately omits the
@@ -306,12 +343,25 @@ type SidePanelSection struct {
 // human-readable rendering. Inaccessible is true when the underlying entity
 // is git-crypt encrypted — the field is known to exist in the schema but
 // its value cannot be read.
+// Span is the field's width on the 12-column layout grid (0 = full width).
+//
+// Render is the already-resolved render mode ("display" | "input", TKT-HOIX1),
+// set server-side from the section + field config. View sections and cards/list
+// rows honor it; the side-panel renderer does not implement inline edit today
+// and ignores it.
+//
+// Field order and types must stay in lockstep with dataentry.SectionFieldData:
+// the handlers convert between them with a direct struct conversion, so the
+// compiler is what keeps the wire surface and the internal DTO from drifting.
 type SectionField struct {
 	Property     string   `json:"property,omitempty"`
 	Label        string   `json:"label"`
 	Values       []string `json:"values,omitempty"`
 	PropType     string   `json:"propType,omitempty"`
 	Inaccessible bool     `json:"inaccessible,omitempty"`
+	Span         int      `json:"span,omitempty"`
+	Render       string   `json:"render,omitempty"`
+	Widget       string   `json:"widget,omitempty"`
 }
 
 // SidePanelEntity represents an entity in a side panel section.
@@ -325,12 +375,11 @@ type SidePanelEntity struct {
 	HasContent bool           `json:"hasContent"`
 }
 
-// SidebarItem represents a navigation item with count.
+// SidebarItem represents a navigation item.
 type SidebarItem struct {
 	Label  string `json:"label"`
 	Href   string `json:"href"`
 	Icon   string `json:"icon,omitempty"`
-	Count  *int   `json:"count,omitempty"`
 	Action string `json:"action,omitempty"`
 }
 
@@ -339,6 +388,24 @@ type SidebarGroup struct {
 	Group     string        `json:"group,omitempty"`
 	Collapsed bool          `json:"collapsed,omitempty"`
 	Items     []SidebarItem `json:"items"`
+}
+
+// DashboardResponse contains the dashboard page config with the cards this
+// principal may see (TKT-53KICM).
+//
+// This exists as a separate endpoint from `_config` because the card list is
+// per-principal while `_config` is deliberately identical for everyone (root
+// CLAUDE.md, "The configuration is not a secret; the data is"). `_config` still
+// carries the full `dashboard:` block; only this response is filtered, and only
+// so a user is not offered a card they cannot act on.
+//
+// Cards is always a non-nil slice: a project with no `dashboard:` configured,
+// one with an empty `cards:`, and one where every card was filtered all
+// serialize as `[]`, so the SPA has a single "render what you got" path.
+type DashboardResponse struct {
+	Title       string                          `json:"title,omitempty"`
+	Description string                          `json:"description,omitempty"`
+	Cards       []dataentryconfig.DashboardCard `json:"cards"`
 }
 
 // SidebarResponse contains the sidebar data with app info and navigation.
@@ -350,6 +417,26 @@ type SidebarResponse struct {
 	// `_settings`) so the SPA can render the logo on first paint without
 	// blocking on a settings fetch.
 	LogoURL *string `json:"logoUrl,omitempty"`
+
+	// InlineCreate maps an entity type to the form id the SPA should use
+	// to create one inline from a relation field (TKT-OMUD56). A type
+	// appears ONLY when both conditions hold: the principal may create it,
+	// and a create form resolves for it. So presence alone is the offer —
+	// the client needs no second lookup and no permission arithmetic.
+	//
+	// Sending the resolved form id (rather than letting the client find
+	// its own) keeps `createFormForType`'s ordering authoritative in one
+	// place; the natsort-and-prefer-non-edit rule is not reimplemented
+	// client-side where it could silently diverge.
+	//
+	// It rides on the sidebar because this is the one boot-time payload
+	// that is already principal-scoped: `_config` is pinned
+	// principal-INDEPENDENT (TestNavPermission_ConfigUnfiltered) and
+	// `_schema` is a pure metamodel projection.
+	//
+	// A UI hint, never authorization: POST /api/v1/{plural} re-authorizes,
+	// so a stale or forged map can only surface a button that then 403s.
+	InlineCreate map[string]string `json:"inline_create,omitempty"`
 }
 
 // ConflictItem represents a conflicted file.

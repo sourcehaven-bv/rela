@@ -234,7 +234,7 @@ baseline.
 Agree on ID patterns upfront:
 
 ```yaml
-# In metamodel.yaml
+# In schema.yaml
 entities:
   requirement:
     id_patterns: ["REQ-", "FR-", "NFR-"]

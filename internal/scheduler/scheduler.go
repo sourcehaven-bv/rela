@@ -16,17 +16,32 @@
 //	30m, 2h      fixed interval (any Go duration)
 //	15           bare number interpreted as minutes
 //
+// A task that fails enters a backoff ladder (5m, 10m, 20m, 40m, 80m, then
+// every 2h) which REPLACES its schedule until it succeeds — while a retry is
+// pending the task fires only on ladder steps, never on its normal cadence.
+// The ladder is identical for every schedule, so it slows a failing
+// short-interval task down and speeds a failing daily one up. Only a
+// successful run resets it.
+//
 // See Config/TaskConfig for the YAML shape and Schedule.IsDue for the
 // due-time logic.
 package scheduler
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"iter"
 	"log/slog"
+	"maps"
+	"slices"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/config"
+	"github.com/Sourcehaven-BV/rela/internal/jobs"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -36,6 +51,35 @@ import (
 
 // tickInterval is how often the scheduler wakes to check for due tasks.
 const tickInterval = 60 * time.Second
+
+// Retry ladder for failed tasks. The delay doubles per consecutive failure
+// from baseRetryDelay (5m, 10m, 20m, 40m, 80m) and then holds at
+// maxRetryDelay, repeating until the task succeeds.
+//
+// The cap keeps a persistently broken job to roughly a dozen attempts a day
+// rather than silencing it, while still recovering an intermittent failure
+// within minutes. It is not tied to any schedule: see retryDelay.
+const (
+	baseRetryDelay = 5 * time.Minute
+	maxRetryDelay  = 2 * time.Hour
+
+	// persistentFailureThreshold is the consecutive-failure count at which
+	// "task failed" escalates from WARN to ERROR — by this point the retries
+	// are demonstrably not helping and the job needs a human.
+	persistentFailureThreshold = 4
+)
+
+// maxLadderSteps is the failure count at which doubling first reaches
+// maxRetryDelay; beyond it every retry is capped. Derived rather than written
+// as a literal so retuning baseRetryDelay or maxRetryDelay cannot silently
+// desynchronise the bound from the ladder it describes.
+var maxLadderSteps = func() int {
+	steps := 1
+	for d := baseRetryDelay; d < maxRetryDelay; d *= 2 {
+		steps++
+	}
+	return steps
+}()
 
 // WorkspaceProvider is the subset of workspace.Workspace the scheduler needs.
 type WorkspaceProvider interface {
@@ -77,12 +121,66 @@ func StartBackground(
 	engine := script.NewEngine()
 	s := New(cfg, engine, ws, logger)
 
+	if err := attachQueue(s, ws); err != nil {
+		logger.Error("scheduler not started", "error", err)
+		return
+	}
+
 	go func() {
 		logger.Info("background scheduler starting", "tasks", len(cfg.Tasks))
 		if runErr := s.Run(ctx); runErr != nil {
 			logger.Error("scheduler stopped with error", "error", runErr)
 		}
 	}()
+}
+
+// jobQueueProvider is the capability a WorkspaceProvider must carry to hand the
+// scheduler a job queue.
+//
+// Type-asserted rather than added to WorkspaceProvider so the existing test
+// doubles keep compiling, but it is NOT optional in practice: script execution
+// happens exclusively on the queue, so a provider without one yields a
+// scheduler that cannot run anything.
+type jobQueueProvider interface {
+	Jobs() jobs.Client
+}
+
+// attachQueue wires the workspace's job queue onto s.
+//
+// Shared by every entry point — StartBackground (rela-server, rela-desktop) and
+// the `rela scheduler` command — because forgetting it produces a scheduler
+// that starts cleanly, logs a due task every tick, and fails every one of them
+// with "no job queue configured". That is exactly the regression a demo caught
+// after the unit tests missed it: they all call UseQueue directly, so none of
+// them exercised a wiring site.
+//
+// Nil: rejected — returns an error rather than leaving the scheduler unable to
+// execute, so the caller can refuse to start.
+func attachQueue(s *Scheduler, ws WorkspaceProvider) error {
+	jp, ok := ws.(jobQueueProvider)
+	if !ok {
+		return errors.New("scheduler: the workspace provides no job queue")
+	}
+	if err := s.UseQueue(jp.Jobs()); err != nil {
+		return fmt.Errorf("scheduler: could not use the job queue: %w", err)
+	}
+	return nil
+}
+
+// NewWithQueue builds a scheduler with its job queue attached.
+//
+// The constructor entry points should use: script execution happens only on the
+// queue, so a Scheduler built by New alone cannot run anything until UseQueue
+// is called. Returning an error here means a caller cannot accidentally start a
+// scheduler that will fail every task.
+func NewWithQueue(
+	cfg *Config, engine *script.Engine, ws WorkspaceProvider, logger *slog.Logger,
+) (*Scheduler, error) {
+	s := New(cfg, engine, ws, logger)
+	if err := attachQueue(s, ws); err != nil {
+		return nil, err
+	}
+	return s, nil
 }
 
 // stampTaskAuditContext stamps the task's Principal and the per-task
@@ -126,6 +224,34 @@ type Scheduler struct {
 	// executeTaskFunc overrides task execution for testing.
 	// When nil, doExecuteTask is used.
 	executeTaskFunc func(ctx context.Context, task TaskConfig)
+
+	// engineRunner overrides the Lua engine call for testing, WITHOUT
+	// bypassing the job handler around it.
+	//
+	// Distinct from executeTaskFunc, which replaces the whole execution step:
+	// a test that wants to exercise the queue path must keep the real handler
+	// (it is what reports completion back to the waiting submitter) and
+	// substitute only the engine. When nil, the real engine runs.
+	//
+	// Two nil-able override hooks on one struct is one more than is
+	// comfortable, and a third would be the signal to stop: the honest shape
+	// is a constructor-injected engine interface, collapsing both into one
+	// real dependency. Not done here because executeTaskFunc predates the
+	// queue port and rewiring it touches every scheduler test.
+	engineRunner func(ctx context.Context, task TaskConfig) error
+
+	// queue is where script execution happens. REQUIRED: there is no inline
+	// path, so a scheduler without one cannot run anything. Set by UseQueue at
+	// wiring time — see jobs.go.
+	queue jobs.Client
+
+	// inflight tracks the one running execution per task, so a slow task is
+	// skipped rather than queued behind itself. Guarded by inflightMu because
+	// the writer is the scheduler goroutine and the reader is a queue worker.
+	inflightMu sync.Mutex
+	inflight   map[string]inflightRun
+	// runSeq mints in-flight run tokens; see inflightRun.
+	runSeq atomic.Uint64
 }
 
 // New creates a Scheduler.
@@ -141,6 +267,10 @@ func New(
 		ws:     ws,
 		logger: logger,
 		now:    time.Now,
+		// Initialized here, not left for loadState: recordFailure and
+		// recordSuccess write three maps unconditionally, so a nil state
+		// turns any call ordering other than Run's into a nil-map panic.
+		state: newState(),
 	}
 }
 
@@ -188,6 +318,37 @@ func (s *Scheduler) runDueTasks(ctx context.Context) {
 			return
 		}
 
+		// A failing task is driven ENTIRELY by the retry ladder: while a
+		// retry is pending, the ordinary schedule is suppressed, so the
+		// task fires exactly once per ladder step and never on its normal
+		// cadence. This is the gate that closes BUG-ZKK2UL — a failed
+		// attempt always sets NextRetry, so it can no longer fall through
+		// to the "first run" branch below and execute on every tick.
+		if retryAt, retrying := s.state.NextRetry[task.Name]; retrying {
+			// A pending retry can never legitimately be further out than
+			// the longest rung. Anything beyond that came from a clock
+			// that jumped (VM snapshot resume, NTP step, bad RTC) or a
+			// hand-edited state file, and because the file is the source
+			// of truth it would otherwise wedge the task FOREVER — silently,
+			// since this branch is the one that logs nothing.
+			if retryAt.Sub(now) > maxRetryDelay {
+				s.logger.Warn("retry time is implausibly far in the future, retrying now",
+					"name", task.Name,
+					"scheduled_for", retryAt,
+					"max_delay", maxRetryDelay)
+				retryAt = now
+				s.state.NextRetry[task.Name] = retryAt
+			}
+			if !now.Before(retryAt) {
+				s.logger.Info("retrying failed task",
+					"name", task.Name,
+					"failures", s.state.Failures[task.Name],
+					"scheduled_for", retryAt)
+				s.executeTask(ctx, task)
+			}
+			continue
+		}
+
 		lastRun, recorded := s.state.Tasks[task.Name]
 		if !recorded {
 			s.logger.Info("first run, executing immediately", "name", task.Name)
@@ -219,22 +380,143 @@ func (s *Scheduler) doExecuteTask(ctx context.Context, task TaskConfig) {
 	s.logger.Info("task started", "name", task.Name, "script", task.Script)
 	start := s.now()
 
-	// The principal goes on the CTX (not into the deps bundle) because the
-	// read seam resolves identity per call — see ScheduledLuaWriteDeps.
-	taskCtx := stampTaskAuditContext(ctx, task.Name, task.RunAs)
-	err := s.engine.ExecuteFile(taskCtx, task.Script, s.ws.ScheduledLuaWriteDeps(), nil, nil)
+	err := s.enqueueTask(ctx, task)
 	elapsed := s.now().Sub(start)
 
+	// A task whose previous run has not finished is SKIPPED, and the skip
+	// records neither success nor failure.
+	//
+	// Not a failure: the task has not gone wrong, it is merely slow, and
+	// advancing the retry ladder would back off a healthy task and suppress
+	// its normal cadence. Not a success either: it did not run, and stamping
+	// the last-run time would make a permanently stuck task look healthy
+	// forever while nothing executed. Leaving state untouched lets the next
+	// tick evaluate it normally.
+	//
+	// Two routes reach here — an in-process claim (errTaskInFlight) and the
+	// queue collapsing a duplicate (errTaskPending). They mean the same thing
+	// to the scheduler; the second also covers other processes.
+	if errors.Is(err, errTaskInFlight) || errors.Is(err, errTaskPending) {
+		s.logger.Warn("skipping task, a run is already pending",
+			"name", task.Name, "duration", elapsed)
+		return
+	}
+
 	if err != nil {
-		s.logger.Error("task failed", "name", task.Name, "duration", elapsed, "error", err)
+		s.recordFailure(ctx, task, start, elapsed, err)
 		return
 	}
 
 	s.logger.Info("task completed", "name", task.Name, "duration", elapsed)
+	s.recordSuccess(ctx, task, start)
+}
 
-	// Record successful run — no mutex needed, single goroutine.
-	s.state.Tasks[task.Name] = s.now()
+// runEngine executes a task's script, honoring the engineRunner test override.
+//
+// Called only from the job handler: there is one execution path, and it goes
+// through the queue. Keeping the override here rather than around the whole
+// execution step is what lets a test substitute Lua while still exercising the
+// handler, the completion reporting and the state bookkeeping.
+func (s *Scheduler) runEngine(ctx context.Context, task TaskConfig) error {
+	if s.engineRunner != nil {
+		return s.engineRunner(ctx, task)
+	}
+
+	// TKT-YH52OM: the task's declared capabilities are the only ambient grant.
+	// A scheduled job runs unattended inside the server process, so an
+	// undeclared capability stays absent rather than inheriting the trusted
+	// default that `rela script` gets at the operator shell.
+	deps := s.ws.ScheduledLuaWriteDeps()
+	http, ai, writeFile, secrets := task.Capabilities.Fields()
+	deps.Capabilities = lua.Capabilities{
+		HTTP: http, AI: ai, WriteFile: writeFile, Secrets: secrets,
+	}
+	return s.engine.ExecuteFile(ctx, task.Script, deps, nil, nil)
+}
+
+// recordSuccess stamps a completed run and clears any retry ladder.
+//
+// It takes the run's START time rather than reading s.now(): the schedule is
+// evaluated against this stamp, so recording completion would let a task that
+// begins at 23:59 and runs past midnight land on the next day and silently
+// skip that day's execution. It also keeps interval schedules from drifting
+// forward by each run's duration.
+//
+// This is a method rather than inline bookkeeping so tests exercising the
+// scheduling loop through executeTaskFunc can call the SAME code the
+// production path uses. A hand-copied double here is what previously let a
+// reverted start-time fix pass green (RR-F6182G/RR-3BCWQ4).
+func (s *Scheduler) recordSuccess(ctx context.Context, task TaskConfig, start time.Time) {
+	// No mutex needed, single goroutine.
+	s.state.Tasks[task.Name] = start
+
+	// Success clears the ladder. This is the ONLY reset: elapsed scheduled
+	// slots must not clear it, or a short-interval task (whose slots pass
+	// faster than the ladder climbs) would never back off at all.
+	delete(s.state.Failures, task.Name)
+	delete(s.state.NextRetry, task.Name)
+
 	s.saveState(ctx)
+}
+
+// recordFailure advances the retry ladder for a failed task and persists it.
+//
+// Every failure writes state, so a failed task always has a pending retry and
+// can never be perpetually due — that omission was BUG-ZKK2UL. Note it does
+// NOT touch s.state.Tasks: the schedule is evaluated against the last
+// *successful* run, so a failure must not count as having run.
+func (s *Scheduler) recordFailure(
+	ctx context.Context,
+	task TaskConfig,
+	start time.Time,
+	elapsed time.Duration,
+	err error,
+) {
+	failures := s.state.Failures[task.Name] + 1
+	delay := retryDelay(failures)
+	retryAt := start.Add(delay)
+
+	s.state.Failures[task.Name] = failures
+	s.state.NextRetry[task.Name] = retryAt
+
+	// Escalate severity with consecutive failures: an intermittent blip that
+	// recovers on the next retry should not read like a job that has been
+	// broken for hours.
+	logAt := s.logger.Warn
+	if failures >= persistentFailureThreshold {
+		logAt = s.logger.Error
+	}
+	logAt("task failed",
+		"name", task.Name,
+		"duration", elapsed,
+		"failures", failures,
+		"retry_in", delay,
+		"retry_at", retryAt,
+		"error", err)
+
+	s.saveState(ctx)
+}
+
+// retryDelay returns the backoff for the nth consecutive failure (n >= 1):
+// 5m, 10m, 20m, 40m, 80m, then capped at maxRetryDelay and repeating.
+//
+// The ladder is identical for every schedule. It replaces the schedule while
+// a task is failing, so it deliberately slows a short-interval task down
+// (a failing 5m task stops hammering every 5m) and speeds a daily one up
+// (an intermittent failure recovers without waiting 24h).
+func retryDelay(failures int) time.Duration {
+	if failures < 1 {
+		// Only reachable from a corrupt or hand-edited state file; treat
+		// it as the first failure rather than computing a nonsense delay.
+		failures = 1
+	}
+	// maxLadderSteps is where doubling first meets the cap, so anything
+	// beyond it is the cap. Bounding the shift here also makes overflow
+	// structurally impossible for a large or wrapped failure count.
+	if failures > maxLadderSteps {
+		return maxRetryDelay
+	}
+	return min(baseRetryDelay<<(failures-1), maxRetryDelay)
 }
 
 func (s *Scheduler) loadState(ctx context.Context) {
@@ -244,6 +526,47 @@ func (s *Scheduler) loadState(ctx context.Context) {
 		return
 	}
 	s.state = parseState(data)
+	s.pruneOrphanedState()
+}
+
+// pruneOrphanedState drops entries for tasks no longer in schedules.yaml.
+//
+// Nothing else removes them: runDueTasks only ever reads state by the names in
+// the current config, so a deleted or renamed task's rows would accumulate
+// indefinitely — and with the retry ladder that is up to three entries per
+// dead task rather than one stale timestamp.
+func (s *Scheduler) pruneOrphanedState() {
+	if s.config == nil {
+		// Nothing to prune against; keep the state as loaded rather than
+		// treating every task as orphaned.
+		return
+	}
+	live := make(map[string]struct{}, len(s.config.Tasks))
+	for _, t := range s.config.Tasks {
+		live[t.Name] = struct{}{}
+	}
+	orphans := make(map[string]struct{})
+	for _, m := range []iter.Seq[string]{
+		maps.Keys(s.state.Tasks),
+		maps.Keys(s.state.Failures),
+		maps.Keys(s.state.NextRetry),
+	} {
+		for name := range m {
+			if _, ok := live[name]; !ok {
+				orphans[name] = struct{}{}
+			}
+		}
+	}
+	if len(orphans) == 0 {
+		return
+	}
+	for name := range orphans {
+		delete(s.state.Tasks, name)
+		delete(s.state.Failures, name)
+		delete(s.state.NextRetry, name)
+	}
+	dropped := slices.Sorted(maps.Keys(orphans))
+	s.logger.Info("pruned state for tasks no longer configured", "tasks", dropped)
 }
 
 func (s *Scheduler) saveState(ctx context.Context) {

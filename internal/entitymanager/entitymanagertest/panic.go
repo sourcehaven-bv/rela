@@ -35,6 +35,11 @@ func (PanicOnUse) UpdateEntity(context.Context,
 	panic("entitymanagertest.PanicOnUse.UpdateEntity: not expected in this test")
 }
 
+func (PanicOnUse) PatchEntity(context.Context, string,
+	entity.Patch) (*entity.UpdateResult, error) {
+	panic("entitymanagertest.PanicOnUse.PatchEntity: not expected in this test")
+}
+
 func (PanicOnUse) DeleteEntity(context.Context, string,
 	bool) (*entity.DeleteResult, error) {
 	panic("entitymanagertest.PanicOnUse.DeleteEntity: not expected in this test")

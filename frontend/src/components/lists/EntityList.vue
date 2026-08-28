@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, shallowRef, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, shallowRef, computed, watch, onMounted, onUnmounted, type Component } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQuery, useMutation, useQueryCache } from '@pinia/colada'
 import { useSchemaStore, useUIStore } from '@/stores'
@@ -15,14 +15,16 @@ import { entityDetailHref } from '@/utils/entityRoute'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { renderMarkdown } from '@/utils/markdown'
 import { actionAllowed } from '@/utils/affordancesWarning'
-import { getCellValue, formatCellValue, isEnumPropertyDef, asArray } from '@/utils/format'
+import { getCellValue, formatCellValue } from '@/utils/format'
+import { densePropertyRoutingHint, isDenseEmpty } from '@/widgets/viewRouting'
+import { defaultRegistry } from '@/widgets/registry'
+import type { DenseRoutingHint } from '@/widgets/viewRouting'
 import type { Entity, ListMeta, ListParams, ListResponse, FilterState } from '@/types'
-import { listHeaderMarkdown, listFooterMarkdown } from '@/types'
+import { viewHeaderMarkdown, viewFooterMarkdown } from '@/types'
 import FilterBar from './FilterBar.vue'
 import Pagination from './Pagination.vue'
 import SearchBox from './SearchBox.vue'
 import AdHocFilterMenu from './AdHocFilterMenu.vue'
-import Badge from '@/components/common/Badge.vue'
 import BackButton from '@/components/common/BackButton.vue'
 import ExportMenu from '@/components/entity/ExportMenu.vue'
 import { listExportUrl } from '@/api/transforms'
@@ -78,8 +80,15 @@ const meta = computed<ListMeta>(
 )
 // `isPending` is true while a query key has no resolved data. Same-key SSE
 // refetches keep the entry `success` (placeholderData holds the rows, no
-// spinner — the liveness win). A param change (page/filter/sort) swaps to a
-// new key that starts pending, so the spinner shows then, as before.
+// spinner — the liveness win).
+//
+// A param change (page/filter/sort) swaps to a NEW key whose entry starts
+// out pending — but `placeholderData: (prev) => prev` below seeds it from
+// the previous entry, and Colada then exposes the state as
+// `{status: 'success', data: placeholderData}`. So `isPending` stays false
+// and the old rows are held on screen instead of flashing the spinner.
+// The block spinner is therefore reached only on a cold first load.
+// Pinned by the "pagination keeps previous rows" tests.
 const loading = computed(() => listQueryRef.value?.isPending.value ?? true)
 const loadError = computed(() => {
   const err = listQueryRef.value?.error.value
@@ -273,8 +282,11 @@ function listExportUrlFor(transform: string): string {
 // fallback for the top slot, used only when `header` is unset. No refResolver
 // here — the /_config endpoint carries no mentions map, so bare-ID code spans
 // stay inert; standard [text](/entity/ID) links work.
-const headerHtml = computed(() => renderMarkdown(listHeaderMarkdown(listConfig.value)))
-const footerHtml = computed(() => renderMarkdown(listFooterMarkdown(listConfig.value)))
+// Lists opt into the legacy `description` alias; kanban deliberately does not.
+const headerHtml = computed(() =>
+  renderMarkdown(viewHeaderMarkdown(listConfig.value, { allowDescriptionAlias: true }))
+)
+const footerHtml = computed(() => renderMarkdown(viewFooterMarkdown(listConfig.value)))
 
 // Pre-configured filters from list config
 const configuredFilters = computed(() => {
@@ -528,9 +540,92 @@ function navigateToEntity(entity: Entity) {
   router.push({ path, query })
 }
 
-function isEnumColumn(column: { property?: string }): boolean {
-  if (!column.property || !entityType.value) return false
-  return isEnumPropertyDef(entityType.value.properties[column.property])
+// Widget resolution for property cells, keyed by column property name and
+// computed ONCE per column rather than per cell (RR-UD2A -- the same reason
+// PropertyDisplay precomputes `rows`). resolve()/resolveFromHint() walk a Map
+// and can console.warn; doing that per cell would be one lookup and one
+// potential warning per row per render.
+//
+// Relation columns are absent from this map on purpose: they have no
+// PropertyDef and there is no relation widget, so they stay on the string
+// path in getFormattedCellValue.
+const columnWidgets = computed(() => {
+  const byProperty = new Map<string, { component: Component; hint: DenseRoutingHint }>()
+  const type = entityType.value
+  if (!type) return byProperty
+  for (const column of listConfig.value?.columns ?? []) {
+    if (!column.property || byProperty.has(column.property)) continue
+    const hint = densePropertyRoutingHint(type.properties[column.property], column.property)
+    byProperty.set(column.property, { component: defaultRegistry.resolveFromHint(hint), hint })
+  }
+  return byProperty
+})
+
+// The widget for a cell, or undefined when the cell should NOT render one:
+// a relation column (no PropertyDef, no relation widget) or an empty value
+// (widgets may render a "no value" placeholder that cells must not show --
+// see isDenseEmpty). Both fall through to the plain string span.
+function cellWidget(
+  entity: Entity,
+  column: { property?: string; relation?: string; direction?: 'outgoing' | 'incoming' }
+) {
+  if (!column.property) return undefined
+  const entry = columnWidgets.value.get(column.property)
+  if (!entry) return undefined
+  return isDenseEmpty(getCellValue(entity, column)) ? undefined : entry
+}
+
+interface ResolvedCell {
+  component: Component
+  propertyName: string
+  modelValue: unknown
+}
+
+// One resolved cell: the widget to render plus the value already shaped the
+// way that widget wants. Returns undefined when the cell must fall back to the
+// plain string span (relation column, or an empty value -- see cellWidget).
+//
+// Memoized per (entity, column). The template reads it four times per cell
+// (v-else-if, :is, and two bindings); without the cache each read redoes the
+// Map lookup and re-formats the value.
+//
+// Safe against staleness because entity objects are copy-on-write: both
+// optimistic paths in queries/optimisticList.ts rebuild the changed entity
+// via `data.map(e => e.id === id ? update(e) : e)`, and a refetch parses
+// fresh objects. A mutated cell therefore always arrives as a NEW identity
+// and misses the cache. If an entity ever starts being mutated in place,
+// this cache goes stale silently -- keyed on identity, it cannot detect it.
+//
+// WeakMap so a dropped row's entry is collected with the row. The inner key
+// is the column object, stable across renders because listConfig.columns is
+// the same array.
+const cellCache = new WeakMap<Entity, Map<object, ResolvedCell | undefined>>()
+
+function resolveCell(
+  entity: Entity,
+  column: { property?: string; relation?: string; direction?: 'outgoing' | 'incoming' }
+): ResolvedCell | undefined {
+  let perEntity = cellCache.get(entity)
+  if (!perEntity) {
+    perEntity = new Map()
+    cellCache.set(entity, perEntity)
+  }
+  if (perEntity.has(column)) return perEntity.get(column)
+
+  const entry = cellWidget(entity, column)
+  const resolved: ResolvedCell | undefined = entry
+    ? {
+        component: entry.component,
+        propertyName: entry.hint.propertyName,
+        // Passthrough widgets render String(value); everything else owns its
+        // display formatting and wants the stored value.
+        modelValue: entry.hint.preformatted
+          ? getFormattedCellValue(entity, column)
+          : getCellValue(entity, column),
+      }
+    : undefined
+  perEntity.set(column, resolved)
+  return resolved
 }
 
 // isCellInaccessible reports whether the cell's underlying property is
@@ -694,7 +789,7 @@ watch(searchQuery, () => {
     </header>
 
     <!-- eslint-disable-next-line vue/no-v-html -- sanitized by renderMarkdown -->
-    <div v-if="headerHtml" class="list-info list-info--top" v-html="headerHtml"/>
+    <div v-if="headerHtml" class="view-info view-info--top" v-html="headerHtml"/>
 
     <div v-if="configuredFilters.length" class="configured-filters">
       <span
@@ -818,18 +913,15 @@ watch(searchQuery, () => {
                 class="inaccessible-cell"
                 title="inaccessible"
               >🔒</span>
-              <div
-                v-else-if="isEnumColumn(column) && asArray(getCellValue(entity, column)).length > 0"
-                class="badge-row"
-              >
-                <Badge
-                  v-for="badgeValue in asArray(getCellValue(entity, column))"
-                  :key="badgeValue"
-                  :value="badgeValue"
-                  :property="column.property"
-                  :entity-type="entityType"
-                />
-              </div>
+              <component
+                :is="resolveCell(entity, column)!.component"
+                v-else-if="resolveCell(entity, column)"
+                class="mobile-card-value"
+                :model-value="resolveCell(entity, column)!.modelValue"
+                :mode="'display'"
+                :property-name="resolveCell(entity, column)!.propertyName"
+                :entity-type="listConfig.entity"
+              />
               <span v-else class="mobile-card-value">{{ getFormattedCellValue(entity, column) }}</span>
             </div>
           </div>
@@ -916,18 +1008,14 @@ watch(searchQuery, () => {
                 class="inaccessible-cell"
                 title="inaccessible"
               >🔒</span>
-              <div
-                v-else-if="isEnumColumn(column) && asArray(getCellValue(entity, column)).length > 0"
-                class="badge-row"
-              >
-                <Badge
-                  v-for="badgeValue in asArray(getCellValue(entity, column))"
-                  :key="badgeValue"
-                  :value="badgeValue"
-                  :property="column.property"
-                  :entity-type="entityType"
-                />
-              </div>
+              <component
+                :is="resolveCell(entity, column)!.component"
+                v-else-if="resolveCell(entity, column)"
+                :model-value="resolveCell(entity, column)!.modelValue"
+                :mode="'display'"
+                :property-name="resolveCell(entity, column)!.propertyName"
+                :entity-type="listConfig.entity"
+              />
               <span v-else>
                 {{ getFormattedCellValue(entity, column) }}
               </span>
@@ -959,7 +1047,7 @@ watch(searchQuery, () => {
     </div>
 
     <!-- eslint-disable-next-line vue/no-v-html -- sanitized by renderMarkdown -->
-    <div v-if="footerHtml" class="list-info list-info--bottom" v-html="footerHtml"/>
+    <div v-if="footerHtml" class="view-info view-info--bottom" v-html="footerHtml"/>
   </div>
 
   <div v-else class="error-state">
@@ -975,47 +1063,8 @@ watch(searchQuery, () => {
   cursor: help;
 }
 
-/* Admin-authored info regions (header/footer markdown). Rendered HTML is
-   sanitized by renderMarkdown; these styles only govern typography/spacing. */
-.list-info {
-  color: var(--text-color);
-  font-size: 14px;
-  line-height: 1.6;
-}
-
-.list-info--top {
-  /* Pulls up against .list-header's margin-bottom: 24px so the info sits close
-     to the title rather than a full gap below it. Keep in sync if that changes. */
-  margin-top: -12px;
-  margin-bottom: 20px;
-}
-
-.list-info--bottom {
-  margin-top: 24px;
-}
-
-.list-info :deep(> :first-child) {
-  margin-top: 0;
-}
-
-.list-info :deep(> :last-child) {
-  margin-bottom: 0;
-}
-
-.list-info :deep(p),
-.list-info :deep(ul),
-.list-info :deep(ol) {
-  margin: 0 0 8px;
-}
-
-.list-info :deep(a) {
-  color: var(--accent-color);
-  text-decoration: none;
-}
-
-.list-info :deep(a:hover) {
-  text-decoration: underline;
-}
+/* Info-region styles (.view-info) live in styles/view-info.css — shared with
+   KanbanView so both views render admin-authored markdown identically. */
 
 .entity-list {
   max-width: 1200px;
@@ -1035,22 +1084,22 @@ watch(searchQuery, () => {
 .header-left {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-md);
 }
 
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-sm);
 }
 
 .btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-xs);
   padding: 8px 16px;
-  border-radius: 6px;
-  font-size: 14px;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-base);
   font-weight: 500;
   text-decoration: none;
   cursor: pointer;
@@ -1079,7 +1128,7 @@ watch(searchQuery, () => {
 .configured-filters {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-sm);
   margin-top: 12px;
   margin-bottom: 12px;
 }
@@ -1091,12 +1140,12 @@ watch(searchQuery, () => {
   background: var(--hover-bg);
   border: 1px solid var(--border-color);
   border-radius: 16px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-color);
 }
 
 .filter-chip.removable {
-  gap: 6px;
+  gap: var(--space-xs);
   padding-right: 4px;
   background: color-mix(in srgb, var(--accent-color) 15%, transparent);
   border-color: color-mix(in srgb, var(--accent-color) 30%, transparent);
@@ -1107,7 +1156,7 @@ watch(searchQuery, () => {
   background: none;
   border: none;
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--font-size-base);
   line-height: 1;
   padding: 0 4px;
   color: inherit;
@@ -1121,21 +1170,21 @@ watch(searchQuery, () => {
 .search-row {
   display: flex;
   align-items: stretch;
-  gap: 8px;
+  gap: var(--space-sm);
   margin-bottom: 12px;
 }
 
 .adhoc-filter-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-sm);
   margin-bottom: 12px;
 }
 
 .list-content {
   background: var(--card-bg);
-  border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
   overflow: hidden;
 }
 
@@ -1146,7 +1195,7 @@ watch(searchQuery, () => {
   align-items: center;
   justify-content: center;
   padding: 48px;
-  gap: 16px;
+  gap: var(--space-lg);
   color: var(--muted-text);
 }
 
@@ -1155,14 +1204,8 @@ watch(searchQuery, () => {
   height: 32px;
   border: 3px solid var(--border-color);
   border-top-color: var(--accent-color);
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 .entity-table {
@@ -1181,7 +1224,7 @@ watch(searchQuery, () => {
   padding: 12px 16px;
   background: var(--hover-bg);
   border-bottom: 1px solid var(--border-color);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -1199,7 +1242,7 @@ watch(searchQuery, () => {
 
 .action-header-count {
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--font-size-dense);
   color: var(--text-color);
   margin-right: 0.75rem;
 }
@@ -1212,10 +1255,10 @@ watch(searchQuery, () => {
   vertical-align: middle;
   padding: 0.2rem 0.6rem;
   border: 1px solid var(--border-color);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--card-bg);
   color: var(--text-color);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   cursor: pointer;
   transition: background 0.15s;
 }
@@ -1236,7 +1279,7 @@ watch(searchQuery, () => {
   border-radius: 3px;
   background: var(--hover-bg);
   font-family: monospace;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   line-height: 1;
 }
 
@@ -1263,14 +1306,14 @@ watch(searchQuery, () => {
   background: var(--accent-color);
   color: white;
   padding: 1px 4px;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   margin-right: 2px;
 }
 
 .entity-table td {
   padding: 12px 16px;
   border-bottom: 1px solid var(--border-color);
-  font-size: 14px;
+  font-size: var(--font-size-base);
 }
 
 .entity-row {
@@ -1367,7 +1410,7 @@ watch(searchQuery, () => {
   padding: 0;
   background: transparent;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--muted-text);
   cursor: pointer;
   transition: all 0.15s;
@@ -1386,7 +1429,7 @@ watch(searchQuery, () => {
 .mobile-card {
   background: var(--card-bg);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   padding: 12px;
   cursor: pointer;
   transition: all 0.15s;
@@ -1414,7 +1457,7 @@ watch(searchQuery, () => {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 8px;
+  gap: var(--space-sm);
 }
 
 .mobile-card-title {
@@ -1437,8 +1480,8 @@ watch(searchQuery, () => {
 .mobile-card-field {
   display: flex;
   align-items: center;
-  gap: 4px;
-  font-size: 13px;
+  gap: var(--space-2xs);
+  font-size: var(--font-size-dense);
 }
 
 .mobile-card-label {
@@ -1457,7 +1500,7 @@ watch(searchQuery, () => {
   /* .list-header uses .mobile-topbar.mobile-topbar--with-menu from
      mobile-bars.css (sticky chrome + safe-area math + hamburger room). */
   .list-header h1 {
-    font-size: 18px;
+    font-size: var(--font-size-lg);
   }
 
   .list-content {

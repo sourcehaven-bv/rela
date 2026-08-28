@@ -228,7 +228,13 @@ test.describe("Wizard (multi-step) forms", () => {
     expect(entity.properties.title).toBe("Retitled in wizard");
   });
 
-  test("edit mode unsets a field whose branch is hidden (AC5, TKT-ZKGY3)", async ({
+  // BUG-FB0LN8. This test previously asserted the OPPOSITE — that hiding a
+  // branch unsets its stored value (AC5, TKT-ZKGY3). That behavior was the bug:
+  // it destroyed data the user never touched, and the render gate then refused
+  // to draw the field again, so the loss was silent and unrecoverable. Hiding
+  // is presentation; `clear_when_hidden` (default `no`) now owns the value's
+  // fate. The old behavior is still available and pinned below under `yes`.
+  test("edit mode KEEPS a field whose branch is hidden (BUG-FB0LN8)", async ({
     appPage,
     api,
   }) => {
@@ -247,13 +253,135 @@ test.describe("Wizard (multi-step) forms", () => {
     await formPage.navigateToEditForm("task_wizard", created.id);
 
     // `done` lives on the first step (Basics); toggling it off hides the whole
-    // Assignment step (which carries `assignee`). Its stored value must be unset.
+    // Assignment step (which carries `assignee`). The user never touched
+    // `assignee`, so its stored value must survive.
     await formPage.setCheckbox("done", false);
     await formPage.saveAndWaitForPatch("tasks", created.id);
 
     const entity = await api.getEntity("tasks", created.id);
     expect(entity.properties.done).toBe(false);
-    expect(entity.properties.assignee ?? "").toBe(""); // unset because its branch hid
+    expect(entity.properties.assignee).toBe("alice"); // NOT destroyed by hiding
+  });
+
+  // The reveal direction — the half of the round-trip nothing covered before,
+  // and the half that made BUG-FB0LN8 unrecoverable rather than merely lossy.
+  test("a hidden field reappears with its value when its branch is revealed (BUG-FB0LN8)", async ({
+    appPage,
+    api,
+  }) => {
+    const created = await api.createEntity("tasks", {
+      properties: {
+        title: "Round trip",
+        status: "approved",
+        done: true,
+        assignee: "alice",
+      },
+    });
+    createdTasks.push(created.id);
+
+    const formPage = new FormPage(appPage);
+    await formPage.navigateToEditForm("task_wizard", created.id);
+
+    // Hide the branch...
+    await formPage.setCheckbox("done", false);
+    await formPage.saveAndWaitForPatch("tasks", created.id);
+
+    // ...then reveal it again. The field must come back, holding its value.
+    await formPage.setCheckbox("done", true);
+    await formPage.clickStep(1);
+    expect(await formPage.isFieldVisible("assignee")).toBe(true);
+    await formPage.expectFieldValue("assignee", "alice");
+
+    const entity = await api.getEntity("tasks", created.id);
+    expect(entity.properties.assignee).toBe("alice");
+  });
+
+  // Survives a full reload, not just an in-session toggle: the value was never
+  // deleted server-side, so a fresh form renders it from storage.
+  test("a hidden-then-revealed field survives a page reload (BUG-FB0LN8)", async ({
+    appPage,
+    api,
+  }) => {
+    const created = await api.createEntity("tasks", {
+      properties: {
+        title: "Reload safe",
+        status: "approved",
+        done: true,
+        assignee: "alice",
+      },
+    });
+    createdTasks.push(created.id);
+
+    const formPage = new FormPage(appPage);
+    await formPage.navigateToEditForm("task_wizard", created.id);
+    await formPage.setCheckbox("done", false);
+    await formPage.saveAndWaitForPatch("tasks", created.id);
+
+    // Reload with the branch hidden, then reveal it in the fresh session.
+    await formPage.navigateToEditForm("task_wizard", created.id);
+    await formPage.setCheckbox("done", true);
+    await formPage.clickStep(1);
+    await formPage.expectFieldValue("assignee", "alice");
+  });
+
+  // The opt-in escape hatch: `clear_when_hidden: yes` restores the old
+  // destructive behavior for anyone who genuinely wanted it.
+  test("clear_when_hidden:yes clears the value when the branch hides (BUG-FB0LN8)", async ({
+    appPage,
+    api,
+  }) => {
+    const created = await api.createEntity("tasks", {
+      properties: {
+        title: "Clears on hide",
+        status: "approved",
+        done: true,
+        assignee: "alice",
+      },
+    });
+    createdTasks.push(created.id);
+
+    const formPage = new FormPage(appPage);
+    await formPage.navigateToEditForm("task_clear_when_hidden", created.id);
+    await formPage.setCheckbox("done", false);
+    await formPage.saveAndWaitForPatch("tasks", created.id);
+
+    const entity = await api.getEntity("tasks", created.id);
+    expect(entity.properties.assignee ?? "").toBe(""); // opted in to clearing
+  });
+
+  // Mixed policies hidden by ONE trigger: each field must honor its own
+  // setting rather than the batch taking a single decision for all of them.
+  test("mixed clear policies each apply on a single hide (BUG-FB0LN8)", async ({
+    appPage,
+    api,
+  }) => {
+    const created = await api.createEntity("tasks", {
+      properties: {
+        title: "Mixed policies",
+        status: "approved",
+        done: true,
+        assignee: "alice",
+        note: "keep me",
+      },
+    });
+    createdTasks.push(created.id);
+
+    const formPage = new FormPage(appPage);
+    await formPage.navigateToEditForm("task_mixed_policies", created.id);
+
+    // Hides `note` + `assignee` (default keep) and `done` (clear) in one pass.
+    await formPage.selectField("status", "draft");
+    await formPage.saveAndWaitForPatch("tasks", created.id);
+
+    const entity = await api.getEntity("tasks", created.id);
+    expect(entity.properties.note).toBe("keep me");
+    expect(entity.properties.assignee).toBe("alice");
+    expect(entity.properties.done ?? "").toBe(""); // only the yes-policy field cleared
+
+    // And the keep-policy fields come back when the branch is revealed.
+    await formPage.selectField("status", "approved");
+    await formPage.expectFieldValue("assignee", "alice");
+    await formPage.expectFieldValue("note", "keep me");
   });
 
   test("a revealed-then-hidden field is NOT persisted on create", async ({

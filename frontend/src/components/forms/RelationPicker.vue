@@ -5,7 +5,8 @@ import { isCancelledFetch } from '@/composables/usePageData'
 import { getEntityRelations } from '@/api'
 import { entityDisplayTitleWithId } from '@/utils/entityDisplay'
 import type { FormFieldOrRelation, Entity, RelationEntry, RelationAffordance } from '@/types'
-import InlineCreateModal from './InlineCreateModal.vue'
+import InlineCreateFormModal from './InlineCreateFormModal.vue'
+import { useInlineCreate } from '@/composables/useInlineCreate'
 
 // Per-edge state emitted on the incoming-changed channel after
 // TKT-GFQK unified the save path. DynamicForm wraps this into a
@@ -56,6 +57,9 @@ const searchQuery = ref('')
 const showDropdown = ref(false)
 const showCreateModal = ref(false)
 const createTargetType = ref('')
+// Form id for the open create modal, set alongside createTargetType so the
+// modal always renders the form the server resolved for that exact type.
+const createFormId = ref('')
 
 // For direction: incoming, the picker manages its own value list. The
 // parent's `:value` prop is sourced from `entity.relations`, which the
@@ -94,7 +98,23 @@ const targetTypes = computed(() => {
   return isIncoming.value ? relationType.value.from : relationType.value.to
 })
 
-const label = computed(() => props.field.label || props.field.relation || '')
+// Label resolution (DEC-6C1NAA): an authored form label wins, then the
+// metamodel's own label for the relation type, then the raw relation id.
+// The metamodel label is server-authored and language-neutral, so consulting
+// it is not a derivation from an identifier — and the cleanup migration
+// strips a form label that duplicates it, so the SPA MUST read it here or
+// that label is lost.
+// An incoming picker shows edges pointing AT us, so the inverse label is the
+// correct one ("blocked by", not "blocks"). Mirrors the server-side resolution
+// in internal/dataentry/export.go relationDisplayLabel.
+const label = computed(
+  () =>
+    props.field.label ||
+    (isIncoming.value ? relationType.value?.inverse?.label : undefined) ||
+    relationType.value?.label ||
+    props.field.relation ||
+    ''
+)
 const help = computed(() => props.field.help || relationType.value?.description || '')
 
 const isMulti = computed(() => {
@@ -119,8 +139,7 @@ const filteredCandidates = computed(() => {
   return candidates.value.filter(
     (c) =>
       !effectiveValue.value.includes(c.id) &&
-      (c.id.toLowerCase().includes(query) ||
-        (c._title ?? '').toLowerCase().includes(query))
+      (c.id.toLowerCase().includes(query) || (c._title ?? '').toLowerCase().includes(query))
   )
 })
 
@@ -164,7 +183,7 @@ async function loadIncomingValue() {
       props.entityType,
       props.entityId,
       props.field.relation,
-      'incoming',
+      'incoming'
     )
     const ids = edges.map((e) => e.id)
     incomingValue.value = ids
@@ -234,9 +253,7 @@ function buildOutgoingTypes(ids: string[]): Map<string, string> {
 
 function selectEntity(entity: Entity) {
   if (isIncoming.value) {
-    incomingValue.value = isMulti.value
-      ? [...incomingValue.value, entity.id]
-      : [entity.id]
+    incomingValue.value = isMulti.value ? [...incomingValue.value, entity.id] : [entity.id]
     emitIncomingDiff()
   } else {
     const next = isMulti.value ? [...props.value, entity.id] : [entity.id]
@@ -264,14 +281,31 @@ function formatEntityLabel(entity: Entity): string {
   return entityDisplayTitleWithId(entity)
 }
 
-function openCreateModal(targetType: string) {
-  createTargetType.value = targetType
+// Inline-create targets for this relation's candidate types. A type appears
+// only when the principal may create it AND a create form resolves — the
+// server decides both, so there is no permission arithmetic here. Empty inside
+// an already-nested form (the depth cap).
+const inlineCreateTargets = useInlineCreate(targetTypes)
+
+function openCreateModal(target: { entityType: string; formId: string }) {
+  createTargetType.value = target.entityType
+  createFormId.value = target.formId
   showCreateModal.value = true
   showDropdown.value = false
 }
 
+// Clear the form id too, so the modal component unmounts rather than lingering
+// hidden with its stale focus/modal-stack state.
+function closeCreateModal() {
+  showCreateModal.value = false
+  createFormId.value = ''
+}
+
 function handleEntityCreated(entity: Entity) {
-  // Add to candidates and select it
+  closeCreateModal()
+  // Push into candidates before selecting: `loadCandidates` fetches only the
+  // first 100 per type, so a freshly created entity is generally outside that
+  // window and would otherwise be unresolvable for display.
   candidates.value.push(entity)
   selectEntity(entity)
 }
@@ -318,19 +352,10 @@ onBeforeUnmount(() => {
 
     <!-- Selected entities -->
     <div v-if="selectedEntities.length" class="selected-entities">
-      <div
-        v-for="entity in selectedEntities"
-        :key="entity.id"
-        class="selected-entity"
-      >
+      <div v-for="entity in selectedEntities" :key="entity.id" class="selected-entity">
         <span class="entity-type">{{ entity.type }}</span>
         <span class="entity-label">{{ formatEntityLabel(entity) }}</span>
-        <button
-          v-if="canRemove"
-          type="button"
-          class="remove-btn"
-          @click="removeEntity(entity.id)"
-        >
+        <button v-if="canRemove" type="button" class="remove-btn" @click="removeEntity(entity.id)">
           &times;
         </button>
       </div>
@@ -370,31 +395,31 @@ onBeforeUnmount(() => {
           +{{ filteredCandidates.length - 10 }} more...
         </div>
         <!-- Add new buttons -->
-        <div v-if="targetTypes.length > 0" class="dropdown-actions">
+        <div v-if="inlineCreateTargets.length > 0" class="dropdown-actions">
           <button
-            v-for="targetType in targetTypes"
-            :key="targetType"
+            v-for="target in inlineCreateTargets"
+            :key="target.entityType"
             type="button"
             class="add-new-btn"
-            @click.stop="openCreateModal(targetType)"
+            @click.stop="openCreateModal(target)"
           >
-            + Add new {{ schemaStore.getEntityType(targetType)?.label || targetType }}
+            + New {{ target.label }}
           </button>
         </div>
       </div>
 
-      <div v-if="loading" class="loading-indicator">
-        Loading...
-      </div>
+      <div v-if="loading" class="loading-indicator">Loading...</div>
     </div>
 
     <p v-if="help" class="field-help">{{ help }}</p>
 
     <!-- Inline Create Modal -->
-    <InlineCreateModal
+    <InlineCreateFormModal
+      v-if="createFormId"
       :show="showCreateModal"
+      :form-id="createFormId"
       :entity-type="createTargetType"
-      @close="showCreateModal = false"
+      @close="closeCreateModal"
       @created="handleEntityCreated"
     />
   </div>
@@ -474,7 +499,9 @@ onBeforeUnmount(() => {
 .search-wrapper input:focus {
   outline: none;
   border-color: var(--accent-color);
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
+  box-shadow:
+    0 0 0 2px var(--focus-ring-gap),
+    0 0 0 4px var(--focus-ring);
 }
 
 .dropdown {

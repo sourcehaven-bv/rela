@@ -159,7 +159,7 @@ body { font-family: var(--font); background: var(--bg); color: var(--text);
 </button>
 <div class="welcome">
   <h1>Rela Desktop</h1>
-  <p class="subtitle">Open a rela project directory to get started.<br>The folder should contain a <code>metamodel.yaml</code> file.</p>
+  <p class="subtitle">Open a rela project directory to get started.<br>The folder should contain a <code>schema.yaml</code> file.</p>
 
   %s
 

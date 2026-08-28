@@ -1,0 +1,45 @@
+# commentlint configuration — see https://github.com/sourcehaven-bv/commentlint
+#
+# CI runs two steps (the "Comment lint" job in ci.yml):
+#
+#   gate   — commented-code, doclink. Clean today, so a regression fails the
+#            build. Suppression is available, but read the finding first: the
+#            failure message says why, and a reason is required.
+#   report — every other enabled rule, advisory (continue-on-error).
+#
+# The advisory rules have a real backlog: duplication 120, nil-contract 105,
+# param-contract 5, restatement 17. They are being worked down; a gate that is
+# red on arrival just teaches people to ignore the job. Promote a rule to the
+# gate once its backlog reaches zero.
+#
+# Suppressing a false positive:
+#   - preferred: //commentlint:ignore <rule>  <reason> on the declaration line
+#   - here:      a path glob under `ignore:`, or a house idiom under
+#                `allow-phrases:` when the same prose recurs across many sites
+
+rules:
+  # Length is a poor proxy for "this comment explains the system": the mode on
+  # this corpus is one line over the threshold, and the highest-value comment
+  # in the tree (a verified sandbox limitation on a one-line function) has the
+  # worst doc:body ratio. Duplication is the signal we act on instead.
+  too-long: false
+  # Flags shared acronyms (ACL, DSN, JWT, SSE) as out-of-scope terms. Useful
+  # to rank a cleanup sweep by hand; far too noisy to run unattended.
+  scope-reach: false
+  # Not gated. golangci-lint enables revive's `exported` rule, so every
+  # exported symbol MUST carry a doc starting with its name; for a trivial
+  # accessor (`Title returns the entity's title`) the name really does say it
+  # all, and this rule's advice — "otherwise delete" — would break the build.
+  # The ~19 remaining findings are all that shape. It stays ON for the report
+  # job, where it is still worth reading for unexported helpers.
+  restatement: true
+
+exclude:
+  - "frontend/**"
+  - testdata
+
+allow-phrases:
+  # Drawing the nil-vs-empty-slice distinction describes how YAML decodes,
+  # not a contract about what a caller may pass. Load-bearing across the ACL
+  # ceiling code (`read: []` means "permit nothing", absent means "inherit").
+  - "non-nil empty slice"

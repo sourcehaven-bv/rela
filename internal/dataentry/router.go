@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -44,7 +45,7 @@ func CheckEmbeddedSPA() error {
 	if err != nil {
 		return fmt.Errorf("mount embedded SPA filesystem (static/v2): %w", err)
 	}
-	if _, err := fs.Stat(spaFS, "index.html"); err != nil {
+	if _, err := fs.Stat(spaFS, spaIndexFile); err != nil {
 		return fmt.Errorf("embedded SPA is missing index.html (run `just build-frontend`): %w", err)
 	}
 	return nil
@@ -94,6 +95,9 @@ func (a *App) NewRouter() http.Handler {
 	// Sync API (FEAT-NJ9FEN) - machine-to-machine fs↔pg sync, under /api/sync/.
 	a.sync.registerSyncRoutes(inner)
 
+	// Remote MCP (TKT-BDG8U9) — opt-in, absent unless SetRemoteMCP enabled it.
+	registerMCPRoute(inner, a.mcpHandler)
+
 	// noCacheMiddleware sets no-cache headers on API responses so that
 	// browsers always fetch fresh data after file changes trigger a reload.
 	mux.Handle("/api/", a.noCacheMiddleware(inner))
@@ -109,8 +113,57 @@ func (a *App) NewRouter() http.Handler {
 	// needs neither the same-origin gate nor the JWT identity gate.
 	a.registerWebhookRoutes(mux)
 
-	// Serve Vue SPA at root (catch-all for client-side routing)
-	mux.Handle("/", spaHandler(spaFS))
+	// Operator customisation assets from the project's custom/ directory —
+	// custom.css / custom.js plus any fonts, logos or images they reference.
+	// Registered before the SPA catch-all so /_custom/* never falls through to
+	// the shell. The ServeMux prefix pattern already matches nested paths.
+	//
+	// This route is PUBLIC and UNAUTHENTICATED: /_custom/ is not an isAPIPath,
+	// so neither requireVerifiedJWT nor attachACLRequest applies. Deliberate —
+	// the shell's stylesheet must load before login. See custom.go.
+	//
+	// The enabled check is a closure, not a snapshot: data-entry.yaml is
+	// reloadable, so caching disable_custom_injection here would leave a
+	// running server honoring a stale value.
+	//
+	// Serving is independent of injection: an unreadable shell (or
+	// disable_custom_injection) must not stop /_custom/ from serving, so the
+	// route is registered unconditionally and only the shell rewrite degrades.
+	shell, shellErr := fs.ReadFile(spaFS, spaIndexFile)
+	custom := newCustomAssets(a.paths.Root, shell, func() bool {
+		return shellErr == nil && !a.State().Cfg.App.DisableCustomInjection
+	})
+	mux.HandleFunc(customURLPrefix, custom.serveAsset)
+
+	// Serve Vue SPA at root (catch-all for client-side routing).
+	//
+	// The shell is rewritten to reference custom/custom.css and custom/custom.js
+	// when those exist. This is the ONE server-side HTML rewrite in the
+	// codebase, and it is deliberately scoped to rela's own shell.
+	//
+	// Why apps/<id>/index.html must NOT be rewritten but this may: an app's
+	// CSP *is* the entire security boundary confining an untrusted, installable
+	// app (path-scoped script-src, connect-src 'none'). Injecting script into
+	// an app's index would require widening that CSP and puncture the boundary.
+	// The SPA shell has no CSP at all, so this rewrite crosses no boundary.
+	//
+	// TRIP-WIRE: if a CSP is ever applied to the SPA route, that reasoning
+	// lapses and this injection must be revisited (it would need to permit
+	// the /_custom/ paths explicitly).
+	//
+	// RFC 6764 CalDAV discovery lives at site-root paths, so it cannot go on
+	// the inner /api/ mux. It takes over "/" and delegates everything that is
+	// not a discovery probe to the SPA — which must be the customisation-aware
+	// handler, or operator custom.css would be dropped on every CalDAV-enabled
+	// deployment.
+	spa := spaHandlerWithCustom(spaFS, custom)
+	if a.caldavAliases != nil {
+		if routes := newCalDAVRoutes(a); routes != nil {
+			routes.registerWellKnown(mux, spa)
+		}
+	} else {
+		mux.Handle("/", spa)
+	}
 
 	// Apply security middlewares as the outermost wrapper so they protect
 	// every route, including the SSE handlers and static assets. The
@@ -137,7 +190,19 @@ func (a *App) NewRouter() http.Handler {
 	// principal is still the unstamped default at the time
 	// ForPrincipal is called.
 	if d, ok := a.acl.(*acl.Declarative); ok && d != nil {
-		handler = attachACLRequest(handler, d)
+		// jwtVerified tells attachACLRequest that identity is a verified-JWT
+		// assertion (the gate is installed), so an unmatched principal can be
+		// distinguished from a spoofable-header one — the fact the
+		// `unmatched_principal: reject` gate keys on. Wiring state, not a
+		// per-principal marker (a JWT and a header principal are identical on
+		// the Principal).
+		//
+		// This snapshots a.jwtGate at NewRouter time. SetJWTGate MUST run before
+		// NewRouter (it does in production wiring and in every test) — otherwise
+		// this captures nil and `unmatched_principal: reject` silently never
+		// fires. If a future refactor reorders these, that invariant breaks
+		// quietly; keep SetJWTGate ahead of NewRouter.
+		handler = attachACLRequest(handler, d, a.jwtGate != nil)
 	}
 	// The JWT gate wraps BETWEEN attachACLRequest and stampAuditPrincipal, so at
 	// request time it runs after the stamper and before ACL. This ordering is
@@ -198,7 +263,7 @@ func isAPIPath(p string) bool {
 // acl.WithRequest). The middleware is at the outer edge of the
 // production chain so this guard rarely fires in production, but it
 // makes the test composition story safer.
-func attachACLRequest(next http.Handler, d *acl.Declarative) http.Handler {
+func attachACLRequest(next http.Handler, d *acl.Declarative, jwtVerified bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !isAPIPath(r.URL.Path) {
 			next.ServeHTTP(w, r)
@@ -258,7 +323,7 @@ func attachACLRequest(next http.Handler, d *acl.Declarative) http.Handler {
 		// preserving the raw header value in RawUser. Any non-match /
 		// ambiguous / errored lookup keeps the raw principal (fail-open to
 		// pre-feature behavior) — see acl.Declarative.ResolvePrincipal.
-		ctx = resolvePrincipalEntity(ctx, d, r)
+		ctx = resolvePrincipalEntity(ctx, d, r, jwtVerified)
 
 		req, err := d.ForPrincipal(principal.From(ctx))
 		if err != nil {
@@ -308,7 +373,13 @@ func attachACLRequest(next http.Handler, d *acl.Declarative) http.Handler {
 // (pre-feature behavior); ambiguity and errors are logged, a plain
 // no-match is not (a principal absent from the graph is expected, e.g. a
 // break-glass identity assigned by raw UPN).
-func resolvePrincipalEntity(ctx context.Context, d *acl.Declarative, r *http.Request) context.Context {
+// jwtVerified reports whether identity came from a verified-JWT assertion (the
+// gate is installed). Combined with a genuine no-match while the lookup is
+// enabled, it lets the caller mark the request unmatched-verified so
+// `unmatched_principal: reject` can deny its writes — see [acl.WithUnmatchedVerified].
+func resolvePrincipalEntity(
+	ctx context.Context, d *acl.Declarative, r *http.Request, jwtVerified bool,
+) context.Context {
 	p := principal.From(ctx)
 	id, err := d.ResolvePrincipal(ctx, p.User)
 	if err != nil {
@@ -317,12 +388,30 @@ func resolvePrincipalEntity(ctx context.Context, d *acl.Declarative, r *http.Req
 		return ctx
 	}
 	if id == "" || id == p.User {
+		// No entity resolved. If identity is a verified JWT and the lookup was
+		// actually enabled (id=="" from a disabled lookup is not a "no-match",
+		// it's "not attempted"), mark the request so the write path can enforce
+		// `unmatched_principal: reject`. The mark is inert unless the policy
+		// opts in.
+		if jwtVerified && id == "" && d.Policy().PrincipalPropertyLookupEnabled() {
+			ctx = acl.WithUnmatchedVerified(ctx)
+		}
 		return ctx
 	}
-	// Rebuild via Verified so the assertion claims survive the substitution.
-	// A plain composite literal here would silently drop org and roles — the
-	// resolved principal would keep its identity but lose every asserted grant.
-	out := principal.Verified(id, p.Tool, p.OrgID(), p.OrgSlug(), p.Roles())
+	// Rebuild via VerifiedFrom so the assertion claims survive the substitution.
+	// A plain composite literal here would silently drop org, roles, email and the
+	// attenuation claims — the resolved principal would keep its identity but
+	// lose every asserted grant AND its ceiling. Losing the ceiling is the
+	// dangerous direction: it would silently WIDEN a restricted client to its
+	// acting user's full grants. Pinned by TestResolvePrincipalEntity_*.
+	out := principal.VerifiedFrom(id, p.Tool, principal.Claims{
+		OrgID:         p.OrgID(),
+		OrgSlug:       p.OrgSlug(),
+		Roles:         p.Roles(),
+		PrincipalType: p.PrincipalType(),
+		Scopes:        p.Scopes(),
+		Email:         p.Email(),
+	})
 	out.RawUser = p.User
 	return principal.With(ctx, out)
 }
@@ -415,6 +504,19 @@ type AssertedIdentity struct {
 	OrgID   string
 	OrgSlug string
 	Roles   []string
+
+	// PrincipalType and Scopes drive client attenuation (TKT-IAC8TX): the
+	// former selects a ceiling in acl.yaml, the latter re-opens pieces of it.
+	// Both are absent for a proxy that doesn't model them, which means "no
+	// ceiling applies" — the principal keeps its acting user's grants.
+	PrincipalType string
+	Scopes        []string
+
+	// Email is the verified `email` claim, when the proxy supplies one. Absent
+	// for a proxy that doesn't model it, which is not an error. Threaded onto the
+	// Principal so lazy provisioning (TKT-ANUJDS) can stamp it on a stub user
+	// entity; nothing in the ACL evaluates it.
+	Email string
 }
 
 // assertionVerifier verifies a signed assertion and projects the org/role
@@ -471,8 +573,8 @@ func JWTPrincipalResolver(v assertionVerifier, headerName string) PrincipalResol
 		if err != nil {
 			return principal.Principal{}
 		}
-		p, ok := verifiedPrincipal(id)
-		if !ok {
+		p, reason := verifiedPrincipal(id, principal.ToolDataEntry)
+		if !reason.ok() {
 			return principal.Principal{}
 		}
 		return p
@@ -493,31 +595,103 @@ func JWTPrincipalResolver(v assertionVerifier, headerName string) PrincipalResol
 // from a record this process already wrote and verified). A role reaching the
 // ACL from an unverified source would be a complete authorization bypass, so
 // this must be called ONLY on the output of a completed signature verification.
-func verifiedPrincipal(id AssertedIdentity) (principal.Principal, bool) {
+//
+// tool is the audit attribution for the surface the request arrived on —
+// [principal.ToolDataEntry] for the SPA/API, [principal.ToolMCP] for the
+// remote MCP endpoint. It is a parameter rather than a constant because
+// [principal.VerifiedFrom] is the ONLY constructor that populates the
+// unexported org/role/scope fields: a caller needing a different Tool cannot
+// just build a `principal.Principal{Tool: ...}` composite literal without
+// silently dropping every asserted role, so the Tool has to enter here
+// (RR-H8S10M).
+func verifiedPrincipal(id AssertedIdentity, tool string) (principal.Principal, rejectReason) {
 	if id.Subject == "" {
-		return principal.Principal{}, false
+		return principal.Principal{}, rejectUnusable
 	}
 	// The subject is a controlled id (opaque, from the IdP), but sanitize it the
 	// same way as header/env users for defense in depth (length cap, control-char
 	// strip). A control-only value sanitizes to "" and is rejected.
 	user := sanitizeUser(id.Subject)
 	if user == "" {
-		return principal.Principal{}, false
+		return principal.Principal{}, rejectUnusable
+	}
+	// A signature proves the IdP issued this subject; it does NOT prove the
+	// subject is not one of rela's reserved internal identities (TKT-9PCL7D).
+	// Where subjects are user-influenced — email-shaped, or an operator creating
+	// an account — a genuinely valid assertion can carry `system:scheduler` and
+	// inherit its acl.yaml grants. Reject it here, which covers BOTH callers:
+	// the deprecated resolver and [requireVerifiedJWT], the production gate that
+	// re-stamps over stampAuditPrincipal's check on `/api/` and `/api/v1/_mcp`.
+	if principal.IsReserved(user) {
+		return principal.Principal{}, rejectReserved
 	}
 	// Org and roles get the same treatment. Roles are already bounded by the
 	// verifier's projection; sanitizing here covers control chars and any future
 	// verifier that forgets to. A role that sanitizes away is dropped rather than
 	// kept as "" — an empty role name can never match a policy mapping, so
 	// keeping it would only pad the attribution set.
-	roles := make([]string, 0, len(id.Roles))
-	for _, role := range id.Roles {
-		if s := sanitizeUser(role); s != "" {
-			roles = append(roles, s)
+	roles := sanitizeClaimList(id.Roles)
+	// Scopes get the same treatment for the same reason. A scope that sanitizes
+	// away is dropped rather than kept as "": it could never match a policy
+	// mapping, so keeping it would only re-open nothing at a cost.
+	scopes := sanitizeClaimList(id.Scopes)
+	return principal.VerifiedFrom(user, tool, principal.Claims{
+		OrgID:   sanitizeUser(id.OrgID),
+		OrgSlug: sanitizeUser(id.OrgSlug),
+		Roles:   roles,
+		// A principal_type that sanitizes to "" matches no baseline, which means
+		// unrestricted. That is the correct failure direction: the ceiling is a
+		// restriction on top of the user's own grants, so losing it can never
+		// grant more than the acting user already had.
+		PrincipalType: sanitizeUser(id.PrincipalType),
+		Scopes:        scopes,
+		Email:         sanitizeUser(id.Email),
+	}), rejectNone
+}
+
+// rejectReason says WHY [verifiedPrincipal] refused a subject, or that it did
+// not. It replaced a bare `ok bool` so the caller's log classification is driven
+// by the same evaluation that made the decision (RR-OJRCNY).
+//
+// The bug it prevents: the gate used to re-derive "was this reserved?" from the
+// RAW `id.Subject`, while verifiedPrincipal decided on the SANITIZED value. Those
+// disagree exactly when sanitizing CREATES a reserved name — "\x01system:scheduler"
+// was correctly denied but logged as a benign unusable-subject INFO rather than
+// the security WARN, so the one log line operators are told to grep for missed
+// the variant an attacker would actually send. Returning the reason makes the
+// two impossible to drift, which is the same argument that made verifiedPrincipal
+// a single shared function in the first place.
+type rejectReason int
+
+const (
+	// rejectNone means the subject was accepted; the Principal is usable.
+	rejectNone rejectReason = iota
+	// rejectUnusable means the subject was empty, or sanitized away entirely —
+	// an IdP/claims problem for the operator to chase.
+	rejectUnusable
+	// rejectReserved means the subject named a reserved `system:` identity —
+	// a misconfigured IdP, or someone probing for TKT-9PCL7D.
+	rejectReserved
+)
+
+// ok reports whether the subject was accepted.
+func (r rejectReason) ok() bool { return r == rejectNone }
+
+// sanitizeClaimList applies sanitizeUser to every element, dropping any that
+// sanitizes to empty. Shared by the roles and scopes projections: both are
+// already bounded by the verifier, and both are policy-map keys where an empty
+// string can never match anything.
+func sanitizeClaimList(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(in))
+	for _, v := range in {
+		if s := sanitizeUser(v); s != "" {
+			out = append(out, s)
 		}
 	}
-	return principal.Verified(
-		user, principal.ToolDataEntry,
-		sanitizeUser(id.OrgID), sanitizeUser(id.OrgSlug), roles), true
+	return out
 }
 
 // stripBearer trims the header value and removes an optional "Bearer" auth
@@ -570,6 +744,14 @@ func ChainResolvers(resolvers ...PrincipalResolver) PrincipalResolver {
 // whitespace. Returns "" when the cleaned value is empty so chained
 // resolvers can fall through.
 //
+// **It does NOT reject reserved `system:` principals** (TKT-9PCL7D), even
+// though every HTTP username source passes through here, which makes it a
+// tempting place for the check. It can only signal "unusable" by returning "",
+// and every caller reads that as fall-through — a silent demotion to the next
+// resolver or to `unknown`, which is exactly the wrong answer for an
+// impersonation attempt. The rejection lives in [stampAuditPrincipal] and
+// [verifiedPrincipal], which can fail loudly. See [principal.IsReserved].
+//
 // **Important — order matters.** Control-char replacement runs
 // *before* the final whitespace trim. A value of `"\x00\x00"`
 // would survive `strings.TrimSpace` (NULs are not whitespace),
@@ -604,11 +786,104 @@ func isControlRune(r rune) bool {
 // stampAuditPrincipal stamps a Principal (resolved by resolve) on
 // every request ctx. See plan AC4 for the test that pins this
 // behavior.
+//
+// **Reserved principals are rejected here (TKT-9PCL7D).** A resolver derives
+// User from request-controlled input — a proxy header or $RELA_DATAENTRY_USER —
+// and neither is a proof of identity. `system:scheduler` is grantable in
+// acl.yaml (the DEC-O59WM4 migration gives it `read: ["*"]`) and the ACL
+// matches it by raw string, so letting one through the door is a privilege
+// escalation the ACL cannot detect. See [principal.IsReserved].
+//
+// The rejection is split by surface, mirroring [attachACLRequest]'s RR-T15E
+// scope rule:
+//
+//   - On `/api/` — 403. This is the surface that carries entity data and the
+//     only one where the forged identity could confer anything.
+//   - Everywhere else (`/`, `/static/`) — serve the request, but strip the
+//     identity to the anonymous default rather than erroring. A misconfigured
+//     proxy that stamps a reserved name on every request must not render the
+//     SPA as raw JSON: that locks operators out of the very surface they need
+//     to fix the proxy. Nothing outside `/api/` reads the principal for
+//     authorization, so downgrading is safe here in a way it is NOT on the API
+//     (where AC1 requires a loud failure, not a silent demotion to `unknown`).
+//
+// The JWT gate re-stamps on API paths after this middleware, so it repeats the
+// check on its own verified subject — see [verifiedPrincipal]. A guard here
+// alone would be bypassed whenever the gate is installed.
 func stampAuditPrincipal(next http.Handler, resolve PrincipalResolver) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx := principal.With(r.Context(), resolve(r))
+		p := resolve(r)
+		if principal.IsReserved(p.User) {
+			slog.WarnContext(r.Context(), "rejected reserved principal asserted by request",
+				"user", p.User,
+				"path", r.URL.Path,
+				"method", r.Method,
+				"remote_addr", r.RemoteAddr)
+			if isAPIPath(r.URL.Path) {
+				// The rule is named, the VALUE is not echoed back. Naming the
+				// rule is right (the config is not a secret, and an operator
+				// debugging a proxy needs it) but repeating up to 256
+				// attacker-chosen runes into the response body makes this a
+				// reflection gadget for whatever consumes the problem+json
+				// downstream, and buys nothing — the log line above already
+				// carries the value, which is where it belongs (RR-I5S4NK).
+				writeV1Error(w, r, http.StatusForbidden, "reserved_principal",
+					"Reserved principal",
+					"A '"+principal.ReservedPrefix+"' prefixed identity is internal to rela "+
+						"and cannot be asserted by a request.")
+				return
+			}
+			p = defaultPrincipalResolver(r)
+		}
+		ctx := principal.With(r.Context(), p)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// spaHandlerWithCustom wraps spaHandler so that requests resolving to the SPA
+// shell are served a variant referencing the operator's custom.css/custom.js.
+// An unreadable shell degrades to the plain SPA handler.
+//
+// The four possible shells are precomputed once at router construction (no
+// per-request rewrite, so there is no cache-population race and no lock on the
+// hot path); which one to serve is chosen per request by a cheap existence
+// check, so adding custom.css does not require a server restart.
+//
+// Requests for real files (assets, favicon, …) are delegated untouched.
+func spaHandlerWithCustom(fsys fs.FS, custom *customAssets) http.Handler {
+	fallback := spaHandler(fsys)
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body := custom.shell()
+		// A non-shell path, or an unreadable shell (nil body): delegate to the
+		// plain file server exactly as before.
+		if body == nil || !servesSPAShell(fsys, r.URL.Path) {
+			fallback.ServeHTTP(w, r)
+			return
+		}
+
+		h := w.Header()
+		h.Set("Content-Type", "text/html; charset=utf-8")
+		// The shell is rewritten per filesystem state, so the embedded file's
+		// length/modtime no longer describe it. Set Content-Length explicitly
+		// rather than letting http.FileServer derive headers from bytes we did
+		// not serve.
+		h.Set("Content-Length", strconv.Itoa(len(body)))
+		if r.Method == http.MethodHead {
+			return
+		}
+		_, _ = w.Write(body)
+	})
+}
+
+// servesSPAShell reports whether a request path falls through to the SPA shell
+// rather than resolving to a real embedded file. Mirrors spaHandler's rule.
+func servesSPAShell(fsys fs.FS, urlPath string) bool {
+	if urlPath == "" || urlPath == "/" {
+		return true
+	}
+	_, err := fs.Stat(fsys, strings.TrimPrefix(urlPath, "/"))
+	return err != nil
 }
 
 // spaHandler wraps a filesystem and serves index.html for any path that doesn't

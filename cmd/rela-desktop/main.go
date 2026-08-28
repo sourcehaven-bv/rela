@@ -172,6 +172,7 @@ func (d *Desktop) LoadProject(dir string) string {
 		svc.EntityManager(), svc.Searcher(), svc.VisibleSearcher(), svc.ACL(),
 		fieldResolver,
 		svc.Audit(),
+		svc.State(),
 	)
 	if err != nil {
 		return d.failLoad(err)
@@ -236,7 +237,7 @@ func (d *Desktop) GetSetupInfo() map[string]any {
 		return map[string]any{"error": "No project pending setup"}
 	}
 
-	loader := metamodel.NewFSLoader(d.pendingSetupFS, d.pendingSetupPaths.MetamodelPath)
+	loader := metamodel.NewFSLoader(d.pendingSetupFS, d.pendingSetupPaths.SchemaPath)
 	meta, _, err := loader.Load(context.Background())
 	if err != nil {
 		return map[string]any{"error": fmt.Sprintf("Failed to load metamodel: %v", err)}
@@ -265,7 +266,7 @@ func (d *Desktop) GenerateDataEntryConfig(appName string) string {
 		return "No project pending setup"
 	}
 
-	meta, _, err := metamodel.NewFSLoader(fs, paths.MetamodelPath).Load(context.Background())
+	meta, _, err := metamodel.NewFSLoader(fs, paths.SchemaPath).Load(context.Background())
 	if err != nil {
 		return fmt.Sprintf("Failed to load metamodel: %v", err)
 	}
@@ -336,16 +337,19 @@ func (d *Desktop) CloneProject(repoURL, baseDir string) map[string]any {
 	d.lastCloneDir = targetDir
 	d.mu.Unlock()
 
+	// repoName is the URL's last path segment, so a hostile URL can make it
+	// ".." — BaseDir makes Clone reject a targetDir that escapes baseDir.
 	err := git.Clone(git.CloneOptions{
-		URL:   repoURL,
-		Path:  targetDir,
-		Token: token,
+		URL:     repoURL,
+		Path:    targetDir,
+		BaseDir: baseDir,
+		Token:   token,
 	})
 	if err != nil {
 		return map[string]any{"error": fmt.Sprintf("Clone failed: %v", err)}
 	}
 
-	// Scan for rela projects (directories containing metamodel.yaml)
+	// Scan for rela projects (directories containing a schema file)
 	projects := scanForRelaProjects(targetDir)
 
 	if len(projects) == 0 {
@@ -417,16 +421,23 @@ func (d *Desktop) InitRelaProject(subfolder string) string {
 		}
 	}
 
-	// Create minimal metamodel.yaml
-	metamodelPath := filepath.Join(projectDir, "metamodel.yaml")
-	minimalMetamodel := `# Rela Project Configuration
+	// Refuse if a schema already exists under EITHER name — writing a default
+	// one next to an operator's real (legacy-named) schema would leave the
+	// project loading the empty default, since discovery prefers the new name.
+	if existing, _, found := project.SchemaFileAt(projectDir, storage.NewSafeFS(storage.NewOsFS())); found {
+		return fmt.Sprintf("Directory is already a rela project (%s exists)", filepath.Base(existing))
+	}
+
+	// Create minimal schema.yaml
+	schemaPath := filepath.Join(projectDir, project.SchemaFile)
+	minimalSchema := `# Rela Project Configuration
 # See https://github.com/Sourcehaven-BV/rela for documentation
 
 entity_types: {}
 relation_types: {}
 `
-	if err := os.WriteFile(metamodelPath, []byte(minimalMetamodel), 0o644); err != nil {
-		return fmt.Sprintf("Failed to create metamodel.yaml: %v", err)
+	if err := os.WriteFile(schemaPath, []byte(minimalSchema), 0o644); err != nil {
+		return fmt.Sprintf("Failed to create %s: %v", project.SchemaFile, err)
 	}
 
 	// Create entities directory
@@ -438,7 +449,7 @@ relation_types: {}
 	return d.LoadProject(projectDir)
 }
 
-// scanForRelaProjects recursively finds directories containing metamodel.yaml.
+// scanForRelaProjects recursively finds directories containing a schema file.
 func scanForRelaProjects(root string) []string {
 	var projects []string
 	_ = filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
@@ -453,8 +464,17 @@ func scanForRelaProjects(root string) []string {
 			}
 			return nil
 		}
-		if info.Name() == "metamodel.yaml" {
+		// Match the legacy name too, so pre-rename projects keep showing up in
+		// the picker. Only the new name appends when both are present,
+		// otherwise such a directory would be listed twice.
+		switch info.Name() {
+		case project.SchemaFile:
 			projects = append(projects, filepath.Dir(path))
+		case project.LegacySchemaFile:
+			dir := filepath.Dir(path)
+			if _, err := os.Stat(filepath.Join(dir, project.SchemaFile)); err != nil {
+				projects = append(projects, dir)
+			}
 		}
 		return nil
 	})
@@ -777,10 +797,11 @@ func resolveProjectDir(flagValue string, prefs *desktop.Preferences) string {
 	return ""
 }
 
-// isRelaProject checks if the directory looks like a rela project.
+// isRelaProject checks if the directory looks like a rela project, accepting
+// either schema file name.
 func isRelaProject(dir string) bool {
-	_, err := os.Stat(filepath.Join(dir, "metamodel.yaml"))
-	return err == nil
+	_, _, found := project.SchemaFileAt(dir, storage.NewSafeFS(storage.NewOsFS()))
+	return found
 }
 
 // discoverProject returns the filesystem and project context for the
@@ -795,6 +816,9 @@ func discoverProject(projectDir string) (storage.FS, *project.Context, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("discovering project: %w", err)
 	}
+	// The desktop app opens projects without going through appbuild.Discover,
+	// so it needs its own call for the notice to reach desktop-only operators.
+	project.WarnIfLegacySchema(projCtx)
 	return fs, projCtx, nil
 }
 
@@ -824,13 +848,31 @@ func generateDataEntryConfig(appName string, meta *metamodel.Metamodel) string {
 		}
 		sort.Strings(propNames)
 
+		// No generated field/column labels: a label is authored, never derived
+		// (DEC-6C1NAA). Emitting titleCase(property) here would bake an English
+		// orthographic guess into every new project's config. An unlabelled
+		// field renders its raw property name until the user writes a label in
+		// their own language. Titles and nav DO get a label because entDef.Label
+		// is a required, user-authored metamodel field — not a derivation. The
+		// loader enforces that it is set, but this generator can also be handed
+		// an in-memory metamodel, so fall back to the raw type name rather than
+		// emitting an empty title (or a bare "s" for the plural).
+		typeLabel := entDef.Label
+		if typeLabel == "" {
+			typeLabel = typeName
+		}
+		typeLabelPlural := entDef.LabelPlural
+		if typeLabelPlural == "" {
+			typeLabelPlural = typeLabel + "s"
+		}
+
 		fields := make([]map[string]string, 0, len(propNames))
 		for _, propName := range propNames {
-			fields = append(fields, map[string]string{"property": propName, "label": titleCase(propName)})
+			fields = append(fields, map[string]string{"property": propName})
 		}
 		appendMapEntry(&forms, formID, map[string]any{
 			"entity_type": typeName,
-			"title":       titleCase(typeName),
+			"title":       typeLabel,
 			"fields":      fields,
 		})
 
@@ -839,18 +881,18 @@ func generateDataEntryConfig(appName string, meta *metamodel.Metamodel) string {
 			if i >= maxColumns {
 				break
 			}
-			columns = append(columns, map[string]string{"property": propName, "label": titleCase(propName)})
+			columns = append(columns, map[string]string{"property": propName})
 		}
 		appendMapEntry(&lists, listID, map[string]any{
 			"entity_type": typeName,
-			"title":       titleCase(typeName) + "s",
+			"title":       typeLabelPlural,
 			"columns":     columns,
 			"create_form": formID,
 			"edit_form":   formID,
 		})
 
 		navItem := yaml.Node{Kind: yaml.MappingNode}
-		appendMapEntry(&navItem, "label", titleCase(typeName)+"s")
+		appendMapEntry(&navItem, "label", typeLabelPlural)
 		appendMapEntry(&navItem, "list", listID)
 		navigation.Content = append(navigation.Content, &navItem)
 	}
@@ -889,17 +931,4 @@ func appendMapEntry(m *yaml.Node, key string, value any) {
 		_ = valNode.Encode(value)
 	}
 	m.Content = append(m.Content, keyNode, valNode)
-}
-
-// titleCase converts a-kebab-case or snake_case to Title Case.
-func titleCase(s string) string {
-	s = strings.ReplaceAll(s, "-", " ")
-	s = strings.ReplaceAll(s, "_", " ")
-	words := strings.Fields(s)
-	for i, w := range words {
-		if w != "" {
-			words[i] = strings.ToUpper(w[:1]) + w[1:]
-		}
-	}
-	return strings.Join(words, " ")
 }

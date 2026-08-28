@@ -30,6 +30,12 @@
 // the outer limit of what belongs here. Session lifecycle, provisioning, and
 // role *expansion* remain out — they are separate concerns with their own
 // packages.
+//
+// It opened a second time (TKT-IAC8TX) on the same terms: `principalType` and
+// `scopes` earned their place by having an evaluator — internal/acl compiles
+// them into a client-attenuation ceiling. `client_id` was considered and left
+// out precisely because nothing evaluates it; it would be attribution-only
+// clutter, and the ceiling can key on it later if that changes.
 package principal
 
 import (
@@ -38,6 +44,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"unicode"
 )
 
 // Principal identifies who is making a write. User is the OS user
@@ -55,44 +62,118 @@ import (
 //
 // # Verified assertion claims
 //
-// orgID, orgSlug, and roles carry claims from a CRYPTOGRAPHICALLY VERIFIED
-// identity assertion. They are unexported on purpose: [Verified] is the only
-// way to populate them, so no composite literal anywhere in the tree can forge
-// a role. That matters because internal/acl trusts a Principal absolutely — it
-// verifies nothing itself — so a role reaching it from an unverified source
-// (a spoofable header, say) would be a complete authorization bypass. The
-// compiler enforces the trust boundary here rather than leaving it to a code
-// reviewer's memory.
+// orgID, orgSlug, roles, principalType and scopes carry claims from a
+// CRYPTOGRAPHICALLY VERIFIED identity assertion. They are unexported on
+// purpose: [VerifiedFrom] (and its [Verified] wrapper) is the only way to
+// populate them, so no composite literal anywhere in the tree can forge a role.
+// That matters because internal/acl trusts a Principal absolutely — it verifies
+// nothing itself — so a role reaching it from an unverified source (a spoofable
+// header, say) would be a complete authorization bypass. The compiler enforces
+// the trust boundary here rather than leaving it to a code reviewer's memory.
 //
-// Read them via [Principal.OrgID], [Principal.OrgSlug], [Principal.Roles].
+// Read them via [Principal.OrgID], [Principal.OrgSlug], [Principal.Roles],
+// [Principal.PrincipalType], [Principal.Scopes], [Principal.Email].
+//
+// The two attenuation claims run the OPPOSITE direction from roles: principalType
+// selects a ceiling that removes capability, and scopes re-open pieces of it
+// bounded by the acting user. So a forged one could only ever narrow — but they
+// share the constructor discipline anyway, because "this claim is safe to forge"
+// is not a property worth asking a future reader to re-derive.
+//
+// email carries the verified `email` claim, when the assertion supplies one. It
+// rides here for the same reason org does — so lazy provisioning (TKT-ANUJDS)
+// can stamp it onto a freshly-created stub user entity — and is populated only
+// via the verified constructors, never a composite literal, so it shares the
+// org/roles trust boundary. Attribution/enrichment only; nothing in internal/acl
+// evaluates it.
 type Principal struct {
 	User    string
 	Tool    string
 	RawUser string
 
-	orgID   string
-	orgSlug string
-	roles   []string
+	orgID         string
+	orgSlug       string
+	roles         []string
+	principalType string
+	scopes        []string
+	email         string
 }
 
-// Verified constructs a Principal carrying claims from a verified identity
+// Claims carries the verified-assertion fields [VerifiedFrom] stamps onto a
+// Principal. It exists so the claim set can grow without re-churning every
+// call site the way a widening positional signature would: [Verified] already
+// took five arguments, and client attenuation (TKT-IAC8TX) needed two more.
+//
+// A zero Claims is valid — it produces a Principal with no verified claims,
+// which is what every non-assertion entry point wants.
+type Claims struct {
+	OrgID   string
+	OrgSlug string
+	Roles   []string
+
+	// PrincipalType selects a client-attenuation baseline in acl.yaml. Note
+	// the asymmetry with Roles: a role ADDS capability, a principal type only
+	// ever REMOVES it. That is why an unrecognized value is safe to ignore
+	// (no baseline matches → unrestricted) while an unrecognized role is
+	// dropped — both fail toward the acting user's own grants.
+	PrincipalType string
+
+	// Scopes re-open capability a baseline closed, always bounded by what the
+	// acting user holds. A scope can therefore never escalate past the user.
+	Scopes []string
+
+	// Email is the verified `email` claim, when the assertion supplies one.
+	// Attribution/enrichment only (lazy provisioning stamps it on a stub user
+	// entity, TKT-ANUJDS); nothing in internal/acl evaluates it.
+	Email string
+}
+
+// VerifiedFrom constructs a Principal carrying claims from a verified identity
 // assertion. Callers MUST have validated the assertion's signature before
 // calling this — see the type doc for why that is load-bearing.
 //
-// roles is defensively copied so a later mutation of the caller's slice cannot
-// retroactively change an authorization decision.
-func Verified(user, tool, orgID, orgSlug string, roles []string) Principal {
+// Slice claims are defensively copied so a later mutation of the caller's slice
+// cannot retroactively change an authorization decision.
+func VerifiedFrom(user, tool string, c Claims) Principal {
 	p := Principal{
-		User:    user,
-		Tool:    tool,
-		orgID:   orgID,
-		orgSlug: orgSlug,
+		User:          user,
+		Tool:          tool,
+		orgID:         c.OrgID,
+		orgSlug:       c.OrgSlug,
+		principalType: c.PrincipalType,
+		email:         c.Email,
 	}
-	if len(roles) > 0 {
-		p.roles = slices.Clone(roles)
+	if len(c.Roles) > 0 {
+		p.roles = slices.Clone(c.Roles)
+	}
+	if len(c.Scopes) > 0 {
+		p.scopes = slices.Clone(c.Scopes)
 	}
 	return p
 }
+
+// Verified is the original positional constructor, retained because it reads
+// well at the many call sites that only ever carry org + roles. It delegates to
+// [VerifiedFrom]; prefer that one when setting the attenuation or email claims.
+func Verified(user, tool, orgID, orgSlug string, roles []string) Principal {
+	return VerifiedFrom(user, tool, Claims{OrgID: orgID, OrgSlug: orgSlug, Roles: roles})
+}
+
+// WithEmail returns a copy of p carrying the verified `email` claim. Useful when
+// a caller already holds a verified Principal and only needs to add the email
+// (the lazy-provisioning re-stamp path, TKT-ANUJDS) rather than rebuild it
+// through [VerifiedFrom]. The verified-source guarantee still holds — WithEmail
+// is only reachable from a Principal a caller already built via a verified
+// constructor.
+func (p Principal) WithEmail(email string) Principal {
+	out := p.Clone()
+	out.email = email
+	return out
+}
+
+// Email returns the verified `email` claim, or "" when absent. Same
+// attribution-only caveat as [Principal.OrgID].
+func (p Principal) Email() string { return p.email }
 
 // OrgID returns the verified `org_id` claim, or "" when the principal did not
 // arrive with a verified assertion.
@@ -123,6 +204,32 @@ func (p Principal) Roles() []string {
 	return slices.Clone(p.roles)
 }
 
+// PrincipalType returns the verified `principal_type` claim — what KIND of
+// caller this is (e.g. "user", "app", "pat", "service"). Empty for every
+// non-assertion entry point, and for a proxy that does not model it.
+//
+// This selects a client-attenuation baseline in acl.yaml (TKT-IAC8TX). Unlike
+// [Principal.Roles] it can only ever REMOVE capability, never add it, so an
+// unrecognized value is not a security event: no baseline matches and the
+// principal keeps exactly its acting user's grants.
+func (p Principal) PrincipalType() string { return p.principalType }
+
+// Scopes returns the verified `scope` claim, split on whitespace. Empty for
+// every non-assertion entry point.
+//
+// A scope re-opens capability a client baseline closed, always intersected with
+// what the acting user holds — so a scope can never grant past the user. Like
+// [Principal.Roles], these are the IdP's names, mapped through an
+// operator-authored allowlist in acl.yaml; an unknown scope grants nothing.
+//
+// The returned slice is a copy; mutating it cannot affect authorization.
+func (p Principal) Scopes() []string {
+	if len(p.scopes) == 0 {
+		return nil
+	}
+	return slices.Clone(p.scopes)
+}
+
 // IsZero reports whether p carries no identity at all. Entry points use it to
 // reject an unconfigured Principal at construction time.
 //
@@ -147,6 +254,9 @@ func (p Principal) Clone() Principal {
 	if len(p.roles) > 0 {
 		p.roles = slices.Clone(p.roles)
 	}
+	if len(p.scopes) > 0 {
+		p.scopes = slices.Clone(p.scopes)
+	}
 	return p
 }
 
@@ -161,16 +271,24 @@ func (p Principal) Clone() Principal {
 // about what "clean" means.
 func (p Principal) Sanitized(clean func(string) string) Principal {
 	out := Principal{
-		User:    clean(p.User),
-		Tool:    clean(p.Tool),
-		RawUser: clean(p.RawUser),
-		orgID:   clean(p.orgID),
-		orgSlug: clean(p.orgSlug),
+		User:          clean(p.User),
+		Tool:          clean(p.Tool),
+		RawUser:       clean(p.RawUser),
+		orgID:         clean(p.orgID),
+		orgSlug:       clean(p.orgSlug),
+		principalType: clean(p.principalType),
+		email:         clean(p.email),
 	}
 	if len(p.roles) > 0 {
 		out.roles = make([]string, 0, len(p.roles))
 		for _, r := range p.roles {
 			out.roles = append(out.roles, clean(r))
+		}
+	}
+	if len(p.scopes) > 0 {
+		out.scopes = make([]string, 0, len(p.scopes))
+		for _, s := range p.scopes {
+			out.scopes = append(out.scopes, clean(s))
 		}
 	}
 	return out
@@ -185,19 +303,25 @@ func (p Principal) Equal(q Principal) bool {
 		p.RawUser == q.RawUser &&
 		p.orgID == q.orgID &&
 		p.orgSlug == q.orgSlug &&
-		slices.Equal(p.roles, q.roles)
+		p.principalType == q.principalType &&
+		p.email == q.email &&
+		slices.Equal(p.roles, q.roles) &&
+		slices.Equal(p.scopes, q.scopes)
 }
 
 // principalJSON is the wire format. It is a separate type because the assertion
 // claims live in unexported fields (see the [Principal] doc), which
 // encoding/json cannot reach in either direction.
 type principalJSON struct {
-	User    string   `json:"user"`
-	Tool    string   `json:"tool"`
-	RawUser string   `json:"raw_user,omitempty"`
-	OrgID   string   `json:"org_id,omitempty"`
-	OrgSlug string   `json:"org_slug,omitempty"`
-	Roles   []string `json:"roles,omitempty"`
+	User          string   `json:"user"`
+	Tool          string   `json:"tool"`
+	RawUser       string   `json:"raw_user,omitempty"`
+	OrgID         string   `json:"org_id,omitempty"`
+	OrgSlug       string   `json:"org_slug,omitempty"`
+	Roles         []string `json:"roles,omitempty"`
+	PrincipalType string   `json:"principal_type,omitempty"`
+	Scopes        []string `json:"scopes,omitempty"`
+	Email         string   `json:"email,omitempty"`
 }
 
 // MarshalJSON emits the assertion claims alongside the exported fields. Every
@@ -205,12 +329,15 @@ type principalJSON struct {
 // byte-identical to what previous versions wrote.
 func (p Principal) MarshalJSON() ([]byte, error) {
 	return json.Marshal(principalJSON{
-		User:    p.User,
-		Tool:    p.Tool,
-		RawUser: p.RawUser,
-		OrgID:   p.orgID,
-		OrgSlug: p.orgSlug,
-		Roles:   p.roles,
+		User:          p.User,
+		Tool:          p.Tool,
+		RawUser:       p.RawUser,
+		OrgID:         p.orgID,
+		OrgSlug:       p.orgSlug,
+		Roles:         p.roles,
+		PrincipalType: p.principalType,
+		Scopes:        p.scopes,
+		Email:         p.email,
 	})
 }
 
@@ -227,12 +354,15 @@ func (p *Principal) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*p = Principal{
-		User:    w.User,
-		Tool:    w.Tool,
-		RawUser: w.RawUser,
-		orgID:   w.OrgID,
-		orgSlug: w.OrgSlug,
-		roles:   w.Roles,
+		User:          w.User,
+		Tool:          w.Tool,
+		RawUser:       w.RawUser,
+		orgID:         w.OrgID,
+		orgSlug:       w.OrgSlug,
+		roles:         w.Roles,
+		principalType: w.PrincipalType,
+		scopes:        w.Scopes,
+		email:         w.Email,
 	}
 	return nil
 }
@@ -254,6 +384,12 @@ const (
 	// distinct entry point from data-entry: the write originates from a verified
 	// server-to-server callback, not a human at the UI.
 	ToolWebhookReceiver = "webhook-receiver"
+	// ToolProvisioner attributes the stub-user create performed by lazy
+	// provisioning (`unmatched_principal: provision`, TKT-ANUJDS) when a verified
+	// principal resolves to no user entity. It is a distinct entry point so the
+	// audit log distinguishes an auto-provisioned stub from a human edit; paired
+	// with [UserProvisioner].
+	ToolProvisioner = "provisioner"
 )
 
 // UserScheduler is the default [Principal.User] for scheduled tasks that
@@ -276,6 +412,74 @@ const (
 // It grants nothing by itself (DEC-O59WM4) — privileges still come only
 // from acl.yaml. `run_as` continues to override it per task.
 const UserScheduler = "system:scheduler"
+
+// UserProvisioner is the fixed [Principal.User] under which lazy provisioning
+// creates a stub user entity for an unmatched verified principal
+// (`unmatched_principal: provision`, TKT-ANUJDS). Like [UserScheduler] it is a
+// documented, grantable constant — a migration binds it to a role granting
+// `create: [<user_entity_type>]` and NOTHING else, so the create it performs is
+// authorized and audited to this identity while it cannot author group edges or
+// touch any other type (the bare-stub containment, RR-28SCW3).
+//
+// It grants nothing by itself; the create-only privilege comes solely from the
+// acl.yaml role the provisioner migration injects. Paired with
+// [ToolProvisioner].
+const UserProvisioner = "system:provisioner"
+
+// ReservedPrefix namespaces the [Principal.User] values that only rela's own
+// in-process entry points may assert. [UserScheduler] and [UserProvisioner] are
+// its current members.
+//
+// The whole prefix is reserved, not just the two constants above, so a future
+// `system:*` identity is safe by construction rather than depending on someone
+// remembering to extend a list. The cost is that a deployment whose IdP issues
+// a `system:`-shaped subject cannot use it as an acting identity.
+const ReservedPrefix = "system:"
+
+// IsReserved reports whether user names an internal identity under
+// [ReservedPrefix].
+//
+// **Request-path entry points MUST reject a reserved user.** These names are
+// grantable in acl.yaml — the DEC-O59WM4 migration binds [UserScheduler] to a
+// role with `read: ["*"]` — and the ACL resolves them by a plain map lookup on
+// the raw string (`policy.Assignments[user]`), with no notion of where the
+// principal came from. So a reserved name arriving from the wire is identity
+// spoofing that inherits the scheduler's grants; the ACL cannot detect it,
+// because it cannot tell a forged `system:scheduler` from the real one.
+//
+// The check belongs at the boundary where request input becomes a Principal,
+// not in the ACL and not in [With] — the scheduler, the provisioner and the CLI
+// all stamp reserved identities legitimately, in-process.
+//
+// The comparison is deliberately case-SENSITIVE: acl.yaml assignments are
+// matched exactly, so "System:Scheduler" confers no scheduler grant and is an
+// ordinary (if odd) username. Case-folding here would reject it for no security
+// gain.
+//
+// It is correct on a RAW value, not merely a pre-sanitized one. Leading control
+// characters are stripped before the prefix test, because a caller's own
+// sanitizer may map them to something that IS reserved: data-entry's
+// sanitizeUser turns "\x01system:scheduler" into exactly "system:scheduler". If
+// this function only trimmed whitespace, whether a name counted as reserved
+// would depend on whether the caller happened to sanitize first — safe by
+// ordering rather than by construction, and silently wrong for any future entry
+// point that passes a raw value (provisioning already does).
+func IsReserved(user string) bool {
+	return strings.HasPrefix(trimReservedNoise(user), ReservedPrefix)
+}
+
+// trimReservedNoise strips the leading characters that carry no identity but
+// could hide a reserved prefix: ASCII whitespace and C0/DEL control codes.
+//
+// Only the LEADING run matters. The prefix test that follows anchors at
+// position 0, so interior or trailing noise cannot manufacture a `system:`
+// prefix — and stripping it would risk equating names that are genuinely
+// distinct to the ACL's exact-match assignment lookup.
+func trimReservedNoise(user string) string {
+	return strings.TrimLeftFunc(user, func(r rune) bool {
+		return unicode.IsSpace(r) || r <= 0x1f || r == 0x7f
+	})
+}
 
 // principalKey is the unexported context.WithValue key so no other
 // package can collide with it or read/write the value outside this
@@ -306,6 +510,28 @@ func From(ctx context.Context) Principal {
 		return v.Clone()
 	}
 	return Principal{User: "unknown", Tool: "unknown"}
+}
+
+// Stamped returns the Principal carried by ctx and whether one was actually
+// stamped. It is [From] without the unknown/unknown default, for the callers
+// that must distinguish "no identity on this ctx" from "an identity that
+// happens to be unknown".
+//
+// Use it only when the two cases lead to DIFFERENT behavior — chiefly a
+// transport deciding whether to supply a fallback identity (the MCP server's
+// principal middleware: a request-borne identity wins, a construction-time
+// one fills in when there is none). Everywhere else, [From]'s default is the
+// right answer and this function would just be a way to reintroduce nil
+// checks.
+//
+// Never use ok==false to grant access. An unstamped ctx means the identity is
+// unknown, not that the caller is privileged.
+func Stamped(ctx context.Context) (Principal, bool) {
+	v, ok := ctx.Value(principalKey{}).(Principal)
+	if !ok {
+		return Principal{}, false
+	}
+	return v.Clone(), true
 }
 
 // SystemUser returns the OS user running this process — $USER

@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"maps"
 	"math"
 	"os"
 	"path/filepath"
@@ -69,14 +68,22 @@ func stripShebang(code string) string {
 // of entities and relations) registered at all; calling those from Lua raises
 // a "attempt to call a nil value" error from the VM itself.
 //
-// TODO(TKT-N0IKN9): Runtime is a god-object (120 methods). Decompose toward the
+// TODO(TKT-N0IKN9): Runtime is a god-object (105 methods). Decompose toward the
 // 40-method load line; ratchet this number down as bindings move out.
 //
 // 119 → 120 (TKT-ZF2DTV): reader(), the single choke point every read binding
 // resolves its ACL-bound handle through. One method that makes six call sites
 // unable to skip the gate is a good trade against this line.
 //
-//plimsoll:max-methods=120
+// 120 → 105 (TKT-IG54YO): the seventeen rela.url helpers moved to urlHelpers.
+// They needed nothing from the runtime — no store, no deps, no context, not
+// even the Lua state, since each receives the *lua.LState it is called with —
+// so they were only ever methods by habit. Grouping them in a FILE never
+// helped: the linter counts methods per type, and so does anyone reading this
+// struct's API. The remaining bindings are not free like this; they genuinely
+// use deps and callerCtx, which is what makes them TKT-N0IKN9's job.
+//
+//plimsoll:max-methods=105
 type Runtime struct {
 	L             *lua.LState
 	deps          WriteDeps // EntityManager is nil on a reader runtime.
@@ -87,6 +94,7 @@ type Runtime struct {
 	cancelTimeout context.CancelFunc
 	params        map[string]string // rela.params values (used by action scripts)
 	secrets       map[string]string // rela.secrets values (from .rela/secrets.yaml)
+	caps          Capabilities      // ambient capability grants; zero value denies all (TKT-YH52OM)
 	isAction      bool              // true when running as an action (changes rela.output behavior)
 	isDocument    bool              // document mode: rela.document populated, rela.output becomes a warning
 	documentID    string            // data-entry.yaml documents: key, exposed as rela.document.id
@@ -226,6 +234,28 @@ func WithDocumentMode(documentID, entryID string) Option {
 	}
 }
 
+// WithStandaloneDocumentMode marks the runtime as rendering a STANDALONE
+// document — one declared without an `entity_type:` in data-entry.yaml, whose
+// content is company-wide rather than about a single entity (TKT-M1AX6P). It
+// sets document mode, so stdout capture and the rela.output warning behave
+// exactly as for an entity render.
+//
+// Like [WithListDocumentMode] this is a SEPARATE constructor from
+// [WithDocumentMode] rather than the latter called with an empty entryID:
+// rela.document.entry_id must be Lua nil, and passing "" to express that is
+// exactly the footgun registerContextBindings documents (empty string is
+// truthy in Lua). Making the absence structural means no caller can get it
+// wrong.
+//
+// Unlike [WithListDocumentMode] there are no row/query bindings — a standalone
+// document has no driving list either. rela.document carries `id` alone.
+func WithStandaloneDocumentMode(documentID string) Option {
+	return func(r *Runtime) {
+		r.isDocument = true
+		r.documentID = documentID
+	}
+}
+
 // WithListDocumentMode marks the runtime as rendering a LIST export (the
 // `lists.<id>.export_render` override). It sets document mode, so stdout
 // capture and the rela.output warning behave exactly as for an entity
@@ -245,6 +275,36 @@ func WithListDocumentMode(documentID string, lrc ListRenderContext) Option {
 		r.isDocument = true
 		r.documentID = documentID
 		r.listRender = lrc
+	}
+}
+
+// WithCapabilities declares which ambient capabilities the runtime may reach
+// (TKT-YH52OM). Omitting it denies all of them — see [Capabilities] for why
+// the default is closed rather than open.
+//
+// A ZERO-VALUE grant is a no-op, NOT a revocation: it leaves whatever
+// [ReadDeps.Capabilities] supplied in place. The two are alternative ways to
+// say the same thing, and "grant nothing" is already the default, so an empty
+// option carries no information worth destroying a deps-carried grant over.
+//
+// This is not a stylistic choice — it fixes a real defect. Engine.execute
+// passes this option UNCONDITIONALLY (plain ExecuteFile supplies
+// Capabilities{}), so a straight assignment made every deps-carried grant
+// vanish. The scheduler sets deps.Capabilities and calls ExecuteFile, so every
+// scheduled task's `capabilities:` block was silently a no-op. Pinned by
+// TestDepsCapabilitiesSurviveExecuteFile in internal/script.
+//
+// The failure mode this avoids is the dangerous direction: a grant that
+// silently disappears is a broken feature, but it fails CLOSED. The reverse —
+// an empty option that could not clear a grant when the caller MEANT to revoke
+// one — does not arise, because no caller revokes: a runtime is built once, per
+// execution, from a config that either named a capability or did not.
+func WithCapabilities(c Capabilities) Option {
+	return func(r *Runtime) {
+		if !c.Any() {
+			return
+		}
+		r.caps = c
 	}
 }
 
@@ -321,6 +381,12 @@ func newRuntime(deps WriteDeps, stdout io.Writer, allowWrites bool, opts ...Opti
 		stdout:    stdout,
 		outputDir: defaultOutputDir,
 		timeout:   DefaultTimeout,
+		// Ambient capabilities default to whatever the deps declared
+		// (TKT-YH52OM). Seeded BEFORE options so an explicit
+		// WithCapabilities wins — deps carry the wiring-site default, the
+		// option is a per-execution override. Both default to the zero
+		// value, which grants nothing.
+		caps: deps.Capabilities,
 	}
 
 	// Apply options
@@ -429,7 +495,7 @@ func (r *Runtime) pcallWithCapture() error {
 }
 
 // collectStackFrames walks the live Lua stack and returns user-visible
-// frames (skipping built-in [G] frames with no source). Capped at
+// frames (skipping built-in G frames with no source). Capped at
 // maxStackFrames; safe to call from a message handler.
 func collectStackFrames(ls *lua.LState) []StackFrame {
 	var frames []StackFrame
@@ -690,9 +756,16 @@ func (r *Runtime) registerBindings(allowWrites bool) {
 	if allowWrites {
 		r.registerWriteBindings(rela)
 		// rela.bypass_acl is registered ONLY when an elevated handle was wired
-		// (an allow_acl_bypass automation action — TKT-D8T148). Absent it, the
+		// (an allow_acl_bypass automation action — TKT-D8T148). Absent BOTH, the
 		// binding does not exist and a script cannot elevate.
-		if r.deps.ElevatedManager != nil {
+		//
+		// EITHER handle suffices (TKT-Y3JVFK). A document render is granted an
+		// elevated READER and no elevated Mutator, so it can aggregate over rows
+		// its caller cannot see while remaining unable to mutate: newElevatedHandle
+		// omits the write methods when em is nil, so `admin.delete_entity` is
+		// "attempt to call a nil value" rather than a guarded call. Reads-only is
+		// structural, not a promise.
+		if r.deps.ElevatedManager != nil || r.deps.ElevatedReader != nil {
 			r.L.SetField(rela, "bypass_acl", r.L.NewFunction(r.luaBypassACL))
 		}
 	}
@@ -700,12 +773,20 @@ func (r *Runtime) registerBindings(allowWrites bool) {
 
 	r.L.SetGlobal("rela", rela)
 
-	// Top-level ai.* module (always registered; functions return a
-	// typed not_configured error when no provider is wired).
-	r.registerAIModule()
-
-	// Top-level http.* module (always registered; no configuration needed).
-	r.registerHTTPModule()
+	// ai.* and http.* are registered ONLY when the capability was granted
+	// (TKT-YH52OM). Absent the grant the global does not exist at all, so a
+	// script cannot reach the provider or the network however it is written —
+	// the same structural absence rela.bypass_acl relies on above.
+	//
+	// They were previously "always registered", which meant every runtime —
+	// including read-only validation rules and document renders — could pair
+	// outbound HTTP with rela.secrets and exfiltrate the whole secrets file.
+	if r.caps.AI {
+		r.registerAIModule()
+	}
+	if r.caps.HTTP {
+		r.registerHTTPModule()
+	}
 
 	// Top-level crypto.* module — generic hashing primitives so a Lua action
 	// can sign an outbound request to an HMAC-authenticated upstream. Always
@@ -769,7 +850,11 @@ func (r *Runtime) registerWriteBindings(rela *lua.LTable) {
 	r.L.SetField(rela, "delete_entity", r.L.NewFunction(r.luaDeleteEntity))
 	r.L.SetField(rela, "create_relation", r.L.NewFunction(r.luaCreateRelation))
 	r.L.SetField(rela, "delete_relation", r.L.NewFunction(r.luaDeleteRelation))
-	r.L.SetField(rela, "write_file", r.L.NewFunction(r.luaWriteFile))
+	// write_file is additionally capability-gated (TKT-YH52OM): a writer
+	// runtime may mutate the graph without being entitled to touch the disk.
+	if r.caps.WriteFile {
+		r.L.SetField(rela, "write_file", r.L.NewFunction(r.luaWriteFile))
+	}
 }
 
 // freezeTable returns a read-only proxy over data: reads fall through to the
@@ -805,9 +890,13 @@ func (r *Runtime) registerContextBindings(rela *lua.LTable) {
 	}
 	r.L.SetField(rela, "params", paramsTable)
 
-	// Secrets table (populated from WithSecrets option, loaded from .rela/secrets.yaml)
+	// Secrets table (populated from WithSecrets option, loaded from
+	// .rela/secrets.yaml), FILTERED to the keys this runtime was granted
+	// (TKT-YH52OM). An ungranted key is absent from the table rather than
+	// present-and-empty, so a missing grant surfaces as a nil index at the use
+	// site instead of as a silently-wrong credential.
 	secretsTable := r.L.NewTable()
-	for k, v := range r.secrets {
+	for k, v := range r.caps.filterSecrets(r.secrets) {
 		r.L.SetField(secretsTable, k, lua.LString(v))
 	}
 	r.L.SetField(rela, "secrets", secretsTable)
@@ -854,10 +943,10 @@ func (r *Runtime) registerContextBindings(rela *lua.LTable) {
 	r.registerURLModule(rela)
 
 	// Document-mode context: rela.mode + rela.document.*.
-	// Only populated when WithDocumentMode or WithListDocumentMode was
-	// applied. In every other context rela.mode and rela.document are
-	// absent (Lua nil), so a script that branches on them sees nil outside
-	// document renders.
+	// Only populated when WithDocumentMode, WithStandaloneDocumentMode or
+	// WithListDocumentMode was applied. In every other context rela.mode and
+	// rela.document are absent (Lua nil), so a script that branches on them
+	// sees nil outside document renders.
 	if r.isDocument {
 		r.L.SetField(rela, "mode", lua.LString("document"))
 		docTable := r.L.NewTable()
@@ -866,7 +955,8 @@ func (r *Runtime) registerContextBindings(rela *lua.LTable) {
 		// entry_id is set ONLY when there is a real entry entity. An entity
 		// render always has one (the caller path-validates it before we get
 		// here), so this is byte-identical to the previous unconditional
-		// set; a LIST render has none and must see Lua nil, never "".
+		// set; a LIST render and a STANDALONE document render have none and
+		// must see Lua nil, never "".
 		// Empty-string would be the worse lie: it is truthy in Lua, so the
 		// idiomatic `if rela.document.entry_id then rela.get_entity(...)`
 		// guard would pass and then raise ("entity ID cannot be empty"),
@@ -1025,18 +1115,38 @@ func (r *Runtime) luaListEntities(ls *lua.LState) int {
 		ls.RaiseError("entity type cannot be empty")
 		return 0
 	}
-	filterExpr := ls.OptString(2, "")
+	filterExpr, opts, err := listEntitiesArgs(ls)
+	if err != nil {
+		ls.RaiseError("rela.list_entities: %s", err.Error())
+		return 0
+	}
 	rd, ok := r.reader(ls, "rela.list_entities")
 	if !ok {
 		return 0
 	}
 
-	entities := make([]*entity.Entity, 0)
+	// The bound is applied by stopping the iterator, not by slicing a
+	// materialized set: rows past the limit are never loaded, redacted, or
+	// turned into Lua tables. On fsstore that is a saved file read and parse
+	// per skipped row.
+	//
+	// It bounds rows EXAMINED. With a property filter (which the store cannot
+	// express, so it runs here) a full page in can be fewer rows out, and the
+	// caller cannot tell "that is everything" from "the rest was filtered".
+	// Resolving that needs the cursor -- DEC-IYHLNF stage 2.
+	entities := make([]*entity.Entity, 0, min(opts.limit, initialRowCapacity))
 	for e, err := range rd.ListEntities(r.callerCtx(), store.EntityQuery{Type: entityType}) {
 		if err != nil {
-			break
+			// RAISE, never break-and-return-what-we-have (TKT-FVQ4). A short
+			// list is indistinguishable from a genuinely short result, so
+			// swallowing this hands the script a wrong answer that looks right.
+			ls.RaiseError("rela.list_entities: %s", err.Error())
+			return 0
 		}
 		entities = append(entities, e)
+		if len(entities) >= opts.limit {
+			break
+		}
 	}
 
 	// Apply filter if provided
@@ -1273,8 +1383,22 @@ func EntityToTable(ls *lua.LState, e *entity.Entity) *lua.LTable {
 	}
 	t.RawSetString("properties", props)
 
+	// Names withheld by field-level ACL, as a set so a script can both
+	// iterate it and test membership. Always present (empty when nothing
+	// was hidden) — on ungated runtimes (CLI, MCP, docs) it is always
+	// empty because no policy was evaluated. Values are NOT here; they
+	// were stripped from properties above.
+	redacted := ls.NewTable()
+	for _, name := range e.Redacted {
+		redacted.RawSetString(name, lua.LTrue)
+	}
+	t.RawSetString("redacted", redacted)
+
 	// Add prop(name, default) method via a function field
 	t.RawSetString("prop", ls.NewFunction(luaEntityProp))
+
+	// Add is_redacted(name) method to distinguish withheld from unset
+	t.RawSetString("is_redacted", ls.NewFunction(luaEntityIsRedacted))
 
 	// Add strip_prefix() method to get ID without type prefix
 	t.RawSetString("strip_prefix", ls.NewFunction(luaEntityStripPrefix))
@@ -1312,6 +1436,28 @@ func luaEntityProp(ls *lua.LState) int {
 	}
 
 	ls.Push(val)
+	return 1
+}
+
+// luaEntityIsRedacted implements entity:is_redacted(name) -> bool
+// Reports whether field-level ACL withheld the named property from the
+// reading principal, letting a script render "[redacted]" rather than a
+// blank that reads as "never set".
+//
+// False means "not withheld", which on an ungated runtime (CLI, MCP,
+// docs) is every property — those paths evaluate no policy.
+func luaEntityIsRedacted(ls *lua.LState) int {
+	self := ls.CheckTable(1)
+	name := ls.CheckString(2)
+
+	redactedVal := self.RawGetString("redacted")
+	redacted, ok := redactedVal.(*lua.LTable)
+	if !ok {
+		ls.Push(lua.LFalse)
+		return 1
+	}
+
+	ls.Push(lua.LBool(lua.LVAsBool(redacted.RawGetString(name))))
 	return 1
 }
 
@@ -1650,40 +1796,34 @@ func (r *Runtime) luaUpdateEntity(ls *lua.LState) int {
 	}
 
 	ctx := r.callerCtx()
-	if r.deps.WritePrepStore == nil {
-		ls.RaiseError("rela.update_entity: no write-prep store is configured for this runtime")
-		return 0
-	}
-	// WritePrepStore, NOT VisibleReader — deliberately raw. The clone below
-	// becomes the SAVED entity, so reading a redacted copy here would drop
-	// the caller's hidden properties and erase them on save. See the field's
-	// godoc in deps.go; the guard test pins this.
-	existing, err := r.deps.WritePrepStore.GetEntity(ctx, id)
-	if err != nil {
-		ls.RaiseError("entity not found: %s", id)
-		return 0
-	}
 
-	// Clone for update
-	updated := existing.Clone()
+	// A TARGETED write: name only what the script actually supplied and let
+	// the manager merge it against the raw stored entity. The binding holds
+	// no store handle at all, so the read-before-write that used to erase a
+	// caller's hidden properties is now unreachable from here (TKT-80EWGM).
+	var patch entity.Patch
 
 	// Merge properties if provided
 	if ls.GetTop() >= 2 && ls.Get(2).Type() == lua.LTTable {
-		propsTable := ls.CheckTable(2)
-		newProps := luaTableToGoMap(propsTable)
-		if updated.Properties == nil {
-			updated.Properties = make(map[string]any)
-		}
-		maps.Copy(updated.Properties, newProps)
+		patch.Properties = luaTableToGoMap(ls.CheckTable(2))
 	}
 
 	// Update content if provided (nil means not provided, empty string clears content)
 	if ls.GetTop() >= 3 && ls.Get(3).Type() != lua.LTNil {
-		updated.Content = ls.CheckString(3)
+		content := ls.CheckString(3)
+		patch.Content = &content
 	}
 
-	result, err := r.deps.EntityManager.UpdateEntity(ctx, updated)
+	result, err := r.deps.EntityManager.PatchEntity(ctx, id, patch)
 	if err != nil {
+		// Preserve the pre-TKT-80EWGM message for a missing entity: scripts
+		// match on it. The check is STRUCTURAL (see [NotFoundError]) — a
+		// text match would misreport an illegal-transition rejection, whose
+		// message embeds the caller's own property value, as a 404.
+		if isEntityNotFound(err) {
+			ls.RaiseError("entity not found: %s", id)
+			return 0
+		}
 		ls.RaiseError("update entity error: %s", err.Error())
 		return 0
 	}
@@ -1719,10 +1859,14 @@ func WarningsToTable(ls *lua.LState, warnings []entity.Warning) lua.LValue {
 }
 
 // luaBypassACL implements rela.bypass_acl(fn) (TKT-D8T148). It invokes fn with
-// a single argument `admin`: a write handle whose mutations skip the ACL deny,
-// backed by the elevated Mutator wired into WriteDeps. Elevation is therefore
-// an OBJECT CAPABILITY scoped to the closure — the gated rela.* bindings are
-// never elevated; only writes made through `admin` bypass ACL.
+// a single argument `admin`: a handle whose reads and writes skip the ACL,
+// backed by the elevated Mutator and/or EntityReader wired into WriteDeps.
+// Elevation is therefore an OBJECT CAPABILITY scoped to the closure — the gated
+// rela.* bindings are never elevated; only access through `admin` bypasses ACL.
+//
+// The handle carries only the capabilities that were wired (TKT-Y3JVFK): a
+// document render gets an elevated reader and no Mutator, so `admin` has the
+// three read methods and no write methods at all. See newElevatedHandle.
 //
 // After fn returns (or raises), `admin` is INVALIDATED: its methods raise. A
 // script that squirrels `admin` into a global and calls it later gets a dead
@@ -1731,10 +1875,13 @@ func WarningsToTable(ls *lua.LState, warnings []entity.Warning) lua.LValue {
 // raise inside fn propagates too (a failed elevated write must surface).
 func (r *Runtime) luaBypassACL(ls *lua.LState) int {
 	fn := ls.CheckFunction(1)
-	if r.deps.ElevatedManager == nil {
-		// Defensive: the binding is only registered when ElevatedManager is
-		// set, but fail loud rather than silently no-op if that ever drifts.
-		ls.RaiseError("rela.bypass_acl: no elevated write handle is available")
+	if r.deps.ElevatedManager == nil && r.deps.ElevatedReader == nil {
+		// Defensive: the binding is only registered when at least one elevated
+		// handle is set, but fail loud rather than silently no-op if that ever
+		// drifts. Note this raises only when BOTH are absent — a reader-only
+		// elevation is legitimate (TKT-Y3JVFK), and a manager-only one keeps
+		// its existing behavior of raising per-method inside readGuard.
+		ls.RaiseError("rela.bypass_acl: no elevated handle is available")
 		return 0
 	}
 
@@ -1792,8 +1939,16 @@ func (r *Runtime) luaBypassACL(ls *lua.LState) int {
 // A nil `er` leaves the three read methods present but RAISING, not absent.
 // Absence would make `if admin.get_entity then` silently take the
 // no-elevation branch on a misconfigured deployment; raising names the
-// missing capability. Writes behave the same way via the outer nil check on
-// ElevatedManager.
+// missing capability.
+//
+// That reasoning fits the cascade path, where reader and mutator are wired
+// together under one check so a missing reader really is a wiring bug. The
+// document path has a THIRD state the dichotomy does not cover: a wiring site
+// may grant no elevation bundle at all, in which case neither handle is set
+// and `rela.bypass_acl` is absent outright rather than present-and-raising
+// (see documentService.elevatedDeps). All three states fail closed; they just
+// fail in different shapes, so don't read this comment as "nil reader always
+// means misconfiguration".
 // readUsage accumulates which elevated read bindings a bypass_acl closure
 // actually used, so the post-closure audit record can name them. Order is
 // first-use, and each binding appears once — the record answers "what kind
@@ -1854,12 +2009,44 @@ func (r *Runtime) newElevatedHandle(
 		}
 		return true
 	}
+	// Write methods are ABSENT (not present-and-raising) when no elevated
+	// Mutator was wired — the asymmetry with `er` above is deliberate
+	// (TKT-Y3JVFK). A nil `er` means "elevation was intended but the reader is
+	// missing", i.e. a misconfiguration, so raising names the missing
+	// capability. A nil `em` means the caller deliberately withheld elevated
+	// writes, so `admin.delete_entity == nil` is the honest contract and a
+	// script probing `if admin.delete_entity then` correctly learns it cannot
+	// write past the ACL.
+	//
+	// Note the scope of that guarantee: it removes the ELEVATED write path,
+	// not writing as such. A document render still holds the ordinary gated
+	// rela.* write bindings (TKT-PX5YL7), so "this handle cannot bypass the
+	// ACL to write" is the claim — not "this surface cannot mutate".
+	if em != nil {
+		registerElevatedWrites(ls, t, em, guard, r.callerCtx)
+	}
+	registerElevatedReads(ls, t, er, readGuard, r.callerCtx, reads)
+	return t
+}
+
+// registerElevatedWrites adds the raw write methods to the `admin` table
+// (TKT-D8T148). Split out for the same reason as registerElevatedReads — the
+// function-length limit — and called only when an elevated Mutator was wired,
+// so a read-only elevation has no write methods at all (TKT-Y3JVFK).
+//
+// create_entity / update_entity remain absent by design: they marshal a full
+// entity table and were deferred with their own tests as the follow-up noted
+// in newElevatedHandle's doc.
+func registerElevatedWrites(
+	ls *lua.LState, t *lua.LTable, em Mutator, guard func(string) bool,
+	ctxFn func() context.Context,
+) {
 	ls.SetField(t, "create_relation", ls.NewFunction(func(s *lua.LState) int {
 		if !guard("create_relation") {
 			return 0
 		}
 		from, relType, to := s.CheckString(1), s.CheckString(2), s.CheckString(3)
-		if _, err := em.CreateRelation(r.callerCtx(), from, relType, to, entity.RelationOptions{}); err != nil {
+		if _, err := em.CreateRelation(ctxFn(), from, relType, to, entity.RelationOptions{}); err != nil {
 			s.RaiseError("bypass_acl create_relation error: %s", err.Error())
 			return 0
 		}
@@ -1871,7 +2058,7 @@ func (r *Runtime) newElevatedHandle(
 			return 0
 		}
 		from, relType, to := s.CheckString(1), s.CheckString(2), s.CheckString(3)
-		if err := em.DeleteRelation(r.callerCtx(), from, relType, to); err != nil {
+		if err := em.DeleteRelation(ctxFn(), from, relType, to); err != nil {
 			s.RaiseError("bypass_acl delete_relation error: %s", err.Error())
 			return 0
 		}
@@ -1884,15 +2071,13 @@ func (r *Runtime) newElevatedHandle(
 		}
 		id := s.CheckString(1)
 		cascade := s.OptBool(2, false)
-		if _, err := em.DeleteEntity(r.callerCtx(), id, cascade); err != nil {
+		if _, err := em.DeleteEntity(ctxFn(), id, cascade); err != nil {
 			s.RaiseError("bypass_acl delete_entity error: %s", err.Error())
 			return 0
 		}
 		s.Push(lua.LTrue)
 		return 1
 	}))
-	registerElevatedReads(ls, t, er, readGuard, r.callerCtx, reads)
-	return t
 }
 
 // registerElevatedReads adds the three raw read methods to the `admin` table
@@ -2344,7 +2529,9 @@ func luaValueToSortable(v lua.LValue) (str string, num float64, isNum bool) {
 	}
 }
 
-// hoursPerDay is the number of hours in a day.
+// hoursPerDay converts the elapsed-hours difference luaDaysSince measures into
+// whole days. This is absolute elapsed time, not calendar days, so a DST
+// transition shifts the boundary by an hour — acceptable for a day counter.
 const hoursPerDay = 24
 
 // luaDaysSince implements rela.days_since(date_string) -> number

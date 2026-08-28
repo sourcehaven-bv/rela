@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
@@ -15,9 +15,10 @@ import (
 )
 
 func (s *Server) handleAnalyzeOrphans(
-	ctx context.Context, request mcp.CallToolRequest,
-) (*mcp.CallToolResult, error) {
-	entityType := request.GetString("type", "")
+	ctx context.Context, request *mcpgo.CallToolRequest,
+) (*mcpgo.CallToolResult, error) {
+	args := newToolRequest(request)
+	entityType := args.GetString("type", "")
 
 	orphanIDs, _ := s.deps.Tracer.FindOrphans(ctx)
 
@@ -48,14 +49,14 @@ func (s *Server) handleAnalyzeOrphans(
 	}
 
 	if len(orphans) == 0 {
-		return mcp.NewToolResultText("No orphan entities found"), nil
+		return textResult("No orphan entities found"), nil
 	}
 
 	text, err := marshalJSON(orphans)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
-	return mcp.NewToolResultText(
+	return textResult(
 		fmt.Sprintf("Found %d orphan entities:\n\n%s", len(orphans), text)), nil
 }
 
@@ -66,8 +67,8 @@ type cardinalityViolation struct {
 }
 
 func (s *Server) handleAnalyzeCardinality(
-	ctx context.Context, _ mcp.CallToolRequest,
-) (*mcp.CallToolResult, error) {
+	ctx context.Context, _ *mcpgo.CallToolRequest,
+) (*mcpgo.CallToolResult, error) {
 	violations := make([]cardinalityViolation, 0) //nolint:prealloc // capacity unknown
 
 	for relName, relDef := range s.deps.Meta.Relations {
@@ -75,14 +76,14 @@ func (s *Server) handleAnalyzeCardinality(
 	}
 
 	if len(violations) == 0 {
-		return mcp.NewToolResultText("All cardinality constraints satisfied"), nil
+		return textResult("All cardinality constraints satisfied"), nil
 	}
 
 	text, err := marshalJSON(violations)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
-	return mcp.NewToolResultText(
+	return textResult(
 		fmt.Sprintf("Found %d cardinality violations:\n\n%s", len(violations), text)), nil
 }
 
@@ -158,8 +159,8 @@ type uniqueViolation struct {
 // read-side analysis.Service.FindUniqueViolations; kept here against
 // Store+Meta because the MCP server has no analysis.Service dependency.
 func (s *Server) handleAnalyzeUnique(
-	ctx context.Context, _ mcp.CallToolRequest,
-) (*mcp.CallToolResult, error) {
+	ctx context.Context, _ *mcpgo.CallToolRequest,
+) (*mcpgo.CallToolResult, error) {
 	violations := make([]uniqueViolation, 0)
 
 	for typeName, def := range s.deps.Meta.Entities {
@@ -187,19 +188,19 @@ func (s *Server) handleAnalyzeUnique(
 	}
 
 	if len(violations) == 0 {
-		return mcp.NewToolResultText("No unique constraint violations found"), nil
+		return textResult("No unique constraint violations found"), nil
 	}
 	text, err := marshalJSON(violations)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
-	return mcp.NewToolResultText(
+	return textResult(
 		fmt.Sprintf("Found %d unique constraint violations:\n\n%s", len(violations), text)), nil
 }
 
 func (s *Server) handleAnalyzeProperties(
-	ctx context.Context, _ mcp.CallToolRequest,
-) (*mcp.CallToolResult, error) {
+	ctx context.Context, _ *mcpgo.CallToolRequest,
+) (*mcpgo.CallToolResult, error) {
 	type entityErrors struct {
 		EntityID   string   `json:"entity_id"`
 		EntityType string   `json:"entity_type"`
@@ -254,7 +255,7 @@ func (s *Server) handleAnalyzeProperties(
 	totalRelationErrors := len(allRelationErrors)
 
 	if totalEntityErrors == 0 && totalRelationErrors == 0 {
-		return mcp.NewToolResultText("All entity and relation properties are valid"), nil
+		return textResult("All entity and relation properties are valid"), nil
 	}
 
 	result := make(map[string]any)
@@ -276,20 +277,20 @@ func (s *Server) handleAnalyzeProperties(
 
 	text, err := marshalJSON(result)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
 
-	return mcp.NewToolResultText(
+	return textResult(
 		fmt.Sprintf("Found %d property errors across %d entities and %d relations:\n\n%s",
 			errorCount, totalEntityErrors, totalRelationErrors, text)), nil
 }
 
 func (s *Server) handleAnalyzeValidations(
-	ctx context.Context, _ mcp.CallToolRequest,
-) (*mcp.CallToolResult, error) {
+	ctx context.Context, _ *mcpgo.CallToolRequest,
+) (*mcpgo.CallToolResult, error) {
 	rules := s.deps.Meta.Validations
 	if len(rules) == 0 {
-		return mcp.NewToolResultText("No custom validation rules defined in metamodel"), nil
+		return textResult("No custom validation rules defined in metamodel"), nil
 	}
 
 	type ruleResult struct {
@@ -315,35 +316,36 @@ func (s *Server) handleAnalyzeValidations(
 	}
 
 	if len(results) == 0 {
-		return mcp.NewToolResultText(
+		return textResult(
 			fmt.Sprintf("All %d validation rules passed", len(rules))), nil
 	}
 
 	text, err := marshalJSON(results)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
-	return mcp.NewToolResultText(
+	return textResult(
 		"Found validation issues:\n\n" + text), nil
 }
 
 func (s *Server) handleAnalyzeSchema(
-	ctx context.Context, request mcp.CallToolRequest,
-) (*mcp.CallToolResult, error) {
-	threshold := request.GetInt("threshold", 0)
+	ctx context.Context, request *mcpgo.CallToolRequest,
+) (*mcpgo.CallToolResult, error) {
+	args := newToolRequest(request)
+	threshold := args.GetInt("threshold", 0)
 
 	dataEntry := s.loadDataEntryConfig(ctx)
 
-	counter := &schema.StoreCounter{Store: s.deps.Store}
+	counter := schema.NewStoreCounter(ctx, s.deps.Store)
 	analysis := schema.Analyze(s.deps.Meta, counter, dataEntry, threshold)
 
 	if !analysis.HasIssues() {
-		return mcp.NewToolResultText("All schema types are in use"), nil
+		return textResult("All schema types are in use"), nil
 	}
 
 	text, err := marshalJSON(analysis)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
 
 	totalUnused := analysis.TotalUnused()
@@ -357,7 +359,7 @@ func (s *Server) handleAnalyzeSchema(
 		message = fmt.Sprintf("Found %d unused types:\n\n%s", totalUnused, text)
 	}
 
-	return mcp.NewToolResultText(message), nil
+	return textResult(message), nil
 }
 
 // loadDataEntryConfig loads data-entry.yaml if it exists.

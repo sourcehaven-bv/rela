@@ -31,6 +31,20 @@ type Capabilities struct {
 	// AttachmentManager. When false, attachment-related conformance
 	// tests are skipped.
 	Attachments bool
+
+	// TxRollback declares that the backend provides the STRONG Tx contract
+	// (DEC-8UIL0): an error from fn discards the transaction's writes, and no
+	// events are delivered until commit. Setting it runs RunTxRollbackTests as
+	// part of RunAll.
+	//
+	// This is a claim the backend makes about itself, and stating it here is
+	// the point. Before TKT-8TJ2WN the rollback suite was reachable only by
+	// calling RunTxRollbackTests separately, so forgetting that call produced
+	// silence — identical to fsstore and memstore, which omit the strong
+	// contract deliberately (they cannot promise crash atomicity either).
+	// A backend that HAS rollback and forgets to say so gets no coverage of
+	// its most safety-critical behavior and no warning that it is missing.
+	TxRollback bool
 }
 
 func ctx() context.Context { return context.Background() }
@@ -149,6 +163,7 @@ func countRelations(t *testing.T, s store.Store) int {
 // Capabilities gates optional feature tests (e.g. attachments).
 func RunAll(t *testing.T, f Factory, sf SearchFactory, vsf VisibleSearchFactory, caps Capabilities) {
 	t.Run("Entity", func(t *testing.T) { RunEntityTests(t, f) })
+	t.Run("Header", func(t *testing.T) { RunHeaderTests(t, f) })
 	t.Run("Relation", func(t *testing.T) { RunRelationTests(t, f) })
 	t.Run("Query", func(t *testing.T) { RunQueryTests(t, f) })
 	t.Run("GraphQuery", func(t *testing.T) { RunGraphQueryTests(t, f) })
@@ -164,5 +179,14 @@ func RunAll(t *testing.T, f Factory, sf SearchFactory, vsf VisibleSearchFactory,
 	}
 	t.Run("Watcher", func(t *testing.T) { RunWatcherTests(t, f) })
 	t.Run("Validation", func(t *testing.T) { RunValidationTests(t, f) })
+	t.Run("Freshness", func(t *testing.T) { RunFreshnessTests(t, f) })
 	t.Run("Tx", func(t *testing.T) { RunTxTests(t, f) })
+
+	// The transaction tier is declared, not inferred. RunTxRollbackTests used
+	// to be reachable only by calling it separately, so a backend with genuine
+	// rollback whose author forgot the extra call got zero coverage and no
+	// warning — indistinguishable from a backend that deliberately omits it.
+	if caps.TxRollback {
+		t.Run("TxRollback", func(t *testing.T) { RunTxRollbackTests(t, f) })
+	}
 }

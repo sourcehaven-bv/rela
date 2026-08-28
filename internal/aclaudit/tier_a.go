@@ -2,6 +2,8 @@ package aclaudit
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -10,17 +12,19 @@ import (
 // tierA runs the pure-policy checks: escalation foot-guns and dead/inert
 // config that need no metamodel. Order within the slice doesn't matter —
 // Audit sorts the combined result.
-func tierA(p *acl.Policy) []Finding {
+func tierA(p *acl.Policy, perms PermissionConsumer) []Finding {
 	f := make([]Finding, 0, 8)
-	f = append(f, checkUngatedMembership(p)...)     // A1 / A1b
-	f = append(f, checkUngatedRoleRelations(p)...)  // A2
-	f = append(f, checkEveryonePrivileged(p)...)    // A3
-	f = append(f, checkAssignmentsToUnknown(p)...)  // A4
-	f = append(f, checkConfersUnknown(p)...)        // A5
-	f = append(f, checkUngrantablePermission(p)...) // A6
-	f = append(f, checkDeadPermissions(p)...)       // A7
-	f = append(f, checkWildcardWriteSprawl(p)...)   // A9
-	f = append(f, checkNameWhitespace(p)...)        // A10
+	f = append(f, checkUngatedMembership(p)...)       // A1 / A1b
+	f = append(f, checkUngatedRoleRelations(p)...)    // A2
+	f = append(f, checkEveryonePrivileged(p)...)      // A3
+	f = append(f, checkAssignmentsToUnknown(p)...)    // A4
+	f = append(f, checkConfersUnknown(p)...)          // A5
+	f = append(f, checkUngrantablePermission(p)...)   // A6
+	f = append(f, checkUngrantedRelationGrants(p)...) // A6b
+	f = append(f, checkDeadPermissions(p, perms)...)  // A7
+	f = append(f, checkWildcardWriteSprawl(p)...)     // A9
+	f = append(f, checkNameWhitespace(p)...)          // A10
+	f = append(f, checkCeilings(p)...)                // A11 / A12 / A13
 	return f
 }
 
@@ -46,11 +50,13 @@ func checkUngatedMembership(p *acl.Policy) []Finding {
 	}
 
 	// A1 — the membership relation can confer a PRIVILEGED assigned role but
-	// writes to it are not gated. Gated on isPrivileged (symmetric with A2):
-	// granting yourself a read-only role is a visibility choice, not an
-	// escalation path (RR-LXI3NW / RR-UR0LJU / RR-EG5D3E), so a read-only
-	// group does not trip A1.
-	if assignsAnyPrivilegedRole(p) && requiresPermissionFor(p, rel) == "" {
+	// writes to it are not gated. The predicate lives on acl.Policy so this
+	// finding and the boot-time startup warning can never disagree about
+	// whether membership is gated (TKT-T31NKT); its privilege gate keeps A1
+	// symmetric with A2 — granting yourself a read-only role is a visibility
+	// choice, not an escalation path (RR-LXI3NW / RR-UR0LJU / RR-EG5D3E), so
+	// a read-only group does not trip A1.
+	if p.MembershipSelfPromotionOpen() {
 		f = append(f, Finding{
 			Rule: "A1-ungated-membership", Severity: High, Subject: rel,
 			Detail: fmt.Sprintf("membership relation %q confers a privileged group role via assignments "+
@@ -61,18 +67,6 @@ func checkUngatedMembership(p *acl.Policy) []Finding {
 		})
 	}
 	return f
-}
-
-// assignsAnyPrivilegedRole reports whether at least one assignment targets a
-// declared, privileged role — i.e. the membership walk can confer escalation-
-// relevant power. Mirrors A2's isPrivileged gate.
-func assignsAnyPrivilegedRole(p *acl.Policy) bool {
-	for _, roleName := range p.Assignments {
-		if role, ok := p.Roles[roleName]; ok && isPrivileged(role) {
-			return true
-		}
-	}
-	return false
 }
 
 // A2 — a role-relation confers a privileged role but is not gated by
@@ -171,9 +165,69 @@ func checkUngrantablePermission(p *acl.Policy) []Finding {
 	return f
 }
 
+// A6b — a relation_grants entry names a permission no role grants, so the
+// grant is INERT: every relation write still falls back to the source type's
+// verb grant, exactly as before the block was written.
+//
+// This is the operator-facing half of the relation_grants safety net. The
+// block's whole purpose is to be verifiable ahead of a write, and the failure
+// it must catch is config that reads as a grant and grants nothing. Medium
+// rather than A6's Low, because A6's silent state is a lockdown (fails closed
+// and denies) while this one is a no-op an operator may have relaxed an entity
+// grant against.
+func checkUngrantedRelationGrants(p *acl.Policy) []Finding {
+	var f []Finding
+	for _, rel := range slices.Sorted(maps.Keys(p.RelationWriteGrants)) {
+		g := p.RelationWriteGrants[rel]
+		for _, perm := range slices.Sorted(maps.Keys(relationGrantPermissions(g))) {
+			if permissionGranted(p, perm) {
+				continue
+			}
+			f = append(f, Finding{
+				Rule: "A6b-inert-relation-grant", Severity: Medium, Subject: rel,
+				Detail: fmt.Sprintf("relation_grants.%s names permission %q which no role grants, so "+
+					"the grant is inert — %s writes still require the verb grant on the source "+
+					"entity's type", rel, perm, rel),
+				Fix: fmt.Sprintf("add %q to the permissions: of the role that should write %s edges, "+
+					"or remove the entry", perm, rel),
+			})
+		}
+	}
+	return f
+}
+
+// relationGrantPermissions is the set of permission names one grant names,
+// deduplicated — the shorthand names the same permission for three verbs and
+// should be reported once.
+func relationGrantPermissions(g acl.RelationWriteGrant) map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, perm := range []string{g.Permission, g.Create, g.Update, g.Delete} {
+		if perm != "" {
+			out[perm] = struct{}{}
+		}
+	}
+	return out
+}
+
 // A7 — a role declares a permission that no requires_permission references:
 // dead config, possibly a typo of a real gate.
-func checkDeadPermissions(p *acl.Policy) []Finding {
+//
+// "Referenced" is not the same as "gated by a requires_permission". rela's own
+// global permissions ([acl.BuiltinPermissions]) are consumed by read paths that
+// have no relation gate at all, so treating requires_permission as the only
+// consumer reported live, shipped config as dead — and the remediation hint
+// ("reference it in a gate, or remove it") would have revoked a working grant.
+// They are seeded as used here.
+//
+// The same reasoning extends to permissions gating a data-entry UI surface,
+// which the policy cannot see at all. Those arrive through the caller-supplied
+// [PermissionConsumer] — and when none is supplied the check does not run,
+// because "nobody told me what the UI references" is not evidence that nothing
+// does.
+func checkDeadPermissions(p *acl.Policy, perms PermissionConsumer) []Finding {
+	if perms == nil {
+		return nil
+	}
 	// Collect every permission referenced by a requires_permission gate.
 	used := map[string]bool{}
 	for _, def := range p.RoleRelations {
@@ -181,19 +235,41 @@ func checkDeadPermissions(p *acl.Policy) []Finding {
 			used[def.RequiresPermission] = true
 		}
 	}
+	// Permissions rela itself defines and consumes are live by definition.
+	for _, perm := range acl.BuiltinPermissions() {
+		used[perm] = true
+	}
+	// Permissions referenced outside acl.yaml (data-entry UI gates).
+	for _, perm := range perms.UsedPermissions() {
+		if perm != "" {
+			used[perm] = true
+		}
+	}
+	// relation_grants entries consume permissions too (TKT-K2VN9D). Same
+	// reasoning as the gates above: counting only requires_permission would
+	// report every correctly-configured relation grant as dead — a false
+	// finding on exactly the config the audit exists to make trustworthy,
+	// with a hint that would revoke a working grant.
+	for _, g := range p.RelationWriteGrants {
+		for perm := range relationGrantPermissions(g) {
+			used[perm] = true
+		}
+	}
 	var f []Finding
 	for _, name := range sortedRoleNames(p) {
-		perms := append([]string(nil), p.Roles[name].Permissions...)
-		sort.Strings(perms)
-		for _, perm := range perms {
+		rolePerms := append([]string(nil), p.Roles[name].Permissions...)
+		sort.Strings(rolePerms)
+		for _, perm := range rolePerms {
 			if used[perm] {
 				continue
 			}
 			f = append(f, Finding{
 				Rule: "A7-dead-permission", Severity: Low, Subject: name,
-				Detail: fmt.Sprintf("role %q grants permission %q which no role_relations.requires_permission "+
-					"references; the permission is dead", name, perm),
-				Fix: fmt.Sprintf("reference %q in a requires_permission gate, or remove it (check for a typo)", perm),
+				Detail: fmt.Sprintf("role %q grants permission %q which nothing references — no "+
+					"role_relations.requires_permission gate, no data-entry.yaml permission: key, "+
+					"and it is not one of rela's built-in permissions; the permission is dead", name, perm),
+				Fix: fmt.Sprintf("reference %q from a requires_permission gate or a data-entry.yaml "+
+					"permission: key, or remove it (check for a typo)", perm),
 			})
 		}
 	}

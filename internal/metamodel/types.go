@@ -12,7 +12,10 @@ import (
 // candidate: group the type/relation/property lookups behind focused accessors
 // (the attachment-scan accessors moved behind [AttachmentPolicy] this way).
 //
-//plimsoll:max-exported-methods=31
+// 32nd exported method is ShapeProjection (TKT-0C57FS), the data-shape
+// sibling of RenderProjection.
+//
+//plimsoll:max-exported-methods=32
 type Metamodel struct {
 	Version   string `yaml:"version"`
 	Namespace string `yaml:"namespace"`
@@ -82,6 +85,19 @@ type ValidationRule struct {
 	// Uses the same syntax as --where filters (e.g., "owner!=")
 	// Multiple conditions are ANDed together
 	Then []string `yaml:"then,omitempty"`
+
+	// WhenCondition is a predicate EXPRESSION selecting which entities the
+	// rule applies to, ANDed with every When clause. Expression syntax
+	// (unlike When's filter syntax) gets boolean composition and the
+	// host-function stdlib, including date arithmetic.
+	WhenCondition string `yaml:"when_condition,omitempty"`
+
+	// ThenCondition is a predicate EXPRESSION that matching entities must
+	// satisfy, ANDed with every Then clause.
+	//
+	// A rule may use any mix: `when:` + `then_condition:` is a filter
+	// selecting entities that an expression then asserts over.
+	ThenCondition string `yaml:"then_condition,omitempty"`
 
 	// Content specifies validation rules for markdown body content
 	Content *ContentRule `yaml:"content,omitempty"`
@@ -274,6 +290,11 @@ type PropertyDef struct {
 	Description string            `yaml:"description,omitempty"` // Documentation for the property
 	Format      string            `yaml:"format,omitempty"`      // Date format (Go layout, e.g., "2006-01-02")
 	List        bool              `yaml:"list,omitempty"`        // True for multi-select properties (allows multiple values)
+	// Computed is a pure Lua-compatible scalar expression evaluated from the
+	// entity's other properties on every write. Computed properties are
+	// materialized but never caller-authored. Entity-local dependencies are
+	// inferred from the compiled expression.
+	Computed string `yaml:"computed,omitempty" json:"Computed,omitempty"`
 	// Unique constrains the property to a natural key: no two entities of
 	// the same type may carry the same non-empty value. Enforced at write
 	// time by the entitymanager (a colliding create/update is rejected as
@@ -321,12 +342,58 @@ type PropertyDef struct {
 	Transform []TransformStep `yaml:"transform,omitempty"`
 }
 
-// TransformStep is one entry in a `transform:` pipeline — an external command
-// (array args) that rewrites the attachment bytes (e.g. metadata strip,
-// resize, CDR). The command receives templated {in}/{out} paths owned by the
-// runner; see the attachment-security guide for vetted recipes.
+// TransformStep is one entry in a `transform:` pipeline. A step is EITHER an
+// external command (Cmd) OR a native, in-process image operation (Image) —
+// exactly one must be set, enforced at load. The two kinds have very different
+// trust models: a Cmd shells out to an operator-configured binary (sandboxed by
+// internal/cmdexec), while an Image step runs a memory-safe pure-Go decoder
+// in-process with no external tool and no sandbox. See the attachment-security
+// guide.
 type TransformStep struct {
-	Cmd []string `yaml:"cmd"`
+	// Cmd is an external command (array args) that rewrites the bytes; it
+	// receives templated {in}/{out} paths owned by the runner.
+	Cmd []string `yaml:"cmd,omitempty"`
+	// Image is a native in-process image transform (decode, orient, re-encode).
+	// Mutually exclusive with Cmd.
+	Image *ImageStep `yaml:"image,omitempty"`
+}
+
+// ImageStep is a native, in-process image transform: it decodes the upload with
+// a memory-safe pure-Go decoder, bakes in EXIF orientation, and re-encodes to a
+// canonical format, dropping all metadata. Supported inputs are PNG, JPEG, GIF,
+// and WebP (decode); the output is always PNG or JPEG (there is no pure-Go WebP
+// encoder). Because decoding is memory-safe, this needs no external tool and no
+// OS sandbox. Resize/thumbnail is a later phase and deliberately absent here.
+type ImageStep struct {
+	// Reencode is the canonical output format: "jpeg" (default) or "png". Both
+	// are always within the default-safe MIME allowlist, so the re-encoded
+	// output is safe by construction.
+	Reencode string `yaml:"reencode,omitempty"`
+	// Quality is the JPEG quality (1..100) when Reencode is "jpeg". Zero uses
+	// the package default. Ignored for PNG.
+	Quality int `yaml:"quality,omitempty"`
+}
+
+// ImageReencode returns the effective re-encode target for the step, applying
+// the "jpeg" default when unset.
+func (s ImageStep) ImageReencode() string {
+	if s.Reencode == "" {
+		return "jpeg"
+	}
+	return s.Reencode
+}
+
+// Kind reports which of the two mutually-exclusive step kinds is set, or an
+// empty string when the step is malformed (both/neither set).
+func (t TransformStep) Kind() string {
+	switch {
+	case len(t.Cmd) > 0 && t.Image == nil:
+		return "cmd"
+	case t.Image != nil && len(t.Cmd) == 0:
+		return "image"
+	default:
+		return ""
+	}
 }
 
 // TransformDef is one entry in the top-level `transforms:` view-export registry.
@@ -520,8 +587,9 @@ type InverseDef struct {
 	// ID is the identifier for the inverse relation (e.g., "addressedBy")
 	ID string `yaml:"id,omitempty"`
 
-	// Label is the display label for the inverse relation (e.g., "addressed by")
-	// If not specified, it's auto-derived from ID by converting camelCase to space-separated.
+	// Label is the display label for the inverse relation (e.g., "addressed by").
+	// If not specified, the raw ID is displayed — labels are authored, never
+	// derived (DEC-6C1NAA).
 	Label string `yaml:"label,omitempty"`
 }
 
@@ -530,48 +598,21 @@ func (i *InverseDef) GetID() string {
 	return i.ID
 }
 
-// GetLabel returns the display label, auto-deriving from ID if not specified
+// GetLabel returns the display label, falling back to the raw ID.
+//
+// A label is authored, never derived (DEC-6C1NAA). This used to convert
+// camelCase to space-separated lowercase ("addressedBy" → "addressed by"),
+// which bakes an English orthographic convention into a language-neutral
+// metamodel. Write an explicit `label:` to control the display text.
 func (i *InverseDef) GetLabel() string {
 	if i.Label != "" {
 		return i.Label
 	}
-	// Auto-derive from ID by converting camelCase to space-separated lowercase
-	if i.ID == "" {
-		return ""
-	}
-	return camelCaseToSpaced(i.ID)
-}
-
-// camelCaseToSpaced converts camelCase/PascalCase to space-separated lowercase.
-// Examples: "addressedBy" → "addressed by", "implementedBy" → "implemented by"
-func camelCaseToSpaced(s string) string {
-	if s == "" {
-		return ""
-	}
-
-	const asciiCaseOffset = 'a' - 'A'   // 32, but as a named constant
-	result := make([]byte, 0, len(s)+4) // Extra space for inserted spaces
-
-	for i := range len(s) {
-		c := s[i]
-		isUpper := c >= 'A' && c <= 'Z'
-
-		switch {
-		case i > 0 && isUpper:
-			// Insert space before uppercase letters (except at start) and convert to lowercase
-			result = append(result, ' ', c+asciiCaseOffset)
-		case isUpper:
-			// First character - just convert to lowercase
-			result = append(result, c+asciiCaseOffset)
-		default:
-			result = append(result, c)
-		}
-	}
-	return string(result)
+	return i.ID
 }
 
 // UnmarshalYAML allows InverseDef to be unmarshaled from either a string or an object.
-// String form: "addressedBy" (ID only, label auto-derived)
+// String form: "addressedBy" (ID only; the ID doubles as the display label)
 // Object form: { id: "addressedBy", label: "addressed by" }
 func (i *InverseDef) UnmarshalYAML(unmarshal func(any) error) error {
 	// First try to unmarshal as a string (simple form)
@@ -612,6 +653,24 @@ type AutomationTrigger struct {
 	RelationCreated string        `yaml:"relation_created,omitempty"`
 	RelationRemoved string        `yaml:"relation_removed,omitempty"`
 	When            []string      `yaml:"when,omitempty"` // Property conditions that must match (AND logic)
+
+	// Condition is a predicate EXPRESSION that must hold for the
+	// automation to fire, ANDed with every When clause.
+	//
+	// When and Condition are separate keys because their syntaxes
+	// overlap without erroring: filter.Parse accepts
+	// "days_between(entity.due, today()) <= 7" as a filter on a property
+	// literally named "days_between(entity.due, today())", which then
+	// matches nothing, silently. Sniffing which dialect a string is
+	// written in would guess, and guess quietly — so the operator says
+	// which one they meant by choosing the key.
+	//
+	// `when:` is filter syntax (`status=todo`) transpiled to predicate on
+	// load; `condition:` is predicate source evaluated as written, so it
+	// gets boolean composition and the host-function stdlib — notably the
+	// date arithmetic (today/days_between/date_add/rrule_next) that a
+	// property filter cannot express.
+	Condition string `yaml:"condition,omitempty"`
 }
 
 // AutomationAction specifies an operation to perform.
@@ -624,11 +683,23 @@ type AutomationAction struct {
 	LuaFile        string                `yaml:"lua_file,omitempty"` // Path to Lua script in scripts/ directory
 
 	// AllowACLBypass unlocks rela.bypass_acl in this Lua action (TKT-D8T148).
-	// Operator-only (lives in metamodel.yaml). When true, the script may call
-	// rela.bypass_acl(fn) to obtain a closure-scoped elevated write handle
-	// whose writes skip the ACL deny (still audited, real principal preserved).
+	// Operator-only (lives in the schema file). When set, the script may call
+	// rela.bypass_acl(fn) to obtain a closure-scoped elevated handle whose
+	// access skips the ACL deny (still audited, real principal preserved).
 	// Ignored for non-Lua actions.
-	AllowACLBypass bool `yaml:"allow_acl_bypass,omitempty"`
+	//
+	// Since TKT-Y3JVFK this is an enum, not a bool: `read`, `write` or
+	// `read+write` select which methods the handle carries. The legacy
+	// `true` is refused at parse time with a message naming `read+write`;
+	// `rela migrate` rewrites it.
+	AllowACLBypass ACLBypass `yaml:"allow_acl_bypass,omitempty"`
+
+	// Capabilities declares which ambient capabilities this Lua action may
+	// reach: http, ai, write_file and named secrets (TKT-YH52OM). Omitting it
+	// grants NONE of them — automations run on the write path of any HTTP
+	// request, so they are not an operator-shell surface and do not get the
+	// trusted default. Ignored for non-Lua actions.
+	Capabilities Capabilities `yaml:"capabilities,omitempty"`
 }
 
 // CreateRelationAction specifies parameters for creating a relation.

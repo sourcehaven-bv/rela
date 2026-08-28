@@ -1,3 +1,4 @@
+import type { Component } from 'vue'
 import type { PropertyDef } from '@/types'
 import type { WidgetEntry, WidgetRegistry, WidgetRoutingHint, WidgetHintKind } from './types'
 import TextWidget from './TextWidget.vue'
@@ -100,21 +101,40 @@ export function defineWidgetRegistry(): WidgetRegistry {
   }
 }
 
-function buildDefaultRegistry(): WidgetRegistry {
-  const r = defineWidgetRegistry()
-  r.register('text', { component: TextWidget, supportedPropertyTypes: ['string'] })
-  r.register('textarea', { component: TextareaWidget, supportedPropertyTypes: ['string'] })
-  r.register('number', { component: NumberWidget, supportedPropertyTypes: ['integer'] })
-  r.register('checkbox', { component: CheckboxWidget, supportedPropertyTypes: ['boolean'] })
-  r.register('date', { component: DateWidget, supportedPropertyTypes: ['date'] })
-  r.register('datetime', { component: DatetimeWidget, supportedPropertyTypes: ['datetime'] })
-  r.register('select', { component: SelectWidget, supportedPropertyTypes: ['enum', 'string'] })
-  r.register('multi-select', {
+// WIDGET_REGISTRATIONS is the single list buildDefaultRegistry consumes, and
+// the one the cross-language drift guard asserts against (TKT-3R7RF3).
+//
+// It is exported DATA rather than a sequence of register() calls inside the
+// builder because a test cannot observe those calls: the registry exposes no
+// enumeration, so the guard had to re-declare them — which meant it asserted
+// its own copy and stayed green while the real registrations drifted. Keeping
+// the list addressable makes the guard structurally unable to miss a change.
+export const WIDGET_REGISTRATIONS: ReadonlyArray<{
+  name: string
+  component: Component
+  supportedPropertyTypes: NonNullable<WidgetEntry['supportedPropertyTypes']>
+}> = [
+  { name: 'text', component: TextWidget, supportedPropertyTypes: ['string'] },
+  { name: 'textarea', component: TextareaWidget, supportedPropertyTypes: ['string'] },
+  { name: 'number', component: NumberWidget, supportedPropertyTypes: ['integer'] },
+  { name: 'checkbox', component: CheckboxWidget, supportedPropertyTypes: ['boolean'] },
+  { name: 'date', component: DateWidget, supportedPropertyTypes: ['date'] },
+  { name: 'datetime', component: DatetimeWidget, supportedPropertyTypes: ['datetime'] },
+  { name: 'select', component: SelectWidget, supportedPropertyTypes: ['enum', 'string'] },
+  {
+    name: 'multi-select',
     component: MultiSelectWidget,
     supportedPropertyTypes: ['enum', 'string'],
-  })
-  r.register('rrule', { component: RruleWidget, supportedPropertyTypes: ['rrule'] })
-  r.register('file', { component: FileWidget, supportedPropertyTypes: ['file'] })
+  },
+  { name: 'rrule', component: RruleWidget, supportedPropertyTypes: ['rrule'] },
+  { name: 'file', component: FileWidget, supportedPropertyTypes: ['file'] },
+]
+
+function buildDefaultRegistry(): WidgetRegistry {
+  const r = defineWidgetRegistry()
+  for (const { name, component, supportedPropertyTypes } of WIDGET_REGISTRATIONS) {
+    r.register(name, { component, supportedPropertyTypes })
+  }
   return r
 }
 

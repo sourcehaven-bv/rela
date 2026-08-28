@@ -71,7 +71,9 @@ const resolvedFilters = computed((): ResolvedFilter[] => {
 
 function resolveFilter(fc: FilterControl): ResolvedFilter {
   const key = fc.relation || fc.property || ''
-  const label = fc.label || titleCase(key)
+  // DEC-6C1NAA: a label is authored, never derived — an unset filter label
+  // shows the raw property/relation id.
+  const label = fc.label || key
 
   if (fc.relation) {
     const candidates = relationCandidates.value[key] ?? []
@@ -155,10 +157,6 @@ function resolveWidgetType(
   }
   // Text for everything else
   return 'text'
-}
-
-function titleCase(str: string): string {
-  return str.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
 // Which control keys are text widgets (vs select / multi-select). Text
@@ -397,18 +395,18 @@ onBeforeUnmount(() => {
 
 .filters {
   display: flex;
-  gap: 16px;
+  gap: var(--space-lg);
   flex-wrap: wrap;
 }
 
 .filter-item {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2xs);
 }
 
 .filter-item label {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -419,8 +417,8 @@ onBeforeUnmount(() => {
 .filter-item input {
   padding: 6px 10px;
   border: 1px solid var(--border-color);
-  border-radius: 4px;
-  font-size: 14px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-base);
   min-width: 150px;
   background: var(--input-bg);
   color: var(--text-color);
@@ -430,15 +428,17 @@ onBeforeUnmount(() => {
 .filter-item input:focus {
   outline: none;
   border-color: var(--accent-color);
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
+  box-shadow:
+    0 0 0 2px var(--focus-ring-gap),
+    0 0 0 4px var(--focus-ring);
 }
 
 .clear-filters {
   padding: 6px 12px;
   background: none;
   border: 1px solid var(--border-color);
-  border-radius: 4px;
-  font-size: 13px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-dense);
   color: var(--muted-text);
   cursor: pointer;
   transition: all 0.15s;
@@ -468,14 +468,14 @@ onBeforeUnmount(() => {
        stretched vertically next to a wrapping filter grid. */
     flex-direction: column;
     align-items: stretch;
-    gap: 8px;
+    gap: var(--space-sm);
   }
 
   /* Filters fill the width and wrap evenly. Each item flexes from a small
      min-width so up to two enum filters fit on a row before wrapping. */
   .filters {
     width: 100%;
-    gap: 8px;
+    gap: var(--space-sm);
   }
 
   .clear-filters {

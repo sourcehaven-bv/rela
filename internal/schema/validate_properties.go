@@ -2,7 +2,9 @@ package schema
 
 import (
 	"context"
+	"iter"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -48,11 +50,21 @@ type RelationPropertyError struct {
 	Errors       []*metamodel.ValidationError
 }
 
-// ValidateRelationProperties iterates every relation in st and returns
+// RelationLister is the single capability [ValidateRelationProperties]
+// needs. Declared at the call site rather than taking `store.Store`, so a
+// caller may pass an ACL-scoped reader whose ListRelations yields only the
+// principal's visible edges — the check then reports on that slice instead
+// of the whole graph. `store.Store` satisfies it structurally, so existing
+// callers are unaffected.
+type RelationLister interface {
+	ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
+}
+
+// ValidateRelationProperties iterates every relation st yields and returns
 // a RelationPropertyError for each relation whose properties fail the
 // metamodel's relation-property validation.
 func ValidateRelationProperties(
-	ctx context.Context, st store.Store, meta *metamodel.Metamodel,
+	ctx context.Context, st RelationLister, meta *metamodel.Metamodel,
 ) []RelationPropertyError {
 	if st == nil || meta == nil {
 		return nil

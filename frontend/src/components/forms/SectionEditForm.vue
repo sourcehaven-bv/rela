@@ -20,6 +20,7 @@ import { defaultRegistry } from '@/widgets/registry'
 import { useAutoSave, type AutoSaveErrorInfo } from '@/composables/useAutoSave'
 import { isFieldWritable, optionVerdictsFor } from '@/utils/affordances'
 import { isClearedForType } from '@/utils/formValue'
+import { fieldSpanStyle } from '@/utils/fieldSpan'
 import FieldShell from './FieldShell.vue'
 import StatusControl from './StatusControl.vue'
 import AutoSaveIndicator from './AutoSaveIndicator.vue'
@@ -31,11 +32,25 @@ export type SectionEditField = {
   property: string
   label: string
   verdict?: FieldAffordance
+  // Authored width on the 12-column layout grid (TKT-5V8704). Undefined /
+  // 0 means full width, which is the default for every auto-generated view.
+  span?: number
   // Machine-aware status control (TKT-3G93B8): when present (even empty), the
   // field is a state machine and renders as a StatusControl instead of its
   // resolved widget. Undefined = not a machine field (or a surface without
   // `_transitions`, e.g. cards/list rows) → the ordinary widget.
   transitions?: TransitionOption[]
+  // Server-resolved config render mode (TKT-HOIX1). Deliberately a SEPARATE
+  // property from `verdict`, not folded into it: the verdict-flip watcher
+  // below compares `isFieldWritable(verdict)` across prop updates, so a
+  // config-driven display field would otherwise look like a revoked
+  // permission and fire a spurious "Permission changed" toast (RR-PGGRBD).
+  render?: 'input' | 'display'
+  // Config's widget override (TKT-3R7RF3). Applied on the 'schema' arm only —
+  // see widgetRows. Carried on the shared half of the union rather than inside
+  // the 'schema' variant so buildSectionEditFields can assign it uniformly;
+  // the ARM decides whether it is honoured, not the presence of the field.
+  widget?: string
 } & (
   | { kind: 'schema'; propertyDef: PropertyDef }
   | { kind: 'hint'; routingHint: WidgetRoutingHint }
@@ -128,22 +143,57 @@ interface WidgetRow {
   widget: Component
   writable: boolean
   optionVerdicts?: Record<string, boolean>
+  // Display-rendered long values take their own full-width row, matching
+  // PropertyDisplay's behaviour (TKT-HOIX1). Only meaningful on the display
+  // arm — an edit widget sizes itself.
+  isLong: boolean
 }
 
 const widgetRows = computed<WidgetRow[]>(() =>
   props.fields.map((field) => {
+    // The config override applies ONLY on the schema arm. The hint arm fires
+    // for a property the metamodel does not declare, so there is no
+    // PropertyDef the server could have type-checked the widget against
+    // (RR-2GBB0V) — honouring it here would push an unvalidated widget into a
+    // live edit control, since an unschema'd field is editable (a missing
+    // verdict reads as writable), not read-only. Config load warns instead.
+    // resolve() already falls back to the type default on an unknown name.
     const widget =
       field.kind === 'schema'
-        ? defaultRegistry.resolve(undefined, field.propertyDef)
+        ? defaultRegistry.resolve(field.widget, field.propertyDef)
         : defaultRegistry.resolveFromHint(field.routingHint)
     return {
       field,
       widget,
-      writable: isFieldWritable(field.verdict),
+      // Config can only DOWNGRADE editability (TKT-HOIX1): a field renders as
+      // an input when the config opts in AND the ACL permits the write. Never
+      // weaken this to an `||` or a ternary that lets config win — `render:
+      // input` on a read-only field must still render display.
+      //
+      // Applied HERE only, not in the verdict-flip watcher below, and NOT via
+      // `isFieldWritable`'s second `fieldReadonly` parameter — doing either
+      // would make a display field look like a revoked permission (RR-PGGRBD).
+      writable: field.render === 'input' && isFieldWritable(field.verdict),
       optionVerdicts: optionVerdictsFor(field.verdict),
+      isLong: isLongValue(field),
     }
   }),
 )
+
+// Shares PropertyDisplay.vue `isLong`'s 60-char threshold, so a value doesn't
+// reflow when a section switches between the two renderers — keep the two
+// thresholds equal.
+//
+// Not a full port: PropertyDisplay also short-circuits on `PropertyItem.
+// isLongText`, which nothing in the codebase ever populates (it is dead on
+// that side too), so there is no behavioural difference to mirror. If
+// isLongText is ever wired up, this needs the same arm.
+//
+// Reads `formData` (not the field's server-side string mirror) so the layout
+// tracks the post-PATCH value.
+function isLongValue(field: SectionEditField): boolean {
+  return String(formData[field.property] ?? '').length > 60
+}
 
 function onFieldUpdate(field: SectionEditField, value: unknown) {
   const def = field.kind === 'schema' ? field.propertyDef : undefined
@@ -227,11 +277,18 @@ defineExpose({
         v-for="row in widgetRows"
         :key="row.field.property"
         class="property-item"
+        :style="fieldSpanStyle(row.field.span)"
+        :class="{ 'property-long': !row.writable && row.isLong }"
       >
         <dt>{{ row.field.label }}</dt>
         <dd>
+          <!-- A machine field flagged `render: display` falls through to the
+               display arm below rather than rendering a DISABLED StatusControl
+               (TKT-HOIX1) — status fields are the ones most likely to be
+               flagged display, and a greyed-out control is exactly the
+               disabled-input outcome this ticket exists to avoid. -->
           <StatusControl
-            v-if="row.field.transitions !== undefined"
+            v-if="row.field.transitions !== undefined && row.field.render === 'input'"
             :model-value="formData[row.field.property] == null ? '' : String(formData[row.field.property])"
             :property="row.field.property"
             :entity-type="entityType"
@@ -284,7 +341,7 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-sm);
   margin: 0 0 16px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--border-color);
@@ -295,38 +352,21 @@ defineExpose({
    (font, margin, border via the row) — the Properties heading must match
    every sibling section heading on the page. */
 .section-edit-form-header .section-heading {
-  font-size: 18px;
+  font-size: var(--font-size-lg);
   font-weight: 600;
   margin: 0;
   color: var(--text-color);
 }
 
-.properties-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px 32px;
-  margin: 0;
-}
+/* .properties-list / .property-item now live in styles/properties-list.css,
+ * shared with PropertyDisplay and SidePanel. Do not redefine them here — the
+ * three scoped copies drifting apart is what this ticket removed. */
 
-.property-item {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 200px;
-}
-
-.property-item dt {
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  color: var(--muted-text);
-  margin: 0;
-}
-
-.property-item dd {
-  margin: 0;
-  font-size: 14px;
-  color: var(--text-color);
-  line-height: 1.5;
+/* Long display-rendered values wrap rather than overflow. The full-row
+ * behaviour (`grid-column: span 12`) is owned by styles/properties-list.css;
+ * only these text rules are component-local, mirroring PropertyDisplay.vue. */
+.property-item.property-long dd {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 </style>

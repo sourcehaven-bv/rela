@@ -374,7 +374,7 @@ function buildIfMissing(binaryPath: string, ...buildArgs: string[]): string {
 
 function createTestProject(): string {
   const tmpDir = fs.mkdtempSync(path.join(TMPDIR, "rela-e2e-"));
-  fs.writeFileSync(path.join(tmpDir, "metamodel.yaml"), METAMODEL_YAML);
+  fs.writeFileSync(path.join(tmpDir, "schema.yaml"), METAMODEL_YAML);
   fs.writeFileSync(path.join(tmpDir, "data-entry.yaml"), DATA_ENTRY_YAML);
   fs.mkdirSync(path.join(tmpDir, "entities", "features"), { recursive: true });
   fs.mkdirSync(path.join(tmpDir, "entities", "bugs"), { recursive: true });
@@ -401,7 +401,17 @@ function createTestProject(): string {
 
 /** Spawn rela-server on a free port with retry-on-startup-failure: the port
  *  we pick from findFreePort may have been reassigned by the kernel before the
- *  child binds it, under load (RR-B8GJT). Up to 3 attempts. */
+ *  child binds it, under load (RR-B8GJT). Up to 3 attempts.
+ *
+ *  A server that DIES during startup fails fast rather than waiting out
+ *  waitForServer's timeout, and its stderr travels in the thrown error. Both
+ *  matter: without them a server that refused to start (a bad DSN, a failed
+ *  migration) surfaced only as "Test timeout of 30000ms exceeded while setting
+ *  up serverUrl", with the real reason — which the child had already printed —
+ *  discarded. A spawn failure is also an 'error' EVENT, not a throw; with no
+ *  listener Node re-raises it as an unhandled error out of band, which is how
+ *  a failed startup came to be reported as a bare, and entirely misleading,
+ *  `spawn ... ENOENT`. (BUG-YJEIFH) */
 async function spawnServer(
   serverBinary: string,
   cwd: string,
@@ -434,8 +444,27 @@ async function spawnServer(
     proc.stdout?.on("data", (d) => (stdout += d.toString()));
     proc.stderr?.on("data", (d) => (stderr += d.toString()));
 
+    // Resolves as soon as the child is known to be unusable, so a server that
+    // exits immediately is not waited out for the full readiness timeout.
+    const died = new Promise<never>((_, reject) => {
+      proc.once("error", (e) =>
+        reject(new Error(`could not spawn ${serverBinary}: ${String(e)}`)),
+      );
+      proc.once("exit", (code, signal) =>
+        reject(
+          new Error(
+            `server exited during startup (code ${code}, signal ${signal})\n` +
+              `--- stderr ---\n${stderr.trim() || "(empty)"}`,
+          ),
+        ),
+      );
+    });
+    // The rejection is always consumed below, but only once the race settles;
+    // mark it handled now so a loser never trips unhandledRejection.
+    died.catch(() => {});
+
     try {
-      await waitForServer(url, url);
+      await Promise.race([waitForServer(url, url), died]);
       return {
         proc,
         url,
@@ -853,6 +882,10 @@ entities:
         type: string
       done:
         type: boolean
+      # BUG-FB0LN8: lets a fixture hide a default-policy field alongside a
+      # clear-policy one in a single pass.
+      note:
+        type: string
 
   # TKT-E7NNM fixtures: covers manual-ID, multi-prefix, and the combinations
   # we want to exercise in forms.spec.ts. Keep names short and orthogonal
@@ -992,6 +1025,7 @@ forms:
         widget: textarea
     relations:
       - relation: tagged
+        direction: outgoing
         widget: cards
         properties:
           - property: added_by
@@ -1098,6 +1132,39 @@ forms:
         visible_when: "form.done == true"
         required_when: "form.done == true"
 
+  # BUG-FB0LN8: clear_when_hidden "yes" opts back in to clearing a hidden
+  # branch's stored value — the behavior that used to be unconditional. Keeps
+  # the old semantics pinned now that the default is to KEEP the value.
+  task_clear_when_hidden:
+    entity_type: task
+    title: "Task (clears on hide)"
+    fields:
+      - property: title
+        required: true
+      - property: done
+        widget: checkbox
+      - property: assignee
+        visible_when: "form.done == true"
+        clear_when_hidden: "yes"
+
+  # MIXED policies hidden by ONE trigger, via a SELECT. A keep-policy and a
+  # clear-policy field hide in the same pass, so each must honor its own
+  # setting rather than the batch taking one decision for all of them.
+  task_mixed_policies:
+    entity_type: task
+    title: "Task (mixed clear policies, one trigger)"
+    fields:
+      - property: title
+        required: true
+      - property: status
+      - property: note
+        visible_when: "form.status == 'approved'"
+      - property: assignee
+        visible_when: "form.status == 'approved'"
+      - property: done
+        visible_when: "form.status == 'approved'"
+        clear_when_hidden: "yes"
+
   tag:
     entity_type: tag
     title: "Tag"
@@ -1190,15 +1257,42 @@ views:
       - heading: "Task"
         source: entry
         display: properties
+        # Deliberately left at the display default (TKT-HOIX1) so the suite
+        # exercises BOTH render modes on one page: this entry section renders
+        # display values while the "Implements" list section below is inline-
+        # editable. A future spec asserting an editable form here must add
+        # render: input rather than assume the pre-TKT-HOIX1 default.
         fields:
           - property: status
           - property: assignee
+      # TKT-3R7RF3: a section whose fields opt into inline edit AND override
+      # which widget renders them. The done property is a boolean, so its type
+      # default is already checkbox; title is the load-bearing case — a string
+      # would default to TextWidget, and only a widget override makes it a
+      # textarea. Keeps the override honest: if the plumbing silently dropped,
+      # the textarea assertion fails even though the checkbox one would pass.
+      # (No backticks in this comment: it lives inside a TS template literal.)
+      - heading: "Progress"
+        source: entry
+        display: properties
+        render: input
+        fields:
+          - property: done
+            widget: checkbox
+          - property: title
+            widget: textarea
       - heading: "Implements"
         source: implemented
         display: list
+        # render: input is REQUIRED for this section to mount a
+        # SectionEditForm — fields render as display by default (TKT-HOIX1).
+        # Without it the #997 unmount-crash guard silently stops exercising
+        # the DOM shape it exists to guard.
         fields:
           - property: status
+            render: input
           - property: priority
+            render: input
         empty_message: "No implemented features"
 
 kanbans:
@@ -1255,7 +1349,10 @@ documents:
   feature_summary:
     title: "Feature Summary"
     entity_type: feature
-    command: "printf '# Summary for %s\\n\\nDocument body.' {id}"
+    # argv array, no shell (TKT-QGHNVA). {in} is the entry entity's markdown
+    # file; its frontmatter carries the id, so cat emits a document naming the
+    # entity without the id ever reaching the command line.
+    command: ["cat", "{in}"]
     edit:
       # Reusing the shared 'feature' form rather than adding a dedicated
       # edit-mode form: adding feature_edit would shift the form count
@@ -1268,7 +1365,7 @@ documents:
   feature_readonly:
     title: "Feature Readonly"
     entity_type: feature
-    command: "printf '# Read-only view of %s' {id}"
+    command: ["cat", "{in}"]
 
 navigation:
   - label: "Dashboard"
@@ -1455,6 +1552,7 @@ type: task
 title: Write unit tests
 status: draft
 assignee: Alice
+done: false
 ---
 
 Write unit tests for auth module.

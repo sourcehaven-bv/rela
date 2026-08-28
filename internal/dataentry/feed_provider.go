@@ -13,6 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // feedProvider is the internal, transport-independent view of a calendar feed:
@@ -59,11 +60,14 @@ type deepLinker func(entityType, id string) string
 // entities' properties to calendar events (all-day or timed, per the source
 // date property's type).
 type declarativeFeed struct {
-	cfg    dataentryconfig.Feed
-	meta   *metamodel.Metamodel
-	src    entitySource
-	link   deepLinker
-	feedID string // the config key; used as the default calendar name
+	cfg  dataentryconfig.Feed
+	meta *metamodel.Metamodel
+	src  entitySource
+	link deepLinker
+	// redactor applies field-level `visible:` ACL to rendered values. Nil means
+	// no redaction (the memory/test wiring); production always supplies one.
+	redactor visibility.FieldRedactor
+	feedID   string // the config key; used as the default calendar name
 }
 
 // newDeclarativeFeed builds a provider for one configured feed. It pre-parses
@@ -71,6 +75,7 @@ type declarativeFeed struct {
 // entity is read (config validation catches this earlier still).
 func newDeclarativeFeed(
 	feedID string, cfg dataentryconfig.Feed, meta *metamodel.Metamodel, src entitySource, link deepLinker,
+	redactor visibility.FieldRedactor,
 ) (*declarativeFeed, error) {
 	// Validate sources reference known types up front so List/Get can assume it.
 	for i, s := range cfg.Sources {
@@ -81,7 +86,9 @@ func newDeclarativeFeed(
 			return nil, fmt.Errorf("feed %q: source[%d]: %w", feedID, i, err)
 		}
 	}
-	return &declarativeFeed{cfg: cfg, meta: meta, src: src, link: link, feedID: feedID}, nil
+	return &declarativeFeed{
+		cfg: cfg, meta: meta, src: src, link: link, redactor: redactor, feedID: feedID,
+	}, nil
 }
 
 // calendarName is the feed's display name: the configured meta.name, or the
@@ -132,7 +139,7 @@ func (d *declarativeFeed) List(ctx context.Context, opts feedListOpts) ([]calfee
 			if !since.IsZero() && !e.UpdatedAt.After(since) {
 				continue
 			}
-			ev, ok, err := d.mapEntity(e, s, entDef, filters)
+			ev, ok, err := d.mapEntity(ctx, e, s, entDef, filters)
 			if err != nil {
 				return nil, "", err
 			}
@@ -179,7 +186,7 @@ func (d *declarativeFeed) Get(ctx context.Context, uid string) (calfeed.Event, b
 			return calfeed.Event{}, false, err
 		}
 		entDef, _ := d.meta.GetEntityDef(entityType)
-		ev, mapped, err := d.mapEntity(e, s, entDef, filters)
+		ev, mapped, err := d.mapEntity(ctx, e, s, entDef, filters)
 		if err != nil {
 			return calfeed.Event{}, false, err
 		}
@@ -188,13 +195,59 @@ func (d *declarativeFeed) Get(ctx context.Context, uid string) (calfeed.Event, b
 	return calfeed.Event{}, false, nil
 }
 
+// redactFeedEntity returns a copy of e with `visible:`-hidden properties
+// removed, or e unchanged when nothing is hidden.
+//
+// A COPY, never a mutation: the entity comes from the shared store snapshot, so
+// deleting properties in place would redact it for every other reader in the
+// process.
+//
+// The DATE property is deliberately not special-cased. If an operator hides the
+// property a feed is anchored on, the entity has no usable date and drops out of
+// the calendar — which is the correct outcome: an event whose date the reader
+// may not see is not an event they should be shown. That it also removes the
+// entity from the feed is a disclosure the row-level ACL already governs (a
+// reader who cannot see the row never got here at all).
+func redactFeedEntity(
+	ctx context.Context, r visibility.FieldRedactor, e *entity.Entity,
+) *entity.Entity {
+	if r == nil || e == nil {
+		return e
+	}
+	hidden := r.HiddenProperties(ctx, e)
+	if len(hidden) == 0 {
+		return e
+	}
+	clone := *e
+	clone.Properties = make(map[string]any, len(e.Properties))
+	for k, v := range e.Properties {
+		if _, hide := hidden[k]; hide {
+			continue
+		}
+		clone.Properties[k] = v
+	}
+	return &clone
+}
+
 // mapEntity applies a source's filter to one entity and, if it matches and has
 // a date value, maps its properties to a calendar event. ok=false means the
 // entity is filtered out or has no usable date (it is silently skipped, not an
 // error — a task with no due date is simply not on the calendar).
 func (d *declarativeFeed) mapEntity(
+	ctx context.Context,
 	e *entity.Entity, s dataentryconfig.FeedSource, entDef *metamodel.EntityDef, filters []*filter.Filter,
 ) (calfeed.Event, bool, error) {
+	// The FILTER runs against the raw entity, deliberately, and redaction is
+	// applied only afterwards to the values that get rendered.
+	//
+	// Order matters. Redacting first would make a `visible:`-hidden property
+	// read as empty inside `where:`, so feed MEMBERSHIP would vary by principal:
+	// the same feed would contain different events for different readers, and an
+	// entity would silently drop out of the calendar because a field the reader
+	// cannot see was filtered on. Which entities a feed selects is an
+	// operator-authored decision (row visibility is the ACL's job, and
+	// `src.listType` has already applied it); what their FIELDS say is the
+	// reader's business.
 	matched, err := filter.MatchAll(entityRecord(e), filters, entDef, d.meta)
 	if err != nil {
 		return calfeed.Event{}, false, err
@@ -202,6 +255,7 @@ func (d *declarativeFeed) mapEntity(
 	if !matched {
 		return calfeed.Event{}, false, nil
 	}
+	e = redactFeedEntity(ctx, d.redactor, e)
 
 	dateStr := e.GetString(s.Date)
 	if dateStr == "" {

@@ -17,6 +17,21 @@ type compileOptions struct {
 	maxDepth int
 }
 
+// Profile selects the expression features and result contract available to a
+// compilation context. Profiles change availability, never semantics.
+type Profile struct {
+	Expected           Type
+	AllowArithmetic    bool
+	AllowConcatenation bool
+	RequireSQLPortable bool
+}
+
+// ValueProfile returns the general pure scalar-expression profile used by
+// materialized computations.
+func ValueProfile(expected Type) Profile {
+	return Profile{Expected: expected, AllowArithmetic: true, AllowConcatenation: true}
+}
+
 // defaultMaxDepth caps walker recursion so a pathologically nested
 // AST cannot produce a runtime stack overflow.
 const defaultMaxDepth = 256
@@ -39,6 +54,19 @@ func WithMaxDepth(n int) CompileOption {
 // (statements, multi-return-value, and leading `return` are all
 // rejected with a *CompileError naming the failure mode).
 func Compile(env *Env, source string, opts ...CompileOption) (prog *Program, err error) {
+	return compile(env, source, Profile{Expected: BoolType}, opts...)
+}
+
+// CompileValue compiles a pure value expression under profile. Unlike Compile,
+// the top-level result need not be bool.
+func CompileValue(env *Env, source string, profile Profile, opts ...CompileOption) (prog *Program, err error) {
+	if profile.Expected == nil {
+		return nil, &CompileError{Reason: "profile expected type must be non-nil"}
+	}
+	return compile(env, source, profile, opts...)
+}
+
+func compile(env *Env, source string, profile Profile, opts ...CompileOption) (prog *Program, err error) {
 	if env == nil {
 		return nil, &CompileError{Reason: "env must be non-nil"}
 	}
@@ -96,25 +124,26 @@ func Compile(env *Env, source string, opts ...CompileOption) (prog *Program, err
 		return nil, &CompileError{Reason: "multiple return values are not supported"}
 	}
 
-	w := &walker{env: env, maxDepth: cfg.maxDepth}
+	w := &walker{env: env, maxDepth: cfg.maxDepth, profile: profile}
 	root, walkErr := w.walkExpr(retStmt.Exprs[0])
 	if walkErr != nil {
 		return nil, walkErr
 	}
 
-	// A predicate's top-level expression must be a bool. This catches
-	// rules like `entity.status` (a string) that authors might intend
-	// as truthiness checks but in this language must be written
-	// `entity.status ~= nil` or `entity.status == 'x'`.
-	if !root.resultType().equalsType(BoolType) {
-		return nil, &CompileError{Reason: "top-level expression must be bool, got " + root.resultType().typeName()}
+	if !root.resultType().equalsType(profile.Expected) && !root.resultType().equalsType(NilType) {
+		return nil, &CompileError{Reason: "top-level expression must be " + profile.Expected.typeName() + ", got " + root.resultType().typeName()}
 	}
 
-	return &Program{
+	program := &Program{
 		root:      root,
 		resultTyp: root.resultType(),
 		env:       env,
-	}, nil
+	}
+	program.inspect()
+	if profile.RequireSQLPortable && !program.sqlPortable {
+		return nil, &CompileError{Reason: "expression is not SQL-portable"}
+	}
+	return program, nil
 }
 
 // describeStmtAsNonExpression returns a domain-friendly message for
@@ -229,6 +258,7 @@ type walker struct {
 	env      *Env
 	maxDepth int
 	depth    int
+	profile  Profile
 }
 
 func (w *walker) enter(line int) *CompileError {
@@ -274,17 +304,23 @@ func (w *walker) walkExpr(e ast.Expr) (node, error) {
 		return w.walkNot(x)
 	case *ast.FuncCallExpr:
 		return w.walkCall(x)
+	case *ast.ArithmeticOpExpr:
+		if !w.profile.AllowArithmetic {
+			return nil, &CompileError{Line: x.Line(), Reason: "arithmetic operators are not allowed"}
+		}
+		return w.walkArithmetic(x)
+	case *ast.StringConcatOpExpr:
+		if !w.profile.AllowConcatenation {
+			return nil, &CompileError{Line: x.Line(), Reason: "string concatenation (..) is not allowed"}
+		}
+		return w.walkConcat(x)
 
 	// Explicitly named rejects produce a clearer error than the
 	// default-reject fallthrough.
 	case *ast.FunctionExpr:
 		return nil, &CompileError{Line: x.Line(), Reason: "function literals are not allowed"}
-	case *ast.StringConcatOpExpr:
-		return nil, &CompileError{Line: x.Line(), Reason: "string concatenation (..) is not allowed"}
-	case *ast.ArithmeticOpExpr:
-		return nil, &CompileError{Line: x.Line(), Reason: "arithmetic operators are not allowed"}
 	case *ast.UnaryMinusOpExpr:
-		return nil, &CompileError{Line: x.Line(), Reason: "unary minus is not allowed"}
+		return w.walkUnaryMinus(x)
 	case *ast.UnaryLenOpExpr:
 		return nil, &CompileError{Line: x.Line(), Reason: "length operator (#) is not allowed"}
 	case *ast.Comma3Expr:
@@ -298,6 +334,29 @@ func (w *walker) walkExpr(e ast.Expr) (node, error) {
 		// types break here visibly until we triage them.
 		return nil, &CompileError{Line: e.Line(), Reason: "unsupported expression kind: " + astKindName(e)}
 	}
+}
+
+func (w *walker) walkUnaryMinus(x *ast.UnaryMinusOpExpr) (node, error) {
+	// A negative numeric literal is folded so legacy predicate comparisons
+	// retain their historical support without enabling general arithmetic.
+	if num, ok := x.Expr.(*ast.NumberExpr); ok {
+		f, err := parseLuaNumber(num.Value)
+		if err != nil {
+			return nil, &CompileError{Line: x.Line(), Reason: err.Error()}
+		}
+		return &constNode{v: NewNumber(-f)}, nil
+	}
+	if !w.profile.AllowArithmetic {
+		return nil, &CompileError{Line: x.Line(), Reason: "unary minus is allowed only on a numeric literal (e.g. -100)"}
+	}
+	inner, err := w.walkExpr(x.Expr)
+	if err != nil {
+		return nil, err
+	}
+	if !inner.resultType().equalsType(IntType) && !inner.resultType().equalsType(NumberType) {
+		return nil, &CompileError{Line: x.Line(), Reason: "unary minus requires int or number, got " + inner.resultType().typeName()}
+	}
+	return &unaryMinusNode{expr: inner, typ: inner.resultType()}, nil
 }
 
 // parseLuaNumber accepts Lua number lexical forms (`1`, `1.0`, `0xFF`,

@@ -25,7 +25,6 @@ import (
 	"io"
 	"iter"
 	"maps"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -48,8 +47,14 @@ import (
 // unexported core so Tx callbacks can re-enter. Interface-driven, not
 // accreted sprawl; ratchets with the interface.
 //
-//plimsoll:max-methods=42
-//plimsoll:max-exported-methods=28
+// +1 for ListEntityHeaders (TKT-1ESTYJ): the store.HeaderReader capability,
+// a content-free ListEntities. Implemented natively rather than left to the
+// generic fallback because the fallback would clone each entity — bodies
+// included — only to drop the body immediately, which is the cost the
+// capability exists to remove. Interface-driven like the Tx split above.
+//
+//plimsoll:max-methods=43
+//plimsoll:max-exported-methods=29
 type MemStore struct {
 	// txMu serializes an open Tx against ordinary writers: Tx holds it
 	// for the whole callback, every exported write method takes it
@@ -156,6 +161,31 @@ var (
 	sortedRemove     = storeutil.SortedRemove
 )
 
+// idTaken reports whether any key of index case-folds to the same identity as
+// id. except is skipped so a rename can ask "does any OTHER entity claim this
+// identity?" without self-colliding.
+//
+// Derived from the entities map on each call rather than kept as a second
+// index: entity IDs are written at five sites here, and a parallel map would
+// silently drift out of sync at whichever one a future change forgets. The
+// scan is O(n) but runs only on create and rename, never on a read path.
+//
+// Callers must hold m.mu.
+// A free function rather than a method — MemStore is at its plimsoll
+// max-methods line, and this needs no receiver state beyond the index.
+func idTaken(index map[string]*entity.Entity, id, except string) bool {
+	folded := storeutil.FoldID(id)
+	for existing := range index {
+		if existing == except {
+			continue
+		}
+		if storeutil.FoldID(existing) == folded {
+			return true
+		}
+	}
+	return false
+}
+
 // --- EntityReader ---
 
 func (m *MemStore) GetEntity(_ context.Context, id string) (*entity.Entity, error) {
@@ -186,6 +216,45 @@ func (m *MemStore) ListEntities(_ context.Context, q store.EntityQuery) iter.Seq
 	return func(yield func(*entity.Entity, error) bool) {
 		for _, e := range snapshot {
 			if !yield(e, nil) {
+				return
+			}
+		}
+	}
+}
+
+// ListEntityHeaders implements store.HeaderReader. Like ListEntities it
+// snapshots under the read lock (so the iterator never holds it), but copies
+// only the header fields — the body string is not carried into the snapshot,
+// and Properties are cloned so a caller cannot mutate stored state through a
+// header.
+//
+// The generic fallback would clone each ENTITY (bodies included) just to
+// discard the content a moment later; this keeps a whole-store scan
+// proportional to ids and properties rather than to markdown.
+func (m *MemStore) ListEntityHeaders(
+	_ context.Context, q store.EntityQuery,
+) iter.Seq2[store.EntityHeader, error] {
+	m.mu.RLock()
+	idSet := entityIDSet(q.IDs)
+
+	snapshot := make([]store.EntityHeader, 0)
+	for _, id := range m.entityOrder {
+		e := m.entities[id]
+		if !matchEntityQuery(e, q, idSet) {
+			continue
+		}
+		snapshot = append(snapshot, store.EntityHeader{
+			ID:         e.ID,
+			Type:       e.Type,
+			Properties: maps.Clone(e.Properties),
+			UpdatedAt:  e.UpdatedAt,
+		})
+	}
+	m.mu.RUnlock()
+
+	return func(yield func(store.EntityHeader, error) bool) {
+		for _, h := range snapshot {
+			if !yield(h, nil) {
 				return
 			}
 		}
@@ -298,26 +367,7 @@ func (m *MemStore) PropertyValues(_ context.Context, property string, limit int)
 		}
 	}
 
-	type vc struct {
-		value string
-		count int
-	}
-	sorted := make([]vc, 0, len(counts))
-	for v, c := range counts {
-		sorted = append(sorted, vc{v, c})
-	}
-	sort.Slice(sorted, func(i, j int) bool {
-		if sorted[i].count != sorted[j].count {
-			return sorted[i].count > sorted[j].count
-		}
-		return sorted[i].value < sorted[j].value
-	})
-
-	result := make([]string, 0, limit)
-	for i := 0; i < len(sorted) && (limit == 0 || i < limit); i++ {
-		result = append(result, sorted[i].value)
-	}
-	return result, nil
+	return storeutil.TopValues(counts, limit), nil
 }
 
 // --- EntityWriter ---
@@ -330,11 +380,14 @@ func (m *MemStore) createEntity(_ context.Context, e *entity.Entity) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if _, exists := m.entities[e.ID]; exists {
+	// Case-folded so "ABC" conflicts with an existing "abc" — on fsstore they
+	// are one file, and the backends must agree on identity (BUG-3RCWNS).
+	if idTaken(m.entities, e.ID, "") {
 		return store.ErrConflict
 	}
 
 	stored := e.Clone()
+	stored.Redacted = nil // per-reader ACL artifact, never content (RR-KBWJPV)
 	stored.UpdatedAt = time.Now()
 	m.entities[e.ID] = stored
 	m.entityOrder = sortedInsert(m.entityOrder, e.ID)
@@ -357,6 +410,7 @@ func (m *MemStore) updateEntity(_ context.Context, e *entity.Entity) error {
 	}
 
 	stored := e.Clone()
+	stored.Redacted = nil // per-reader ACL artifact, never content (RR-KBWJPV)
 	stored.UpdatedAt = time.Now()
 	m.entities[e.ID] = stored
 	m.notifyPut(stored)
@@ -441,7 +495,9 @@ func (m *MemStore) renameEntity(_ context.Context, oldID, newID string) (*store.
 	if !ok {
 		return nil, store.ErrNotFound
 	}
-	if _, exists := m.entities[newID]; exists {
+	// except=oldID: renaming an entity to a different casing of its own ID
+	// (abc -> ABC) is legitimate and must not self-collide.
+	if idTaken(m.entities, newID, oldID) {
 		return nil, store.ErrConflict
 	}
 

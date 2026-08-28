@@ -117,6 +117,41 @@ describe('DateWidget', () => {
     await input.setValue('2026-06-01')
     expect(w.emitted('update:modelValue')?.[0]).toEqual(['2026-06-01'])
   })
+
+  // The API returns RFC3339 for `date` properties (`2026-09-15T00:00:00Z`),
+  // but `<input type="date">` accepts ONLY `YYYY-MM-DD` and silently renders
+  // blank otherwise — so the form showed an empty input over a stored value,
+  // which reads as "my data is gone". The old test only ever passed an
+  // already-normalized date, which is how this slipped through.
+  it('narrows an RFC3339 timestamp to the date part so the input is populated', () => {
+    const w = mount(DateWidget, {
+      props: { modelValue: '2026-09-15T00:00:00Z', mode: 'edit' as const, propertyName: '' },
+    })
+    expect((w.find('input[type="date"]').element as HTMLInputElement).value).toBe('2026-09-15')
+  })
+
+  it('narrows a timestamp with an offset too', () => {
+    const w = mount(DateWidget, {
+      props: { modelValue: '2026-09-15T13:45:00+02:00', mode: 'edit' as const, propertyName: '' },
+    })
+    expect((w.find('input[type="date"]').element as HTMLInputElement).value).toBe('2026-09-15')
+  })
+
+  it('passes an un-parseable value through rather than swallowing it', () => {
+    // The browser will reject it for display, but we must not silently rewrite
+    // whatever the user or a hand-edited file put there.
+    const w = mount(DateWidget, {
+      props: { modelValue: 'not-a-date', mode: 'edit' as const, propertyName: '' },
+    })
+    expect(w.find('input[type="date"]').exists()).toBe(true)
+  })
+
+  it('renders empty for no value', () => {
+    const w = mount(DateWidget, {
+      props: { modelValue: '', mode: 'edit' as const, propertyName: '' },
+    })
+    expect((w.find('input[type="date"]').element as HTMLInputElement).value).toBe('')
+  })
 })
 
 describe('DatetimeWidget', () => {
@@ -353,6 +388,70 @@ describe('CheckboxWidget (display)', () => {
       props: { modelValue: 'true', mode: 'display' as const, propertyName: '' },
     })
     expect((w.find('input[type="checkbox"]').element as HTMLInputElement).checked).toBe(true)
+  })
+
+  // TKT-CBSTYLE. Styling the widget set `appearance: none`, which removes the
+  // greyed rendering the browser previously gave the disabled display arm for
+  // free. The muted treatment is now drawn by the `.display-checkbox` rule, so
+  // the class is load-bearing rather than decorative.
+  //
+  // This pins the HOOK only (class + disabled). It cannot see whether the rule
+  // hanging off that class actually wins the cascade — the first version of
+  // this change lost that race and shipped `not-allowed` on a read-only field
+  // with these assertions green. `resolves the cursor` below is the test that
+  // catches it; keep both, they fail for different reasons.
+  it.each([true, false])(
+    'keeps the .display-checkbox hook that carries the read-only treatment (%s)',
+    (modelValue) => {
+      const w = mount(CheckboxWidget, {
+        props: { modelValue, mode: 'display' as const, propertyName: '' },
+      })
+      const input = w.find('input[type="checkbox"]')
+      expect(input.classes()).toContain('display-checkbox')
+      expect(input.attributes('disabled')).toBeDefined()
+    }
+  )
+
+  // The edit arm must NOT pick up the display-only muting; it is a live
+  // control and only takes the disabled treatment when actually disabled.
+  it('does not put the display-only class on the edit arm', () => {
+    const w = mount(CheckboxWidget, {
+      props: { modelValue: true, mode: 'edit' as const, propertyName: '' },
+    })
+    expect(w.find('input[type="checkbox"]').classes()).not.toContain('display-checkbox')
+  })
+
+  // The cascade assertion the hook test can't make.
+  //
+  // Vitest does not apply an SFC's scoped <style>, so the rules are injected
+  // here with the same `[data-v-x]` suffix the compiler adds — which is what
+  // makes the specificity faithful: the element rule is (0,3,1) and a bare
+  // `.display-checkbox:disabled` override is (0,3,0), so the general rule wins
+  // and the display arm silently reads as a control you were denied rather
+  // than as a rendered value. `:not(.display-checkbox)` is what prevents that.
+  //
+  // Mirrors CheckboxWidget.vue; if that changes, change this with it.
+  it('resolves the read-only cursor for the display arm, not not-allowed', () => {
+    const style = document.createElement('style')
+    style.textContent = `
+      input[type='checkbox']:disabled:not(.display-checkbox)[data-v-x] {
+        cursor: not-allowed;
+      }
+      .display-checkbox:disabled[data-v-x] { cursor: default; }
+    `
+    document.head.appendChild(style)
+    document.body.innerHTML = `
+      <input data-v-x type="checkbox" class="display-checkbox" disabled />
+      <input data-v-x type="checkbox" disabled />
+    `
+    const [displayArm, disabledEditArm] = [...document.querySelectorAll('input')]
+
+    expect(getComputedStyle(displayArm).cursor).toBe('default')
+    // The edit arm, when the ACL made it read-only, still says "denied".
+    expect(getComputedStyle(disabledEditArm).cursor).toBe('not-allowed')
+
+    style.remove()
+    document.body.innerHTML = ''
   })
 })
 

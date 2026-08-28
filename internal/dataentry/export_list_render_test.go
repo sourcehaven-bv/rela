@@ -41,7 +41,7 @@ func withListRenderOverride(
 
 	fake := &fakeScriptEngine{stdout: output}
 	deps := func() lua.WriteDeps { return lua.WriteDeps{} }
-	app.documents = newDocumentService(app.store, app.kv, "/", fake, deps)
+	app.documents = newDocumentService(app.store, app.kv, "/", fake, deps, nil)
 	var err error
 	if app.export, err = newExportHandler(app); err != nil {
 		t.Fatalf("newExportHandler: %v", err)
@@ -133,7 +133,7 @@ func TestExport_List_NoOverrideUsesBuiltin(t *testing.T) {
 	})
 	fake := &fakeScriptEngine{stdout: func(fakeScriptCall) string { return "SHOULD NOT RUN" }}
 	app.documents = newDocumentService(app.store, app.kv, "/", fake,
-		func() lua.WriteDeps { return lua.WriteDeps{} })
+		func() lua.WriteDeps { return lua.WriteDeps{} }, nil)
 	var err error
 	if app.export, err = newExportHandler(app); err != nil {
 		t.Fatalf("newExportHandler: %v", err)
@@ -193,7 +193,7 @@ func TestExport_List_RenderOverride_ColumnlessList(t *testing.T) {
 	})
 	fake := &fakeScriptEngine{stdout: func(c fakeScriptCall) string { return "# Columnless " + c.listID + "\n" }}
 	app.documents = newDocumentService(app.store, app.kv, "/", fake,
-		func() lua.WriteDeps { return lua.WriteDeps{} })
+		func() lua.WriteDeps { return lua.WriteDeps{} }, nil)
 	var err error
 	if app.export, err = newExportHandler(app); err != nil {
 		t.Fatalf("newExportHandler: %v", err)
@@ -393,7 +393,7 @@ func TestExport_List_RenderOverride_ConfigIDDistinctFromEntityPath(t *testing.T)
 	})
 	fake := &fakeScriptEngine{stdout: func(fakeScriptCall) string { return "ok\n" }}
 	app.documents = newDocumentService(app.store, app.kv, "/", fake,
-		func() lua.WriteDeps { return lua.WriteDeps{} })
+		func() lua.WriteDeps { return lua.WriteDeps{} }, nil)
 	var err error
 	if app.export, err = newExportHandler(app); err != nil {
 		t.Fatalf("newExportHandler: %v", err)

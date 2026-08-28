@@ -36,7 +36,7 @@ func New(cfg Config, opts ...Option) (*Services, error) {
 // no backfill is needed (the store starts empty anyway). The fs/paths in
 // base are unused by the store here; the metamodel still came from disk
 // via prepare.
-func openBackend(_ context.Context, _ *buildBase) (store.Store, search.Searcher, io.Closer, error) {
+func openBackend(_ context.Context, _ *SharedBase) (store.Store, search.Searcher, io.Closer, error) {
 	idx := search.NewLinearSearch()
 	st := memstore.New(memstore.WithObserver(idx))
 	if idx == nil {

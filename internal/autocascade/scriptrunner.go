@@ -58,12 +58,47 @@ type ScriptAction struct {
 	// from pre-refactor workspace behavior.
 	OldEntity *entity.Entity
 
-	// AllowACLBypass mirrors the action's `allow_acl_bypass` flag
-	// (TKT-D8T148). When true, the script runner exposes `rela.bypass_acl`
-	// backed by an elevated Mutator (from [ElevatedProvider]); when false the
-	// binding is absent and the script cannot elevate. Operator-gated: only a
-	// metamodel-authored action can set it.
-	AllowACLBypass bool
+	// AllowACLBypass mirrors the action's `allow_acl_bypass` (TKT-D8T148,
+	// TKT-Y3JVFK). When set, the script runner exposes `rela.bypass_acl`
+	// backed by the capabilities the value names — an elevated Mutator (from
+	// [ElevatedProvider]) for write, an elevated reader for read; when unset
+	// the binding is absent and the script cannot elevate. Operator-gated:
+	// only a schema-authored action can set it.
+	//
+	// Typed as a plain string rather than metamodel.ACLBypass because this
+	// package is deliberately schema-agnostic (it may not import metamodel —
+	// see .go-arch-lint.yml). The caller converts; the values are the
+	// metamodel.ACLBypass* constants and AllowsRead/AllowsWrite below mirror
+	// their semantics.
+	AllowACLBypass string
+
+	// Capabilities mirrors the action's `capabilities:` block (TKT-YH52OM):
+	// which ambient, non-graph capabilities the script may reach. The zero
+	// value grants NOTHING — an automation runs on the write path of any HTTP
+	// request, so it is not an operator-shell surface.
+	//
+	// Carried as primitives for the same reason AllowACLBypass is a string:
+	// this package may not import metamodel or lua. The caller converts.
+	Capabilities ScriptCapabilities
+}
+
+// ScriptCapabilities is the schema-agnostic carrier for a scripted action's
+// ambient capability grants. It mirrors metamodel.Capabilities / lua.Capabilities
+// field-for-field; see [ScriptAction.Capabilities] for why it is duplicated
+// rather than imported.
+type ScriptCapabilities struct {
+	HTTP      bool
+	AI        bool
+	WriteFile bool
+	// Secrets names the .rela/secrets.yaml keys the script may read. Empty
+	// means none — NOT all.
+	Secrets []string
+}
+
+// Fields returns the grant as plain values, mirroring
+// metamodel.Capabilities.Fields so both ends of the hop read through one shape.
+func (c ScriptCapabilities) Fields() (http, ai, writeFile bool, secrets []string) {
+	return c.HTTP, c.AI, c.WriteFile, c.Secrets
 }
 
 // NopScriptRunner is a no-op [ScriptRunner] for tests that should not
@@ -76,3 +111,12 @@ type nopScriptRunner struct{}
 func (nopScriptRunner) Run(_ context.Context, _ ScriptAction, _ Mutator) error {
 	panic("autocascade.NopScriptRunner: script execution not expected in this context")
 }
+
+// Elevation capability values carried by [ScriptAction.AllowACLBypass].
+// These MUST match the metamodel.ACLBypass* constants; the duplication is
+// what keeps this package free of a schema dependency.
+const (
+	ACLBypassRead      = "read"
+	ACLBypassWrite     = "write"
+	ACLBypassReadWrite = "read+write"
+)

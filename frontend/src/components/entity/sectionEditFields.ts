@@ -53,12 +53,21 @@ export function buildSectionEditFields(
     const def = getPropertyDef(source.type, f.property)
     const verdict = source._fields?.[f.property]
     const transitions = source._transitions?.[f.property]
+    // Server-resolved (section → field inheritance already applied); carried
+    // through as its own property, never folded into `verdict` (RR-PGGRBD).
+    const render = f.render
+    // Widget override (TKT-3R7RF3), carried verbatim. Honoured only on the
+    // schema arm below; SectionEditForm's widgetRows enforces that.
+    const widget = f.widget
     if (def) {
       out.push({
         property: f.property,
         label: f.label,
         verdict,
         transitions,
+        span: f.span,
+        render,
+        widget,
         kind: 'schema',
         propertyDef: def,
       })
@@ -68,6 +77,9 @@ export function buildSectionEditFields(
         label: f.label,
         verdict,
         transitions,
+        span: f.span,
+        render,
+        widget,
         kind: 'hint',
         routingHint: viewFieldRoutingHint(f),
       })
@@ -77,12 +89,21 @@ export function buildSectionEditFields(
 }
 
 // sectionShouldRouteToInlineEdit: properties section gets routed to
-// SectionEditForm only when (a) at least one field is writable per
-// `_fields` AND (b) no field on the section is inaccessible (e.g.
+// SectionEditForm only when (a) at least one field is EFFECTIVELY editable
+// AND (b) no field on the section is inaccessible (e.g.
 // git-crypt encrypted). The inaccessible affordance — a per-cell lock
 // placeholder — is rendered by PropertyDisplay's `<InaccessibleField>`
 // path; SectionEditForm doesn't model it (TKT-IHC7B explicitly scopes
 // to writability gating, not inaccessibility).
+//
+// "Effectively editable" is config AND ACL (TKT-HOIX1): `render: input`
+// plus a writable verdict — the same conjunction SectionEditForm's
+// `widgetRows` applies per field. The two MUST agree: if this predicate
+// used the verdict alone, an all-display section would mount a
+// SectionEditForm in which every field renders display anyway — an
+// autosave host that can never save, with its AutoSaveIndicator beside
+// a heading it took ownership of (RR-8EISWO). Since `render` defaults to
+// display, that would otherwise become the common case, not an edge one.
 //
 // Parameterized over FieldVerdictSource (TKT-IHC7C) — same as
 // buildSectionEditFields. Section fields come from `section.fields`
@@ -94,8 +115,8 @@ export function sectionShouldRouteToInlineEdit(
 ): boolean {
   const fs = fields ?? []
   if (fs.some((f) => f.inaccessible)) return false
-  return buildSectionEditFields(fs, source, getPropertyDef).some((f) =>
-    isFieldWritable(f.verdict),
+  return buildSectionEditFields(fs, source, getPropertyDef).some(
+    (f) => f.render === 'input' && isFieldWritable(f.verdict),
   )
 }
 

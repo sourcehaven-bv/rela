@@ -54,30 +54,40 @@ func SnapshotLocal(ctx context.Context, st store.Store) (*LocalSnapshot, int, er
 }
 
 // LocalChange classifies how a local record differs from the index.
+//
+// Base is the OPAQUE primary ETag the replica last agreed on (the index's
+// Server token), sent as If-Match on push so the primary rejects the write if
+// it moved. It is "" for a record the primary has never seen (first create).
+// Dirtiness is decided against the index's Local (canonical) token, NOT Base —
+// the two tokens live in different value spaces (see Baseline).
 type LocalChange struct {
 	Record  LocalRecord // the live record (zero Entity/Relation when Deleted)
 	Key     string
 	Kind    Kind
-	Base    string // index hash (the agreed base); "" for a new record
+	Base    string // primary's opaque ETag to send as If-Match; "" for a new record
 	Deleted bool   // present in index, absent in working copy
 }
 
 // DiffLocal compares the working-copy snapshot against the index and returns the
 // records that have diverged from the agreed baseline: created (in working copy,
-// not in index), updated (hash differs from index), and deleted (in index, gone
-// from working copy). Records whose hash equals the index are omitted — they are
-// already in sync. The result is unordered; the push command applies topological
+// not in index), updated (canonical hash differs from the index's Local token),
+// and deleted (in index, gone from working copy). Records whose canonical hash
+// equals the index Local are omitted — the replica has not edited them since the
+// last sync. The result is unordered; the push command applies topological
 // ordering.
+//
+// Dirtiness uses Local (the replica's own change-detector); the primary's Server
+// ETag is carried into Base only to serve as the push If-Match precondition.
 func DiffLocal(snap *LocalSnapshot, idx *State) []LocalChange {
 	var changes []LocalChange
 
 	for key, rec := range snap.Records {
-		base, indexed := idx.Hash(key)
+		base, indexed := idx.Baseline(key)
 		switch {
 		case !indexed:
 			changes = append(changes, LocalChange{Record: rec, Key: key, Kind: rec.Kind, Base: ""})
-		case base != rec.Hash:
-			changes = append(changes, LocalChange{Record: rec, Key: key, Kind: rec.Kind, Base: base})
+		case base.Local != rec.Hash:
+			changes = append(changes, LocalChange{Record: rec, Key: key, Kind: rec.Kind, Base: base.Server})
 		}
 	}
 
@@ -89,7 +99,7 @@ func DiffLocal(snap *LocalSnapshot, idx *State) []LocalChange {
 		changes = append(changes, LocalChange{
 			Key:     key,
 			Kind:    kindFromKey(key),
-			Base:    base,
+			Base:    base.Server,
 			Deleted: true,
 		})
 	}

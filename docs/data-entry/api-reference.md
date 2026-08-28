@@ -425,7 +425,8 @@ regardless of source.
     "affects":    { "creatable": false },
     "implements": { "removable": false },
     "has-planning": { "fields": { "note": { "writable": false } } }
-  }
+  },
+  "_redacted": ["salary"]
 }
 ```
 
@@ -436,11 +437,42 @@ from the permissive default appear. An absent key in either map means
 signal letting the SPA distinguish "evaluated, no deviations" from
 "affordances not available" (anonymous fallback / pre-rollout server).
 
-Hidden fields are doubly invisible: omitted from `properties` AND absent
-from `_fields`. The SPA filters its config-driven form-field list against
-both: a field declared in `data-entry.yaml` is rendered only if it appears
-in `_fields` OR `properties`. This makes "hidden = omitted" actually hide
-the input.
+### Hidden fields and `_redacted`
+
+Hidden fields are doubly invisible in the payload: their **values** are
+omitted from `properties` AND they are absent from `_fields`.
+
+Their **names**, however, are stated explicitly in `_redacted` — a list of the
+properties this response withheld by field-level ACL:
+
+```json
+{
+  "properties": { "status": "open" },
+  "_fields": {},
+  "_redacted": ["salary"]
+}
+```
+
+**Never infer redaction from absence.** A property missing from `properties`
+may have been redacted *or* may simply have never been set — the two are
+byte-identical in the payload, and `_fields` is sparse so a plainly-writable
+field is absent from it by design. Consult `_redacted`; it is the only sound
+signal. (Reading absence as redaction is what made every unset property
+permanently unreachable in the edit form — BUG-MLT9DE. The SPA now renders a
+configured field unless `_redacted` names it.)
+
+`_redacted` carries the same closed-world pointer semantics as `_fields` /
+`_relations`: present (possibly empty — "evaluated, nothing hidden") on
+per-entity responses, absent on list rows, which carry no write affordances.
+Names are sorted.
+
+Disclosure boundary: `_redacted` reveals property **names**, never **values**.
+This is not a new disclosure — the metamodel endpoint already serves the
+declared property names per type, and `visible:` redaction is defined as
+hiding values only, making no claim to conceal which properties exist. Row-level
+ACL is unaffected: whether an *entity* exists remains a genuine secret, and
+`_redacted` only ever rides a response the caller was already authorized to
+read. See DEC-T0XIWQ.
 
 ### Write-side parity
 
@@ -484,6 +516,11 @@ including any writable fields in the same body. The SPA's `useAutoSave`
 suppresses no-op PATCHes client-side via its `lastSeenServer` snapshot,
 so no real SPA path produces a same-value PATCH; the rejection exists
 for defense against hand-crafted clients.
+
+Schema-declared `computed` properties always participate in this contract as
+read-only fields, independently of ACL policy. Their materialized value is
+returned for display with `_fields.<name>.writable: false`; the server derives
+the value after writable input has been accepted.
 
 ### Create-mode affordances: dry-run (`?dry_run=true`) (TKT-3I5U)
 

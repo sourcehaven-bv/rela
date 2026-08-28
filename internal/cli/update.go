@@ -7,6 +7,9 @@ import (
 	"io"
 	"os"
 	"strings"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 )
 
 // UpdateCmd updates an existing entity.
@@ -22,60 +25,76 @@ type UpdateCmd struct {
 	Priority    string   `short:"p" help:"New priority."`
 	Description string   `short:"d" help:"New description."`
 	Property    []string `short:"P" help:"Set a property (format: key=value, can be repeated)."`
-	Body        string   `short:"b" help:"Markdown body content for the entity."`
-	BodyFile    string   `name:"body-file" short:"B" help:"Read body content from file (use - for stdin)."`
-	Strict      bool     `help:"Exit with status 1 if soft validation warnings are surfaced."`
+	// Unset removes a property outright. Distinct from `-P key=`, which
+	// sets the EMPTY STRING and always has — changing that silently would
+	// break existing scripts, so removal gets its own flag.
+	Unset     []string `short:"U" help:"Remove a property entirely (can be repeated). Differs from -P key=, which sets an empty value."`
+	Body      string   `short:"b" help:"Markdown body content for the entity."`
+	BodyFile  string   `name:"body-file" short:"B" help:"Read body content from file (use - for stdin)."`
+	ClearBody bool     `name:"clear-body" help:"Remove the entity's markdown body."`
+	Strict    bool     `help:"Exit with status 1 if soft validation warnings are surfaced."`
 }
 
 // Run dispatches `rela update <id>`.
 func (c *UpdateCmd) Run(ctx context.Context, svc *writeServices) error {
-	entity, err := svc.Store.GetEntity(ctx, c.ID)
-	if err != nil {
-		return &entityNotFoundError{ID: c.ID}
-	}
+	// A targeted patch: name only the flags the operator passed. Properties
+	// that go unmentioned are preserved by the manager, so `rela update` can
+	// no longer clobber state it never read (TKT-80EWGM).
+	patch := entity.Patch{Properties: map[string]any{}}
 
-	changed := false
 	for _, prop := range c.Property {
 		key, value, parseErr := parsePropertyFlag(prop)
 		if parseErr != nil {
 			return parseErr
 		}
-		entity.SetString(key, value)
-		changed = true
+		patch.Properties[key] = value
+	}
+	patch.MetaUnset = append(patch.MetaUnset, c.Unset...)
+
+	for key, value := range map[string]string{
+		"title":       c.Title,
+		"status":      c.Status,
+		"priority":    c.Priority,
+		"description": c.Description,
+	} {
+		if value != "" {
+			patch.Properties[key] = value
+		}
 	}
 
-	if c.Title != "" {
-		entity.SetString("title", c.Title)
-		changed = true
-	}
-	if c.Status != "" {
-		entity.SetString("status", c.Status)
-		changed = true
-	}
-	if c.Priority != "" {
-		entity.SetString("priority", c.Priority)
-		changed = true
-	}
-	if c.Description != "" {
-		entity.SetString("description", c.Description)
-		changed = true
+	// Check the FLAGS, not the resolved content: `--clear-body -B empty.md`
+	// is just as contradictory as `--clear-body -b text`, and testing the
+	// content would let the empty-file case through silently.
+	if c.ClearBody && (c.Body != "" || c.BodyFile != "") {
+		return errors.New("--clear-body cannot be combined with -b/--body or -B/--body-file")
 	}
 
 	bodyContent, err := c.getBodyContent()
 	if err != nil {
 		return err
 	}
-	if bodyContent != "" {
-		entity.Content = bodyContent
-		changed = true
+	switch {
+	case c.ClearBody:
+		patch.Content = new("")
+	case c.BodyFile != "":
+		// An explicitly-supplied file wins even when it is empty or all
+		// whitespace: the operator named a source, so honor it rather than
+		// silently degrading to "no updates specified". Use --clear-body to
+		// clear deliberately.
+		patch.Content = &bodyContent
+	case bodyContent != "":
+		patch.Content = &bodyContent
 	}
 
-	if !changed {
+	if patch.IsEmpty() {
 		return errors.New("no updates specified")
 	}
 
-	result, err := svc.EntityManager.UpdateEntity(ctx, entity)
+	result, err := svc.EntityManager.PatchEntity(ctx, c.ID, patch)
 	if err != nil {
+		if errors.Is(err, entitymanager.ErrEntityNotFound) {
+			return &entityNotFoundError{ID: c.ID}
+		}
 		return err
 	}
 

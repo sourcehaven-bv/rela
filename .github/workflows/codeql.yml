@@ -3,8 +3,10 @@ name: CodeQL
 on:
   push:
     branches: [develop]
+  # No `branches:` filter — see the same note in ci.yml. The filter matched the
+  # TARGET branch, so a PR stacked on a feature branch got no SAST at all, and
+  # its check list looked clean because it was empty.
   pull_request:
-    branches: [develop]
   schedule:
     # Weekly fallback run (Monday 10:00 UTC). Complements the
     # push/PR triggers so even branches that don't reach develop get
@@ -39,7 +41,7 @@ jobs:
         if: matrix.language == 'go'
         uses: actions/setup-go@v7
         with:
-          go-version: "1.26"
+          go-version: "1.26.6"
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4

@@ -67,6 +67,7 @@ func newTransitionManager(t *testing.T, guard statemachine.Guard) *entitymanager
 		Audit:           audit.Nop{},
 		ACL:             acl.NopACL{},
 		Transitions:     machines,
+		FieldGate:       entitymanager.AllowAllFieldGate{},
 		TransitionGuard: guard,
 	})
 	if err != nil {
@@ -196,6 +197,7 @@ func TestTransition_IllegalEntry_DoesNotPersist(t *testing.T) {
 		Audit:           audit.Nop{},
 		ACL:             acl.NopACL{},
 		Transitions:     machines,
+		FieldGate:       entitymanager.AllowAllFieldGate{},
 		TransitionGuard: allowAllGuard{},
 	})
 	if err != nil {

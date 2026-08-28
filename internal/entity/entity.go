@@ -8,14 +8,25 @@ package entity
 
 import (
 	"fmt"
+	"slices"
 	"time"
 )
 
 // InaccessibleReason explains why a property's value is unreadable.
 //
 // Today only [InaccessibleReasonGitCrypt] is produced; the type is an
-// enum so future sources of redaction (SOPS-style field encryption,
-// Lua-driven access control) can extend it without changing the shape.
+// enum so future sources of the same condition (e.g. SOPS-style field
+// encryption) can extend it without changing the shape.
+//
+// NOT for ACL field redaction — use [Entity.Redacted]. The two look
+// alike and are not: Inaccessible means the STORED BYTES cannot be read
+// by anyone here, so [Entity.IsLocked] blocks writes that would replace
+// ciphertext with a cleartext shell. ACL redaction means this PRINCIPAL
+// may not see a value that is otherwise intact and writable. Recording
+// a redaction here would make every gated read look locked — the
+// validator silently skips locked entities (internal/validator, which
+// reads through a gated reader), and the data-entry write path would
+// reject them with a git-crypt error message.
 type InaccessibleReason string
 
 const (
@@ -47,6 +58,32 @@ type Entity struct {
 	Content      string              `json:"content,omitempty"`
 	UpdatedAt    time.Time           `json:"updated_at,omitzero"`
 	Inaccessible []InaccessibleField `json:"inaccessible,omitempty"`
+
+	// Redacted names the properties withheld from the reading principal
+	// by field-level ACL (`visible:`), sorted. Populated by
+	// visibility.Redact, the one read-out choke point; empty on every
+	// ungated path.
+	//
+	// A PER-READER ARTIFACT, never content: it is not persisted, and
+	// canonical.HashEntity ignores it (like Inaccessible) so two
+	// principals compute the same content hash for the same entity.
+	//
+	// Distinct from Inaccessible — see [InaccessibleReason]. A redacted
+	// property is readable by SOMEONE and the entity stays writable, so
+	// this deliberately does NOT feed [Entity.IsLocked].
+	//
+	// Disclosing NAMES is intended: field-level redaction hides property
+	// values only, and the metamodel that declares those names is already
+	// served over /api/v1/_schema. The HTTP surface ships the same list as
+	// `_redacted` (DEC-T0XIWQ); this is the in-process equivalent.
+	Redacted []string `json:"redacted,omitempty"`
+}
+
+// IsRedacted reports whether the named property was withheld from the
+// reading principal by field-level ACL. False on ungated read paths,
+// where no policy was evaluated.
+func (e *Entity) IsRedacted(name string) bool {
+	return slices.Contains(e.Redacted, name)
 }
 
 // IsInaccessible reports whether the named property is in [Entity.Inaccessible].
@@ -176,6 +213,9 @@ func (e *Entity) Clone() *Entity {
 	if len(e.Inaccessible) > 0 {
 		clone.Inaccessible = make([]InaccessibleField, len(e.Inaccessible))
 		copy(clone.Inaccessible, e.Inaccessible)
+	}
+	if len(e.Redacted) > 0 {
+		clone.Redacted = slices.Clone(e.Redacted)
 	}
 	return clone
 }

@@ -52,12 +52,54 @@ src/components/   → Reusable UI components
 | `src/api/` | Typed API client functions (entities, schema, git, settings, etc.) |
 | `src/stores/` | Pinia stores: `schema` (metamodel/config), `entities` (CRUD + cache), `ui` (toasts, sidebar), `git` (status) |
 | `src/views/` | Route-level components: Dashboard, List, Form, Entity, Kanban, Graph, Search, Settings |
-| `src/components/forms/` | Form widgets: DynamicForm, FieldRenderer, RelationPicker, MarkdownEditor, SidePanel |
+| `src/widgets/` | The property-widget library + `registry.ts` (the type→widget dispatch). One widget per property type, each rendering both `mode: 'display'` and `mode: 'edit'` |
+| `src/components/forms/` | Form scaffolding: DynamicForm, FieldRenderer (resolves via the widget registry), RelationPicker, MarkdownEditor, SidePanel |
 | `src/components/lists/` | EntityList, FilterBar, Pagination |
 | `src/components/common/` | Sidebar, StatusBar, Badge, Toast, BackButton |
 | `src/composables/` | Vue composables: useKeyboardShortcuts, useEvents (SSE), useListKeyboard, useScopeNavigation, useBackTarget |
 | `src/styles/` | Shared CSS loaded from `main.ts` (e.g. `back-button.css` for the `.scope-nav-btn` class reused across EntityDetail, CustomView, and standalone BackButton) |
 | `src/types/` | TypeScript interfaces for entities, schema, and config |
+
+### Widgets render property values everywhere, including read-only
+
+A property value is rendered by a **widget** on every surface — forms, entity
+detail, view sections, list/table cells, and kanban cards. Widgets take a
+required `mode: 'display' | 'edit'` (no default, RR-UD1I) and own their
+read-only rendering. **Do not add a per-type `v-if` to a view.** A new property
+type should need a widget plus a routing entry, never a branch per surface.
+
+There are two routing entry points, and they are not interchangeable:
+
+- `defaultRegistry.resolve(name, propertyDef)` — form side, when you hold the
+  real schema entry.
+- `defaultRegistry.resolveFromHint(hint)` — view side, when you have wire-level
+  field metadata. Build the hint with `viewFieldRoutingHint` (view sections) or
+  `densePropertyRoutingHint` (list cells, kanban cards).
+
+**Dense surfaces are not detail views.** `densePropertyRoutingHint` exists
+because a table cell and a detail row have genuinely opposite contracts, and
+reusing the detail-view routing in a cell has already caused regressions
+(TKT-S9C14S):
+
+- **Empty renders blank, never a placeholder.** MultiSelectWidget's em-dash
+  (RR-UD2C) is right for a detail row and wrong for a cell — `formatCellValue`
+  documents that "blank table cells stay visually quiet". `isDenseEmpty` gates
+  this at the cell, before the widget sees the value.
+- **`list: true` must not override the type's formatter.** `defaultWidgetFor`
+  puts list first because the *edit* side needs a tag picker whatever the type;
+  on the display side that erases the formatter (a list-valued rrule rendered as
+  an em-dash). Non-enum lists route to preformatted text.
+- **`boolean` → text and `file` → text in cells**, deliberately: booleans stay
+  Cmd-F searchable, and FileWidget's `<img>` previews would be one network
+  request per cell.
+- **Resolve per column/field, not per cell** — `resolve()` walks a Map and can
+  `console.warn`, which at 200 rows is 200 warnings per render. See
+  `PropertyDisplay.vue`'s precomputed `rows` (RR-UD2A) for the pattern.
+
+The hint carries `preformatted`: true for passthrough widgets that render
+`String(value)`, false for widgets that own their display formatting. A new
+widget defaults to false (raw value), which is correct — the reason to add a
+widget is that it renders something text cannot.
 
 ### Key Stores
 
@@ -85,6 +127,106 @@ ESLint flat config with:
 - `max-lines: 500` warning for Vue files (catches god components)
 - Relaxed rules for test files (`no-explicit-any`, `no-non-null-assertion` allowed)
 
+## Pending and loading indicators
+
+Three indicators, one per class, with no overlap (TKT-TFSNBY). The class is
+decided by **who started the operation and whether the user needs to know it
+finished** — not by whether it blocks.
+
+| Class | Use | Delay / min |
+|---|---|---|
+| Navigation | `<ActivityBar>` in `App.vue` (already wired) | 250 / 300ms |
+| Explicit action (Save, Create, Search, Refresh) | `<PendingButton>` | 500 / 400ms |
+| Ambient (autosave) | `AutoSaveIndicator` + `useAutoSave` | see below |
+| Background revalidation (SSE refetch) | **nothing** | — |
+
+**The governing rule:** if an operation completes before its indicator's delay
+elapses, nothing is ever shown. rela normally talks to a local or
+well-connected server, so the common case is well under 100ms — meaning the
+app shows no loading UI at all most of the time. That is the intended
+behaviour, not a bug.
+
+**Delay scales with how invasive the indicator is**, not with how slow the
+request is. A peripheral bar that fades in can appear at 250ms; a button
+label mutating under the cursor waits 500ms. This is why published figures
+like Spectrum's and Primer's 1000ms exist — they are calibrated for a
+*spinner on a button*, and are wrong applied to a top bar.
+
+Timings live in `composables/pendingTimings.ts` (JS) and `styles/scales.css`
+(`--pending-fade`). They are tuned by feel; change them there, not at a call
+site.
+
+### Rules for new code
+
+- **Never wire an indicator straight to a boolean.** Put it behind
+  `useDelayedPending(source, {delay, minDuration})`. Without the gate a 40ms
+  request flashes for a few frames, which is the defect this replaced.
+- **Use `<PendingButton>` for any button that triggers a request.**
+  `pendingLabel` is required and must never be derived from `label` by string
+  munging — that breaks on the first irregular verb or translated string.
+  Use `…` (U+2026), not `...`.
+- **No spinners inside buttons, and no skeletons anywhere.** A label swap says
+  *what* is happening, survives `prefers-reduced-motion` with no fallback
+  needed, and is its own screen-reader announcement. Skeletons belong to the
+  1-10s band and never earn their place at a 1-2s worst case.
+- **Keep previous content rather than showing an indicator.** For pagination
+  and entity-to-entity navigation the right answer is usually *no* indicator:
+  hold what is on screen until the new data lands. Pinia Colada does this via
+  `placeholderData: (prev) => prev`; gate the template on `isPending` ("no
+  data yet"), never `isFetching` ("a request is in flight"), or SSE
+  revalidation will flash the spinner on every background refresh.
+  `DocumentView` / `DocumentsPanel` do the same by hand with
+  `v-if="loading && !docContent"` — **preserve that guard.**
+- **One indicator per user act.** A save shows the button state, never the
+  bar. Create-then-redirect is sequential: the button owns the save, the bar
+  takes over at the route change.
+- **`@keyframes spin` lives once, in `styles/pending.css`.** Do not
+  re-declare it in a component; it was previously copied ten times.
+- **A new spinner needs its OWN `prefers-reduced-motion` rule unless it is
+  unscoped.** `pending.css` suppresses `.spinner` because that class is
+  declared in App.vue's unscoped `<style>`. A class declared in a *scoped*
+  component `<style>` compiles to a `[data-v-*]` selector that outranks any
+  unscoped rule, so adding it to `pending.css` would silently do nothing —
+  put the rule beside the declaration instead, as `.spinner-sm`,
+  `.search-spinner`, `.cmdk-spinner` and `.entity-picker-spinner` now do.
+
+### Two sanctioned exceptions
+
+- **`ConfirmModal` keeps its own treatment.** It appends one character to a
+  caller-supplied `confirmLabel` (optional, defaults to `'Confirm'`) rather
+  than swapping verbs. Migrating it would push a required `pendingLabel`
+  through every `useConfirm()` caller to replace behaviour that is already
+  minimal-shift. This is a decision, not an oversight.
+- **`useAutoSave` has no entry delay, deliberately.** Its 0ms is measured
+  from *request start*, and its 800ms debounce has already filtered out the
+  fast and transient cases — **the debounce IS that class's delay.** Do not
+  "harmonise" it with the other two by adding one; you would make autosave
+  feel broken. It keeps its own `MIN_SAVING_VISIBLE_MS` / `SAVED_INDICATOR_MS`.
+
+### Accessibility
+
+`aria-disabled`, not native `disabled`, on a **primary** action while
+pending — native `disabled` drops focus to `<body>` mid-interaction.
+Secondary/Cancel buttons keep native `disabled`, because `aria-disabled`
+leaves a control activatable and "cancel an in-flight action" has no defined
+meaning. Since `aria-disabled` does not prevent activation, suppression is
+the component's job and must cover **keyboard as well as pointer** — on a
+destructive action a second activation is a second DELETE.
+
+### Testing
+
+jsdom has no layout engine, so the width-reservation guarantee cannot be
+asserted there. Unit tests assert the structural preconditions (both labels
+in the DOM, the inactive one hidden by `visibility` rather than removed);
+`e2e/tests/pending-indicators.spec.ts` measures the actual pixels. Both
+halves are mutation-verified — swapping `visibility: hidden` for
+`display: none` fails the e2e width tests, and replacing the navigation
+tracker with a counter fails `useNavigationPending.test.ts`.
+
+When asserting a computed style in e2e, remember the scoping rule above: a
+probe element built with `document.createElement` only picks up *unscoped*
+CSS, so it can verify `.spinner` but not any scoped class.
+
 ## CSS Architecture
 
 Global styles in `App.vue` use CSS custom properties for theming:
@@ -92,3 +234,164 @@ Global styles in `App.vue` use CSS custom properties for theming:
 - Light/dark mode via `:root.dark` class
 - Shared utility classes: `.btn`, `.btn-primary`, `.modal`, `.page-header`
 - Components use scoped styles with BEM-like naming
+
+### Design tokens: two files, different contracts
+
+| File | Holds | Contract |
+|------|-------|----------|
+| `src/styles/tokens.css` | **Colour only** | Copied byte-identically into the Go binary (`internal/dataentry/apps_tokens.css`) and served to custom apps as `_rela.css`. `TestAppTokensCSSInSyncWithFrontend` fails on drift. |
+| `src/styles/scales.css` | Spacing, radius, typography, elevation | SPA-only, except the four `--font-size-*` steps noted below. |
+
+Both are imported from `main.ts`. Keep them separate: `tokens.css` documents
+itself as theme-tokens-only, so dimension scales do **not** belong there.
+
+**Use the scales instead of hardcoding.** Prefer `var(--space-sm)`,
+`var(--radius-md)`, `var(--font-size-base)`, `var(--shadow-sm)` over raw px.
+Before this existed the SPA had 10 distinct border-radius values and 17 font
+sizes chosen per-component, so nothing lined up between components.
+
+**Focus rings are two shadows and a token, never a hand-written colour**
+(TKT-FRING7). The pattern is:
+
+```css
+.thing:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--focus-ring-gap),
+    0 0 0 4px var(--focus-ring);
+}
+```
+
+Use `--error-ring` in place of `--focus-ring` for a validation-failed field.
+Three things this encodes, each of which was a live bug before:
+
+- **A literal cannot follow the theme.** 26 rings were written as
+  `rgba(99, 102, 241, 0.1)` — an indigo that is not this app's accent, is
+  wrong in dark mode, and is unreachable by an operator's `custom.css`.
+- **The ring is opaque on purpose.** Every translucent value fails WCAG 2.2
+  §1.4.11's 3:1 minimum for non-text UI — the old ring measured 1.13:1. Don't
+  "soften" it back to a tint.
+- **The inner gap band is load-bearing, not decoration.** Focus rules usually
+  also set `border-color: var(--accent-color)`, which is the same colour as
+  the ring, so a single shadow abuts its own border at 1:1 and reads as one
+  thick band. A checked `CheckboxWidget` is the extreme case: accent ring on
+  an accent fill, i.e. invisible.
+
+`styles/focus-ring.css` restores a real `outline` under
+`@media (forced-colors: active)`, where Windows High Contrast discards
+`box-shadow` and would otherwise leave no focus indicator at all. It needs
+`!important` — a bare `:focus-visible` (0,1,0) loses to every
+`input:focus { outline: none }` (0,1,1) it must override. That is the one
+sanctioned `!important` in the tree; don't copy the pattern for styling.
+
+`styles/focusRing.test.ts` enforces all of this by reading the source, because
+Vitest does not apply scoped SFC styles — a mounted-component assertion on
+ring colour passes against no CSS at all.
+
+**`--font-size-{sm,base,lg,xl}` is a frozen cross-boundary contract.** The same
+four names and values are declared in Go, in `appTypographyCSS`
+(`internal/dataentry/apps_css.go`), and served to every custom app — TKT-PF4E6S
+froze them. Changing one side without the other makes an app's typography drift
+from the host UI it renders inside.
+
+`TestFrozenTypographyContractMatchesSPA` reads **both files off disk and
+compares them to each other**, so a revalue on either side fails. Don't
+"simplify" it into asserting Go against literals in the test file: that only
+proves Go is self-consistent and cannot see a change to `scales.css` at all.
+
+SPA-only sizes stay **outside** the ramp's naming. `--font-size-dense` (13px)
+is a role name, not a `-md` step, precisely so nobody reads it as part of the
+contract and copies it into a custom app — where it is undefined and would
+silently fall back to the inherited size. `TestAppCSSSource` pins the negative
+side (apps must not define it).
+
+**Token values are chosen to be value-preserving,** not to be the shortest
+ramp: `--radius-lg` is 8px because 8px is the card radius across the app, so
+adopting the token doesn't quietly flatten every card. When you add a token,
+prefer an existing value in the tree over a rounder number.
+
+Off-scale sizes (9/10/15/16/17/20/21/24/48px) are deliberately left as
+literals — each is rare and rounding them would change a size the author picked
+on purpose.
+
+### Property layout: one grid, one stylesheet
+
+`src/styles/properties-list.css` owns `.properties-list` / `.property-item`,
+shared by `SectionEditForm`, `PropertyDisplay` and `SidePanel`. **Do not
+redefine those classes in a component `<style>` block** — they used to be
+declared three times with three different `min-width` values, scoped so they
+could never actually share, which is why the detail page didn't align with
+itself.
+
+Layout is a **12-column grid** (TKT-5V8704). Every item spans all 12 unless the
+view/form config authors a `span:`, which arrives as a `--field-span` custom
+property. The default lives in exactly one place: the `var(--field-span, 12)`
+fallback. Don't emit a literal `12` from Go or a component — that creates a
+second copy of the default.
+
+`utils/fieldSpan.ts` is the only place a span becomes CSS. It clamps to 1-12
+and returns `undefined` for anything else, so config never reaches a stylesheet
+unvalidated. The server already rejects bad spans at load with a specific
+error; the frontend clamp is defence-in-depth for hand-crafted responses.
+
+Careful with grid children: in `DynamicForm`, `.form-fields > *` and
+`.form-field` have equal specificity, so both read `var(--field-span, 12)`. A
+bare `span 12` on the first rule would win on source order and silently swallow
+every authored span — which is exactly what happened the first time.
+
+### Cascade layers: all rela CSS lives in `@layer rela`
+
+A Vite `generateBundle` plugin wraps every emitted stylesheet in `@layer rela`.
+This is what lets an operator's `custom.css` win the cascade — an unlayered
+declaration outranks a layered one regardless of source order **or**
+specificity.
+
+The split is deliberate: `relaCssLayer.ts` holds the pure `wrapCss` logic (no
+`vite` import, unit-tested by `relaCssLayer.test.ts` beside it) and
+`vite.config.ts` holds the thin plugin binding, mirroring how
+`vite.editor.config.ts` defines its plugin locally.
+
+**Both files must stay at the `frontend/` root, in the `tsconfig.node.json`
+project.** They cannot move under `src/`: `vue-tsc -b` builds project
+references, so a file owned by *both* projects fails `TS6305` ("output file has
+not been built from source file") and one imported *across* the boundary
+without being listed fails `TS6307`. Neither reproduces on a warm tree — a stale
+`node_modules/.cache/tsc-node` hides `TS6305` — so verify config moves with a
+real `rm -rf node_modules && npm ci`, which is what CI runs.
+
+It is not cosmetic. The build emits ~19 stylesheets; 18 are route chunks that
+Vite appends to `<head>` at RUNTIME, i.e. *after* the operator's injected
+`<link>`. Before layering, operator CSS lost every equal-specificity tie against
+a route view — a skin worked on the dashboard and silently died on a list view.
+
+Rules:
+
+- **`:root` token blocks stay OUTSIDE the layer.** `wrapCss` splits them out.
+  `tokens.css` is byte-identical to `internal/dataentry/apps_tokens.css`, which
+  is served to custom apps in iframes as `_rela.css` — where there is no other
+  rela CSS to layer against, so layering would merely demote the tokens beneath
+  every unlayered rule an app author writes. `TestTokensCSSNeverLayered` pins
+  both copies; `TestBuiltCSSIsLayered` pins the split in the build output.
+- **Don't hand-write `@layer` in a component `<style>` block.** The wrap is
+  applied once at build time. A competing layer declared in source would
+  establish its own ordering against `rela`.
+- **`!important` INVERTS under layers.** rela's layered `!important` beats an
+  operator's unlayered `!important`. That is a documented, permanent property
+  (see `docs/customisation.md`), not a bug to "fix" by unlayering.
+- **The wrap is build-only.** `generateBundle` does not run under `vite` dev
+  server, so `npm run dev` has NO layer and a different cascade from production.
+  Verify cascade-sensitive changes against `npm run build`. (`npm run build:e2e`
+  IS a real `vite build`, so the e2e suite does exercise the layer — don't
+  "optimise" e2e onto the dev server.)
+
+### Testing `rela-` custom elements: SFC fixtures only
+
+`isCustomElement: (tag) => tag.startsWith('rela-')` is set in **both**
+`vite.config.ts` and `vitest.config.ts`, so `<rela-slot>` and `<rela-editor>`
+are treated as native custom elements rather than unresolved Vue components.
+
+⚠ A regression test for this **must use a `.vue` SFC fixture** (see
+`src/components/__tests__/fixtures/RelaSlotHost.vue`). Runtime-compiled string
+templates never see build-time `compilerOptions`, so a string-template test
+reports "Failed to resolve component" even when the config is correct — a false
+negative that already cost one debugging cycle.

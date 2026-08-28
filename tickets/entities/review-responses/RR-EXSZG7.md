@@ -1,0 +1,9 @@
+---
+id: RR-EXSZG7
+type: review-response
+title: SMTP password should live in .rela/secrets.yaml, not a mail-only password_env mechanism
+finding: 'Reviewer challenge during the local demo: why password_env rather than the existing rela secrets store? My justification was that .rela/ai.yaml uses api_key_env, but that argument is circular — ai.yaml''s api_key_env holds exactly the same kind of credential secrets.yaml stores as a plain value, so copying one precedent while ignoring the other was arbitrary. An SMTP password is no different in kind from an OpenAI token. My secondary objection (secrets.Load is keyed by script path and mail has no script) treated a temporary state as structural: TKT-DS1CR6 adds the Lua script transport, at which point mail IS a script consumer. The real cost was making an operator maintain two credential mechanisms for two kinds of secret.'
+severity: significant
+resolution: The password now comes from .rela/secrets.yaml under smtp_password, checked FIRST because that is where an operator keeps every other credential and therefore where they will look. password_env remains as a fallback for deployments that inject credentials as environment variables (containers, systemd units), which would otherwise have to materialize a plaintext file at deploy time; secrets.yaml wins when both are set. secrets.Load(relaDir, "") returns globals cleanly, so internal/secrets needed no change; the mail -> secrets arch-lint edge is declared with the rationale. Config.relaDir is unexported so it cannot be supplied from YAML, with WithRelaDir for programmatic construction. Validation no longer requires password_env alongside username. Four tests cover the sources and their precedence, and the Mailpit demo was re-run end-to-end reading the credential from a real secrets.yaml.
+status: addressed
+---

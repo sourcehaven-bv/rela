@@ -1,6 +1,6 @@
 // Package config provides read-only access to project-root configuration
 // files — the YAML/JSON files users check into their repo alongside
-// metamodel.yaml (data-entry.yaml, schedules.yaml, and so on).
+// schema.yaml (data-entry.yaml, schedules.yaml, and so on).
 //
 // The Loader interface is the swap boundary. FSLoader is the default
 // backend; remote or embedded deployments plug in by implementing Loader.

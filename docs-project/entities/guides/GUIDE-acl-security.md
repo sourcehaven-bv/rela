@@ -61,6 +61,42 @@ The `rela acl audit` linter (below) flags an un-gated membership
 relation — default or configured — as a high-severity finding, so run
 it after editing `acl.yaml`.
 
+You do not have to remember to run it, though: whenever rela loads a
+policy whose `assignments` confer a **privileged** role while the
+membership relation is un-gated — at server startup, and equally when a
+CLI command builds the full service bundle — it logs a prominent
+warning naming the relation and the fix. (Surfaces that inject their
+own ACL instead of loading the policy, such as the server's read-only
+mode, do not evaluate it and stay silent.) The server still boots — the
+gap is pre-existing, and in a single-team deployment where everyone who
+can write to the project is already trusted, it may be an acceptable
+risk you have consciously taken. The warning exists so it is a choice
+rather than an oversight.
+
+A group assigned a **read-only** role does not trigger the warning (or
+the audit finding): granting yourself read access to something you were
+going to be shown anyway is a visibility decision, not an escalation
+path. Both the warning and the linter evaluate the same predicate, so
+they never disagree.
+
+### This becomes a hard requirement with content states
+
+The tolerance above holds only while the worst case is over-granting
+inside a trusted group. It stops holding the moment the same policy
+also grants read on a **non-default world** — the content-states
+feature, where an entity has separate draft/review/published faces.
+There, an un-gated membership relation is no longer just a
+role-management weakness: it is a working mechanism for reading
+unpublished content, because self-assigning a role that can read the
+draft world is one relation write away.
+
+When world-shaped read grants ship, a policy that combines them with an
+un-gated membership relation will be **refused at load** with an error
+naming the fix, rather than booting with a warning. Deployments that do
+not use worlds are unaffected and keep today's behaviour. Gating the
+membership relation now costs one `requires_permission` line and means
+that change is a no-op for you.
+
 The companion section in `docs/server-security.md` carries the same
 guidance with more context on the broader threat model.
 
@@ -147,33 +183,30 @@ Two layers keep that from happening:
    grants only what the raw string is assigned — it never silently picks
    one of the duplicates.
 
-**Enforcement rigor by backend.** The write-time uniqueness check is
-exact on the single-writer backends (fsstore, memstore). On PostgreSQL,
-concurrent writers leave a narrow time-of-check/time-of-use window
-between the check and the durable write. Operators who need race-free
-enforcement add a partial unique index — which is also the recommended
-performance index for the lookup itself:
+**Enforcement rigor by backend.** The application-level uniqueness check
+reads the existing entities of the type and then writes — two separate
+operations with no lock held across them. On the single-writer backends
+(fsstore, memstore) that is race-free enough. Under concurrent writers,
+though, two racing writes with the same value could both pass the check
+and both commit, leaving a duplicate.
 
-```sql
-CREATE UNIQUE INDEX persoon_email_unique_idx
-  ON entities ((properties->>'email'))
-  WHERE type = 'persoon';
-```
+On **PostgreSQL** this window is closed automatically: rela maintains a
+partial unique index for every `unique: true` property (see
+[Derived schema](postgres-backend.md#derived-schema-unique-constraints)
+in the PostgreSQL backend guide), so a colliding write fails atomically in
+the database and surfaces as the same conflict the write path already
+reports. You do not add this index by hand — rela creates and maintains it
+from the metamodel. (If existing rows already contain duplicate values when
+you add `unique: true`, the index cannot be built; rela warns and leaves it
+unenforced until you clean up the duplicates — run `rela db reconcile
+--dry-run` to see what is blocking it.)
 
-With the index in place a colliding write fails atomically in the
-database and surfaces as the same conflict the write path already
-reports.
-
-**The write-time check is not atomic.** It reads the existing entities
-of the type, then writes — two separate operations with no lock held
-across them. Under concurrent writers (the data-entry server runs one
-goroutine per request) two racing writes with the same value can both
-pass the check and both commit, on *any* backend, not just PostgreSQL.
-The window is small, and the resolver's multi-match fallback (keep-raw,
-above) is the runtime backstop for the identity-key case — but the only
-*race-free* enforcement is the store-level unique index. If you rely on
-uniqueness for correctness rather than as a data-quality guard, add the
-index.
+This matters most for `unmatched_principal: provision`
+([below](#unknown-verified-identities-unmatched_principal)), which creates a
+stub user keyed on `principal_property`: the database index is what
+guarantees two servers provisioning the same subject at once produce exactly
+one user rather than a permanently ambiguous pair. On fsstore/memstore, which
+have no such index, keep provisioning to a single writer.
 
 **Two operator notes for `principal_property`:**
 
@@ -193,6 +226,104 @@ index.
   identifier is assigned — typically `everyone` only). This is
   fail-closed. Don't assume one `acl.yaml` grants the same authority on
   every transport.
+
+## Unknown verified identities (`unmatched_principal`)
+
+When a **verified** JWT principal's subject resolves to no
+`user_entity_type` entity (the `principal_property` lookup found no
+match), rela must decide what an identity it trusts but does not *know*
+may do. The `unmatched_principal` key chooses:
+
+```yaml
+user_entity_type: persoon
+principal_property: sub
+unmatched_principal: reject   # anonymous (default) | reject | provision
+```
+
+- **`anonymous`** (default, and the behavior when the key is absent): the
+  request proceeds. The principal keeps any roles its verified assertion
+  grants (see `asserted_role_assignments`), but has no resolved entity, so
+  local roles, ancestry, and `principal_property` grants do not apply. This
+  is the SSO-newcomer case — a user provisioned in the IdP but not yet in
+  the graph can still act on their asserted roles.
+- **`reject`**: a graph-is-authority posture. The entity graph is the
+  authority on who may mutate, so an unknown verified identity's **writes**
+  are denied (403). Its **reads** are unaffected — it still sees what its
+  asserted roles allow. Blocking reads too is a larger, separate choice and
+  is not what this does.
+- **`provision`**: lazy creation of a stub user entity. On the unmatched
+  principal's **first authorized write** (never a GET), rela creates a
+  minimal `user_entity_type` entity keyed on `principal_property = sub`,
+  then the triggering write proceeds as that newly-created identity. The
+  stub carries the verified `email`, `org_id`, and `org_slug` claims *only
+  when the user type declares those properties* (otherwise they are
+  dropped). The create is performed and audited under the built-in
+  `system:provisioner` identity — see the operator-responsibility notes
+  below.
+
+Load-bearing details:
+
+- **Scope is the verified-JWT data-entry write path only.** `reject`
+  keys on the fact that identity came from the fail-closed JWT gate AND
+  resolved to no entity. A `--principal-header` deployment, and the
+  CLI/MCP/scheduler entry points, are never subject to it — their
+  principals legitimately don't resolve to a `persoon` either, and a
+  blanket rule would wrongly deny them. It gates writes (CRUD, sync, and
+  Lua-action writes all funnel through the one write-authorization point);
+  reads and non-`/api/` paths are untouched.
+- **`reject` and `provision` require the lookup.** Both need
+  `user_entity_type` + `principal_property` set — otherwise "unmatched"
+  has no meaning (with the lookup disabled the resolver returns no-match
+  for *every* request, so every principal would look unmatched and be
+  rejected). Setting `reject` without them is a **load error**, not a
+  runtime foot-gun.
+- **`provision` additionally requires the `system:provisioner` grant.**
+  The stub create is ACL-authorized like any other write, so the policy
+  must grant `system:provisioner` `create` on the `user_entity_type`. The
+  `acl-provisioner-grant` migration injects exactly this grant (a
+  `create`-only role bound to `system:provisioner`) the same way the
+  scheduler grant works — run your migrations (`rela db migrate`, or the
+  migration runs on first store open) or add the grant by hand. A
+  `provision` policy **without** that grant is a **load error**, so a
+  misconfiguration fails at startup, not at the first unmatched request.
+- **`system:` identities cannot be asserted from a request.** Both
+  `system:provisioner` and `system:scheduler` are grantable assignment
+  keys, and the ACL matches a principal by raw username with no notion of
+  where it came from. The boundary check lives at the API instead: a
+  `system:`-prefixed username arriving via `--principal-header`,
+  `$RELA_DATAENTRY_USER`, or a *validly signed* JWT `sub` is refused and
+  logged, so neither grant can be borrowed by a web or MCP caller. See
+  "Reserved `system:` identities" in [GUIDE-server-security]. This is also
+  why a forged subject can never be provisioned into a stub's
+  `principal_property`.
+- **The provisioned stub is bare — identity, not authority.** The
+  `system:provisioner` role is `create`-only on the user type and nothing
+  else, so provisioning gives the principal a graph *identity* but **no
+  group membership or local roles**. This is deliberate: the on-create
+  cascade authorizes as `system:provisioner`, which cannot author
+  relations, so an on-create automation that adds a `member-of` edge would
+  fail. An on-create automation that only sets *properties* runs fine.
+  Group/local-role assignment for a newly-provisioned user is your
+  responsibility — via the IdP webhook, a reconciliation job, or an admin.
+  The stub is not inert in the meantime: the principal's **asserted roles
+  still apply** (see `asserted_role_assignments`), so it is not powerless
+  while it waits for group assignment.
+- **On a filesystem/memory backend, provisioning is best-effort unique.**
+  `principal_property` uniqueness is enforced check-then-write on fs/mem,
+  not atomically, so two processes (or the IdP webhook racing a lazy
+  provision) can in principle create two stubs for one subject. In one
+  process the write mutex serializes them and the loser re-resolves the
+  existing stub. A PostgreSQL backend closes the cross-process gap with a
+  real unique constraint. If two stubs ever do collide, resolution for that
+  subject becomes ambiguous until an operator merges them.
+- **The 403 discloses only that the identity is unmatched.** Like every
+  ACL denial on the data-entry write path, the body carries a
+  `rule_kind`/`reason` (here, `unmatched-principal` — "verified principal
+  resolves to no user entity") so the SPA's affordance contract stays
+  uniform. It does **not** reveal anything the caller doesn't already
+  know: an unmatched principal knows it has no entity. It does not
+  distinguish "no IdP account" from "no graph entity," and it exposes no
+  policy detail beyond the rule that fired.
 
 ## Roles from a verified assertion (`asserted_role_assignments`)
 
@@ -244,9 +375,16 @@ tenant a request *came from*; it does not constrain what that request
 could reach.
 
 This is a deliberate scope decision, not an oversight — ACL evaluation
-is additive (any role granting the verb allows it, and no rule can
-subtract), so a cross-cutting "deny unless org matches" needs its own
-design rather than a field check bolted onto the resolver. A test
+is additive (any role granting the verb allows it), so a cross-cutting
+"deny unless org matches" needs its own design rather than a field check
+bolted onto the resolver.
+
+Client attenuation is not a counter-example. It narrows, but it does so
+by compiling restrictions into plain allowlists at LOAD time, keyed on a
+claim whose value set the operator enumerates. Org enforcement cannot
+work that way: the comparison is between a claim and a property of the
+entity being evaluated, which is a per-row predicate — the thing the
+read path deliberately does not have. A test
 (`TestAssertedRoles_OrgIsNotEvaluated`) pins the absence of enforcement
 so it cannot be mistaken for an omission, and fails the day a partial
 org check is added.
@@ -256,6 +394,65 @@ containment edges plus `inherit_roles_through` scope roles to a subtree
 positively, and read-filtering follows for free. That works only if no
 role grants a broad wildcard read — a global `read: ["*"]` defeats any
 org scoping, in this design or any other.
+
+## Client attenuation (`client_baselines` / `scope_grants`)
+
+Client attenuation restricts a client BELOW the user it acts as (see
+GUIDE-acl-overview for the mechanics). Four properties are load-bearing.
+
+**Same trust boundary as asserted roles, and for the same reason.**
+`principal_type` and `scope` live in unexported fields on
+`principal.Principal`, populated only through `principal.Verified` /
+`VerifiedFrom` after signature verification. Never introduce a header
+trusted as a `principal_type` source.
+
+The direction of harm is inverted from a role, which is worth stating
+explicitly because it is easy to reason about backwards: forging a role
+*adds* access, while forging a `principal_type` selects a ceiling and
+therefore *removes* it. The dangerous manipulation here is not injecting
+a claim but **dropping** one — a principal whose `principal_type` is
+lost matches no baseline and is unrestricted. That is why every re-stamp
+of a Principal must carry the claims forward, and why the audit log
+records them.
+
+**A ceiling only ever narrows.** `effective = user_grants ∩ (baseline ∪
+scopes)`. Nothing an operator writes in `client_baselines` or
+`scope_grants` can grant capability the acting user lacks, so a mistake
+in one of these blocks fails toward *less* access. The one exception to
+that comfort is a ceiling that silently matches nothing — see the audit
+rules below.
+
+**This does not contradict the additive model.** Restrictions are
+compiled at LOAD time into ordinary allowlists: `redact: {person:
+[salary]}` becomes "the permitted field set for person, minus salary",
+and the runtime evaluator sees a plain allowlist exactly as before. No
+denial primitive exists at evaluation time, and none should be added —
+`ReadQuery` compiles to a `store.GraphQuery` pushed down into SQL, so a
+runtime deny would have to become a SQL predicate in every backend.
+
+**An inert ceiling is the failure mode to watch.** A wrong *grant*
+denies something and someone reports it. A wrong *restriction* just
+fails to restrict, and nobody files a bug about access they still have.
+`rela acl audit` therefore reports:
+
+- `A11-inert-client-baseline` — a baseline that narrows nothing.
+- `A13-baseline-matches-nothing` — an empty `applies_to`.
+- `A12-scope-reopens-nothing` — a scope re-opening what no baseline
+  closed (it appears to work, which is exactly the trap).
+- `B8` / `B9` — a ceiling naming an entity type or field the metamodel
+  does not declare. A typo in a *denial* is worse than in a grant: it
+  silently fails to protect.
+
+Run `rela acl map --principal <user> --as <type>` to see what a client
+actually gets, rather than inferring it from the policy file.
+
+### Not a substitute for gating the client itself
+
+stdio MCP has no authentication, so no verified claim exists to key a
+baseline on, and its read path does not yet route through the ACL read
+gate at all (TKT-G3PPD). Client attenuation makes the *policy*
+expressible; it does not by itself restrict a locally-launched
+`rela mcp`.
 
 ## Fail-loud on malformed `acl.yaml`
 
@@ -360,7 +557,7 @@ deny models:
 
 - **Per-entity responses** (TKT-VQGN): deny is shaped exactly like
   not-found — a 404 indistinguishable from a nonexistent id.
-- **Aggregates** (TKT-VMD8): lists, sidebar counts, and pagination
+- **Aggregates** (TKT-VMD8): lists and pagination
   metadata are shaped exactly like "the hidden entities don't exist" —
   filtered sets, filtered totals, no cardinality residue.
 
@@ -403,7 +600,7 @@ operator debugging.
   surfaces (e.g. nested includes in a list response) MUST go through
   the same gate.
 
-### Lists, sidebar counts, pagination (TKT-VMD8)
+### Lists and pagination (TKT-VMD8)
 
 Anything that enumerates entities of a type returns only the visible
 subset, with no leak surface revealing hidden cardinality. The list
@@ -425,14 +622,6 @@ Every pagination surface derives from the post-filter total:
 `X-Page`, `X-Per-Page`, and the `Link` header rels — `rel="next"` is
 absent when no *visible* next page exists, even when hidden pages
 exist after it.
-
-Sidebar counts go through the same gate, single-mode: there is no
-"ACL off" code branch (a count path that only runs under ACL is a
-count path that silently drifts). `listCount` / `kanbanCount` always
-resolve the read scope, then `GraphCount` (no config filters) or
-GraphQuery-then-filter (with config filters). Ordering is always
-ACL → config filter → count, so a sidebar badge can never disagree
-with the list it links to.
 
 ### Invariants downstream maintainers MUST preserve (aggregates)
 
@@ -476,7 +665,7 @@ Key properties:
   `{"*": allow-all}`, so entities whose type is absent from the
   metamodel stay searchable exactly as before ACL existed. Under a
   policy, no wildcard is emitted — an off-metamodel type (removed
-  from `metamodel.yaml` while its files remain) is hidden from
+  from `schema.yaml` while its files remain) is hidden from
   search rather than leaked.
 - **The result limit applies after visibility.** `/_search` returns
   up to 1000 results; the bound counts *visible* hits. A
@@ -529,20 +718,59 @@ caches from leaking one principal's view to another:
 ### Sidebar menu structure is principal-independent
 
 The sidebar's *structure* (groups, labels, links) reveals metamodel
-shape, not data shape, and is served identically to every principal —
-only the *counts* are gated. Hiding whole menu entries per principal
-is a possible future tightening, deliberately not done here: the
-metamodel is not a secret (it's served by `/api/v1/_schema`), and a
-divergent menu per principal complicates SPA caching for no
-confidentiality gain today.
+shape, not data shape. It is served identically to every principal
+**except** for entries an operator explicitly marks with a
+`permission:` (see GUIDE-data-entry, "Hiding entries a user cannot act
+on"). The sidebar carries no per-principal data of its own.
 
-### Sidebar config-filter performance caveat
+That exception is a **UX convenience and is not a confidentiality
+control** — the distinction matters, because the reasoning that once
+argued against per-principal menus still holds:
 
-A sidebar list with `filters:` evaluates them in-memory after the ACL
-GraphQuery — cost scales with the principal's visible-set size. For
-visible sets beyond ~10k entities per type, prefer narrowing the nav
-entry to a dedicated entity type, or file the follow-up that pushes
-config filters down into GraphQuery.
+- The metamodel is not a secret; it is served by `/api/v1/_schema`.
+- Neither is the navigation config: `/api/v1/_config` serves the whole
+  tree, `permission:` values included, to every principal.
+- A hidden entry's target enforces exactly what it enforced before. Type
+  the URL and you reach it; a list still returns its ACL-scoped rows,
+  which for a principal permitted to read none of them is an empty list.
+
+So `permission:` on a nav entry buys tidiness, not protection. Never
+reach for it in place of a read grant, and never assume an entry's
+absence means a principal cannot get at what it points to.
+
+**Dashboard cards work the same way** (TKT-53KICM). A `permission:` on a
+`dashboard.cards[]` entry omits that card from `/api/v1/_dashboard` for
+non-holders, on exactly the reasoning above: the card's query already runs
+through the ACL-scoped search path, so a principal who may read none of the
+matching entities already sees a card reading `0`. Hiding it removes a useless
+tile and nothing more — the query remains runnable, returning precisely the
+rows it always did.
+
+The card list needs its own endpoint because `/api/v1/_config` is
+principal-independent by design and must stay that way: it keeps serving the
+whole `dashboard:` block, `permission:` values included, to everyone.
+`/api/v1/_dashboard` is the per-principal view; `_config` is the config. Do not
+collapse them.
+
+The same holds for the rest of the app's configuration.
+`/api/v1/_config` serves lists, views, kanbans, documents and
+navigation in full — including a document's `permission:` value. Your
+`data-entry.yaml` is an operator-authored file that lives in your
+repo, so its keys, script paths and permission names are already
+disclosed; withholding them from the API would conceal nothing. A
+capability a principal lacks is refused at the endpoint with a **403
+that names it**, not hidden behind a 404 pretending it does not
+exist — an operator reading that error can act on it.
+
+Entity ids are the opposite case, and the distinction is the whole
+point: there the uniform 404 is required, because whether an entity
+exists is a genuine secret.
+
+Note this section rejects per-principal menu hiding as a *security*
+measure. Hiding entries a user cannot act on is still wanted as a
+**UX** improvement and is tracked separately; if that lands, the
+filter is an affordance — the endpoints keep enforcing independently,
+and a hidden entry stays reachable by direct URL.
 
 ## ACL fail-loud and middleware scope
 
@@ -585,8 +813,44 @@ alongside the write methods, all reading raw. That keeps the privilege
 scoped to a closure and visible at the call site, and it leaves an
 `acl-bypass-read` audit row, where relaxing a role in `acl.yaml` would
 widen access for every read on every path with nothing in the log to
-show for it. It requires operator opt-in (`allow_acl_bypass: true` on
-the action) — see the Lua scripting guide.
+show for it. It requires operator opt-in (`allow_acl_bypass:` on the
+action, valued `read`, `write` or `read+write`) — see the Lua scripting
+guide.
+
+### An elevated document is trusted code
+
+A `documents:` entry may also declare `allow_acl_bypass: read`, so its
+render can compute over rows the reader cannot see — a benchmark against
+peers whose records are invisible to them. No `acl.yaml` role expresses
+that: granting enough to *compute* the benchmark grants enough to
+*enumerate* the subjects.
+
+Understand what that gate means, because it is not what it looks like:
+
+> `permission:` on an elevated document grants **"may read whatever this
+> script reads"** — not "may view this report".
+
+Once the render elevates, the ACL no longer bounds its **output**; only
+the script's own discipline does. A script that prints the rows it read,
+rather than a statistic derived from them, has published them to every
+holder of that permission. Nothing in the system prevents this, and
+nothing can: the aggregation *is* the confidentiality boundary.
+
+So the mitigation is procedural, and it must actually happen:
+
+- **Review the `bypass_acl` block before deploying.** That review is the
+  control. The `allow_acl_bypass:` key exists in config precisely so a
+  reviewer sees which scripts need it.
+- **Treat the permission as equivalent to the read grant** the script
+  performs, when deciding who holds it.
+- **Elevated reads are audited** (`acl-bypass-read`), so use is
+  answerable after the fact — but the row records *that* raw reads
+  happened, not what reached the page.
+
+An elevated document additionally requires a configured `acl.yaml`: under
+no policy the permission names a capability nothing can withhold, so the
+render is refused rather than served to everyone. Writes are refused
+outright — a render is a `GET`.
 
 ## Property-level redaction (`visible:`)
 
@@ -616,6 +880,38 @@ the hidden property redacted from its body. The property-level conformance
 suite (`storetest.RunVisibleFieldSearchTests`) pins this across all
 backends.
 
+**Relation meta is redacted the same way.** A relation carries its own
+property map (`meta`), and a role's `relations:` grant can add a `visible:`
+block beside its write-side `fields:` block to redact those per-field:
+
+```yaml
+roles:
+  owner:
+    relations:
+      ticket:
+        - relation: employed-by
+          visible:
+            - field: salary          # only `salary` visible; every other
+                                      # meta key on the edge is closed-world hidden
+            - field: approval_note
+              when: "has_role('hr')"  # conditional, same predicate vocabulary
+```
+
+The block is keyed on the relation's **source** entity type (the `from`
+side owns the grant), and redaction runs on every browser-reachable relation
+read shape — the `/relations` map, the single-relation-type GET, and both the
+outgoing and incoming direction (an incoming edge resolves its grant against
+the true source, not the entity being viewed). It also runs on relation
+history (see below). The machine-to-machine sync channel (`/api/sync/`) applies
+the **same** redaction by reading through `/api/v1` rather than a private channel
+(TKT-8P1TM7) — see "Sync is a client of the authorized API" below. The deny universe is the edge's actual
+meta keys, so a free-form key never declared in the metamodel is redacted
+too — a caller cannot smuggle a secret past the closed-world by using an
+undeclared property name. Relations have no display-title channel, so there
+is no `_title` fallback to worry about; the redaction is a straight
+value-omission from `meta`. A relation type with no `visible:` block emits
+its meta unchanged (permissive default).
+
 ## What still leaks (deferred)
 
 - **`/api/v1/_position` per-id semantics** — `_position` is gated on
@@ -632,14 +928,80 @@ backends.
   neither the entity-level read gate nor `visible:` redaction; they
   return full entity bodies. The MCP server is local-only (stdio), so
   this is an accepted gap at this stage.
+- **Markdown body (`content`) is not field-redacted, on any read path.**
+  `visible:` is a **property-values** guard: it omits hidden *property* and
+  *relation-meta* values from the wire. It makes no claim over the markdown
+  **body** — there are no body-level guards anywhere in rela (the web read
+  path, the sync fetch, and history all serve the full body). A deployment
+  that duplicates a hidden property's value into the body (e.g. a rendered
+  "summary" line) discloses it to any principal who may row-read the entity.
+  Covering the body would be a new cross-path mechanism; it is deliberately
+  out of scope (RR-ATFNM1).
 
 For threat-modelling purposes today: per-entity GET, write, include,
-list, sidebar, pagination, global-search, and the SSE event stream are
-all read-gated (the SSE feed per-type, see above); `visible:` redaction
-applies to every data-entry HTTP read body; and `/_search` cannot be
-used as a hidden-field oracle. The remaining read-side gap is the MCP
-transport (TKT-G3PPD); within the data-entry server every read channel a
-browser can reach is tight.
+list, pagination, global-search, the SSE event stream, and the
+machine-to-machine sync channel are all read-gated (the SSE feed per-type,
+see above); `visible:` property/meta redaction applies to every data-entry
+HTTP read body — and **sync inherits it by reading through `/api/v1`**
+(TKT-8P1TM7); and `/_search`
+cannot be used as a hidden-field oracle. The remaining read-side gaps are
+the MCP transport (TKT-G3PPD) and the markdown body (never field-redacted,
+by design — see above); within the data-entry server every property/meta
+read channel a browser or a replica can reach is tight.
+
+### Sync is a client of the authorized API (a "fancy browser")
+
+The machine-to-machine sync channel (`/api/sync/`, FEAT-NJ9FEN) used to be a
+**second content channel** into the store — its own record GET/PUT/DELETE with
+its own row-level gate, bypassing `visible:` field redaction on reads and the
+field-write ACL on writes. TKT-8P1TM7 retired that channel: sync now reads AND
+writes through the **same authorized `/api/v1` API** the SPA uses, so there is
+one content channel with one authorization decision. A replica is a client with
+no authority of its own — the remote is always the authoritative primary.
+
+- The **feed** (`/api/sync/manifest`) is the only sync-specific surface that
+  remains — content-free and row-gated. It lists `{id, type, op, deleted}` per
+  changed row filtered by the same read verdict, carrying no property or meta
+  values. A row a principal cannot read is omitted (the cursor still advances
+  past it, so the client never re-polls a hidden tail forever). A row the
+  principal can read but is field-redacted on **still appears** — the feed has
+  no field-level decision because it carries no fields. It stays because a plain
+  GET cannot express a tombstone (absence-from-a-list is not an explicit delete).
+- **Reads** go through `/api/v1` GET, inheriting row-gating AND `visible:`
+  redaction — the field-redaction gap closes as a consequence of there being one
+  content channel, not a bolted-on step. A single-relation `/api/v1` read
+  (RR-SYNCR1) serves the relation body + a relation-level ETag, field-meta
+  redacted and **fail-closed** (empty meta if the source is gone), mirroring
+  relation history.
+- **Reads that feed a local write are safe** because the `/api/v1` response
+  carries `_redacted` — the *names* (never values) of the properties withheld by
+  field ACL (DEC-T0XIWQ). A replica applying a pulled change patches only the
+  fields it can see: a name present in `_redacted` is **hidden, not deleted**, so
+  the replica leaves its own local copy untouched; a field in neither
+  `properties` nor `_redacted` is a genuine delete. A redacted read therefore
+  drives a faithful replica without ever erasing hidden values the replica isn't
+  entitled to.
+- **Writes** go through the `/api/v1` write path, so a push is enforced by the
+  same field-write ACL (`validateFieldWrite`) as a human edit, and a redacted
+  replica pushes a PATCH of visible fields only — it never names (and so never
+  erases) the primary's hidden fields. Ids are the primary's to mint: a
+  locally-created record is pushed under a temporary id, the primary returns the
+  real id, and the replica renames its local doc to match.
+- **Conflict detection** uses the primary's ETag as an opaque `If-Match` token —
+  the replica stores what the primary returned and echoes it back, comparing only
+  for equality to detect "the primary moved." A conflict halts the record and is
+  surfaced to the operator to resolve (`--force`), not auto-reconciled.
+
+Two residual notes for a deployment. (1) The markdown **body** is not
+field-redacted on any path (see "What still leaks" above), so sync replicates
+full bodies — the same as a web GET. (2) A principal who **loses** row access
+keeps whatever it already replicated (the row simply stops appearing and its GET
+404s — it cannot refresh, but the last copy is not recalled; "you could have made
+a copy"). A manifest-listed id that 404s on fetch (access lost between feed and
+fetch) means *skip and advance* — the replica must NOT mirror a delete from a
+bare 404, only from an explicit feed tombstone (RR-SYNCR3). Scope: this is the
+CLI replica↔remote mode; a server↔server mode is deliberately deferred (see the
+ticket).
 
 ## Version history read gating (`history:read`)
 
@@ -723,6 +1085,36 @@ entirely (the snapshot already contains every field; the reveal just skips the
 strip). Grant it only to trusted audit/compliance roles — it exposes fields the
 live `visible:` policy would redact. A non-holder always sees the fail-closed
 redaction described above.
+
+**Relation history is governed by the current live world — deliberately unlike
+entity history.** Where *entity* history reconstructs the moment of capture and
+adds a `history:read-redacted` audit reveal, *relation* history takes a simpler,
+stricter stance: a relation's meta is redacted against **today's** `visible:`
+policy evaluated against the **live source entity**, and the version's frozen
+values are never served on their own terms.
+
+- **Source entity live** → redact per-field against the current policy and the
+  live source, exactly as a live relation GET. Reader-side access is live in both
+  directions: lose the role that granted a field today and you lose it in history
+  too; gain the role and you gain it. (This is the point — being removed from a
+  team takes effect on history, not just on live reads. A copy the reader already
+  made is a separate matter; rela simply stops *serving* it.)
+- **Source entity deleted** → **no meta is served, to anyone.** The thing that
+  grants access to a relation's properties is the live relation; once its source
+  is gone there is nothing to evaluate current ACL against (and the version row
+  stores the source *id*, not its *type*, so the type is unrecoverable — the
+  caller-supplied URL `{fromType}` is never trusted, or a principal could spoof a
+  type their own role has a favorable grant for). There is deliberately **no
+  `history:read-redacted` reveal** for a deleted relation: gone is gone. The
+  timeline/attribution metadata (version, op, who, when) still serves — only the
+  ACL-governed property values follow this rule.
+
+(The version rows themselves are *retained* — history is append-only, and a
+deleted source's relation-version rows persist until an operator runs the audited
+`relation-history-purge`. "Not served" is an access guarantee, not an erasure
+one; erasure is the separate operator tool. Relation restore reads the raw frozen
+meta, never the redacted view — a redacted read-modify-write would erase the
+caller's hidden meta on save.)
 
 ## Command execution gating (`command:*`)
 
@@ -837,11 +1229,13 @@ denied `to` could enumerate `from`'s outgoing relation histories and learn about
 the hidden `to` endpoint. A deleted relation (endpoints gone) uses the same global
 `history:read`; a non-holder gets the same 404 as a nonexistent relation.
 
-Note that relations have **no field-level (`visible:`) redaction** anywhere today
-— a live relation GET returns its properties in full — so relation history
-exposes exactly what a live relation read exposes, no more. A relation
-field-redaction path is a separate follow-up; the dual-endpoint gate is what
-bounds relation-history visibility today.
+Relations DO support field-level (`visible:`) redaction (TKT-B1F5Q1) — on the
+live relation GET and in history. Relation history exposes exactly what a live
+relation read exposes, no more, and its history redaction is governed by the
+**current live world** against the **live source** (a deleted source serves no
+meta at all). See the property-level-redaction section above; the dual-endpoint
+gate bounds *which relations' histories* are reachable, and the live-world rule
+bounds *which meta fields* within a reachable one.
 
 ## Where to read next
 

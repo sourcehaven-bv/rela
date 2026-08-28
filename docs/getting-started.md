@@ -53,7 +53,7 @@ rela init
 
 This creates:
 
-- `metamodel.yaml` - Defines your entity types and relations
+- `schema.yaml` - Defines your entity types and relations
 - `entities/` - Where entity markdown files are stored
 - `relations/` - Where relation markdown files are stored
 - `.rela/` - Cache directory (automatically added to `.gitignore`)

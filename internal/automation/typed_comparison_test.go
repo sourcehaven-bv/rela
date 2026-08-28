@@ -1,6 +1,7 @@
 package automation
 
 import (
+	"context"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -37,10 +38,10 @@ func TestEngine_WhenCondition_IntegerComparisonIsNumeric(t *testing.T) {
 	ent := buildEntity(testutil.Entity("bug").With("count", 10))
 
 	t.Run("with metamodel: numeric comparison fires", func(t *testing.T) {
-		engine := NewEngineFromMetamodel(intPropMeta(), nil)
+		engine := mustEngine(t, intPropMeta())
 		engine.automations = []Automation{auto}
 
-		result := engine.Process(Event{Type: EventEntityCreated, Entity: ent})
+		result := engine.Process(context.Background(), Event{Type: EventEntityCreated, Entity: ent})
 		if result.PropertiesSet["status"] != "escalated" {
 			t.Errorf("expected count>9 to match numerically for count=10; PropertiesSet=%v", result.PropertiesSet)
 		}
@@ -52,7 +53,7 @@ func TestEngine_WhenCondition_IntegerComparisonIsNumeric(t *testing.T) {
 		// built without a metamodel keep this string-only behavior.
 		engine := NewEngine([]Automation{auto})
 
-		result := engine.Process(Event{Type: EventEntityCreated, Entity: ent})
+		result := engine.Process(context.Background(), Event{Type: EventEntityCreated, Entity: ent})
 		if result.PropertiesSet["status"] == "escalated" {
 			t.Error("string-only engine unexpectedly compared numerically")
 		}
@@ -74,10 +75,10 @@ func TestEngine_Validation_IntegerComparisonIsNumeric(t *testing.T) {
 
 	ent := buildEntity(testutil.Entity("bug").With("count", 10))
 
-	engine := NewEngineFromMetamodel(intPropMeta(), nil)
+	engine := mustEngine(t, intPropMeta())
 	engine.automations = []Automation{auto}
 
-	result := engine.Process(Event{Type: EventEntityCreated, Entity: ent})
+	result := engine.Process(context.Background(), Event{Type: EventEntityCreated, Entity: ent})
 	if !result.HasWarnings() {
 		t.Error("expected a warning: count=10 is not < 9 numerically")
 	}
@@ -95,11 +96,48 @@ func TestEngine_WhenCondition_UnknownPropertyFallsBackToString(t *testing.T) {
 
 	ent := buildEntity(testutil.Entity("bug").With("adhoc", "yes"))
 
-	engine := NewEngineFromMetamodel(intPropMeta(), nil)
+	engine := mustEngine(t, intPropMeta())
 	engine.automations = []Automation{auto}
 
-	result := engine.Process(Event{Type: EventEntityCreated, Entity: ent})
+	result := engine.Process(context.Background(), Event{Type: EventEntityCreated, Entity: ent})
 	if result.PropertiesSet["status"] != "tagged" {
 		t.Errorf("undeclared property should still match via string fallback; PropertiesSet=%v", result.PropertiesSet)
 	}
+}
+
+// TestEngine_WhenCondition_UntranspilableClauseKeepsLegacyVerdict pins
+// RR-G9KT8H: a regex operator on an INTEGER property is something
+// filter.Match rejects (regex is string-only), so the automation must
+// NOT fire. The predicate transpiler can't express regex-on-int either,
+// so matchTyped falls back to filter.Match — it must reproduce that
+// reject, NOT drop to the string matcher (which would happily regex the
+// stringified "5" and wrongly fire).
+func TestEngine_WhenCondition_UntranspilableClauseKeepsLegacyVerdict(t *testing.T) {
+	auto := newAutomation().
+		OnCreate("bug").
+		When("count=~[0-9]"). // regex on an integer property
+		Set("status", "escalated").
+		Build()
+
+	ent := buildEntity(testutil.Entity("bug").With("count", 5))
+
+	engine := mustEngine(t, intPropMeta())
+	engine.automations = []Automation{auto}
+
+	result := engine.Process(context.Background(), Event{Type: EventEntityCreated, Entity: ent})
+	if result.PropertiesSet["status"] == "escalated" {
+		t.Error("regex on an integer property must NOT fire (filter.Match rejects it); " +
+			"the string-fallback verdict flip is not fixed")
+	}
+}
+
+// mustEngine builds an engine from a metamodel, failing the test if a
+// definition cannot be honored as written.
+func mustEngine(t *testing.T, meta *metamodel.Metamodel) *Engine {
+	t.Helper()
+	e, err := NewEngineFromMetamodel(meta, nil)
+	if err != nil {
+		t.Fatalf("NewEngineFromMetamodel: %v", err)
+	}
+	return e
 }

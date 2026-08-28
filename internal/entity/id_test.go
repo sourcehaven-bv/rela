@@ -1,6 +1,7 @@
 package entity
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -485,6 +486,111 @@ func TestCalculateIDLength(t *testing.T) {
 		got := calculateIDLength(tt.entityCount)
 		if got != tt.wantLength {
 			t.Errorf("calculateIDLength(%d) = %d, want %d", tt.entityCount, got, tt.wantLength)
+		}
+	}
+}
+
+// TestValidateID pins the single ID grammar. See the ValidateID godoc for
+// why each rule exists; this test exists so a future "simplification" of the
+// character class fails loudly rather than silently widening what can become
+// a filename, a relation-key component, or a command-line argument.
+func TestValidateID(t *testing.T) {
+	valid := []string{
+		"TKT-001",
+		"FOO-BAR",
+		"a",
+		"ai-integration",    // the manual-ID slug convention
+		"data_entry_server", // underscores are allowed
+		"A1",
+	}
+	for _, id := range valid {
+		t.Run("valid/"+id, func(t *testing.T) {
+			if err := ValidateID(id); err != nil {
+				t.Errorf("ValidateID(%q) = %v, want nil", id, err)
+			}
+		})
+	}
+
+	invalid := []struct {
+		name string
+		id   string
+		want string // substring the message must name
+	}{
+		{"empty", "", "empty ID"},
+		{"forward slash", "foo/bar", "path separator"},
+		{"backslash", "foo\\bar", "path separator"},
+		{"traversal", "..", "path traversal"},
+		{"NUL", "foo\x00bar", "control character"},
+		{"newline", "foo\nbar", "control character"},
+		{"tab", "foo\tbar", "control character"},
+		{"DEL", "foo\x7fbar", "control character"},
+		{"consecutive dashes", "FOO--BAR", "consecutive dashes"},
+
+		// An identifier must open with a letter or digit; "-" reads as an
+		// option flag and "_" as a hidden/private marker.
+		{"leading dash", "-rf", "must start with a letter or digit"},
+		{"leading dash word", "-oevil", "must start with a letter or digit"},
+		{"leading underscore", "_private", "must start with a letter or digit"},
+
+		// ASCII-only: NFC/NFD divergence across platforms, plus homoglyphs.
+		{"latin accent", "café", "invalid characters"},
+		{"cjk", "日本語", "invalid characters"},
+		{"cyrillic homoglyph", "аdmin", "invalid characters"},
+		{"fullwidth", "ＴＫＴ", "invalid characters"},
+		{"zero width space", "a\u200bb", "invalid characters"},
+		{"bidi override", "a\u202eb", "invalid characters"},
+
+		// Shell-hostile characters, excluded by the character class.
+		{"space", "a b", "invalid characters"},
+		{"semicolon", "a;b", "invalid characters"},
+		{"command substitution", "a$(id)", "invalid characters"},
+		{"backtick", "a`id`", "invalid characters"},
+		{"glob", "a*b", "invalid characters"},
+		{"quote", "a'b", "invalid characters"},
+		{"leading dot", ".git", "invalid characters"},
+	}
+	for _, tt := range invalid {
+		t.Run("invalid/"+tt.name, func(t *testing.T) {
+			err := ValidateID(tt.id)
+			if err == nil {
+				t.Fatalf("ValidateID(%q) = nil, want error", tt.id)
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("ValidateID(%q) = %q, want message containing %q", tt.id, err, tt.want)
+			}
+		})
+	}
+}
+
+// TestValidateID_RejectsReservedPrincipalSeparator pins a property that
+// internal/dataentry's reserved-principal guard (TKT-9PCL7D) silently depends
+// on: an entity ID can never contain ':'.
+//
+// The dependency is indirect, which is exactly why it needs a test here. When
+// acl.yaml sets `principal_property`, resolvePrincipalEntity SUBSTITUTES the
+// acting Principal.User with the resolved entity's ID — after the boundary
+// check that rejects `system:`-prefixed names has already run. So the ID
+// becomes an acting identity that no longer passes through that guard.
+//
+// Today that is safe only because this grammar forbids ':', making it
+// impossible to author an entity whose ID is `system:scheduler`. If the pattern
+// were ever widened to admit ':', such an entity would be stamped as the acting
+// principal and inherit whatever acl.yaml grants that name — which, after the
+// DEC-O59WM4 migration, is `read: ["*"]`.
+//
+// Widening the grammar is not forbidden; doing so without revisiting
+// internal/dataentry/router.go's resolvePrincipalEntity is.
+func TestValidateID_RejectsReservedPrincipalSeparator(t *testing.T) {
+	for _, id := range []string{
+		"system:scheduler",
+		"system:provisioner",
+		"PERS-1:2",
+		"a:b",
+	} {
+		if err := ValidateID(id); err == nil {
+			t.Errorf("ValidateID(%q) = nil, want an error — an ID containing ':' "+
+				"could be substituted as an acting principal and collide with a "+
+				"reserved system: identity (TKT-9PCL7D)", id)
 		}
 	}
 }

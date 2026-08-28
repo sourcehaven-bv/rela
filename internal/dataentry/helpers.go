@@ -24,6 +24,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/htmlutil"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/queryplan"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/search/searchparser"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -68,26 +69,73 @@ func resolveFilterVariablesInList(value string) string {
 	return strings.Join(parts, ",")
 }
 
+// TODO(TKT-HFEKVN): this list is the THIRD copy of the same layout set —
+// metamodel.ParseDateValue and predicate.parseDateLiteral hold the other two,
+// and their comments say they mirror each other by hand. They already disagree:
+// this one accepts minute precision and ignores a property's declared format:
+// (compareValues gets two bare strings and has no PropertyDef in scope), so a
+// custom-format date compares correctly under --filter and incorrectly here.
+//
+// temporalLayouts are the layouts a filter value may use, tried in order.
+// A bare date is listed first so it keeps winning for date-typed properties;
+// the datetime layouts exist because a `datetime` property stores RFC3339 and
+// comparing it against a window bound previously fell through to lexicographic
+// string comparison (or errored against a bare-date bound), which silently
+// excluded every entity — see TKT-IG54YO.
+var temporalLayouts = []string{
+	"2006-01-02",
+	time.RFC3339,
+	"2006-01-02T15:04:05Z",
+	"2006-01-02T15:04:05",
+	"2006-01-02T15:04",
+}
+
+// parseTemporal parses value as a date or datetime, returning the instant it
+// denotes. A bare date denotes midnight UTC, so a bare-date bound compared
+// against a datetime is a start-of-day bound — callers wanting an inclusive
+// upper bound should use a half-open range against the next day rather than
+// relying on end-of-day semantics.
+//
+// Nil: never returns a nil time — ok=false means the value is not temporal.
+func parseTemporal(value string) (t time.Time, ok bool) {
+	for _, layout := range temporalLayouts {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed, true
+		}
+	}
+	return time.Time{}, false
+}
+
 // compareValues compares two values using the given comparison operator
 // (lt, lte, gt, gte). It uses strict same-type comparison: if both sides
-// parse as dates, dates are compared; if both parse as numbers, numbers
-// are compared; otherwise strings are compared lexicographically.
+// parse as temporal values (date or datetime), they are compared as instants;
+// if both parse as numbers, numbers are compared; otherwise strings are
+// compared lexicographically.
 //
-// On a type mismatch (e.g. left is a date string, right is not), the
+// Date and datetime interoperate deliberately: a bare-date bound against an
+// RFC3339 property value is a legitimate comparison (midnight on that day), and
+// treating it as a type mismatch is what made date-windowed queries over
+// datetime properties return nothing. Mixed offsets compare correctly because
+// both sides are normalized to an instant rather than compared as strings.
+//
+// On a type mismatch (e.g. left is a temporal string, right is not), the
 // comparison returns false and a non-nil error so callers can decide
 // whether to log/reject. This prevents the silent lexicographic-fallback
 // trap where "2026-04-07" < "tomorrow" returned true.
 func compareValues(left, right, operator string) (match bool, err error) {
-	// Both sides parse as dates → compare as dates
-	lt, lDateErr := time.Parse("2006-01-02", left)
-	rt, rDateErr := time.Parse("2006-01-02", right)
+	// Both sides parse as dates/datetimes → compare as instants
+	lt, lIsTime := parseTemporal(left)
+	rt, rIsTime := parseTemporal(right)
 	switch {
-	case lDateErr == nil && rDateErr == nil:
-		return compareOrdered(lt.Unix(), rt.Unix(), operator), nil
-	case lDateErr == nil || rDateErr == nil:
-		// One side is a date, the other isn't — refuse to guess.
+	case lIsTime && rIsTime:
+		// time.Compare, not UnixNano: nanoseconds since the epoch overflow an
+		// int64 outside roughly 1678-2262, and a far-future date would wrap
+		// negative and sort before everything.
+		return compareOrdered(lt.Compare(rt), 0, operator), nil
+	case lIsTime || rIsTime:
+		// One side is temporal, the other isn't — refuse to guess.
 		return false, fmt.Errorf("cannot compare date %q with non-date %q",
-			pickDate(left, right, lDateErr == nil), pickNonDate(left, right, lDateErr == nil))
+			pickDate(left, right, lIsTime), pickNonDate(left, right, lIsTime))
 	}
 
 	// Both sides parse as numbers → compare as numbers
@@ -308,19 +356,6 @@ func slugify(s string) string {
 	return strings.Trim(b.String(), "-")
 }
 
-// titleCase converts snake_case/kebab-case to Title Case.
-func titleCase(s string) string {
-	s = strings.ReplaceAll(s, "_", " ")
-	s = strings.ReplaceAll(s, "-", " ")
-	words := strings.Fields(s)
-	for i, w := range words {
-		if w != "" {
-			words[i] = strings.ToUpper(w[:1]) + w[1:]
-		}
-	}
-	return strings.Join(words, " ")
-}
-
 // resolvePropertyType returns the metamodel type name for a property on an entity type.
 func resolvePropertyType(prop, entityType string, meta *metamodel.Metamodel) string {
 	entDef, ok := meta.GetEntityDef(entityType)
@@ -433,7 +468,25 @@ func (a *App) executeQuery(ctx context.Context, query string) ([]*entity.Entity,
 		// executeQuery never sorted by them.
 		candidates, err = a.runVisibleFreeTextSearch(ctx, svc, sq, scope)
 	} else {
-		candidates, err = visibleListByTypes(ctx, svc, sq.EntityTypes, scope)
+		// Push the equality filters into the store as a PRE-FILTER, cutting
+		// the rows loaded. The Go pass below still evaluates every filter,
+		// including the pushed ones, and remains authoritative.
+		//
+		// That belt-and-braces is deliberate rather than redundant.
+		// store.PropPredicate compares by STRING FORM; filter.MatchAll is
+		// metamodel-aware. On a typed property they disagree — `count!=03`
+		// against an integer 3 is a non-match typed and a match as strings,
+		// and an enum filter naming an undeclared value ERRORS in Go
+		// (surfacing the operator's typo) while the store silently returns
+		// nothing. Dropping a pushed filter from the Go pass would let the
+		// looser of the two decide, WIDENING results on a path /_search and
+		// scope navigation share.
+		//
+		// Keeping both makes the outcome provably identical to the
+		// pre-pushdown behavior — the store can only ever remove rows the Go
+		// pass would also have removed — while still winning the I/O.
+		pushed := pushdownPrefilters(sq.PropertyFilters, svc.Meta, sq.EntityTypes)
+		candidates, err = visibleListByTypes(ctx, svc, sq.EntityTypes, scope, pushed)
 	}
 	if err != nil {
 		return nil, err
@@ -553,13 +606,25 @@ func hiddenSearchFields(aff affordanceService) search.HiddenFieldsFunc {
 // listFromStoreByTypes (which other, ungated consumers still use and
 // which swallows iterator errors), this fails loud on both verdict
 // paths — same rationale as scopedSortedEntities.
+// visibleListByTypes loads the visible entities of the given types, applying
+// `props` in the STORE rather than after the fact.
+//
+// The predicates compose with the ACL scope rather than replacing it: an
+// AllowAll type gets a plain type+props query, and a scope-restricted type
+// gets its verdict query with the props appended. Both are ANDed by the
+// store, so narrowing by property can never widen what the gate allows.
 func visibleListByTypes(
 	ctx context.Context, svc Services, types []string, scope map[string]search.TypeScope,
+	props []store.PropPredicate,
 ) ([]*entity.Entity, error) {
 	if len(types) == 0 {
 		if _, wildcard := scope[search.WildcardType]; wildcard {
 			// Wildcard-allow (no ACL): every entity, any type — the
 			// pre-ACL listAll shape, with iterator errors surfaced.
+			// No type named and no ACL: every entity, any type. The
+			// property predicates cannot be pushed here — GraphQuery is
+			// per-type — so this one path keeps the Go-side filter, which
+			// still runs over the result below.
 			out := make([]*entity.Entity, 0)
 			for e, err := range svc.Store.ListEntities(ctx, store.EntityQuery{}) {
 				if err != nil {
@@ -584,21 +649,58 @@ func visibleListByTypes(
 		if !ok {
 			continue // denied type
 		}
-		if ts.AllowAll {
-			for e, err := range svc.Store.ListEntities(ctx, store.EntityQuery{Type: typ}) {
-				if err != nil {
-					return nil, fmt.Errorf("%w: %w", errListLoad, err)
-				}
-				out = append(out, e)
-			}
-			continue
+		got, err := visibleEntitiesOfType(ctx, svc, typ, ts, props)
+		if err != nil {
+			return nil, err
 		}
-		for e, err := range svc.Store.GraphQuery(ctx, *ts.Query) {
+		out = append(out, got...)
+	}
+	return out, nil
+}
+
+// visibleEntitiesOfType loads one type's visible entities, applying the
+// property predicates in the store.
+//
+// Three shapes, differing only in how the query is composed:
+//
+//   - AllowAll with no props: a plain type listing, byte-identical to the
+//     pre-pushdown path.
+//   - AllowAll with props: a type+props query rather than a full scan. The
+//     error class stays errListLoad — no gate is involved here.
+//   - Scope-restricted: the gate's own verdict query with the props appended,
+//     ANDed by the store, so narrowing by property can never widen what the
+//     gate allows. errACLListQuery, because a failure here IS a gate failure.
+func visibleEntitiesOfType(
+	ctx context.Context, svc Services, typ string,
+	ts search.TypeScope, props []store.PropPredicate,
+) ([]*entity.Entity, error) {
+	if ts.AllowAll && len(props) == 0 {
+		var out []*entity.Entity
+		for e, err := range svc.Store.ListEntities(ctx, store.EntityQuery{Type: typ}) {
 			if err != nil {
-				return nil, fmt.Errorf("%w: %w", errACLListQuery, err)
+				return nil, fmt.Errorf("%w: %w", errListLoad, err)
 			}
 			out = append(out, e)
 		}
+		return out, nil
+	}
+
+	q := store.GraphQuery{EntityType: typ, Props: props}
+	errClass := errListLoad
+	if !ts.AllowAll {
+		// Copy by value: TypeScope.Query is shared across calls and must not
+		// be mutated (store.GraphQueryer documents the same rule).
+		q = *ts.Query
+		q.Props = append(append([]store.PropPredicate(nil), q.Props...), props...)
+		errClass = errACLListQuery
+	}
+
+	var out []*entity.Entity
+	for e, err := range svc.Store.GraphQuery(ctx, q) {
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", errClass, err)
+		}
+		out = append(out, e)
 	}
 	return out, nil
 }
@@ -703,6 +805,19 @@ func listFromStoreByTypes(ctx context.Context, svc Services, types []string) []*
 }
 
 // listAllFromStore drains every entity from the store.
+//
+// UNBOUNDED, and the same shape that made GET /api/v1/_analyze an OOM
+// (TKT-1ESTYJ): whole entities, bodies included, retained in one slice. It
+// is currently safe only because nothing reaches it with an empty type
+// list — both listFromStoreByTypes callers pass exactly one type, and a
+// list's entity_type is required and validated at load.
+//
+// So this is left as-is rather than migrated: the analyze fix removed the
+// live O(store) retention, and rewriting a path with no reachable caller
+// would be churn. If a caller ever DOES pass an empty type list, this
+// becomes a live whole-store drain — at that point it wants
+// store.ListEntityHeaders (if the caller reads no bodies) or paging, not a
+// bigger slice.
 func listAllFromStore(ctx context.Context, svc Services) []*entity.Entity {
 	out := make([]*entity.Entity, 0)
 	for e, err := range svc.Store.ListEntities(ctx, store.EntityQuery{}) {
@@ -712,49 +827,6 @@ func listAllFromStore(ctx context.Context, svc Services) []*entity.Entity {
 		out = append(out, e)
 	}
 	return out
-}
-
-// resolveRelationColumnValues returns display titles for all targets of the given
-// relation type from an entity. Direction controls whether to follow edges pointing
-// to the entity (incoming) or from the entity (outgoing, the default).
-//
-// The targets are routed through viewReader.Filter (DEC-ZBI39P) before their
-// titles are derived: a neighbor the principal may not read is dropped
-// (row-gate), and a survivor whose display property is hidden has it redacted so
-// DisplayTitle falls back to the id (BUG-R9EHKV). Without this, a table
-// relation-column leaked a hidden neighbor's title via the raw store read —
-// the one builder path the executeView redaction did not cover, since these
-// targets are fetched fresh here rather than carried in result.Collections.
-func (a *App) resolveRelationColumnValues(
-	ctx context.Context, entityID, relationType string, direction dataentryconfig.Direction,
-) []string {
-	svc := a.Services()
-	q := store.RelationQuery{
-		EntityID:  entityID,
-		Type:      relationType,
-		Direction: relationDirection(direction),
-	}
-
-	var targets []*entity.Entity
-	for r, err := range svc.Store.ListRelations(ctx, q) {
-		if err != nil {
-			break
-		}
-		targetID := r.To
-		if direction.IsIncoming() {
-			targetID = r.From
-		}
-		if e, gerr := svc.Store.GetEntity(ctx, targetID); gerr == nil {
-			targets = append(targets, e)
-		}
-	}
-
-	visible := a.viewReader.Filter(ctx, targets)
-	titles := make([]string, 0, len(visible))
-	for _, e := range visible {
-		titles = append(titles, svc.Meta.DisplayTitle(e.ID, e.Type, e.Properties))
-	}
-	return titles
 }
 
 // relationDirection maps the data-entry config direction type to the
@@ -768,6 +840,41 @@ func relationDirection(d dataentryconfig.Direction) store.Direction {
 
 // matchesPropertyFilters checks whether an entity matches the given property filters.
 // Returns true if no filters are specified or all filters match.
+// pushdownPrefilters returns the store-evaluable subset of the property
+// filters, as a PRE-FILTER only — the caller must still run every filter
+// through the metamodel-aware Go pass.
+//
+// Only plain equality pushes down. Everything else is either unsupported by
+// store.PropPredicate (ordered comparison, regex, fuzzy) or means something
+// different there: a glob rides on OpEqual but would become a literal string
+// comparison.
+//
+// NOT-equal is excluded even though PropPredicate supports it: on a typed
+// property a string-form disagreement WIDENS (`flag!=yes` on a boolean errors
+// in Go, excluding the row, and matches in the store), so it would admit rows
+// the Go pass must then reject — no saving, and a bug in the pairing leaks them.
+//
+// TYPED properties are excluded entirely, in either direction. A pre-filter is
+// only sound if it can never remove a row the authoritative pass would keep,
+// and equality on a typed property breaks exactly that: `count=03` against an
+// integer 3 matches numerically but not as strings, so pushing it would drop a
+// row that belongs in the result. Only `string` and untyped-unknown properties
+// compare identically both ways.
+//
+// Multi-type queries are handled by requiring EVERY named type to declare the
+// property as string-comparable: one property name can be `string` on one type
+// and `integer` on another, and the pushdown is applied per query, not per type.
+// An unnamed-type query (no `type:`) pushes nothing, since any type could match.
+//
+// Emptiness agrees across both paths because internal/propmatch is the single
+// definition backing store.PropPredicate AND internal/filter's empty handling;
+// storetest's Props_value_shapes pins that agreement per backend.
+func pushdownPrefilters(
+	filters []*filter.Filter, meta *metamodel.Metamodel, types []string,
+) []store.PropPredicate {
+	return queryplan.PushdownPrefilters(filters, meta, types)
+}
+
 func (a *App) matchesPropertyFilters(e *entity.Entity, filters []*filter.Filter) bool {
 	if len(filters) == 0 {
 		return true

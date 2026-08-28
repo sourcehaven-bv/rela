@@ -39,15 +39,13 @@ forms:
       - property: featured
     relations:
       - relation: made-by
+        direction: outgoing
         label: "Brand"
         required: true
-        allow_create: true
-        create_form: add_brand
       - relation: tagged
+        direction: outgoing
         label: "Tags"
         widget: multi-select
-        allow_create: true
-        create_form: add_tag
   edit_product:
     entity_type: product
     title: "Edit Product"
@@ -69,15 +67,13 @@ forms:
       - property: featured
     relations:
       - relation: made-by
+        direction: outgoing
         label: "Brand"
         required: true
-        allow_create: true
-        create_form: add_brand
       - relation: tagged
+        direction: outgoing
         label: "Tags"
         widget: multi-select
-        allow_create: true
-        create_form: add_tag
       - relation: accessory-for
         direction: outgoing
         widget: search

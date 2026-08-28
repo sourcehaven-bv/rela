@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
@@ -196,6 +198,188 @@ func TestValidateConfig_UnknownFormFieldProperty(t *testing.T) {
 	}
 }
 
+// BUG-FB0LN8: clear_when_hidden is allowlist-validated so a typo cannot
+// silently resolve to a destructive default.
+func TestValidateConfig_ClearWhenHiddenAllowlist(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		wantErr bool
+	}{
+		{name: "no", value: "no"},
+		{name: "yes", value: "yes"},
+		// TKT-7S5735 landed the propose/commit seam, so "confirm" is now a
+		// real policy rather than a promise. The typo cases below still
+		// matter: "confrim" must never silently resolve to a destructive
+		// default.
+		{name: "confirm", value: "confirm"},
+		{name: "empty means default", value: ""},
+		{name: "off is rejected", value: "off", wantErr: true},
+		{name: "false is rejected", value: "false", wantErr: true},
+		{name: "true is rejected", value: "true", wantErr: true},
+		{name: "typo is rejected", value: "confrim", wantErr: true},
+		{name: "never is rejected", value: "never", wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &Config{
+				Forms: map[string]Form{
+					"test": {
+						EntityType: "ticket",
+						Fields: []FormField{{
+							Property:        "assignee",
+							VisibleWhen:     "form.status == 'open'",
+							ClearWhenHidden: tc.value,
+						}},
+					},
+				},
+			}
+			err := ValidateConfig([]byte(`version: "1.0"`), cfg, testMetamodel())
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for clear_when_hidden %q", tc.value)
+				}
+				if !strings.Contains(err.Error(), "invalid clear_when_hidden") {
+					t.Errorf("expected allowlist error, got: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("clear_when_hidden %q should be valid, got: %v", tc.value, err)
+			}
+		})
+	}
+}
+
+// The checks must reach STEP-NESTED fields too — a wizard step hiding is the
+// motivating case for clear_when_hidden, so validating only top-level
+// form.Fields would miss exactly the configs most likely to use it.
+func TestValidateConfig_ClearWhenHiddenValidatedInWizardSteps(t *testing.T) {
+	cfg := &Config{
+		Forms: map[string]Form{
+			"test": {
+				EntityType: "ticket",
+				Steps: []FormStep{{
+					Title: "Assignment",
+					Fields: []FormField{{
+						Property:        "assignee",
+						VisibleWhen:     "form.status == 'open'",
+						ClearWhenHidden: "off", // invalid
+					}},
+				}},
+			},
+		},
+	}
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, testMetamodel())
+	if err == nil {
+		t.Fatal("expected error for invalid clear_when_hidden on a step field")
+	}
+	if !strings.Contains(err.Error(), "invalid clear_when_hidden") {
+		t.Errorf("expected allowlist error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "step[0]") {
+		t.Errorf("expected the error to locate the step, got: %v", err)
+	}
+}
+
+// clear_when_hidden without visible_when can never fire — flag it as a
+// config mistake rather than letting it sit there looking meaningful.
+func TestValidateConfig_ClearWhenHiddenRequiresVisibleWhen(t *testing.T) {
+	cfg := &Config{
+		Forms: map[string]Form{
+			"test": {
+				EntityType: "ticket",
+				Fields:     []FormField{{Property: "assignee", ClearWhenHidden: "yes"}},
+			},
+		},
+	}
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, testMetamodel())
+	if err == nil {
+		t.Fatal("expected error for clear_when_hidden without visible_when")
+	}
+	if !strings.Contains(err.Error(), "neither it nor its step has a visible_when") {
+		t.Errorf("expected without-visible_when error, got: %v", err)
+	}
+}
+
+// A field on a CONDITIONAL STEP can be hidden without a visible_when of its
+// own — the step hides it. clear_when_hidden is meaningful there, so the
+// "would never apply" check must not fire. Caught while building the demo
+// project: the naive rule rejected a perfectly valid wizard config.
+func TestValidateConfig_ClearWhenHiddenInheritsStepVisibility(t *testing.T) {
+	cfg := &Config{
+		Forms: map[string]Form{
+			"test": {
+				EntityType: "ticket",
+				Steps: []FormStep{{
+					Title:       "Assignment",
+					VisibleWhen: "form.status == 'open'", // the step hides the field
+					Fields: []FormField{{
+						Property:        "assignee",
+						ClearWhenHidden: "yes", // no field-level visible_when
+					}},
+				}},
+			},
+		},
+	}
+	if err := ValidateConfig([]byte(`version: "1.0"`), cfg, testMetamodel()); err != nil {
+		t.Errorf("a field on a conditional step may set clear_when_hidden, got: %v", err)
+	}
+}
+
+// ...but a field on an UNCONDITIONAL step still can't: nothing would ever hide it.
+func TestValidateConfig_ClearWhenHiddenOnUnconditionalStepRejected(t *testing.T) {
+	cfg := &Config{
+		Forms: map[string]Form{
+			"test": {
+				EntityType: "ticket",
+				Steps: []FormStep{{
+					Title: "Assignment", // no visible_when
+					Fields: []FormField{{
+						Property:        "assignee",
+						ClearWhenHidden: "yes",
+					}},
+				}},
+			},
+		},
+	}
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, testMetamodel())
+	if err == nil {
+		t.Fatal("expected error: neither the field nor its step can hide it")
+	}
+	if !strings.Contains(err.Error(), "neither it nor its step has a visible_when") {
+		t.Errorf("expected without-visible_when error, got: %v", err)
+	}
+}
+
+// The YAML footgun: bare `no`/`yes` are booleans under YAML 1.1. yaml.v3
+// uses the 1.2 core schema and the field is typed string, so they decode as
+// the literal text and land in the allowlist as written. Pinned because a
+// regression here would turn `clear_when_hidden: no` into the empty string —
+// which still means "no" today, but would silently drift if the default ever
+// changed.
+func TestFormField_ClearWhenHiddenYAMLScalars(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"clear_when_hidden: no", "no"},
+		{"clear_when_hidden: yes", "yes"},
+		{`clear_when_hidden: "no"`, "no"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.in, func(t *testing.T) {
+			var f FormField
+			if err := yaml.Unmarshal([]byte(tc.in), &f); err != nil {
+				t.Fatalf("unmarshal %q: %v", tc.in, err)
+			}
+			if f.ClearWhenHidden != tc.want {
+				t.Errorf("got %q, want %q", f.ClearWhenHidden, tc.want)
+			}
+			if !ValidClearWhenHidden[f.ClearWhenHidden] {
+				t.Errorf("%q decoded to %q which is not in the allowlist", tc.in, f.ClearWhenHidden)
+			}
+		})
+	}
+}
+
 func TestValidateConfig_InvalidTransitions(t *testing.T) {
 	meta := testMetamodel()
 	cfg := &Config{
@@ -251,6 +435,10 @@ func TestValidateConfig_UnknownFormRelation(t *testing.T) {
 func inverseTestMetamodel(t *testing.T) *metamodel.Metamodel {
 	t.Helper()
 	yaml := `version: "1.0"
+types:
+  entity_status:
+    values: [open, closed]
+    default: open
 entities:
   from_entity:
     label: From
@@ -259,6 +447,8 @@ entities:
       title:
         type: string
         required: true
+      status:
+        type: entity_status
   to_entity:
     label: To
     id_prefix: "TO-"
@@ -266,6 +456,8 @@ entities:
       title:
         type: string
         required: true
+      status:
+        type: entity_status
   other_entity:
     label: Other
     id_prefix: "OTH-"
@@ -283,6 +475,10 @@ relations:
     label: multi source
     from: [from_entity, other_entity]
     to: [to_entity]
+  depends_on:
+    label: depends on
+    from: [from_entity]
+    to: [from_entity]
 `
 	m, err := metamodel.Parse([]byte(yaml))
 	if err != nil {
@@ -320,10 +516,11 @@ func TestValidateConfig_FormRelationInverseName(t *testing.T) {
 	}
 }
 
-func TestValidateConfig_FormRelationWrongSide_HintsIncoming(t *testing.T) {
+func TestValidateConfig_FormRelationToSide_InfersIncoming(t *testing.T) {
 	meta := inverseTestMetamodel(t)
-	// to_entity is on the TO side of connects_to; the default outgoing
-	// direction makes this form silently broken.
+	// to_entity is ONLY on the TO side of connects_to, so an absent direction
+	// has exactly one correct answer and is inferred as incoming rather than
+	// defaulting to outgoing and being reported as wrong-side.
 	cfg := &Config{
 		Forms: map[string]Form{
 			"edit_to": {
@@ -333,27 +530,17 @@ func TestValidateConfig_FormRelationWrongSide_HintsIncoming(t *testing.T) {
 		},
 	}
 
-	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
-	if err == nil {
-		t.Fatal("expected error for form entity not on the source side of an outgoing relation")
-	}
-	msg := err.Error()
-	if !strings.Contains(msg, `"to_entity"`) {
-		t.Errorf("expected error to mention form entity type, got: %v", err)
-	}
-	if !strings.Contains(msg, `"connects_to"`) {
-		t.Errorf("expected error to mention the relation, got: %v", err)
-	}
-	if !strings.Contains(msg, "direction: incoming") {
-		t.Errorf("expected hint to set direction: incoming, got: %v", err)
+	if err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta); err != nil {
+		t.Fatalf("expected an unambiguous to-side binding to infer incoming, got: %v", err)
 	}
 }
 
-func TestValidateConfig_FormRelationWrongSide_NoHintWhenDirectionExplicit(t *testing.T) {
+func TestValidateConfig_FormRelationWrongSide_HintsWhenDirectionExplicit(t *testing.T) {
 	meta := inverseTestMetamodel(t)
-	// Explicit outgoing with form entity on the wrong side — flipping the
-	// direction would help, but the user has explicitly chosen outgoing,
-	// so we error without a "did you mean" hint.
+	// Explicit outgoing with the form entity on the TO side. The author wrote a
+	// direction and picked the wrong one, so flipping it is the actionable fix
+	// and the message says so. (An ABSENT direction cannot reach here for this
+	// shape — inference would have resolved it to incoming.)
 	cfg := &Config{
 		Forms: map[string]Form{
 			"edit_to": {
@@ -367,8 +554,12 @@ func TestValidateConfig_FormRelationWrongSide_NoHintWhenDirectionExplicit(t *tes
 	if err == nil {
 		t.Fatal("expected error for form entity not on the source side")
 	}
-	if !strings.Contains(err.Error(), `"to_entity"`) {
+	msg := err.Error()
+	if !strings.Contains(msg, `"to_entity"`) {
 		t.Errorf("expected error to mention form entity type, got: %v", err)
+	}
+	if !strings.Contains(msg, "direction: incoming") {
+		t.Errorf("expected hint to suggest flipping to incoming, got: %v", err)
 	}
 }
 
@@ -475,26 +666,6 @@ func TestValidateConfig_InvalidRelationWidget(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), `invalid widget "banana"`) {
 		t.Errorf("expected error about invalid widget, got: %v", err)
-	}
-}
-
-func TestValidateConfig_FormRelationUnknownCreateForm(t *testing.T) {
-	meta := testMetamodel()
-	cfg := &Config{
-		Forms: map[string]Form{
-			"test": {
-				EntityType: "ticket",
-				Relations:  []FormRelation{{Relation: "blocks", CreateForm: "nonexistent"}},
-			},
-		},
-	}
-
-	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
-	if err == nil {
-		t.Fatal("expected error for unknown create_form")
-	}
-	if !strings.Contains(err.Error(), `unknown create_form "nonexistent"`) {
-		t.Errorf("expected error about unknown create_form, got: %v", err)
 	}
 }
 
@@ -1315,8 +1486,14 @@ func TestValidateConfig_ViewSectionUsesPreviousCollectAs(t *testing.T) {
 
 // TestValidateConfig_Documents is a table-driven sweep of DocumentConfig
 // validation. Covers the {command, script} mutual-exclusion rule and the
-// still-required entity_type invariant (addresses RR-1FA8W, the risk that
-// relaxing command's required-ness would silently drop entity_type).
+// two document kinds (entity-anchored vs standalone).
+//
+// entity_type used to be unconditionally required; TKT-M1AX6P made an empty
+// entity_type mean "standalone document" instead. RR-1FA8W's underlying risk —
+// that relaxing one field's required-ness silently drops a sibling rule — still
+// applies, so the renderer cases below assert that a standalone document is
+// still held to the {command, script} rule rather than skipping validation
+// wholesale.
 func TestValidateConfig_Documents(t *testing.T) {
 	meta := testMetamodel()
 
@@ -1330,7 +1507,7 @@ func TestValidateConfig_Documents(t *testing.T) {
 	}{
 		{
 			name:    "only command is valid",
-			doc:     DocumentConfig{Command: "render.sh", EntityType: "ticket"},
+			doc:     DocumentConfig{Command: []string{"render.sh"}, EntityType: "ticket"},
 			wantErr: "",
 		},
 		{
@@ -1340,8 +1517,76 @@ func TestValidateConfig_Documents(t *testing.T) {
 		},
 		{
 			name:    "both command and script is an error",
-			doc:     DocumentConfig{Command: "render.sh", Script: "docs/render.lua", EntityType: "ticket"},
+			doc:     DocumentConfig{Command: []string{"render.sh"}, Script: "docs/render.lua", EntityType: "ticket"},
 			wantErr: "mutually exclusive",
+		},
+		// --- allow_acl_bypass (TKT-Y3JVFK) ---
+		{
+			name: "elevated read with permission is valid",
+			doc: DocumentConfig{
+				Script:         "docs/benchmark.lua",
+				AllowACLBypass: metamodel.ACLBypassRead,
+				Permission:     "report:sales",
+			},
+			wantErr: "",
+		},
+		{
+			// Elevation is allowed on an entity-anchored document too; both
+			// gates then apply (the per-entity read gate AND the permission).
+			name: "elevated read on an entity-anchored document is valid",
+			doc: DocumentConfig{
+				Script:         "docs/benchmark.lua",
+				EntityType:     "ticket",
+				AllowACLBypass: metamodel.ACLBypassRead,
+				Permission:     "report:sales",
+			},
+			wantErr: "",
+		},
+		{
+			// The load-bearing rule: without a permission an elevated render
+			// serves everything the script reads to every principal.
+			name: "elevated without permission is an error",
+			doc: DocumentConfig{
+				Script:         "docs/benchmark.lua",
+				AllowACLBypass: metamodel.ACLBypassRead,
+			},
+			wantErr: "permission is required when allow_acl_bypass is set",
+		},
+		{
+			name: "elevated write is an error",
+			doc: DocumentConfig{
+				Script:         "docs/benchmark.lua",
+				AllowACLBypass: metamodel.ACLBypassWrite,
+				Permission:     "report:sales",
+			},
+			wantErr: "a render is a GET",
+		},
+		{
+			name: "elevated read+write is an error",
+			doc: DocumentConfig{
+				Script:         "docs/benchmark.lua",
+				AllowACLBypass: metamodel.ACLBypassReadWrite,
+				Permission:     "report:sales",
+			},
+			wantErr: "a render is a GET",
+		},
+		{
+			// A command renderer never sees the Lua bindings elevation
+			// unlocks, so declaring it names a capability that cannot apply.
+			name: "elevated command renderer is an error",
+			doc: DocumentConfig{
+				Command:        []string{"render.sh"},
+				AllowACLBypass: metamodel.ACLBypassRead,
+				Permission:     "report:sales",
+			},
+			wantErr: "applies only to a script renderer",
+		},
+		{
+			// The overwhelmingly common case must stay unaffected: no
+			// elevation means no permission requirement.
+			name:    "unelevated document needs no permission",
+			doc:     DocumentConfig{Script: "docs/render.lua", EntityType: "ticket"},
+			wantErr: "",
 		},
 		{
 			name:    "neither command nor script is an error",
@@ -1349,19 +1594,48 @@ func TestValidateConfig_Documents(t *testing.T) {
 			wantErr: "one of command or script must be set",
 		},
 		{
-			name:    "missing entity_type with command",
-			doc:     DocumentConfig{Command: "render.sh"},
-			wantErr: "entity_type is required",
+			// Omitting entity_type is no longer an error — it declares a
+			// standalone document (TKT-M1AX6P).
+			name:    "standalone with command is valid",
+			doc:     DocumentConfig{Command: []string{"render.sh"}},
+			wantErr: "",
 		},
 		{
-			name:    "missing entity_type with script",
+			name:    "standalone with script is valid",
 			doc:     DocumentConfig{Script: "docs/render.lua"},
-			wantErr: "entity_type is required",
+			wantErr: "",
+		},
+		{
+			// RR-1FA8W guard: relaxing entity_type must not disable the
+			// sibling {command, script} rules for standalone documents.
+			name:    "standalone with neither command nor script is an error",
+			doc:     DocumentConfig{},
+			wantErr: "one of command or script must be set",
+		},
+		{
+			name:    "standalone with both command and script is an error",
+			doc:     DocumentConfig{Command: []string{"render.sh"}, Script: "docs/render.lua"},
+			wantErr: "mutually exclusive",
+		},
+		{
+			name:    "standalone with a permission is valid",
+			doc:     DocumentConfig{Script: "docs/render.lua", Permission: "report:sales"},
+			wantErr: "",
+		},
+		{
+			// An edit button navigates to a form for the document's entity;
+			// a standalone document has none.
+			name: "standalone with an edit block is an error",
+			doc: DocumentConfig{
+				Script: "docs/render.lua",
+				Edit:   &DocumentEdit{Form: "edit_req", Label: "Edit"},
+			},
+			wantErr: "edit is not supported without entity_type",
 		},
 		{
 			name: "edit block with valid form and label",
 			doc: DocumentConfig{
-				Command:    "render.sh",
+				Command:    []string{"render.sh"},
 				EntityType: "ticket",
 				Edit:       &DocumentEdit{Form: "edit_req", Label: "Edit requirement"},
 			},
@@ -1370,7 +1644,7 @@ func TestValidateConfig_Documents(t *testing.T) {
 		{
 			name: "edit.form references unknown form",
 			doc: DocumentConfig{
-				Command:    "render.sh",
+				Command:    []string{"render.sh"},
 				EntityType: "ticket",
 				Edit:       &DocumentEdit{Form: "bogus", Label: "Edit"},
 			},
@@ -1379,7 +1653,7 @@ func TestValidateConfig_Documents(t *testing.T) {
 		{
 			name: "edit.form empty when edit block is set",
 			doc: DocumentConfig{
-				Command:    "render.sh",
+				Command:    []string{"render.sh"},
 				EntityType: "ticket",
 				Edit:       &DocumentEdit{Form: "", Label: "Edit"},
 			},
@@ -1388,7 +1662,7 @@ func TestValidateConfig_Documents(t *testing.T) {
 		{
 			name: "edit.label empty when edit block is set",
 			doc: DocumentConfig{
-				Command:    "render.sh",
+				Command:    []string{"render.sh"},
 				EntityType: "ticket",
 				Edit:       &DocumentEdit{Form: "edit_req", Label: ""},
 			},
@@ -1436,7 +1710,7 @@ func TestValidateConfig_DocumentsEditBothEmpty(t *testing.T) {
 	cfg := &Config{
 		Documents: map[string]DocumentConfig{
 			"spec": {
-				Command:    "render.sh",
+				Command:    []string{"render.sh"},
 				EntityType: "ticket",
 				Edit:       &DocumentEdit{}, // both fields empty
 			},
@@ -1462,7 +1736,7 @@ func TestValidateConfig_DocumentsEditFormSuggestion(t *testing.T) {
 	cfg := &Config{
 		Documents: map[string]DocumentConfig{
 			"spec": {
-				Command:    "render.sh",
+				Command:    []string{"render.sh"},
 				EntityType: "ticket",
 				Edit:       &DocumentEdit{Form: "EDIT_TICKET", Label: "Edit"},
 			},
@@ -1885,6 +2159,146 @@ func TestValidateNavigation_KnownAction(t *testing.T) {
 	}
 }
 
+// TestValidateNavigation_Document covers the `document:` navigation entry
+// (TKT-M1AX6P). Only a standalone document can be a navigation target: an
+// entity-anchored one needs an entry id the sidebar cannot supply.
+func TestValidateNavigation_Document(t *testing.T) {
+	meta := testMetamodel()
+
+	cases := []struct {
+		name    string
+		docs    map[string]DocumentConfig
+		wantErr string // substring; "" means expect success
+	}{
+		{
+			name:    "standalone document is a valid nav target",
+			docs:    map[string]DocumentConfig{"sales_review": {Script: "docs/sales.lua"}},
+			wantErr: "",
+		},
+		{
+			name:    "unknown document is an error",
+			docs:    map[string]DocumentConfig{"other": {Script: "docs/other.lua"}},
+			wantErr: `unknown document "sales_review"`,
+		},
+		{
+			name: "entity-anchored document is not a valid nav target",
+			docs: map[string]DocumentConfig{
+				"sales_review": {Script: "docs/sales.lua", EntityType: "ticket"},
+			},
+			wantErr: `document "sales_review" has entity_type "ticket"`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &Config{
+				Documents: tc.docs,
+				Navigation: []NavigationEntry{
+					{Label: "Verkooprapportage", Document: "sales_review"},
+				},
+			}
+			err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Errorf("expected success, got error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("expected error to contain %q, got: %s", tc.wantErr, err.Error())
+			}
+		})
+	}
+}
+
+// TestValidateNavigation_Permission covers `permission:` on a navigation entry
+// (TKT-TXDK8U). It is valid on any direct item and rejected on a group: a group
+// is a container with no destination, and it already disappears on its own once
+// every child is filtered out.
+func TestValidateNavigation_Permission(t *testing.T) {
+	meta := testMetamodel()
+
+	cases := []struct {
+		name    string
+		nav     []NavigationEntry
+		wantErr string // substring; "" means expect success
+	}{
+		{
+			name:    "permission on a list entry is valid",
+			nav:     []NavigationEntry{{Label: "Audit", List: "tickets", Permission: "admin:read"}},
+			wantErr: "",
+		},
+		{
+			// Kinds with no config object behind them can be gated too — that
+			// is the main reason the field lives on the entry.
+			name:    "permission on a settings entry is valid",
+			nav:     []NavigationEntry{{Label: "Settings", Settings: true, Permission: "admin:settings"}},
+			wantErr: "",
+		},
+		{
+			name: "permission on a group is an error",
+			nav: []NavigationEntry{
+				{Group: "Admin", Permission: "admin:read", Items: []NavigationEntry{
+					{Label: "Audit", List: "tickets"},
+				}},
+			},
+			wantErr: `group "Admin" cannot have a permission`,
+		},
+		{
+			name: "permission on an item inside a group is valid",
+			nav: []NavigationEntry{
+				{Group: "Admin", Items: []NavigationEntry{
+					{Label: "Audit", List: "tickets", Permission: "admin:read"},
+				}},
+			},
+			wantErr: "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &Config{
+				Lists:      map[string]List{"tickets": {EntityType: "ticket"}},
+				Navigation: tc.nav,
+			}
+			err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Errorf("expected success, got error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("expected error to contain %q, got: %s", tc.wantErr, err.Error())
+			}
+		})
+	}
+}
+
+// TestValidateNavigation_DocumentInGroup pins that the document check recurses
+// into groups like the list/kanban/action checks do.
+func TestValidateNavigation_DocumentInGroup(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Documents: map[string]DocumentConfig{"spec": {Script: "docs/spec.lua", EntityType: "ticket"}},
+		Navigation: []NavigationEntry{
+			{Group: "Reports", Items: []NavigationEntry{
+				{Label: "Spec", Document: "spec"},
+			}},
+		},
+	}
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err == nil || !strings.Contains(err.Error(), `document "spec" has entity_type "ticket"`) {
+		t.Errorf("expected entity-anchored rejection inside a group, got: %v", err)
+	}
+}
+
 func TestValidateEntityViews_Valid(t *testing.T) {
 	meta := testMetamodel()
 	cfg := &Config{
@@ -2250,4 +2664,204 @@ func TestViewCommandPermissionWarning(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestValidateDocuments_LegacyIDPlaceholderRejected pins that a config written
+// against the removed {id}/{id_lower} placeholders fails at load with the
+// replacement named, rather than silently passing the literal through
+// (TKT-QGHNVA).
+func TestValidateDocuments_LegacyIDPlaceholderRejected(t *testing.T) {
+	meta := testMetamodel()
+
+	for _, arg := range []string{"{id}", "{id_lower}", "--entry={id}"} {
+		cfg := &Config{
+			Documents: map[string]DocumentConfig{
+				"release_notes": {EntityType: "ticket", Command: []string{"my-renderer", arg}},
+			},
+		}
+		err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+		if err == nil {
+			t.Fatalf("arg %q: expected an error, got nil", arg)
+		}
+		if !strings.Contains(err.Error(), "{in}") {
+			t.Errorf("arg %q: error should name {in} as the replacement, got: %s", arg, err.Error())
+		}
+	}
+}
+
+// TestValidateConfig_FormRelationSelfReferencing_RequiresDirection pins the one
+// case inference cannot resolve: when the form's entity type is BOTH the from
+// and the to of the relation, outgoing and incoming are equally valid and mean
+// opposite things. Guessing would silently pick one reading, so the author must
+// say which.
+func TestValidateConfig_FormRelationSelfReferencing_RequiresDirection(t *testing.T) {
+	meta := inverseTestMetamodel(t)
+	cfg := &Config{
+		Forms: map[string]Form{
+			"edit_from": {
+				EntityType: "from_entity",
+				Relations:  []FormRelation{{Relation: "depends_on"}},
+			},
+		},
+	}
+
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err == nil {
+		t.Fatal("expected an error for a self-referencing relation with no explicit direction")
+	}
+	msg := err.Error()
+	for _, want := range []string{"depends_on", "from_entity", "direction"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("expected error to mention %q, got: %v", want, err)
+		}
+	}
+}
+
+// An explicit direction resolves the ambiguity either way.
+func TestValidateConfig_FormRelationSelfReferencing_ExplicitDirectionOK(t *testing.T) {
+	meta := inverseTestMetamodel(t)
+	for _, dir := range []Direction{DirectionOutgoing, DirectionIncoming} {
+		t.Run(string(dir), func(t *testing.T) {
+			cfg := &Config{
+				Forms: map[string]Form{
+					"edit_from": {
+						EntityType: "from_entity",
+						Relations:  []FormRelation{{Relation: "depends_on", Direction: dir}},
+					},
+				},
+			}
+			if err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta); err != nil {
+				t.Errorf("explicit direction %q should validate, got: %v", dir, err)
+			}
+		})
+	}
+}
+
+// TestValidateConfig_EmptyDirectionStringIsNotOutgoing pins the fix for a hole
+// in the ambiguity check: `direction: ""` (written but empty, as a templating
+// system or config generator emits) used to unmarshal to "outgoing" and so
+// walked straight past the self-referencing check that is the whole point of
+// requiring an explicit direction. An empty value must be treated the same as
+// an absent key — inferred, and rejected when ambiguous.
+func TestValidateConfig_EmptyDirectionStringIsNotOutgoing(t *testing.T) {
+	meta := inverseTestMetamodel(t)
+
+	t.Run("ambiguous relation still errors", func(t *testing.T) {
+		cfg := &Config{
+			Forms: map[string]Form{
+				"edit_from": {
+					EntityType: "from_entity",
+					Relations:  []FormRelation{{Relation: "depends_on", Direction: ""}},
+				},
+			},
+		}
+		if err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta); err == nil {
+			t.Fatal("empty direction must not bypass the self-referencing check")
+		}
+	})
+
+	t.Run("to-side binding still infers incoming", func(t *testing.T) {
+		cfg := &Config{
+			Forms: map[string]Form{
+				"edit_to": {
+					EntityType: "to_entity",
+					Relations:  []FormRelation{{Relation: "connects_to", Direction: ""}},
+				},
+			},
+		}
+		if err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta); err != nil {
+			t.Fatalf("empty direction should infer incoming on a to-side binding, got: %v", err)
+		}
+	})
+}
+
+// TestValidateConfig_AmbiguousDirection_AllSurfaces pins that every surface
+// carrying a `direction:` refuses to guess on a self-referencing relation, not
+// just form relations. A wrong side is a silent bug on each of them: a list
+// column or kanban card renders the wrong neighbors, a filter control filters
+// the wrong edge, and a CalDAV collection selects the wrong members.
+func TestValidateConfig_AmbiguousDirection_AllSurfaces(t *testing.T) {
+	meta := inverseTestMetamodel(t)
+	// from_entity is BOTH the from and the to of depends_on.
+	const selfRef = "depends_on"
+
+	tests := []struct {
+		name string
+		cfg  *Config
+	}{
+		{
+			name: "list column",
+			cfg: &Config{Lists: map[string]List{
+				"l": {EntityType: "from_entity", Columns: []ListColumn{{Relation: selfRef}}},
+			}},
+		},
+		{
+			name: "list filter control",
+			cfg: &Config{Lists: map[string]List{
+				"l": {EntityType: "from_entity", FilterControls: []FilterControl{{Relation: selfRef}}},
+			}},
+		},
+		{
+			name: "kanban card field",
+			cfg: &Config{Kanbans: map[string]Kanban{
+				"k": {
+					EntityType:     "from_entity",
+					ColumnProperty: "status",
+					Card:           KanbanCard{Fields: []KanbanCardField{{Relation: selfRef}}},
+				},
+			}},
+		},
+		{
+			name: "kanban filter control",
+			cfg: &Config{Kanbans: map[string]Kanban{
+				"k": {
+					EntityType:     "from_entity",
+					ColumnProperty: "status",
+					FilterControls: []FilterControl{{Relation: selfRef}},
+				},
+			}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateConfig([]byte(`version: "1.0"`), tt.cfg, meta)
+			if err == nil {
+				t.Fatalf("%s: expected an ambiguity error for a self-referencing relation", tt.name)
+			}
+			msg := err.Error()
+			for _, want := range []string{selfRef, "from_entity", "direction"} {
+				if !strings.Contains(msg, want) {
+					t.Errorf("expected error to mention %q, got: %v", want, err)
+				}
+			}
+		})
+	}
+}
+
+// An unambiguous binding on those same surfaces must stay silent — inference
+// resolves it, so requiring the key would be noise.
+func TestValidateConfig_UnambiguousDirection_AllSurfaces(t *testing.T) {
+	meta := inverseTestMetamodel(t)
+	// to_entity is only ever the TO of connects_to.
+	cfg := &Config{
+		Lists: map[string]List{
+			"l": {
+				EntityType:     "to_entity",
+				Columns:        []ListColumn{{Relation: "connects_to"}},
+				FilterControls: []FilterControl{{Relation: "connects_to"}},
+			},
+		},
+		Kanbans: map[string]Kanban{
+			"k": {
+				EntityType:     "to_entity",
+				ColumnProperty: "status",
+				Card:           KanbanCard{Fields: []KanbanCardField{{Relation: "connects_to"}}},
+				FilterControls: []FilterControl{{Relation: "connects_to"}},
+			},
+		},
+	}
+	if err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta); err != nil {
+		t.Fatalf("unambiguous bindings should validate without an explicit direction, got: %v", err)
+	}
 }

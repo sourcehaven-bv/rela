@@ -7,7 +7,7 @@ becomes available everywhere a view can render markdown.
 
 ## Registering transforms
 
-Add a `transforms:` map to `metamodel.yaml`. Each entry names an external command
+Add a `transforms:` map to `schema.yaml`. Each entry names an external command
 that converts markdown to an output format:
 
 ```yaml
@@ -263,7 +263,7 @@ untrusted content through the Linux tier.
 
 ### Other notes
 
-- Transform commands come from project config (`metamodel.yaml`) — the same trust
+- Transform commands come from project config (`schema.yaml`) — the same trust
   level as attachment scan/transform commands and schedules. A request may only
   choose a registered transform **name**; it can never supply a command, flag, or
   path.

@@ -101,6 +101,29 @@ type MapPrincipalResult struct {
 	// built-in everyone role gives every principal — the "fully cut off"
 	// signal for offboarding (UC2).
 	EveryoneOnly bool `json:"everyone_only"`
+
+	// As and Scopes echo the client attenuation this map was computed under
+	// (TKT-IAC8TX), empty when none was requested. Echoed rather than left
+	// implicit because the same principal yields DIFFERENT maps through
+	// different clients — an artifact that did not say which client it
+	// described would be actively misleading.
+	As     string   `json:"as,omitempty"`
+	Scopes []string `json:"scopes,omitempty"`
+}
+
+// ClientView asks for a map computed as a client of the given principal_type,
+// carrying the given scopes — what `rela acl map --as app` reports.
+//
+// The zero value means "no attenuation": the map covers the principal's own
+// access, which is what every caller predating client attenuation gets.
+type ClientView struct {
+	PrincipalType string
+	Scopes        []string
+}
+
+// isZero reports whether no client view was requested.
+func (c ClientView) isZero() bool {
+	return c.PrincipalType == "" && len(c.Scopes) == 0
 }
 
 // MapPrincipal computes principal P's effective access across the given
@@ -124,6 +147,27 @@ type MapPrincipalResult struct {
 func (e *Engine) MapPrincipal(
 	ctx context.Context, rawPrincipal string, verbFilter acl.Verb, typeFilter string, entityTypes []string,
 ) (*MapPrincipalResult, error) {
+	return e.MapPrincipalAs(ctx, rawPrincipal, verbFilter, typeFilter, entityTypes, ClientView{})
+}
+
+// MapPrincipalAs is [Engine.MapPrincipal] computed as a CLIENT of the
+// principal — the answer to "what can this MCP do when Alice connects it?"
+// (TKT-IAC8TX).
+//
+// A zero view is exactly [Engine.MapPrincipal]. A non-zero one resolves the
+// principal's client ceiling, so the reported access is what the client
+// actually has: the principal's own grants intersected with the baseline its
+// principal_type selects, widened by the scopes it presents.
+//
+// This is why the attenuation claims are stamped through principal.Verified
+// here rather than assembled as a literal: they are unexported precisely so no
+// composite literal can populate them, and an attestation tool must go through
+// the same door the request path does or it reports a different policy than the
+// one that runs.
+func (e *Engine) MapPrincipalAs(
+	ctx context.Context, rawPrincipal string, verbFilter acl.Verb, typeFilter string,
+	entityTypes []string, view ClientView,
+) (*MapPrincipalResult, error) {
 	verbs, err := resolveVerbs(verbFilter)
 	if err != nil {
 		return nil, err
@@ -146,8 +190,18 @@ func (e *Engine) MapPrincipal(
 			EveryoneOnly:  true,
 		}, nil
 	}
-	req, err := e.resolver.ForPrincipal(
-		principal.Principal{User: user, Tool: principal.ToolCLI, RawUser: rawShown})
+	p := principal.Principal{User: user, Tool: principal.ToolCLI, RawUser: rawShown}
+	if !view.isZero() {
+		// Stamp the attenuation claims through the verified constructor — the
+		// only path that can populate them — so the ceiling this map reports is
+		// the one the request path would compute.
+		p = principal.VerifiedFrom(user, principal.ToolCLI, principal.Claims{
+			PrincipalType: view.PrincipalType,
+			Scopes:        view.Scopes,
+		})
+		p.RawUser = rawShown
+	}
+	req, err := e.resolver.ForPrincipal(p)
 	if err != nil {
 		return nil, fmt.Errorf("aclmap: open resolver for %q: %w", user, err)
 	}
@@ -158,6 +212,8 @@ func (e *Engine) MapPrincipal(
 		Raw:           rawShown,
 		Verbs:         verbStrings(verbs),
 		EveryoneOnly:  true, // cleared as soon as a non-everyone route is found
+		As:            view.PrincipalType,
+		Scopes:        view.Scopes,
 	}
 
 	for _, typ := range mapTypes(typeFilter, entityTypes) {

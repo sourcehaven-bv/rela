@@ -42,6 +42,11 @@ type ScriptReader struct {
 	reader Reader
 	raw    store.Store
 	binder Binder
+
+	// provider, when non-nil, lets ListEntities push the row gate into the
+	// store as a query instead of probing per batch. Derived from binder in
+	// the constructor; nil simply means no pushdown, never a weaker gate.
+	provider ReadQueryProvider
 }
 
 // Binder attaches a per-operation ACL scope to a ctx. [DeclarativeGate]
@@ -70,7 +75,17 @@ func NewScriptReader(reader Reader, raw store.Store, binder Binder) (*ScriptRead
 	if raw == nil {
 		return nil, errors.New("visibility: NewScriptReader: raw store must be non-nil")
 	}
-	return &ScriptReader{reader: reader, raw: raw, binder: binder}, nil
+	s := &ScriptReader{reader: reader, raw: raw, binder: binder}
+	// The binder IS the gate in every production wiring, and DeclarativeGate
+	// composes the read scope as a store predicate. Deriving the provider
+	// from it rather than taking a fourth constructor argument keeps the two
+	// from ever disagreeing about which policy is in force — a pushdown built
+	// from a different gate than the row filter would be a silent
+	// authorization split.
+	if p, ok := binder.(ReadQueryProvider); ok {
+		s.provider = p
+	}
+	return s, nil
 }
 
 // bind opens (or reuses) the per-operation ACL scope. A bind failure —
@@ -105,10 +120,26 @@ func (s *ScriptReader) GetEntity(ctx context.Context, id string) (*entity.Entity
 }
 
 // ListEntities yields only the entities the caller may read, redacted.
+//
+// Prefers ACL PUSHDOWN: when the gate can compose the caller's scope as a
+// store predicate, the store never materializes rows the caller may not see
+// and there is no per-type PermitsReadMany probe. Field redaction still runs
+// per yielded row — the pushdown replaces the row gate, not the field gate
+// (RR-1W1G6K).
+//
+// Falls back to load-then-Filter when pushdown is unavailable (no
+// ReadQueryProvider, a store without GraphQueryer, a type-less query, or a
+// Reader that cannot redact without gating). The fallback is a performance
+// regression only: both paths gate on the same policy.
 func (s *ScriptReader) ListEntities(
 	ctx context.Context, q store.EntityQuery,
 ) iter.Seq2[*entity.Entity, error] {
 	bound := s.bind(ctx)
+	if red, ok := s.reader.(rowRedactor); ok {
+		if seq, pushed := listPushdown(bound, s.provider, s.raw, red.RedactRow, q); pushed {
+			return seq
+		}
+	}
 	return func(yield func(*entity.Entity, error) bool) {
 		var batch []*entity.Entity
 		for e, err := range s.raw.ListEntities(bound, q) {
@@ -120,6 +151,98 @@ func (s *ScriptReader) ListEntities(
 		}
 		for _, e := range s.reader.Filter(bound, batch) {
 			if !yield(e, nil) {
+				return
+			}
+		}
+	}
+}
+
+// headerGateChunk is how many headers ListEntityHeaders gates at once.
+//
+// The row gate is deliberately BATCHED — one PermitsReadMany per distinct
+// type per chunk rather than one probe per row — so gating cannot stream a
+// row at a time without turning an O(types) probe count into O(rows). This
+// chunk is the compromise: peak retention is bounded by the chunk, not by
+// the store size, while the probe count stays proportional to
+// rows/headerGateChunk.
+//
+// 512 is chosen so the probe overhead is amortized (a chunk holds many rows
+// of each type in any realistic mix) while the retained slice stays small —
+// headers carry no bodies, so 512 of them is tens of KB, not tens of MB.
+const headerGateChunk = 512
+
+// ListEntityHeaders yields content-free headers the caller may read,
+// redacted — the header analog of [ScriptReader.ListEntities].
+//
+// Bounded in BOTH dimensions, which is the whole point (TKT-1ESTYJ):
+//
+//   - Per row, no body is carried. Backends that can project the content
+//     column away never read it (see [store.ListEntityHeaders]).
+//   - Across rows, at most [headerGateChunk] headers are retained at once.
+//     ListEntities cannot make this promise: it materializes the ENTIRE
+//     matching set to hand to Filter, so a whole-store scan retains a
+//     whole store. That buffer — not the analyzers' own slices — is why a
+//     type-less analyze scan held ~1 GB of markdown.
+//
+// Gating is identical to ListEntities': the same Reader, hence the same
+// policy, on the same (id, type) pairs. Chunking changes only WHEN probes
+// happen, never their verdicts, because a row's visibility does not depend
+// on which other rows accompany it.
+//
+// Falls back to whole-entity load-then-Filter when the Reader cannot filter
+// headers, so an incomplete Reader loses the memory win but never the gate.
+func (s *ScriptReader) ListEntityHeaders(
+	ctx context.Context, q store.EntityQuery,
+) iter.Seq2[store.EntityHeader, error] {
+	hf, ok := s.reader.(HeaderFilterer)
+	if !ok {
+		return s.headersViaEntities(ctx, q)
+	}
+	bound := s.bind(ctx)
+	return func(yield func(store.EntityHeader, error) bool) {
+		batch := make([]store.EntityHeader, 0, headerGateChunk)
+		flush := func() bool {
+			for _, h := range hf.FilterHeaders(bound, batch) {
+				if !yield(h, nil) {
+					return false
+				}
+			}
+			batch = batch[:0]
+			return true
+		}
+		for h, err := range store.ListEntityHeaders(bound, s.raw, q) {
+			if err != nil {
+				yield(store.EntityHeader{}, err)
+				return
+			}
+			batch = append(batch, h)
+			if len(batch) < headerGateChunk {
+				continue
+			}
+			if !flush() {
+				return
+			}
+		}
+		if len(batch) > 0 {
+			_ = flush()
+		}
+	}
+}
+
+// headersViaEntities is the fallback for a [Reader] without
+// [HeaderFilterer]: gate whole entities through ListEntities, then project.
+// Correct but unbounded — it inherits ListEntities' full-set buffering — so
+// it trades the memory win for gate parity, never the reverse.
+func (s *ScriptReader) headersViaEntities(
+	ctx context.Context, q store.EntityQuery,
+) iter.Seq2[store.EntityHeader, error] {
+	return func(yield func(store.EntityHeader, error) bool) {
+		for e, err := range s.ListEntities(ctx, q) {
+			if err != nil {
+				yield(store.EntityHeader{}, err)
+				return
+			}
+			if !yield(store.HeaderOf(e), nil) {
 				return
 			}
 		}

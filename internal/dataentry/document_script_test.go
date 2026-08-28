@@ -74,6 +74,28 @@ func (f *fakeScriptEngine) ExecuteDocument(_ context.Context, path string, _ lua
 	return nil
 }
 
+// ExecuteStandaloneDocument records a standalone render (TKT-M1AX6P). entryID
+// stays zero on the recorded call — that absence is the contract under test:
+// a document with no entity_type has no entry entity.
+func (f *fakeScriptEngine) ExecuteStandaloneDocument(_ context.Context, path string, _ lua.WriteDeps,
+	stdout io.Writer, documentID string, timeout time.Duration) error {
+	call := fakeScriptCall{path: path, documentID: documentID, timeout: timeout}
+	f.mu.Lock()
+	f.calls = append(f.calls, call)
+	f.mu.Unlock()
+
+	if f.delay > 0 {
+		time.Sleep(f.delay)
+	}
+	if f.err != nil {
+		return f.err
+	}
+	if f.stdout != nil {
+		_, _ = io.WriteString(stdout, f.stdout(call))
+	}
+	return nil
+}
+
 // ExecuteListDocument records a list render. It DRAINS the row provider
 // (twice) rather than ignoring it, so tests can assert which rows reached the
 // script — and that a second walk restarts — without standing up a real Lua
@@ -141,7 +163,7 @@ func newTestService(t *testing.T, entities ...*entity.Entity) (*documentService,
 	// Deps are never actually read by the fake; the zero value is fine.
 	deps := func() lua.WriteDeps { return lua.WriteDeps{} }
 
-	return newDocumentService(st, kv, "/p", fake, deps), fake
+	return newDocumentService(st, kv, "/p", fake, deps, nil), fake
 }
 
 // reqEntity is a convenience factory for the tests below, all of which
@@ -373,12 +395,17 @@ func TestDocumentService_CacheMemoizeAcrossRenders(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	scriptBody := `
--- Memoized "compute" writes a line to output/counter.log on first run
--- and returns a cached string on subsequent runs. After two document
--- renders the file should contain exactly one line: proof that the fn
--- only executed once across the two renders.
+-- Memoized "compute" prints a marker on first run and returns a cached
+-- string on subsequent runs. Across two document renders the marker must
+-- appear exactly once: proof that the fn only executed once.
+--
+-- The marker is print()ed rather than written with rela.write_file because
+-- a document runtime is not granted the write_file capability (TKT-YH52OM)
+-- and should not be: rendering a report has no business touching the disk.
+-- print() is the document path's own output mechanism, so this observes the
+-- side effect through a capability the surface legitimately has.
 local got = rela.cache.memoize("counter-key", function()
-  rela.write_file("counter.log", "ran\n", {ensure_newline = true})
+  print("RAN-MARKER")
   return "computed"
 end)
 print("# doc")
@@ -406,15 +433,14 @@ print(got)
 	deps := func() lua.WriteDeps {
 		return lua.WriteDeps{
 			ReadDeps: lua.ReadDeps{
-				VisibleReader:  st,
-				WritePrepStore: st,
-				Tracer:         tracer.New(st),
-				ProjectRoot:    projectRoot,
+				VisibleReader: st,
+				Tracer:        tracer.New(st),
+				ProjectRoot:   projectRoot,
 			},
 			EntityManager: entitymanagertest.PanicOnUse{},
 		}
 	}
-	s := newDocumentService(st, kv, projectRoot, engine, deps)
+	s := newDocumentService(st, kv, projectRoot, engine, deps, nil)
 
 	cfg := documentRenderConfig{
 		ConfigID: "notes",
@@ -422,22 +448,17 @@ print(got)
 		Timeout:  5 * time.Second,
 	}
 
+	var combined strings.Builder
 	for i := range 2 {
-		if _, renderErr := s.Render(context.Background(), "REQ-001", cfg); renderErr != nil {
+		out, renderErr := s.Render(context.Background(), "REQ-001", cfg)
+		if renderErr != nil {
 			t.Fatalf("render %d: %v", i, renderErr)
 		}
+		combined.WriteString(out.HTML)
 	}
 
-	counterFile := filepath.Join(projectRoot, "output", "counter.log")
-	data, err := os.ReadFile(counterFile)
-	if err != nil {
-		t.Fatalf("read counter.log: %v", err)
-	}
-	// ensure_newline=true on rela.write_file guarantees a trailing
-	// newline, so counting '\n' gives the number of lines written.
-	lines := strings.Count(string(data), "\n")
-	if lines != 1 {
-		t.Errorf("expected 1 line in counter.log (memoize ran once), got %d lines: %q",
-			lines, string(data))
+	// The marker must appear exactly once across BOTH renders' output.
+	if n := strings.Count(combined.String(), "RAN-MARKER"); n != 1 {
+		t.Errorf("expected RAN-MARKER once (memoize ran once), got %d in: %q", n, combined.String())
 	}
 }

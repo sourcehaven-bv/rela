@@ -29,6 +29,11 @@ func (c *SchedulerCmd) Run(ctx context.Context, ws scheduler.WorkspaceProvider) 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
-	s := scheduler.New(cfg, script.NewEngine(), ws, logger)
+	// NewWithQueue, not New: script execution happens on the job queue, so a
+	// scheduler built without one starts cleanly and then fails every task.
+	s, err := scheduler.NewWithQueue(cfg, script.NewEngine(), ws, logger)
+	if err != nil {
+		return err
+	}
 	return s.Run(ctx)
 }

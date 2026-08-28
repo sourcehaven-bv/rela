@@ -28,7 +28,7 @@ func viewsAs(ctx context.Context, t *testing.T, app *App, d *acl.Declarative,
 		"/api/v1/_views/"+entityType+"/"+entityID, http.NoBody)
 	req = req.WithContext(gateCtxFor(ctx, t, d))
 	rec := httptest.NewRecorder()
-	app.handleV1Views(rec, req)
+	app.views.handleV1Views(rec, req)
 	return rec
 }
 
@@ -170,7 +170,7 @@ func TestACLViews_RelationColumnRedactsHiddenNeighborTitle(t *testing.T) {
 	}, app.store)
 	app.acl = d
 
-	titles := app.resolveRelationColumnValues(gateCtxFor(aliceCtx(), t, d), "TKT-001", "implements", dataentryconfig.DirectionOutgoing)
+	titles := app.views.resolveRelationColumnValues(gateCtxFor(aliceCtx(), t, d), "TKT-001", "implements", dataentryconfig.DirectionOutgoing)
 	for _, tt := range titles {
 		if strings.Contains(tt, "SECRET-FEATURE") {
 			t.Errorf("LEAK: hidden neighbor display value in relation column: %v", titles)
@@ -197,8 +197,48 @@ func TestACLViews_RelationColumnDropsUnreadableNeighbor(t *testing.T) {
 	}, app.store)
 	app.acl = d
 
-	titles := app.resolveRelationColumnValues(gateCtxFor(aliceCtx(), t, d), "TKT-001", "implements", dataentryconfig.DirectionOutgoing)
+	titles := app.views.resolveRelationColumnValues(gateCtxFor(aliceCtx(), t, d), "TKT-001", "implements", dataentryconfig.DirectionOutgoing)
 	if len(titles) != 0 {
 		t.Errorf("unreadable neighbor leaked into relation column: %v", titles)
+	}
+}
+
+// TestACLScript_RedactedVisibleToLua is the end-to-end verification for
+// TKT-FJ6END on the data-entry path — the one production wiring that has
+// a real field resolver (the scheduler's does not; see RR-7408F5). It runs
+// a script through App.scriptReader exactly as document rendering does.
+func TestACLScript_RedactedVisibleToLua(t *testing.T) {
+	app := newTestAppV1(t)
+	app.fieldResolver = fakeResolver{fv: FieldVerdicts{
+		Visible: map[string]bool{"status": false},
+	}}
+	seedEntity(app, &entity.Entity{
+		ID: "TKT-001", Type: "ticket",
+		Properties: map[string]any{"title": "visible title", "status": "SECRET-STATUS"},
+	})
+
+	d := mustNewACL(t, &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
+		Assignments: map[string]string{"alice": "viewer"},
+	}, app.store)
+	app.acl = d
+
+	reader := app.scriptReader(appRedactor(app))
+	e, err := reader.GetEntity(aliceCtx(), "TKT-001")
+	if err != nil {
+		t.Fatalf("GetEntity: %v", err)
+	}
+
+	if got, ok := e.Properties["status"]; ok {
+		t.Errorf("LEAK: hidden value still present: %v", got)
+	}
+	if !e.IsRedacted("status") {
+		t.Errorf("hidden property not marked redacted; Redacted=%v", e.Redacted)
+	}
+	if e.IsRedacted("title") {
+		t.Errorf("granted property wrongly marked redacted; Redacted=%v", e.Redacted)
+	}
+	if e.IsLocked() {
+		t.Error("redacted entity reports IsLocked; write paths and the validator would skip it")
 	}
 }

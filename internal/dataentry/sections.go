@@ -53,12 +53,71 @@ func propertyToStrings(v any) []string {
 // human-readable form. Inaccessible is true when the underlying entity is
 // git-crypt encrypted and the value cannot be read with the current key —
 // frontends render a lock indicator instead of the (absent) value.
+// Span is the field's width on the 12-column layout grid, carried through from
+// the view config. 0 means full width — the default for every auto-generated
+// view, so a section with no spans authored renders as one scannable column.
+//
+// Render is the resolved render mode ("display" | "input", TKT-HOIX1) — see
+// dataentryconfig.ResolveFieldRender. Resolved server-side so the SPA never
+// reimplements the section→field inheritance rule.
 type SectionFieldData struct {
 	Property     string
 	Label        string
 	Values       []string
 	PropType     string
 	Inaccessible bool
+	Span         int
+	Render       string
+	// Widget is the config's widget override for this field, empty when the
+	// author did not set one. Passed through verbatim: resolving it is the
+	// SPA's job (its registry owns the type→widget default), and the server
+	// has already rejected a name/type mismatch at config load (TKT-3R7RF3).
+	Widget string
+}
+
+// buildSectionFieldData resolves one configured field against an entity.
+//
+// Shared by both construction sites — buildSectionEntityData (cards/list rows)
+// and the entry-source `properties` branch of buildSections (the detail page).
+// They were near-identical literals, which is exactly how a new field like Span
+// ends up wired into one and silently dropped from the other.
+//
+// sectionRender is the containing section's `render:` default; the field's own
+// `render:` overrides it (TKT-HOIX1).
+func buildSectionFieldData(
+	f ViewSectionField, e *entity.Entity, eDef *metamodel.EntityDef,
+	sectionRender string,
+) SectionFieldData {
+	propType := ""
+	if eDef != nil {
+		if pd, ok := eDef.Properties[f.Property]; ok {
+			propType = pd.Type
+		}
+	}
+	// A label is authored, never derived (DEC-6C1NAA): an unset label falls
+	// back to the raw property name rather than a title-cased guess, which
+	// would bake an English convention into a language-neutral metamodel.
+	label := f.Label
+	if label == "" {
+		label = f.Property
+	}
+	return SectionFieldData{
+		Property:     f.Property,
+		Label:        label,
+		Values:       propertyToStrings(e.Properties[f.Property]),
+		PropType:     propType,
+		Inaccessible: e.IsInaccessible(f.Property),
+		// int, not dataentryconfig.Span: the named type exists to enforce
+		// strict YAML decoding at config load. Past that boundary the value is
+		// just a number, and the wire DTO shouldn't drag a config type onto
+		// the API surface.
+		Span:   int(f.Span),
+		Render: resolveFieldRender(sectionRender, f.Render),
+		// No section-level inheritance for Widget, unlike Render — a widget is
+		// per-property, and a section-wide one would be a config error on every
+		// field of a non-matching type. See ViewSectionField's godoc.
+		Widget: f.Widget,
+	}
 }
 
 // SectionEntityData holds a resolved entity for template rendering.
@@ -159,34 +218,24 @@ type SectionData struct {
 // Returns a value (not a pointer) so callers can layer on display-mode-
 // specific fields (e.g. `Content`/`HasContent` for the `content`/`cards`
 // branch) without sharing mutation across rows.
-func (a *App) buildSectionEntityData(
+//
+// sectionRender is the containing section's `render:` default; each field's
+// own `render:` overrides it (TKT-HOIX1).
+func (h *viewsHandler) buildSectionEntityData(
 	ctx context.Context, e *entity.Entity, secFields []ViewSectionField, eDef *metamodel.EntityDef,
+	sectionRender string,
 ) SectionEntityData {
-	s := a.State()
+	s := h.schema()
 	sed := SectionEntityData{
 		ID:            e.ID,
 		Title:         s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
 		Type:          e.Type,
-		EditFormID:    a.editFormForType(e.Type),
-		Props:         a.affordances.copyVisibleProperties(ctx, e),
-		FieldVerdicts: a.affordances.computeFieldAffordances(ctx, e),
+		EditFormID:    h.editFormForType(e.Type),
+		Props:         h.affordances.copyVisibleProperties(ctx, e),
+		FieldVerdicts: h.affordances.computeFieldAffordances(ctx, e),
 	}
 	for _, f := range secFields {
-		values := propertyToStrings(e.Properties[f.Property])
-		propType := ""
-		if eDef != nil {
-			if pd, ok := eDef.Properties[f.Property]; ok {
-				propType = pd.Type
-			}
-		}
-		label := f.Label
-		if label == "" {
-			label = titleCase(f.Property)
-		}
-		sed.Fields = append(sed.Fields, SectionFieldData{
-			Property: f.Property, Label: label, Values: values, PropType: propType,
-			Inaccessible: e.IsInaccessible(f.Property),
-		})
+		sed.Fields = append(sed.Fields, buildSectionFieldData(f, e, eDef, sectionRender))
 	}
 	return sed
 }
@@ -194,8 +243,8 @@ func (a *App) buildSectionEntityData(
 // buildSections builds template-ready section data from view sections and a view result.
 //
 //nolint:gocognit,funlen // builds each section by its declared source and display mode; the branches are the distinct section kinds, not shared logic to extract.
-func (a *App) buildSections(ctx context.Context, sections []ViewSection, result *viewResult) []SectionData {
-	s := a.State()
+func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection, result *viewResult) []SectionData {
+	s := h.schema()
 	out := make([]SectionData, 0, len(sections))
 
 	for _, sec := range sections {
@@ -214,21 +263,7 @@ func (a *App) buildSections(ctx context.Context, sections []ViewSection, result 
 			switch sec.Display {
 			case "properties":
 				for _, f := range sec.Fields {
-					values := propertyToStrings(e.Properties[f.Property])
-					propType := ""
-					if entDef != nil {
-						if pd, ok := entDef.Properties[f.Property]; ok {
-							propType = pd.Type
-						}
-					}
-					label := f.Label
-					if label == "" {
-						label = titleCase(f.Property)
-					}
-					sd.Fields = append(sd.Fields, SectionFieldData{
-						Property: f.Property, Label: label, Values: values, PropType: propType,
-						Inaccessible: e.IsInaccessible(f.Property),
-					})
+					sd.Fields = append(sd.Fields, buildSectionFieldData(f, e, entDef, sec.Render))
 				}
 			case "content":
 				sd.Content = e.Content
@@ -245,20 +280,24 @@ func (a *App) buildSections(ctx context.Context, sections []ViewSection, result 
 			case "properties", "list":
 				for _, e := range entities {
 					eDef, _ := s.Meta.GetEntityDef(e.Type)
-					sed := a.buildSectionEntityData(ctx, e, sec.Fields, eDef)
+					sed := h.buildSectionEntityData(ctx, e, sec.Fields, eDef, sec.Render)
 					sd.Entities = append(sd.Entities, sed)
 				}
 			case "table":
 				sd.Columns = sec.Columns
 				buildRow := func(e *entity.Entity) SectionRowData {
 					eDef, _ := s.Meta.GetEntityDef(e.Type)
-					row := SectionRowData{EntityID: e.ID, EntityType: e.Type, EditFormID: a.editFormForType(e.Type)}
+					row := SectionRowData{EntityID: e.ID, EntityType: e.Type, EditFormID: h.editFormForType(e.Type)}
 					for _, col := range sec.Columns {
 						cell := SectionColumnData{
-							Link: a.resolveLinkTarget(col.Link, e.Type, e.ID), EntityID: e.ID, EntityType: e.Type,
+							Link: resolveLinkTarget(col.Link, e.Type, e.ID), EntityID: e.ID, EntityType: e.Type,
 						}
 						if col.Relation != "" {
-							cell.Values = a.resolveRelationColumnValues(ctx, e.ID, col.Relation, col.Direction)
+							// The row entity's own type anchors the inference: a
+							// section's rows come from a traversal, so the type is
+							// only known per row, not from the section declaration.
+							dir := resolveConfigDirection(s, e.Type, col.Relation, col.Direction)
+							cell.Values = h.resolveRelationColumnValues(ctx, e.ID, col.Relation, dir)
 						} else {
 							var pd metamodel.PropertyDef
 							if eDef != nil {
@@ -310,7 +349,7 @@ func (a *App) buildSections(ctx context.Context, sections []ViewSection, result 
 			case "content", "cards":
 				for _, e := range entities {
 					eDef, _ := s.Meta.GetEntityDef(e.Type)
-					sed := a.buildSectionEntityData(ctx, e, sec.Fields, eDef)
+					sed := h.buildSectionEntityData(ctx, e, sec.Fields, eDef, sec.Render)
 					sed.Content = e.Content
 					sed.HasContent = e.Content != ""
 					sd.Entities = append(sd.Entities, sed)
@@ -326,7 +365,9 @@ func (a *App) buildSections(ctx context.Context, sections []ViewSection, result 
 
 // executeSidePanel runs the side panel traversal and builds section data.
 // Returns nil if the form has no side panel or the entity doesn't exist.
-func (a *App) executeSidePanel(ctx context.Context, panel *SidePanelConfig, entityID, entityType string) []SectionData {
+func (h *viewsHandler) executeSidePanel(
+	ctx context.Context, panel *SidePanelConfig, entityID, entityType string,
+) []SectionData {
 	if panel == nil || entityID == "" {
 		return nil
 	}
@@ -338,12 +379,12 @@ func (a *App) executeSidePanel(ctx context.Context, panel *SidePanelConfig, enti
 		Sections: panel.Sections,
 	}
 
-	result, err := a.executeView(ctx, viewCfg, entityID)
+	result, err := h.executeView(ctx, viewCfg, entityID)
 	if err != nil {
 		return nil
 	}
 
-	return a.buildSections(ctx, panel.Sections, result)
+	return h.buildSections(ctx, panel.Sections, result)
 }
 
 // resolveSectionButtonsWithTraverse populates AddInfo and LinkInfo on
@@ -353,8 +394,10 @@ func (a *App) executeSidePanel(ctx context.Context, panel *SidePanelConfig, enti
 // hand-built from a form's SidePanel config — it is not a generic view.
 //
 //nolint:gocognit // resolves section buttons across traverse targets; the branches are per-source button-resolution cases, not shared logic to extract.
-func (a *App) resolveSectionButtonsWithTraverse(viewConfig ViewConfig, sections []SectionData, entry *entity.Entity) {
-	s := a.State()
+func (h *viewsHandler) resolveSectionButtonsWithTraverse(
+	viewConfig ViewConfig, sections []SectionData, entry *entity.Entity,
+) {
+	s := h.schema()
 	for i, sec := range viewConfig.Sections {
 		if sec.Source == "entry" {
 			continue
@@ -382,7 +425,7 @@ func (a *App) resolveSectionButtonsWithTraverse(viewConfig ViewConfig, sections 
 			}
 			var targets []SectionAddTarget
 			for _, et := range candidateTypes {
-				formID := a.createFormForType(et)
+				formID := h.createFormForType(et)
 				if formID == "" {
 					continue
 				}

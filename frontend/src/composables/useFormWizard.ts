@@ -61,6 +61,20 @@ export interface FormWizard {
   isFieldRequired: (field: FormFieldOrRelation) => boolean
   /** Property keys under all currently-visible steps (for payload pruning). */
   activeProperties: ComputedRef<Set<string>>
+  /**
+   * `activeProperties` as it WOULD be for a hypothetical form state, without
+   * mutating anything (TKT-7S5735).
+   *
+   * This is what lets the form decide whether a proposed edit hides a field
+   * BEFORE applying it. Visibility is a pure function of the form values
+   * (`conditionBindings` feeds `form: formData` into every `visible_when`), so
+   * without this the only way to learn "what would hide" is to write the value
+   * first — which is the propose/commit conflation BUG-FB0LN8 kept failing on.
+   *
+   * Pure and synchronous: no reactive state is read or written beyond the
+   * config, so it is unit-testable with no component mount.
+   */
+  activePropertiesFor: (bindings: Bindings) => Set<string>
   /** Property keys named by ANY step/field, regardless of visibility. */
   managedProperties: ComputedRef<Set<string>>
   /** Relation names under all currently-visible steps. */
@@ -75,6 +89,20 @@ export interface FormWizard {
   seedFromUrl: () => void
 }
 
+export interface FormWizardOptions {
+  /**
+   * Mirror the current step into `?step=N` (default true).
+   *
+   * Set false for a wizard rendered inside another form's page — an embedded
+   * create modal (TKT-OMUD56). The query key is global, so two live wizards
+   * would write the same `step` param: the nested form's writes would move the
+   * host's step, and the host's echo guard would see a foreign value and clamp
+   * its own index to it. A nested wizard is short-lived and not deep-linkable,
+   * so it simply keeps its step in memory.
+   */
+  syncUrl?: boolean
+}
+
 export function useFormWizard(
   formConfig: Ref<FormConfig | undefined> | ComputedRef<FormConfig | undefined>,
   // A getter, not a computed: it is invoked inside each derived computed so the
@@ -82,8 +110,10 @@ export function useFormWizard(
   // tracking scope. A cached computed would return a stable object whose
   // property reads are not re-tracked, so visibility would never update as the
   // user types (the `form.done == true` reveal would go stale).
-  getBindings: () => Bindings
+  getBindings: () => Bindings,
+  options: FormWizardOptions = {}
 ): FormWizard {
+  const syncUrl = options.syncUrl !== false
   const route = useRoute()
   const router = useRouter()
 
@@ -102,14 +132,20 @@ export function useFormWizard(
 
   const isMultiStep = computed(() => (formConfig.value?.steps?.length ?? 0) > 1)
 
-  // Evaluate a condition against the live bindings. The engine memoizes the
-  // compiled program by source, so re-evaluating each render is cheap. An
-  // absent/empty condition means "no condition" → true; a present-but-malformed
-  // one was already warned about in compileCond and reads as false.
-  const evalCond = (expr: string | undefined): boolean => {
+  // Evaluate a condition. The engine memoizes the compiled program by source,
+  // so re-evaluating each render is cheap. An absent/empty condition means "no
+  // condition" → true; a present-but-malformed one was already warned about in
+  // compileCond and reads as false.
+  //
+  // `bindings` defaults to the live form values. Passing them explicitly
+  // evaluates against a HYPOTHETICAL state instead — see `activePropertiesFor`.
+  // The default must stay a call to `getBindings()` inside this function, not a
+  // captured value: the reactive read has to happen in the calling computed's
+  // tracking scope or visibility stops updating as the user types.
+  const evalCond = (expr: string | undefined, bindings?: Bindings): boolean => {
     const prog = compileCond(expr)
     if (!prog) return !expr || expr.trim() === ''
-    return prog.eval(getBindings())
+    return prog.eval(bindings ?? getBindings())
   }
 
   const visibleSteps = computed<FormStep[]>(() =>
@@ -122,8 +158,8 @@ export function useFormWizard(
   const isFirstStep = computed(() => currentStep.value <= 0)
   const isLastStep = computed(() => currentStep.value >= visibleSteps.value.length - 1)
 
-  function visibleFieldsOf(step: FormStep): FormFieldOrRelation[] {
-    return stepFields(step).filter((f) => evalCond(f.visible_when))
+  function visibleFieldsOf(step: FormStep, bindings?: Bindings): FormFieldOrRelation[] {
+    return stepFields(step).filter((f) => evalCond(f.visible_when, bindings))
   }
 
   // The visible-step index that currently shows a field for `property`, or -1.
@@ -143,10 +179,21 @@ export function useFormWizard(
 
   // Keys (property names OR relation names) currently VISIBLE — under a
   // visible step, honouring per-field visible_when.
-  function activeKeys(pick: (f: FormFieldOrRelation) => string | undefined): Set<string> {
+  //
+  // With `bindings` supplied, answers the same question about a hypothetical
+  // form state rather than the live one. Note it must re-filter the STEPS too,
+  // not reuse `visibleSteps.value`: a step's own `visible_when` reads the same
+  // bindings, so a proposal can hide a whole step.
+  function activeKeys(
+    pick: (f: FormFieldOrRelation) => string | undefined,
+    bindings?: Bindings
+  ): Set<string> {
     const keys = new Set<string>()
-    for (const step of visibleSteps.value) {
-      for (const f of visibleFieldsOf(step)) {
+    const steps = bindings
+      ? normalizedSteps.value.filter((s) => evalCond(s.visible_when, bindings))
+      : visibleSteps.value
+    for (const step of steps) {
+      for (const f of visibleFieldsOf(step, bindings)) {
         const k = pick(f)
         if (k) keys.add(k)
       }
@@ -173,6 +220,9 @@ export function useFormWizard(
   const asRelation = (f: FormFieldOrRelation) => f.relation
 
   const activeProperties = computed(() => activeKeys(asProperty))
+  // The hypothetical counterpart. Deliberately a plain function, not a
+  // computed: it takes an argument and must not cache or track.
+  const activePropertiesFor = (bindings: Bindings) => activeKeys(asProperty, bindings)
   const managedProperties = computed(() => managedKeys(asProperty))
   // Relations get the same treatment so a relation under a hidden branch is
   // pruned from the submitted payload, not just hidden from render.
@@ -195,7 +245,7 @@ export function useFormWizard(
   // `visible_when` — and clamp against a smaller visibleSteps would otherwise
   // strand the user on the wrong step.
   function seedFromUrl(): void {
-    if (!isMultiStep.value) return
+    if (!isMultiStep.value || !syncUrl) return
     const raw = route.query.step
     const parsed = typeof raw === 'string' ? parseInt(raw, 10) : NaN
     currentStep.value = clamp(parsed)
@@ -204,7 +254,8 @@ export function useFormWizard(
 
   let lastWritten = ''
   function writeStep(i: number): void {
-    if (!isMultiStep.value) return // single-step forms never touch the URL
+    // Single-step forms never touch the URL; nor do URL-desynced ones.
+    if (!isMultiStep.value || !syncUrl) return
     const value = String(i)
     lastWritten = value
     const query = { ...route.query, step: value }
@@ -216,6 +267,7 @@ export function useFormWizard(
   watch(
     () => route.query.step,
     (raw) => {
+      if (!syncUrl) return
       const incoming = typeof raw === 'string' ? raw : ''
       if (incoming === lastWritten) return
       const parsed = incoming ? parseInt(incoming, 10) : 0
@@ -255,6 +307,7 @@ export function useFormWizard(
     visibleStepIndexForProperty,
     isFieldRequired,
     activeProperties,
+    activePropertiesFor,
     managedProperties,
     activeRelations,
     managedRelations,

@@ -63,21 +63,34 @@ type ManifestChange struct {
 	Deleted bool   `json:"deleted"`
 }
 
-// EntityBody is the JSON push/fetch payload for an entity.
+// EntityBody is the JSON fetch payload for an entity, decoded from the
+// authorized /api/v1 GET (TKT-8P1TM7). Properties carries the VISIBLE values
+// only; Redacted names the properties the primary withheld by field-level ACL
+// (the `_redacted` wire field, DEC-T0XIWQ). The two together let the replica
+// distinguish a hidden field (named in Redacted → leave the local copy alone)
+// from a genuinely deleted one (in neither → unset locally) when it splices the
+// fetch onto its raw local record. Redacted is a pointer so "absent" (a shape
+// with no field affordances) is distinct from "present and empty" (evaluated,
+// nothing hidden).
 type EntityBody struct {
 	ID         string         `json:"id"`
 	Type       string         `json:"type"`
 	Properties map[string]any `json:"properties,omitempty"`
 	Content    string         `json:"content,omitempty"`
+	Redacted   *[]string      `json:"_redacted,omitempty"`
 }
 
-// RelationBody is the JSON push/fetch payload for a relation.
+// RelationBody is the JSON fetch payload for a relation. Like EntityBody,
+// Properties carries the VISIBLE meta values and Redacted names the withheld
+// ones (TKT-8P1TM7) so the replica can splice relation meta without erasing
+// hidden values it isn't entitled to.
 type RelationBody struct {
 	From       string         `json:"from"`
 	Type       string         `json:"type"`
 	To         string         `json:"to"`
 	Properties map[string]any `json:"properties,omitempty"`
 	Content    string         `json:"content,omitempty"`
+	Redacted   *[]string      `json:"_redacted,omitempty"`
 }
 
 // Manifest is the decoded change feed plus the next cursor to persist.
@@ -124,9 +137,14 @@ type FetchedRelation struct {
 	Hash string
 }
 
-// GetEntity fetches an entity's full content and its current server hash (ETag).
-func (c *Client) GetEntity(ctx context.Context, id string) (*FetchedEntity, error) {
-	resp, err := c.get(ctx, entitySegments(id))
+// GetEntity fetches an entity through the authorized /api/v1 read path
+// (TKT-8P1TM7). The response body is the redacted v1 entity — VISIBLE property
+// values plus the `_redacted` names — and the Hash is the primary's opaque
+// ETag (its conflict token, echoed back as If-Match on the next write, never
+// re-derived locally). plural is the type's /api/v1 route segment, resolved from
+// the primary's schema by the engine.
+func (c *Client) GetEntity(ctx context.Context, plural, id string) (*FetchedEntity, error) {
+	resp, err := c.get(ctx, entitySegments(plural, id))
 	if err != nil {
 		return nil, err
 	}
@@ -134,16 +152,35 @@ func (c *Client) GetEntity(ctx context.Context, id string) (*FetchedEntity, erro
 	if resp.StatusCode != http.StatusOK {
 		return nil, c.statusError(resp, "fetch entity "+id)
 	}
-	var b EntityBody
-	if err := json.NewDecoder(resp.Body).Decode(&b); err != nil {
+	var v v1EntityResponse
+	if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
 		return nil, fmt.Errorf("decode entity %s: %w", id, err)
 	}
-	return &FetchedEntity{Body: b, Hash: resp.Header.Get("ETag")}, nil
+	return &FetchedEntity{Body: v.toEntityBody(), Hash: resp.Header.Get("ETag")}, nil
 }
 
-// GetRelation fetches a relation's full content and its current server hash.
-func (c *Client) GetRelation(ctx context.Context, from, relType, to string) (*FetchedRelation, error) {
-	resp, err := c.get(ctx, relationSegments(from, relType, to))
+// v1EntityResponse decodes the fields of an /api/v1 entity response the sync
+// client uses. It mirrors the server's apiwire/v1 Entity shape but is a local,
+// minimal decode (the CLI must not import the server wire package).
+type v1EntityResponse struct {
+	ID         string         `json:"id"`
+	Type       string         `json:"type"`
+	Properties map[string]any `json:"properties"`
+	Content    string         `json:"content,omitempty"`
+	Redacted   *[]string      `json:"_redacted,omitempty"`
+}
+
+func (v v1EntityResponse) toEntityBody() EntityBody {
+	// Identical field set/order, so a direct conversion is exact.
+	return EntityBody(v)
+}
+
+// GetRelation fetches a relation through the /api/v1 single-relation read that
+// carries the relation body + a relation-level ETag (RR-SYNCR1). fromPlural is
+// the source entity type's route plural. The response is redacted relation meta
+// + `_redacted` names, and Hash is the primary's opaque relation ETag.
+func (c *Client) GetRelation(ctx context.Context, fromPlural, from, relType, to string) (*FetchedRelation, error) {
+	resp, err := c.get(ctx, relationSegments(fromPlural, from, relType, to))
 	if err != nil {
 		return nil, err
 	}
@@ -151,11 +188,27 @@ func (c *Client) GetRelation(ctx context.Context, from, relType, to string) (*Fe
 	if resp.StatusCode != http.StatusOK {
 		return nil, c.statusError(resp, fmt.Sprintf("fetch relation %s/%s/%s", from, relType, to))
 	}
-	var b RelationBody
-	if err := json.NewDecoder(resp.Body).Decode(&b); err != nil {
+	var v v1RelationResponse
+	if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
 		return nil, fmt.Errorf("decode relation: %w", err)
 	}
-	return &FetchedRelation{Body: b, Hash: resp.Header.Get("ETag")}, nil
+	return &FetchedRelation{Body: v.toRelationBody(from, relType, to), Hash: resp.Header.Get("ETag")}, nil
+}
+
+// v1RelationResponse decodes the /api/v1 single-relation read (RR-SYNCR1). The
+// from/type/to are known from the request path, so the body carries meta +
+// content + `_redacted` only.
+type v1RelationResponse struct {
+	Properties map[string]any `json:"meta"`
+	Content    string         `json:"content,omitempty"`
+	Redacted   *[]string      `json:"_redacted,omitempty"`
+}
+
+func (v v1RelationResponse) toRelationBody(from, relType, to string) RelationBody {
+	return RelationBody{
+		From: from, Type: relType, To: to,
+		Properties: v.Properties, Content: v.Content, Redacted: v.Redacted,
+	}
 }
 
 // PushResult is the typed outcome of a conditional PUT/DELETE. Exactly one of
@@ -175,38 +228,89 @@ type PushResult struct {
 	// let the run continue; the flag only sharpens the operator-facing message.
 	CreatedConcurrently bool
 	Invalid             bool   // 422: content rejected by validation (NOT a conflict)
-	Hash                string // new hash on Applied
-	Detail              string // human-readable detail (validation message, etc.)
+	Hash                string // new hash (primary's opaque ETag) on Applied
+	// CreatedID is the primary-minted id returned by a create (POST /api/v1/
+	// {plural}). The replica adopts it and renames its temp-id local doc
+	// (TKT-8P1TM7). Empty for updates/deletes.
+	CreatedID string
+	Detail    string // human-readable detail (validation message, etc.)
 }
 
-// PutEntity pushes an entity conditionally. ifMatch is the index hash (the base
-// the client edited); empty means "expect this to not yet exist" (first create).
-func (c *Client) PutEntity(ctx context.Context, body EntityBody, ifMatch string) (*PushResult, error) {
-	return c.put(ctx, entitySegments(body.ID), body, ifMatch)
+// v1PatchEntity is the partial-update body the replica PUSHes to
+// PATCH /api/v1/{plural}/{id} (TKT-8P1TM7). It names only the VISIBLE properties
+// the replica holds — the primary merges them onto its raw record, so any field
+// the replica does not name (including the primary's hidden fields) is
+// preserved. PropertiesUnset carries genuine local deletions of VISIBLE fields.
+// This is the push-side symmetry of the pull splice: never a whole-record
+// replace, so a redacted replica cannot erase the primary's hidden data.
+type v1PatchEntity struct {
+	Properties      map[string]any `json:"properties,omitempty"`
+	PropertiesUnset []string       `json:"properties_unset,omitempty"`
+	Content         *string        `json:"content,omitempty"`
 }
 
-// PutRelation pushes a relation conditionally.
-func (c *Client) PutRelation(ctx context.Context, body RelationBody, ifMatch string) (*PushResult, error) {
-	return c.put(ctx, relationSegments(body.From, body.Type, body.To), body, ifMatch)
+// v1CreateEntity is the create body POSTed to /api/v1/{plural} WITHOUT an id —
+// the primary mints the real id and returns it (the replica adopts it and
+// renames locally, TKT-8P1TM7). Content is a plain string on create.
+type v1CreateEntity struct {
+	Properties map[string]any `json:"properties,omitempty"`
+	Content    string         `json:"content,omitempty"`
 }
 
-// DeleteEntity / DeleteRelation conditionally delete a record. ifMatch must be
-// the record's current hash (the server rejects a blind delete with 412).
-func (c *Client) DeleteEntity(ctx context.Context, id, ifMatch string) (*PushResult, error) {
-	return c.delete(ctx, entitySegments(id), ifMatch)
+// PatchEntity pushes a partial entity update through PATCH /api/v1/{plural}/{id}
+// under If-Match (the primary's opaque ETag baseline). plural is the type route.
+func (c *Client) PatchEntity(
+	ctx context.Context, plural, id string, body v1PatchEntity, ifMatch string,
+) (*PushResult, error) {
+	return c.patch(ctx, entitySegments(plural, id), body, ifMatch)
 }
-func (c *Client) DeleteRelation(ctx context.Context, from, relType, to, ifMatch string) (*PushResult, error) {
-	return c.delete(ctx, relationSegments(from, relType, to), ifMatch)
+
+// CreateEntity pushes a create through POST /api/v1/{plural} (no id) and returns
+// the primary-minted id in the PushResult (CreatedID) for the replica to adopt.
+func (c *Client) CreateEntity(ctx context.Context, plural string, body v1CreateEntity) (*PushResult, error) {
+	return c.create(ctx, []string{"api", "v1", plural}, body)
+}
+
+// DeleteEntity deletes an entity through DELETE /api/v1/{plural}/{id}.
+func (c *Client) DeleteEntity(ctx context.Context, plural, id, ifMatch string) (*PushResult, error) {
+	return c.delete(ctx, entitySegments(plural, id), ifMatch)
+}
+
+// v1RelationWrite is the create/update body for the dedicated single-relation
+// endpoints (POST/PATCH /api/v1/{fromPlural}/{from}/relations/{relType}/{to}).
+// The v1 relation write body names the target id + meta; the replica sends the
+// VISIBLE meta only (symmetry with the pull splice).
+type v1RelationWrite struct {
+	ID   string         `json:"id"`             // the TO endpoint id
+	Meta map[string]any `json:"meta,omitempty"` // relation properties
+}
+
+// PutRelation upserts a relation through the /api/v1 relation write endpoint.
+// The server create/update is idempotent on the (from,type,to) triple, so a
+// single PATCH-style call covers both create and update from the replica's
+// point of view. fromPlural is the source entity type's route plural.
+func (c *Client) PutRelation(
+	ctx context.Context, fromPlural string, body RelationBody, ifMatch string,
+) (*PushResult, error) {
+	return c.patch(ctx, relationSegments(fromPlural, body.From, body.Type, body.To),
+		v1RelationWrite{ID: body.To, Meta: body.Properties}, ifMatch)
+}
+
+// DeleteRelation deletes a relation through the /api/v1 relation endpoint.
+func (c *Client) DeleteRelation(
+	ctx context.Context, fromPlural, from, relType, to, ifMatch string,
+) (*PushResult, error) {
+	return c.delete(ctx, relationSegments(fromPlural, from, relType, to), ifMatch)
 }
 
 // --- internal request plumbing ---
 
-func (c *Client) put(ctx context.Context, segments []string, body any, ifMatch string) (*PushResult, error) {
+func (c *Client) patch(ctx context.Context, segments []string, body any, ifMatch string) (*PushResult, error) {
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("marshal body: %w", err)
 	}
-	req, err := c.newRequest(ctx, http.MethodPut, segments, nil, bytes.NewReader(buf))
+	req, err := c.newRequest(ctx, http.MethodPatch, segments, nil, bytes.NewReader(buf))
 	if err != nil {
 		return nil, err
 	}
@@ -215,6 +319,43 @@ func (c *Client) put(ctx context.Context, segments []string, body any, ifMatch s
 		req.Header.Set("If-Match", ifMatch)
 	}
 	return c.pushResult(req)
+}
+
+// create POSTs a create body (no id) and maps the 201 response — the primary
+// mints the id and returns it in the body, which the replica adopts. A create
+// carries no If-Match (there is no prior version); a concurrent first-create of
+// the same natural key surfaces as the primary's own conflict status.
+func (c *Client) create(ctx context.Context, segments []string, body any) (*PushResult, error) {
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshal body: %w", err)
+	}
+	req, err := c.newRequest(ctx, http.MethodPost, segments, nil, bytes.NewReader(buf))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusCreated, http.StatusOK:
+		var created struct {
+			ID string `json:"id"`
+		}
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
+		_ = json.Unmarshal(data, &created)
+		return &PushResult{Applied: true, Hash: resp.Header.Get("ETag"), CreatedID: created.ID}, nil
+	case http.StatusConflict:
+		return &PushResult{Conflict: true, CreatedConcurrently: true}, nil
+	case http.StatusUnprocessableEntity:
+		return &PushResult{Invalid: true, Detail: c.errorDetail(resp)}, nil
+	default:
+		return nil, c.statusError(resp, "create "+req.URL.Path)
+	}
 }
 
 func (c *Client) delete(ctx context.Context, segments []string, ifMatch string) (*PushResult, error) {
@@ -288,7 +429,7 @@ func (c *Client) pushResult(req *http.Request) (*PushResult, error) {
 // existing path via url.URL.JoinPath, which percent-escapes each one exactly
 // once. Joining (not replacing) preserves a base path prefix, so a base like
 // https://host/rela/ keeps its prefix: the result is
-// https://host/rela/api/sync/entities/<id>, not https://host/api/sync/... .
+// https://host/rela/api/v1/tickets/<id>, not https://host/api/v1/... .
 func (c *Client) newRequest(
 	ctx context.Context, method string, segments []string, q url.Values, body io.Reader,
 ) (*http.Request, error) {
@@ -307,13 +448,29 @@ func (c *Client) newRequest(
 }
 
 // entitySegments / relationSegments return the raw (unescaped) path elements for
-// a record's sync URL. newRequest escapes them via JoinPath.
-func entitySegments(id string) []string { return []string{"api", "sync", "entities", id} }
-func relationSegments(from, relType, to string) []string {
-	return []string{"api", "sync", "relations", from, relType, to}
+// a record's /api/v1 URL. newRequest escapes them via JoinPath.
+//
+// Entities route by type plural: /api/v1/{plural}/{id}. Relations use the
+// dedicated sync-oriented single-relation read/write route that carries the
+// relation body + a relation-level ETag (RR-SYNCR1): the source entity's plural,
+// then the relation triple.
+func entitySegments(plural, id string) []string { return []string{"api", "v1", plural, id} }
+func relationSegments(fromPlural, from, relType, to string) []string {
+	return []string{"api", "v1", fromPlural, from, "relations", relType, to}
 }
 
 func (c *Client) do(req *http.Request) (*http.Response, error) {
+	// The destination is operator configuration, not attacker input: the base
+	// URL is the `rela sync push/pull --remote` flag (env RELA_REMOTE), supplied
+	// by whoever invokes the CLI, and NewClient requires it to be absolute.
+	// Choosing which rela-server to sync against is the entire point of the
+	// command, so a host allowlist would defeat it. Remote-controlled data never
+	// reaches the destination: the path is built from JoinPath over segments this
+	// package derives from local record ids, so a hostile server's manifest can
+	// influence the path (escaped exactly once by JoinPath) but never the
+	// scheme/host. The trust boundary is the operator's shell, the same one that
+	// already grants full local filesystem access.
+	//nolint:gosec // G704: destination comes from the operator's --remote/RELA_REMOTE, not from request input.
 	resp, err := c.http.Do(req)
 	if err != nil {
 		// Never include req.URL with credentials — newRequest keeps the token in

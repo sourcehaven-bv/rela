@@ -13,6 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
+	"github.com/Sourcehaven-BV/rela/internal/computed"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -69,7 +70,7 @@ type Manager struct {
 	// bypassACL marks this Manager as an ELEVATED write handle: its writes
 	// skip the ACL deny (TKT-D8T148, the `rela.bypass_acl(...)` path). It is
 	// false on the normal Manager and set true ONLY on the throwaway handle
-	// returned by [Manager.elevated]. Carrying elevation on the object (not
+	// returned by Manager.elevated. Carrying elevation on the object (not
 	// the context) is what makes it leak-proof: a nested cascade an elevated
 	// write triggers re-dispatches with the gated Manager (see the cascade
 	// dispatch sites, which pass `m.gated()` as the Mutator), so elevation
@@ -175,6 +176,11 @@ type Deps struct {
 	// versions are handled by the store's periodic sweep, not this hook).
 	VersionRecorder VersionRecorder
 
+	// AliasRewriter is notified when an entity is renamed or deleted so a
+	// subsystem holding references BY ENTITY ID (the CalDAV alias service) can
+	// rewrite them (see [AliasRewriter]). Optional: nil disables the hook.
+	AliasRewriter AliasRewriter
+
 	// RelationVersionRecorder captures a synchronous relation version for
 	// relation delete (explicit and entity-cascade) and endpoint rename (see
 	// [RelationVersionRecorder]). Optional: nil disables it (fs/mem builds; the
@@ -190,6 +196,11 @@ type Deps struct {
 	// re-derives it from the metamodel.
 	Transitions TransitionEnforcer
 
+	// Computed is the compiled materialized-property evaluator. If omitted,
+	// New compiles it from Meta so a wiring omission can never skip
+	// computation. Production appbuild injects the already-compiled set.
+	Computed *computed.Set
+
 	// TransitionGuard answers the guard question for a state-machine
 	// transition (does the ctx principal hold permission P for the subject).
 	// May be nil: a nil guard makes every guarded edge fail closed, which is
@@ -202,6 +213,66 @@ type Deps struct {
 	// `when:` precondition. May be nil when no precondition needs the graph;
 	// a `when:` that queries the graph then evaluates against an empty graph.
 	TransitionGraph statemachine.GraphLookup
+
+	// FieldGate decides whether the ctx principal may author the specific
+	// property changes in a [Manager.PatchEntity] call. Required — pass
+	// [AllowAllFieldGate] to opt out explicitly.
+	//
+	// It is a CAPABILITY injected at the wiring site, never inferred from
+	// identity (the write-side analog of the read-side AllowAllReader,
+	// DEC-ZBI39P). Operator-trust-boundary entry points (CLI) wire
+	// AllowAllFieldGate because they have full access by design;
+	// request-scoped surfaces are where a policy-backed implementation
+	// belongs — none is wired yet (TKT-0XL8MF); see [FieldWriteGate].
+	//
+	// Required rather than optional-nil on purpose: a silently-nil authz
+	// gate is the "forgotten wiring must not become an ACL bypass" failure
+	// (RR-X9NVHI), and it matches how ACL and Audit are already handled.
+	FieldGate FieldWriteGate
+}
+
+// FieldWriteGate answers whether the ctx principal may write the named
+// properties of e. Defined here at the call site (CLAUDE.md consumer-side
+// interfaces) so entitymanager needs no dependency on the affordance
+// resolver that backs it in production.
+//
+// **STATUS: no production surface wires a real implementation yet.** Every
+// current wiring site passes [AllowAllFieldGate], so this gate is inert
+// outside tests — field-level write authz is enforced only by
+// internal/dataentry's own validateFieldWrite on its HTTP path, exactly as
+// before. The seam exists so the policy-backed implementation is a wiring
+// change rather than a rewrite; see TKT-0XL8MF. Do not assume a write
+// reaching PatchEntity has been field-gated.
+//
+// set holds the properties being upserted (key → new value); unset holds
+// the ones being removed. An implementation returns a non-nil error to
+// refuse the write; the error surfaces to the caller unwrapped, so it
+// should carry whatever structured denial detail the surface needs.
+//
+// **Scope: caller-authored changes only.** Automation-derived properties
+// ([automation.Result.PropertiesSet]) are system writes and are
+// deliberately NOT passed through this gate. The gate enforces parity with
+// what the affordance resolver would surface to this principal on a read —
+// and automation is the system acting, not the principal. Gating it would
+// mean a user who cannot author `status` could never trigger an automation
+// that sets `status`, breaking ordinary workflow automations (RR-00ERM9).
+type FieldWriteGate interface {
+	CheckFieldWrite(ctx context.Context, e *entity.Entity, set map[string]any, unset []string) error
+}
+
+// AllowAllFieldGate permits every field write. It is the explicit opt-out
+// for surfaces that sit on the operator trust boundary (the CLI, where the
+// caller already has full filesystem access to the data) and for tests.
+//
+// Named and passed deliberately, exactly like [acl.NopACL] — never the
+// result of leaving [Deps.FieldGate] nil.
+type AllowAllFieldGate struct{}
+
+// CheckFieldWrite implements [FieldWriteGate] by allowing everything.
+func (AllowAllFieldGate) CheckFieldWrite(
+	context.Context, *entity.Entity, map[string]any, []string,
+) error {
+	return nil
 }
 
 // TransitionEnforcer is the narrow contract the Manager needs from the
@@ -237,6 +308,17 @@ func New(d Deps) (*Manager, error) {
 		return nil, errors.New(
 			"entitymanager: New: Transitions is required (use statemachine.Compile; an empty set is a no-op)")
 	}
+	if d.Computed == nil {
+		compiled, err := computed.Compile(d.Meta)
+		if err != nil {
+			return nil, fmt.Errorf("entitymanager: New: %w", err)
+		}
+		d.Computed = compiled
+	}
+	if d.FieldGate == nil {
+		return nil, errors.New(
+			"entitymanager: New: FieldGate is required (use entitymanager.AllowAllFieldGate{} to opt out)")
+	}
 	if (d.Automations == nil) != (d.Cascade == nil) {
 		return nil, errors.New(
 			"entitymanager: New: Automations and Cascade must be supplied together (both non-nil or both nil)",
@@ -257,7 +339,7 @@ func New(d Deps) (*Manager, error) {
 // When this Manager is an elevated handle (`m.bypassACL` — TKT-D8T148: a
 // `rela.bypass_acl(...)` write), the ACL deny is SKIPPED: the write is allowed
 // regardless of the principal's grants. Elevation is a property of WHICH
-// Manager you hold, not of the context — see [Manager.elevated]. The real
+// Manager you hold, not of the context — see Manager.elevated. The real
 // principal is still preserved (`principal.From(ctx)`, unchanged) and the
 // bypass is recorded (recordACLBypass) so the audit trail is unambiguous about
 // which writes were elevated and on whose behalf. We do NOT recordDeniedWrite
@@ -449,13 +531,19 @@ func (m *Manager) CreateEntity(
 		return result, nil
 	}
 
-	autoResult := m.deps.Automations.Process(automation.Event{
+	autoResult := m.deps.Automations.Process(ctx, automation.Event{
 		Type:   automation.EventEntityCreated,
 		Entity: created,
 	})
 	if len(autoResult.PropertiesSet) > 0 {
+		if err := rejectComputedPresent(m.deps, created.Type, stringMapAny(autoResult.PropertiesSet)); err != nil {
+			return nil, err
+		}
 		for prop, val := range autoResult.PropertiesSet {
 			created.SetString(prop, val)
+		}
+		if err := m.deps.Computed.Evaluate(ctx, created); err != nil {
+			return nil, err
 		}
 		// Re-enforce unique constraints against the POST-automation values:
 		// createCore's check ran before automations, so an automation that
@@ -562,6 +650,135 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 	}); err != nil {
 		return nil, err
 	}
+	// Hard-validate BEFORE the existence probe. Order is load-bearing and
+	// predates the updateCore extraction: an invalid entity reports its
+	// validation error even when the id does not exist. PatchEntity cannot
+	// share this half (it has no candidate entity until after the read), so
+	// the pre-check lives here rather than in updateCore, which re-runs the
+	// same partition on the merged result.
+	preErrs := m.deps.Meta.ValidateEntity(e.ID, e.Type, e.Properties)
+	if hard, _ := partitionValidationErrors(preErrs); len(hard) > 0 {
+		return nil, newValidationError(hard)
+	}
+
+	oldEntity, getErr := m.deps.Store.GetEntity(ctx, e.ID)
+	if getErr != nil {
+		return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, e.ID)
+	}
+	if err := rejectComputedChanges(m.deps, oldEntity, e); err != nil {
+		return nil, err
+	}
+
+	return m.updateCore(ctx, e, oldEntity)
+}
+
+// PatchEntity applies a TARGETED set of property changes to one entity:
+// properties the patch does not name are preserved as-is, regardless of
+// whether the caller could read them. See [entity.Patch] for the
+// merge semantics (upserts, then unsets, then the body tri-state).
+//
+// This is the safe alternative to read-modify-write. A caller doing
+// GetEntity → merge → UpdateEntity must hold the WHOLE entity, so any
+// property it failed to carry across is destroyed on save — and a caller
+// reading through a redacting reader cannot carry across what it cannot
+// see. PatchEntity owns the read internally and merges against the RAW
+// stored entity, so that failure mode is unreachable: forgetting a
+// property is a no-op, not an erasure.
+//
+// **Ordering is load-bearing** (RR-32XA5V):
+//
+//	read → locked-check → authorize → field gate → merge → updateCore
+//
+// The read comes first because the ACL subject needs the entity's real
+// type and the caller supplied only an id — the same shape, and the same
+// accepted existence disclosure, as [Manager.DeleteEntity]. The field gate
+// runs strictly AFTER authorization: field verdicts are value-dependent,
+// so consulting them for an unauthorized caller would turn allow-vs-deny
+// into an oracle for stored property values and for entity existence.
+//
+// An elevated Manager (rela.bypass_acl) skips the field gate as well as
+// the row ACL. Elevation is total by design — a half-elevated handle that
+// silently drops some property writes is the confusing contract
+// lua.WriteDeps.ElevatedManager exists to avoid — and the bypass is still
+// recorded by authorizeAndAudit (RR-BA1NIV).
+func (m *Manager) PatchEntity(
+	ctx context.Context, id string, p entity.Patch,
+) (*entity.UpdateResult, error) {
+	ctx = withStoreAttribution(ctx)
+	if id == "" {
+		return nil, errors.New("entitymanager: PatchEntity: id is empty")
+	}
+
+	// RAW read, deliberately ungated: this is write-prep, and the merge
+	// base must be the complete stored entity or hidden properties would
+	// be dropped from the clone and erased on save. Consolidating this
+	// read here is the point of the primitive — consumers no longer hold
+	// a raw store handle of their own.
+	stored, getErr := m.deps.Store.GetEntity(ctx, id)
+	if getErr != nil {
+		// Structural, not textual: consumers holding a narrow write
+		// interface (the Lua bindings) must be able to tell this apart
+		// from other hard errors without matching on the message.
+		return nil, newEntityNotFound(id)
+	}
+
+	// A locked (git-crypt) entity reads as a shell whose real property
+	// values are unavailable, so merging onto it and saving would persist
+	// the shell OVER the encrypted content — the same erasure this
+	// primitive exists to prevent, via encryption instead of redaction
+	// (RR-0QWLRC). Matches ApplyEntity's guard.
+	if stored.IsLocked() {
+		return nil, fmt.Errorf("entitymanager: PatchEntity: entity %s has inaccessible fields", id)
+	}
+
+	if err := m.authorizeAndAudit(ctx, acl.WriteRequest{
+		Op:      acl.OpUpdate,
+		Subject: acl.EntitySubject{Type: stored.Type, ID: id},
+	}); err != nil {
+		return nil, err
+	}
+
+	// Field-level gate, after the row-level decision. Skipped under
+	// elevation for the same reason the row ACL is (see the doc comment).
+	if !m.bypassACL {
+		if err := m.deps.FieldGate.CheckFieldWrite(ctx, stored, p.Properties, p.MetaUnset); err != nil {
+			return nil, err
+		}
+	}
+	if err := rejectComputedPatch(m.deps, stored.Type, p.Properties, p.MetaUnset); err != nil {
+		return nil, err
+	}
+
+	updated := stored.Clone()
+	p.Apply(updated)
+
+	return m.updateCore(ctx, updated, stored)
+}
+
+// updateCore is the shared post-authorization update pipeline: validate,
+// run on-update automation, enforce transitions and unique constraints,
+// persist, audit, and dispatch the cascade.
+//
+// Method on Manager (not a free function over [Deps] like [createCore])
+// because the cascade needs m.gated() to stop elevation propagating into
+// descendants. It deliberately contains **no ACL check and no attribution**
+// — both belong to the entry points ([Manager.UpdateEntity], [Manager.PatchEntity]), which
+// authorize with the subject shape appropriate to how they learned the
+// entity type. Putting authorize here would double-authorize PatchEntity
+// (which must authorize early, before it can merge) and emit two
+// denied-write audit rows for one denial.
+//
+// oldEntity is passed in rather than re-read: both callers already hold it
+// (UpdateEntity to prove existence, PatchEntity as the merge base), so the
+// manager itself reads the row once per write. Callers may still read
+// separately for their own reasons — internal/mcp does, to validate
+// property names against the entity type before dispatching.
+func (m *Manager) updateCore(
+	ctx context.Context, e, oldEntity *entity.Entity,
+) (*entity.UpdateResult, error) {
+	if err := m.deps.Computed.Evaluate(ctx, e); err != nil {
+		return nil, err
+	}
 	// DEC-HWZHA: partition validation errors once. Hard errors abort;
 	// soft conditions populate Result.Warnings. If automation runs and
 	// mutates properties, we recompute warnings against the post-
@@ -572,25 +789,14 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 		return nil, newValidationError(hard)
 	}
 
-	oldEntity, getErr := m.deps.Store.GetEntity(ctx, e.ID)
-	if getErr != nil {
-		return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, e.ID)
-	}
-
 	result := &entity.UpdateResult{Entity: e, Warnings: soft}
 
-	runAutomation := m.deps.Automations != nil
-	var autoResult *automation.Result
-	if runAutomation {
-		autoResult = m.deps.Automations.Process(automation.Event{
-			Type:      automation.EventEntityUpdated,
-			Entity:    e,
-			OldEntity: oldEntity,
-		})
+	autoResult, ranAutomation, err := m.processUpdateAutomation(ctx, e, oldEntity)
+	if err != nil {
+		return nil, err
+	}
+	if ranAutomation {
 		if len(autoResult.PropertiesSet) > 0 {
-			for prop, val := range autoResult.PropertiesSet {
-				e.SetString(prop, val)
-			}
 			// Properties changed — recompute warnings against the
 			// post-automation state (DEC-HWZHA).
 			if errs := m.deps.Meta.ValidateEntity(e.ID, e.Type, e.Properties); len(errs) > 0 {
@@ -626,6 +832,13 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 	// the row exists (else we returned ErrEntityNotFound), so this is
 	// unambiguously an update (BUG-ZWTDH9).
 	if err := m.deps.Store.UpdateEntity(ctx, e); err != nil {
+		// A derived unique-property index can reject an update whose (possibly
+		// automation-set) value duplicates another entity's, even though the
+		// scan above passed under a concurrent writer. Surface it as the same
+		// 422 the scan produces (TKT-3Q0GP1); other errors pass through.
+		if ok, mapped := mapUniquePropertyConflict(err); ok {
+			return nil, mapped
+		}
 		return nil, fmt.Errorf("write entity: %w", err)
 	}
 
@@ -634,7 +847,7 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 	// window where a committed write produced no audit record.
 	m.recordEntityAudit(ctx, audit.OpUpdateEntity, e, updateEntitySummary(oldEntity, e))
 
-	if !runAutomation {
+	if !ranAutomation {
 		return result, nil
 	}
 
@@ -656,6 +869,170 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 	return result, nil
 }
 
+func (m *Manager) processUpdateAutomation(
+	ctx context.Context, e, oldEntity *entity.Entity,
+) (*automation.Result, bool, error) {
+	if m.deps.Automations == nil {
+		return nil, false, nil
+	}
+	result := m.deps.Automations.Process(ctx, automation.Event{
+		Type:      automation.EventEntityUpdated,
+		Entity:    e,
+		OldEntity: oldEntity,
+	})
+	if len(result.PropertiesSet) == 0 {
+		return result, true, nil
+	}
+	if err := rejectComputedPresent(m.deps, e.Type, stringMapAny(result.PropertiesSet)); err != nil {
+		return nil, true, err
+	}
+	for prop, val := range result.PropertiesSet {
+		e.SetString(prop, val)
+	}
+	if err := m.deps.Computed.Evaluate(ctx, e); err != nil {
+		return nil, true, err
+	}
+	return result, true, nil
+}
+
+// authorizeCascadeRelations checks the principal may delete every relation
+// type a cascade will destroy, and returns the first denial.
+//
+// Deduplicated by (relation type, source entity type): the decision is a pure
+// function of those two plus the op, so a hub entity with thousands of edges
+// across a handful of types costs a handful of checks. Without the dedup a
+// denied cascade on a 5,000-edge entity would also write 5,000 denied-write
+// audit rows for ONE refused operation, burying the signal it exists to give.
+//
+// Note the asymmetry with the live write path: DeleteRelation authorizes
+// against the SOURCE entity's type, so an incoming edge is checked against its
+// own source, not against the entity being deleted. That is the same subject
+// the principal would face deleting the edge directly, which is the property
+// that makes this gate meaningful rather than merely stricter.
+func (m *Manager) authorizeCascadeRelations(
+	ctx context.Context, tx store.Store, id string, incoming, outgoing []*entity.Relation,
+) error {
+	type subject struct{ relType, fromType string }
+	seen := make(map[subject]bool)
+
+	check := func(rel *entity.Relation) error {
+		if rel == nil {
+			return nil
+		}
+		// Resolve through the TX view, not the outer store. The whole point of
+		// running in a transaction is that the authorized set and the deleted
+		// set are derived under one serialization; reading the type that the
+		// decision is MADE ON from outside it would undercut exactly that. On
+		// pgstore the outer handle is the pool, so this would also take a
+		// second connection while the first is held.
+		//
+		// Best-effort, as the live relation-write path resolves it: an
+		// unresolvable source yields an empty FromType, which fails closed.
+		var fromType string
+		if from, err := tx.GetEntity(ctx, rel.From); err == nil {
+			fromType = from.Type
+		}
+		key := subject{relType: rel.Type, fromType: fromType}
+		if seen[key] {
+			return nil
+		}
+		seen[key] = true
+
+		// FromID is deliberately EMPTY. The decision is a pure function of
+		// (relation type, source type, op) — FromID is never read by any
+		// branch of authorizeRelationWrite — so one check stands for every
+		// edge sharing that pair. Stamping one arbitrary id into the audit
+		// row would make it look like a claim about that specific entity: a
+		// forensic query for another source in the same class would find
+		// nothing, though it was equally refused. An empty FromID says
+		// "this type-pair", which is what was actually decided.
+		return m.authorizeAndAudit(ctx, acl.WriteRequest{
+			Op: acl.OpDelete,
+			Subject: acl.RelationSubject{
+				Type:     rel.Type,
+				FromType: fromType,
+			},
+		})
+	}
+
+	// Split by direction so the error can name the FAR endpoint. For an
+	// incoming edge the entity being deleted IS rel.To, so "its X relation to
+	// <To>" would say "its relation to itself" and withhold the one fact that
+	// makes the error actionable: the other endpoint, whose type is what
+	// actually blocked the delete.
+	for _, rel := range incoming {
+		if err := check(rel); err != nil {
+			return fmt.Errorf("cannot delete %s: its incoming %s relation from %s: %w",
+				id, rel.Type, rel.From, err)
+		}
+	}
+	for _, rel := range outgoing {
+		if err := check(rel); err != nil {
+			return fmt.Errorf("cannot delete %s: its outgoing %s relation to %s: %w",
+				id, rel.Type, rel.To, err)
+		}
+	}
+	return nil
+}
+
+// cascadeCapture is what deleteEntityInTx hands back for the caller to act on
+// AFTER the transaction closes: the incident relations the cascade destroyed,
+// captured before the delete removed them.
+type cascadeCapture struct {
+	incoming []*entity.Relation
+	outgoing []*entity.Relation
+}
+
+// deleteEntityInTx is DeleteEntity's critical section: collect the incident
+// relations, authorize every one a cascade would destroy, then delete.
+//
+// It performs STORE WORK ONLY. Version capture, alias notification and audit
+// all happen in the caller, after the transaction closes — see the Tx comment
+// at the call site for why that separation is load-bearing rather than
+// stylistic.
+func (m *Manager) deleteEntityInTx(
+	ctx context.Context, tx store.Store, id string, cascade bool,
+) (*store.DeleteResult, *cascadeCapture, error) {
+	incoming, cErr := collectIncidentRelations(ctx, tx, id, store.DirectionIncoming)
+	if cErr != nil {
+		return nil, nil, fmt.Errorf("collect incoming relations for %q: %w", id, cErr)
+	}
+	outgoing, cErr := collectIncidentRelations(ctx, tx, id, store.DirectionOutgoing)
+	if cErr != nil {
+		return nil, nil, fmt.Errorf("collect outgoing relations for %q: %w", id, cErr)
+	}
+	totalRelations := len(incoming) + len(outgoing)
+
+	if totalRelations > 0 && !cascade {
+		return nil, nil, ErrHasRelations
+	}
+
+	// A cascade destroys these edges, so the principal must be allowed to
+	// delete each one — otherwise deleting an entity is a back door to
+	// removing relation types you hold no delete grant on.
+	//
+	// This MUST run inside the transaction: both backends re-derive the
+	// incident set under their own lock and delete THAT set, so authorizing
+	// a set collected outside the serialization would leave a window for a
+	// concurrent writer. Denials abort before any write, so nothing unwinds
+	// — which matters because fs/mem do not roll back (store.Transactor).
+	if cascade && totalRelations > 0 {
+		if aErr := m.authorizeCascadeRelations(ctx, tx, id, incoming, outgoing); aErr != nil {
+			return nil, nil, aErr
+		}
+	}
+
+	// Delegate the actual deletion to the store's cascade, which removes
+	// the relation files and the entity file under a single lock and aborts
+	// fail-secure if any relation file cannot be removed — so the entity is
+	// never deleted while a relation is left behind (issue #888).
+	res, delErr := tx.DeleteEntity(ctx, id, cascade)
+	if delErr != nil {
+		return nil, nil, fmt.Errorf("delete entity: %w", delErr)
+	}
+	return res, &cascadeCapture{incoming: incoming, outgoing: outgoing}, nil
+}
+
 // DeleteEntity removes an entity and its incident relations.
 // **No automation, no cascade.** When cascade is false and the
 // entity has any incident relations, returns [ErrHasRelations]
@@ -675,54 +1052,78 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 		return nil, aclErr
 	}
 
-	incoming, err := collectIncidentRelations(ctx, m.deps.Store, id, store.DirectionIncoming)
-	if err != nil {
-		return nil, fmt.Errorf("collect incoming relations for %q: %w", id, err)
+	// Everything from here to the store delete runs inside ONE Tx.
+	//
+	// The incident-relation set must be collected, authorized and deleted
+	// under a single serialization: both stores RE-DERIVE the set inside
+	// their own lock/tx (fsstore rebuilds from its live index, pgstore
+	// re-reads inside the transaction) and delete THAT set — not the one
+	// handed to them. Authorizing a snapshot taken outside the lock would
+	// leave a window in which a concurrent writer adds an edge that is then
+	// deleted with no authorization at all, which is exactly the "back door
+	// to destroying edge types you cannot delete directly" this gate exists
+	// to close.
+	//
+	// Reads inside the callback go through the OUTER handle (that is what
+	// acl.StoreGraph holds). fsstore's readers never take txMu, so this does
+	// not deadlock — pinned by TestTx_ReadsViaOuterHandleDoNotDeadlock.
+	// Writes must use the tx view, per the Tx contract.
+	// The critical section — collect, authorize, delete — runs inside ONE Tx.
+	//
+	// Both backends RE-DERIVE the incident set inside their own lock/tx
+	// (fsstore rebuilds from its live index, pgstore re-reads inside the
+	// transaction) and delete THAT set, not the one handed to them.
+	// Authorizing a snapshot taken outside the lock would leave a window in
+	// which a concurrent writer adds an edge that is then deleted with no
+	// authorization at all — the "back door to destroying edge types you
+	// cannot delete directly" this gate exists to close.
+	//
+	// Everything EXTERNAL stays out of the callback: version capture, alias
+	// notification and audit all run below, after the transaction closes.
+	// store.Transactor is explicit that slow external I/O inside fn makes the
+	// whole deployment's writers wait (pgstore holds a global advisory lock
+	// for the callback's duration), and the version recorder writes through
+	// its own pool connection — so a capture emitted inside would commit even
+	// when the delete rolls back, leaving history asserting a delete that
+	// never happened.
+	var (
+		res      *store.DeleteResult
+		captured *cascadeCapture
+	)
+	txErr := m.deps.Store.Tx(ctx, func(tx store.Store) error {
+		var dErr error
+		res, captured, dErr = m.deleteEntityInTx(ctx, tx, id, cascade)
+		return dErr
+	})
+	if txErr != nil {
+		return nil, txErr
 	}
-	outgoing, err := collectIncidentRelations(ctx, m.deps.Store, id, store.DirectionOutgoing)
-	if err != nil {
-		return nil, fmt.Errorf("collect outgoing relations for %q: %w", id, err)
-	}
-	totalRelations := len(incoming) + len(outgoing)
 
-	if totalRelations > 0 && !cascade {
-		return nil, ErrHasRelations
-	}
-
-	// Capture the final pre-delete version BEFORE the store delete. The row is
-	// hard-deleted below, so a version taken after the delete would be
-	// unrecoverable if the process died in between — order-before closes that
-	// permanent-loss window (the store delete is still not transactional with
-	// this capture; strict atomicity is a future hardening).
+	// Version capture, after commit. The rows are written from the pre-delete
+	// state captured inside the transaction, so their content is the same as
+	// an in-transaction capture would have produced; only the timing differs.
+	// A crash between commit and here loses the delete markers — the same
+	// non-atomicity the pre-Tx code carried and documented, not a regression.
 	m.recordEntityVersion(ctx, store.VersionOpDelete, current, "")
 
-	// Capture a final version for every relation this cascade destroys, BEFORE
-	// the store delete removes them. This is the ONLY place cascade-deleted
-	// relations get versioned: the store's DeleteEntity bulk-deletes them below
-	// the write choke-point, so without this their history would silently end
-	// with no `delete` marker and no restore path (RR-181AFY). Each is attributed
-	// to the triggering entity delete. Live rows still exist here, so
-	// WriteRelationVersion resolves rel_record_id from the key.
-	if cascade && totalRelations > 0 {
-		cascadeTB := "cascade:delete-entity:" + id
-		for _, rel := range incoming {
-			m.recordRelationVersion(ctx, store.VersionOpDelete, rel, "", "", cascadeTB)
-		}
-		for _, rel := range outgoing {
-			m.recordRelationVersion(ctx, store.VersionOpDelete, rel, "", "", cascadeTB)
-		}
-	}
+	// Tell id-keyed subscribers the entity is gone. They decide what to do:
+	// the CalDAV alias service RETAINS its reference, as the tombstone that
+	// stops a stale client write resurrecting this entity.
+	m.notifyAliasesOfDelete(ctx, id)
 
-	// Delegate the actual deletion to the store's cascade, which removes
-	// the relation files and the entity file under a single lock and aborts
-	// fail-secure if any relation file cannot be removed — so the entity is
-	// never deleted while a relation is left behind (issue #888). A real
-	// error surfaces to the caller rather than being swallowed; previously
-	// the Manager looped per-relation and `continue`d past I/O failures,
-	// deleting the entity anyway and leaving orphans untraced.
-	res, delErr := m.deps.Store.DeleteEntity(ctx, id, cascade)
-	if delErr != nil {
-		return nil, fmt.Errorf("delete entity: %w", delErr)
+	// Capture a final version for every relation this cascade destroyed. This
+	// is the ONLY place cascade-deleted relations get versioned: the store's
+	// DeleteEntity bulk-deletes them below the write choke-point, so without
+	// this their history would silently end with no `delete` marker and no
+	// restore path (RR-181AFY).
+	if captured != nil {
+		cascadeTB := "cascade:delete-entity:" + id
+		for _, rel := range captured.incoming {
+			m.recordRelationVersion(ctx, store.VersionOpDelete, rel, "", "", cascadeTB)
+		}
+		for _, rel := range captured.outgoing {
+			m.recordRelationVersion(ctx, store.VersionOpDelete, rel, "", "", cascadeTB)
+		}
 	}
 
 	// Audit exactly what the store reports deleting. Cascade-deleted
@@ -815,6 +1216,10 @@ func (m *Manager) RenameEntity(
 	// choke-point knows old->new; a later sweep sees the renamed entity as an
 	// ordinary update and cannot reconstruct this link.
 	m.recordEntityVersion(ctx, store.VersionOpRename, postEntity, oldID)
+
+	// Rewrite id-keyed references for the same reason the version above carries
+	// prev_id: this is the only point that knows old->new.
+	m.rewriteAliasesForRename(ctx, oldID, postEntity.ID)
 
 	// Capture a `rename` version for each incident relation, on its NEW triple,
 	// carrying the pre-rename endpoints (prev_from/prev_to). The version's key is

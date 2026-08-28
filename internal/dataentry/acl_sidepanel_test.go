@@ -21,7 +21,7 @@ func sidePanelAs(ctx context.Context, t *testing.T, app *App, d *acl.Declarative
 		"/api/v1/_sidepanel/"+formID+"/"+entityID, http.NoBody)
 	req = req.WithContext(gateCtxFor(ctx, t, d))
 	rec := httptest.NewRecorder()
-	app.handleV1SidePanel(rec, req)
+	app.views.handleV1SidePanel(rec, req)
 	return rec
 }
 

@@ -2,9 +2,12 @@ package dataentry
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -470,6 +473,27 @@ func TestComputeFieldAffordances_NopResolver_EmitsEmptyMap(t *testing.T) {
 	}
 }
 
+func TestComputeFieldAffordances_ComputedIsAlwaysReadOnly(t *testing.T) {
+	meta := &metamodel.Metamodel{Entities: map[string]metamodel.EntityDef{
+		"ticket": {Properties: map[string]metamodel.PropertyDef{
+			"score": {Type: metamodel.PropertyTypeInteger, Computed: "entity.impact * entity.likelihood"},
+		}},
+	}}
+	svc := affordanceService{
+		resolver: func() FieldVerdictResolver { return NopFieldVerdictResolver{} },
+		meta:     func() *metamodel.Metamodel { return meta },
+	}
+	e := &entity.Entity{Type: "ticket", Properties: map[string]any{"score": 12}}
+	got := svc.computeFieldAffordances(context.Background(), e)
+	score, ok := got["score"]
+	if !ok || score.Writable == nil || *score.Writable {
+		t.Fatalf("score affordance = %+v, want writable=false", score)
+	}
+	if denial := svc.validateFieldWrite(context.Background(), e, map[string]any{"score": 99}, nil); denial == nil || denial.Rule != RuleFieldReadOnly {
+		t.Fatalf("computed write denial = %+v", denial)
+	}
+}
+
 func TestComputeFieldAffordances_SparseWritable(t *testing.T) {
 	// title=true is the default (writable) and must NOT appear in
 	// output; kind=false deviates and must be emitted.
@@ -595,6 +619,82 @@ func TestHiddenProperties_OnlyHiddenEntries(t *testing.T) {
 	}
 }
 
+// DEC-T0XIWQ: `_redacted` is the explicit signal that lets a write surface
+// tell "hidden" from "never set". These pin the three properties the SPA
+// depends on: it names exactly the hidden fields, it is empty-not-nil under
+// the permissive default (closed-world), and it is deterministically ordered.
+func TestRedactedPropertyNames_OnlyHiddenEntries(t *testing.T) {
+	got := redactedPropertyNames(FieldVerdicts{
+		Visible: map[string]bool{
+			"title":    true,
+			"priority": false,
+			"estimate": false,
+		},
+	})
+	want := []string{"estimate", "priority"} // sorted
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("got %v, want %v (sorted)", got, want)
+			break
+		}
+	}
+}
+
+func TestRedactedPropertyNames_NothingHidden_EmptyNotNil(t *testing.T) {
+	// The closed-world contract: `[]` means "evaluated, nothing redacted".
+	// A nil slice would marshal to `null` and read as "not evaluated", which
+	// is the ambiguity this field exists to remove.
+	got := redactedPropertyNames(FieldVerdicts{Visible: map[string]bool{"title": true}})
+	if got == nil {
+		t.Fatal("got nil, want empty non-nil slice (closed-world signal)")
+	}
+	if len(got) != 0 {
+		t.Errorf("got %v, want empty", got)
+	}
+}
+
+func TestRedactedPropertyNames_NopResolverVerdicts_EmptyNotNil(t *testing.T) {
+	svc := affordanceServiceWithResolver(NopFieldVerdictResolver{})
+	v := svc.resolver().FieldVerdicts(context.Background(), &entity.Entity{Type: "ticket"})
+	if got := redactedPropertyNames(v); got == nil || len(got) != 0 {
+		t.Errorf("got %v, want empty non-nil under the permissive default", got)
+	}
+}
+
+// The invariant tying the two halves of the wire together: whatever
+// stripHiddenProperties removes from `properties`, `_redacted` must name.
+// If these ever drift, the SPA either hides a writable field or offers a
+// redacted one as an empty input — the two failure modes of BUG-MLT9DE.
+func TestRedactedPropertyNames_MatchesStrippedProperties(t *testing.T) {
+	verdicts := FieldVerdicts{
+		Visible: map[string]bool{"priority": false, "title": true},
+	}
+	svc := affordanceServiceWithResolver(fakeResolver{fv: verdicts})
+	e := &entity.Entity{
+		Type:       "ticket",
+		Properties: map[string]any{"title": "T", "priority": "high"},
+	}
+	result := v1.Entity{Properties: map[string]any{"title": "T", "priority": "high"}}
+	svc.stripHiddenProperties(context.Background(), e, &result)
+
+	stripped := svc.hiddenProperties(context.Background(), e)
+	named := redactedPropertyNames(verdicts)
+	if len(named) != len(stripped) {
+		t.Fatalf("_redacted %v does not match stripped set %v", named, stripped)
+	}
+	for _, name := range named {
+		if _, ok := stripped[name]; !ok {
+			t.Errorf("_redacted names %q which was not stripped", name)
+		}
+		if _, stillOnWire := result.Properties[name]; stillOnWire {
+			t.Errorf("%q is named redacted but its VALUE is still on the wire", name)
+		}
+	}
+}
+
 func TestComputeRelationAffordances_NopResolver_EmitsEmptyMap(t *testing.T) {
 	svc := affordanceServiceWithResolver(NopFieldVerdictResolver{})
 	got := svc.computeRelationAffordances(context.Background(), &entity.Entity{Type: "ticket"})
@@ -677,5 +777,36 @@ func TestComputeRelationAffordances_MetaFieldOverrides(t *testing.T) {
 	}
 	if note.Writable == nil || *note.Writable {
 		t.Errorf("note.Writable: got %v, want false-pointer", note.Writable)
+	}
+}
+
+// TestDomainRedactedNotOnWire pins RR-79L852. visibility.Redact populates
+// entity.Entity.Redacted on the HTTP read paths too (views.go, export.go,
+// export_list.go), not just the Lua ones. The wire's channel for this is
+// v1.Entity._redacted (DEC-T0XIWQ), computed from FIELD VERDICTS — the
+// domain field must never become a second, unversioned source for it.
+//
+// Drives the real entitySerializer: an earlier version of this test built
+// its own v1.Entity in a helper, which could not fail because the helper
+// simply never set the field (RR-VXZEUN).
+func TestDomainRedactedNotOnWire(t *testing.T) {
+	app := newTestAppV1(t)
+	e := &entity.Entity{
+		ID:         "TKT-1",
+		Type:       "ticket",
+		Properties: map[string]any{"title": "T"},
+		// A domain-side value the serializer must ignore. If it ever
+		// propagates, it would masquerade as a verdict-derived _redacted.
+		Redacted: []string{"DOMAIN-SIDE-LEAK"},
+	}
+
+	out := app.serializer.toV1(t.Context(), e, nil, nil, nil, app.Meta(), "tickets")
+
+	blob, err := json.Marshal(out)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(blob), "DOMAIN-SIDE-LEAK") {
+		t.Errorf("domain Redacted field reached the wire: %s", blob)
 	}
 }

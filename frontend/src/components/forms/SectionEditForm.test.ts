@@ -18,10 +18,14 @@ import type { Entity, PropertyDef, AttachmentInfo } from '@/types'
 const TEXT_DEF: PropertyDef = { type: 'string' } as PropertyDef
 const ENUM_DEF: PropertyDef = { type: 'enum', values: ['open', 'closed'] } as PropertyDef
 
+// Fields default to `render: 'input'` here so the existing suites keep
+// exercising the edit path they were written for. `render` defaults to
+// 'display' in production (TKT-HOIX1); an override can set it back to test the
+// display arm.
 function makeFields(overrides: Partial<SectionEditField>[] = []): SectionEditField[] {
   const defaults: SectionEditField[] = [
-    { property: 'title', label: 'Title', kind: 'schema', propertyDef: TEXT_DEF },
-    { property: 'status', label: 'Status', kind: 'schema', propertyDef: ENUM_DEF },
+    { property: 'title', label: 'Title', kind: 'schema', propertyDef: TEXT_DEF, render: 'input' },
+    { property: 'status', label: 'Status', kind: 'schema', propertyDef: ENUM_DEF, render: 'input' },
   ]
   return defaults.map((d, i) => ({ ...d, ...(overrides[i] ?? {}) } as SectionEditField))
 }
@@ -225,6 +229,97 @@ describe('SectionEditForm', () => {
     expect(onVerdictFlip).not.toHaveBeenCalled()
   })
 
+  // ── render: input | display (TKT-HOIX1) ──────────────────────────────
+
+  it('render: display renders the display arm, not a FieldShell input (AC 1)', () => {
+    const fields = makeFields([{ render: 'display', verdict: { writable: true } }])
+    const { wrapper } = mountForm({ fields: [fields[0]] })
+    // No form chrome: the display arm is a bare widget in mode="display".
+    expect(wrapper.find('.form-field').exists()).toBe(false)
+    const widget = wrapper.findComponent({ name: 'TextWidget' })
+    expect(widget.exists()).toBe(true)
+    expect(widget.props('mode')).toBe('display')
+  })
+
+  it('render: input on an ACL-read-only field still renders display (AC 3)', () => {
+    // SECURITY-CRITICAL. Config downgrades editability; it must never
+    // upgrade a read-only field into an editable input.
+    const fields = makeFields([{ render: 'input', verdict: { writable: false } }])
+    const { wrapper } = mountForm({ fields: [fields[0]] })
+    expect(wrapper.find('.form-field').exists()).toBe(false)
+    expect(wrapper.findComponent({ name: 'TextWidget' }).props('mode')).toBe('display')
+  })
+
+  it('render: input with a writable verdict renders the edit arm (AC 2)', () => {
+    const fields = makeFields([{ render: 'input', verdict: { writable: true } }])
+    const { wrapper } = mountForm({ fields: [fields[0]] })
+    expect(wrapper.find('.form-field').exists()).toBe(true)
+    expect(wrapper.findComponent({ name: 'TextWidget' }).props('mode')).toBe('edit')
+  })
+
+  it('mixes input and display arms within one section (AC 6)', () => {
+    const fields = makeFields([
+      { render: 'input', verdict: { writable: true } },
+      { render: 'display', verdict: { writable: true } },
+    ])
+    const { wrapper } = mountForm({ fields })
+    const items = wrapper.findAll('.property-item')
+    expect(items).toHaveLength(2)
+    expect(items[0].find('.form-field').exists()).toBe(true)
+    expect(items[1].find('.form-field').exists()).toBe(false)
+  })
+
+  it('a display-flagged machine field skips the StatusControl (AC 7)', () => {
+    // Status fields are the likeliest to be flagged display; a disabled
+    // StatusControl is exactly the disabled-input outcome to avoid.
+    const fields = makeFields([
+      {},
+      { render: 'display', transitions: [], verdict: { writable: true } },
+    ])
+    const { wrapper } = mountForm({ fields: [fields[1]] })
+    expect(wrapper.findComponent({ name: 'StatusControl' }).exists()).toBe(false)
+  })
+
+  it('an input-flagged machine field still renders the StatusControl', () => {
+    const fields = makeFields([
+      {},
+      { render: 'input', transitions: [], verdict: { writable: true } },
+    ])
+    const { wrapper } = mountForm({ fields: [fields[1]] })
+    expect(wrapper.findComponent({ name: 'StatusControl' }).exists()).toBe(true)
+  })
+
+  it('switching a field to display does not fire onVerdictFlip (AC 8)', async () => {
+    // RR-PGGRBD: `render` must stay out of `verdict`, or the flip-watcher
+    // reads a config change as a revoked permission and toasts.
+    const initial = makeFields([{ render: 'input', verdict: { writable: true } }])
+    makeStoreMock()
+    const { wrapper, onVerdictFlip } = mountForm({ fields: [initial[0]] })
+    const flipped = makeFields([{ render: 'display', verdict: { writable: true } }])
+    await wrapper.setProps({ fields: [flipped[0]] })
+    await nextTick()
+    expect(onVerdictFlip).not.toHaveBeenCalled()
+  })
+
+  it('gives a long display value its own full-width row', () => {
+    const fields = makeFields([{ render: 'display', verdict: { writable: true } }])
+    const { wrapper } = mountForm({
+      fields: [fields[0]],
+      initialValues: { title: 'x'.repeat(61) },
+    })
+    expect(wrapper.find('.property-item').classes()).toContain('property-long')
+  })
+
+  it('does not force full width on an edit-arm field', () => {
+    // An edit widget sizes itself; stretching it would widen every textarea.
+    const fields = makeFields([{ render: 'input', verdict: { writable: true } }])
+    const { wrapper } = mountForm({
+      fields: [fields[0]],
+      initialValues: { title: 'x'.repeat(61) },
+    })
+    expect(wrapper.find('.property-item').classes()).not.toContain('property-long')
+  })
+
   it('commitImmediately runs on unmount', async () => {
     const fields = makeFields([{ verdict: { writable: true } }])
     const updateMock = makeStoreMock()
@@ -263,7 +358,14 @@ describe('SectionEditForm', () => {
   it('forwards attachment metadata to the file widget for a file property', () => {
     const FILE_DEF: PropertyDef = { type: 'file' } as PropertyDef
     const fields: SectionEditField[] = [
-      { property: 'photo', label: 'Photo', kind: 'schema', propertyDef: FILE_DEF, verdict: { writable: true } },
+      {
+        property: 'photo',
+        label: 'Photo',
+        kind: 'schema',
+        propertyDef: FILE_DEF,
+        verdict: { writable: true },
+        render: 'input',
+      },
     ]
     const att: AttachmentInfo = {
       id: 'shot.png',
@@ -342,5 +444,157 @@ describe('SectionEditForm', () => {
       expect(wrapper.find('.host-indicator').exists()).toBe(true)
       expect(wrapper.find('[data-testid="autosave-indicator"]').exists()).toBe(false)
     })
+  })
+})
+
+// TKT-3R7RF3: the `widget:` override selects which registered widget renders a
+// field, instead of the type-derived default.
+describe('widget override (TKT-3R7RF3)', () => {
+  it('renders the overridden widget instead of the type default', () => {
+    const { wrapper } = mountForm({
+      fields: [
+        {
+          property: 'title',
+          label: 'Title',
+          kind: 'schema',
+          propertyDef: TEXT_DEF,
+          render: 'input',
+          widget: 'textarea',
+        },
+      ],
+    })
+    // string would ordinarily resolve to TextWidget.
+    expect(wrapper.findComponent({ name: 'TextareaWidget' }).exists()).toBe(true)
+    expect(wrapper.findComponent({ name: 'TextWidget' }).exists()).toBe(false)
+  })
+
+  it('omitting the override keeps the type default', () => {
+    const { wrapper } = mountForm({
+      fields: [
+        { property: 'title', label: 'Title', kind: 'schema', propertyDef: TEXT_DEF, render: 'input' },
+      ],
+    })
+    expect(wrapper.findComponent({ name: 'TextWidget' }).exists()).toBe(true)
+    expect(wrapper.findComponent({ name: 'TextareaWidget' }).exists()).toBe(false)
+  })
+
+  it('applies on the display arm too, not just edit', () => {
+    const { wrapper } = mountForm({
+      fields: [
+        {
+          property: 'title',
+          label: 'Title',
+          kind: 'schema',
+          propertyDef: TEXT_DEF,
+          render: 'display',
+          widget: 'textarea',
+        },
+      ],
+    })
+    const w = wrapper.findComponent({ name: 'TextareaWidget' })
+    expect(w.exists()).toBe(true)
+    expect(w.props('mode')).toBe('display')
+  })
+
+  // RR-2GBB0V: the hint arm has no PropertyDef, so the server could not have
+  // type-checked the override — it must be provably DROPPED, not silently
+  // honoured. Guards against a refactor that plumbs `widget` into
+  // resolveFromHint or reads it before the kind check.
+  it('is DROPPED on the hint arm', () => {
+    const { wrapper } = mountForm({
+      fields: [
+        {
+          property: 'mystery',
+          label: 'Mystery',
+          kind: 'hint',
+          routingHint: { kind: 'text', propertyName: 'mystery' },
+          render: 'input',
+          widget: 'textarea',
+        },
+      ],
+      initialValues: { mystery: 'x' },
+    })
+    // The hint's own kind wins: 'text' -> TextWidget, override ignored.
+    expect(wrapper.findComponent({ name: 'TextWidget' }).exists()).toBe(true)
+    expect(wrapper.findComponent({ name: 'TextareaWidget' }).exists()).toBe(false)
+  })
+
+  // RR-66MT0D: the StatusControl interaction is TWO-AXIS, not simply inert.
+  it('is inert on a machine field with render: input (StatusControl owns it)', () => {
+    const { wrapper } = mountForm({
+      fields: [
+        {
+          property: 'status',
+          label: 'Status',
+          kind: 'schema',
+          propertyDef: ENUM_DEF,
+          render: 'input',
+          transitions: [],
+          widget: 'textarea',
+        },
+      ],
+    })
+    expect(wrapper.findComponent({ name: 'StatusControl' }).exists()).toBe(true)
+    expect(wrapper.findComponent({ name: 'TextareaWidget' }).exists()).toBe(false)
+  })
+
+  it('IS honoured on a machine field with render: display', () => {
+    const { wrapper } = mountForm({
+      fields: [
+        {
+          property: 'status',
+          label: 'Status',
+          kind: 'schema',
+          propertyDef: ENUM_DEF,
+          render: 'display',
+          transitions: [],
+          widget: 'textarea',
+        },
+      ],
+    })
+    // render: display deliberately falls through to the display arm rather
+    // than rendering a disabled StatusControl (TKT-HOIX1), so the widget wins.
+    expect(wrapper.findComponent({ name: 'StatusControl' }).exists()).toBe(false)
+    expect(wrapper.findComponent({ name: 'TextareaWidget' }).props('mode')).toBe('display')
+  })
+
+  // The ACL conjunction is untouched by widget selection: config can only
+  // DOWNGRADE editability. A widget override must not create a path around it.
+  it('does not make a read-only field editable', () => {
+    const { wrapper } = mountForm({
+      fields: [
+        {
+          property: 'title',
+          label: 'Title',
+          kind: 'schema',
+          propertyDef: TEXT_DEF,
+          render: 'input',
+          verdict: { writable: false },
+          widget: 'textarea',
+        },
+      ],
+    })
+    expect(wrapper.findComponent({ name: 'TextareaWidget' }).props('mode')).toBe('display')
+  })
+
+  // An unknown name must not throw or blank the field — resolve() falls back
+  // to the type default and warns. Defensive: the server rejects these at
+  // config load, so this only fires on shape drift.
+  it('falls back to the type default on an unknown widget name', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { wrapper } = mountForm({
+      fields: [
+        {
+          property: 'title',
+          label: 'Title',
+          kind: 'schema',
+          propertyDef: TEXT_DEF,
+          render: 'input',
+          widget: 'no-such-widget',
+        },
+      ],
+    })
+    expect(wrapper.findComponent({ name: 'TextWidget' }).exists()).toBe(true)
+    warn.mockRestore()
   })
 })

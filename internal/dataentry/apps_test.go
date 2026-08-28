@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -125,6 +127,65 @@ func TestAppTokensCSSInSyncWithFrontend(t *testing.T) {
 	}
 }
 
+// frozenTypographySteps are the --font-size-* names frozen by TKT-PF4E6S as
+// part of the app-facing _rela.css contract. They are declared twice — in Go
+// (appTypographyCSS) and in the SPA (frontend/src/styles/scales.css) — and
+// must hold identical values on both sides.
+var frozenTypographySteps = []string{
+	"--font-size-sm",
+	"--font-size-base",
+	"--font-size-lg",
+	"--font-size-xl",
+}
+
+// cssDeclValue returns the value of a CSS custom-property declaration.
+// Whitespace-tolerant and anchored on the property name, so reformatting
+// (`--x:12px` vs `--x: 12px`) doesn't produce a spurious failure and a longer
+// name (`--prefix--font-size-sm`) doesn't match a shorter one.
+func cssDeclValue(css, name string) (string, bool) {
+	re := regexp.MustCompile(`(?:^|[;{\s])` + regexp.QuoteMeta(name) + `\s*:\s*([^;]+);`)
+	m := re.FindStringSubmatch(css)
+	if m == nil {
+		return "", false
+	}
+	return strings.TrimSpace(m[1]), true
+}
+
+// TestFrozenTypographyContractMatchesSPA pins the frozen --font-size-* steps
+// ACROSS the language boundary: Go's appTypographyCSS against the SPA's
+// frontend/src/styles/scales.css.
+//
+// This test exists because asserting Go output against literals in a Go test
+// file only proves Go is self-consistent — it cannot see a revalue on the CSS
+// side. Both files are read here and compared to EACH OTHER, so there is no
+// third copy of the values to drift out of step.
+//
+// A mismatch means the SPA and every embedded custom app render different type
+// sizes: an app links _rela.css and must match the host UI it sits inside.
+func TestFrozenTypographyContractMatchesSPA(t *testing.T) {
+	spa, err := os.ReadFile(filepath.Join("..", "..", "frontend", "src", "styles", "scales.css"))
+	if err != nil {
+		t.Fatalf("read frontend scales.css: %v", err)
+	}
+	goCSS := appCSSSource(nil)
+	for _, name := range frozenTypographySteps {
+		goVal, ok := cssDeclValue(goCSS, name)
+		if !ok {
+			t.Errorf("appTypographyCSS is missing frozen step %s", name)
+			continue
+		}
+		spaVal, ok := cssDeclValue(string(spa), name)
+		if !ok {
+			t.Errorf("frontend/src/styles/scales.css is missing frozen step %s", name)
+			continue
+		}
+		if goVal != spaVal {
+			t.Errorf("frozen typography contract %s drifted: Go=%q scales.css=%q\n"+
+				"TKT-PF4E6S froze these — change both sides or neither", name, goVal, spaVal)
+		}
+	}
+}
+
 func TestAppCSSSource(t *testing.T) {
 	// nil palette → fall back to the embedded default tokens. The embed
 	// carries a :root.dark block, so it must be present here.
@@ -137,6 +198,23 @@ func TestAppCSSSource(t *testing.T) {
 		if !strings.Contains(css, want) {
 			t.Errorf("appCSSSource(nil) missing %q", want)
 		}
+	}
+	// The four --font-size-* steps must be present by name. Their VALUES are
+	// pinned against the SPA's copy by TestFrozenTypographyContractMatchesSPA
+	// — deliberately not here, because asserting Go against literals in a Go
+	// test file only proves Go is self-consistent.
+	for _, name := range frozenTypographySteps {
+		if _, ok := cssDeclValue(css, name); !ok {
+			t.Errorf("appCSSSource(nil) missing frozen typography step %q", name)
+		}
+	}
+	// --font-size-dense is SPA-only (see frontend/src/styles/scales.css): 13px
+	// for dense text, deliberately NOT named as a ramp step so it can't be
+	// mistaken for part of the contract. Pinning the negative side stops a
+	// drive-by edit from silently widening the frozen contract.
+	if _, ok := cssDeclValue(css, "--font-size-dense"); ok {
+		t.Error("--font-size-dense is SPA-only; adding it to appTypographyCSS widens the " +
+			"frozen app contract — that needs a ticket, not a drive-by")
 	}
 	// Stays tokens + atomic controls — must NOT smuggle in component-shaped
 	// classes (the documented line).
@@ -649,5 +727,69 @@ func TestValidateBridgeVersion(t *testing.T) {
 	// Older-than-current is allowed (forward compatibility) once we're past v1.
 	if currentBridgeVersion > 1 && validateBridgeVersion(1) != "" {
 		t.Error("older (but supported) version should be allowed")
+	}
+}
+
+// TestPaletteCarriesEveryDefaultToken pins the two renderers of the token
+// contract against each other.
+//
+// There are two, and only one of them is obvious. The default path serves the
+// embedded apps_tokens.css (byte-identical to the SPA's tokens.css, pinned by
+// TestAppTokensCSSInSyncWithFrontend). The PALETTE path throws that block away
+// and rebuilds :root from dataentryconfig.deriveTheme's hand-maintained map.
+// So a token added to tokens.css and not to deriveTheme exists for default
+// projects and silently does not exist for palette-configured ones — every
+// rule referencing it resolves to nothing, with no error anywhere.
+//
+// TKT-FRING7 shipped exactly that for one review cycle: --focus-ring et al
+// were added to tokens.css only, so a custom app under a palette rendered NO
+// focus ring — worse than the hardcoded color the ticket replaced. The
+// existing tests could not see it: TestAppCSSSource only exercises the nil
+// path, and TestAppCSSSourceUsesResolvedPalette asserts specific colors
+// rather than completeness.
+//
+// Asserting the SET rather than any particular name is what makes this catch
+// the next token too, without needing to be updated.
+func TestPaletteCarriesEveryDefaultToken(t *testing.T) {
+	tokenNames := func(css string) map[string]bool {
+		names := map[string]bool{}
+		// Only the :root block — :root.dark repeats the same names.
+		root, _, _ := strings.Cut(css, ":root.dark")
+		for line := range strings.SplitSeq(root, "\n") {
+			line = strings.TrimSpace(line)
+			if !strings.HasPrefix(line, "--") {
+				continue
+			}
+			if name, _, ok := strings.Cut(line, ":"); ok {
+				names[strings.TrimSpace(name)] = true
+			}
+		}
+		return names
+	}
+
+	defaults := tokenNames(appCSSSource(nil))
+	if len(defaults) == 0 {
+		t.Fatal("parsed no tokens from the default path — the parser, not the code, is wrong")
+	}
+
+	resolved := ResolvePalette(&PaletteConfig{
+		PaletteColors: PaletteColors{
+			Base: "#1f0e1c", Surface: "#f5edba", Accent: "#e4943a", Text: "#3e2137",
+			Success: "#34859d", Error: "#d26471", Warning: "#c0c741", Info: "#17434b",
+		},
+	}, nil)
+	palette := tokenNames(appCSSSource(resolved))
+
+	var missing []string
+	for name := range defaults {
+		if !palette[name] {
+			missing = append(missing, name)
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Errorf("palette path drops %d token(s) the default path defines: %v\n"+
+			"Add them to dataentryconfig.deriveTheme — a rule using one of these "+
+			"renders nothing for every palette-configured project.", len(missing), missing)
 	}
 }

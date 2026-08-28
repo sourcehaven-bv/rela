@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { getSchema, getConfig } from '@/api/schema'
+import { getDashboard } from '@/api/dashboard'
 import { registerEntityPlurals } from '@/api/entities'
 import { getErrorMessage } from '@/api/errors'
 import type {
@@ -11,8 +12,10 @@ import type {
   FormConfig,
   ListConfig,
   ViewConfig,
+  CalendarConfig,
   KanbanConfig,
-  DashboardConfig,
+  DashboardResponse,
+  NextActionBand,
   NavigationEntry,
   AppConfig,
   AppEntry,
@@ -29,10 +32,19 @@ export const useSchemaStore = defineStore('schema', () => {
   const lists = ref<Map<string, ListConfig>>(new Map())
   const views = ref<Map<string, ViewConfig>>(new Map())
   const kanbans = ref<Map<string, KanbanConfig>>(new Map())
+  const calendars = ref<Map<string, CalendarConfig>>(new Map())
   const documents = ref<Map<string, DocumentConfig>>(new Map())
   const apps = ref<Map<string, AppEntry>>(new Map())
   const actions = ref<Map<string, ActionConfig>>(new Map())
-  const dashboard = ref<DashboardConfig | undefined>(undefined)
+  // The PER-PRINCIPAL dashboard from `/_dashboard`, not the verbatim
+  // `dashboard:` block on `/_config` (TKT-53KICM). Cards the caller cannot use
+  // are already omitted server-side; never re-derive visibility here.
+  const dashboard = ref<DashboardResponse | undefined>(undefined)
+  // Operator-declared priority tiers for next-action suggestions, so the UI can
+  // label a band rather than echo a raw id. The SOURCES are deliberately not
+  // served: a suggestion arrives fully resolved, and shipping the rules would
+  // invite a client-side re-implementation of the engine.
+  const nextActionBands = ref<NextActionBand[]>([])
   const navigation = ref<NavigationEntry[]>([])
   const app = ref<AppConfig>({ name: 'rela' })
   // The deployment description for the global "About" help (TKT-DUQBD0): the
@@ -47,6 +59,11 @@ export const useSchemaStore = defineStore('schema', () => {
   // then mutated by SettingsView's upload/remove handlers so the
   // sidebar updates without a page reload.
   const logoUrl = ref<string | null>(null)
+  // Entity type -> form id for inline creation, fed by Sidebar's
+  // `_sidebar` fetch (the only principal-scoped boot payload). Empty
+  // until that lands, which is why the offer simply does not render on
+  // the first paint rather than flickering on.
+  const inlineCreate = ref<Record<string, string>>({})
   const loaded = ref(false)
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -81,6 +98,7 @@ export const useSchemaStore = defineStore('schema', () => {
   })
   const getView = computed(() => (id: string) => views.value.get(id))
   const getKanban = computed(() => (id: string) => kanbans.value.get(id))
+  const getCalendar = computed(() => (id: string) => calendars.value.get(id))
   const getAction = computed(() => (id: string) => actions.value.get(id))
 
   const entityTypeList = computed(() => Array.from(entityTypes.value.entries()))
@@ -231,7 +249,22 @@ export const useSchemaStore = defineStore('schema', () => {
     error.value = null
 
     try {
-      const [schemaData, configData] = await Promise.all([getSchema(), getConfig()])
+      // Fetched alongside schema/config rather than on dashboard entry, so the
+      // per-principal card list costs no extra round-trip on the critical path
+      // and repeat visits to /dashboard stay free.
+      //
+      // It is explicitly NOT a boot dependency: a rejection here is swallowed
+      // to undefined, so the dashboard degrades to its empty state while the
+      // sidebar, lists and forms load normally. Letting it reject would take
+      // the WHOLE app to App.vue's error screen — doLoad re-throws — which is
+      // a catastrophic failure mode for a UX filter most deployments (no
+      // acl.yaml) never exercise. A newer SPA against an older server, where
+      // this route 404s, is the concrete case.
+      const [schemaData, configData, dashboardData] = await Promise.all([
+        getSchema(),
+        getConfig(),
+        getDashboard().catch(() => undefined),
+      ])
 
       // Schema
       entityTypes.value = new Map(Object.entries(schemaData.entities || {}))
@@ -255,10 +288,14 @@ export const useSchemaStore = defineStore('schema', () => {
       lists.value = new Map(Object.entries(configData.lists || {}))
       views.value = new Map(Object.entries(configData.views || {}))
       kanbans.value = new Map(Object.entries(configData.kanbans || {}))
+      calendars.value = new Map(Object.entries(configData.calendars || {}))
       documents.value = new Map(Object.entries(configData.documents || {}))
       apps.value = new Map(Object.entries(configData.apps || {}))
       actions.value = new Map(Object.entries(configData.actions || {}))
-      dashboard.value = configData.dashboard
+      // From /_dashboard, NOT configData.dashboard: the latter is the
+      // unfiltered config block every principal receives.
+      dashboard.value = dashboardData
+      nextActionBands.value = configData.next_action_bands || []
       navigation.value = configData.navigation || []
 
       // Apply palette if present
@@ -290,6 +327,17 @@ export const useSchemaStore = defineStore('schema', () => {
     logoUrl.value = url
   }
 
+  function setInlineCreate(map: Record<string, string>) {
+    inlineCreate.value = map
+  }
+
+  // The inline-create form id for an entity type, or undefined when the
+  // type is not offered (no form, or no create permission). Presence in
+  // the map IS the affordance — see SidebarData.inline_create.
+  const inlineCreateFormFor = computed(
+    () => (entityType: string) => inlineCreate.value[entityType]
+  )
+
   return {
     // State
     entityTypes,
@@ -299,10 +347,12 @@ export const useSchemaStore = defineStore('schema', () => {
     lists,
     views,
     kanbans,
+    calendars,
     documents,
     apps,
     actions,
     dashboard,
+    nextActionBands,
     navigation,
     app,
     aboutDescription,
@@ -311,6 +361,7 @@ export const useSchemaStore = defineStore('schema', () => {
     paletteDark,
     darkDisabled,
     logoUrl,
+    inlineCreate,
     loaded,
     loading,
     error,
@@ -324,16 +375,19 @@ export const useSchemaStore = defineStore('schema', () => {
     findListIdForEntityType,
     getView,
     getKanban,
+    getCalendar,
     getAction,
     getEnumLabel,
     resolveOptionLabels,
     stylesForProperty,
     entityTypeList,
     relationTypeList,
+    inlineCreateFormFor,
 
     // Actions
     load,
     reload,
     setLogoUrl,
+    setInlineCreate,
   }
 })

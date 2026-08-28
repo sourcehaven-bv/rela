@@ -20,10 +20,9 @@ func testWriteDeps(projectRoot string) lua.WriteDeps {
 	st := memstore.New()
 	return lua.WriteDeps{
 		ReadDeps: lua.ReadDeps{
-			VisibleReader:  st,
-			WritePrepStore: st,
-			Tracer:         tracer.New(st),
-			ProjectRoot:    projectRoot,
+			VisibleReader: st,
+			Tracer:        tracer.New(st),
+			ProjectRoot:   projectRoot,
 		},
 		EntityManager: entitymanagertest.PanicOnUse{},
 	}

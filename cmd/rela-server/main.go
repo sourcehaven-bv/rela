@@ -50,6 +50,11 @@ type serverFlags struct {
 	principalHeader   string
 	readOnly          bool
 	unconfinedCommand bool
+	// remoteMCP serves the MCP endpoint over HTTP at dataentry.MCPPath.
+	// Off by default; requires the JWT identity flags below (dataentry
+	// refuses to enable it otherwise — the endpoint is CSRF-exempt, and
+	// that is only sound while rela verifies a bearer token itself).
+	remoteMCP bool
 	// JWT identity: verify a signed-JWT assertion from an OIDC proxy against its
 	// JWKS and stamp the verified subject as the principal. Provider-agnostic
 	// (Pratique, oauth2-proxy, Pomerium, ...). All three of issuer/audience/jwks
@@ -98,6 +103,15 @@ func parseFlags() *serverFlags {
 			"commands. Accepts running third-party parsers on untrusted input "+
 			"unconfined — see docs/transforms.md. Also enabled by "+
 			"RELA_UNCONFINED_COMMANDS=1.")
+	flag.BoolVar(&f.remoteMCP, "mcp", os.Getenv("RELA_MCP") == "1",
+		"Serve the Model Context Protocol endpoint over HTTP at /api/v1/_mcp, "+
+			"so AI assistants can reach a deployed rela the same way `rela mcp` "+
+			"serves a local one. Off by default. REQUIRES the -jwt-* identity "+
+			"flags: the endpoint must be CSRF-exempt (MCP clients send no Origin), "+
+			"which is only sound while rela verifies a bearer token itself — "+
+			"startup is refused otherwise. Every tool call runs as the requesting "+
+			"principal and is ACL-gated like any other API request. Also enabled "+
+			"by RELA_MCP=1.")
 	// JWT identity flags (env fallbacks $RELA_JWT_*). Verifying a SIGNED assertion
 	// is safer than --principal-header (which merely trusts the proxy set a header).
 	flag.StringVar(&f.jwtIssuer, "jwt-issuer", os.Getenv("RELA_JWT_ISSUER"),
@@ -119,9 +133,11 @@ func parseFlags() *serverFlags {
 	flag.StringVar(&f.webhookAction, "webhook-action", envOr("RELA_WEBHOOK_ACTION", ""),
 		"Name of the action a verified IdP webhook dispatches to (e.g. idp-sync). The action "+
 			"receives event/user_id/org_id as params and provisions the user.")
-	// Note: there is no --database-url flag. The postgres build reads the DSN
-	// from $RELA_DATABASE_URL only, so the credential never lands in process
-	// listings or shell history. See appbuild.Config.DatabaseURL.
+	// Note: there is no --database-url flag, and must not be. The postgres
+	// build takes the DSN from $RELA_DATABASE_URL (or, for an embedding
+	// caller, appbuild.WithDatabaseURL) — never from argv, so the credential
+	// cannot land in process listings or shell history.
+	// See appbuild.Config.DatabaseURL.
 	flag.Parse()
 	if os.Getenv("RELA_READ_ONLY") == "1" {
 		f.readOnly = true
@@ -351,6 +367,11 @@ func wireWebhookReceiver(app *dataentry.App, f *serverFlags, idv *jwtauth.Verifi
 // The gate consumes VerifyAssertion (not VerifySubject) so the assertion's
 // org/roles reach the Principal it stamps; a subject-only adapter here would
 // silently strip every asserted role (TKT-OJL2GN).
+//
+// The same applies to principal_type/scope (TKT-IAC8TX), with the failure
+// running the other way: dropping a role removes access, dropping a
+// principal_type removes the CEILING and hands a restricted client its acting
+// user's full grants. Every claim this adapter forgets is a silent widening.
 type assertionVerifierAdapter struct{ v *jwtauth.Verifier }
 
 func (a assertionVerifierAdapter) VerifyAssertion(
@@ -361,10 +382,13 @@ func (a assertionVerifierAdapter) VerifyAssertion(
 		return dataentry.AssertedIdentity{}, err
 	}
 	return dataentry.AssertedIdentity{
-		Subject: c.Subject,
-		OrgID:   c.OrgID,
-		OrgSlug: c.OrgSlug,
-		Roles:   c.Roles,
+		Subject:       c.Subject,
+		OrgID:         c.OrgID,
+		OrgSlug:       c.OrgSlug,
+		Roles:         c.Roles,
+		PrincipalType: c.PrincipalType,
+		Scopes:        c.Scopes,
+		Email:         c.Email,
 	}, nil
 }
 
@@ -413,6 +437,7 @@ func main() {
 		svc.EntityManager(), svc.Searcher(), svc.VisibleSearcher(), svc.ACL(),
 		fieldResolver,
 		svc.Audit(),
+		svc.State(),
 	)
 	if err != nil {
 		var configErr *dataentry.ConfigValidationError
@@ -424,6 +449,26 @@ func main() {
 			os.Exit(1)
 		}
 		slog.Error("failed to initialize", "error", err)
+		os.Exit(1)
+	}
+
+	// CalDAV needs the alias service to remember client-created resources;
+	// without it the routes are not registered at all.
+	app.SetCalDAVAliases(svc.CalDAVAliases())
+
+	// Next-action per-user state. The composition root picks the backend
+	// (durable over state.KV, or the store-native one on postgres); this only
+	// hands the app what it built.
+	if err := app.SetUserState(svc.UserState()); err != nil {
+		slog.Error("failed to wire next-action state", "error", err)
+		os.Exit(1)
+	}
+
+	// The predicate compiler backing a source's `condition:`. Supplied here
+	// rather than imported by dataentry: the condition engine sits above the
+	// data-entry app, so the composition root bridges the two.
+	if err := app.SetNextActionMatchers(appbuild.NextActionMatchers); err != nil {
+		slog.Error("failed to wire next-action matchers", "error", err)
 		os.Exit(1)
 	}
 
@@ -446,18 +491,7 @@ func main() {
 
 	// Identity sources are mutually exclusive — validate BEFORE building anything,
 	// so a conflicting config never reaches a running server.
-	mode, modeErr := validateIdentityFlags(f, os.Getenv(dataentry.EnvDataEntryUserVar))
-	if modeErr != nil {
-		slog.Error("invalid identity configuration", "error", modeErr)
-		os.Exit(1)
-	}
-
-	// Build the signed-JWT verifier once (nil when JWT identity is disabled) and
-	// share it between the identity gate and the webhook receiver so the JWKS
-	// is fetched a single time.
-	idv := buildIdentityVerifier(context.Background(), f)
-	wirePrincipalResolvers(app, f, idv, mode)
-	wireWebhookReceiver(app, f, idv)
+	wireIdentityAndMCP(app, svc, f)
 
 	srv := newHTTPServer(addr, app.NewRouter())
 

@@ -133,6 +133,10 @@ func (c *BuildCmd) Run(ctx context.Context, proj Project) error {
 	if mkErr := os.MkdirAll(filepath.Dir(c.Output), 0o755); mkErr != nil {
 		return fmt.Errorf("create output dir: %w", mkErr)
 	}
+	// #nosec G703 -- c.Output is the operator-typed `--out` flag of a local CLI,
+	// not request data: the trust boundary is the operator's own shell, exactly
+	// as with `pandoc in.md -o out`. There is no root to contain it to — writing
+	// outside any project dir is the documented purpose of the flag.
 	if err := os.WriteFile(c.Output, []byte(rendered), 0o644); err != nil {
 		return fmt.Errorf("write output: %w", err)
 	}

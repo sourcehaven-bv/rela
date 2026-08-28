@@ -58,7 +58,7 @@ project/
 │   └── utils/
 │       └── helpers.lua
 ├── entities/
-└── metamodel.yaml
+└── schema.yaml
 ```
 
 ## Interactive Flows
@@ -151,7 +151,7 @@ rela.create_entity("ticket", {
 |----------|------|-------------|
 | `name` | string | Field identifier (required, except for markdown) |
 | `type` | string | Field type (required) |
-| `label` | string | Display label (defaults to title-cased name) |
+| `label` | string | Display label (defaults to the raw field name) |
 | `content` | string | Markdown content (required for markdown fields) |
 | `required` | boolean | Whether field is required |
 | `default` | varies | Default value |
@@ -273,12 +273,48 @@ Transport errors (e.g., terminal not interactive) also raise Lua errors.
 | Function | Description | Returns |
 |----------|-------------|---------|
 | `rela.get_entity(id)` | Get entity by ID | table or nil |
-| `rela.list_entities(type, filter?)` | List entities of a type | table (array) |
+| `rela.list_entities(type, opts?)` | List entities of a type (bounded) | table (array) |
 | `rela.search(query, limit?)` | Full-text search | table (array) |
 | `rela.get_relations(opts?)` | Get relations with filters | table (array) |
 | `rela.trace_from(id, depth?)` | Trace outgoing dependencies | table (tree) |
 | `rela.trace_to(id, depth?)` | Trace incoming dependencies | table (tree) |
 | `rela.find_path(from, to)` | Find shortest path | table (array) or nil |
+
+#### Reads are bounded
+
+**`rela.list_entities` never returns more than 2000 rows.** There is no
+spelling for "give me everything" — an unbounded read of a large type is the
+failure this bound exists to prevent, and leaving it as the default would make
+the dangerous path the shortest one.
+
+```lua
+local tickets = rela.list_entities("ticket")                      -- up to 2000
+local recent  = rela.list_entities("ticket", { limit = 50 })      -- up to 50
+local open    = rela.list_entities("ticket", "status=open")       -- filter shorthand
+local both    = rela.list_entities("ticket",
+                  { filter = "status=open", limit = 50 })
+```
+
+`limit` may lower the bound but never raise it: asking for more than 2000
+clamps rather than erroring, so a script can say "as much as possible" without
+hard-coding the number. `limit = 0` is **an error, not "unbounded"** — it means
+unbounded on `store.ListEntitiesPage`, and silently inheriting the opposite
+meaning here would be the worst kind of near-miss.
+
+The bound stops the read at the source. Rows past the limit are never loaded,
+gated, or converted — this is a real saving, not a slice after the fact.
+
+**Iterating past the bound is not yet possible.** Cursor paging is planned;
+until it lands, `{cursor = ...}` is *rejected* rather than accepted-and-ignored,
+so a script written against the future API fails loudly here instead of
+silently re-reading the first page forever. The same applies to any unknown
+option: a typo'd key raises rather than being skipped.
+
+One caveat worth knowing: with a `filter`, the bound applies to rows
+**examined**, so a `limit` of 50 can return fewer than 50 matches. Without a
+filter it is exact.
+
+#### Relation filters
 
 `rela.get_relations` takes an **options table** — `{from = ..., type = ...,
 to = ...}` — where each key is optional and must be a **string**. Omitting a
@@ -428,9 +464,8 @@ applies the same rule, from the same code — the two cannot drift on what a
 filter means.
 
 **Operator opt-in is required.** `rela.bypass_acl` only exists when the
-automation action sets `allow_acl_bypass: true` in `metamodel.yaml` (an
-operator-only file). Without it the function is absent and a script cannot
-elevate:
+automation action sets `allow_acl_bypass:` in `schema.yaml` (an operator-only
+file). Without it the function is absent and a script cannot elevate:
 
 ```yaml
 automations:
@@ -438,8 +473,73 @@ automations:
     on: { entity: [ticket], created: true }
     do:
       - lua_file: stamp-author.lua
-        allow_acl_bypass: true
+        allow_acl_bypass: read+write
 ```
+
+The value selects which capabilities the `admin` handle carries:
+
+| Value | `admin` methods | Typical use |
+|---|---|---|
+| `read` | `get_entity`, `list_entities`, `get_relations` | aggregate over rows the caller cannot see |
+| `write` | `create_relation`, `delete_relation`, `delete_entity` | enforce a system invariant |
+| `read+write` | both | the general case |
+
+Methods a value does not grant are **absent from the handle**, not present and
+failing — so `admin.delete_entity` under `allow_acl_bypass: read` is `nil`, and
+"this script cannot mutate" is structural rather than a promise.
+
+The flag is a **rough guard for review, not a permission model**. Its job is to
+tell whoever deploys the script whether its bypass block needs reading
+carefully: no `allow_acl_bypass:` means the script can only do what the
+invoking principal can, so the ACL already bounds it; a value means someone
+should read that closure before it ships. The value says which *kind* of
+scrutiny — is this reading data the principal cannot see, or writing past their
+permissions? That is why it is not sliced by verb.
+
+> **Migrating from the boolean.** `allow_acl_bypass: true` used to mean reads
+> and writes. It is now **refused at load** with an error naming the
+> replacement; run `rela migrate` to rewrite it to `read+write`. The boolean is
+> not silently accepted on purpose: this field grants ACL bypass, and quietly
+> mapping a legacy value to the broadest setting is the wrong default for a
+> privilege field.
+
+### Elevated reads in a document render
+
+A `documents:` entry may declare `allow_acl_bypass: read`, which lets its
+script read entities the requesting principal cannot see. This exists for
+reports that must compute over hidden rows — benchmarking a sales manager
+against peers whose clients are invisible to them, say — which no `acl.yaml`
+role can express, because granting enough to *compute* the benchmark grants
+enough to *enumerate* the competitors.
+
+```yaml
+documents:
+  sales_review:
+    title: "Verkooprapportage"
+    script: docs/sales_review.lua
+    allow_acl_bypass: read
+    permission: report:sales   # REQUIRED when elevated
+```
+
+Three rules, all enforced at config load:
+
+- **Only `read`.** A render is served on a `GET`; `write` and `read+write` are
+  a config error. Elevated writes there would not be idempotent (browsers
+  prefetch, users refresh, the SPA retries) and would foreclose caching a
+  principal-independent render, so they belong in an automation action or a
+  schedule. This prevents a render mutating *beyond* the caller's permissions;
+  the ordinary gated `rela.*` write bindings remain available to a document
+  script.
+- **`permission:` is required.** Without it the render would serve whatever the
+  script reads to every principal. This is the one place a document's
+  `permission:` is mandatory — see `docs/data-entry.md`.
+- **`script:` only.** A `command:` renderer is an external process that never
+  receives the Lua bindings elevation unlocks.
+
+**The script is trusted code.** `bypass_acl` hands it a raw reader and nothing
+stops it printing what it reads, so `permission: report:sales` grants "may read
+whatever this script reads", not "may view this report". Review the bypass
+block before deploying — that review *is* the mitigation.
 
 **Safety properties:**
 
@@ -881,11 +981,59 @@ not by the document config. Two `documents:` entries that share one
 script caches work across all its callers). If you need doc-scoped
 keys, include `rela.document.id` in your cache key explicitly.
 
+### Capabilities — `http`, `ai`, `secrets`, `write_file`
+
+Four things a script can reach are **not** granted by default: outbound HTTP,
+the AI provider, named secrets, and `rela.write_file`. A script that has not
+been granted one does not merely fail the call — the binding is **absent**, so
+you get `attempt to index a nil value (global 'http')`.
+
+Declare what a script needs with a `capabilities:` block next to its `script:`
+reference:
+
+```yaml
+# data-entry.yaml
+actions:
+  notify_slack:
+    script: notify.lua
+    capabilities:
+      http: true
+      secrets: [slack_webhook_url]
+```
+
+The same block works on `documents:` entries, automation actions in
+`schema.yaml`, and tasks in `schedules.yaml`.
+
+**`secrets:` is a list of key names, not a boolean.** This is the point of the
+feature: an action that needs one Slack webhook does not also receive your
+database DSN and every other API key in `.rela/secrets.yaml`. A key you did not
+name is absent from `rela.secrets`, so a typo shows up as a `nil` at the use
+site rather than as a silently-empty credential sent to an upstream.
+
+Why closed by default: a script holding `secrets` **and** `http` can read a
+credential and post it anywhere in two calls. That combination used to be
+granted to *every* script on every surface — including read-only document
+renders and validation rules, which cannot even write to the graph. Requiring
+the grant means the capability appears only where an operator wrote it down.
+
+Two surfaces differ, both deliberately:
+
+- **`rela script` / `rela flow` / the docs build** grant everything. These run
+  from your shell, where you already have the project directory and can read
+  `.rela/secrets.yaml` yourself, so withholding anything protects nothing.
+- **MCP `lua_eval` / `lua_run`** grant nothing, and there is no way to change
+  that from config. The code (or the choice of file) comes from an MCP client,
+  which is the least appropriate place to pair arbitrary code with your secrets.
+
 ### Secrets
 
 Scripts can access secrets (API keys, tokens, passwords) via the `rela.secrets` table.
 Secrets are loaded from `.rela/secrets.yaml`, which lives inside the gitignored `.rela/`
 directory.
+
+A script only sees the keys its `capabilities.secrets` list names (see
+[Capabilities](#capabilities--http-ai-secrets-write_file) above); everything
+below describes how the *values* are resolved once a key has been granted.
 
 #### Configuration
 
@@ -1313,6 +1461,52 @@ Entities also have helper methods:
 
 - `entity:prop(name, default)` - Get property with fallback default
 - `entity:strip_prefix()` - Get ID without type prefix (e.g., "001" from "TKT-001")
+- `entity:is_redacted(name)` - Whether ACL withheld the property (see below)
+
+### Redacted properties
+
+When an ACL policy hides a property from the reading principal, the value is
+stripped before the script sees it — `properties.salary` is `nil`. That is
+indistinguishable from a property nobody ever filled in, so scripts that render
+reports get a blank where "[redacted]" would be more honest.
+
+The `redacted` table names the withheld properties, and `entity:is_redacted(name)`
+tests one:
+
+```lua
+local p = rela.get_entity("P-1")
+
+if p:is_redacted("salary") then
+    rela.output("salary: [redacted]")
+else
+    rela.output("salary: " .. p:prop("salary", "(not set)"))
+end
+
+-- Or iterate everything that was withheld:
+for name in pairs(p.redacted) do
+    rela.output("withheld: " .. name)
+end
+```
+
+Two things to know:
+
+- **Names only, never values.** The withheld value is not reachable from
+  `redacted`, from `properties`, or via `prop()`. Disclosing the *name* is
+  intentional and matches the HTTP API's `_redacted` field: field-level ACL
+  hides property values, and the metamodel that declares property names is
+  already served over `/api/v1/_schema`.
+- **`false` means "not withheld here", not "you are allowed to see it".**
+  Whether field policy is evaluated at all depends on the runtime:
+
+  | Runtime | Entity gating | Field redaction | `is_redacted` |
+  |---|---|---|---|
+  | Data-entry (documents, views, actions) | yes | yes | meaningful |
+  | Scheduler (`run_as:`) | yes | **no** | always `false` |
+  | CLI, MCP, docs | no | no | always `false` |
+
+  The scheduler row is the one to watch: scheduled tasks are gated on *which
+  entities* they may read, but field-level `visible:` redaction is not applied
+  there, so a job sees every property of an entity its identity can read.
 
 ## Filter Expressions
 

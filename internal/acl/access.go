@@ -9,7 +9,7 @@ import (
 // Verb is a read-or-write access verb the who-can query asks about. It
 // widens [Op] (create/update/delete/rename) with read, which has no Op
 // because the write path never authorizes reads — the read path is
-// [Request.readQuery]. VerbRead routes through the read machinery;
+// Request.readQuery. VerbRead routes through the read machinery;
 // every other verb routes through the per-verb write grant.
 type Verb string
 
@@ -95,7 +95,7 @@ type AssertedGrant struct {
 }
 
 // AssertedGrants reports every asserted_role_assignments mapping that grants
-// verb on entityType. Uses the same grantForRole helper as [EveryoneGrants] and
+// verb on entityType. Uses the same grantForRole helper as [Declarative.EveryoneGrants] and
 // Request.AccessRoutes, so a reported grant can never disagree with an actual
 // authorization decision.
 //
@@ -225,12 +225,25 @@ func (r *Request) grantingAttributions(
 ) []RoleAttribution {
 	attrs := r.ForEntity(ctx, entityType, entityID)
 	op, isWrite := verb.op()
+
+	// An attestation tool must report EFFECTIVE access, so the client ceiling
+	// applies here exactly as it does at runtime. Reporting the un-attenuated
+	// role set would tell an operator a restricted client can do something it
+	// cannot — the worst error class for a tool whose whole job is answering
+	// "who can do what".
+	if isWrite && !r.ceiling.permitsVerb(op, entityType) {
+		return nil
+	}
+	if !isWrite && !r.ceiling.permitsRead(entityType) {
+		return nil
+	}
+
 	var out []RoleAttribution
 	for _, a := range attrs {
 		if a.Role == EveryoneRole {
 			continue
 		}
-		role, ok := r.d.policy.Roles[a.Role]
+		role, ok := r.roleFor(a.Role)
 		if !ok {
 			continue
 		}

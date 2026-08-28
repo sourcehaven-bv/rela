@@ -46,9 +46,15 @@ var catchUpInterval atomic.Int64
 func init() { catchUpInterval.Store(int64(defaultCatchUpInterval)) }
 
 // listener runs the cross-process change feed for one Store: it holds a
-// dedicated PostgreSQL connection, LISTENs on the store's schema-scoped channel,
-// turns notifications (and a seq-watermark catch-up) into store.Events, and
-// emits them to the store's in-process subscribers.
+// dedicated PostgreSQL connection, LISTENs on the shared feed channel, turns
+// notifications (and a seq-watermark catch-up) into store.Events, and emits
+// them to the store's in-process subscribers.
+//
+// Because the channel is shared by every schema on the database, the listener
+// filters on receipt: it drops a notification whose schema is not its own, and
+// one whose origin is its own store (already emitted in-process). The
+// seq-watermark catch-up is NOT shared — `rela_seq` is per-schema and the
+// catch-up query is unqualified SQL — so it runs against this store's pool.
 //
 // It owns its own connection (separate from the store's query pool) so a slow
 // LISTEN never starves query traffic. Lifecycle is owned by the Store:
@@ -56,7 +62,7 @@ func init() { catchUpInterval.Store(int64(defaultCatchUpInterval)) }
 type listener struct {
 	store    *Store
 	dsn      string
-	channel  string
+	schema   string
 	originID string
 
 	cancel context.CancelFunc
@@ -64,8 +70,8 @@ type listener struct {
 }
 
 // startListener builds and starts a listener for s against dsn. It resolves the
-// schema-scoped channel from a throwaway connection, then runs the loop in a
-// goroutine. A failure to establish the initial connection is returned so the
+// store's schema (stamped into payloads and matched on receipt), then runs the
+// loop in a goroutine. A failure to establish the initial connection is returned so the
 // caller can degrade with a warning (the store stays usable; cross-process
 // events are simply unavailable).
 func startListener(ctx context.Context, s *Store, dsn string) (*listener, error) {
@@ -73,20 +79,23 @@ func startListener(ctx context.Context, s *Store, dsn string) (*listener, error)
 	if err != nil {
 		return nil, err
 	}
-	channel, err := resolveChannel(ctx, conn)
+	// Resolve on the store's own pool, not this listener connection: the
+	// producer writes through the pool, so the schema stamped into payloads
+	// must be the pool's. They are the same DSN today, but tying it to the
+	// writer is what stays correct if a pool ever repoints its search_path.
+	schema, err := resolveSchema(ctx, s.db)
 	if err != nil {
 		_ = conn.Close(ctx)
 		return nil, err
 	}
-	// Keep the store's producer channel in sync with the listener's (both must
-	// match for self/remote notifications to land on the same channel).
-	s.channel = channel
+	// Enabling the producer (see Store.notify, which no-ops on an empty schema).
+	s.schema = schema
 
 	lctx, cancel := context.WithCancel(context.Background())
 	l := &listener{
 		store:    s,
 		dsn:      dsn,
-		channel:  channel,
+		schema:   schema,
 		originID: s.originID,
 		cancel:   cancel,
 		done:     make(chan struct{}),
@@ -179,23 +188,38 @@ func (l *listener) run(ctx context.Context, conn *pgx.Conn) {
 	}
 }
 
-// listen issues LISTEN on the channel. The channel is a server-generated,
-// identifier-shaped string (prefix + current_schema()), quoted to be safe.
+// listen issues LISTEN on the shared feed channel. The name is a compile-time
+// constant; it is quoted only because LISTEN does not accept bound parameters.
 func (l *listener) listen(ctx context.Context, conn *pgx.Conn) error {
-	_, err := conn.Exec(ctx, "LISTEN "+pgQuoteIdentifier(l.channel))
+	_, err := conn.Exec(ctx, "LISTEN "+pgQuoteIdentifier(feedChannel))
 	return err
 }
 
-// handleNotification turns one NOTIFY into a store.Event, skipping our own
-// writes (already emitted in-process). It returns true when the caller should
-// run an immediate catch-up: an unparseable payload (e.g. one truncated past
+// handleNotification turns one NOTIFY into a store.Event, skipping notifications
+// that are not ours to deliver. It returns true when the caller should run an
+// immediate catch-up: an unparseable payload (e.g. one truncated past
 // pg_notify's 8000-byte limit) is never trusted, so we reconcile from real rows
 // right away rather than waiting for the safety ticker.
+//
+// Two filters, in this order:
+//
+//   - **Schema.** Every schema on the database shares one channel, so a write
+//     to another schema arrives here too. It describes rows this store cannot
+//     see; emitting it would fabricate an event for an entity that does not
+//     exist in this store's schema. Checked BEFORE origin because a foreign
+//     schema's write is irrelevant regardless of who wrote it.
+//   - **Origin.** Our own write, already emitted in-process by the writer.
+//
+// Neither triggers a catch-up: both are expected, correctly-formed traffic, not
+// a signal that anything was missed.
 func (l *listener) handleNotification(n *pgconn.Notification) (needCatchUp bool) {
 	fe, ok := parseFeedPayload(n.Payload)
 	if !ok {
 		slog.Debug("pgstore listener: unparseable notification payload; catching up", "channel", n.Channel)
 		return true
+	}
+	if fe.schema != l.schema {
+		return false // another schema sharing this channel — not our rows
 	}
 	if fe.origin == l.originID {
 		return false // our own write — already emitted in-process
@@ -350,8 +374,8 @@ func (l *listener) reconnect(ctx context.Context) (*pgx.Conn, error) {
 
 // pgQuoteIdentifier quotes a PostgreSQL identifier (doubling embedded quotes)
 // for safe interpolation into LISTEN, which does not accept bound parameters.
-// The channel is server-derived (prefix + current_schema()), so this is
-// defense-in-depth rather than a live injection vector.
+// The channel is a compile-time constant, so this is defense-in-depth rather
+// than a live injection vector.
 func pgQuoteIdentifier(ident string) string {
 	out := make([]byte, 0, len(ident)+2)
 	out = append(out, '"')
