@@ -169,26 +169,27 @@ func (l *fsLock) acquireFile(ctx context.Context) (func(), error) {
 	if err := os.MkdirAll(filepath.Dir(l.path), 0o755); err != nil {
 		return nil, fmt.Errorf("datamigration: create lock dir: %w", err)
 	}
-	// One stale-break retry, never more: a second failure means a live
-	// holder raced us to re-create the file, which is contention, not
-	// staleness.
+	// Hold the break marker across the complete inspect-remove-recreate
+	// sequence. Releasing it after removing a stale owner would expose an empty
+	// pathname before this contender publishes its payload, allowing another
+	// breaker into the replacement protocol.
+	bf, err := os.OpenFile(l.breakPath(), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			l.clearAbandonedBreak()
+			return nil, ErrLockHeld
+		}
+		return nil, fmt.Errorf("datamigration: create lock-break marker: %w", err)
+	}
+	_ = bf.Close()
+	defer func() { _ = os.Remove(l.breakPath()) }()
+
+	// One stale-break retry, never more. The marker remains held, so a second
+	// failure cannot be another legitimate breaker racing this replacement.
 	for range 2 {
 		if err := ctx.Err(); err != nil {
 			return nil, fmt.Errorf("datamigration: acquire migration lock: %w", err)
 		}
-		// Serialize creation with stale inspection too. O_EXCL publishes the
-		// pathname before Write fills its payload; without the break mutex a
-		// contender can observe that empty window, call it unparseable/stale,
-		// and delete a live holder's new file.
-		bf, err := os.OpenFile(l.breakPath(), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-		if err != nil {
-			if errors.Is(err, os.ErrExist) {
-				l.clearAbandonedBreak()
-				return nil, ErrLockHeld
-			}
-			return nil, fmt.Errorf("datamigration: create lock-break marker: %w", err)
-		}
-		_ = bf.Close()
 		payload, _ := json.Marshal(lockFilePayload{PID: os.Getpid(), AcquiredAt: time.Now().UTC()})
 		f, err := os.OpenFile(l.path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 		if err == nil {
@@ -196,10 +197,8 @@ func (l *fsLock) acquireFile(ctx context.Context) (func(), error) {
 			cerr := f.Close()
 			if werr != nil || cerr != nil {
 				l.removeIfOurs(payload)
-				_ = os.Remove(l.breakPath())
 				return nil, fmt.Errorf("datamigration: write lock file: %w", errors.Join(werr, cerr))
 			}
-			_ = os.Remove(l.breakPath())
 			// Release removes the file ONLY while it still holds our own
 			// payload: if an operator hand-removed the lock and another
 			// process acquired meanwhile, an unconditional remove would
@@ -207,19 +206,16 @@ func (l *fsLock) acquireFile(ctx context.Context) (func(), error) {
 			return func() { l.removeIfOurs(payload) }, nil
 		}
 		if !errors.Is(err, os.ErrExist) {
-			_ = os.Remove(l.breakPath())
 			return nil, fmt.Errorf("datamigration: create lock file: %w", err)
 		}
 		present, stale := l.staleState()
 		if !stale {
-			_ = os.Remove(l.breakPath())
 			return nil, ErrLockHeld
 		}
 		if present {
 			slog.Warn("datamigration: breaking stale migration lock", "path", l.path)
 			_ = os.Remove(l.path)
 		}
-		_ = os.Remove(l.breakPath())
 	}
 	return nil, ErrLockHeld
 }
