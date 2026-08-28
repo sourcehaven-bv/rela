@@ -7,6 +7,7 @@ finding: |-
 
     On its own this would be out of scope for a file-mode check. It matters because the new docs tell operators `chmod 600 .rela/secrets.yaml` is the fix. Incomplete security advice is worse than none: the operator now believes they are done.
 severity: minor
+resolution: 'Fixed the docs rather than extending the check. docs/lua-scripting.md now shows both `chmod 700 .rela` and `chmod 600 .rela/secrets.yaml`, explains that rela init creates .rela as 0755 and that a group-writable parent allows outright replacement of the file, and states plainly that the check covers the file, not the directory. docs/mail.md carries the same correction in short form. Extending warnIfPermissive to the directory was considered and left out: .rela also holds non-secret cache and index files whose 0755 is not itself a fault, and tightening the mode is a change to what project.Initialize writes rather than what secrets reads — a different package and blast radius. The doc now describes the actual boundary instead of implying a wider one.'
 status: addressed
 ---
 

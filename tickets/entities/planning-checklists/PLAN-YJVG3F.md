@@ -238,8 +238,10 @@ For enhancements: identify what documentation needs updating.
 and the credentials-directory source
 - [x] `docs/mail.md` — systemd `LoadCredentialEncrypted=` beside the existing
 `password_env` guidance, noting why it is preferable
-- [ ] N/A for metamodel.md / cli-reference.md / data-entry.md / CLAUDE.md /
-README.md — no metamodel, command, UI, convention, or project-level change
+- [x] ~~metamodel.md / cli-reference.md / data-entry.md / CLAUDE.md /
+README.md~~ (N/A: no metamodel, UI, convention, or project-level change. The
+`rela secrets credential-name` command added during implementation carries its
+own kong `help:` text, and this repo has no cli-reference.md.)
 
 ## Design Review
 

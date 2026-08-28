@@ -9,6 +9,7 @@ finding: |-
 
     (2) The sync.Map never evicts. In the SharedBase multi-tenant case it retains one entry per project path forever, keyed by a value whose cardinality the package does not control. Small, but it is the shape of leak that matters later — and keying on (path, mode) to fix (1) makes it marginally worse.
 severity: significant
+resolution: '(1) The cache key is now a warnKey{path, perm} struct rather than the path alone, so a changed mode warns again while a stable wrong mode stays quiet. Pinned by TestLoad_WarnsAgainWhenModeChanges, which walks 0640 -> 0600 -> 0666 and asserts two warnings with the second naming 0666. (2) The map is bounded at maxWarnedPaths = 1024, tracked with an atomic.Int64; past the cap the entry is rolled back and the warning dropped, which is acceptable for an advisory diagnostic. Concurrency was confirmed rather than assumed: TestLoad_ConcurrentLoadsWarnOnce fires 16 concurrent Loads at one permissive file and asserts exactly one warning under -race.'
 status: addressed
 ---
 

@@ -11,6 +11,7 @@ finding: |-
 
     (3) sourcePath's doc said "Returns \"\" when neither source exists", which is false: it never checks whether the project file exists, only whether relaDir is empty. In a codebase whose comments are load-bearing, a comment that misdescribes its function is a defect.
 severity: minor
+resolution: '(1) ErrNotFound is now "secrets: no secrets source (no .rela/secrets.yaml, no systemd credential)" so a grep on the message leads somewhere. (2) Both fmt.Errorf("%w", ErrNotFound) sites return the bare sentinel; errors.Is still matches, covered by the existing TestLoad_FileNotFound. (3) sourcePath''s doc now says what the code does — the project-file path is returned without an existence check because os.ReadFile distinguishes absent from unreadable better than a bool could, and "" is returned only when there is no project directory and no credential. Also verified in this pass: the //nolint:gosec is load-bearing (removed it, G703 fired on that exact line, restored it), and resetPermissionWarnings is genuinely test-only. Declined the build-tag split for the Windows check, with reasoning recorded in the body.'
 status: addressed
 ---
 

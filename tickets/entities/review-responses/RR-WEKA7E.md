@@ -9,6 +9,7 @@ finding: |-
 
     That message is now actively false: the credential is present, password_env is irrelevant, and the real fault is a YAML syntax error inside a TPM-encrypted blob the operator cannot easily inspect.
 severity: significant
+resolution: 'resolvePassword (internal/mail/config.go) now switches on the error instead of discarding it: errors.Is(err, secrets.ErrNotFound) falls through silently (the ordinary password_env deployment), a non-nil error logs slog.Warn "mail: secrets source unreadable, falling back to password_env", and only the default branch reads the key. This matches what internal/lua/context.go already did. The fallback is deliberately kept — refusing to send mail over a secrets-file syntax error is worse than trying the other source — but the real fault is now on the record rather than surfacing as a misleading message about password_env. Covered by TestConfig_MalformedSecretsFallsBackAndWarns (fallback works, warning emitted, credential not echoed) and TestConfig_AbsentSecretsIsSilent (an absent file must stay quiet so the warning keeps its signal).'
 status: addressed
 ---
 

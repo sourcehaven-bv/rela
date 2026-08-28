@@ -9,6 +9,7 @@ finding: |-
 
     Found by testing the new code against a symlinked layout rather than by reading it; neither my own review nor the code review caught it, because it only appears once the name became path-derived.
 severity: significant
+resolution: 'CredentialName calls filepath.EvalSymlinks after filepath.Abs, so a project reached through a symlinked parent hashes to the same name as its target and a /srv/current -> /srv/releases/N switchover does not orphan the credential. Best-effort: if EvalSymlinks fails (most likely a not-yet-created directory) the unresolved absolute path is kept rather than returning "", since losing the credential entirely would be the worse failure. Pinned by TestCredentialName/symlinked path resolves to the same name as its target, which builds a real symlinked layout and skips where symlinks are unavailable.'
 status: addressed
 ---
 

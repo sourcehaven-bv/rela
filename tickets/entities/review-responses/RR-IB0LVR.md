@@ -9,6 +9,7 @@ finding: |-
 
     Raised from minor to critical after code review. My original assessment leaned on NewSharedBase having no production caller yet, but a latent fail-open credential leak in the topology the code is being built for is not a minor defect.
 severity: critical
+resolution: 'CredentialName now returns rela-secrets-<project>-<hash>, hashing the symlink-resolved ABSOLUTE path (SHA-256, first 4 bytes) instead of using the bare basename, so two projects sharing a directory name can no longer collide onto one credential. filepath.Abs runs before hashing so a relative relaDir cannot hash per working directory, and the last path segment must be .rela or the source is disabled. Because the name is no longer hand-derivable, added `rela secrets credential-name` (internal/cli/secrets.go) and pointed the docs at it. Pinned by TestCredentialName_DistinctProjectsSharingABasename and the end-to-end TestLoad_SameBasenameProjectsDoNotShareACredential. Supporting: .go-arch-lint.yml grants cli->secrets (name derivation only, no secret values read), kong.go adds secrets to requiresProject, CLI plimsoll pin 46->47.'
 status: addressed
 ---
 
