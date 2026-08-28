@@ -3,6 +3,7 @@
 package lua
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	lua "github.com/yuin/gopher-lua"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -65,27 +67,67 @@ const (
 	maxHeaderLevel = 6
 )
 
+// mdHelpers implements the state-free rela.md AST bindings: parse,
+// render, transform, extract, and the Lua-table manipulation they
+// share. A type of its own rather than more methods on [Runtime]
+// (the urlHelpers rationale in urls.go): these functions need nothing
+// from the runtime — no deps, no context, no capabilities — only the
+// Lua state to allocate tables on, so hanging them off Runtime made a
+// god-object out of what is really a pure function group.
+type mdHelpers struct {
+	// ls is the same LState the bindings are registered on (Runtime.L);
+	// held so internal helpers can allocate tables without threading the
+	// state through every call.
+	ls   *lua.LState
+	conv *mdASTConverter
+}
+
+// mdASTConverter turns a parsed goldmark AST into the Lua table shape
+// the rela.md module exposes (blocks, inlines, list items, tables).
+// Split from [mdHelpers] because conversion is its own layer: it walks
+// goldmark nodes and never touches Lua stack arguments, while mdHelpers
+// owns the bindings and the Lua-table-to-Lua-table transforms.
+type mdASTConverter struct {
+	ls *lua.LState
+}
+
+// mdEntityRefs implements rela.md.entity_refs, the one markdown binding
+// that reads the graph. It holds the minimum it needs (consumer-side
+// interface rule) instead of the whole Runtime: the metamodel for type
+// validation, the ACL-gated reader, and the caller-context closure.
+type mdEntityRefs struct {
+	meta *metamodel.Metamodel
+	// reader is the ACL-gated visible reader. Nil: accepted — the binding
+	// raises a Lua error at call time, matching every other read binding.
+	reader EntityReader
+	// ctx is [Runtime.callerCtx]: a closure, not a captured context, so a
+	// timeout applied to the runtime after registration still propagates.
+	ctx func() context.Context
+}
+
 // registerMarkdownModule adds the rela.md submodule to the rela table.
 // Note: The Lua VM (LState) is not thread-safe. Each goroutine must use
 // its own Runtime instance.
 func (r *Runtime) registerMarkdownModule(rela *lua.LTable) {
+	m := &mdHelpers{ls: r.L, conv: &mdASTConverter{ls: r.L}}
+	er := &mdEntityRefs{meta: r.deps.Meta, reader: r.deps.VisibleReader, ctx: r.callerCtx}
 	md := r.L.NewTable()
 
 	// Core functions
-	r.L.SetField(md, "parse", r.L.NewFunction(r.luaMdParse))
-	r.L.SetField(md, "render", r.L.NewFunction(r.luaMdRender))
+	r.L.SetField(md, "parse", r.L.NewFunction(m.luaMdParse))
+	r.L.SetField(md, "render", r.L.NewFunction(m.luaMdRender))
 
 	// Transformation functions
-	r.L.SetField(md, "shift_headers", r.L.NewFunction(r.luaMdShiftHeaders))
-	r.L.SetField(md, "set_min_header_level", r.L.NewFunction(r.luaMdSetMinHeaderLevel))
+	r.L.SetField(md, "shift_headers", r.L.NewFunction(m.luaMdShiftHeaders))
+	r.L.SetField(md, "set_min_header_level", r.L.NewFunction(m.luaMdSetMinHeaderLevel))
 
 	// Extraction functions
-	r.L.SetField(md, "headers", r.L.NewFunction(r.luaMdHeaders))
-	r.L.SetField(md, "extract_section", r.L.NewFunction(r.luaMdExtractSection))
-	r.L.SetField(md, "first_paragraph", r.L.NewFunction(r.luaMdFirstParagraph))
+	r.L.SetField(md, "headers", r.L.NewFunction(m.luaMdHeaders))
+	r.L.SetField(md, "extract_section", r.L.NewFunction(m.luaMdExtractSection))
+	r.L.SetField(md, "first_paragraph", r.L.NewFunction(m.luaMdFirstParagraph))
 
 	// Composition functions
-	r.L.SetField(md, "concat", r.L.NewFunction(r.luaMdConcat))
+	r.L.SetField(md, "concat", r.L.NewFunction(m.luaMdConcat))
 
 	// Node constructors (block).
 	r.L.SetField(md, "heading", r.L.NewFunction(luaMdHeading))
@@ -108,11 +150,11 @@ func (r *Runtime) registerMarkdownModule(rela *lua.LTable) {
 	r.L.SetField(md, "link", r.L.NewFunction(luaMdLink))
 	r.L.SetField(md, "ref", r.L.NewFunction(luaMdRef))
 	r.L.SetField(md, "table", r.L.NewFunction(luaMdTable))
-	r.L.SetField(md, "entity_table", r.L.NewFunction(r.luaMdEntityTable))
+	r.L.SetField(md, "entity_table", r.L.NewFunction(m.luaMdEntityTable))
 
 	// Reference resolution: rewrite code-span entity-ID tokens to links.
-	r.L.SetField(md, "resolve_refs", r.L.NewFunction(r.luaMdResolveRefs))
-	r.L.SetField(md, "entity_refs", r.L.NewFunction(r.luaMdEntityRefs))
+	r.L.SetField(md, "resolve_refs", r.L.NewFunction(m.luaMdResolveRefs))
+	r.L.SetField(md, "entity_refs", r.L.NewFunction(er.luaMdEntityRefs))
 
 	r.L.SetField(rela, "md", md)
 }
@@ -185,7 +227,7 @@ func luaMdFlatten(ls *lua.LState) int {
 
 // luaMdParse parses markdown content into an AST table.
 // Usage: local ast = rela.md.parse(content)
-func (r *Runtime) luaMdParse(ls *lua.LState) int {
+func (m *mdHelpers) luaMdParse(ls *lua.LState) int {
 	content := ls.CheckString(1)
 
 	source := []byte(content)
@@ -197,14 +239,14 @@ func (r *Runtime) luaMdParse(ls *lua.LState) int {
 	reader := text.NewReader(source)
 	doc := md.Parser().Parse(reader)
 
-	astTable := r.goldmarkToLua(doc, source)
+	astTable := m.conv.goldmarkToLua(doc, source)
 	ls.Push(astTable)
 	return 1
 }
 
 // luaMdRender renders an AST table back to markdown string.
 // Usage: local md = rela.md.render(ast)
-func (r *Runtime) luaMdRender(ls *lua.LState) int {
+func (m *mdHelpers) luaMdRender(ls *lua.LState) int {
 	astTable := ls.CheckTable(1)
 
 	var sb strings.Builder
@@ -218,11 +260,11 @@ func (r *Runtime) luaMdRender(ls *lua.LState) int {
 
 // luaMdShiftHeaders shifts all header levels by the given offset.
 // Usage: ast = rela.md.shift_headers(ast, 1)  -- # becomes ##
-func (r *Runtime) luaMdShiftHeaders(ls *lua.LState) int {
+func (m *mdHelpers) luaMdShiftHeaders(ls *lua.LState) int {
 	astTable := ls.CheckTable(1)
 	offset := ls.CheckInt(2)
 
-	result := r.L.NewTable()
+	result := m.ls.NewTable()
 
 	// Use sequential access to preserve document order
 	for i := 1; i <= astTable.Len(); i++ {
@@ -231,7 +273,7 @@ func (r *Runtime) luaMdShiftHeaders(ls *lua.LState) int {
 		if !ok {
 			continue
 		}
-		newNode := r.shiftNodeHeaders(node, offset)
+		newNode := m.shiftNodeHeaders(node, offset)
 		result.RawSetInt(i, newNode)
 	}
 
@@ -241,13 +283,13 @@ func (r *Runtime) luaMdShiftHeaders(ls *lua.LState) int {
 
 // luaMdSetMinHeaderLevel normalizes headers so minimum level equals target.
 // Usage: ast = rela.md.set_min_header_level(ast, 2)  -- min becomes ##
-func (r *Runtime) luaMdSetMinHeaderLevel(ls *lua.LState) int {
+func (m *mdHelpers) luaMdSetMinHeaderLevel(ls *lua.LState) int {
 	astTable := ls.CheckTable(1)
 	// Clamp target level to valid range
 	targetLevel := min(max(ls.CheckInt(2), minHeaderLevel), maxHeaderLevel)
 
 	// Find current minimum level
-	minLevel := r.findMinHeaderLevel(astTable)
+	minLevel := m.findMinHeaderLevel(astTable)
 
 	// No headers found or already at target, return as-is
 	if minLevel > maxHeaderLevel {
@@ -262,14 +304,14 @@ func (r *Runtime) luaMdSetMinHeaderLevel(ls *lua.LState) int {
 	}
 
 	// Apply shift using sequential access to preserve document order
-	result := r.L.NewTable()
+	result := m.ls.NewTable()
 	for i := 1; i <= astTable.Len(); i++ {
 		v := astTable.RawGetInt(i)
 		node, ok := v.(*lua.LTable)
 		if !ok {
 			continue
 		}
-		newNode := r.shiftNodeHeaders(node, offset)
+		newNode := m.shiftNodeHeaders(node, offset)
 		result.RawSetInt(i, newNode)
 	}
 
@@ -278,7 +320,7 @@ func (r *Runtime) luaMdSetMinHeaderLevel(ls *lua.LState) int {
 }
 
 // findMinHeaderLevel finds the minimum header level in the AST.
-func (r *Runtime) findMinHeaderLevel(astTable *lua.LTable) int {
+func (m *mdHelpers) findMinHeaderLevel(astTable *lua.LTable) int {
 	minLevel := maxHeaderLevel + 1
 	// Order doesn't matter for finding minimum, but use sequential for consistency
 	for i := 1; i <= astTable.Len(); i++ {
@@ -306,12 +348,12 @@ func (r *Runtime) findMinHeaderLevel(astTable *lua.LTable) int {
 // luaMdHeaders extracts a list of headers from the AST.
 // Usage: local headers = rela.md.headers(ast)
 // Usage: local headers = rela.md.headers(ast, {min_level=2, max_level=3})
-func (r *Runtime) luaMdHeaders(ls *lua.LState) int {
+func (m *mdHelpers) luaMdHeaders(ls *lua.LState) int {
 	astTable := ls.CheckTable(1)
 
-	minLvl, maxLvl := r.parseHeaderOptions(ls)
+	minLvl, maxLvl := m.parseHeaderOptions(ls)
 
-	result := r.L.NewTable()
+	result := m.ls.NewTable()
 	resultIdx := 1
 
 	// Use sequential access to preserve document order
@@ -330,7 +372,7 @@ func (r *Runtime) luaMdHeaders(ls *lua.LState) int {
 		}
 
 		if level >= minLvl && level <= maxLvl {
-			header := r.L.NewTable()
+			header := m.ls.NewTable()
 			header.RawSetString("level", lua.LNumber(level))
 			header.RawSetString("title", lua.LString(headingTitleFlat(node)))
 			result.RawSetInt(resultIdx, header)
@@ -343,7 +385,7 @@ func (r *Runtime) luaMdHeaders(ls *lua.LState) int {
 }
 
 // parseHeaderOptions extracts min_level and max_level from options table.
-func (r *Runtime) parseHeaderOptions(ls *lua.LState) (minLvl, maxLvl int) {
+func (m *mdHelpers) parseHeaderOptions(ls *lua.LState) (minLvl, maxLvl int) {
 	minLvl = minHeaderLevel
 	maxLvl = maxHeaderLevel
 
@@ -368,11 +410,11 @@ func (r *Runtime) parseHeaderOptions(ls *lua.LState) (minLvl, maxLvl int) {
 // luaMdExtractSection extracts nodes under a matching header until next same-level header.
 // Only extracts the first matching section.
 // Usage: local section = rela.md.extract_section(ast, "Overview")
-func (r *Runtime) luaMdExtractSection(ls *lua.LState) int {
+func (m *mdHelpers) luaMdExtractSection(ls *lua.LState) int {
 	astTable := ls.CheckTable(1)
 	pattern := ls.CheckString(2)
 
-	result := r.L.NewTable()
+	result := m.ls.NewTable()
 	resultIdx := 1
 	capturing := false
 	done := false
@@ -389,7 +431,7 @@ func (r *Runtime) luaMdExtractSection(ls *lua.LState) int {
 		nodeType, _ := node.RawGetString("type").(lua.LString)
 
 		if nodeType == lua.LString(nodeTypeHeading) {
-			level, title := r.getHeadingInfo(node)
+			level, title := m.getHeadingInfo(node)
 
 			if capturing && level <= captureLevel {
 				// Stop if we hit a header at same or higher level
@@ -404,7 +446,7 @@ func (r *Runtime) luaMdExtractSection(ls *lua.LState) int {
 		}
 
 		if capturing {
-			result.RawSetInt(resultIdx, r.deepCopyNode(node))
+			result.RawSetInt(resultIdx, m.deepCopyNode(node))
 			resultIdx++
 		}
 	}
@@ -418,7 +460,7 @@ func (r *Runtime) luaMdExtractSection(ls *lua.LState) int {
 }
 
 // getHeadingInfo extracts level and a flat title from a heading node.
-func (r *Runtime) getHeadingInfo(node *lua.LTable) (level int, title string) {
+func (m *mdHelpers) getHeadingInfo(node *lua.LTable) (level int, title string) {
 	level = 1
 	if l, ok := node.RawGetString("level").(lua.LNumber); ok {
 		level = int(l)
@@ -439,7 +481,7 @@ func headingTitleFlat(node *lua.LTable) string {
 
 // luaMdFirstParagraph extracts the first paragraph text from the AST.
 // Usage: local text = rela.md.first_paragraph(ast)
-func (r *Runtime) luaMdFirstParagraph(ls *lua.LState) int {
+func (m *mdHelpers) luaMdFirstParagraph(ls *lua.LState) int {
 	astTable := ls.CheckTable(1)
 
 	// Use sequential access to preserve document order
@@ -468,8 +510,8 @@ func (r *Runtime) luaMdFirstParagraph(ls *lua.LState) int {
 
 // luaMdConcat concatenates multiple ASTs into one.
 // Usage: local combined = rela.md.concat(ast1, ast2, ast3)
-func (r *Runtime) luaMdConcat(ls *lua.LState) int {
-	result := r.L.NewTable()
+func (m *mdHelpers) luaMdConcat(ls *lua.LState) int {
+	result := m.ls.NewTable()
 	resultIdx := 1
 
 	// Process each argument using sequential access to preserve order
@@ -485,7 +527,7 @@ func (r *Runtime) luaMdConcat(ls *lua.LState) int {
 			if !ok {
 				continue
 			}
-			result.RawSetInt(resultIdx, r.deepCopyNode(node))
+			result.RawSetInt(resultIdx, m.deepCopyNode(node))
 			resultIdx++
 		}
 	}
@@ -660,13 +702,13 @@ func luaMdList(ls *lua.LState) int {
 // --- Helper Functions ---
 
 // goldmarkToLua converts a goldmark AST document to a Lua table.
-func (r *Runtime) goldmarkToLua(doc ast.Node, source []byte) *lua.LTable {
-	result := r.L.NewTable()
+func (c *mdASTConverter) goldmarkToLua(doc ast.Node, source []byte) *lua.LTable {
+	result := c.ls.NewTable()
 	idx := 1
 
 	// Walk only top-level children of the document
 	for child := doc.FirstChild(); child != nil; child = child.NextSibling() {
-		if node := r.nodeToLua(child, source); node != nil {
+		if node := c.nodeToLua(child, source); node != nil {
 			result.RawSetInt(idx, node)
 			idx++
 		}
@@ -676,51 +718,51 @@ func (r *Runtime) goldmarkToLua(doc ast.Node, source []byte) *lua.LTable {
 }
 
 // nodeToLua converts a single goldmark AST node to a Lua table.
-func (r *Runtime) nodeToLua(n ast.Node, source []byte) *lua.LTable {
-	node := r.L.NewTable()
+func (c *mdASTConverter) nodeToLua(n ast.Node, source []byte) *lua.LTable {
+	node := c.ls.NewTable()
 
 	switch n := n.(type) {
 	case *ast.Heading:
 		node.RawSetString("type", lua.LString(nodeTypeHeading))
 		node.RawSetString("level", lua.LNumber(n.Level))
-		node.RawSetString("inlines", r.extractInlines(n, source))
+		node.RawSetString("inlines", c.extractInlines(n, source))
 
 	case *ast.Paragraph:
 		node.RawSetString("type", lua.LString(nodeTypeParagraph))
-		node.RawSetString("inlines", r.extractInlines(n, source))
+		node.RawSetString("inlines", c.extractInlines(n, source))
 
 	case *ast.TextBlock:
 		// goldmark emits TextBlock for paragraph-equivalent content inside
 		// list items and other contexts. Treat as a paragraph for our
 		// purposes so block-level walkers don't have to special-case it.
 		node.RawSetString("type", lua.LString(nodeTypeParagraph))
-		node.RawSetString("inlines", r.extractInlines(n, source))
+		node.RawSetString("inlines", c.extractInlines(n, source))
 
 	case *ast.FencedCodeBlock:
 		node.RawSetString("type", lua.LString(nodeTypeCodeBlock))
 		node.RawSetString("language", lua.LString(string(n.Language(source))))
-		node.RawSetString("content", lua.LString(r.extractCodeBlockContent(n, source)))
+		node.RawSetString("content", lua.LString(c.extractCodeBlockContent(n, source)))
 
 	case *ast.CodeBlock:
 		node.RawSetString("type", lua.LString(nodeTypeCodeBlock))
 		node.RawSetString("language", lua.LString(""))
-		node.RawSetString("content", lua.LString(r.extractLinesContent(n, source)))
+		node.RawSetString("content", lua.LString(c.extractLinesContent(n, source)))
 
 	case *ast.List:
 		node.RawSetString("type", lua.LString(nodeTypeList))
 		node.RawSetString("ordered", lua.LBool(n.IsOrdered()))
-		node.RawSetString("items", r.extractListItems(n, source))
+		node.RawSetString("items", c.extractListItems(n, source))
 
 	case *ast.Blockquote:
 		node.RawSetString("type", lua.LString(nodeTypeBlockquote))
-		node.RawSetString("children", r.extractBlockChildren(n, source))
+		node.RawSetString("children", c.extractBlockChildren(n, source))
 
 	case *ast.ThematicBreak:
 		node.RawSetString("type", lua.LString(nodeTypeThematicBreak))
 
 	case *east.Table:
 		node.RawSetString("type", lua.LString(nodeTypeTable))
-		header, rows, alignments := r.extractTableData(n, source)
+		header, rows, alignments := c.extractTableData(n, source)
 		node.RawSetString("header", header)
 		node.RawSetString("rows", rows)
 		node.RawSetString("alignments", alignments)
@@ -728,7 +770,7 @@ func (r *Runtime) nodeToLua(n ast.Node, source []byte) *lua.LTable {
 	default:
 		// For unsupported node types, capture as raw
 		node.RawSetString("type", lua.LString(nodeTypeRaw))
-		node.RawSetString("content", lua.LString(r.extractRawContent(n, source)))
+		node.RawSetString("content", lua.LString(c.extractRawContent(n, source)))
 	}
 
 	return node
@@ -742,11 +784,11 @@ func (r *Runtime) nodeToLua(n ast.Node, source []byte) *lua.LTable {
 // `text` field; soft and hard line breaks are emitted as synthetic inline
 // nodes after the text whose flag is set; task checkboxes are skipped
 // (their state is captured separately by detectTaskCheckbox).
-func (r *Runtime) extractInlines(parent ast.Node, source []byte) *lua.LTable {
-	out := r.L.NewTable()
+func (c *mdASTConverter) extractInlines(parent ast.Node, source []byte) *lua.LTable {
+	out := c.ls.NewTable()
 	idx := 1
 	for child := parent.FirstChild(); child != nil; child = child.NextSibling() {
-		idx = r.appendInlines(out, child, source, idx)
+		idx = c.appendInlines(out, child, source, idx)
 	}
 	return out
 }
@@ -754,13 +796,13 @@ func (r *Runtime) extractInlines(parent ast.Node, source []byte) *lua.LTable {
 // appendInlines emits Lua tables for the given goldmark inline node
 // (and any synthetic break that follows) into out, returning the next
 // index to use.
-func (r *Runtime) appendInlines(out *lua.LTable, n ast.Node, source []byte, idx int) int {
+func (c *mdASTConverter) appendInlines(out *lua.LTable, n ast.Node, source []byte, idx int) int {
 	switch n := n.(type) {
 	case *ast.Text:
-		return r.appendTextInline(out, n, source, idx)
+		return c.appendTextInline(out, n, source, idx)
 	case *ast.String:
 		if s := string(n.Value); s != "" {
-			out.RawSetInt(idx, r.makeLeafInline(inlineTypeText, s))
+			out.RawSetInt(idx, c.makeLeafInline(inlineTypeText, s))
 			return idx + 1
 		}
 		return idx
@@ -769,7 +811,7 @@ func (r *Runtime) appendInlines(out *lua.LTable, n ast.Node, source []byte, idx 
 		for c := n.FirstChild(); c != nil; c = c.NextSibling() {
 			collectRawText(&sb, c, source)
 		}
-		out.RawSetInt(idx, r.makeLeafInline(inlineTypeCodeSpan, sb.String()))
+		out.RawSetInt(idx, c.makeLeafInline(inlineTypeCodeSpan, sb.String()))
 		// Note: the original fence width is not preserved on the AST.
 		// renderInlineNode uses the smallest safe fence (computed from
 		// the content) so a span whose content contains a backtick can
@@ -782,56 +824,56 @@ func (r *Runtime) appendInlines(out *lua.LTable, n ast.Node, source []byte, idx 
 			seg := segs.At(i)
 			sb.Write(seg.Value(source))
 		}
-		out.RawSetInt(idx, r.makeLeafInline(inlineTypeRawHTML, sb.String()))
+		out.RawSetInt(idx, c.makeLeafInline(inlineTypeRawHTML, sb.String()))
 		return idx + 1
 	case *ast.AutoLink:
-		an := r.L.NewTable()
+		an := c.ls.NewTable()
 		an.RawSetString("type", lua.LString(inlineTypeAutolink))
 		an.RawSetString("url", lua.LString(string(n.URL(source))))
 		out.RawSetInt(idx, an)
 		return idx + 1
 	case *ast.Link:
-		out.RawSetInt(idx, r.makeLinkInline(n.Destination, n.Title, n, source))
+		out.RawSetInt(idx, c.makeLinkInline(n.Destination, n.Title, n, source))
 		return idx + 1
 	case *ast.Image:
-		out.RawSetInt(idx, r.makeImageInline(n.Destination, n.Title, n, source))
+		out.RawSetInt(idx, c.makeImageInline(n.Destination, n.Title, n, source))
 		return idx + 1
 	case *ast.Emphasis:
 		kind := inlineTypeEmphasis
 		if n.Level >= 2 {
 			kind = inlineTypeStrong
 		}
-		out.RawSetInt(idx, r.makeContainerInline(kind, n, source))
+		out.RawSetInt(idx, c.makeContainerInline(kind, n, source))
 		return idx + 1
 	case *east.Strikethrough:
-		out.RawSetInt(idx, r.makeContainerInline(inlineTypeStrikethrough, n, source))
+		out.RawSetInt(idx, c.makeContainerInline(inlineTypeStrikethrough, n, source))
 		return idx + 1
 	case *east.TaskCheckBox:
 		// State is captured separately by detectTaskCheckbox.
 		return idx
 	default:
 		// Unknown inline kind. Recurse to capture inner text.
-		for c := n.FirstChild(); c != nil; c = c.NextSibling() {
-			idx = r.appendInlines(out, c, source, idx)
+		for child := n.FirstChild(); child != nil; child = child.NextSibling() {
+			idx = c.appendInlines(out, child, source, idx)
 		}
 		return idx
 	}
 }
 
 // appendTextInline emits the text leaf and any soft/hard break following.
-func (r *Runtime) appendTextInline(out *lua.LTable, n *ast.Text, source []byte, idx int) int {
+func (c *mdASTConverter) appendTextInline(out *lua.LTable, n *ast.Text, source []byte, idx int) int {
 	if seg := string(n.Segment.Value(source)); seg != "" {
-		out.RawSetInt(idx, r.makeLeafInline(inlineTypeText, seg))
+		out.RawSetInt(idx, c.makeLeafInline(inlineTypeText, seg))
 		idx++
 	}
 	switch {
 	case n.HardLineBreak():
-		b := r.L.NewTable()
+		b := c.ls.NewTable()
 		b.RawSetString("type", lua.LString(inlineTypeHardBreak))
 		out.RawSetInt(idx, b)
 		idx++
 	case n.SoftLineBreak():
-		b := r.L.NewTable()
+		b := c.ls.NewTable()
 		b.RawSetString("type", lua.LString(inlineTypeSoftBreak))
 		out.RawSetInt(idx, b)
 		idx++
@@ -840,8 +882,8 @@ func (r *Runtime) appendTextInline(out *lua.LTable, n *ast.Text, source []byte, 
 }
 
 // makeLeafInline constructs an inline node with `type` and `text` fields.
-func (r *Runtime) makeLeafInline(kind inlineKind, text string) *lua.LTable {
-	t := r.L.NewTable()
+func (c *mdASTConverter) makeLeafInline(kind inlineKind, text string) *lua.LTable {
+	t := c.ls.NewTable()
 	t.RawSetString("type", lua.LString(kind))
 	t.RawSetString("text", lua.LString(text))
 	return t
@@ -849,35 +891,35 @@ func (r *Runtime) makeLeafInline(kind inlineKind, text string) *lua.LTable {
 
 // makeContainerInline constructs an emphasis/strong/strikethrough/link
 // inline whose body is the inline tree of n's children.
-func (r *Runtime) makeContainerInline(kind inlineKind, n ast.Node, source []byte) *lua.LTable {
-	t := r.L.NewTable()
+func (c *mdASTConverter) makeContainerInline(kind inlineKind, n ast.Node, source []byte) *lua.LTable {
+	t := c.ls.NewTable()
 	t.RawSetString("type", lua.LString(kind))
-	t.RawSetString("inlines", r.extractInlines(n, source))
+	t.RawSetString("inlines", c.extractInlines(n, source))
 	return t
 }
 
 // makeLinkInline constructs a link inline.
-func (r *Runtime) makeLinkInline(dest, title []byte, n ast.Node, source []byte) *lua.LTable {
-	t := r.L.NewTable()
+func (c *mdASTConverter) makeLinkInline(dest, title []byte, n ast.Node, source []byte) *lua.LTable {
+	t := c.ls.NewTable()
 	t.RawSetString("type", lua.LString(inlineTypeLink))
 	t.RawSetString("url", lua.LString(string(dest)))
 	if len(title) > 0 {
 		t.RawSetString("title", lua.LString(string(title)))
 	}
-	t.RawSetString("inlines", r.extractInlines(n, source))
+	t.RawSetString("inlines", c.extractInlines(n, source))
 	return t
 }
 
 // makeImageInline constructs an image inline (alt content goes in
 // `alt_inlines`).
-func (r *Runtime) makeImageInline(dest, title []byte, n ast.Node, source []byte) *lua.LTable {
-	t := r.L.NewTable()
+func (c *mdASTConverter) makeImageInline(dest, title []byte, n ast.Node, source []byte) *lua.LTable {
+	t := c.ls.NewTable()
 	t.RawSetString("type", lua.LString(inlineTypeImage))
 	t.RawSetString("url", lua.LString(string(dest)))
 	if len(title) > 0 {
 		t.RawSetString("title", lua.LString(string(title)))
 	}
-	t.RawSetString("alt_inlines", r.extractInlines(n, source))
+	t.RawSetString("alt_inlines", c.extractInlines(n, source))
 	return t
 }
 
@@ -1158,7 +1200,7 @@ func writeInlinesOrFallback(sb *strings.Builder, node *lua.LTable, render func(*
 }
 
 // extractCodeBlockContent extracts content from a fenced code block.
-func (r *Runtime) extractCodeBlockContent(fcb *ast.FencedCodeBlock, source []byte) string {
+func (c *mdASTConverter) extractCodeBlockContent(fcb *ast.FencedCodeBlock, source []byte) string {
 	var sb strings.Builder
 	lines := fcb.Lines()
 	for i := range lines.Len() {
@@ -1168,7 +1210,7 @@ func (r *Runtime) extractCodeBlockContent(fcb *ast.FencedCodeBlock, source []byt
 	return strings.TrimSuffix(sb.String(), "\n")
 }
 
-func (r *Runtime) extractLinesContent(n ast.Node, source []byte) string {
+func (c *mdASTConverter) extractLinesContent(n ast.Node, source []byte) string {
 	var sb strings.Builder
 	if ln, ok := n.(interface{ Lines() *text.Segments }); ok {
 		lines := ln.Lines()
@@ -1197,8 +1239,8 @@ func (r *Runtime) extractLinesContent(n ast.Node, source []byte) string {
 // Task-checkbox state is captured by detectTaskCheckbox; the inline
 // extractor skips the TaskCheckBox node so `inlines`/`children` do not
 // contain a phantom checkbox.
-func (r *Runtime) extractListItems(n ast.Node, source []byte) *lua.LTable {
-	items := r.L.NewTable()
+func (c *mdASTConverter) extractListItems(n ast.Node, source []byte) *lua.LTable {
+	items := c.ls.NewTable()
 	idx := 1
 	for child := n.FirstChild(); child != nil; child = child.NextSibling() {
 		if child.Kind() != ast.KindListItem {
@@ -1214,25 +1256,25 @@ func (r *Runtime) extractListItems(n ast.Node, source []byte) *lua.LTable {
 
 		switch {
 		case isTask:
-			item := r.L.NewTable()
+			item := c.ls.NewTable()
 			item.RawSetString("task", lua.LBool(true))
 			item.RawSetString("checked", lua.LBool(checked))
-			r.attachItemBody(item, blocks, source)
+			c.attachItemBody(item, blocks, source)
 			items.RawSetInt(idx, item)
 		case len(blocks) == 1 && isParagraphLike(blocks[0]) && isSimpleTextOnly(blocks[0]):
 			// Plain item with simple text only — return as LString.
 			items.RawSetInt(idx, lua.LString(simpleParagraphText(blocks[0], source)))
 		case len(blocks) == 1 && isParagraphLike(blocks[0]):
 			// Single-paragraph plain item with formatting.
-			item := r.L.NewTable()
-			item.RawSetString("inlines", r.extractInlines(blocks[0], source))
+			item := c.ls.NewTable()
+			item.RawSetString("inlines", c.extractInlines(blocks[0], source))
 			items.RawSetInt(idx, item)
 		default:
 			// Multi-block item.
-			item := r.L.NewTable()
-			children := r.L.NewTable()
+			item := c.ls.NewTable()
+			children := c.ls.NewTable()
 			for i, b := range blocks {
-				if bn := r.nodeToLua(b, source); bn != nil {
+				if bn := c.nodeToLua(b, source); bn != nil {
 					children.RawSetInt(i+1, bn)
 				}
 			}
@@ -1246,15 +1288,15 @@ func (r *Runtime) extractListItems(n ast.Node, source []byte) *lua.LTable {
 
 // attachItemBody chooses between `inlines` (single-paragraph item) and
 // `children` (multi-block item) for a list-item table.
-func (r *Runtime) attachItemBody(item *lua.LTable, blocks []ast.Node, source []byte) {
+func (c *mdASTConverter) attachItemBody(item *lua.LTable, blocks []ast.Node, source []byte) {
 	if len(blocks) == 1 && isParagraphLike(blocks[0]) {
-		item.RawSetString("inlines", r.extractInlines(blocks[0], source))
+		item.RawSetString("inlines", c.extractInlines(blocks[0], source))
 		return
 	}
-	children := r.L.NewTable()
+	children := c.ls.NewTable()
 	idx := 1
 	for _, b := range blocks {
-		if bn := r.nodeToLua(b, source); bn != nil {
+		if bn := c.nodeToLua(b, source); bn != nil {
 			children.RawSetInt(idx, bn)
 			idx++
 		}
@@ -1310,11 +1352,11 @@ func isSimpleTextOnly(n ast.Node) bool {
 // extractBlockChildren walks the immediate block-level children of a
 // container (blockquote, list-item) and returns them as an array of
 // block-node Lua tables.
-func (r *Runtime) extractBlockChildren(parent ast.Node, source []byte) *lua.LTable {
-	out := r.L.NewTable()
+func (c *mdASTConverter) extractBlockChildren(parent ast.Node, source []byte) *lua.LTable {
+	out := c.ls.NewTable()
 	idx := 1
-	for c := parent.FirstChild(); c != nil; c = c.NextSibling() {
-		if bn := r.nodeToLua(c, source); bn != nil {
+	for child := parent.FirstChild(); child != nil; child = child.NextSibling() {
+		if bn := c.nodeToLua(child, source); bn != nil {
 			out.RawSetInt(idx, bn)
 			idx++
 		}
@@ -1343,7 +1385,7 @@ func detectTaskCheckbox(li ast.Node) (isTask, checked bool) {
 }
 
 // extractRawContent extracts raw source content for unsupported nodes.
-func (r *Runtime) extractRawContent(n ast.Node, source []byte) string {
+func (c *mdASTConverter) extractRawContent(n ast.Node, source []byte) string {
 	// Try to get the lines if available
 	if ln, ok := n.(interface{ Lines() *text.Segments }); ok {
 		lines := ln.Lines()
@@ -1359,10 +1401,10 @@ func (r *Runtime) extractRawContent(n ast.Node, source []byte) string {
 // extractTableData extracts header, rows, and alignments from a GFM table
 // node. Each cell is an `inlines` array (preserving link/code/raw HTML
 // structure inside the cell).
-func (r *Runtime) extractTableData(table *east.Table, source []byte) (header, rows, alignments *lua.LTable) {
-	header = r.L.NewTable()
-	rows = r.L.NewTable()
-	alignments = r.L.NewTable()
+func (c *mdASTConverter) extractTableData(table *east.Table, source []byte) (header, rows, alignments *lua.LTable) {
+	header = c.ls.NewTable()
+	rows = c.ls.NewTable()
+	alignments = c.ls.NewTable()
 
 	// Extract alignments from table columns
 	for i, a := range table.Alignments {
@@ -1388,14 +1430,14 @@ func (r *Runtime) extractTableData(table *east.Table, source []byte) (header, ro
 		case east.KindTableHeader:
 			cellIdx := 1
 			for cell := child.FirstChild(); cell != nil; cell = cell.NextSibling() {
-				header.RawSetInt(cellIdx, r.extractInlines(cell, source))
+				header.RawSetInt(cellIdx, c.extractInlines(cell, source))
 				cellIdx++
 			}
 		case east.KindTableRow:
-			luaRow := r.L.NewTable()
+			luaRow := c.ls.NewTable()
 			cellIdx := 1
 			for cell := child.FirstChild(); cell != nil; cell = cell.NextSibling() {
-				luaRow.RawSetInt(cellIdx, r.extractInlines(cell, source))
+				luaRow.RawSetInt(cellIdx, c.extractInlines(cell, source))
 				cellIdx++
 			}
 			rows.RawSetInt(rowIdx, luaRow)
@@ -1407,8 +1449,8 @@ func (r *Runtime) extractTableData(table *east.Table, source []byte) (header, ro
 }
 
 // shiftNodeHeaders creates a deep copy of a node with shifted header levels.
-func (r *Runtime) shiftNodeHeaders(node *lua.LTable, offset int) *lua.LTable {
-	newNode := r.deepCopyNode(node)
+func (m *mdHelpers) shiftNodeHeaders(node *lua.LTable, offset int) *lua.LTable {
+	newNode := m.deepCopyNode(node)
 
 	if nodeType := newNode.RawGetString("type"); nodeType == lua.LString(nodeTypeHeading) {
 		if level, ok := newNode.RawGetString("level").(lua.LNumber); ok {
@@ -1421,11 +1463,11 @@ func (r *Runtime) shiftNodeHeaders(node *lua.LTable, offset int) *lua.LTable {
 }
 
 // deepCopyNode creates a deep copy of a node table, including nested tables.
-func (r *Runtime) deepCopyNode(node *lua.LTable) *lua.LTable {
-	newNode := r.L.NewTable()
+func (m *mdHelpers) deepCopyNode(node *lua.LTable) *lua.LTable {
+	newNode := m.ls.NewTable()
 	node.ForEach(func(k, v lua.LValue) {
 		if tbl, ok := v.(*lua.LTable); ok {
-			newNode.RawSet(k, r.deepCopyTable(tbl))
+			newNode.RawSet(k, m.deepCopyTable(tbl))
 		} else {
 			newNode.RawSet(k, v)
 		}
@@ -1434,11 +1476,11 @@ func (r *Runtime) deepCopyNode(node *lua.LTable) *lua.LTable {
 }
 
 // deepCopyTable creates a deep copy of a Lua table.
-func (r *Runtime) deepCopyTable(tbl *lua.LTable) *lua.LTable {
-	newTbl := r.L.NewTable()
+func (m *mdHelpers) deepCopyTable(tbl *lua.LTable) *lua.LTable {
+	newTbl := m.ls.NewTable()
 	tbl.ForEach(func(k, v lua.LValue) {
 		if nested, ok := v.(*lua.LTable); ok {
-			newTbl.RawSet(k, r.deepCopyTable(nested))
+			newTbl.RawSet(k, m.deepCopyTable(nested))
 		} else {
 			newTbl.RawSet(k, v)
 		}
@@ -1921,7 +1963,7 @@ func luaMdTable(ls *lua.LState) int {
 // luaMdEntityTable implements rela.md.entity_table(entities, columns) -> string
 // Builds a markdown table from entities using column specifications.
 // Column spec: {"Header", "field"} or {"Header", "field", "default"} or {"Header", function}
-func (r *Runtime) luaMdEntityTable(ls *lua.LState) int {
+func (m *mdHelpers) luaMdEntityTable(ls *lua.LState) int {
 	entities := ls.CheckTable(1)
 	columns := ls.CheckTable(2)
 
@@ -1966,7 +2008,7 @@ func (r *Runtime) luaMdEntityTable(ls *lua.LState) int {
 				continue
 			}
 
-			cellValue := r.evalColumnSpec(ls, col, entity)
+			cellValue := m.evalColumnSpec(ls, col, entity)
 			sb.WriteString(" ")
 			sb.WriteString(cellValue)
 			sb.WriteString(" |")
@@ -1980,7 +2022,7 @@ func (r *Runtime) luaMdEntityTable(ls *lua.LState) int {
 
 // evalColumnSpec evaluates a column specification against an entity.
 // Spec: {"Header", "field"} or {"Header", "field", "default"} or {"Header", function}
-func (r *Runtime) evalColumnSpec(ls *lua.LState, col, entity *lua.LTable) string {
+func (m *mdHelpers) evalColumnSpec(ls *lua.LState, col, entity *lua.LTable) string {
 	spec := col.RawGetInt(2)
 
 	switch s := spec.(type) {
@@ -2044,7 +2086,7 @@ func (r *Runtime) evalColumnSpec(ls *lua.LState, col, entity *lua.LTable) string
 // Splices are parsed as inline markdown so the replacement integrates
 // structurally (a `[Title](url)` splice becomes a `link` inline, not a
 // raw text fragment).
-func (r *Runtime) luaMdResolveRefs(ls *lua.LState) int {
+func (m *mdHelpers) luaMdResolveRefs(ls *lua.LState) int {
 	astTable, ok := ls.Get(1).(*lua.LTable)
 	if !ok {
 		ls.RaiseError("rela.md.resolve_refs: ast must be a table")
@@ -2056,15 +2098,15 @@ func (r *Runtime) luaMdResolveRefs(ls *lua.LState) int {
 		return 0
 	}
 
-	replacements, err := r.collectRefReplacements(mapTable)
+	replacements, err := m.collectRefReplacements(mapTable)
 	if err != nil {
 		ls.RaiseError("%s", err.Error())
 		return 0
 	}
 
-	out := r.deepCopyAST(astTable)
+	out := m.deepCopyAST(astTable)
 	if len(replacements) > 0 {
-		r.rewriteCodeSpanRefs(out, replacements)
+		m.rewriteCodeSpanRefs(out, replacements)
 	}
 	ls.Push(out)
 	return 1
@@ -2073,7 +2115,7 @@ func (r *Runtime) luaMdResolveRefs(ls *lua.LState) int {
 // collectRefReplacements validates the replacements map. Keys must be
 // non-empty strings, values must be strings without `\n`/`\r`. Pre-parses
 // each value's inline tree so we don't re-parse N times during the walk.
-func (r *Runtime) collectRefReplacements(mapTable *lua.LTable) (map[string]*lua.LTable, error) {
+func (m *mdHelpers) collectRefReplacements(mapTable *lua.LTable) (map[string]*lua.LTable, error) {
 	replacements := make(map[string]*lua.LTable)
 	var validationErr error
 	mapTable.ForEach(func(k, v lua.LValue) {
@@ -2106,7 +2148,7 @@ func (r *Runtime) collectRefReplacements(mapTable *lua.LTable) (map[string]*lua.
 		// Pre-parse the splice as inline markdown. The splice is a
 		// single-paragraph fragment; we extract its inlines for direct
 		// substitution into the AST.
-		replacements[key] = r.parseInlineSplice(val)
+		replacements[key] = m.parseInlineSplice(val)
 	})
 	if validationErr != nil {
 		return nil, validationErr
@@ -2118,7 +2160,7 @@ func (r *Runtime) collectRefReplacements(mapTable *lua.LTable) (map[string]*lua.
 // returns the resulting `inlines` array. If the fragment doesn't parse
 // to a single paragraph, returns a single text inline as a fallback so
 // the splice never silently disappears.
-func (r *Runtime) parseInlineSplice(s string) *lua.LTable {
+func (m *mdHelpers) parseInlineSplice(s string) *lua.LTable {
 	source := []byte(s)
 	md := goldmark.New(goldmark.WithExtensions(
 		extension.NewTable(),
@@ -2128,50 +2170,50 @@ func (r *Runtime) parseInlineSplice(s string) *lua.LTable {
 	doc := md.Parser().Parse(text.NewReader(source))
 	for child := doc.FirstChild(); child != nil; child = child.NextSibling() {
 		if child.Kind() == ast.KindParagraph {
-			return r.extractInlines(child, source)
+			return m.conv.extractInlines(child, source)
 		}
 	}
 	// Fallback: wrap as a single text inline.
-	out := r.L.NewTable()
-	out.RawSetInt(1, r.makeLeafInline(inlineTypeText, s))
+	out := m.ls.NewTable()
+	out.RawSetInt(1, m.conv.makeLeafInline(inlineTypeText, s))
 	return out
 }
 
 // rewriteCodeSpanRefs walks every block in the AST and rewrites
 // code-span inlines whose text matches a key in replacements.
-func (r *Runtime) rewriteCodeSpanRefs(nodes *lua.LTable, replacements map[string]*lua.LTable) {
+func (m *mdHelpers) rewriteCodeSpanRefs(nodes *lua.LTable, replacements map[string]*lua.LTable) {
 	for i := 1; i <= nodes.Len(); i++ {
 		node, ok := nodes.RawGetInt(i).(*lua.LTable)
 		if !ok {
 			continue
 		}
-		r.rewriteCodeSpanRefsInBlock(node, replacements)
+		m.rewriteCodeSpanRefsInBlock(node, replacements)
 	}
 }
 
 // rewriteCodeSpanRefsInBlock dispatches on block kind: paragraph,
 // heading, blockquote, list, table. Each visits the inline arrays
 // hanging off the block.
-func (r *Runtime) rewriteCodeSpanRefsInBlock(node *lua.LTable, replacements map[string]*lua.LTable) {
+func (m *mdHelpers) rewriteCodeSpanRefsInBlock(node *lua.LTable, replacements map[string]*lua.LTable) {
 	switch blockKindOf(node) {
 	case nodeTypeParagraph, nodeTypeHeading:
 		if t := inlinesField(node, "inlines"); t != nil {
-			r.rewriteCodeSpansInInlines(node, "inlines", t, replacements)
+			m.rewriteCodeSpansInInlines(node, "inlines", t, replacements)
 		}
 	case nodeTypeBlockquote:
 		if children := inlinesField(node, "children"); children != nil {
-			r.rewriteCodeSpanRefs(children, replacements)
+			m.rewriteCodeSpanRefs(children, replacements)
 		}
 	case nodeTypeList:
-		r.rewriteCodeSpanRefsInList(node, replacements)
+		m.rewriteCodeSpanRefsInList(node, replacements)
 	case nodeTypeTable:
-		r.rewriteCodeSpanRefsInTable(node, replacements)
+		m.rewriteCodeSpanRefsInTable(node, replacements)
 	default:
 		// code_block, thematic_break, raw — no inline content to rewrite.
 	}
 }
 
-func (r *Runtime) rewriteCodeSpanRefsInList(node *lua.LTable, replacements map[string]*lua.LTable) {
+func (m *mdHelpers) rewriteCodeSpanRefsInList(node *lua.LTable, replacements map[string]*lua.LTable) {
 	items := inlinesField(node, "items")
 	if items == nil {
 		return
@@ -2184,19 +2226,19 @@ func (r *Runtime) rewriteCodeSpanRefsInList(node *lua.LTable, replacements map[s
 			continue
 		}
 		if t := inlinesField(item, "inlines"); t != nil {
-			r.rewriteCodeSpansInInlines(item, "inlines", t, replacements)
+			m.rewriteCodeSpansInInlines(item, "inlines", t, replacements)
 		}
 		if children := inlinesField(item, "children"); children != nil {
-			r.rewriteCodeSpanRefs(children, replacements)
+			m.rewriteCodeSpanRefs(children, replacements)
 		}
 	}
 }
 
-func (r *Runtime) rewriteCodeSpanRefsInTable(node *lua.LTable, replacements map[string]*lua.LTable) {
+func (m *mdHelpers) rewriteCodeSpanRefsInTable(node *lua.LTable, replacements map[string]*lua.LTable) {
 	if header := inlinesField(node, "header"); header != nil {
 		for i := 1; i <= header.Len(); i++ {
 			if cell, ok := header.RawGetInt(i).(*lua.LTable); ok {
-				r.rewriteCodeSpansInTableCell(header, i, cell, replacements)
+				m.rewriteCodeSpansInTableCell(header, i, cell, replacements)
 			}
 		}
 	}
@@ -2211,7 +2253,7 @@ func (r *Runtime) rewriteCodeSpanRefsInTable(node *lua.LTable, replacements map[
 		}
 		for ci := 1; ci <= row.Len(); ci++ {
 			if cell, ok := row.RawGetInt(ci).(*lua.LTable); ok {
-				r.rewriteCodeSpansInTableCell(row, ci, cell, replacements)
+				m.rewriteCodeSpansInTableCell(row, ci, cell, replacements)
 			}
 		}
 	}
@@ -2222,11 +2264,11 @@ func (r *Runtime) rewriteCodeSpanRefsInTable(node *lua.LTable, replacements map[
 // out and replaced with the (possibly multi-element) inlines from the
 // replacement value. Container inlines (link, emphasis, strong,
 // strikethrough) are recursed into.
-func (r *Runtime) rewriteCodeSpansInInlines(
+func (m *mdHelpers) rewriteCodeSpansInInlines(
 	parent *lua.LTable, field string, inlines *lua.LTable,
 	replacements map[string]*lua.LTable,
 ) {
-	out := r.L.NewTable()
+	out := m.ls.NewTable()
 	idx := 1
 	for i := 1; i <= inlines.Len(); i++ {
 		v := inlines.RawGetInt(i)
@@ -2243,7 +2285,7 @@ func (r *Runtime) rewriteCodeSpansInInlines(
 				// Append cloned splice inlines.
 				for j := 1; j <= splice.Len(); j++ {
 					if sn, ok := splice.RawGetInt(j).(*lua.LTable); ok {
-						out.RawSetInt(idx, r.deepCopyTable(sn))
+						out.RawSetInt(idx, m.deepCopyTable(sn))
 						idx++
 					}
 				}
@@ -2253,13 +2295,13 @@ func (r *Runtime) rewriteCodeSpansInInlines(
 			idx++
 		case inlineTypeLink, inlineTypeEmphasis, inlineTypeStrong, inlineTypeStrikethrough:
 			if t := inlinesField(child, "inlines"); t != nil {
-				r.rewriteCodeSpansInInlines(child, "inlines", t, replacements)
+				m.rewriteCodeSpansInInlines(child, "inlines", t, replacements)
 			}
 			out.RawSetInt(idx, child)
 			idx++
 		case inlineTypeImage:
 			if t := inlinesField(child, "alt_inlines"); t != nil {
-				r.rewriteCodeSpansInInlines(child, "alt_inlines", t, replacements)
+				m.rewriteCodeSpansInInlines(child, "alt_inlines", t, replacements)
 			}
 			out.RawSetInt(idx, child)
 			idx++
@@ -2274,11 +2316,11 @@ func (r *Runtime) rewriteCodeSpansInInlines(
 // rewriteCodeSpansInTableCell handles a single table cell. Cells live in
 // an int-indexed slot on their row table; the helper builds a fresh
 // inlines array and re-attaches it via RawSetInt.
-func (r *Runtime) rewriteCodeSpansInTableCell(
+func (m *mdHelpers) rewriteCodeSpansInTableCell(
 	parent *lua.LTable, idx int, cell *lua.LTable,
 	replacements map[string]*lua.LTable,
 ) {
-	out := r.L.NewTable()
+	out := m.ls.NewTable()
 	pos := 1
 	for i := 1; i <= cell.Len(); i++ {
 		v := cell.RawGetInt(i)
@@ -2293,7 +2335,7 @@ func (r *Runtime) rewriteCodeSpansInTableCell(
 			if splice, hit := replacements[string(text)]; hit {
 				for j := 1; j <= splice.Len(); j++ {
 					if sn, ok := splice.RawGetInt(j).(*lua.LTable); ok {
-						out.RawSetInt(pos, r.deepCopyTable(sn))
+						out.RawSetInt(pos, m.deepCopyTable(sn))
 						pos++
 					}
 				}
@@ -2304,7 +2346,7 @@ func (r *Runtime) rewriteCodeSpansInTableCell(
 		switch inlineKindOf(child) {
 		case inlineTypeLink, inlineTypeEmphasis, inlineTypeStrong, inlineTypeStrikethrough:
 			if t := inlinesField(child, "inlines"); t != nil {
-				r.rewriteCodeSpansInInlines(child, "inlines", t, replacements)
+				m.rewriteCodeSpansInInlines(child, "inlines", t, replacements)
 			}
 		default:
 			// Other inline kinds (text, raw_html, autolink, breaks,
@@ -2319,12 +2361,12 @@ func (r *Runtime) rewriteCodeSpansInTableCell(
 
 // deepCopyAST deep-copies the top-level array of node tables. Non-table
 // entries are passed through (defensive — should not normally occur).
-func (r *Runtime) deepCopyAST(astTable *lua.LTable) *lua.LTable {
-	out := r.L.NewTable()
+func (m *mdHelpers) deepCopyAST(astTable *lua.LTable) *lua.LTable {
+	out := m.ls.NewTable()
 	for i := 1; i <= astTable.Len(); i++ {
 		v := astTable.RawGetInt(i)
 		if t, ok := v.(*lua.LTable); ok {
-			out.RawSetInt(i, r.deepCopyNode(t))
+			out.RawSetInt(i, m.deepCopyNode(t))
 		} else {
 			out.RawSetInt(i, v)
 		}
@@ -2339,31 +2381,32 @@ func (r *Runtime) deepCopyAST(astTable *lua.LTable) *lua.LTable {
 // Builds a replacement map covering some or all entities in the project
 // for use with resolve_refs. Iterates the store per entity type because
 // store.ListEntities requires a non-empty Type.
-func (r *Runtime) luaMdEntityRefs(ls *lua.LState) int {
-	if r.deps.Meta == nil {
+func (er *mdEntityRefs) luaMdEntityRefs(ls *lua.LState) int {
+	if er.meta == nil {
 		ls.RaiseError("rela.md.entity_refs: requires a runtime with a metamodel")
 		return 0
 	}
-	opts, err := r.parseEntityRefsOpts(ls)
+	opts, err := er.parseEntityRefsOpts(ls)
 	if err != nil {
 		ls.RaiseError("%s", err.Error())
 		return 0
 	}
 	typeNames := opts.types
 	if len(typeNames) == 0 && opts.useAllTypes {
-		typeNames = r.deps.Meta.EntityTypes()
+		typeNames = er.meta.EntityTypes()
 	}
 
-	rd, ok := r.reader(ls, "rela.md.entity_refs")
-	if !ok {
+	rd := er.reader
+	if rd == nil {
+		ls.RaiseError("rela.md.entity_refs: no reader is configured for this runtime")
 		return 0
 	}
-	out := r.L.NewTable()
+	out := ls.NewTable()
 	// callerCtx, NOT context.Background(): the reader resolves the acting
 	// identity from ctx, so a background ctx has no principal and the gate
 	// fails closed on EVERY type — the binding would silently return an
 	// empty map for every user (RR-ZA452J).
-	ctx := r.callerCtx()
+	ctx := er.ctx()
 	for _, t := range typeNames {
 		for e, listErr := range rd.ListEntities(ctx, store.EntityQuery{Type: t}) {
 			if listErr != nil {
@@ -2371,7 +2414,7 @@ func (r *Runtime) luaMdEntityRefs(ls *lua.LState) int {
 					"rela.md.entity_refs: list entities of type %q: %s", t, listErr.Error())
 				return 0
 			}
-			value, valErr := r.buildEntityRefValue(ls, e, opts)
+			value, valErr := er.buildEntityRefValue(ls, e, opts)
 			if valErr != nil {
 				ls.RaiseError("%s", valErr.Error())
 				return 0
@@ -2390,7 +2433,7 @@ type entityRefsOpts struct {
 	formatFn    *lua.LFunction
 }
 
-func (r *Runtime) parseEntityRefsOpts(ls *lua.LState) (entityRefsOpts, error) {
+func (er *mdEntityRefs) parseEntityRefsOpts(ls *lua.LState) (entityRefsOpts, error) {
 	opts := entityRefsOpts{style: "title-slug", useAllTypes: true}
 	if ls.GetTop() < 1 || ls.Get(1) == lua.LNil {
 		return opts, nil
@@ -2408,7 +2451,7 @@ func (r *Runtime) parseEntityRefsOpts(ls *lua.LState) (entityRefsOpts, error) {
 			if !ok {
 				return opts, errors.New("rela.md.entity_refs: opts.types must contain only strings")
 			}
-			if _, found := r.deps.Meta.GetEntityDef(string(name)); !found {
+			if _, found := er.meta.GetEntityDef(string(name)); !found {
 				return opts, fmt.Errorf("rela.md.entity_refs: unknown entity type %q", string(name))
 			}
 			opts.types = append(opts.types, string(name))
@@ -2438,7 +2481,7 @@ func (r *Runtime) parseEntityRefsOpts(ls *lua.LState) (entityRefsOpts, error) {
 	return opts, nil
 }
 
-func (r *Runtime) buildEntityRefValue(ls *lua.LState, e *entity.Entity, opts entityRefsOpts) (string, error) {
+func (er *mdEntityRefs) buildEntityRefValue(ls *lua.LState, e *entity.Entity, opts entityRefsOpts) (string, error) {
 	if opts.formatFn != nil {
 		entityTbl := EntityToTable(ls, e)
 		entityTbl.RawSetString("title", lua.LString(e.Title()))
