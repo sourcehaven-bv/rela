@@ -161,7 +161,7 @@ func (s *FSStore) rebuildPropCache() error {
 // scanEntityDirs walks the entity type directories concurrently and
 // populates the index from directory structure alone (no file reads).
 func (s *FSStore) scanEntityDirs() error {
-	typeDirs, err := s.rooted.ReadDir(s.entitiesKey)
+	typeDirs, err := s.rooted.ReadDir(s.layout.entitiesKey)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -169,7 +169,7 @@ func (s *FSStore) scanEntityDirs() error {
 		return err
 	}
 
-	pluralToType := s.buildPluralToTypeMap()
+	pluralToType := s.layout.buildPluralToTypeMap()
 
 	type result struct {
 		entries []entityMeta
@@ -185,7 +185,7 @@ func (s *FSStore) scanEntityDirs() error {
 		wg.Add(1)
 		go func(idx int, dirName string) {
 			defer wg.Done()
-			entityType := s.resolveEntityType(dirName, pluralToType)
+			entityType := s.layout.resolveEntityType(dirName, pluralToType)
 			if entityType == "" {
 				// Directory does not map to a metamodel-declared type.
 				// Skipping prevents indexing files for types we cannot
@@ -194,7 +194,7 @@ func (s *FSStore) scanEntityDirs() error {
 				// orphan directory as invisible until cleaned up.
 				return
 			}
-			files, readErr := s.rooted.ReadDir(path.Join(s.entitiesKey, dirName))
+			files, readErr := s.rooted.ReadDir(path.Join(s.layout.entitiesKey, dirName))
 			if readErr != nil {
 				return
 			}
@@ -226,7 +226,7 @@ func (s *FSStore) scanEntityDirs() error {
 // scanRelationDir lists the relations directory and parses relation keys
 // from filenames (FROM--TYPE--TO.md). No file reads needed.
 func (s *FSStore) scanRelationDir() error {
-	files, err := s.rooted.ReadDir(s.relationsKey)
+	files, err := s.rooted.ReadDir(s.layout.relationsKey)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -274,37 +274,12 @@ func parseRelationFilename(name string) (from, relType, to string) {
 	return from, relType, to
 }
 
-// buildPluralToTypeMap builds a reverse map from plural directory names to entity types.
-func (s *FSStore) buildPluralToTypeMap() map[string]string {
-	m := make(map[string]string, len(s.schemas))
-	for typ, schema := range s.schemas {
-		if schema.Plural != "" {
-			m[schema.Plural] = typ
-		}
-	}
-	return m
-}
-
-// resolveEntityType maps a plural directory name back to the entity type.
-// Returns "" when the directory does not map to any metamodel-declared
-// type — callers skip such directories.
-//
-// The schema's Plural field is canonical: app.buildSchemas resolves it
-// via metamodel.EntityDef.GetPlural so fsstore does not have to
-// re-guess via "+s" at call time.
-func (s *FSStore) resolveEntityType(dirName string, pluralToType map[string]string) string {
-	if typ, ok := pluralToType[dirName]; ok {
-		return typ
-	}
-	return ""
-}
-
 // newestEntityFileMtime returns the newest mtime across all entity files.
 // Uses stat only — no file reads.
 func (s *FSStore) newestEntityFileMtime() time.Time {
 	var newest time.Time
 	for _, meta := range s.entities {
-		key := s.entityFileKey(meta.Type, meta.ID)
+		key := s.layout.entityFileKey(meta.Type, meta.ID)
 		if info, err := s.rooted.Stat(key); err == nil {
 			if info.ModTime().After(newest) {
 				newest = info.ModTime()
@@ -319,7 +294,7 @@ func (s *FSStore) newestEntityFileMtime() time.Time {
 func (s *FSStore) newestRelationFileMtime() time.Time {
 	var newest time.Time
 	for _, meta := range s.relations {
-		key := s.relationFileKey(meta.From, meta.Type, meta.To)
+		key := s.layout.relationFileKey(meta.From, meta.Type, meta.To)
 		if info, err := s.rooted.Stat(key); err == nil {
 			if info.ModTime().After(newest) {
 				newest = info.ModTime()
@@ -333,13 +308,13 @@ func (s *FSStore) newestRelationFileMtime() time.Time {
 func (s *FSStore) entitiesDirMtime() time.Time {
 	var latest time.Time
 
-	info, err := s.rooted.Stat(s.entitiesKey)
+	info, err := s.rooted.Stat(s.layout.entitiesKey)
 	if err != nil {
 		return latest
 	}
 	latest = info.ModTime()
 
-	entries, err := s.rooted.ReadDir(s.entitiesKey)
+	entries, err := s.rooted.ReadDir(s.layout.entitiesKey)
 	if err != nil {
 		return latest
 	}
@@ -358,7 +333,7 @@ func (s *FSStore) entitiesDirMtime() time.Time {
 
 // relationsDirMtime returns the mtime of the relations directory.
 func (s *FSStore) relationsDirMtime() time.Time {
-	info, err := s.rooted.Stat(s.relationsKey)
+	info, err := s.rooted.Stat(s.layout.relationsKey)
 	if err != nil {
 		return time.Time{}
 	}

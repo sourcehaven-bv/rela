@@ -266,11 +266,11 @@ func (s *FSStore) updateEntity(_ context.Context, e *entity.Entity) error {
 	// or it would resurrect the stale record on the next reload. Part of the
 	// type-change-on-update store contract (storetest UpdateChangesType).
 	if meta.Type != e.Type {
-		oldKey := s.entityFileKey(meta.Type, e.ID)
+		oldKey := s.layout.entityFileKey(meta.Type, e.ID)
 		if err := s.rooted.Remove(oldKey); err != nil && !os.IsNotExist(err) {
 			return err
 		}
-		s.echoes.Forget(s.absPath(oldKey))
+		s.echoes.Forget(s.layout.absPath(oldKey))
 	}
 
 	// Update index
@@ -332,17 +332,17 @@ func (s *FSStore) deleteEntity(_ context.Context, id string, cascade bool) (*sto
 	// relation file removed before a later failure stays removed, but the
 	// whole op runs under s.mu and the index is updated only on success.
 	for _, rm := range related {
-		key := s.relationFileKey(rm.From, rm.Type, rm.To)
+		key := s.layout.relationFileKey(rm.From, rm.Type, rm.To)
 		if err := s.rooted.Remove(key); err != nil && !os.IsNotExist(err) {
 			return nil, fmt.Errorf("delete relation file %s--%s--%s: %w", rm.From, rm.Type, rm.To, err)
 		}
-		s.echoes.Forget(s.absPath(key))
+		s.echoes.Forget(s.layout.absPath(key))
 	}
-	key := s.entityFileKey(meta.Type, id)
+	key := s.layout.entityFileKey(meta.Type, id)
 	if err := s.rooted.Remove(key); err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
-	s.echoes.Forget(s.absPath(key))
+	s.echoes.Forget(s.layout.absPath(key))
 
 	// Cascade attachments — under the per-entity layout the
 	// attachment directory is owned 1:1 by the entity.
@@ -446,15 +446,15 @@ func (s *FSStore) renameEntity(_ context.Context, oldID, newID string) (*store.R
 		}
 
 		// Delete old relation file.
-		oldKey := s.relationFileKey(rm.From, rm.Type, rm.To)
+		oldKey := s.layout.relationFileKey(rm.From, rm.Type, rm.To)
 		_ = s.rooted.Remove(oldKey)
-		s.echoes.Forget(s.absPath(oldKey))
+		s.echoes.Forget(s.layout.absPath(oldKey))
 	}
 
 	// Delete old entity file.
-	oldKey := s.entityFileKey(meta.Type, oldID)
+	oldKey := s.layout.entityFileKey(meta.Type, oldID)
 	_ = s.rooted.Remove(oldKey)
-	s.echoes.Forget(s.absPath(oldKey))
+	s.echoes.Forget(s.layout.absPath(oldKey))
 
 	// Move the attachment directory (if any) onto the new ID.
 	if err := s.renameAttachmentDir(oldID, newID); err != nil {

@@ -236,7 +236,7 @@ func (s *FSStore) readEntityFile(key, id, entityType string) (*entity.Entity, er
 // that names the markdown body, so consumers know exactly which fields
 // exist but are unreadable.
 //
-// Invariant: entityType is always present in s.schemas. [New] rejects
+// Invariant: entityType is always present in the layout's schemas. [New] rejects
 // stores constructed without a populated Schemas map, and unknown-type
 // directories are skipped at scan time and in the watcher path. The
 // resulting Inaccessible slice always has at least one entry (the
@@ -246,7 +246,7 @@ func (s *FSStore) buildInaccessibleEntity(key, id, entityType string, reason ent
 	if info, err := s.rooted.Stat(key); err == nil {
 		e.UpdatedAt = info.ModTime()
 	}
-	props := s.propertyOrder(entityType)
+	props := s.layout.propertyOrder(entityType)
 	e.Inaccessible = make([]entity.InaccessibleField, 0, len(props)+1)
 	for _, name := range props {
 		e.Inaccessible = append(e.Inaccessible, entity.InaccessibleField{Name: name, Reason: reason})
@@ -280,8 +280,8 @@ func formatEntity(e *entity.Entity, propertyOrder []string) (string, error) {
 
 // writeEntityFile writes an entity to a markdown file using temp-file + rename.
 func (s *FSStore) writeEntityFile(e *entity.Entity) error {
-	key := s.entityFileKey(e.Type, e.ID)
-	order := s.propertyOrder(e.Type)
+	key := s.layout.entityFileKey(e.Type, e.ID)
+	order := s.layout.propertyOrder(e.Type)
 	content, err := formatEntity(e, order)
 	if err != nil {
 		return err
@@ -373,7 +373,7 @@ func formatRelation(r *entity.Relation) (string, error) {
 
 // writeRelationFile writes a relation to a markdown file using temp-file + rename.
 func (s *FSStore) writeRelationFile(r *entity.Relation) error {
-	key := s.relationFileKey(r.From, r.Type, r.To)
+	key := s.layout.relationFileKey(r.From, r.Type, r.To)
 	content, err := formatRelation(r)
 	if err != nil {
 		return err

@@ -95,10 +95,11 @@ type attachMeta struct {
 
 // FSStore is a filesystem-backed store implementation.
 //
-// TODO(TKT-N0IKN9): FSStore is over the 40-method load line (95 methods).
+// TODO(TKT-N0IKN9): FSStore is over the 40-method load line (89 methods).
 // Decompose; ratchet this number down as responsibilities move out.
 // (84 → 95 with the Tx contract, TKT-GXHI8: each write method split into
-// an exported txMu wrapper + unexported core so Tx callbacks can re-enter.)
+// an exported txMu wrapper + unexported core so Tx callbacks can re-enter;
+// 95 → 89 with the fileLayout extraction, TKT-Y683LJ.)
 //
 // The exported surface (33) is mostly the mandated store.Store interface (~28
 // methods incl. Tx) plus the Formatter and watcher side-interfaces; consumers
@@ -106,7 +107,7 @@ type attachMeta struct {
 // the interface size as the non-interface public methods
 // (FormatEntity/Relation, Start/StopWatching) move to composed helpers.
 //
-//plimsoll:max-methods=95
+//plimsoll:max-methods=89
 //plimsoll:max-exported-methods=33
 type FSStore struct {
 	// rooted is the validated-key I/O surface. Every read, write,
@@ -124,12 +125,13 @@ type FSStore struct {
 	// walking the decorator chain per attachment write.
 	streamingSupported bool
 
-	// Keys (root-relative forward-slash) for the standard subtrees.
-	entitiesKey  string
-	relationsKey string
-	attachKey    string
-	cacheKey     string
-	schemas      map[string]store.EntityTypeSchema
+	// layout resolves file keys, plural directory names, and property
+	// order from the immutable path/key/schema configuration.
+	layout fileLayout
+
+	// Keys (root-relative forward-slash) for the non-layout subtrees.
+	attachKey string
+	cacheKey  string
 
 	// txMu serializes an open Tx against ordinary writers: Tx holds it
 	// for the whole callback, every exported write method takes it
@@ -204,18 +206,21 @@ func New(cfg Config) (*FSStore, error) {
 		rooted:             cfg.Rooted,
 		rawReader:          cfg.FS,
 		streamingSupported: cfg.Rooted.SupportsStreaming(),
-		entitiesKey:        cfg.EntitiesKey,
-		relationsKey:       cfg.RelationsKey,
-		attachKey:          cfg.AttachmentsKey,
-		cacheKey:           cfg.CacheKey,
-		schemas:            cfg.Schemas,
-		observers:          cfg.Observers,
-		entities:           make(map[string]entityMeta),
-		relations:          make(map[string]relationMeta),
-		attachments:        make(map[string]attachMeta),
-		propCache:          make(map[string]map[string]int),
-		subscribers:        make(map[int]chan store.Event),
-		echoes:             newEchoTracker(recentHashCapacity),
+		layout: fileLayout{
+			entitiesKey:  cfg.EntitiesKey,
+			relationsKey: cfg.RelationsKey,
+			schemas:      cfg.Schemas,
+			rooted:       cfg.Rooted,
+		},
+		attachKey:   cfg.AttachmentsKey,
+		cacheKey:    cfg.CacheKey,
+		observers:   cfg.Observers,
+		entities:    make(map[string]entityMeta),
+		relations:   make(map[string]relationMeta),
+		attachments: make(map[string]attachMeta),
+		propCache:   make(map[string]map[string]int),
+		subscribers: make(map[int]chan store.Event),
+		echoes:      newEchoTracker(recentHashCapacity),
 	}
 
 	s.cleanupTempFiles()
@@ -226,25 +231,6 @@ func New(cfg Config) (*FSStore, error) {
 	s.loadAttachmentsIndex()
 
 	return s, nil
-}
-
-// absPath resolves a key to an absolute path. Used by the watcher
-// (which needs absolute paths for fsnotify) and the self-echo LRU
-// interaction points, where paths must match what SafeFS.OnPostWrite
-// observes.
-//
-// Returns ("", nil) on resolve failure — keys constructed from
-// configured fields should always resolve, but upstream validators
-// (storeutil.ValidateID) don't cover all cases RootedFS rejects
-// (e.g. Windows reserved names). A resolve failure here means no
-// file was ever written under that key, so the LRU can safely no-op
-// a Forget and the watcher can safely skip-setup.
-func (s *FSStore) absPath(key string) string {
-	abs, err := s.rooted.AbsPath(key)
-	if err != nil {
-		return ""
-	}
-	return abs
 }
 
 // loadAttachmentsIndex walks the attachments directory and populates
@@ -362,35 +348,13 @@ func (s *FSStore) notifyRenamed(oldID string, renamed *entity.Entity) {
 	}
 }
 
-// entityFileKey returns the key for an entity file:
-// "<entitiesKey>/<plural>/<id>.md" — forward slashes, no leading slash.
-func (s *FSStore) entityFileKey(entityType, id string) string {
-	plural := entityType + "s"
-	if schema, ok := s.schemas[entityType]; ok && schema.Plural != "" {
-		plural = schema.Plural
-	}
-	return path.Join(s.entitiesKey, plural, id+".md")
-}
-
-func (s *FSStore) relationFileKey(from, relType, to string) string {
-	return path.Join(s.relationsKey, from+"--"+relType+"--"+to+".md")
-}
-
-// propertyOrder returns the property order for an entity type, if configured.
-func (s *FSStore) propertyOrder(entityType string) []string {
-	if schema, ok := s.schemas[entityType]; ok {
-		return schema.PropertyOrder
-	}
-	return nil
-}
-
 // cleanupTempFiles removes orphaned temp files left by interrupted
 // writes. Two suffixes are swept: ".new" (legacy direct fsstore
 // atomic-write) and ".tmp" (SafeFS atomic-write). Both are produced by
 // writeFile → rename paths and are never expected to survive a normal
 // process shutdown.
 func (s *FSStore) cleanupTempFiles() {
-	for _, dirKey := range []string{s.entitiesKey, s.relationsKey} {
+	for _, dirKey := range []string{s.layout.entitiesKey, s.layout.relationsKey} {
 		if dirKey == "" {
 			continue
 		}
