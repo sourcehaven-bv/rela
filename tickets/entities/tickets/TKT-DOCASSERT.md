@@ -5,7 +5,7 @@ title: Executable manuals — assertions in the rela-docs doc language
 kind: enhancement
 priority: high
 effort: l
-status: backlog
+status: review
 ---
 
 Make a manual prove its own claims. `internal/docs` already runs Lua islands
@@ -116,5 +116,46 @@ No browser, runs everywhere, and makes a worlds manual executable immediately.
 Then write ONE manual — the worlds guide — as the proof: it is the subsystem
 with the worst docs-to-behaviour drift, and `.ignored/WORLDS-DEMO-ISSUES.md`
 supplies the cases.
+
+## Delivered so far
+
+Store-free assertions, on develop (no dependency on the worlds epic):
+
+- **`shows{type, contains|absent|exactly}`** — asserts which entities exist.
+  `exactly = {}` is a real claim ("this type is empty"), distinct from no claim.
+- **`refuses{}` / `permits{}`** — authorization claims evaluated through
+  `acl.Declarative`, the same path the write path uses, so a manual fails if a
+  grant widens OR if the gate stops being consulted. `because=` also pins WHY,
+  since a deny from an unintended rule is a green check over a regression.
+- **`api{path, status, error, as, identical_to}`** — real requests over a
+  seeded temp project. No browser and no built frontend, so it gates CI.
+  `identical_to` expresses the existence-oracle property, excluding the
+  problem-details `instance` (it echoes the request url, so a raw compare could
+  never pass) — the named-exclusion discipline this ticket asks for above.
+- **The "asserts nothing is an ERROR" rule** on every verb, mutation-tested.
+- **Proof**: the example handbook (`prototypes/data-entry/manual/`) now checks
+  its own access-control prose. Widening `viewer` in `acl.yaml` makes it refuse
+  to build, naming the rule that fired.
+
+Incidental fix: `docscapture`'s test skip guard stat'd `metamodel.yaml`,
+renamed to `schema.yaml` in TKT-FNARO6 — those tests had been skipping
+silently. Fixing it raised package coverage 27% → 44%.
+
+## Not yet built, and why
+
+- **`open{}` + browser claims (`text`/`button`/`link`, item 2).** Needs the
+  accessibility pass this ticket already flags as a prerequisite: assertions
+  should key on accessible names, and `data-testid` appears in only 4
+  components. Doing it before that pass would bake CSS selectors into manuals.
+- **`world=` (item 5).** Blocked: content states are not on develop —
+  `store.EntityQuery` has no world field and `entity.Pointer` does not exist
+  there. Buildable as soon as the worlds epic merges; the worlds proof-manual
+  in "First step" depends on this.
+- **Multiple backends (item 6).** Not reachable on the current architecture:
+  the docs pipeline has no backend concept, and both `screenshot{}` and `api{}`
+  are deliberately unavailable on the `postgres` build because seeding a
+  "throwaway" project would write into the live database. Running one manual
+  across backends needs an ephemeral-postgres seam first — a ticket of its own,
+  not a line item here.
 
 Related: [[FEAT-G4VO53]], [[test-fixtures]], [[ci-pipeline]].
