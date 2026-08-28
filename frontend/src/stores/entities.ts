@@ -12,10 +12,16 @@ import type { Entity, CreateEntity, ListParams, ListMeta } from '@/types'
 import { getErrorMessage } from '@/api/errors'
 import { useGitStore } from './git'
 
+// No `etag` field here on purpose (TKT-DPBQ7S). One was declared for a long
+// time and written by NO path — `fetchEntity`, `create` and `update` all
+// construct `{entity, timestamp}`. A declared-but-never-written ETag is a
+// trap: it invites the assumption that cached reads carry an ETag, so an
+// If-Match built from this cache would send `undefined` (silently degrading
+// to last-write-wins) or, worse, a stale value. The etag-bearing read path
+// must go to the network — a cached entity has no meaningful ETag.
 interface EntityCache {
   entity: Entity
   timestamp: number
-  etag?: string
 }
 
 const CACHE_TTL = 60 * 1000 // 1 minute
