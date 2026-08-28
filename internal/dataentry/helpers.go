@@ -24,6 +24,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/htmlutil"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/queryplan"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/search/searchparser"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -871,52 +872,7 @@ func relationDirection(d dataentryconfig.Direction) store.Direction {
 func pushdownPrefilters(
 	filters []*filter.Filter, meta *metamodel.Metamodel, types []string,
 ) []store.PropPredicate {
-	if len(types) == 0 || meta == nil {
-		return nil // no declared type to check against — push nothing
-	}
-	var pushed []store.PropPredicate
-	for _, f := range filters {
-		// A glob (`status=in-*`) rides on OpEqual but means pattern-match, so
-		// it must NOT become a literal string comparison in the store.
-		if f.IsGlob || f.Operator != filter.OpEqual {
-			continue
-		}
-		if !stringComparableOnEveryType(meta, types, f.Property) {
-			continue
-		}
-		pushed = append(pushed, store.PropPredicate{
-			Property: f.Property, Op: store.PropEqual, Value: f.Value,
-		})
-	}
-	return pushed
-}
-
-// stringComparableOnEveryType reports whether `prop` compares identically as a
-// string on every named type — the precondition for pushing it down.
-//
-// Conservative by construction: an unknown type, an undeclared property, or
-// any non-string declared type all return false, so the filter simply stays in
-// the Go pass. The cost of a false negative is a slower query; the cost of a
-// false positive is a wrong result.
-func stringComparableOnEveryType(meta *metamodel.Metamodel, types []string, prop string) bool {
-	for _, typ := range types {
-		def, ok := meta.GetEntityDef(typ)
-		if !ok {
-			return false
-		}
-		pd, ok := def.Properties[prop]
-		if !ok {
-			return false
-		}
-		// Enums are excluded too: filter.matchEnum ERRORS on a value that is
-		// not declared, which surfaces an operator typo. Pushed down, the same
-		// typo silently matches nothing and the source goes quiet with no
-		// diagnostic.
-		if pd.Type != metamodel.PropertyTypeString {
-			return false
-		}
-	}
-	return true
+	return queryplan.PushdownPrefilters(filters, meta, types)
 }
 
 func (a *App) matchesPropertyFilters(e *entity.Entity, filters []*filter.Filter) bool {

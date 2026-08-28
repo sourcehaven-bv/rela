@@ -67,6 +67,10 @@ type PropPredicate struct {
 	Property string
 	Op       PropOp
 	Value    string
+	// Scalar restricts a non-empty equality predicate to a scalar string and
+	// lets SQL backends emit an indexable ->> comparison. It is ignored for
+	// empty values and other operators.
+	Scalar bool
 }
 
 // RelationPredicate restricts which relations the surrounding

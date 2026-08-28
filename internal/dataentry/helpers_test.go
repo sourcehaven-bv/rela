@@ -1085,6 +1085,9 @@ func TestPushdownPrefilters(t *testing.T) {
 			if pushed[0].Property != tc.in.Property || pushed[0].Value != tc.in.Value {
 				t.Errorf("predicate = %+v, want property/value from %+v", pushed[0], tc.in)
 			}
+			if pushed[0].Scalar != (tc.in.Value != "") {
+				t.Errorf("Scalar = %v, want %v", pushed[0].Scalar, tc.in.Value != "")
+			}
 		})
 	}
 }

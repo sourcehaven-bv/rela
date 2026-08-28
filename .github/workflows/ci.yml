@@ -560,6 +560,24 @@ jobs:
           fi
           echo "OK: pgstore suite ran against PostgreSQL with no skips."
 
+      # The job-queue conformance suite is DB-gated the same way, and the same
+      # argument applies: a memory-only run cannot see backend divergence, and
+      # one such bug already shipped (a NUL byte in the idempotency fingerprint
+      # that Go and the memory backend accept and PostgreSQL rejects outright).
+      # `just test-postgres` has always included this package; CI did not, so
+      # the durable tier was unpinned here despite the local recipe covering it.
+      - name: Run job-queue conformance (race) against PostgreSQL
+        run: |
+          set -euo pipefail
+          go test -race -tags postgres -v ./internal/jobs/... 2>&1 | tee jobs-test.log
+          if grep -q -- '--- SKIP' jobs-test.log; then
+            echo "::error::job-queue tests SKIPPED in the Postgres Backend job."
+            echo "A skipped conformance suite is not a pass."
+            grep -- '--- SKIP' jobs-test.log
+            exit 1
+          fi
+          echo "OK: job-queue suite ran against PostgreSQL with no skips."
+
       # The step above covers the STORE under -tags postgres. Nothing covered
       # the WIRING: `internal/appbuild` and `internal/cli` were compiled with
       # the tag but never run with it, so every build-agnostic composition-root

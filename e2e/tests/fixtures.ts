@@ -401,7 +401,17 @@ function createTestProject(): string {
 
 /** Spawn rela-server on a free port with retry-on-startup-failure: the port
  *  we pick from findFreePort may have been reassigned by the kernel before the
- *  child binds it, under load (RR-B8GJT). Up to 3 attempts. */
+ *  child binds it, under load (RR-B8GJT). Up to 3 attempts.
+ *
+ *  A server that DIES during startup fails fast rather than waiting out
+ *  waitForServer's timeout, and its stderr travels in the thrown error. Both
+ *  matter: without them a server that refused to start (a bad DSN, a failed
+ *  migration) surfaced only as "Test timeout of 30000ms exceeded while setting
+ *  up serverUrl", with the real reason — which the child had already printed —
+ *  discarded. A spawn failure is also an 'error' EVENT, not a throw; with no
+ *  listener Node re-raises it as an unhandled error out of band, which is how
+ *  a failed startup came to be reported as a bare, and entirely misleading,
+ *  `spawn ... ENOENT`. (BUG-YJEIFH) */
 async function spawnServer(
   serverBinary: string,
   cwd: string,
@@ -426,8 +436,27 @@ async function spawnServer(
     proc.stdout?.on("data", (d) => (stdout += d.toString()));
     proc.stderr?.on("data", (d) => (stderr += d.toString()));
 
+    // Resolves as soon as the child is known to be unusable, so a server that
+    // exits immediately is not waited out for the full readiness timeout.
+    const died = new Promise<never>((_, reject) => {
+      proc.once("error", (e) =>
+        reject(new Error(`could not spawn ${serverBinary}: ${String(e)}`)),
+      );
+      proc.once("exit", (code, signal) =>
+        reject(
+          new Error(
+            `server exited during startup (code ${code}, signal ${signal})\n` +
+              `--- stderr ---\n${stderr.trim() || "(empty)"}`,
+          ),
+        ),
+      );
+    });
+    // The rejection is always consumed below, but only once the race settles;
+    // mark it handled now so a loser never trips unhandledRejection.
+    died.catch(() => {});
+
     try {
-      await waitForServer(url, url);
+      await Promise.race([waitForServer(url, url), died]);
       return {
         proc,
         url,

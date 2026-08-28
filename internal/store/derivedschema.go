@@ -25,23 +25,26 @@ import (
 // DerivedObjectKind identifies which reconciler RULE produced a spec. Each rule
 // owns a disjoint name sub-namespace in the backend catalog so rules never
 // clobber one another's objects (the unique rule only ever drops its own
-// indexes, an enum rule only its own checks, etc.). Today there is one rule.
+// indexes, a static-query rule only its own indexes, etc.).
 type DerivedObjectKind string
 
 const (
 	// DerivedUnique is the `unique: true` rule: a partial unique index over a
 	// single scalar property value, per entity type.
 	DerivedUnique DerivedObjectKind = "unique"
+	// DerivedQueryIndex accelerates one static scalar-equality query shape.
+	DerivedQueryIndex DerivedObjectKind = "query-index"
 )
 
-// DerivedObjectSpec is one desired derived object, derived from the metamodel.
-// It is backend-agnostic: the backend translates it into concrete DDL. For
-// DerivedUnique, (Type, Property) names the entity type and the unique scalar
-// property.
+// DerivedObjectSpec is one desired derived object, derived from validated
+// project configuration. It is backend-agnostic: the backend translates it
+// into concrete DDL. DerivedUnique uses Property; DerivedQueryIndex uses the
+// canonical sorted Properties query shape.
 type DerivedObjectSpec struct {
-	Kind     DerivedObjectKind
-	Type     string
-	Property string
+	Kind       DerivedObjectKind
+	Type       string
+	Property   string
+	Properties []string
 }
 
 // DerivedObjectState is the outcome of reconciling one spec (or one discovered

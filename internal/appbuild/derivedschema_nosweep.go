@@ -5,7 +5,6 @@ package appbuild
 import (
 	"context"
 
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -28,4 +27,4 @@ import (
 // The second case is why Open also verifies WAL actually engaged and refuses
 // otherwise — the filesystems where flock is unreliable are the same ones where
 // WAL is unavailable.
-func reconcileDerivedSchemaIfSupported(_ context.Context, _ store.Store, _ *metamodel.Metamodel) {}
+func reconcileDerivedSchemaIfSupported(_ context.Context, _ store.Store, _ *SharedBase) {}

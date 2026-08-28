@@ -109,6 +109,53 @@
   entity (a form save that renders every field). `ApplyEntity` is the
   whole-record replace the sync channel needs. If you are writing a *subset*,
   you want `PatchEntity`.
+- **Background jobs: the queue knows nothing about schedules, and never
+  runs before a transaction closes.** External side effects (mail, HTTP, AI)
+  belong on `jobs.Queue` rather than inline on a write path. Two rules keep
+  the seam usable:
+
+  *Retry is a flat enum* (`RetryNever` / `RetryBounded` / `RetryPersistent`),
+  plus an optional deadline and idempotency key — nothing else. The enum names
+  INTENT; mechanism (attempt counts, backoff, the `RetryPersistent` outer
+  bound) lives in `internal/jobs/retry.go` and is meant to be retuned there for
+  everyone. Do NOT widen it into a policy struct or add per-call knobs: a call
+  site needing different mechanics is evidence for a new intent value.
+
+  *A recurring task uses `IdempotencyKey`, never a cadence-derived
+  `Deadline`.* A key says "one of these pending at a time is enough", so a run
+  that is still queued suppresses the next rather than stacking a second copy
+  — a daily report delayed six hours must not then send twice. A deadline
+  expresses something different: "this is worthless after T", which makes the
+  job VANISH when it cannot start in time. Under load that drops scheduled
+  work precisely when the operator most wants it done, and (before the guard
+  existed) hung the scheduler on a completion that never arrived. Deadlines
+  are for work whose value genuinely expires; schedules are not that.
+
+  *A job enqueued inside `store.Store.Tx` must not become runnable until that
+  transaction commits.* Otherwise a worker reads it on another connection
+  that cannot see the uncommitted writes and acts on the pre-write world — a
+  race that passes tests and fails under load. `jobs.WithDeferral` collects
+  enqueues; the transaction seam calls `Flush` on commit or `Discard` on
+  rollback, mirroring pgstore's `txPending`. Pinned by `jobstest`.
+
+  The fs/desktop tier is EPHEMERAL on purpose — jobs vanish on exit, because
+  an unsent mail from an ended session is not worth resurrecting. Don't
+  "fix" it to persist; that is what the postgres tier is for.
+
+  *The durable queue's tables live in the TENANT's schema, like every other
+  postgres-backed table.* A schema-pinned `search_path` is how rela scopes a
+  tenant, and the queue is not exempt: rela submits every kind to one queue
+  name and neoq's insert trigger does `pg_notify(NEW.queue, ...)`, so tables
+  shared across tenants would mean tenants consuming each other's jobs. neoq
+  v0.72.1 could not do this — one migration named `public.neoq_jobs_id_seq`
+  while its tables follow `search_path` — which is why `go.mod` carries a
+  `replace` onto a fork (BUG-YJEIFH, upstream acaloiaro/neoq#149). Drop the
+  `replace` when that lands, not before: `TestPostgresQueue_SchemaPinnedDSN`
+  is what fails if it goes early. **Test any new postgres-touching dependency
+  through a schema-pinned DSN**, not just the bare `RELA_TEST_DATABASE_URL` —
+  the bare DSN resolves to `public`, which is precisely the one case that
+  worked.
+
 - **The configuration is not a secret; the data is.** `schema.yaml`,
   `data-entry.yaml`, `acl.yaml`, `schedules.yaml`, `scripts/`, `actions/`,
   `templates/` are operator-authored files that live in the repo — routinely a
@@ -258,6 +305,7 @@ Domain and storage:
 | `internal/visibility`    | Read-side ACL wrappers: row-gate + field-redact readers, tracer decorator (DEC-ZBI39P) |
 | `internal/entitymanager` | Write path: automations, validation, audit, policy        |
 | `internal/audit`         | Append-only JSONL audit log of every successful write     |
+| `internal/jobs`          | Background-job seam: ephemeral (fs/desktop) or durable (postgres) |
 | `internal/principal`     | Identity attribution (`Principal{User, Tool}`) on ctx     |
 | `internal/validator`     | Validation engine invoked by entitymanager                |
 | `internal/markdown`      | Parse/write entity and relation markdown                  |
@@ -555,6 +603,14 @@ Rules when touching this:
   `--database-url` flag, so the credential never lands in `ps`/shell history.
   `appbuild.Discover` reads the env into `appbuild.Config.DatabaseURL`; the
   `db` commands read the env directly. Don't add a DSN flag.
+- **Derived static-query indexes are all-or-nothing desired state.** The
+  PostgreSQL reconciler owns only `rela_derived_query__*` and derives those
+  indexes from validated static dashboard/next-action query shapes. Never
+  reconcile a partial set after a `data-entry.yaml` read/parse/validation
+  failure: an absent desired object means DROP, so partial input is destructive.
+  Runtime/ad-hoc queries never issue DDL. Pushdown and index inference must use
+  the same `internal/queryplan` eligibility decision, and an EXPLAIN test must
+  prove each newly supported SQL shape actually uses its generated index.
 - **Migrations** are embedded SQL (`pgstore/migrations/*.sql`), applied by
   `pgstore.Migrate` in one transaction under a `pg_advisory_xact_lock`
   (concurrent-start safe; forward-only). Auto-applied on first store open;
