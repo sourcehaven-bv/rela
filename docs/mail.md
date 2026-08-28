@@ -71,11 +71,12 @@ Keep that file readable only by its owner — `chmod 700 .rela && chmod 600
 directory mode is not checked, so set it yourself.
 
 **On systemd, prefer a credential.** rela reads `$CREDENTIALS_DIRECTORY` when
-the unit passes a credential named `rela-secrets-<project>`:
+the unit passes a credential named for the project — run `rela secrets
+credential-name` to get it:
 
 ```ini
 [Service]
-LoadCredentialEncrypted=rela-secrets-acme:/etc/rela/acme-secrets.cred
+LoadCredentialEncrypted=rela-secrets-acme-6e0bff4c:/etc/rela/acme-secrets.cred
 ```
 
 The credential holds the same YAML as `secrets.yaml`, so `smtp_password` goes in

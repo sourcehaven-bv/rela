@@ -1099,7 +1099,7 @@ LoadCredentialEncrypted=rela-secrets-acme-6e0bff4c:/etc/rela/acme-secrets.cred
 Encrypt the file with `systemd-creds` before deploying it:
 
 ```bash
-systemd-creds encrypt --name=rela-secrets-acme secrets.yaml /etc/rela/acme-secrets.cred
+systemd-creds encrypt --name=rela-secrets-acme-6e0bff4c secrets.yaml /etc/rela/acme-secrets.cred
 ```
 
 The credential has the same YAML format as `secrets.yaml`. Why this is better
