@@ -153,12 +153,12 @@ type APIRelationTarget struct {
 }
 
 // handleAPISettingsCRUD routes /api/v1/settings requests based on HTTP method.
-func (a *App) handleAPISettingsCRUD(w http.ResponseWriter, r *http.Request) {
+func (h *appearanceHandler) handleAPISettingsCRUD(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		a.handleAPIGetSettings(w, r)
+		h.handleAPIGetSettings(w, r)
 	case http.MethodPut, http.MethodPost:
-		a.handleAPISaveSettings(w, r)
+		h.handleAPISaveSettings(w, r)
 	default:
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
@@ -167,9 +167,9 @@ func (a *App) handleAPISettingsCRUD(w http.ResponseWriter, r *http.Request) {
 // handleAPIGetSettings returns the settings data for the settings page.
 //
 //nolint:gocognit // assembles the settings response from many independent optional sources; each block guards a distinct setting, with no shared structure to factor out.
-func (a *App) handleAPIGetSettings(w http.ResponseWriter, r *http.Request) {
-	s := a.State()
-	ud := a.settings.UserDefaults()
+func (h *appearanceHandler) handleAPIGetSettings(w http.ResponseWriter, r *http.Request) {
+	s := h.schema()
+	ud := h.settings.UserDefaults()
 	if ud == nil {
 		ud = &UserDefaults{}
 	}
@@ -256,8 +256,8 @@ func (a *App) handleAPIGetSettings(w http.ResponseWriter, r *http.Request) {
 				// and hidden display properties (BUG-R9EHKV, the worst surface: no
 				// gate at all). Filter drops unreadable targets and redacts the
 				// rest so DisplayTitle falls back to the id.
-				candidates := listFromStoreByTypes(r.Context(), a.Services(), []string{targetType})
-				for _, e := range a.viewReader.Filter(r.Context(), candidates) {
+				candidates := listFromStoreByTypes(r.Context(), h.services(), []string{targetType})
+				for _, e := range h.viewReader.Filter(r.Context(), candidates) {
 					rd.Targets = append(rd.Targets, APIRelationTarget{
 						ID:    e.ID,
 						Title: s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
@@ -270,12 +270,12 @@ func (a *App) handleAPIGetSettings(w http.ResponseWriter, r *http.Request) {
 
 	data := APISettingsData{
 		UserDefaults:  apiDefaults,
-		UserPalette:   a.palette.UserPalette(),
+		UserPalette:   h.palette.UserPalette(),
 		AllProperties: allProperties,
 		AllRelations:  allRelations,
 		EntityTypes:   s.Meta.EntityTypes(),
 	}
-	data.LogoURL = a.logo.URL()
+	data.LogoURL = h.logo.URL()
 
 	writeJSON(w, data)
 }
@@ -283,7 +283,7 @@ func (a *App) handleAPIGetSettings(w http.ResponseWriter, r *http.Request) {
 // handleAPISaveSettings saves the user defaults from JSON input. The
 // settingsService persists and republishes atomically so concurrent readers
 // see a coherent snapshot.
-func (a *App) handleAPISaveSettings(w http.ResponseWriter, r *http.Request) {
+func (h *appearanceHandler) handleAPISaveSettings(w http.ResponseWriter, r *http.Request) {
 	var input APIUserDefaults
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
@@ -305,7 +305,7 @@ func (a *App) handleAPISaveSettings(w http.ResponseWriter, r *http.Request) {
 
 	// The service persists and republishes the defaults atomically, so a
 	// concurrent reader can't observe defaults that disagree with disk.
-	if err := a.settings.Save(r.Context(), &ud); err != nil {
+	if err := h.settings.Save(r.Context(), &ud); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "failed to save settings: "+err.Error())
 		return
 	}
@@ -316,20 +316,20 @@ func (a *App) handleAPISaveSettings(w http.ResponseWriter, r *http.Request) {
 // coverage-ignore: HTTP handlers tested via e2e tests
 
 // handleAPIPaletteCRUD routes /api/v1/_palette requests based on HTTP method.
-func (a *App) handleAPIPaletteCRUD(w http.ResponseWriter, r *http.Request) {
+func (h *appearanceHandler) handleAPIPaletteCRUD(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		a.handleAPIGetPalette(w, r)
+		h.handleAPIGetPalette(w, r)
 	case http.MethodPut, http.MethodPost:
-		a.handleAPISavePalette(w, r)
+		h.handleAPISavePalette(w, r)
 	default:
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
 // handleAPIGetPalette returns the current user palette.
-func (a *App) handleAPIGetPalette(w http.ResponseWriter, _ *http.Request) {
-	p := a.palette.UserPalette()
+func (h *appearanceHandler) handleAPIGetPalette(w http.ResponseWriter, _ *http.Request) {
+	p := h.palette.UserPalette()
 	if p == nil {
 		p = &dataentryconfig.PaletteConfig{}
 	}
@@ -337,7 +337,7 @@ func (a *App) handleAPIGetPalette(w http.ResponseWriter, _ *http.Request) {
 }
 
 // handleAPISavePalette validates and saves the user palette.
-func (a *App) handleAPISavePalette(w http.ResponseWriter, r *http.Request) {
+func (h *appearanceHandler) handleAPISavePalette(w http.ResponseWriter, r *http.Request) {
 	var input dataentryconfig.PaletteConfig
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
@@ -347,7 +347,7 @@ func (a *App) handleAPISavePalette(w http.ResponseWriter, r *http.Request) {
 	// The service validates, persists, and republishes the resolved palette
 	// (against the current project palette) atomically. A validation failure
 	// is a 400; a persistence failure is a 500.
-	if err := a.palette.Save(r.Context(), a.Cfg().Palette, &input); err != nil {
+	if err := h.palette.Save(r.Context(), h.schema().Cfg.Palette, &input); err != nil {
 		if errors.Is(err, errInvalidPalette) {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return

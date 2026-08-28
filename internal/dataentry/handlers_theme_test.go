@@ -77,7 +77,7 @@ func uploadLogo(t *testing.T, app *App, fieldName string, body []byte) *httptest
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/_theme/logo", &buf)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	w := httptest.NewRecorder()
-	app.handleAPIThemeLogo(w, req)
+	app.appearance.handleAPIThemeLogo(w, req)
 	return w
 }
 
@@ -119,7 +119,7 @@ func TestThemeLogo_RoundTrip(t *testing.T) {
 	// GET should return the bytes byte-for-byte.
 	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/_theme/logo", http.NoBody)
 	getW := httptest.NewRecorder()
-	app.handleAPIThemeLogo(getW, getReq)
+	app.appearance.handleAPIThemeLogo(getW, getReq)
 	if getW.Code != http.StatusOK {
 		t.Fatalf("GET: expected 200, got %d", getW.Code)
 	}
@@ -142,7 +142,7 @@ func TestThemeLogo_RoundTrip(t *testing.T) {
 	// DELETE should clear state and 204.
 	delReq := httptest.NewRequest(http.MethodDelete, "/api/v1/_theme/logo", http.NoBody)
 	delW := httptest.NewRecorder()
-	app.handleAPIThemeLogo(delW, delReq)
+	app.appearance.handleAPIThemeLogo(delW, delReq)
 	if delW.Code != http.StatusNoContent {
 		t.Fatalf("DELETE: expected 204, got %d", delW.Code)
 	}
@@ -153,7 +153,7 @@ func TestThemeLogo_RoundTrip(t *testing.T) {
 	// Subsequent GET should 404.
 	getReq2 := httptest.NewRequest(http.MethodGet, "/api/v1/_theme/logo", http.NoBody)
 	getW2 := httptest.NewRecorder()
-	app.handleAPIThemeLogo(getW2, getReq2)
+	app.appearance.handleAPIThemeLogo(getW2, getReq2)
 	if getW2.Code != http.StatusNotFound {
 		t.Errorf("GET after DELETE: expected 404, got %d", getW2.Code)
 	}
@@ -247,7 +247,7 @@ func TestThemeLogo_SVGGetHeaders(t *testing.T) {
 		t.Fatalf("upload: %d %s", w.Code, w.Body.String())
 	}
 	getW := httptest.NewRecorder()
-	app.handleAPIThemeLogo(getW, httptest.NewRequest(http.MethodGet, "/api/v1/_theme/logo", http.NoBody))
+	app.appearance.handleAPIThemeLogo(getW, httptest.NewRequest(http.MethodGet, "/api/v1/_theme/logo", http.NoBody))
 	if getW.Code != http.StatusOK {
 		t.Fatalf("GET: %d", getW.Code)
 	}
@@ -297,7 +297,7 @@ func TestThemeLogo_DeleteIdempotent(t *testing.T) {
 	app := newHandlerTestApp(t)
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/_theme/logo", http.NoBody)
 	w := httptest.NewRecorder()
-	app.handleAPIThemeLogo(w, req)
+	app.appearance.handleAPIThemeLogo(w, req)
 	if w.Code != http.StatusNoContent {
 		t.Errorf("DELETE on missing logo: expected 204, got %d", w.Code)
 	}
@@ -307,7 +307,7 @@ func TestThemeLogo_GetWhenUnset(t *testing.T) {
 	app := newHandlerTestApp(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_theme/logo", http.NoBody)
 	w := httptest.NewRecorder()
-	app.handleAPIThemeLogo(w, req)
+	app.appearance.handleAPIThemeLogo(w, req)
 	if w.Code != http.StatusNotFound {
 		t.Errorf("GET when unset: expected 404, got %d", w.Code)
 	}
@@ -317,7 +317,7 @@ func TestThemeLogo_MethodNotAllowed(t *testing.T) {
 	app := newHandlerTestApp(t)
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/_theme/logo", http.NoBody)
 	w := httptest.NewRecorder()
-	app.handleAPIThemeLogo(w, req)
+	app.appearance.handleAPIThemeLogo(w, req)
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("PATCH: expected 405, got %d", w.Code)
 	}
@@ -333,7 +333,7 @@ func TestSettings_ExposesLogoURL(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_settings", http.NoBody)
 	sw := httptest.NewRecorder()
-	app.handleAPIGetSettings(sw, req)
+	app.appearance.handleAPIGetSettings(sw, req)
 	if sw.Code != http.StatusOK {
 		t.Fatalf("get settings: %d", sw.Code)
 	}

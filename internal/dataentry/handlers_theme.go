@@ -19,14 +19,14 @@ import (
 const maxLogoUploadBytes = MaxUserLogoBytes + 16*1024
 
 // handleAPIThemeLogo routes /api/v1/_theme/logo by HTTP method.
-func (a *App) handleAPIThemeLogo(w http.ResponseWriter, r *http.Request) {
+func (h *appearanceHandler) handleAPIThemeLogo(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		a.handleAPIGetThemeLogo(w, r)
+		h.handleAPIGetThemeLogo(w, r)
 	case http.MethodPut, http.MethodPost:
-		a.handleAPIPutThemeLogo(w, r)
+		h.handleAPIPutThemeLogo(w, r)
 	case http.MethodDelete:
-		a.handleAPIDeleteThemeLogo(w, r)
+		h.handleAPIDeleteThemeLogo(w, r)
 	default:
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
@@ -36,8 +36,8 @@ func (a *App) handleAPIThemeLogo(w http.ResponseWriter, r *http.Request) {
 // include CSP sandbox + nosniff + immutable cache headers so user-supplied
 // SVG can't be coerced into a script-execution context, even on direct
 // navigation, and so cache-busting works via the URL alone.
-func (a *App) handleAPIGetThemeLogo(w http.ResponseWriter, _ *http.Request) {
-	logoBytes, logoExt, _ := a.logo.Get()
+func (h *appearanceHandler) handleAPIGetThemeLogo(w http.ResponseWriter, _ *http.Request) {
+	logoBytes, logoExt, _ := h.logo.Get()
 	if logoExt == "" || len(logoBytes) == 0 {
 		writeJSONError(w, http.StatusNotFound, "no logo set")
 		return
@@ -51,24 +51,24 @@ func (a *App) handleAPIGetThemeLogo(w http.ResponseWriter, _ *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, "logo has unknown extension")
 		return
 	}
-	h := w.Header()
-	h.Set("Content-Type", ct)
-	h.Set("X-Content-Type-Options", "nosniff")
+	hdr := w.Header()
+	hdr.Set("Content-Type", ct)
+	hdr.Set("X-Content-Type-Options", "nosniff")
 	// CSP sandbox neutralizes scripts on direct navigation; frame-ancestors
 	// 'none' (and X-Frame-Options as a belt) prevents the response from
 	// being framed by an attacker page even if origin checks are loosened.
-	h.Set("Content-Security-Policy", "sandbox; frame-ancestors 'none'")
-	h.Set("X-Frame-Options", "DENY")
+	hdr.Set("Content-Security-Policy", "sandbox; frame-ancestors 'none'")
+	hdr.Set("X-Frame-Options", "DENY")
 	// The URL contains a content hash — any update produces a different
 	// URL, so the cached response can never go stale.
-	h.Set("Cache-Control", "public, max-age=86400, immutable")
+	hdr.Set("Cache-Control", "public, max-age=86400, immutable")
 	_, _ = w.Write(logoBytes)
 }
 
 // handleAPIPutThemeLogo accepts a multipart upload, validates it, and persists
 // the bytes + extension via the self-synchronized logo store, which publishes
 // the new bytes atomically for concurrent readers.
-func (a *App) handleAPIPutThemeLogo(w http.ResponseWriter, r *http.Request) {
+func (h *appearanceHandler) handleAPIPutThemeLogo(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxLogoUploadBytes)
 
 	if err := r.ParseMultipartForm(maxLogoUploadBytes); err != nil {
@@ -117,7 +117,7 @@ func (a *App) handleAPIPutThemeLogo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := a.logo.Save(r.Context(), bytes, ext); err != nil {
+	if err := h.logo.Save(r.Context(), bytes, ext); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "failed to save logo: "+err.Error())
 		return
 	}
@@ -132,8 +132,8 @@ func (a *App) handleAPIPutThemeLogo(w http.ResponseWriter, r *http.Request) {
 // logo is set the call still succeeds (the on-disk Delete is itself
 // idempotent), so callers that don't track current logo state can just
 // hit the endpoint.
-func (a *App) handleAPIDeleteThemeLogo(w http.ResponseWriter, r *http.Request) {
-	if err := a.logo.Delete(r.Context()); err != nil {
+func (h *appearanceHandler) handleAPIDeleteThemeLogo(w http.ResponseWriter, r *http.Request) {
+	if err := h.logo.Delete(r.Context()); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "failed to delete logo: "+err.Error())
 		return
 	}

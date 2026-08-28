@@ -35,7 +35,7 @@ func uploadThemePackage(t *testing.T, app *App, fieldName string, body []byte) *
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/_theme/import", &buf)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	w := httptest.NewRecorder()
-	app.handleAPIThemeImport(w, req)
+	app.appearance.handleAPIThemeImport(w, req)
 	return w
 }
 
@@ -69,14 +69,14 @@ func TestThemeExport_PaletteOnly(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/_palette", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-	app.handleAPISavePalette(w, req)
+	app.appearance.handleAPISavePalette(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("save palette: %d %s", w.Code, w.Body.String())
 	}
 
 	exReq := httptest.NewRequest(http.MethodGet, "/api/v1/_theme/export", http.NoBody)
 	exW := httptest.NewRecorder()
-	app.handleAPIThemeExport(exW, exReq)
+	app.appearance.handleAPIThemeExport(exW, exReq)
 	if exW.Code != http.StatusOK {
 		t.Fatalf("export: %d %s", exW.Code, exW.Body.String())
 	}
@@ -118,7 +118,7 @@ func TestThemeExport_WithLogo(t *testing.T) {
 
 	exReq := httptest.NewRequest(http.MethodGet, "/api/v1/_theme/export", http.NoBody)
 	exW := httptest.NewRecorder()
-	app.handleAPIThemeExport(exW, exReq)
+	app.appearance.handleAPIThemeExport(exW, exReq)
 	if exW.Code != http.StatusOK {
 		t.Fatalf("export: %d", exW.Code)
 	}
@@ -151,14 +151,14 @@ func TestThemeImport_RoundTrip(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/_palette", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-	source.handleAPISavePalette(w, req)
+	source.appearance.handleAPISavePalette(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("source palette: %d %s", w.Code, w.Body.String())
 	}
 
 	exReq := httptest.NewRequest(http.MethodGet, "/api/v1/_theme/export", http.NoBody)
 	exW := httptest.NewRecorder()
-	source.handleAPIThemeExport(exW, exReq)
+	source.appearance.handleAPIThemeExport(exW, exReq)
 	if exW.Code != http.StatusOK {
 		t.Fatalf("export: %d", exW.Code)
 	}
@@ -230,7 +230,7 @@ func TestThemeExport_MethodNotAllowed(t *testing.T) {
 	app := newHandlerTestApp(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/_theme/export", http.NoBody)
 	w := httptest.NewRecorder()
-	app.handleAPIThemeExport(w, req)
+	app.appearance.handleAPIThemeExport(w, req)
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected 405, got %d", w.Code)
 	}
@@ -240,7 +240,7 @@ func TestThemeImport_MethodNotAllowed(t *testing.T) {
 	app := newHandlerTestApp(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_theme/import", http.NoBody)
 	w := httptest.NewRecorder()
-	app.handleAPIThemeImport(w, req)
+	app.appearance.handleAPIThemeImport(w, req)
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected 405, got %d", w.Code)
 	}

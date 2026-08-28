@@ -109,7 +109,11 @@ const userPaletteFile = "palette.yaml"
 // App entirely — conditionlint owns them and appbuild bridges — so the feature
 // cost one method, not a subsystem.
 //
-//plimsoll:max-methods=104
+// The theme/settings/palette cluster (12 methods — /_theme/logo CRUD, the
+// /_theme export/import pair, and the /_settings + /_palette CRUD) moved to
+// appearanceHandler (TKT-8AJ1PM, 104 → 92).
+//
+//plimsoll:max-methods=92
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS
@@ -229,11 +233,16 @@ type App struct {
 	// views owns the read-only view-assembly surface: view traversal,
 	// section building, and the /_views, /_sidepanel, /_sidebar endpoints
 	// (TKT-R68TV8). No writeMu — this surface never mutates.
-	views     *viewsHandler
-	templater templating.Templater
-	cfgLoader config.Loader
-	kv        state.KV
-	acl       acl.ACL
+	views *viewsHandler
+	// appearance owns the theme/settings/palette surface: /_theme/logo,
+	// /_theme/export, /_theme/import, /_settings, /_palette (TKT-8AJ1PM).
+	// Pure glue over the self-synchronized logo/palette/settings services
+	// — no writeMu.
+	appearance *appearanceHandler
+	templater  templating.Templater
+	cfgLoader  config.Loader
+	kv         state.KV
+	acl        acl.ACL
 
 	// attachmentRunner drives external scan/transform commands for uploads.
 	// nil out-of-box → uploads get native MIME validation only (Phase 2 wires
@@ -956,6 +965,10 @@ func NewApp(
 		// Late-bound: tests reassign app.acl after construction.
 		aclImpl: func() acl.ACL { return app.acl },
 	}
+
+	// appearanceHandler owns the theme/settings/palette routes; wired after
+	// the logo/palette/settings services and viewReader it captures.
+	app.appearance = newAppearanceHandler(app)
 
 	// commandHandler owns the user-configured command surface. Its
 	// collaborators are narrow closures over App: the schema snapshot (command/
