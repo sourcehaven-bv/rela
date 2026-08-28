@@ -5,7 +5,7 @@ title: Executable manuals — assertions in the rela-docs doc language
 kind: enhancement
 priority: high
 effort: l
-status: review
+status: done
 ---
 
 Make a manual prove its own claims. `internal/docs` already runs Lua islands
