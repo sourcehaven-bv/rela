@@ -66,8 +66,9 @@ That is the same file Lua scripts read. An SMTP password is no different in kind
 from an API token, so it goes in the same place rather than in a mechanism unique
 to mail.
 
-Keep that file readable only by its owner — `chmod 600 .rela/secrets.yaml`.
-rela warns when it is group- or world-readable.
+Keep that file readable only by its owner — `chmod 700 .rela && chmod 600
+.rela/secrets.yaml`. rela warns when the file is group- or world-readable; the
+directory mode is not checked, so set it yourself.
 
 **On systemd, prefer a credential.** rela reads `$CREDENTIALS_DIRECTORY` when
 the unit passes a credential named `rela-secrets-<project>`:

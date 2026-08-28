@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -248,6 +249,42 @@ func TestLoad_WarnsOncePerPath(t *testing.T) {
 	}
 }
 
+func TestLoad_WarnsAgainWhenModeChanges(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission bits are synthetic on Windows")
+	}
+	buf := captureWarnings(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, ConfigFile)
+	writeMode(t, dir, "api_key: sk-abc123\n", 0o640)
+
+	if _, err := Load(dir, "s.lua"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Fixed, then regressed to something WORSE. Suppressing the second warning
+	// would leave the log naming 0640 while the file is world-writable.
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	if _, err := Load(dir, "s.lua"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := os.Chmod(path, 0o666); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	if _, err := Load(dir, "s.lua"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	log := buf.String()
+	if n := strings.Count(log, "readable by other users"); n != 2 {
+		t.Errorf("warning count = %d, want 2 (0640 then 0666)\nlog: %s", n, log)
+	}
+	if !strings.Contains(log, "0666") {
+		t.Errorf("the regressed mode was not reported\nlog: %s", log)
+	}
+}
+
 func TestLoad_WarnsPerProjectNotGlobally(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("permission bits are synthetic on Windows")
@@ -293,7 +330,14 @@ func writeCredential(t *testing.T, credDir, relaDir, content string, mode os.Fil
 // CredentialName derives the project name from.
 func projectRelaDir(t *testing.T, project string) string {
 	t.Helper()
-	dir := filepath.Join(t.TempDir(), project, ".rela")
+	return projectRelaDirUnder(t, t.TempDir(), project)
+}
+
+// projectRelaDirUnder builds <root>/<project>/.rela, so two projects can share
+// a basename under different roots.
+func projectRelaDirUnder(t *testing.T, root, project string) string {
+	t.Helper()
+	dir := filepath.Join(root, project, ".rela")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -365,6 +409,64 @@ func TestLoad_CredentialsAreProjectScoped(t *testing.T) {
 			t.Errorf("api_key = %q, want %q — projects saw each other's secrets",
 				sec["api_key"], tc.want)
 		}
+	}
+}
+
+func TestLoad_SameBasenameProjectsDoNotShareACredential(t *testing.T) {
+	captureWarnings(t)
+	// End-to-end form of TestCredentialName_DistinctProjectsSharingABasename:
+	// two tenants each with a project directory named "proj".
+	credDir := t.TempDir()
+	t.Setenv(credentialsDirEnv, credDir)
+
+	relaA := projectRelaDirUnder(t, t.TempDir(), "proj")
+	relaB := projectRelaDirUnder(t, t.TempDir(), "proj")
+
+	// Only tenant A has a credential; B must fall back to its own file rather
+	// than adopt A's secrets.
+	writeCredential(t, credDir, relaA, "api_key: tenant-a-secret\n", 0o400)
+	writeMode(t, relaB, "api_key: tenant-b-own-file\n", 0o600)
+
+	secA, err := Load(relaA, "s.lua")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if secA["api_key"] != "tenant-a-secret" {
+		t.Errorf("tenant A api_key = %q, want tenant-a-secret", secA["api_key"])
+	}
+
+	secB, err := Load(relaB, "s.lua")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if secB["api_key"] != "tenant-b-own-file" {
+		t.Errorf("tenant B api_key = %q, want tenant-b-own-file — it received another tenant's credential",
+			secB["api_key"])
+	}
+}
+
+func TestLoad_ConcurrentLoadsWarnOnce(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission bits are synthetic on Windows")
+	}
+	buf := captureWarnings(t)
+	dir := t.TempDir()
+	writeMode(t, dir, "api_key: sk-abc123\n", 0o644)
+
+	// Emitting exactly one warning is the whole reason warnedPaths is a
+	// sync.Map; parallel script executions are the realistic caller.
+	var wg sync.WaitGroup
+	for range 16 {
+		wg.Go(func() {
+			if _, err := Load(dir, "s.lua"); err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+	wg.Wait()
+
+	if n := strings.Count(buf.String(), "readable by other users"); n != 1 {
+		t.Errorf("warning count = %d, want 1 under concurrency\nlog: %s", n, buf.String())
 	}
 }
 
@@ -465,21 +567,98 @@ func TestLoad_InvalidYAMLInCredentialDoesNotFallBack(t *testing.T) {
 }
 
 func TestCredentialName(t *testing.T) {
+	sep := string(filepath.Separator)
+
+	t.Run("names the project and is stable", func(t *testing.T) {
+		dir := filepath.Join(sep, "srv", "acme", ".rela")
+		got := CredentialName(dir)
+		if !strings.HasPrefix(got, "rela-secrets-acme-") {
+			t.Errorf("CredentialName(%q) = %q, want a rela-secrets-acme- prefix", dir, got)
+		}
+		// The operator writes this into a unit file; it must not move between
+		// runs or a working deployment would break on restart.
+		if again := CredentialName(dir); again != got {
+			t.Errorf("not stable: %q then %q", got, again)
+		}
+	})
+
+	t.Run("trailing separator is the same project", func(t *testing.T) {
+		base := filepath.Join(sep, "srv", "acme", ".rela")
+		if CredentialName(base) != CredentialName(base+sep) {
+			t.Error("a trailing separator changed the credential name")
+		}
+	})
+
+	t.Run("symlinked path resolves to the same name as its target", func(t *testing.T) {
+		// A /srv/current -> /srv/releases/N deploy layout must not change the
+		// credential name on switchover, or the credential silently stops
+		// being found.
+		root := t.TempDir()
+		target := filepath.Join(root, "real", "acme", ".rela")
+		if err := os.MkdirAll(target, 0o700); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		link := filepath.Join(root, "link")
+		if err := os.Symlink(filepath.Join(root, "real"), link); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		viaLink := filepath.Join(link, "acme", ".rela")
+		if got, want := CredentialName(viaLink), CredentialName(target); got != want {
+			t.Errorf("via symlink %q != via target %q", got, want)
+		}
+	})
+
+	t.Run("relative path resolves to the same name as its absolute form", func(t *testing.T) {
+		// Otherwise the name would depend on the working directory.
+		root := t.TempDir()
+		abs := filepath.Join(root, "acme", ".rela")
+		if err := os.MkdirAll(abs, 0o700); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		t.Chdir(root)
+		if got, want := CredentialName(filepath.Join("acme", ".rela")), CredentialName(abs); got != want {
+			t.Errorf("relative %q != absolute %q", got, want)
+		}
+	})
+
 	for _, tc := range []struct {
 		name    string
 		relaDir string
-		want    string
 	}{
-		{"typical project", filepath.Join(string(filepath.Separator), "srv", "acme", ".rela"), "rela-secrets-acme"},
-		{"trailing separator", filepath.Join(string(filepath.Separator), "srv", "acme", ".rela") + string(filepath.Separator), "rela-secrets-acme"},
-		{"empty disables the source", "", ""},
-		{"relative bare .rela", ".rela", ""},
+		{"empty disables the source", ""},
+		{"filesystem root", filepath.Join(sep, ".rela")},
+		{"not a .rela directory", filepath.Join(sep, "srv", "acme")},
+		{"deep path that is not a project", filepath.Join(sep, "some", "deep", "path")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := CredentialName(tc.relaDir); got != tc.want {
-				t.Errorf("CredentialName(%q) = %q, want %q", tc.relaDir, got, tc.want)
+			if got := CredentialName(tc.relaDir); got != "" {
+				t.Errorf("CredentialName(%q) = %q, want \"\" (source disabled)", tc.relaDir, got)
 			}
 		})
+	}
+}
+
+// TestCredentialName_DistinctProjectsSharingABasename guards the cross-tenant
+// leak: /srv/a/proj and /srv/b/proj are different projects, and
+// "/srv/<tenant>/<project>" is the layout appbuild.SharedBase serves. A
+// basename-only name would give both the same credential, failing OPEN — one
+// tenant would receive the other's live secrets.
+func TestCredentialName_DistinctProjectsSharingABasename(t *testing.T) {
+	sep := string(filepath.Separator)
+	a := CredentialName(filepath.Join(sep, "srv", "tenant-a", "proj", ".rela"))
+	b := CredentialName(filepath.Join(sep, "srv", "tenant-b", "proj", ".rela"))
+
+	if a == "" || b == "" {
+		t.Fatalf("expected names for both projects, got %q and %q", a, b)
+	}
+	if a == b {
+		t.Fatalf("distinct projects collided on %q — one tenant would receive the other's secrets", a)
+	}
+	// Both should still be recognizable to the operator.
+	for _, got := range []string{a, b} {
+		if !strings.HasPrefix(got, "rela-secrets-proj-") {
+			t.Errorf("%q lost the readable project component", got)
+		}
 	}
 }
 

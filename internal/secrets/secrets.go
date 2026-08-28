@@ -33,6 +33,7 @@
 package secrets
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -41,6 +42,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"sync/atomic"
 
 	"gopkg.in/yaml.v3"
 )
@@ -48,22 +50,48 @@ import (
 // ConfigFile is the name of the secrets file inside .rela/.
 const ConfigFile = "secrets.yaml"
 
+// cacheDirName is the project cache directory holding the secrets file.
+//
+// Duplicated from project.CacheDir rather than imported: internal/secrets is a
+// leaf in .go-arch-lint.yml with no declared dependencies, and depending on
+// internal/project to read one constant would invert that.
+const cacheDirName = ".rela"
+
 // credentialsDirEnv is the environment variable systemd sets for a unit using
 // LoadCredential= / LoadCredentialEncrypted=. systemd owns the directory and
 // its modes.
 const credentialsDirEnv = "CREDENTIALS_DIRECTORY"
 
 // ErrNotFound indicates that no secrets source exists for the project.
-var ErrNotFound = errors.New("secrets: no .rela/secrets.yaml")
+var ErrNotFound = errors.New("secrets: no secrets source (no .rela/secrets.yaml, no systemd credential)")
 
-// warnedPaths records the secrets files already reported as over-permissive.
+// warnedPaths records the (file, mode) pairs already reported as
+// over-permissive, and warnedCount bounds it.
 //
-// Keyed by path rather than a single [sync.Once] because one process can serve
-// several projects (appbuild.SharedBase assembles one Services per store), and
-// a process-wide latch would silence every project after the first. Load runs
-// per script execution and twice per mail send, so without this the warning
-// would repeat on every document render.
-var warnedPaths sync.Map
+// Keyed per entry rather than a single [sync.Once] because one process can
+// serve several projects (appbuild.SharedBase assembles one Services per
+// store), and a process-wide latch would silence every project after the first.
+// Load runs per script execution and twice per mail send, so without this the
+// warning would repeat on every document render.
+//
+// The cap keeps this from growing without bound: entries are never evicted, and
+// the key set is "projects this process has served" — a cardinality the package
+// does not control. Past the cap the warning is simply dropped, which is
+// acceptable for an advisory diagnostic and preferable to unbounded retention.
+var (
+	warnedPaths sync.Map
+	warnedCount atomic.Int64
+)
+
+// maxWarnedPaths caps the warn-once cache. Far above any realistic project
+// count, so a normal deployment never reaches it.
+const maxWarnedPaths = 1024
+
+// warnKey identifies one (file, mode) pair already reported.
+type warnKey struct {
+	path string
+	perm os.FileMode
+}
 
 // Load reads the project's secrets and returns the resolved values for the
 // given script path. Global values are merged with per-script overrides
@@ -82,24 +110,66 @@ func Load(relaDir, scriptPath string) (map[string]string, error) {
 // CredentialName returns the systemd credential name that supplies secrets for
 // the project whose .rela directory is relaDir.
 //
-// The name is project-scoped ("rela-secrets-<project>") because
-// CREDENTIALS_DIRECTORY is process-global while secrets are per-project: a
-// single fixed name would hand one tenant's credential to every other project
-// in the same process. The project component is the name of the directory
-// CONTAINING .rela, which is what an operator sees as the project.
+// The name is "rela-secrets-<project>-<hash>", where <project> is the directory
+// CONTAINING .rela and <hash> is the first 4 bytes of the SHA-256 of that
+// directory's ABSOLUTE path.
 //
-// Returns "" when relaDir is empty, which disables the credentials source.
+// # Why both halves are needed
+//
+// CREDENTIALS_DIRECTORY is process-global while secrets are per-project, so a
+// single fixed name would hand one tenant's credential to every other project
+// in the same process. The project component alone does not fix that: two
+// tenants laid out as /srv/a/proj and /srv/b/proj share a basename, and
+// "/srv/<tenant>/<project>" is exactly the layout appbuild.SharedBase exists to
+// serve. A basename-only name would silently serve one tenant's live
+// credentials to the other, failing OPEN. The path hash restores uniqueness;
+// the readable project component is kept so an operator can still recognize
+// which unit-file line belongs to which project.
+//
+// Print the name with `rela secrets credential-name` rather than deriving it by
+// hand.
+//
+// # Rejected inputs
+//
+// Returns "" — disabling the credentials source — when relaDir is empty, is not
+// a <project>/.rela path, or names no project (a bare ".rela", a filesystem
+// root, a path that walks upward). A caller passing something else is a bug,
+// and minting a credential name for it would let an unrelated file in the
+// credentials directory be adopted on the strength of a path artifact.
 func CredentialName(relaDir string) string {
 	if relaDir == "" {
 		return ""
 	}
-	project := filepath.Base(filepath.Dir(filepath.Clean(relaDir)))
-	// Base can yield "." or a separator for degenerate inputs; those name no
-	// project, so there is nothing to scope a credential to.
-	if project == "." || project == string(filepath.Separator) {
+	// Relative paths must be resolved before hashing: "proj/.rela" and
+	// "/srv/a/proj/.rela" would otherwise hash differently per working
+	// directory, or collide with each other.
+	abs, err := filepath.Abs(filepath.Clean(relaDir))
+	if err != nil {
 		return ""
 	}
-	return "rela-secrets-" + project
+	// Resolve symlinks too. project.Discover only calls filepath.Abs, so the
+	// same project reached through a symlinked parent (a /srv/current ->
+	// /srv/releases/N deploy layout) would otherwise hash to a DIFFERENT name
+	// than the one the operator printed — the credential would silently stop
+	// being found after a switchover. Best-effort: a path that does not exist
+	// yet keeps the unresolved form rather than losing the credential entirely.
+	if resolved, resErr := filepath.EvalSymlinks(abs); resErr == nil {
+		abs = resolved
+	}
+	// The last segment must actually be the cache directory. Accepting any
+	// path would return a credential name for a project that does not exist.
+	if filepath.Base(abs) != cacheDirName {
+		return ""
+	}
+
+	parent := filepath.Dir(abs)
+	project := filepath.Base(parent)
+	if project == "." || project == ".." || project == string(filepath.Separator) {
+		return ""
+	}
+
+	sum := sha256.Sum256([]byte(parent))
+	return fmt.Sprintf("rela-secrets-%s-%x", project, sum[:4])
 }
 
 // rawConfig is the on-disk YAML structure. Top-level keys (except
@@ -114,7 +184,7 @@ type rawConfig struct {
 func readFile(relaDir string) (*rawConfig, error) {
 	path, fromCredentials := sourcePath(relaDir)
 	if path == "" {
-		return nil, fmt.Errorf("%w", ErrNotFound)
+		return nil, ErrNotFound
 	}
 
 	// systemd owns the modes inside its credentials directory (0400 already),
@@ -126,7 +196,7 @@ func readFile(relaDir string) (*rawConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("%w", ErrNotFound)
+			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
@@ -145,7 +215,10 @@ func readFile(relaDir string) (*rawConfig, error) {
 // project file is used. systemd sets CREDENTIALS_DIRECTORY for any unit loading
 // any credential, so its mere presence says nothing about rela.
 //
-// Returns "" when neither source exists.
+// The returned project-file path is NOT checked for existence — that is
+// os.ReadFile's job, which distinguishes "absent" from "unreadable" with a
+// better error than a bool could. Returns "" only when there is no project
+// directory and no credential, i.e. nothing to read at all.
 func sourcePath(relaDir string) (path string, fromCredentials bool) {
 	if dir := os.Getenv(credentialsDirEnv); dir != "" {
 		if name := CredentialName(relaDir); name != "" {
@@ -194,7 +267,18 @@ func warnIfPermissive(path string) {
 	if perm&0o077 == 0 {
 		return
 	}
-	if _, loaded := warnedPaths.LoadOrStore(path, struct{}{}); loaded {
+	// Key on path AND mode: a file fixed to 0600 and later regressed to 0666
+	// must warn again, or the log would still name the mode it had the first
+	// time. A mode that simply stays wrong stays quiet.
+	if _, loaded := warnedPaths.LoadOrStore(warnKey{path: path, perm: perm}, struct{}{}); loaded {
+		return
+	}
+	// Count AFTER the store so each distinct entry is counted once. Racing
+	// goroutines may overshoot the cap slightly; the bound is to stop unbounded
+	// growth, not to be exact.
+	if warnedCount.Add(1) > maxWarnedPaths {
+		warnedPaths.Delete(warnKey{path: path, perm: perm})
+		warnedCount.Add(-1)
 		return
 	}
 
@@ -213,6 +297,7 @@ func resetPermissionWarnings() {
 		warnedPaths.Delete(k)
 		return true
 	})
+	warnedCount.Store(0)
 }
 
 // resolve merges global secrets with per-script overrides.

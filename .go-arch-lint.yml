@@ -336,6 +336,12 @@ deps:
       - schema
       - script
       - search
+      # `rela secrets credential-name` only DERIVES the systemd credential name
+      # for the project — it reads no secret values. The name embeds a hash of
+      # the project path (so two same-named projects cannot share a credential),
+      # which makes it underivable by hand, so an operator needs a way to print
+      # it for their unit file.
+      - secrets
       - state
       - storage
       - store
