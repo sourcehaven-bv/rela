@@ -134,7 +134,7 @@ func (s *Server) handleReviewOrphansPrompt(
 	st := s.deps.Store
 	var resolved string
 	if entityType != "" {
-		resolved = s.resolveType(entityType)
+		resolved = s.types.resolveType(entityType)
 	}
 
 	type orphanSummary struct {

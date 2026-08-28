@@ -110,6 +110,7 @@ func gatedServer(t *testing.T) (*Server, context.Context) {
 	}
 
 	srv := &Server{deps: deps, logger: slog.New(slog.DiscardHandler)}
+	srv.types, srv.trace, srv.export = deps.handlers()
 	return srv, principal.With(ctx, principal.Principal{User: "alice", Tool: principal.ToolMCP})
 }
 
@@ -364,11 +365,11 @@ func TestACL_Trace_HiddenRootIsNotAnOracle(t *testing.T) {
 	t.Parallel()
 	s, ctx := gatedServer(t)
 
-	hidden, err := s.handleTraceFrom(ctx, makeToolRequest(map[string]any{"id": hiddenID}))
+	hidden, err := s.trace.handleTraceFrom(ctx, makeToolRequest(map[string]any{"id": hiddenID}))
 	if err != nil {
 		t.Fatalf("trace_from(hidden): %v", err)
 	}
-	absent, err := s.handleTraceFrom(ctx, makeToolRequest(map[string]any{"id": "NO-SUCH-ID"}))
+	absent, err := s.trace.handleTraceFrom(ctx, makeToolRequest(map[string]any{"id": "NO-SUCH-ID"}))
 	if err != nil {
 		t.Fatalf("trace_from(absent): %v", err)
 	}

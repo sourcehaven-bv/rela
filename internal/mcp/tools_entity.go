@@ -29,7 +29,7 @@ func (s *Server) handleListEntities(
 	st := s.deps.Store
 	q := store.EntityQuery{}
 	if entityType != "" {
-		q.Type = s.resolveType(entityType)
+		q.Type = s.types.resolveType(entityType)
 	}
 
 	entities := make([]*entity.Entity, 0)
@@ -111,7 +111,7 @@ func (s *Server) handleSearchEntities(
 
 	q := search.Query{Text: query, Limit: limit}
 	if entityType != "" {
-		q.Types = []string{s.resolveType(entityType)}
+		q.Types = []string{s.types.resolveType(entityType)}
 	}
 
 	st := s.deps.Store
@@ -151,7 +151,7 @@ func (s *Server) handleCreateEntity(
 	customID := args.GetString("id", "")
 
 	// Resolve type
-	resolvedType, _, resolveErr := s.resolveEntityType(typeName)
+	resolvedType, _, resolveErr := s.types.resolveEntityType(typeName)
 	if resolveErr != nil {
 		return errorResult(resolveErr.Error()), nil
 	}
@@ -160,7 +160,7 @@ func (s *Server) handleCreateEntity(
 	properties := extractProperties(request)
 
 	// Validate property names early for better error messages
-	if errResult := s.validatePropertyNames(resolvedType, properties); errResult != nil {
+	if errResult := s.types.validatePropertyNames(resolvedType, properties); errResult != nil {
 		return errResult, nil
 	}
 
@@ -216,7 +216,7 @@ func (s *Server) handleUpdateEntity(
 	}
 
 	// Validate property names early for better error messages
-	if errResult := s.validatePropertyNames(e.Type, properties); errResult != nil {
+	if errResult := s.types.validatePropertyNames(e.Type, properties); errResult != nil {
 		return errResult, nil
 	}
 
