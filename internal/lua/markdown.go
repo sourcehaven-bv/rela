@@ -75,9 +75,12 @@ const (
 // Lua state to allocate tables on, so hanging them off Runtime made a
 // god-object out of what is really a pure function group.
 type mdHelpers struct {
-	// ls is the same LState the bindings are registered on (Runtime.L);
-	// held so internal helpers can allocate tables without threading the
-	// state through every call.
+	// ls is Runtime.L, held ONLY to allocate tables. gopher-lua's NewTable
+	// ignores its receiver, so this is equivalent to the LState a binding
+	// is invoked with — which matters because coroutines (flow.go) invoke
+	// bindings on a *thread* LState, not Runtime.L. Receiver-sensitive
+	// calls (Push, RaiseError, CheckX) must use the ls parameter a binding
+	// receives, or they act on the wrong state inside a flow.
 	ls   *lua.LState
 	conv *mdASTConverter
 }
@@ -88,6 +91,9 @@ type mdHelpers struct {
 // goldmark nodes and never touches Lua stack arguments, while mdHelpers
 // owns the bindings and the Lua-table-to-Lua-table transforms.
 type mdASTConverter struct {
+	// ls is Runtime.L, held ONLY to allocate tables — same constraint as
+	// the [mdHelpers] ls field: NewTable ignores its receiver, anything
+	// receiver-sensitive must take the invoking LState as a parameter.
 	ls *lua.LState
 }
 
@@ -100,8 +106,11 @@ type mdEntityRefs struct {
 	// reader is the ACL-gated visible reader. Nil: accepted — the binding
 	// raises a Lua error at call time, matching every other read binding.
 	reader EntityReader
-	// ctx is [Runtime.callerCtx]: a closure, not a captured context, so a
-	// timeout applied to the runtime after registration still propagates.
+	// ctx is [Runtime.callerCtx]: a closure, not a captured context, so
+	// the parent set by WithContext is read at CALL time. Registration
+	// currently runs after the option loop, but the closure keeps this
+	// correct if that order ever changes. (The execution timeout reaches
+	// Lua via L.SetContext, not through here.)
 	ctx func() context.Context
 }
 
@@ -808,8 +817,8 @@ func (c *mdASTConverter) appendInlines(out *lua.LTable, n ast.Node, source []byt
 		return idx
 	case *ast.CodeSpan:
 		var sb strings.Builder
-		for c := n.FirstChild(); c != nil; c = c.NextSibling() {
-			collectRawText(&sb, c, source)
+		for child := n.FirstChild(); child != nil; child = child.NextSibling() {
+			collectRawText(&sb, child, source)
 		}
 		out.RawSetInt(idx, c.makeLeafInline(inlineTypeCodeSpan, sb.String()))
 		// Note: the original fence width is not preserved on the AST.
@@ -1250,8 +1259,8 @@ func (c *mdASTConverter) extractListItems(n ast.Node, source []byte) *lua.LTable
 
 		// Count and classify the item's block children.
 		var blocks []ast.Node
-		for c := child.FirstChild(); c != nil; c = c.NextSibling() {
-			blocks = append(blocks, c)
+		for blk := child.FirstChild(); blk != nil; blk = blk.NextSibling() {
+			blocks = append(blocks, blk)
 		}
 
 		switch {
