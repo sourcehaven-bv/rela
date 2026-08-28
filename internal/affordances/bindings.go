@@ -97,6 +97,9 @@ func (bc *bindingContext) newBindings(meta *metamodel.Metamodel) (*predicate.Bin
 	b := predicate.NewBindings()
 
 	if err := b.SetVar("entity", bc.entityRecord(meta)); err != nil {
+		// coverage-ignore: defensive: SetVar only errors on empty name / nil value; "entity" is a non-empty constant
+		// and entityRecord always
+		// returns a non-nil predicate.Record
 		return nil, err
 	}
 	// See bindingContext.identity: an unidentified caller binds an EMPTY
@@ -110,6 +113,9 @@ func (bc *bindingContext) newBindings(meta *metamodel.Metamodel) (*predicate.Bin
 		"id":   predicate.NewString(identity),
 		"tool": predicate.NewString(bc.principal.Tool),
 	})); err != nil {
+		// coverage-ignore: defensive: "current_user" is a non-empty constant and NewRecord always yields a non-nil
+		// value, so SetVar cannot
+		// error here
 		return nil, err
 	}
 
@@ -125,6 +131,9 @@ func (bc *bindingContext) newBindings(meta *metamodel.Metamodel) (*predicate.Bin
 	}
 	for _, s := range setters {
 		if err := b.SetFunc(s.name, s.fn); err != nil {
+			// coverage-ignore: defensive: SetFunc only errors on empty name / nil impl; every setter name is a non-
+			// empty constant and each fn is
+			// a non-nil predicate.FuncFunc
 			return nil, err
 		}
 	}

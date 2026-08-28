@@ -101,7 +101,8 @@ func (h *cascadeHost) CreateEntity(
 // re-check rather than a self-collision: the row is already persisted, so it
 // would otherwise match itself.
 func (h *cascadeHost) WriteEntity(ctx context.Context, e *entity.Entity) error {
-	if e == nil {
+	if e == nil { // coverage-ignore: defensive: Runner only calls WriteEntity with an entity it created earlier in the
+		// same cascade; never nil
 		return nil
 	}
 	stored, err := h.deps.Store.GetEntity(ctx, e.ID)
@@ -160,7 +161,8 @@ func (h *cascadeHost) GetEntity(ctx context.Context, id string) (*entity.Entity,
 // BUG-ZWTDH9); no audit record is emitted for the no-op since nothing
 // was written.
 func (h *cascadeHost) WriteRelation(ctx context.Context, r *entity.Relation) error {
-	if r == nil {
+	if r == nil { // coverage-ignore: defensive: Runner only calls WriteRelation with freshly built
+		// RelationsToCreate/trigger relations; never nil
 		return nil
 	}
 	if _, err := h.deps.Store.CreateRelation(ctx, r.From, r.Type, r.To, &store.RelationData{
@@ -296,7 +298,8 @@ func relationSubject(r *entity.Relation) *audit.Subject {
 func (h *cascadeHost) recordCascade(
 	ctx context.Context, op string, subject *audit.Subject, summary string,
 ) {
-	if subject == nil {
+	if subject == nil { // coverage-ignore: defensive: all callers pass entitySubject()/relationSubject() results, which
+		// are never nil
 		return
 	}
 	if audit.TriggeredByFrom(ctx) == "" {

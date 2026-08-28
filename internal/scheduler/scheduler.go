@@ -129,7 +129,10 @@ func StartBackground(
 	go func() {
 		logger.Info("background scheduler starting", "tasks", len(cfg.Tasks))
 		if runErr := s.Run(ctx); runErr != nil {
+			// coverage-ignore-start: defensive: Scheduler.Run only ever returns nil (on ctx.Done or empty config), so
+			// this error branch is unreachable
 			logger.Error("scheduler stopped with error", "error", runErr)
+			// coverage-ignore-end
 		}
 	}()
 }
@@ -572,8 +575,11 @@ func (s *Scheduler) pruneOrphanedState() {
 func (s *Scheduler) saveState(ctx context.Context) {
 	data, err := s.state.marshal()
 	if err != nil {
+		// coverage-ignore-start: defensive: json.MarshalIndent of State{map[string]time.Time} cannot fail — no
+		// unsupported types or cycles
 		s.logger.Error("failed to marshal scheduler state", "error", err)
 		return
+		// coverage-ignore-end
 	}
 	if err := s.ws.State().Put(ctx, stateFile, data); err != nil {
 		s.logger.Error("failed to save scheduler state", "error", err)

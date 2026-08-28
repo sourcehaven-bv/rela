@@ -301,12 +301,20 @@ func (m *MemFS) ReadDir(path string) ([]os.DirEntry, error) {
 		if strings.Contains(rest, "/") {
 			continue // Not a direct child.
 		}
+		// coverage-ignore-start: defensive: a file path can never equal the ReadDir prefix (files never end in "/" and
+		// root "/" is a dir), so rest
+		// is never empty here
 		if rest == "" {
 			continue
 		}
+		// coverage-ignore-end
+		// coverage-ignore-start: defensive: seen is populated only within this same files loop; two distinct file keys
+		// under one prefix cannot share
+		// a tail, so this is never true
 		if seen[rest] {
 			continue
 		}
+		// coverage-ignore-end
 		seen[rest] = true
 		entries = append(entries, &memDirEntry{
 			name:  rest,
@@ -371,10 +379,14 @@ func (m *MemFS) Walk(root string, fn fs.WalkDirFunc) error {
 	for i < len(paths) {
 		p := paths[i]
 		info, _ := m.statLocked(p)
+		// coverage-ignore-start: defensive: paths come from collectPaths under the same held RLock, so every p still
+		// exists and statLocked never
+		// returns nil here
 		if info == nil {
 			i++
 			continue
 		}
+		// coverage-ignore-end
 		entry := &memDirEntry{name: info.Name(), isDir: info.IsDir(), info: info}
 		err := fn(p, entry, nil)
 		if err != nil {
@@ -493,7 +505,9 @@ func (m *MemFS) statLocked(path string) (os.FileInfo, error) {
 			isDir:   true,
 		}, nil
 	}
-	return nil, &os.PathError{Op: "stat", Path: path, Err: os.ErrNotExist}
+	return nil, &os.PathError{Op: "stat", Path: path, Err: os.ErrNotExist} // coverage-ignore: defensive: statLocked's
+	// only caller is Walk on collectPaths results under a held RLock, so path always exists and this error is never
+	// returned
 }
 
 // cleanPath normalizes a path using filepath.Clean and ensures it's absolute-style.

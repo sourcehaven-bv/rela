@@ -405,9 +405,13 @@ func (s *FSStore) loadPropertyAttachments(entityID, prop string) {
 			continue
 		}
 		info, err := fileEntry.Info()
+		// coverage-ignore-start: defensive: DirEntry.Info() never fails for an entry just returned by ReadDir on
+		// MemFS/OsFS; not injectable via
+		// ErrorFS (Info is on the DirEntry, not the FS)
 		if err != nil {
 			continue
 		}
+		// coverage-ignore-end
 		s.attachments[attachmentKey(entityID, prop, name)] = attachMeta{
 			entityID: entityID,
 			property: prop,
@@ -492,9 +496,12 @@ func (s *FSStore) notifyRenamed(oldID string, renamed *entity.Entity) {
 // process shutdown.
 func (s *FSStore) cleanupTempFiles() {
 	for _, dirKey := range []string{s.layout.entitiesKey, s.layout.relationsKey} {
+		// coverage-ignore-start: unreachable: cleanupTempFiles runs only from New, which rejects empty
+		// EntitiesKey/RelationsKey before this loop
 		if dirKey == "" {
 			continue
 		}
+		// coverage-ignore-end
 		var toRemove []string
 		if err := s.rooted.Walk(dirKey, func(p string, d os.DirEntry, err error) error {
 			if err != nil || d.IsDir() {

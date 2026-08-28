@@ -28,7 +28,7 @@ func (c *GraphCmd) Run(ctx context.Context, svc *readServices) error {
 
 	var entities []*entity.Entity
 	for e, err := range st.ListEntities(ctx, store.EntityQuery{}) {
-		if err != nil {
+		if err != nil { // coverage-ignore: defensive: memstore.ListEntities iterator never yields a non-nil error
 			return err
 		}
 		entities = append(entities, e)
@@ -36,7 +36,7 @@ func (c *GraphCmd) Run(ctx context.Context, svc *readServices) error {
 
 	var edges []*entity.Relation
 	for r, err := range st.ListRelations(ctx, store.RelationQuery{}) {
-		if err != nil {
+		if err != nil { // coverage-ignore: defensive: memstore.ListRelations iterator never yields a non-nil error
 			return err
 		}
 		edges = append(edges, r)
@@ -183,6 +183,8 @@ func escapeLabel(s string) string {
 
 // coverage-ignore-func: requires external graphviz installation
 func renderWithGraphviz(ctx context.Context, dot, outputPath, format string) error {
+	// coverage-ignore-start: external-tool: shells out to the Graphviz `dot` binary, not available in the test
+	// environment
 	_, err := exec.LookPath("dot")
 	if err != nil {
 		return errors.New("graphviz 'dot' command not found; install Graphviz or use -f dot")
@@ -195,4 +197,5 @@ func renderWithGraphviz(ctx context.Context, dot, outputPath, format string) err
 	}
 	out.WriteSuccess("Rendered graph to %s", outputPath)
 	return nil
+	// coverage-ignore-end
 }

@@ -563,6 +563,9 @@ func tryAdvisoryLock(ctx context.Context, conn *pgxpool.Conn, key int64) (bool, 
 	err := conn.QueryRow(ctx,
 		`SELECT pg_try_advisory_lock($1::int, hashtext(current_schema()))`, key).Scan(&ok)
 	if errors.Is(err, pgx.ErrNoRows) {
+		// coverage-ignore: defensive: SELECT pg_try_advisory_lock always returns exactly one row, so QueryRow.Scan
+		// never yields pgx.ErrNoRows
+		// here.
 		return false, nil
 	}
 	return ok, err

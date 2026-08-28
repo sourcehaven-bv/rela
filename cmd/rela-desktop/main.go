@@ -305,6 +305,9 @@ func (d *Desktop) reloadWindow() {
 
 // OpenProject opens a native directory picker and loads the selected project.
 // It returns an error string (empty on success) so the JS frontend can react.
+// coverage-ignore-start: os-fs-event: runtime.OpenDirectoryDialog needs the live Wails runtime and a native OS
+// directory picker; unreachable
+// in unit tests
 func (d *Desktop) OpenProject() string {
 	dir, err := d.pickDirectory("Open Rela Project", "")
 	if err != nil {
@@ -315,6 +318,8 @@ func (d *Desktop) OpenProject() string {
 	}
 	return d.LoadProject(projectRootOf(dir))
 }
+
+// coverage-ignore-end
 
 // OpenRecentProject loads a project from the recent projects list.
 // It returns an error string (empty on success) so the JS frontend can react.
@@ -582,6 +587,9 @@ func (d *Desktop) GetDefaultCloneDir() string {
 }
 
 // PickCloneDirectory opens a directory picker and returns the selected path.
+// coverage-ignore-start: os-fs-event: runtime.OpenDirectoryDialog needs the live Wails runtime and a native OS
+// directory picker; unreachable
+// in unit tests
 func (d *Desktop) PickCloneDirectory() string {
 	dir, err := d.pickDirectory("Select Clone Destination", d.GetDefaultCloneDir())
 	if err != nil || dir == "" {
@@ -592,6 +600,8 @@ func (d *Desktop) PickCloneDirectory() string {
 	_ = d.prefs.Save()
 	return dir
 }
+
+// coverage-ignore-end
 
 // CloneProject clones a git repository and scans for rela projects.
 // Returns a JSON response with status and any discovered projects.
@@ -618,6 +628,9 @@ func (d *Desktop) CloneProject(repoURL, baseDir string) map[string]any {
 
 	// repoName is the URL's last path segment, so a hostile URL can make it
 	// ".." — BaseDir makes Clone reject a targetDir that escapes baseDir.
+	// coverage-ignore-start: os-fs-event: git.Clone (go-git PlainClone) performs real network I/O against a remote repo
+	// with no injectable
+	// transport here; the success path and downstream project handling are only reachable after an actual clone
 	err := git.Clone(git.CloneOptions{
 		URL:     repoURL,
 		Path:    targetDir,
@@ -670,6 +683,7 @@ func (d *Desktop) CloneProject(repoURL, baseDir string) map[string]any {
 		"projects":  relPaths,
 		"clone_dir": targetDir,
 	}
+	// coverage-ignore-end
 }
 
 // OpenClonedProject opens a specific project from a recently cloned repository.
@@ -779,6 +793,9 @@ func (d *Desktop) StartGitHubAuth() map[string]string {
 		return map[string]string{"error": "GitHub OAuth not configured. Set RELA_GITHUB_CLIENT_ID environment variable."}
 	}
 
+	// coverage-ignore-start: os-fs-event: RequestDeviceCode makes a live HTTPS request to the hardcoded
+	// github.com/login/device/code endpoint (no
+	// injectable base URL); unreachable without real network
 	oauth := git.NewOAuth(git.OAuthConfig{ClientID: clientID})
 	resp, err := oauth.RequestDeviceCode(context.Background())
 	if err != nil {
@@ -799,6 +816,7 @@ func (d *Desktop) StartGitHubAuth() map[string]string {
 		"user_code":        resp.UserCode,
 		"verification_url": resp.VerificationURI,
 	}
+	// coverage-ignore-end
 }
 
 // CompleteGitHubAuth waits for the user to authorize and stores the token.
@@ -812,6 +830,9 @@ func (d *Desktop) CompleteGitHubAuth() string {
 		return "No auth in progress. Call StartGitHubAuth first."
 	}
 
+	// coverage-ignore-start: os-fs-event: WaitForAuthorization polls the hardcoded github.com/login/oauth/access_token
+	// endpoint (no injectable
+	// base URL) until the user authorizes; unreachable without real network and human interaction
 	clientID := GitHubClientID
 	if clientID == "" {
 		clientID = os.Getenv("RELA_GITHUB_CLIENT_ID")
@@ -845,6 +866,7 @@ func (d *Desktop) CompleteGitHubAuth() string {
 	d.mu.Unlock()
 
 	return ""
+	// coverage-ignore-end
 }
 
 // HasGitHubToken returns true if a GitHub token is stored.
@@ -1059,12 +1081,19 @@ func (d *Desktop) refreshMenu() {
 	if d.wails == nil || !d.menuReady.Load() {
 		return
 	}
+	// coverage-ignore-start: os-fs-event: runtime.MenuSet/UpdateApplicationMenu need the live Wails runtime; only
+	// reachable once d.ctx is a real
+	// Wails context
 	m := d.buildAppMenu()
 	d.wails.Menu.Set(m)
 	m.Update()
+	// coverage-ignore-end
 }
 
 // coverage-ignore-func: main function - entry point
+// coverage-ignore-start: main-or-wiring: process entry point — flag parsing, DI wiring, and wails.Run event loop;
+// exercised only at real
+// process start
 func main() {
 	projectDir := flag.String("project", ".", "Path to the rela project directory")
 	verbose := flag.Bool("verbose", false, "Verbose (debug) logging")
@@ -1166,6 +1195,8 @@ func main() {
 		os.Exit(1)
 	}
 }
+
+// coverage-ignore-end
 
 // configureLogging sets the default slog logger based on verbose/quiet flags.
 func configureLogging(verbose, quiet bool) {
@@ -1326,9 +1357,12 @@ func generateDataEntryConfig(appName string, meta *metamodel.Metamodel) string {
 
 	out, err := yaml.Marshal(&root)
 	if err != nil {
+		// coverage-ignore-start: defensive: yaml.Marshal cannot fail on this locally-built node graph of
+		// scalar/mapping/sequence nodes
 		// yaml.Marshal on a manually-built node graph shouldn't fail; surface
 		// as a comment so the generated file is still valid YAML.
 		return fmt.Sprintf("# failed to generate config: %v\n", err)
+		// coverage-ignore-end
 	}
 	return string(out)
 }

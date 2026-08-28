@@ -96,9 +96,13 @@ func (p *Preferences) Save() error {
 	}
 
 	data, err := json.MarshalIndent(p, "", "  ")
+	// coverage-ignore-start: defensive: Preferences has only string/slice/time.Time fields, json.MarshalIndent cannot
+	// fail for any valid
+	// *Preferences value
 	if err != nil {
 		return err
 	}
+	// coverage-ignore-end
 	return os.WriteFile(path, data, 0o644)
 }
 

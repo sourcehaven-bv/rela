@@ -42,10 +42,13 @@ const principalUserMaxLen = 256
 // to call this.
 func CheckEmbeddedSPA() error {
 	spaFS, err := fs.Sub(staticFiles, "static/v2")
+	// coverage-ignore-start: defensive: fs.Sub on the compile-time embed.FS with the literal "static/v2" path cannot
+	// fail
 	if err != nil {
 		return fmt.Errorf("mount embedded SPA filesystem (static/v2): %w", err)
 	}
 	if _, err := fs.Stat(spaFS, spaIndexFile); err != nil {
+		// coverage-ignore-end
 		return fmt.Errorf("embedded SPA is missing index.html (run `just build-frontend`): %w", err)
 	}
 	return nil
@@ -63,18 +66,24 @@ func (a *App) NewRouter() http.Handler {
 	// /static/v2/*, but the SPA's built index.html references assets as
 	// /assets/*, served via the catch-all below.
 	staticFS, err := fs.Sub(staticFiles, "static")
+	// coverage-ignore-start: panic-invariant: fs.Sub on the compile-time embed.FS with the literal "static" path cannot
+	// fail
 	if err != nil {
 		panic("failed to mount embedded static filesystem (static): " + err.Error())
 	}
+	// coverage-ignore-end
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 
 	// Vue SPA served at root. The build output dir is kept as `static/v2` to
 	// avoid churn in frontend/vite.config.ts; see TKT-MNOO. Presence of
 	// index.html is verified at startup by CheckEmbeddedSPA.
 	spaFS, err := fs.Sub(staticFiles, "static/v2")
+	// coverage-ignore-start: panic-invariant: fs.Sub on the compile-time embed.FS with the literal "static/v2" path
+	// cannot fail
 	if err != nil {
 		panic("failed to mount embedded SPA filesystem (static/v2): " + err.Error())
 	}
+	// coverage-ignore-end
 
 	// SSE endpoints — excluded from reload-lock (long-lived connection)
 	mux.HandleFunc("/api/events", a.handleSSE)
@@ -398,6 +407,8 @@ func attachACLRequest(next http.Handler, d *acl.Declarative, jwtVerified bool) h
 				return
 			}
 			gate, gerr := newACLReadGate(existing)
+			// coverage-ignore-start: defensive: newACLReadGate only errors on a nil Request, but existing is non-nil in
+			// this branch
 			if gerr != nil {
 				slog.Warn("acl: attachACLRequest: newACLReadGate failed (existing)",
 					"err", gerr, "path", r.URL.Path)
@@ -405,6 +416,7 @@ func attachACLRequest(next http.Handler, d *acl.Declarative, jwtVerified bool) h
 					"acl_internal", "ACL gate construction failed", "check server logs")
 				return
 			}
+			// coverage-ignore-end
 			ctx = withReadGate(ctx, gate)
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
@@ -440,6 +452,9 @@ func attachACLRequest(next http.Handler, d *acl.Declarative, jwtVerified bool) h
 			return
 		}
 		gate, gerr := newACLReadGate(req)
+		// coverage-ignore-start: defensive: ForPrincipal returned non-nil err above on any failure mode, so req is non-
+		// nil and newACLReadGate cannot
+		// error
 		if gerr != nil {
 			// Unreachable: ForPrincipal returned non-nil err above on
 			// any failure mode; req here is non-nil. Defense in depth
@@ -451,6 +466,7 @@ func attachACLRequest(next http.Handler, d *acl.Declarative, jwtVerified bool) h
 				"acl_internal", "ACL gate construction failed", "check server logs")
 			return
 		}
+		// coverage-ignore-end
 		ctx = acl.WithRequest(ctx, req)
 		ctx = withReadGate(ctx, gate)
 		next.ServeHTTP(w, r.WithContext(ctx))

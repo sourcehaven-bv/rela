@@ -121,7 +121,8 @@ func (s Schedule) IsDue(lastRun, now time.Time) bool {
 	case intervalKind:
 		return now.Sub(lastRun) >= s.interval
 	}
-	return false
+	return false // coverage-ignore: unreachable-default: switch is exhaustive over the three scheduleKind constants; no
+	// valid Schedule has another kind
 }
 
 // mostRecentWeekday returns midnight (local time) of the most recent
@@ -159,7 +160,8 @@ func (s Schedule) String() string {
 	case intervalKind:
 		return s.interval.String()
 	}
-	return "unknown"
+	return "unknown" // coverage-ignore: unreachable-default: switch is exhaustive over the three scheduleKind
+	// constants; no valid Schedule has another kind
 }
 
 // Occurrence returns the stable local-date identity for a calendar schedule.

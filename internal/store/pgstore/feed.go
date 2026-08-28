@@ -66,9 +66,13 @@ const payloadSep = "\x1f"
 func newOriginID() string {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
+		// coverage-ignore-start: defensive: crypto/rand.Read cannot be induced to fail in a normal test; the fallback
+		// is unreachable.
+		//
 		// crypto/rand failure is fatal-grade; fall back to a process-unique-ish
 		// constant so self-echo filtering still mostly works. Practically never hit.
 		return "origin-fallback"
+		// coverage-ignore-end
 	}
 	return hex.EncodeToString(b[:])
 }
@@ -196,7 +200,8 @@ func feedKindOp(op store.EventOp) (kind, code string) {
 	case store.EventRelationDeleted:
 		return "r", "d"
 	default:
-		return "?", "?"
+		return "?", "?" // coverage-ignore: unreachable-default: notifyPayload only calls feedKindOp with the six valid
+		// store.EventOp values; no other op reaches this switch.
 	}
 }
 

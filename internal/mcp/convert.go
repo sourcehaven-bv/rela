@@ -224,7 +224,8 @@ func sortStoreRelations(relations []*entity.Relation) {
 
 func marshalJSON(v any) (string, error) {
 	data, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
+	if err != nil { // coverage-ignore: defensive: every caller passes entity/relation DTOs and YAML-derived property
+		// maps (no chan/func/cycle); json.MarshalIndent cannot fail.
 		return "", fmt.Errorf("failed to marshal JSON: %w", err)
 	}
 	return string(data), nil

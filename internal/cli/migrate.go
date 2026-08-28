@@ -68,7 +68,8 @@ func runMigrateCheck(startDir string) error {
 		if len(detections) > 0 || schemaName.RenamePending {
 			fmt.Println("\nRun 'rela migrate' to apply these migrations.")
 		}
-		os.Exit(1)
+		os.Exit(1) // coverage-ignore: os-fs-event: os.Exit terminates the process; cannot be exercised from an in-
+		// process unit test
 	}
 
 	fmt.Println("No migrations needed.")

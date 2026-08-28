@@ -60,7 +60,8 @@ func (h schemaResourceHandler) handleReadMetamodel(
 	}
 
 	text, err := marshalJSON(result)
-	if err != nil {
+	if err != nil { // coverage-ignore: defensive: result holds metamodel version/namespace/entities/relations (JSON-
+		// tagged types); json.Marshal cannot fail.
 		return nil, fmt.Errorf("failed to marshal metamodel: %w", err)
 	}
 

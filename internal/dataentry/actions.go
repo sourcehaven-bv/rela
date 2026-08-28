@@ -171,9 +171,13 @@ func (h *writeHandler) handleV1Action(w http.ResponseWriter, r *http.Request) {
 // newCorrelationID returns a short random hex string for log tracing.
 func newCorrelationID() string {
 	b := make([]byte, 6)
+	// coverage-ignore-start: defensive: crypto/rand.Read never returns an error on supported platforms, so the
+	// timestamp fallback is unreachable
+	// in tests
 	if _, err := rand.Read(b); err != nil {
 		// Fallback to a timestamp if rand fails (extremely unlikely)
 		return "ts" + time.Now().Format("150405.000")
 	}
+	// coverage-ignore-end
 	return hex.EncodeToString(b)
 }

@@ -341,10 +341,14 @@ func ResolvePalette(project, user *PaletteConfig) *ResolvedPalette {
 	// Defensive: a zero-value DarkMode (e.g. from a JSON `null`
 	// payload) would reach here without Explicit set. Treat that as
 	// disabled rather than panicking on a nil dereference.
+	// coverage-ignore-start: defensive: darkMode is only reassigned when Disabled||Explicit!=nil; a Disabled one
+	// returns above, so reaching here
+	// always has Explicit set — a zero-value DarkMode keeps the default (Explicit set)
 	if darkMode.Explicit == nil {
 		result.DarkDisabled = true
 		return result
 	}
+	// coverage-ignore-end
 
 	// Explicit dark palette: empty fields inherit from light so that
 	// partial overrides compose with the user's chosen light theme.

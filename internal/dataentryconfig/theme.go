@@ -13,6 +13,9 @@ import (
 // turns a runtime-fatal regression into a startup error.
 func init() {
 	if err := checkManifestTagsUnique(); err != nil {
+		// coverage-ignore: panic-invariant: startup assertion — the fixed ThemeManifest type has no colliding yaml
+		// keys, so
+		// checkManifestTagsUnique never returns an error
 		panic("dataentryconfig: theme manifest tag collision: " + err.Error())
 	}
 }
@@ -32,17 +35,26 @@ func checkManifestTagsUnique() error {
 				}
 			}
 			if inline {
+				// coverage-ignore-start: defensive: recursive visit over the fixed ThemeManifest type never finds a
+				// duplicate, so this err is always nil
 				if err := visit(f.Type, path+"."+f.Name); err != nil {
 					return err
 				}
+				// coverage-ignore-end
 				continue
 			}
+			// coverage-ignore: defensive: every visited ThemeManifest/PaletteConfig field has a non-empty, non-"-" yaml
+			// tag, so this continue is
+			// unreachable for the fixed type
 			if name == "" || name == "-" {
 				continue
 			}
+			// coverage-ignore-start: defensive: the fixed ThemeManifest type has no colliding yaml keys, so the dup
+			// branch never fires
 			if prev, dup := seen[name]; dup {
 				return fmt.Errorf("yaml key %q appears in both %s and %s%s", name, prev, path, "."+f.Name)
 			}
+			// coverage-ignore-end
 			seen[name] = path + "." + f.Name
 		}
 		return nil

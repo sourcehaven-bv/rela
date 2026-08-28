@@ -117,9 +117,13 @@ func compileMachine(typeName string, ct metamodel.CustomType) (machine *Machine,
 	}
 
 	env, err := buildEnv(ct)
+	// coverage-ignore-start: defensive: buildEnv declares fixed non-empty names and valid non-nil types on a fresh env,
+	// so it never returns an
+	// error here
 	if err != nil {
 		problems = append(problems, fmt.Sprintf("type %q: %v", typeName, err))
 	}
+	// coverage-ignore-end
 
 	edges := map[transitionKey]edge{}
 	for i, tr := range ct.Transitions {

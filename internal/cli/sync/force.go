@@ -103,6 +103,9 @@ func (e *Engine) remoteHash(ctx context.Context, kind Kind, key string) (string,
 		return fe.Hash, nil
 	default:
 		from, relType, to, ok := splitRelationKey(key)
+		// coverage-ignore-start: defensive invariant: remoteHash is called with rec.Kind/key from a local snapshot
+		// where a relation key is built by
+		// RelationKey (exactly 3 slash-free segments), so splitRelationKey always returns ok here
 		if !ok {
 			return "", fmt.Errorf("internal: malformed relation key %q", key)
 		}
@@ -111,6 +114,7 @@ func (e *Engine) remoteHash(ctx context.Context, kind Kind, key string) (string,
 			return "", err
 		}
 		fr, err := e.client.GetRelation(ctx, fromPlural, from, relType, to)
+		// coverage-ignore-end
 		if err != nil {
 			if isNotFound(err) {
 				return "", nil

@@ -42,8 +42,11 @@ func (r *ValidateResult) HasErrors() bool {
 // without loading the full graph. Use this for the `rela validate` command.
 // If startDir is empty, it uses the current working directory.
 func Validate(startDir string) (*ValidateResult, error) {
+	// coverage-ignore-start: main-or-wiring: constructs the real OS filesystem and delegates to ValidateWithFS, which
+	// is the tested seam
 	fs := storage.NewSafeFS(storage.NewOsFS())
 	return ValidateWithFS(startDir, fs)
+	// coverage-ignore-end
 }
 
 // ValidateWithFS validates using the provided filesystem.

@@ -25,14 +25,14 @@ func (c *ShowCmd) Run(ctx context.Context, svc *readServices) error {
 	var incoming, outgoing []*entity.Relation
 	inQ := store.RelationQuery{EntityID: c.ID, Direction: store.DirectionIncoming}
 	for r, err := range st.ListRelations(ctx, inQ) {
-		if err != nil {
+		if err != nil { // coverage-ignore: defensive: memstore.ListRelations iterator never yields a non-nil error
 			break
 		}
 		incoming = append(incoming, r)
 	}
 	outQ := store.RelationQuery{EntityID: c.ID, Direction: store.DirectionOutgoing}
 	for r, err := range st.ListRelations(ctx, outQ) {
-		if err != nil {
+		if err != nil { // coverage-ignore: defensive: memstore.ListRelations iterator never yields a non-nil error
 			break
 		}
 		outgoing = append(outgoing, r)

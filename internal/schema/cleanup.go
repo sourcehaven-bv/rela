@@ -219,9 +219,13 @@ func applyMetamodelChanges(path string, changes []Change, dryRun bool) error {
 	}
 
 	root := migration.GetDocumentRoot(&doc)
+	// coverage-ignore-start: defensive: GetDocumentRoot(&doc) never returns nil for a non-nil *yaml.Node (it only nils
+	// on a nil doc), and &doc is
+	// always non-nil here
 	if root == nil {
 		return errors.New("failed to get document root")
 	}
+	// coverage-ignore-end
 
 	// Apply each change
 	for _, change := range changes {
@@ -250,9 +254,13 @@ func applyMetamodelChanges(path string, changes []Change, dryRun bool) error {
 
 	// Write back
 	out, err := yaml.Marshal(&doc)
+	// coverage-ignore-start: defensive: yaml.Marshal of a yaml.Node produced by a successful yaml.Unmarshal cannot
+	// fail; no test input reaches
+	// this error
 	if err != nil {
 		return err
 	}
+	// coverage-ignore-end
 
 	return os.WriteFile(path, out, 0o644)
 }
@@ -275,9 +283,13 @@ func applyDataEntryChanges(path string, changes []Change, dryRun bool) error {
 	}
 
 	root := migration.GetDocumentRoot(&doc)
+	// coverage-ignore-start: defensive: GetDocumentRoot(&doc) never returns nil for a non-nil *yaml.Node (it only nils
+	// on a nil doc), and &doc is
+	// always non-nil here
 	if root == nil {
 		return errors.New("failed to get document root")
 	}
+	// coverage-ignore-end
 
 	for _, change := range changes {
 		switch change.Action {
@@ -314,9 +326,13 @@ func applyDataEntryChanges(path string, changes []Change, dryRun bool) error {
 	}
 
 	out, err := yaml.Marshal(&doc)
+	// coverage-ignore-start: defensive: yaml.Marshal of a yaml.Node produced by a successful yaml.Unmarshal cannot
+	// fail; no test input reaches
+	// this error
 	if err != nil {
 		return err
 	}
+	// coverage-ignore-end
 
 	return os.WriteFile(path, out, 0o644)
 }

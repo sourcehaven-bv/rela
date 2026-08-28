@@ -22,8 +22,11 @@ type InitResult struct {
 // It creates the directory structure, writes a default metamodel, and
 // optionally updates .gitignore.
 func Initialize(targetDir string) (*InitResult, error) {
+	// coverage-ignore-start: main-or-wiring: constructs the real OS filesystem and delegates to InitializeWithFS, which
+	// is the tested seam
 	fs := storage.NewSafeFS(storage.NewOsFS())
 	return InitializeWithFS(targetDir, fs)
+	// coverage-ignore-end
 }
 
 // InitializeWithFS creates a new rela project using the provided filesystem.

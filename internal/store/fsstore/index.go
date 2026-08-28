@@ -83,9 +83,12 @@ func (s *FSStore) savePersistedIndex() error {
 	}
 
 	data, err := json.Marshal(idx)
+	// coverage-ignore-start: defensive: persistedIndex holds only time.Time and map[string]... of strings/ints;
+	// json.Marshal of it cannot fail
 	if err != nil {
 		return err
 	}
+	// coverage-ignore-end
 	return s.rooted.WriteFile(path.Join(s.cacheKey, indexFile), data, 0o644)
 }
 

@@ -54,7 +54,8 @@ func checkUniqueProperties(
 	ctx context.Context, deps Deps, e *entity.Entity, excludeSelfID string,
 ) error {
 	def, ok := deps.Meta.GetEntityDef(e.Type)
-	if !ok {
+	if !ok { // coverage-ignore: defensive: every caller runs ValidateEntity first, which hard-rejects an unknown type
+		// (ValidationErrorUnknownType is not soft), so an unknown type here needs a metamodel reload race
 		return nil // unknown type is caught by ValidateEntity's own path
 	}
 

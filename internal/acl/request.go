@@ -189,6 +189,9 @@ func (r *Request) PermitsReadMany(ctx context.Context, entityType string, ids []
 		return m, nil
 	case rqr.DenyAll:
 		return map[string]bool{}, nil
+	// coverage-ignore: defensive: readQuery always sets exactly one of AllowAll/DenyAll/Query, so once AllowAll and
+	// DenyAll are false Query
+	// is non-nil — a zero ReadQueryResult cannot occur
 	case rqr.Query == nil:
 		return nil, errors.New("acl: PermitsReadMany: readQuery returned zero ReadQueryResult")
 	}

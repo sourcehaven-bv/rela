@@ -158,11 +158,13 @@ func (c *VersionCmd) Run() error {
 //
 // coverage-ignore-func: CLI entry point - tested via integration tests
 func Execute() {
+	// coverage-ignore: main-or-wiring: process entry point calling os.Exit; only reachable at process start
 	os.Exit(runKong())
 }
 
 // coverage-ignore-func: CLI entry point - tested via integration tests
 func runKong() int {
+	// coverage-ignore-start: main-or-wiring: flag parsing + DI startup wiring exercised only at process start
 	var cli CLI
 	ktx := kong.Parse(&cli,
 		kong.Name("rela"),
@@ -240,9 +242,11 @@ func runKong() int {
 		return 1
 	}
 	return 0
+	// coverage-ignore-end
 }
 
 func configureKongLogging(verbose, quiet bool) {
+	// coverage-ignore-start: main-or-wiring: installs the process-global slog default logger at CLI startup
 	level := slog.LevelInfo
 	switch {
 	case verbose:
@@ -252,6 +256,7 @@ func configureKongLogging(verbose, quiet bool) {
 	}
 	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})
 	slog.SetDefault(slog.New(handler))
+	// coverage-ignore-end
 }
 
 // requiresProject reports whether the matched kong command needs

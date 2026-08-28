@@ -348,6 +348,9 @@ func (e *Engine) pushDelete(ctx context.Context, ch LocalChange) (PushRecordResu
 		res, err = e.client.DeleteEntity(ctx, plural, ch.Key, ch.Base)
 	case KindRelation:
 		from, relType, to, ok := splitRelationKey(ch.Key)
+		// coverage-ignore-start: defensive invariant: ch.Key for a KindRelation change is built by RelationKey (exactly
+		// "from/type/to", 3 slash-free
+		// segments) from a store snapshot, so splitRelationKey always returns ok here
 		if !ok {
 			return PushRecordResult{}, fmt.Errorf("internal: malformed relation key %q", ch.Key)
 		}
@@ -356,6 +359,7 @@ func (e *Engine) pushDelete(ctx context.Context, ch LocalChange) (PushRecordResu
 			return PushRecordResult{}, perr
 		}
 		res, err = e.client.DeleteRelation(ctx, fromPlural, from, relType, to, ch.Base)
+		// coverage-ignore-end
 	}
 	if err != nil {
 		return PushRecordResult{}, err
