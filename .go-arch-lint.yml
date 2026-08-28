@@ -51,6 +51,7 @@ components:
   appbuild:         { in: internal/appbuild }
   appbuildtest:     { in: internal/appbuild/appbuildtest }
   backendtest:      { in: internal/appbuild/backendtest }
+  tenant:           { in: internal/tenant }
 
   # Domain services
   analysis:         { in: internal/analysis }
@@ -555,6 +556,22 @@ deps:
       - appbuild
     canUse:
       - pgx
+  # tenant resolves a verified org to the store it may reach (RES-D54281). It
+  # sits ABOVE appbuild — it assembles per-tenant Services over one shared
+  # configuration — so appbuild must never depend on it: a tenant map is a
+  # deployment concern, and appbuild is the wiring facade the single-store
+  # binaries and the desktop app also use.
+  #
+  # pgx is confined to the postgres-tagged dsn file, which the default build
+  # does not compile — the same arrangement pgstore and backendtest use, and
+  # the reason CI's "default build must not link pgx" assertion keeps holding
+  # once a host wires this package.
+  tenant:
+    mayDependOn:
+      - appbuild
+    canUse:
+      - pgx
+      - yaml
   appbuildtest:
     mayDependOn:
       - acl
