@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, onUnmounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { useScopeNavigation } from '@/composables'
 import { useBackTarget } from '@/composables/useBackTarget'
@@ -456,6 +456,16 @@ function backTargetAfterDelete(): string {
 }
 
 // Section navigation helpers
+//
+// entityTarget is the single source of truth for a section entry's destination,
+// bound to the RouterLinks below so a cmd/middle-clicked tab lands exactly where
+// a plain click does.
+// Nil: returns undefined when the entry has no resolvable route (empty type),
+// and the template renders plain text instead of an anchor.
+function entityTarget(entity: { id: string; type: string }, cellLink?: string): string | undefined {
+  return entityDetailHref(entity, { cellLink }) || undefined
+}
+
 function navigateToEntity(entity: { id: string; type: string }, cellLink?: string) {
   const path = entityDetailHref(entity, { cellLink })
   if (!path) return
@@ -998,10 +1008,16 @@ watch(
               :data-entity-id="ent.id"
               class="content-card"
             >
-              <header class="card-header" @click="navigateToEntity(ent)">
-                <span class="entity-type">{{ ent.type }}</span>
-                <span class="entity-title">{{ ent.title }}</span>
-                <span class="entity-id">{{ ent.id }}</span>
+              <header class="card-header">
+                <component
+                  :is="entityTarget(ent) ? RouterLink : 'span'"
+                  class="card-header-link"
+                  v-bind="entityTarget(ent) ? { to: entityTarget(ent) } : {}"
+                >
+                  <span class="entity-type">{{ ent.type }}</span>
+                  <span class="entity-title">{{ ent.title }}</span>
+                  <span class="entity-id">{{ ent.id }}</span>
+                </component>
               </header>
               <div
                 v-if="ent.hasContent"
@@ -1025,10 +1041,16 @@ watch(
                 because that would navigate away mid-edit. The header
                 still navigates; cells stay editable.
               -->
-              <header class="card-header" @click="navigateToEntity(ent)">
-                <span class="entity-type">{{ ent.type }}</span>
-                <span class="entity-title">{{ ent.title }}</span>
-                <span class="entity-id">{{ ent.id }}</span>
+              <header class="card-header">
+                <component
+                  :is="entityTarget(ent) ? RouterLink : 'span'"
+                  class="card-header-link"
+                  v-bind="entityTarget(ent) ? { to: entityTarget(ent) } : {}"
+                >
+                  <span class="entity-type">{{ ent.type }}</span>
+                  <span class="entity-title">{{ ent.title }}</span>
+                  <span class="entity-id">{{ ent.id }}</span>
+                </component>
                 <button
                   v-if="ent.editFormId"
                   class="edit-btn"
@@ -1089,11 +1111,15 @@ watch(
               :data-entity-id="ent.id"
               class="list-item"
             >
-              <a class="list-link" @click="navigateToEntity(ent)">
+              <component
+                :is="entityTarget(ent) ? RouterLink : 'span'"
+                class="list-link"
+                v-bind="entityTarget(ent) ? { to: entityTarget(ent) } : {}"
+              >
                 <span class="entity-type">{{ ent.type }}</span>
                 <span class="entity-title">{{ ent.title }}</span>
                 <span class="entity-id">{{ ent.id }}</span>
-              </a>
+              </component>
               <SectionEditForm
                 v-if="rowShouldRouteToInlineEdit(ent, section.entities?.length ?? 0)"
                 :key="`${ent.type}/${ent.id}`"
@@ -1277,9 +1303,9 @@ watch(
     <div v-else class="error-state">
       <h2>Entity not found</h2>
       <p>{{ entityType }} "{{ entityId }}" could not be found.</p>
-      <router-link :to="backTargetAfterDelete()" class="btn btn-secondary">
+      <RouterLink :to="backTargetAfterDelete()" class="btn btn-secondary">
         Back to list
-      </router-link>
+      </RouterLink>
     </div>
   </div>
 </template>
@@ -1676,6 +1702,24 @@ watch(
   gap: var(--space-sm);
   cursor: pointer;
   flex: 1;
+  /* Was an <a> with no href (so cmd-click did nothing); now a real RouterLink.
+     Keep the inherited text colour and no underline. */
+  color: inherit;
+  text-decoration: none;
+}
+
+/* The link inside a card header carries the header's own flex layout, so the
+   header still reads as one row. It takes the free space, leaving the
+   edit-button (which may NOT live inside an <a>) a sibling beside it. */
+.card-header-link {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+  color: inherit;
+  text-decoration: none;
 }
 
 .list-link:hover .entity-title {

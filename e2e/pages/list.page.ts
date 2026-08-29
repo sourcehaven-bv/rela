@@ -67,6 +67,26 @@ export class ListPage extends BasePage {
     await this.page.locator(`.entity-row[data-entity-id="${id}"]`).click();
   }
 
+  /** Modifier/middle-click a row and return the tab it opens (TKT-3CSZRG).
+   *  Rows are real links, so the browser — not the SPA — opens the tab; this
+   *  waits on the resulting popup rather than on an in-page navigation. */
+  async openRowInNewTab(index: number, how: { modifier?: 'Meta' | 'Control'; middle?: boolean }) {
+    const row = this.page.locator('.entity-row, tbody tr').nth(index);
+    const popupPromise = this.page.context().waitForEvent('page');
+    if (how.middle) {
+      await row.click({ button: 'middle' });
+    } else {
+      await row.click({ modifiers: [how.modifier ?? 'Meta'] });
+    }
+    return popupPromise;
+  }
+
+  /** The href of a row's link, for asserting the target and its scope query. */
+  async rowLinkHref(index: number): Promise<string | null> {
+    const row = this.page.locator('.entity-row, tbody tr').nth(index);
+    return row.locator('a.row-link').first().getAttribute('href');
+  }
+
   async openDeleteModalForFirstRow() {
     const firstRow = this.page.locator('.entity-row, tbody tr').first();
     await firstRow.locator('.delete-btn, button[title="Delete"]').click();

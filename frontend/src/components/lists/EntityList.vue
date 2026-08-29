@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, shallowRef, computed, watch, onMounted, onUnmounted, type Component } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { RouterLink, useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import { useQuery, useMutation, useQueryCache } from '@pinia/colada'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { useListKeyboard } from '@/composables/useListKeyboard'
@@ -12,6 +12,7 @@ import { entityKeys } from '@/queries/entities'
 import { beginOptimisticRemove, rollbackOptimistic } from '@/queries/optimisticList'
 import { toApiOperator, filterStateToApiParams } from '@/utils/filters'
 import { entityDetailHref } from '@/utils/entityRoute'
+import { safeInternalHref, shouldDeferToBrowser } from '@/utils/openIntent'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { renderMarkdown } from '@/utils/markdown'
 import { actionAllowed } from '@/utils/affordancesWarning'
@@ -482,7 +483,15 @@ function resolveLinkTarget(link: string, entityType: string, entityId: string): 
   return ''
 }
 
-function navigateToEntity(entity: Entity) {
+// entityTarget is the SINGLE source of truth for a row's destination — used both
+// by the row's plain-click push AND by the title cell's RouterLink `to`.
+// Building the href separately would silently drop the query below: the tab
+// would open on an unscoped detail page where prev/next navigation is dead and
+// the back target is wrong, while still rendering a valid-looking page.
+// Nil: returns undefined when no safe internal path resolves (empty entity
+// type, or a cellLink that is not a same-origin path); the row then renders no
+// link and the click is inert.
+function entityTarget(entity: Entity): RouteLocationRaw | undefined {
   // Build query params to preserve navigation context.
   // Filters are already in `route.query` via useUrlFilterSync — we just
   // forward all `filter[*]` entries unchanged so the bracket format is the
@@ -530,14 +539,30 @@ function navigateToEntity(entity: Entity) {
     : ''
 
   // entityDetailHref returns columnLink when set, otherwise the
-  // entity-route path. Centralised so right-click / middle-click open
-  // through a real <a href> on the row markup elsewhere.
+  // entity-route path.
   const path = entityDetailHref(
     { id: entity.id, type: entity.type },
     { cellLink: columnLink },
   )
-  if (!path) return
-  router.push({ path, query })
+  if (!path || !safeInternalHref(path)) return undefined
+  return { path, query }
+}
+
+// navigateToEntity handles a plain left-click on the row. The row is a <tr>, so
+// it cannot be an anchor; the link affordance comes from the stretched
+// .row-link in the first cell, which is what cmd/middle/right-click act on.
+function navigateToEntity(entity: Entity) {
+  const target = entityTarget(entity)
+  if (!target) return
+  router.push(target)
+}
+
+// onRowClick backs the row's plain-click navigation. It defers to the browser
+// on a modifier or non-primary click so the stretched .row-link's own default
+// action runs (opening a tab/window) instead of routing in place.
+function onRowClick(entity: Entity, event: MouseEvent) {
+  if (shouldDeferToBrowser(event)) return
+  navigateToEntity(entity)
 }
 
 // Widget resolution for property cells, keyed by column property name and
@@ -778,13 +803,13 @@ watch(searchQuery, () => {
       </div>
       <div class="header-actions">
         <ExportMenu :url-for="listExportUrlFor" />
-        <router-link
+        <RouterLink
           v-if="listConfig.create_form && canCreate()"
           :to="`/form/${listConfig.create_form}`"
           class="btn btn-primary"
         >
           + New <kbd>N</kbd>
-        </router-link>
+        </RouterLink>
       </div>
     </header>
 
@@ -866,13 +891,13 @@ watch(searchQuery, () => {
         >
           Clear search
         </button>
-        <router-link
+        <RouterLink
           v-else-if="listConfig.create_form"
           :to="`/form/${listConfig.create_form}`"
           class="btn btn-secondary"
         >
           Create one
-        </router-link>
+        </RouterLink>
       </div>
 
       <template v-else>
@@ -883,10 +908,20 @@ watch(searchQuery, () => {
           :key="'card-' + entity.id"
           class="mobile-card"
           :class="{ selected: index === selectedIndex, 'action-selected': isSelected(entity.id) }"
-          @click="navigateToEntity(entity)"
+          @click="onRowClick(entity, $event)"
         >
           <div class="mobile-card-header">
-            <span class="mobile-card-title text-wrap-anywhere text-clamp-2">
+            <!-- The card holds a delete <button>, and an <a> may not contain
+                 interactive content — so the link wraps the title, not the
+                 card. Stretched over the card by .mobile-card-title::after. -->
+            <RouterLink
+              v-if="entityTarget(entity)"
+              class="mobile-card-title text-wrap-anywhere text-clamp-2"
+              :to="entityTarget(entity)!"
+            >
+              {{ getFormattedCellValue(entity, listConfig.columns[0]) }}
+            </RouterLink>
+            <span v-else class="mobile-card-title text-wrap-anywhere text-clamp-2">
               {{ getFormattedCellValue(entity, listConfig.columns[0]) }}
             </span>
             <button
@@ -990,7 +1025,7 @@ watch(searchQuery, () => {
             class="entity-row"
             :data-entity-id="entity.id"
             :class="{ selected: index === selectedIndex, 'action-selected': isSelected(entity.id) }"
-            @click="navigateToEntity(entity)"
+            @click="onRowClick(entity, $event)"
           >
             <td v-if="hasActions" class="select-cell" @click.stop>
               <input
@@ -1000,7 +1035,7 @@ watch(searchQuery, () => {
               />
             </td>
             <td
-              v-for="column in listConfig.columns"
+              v-for="(column, colIndex) in listConfig.columns"
               :key="column.property || column.relation"
             >
               <span
@@ -1008,6 +1043,26 @@ watch(searchQuery, () => {
                 class="inaccessible-cell"
                 title="inaccessible"
               >🔒</span>
+              <!-- The first column's content is wrapped in the row's real link,
+                   stretched over the whole row by .row-link::after. A <tr>
+                   cannot be an anchor, so this is what gives the row
+                   cmd/middle/right-click and a hover URL preview. It wraps real
+                   text (not an empty box) so it has an accessible name. -->
+              <RouterLink
+                v-else-if="colIndex === 0 && entityTarget(entity)"
+                class="row-link"
+                :to="entityTarget(entity)!"
+              >
+                <component
+                  :is="resolveCell(entity, column)!.component"
+                  v-if="resolveCell(entity, column)"
+                  :model-value="resolveCell(entity, column)!.modelValue"
+                  :mode="'display'"
+                  :property-name="resolveCell(entity, column)!.propertyName"
+                  :entity-type="listConfig.entity"
+                />
+                <template v-else>{{ getFormattedCellValue(entity, column) }}</template>
+              </RouterLink>
               <component
                 :is="resolveCell(entity, column)!.component"
                 v-else-if="resolveCell(entity, column)"
@@ -1319,6 +1374,35 @@ watch(searchQuery, () => {
 .entity-row {
   cursor: pointer;
   transition: background 0.15s;
+  /* Containing block for the stretched .row-link below. */
+  position: relative;
+}
+
+/* Stretched link (the Bootstrap `.stretched-link` pattern). A <tr> may not be
+   or contain an <a> at the row level, so the first cell's link is expanded over
+   the whole row: cmd/ctrl-click, middle-click, right-click "Open in new tab"
+   and the hover URL preview all work anywhere on the row, with exactly ONE link
+   per row in the accessibility tree.
+   Known trade-off (accepted, TKT-3CSZRG): the overlay sits above the row's text,
+   so text selection within a row is not possible. */
+.entity-row .row-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.entity-row .row-link::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  /* Below the interactive cells lifted to z-index 1 below. */
+  z-index: 0;
+}
+
+/* Nested controls must stay above the overlay or they become unclickable. */
+.entity-row .select-cell,
+.entity-row .actions-cell {
+  position: relative;
+  z-index: 1;
 }
 
 .entity-row:hover {
@@ -1433,6 +1517,28 @@ watch(searchQuery, () => {
   padding: 12px;
   cursor: pointer;
   transition: all 0.15s;
+  /* Containing block for the stretched title link. */
+  position: relative;
+}
+
+/* Same stretched-link pattern as the desktop row: the title is the real link,
+   expanded over the card so the whole card supports cmd/middle/right-click. */
+a.mobile-card-title {
+  color: inherit;
+  text-decoration: none;
+}
+
+a.mobile-card-title::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+/* The delete button must stay above the overlay. */
+.mobile-card .delete-btn {
+  position: relative;
+  z-index: 1;
 }
 
 .mobile-card + .mobile-card {

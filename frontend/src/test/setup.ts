@@ -37,11 +37,38 @@ Object.defineProperty(globalThis, 'crypto', {
   },
 })
 
-// Global stubs for router-link and router-view
+// Global stubs for router-link and router-view.
+//
+// The RouterLink stub renders `to` into a real `href`. Navigable rows, cards and
+// titles are genuine links (TKT-3CSZRG) so that cmd/ctrl/middle-click opens a
+// new tab; a stub that dropped `to` produced `<a>` with no href, which made
+// every such assertion vacuous while still rendering something anchor-shaped.
+// Object targets are serialized path + query, matching what vue-router builds.
 config.global.stubs = {
   RouterLink: {
-    template: '<a><slot /></a>',
     props: ['to'],
+    computed: {
+      href(): string {
+        const to = (this as unknown as { to: unknown }).to
+        if (typeof to === 'string') return to
+        if (!to || typeof to !== 'object') return ''
+        const loc = to as { path?: string; query?: Record<string, unknown> }
+        const path = loc.path ?? ''
+        if (!loc.query) return path
+        const params = new URLSearchParams()
+        for (const [key, value] of Object.entries(loc.query)) {
+          if (value === null || value === undefined) continue
+          if (Array.isArray(value)) {
+            for (const v of value) if (v !== null && v !== undefined) params.append(key, String(v))
+          } else {
+            params.append(key, String(value))
+          }
+        }
+        const qs = params.toString()
+        return qs ? `${path}?${qs}` : path
+      },
+    },
+    template: '<a :href="href"><slot /></a>',
   },
   RouterView: true,
 }
