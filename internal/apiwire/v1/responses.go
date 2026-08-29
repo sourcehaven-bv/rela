@@ -733,6 +733,14 @@ type GanttNode struct {
 	Committed string      `json:"committed,omitempty"`
 	Breach    GanttBreach `json:"breach,omitzero"`
 	Children  []GanttNode `json:"children,omitempty"`
+	// HasMoreChildren is true when this node has children the response does
+	// not carry (the depth cap or node budget withheld them). Without it a
+	// depth-capped node is byte-identical to a genuine leaf — Children is
+	// omitempty — so a consumer could not tell a complete subtree from a
+	// withheld one. Computed on the gated tree: it never reflects hidden
+	// entities. Distinct from Truncated, which is the budget-cut signal for
+	// the response as a whole.
+	HasMoreChildren bool `json:"has_more_children,omitempty"`
 }
 
 // GanttSpan is a date interval; either bound may be empty.

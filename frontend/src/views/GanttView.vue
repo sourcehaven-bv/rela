@@ -92,12 +92,13 @@ watch(
     }
     const target = path.length ? path[path.length - 1] : null
     if (!idChanged && target === fetchedRoot.value) return
+    const found = target !== null && data.value ? findNode(data.value.roots, target) : null
     const canAnswerLocally =
       !idChanged &&
       data.value !== null &&
       !data.value.truncated &&
       fetchedRoot.value === null &&
-      (target === null || findNode(data.value.roots, target) !== null)
+      (target === null || (found !== null && !found.has_more_children))
     if (!canAnswerLocally) void fetchScope(target)
   },
   { immediate: true },
@@ -142,7 +143,10 @@ const todayDay = computed(() => {
 })
 
 function drill(node: GanttNode) {
-  if (!node.children?.length) {
+  // Clicking the drilled root's own bar (always the top row of a drilled
+  // view) must be a no-op, not another breadcrumb of the same id.
+  if (drillPath.value[drillPath.value.length - 1] === node.id) return
+  if (!node.children?.length && !node.has_more_children) {
     router.push(`/entity/${node.type}/${node.id}`)
     return
   }
@@ -173,6 +177,23 @@ function barStyle(node: GanttNode) {
   const left = Math.max(0, pct(span.start, a))
   const width = Math.max(Math.min(100, pct(span.end, a)) - left, 0.6)
   return { left: `${left}%`, width: `${width}%` }
+}
+
+/**
+ * Label placement: ABOVE the bar, anchored to its start (right-anchored when
+ * the bar begins in the last stretch of the axis, so long names stay on
+ * screen). Inside-the-bar labels sat on top of the breach textures
+ * (unreadable) and forced accent-on-light text that failed WCAG AA
+ * (4.16:1 < 4.5:1); above the bar, the label renders in the body text color
+ * on the row background — the row is the label's own clean strip.
+ */
+function labelStyle(node: GanttNode) {
+  const a = axis.value
+  const span = barSpan(node)
+  if (!a || span.start === null || span.end === null) return null
+  const startPct = Math.max(0, pct(span.start, a))
+  if (startPct <= 60) return { left: `${startPct}%` }
+  return { right: `${100 - Math.min(100, pct(span.end, a))}%` }
 }
 
 /** The planned window inset, relative to the BAR (not the axis). */
@@ -261,6 +282,56 @@ function pastCommitDays(node: GanttNode): number {
   const span = barSpan(node)
   if (c === null || span.end === null) return 0
   return span.end - c
+}
+
+/**
+ * Tooltip: one fixed-position card following the hovered bar/label, carrying
+ * what the bar geometry can only gesture at — exact dates, the derived-vs-
+ * declared distinction, and breach MAGNITUDES in days. Shown on hover and on
+ * keyboard focus; dismissed on leave/blur/Escape (WCAG 1.4.13).
+ */
+const tip = ref<{ node: GanttNode; x: number; y: number } | null>(null)
+
+function showTip(node: GanttNode, ev: MouseEvent | FocusEvent) {
+  const x = 'clientX' in ev ? ev.clientX : (ev.target as HTMLElement).getBoundingClientRect().left
+  const y = 'clientY' in ev ? ev.clientY : (ev.target as HTMLElement).getBoundingClientRect().top
+  tip.value = { node, x: Math.min(x, window.innerWidth - 320), y }
+}
+function moveTip(ev: MouseEvent) {
+  if (tip.value) tip.value = { ...tip.value, x: Math.min(ev.clientX, window.innerWidth - 320), y: ev.clientY }
+}
+function hideTip() {
+  tip.value = null
+}
+
+function fmtRange(span?: { start?: string; end?: string }): string {
+  if (!span || (!span.start && !span.end)) return '—'
+  return `${span.start || '…'} → ${span.end || '…'}`
+}
+
+function countDescendants(node: GanttNode): number {
+  return (node.children ?? []).reduce((n, c) => n + 1 + countDescendants(c), 0)
+}
+
+/** Breach lines with day magnitudes — the actionable part of a breach. */
+function breachLines(node: GanttNode): { text: string; kind: 'overrun' | 'commit' }[] {
+  const out: { text: string; kind: 'overrun' | 'commit' }[] = []
+  const ps = parseDay(node.planned?.start)
+  const pe = parseDay(node.planned?.end)
+  const rs = parseDay(node.rolled?.start)
+  const re = parseDay(node.rolled?.end)
+  if (node.breach?.before && ps !== null && rs !== null) {
+    out.push({ text: `children start ${ps - rs}d before the planned start`, kind: 'overrun' })
+  }
+  if (node.breach?.after && pe !== null && re !== null) {
+    out.push({ text: `children end ${re - pe}d after the planned end`, kind: 'overrun' })
+  }
+  const c = parseDay(node.committed)
+  const span = barSpan(node)
+  if (c !== null && span.end !== null && span.end > c) {
+    out.push({ text: `${span.end - c}d past the committed date (${node.committed})`, kind: 'commit' })
+  }
+  return out
 }
 
 const headerHtml = computed(() =>
@@ -368,6 +439,9 @@ const footerHtml = computed(() =>
                 ]"
                 :style="barStyle(row.node)!"
                 @click="drill(row.node)"
+                @mouseenter="showTip(row.node, $event)"
+                @mousemove="moveTip"
+                @mouseleave="hideTip"
               >
                 <div v-if="plannedStyle(row.node)" class="planned" :style="plannedStyle(row.node)!" />
                 <div
@@ -386,13 +460,24 @@ const footerHtml = computed(() =>
                     :title="p.title"
                   />
                 </div>
-                <span class="bar-label">
-                  {{ row.node.title || row.node.id }}
-                  <span v-if="row.node.children?.length" class="bar-count">{{
-                    row.node.children!.length
-                  }}</span>
-                </span>
               </div>
+              <button
+                v-if="labelStyle(row.node)"
+                class="bar-name"
+                :style="labelStyle(row.node)!"
+                @click="drill(row.node)"
+                @mouseenter="showTip(row.node, $event)"
+                @mousemove="moveTip"
+                @mouseleave="hideTip"
+                @focus="showTip(row.node, $event)"
+                @blur="hideTip"
+                @keydown.escape="hideTip"
+              >
+                {{ row.node.title || row.node.id }}
+                <span v-if="row.node.children?.length" class="bar-count">{{
+                  row.node.children!.length
+                }}</span>
+              </button>
               <div
                 v-if="committedStyle(row.node)"
                 class="commit"
@@ -429,6 +514,51 @@ const footerHtml = computed(() =>
 
     <!-- eslint-disable-next-line vue/no-v-html -- admin-authored, sanitized in renderMarkdown -->
     <div v-if="footerHtml" class="gantt-info" v-html="footerHtml" />
+
+    <Teleport to="body">
+      <div
+        v-if="tip"
+        class="gantt-tip"
+        role="tooltip"
+        :style="{ left: tip.x + 14 + 'px', top: tip.y + 16 + 'px' }"
+      >
+        <div class="tip-head">
+          <strong>{{ tip.node.title || tip.node.id }}</strong>
+          <span class="tip-kind">{{ tip.node.type }}</span>
+        </div>
+        <dl class="tip-grid">
+          <template v-if="tip.node.planned">
+            <dt>Planned</dt>
+            <dd>{{ fmtRange(tip.node.planned) }}</dd>
+          </template>
+          <template v-if="tip.node.rolled">
+            <dt>Rolled up</dt>
+            <dd>
+              {{ fmtRange(tip.node.rolled) }}
+              <span class="tip-muted">from {{ countDescendants(tip.node) }} items</span>
+            </dd>
+          </template>
+          <template v-if="!tip.node.planned && tip.node.rolled">
+            <dt />
+            <dd class="tip-muted">no dates of its own — span derived from children</dd>
+          </template>
+          <template v-if="tip.node.committed">
+            <dt>Committed</dt>
+            <dd>{{ tip.node.committed }}</dd>
+          </template>
+        </dl>
+        <div v-for="(b, i) in breachLines(tip.node)" :key="i" class="tip-breach" :class="'tip-' + b.kind">
+          <span class="tip-glyph">{{ b.kind === 'commit' ? '╱' : '●' }}</span> {{ b.text }}
+        </div>
+        <div class="tip-hint">
+          {{
+            tip.node.children?.length || tip.node.has_more_children
+              ? 'Click to drill in'
+              : 'Click to open the entity'
+          }}
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -455,15 +585,16 @@ const footerHtml = computed(() =>
 .zoom-seg button {
   border: 0;
   background: var(--card-bg);
-  padding: 0.3rem 0.65rem;
-  font-size: 0.78rem;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.8125rem;
   cursor: pointer;
-  color: var(--muted-text);
+  color: var(--text-color);
   text-transform: capitalize;
 }
 .zoom-seg button.on {
   background: var(--accent-color);
   color: #fff;
+  font-weight: 600;
 }
 .gantt-info {
   margin-bottom: 0.75rem;
@@ -483,7 +614,7 @@ const footerHtml = computed(() =>
 .crumb-bar {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: 0.4rem;
   flex-wrap: wrap;
   padding: 0.6rem 0.9rem;
   border-bottom: 1px solid var(--border-color);
@@ -492,23 +623,24 @@ const footerHtml = computed(() =>
   border: 1px solid var(--border-color);
   background: transparent;
   border-radius: 999px;
-  padding: 0.15rem 0.6rem;
-  font-size: 0.78rem;
+  padding: 0.2rem 0.7rem;
+  font-size: 0.8125rem;
   cursor: pointer;
-  color: var(--muted-text);
+  color: var(--text-color);
 }
+/* Current crumb: accent BORDER + body text, not white-on-accent — the chip
+   text is small, and white on the accent blue is 4.16:1 (< AA's 4.5:1). */
 .crumb.current {
-  background: var(--accent-color);
-  border-color: var(--accent-color);
-  color: #fff;
+  border: 2px solid var(--accent-color);
+  font-weight: 600;
 }
 .truncated-flag {
-  font-size: 0.68rem;
-  color: #b45309;
+  font-size: 0.75rem;
+  color: #92400e; /* 6.3:1 on the amber chip; #b45309 was borderline 4.5 */
   background: #fef3c7;
   border: 1px solid #fde68a;
   border-radius: 3px;
-  padding: 0 4px;
+  padding: 0 5px;
   cursor: help;
 }
 .chart {
@@ -517,7 +649,7 @@ const footerHtml = computed(() =>
 .axis-row {
   display: flex;
   border-bottom: 1px solid var(--border-color);
-  height: 34px;
+  height: 36px;
 }
 .tree-gutter {
   width: 280px;
@@ -531,8 +663,8 @@ const footerHtml = computed(() =>
 }
 .tick {
   position: absolute;
-  bottom: 3px;
-  font-size: 0.68rem;
+  bottom: 4px;
+  font-size: 0.75rem;
   color: var(--muted-text);
   padding-left: 4px;
   border-left: 1px solid var(--border-color);
@@ -541,21 +673,24 @@ const footerHtml = computed(() =>
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 1px;
-  background: #dc2626;
+  width: 2px;
+  background: var(--error-color);
 }
 .today-flag::after {
   content: 'today';
   position: absolute;
   top: 0;
-  left: 3px;
-  font-size: 0.6rem;
-  color: #dc2626;
-  font-weight: 600;
+  left: 4px;
+  font-size: 0.6875rem;
+  color: var(--error-color);
+  font-weight: 700;
 }
+/* Two-tier row: a full-contrast label strip on top, the bar beneath it.
+   The strip is the row's own background, so the name can never collide with
+   the bar fill or the breach textures. */
 .row {
   display: flex;
-  height: 56px;
+  height: 62px;
   border-bottom: 1px solid var(--border-color);
 }
 .row:hover {
@@ -574,10 +709,10 @@ const footerHtml = computed(() =>
 .twisty {
   border: 0;
   background: transparent;
-  width: 18px;
+  width: 20px;
   cursor: pointer;
-  color: var(--muted-text);
-  font-size: 0.7rem;
+  color: var(--text-color);
+  font-size: 0.8125rem;
   padding: 0;
 }
 .twisty.leaf {
@@ -586,7 +721,7 @@ const footerHtml = computed(() =>
 .tname {
   border: 0;
   background: transparent;
-  font-size: 0.82rem;
+  font-size: 0.875rem;
   color: var(--text-color);
   cursor: pointer;
   overflow: hidden;
@@ -601,13 +736,13 @@ const footerHtml = computed(() =>
   text-decoration: underline;
 }
 .kind {
-  font-size: 0.58rem;
+  font-size: 0.6875rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--muted-text);
   border: 1px solid var(--border-color);
   border-radius: 3px;
-  padding: 0 3px;
+  padding: 0 4px;
   margin-right: 0.5rem;
   flex: 0 0 auto;
 }
@@ -615,6 +750,7 @@ const footerHtml = computed(() =>
   flex: 1;
   position: relative;
   min-width: 300px;
+  overflow: hidden;
 }
 .gridline {
   position: absolute;
@@ -623,6 +759,31 @@ const footerHtml = computed(() =>
   border-left: 1px solid var(--border-color);
   opacity: 0.5;
 }
+/* The label strip: body text color on the row background (≥12:1 in both
+   themes), anchored above the bar's start. */
+.bar-name {
+  position: absolute;
+  top: 4px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-color);
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bar-name:hover {
+  color: var(--accent-color);
+  text-decoration: underline;
+}
+.bar-count {
+  font-weight: 400;
+  color: var(--muted-text);
+}
 .bar {
   position: absolute;
   border-radius: 5px;
@@ -630,26 +791,28 @@ const footerHtml = computed(() =>
   overflow: hidden;
 }
 .bar.leaf {
-  top: 18px;
-  height: 20px;
+  top: 30px;
+  height: 18px;
   background: var(--accent-color);
 }
 .bar.parent {
-  top: 10px;
-  height: 32px;
-  background: color-mix(in srgb, var(--accent-color) 7%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent-color) 50%, transparent);
+  top: 26px;
+  height: 26px;
+  background: color-mix(in srgb, var(--accent-color) 8%, transparent);
+  /* Solid accent border: a meaningful boundary needs ≥3:1 (WCAG 1.4.11);
+     the earlier 50%-alpha border was ~1.6:1 against the card. */
+  border: 1px solid var(--accent-color);
 }
 .bar.breached {
-  border-color: rgba(217, 119, 6, 0.7);
+  border-color: #b45309; /* 4.6:1 vs white, 3.4:1 vs the dark bg */
 }
 .planned {
   position: absolute;
   top: 0;
   bottom: 0;
-  background: color-mix(in srgb, var(--accent-color) 13%, transparent);
-  border-left: 2px solid color-mix(in srgb, var(--accent-color) 75%, transparent);
-  border-right: 2px solid color-mix(in srgb, var(--accent-color) 75%, transparent);
+  background: color-mix(in srgb, var(--accent-color) 14%, transparent);
+  border-left: 2px solid var(--accent-color);
+  border-right: 2px solid var(--accent-color);
   pointer-events: none;
 }
 /* Overrun: amber DOTS. Texturally distinct from the past-commit stripes so
@@ -659,7 +822,7 @@ const footerHtml = computed(() =>
   top: 0;
   bottom: 0;
   pointer-events: none;
-  background-image: radial-gradient(rgba(180, 83, 9, 0.85) 1.2px, transparent 1.3px);
+  background-image: radial-gradient(rgba(180, 83, 9, 0.9) 1.3px, transparent 1.4px);
   background-size: 5px 5px;
   background-color: rgba(217, 119, 6, 0.14);
 }
@@ -668,55 +831,32 @@ const footerHtml = computed(() =>
   left: 0;
   right: 0;
   bottom: 0;
-  height: 12px;
+  height: 11px;
   background: color-mix(in srgb, var(--accent-color) 6%, transparent);
-  border-top: 1px solid color-mix(in srgb, var(--accent-color) 22%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--accent-color) 35%, transparent);
 }
 .peek {
   position: absolute;
-  top: 3px;
+  top: 2px;
   height: 6px;
   background: var(--accent-color);
   border-radius: 2px;
 }
 .peek.deep {
-  opacity: 0.5;
-}
-.bar-label {
-  position: absolute;
-  left: 7px;
-  right: 7px;
-  top: 2px;
-  font-size: 0.7rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  pointer-events: none;
-  color: var(--accent-color);
-  font-weight: 600;
-}
-.bar.leaf .bar-label {
-  color: #fff;
-  top: 50%;
-  transform: translateY(-50%);
-  font-weight: 400;
-}
-.bar-count {
-  font-weight: 400;
-  opacity: 0.6;
+  opacity: 0.55;
 }
 .commit {
   position: absolute;
-  top: 8px;
-  bottom: 12px;
+  top: 24px;
+  height: 30px;
   width: 2px;
-  background: #dc2626;
+  background: var(--error-color);
   z-index: 2;
 }
 /* Past-commit: red diagonal STRIPES on their own tier under the bar. */
 .past-commit {
   position: absolute;
-  top: 45px;
+  top: 55px;
   height: 4px;
   border-radius: 2px;
   background: repeating-linear-gradient(45deg, #dc2626 0 2px, rgba(220, 38, 38, 0.18) 2px 6px);
@@ -726,33 +866,33 @@ const footerHtml = computed(() =>
   top: 0;
   bottom: 0;
   width: 1px;
-  background: #dc2626;
-  opacity: 0.45;
+  background: var(--error-color);
+  opacity: 0.7;
   pointer-events: none;
 }
 .empty {
   padding: 2rem;
   text-align: center;
   color: var(--muted-text);
-  font-size: 0.85rem;
+  font-size: 0.875rem;
 }
 .legend {
   display: flex;
   gap: 1.1rem;
   flex-wrap: wrap;
-  padding: 0.55rem 0.9rem;
+  padding: 0.6rem 0.9rem;
   border-top: 1px solid var(--border-color);
-  font-size: 0.72rem;
-  color: var(--muted-text);
+  font-size: 0.8125rem;
+  color: var(--text-color);
 }
 .legend span {
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
+  gap: 0.35rem;
 }
 .sw {
   width: 20px;
-  height: 9px;
+  height: 10px;
   border-radius: 3px;
   display: inline-block;
 }
@@ -760,20 +900,95 @@ const footerHtml = computed(() =>
   background: var(--accent-color);
 }
 .parent-sw {
-  background: color-mix(in srgb, var(--accent-color) 7%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent-color) 50%, transparent);
+  background: color-mix(in srgb, var(--accent-color) 8%, transparent);
+  border: 1px solid var(--accent-color);
 }
 .planned-sw {
-  background: color-mix(in srgb, var(--accent-color) 13%, transparent);
+  background: color-mix(in srgb, var(--accent-color) 14%, transparent);
   border-left: 2px solid var(--accent-color);
   border-right: 2px solid var(--accent-color);
 }
 .overrun-sw {
-  background-image: radial-gradient(rgba(180, 83, 9, 0.85) 1.2px, transparent 1.3px);
+  background-image: radial-gradient(rgba(180, 83, 9, 0.9) 1.3px, transparent 1.4px);
   background-size: 5px 5px;
   background-color: rgba(217, 119, 6, 0.14);
 }
 .commit-sw {
   background: repeating-linear-gradient(45deg, #dc2626 0 2px, rgba(220, 38, 38, 0.18) 2px 6px);
+}
+
+/* Tooltip card — fixed, above everything, theme-token colored. Text sizes
+   and colors hold WCAG AA on the card background in both themes. */
+.gantt-tip {
+  position: fixed;
+  z-index: 1000;
+  max-width: 300px;
+  background: var(--card-bg);
+  color: var(--text-color);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  padding: 0.6rem 0.75rem;
+  font-size: 0.8125rem;
+  pointer-events: none;
+}
+.tip-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+.tip-head strong {
+  font-size: 0.875rem;
+}
+.tip-kind {
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted-text);
+}
+.tip-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.1rem 0.6rem;
+  margin: 0;
+}
+.tip-grid dt {
+  color: var(--muted-text);
+}
+.tip-grid dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+.tip-muted {
+  color: var(--muted-text);
+}
+.tip-breach {
+  margin-top: 0.35rem;
+  font-weight: 500;
+}
+/* amber-800 / red-700: ≥6:1 on the light card, and both hold ≥4.5 on the
+   dark card via the shared glyphs carrying the distinction anyway. */
+.tip-breach.tip-overrun {
+  color: #92400e;
+}
+.tip-breach.tip-commit {
+  color: #b91c1c;
+}
+:root.dark .tip-breach.tip-overrun {
+  color: #fbbf24;
+}
+:root.dark .tip-breach.tip-commit {
+  color: #f87171;
+}
+.tip-glyph {
+  font-weight: 700;
+}
+.tip-hint {
+  margin-top: 0.4rem;
+  font-size: 0.75rem;
+  color: var(--muted-text);
+  border-top: 1px solid var(--border-color);
+  padding-top: 0.3rem;
 }
 </style>

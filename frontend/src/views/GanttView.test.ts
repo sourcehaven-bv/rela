@@ -135,6 +135,22 @@ describe('GanttView fetch policy', () => {
     w.unmount()
   })
 
+  it('clicking the drilled root again does not grow the path', async () => {
+    getGanttMock.mockResolvedValue(forest(false))
+    const w = mountGantt()
+    await flushPromises()
+
+    routeQuery.value = { path: 'B' }
+    await flushPromises()
+    routerPush.mockClear()
+
+    // B is now the top row; clicking its bar must be a no-op.
+    await w.find('[data-node-id="B"] .bar').trigger('click')
+    expect(routerPush).not.toHaveBeenCalled()
+    expect(routeQuery.value.path).toBe('B')
+    w.unmount()
+  })
+
   it('shows the fetch error instead of an empty chart', async () => {
     getGanttMock.mockRejectedValue(new Error('boom'))
     const w = mountGantt()

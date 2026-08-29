@@ -76,11 +76,43 @@ describe('ticksFor', () => {
     expect(labels).toEqual(["Q2 '26"])
   })
 
-  it('week ticks all fall on Mondays', () => {
+  it('week ticks all fall on Mondays and carry ISO week numbers', () => {
     const ticks = ticksFor({ start: parseDay('2026-03-01')!, end: parseDay('2026-03-31')! }, 'week')
     expect(ticks.length).toBeGreaterThan(3)
     for (const t of ticks) {
       expect(new Date(t.day * 86_400_000).getUTCDay()).toBe(1)
+      expect(t.label).toMatch(/^W\d{1,2}$/)
+    }
+    // 2026-03-02 is the Monday of ISO week 10.
+    expect(ticks[0].label).toBe('W10')
+  })
+
+  it('caps density over a two-year span instead of smearing labels', () => {
+    const twoYears = { start: parseDay('2026-01-01')!, end: parseDay('2027-12-31')! }
+    for (const zoom of ['week', 'month', 'quarter'] as const) {
+      const ticks = ticksFor(twoYears, zoom)
+      expect(ticks.length).toBeLessThanOrEqual(22)
+      expect(ticks.length).toBeGreaterThan(3)
+    }
+    // A ~104-week span emits every 4th week, still Mondays, still ISO-numbered.
+    const weeks = ticksFor(twoYears, 'week')
+    for (const t of weeks) {
+      expect(new Date(t.day * 86_400_000).getUTCDay()).toBe(1)
+      expect(t.label).toMatch(/^W\d{1,2}$/)
+    }
+  })
+
+  it('months carry the year at January on a multi-year axis', () => {
+    const twoYears = { start: parseDay('2026-06-01')!, end: parseDay('2027-08-31')! }
+    const labels = ticksFor(twoYears, 'month').map((t) => t.label)
+    expect(labels).toContain("Jan '27")
+  })
+
+  it('January survives striding — the year anchor is never skipped', () => {
+    const threeYears = { start: parseDay('2026-01-01')!, end: parseDay('2028-12-31')! }
+    const labels = ticksFor(threeYears, 'month').map((t) => t.label)
+    for (const y of ["'26", "'27", "'28"]) {
+      expect(labels.some((l) => l === `Jan ${y}`)).toBe(true)
     }
   })
 })

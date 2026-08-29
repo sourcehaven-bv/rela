@@ -27,6 +27,9 @@ export interface GanttNode {
   committed?: string
   breach?: GanttBreach
   children?: GanttNode[]
+  /** True when children exist that this response does not carry (depth cap
+   * or node budget) — the drill signal for a node that looks like a leaf. */
+  has_more_children?: boolean
 }
 
 export interface GanttResponse {

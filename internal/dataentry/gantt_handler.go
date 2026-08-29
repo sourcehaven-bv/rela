@@ -417,10 +417,15 @@ func emitGanttNode(f *ganttForest, id string, depth, maxDepth int, budget *gantt
 	if depth >= maxDepth {
 		// Children beyond the cap are not emitted, but their dates are
 		// already inside this node's rolled span — the fold ran first.
+		// HasMoreChildren keeps the withholding visible on the wire: with
+		// Children omitempty, a capped node would otherwise be
+		// byte-identical to a genuine leaf.
+		out.HasMoreChildren = len(n.children) > 0
 		return out
 	}
 	for _, childID := range n.children {
 		if !budget.take() {
+			out.HasMoreChildren = true
 			break
 		}
 		out.Children = append(out.Children, emitGanttNode(f, childID, depth+1, maxDepth, budget))

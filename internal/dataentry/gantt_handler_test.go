@@ -470,6 +470,14 @@ func TestGantt_DepthCapFoldsBeyond(t *testing.T) {
 	if root.Rolled == nil || root.Rolled.Start != "2026-01-05" || root.Rolled.End != "2026-08-20" {
 		t.Errorf("beyond-cap dates must still fold: rolled = %+v", root.Rolled)
 	}
+	// The capped node must be distinguishable from a genuine leaf on the
+	// wire: it HAS children, the response just does not carry them.
+	if !root.Children[0].HasMoreChildren {
+		t.Errorf("depth-capped node must set has_more_children")
+	}
+	if root.HasMoreChildren {
+		t.Errorf("a node whose children ARE emitted must not set has_more_children")
+	}
 }
 
 // TestGantt_HierarchyConfigOrderWins pins the cross-relation-type half of

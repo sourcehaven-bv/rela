@@ -86,7 +86,29 @@ export interface GanttTick {
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
-/** ticksFor lays out period boundaries across the axis for a zoom level. */
+/** MAX_TICKS caps label density: past it, adjacent labels overlap into an
+ * unreadable smear, so periods are emitted at a stride instead. */
+const MAX_TICKS = 20
+
+/** isoWeek returns the ISO 8601 week number for an epoch day (UTC). */
+export function isoWeek(day: number): number {
+  const d = dayToDate(day)
+  // Shift to the Thursday of this week; its year is the ISO year.
+  const target = new Date(d)
+  target.setUTCDate(d.getUTCDate() + 3 - ((d.getUTCDay() + 6) % 7))
+  const yearStart = Date.UTC(target.getUTCFullYear(), 0, 1)
+  return Math.ceil(((target.getTime() - yearStart) / MS_PER_DAY + 1) / 7)
+}
+
+/**
+ * ticksFor lays out period boundaries across the axis for a zoom level.
+ *
+ * Density is bounded: when the span holds more periods than MAX_TICKS, every
+ * Nth period is emitted instead — a two-year axis at week zoom would
+ * otherwise draw ~104 labels into each other. Weeks are labelled with ISO
+ * week numbers (the planning convention, and far shorter than dates); months
+ * carry the year at January so a multi-year axis stays unambiguous.
+ */
 export function ticksFor(axis: { start: number; end: number }, zoom: GanttZoom): GanttTick[] {
   const out: GanttTick[] = []
   const d = dayToDate(axis.start)
@@ -98,21 +120,40 @@ export function ticksFor(axis: { start: number; end: number }, zoom: GanttZoom):
     // back up to Monday; wd is UTC midnight and whole-day arithmetic keeps it there
     cur.setTime(wd.getTime() - ((wd.getUTCDay() + 6) % 7) * MS_PER_DAY)
   }
+
+  const spanDays = axis.end - axis.start + 1
+  const periodDays = zoom === 'quarter' ? 91 : zoom === 'month' ? 30 : 7
+  const stride = Math.max(1, Math.ceil(spanDays / periodDays / MAX_TICKS))
+
   const endMs = (axis.end + 1) * MS_PER_DAY
   let guard = 0
-  while (cur.getTime() < endMs && guard++ < 400) {
+  let i = 0
+  while (cur.getTime() < endMs && guard++ < 800) {
     const day = Math.floor(cur.getTime() / MS_PER_DAY)
+    // January is always emitted at month zoom: it carries the year, and a
+    // stride that happened to skip it would leave a multi-year axis with no
+    // year anchor at all.
+    const emit = i % stride === 0 || (zoom === 'month' && cur.getUTCMonth() === 0)
+    i++
     if (zoom === 'quarter') {
-      out.push({
-        day,
-        label: `Q${Math.floor(cur.getUTCMonth() / 3) + 1} '${String(cur.getUTCFullYear()).slice(2)}`,
-      })
+      if (emit) {
+        out.push({
+          day,
+          label: `Q${Math.floor(cur.getUTCMonth() / 3) + 1} '${String(cur.getUTCFullYear()).slice(2)}`,
+        })
+      }
       cur.setUTCMonth(cur.getUTCMonth() + 3)
     } else if (zoom === 'month') {
-      out.push({ day, label: MONTHS[cur.getUTCMonth()] })
+      if (emit) {
+        const m = cur.getUTCMonth()
+        const label = m === 0 ? `${MONTHS[m]} '${String(cur.getUTCFullYear()).slice(2)}` : MONTHS[m]
+        out.push({ day, label })
+      }
       cur.setUTCMonth(cur.getUTCMonth() + 1)
     } else {
-      out.push({ day, label: `${cur.getUTCDate()}/${cur.getUTCMonth() + 1}` })
+      if (emit) {
+        out.push({ day, label: `W${isoWeek(day)}` })
+      }
       cur.setTime(cur.getTime() + 7 * MS_PER_DAY)
     }
   }
