@@ -2343,7 +2343,7 @@ inherits the surrounding text colour, so icons follow the light / dark theme
 instead of fighting it the way an emoji does.
 
 <!-- BEGIN generated: icons -->
-The 217 names below are the complete set. This table is **generated** from the
+The 218 names below are the complete set. This table is **generated** from the
 same definition the server validates against and the app renders from, so it
 cannot fall out of step with either — an earlier hand-written copy went stale
 within a single release, which is why it is machine-written now.
@@ -2359,6 +2359,7 @@ draws nothing.
 | `list` | List | List view; the default list glyph |
 | `kanban` | Kanban | Board view; the default kanban glyph |
 | `calendar` | CalendarDays | Calendar view |
+| `gantt` | ChartGantt | Gantt view |
 | `search` | Search | Search |
 | `settings` | Settings | Settings or configuration |
 | `apps` | Blocks | Custom apps section |
