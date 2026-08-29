@@ -472,6 +472,113 @@ func TestGantt_DepthCapFoldsBeyond(t *testing.T) {
 	}
 }
 
+// TestGantt_HierarchyConfigOrderWins pins the cross-relation-type half of
+// parent-selection determinism: hierarchy list order decides which relation
+// type claims a child when two types both point at it. (The within-type half
+// — lexicographic edge sort — is pinned by TestGantt_MultiParentFirst.)
+func TestGantt_HierarchyConfigOrderWins(t *testing.T) {
+	// Both relation types can parent EPIC-S; `contains` is not valid
+	// project→epic in the metamodel, so use two projects and give has-epic a
+	// competitor by reversing the hierarchy list instead.
+	app := newGanttTestApp(t, func(g *dataentryconfig.Gantt) {
+		g.Hierarchy = []string{"has-epic", "contains"}
+	})
+	seedProject(app, "PRJ-A", "Alpha", nil)
+	seedProject(app, "PRJ-B", "Beta", nil)
+	// PRJ-B is claimed by PRJ-A twice: via contains and (illegally per
+	// metamodel, but the store does not enforce that) via has-epic from a
+	// LATER-sorting parent. The has-epic edge must win because its type is
+	// first in the hierarchy list, even though "PRJ-Z" sorts after "PRJ-A".
+	seedProject(app, "PRJ-Z", "Zulu", nil)
+	seedRelation(app, &entity.Relation{From: "PRJ-A", Type: "contains", To: "PRJ-B"})
+	seedRelation(app, &entity.Relation{From: "PRJ-Z", Type: "has-epic", To: "PRJ-B"})
+
+	resp := decodeGantt(t, ganttGet(context.Background(), app, "plan"))
+	var parentOfB string
+	var walk func(parent string, ns []v1.GanttNode)
+	walk = func(parent string, ns []v1.GanttNode) {
+		for _, n := range ns {
+			if n.ID == "PRJ-B" {
+				parentOfB = parent
+			}
+			walk(n.ID, n.Children)
+		}
+	}
+	walk("", resp.Roots)
+	if parentOfB != "PRJ-Z" {
+		t.Errorf("parent of PRJ-B = %q, want PRJ-Z (has-epic is first in hierarchy config order)", parentOfB)
+	}
+}
+
+// TestGantt_WhereOnHiddenPropertyMatchesNothing pins the post-redact filter
+// contract as a TEST, not prose: membership must never reflect a predicate
+// over a value the principal cannot read.
+func TestGantt_WhereOnHiddenPropertyMatchesNothing(t *testing.T) {
+	app := newGanttTestApp(t, func(g *dataentryconfig.Gantt) {
+		g.Sources["project"] = dataentryconfig.GanttSource{
+			Start: "planned_start", End: "planned_end",
+			Where: []string{"planned_end>=2026-01-01"},
+		}
+	})
+	app.fieldResolver = fakeResolver{fv: FieldVerdicts{
+		Visible: map[string]bool{"planned_end": false},
+	}}
+	seedProject(app, "PRJ-A", "Root", map[string]any{
+		"planned_start": "2026-01-01", "planned_end": "2026-03-01"})
+
+	resp := decodeGantt(t, ganttGet(context.Background(), app, "plan"))
+	// The raw value (2026-03-01) WOULD match; the redacted view has no value,
+	// so the entity must be excluded — otherwise its presence is a one-bit
+	// oracle on the hidden value.
+	if len(resp.Roots) != 0 {
+		t.Errorf("ORACLE: where over a hidden property admitted an entity: %+v", resp.Roots)
+	}
+}
+
+// TestGantt_WhereMatchErrorExcludes pins the match-ERROR direction: an
+// unparseable stored value under a comparison filter excludes the entity
+// (logged server-side), it does not fail the request or slip through.
+func TestGantt_WhereMatchErrorExcludes(t *testing.T) {
+	app := newGanttTestApp(t, func(g *dataentryconfig.Gantt) {
+		g.Sources["project"] = dataentryconfig.GanttSource{
+			Start: "planned_start", End: "planned_end",
+			Where: []string{"planned_end<2026-06-01"},
+		}
+	})
+	seedProject(app, "PRJ-BAD", "BadDate", map[string]any{"planned_end": "soon"})
+	seedProject(app, "PRJ-OK", "Good", map[string]any{
+		"planned_start": "2026-01-01", "planned_end": "2026-02-01"})
+
+	resp := decodeGantt(t, ganttGet(context.Background(), app, "plan"))
+	if len(resp.Roots) != 1 || resp.Roots[0].ID != "PRJ-OK" {
+		t.Errorf("match-error entity should be excluded, good one kept: %+v", resp.Roots)
+	}
+}
+
+// TestGantt_DrillDepthIsRelative pins the flame-graph depth semantic: the
+// depth cap is measured from the RESPONSE root, so drilling reaches levels a
+// root-level response cannot carry.
+func TestGantt_DrillDepthIsRelative(t *testing.T) {
+	app := newGanttTestApp(t, func(g *dataentryconfig.Gantt) { g.MaxDepth = 1 })
+	seedProject(app, "PRJ-A", "L0", nil)
+	seedProject(app, "PRJ-B", "L1", nil)
+	seedProject(app, "PRJ-C", "L2", nil)
+	seedRelation(app, &entity.Relation{From: "PRJ-A", Type: "contains", To: "PRJ-B"})
+	seedRelation(app, &entity.Relation{From: "PRJ-B", Type: "contains", To: "PRJ-C"})
+
+	top := decodeGantt(t, ganttGet(context.Background(), app, "plan"))
+	if len(top.Roots[0].Children) != 1 || len(top.Roots[0].Children[0].Children) != 0 {
+		t.Fatalf("root response should stop at depth 1: %+v", top.Roots)
+	}
+
+	drilled := decodeGantt(t, ganttGet(context.Background(), app, "plan?root=PRJ-B"))
+	if len(drilled.Roots) != 1 || len(drilled.Roots[0].Children) != 1 ||
+		drilled.Roots[0].Children[0].ID != "PRJ-C" {
+
+		t.Errorf("drilling re-roots the depth cap; PRJ-C should now be reachable: %+v", drilled.Roots)
+	}
+}
+
 // TestGantt_TimeTypedDateProperties pins the YAML-frontmatter shape: an
 // unquoted date parses to a time.Time, not a string, and the date roles must
 // read it (GetString silently drops it — the entityTimeValue hazard).
@@ -521,5 +628,35 @@ func TestSidebar_GanttEntry(t *testing.T) {
 	}
 	if !strings.Contains(body, `"gantt"`) {
 		t.Errorf("sidebar should carry the gantt icon: %s", body)
+	}
+}
+
+// TestSidebar_GanttHiddenWithoutPermission mirrors the calendar's test: a
+// permission-gated gantt entry is filtered from the sidebar for a principal
+// without the grant. (A UX filter only — the endpoint stays reachable and
+// returns ACL-scoped rows.)
+func TestSidebar_GanttHiddenWithoutPermission(t *testing.T) {
+	app := newGanttTestApp(t)
+	next := *app.State().Cfg
+	next.Navigation = []dataentryconfig.NavigationEntry{
+		{Label: "Plan", Gantt: "plan", Permission: "planner"},
+	}
+	app.schema.Publish(&Schema{Cfg: &next, Meta: app.State().Meta})
+
+	d := mustNewACL(t, &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"project"}}},
+		Assignments: map[string]string{"alice": "viewer"},
+	}, app.store)
+	app.acl = d
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_sidebar", http.NoBody)
+	req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
+	rec := httptest.NewRecorder()
+	app.views.handleV1Sidebar(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("sidebar: got %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "/gantt/plan") {
+		t.Errorf("gated gantt entry should be hidden without the permission: %s", rec.Body)
 	}
 }

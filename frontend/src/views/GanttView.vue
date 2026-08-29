@@ -40,18 +40,24 @@ const schemaStore = useSchemaStore()
 const config = computed(() => schemaStore.getGantt(props.id))
 
 const data = ref<GanttResponse | null>(null)
+/** The root id `data` was fetched for; null means the full forest. */
+const fetchedRoot = ref<string | null>(null)
 const error = ref('')
 
-async function refetch() {
+/** Titles remembered per drilled id, so breadcrumbs stay labelled even when a
+ * re-scoped fetch no longer carries the ancestors. */
+const crumbTitles = ref<Map<string, string>>(new Map())
+
+async function fetchScope(root: string | null) {
   error.value = ''
   try {
-    data.value = await getGantt(props.id)
+    data.value = await getGantt(props.id, root ?? undefined)
+    fetchedRoot.value = root
   } catch (e) {
     data.value = null
     error.value = getErrorMessage(e)
   }
 }
-watch(() => props.id, refetch, { immediate: true })
 
 /** Drill path from the URL (?path=id1,id2); [] means the full forest. */
 const drillPath = computed<string[]>(() => {
@@ -63,7 +69,41 @@ const drillPath = computed<string[]>(() => {
 const zoom = ref<GanttZoom>('month')
 const expanded = ref<Set<string>>(new Set())
 
-/** The roots currently shown: the forest, or the drilled node's children. */
+/**
+ * Fetch policy: drilling is client-side (snappy — the subtree is usually
+ * already here) EXCEPT when the fetched data cannot answer: the target is
+ * missing from it, or the response was truncated (its children may have been
+ * cut — this is what makes the truncated hint's "drill in to see more" true).
+ * Going back up above the fetched scope refetches likewise.
+ */
+watch(
+  [() => props.id, drillPath] as const,
+  ([id, path], old) => {
+    const idChanged = !old || id !== old[0]
+    if (idChanged) {
+      crumbTitles.value = new Map()
+      expanded.value = new Set()
+      data.value = null
+      fetchedRoot.value = null
+    } else {
+      // A drill is a change of context; expansion set in the old context
+      // rarely means anything in the new one, and would grow unboundedly.
+      expanded.value = new Set()
+    }
+    const target = path.length ? path[path.length - 1] : null
+    if (!idChanged && target === fetchedRoot.value) return
+    const canAnswerLocally =
+      !idChanged &&
+      data.value !== null &&
+      !data.value.truncated &&
+      fetchedRoot.value === null &&
+      (target === null || findNode(data.value.roots, target) !== null)
+    if (!canAnswerLocally) void fetchScope(target)
+  },
+  { immediate: true },
+)
+
+/** The roots currently shown: the forest, or the drilled node's subtree. */
 const currentRoots = computed<GanttNode[]>(() => {
   const roots = data.value?.roots ?? []
   const path = drillPath.value
@@ -72,12 +112,14 @@ const currentRoots = computed<GanttNode[]>(() => {
   return node ? [node] : roots
 })
 
-/** Breadcrumb nodes for the drill path (skips ids that vanished on refetch). */
-const crumbs = computed<GanttNode[]>(() => {
+/** Breadcrumbs: id + best-known title (from the drill click, else the tree,
+ * else the id — a deep link into a truncated tree has nothing better). */
+const crumbs = computed<{ id: string; title: string }[]>(() => {
   const roots = data.value?.roots ?? []
-  return drillPath.value
-    .map((id) => findNode(roots, id))
-    .filter((n): n is GanttNode => n !== null)
+  return drillPath.value.map((id) => ({
+    id,
+    title: crumbTitles.value.get(id) || findNode(roots, id)?.title || id,
+  }))
 })
 
 const axis = computed(() => forestSpan(currentRoots.value))
@@ -89,6 +131,10 @@ const rows = computed(() =>
 )
 
 const todayDay = computed(() => {
+  // LOCAL calendar fields on purpose: the user's local "today" is what the
+  // marker means, while every stored date is UTC-parsed. Rebuilding this from
+  // toISOString() would shift the line a day for anyone west of Greenwich
+  // after 00:00 UTC.
   const now = new Date()
   return parseDay(
     `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`,
@@ -100,6 +146,9 @@ function drill(node: GanttNode) {
     router.push(`/entity/${node.type}/${node.id}`)
     return
   }
+  const titles = new Map(crumbTitles.value)
+  titles.set(node.id, node.title || node.id)
+  crumbTitles.value = titles
   const path = [...drillPath.value, node.id]
   router.push({ query: { ...route.query, path: path.join(',') } })
 }
@@ -255,7 +304,7 @@ const footerHtml = computed(() =>
           :class="{ current: i === crumbs.length - 1 }"
           @click="drillTo(i)"
         >
-          {{ c.title || c.id }}
+          {{ c.title }}
         </button>
         <span v-if="data?.truncated" class="truncated-flag" title="The tree was cut at the node cap; drill in to see more">
           truncated

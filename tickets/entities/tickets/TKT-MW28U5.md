@@ -5,7 +5,7 @@ title: 'Hierarchical Gantt view for data-entry (gantts: config, recursive roll-u
 kind: enhancement
 priority: medium
 effort: xl
-status: in-progress
+status: review
 ---
 
 ## Summary

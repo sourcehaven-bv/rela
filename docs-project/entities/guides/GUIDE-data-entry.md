@@ -3208,7 +3208,7 @@ colour-blindness and greyscale where amber-versus-red alone would not.
 | `multi_parent` | string | `first` (default) or `error` — see below |
 | `on_cycle` | string | `error` (default) or `prune` — see below |
 | `default_depth` | int | Levels expanded on first load (default 2) |
-| `max_depth` | int | Server-side traversal cap (default 10). Deeper levels still fold into their ancestor's rolled span |
+| `max_depth` | int | Levels per **response**, measured from the response's root (default 10). Drilling re-roots the walk, so deeper levels stay reachable; beyond-cap levels still fold into their ancestor's rolled span |
 | `max_nodes` | int | Nodes per response (default 2000); exceeding it flags the response as truncated |
 | `sources` | map | Date-role mapping keyed by entity **type** |
 | `filter_controls` | list | Interactive filters, as on lists and kanbans |
@@ -3239,6 +3239,12 @@ rather than a silent default:
 - `on_cycle: error` refuses the request when containment loops (A contains B
   contains A); `prune` drops the loop and renders the rest. A cycle is always
   a data bug — the choice is only between a hard stop and a degraded render.
+
+Both `error` policies evaluate against the **requesting principal's visible
+subgraph** (hidden entities must not be reportable), so under ACL the same
+gantt can refuse for one principal and render for another — if a report of
+the error cannot be reproduced, check whether the offending entities are
+hidden from you.
 
 ### Validation
 

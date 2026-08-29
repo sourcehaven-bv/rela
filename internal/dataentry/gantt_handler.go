@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
@@ -119,23 +120,14 @@ func (h *ganttHandler) handleV1Gantt(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := v1.GanttResponse{Roots: []v1.GanttNode{}}
-	budget := g.MaxNodes
-	for i, rootID := range rootIDs {
-		// Truncation means something VISIBLE was cut — exhausting the budget
-		// on exactly the last node is not truncation, or the flag would leak
-		// how close a principal's visible tree sits to the cap.
-		if budget <= 0 && i < len(rootIDs) {
-			resp.Truncated = true
+	budget := &ganttBudget{remaining: g.MaxNodes}
+	for _, rootID := range rootIDs {
+		if !budget.take() {
 			break
 		}
-		node, used, truncated := emitGanttNode(forest, rootID, 0, g.MaxDepth, budget)
-		resp.Roots = append(resp.Roots, node)
-		budget -= used
-		if truncated {
-			resp.Truncated = true
-			break
-		}
+		resp.Roots = append(resp.Roots, emitGanttNode(forest, rootID, 0, g.MaxDepth, budget))
 	}
+	resp.Truncated = budget.truncated
 	writeV1JSON(w, http.StatusOK, resp)
 }
 
@@ -261,7 +253,18 @@ func (h *ganttHandler) loadGanttNodes(
 				// read. A where: on a hidden property therefore matches
 				// nothing for that principal.
 				matched, merr := filter.MatchAll(entityRecord(red), filters, entDef, s.Meta)
-				if merr != nil || !matched {
+				if merr != nil {
+					// A match ERROR (an unparseable stored value, not a
+					// non-match) excludes the entity — for a filter that is
+					// the closed direction — but never silently: exclusion
+					// also narrows every ancestor's rolled span, which is
+					// exactly the "looks on schedule" failure this view
+					// exists to prevent, so the drop is logged.
+					slog.Warn("gantt: where filter errored; entity excluded",
+						"entity", red.ID, "error", merr)
+					continue
+				}
+				if !matched {
 					continue
 				}
 			}
@@ -318,33 +321,82 @@ func (h *ganttHandler) linkGanttParents(
 				continue
 			}
 			parent[e[1]] = e[0]
-			p := nodes[e[0]]
-			p.children = append(p.children, e[1])
+			// Guard adjacent to the deref, not 20 lines up: the edge loop
+			// above filters unknown endpoints today, but this must not
+			// become a panic if a future edge source skips that filter.
+			if p := nodes[e[0]]; p != nil {
+				p.children = append(p.children, e[1])
+			}
 		}
 	}
 	return parent, multiParent, nil
 }
 
-// foldGantt computes n's rolled span from its descendants, post-order.
-func foldGantt(f *ganttForest, id string) ganttSpan {
-	n := f.nodes[id]
-	f.reachable[id] = true
-	sort.Strings(n.children)
-	for _, childID := range n.children {
-		n.rolled.union(foldGantt(f, childID))
+// ganttBudget is the node-cap accounting shared by every emission site, so
+// the truncation rule exists ONCE: `truncated` becomes true exactly when a
+// visible node was denied emission — never merely because the budget landed
+// on zero after the last node (that would leak how close a principal's
+// visible tree sits to the cap).
+type ganttBudget struct {
+	remaining int
+	truncated bool
+}
+
+// take consumes one node's worth. False means the node was cut, and the flag
+// is recorded at that moment — the caller just stops.
+func (b *ganttBudget) take() bool {
+	if b.remaining <= 0 {
+		b.truncated = true
+		return false
 	}
-	// The value this node contributes upward is the union of what it declares
-	// and what rolled up into it.
-	contrib := ganttSpan{start: n.start, end: n.end}
-	contrib.union(n.rolled)
-	return contrib
+	b.remaining--
+	return true
+}
+
+// foldGantt computes every node's rolled span, post-order, and marks
+// reachability. Iterative on an explicit stack: recursion depth here is
+// DATA-controlled (a chain of containment edges), and a deep-enough chain
+// would overflow the goroutine stack — which kills the process, not the
+// request. The emit walk is depth-capped so it has no such exposure.
+func foldGantt(f *ganttForest, rootID string) {
+	type frame struct {
+		id   string
+		next int // index into children; len(children) means "fold and pop"
+	}
+	stack := []frame{{id: rootID}}
+	f.reachable[rootID] = true
+	sort.Strings(f.nodes[rootID].children)
+
+	for len(stack) > 0 {
+		top := &stack[len(stack)-1]
+		n := f.nodes[top.id]
+		if top.next < len(n.children) {
+			childID := n.children[top.next]
+			top.next++
+			f.reachable[childID] = true
+			sort.Strings(f.nodes[childID].children)
+			stack = append(stack, frame{id: childID})
+			continue
+		}
+		// Post-order: children folded; contribute upward the union of what
+		// this node declares and what rolled into it.
+		stack = stack[:len(stack)-1]
+		if len(stack) > 0 {
+			parent := f.nodes[stack[len(stack)-1].id]
+			contrib := ganttSpan{start: n.start, end: n.end}
+			contrib.union(n.rolled)
+			parent.rolled.union(contrib)
+		}
+	}
 }
 
 // emitGanttNode converts the folded build into wire nodes, applying the depth
-// and node caps. Both caps run on the already-gated tree, so `truncated` can
-// only ever reflect visible nodes (a dropped-for-visibility subtree is not
-// truncation and must not look like it).
-func emitGanttNode(f *ganttForest, id string, depth, maxDepth, budget int) (v1.GanttNode, int, bool) {
+// cap and the shared node budget. Depth is relative to the RESPONSE root —
+// the flame-graph semantic: a drilled request re-roots the walk, so repeated
+// drilling reaches arbitrary depth while each response stays bounded (see the
+// MaxDepth field doc). Both caps run on the already-gated tree, so truncation
+// can only ever reflect visible nodes.
+func emitGanttNode(f *ganttForest, id string, depth, maxDepth int, budget *ganttBudget) v1.GanttNode {
 	n := f.nodes[id]
 	out := v1.GanttNode{
 		ID:    n.id,
@@ -362,24 +414,18 @@ func emitGanttNode(f *ganttForest, id string, depth, maxDepth, budget int) (v1.G
 	out.Breach.Before = n.start != nil && n.rolled.start != nil && n.rolled.start.Before(*n.start)
 	out.Breach.After = n.end != nil && n.rolled.end != nil && n.rolled.end.After(*n.end)
 
-	used := 1
 	if depth >= maxDepth {
 		// Children beyond the cap are not emitted, but their dates are
 		// already inside this node's rolled span — the fold ran first.
-		return out, used, false
+		return out
 	}
 	for _, childID := range n.children {
-		if used >= budget {
-			return out, used, true
+		if !budget.take() {
+			break
 		}
-		child, childUsed, truncated := emitGanttNode(f, childID, depth+1, maxDepth, budget-used)
-		out.Children = append(out.Children, child)
-		used += childUsed
-		if truncated {
-			return out, used, true
-		}
+		out.Children = append(out.Children, emitGanttNode(f, childID, depth+1, maxDepth, budget))
 	}
-	return out, used, false
+	return out
 }
 
 // ganttTitle resolves the bar label from the redacted entity: the source's

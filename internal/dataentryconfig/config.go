@@ -893,8 +893,12 @@ type Gantt struct {
 	// (default 2). Deeper levels stay reachable by drill-down; this only
 	// picks the initial view.
 	DefaultDepth int `yaml:"default_depth,omitempty" json:"default_depth"`
-	// MaxDepth caps the server-side walk (default 10, matching the view
-	// traversal cap). Levels beyond it fold into their ancestor's rolled span.
+	// MaxDepth caps how many levels one RESPONSE carries (default 10,
+	// matching the view traversal cap), measured from the response's root —
+	// the flame-graph semantic. A drilled request (?root=) re-roots the walk,
+	// so repeated drilling reaches arbitrary depth while each response stays
+	// bounded; this is a payload cap, not a reachability limit. Levels beyond
+	// it still fold into their ancestor's rolled span.
 	MaxDepth int `yaml:"max_depth,omitempty" json:"max_depth"`
 	// MaxNodes caps how many nodes one response may carry (default 2000).
 	// Exceeding it sets the response's truncated flag rather than failing.

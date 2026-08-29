@@ -59,10 +59,20 @@ func validateGanttShell(ganttID string, g Gantt, meta *metamodel.Metamodel) []st
 	if len(g.Hierarchy) == 0 {
 		errs = append(errs, prefix+": 'hierarchy' must list at least one relation type")
 	}
+	seen := map[string]int{}
 	for i, rel := range g.Hierarchy {
 		if _, ok := meta.GetRelationDef(rel); !ok {
 			errs = append(errs, fmt.Sprintf("%s: hierarchy[%d] references unknown relation type %q",
 				prefix, i, rel))
+		}
+		// A duplicate is dead config at best; at worst it changes which
+		// parent "sorts first" for multi-parent detection. Refuse rather
+		// than depend on the runtime happening to tolerate it.
+		if j, dup := seen[rel]; dup {
+			errs = append(errs, fmt.Sprintf("%s: hierarchy[%d] duplicates hierarchy[%d] (%q)",
+				prefix, i, j, rel))
+		} else {
+			seen[rel] = i
 		}
 	}
 
@@ -89,6 +99,23 @@ func validateGanttShell(ganttID string, g Gantt, meta *metamodel.Metamodel) []st
 	}
 	if g.MaxNodes < 0 {
 		errs = append(errs, prefix+": max_nodes must not be negative")
+	}
+
+	// Compare the EFFECTIVE values (defaults applied), or `default_depth: 20`
+	// with an unset max_depth would load clean and then silently never show
+	// more than 10 levels — the author's stated intent unachievable with no
+	// signal.
+	effDefault, effMax := g.DefaultDepth, g.MaxDepth
+	if effDefault == 0 {
+		effDefault = defaultGanttDefaultDepth
+	}
+	if effMax == 0 {
+		effMax = defaultGanttMaxDepth
+	}
+	if effDefault > effMax {
+		errs = append(errs, fmt.Sprintf(
+			"%s: default_depth (%d) exceeds max_depth (%d) — levels past max_depth are never sent",
+			prefix, effDefault, effMax))
 	}
 	return errs
 }

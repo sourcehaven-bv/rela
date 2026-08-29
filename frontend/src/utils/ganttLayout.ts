@@ -95,9 +95,8 @@ export function ticksFor(axis: { start: number; end: number }, zoom: GanttZoom):
     cur.setUTCMonth(Math.floor(cur.getUTCMonth() / 3) * 3)
   } else if (zoom === 'week') {
     const wd = dayToDate(axis.start)
-    // back up to Monday
+    // back up to Monday; wd is UTC midnight and whole-day arithmetic keeps it there
     cur.setTime(wd.getTime() - ((wd.getUTCDay() + 6) % 7) * MS_PER_DAY)
-    cur.setUTCHours(0, 0, 0, 0)
   }
   const endMs = (axis.end + 1) * MS_PER_DAY
   let guard = 0

@@ -183,6 +183,21 @@ func TestValidateGantts_Invalid(t *testing.T) {
 			want: `on_cycle "ignore" is not valid`,
 		},
 		{
+			name: "duplicate hierarchy entry",
+			g:    withGantt(func(g *Gantt) { g.Hierarchy = []string{"contains", "has-epic", "contains"} }),
+			want: `hierarchy[2] duplicates hierarchy[0] ("contains")`,
+		},
+		{
+			name: "default_depth exceeding max_depth",
+			g:    withGantt(func(g *Gantt) { g.DefaultDepth = 20; g.MaxDepth = 3 }),
+			want: "default_depth (20) exceeds max_depth (3)",
+		},
+		{
+			name: "default_depth exceeding the DEFAULT max_depth",
+			g:    withGantt(func(g *Gantt) { g.DefaultDepth = 20 }),
+			want: "exceeds max_depth (10)",
+		},
+		{
 			name: "negative max_depth",
 			g:    withGantt(func(g *Gantt) { g.MaxDepth = -1 }),
 			want: "max_depth must not be negative",

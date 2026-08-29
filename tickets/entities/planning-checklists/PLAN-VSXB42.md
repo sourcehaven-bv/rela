@@ -287,11 +287,11 @@ per-source `roll_up: derive | strict` only on demonstrated need.
 
 - [x] `docs/data-entry.md` — `gantts:` block after Calendars, worked date-role
 example
-- [ ] `docs/metamodel.md` — N/A
-- [ ] `docs/cli-reference.md` — N/A
+- [x] ~~`docs/metamodel.md`~~ (N/A: no metamodel change)
+- [x] ~~`docs/cli-reference.md`~~ (N/A: no CLI change)
 - [x] `CLAUDE.md` — record the five-step pipeline (gate → zero hidden fields →
 fold → cap → redact-once) as a load-bearing invariant
-- [ ] `README.md` — N/A
+- [x] ~~`README.md`~~ (N/A: no project-level change)
 
 ## Design Review
 
