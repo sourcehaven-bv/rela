@@ -68,6 +68,7 @@ components:
   automation:       { in: internal/automation }
   calfeed:          { in: internal/calfeed }
   mailrender:       { in: internal/mailrender }
+  mailtemplate:     { in: internal/mailtemplate }
   caldavalias:      { in: internal/caldavalias }
   conflict:         { in: internal/conflict }
   computed:         { in: internal/computed }
@@ -519,6 +520,8 @@ deps:
       # data-migration GC sweep. Consumers take the mail.Sender seam, not this
       # edge.
       - mail
+      - mailrender
+      - filter
       # The composition root picks the userstate backend, the same way it
       # picks the store backend. Consumers take the userstate.Store seam.
       - userstate
@@ -553,6 +556,8 @@ deps:
       - lua
       - memstore
       - metamodel
+      - mailtemplate
+      - scheduler
       - pgstore
       - sqlitestore
       - project
@@ -622,9 +627,11 @@ deps:
       - conditionlint
       - computed
       - dataentryconfig
+      - mailtemplate
       - metamodel
       - migration
       - project
+      - scheduler
       - storage
 
   # Domain services
@@ -671,6 +678,14 @@ deps:
       - goldmark
       - bluemonday
       - douceur
+  # Project declarations assemble renderer models from an injected visible
+  # reader. SMTP and app wiring remain outside this package.
+  mailtemplate:
+    mayDependOn:
+      - filter
+      - mailrender
+      - metamodel
+      - store
   # Sender seam, transports, config and the best-effort outbox. Depends on
   # mailrender for the body model only; it reaches the store through a narrow
   # structural interface at the wiring site, never by importing appbuild.
@@ -682,8 +697,22 @@ deps:
       # from the API tokens already kept there, and TKT-DS1CR6 makes mail a
       # script consumer anyway.
       - secrets
+      # transport: script (TKT-DS1CR6) runs an operator Lua script that ships
+      # an already-rendered message. The arrow points mail -> lua and NEVER
+      # back: lua declares its own MailSender interface at the call site, so
+      # mail.send needs no import of this package and no cycle exists.
+      #
+      # The runtime is built with a ZERO ReadDeps and no WriteDeps, which is
+      # why mail does not gain store/tracer/search here — a send script has no
+      # graph access at all, by construction rather than by convention.
+      - lua
+      # For the fixed system:mail identity the send runtime runs as. See
+      # mail.SendScriptPrincipal for why the identity is fixed rather than
+      # inherited from whoever enqueued the message.
+      - principal
     canUse:
       - gomail
+      - gopherlua
   acl:
     mayDependOn:
       - entity
@@ -703,6 +732,7 @@ deps:
       - acl
       - entity
       - metamodel
+      - filter
       - predicate
       - predicatefns
       - principal
@@ -968,6 +998,7 @@ deps:
       - config
       - lua
       - metamodel
+      - filter
       - principal
       - project
       - script
@@ -977,6 +1008,11 @@ deps:
       - ai
       - autocascade
       - lua
+      # The mail.send binding's transport. This package supplies
+      # mail.LoadLuaSender to lua.LoadContextOptions because internal/lua
+      # cannot import internal/mail (mail -> lua already, for transport:
+      # script), so the adapter has to live at a site that sees both.
+      - mail
       - metamodel
       - principal
       - project

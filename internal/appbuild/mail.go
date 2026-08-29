@@ -27,7 +27,21 @@ import (
 // connection) per tenant. That satisfies the SharedBase rule that Close tears
 // down only per-assembled resources, at the cost of N connections to a shared
 // provider — documented in docs/mail.md rather than hidden here.
+type mailRuntime struct {
+	config *mail.Config
+	sender mail.Sender
+	outbox *mail.Outbox
+}
+
 func startMail(paths *project.Context) (ob *mail.Outbox, stop func()) {
+	runtime, stop := startMailRuntime(paths)
+	if runtime == nil {
+		return nil, stop
+	}
+	return runtime.outbox, stop
+}
+
+func startMailRuntime(paths *project.Context) (runtime *mailRuntime, stop func()) {
 	noop := func() {}
 
 	if paths == nil {
@@ -48,7 +62,7 @@ func startMail(paths *project.Context) (ob *mail.Outbox, stop func()) {
 		return nil, noop
 	}
 
-	sender, err := senderFor(cfg)
+	sender, err := mail.SenderFor(cfg)
 	if err != nil {
 		slog.Warn("mail: disabled — cannot build sender", "error", err)
 		return nil, noop
@@ -62,21 +76,5 @@ func startMail(paths *project.Context) (ob *mail.Outbox, stop func()) {
 	outbox.Start()
 
 	slog.Info("mail: enabled", "transport", cfg.Transport)
-	return outbox, outbox.Stop
-}
-
-// senderFor builds the transport named by the config.
-//
-// The switch is exhaustive over a closed set; an unknown transport cannot reach
-// here because Validate rejects it at load, but the default arm stays as a
-// compile-time reminder that a new transport needs wiring in both places.
-func senderFor(cfg *mail.Config) (mail.Sender, error) {
-	switch cfg.Transport {
-	case mail.TransportSMTP:
-		return mail.NewSMTPSender(cfg)
-	case mail.TransportMemory:
-		return mail.NewMemorySender(0), nil
-	default:
-		return nil, errors.New("mail: unsupported transport " + string(cfg.Transport))
-	}
+	return &mailRuntime{config: cfg, sender: sender, outbox: outbox}, outbox.Stop
 }

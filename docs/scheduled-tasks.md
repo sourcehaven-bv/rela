@@ -68,6 +68,27 @@ tasks:
     every: 30m
 ```
 
+A task may instead name a declarative mail template and expand it once per
+recipient. `for_each` is available only on calendar schedules (`day`, `week`, or
+a weekday), is bounded to 1,000 entities by default, and may set `limit` up to
+10,000:
+
+```yaml
+tasks:
+  - name: daily-digest
+    template: overdue_digest
+    every: day
+    for_each:
+      entity_type: person
+      where: ["active = true"]
+      limit: 1000
+```
+
+`script` and `template` are mutually exclusive. Template tasks require
+`for_each`; `run_as` and `for_each` are mutually exclusive because every child
+runs as its selected entity's current ACL principal. Expansion posts independent
+bounded-retry child jobs and does not wait for their delivery.
+
 ### Identity and what a task can read (`run_as`)
 
 A scheduled task runs under an **identity**, and that identity decides what

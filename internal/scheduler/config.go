@@ -4,11 +4,14 @@
 package scheduler
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 
 	"gopkg.in/yaml.v3"
@@ -24,9 +27,10 @@ type Config struct {
 
 // TaskConfig defines a single scheduled task.
 type TaskConfig struct {
-	Name   string   `yaml:"name"`
-	Script string   `yaml:"script"`
-	Every  Schedule `yaml:"every"`
+	Name     string   `yaml:"name"`
+	Script   string   `yaml:"script,omitempty"`
+	Template string   `yaml:"template,omitempty"`
+	Every    Schedule `yaml:"every"`
 
 	// RunAs is the IDENTITY this task runs as — not a capability
 	// (DEC-O59WM4). What the task may read is decided entirely by
@@ -57,6 +61,31 @@ type TaskConfig struct {
 	// operator SHELL: it runs unattended in the server process, so it gets the
 	// declared grant rather than the trusted default `rela script` uses.
 	Capabilities metamodel.Capabilities `yaml:"capabilities,omitempty"`
+
+	// ForEach expands one calendar occurrence into independently retried jobs,
+	// one per matching entity. Its selected entity supplies the execution
+	// principal, so ForEach and RunAs are mutually exclusive.
+	ForEach *ForEachConfig `yaml:"for_each,omitempty"`
+}
+
+// ForEachConfig selects the entities a scheduled task runs as.
+type ForEachConfig struct {
+	EntityType string   `yaml:"entity_type"`
+	Where      []string `yaml:"where,omitempty"`
+	Limit      int      `yaml:"limit,omitempty"`
+}
+
+const (
+	defaultForEachLimit = 1000
+	maxForEachLimit     = 10000
+)
+
+// EffectiveLimit returns the configured fan-out bound or its safe default.
+func (c *ForEachConfig) EffectiveLimit() int {
+	if c == nil || c.Limit == 0 {
+		return defaultForEachLimit
+	}
+	return c.Limit
 }
 
 // Schedule represents a recurring schedule interval.
@@ -133,6 +162,19 @@ func (s Schedule) String() string {
 	return "unknown"
 }
 
+// Occurrence returns the stable local-date identity for a calendar schedule.
+// Interval schedules deliberately have no occurrence identity.
+func (s Schedule) Occurrence(now time.Time) (string, bool) {
+	switch s.kind {
+	case dayKind:
+		return now.Format(time.DateOnly), true
+	case weekdayKind:
+		return mostRecentWeekday(now, s.weekday).Format(time.DateOnly), true
+	default:
+		return "", false
+	}
+}
+
 var durationRe = regexp.MustCompile(`^\d+[mhMH]`)
 
 // UnmarshalYAML implements yaml.Unmarshaler for Schedule.
@@ -198,7 +240,9 @@ func parseSchedule(raw string) (Schedule, error) {
 // ParseConfig parses and validates scheduler configuration from YAML bytes.
 func ParseConfig(data []byte) (*Config, error) {
 	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&cfg); err != nil {
 		return nil, fmt.Errorf("parse schedules.yaml: %w", err)
 	}
 
@@ -217,21 +261,64 @@ func (c *Config) validate() error {
 	seen := make(map[string]struct{}, len(c.Tasks))
 
 	for i, t := range c.Tasks {
-		if t.Name == "" {
-			return fmt.Errorf("task %d: name is required", i)
-		}
-		if _, dup := seen[t.Name]; dup {
-			return fmt.Errorf("task %q: duplicate task name", t.Name)
-		}
-		seen[t.Name] = struct{}{}
-
-		if t.Script == "" {
-			return fmt.Errorf("task %q: script is required", t.Name)
-		}
-		if !t.Every.set {
-			return fmt.Errorf("task %q: every is required", t.Name)
+		if err := validateTask(i, t, seen); err != nil {
+			return err
 		}
 	}
 
+	return nil
+}
+
+func validateTask(i int, t TaskConfig, seen map[string]struct{}) error {
+	if t.Name == "" {
+		return fmt.Errorf("task %d: name is required", i)
+	}
+	if _, dup := seen[t.Name]; dup {
+		return fmt.Errorf("task %q: duplicate task name", t.Name)
+	}
+	seen[t.Name] = struct{}{}
+
+	if (t.Script == "") == (t.Template == "") {
+		return fmt.Errorf("task %q: exactly one of script or template is required", t.Name)
+	}
+	if !t.Every.set {
+		return fmt.Errorf("task %q: every is required", t.Name)
+	}
+	if t.ForEach != nil {
+		if t.RunAs != "" {
+			return fmt.Errorf("task %q: run_as and for_each are mutually exclusive", t.Name)
+		}
+		if t.ForEach.EntityType == "" {
+			return fmt.Errorf("task %q: for_each.entity_type is required", t.Name)
+		}
+		if _, ok := t.Every.Occurrence(time.Now()); !ok {
+			return fmt.Errorf("task %q: for_each requires a calendar schedule (day, week, or weekday)", t.Name)
+		}
+		if t.ForEach.Limit < 0 || t.ForEach.Limit > maxForEachLimit {
+			return fmt.Errorf("task %q: for_each.limit must be between 1 and %d", t.Name, maxForEachLimit)
+		}
+		if _, err := filter.ParseAll(t.ForEach.Where); err != nil {
+			return fmt.Errorf("task %q: for_each.where: %w", t.Name, err)
+		}
+	}
+	if t.Template != "" && t.ForEach == nil {
+		return fmt.Errorf("task %q: template requires for_each", t.Name)
+	}
+	return nil
+}
+
+// ValidateMetamodel checks the schema-dependent part of for_each config.
+func (c *Config) ValidateMetamodel(meta *metamodel.Metamodel) error {
+	if meta == nil {
+		return errors.New("scheduler: metamodel must not be nil")
+	}
+	for _, task := range c.Tasks {
+		if task.ForEach == nil {
+			continue
+		}
+		if _, ok := meta.GetEntityDef(task.ForEach.EntityType); !ok {
+			return fmt.Errorf("task %q: for_each.entity_type %q is unknown", task.Name, task.ForEach.EntityType)
+		}
+	}
 	return nil
 }

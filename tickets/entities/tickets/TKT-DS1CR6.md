@@ -5,7 +5,7 @@ title: 'Mail extensibility: HTTP + Lua script transports, mail.send binding, bas
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+status: done
 ---
 
 ## Description
@@ -92,15 +92,45 @@ Enforced by construction, not asserted in prose. Rendering is ACL-gated upstream
 By the time this ticket starts, #1385 should be merged; confirm the
 `Capabilities` API matches before building on it.
 
-## Open question for planning
+## Open question — DECIDED
 
-The outbox worker has no triggering principal or script context — it delivers
-minutes after the fact, on retry, with no `run_as` and no script-path-keyed
-secrets scope (`secrets.Load` is keyed by script path). Decide how the send
-runtime obtains its secrets scope and audit identity. A fixed `system:mail`
-principal plus a scope keyed on the configured script path is the obvious
-candidate, but it needs deciding explicitly rather than falling out of the
-implementation.
+**Question.** The outbox worker has no triggering principal or script context —
+it delivers minutes after the fact, on retry, with no `run_as` and no
+script-path-keyed secrets scope (`secrets.Load` is keyed by script path). How
+does the send runtime obtain its secrets scope and audit identity?
+
+**Decision.** A fixed `system:mail` principal (plus tool `mail`), with the
+secrets scope keyed on the **configured script path** — the value of `script:`
+in mail.yaml, as written, not resolved to an absolute path. Recorded in
+`mail.SendScriptPrincipal`'s godoc and pinned by
+`TestScriptSender_Principal` / `TestScriptSender_PerScriptSecretOverride`.
+
+**Reasoning.** The alternative was to carry the enqueuing principal on the
+Message and run the script as them. It reads like better attribution and is
+worse on every axis that matters:
+
+- The credential the script uses is the OPERATOR's, not the user's. An audit
+  line naming a person with no relationship to that credential — and no ability
+  to revoke it — is worse than no attribution, because it is misleading rather
+  than merely absent.
+- A per-user secrets scope would make delivery succeed or fail depending on who
+  happened to trigger it. That is a nondeterministic mail system.
+- `Message.RenderedFor` already records the identity that matters: the one
+  whose visibility bounded the CONTENT. Attribution of the DELIVERY is a
+  different question, and conflating them loses the second — which is the one
+  the ACL model depends on.
+
+Positively: delivery is infrastructure the operator configured once, in a file
+only they can write, and every send through a given transport is the same act
+whatever triggered it. The script path is the right scope key because it is
+what `secrets.Load` already keys on everywhere else, so an operator writes the
+ordinary `overrides:` block and it works — no second, mail-only convention.
+The path is also stable across restarts and retries, which a principal is not.
+
+The path is used *as written* rather than resolved, because `overrides:` keys in
+secrets.yaml are project-relative script paths; scoping on an absolute path
+would never match an override and the operator's per-script credential would be
+silently ignored.
 
 ## Scope: IS NOT
 
@@ -144,3 +174,35 @@ trusted code") still applies and should be restated in the package doc.
 They are tested against local stubs, which pins *our* contract but not the
 providers'. Say so in the docs rather than implying they are supported
 integrations.
+
+## Implementation notes
+
+**Capabilities API confirmed.** `lua.Capabilities` matches what this ticket
+assumed: `HTTP`/`AI`/`WriteFile` bools plus `Secrets []string`, fail-closed
+zero value, `AllSecrets` reserved for the operator-shell boundary and not
+settable from YAML. `mail.ScriptCapabilities` is a narrower YAML face over it —
+`http` and `secrets` only, with `AI`/`WriteFile` hard-wired false, because a
+mail transport has no business spending money on inference or touching the
+disk, and a field that exists in YAML is a field someone eventually sets.
+
+**Runtime's plimsoll ceiling moved 105 -> 106.** The ticket predicted the
+mail.send binding would have to be a free function to stay under the load line.
+`registerMailModule` IS a free function, as specified. The binding itself had to
+become a method value: `contextcheck` follows a registration CLOSURE back
+through `registerBindings` to all twelve `NewReader`/`NewWriter` call sites and
+demands each thread a context into runtime CONSTRUCTION, which is not a thing
+that exists — a binding runs later, when a script calls it. `ai.*` and `http.*`
+are unflagged only because they register method values. Matching them is the
+substantive fix; suppressing the finding at twelve unrelated call sites would
+have been the cosmetic one. The directive carries that reasoning.
+
+**`SenderFor` hoisted into internal/mail.** The transport switch was duplicated
+in `internal/appbuild`; with four transports a two-copy switch over a closed set
+is how one gets wired in one place and not the other.
+
+**Wiring.** `lua.LoadContextOptions` gained a `MailSenderLoader` parameter and
+`internal/script` supplies `mail.LoadLuaSender`. The loader is a parameter
+rather than a direct import because `internal/mail` depends on `internal/lua`
+(transport: script runs a Lua runtime), so the reverse import would be a cycle.
+`LoadContextOptions` stays the single load point — no parallel `LoadProvider`-
+style call site was added, per the rule internal/ai already states.

@@ -91,6 +91,12 @@ func (s *Scheduler) UseQueue(q jobs.Client) error {
 	if err := q.Register(TaskKind, s.runTaskJob); err != nil {
 		return fmt.Errorf("scheduler: register task handler: %w", err)
 	}
+	if err := q.Register(ExpandKind, s.runExpandJob); err != nil {
+		return fmt.Errorf("scheduler: register expansion handler: %w", err)
+	}
+	if err := q.Register(ChildKind, s.runChildJob); err != nil {
+		return fmt.Errorf("scheduler: register child handler: %w", err)
+	}
 	s.queue = q
 	return nil
 }
@@ -223,6 +229,36 @@ func (s *Scheduler) enqueueTask(ctx context.Context, task TaskConfig) error {
 		return err
 	}
 	defer s.releaseInFlight(task.Name, token)
+	if task.ForEach != nil {
+		occurrence, ok := task.Every.Occurrence(s.now())
+		if !ok {
+			return fmt.Errorf("scheduler: task %q has for_each without a calendar occurrence", task.Name)
+		}
+		if err := s.queue.Enqueue(ctx, jobs.Job{
+			Kind: ExpandKind,
+			Payload: map[string]any{
+				payloadTaskName:   task.Name,
+				payloadRunToken:   token,
+				payloadOccurrence: occurrence,
+			},
+			Retry:          jobs.RetryNever,
+			IdempotencyKey: task.Name + "/" + occurrence,
+		}); err != nil {
+			if errors.Is(err, jobs.ErrDuplicateJob) {
+				return errTaskPending
+			}
+			return fmt.Errorf("scheduler: enqueue expansion %q: %w", task.Name, err)
+		}
+		select {
+		case err := <-done:
+			return err
+		case <-time.After(taskResultTimeout):
+			return fmt.Errorf("scheduler: expansion %q reported no result within %s", task.Name, taskResultTimeout)
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+
 	http, ai, writeFile, secrets := task.Capabilities.Fields()
 
 	job := jobs.Job{

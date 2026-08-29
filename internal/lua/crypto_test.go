@@ -109,3 +109,142 @@ func TestCryptoRaisesOnNonString(t *testing.T) {
 	err := rt.RunString(`crypto.sha256_hex({})`)
 	require.Error(t, err)
 }
+
+// TestBase64EncodeKnownVectors covers AC6's encode half with the RFC 4648 §10
+// test vectors — the padding cases are where a hand-rolled implementation goes
+// wrong, so they are enumerated rather than sampled.
+func TestBase64EncodeKnownVectors(t *testing.T) {
+	t.Parallel()
+
+	for input, want := range map[string]string{
+		"":       "",
+		"f":      "Zg==",
+		"fo":     "Zm8=",
+		"foo":    "Zm9v",
+		"foob":   "Zm9vYg==",
+		"fooba":  "Zm9vYmE=",
+		"foobar": "Zm9vYmFy",
+	} {
+		got := runCryptoString(t, `rela.output(crypto.base64_encode("`+input+`"))`)
+		assert.Equal(t, want, got, "base64_encode(%q)", input)
+	}
+}
+
+// TestBase64DecodeKnownVectors covers AC6's decode half against the same
+// vectors, read in the other direction.
+func TestBase64DecodeKnownVectors(t *testing.T) {
+	t.Parallel()
+
+	for encoded, want := range map[string]string{
+		"":         "",
+		"Zg==":     "f",
+		"Zm8=":     "fo",
+		"Zm9v":     "foo",
+		"Zm9vYg==": "foob",
+		"Zm9vYmE=": "fooba",
+		"Zm9vYmFy": "foobar",
+	} {
+		got := runCryptoString(t, `
+local out, err = crypto.base64_decode("`+encoded+`")
+if err then error(err.message) end
+rela.output(out)`)
+		assert.Equal(t, want, got, "base64_decode(%q)", encoded)
+	}
+}
+
+// TestBase64RoundTripBinary covers AC6's round-trip clause on BINARY data.
+//
+// Binary specifically: Lua strings are byte strings, and a NUL or a high byte
+// is exactly what a naive implementation truncates or mangles. Text-only
+// vectors would not catch it.
+func TestBase64RoundTripBinary(t *testing.T) {
+	t.Parallel()
+
+	got := runCryptoString(t, `
+local raw = ""
+for i = 0, 255 do
+  raw = raw .. string.char(i)
+end
+local encoded = crypto.base64_encode(raw)
+local decoded, err = crypto.base64_decode(encoded)
+if err then error(err.message) end
+if decoded ~= raw then error("round-trip changed the bytes") end
+rela.output(encoded)`)
+
+	all := make([]byte, 256)
+	for i := range all {
+		all[i] = byte(i)
+	}
+	assert.Equal(t, base64.StdEncoding.EncodeToString(all), got)
+}
+
+// TestBase64DecodeVariants pins that decode accepts the unpadded and URL-safe
+// alphabets. A script decoding someone else's output does not get to choose
+// which variant it receives.
+func TestBase64DecodeVariants(t *testing.T) {
+	t.Parallel()
+
+	// ">>>???" encodes with '+' and '/' in the standard alphabet and with '-'
+	// and '_' in the URL-safe one, so it distinguishes them.
+	raw := ">>>???"
+	for name, encoded := range map[string]string{
+		"std":    base64.StdEncoding.EncodeToString([]byte(raw)),
+		"rawStd": base64.RawStdEncoding.EncodeToString([]byte(raw)),
+		"url":    base64.URLEncoding.EncodeToString([]byte(raw)),
+		"rawURL": base64.RawURLEncoding.EncodeToString([]byte(raw)),
+	} {
+		got := runCryptoString(t, `
+local out, err = crypto.base64_decode("`+encoded+`")
+if err then error(err.message) end
+rela.output(out)`)
+		assert.Equal(t, raw, got, "variant %s", name)
+	}
+}
+
+// TestBase64DecodeInvalid pins the error CONVENTION: malformed input from a
+// remote is an expected runtime condition, so it returns (nil, err_table)
+// rather than raising. A raise would make a script lose its whole run because
+// an upstream sent a bad header.
+func TestBase64DecodeInvalid(t *testing.T) {
+	t.Parallel()
+
+	rt, buf := newCryptoTestRuntime(t)
+	defer rt.Close()
+
+	require.NoError(t, rt.RunString(`
+local out, err = crypto.base64_decode("!!!not base64!!!")
+if out ~= nil then error("expected nil value on failure") end
+rela.output(err.kind .. "|" .. err.message)`))
+
+	var got string
+	require.NoError(t, json.Unmarshal([]byte(buf.String()), &got))
+	assert.True(t, strings.HasPrefix(got, "bad_input|"), "got %q", got)
+	// The message must not echo the input: decode is reached with credentials
+	// often enough that quoting the offending string into a log is a leak.
+	assert.NotContains(t, got, "!!!not base64!!!")
+}
+
+// TestBase64EncodeRaisesOnNonString pins the other half of the convention:
+// a wrong-type argument is a programming error and raises.
+func TestBase64EncodeRaisesOnNonString(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := newCryptoTestRuntime(t)
+	defer rt.Close()
+	require.Error(t, rt.RunString(`crypto.base64_encode({})`))
+}
+
+// TestCryptoAlwaysRegistered pins that crypto.* needs no capability grant —
+// hashing and encoding reach nothing outside the process, so gating them would
+// cost usability and buy no containment.
+func TestCryptoAlwaysRegistered(t *testing.T) {
+	t.Parallel()
+
+	rt := NewReader(ReadDeps{}, &strings.Builder{})
+	defer rt.Close()
+	require.NoError(t, rt.RunString(`
+assert(crypto.base64_encode ~= nil)
+assert(crypto.base64_decode ~= nil)
+assert(crypto.sha256_hex ~= nil)
+assert(crypto.hmac_sha256_base64 ~= nil)`))
+}

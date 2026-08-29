@@ -1,20 +1,20 @@
 ---
 id: TKT-U2R7GU
 type: ticket
-title: 'Declarative mails: content templates, scheduler + automation triggers, graph-resolved recipients with per-recipient ACL scoping'
+title: Declarative scheduled mail with per-recipient ACL scoping
 kind: enhancement
 priority: medium
 effort: l
-status: backlog
+status: done
 ---
 
 ## Description
 
-Second of three: the declarative layer, built on the SMTP foundation
-(TKT-332QZY) and ahead of the extensibility work (TKT-DS1CR6). Covers the
-cases an operator actually asks for — a daily digest of overdue tasks, upcoming
-events, a meeting reminder carrying its agenda, and "this changed, go look" from
-an automation — declaratively.
+The declarative layer, built on the SMTP foundation (TKT-332QZY), the shared job
+queue (TKT-YOED3R), and scheduler fan-out (TKT-XWZIOB). Automation triggers are
+split out to TKT-LU4AAY. Covers the scheduled cases an operator actually asks
+for — a daily digest of overdue tasks, upcoming events, and a meeting reminder
+carrying its agenda — declaratively.
 
 ## Design: content and trigger are separate
 
@@ -25,16 +25,13 @@ triggers reference it — the same split `feeds:` already makes (a feed declares
 content; the URL is delivery).
 
 ```yaml
-# content only — no trigger, no delivery mechanism
+# content only — no trigger or recipient selection
 mail_templates:
   overdue_digest:
     subject: "Tasks due {{today}}"
     intro: |
       You have **{{count}}** items needing attention.
-    to:
-      entity_type: person
-      property: email
-      where: ["active = true"]
+    address_property: email
     sections:
       - title: "Overdue"
         entity_type: task
@@ -58,58 +55,69 @@ tasks:
   - name: daily-digest
     template: overdue_digest
     every: day
-    run_as: system:digest
+    for_each:
+      entity_type: person
+      where: ["active = true"]
 ```
 
-**Trigger 2 — automation** (has entity context). `Action` is a small closed
-union (`Set` / `CreateRelation` / `CreateEntity`) in
-`internal/automation/types.go`; this adds one arm:
+Mail tasks require `for_each:`. There is deliberately no broadcast fallback: the
+selected entity is resolved to a principal and the message is rendered as that
+principal. A shared `run_as` would prove only that the sender may read the
+content, not that every recipient may read it.
 
-```yaml
-on: {property: status, to: blocked}
-do:
-  - send_mail:
-      template: blocked_notice
-      entity: "{{entity.id}}"
-```
-
-**`{{entity}}` is a load-time error on a scheduled trigger.** A template
-referencing entity context is automation-only; naming it from `schedules.yaml`
-fails the load rather than rendering an empty mail. This follows the house rule
-that a `condition:` which fails to compile is a load error — dropping a
-constraint silently is the unsafe direction. Detected by scanning the template's
-interpolations at config load.
+**Trigger 2 — automation** is TKT-LU4AAY, along with the `{{entity}}` load-time
+validation that only has something to validate once templates exist.
 
 **`style:`** per section — `table` (columns), `list` (titles + deep links), or
 `detail` (renders the entity's markdown body, for the meeting-agenda case).
 
 ## Recipients and ACL
 
-Recipients resolve from the graph: an `entity_type` + `property` holding the
-address, optionally filtered. `group_by:` yields a per-recipient digest (each
-person gets their own open tasks) rather than one broadcast.
+`for_each` resolves recipients from the graph. The template names the property
+on that recipient entity that holds its delivery address.
 
-**Mail renders entity content to an inbox, outside every read gate — it is an
-exfiltration surface.** Two rules:
+**Address validity is asserted from config, not discovered at send time.** Since
+the config names the entity type and the property, the selection can be checked
+up front: every entity the recipient query yields must have a non-empty and
+unambiguous value for that property. An operator who mistypes the property name,
+or whose `person` records have blank emails, should learn about it when the
+config is validated — not from a partial send at 6am.
 
-1. A scheduled mail renders through its `run_as` principal's visibility wrapper.
-`run_as` is identity, not capability (DEC-O59WM4) — naming a principal grants
-nothing; `acl.yaml` decides what it reads.
-2. A per-recipient digest renders as **that recipient's** principal, so nobody is
-mailed content they could not see in the app. Depends on principal resolution
-(FEAT-OF2ZOL, `principal_property`); if that is not ready, per-recipient scoping
-falls back to a single `run_as` and `group_by:` is gated off rather than shipped
-unscoped.
+Two consequences for where this lives. It is graph-dependent, so it cannot go in
+a syntactic config check (`scheduler.Config.validate`, `config.go:195`, never
+touches the store); it needs a store-aware surface, alongside the other `rela
+validate` graph checks. And it belongs to **mail**, not to the scheduler:
+`for_each` (TKT-XWZIOB) resolves an entity to a principal, and a per-user export
+or cleanup pass has no address at all. A blank address must not be fatal to the
+whole run — the mail for the other recipients still goes out, and the skipped
+one is named in the log.
+
+Execution is two-phase. The scheduler posts one expansion job for the task
+occurrence. That job queries the bounded `for_each` selection and posts one
+delivery job per recipient. Each delivery job independently resolves the
+recipient principal, installs its ACL request, resolves the current address,
+queries content, renders, and sends. The payload carries stable identifiers
+(task, template, occurrence, recipient entity, principal), never rendered bytes
+or an email address.
+
+The expansion succeeds once every intended child is accepted; it does not wait
+for delivery. A child failure retries only that recipient. Stable pending
+idempotency keys collapse concurrent work; a post-completion expansion retry
+remains at-least-once, matching SMTP's own acknowledgement crash window.
 
 Reads go through `internal/visibility` decorators at the wiring site — never
 per-consumer redaction calls.
 
+Field-level redaction is mandatory, not a documented limitation. The read half
+of TKT-BUYEW1 already supplies it through `ScheduledLuaWriteDeps`; delivery must
+reuse that seam because "sees what that user sees" cannot be half-enforced.
+
 ## Testing note
 
 The `transport: memory` sender from TKT-332QZY is what makes these criteria
-testable without an SMTP fake in every case: a test triggers a digest and asserts
-on the recorded messages — recipients, subject, and rendered parts. The ACL
-criteria below (6) depend on that, since they assert on what a *specific
+testable without an SMTP fake in every case: a test triggers a digest and
+asserts on the recorded messages — recipients, subject, and rendered parts. The
+ACL criteria below (6) depend on that, since they assert on what a *specific
 recipient* did and did not receive.
 
 ## Scope: IS NOT
@@ -124,16 +132,22 @@ recipient* did and did not receive.
 1. A `mail_templates:` entry with two sections renders one mail with a table section
 and a list section, deep links resolving to the configured base URL.
 2. `style: detail` renders the entity's markdown body (agenda case).
-3. A template using `{{entity}}` referenced from `schedules.yaml` **fails config load**
-with a message naming the template and the offending interpolation.
-4. The same template referenced from an automation renders with entity context.
-5. `group_by:` produces one mail per recipient containing only that recipient's rows.
-6. An entity hidden from the recipient by `acl.yaml` does **not** appear in their mail
-(row-level), and a `visible:`-redacted property is absent from the rendered
-table.
+3. A template naming an unknown entity type or an unparseable `where:` fails
+config load.
+4. A scheduled task naming an unknown template fails config load.
+4b. A `for_each` selection whose entities lack a usable address is reported by
+`rela validate`, naming the property and the offending entities, rather than
+surfacing as a partial send. At send time a blank address skips that recipient
+with a named log line and does not fail the others.
+5. `for_each` posts one delivery job per matching recipient, and each job sends
+only to the address on its recipient entity.
+6. Every delivery renders under its recipient principal: a denied entity and a
+`visible:`-redacted field are absent from that recipient's message.
 7. A section matching zero entities renders the empty message, not a broken table.
-8. Automation-triggered send enqueues without blocking the write, and the write still
-commits if the mail server is unreachable.
+8. Expansion does not wait for delivery; one delivery failure retries only that
+recipient and does not stop later scheduler tasks or replay successful peers.
+8b. Task + occurrence + recipient is the pending delivery identity; the
+post-completion replay window is documented rather than called exactly-once.
 9. `rela validate` reports unknown template names, unknown entity types, and
 unparseable `where:` clauses.
 10. Config validation rejects unknown keys with a typo suggestion (the
@@ -141,10 +155,12 @@ unparseable `where:` clauses.
 
 ## Risks
 
-- **ACL leak via mail** — the central risk. Mitigated by rendering through visibility
-wrappers and by an explicit test per criterion 6. If per-recipient principal
-resolution is unavailable, ship single-principal only rather than unscoped.
-- **Digest fan-out cost** — N recipients means N scoped queries; needs a bound and a
-documented cap rather than silent truncation.
-- **Template/trigger coupling drift** — mitigated by making the `{{entity}}` mismatch a
-load error rather than a runtime surprise.
+- **ACL leak via mail** — the central risk. There is no broadcast mode. Every
+delivery installs the resolved recipient's row and field visibility before any
+content query, and an end-to-end denial test pins the boundary.
+- **Recipient-count blowup** — expansion is bounded and logs/counts what was not
+posted rather than silently truncating.
+- **Duplicate sends after expansion retry** — pending-job dedup suppresses
+concurrent copies but SMTP remains non-transactional. A process loss after DATA
+or a partial expansion retry can duplicate a completed recipient and is
+documented honestly.

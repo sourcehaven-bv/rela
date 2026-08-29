@@ -107,30 +107,3 @@ func TestStartMail_SMTPBuildsWithoutDialing(t *testing.T) {
 	t.Cleanup(stop)
 	stop()
 }
-
-// TestSenderFor covers the transport switch.
-func TestSenderFor(t *testing.T) {
-	t.Parallel()
-
-	t.Run("memory", func(t *testing.T) {
-		t.Parallel()
-		s, err := senderFor(&mail.Config{Transport: mail.TransportMemory, From: "f@e.com"})
-		require.NoError(t, err)
-		require.IsType(t, &mail.MemorySender{}, s)
-	})
-
-	t.Run("smtp", func(t *testing.T) {
-		t.Parallel()
-		s, err := senderFor(&mail.Config{
-			Transport: mail.TransportSMTP, Host: "smtp.example.com", From: "f@e.com",
-		})
-		require.NoError(t, err)
-		require.IsType(t, &mail.SMTPSender{}, s)
-	})
-
-	t.Run("unknown", func(t *testing.T) {
-		t.Parallel()
-		_, err := senderFor(&mail.Config{Transport: "pigeon", From: "f@e.com"})
-		require.Error(t, err)
-	})
-}

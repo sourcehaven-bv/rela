@@ -824,6 +824,51 @@ local resp, err = http.request({
 })
 ```
 
+#### Form Encoding and Basic Auth
+
+Not every API takes JSON. `form` builds a `multipart/form-data` body and
+`basic_auth` sets an `Authorization: Basic` header:
+
+```lua
+local resp, err = http.request({
+  url        = "https://api.mailgun.net/v3/mg.example.com/messages",
+  method     = "POST",
+  form       = {subject = "Hello", text = "hi"},
+  basic_auth = {user = "api", pass = rela.secrets.mailgun_key},
+})
+```
+
+`form` accepts two shapes. A map is what you usually want; parts are sorted by
+name so the body is deterministic:
+
+```lua
+form = {subject = "Hello", text = "hi"}
+```
+
+An array of `{name, value}` pairs when you need a **repeated field name**,
+which form encoding permits and a Lua map cannot express:
+
+```lua
+form = {
+  {"to", "a@example.com"},
+  {"to", "b@example.com"},
+  {"subject", "Hello"},
+}
+```
+
+Notes:
+
+- `form` and `body` are **mutually exclusive** — setting both raises, rather
+  than silently picking one and sending half of what you meant.
+- The generated `Content-Type` (with its boundary) always wins over one you set
+  in `headers`; a declared boundary that does not match the body is unparseable
+  at the far end.
+- Form values must be strings. Numbers raise — use `tostring()`, so which
+  rendering you meant is explicit rather than a float-formatting accident.
+- `basic_auth.user` is required; `basic_auth.pass` may be empty, for APIs that
+  authenticate with a token as the username.
+- Both are available on `http.request` and on every convenience method.
+
 #### Response Shape
 
 `resp` is a table:
@@ -883,6 +928,78 @@ outbound requests using the user's machine. There is no SSRF protection
 (the localhost / private-IP range is reachable). URLs containing
 embedded credentials (`http://user:pass@host/`) are rejected — set the
 `Authorization` header explicitly. Treat Lua scripts as trusted code.
+
+### Crypto Functions
+
+The `crypto` module provides hashing and encoding primitives. Always available,
+no capability needed — nothing here reaches outside the process.
+
+| Function | Description | Returns |
+|----------|-------------|---------|
+| `crypto.sha256_hex(data)` | SHA-256, lowercase hex | string |
+| `crypto.hmac_sha256_base64(key, msg)` | HMAC-SHA256, standard base64 | string |
+| `crypto.base64_encode(data)` | Standard base64, padded | string |
+| `crypto.base64_decode(s)` | Decode base64 | (string, nil) or (nil, err_table) |
+
+```lua
+local encoded = crypto.base64_encode("foobar")     -- "Zm9vYmFy"
+local decoded, err = crypto.base64_decode(encoded) -- "foobar", nil
+```
+
+Lua strings are byte strings, so binary data (an image, a signature) round-trips
+intact.
+
+`base64_decode` is the one function here that returns an **error pair** rather
+than raising, because it is the one that takes untrusted input — an API
+response, a header, a file. Malformed base64 from a remote is an expected
+runtime condition a script must be able to branch on, not a programming error.
+It accepts the padded, unpadded and URL-safe alphabets, since a script decoding
+someone else's output does not get to choose which it receives. `base64_encode`
+emits the padded standard alphabet only.
+
+The other three raise on a wrong-type argument, as `rela.json.encode` does.
+
+### Mail Functions
+
+`mail.send` delivers a message through whichever transport the project
+configured in `.rela/mail.yaml`. A script cannot reach a destination the
+operator did not set up.
+
+```lua
+local ok, err = mail.send{
+  to      = "alice@example.com",      -- or {"a@example.com", "b@example.com"}
+  subject = "Report ready",
+  html    = "<p>Done.</p>",
+  text    = "Done.",
+}
+if not ok then
+  print("mail failed: " .. err.kind .. ": " .. err.message)
+end
+```
+
+Returns `(true, nil)` on success, `(nil, err_table)` on failure. The error
+table has the same shape as `ai.*` and `http.*`:
+
+| `err.kind` | When |
+|---|---|
+| `not_configured` | The project has no `.rela/mail.yaml` |
+| `timeout` | The send exceeded its deadline or was canceled |
+| `delivery_failed` | The transport rejected it or could not reach the server |
+
+**The binding is always registered**, even when mail is not configured — unlike
+`http` and `ai`, whose absence *is* the capability gate. `mail.send` is not a
+capability a script holds; it is a service the project either has or has not
+configured, and the answer is the same for every script. So it is present and
+returns `not_configured`, which a script can feature-detect on, rather than
+raising "attempt to call a nil value" in exactly the deployment where the
+operator most needs to be told that mail is off.
+
+A delivery failure **never raises**: a script that mails a summary at the end of
+a run must not lose the run because the mail server was rebooting. Argument
+errors do raise — a missing recipient is a bug in the script that no retry fixes.
+
+See the [Outbound Mail](mail.md) guide for transports, including
+`transport: script`, which lets you supply the provider mapping yourself.
 
 ### JSON Functions
 

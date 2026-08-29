@@ -62,6 +62,33 @@ func (c *ValidateCmd) Run(ctx context.Context) error {
 		fmt.Println("  ✓ schema is valid")
 	}
 	hasErrors = reportDataEntryValidation(result, hasErrors)
+	for _, item := range []struct {
+		name string
+		err  error
+	}{
+		{"mail templates", result.MailTemplatesError}, {"schedules", result.SchedulesError},
+	} {
+		if item.err != nil {
+			fmt.Printf("  ✗ %s: %v\n", item.name, item.err)
+			hasErrors = true
+		} else if !quiet {
+			fmt.Printf("  ✓ %s are valid\n", item.name)
+		}
+	}
+	if result.MailTemplatesPresent && !hasErrors {
+		//nolint:contextcheck // appbuild.Discover does not take ctx; matches the entity-check path below
+		mailSvc, discoverErr := appbuild.Discover(result.ProjectRoot, script.NewEngine())
+		if discoverErr != nil {
+			return fmt.Errorf("validate scheduled mail recipients: %w", discoverErr)
+		}
+		defer mailSvc.Close() //nolint:contextcheck // Services.Close has no context-bearing variant.
+		if validateErr := mailSvc.ValidateScheduledMailRecipients(ctx); validateErr != nil {
+			fmt.Printf("  ✗ scheduled mail recipients: %v\n", validateErr)
+			hasErrors = true
+		} else if !quiet {
+			fmt.Println("  ✓ scheduled mail recipients are valid")
+		}
+	}
 
 	if len(c.Check) == 0 {
 		if hasErrors {
