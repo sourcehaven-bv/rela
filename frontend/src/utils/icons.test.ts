@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { resolveIcon, isKnownIcon, ICONS, DEFAULT_ICON, iconNames } from './icons'
+import { resolveIcon, isKnownIcon, hasIcon, ICONS, DEFAULT_ICON, iconNames, NO_ICON } from './icons'
 
 describe('resolveIcon', () => {
   it('resolves every name in the registry to its own component', () => {
@@ -36,34 +36,76 @@ describe('resolveIcon', () => {
 })
 
 describe('icon registry', () => {
-  it('exposes the names the config allowlist mirrors', () => {
-    // The Go side (dataentryconfig.ValidIconNames) is pinned to this list by
-    // TestIconAllowlistMatchesFrontend. This assertion only guards the shape
-    // that test parses — a registry that stopped being a flat name->component
-    // map would break it silently.
+  it('is a flat map of lowercase names to components', () => {
     const names = iconNames()
-    expect(names.length).toBeGreaterThan(0)
+    expect(names.length).toBeGreaterThanOrEqual(120)
     for (const name of names) {
       expect(name).toMatch(/^[a-z][a-z0-9-]*$/)
+      expect(ICONS[name]).toBeTruthy()
     }
   })
 
-  it('includes the names the sidebar and prototype config depend on', () => {
+  it('keeps every name that shipped before the set was expanded', () => {
+    // A project may already have authored any of these, so removing or
+    // renaming one breaks a config that works today. The Go side pins the same
+    // list; both are generated from one table, and this is the SPA half of
+    // that contract.
     for (const required of [
-      'dashboard',
-      'list',
-      'kanban',
-      'search',
-      'warning',
-      'apps',
-      'settings',
-      'sun',
-      'moon',
-      'inbox',
-      'wrench',
-      'done',
+      'dashboard', 'list', 'kanban', 'search', 'calendar', 'warning',
+      'apps', 'settings', 'document', 'sun', 'moon', 'inbox', 'wrench',
+      'done', 'clock', 'status',
     ]) {
       expect(isKnownIcon(required)).toBe(true)
     }
+  })
+
+  it('resolves a config string only through a static own-property lookup', () => {
+    // The security property: a config value must never be able to name an
+    // arbitrary component. Every value is a compile-time import, and the
+    // registry is a closed object literal — no dynamic import(), no
+    // string-to-component resolution.
+    for (const name of iconNames()) {
+      const c = ICONS[name]
+      expect(['function', 'object']).toContain(typeof c)
+    }
+  })
+})
+
+describe('NO_ICON', () => {
+  it('is not a renderable icon', () => {
+    // `none` is valid to write in config but names no component. If it ever
+    // entered the registry, `icon: none` would draw a glyph — the exact
+    // opposite of what the author asked for.
+    expect(isKnownIcon(NO_ICON)).toBe(false)
+    expect(iconNames()).not.toContain(NO_ICON)
+  })
+
+  it('resolves to the fallback if it ever reaches resolveIcon', () => {
+    // Callers are supposed to gate on hasIcon first. This is the safety net,
+    // and pinning it documents that reaching here is a caller bug, not a
+    // supported path.
+    expect(resolveIcon(NO_ICON)).toBe(DEFAULT_ICON)
+  })
+})
+
+describe('hasIcon', () => {
+  it('separates "draw nothing" from "derive one" from "draw this"', () => {
+    // The single decision point shared by the sidebar and the kanban board.
+    // They render the no-glyph case differently — the sidebar reserves the
+    // column to keep labels aligned, a kanban header has no column to reserve
+    // — but they must agree on WHEN there is no glyph, or they drift apart
+    // again the next time a case is added.
+    expect(hasIcon('inbox')).toBe(true)
+    expect(hasIcon(NO_ICON)).toBe(false)
+    expect(hasIcon('')).toBe(false)
+    expect(hasIcon(null)).toBe(false)
+    expect(hasIcon(undefined)).toBe(false)
+  })
+
+  it('does not judge whether the name is known', () => {
+    // An unknown name still gets a glyph (the fallback), so hasIcon must say
+    // true for it. Conflating "unknown" with "none" would silently turn a
+    // typo into a deliberate-looking blank.
+    expect(hasIcon('no-such-icon')).toBe(true)
   })
 })

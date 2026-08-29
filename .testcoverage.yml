@@ -97,6 +97,7 @@ exclude:
     - ^internal/store/pgstore  # covered by the dedicated postgres CI job (needs a live DB; skipped without RELA_TEST_DATABASE_URL)
     - ^internal/entitymanager/entitymanagertest # shared test doubles (PanicOnUse etc.), exercised via consumers
     - ^internal/store/graphquerynaive # exercised through every backend's graphquery tests; cross-package coverage isn't attributed without -coverpkg, so its own number reads 0
+    - ^internal/dataentryconfig/icondefs # the canonical icon table: data plus two accessors, exercised from cmd/gen-icons and dataentryconfig; same cross-package attribution gap as graphquerynaive, so its own number reads 0
     - ^frontend/node_modules   # Go files in npm dependencies
     - ^e2e/node_modules        # Go files in npm dependencies (e.g. flatted)
 

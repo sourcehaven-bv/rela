@@ -28,6 +28,7 @@ components:
   cmdServer:        { in: cmd/rela-server }
   cmdDocs:          { in: cmd/rela-docs }
   cmdDesktop:       { in: cmd/rela-desktop }
+  cmdGenIcons:      { in: cmd/gen-icons }
 
   # CLI layer
   cli:              { in: internal/cli }
@@ -37,6 +38,11 @@ components:
   # Web / UI layer
   dataentry:        { in: internal/dataentry }
   dataentryconfig:  { in: internal/dataentryconfig }
+  # The canonical icon table. A LEAF on purpose: cmd/gen-icons imports it and
+  # generates code back into dataentryconfig, so keeping the data in a package
+  # with no generated file means a broken generated file can never make the
+  # generator that fixes it unbuildable.
+  icondefs:         { in: internal/dataentryconfig/icondefs }
   conditionlint:    { in: internal/conditionlint }
   desktop:          { in: internal/desktop }
   docs:             { in: internal/docs }
@@ -425,6 +431,7 @@ deps:
     mayDependOn:
       - filter
       - git
+      - icondefs
       - metamodel
     canUse:
       - rrulego
@@ -438,6 +445,10 @@ deps:
   # must see the same host functions (days_between, today, ...) the runtime
   # will, hence predicatefns. searchparser is needed to read the entity types
   # out of the source's `query:`, which is what a condition compiles against.
+  # Build-time only; never linked into a shipped binary.
+  cmdGenIcons:
+    mayDependOn:
+      - icondefs
   conditionlint:
     mayDependOn:
       - dataentryconfig

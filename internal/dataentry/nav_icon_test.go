@@ -39,17 +39,21 @@ func TestNavEntryIcon(t *testing.T) {
 			"clock",
 		},
 		{
-			// An action derives NO icon, so before the override it was the one
-			// entry kind that could never have one. The override is applied
-			// after the switch precisely so this case is covered.
-			"an action entry can finally have an icon",
+			// The override is applied after the switch, so it reaches every
+			// entry kind — including action, which for a long time was the one
+			// kind that could not otherwise have a glyph at all.
+			"an authored icon reaches an action entry",
 			dataentryconfig.NavigationEntry{Label: "Run", Action: "sync", Icon: "progress"},
 			"progress",
 		},
 		{
-			"an action without an icon still has none",
+			// An action derives a glyph since TKT-EG33Y1. It used to derive
+			// none, which was harmless while `icon:` could only override — but
+			// `icon: none` left nothing for the collapsed sidebar to draw, and
+			// the empty fallback resolved to the generic document glyph.
+			"an action derives its own glyph",
 			dataentryconfig.NavigationEntry{Label: "Run", Action: "sync"},
-			"",
+			"zap",
 		},
 	}
 

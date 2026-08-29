@@ -285,8 +285,18 @@ comment-report rule="":
 # Run all checks (lint + arch-lint + lint-md + test)
 check: lint arch-lint plimsoll comment-lint lint-md test
 
+# Regenerate everything derived from the canonical icon table
+# (internal/dataentryconfig/icondefs): the Go allowlist, the SPA registry, and
+# the documentation table.
+#
+# The docs half writes into the GUIDE ENTITY, which `just docs` then renders to
+# docs/data-entry.md — hence the ordering in `docs` below. Writing to docs/
+# directly would be reverted on the next docs run.
+generate-icons:
+    @go run ./cmd/gen-icons -root "{{justfile_directory()}}"
+
 # Generate docs from rela entities via mdcomp
-docs: build-cli
+docs: build-cli generate-icons
     @echo "Generating documentation..."
     @./scripts/generate-docs.sh
 
@@ -305,8 +315,8 @@ docs-example: build-docs
 # Check that committed docs are up to date with entities
 docs-check: docs
     @echo "Checking docs are up to date..."
-    git diff --exit-code docs/ README.md || \
-        (echo "" && echo "ERROR: docs/ or README.md is out of date." && \
+    git diff --exit-code docs/ README.md docs-project/ || \
+        (echo "" && echo "ERROR: docs/, README.md or docs-project/ is out of date." && \
          echo "Run 'just docs' and commit the changes." && exit 1)
     @echo "✓ Docs are up to date."
 

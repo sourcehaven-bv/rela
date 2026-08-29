@@ -377,9 +377,24 @@ type SidePanelEntity struct {
 
 // SidebarItem represents a navigation item.
 type SidebarItem struct {
-	Label  string `json:"label"`
-	Href   string `json:"href"`
-	Icon   string `json:"icon,omitempty"`
+	Label string `json:"label"`
+	Href  string `json:"href"`
+
+	// Icon is the glyph to render, or the reserved "none" when the author asked
+	// for no glyph at all. "none" travels as itself rather than as "" because
+	// this field is omitempty: an empty string vanishes from the payload and
+	// becomes indistinguishable from an entry that simply never had an icon.
+	Icon string `json:"icon,omitempty"`
+
+	// DerivedIcon carries the glyph this entry's KIND would have produced, and
+	// is populated only when Icon suppresses it.
+	//
+	// The collapsed sidebar hides every label, so a row with no icon and no
+	// label would be invisible yet still clickable. It falls back to this glyph
+	// instead — which the client cannot reconstruct on its own, since the
+	// suppression already happened by the time the payload is built.
+	DerivedIcon string `json:"derivedIcon,omitempty"`
+
 	Action string `json:"action,omitempty"`
 }
 

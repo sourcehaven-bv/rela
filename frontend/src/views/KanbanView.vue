@@ -13,7 +13,7 @@ import { useBackTarget } from '@/composables/useBackTarget'
 import { actionAllowed } from '@/utils/affordancesWarning'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { renderMarkdown } from '@/utils/markdown'
-import { resolveIcon } from '@/utils/icons'
+import { hasIcon, resolveIcon } from '@/utils/icons'
 import { formatCellValue } from '@/utils/format'
 import { densePropertyRoutingHint } from '@/widgets/viewRouting'
 import CardFieldList, { type ResolvedCardField } from '@/components/common/CardFieldList.vue'
@@ -573,7 +573,7 @@ function createNew() {
         <div class="column-header">
           <component
             :is="resolveIcon(column.icon)"
-            v-if="column.icon"
+            v-if="hasIcon(column.icon)"
             class="column-icon"
             :size="16"
             aria-hidden="true"
@@ -619,7 +619,7 @@ function createNew() {
         >
           <component
             :is="resolveIcon(column.icon)"
-            v-if="column.icon"
+            v-if="hasIcon(column.icon)"
             class="column-icon"
             :size="16"
             aria-hidden="true"
@@ -637,7 +637,7 @@ function createNew() {
         <div class="swimlane-label-cell">
           <component
             :is="resolveIcon(swimlane.icon)"
-            v-if="swimlane.icon"
+            v-if="hasIcon(swimlane.icon)"
             class="column-icon"
             :size="16"
             aria-hidden="true"

@@ -7,7 +7,15 @@ import { getSidebar, runAction } from '@/api'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { ApiError, getErrorMessage, getScriptError } from '@/api/errors'
 import type { SidebarGroup, SidebarItem } from '@/types'
-import { resolveIcon, ICONS } from '@/utils/icons'
+import {
+  IconApps,
+  IconMoon,
+  IconSearch,
+  IconSettings,
+  IconSun,
+  IconWarning,
+} from '@/utils/icons'
+import NavIcon from './NavIcon.vue'
 
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
@@ -159,12 +167,12 @@ async function handleAction(item: SidebarItem, ev?: Event) {
     <!-- Fixed top items: Search and Analysis -->
     <div class="sidebar-top-items">
       <RouterLink to="/search" class="nav-item" :class="{ active: route.path === '/search' }">
-        <component :is="ICONS.search" class="nav-icon" :size="18" aria-hidden="true" />
+        <component :is="IconSearch" class="nav-icon" :size="18" aria-hidden="true" />
         <span class="nav-label">Search</span>
         <kbd v-if="!uiStore.sidebarCollapsed">/</kbd>
       </RouterLink>
       <RouterLink to="/analyze" class="nav-item" :class="{ active: route.path === '/analyze' }">
-        <component :is="ICONS.warning" class="nav-icon" :size="18" aria-hidden="true" />
+        <component :is="IconWarning" class="nav-icon" :size="18" aria-hidden="true" />
         <span class="nav-label">Analysis</span>
       </RouterLink>
     </div>
@@ -182,7 +190,11 @@ async function handleAction(item: SidebarItem, ev?: Event) {
               :disabled="actionInFlight.has(item.action)"
               @click="handleAction(item, $event)"
             >
-              <component :is="resolveIcon(item.icon)" class="nav-icon" :size="18" aria-hidden="true" />
+              <NavIcon
+                :name="item.icon"
+                :fallback="item.derivedIcon"
+                :collapsed="uiStore.sidebarCollapsed"
+              />
               <span class="nav-label">{{ item.label }}</span>
             </button>
             <RouterLink
@@ -191,7 +203,11 @@ async function handleAction(item: SidebarItem, ev?: Event) {
               class="nav-item"
               :class="{ active: isActive(item.href) }"
             >
-              <component :is="resolveIcon(item.icon)" class="nav-icon" :size="18" aria-hidden="true" />
+              <NavIcon
+                :name="item.icon"
+                :fallback="item.derivedIcon"
+                :collapsed="uiStore.sidebarCollapsed"
+              />
               <span class="nav-label">{{ item.label }}</span>
             </RouterLink>
           </template>
@@ -206,7 +222,11 @@ async function handleAction(item: SidebarItem, ev?: Event) {
               :disabled="actionInFlight.has(item.action)"
               @click="handleAction(item, $event)"
             >
-              <component :is="resolveIcon(item.icon)" class="nav-icon" :size="18" aria-hidden="true" />
+              <NavIcon
+                :name="item.icon"
+                :fallback="item.derivedIcon"
+                :collapsed="uiStore.sidebarCollapsed"
+              />
               <span class="nav-label">{{ item.label }}</span>
             </button>
             <RouterLink
@@ -215,7 +235,11 @@ async function handleAction(item: SidebarItem, ev?: Event) {
               class="nav-item"
               :class="{ active: isActive(item.href) }"
             >
-              <component :is="resolveIcon(item.icon)" class="nav-icon" :size="18" aria-hidden="true" />
+              <NavIcon
+                :name="item.icon"
+                :fallback="item.derivedIcon"
+                :collapsed="uiStore.sidebarCollapsed"
+              />
               <span class="nav-label">{{ item.label }}</span>
             </RouterLink>
           </template>
@@ -232,7 +256,7 @@ async function handleAction(item: SidebarItem, ev?: Event) {
           class="nav-item"
           :class="{ active: isActive(`/app/${app.id}`) }"
         >
-          <component :is="ICONS.apps" class="nav-icon" :size="18" aria-hidden="true" />
+          <component :is="IconApps" class="nav-icon" :size="18" aria-hidden="true" />
           <span class="nav-label">{{ app.label }}</span>
         </RouterLink>
       </div>
@@ -245,7 +269,7 @@ async function handleAction(item: SidebarItem, ev?: Event) {
         <span class="nav-label">{{ gitStore.branch }} · {{ gitStore.statusText }}</span>
       </div>
       <RouterLink to="/settings" class="nav-item" :class="{ active: route.path === '/settings' }">
-        <component :is="ICONS.settings" class="nav-icon" :size="18" aria-hidden="true" />
+        <component :is="IconSettings" class="nav-icon" :size="18" aria-hidden="true" />
         <span class="nav-label">Settings</span>
       </RouterLink>
       <button
@@ -253,7 +277,7 @@ async function handleAction(item: SidebarItem, ev?: Event) {
         class="nav-item nav-action"
         @click="uiStore.toggleDarkMode()"
       >
-        <component :is="uiStore.isDark ? ICONS.sun : ICONS.moon" class="nav-icon" :size="18" aria-hidden="true" />
+        <component :is="uiStore.isDark ? IconSun : IconMoon" class="nav-icon" :size="18" aria-hidden="true" />
         <span class="nav-label">{{ uiStore.isDark ? 'Light Mode' : 'Dark Mode' }}</span>
       </button>
     </div>

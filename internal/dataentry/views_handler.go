@@ -349,41 +349,69 @@ func navEntryToSidebarItem(entry dataentryconfig.NavigationEntry) v1.SidebarItem
 		Label: entry.Label,
 	}
 
+	// Glyph names come from icondefs.DerivedNames, not string literals. The SPA
+	// resolves whatever this emits through a generated allowlist, so a renamed
+	// table entry paired with a stale literal here would make EVERY entry of
+	// that kind render the fallback glyph — silently, with no build or test
+	// failure. Naming them makes that rename a compile error.
+	derived := dataentryconfig.DerivedIconNames
 	switch {
 	case entry.List != "":
 		item.Href = "/list/" + entry.List
-		item.Icon = "list"
+		item.Icon = derived.List
 	case entry.Kanban != "":
 		item.Href = "/kanban/" + entry.Kanban
-		item.Icon = "kanban"
+		item.Icon = derived.Kanban
 	case entry.Calendar != "":
 		item.Href = "/calendar/" + entry.Calendar
-		item.Icon = "calendar"
+		item.Icon = derived.Calendar
 	case entry.Dashboard:
 		item.Href = "/"
-		item.Icon = "dashboard"
+		item.Icon = derived.Dashboard
 	case entry.Search:
 		item.Href = "/search"
-		item.Icon = "search"
+		item.Icon = derived.Search
 	case entry.Settings:
 		item.Href = "/settings"
-		item.Icon = "settings"
+		item.Icon = derived.Settings
 	case entry.Document != "":
 		// Standalone documents only — validateNavEntry rejects an
 		// entity-anchored document here, since this href has no entity id
 		// segment to fill.
 		item.Href = "/document/" + entry.Document
-		item.Icon = "document"
+		item.Icon = derived.Document
 	case entry.Action != "":
 		item.Action = entry.Action
-		// Href stays empty — frontend renders this as a button
+		// Href stays empty — frontend renders this as a button.
+		//
+		// An action DOES derive a glyph now. It used to derive none, which was
+		// harmless while `icon:` could only override — but `icon: none` needs
+		// something to fall back to when the collapsed sidebar hides labels,
+		// and an empty fallback resolved to the generic document glyph. That
+		// made a button which fires a mutation look like a link to a document,
+		// sitting in a column of real document links.
+		item.Icon = derived.Action
 	}
 
 	// An authored icon wins over the kind-derived default set above. Applied
 	// after the switch so it covers every branch — including `action`, which
 	// derives no icon of its own and would otherwise be the one entry kind
 	// that could never have one.
+	//
+	// dataentryconfig.NoIcon travels to the client AS ITSELF rather than being
+	// flattened to "". The field is `json:"icon,omitempty"`, so an empty string
+	// is dropped from the payload entirely and becomes indistinguishable from
+	// an entry that never had an icon — which is also what an unmatched switch
+	// leaves behind. The client needs to tell "the author asked for no glyph"
+	// apart from "no glyph was ever chosen", because only the first reserves
+	// the icon column.
 	if entry.Icon != "" {
+		// Keep what the kind derived, for the collapsed sidebar to fall back on.
+		// Only when suppressed: otherwise this would duplicate Icon on every
+		// entry in the payload for no reader.
+		if entry.Icon == dataentryconfig.NoIcon {
+			item.DerivedIcon = item.Icon
+		}
 		item.Icon = entry.Icon
 	}
 
