@@ -259,6 +259,7 @@ type Config struct {
 	EntityViews      map[string]dataentryconfig.EntityViewConfig `json:"entity_views,omitempty"`
 	Kanbans          map[string]dataentryconfig.Kanban           `json:"kanbans"`
 	Calendars        map[string]dataentryconfig.Calendar         `json:"calendars,omitempty"`
+	Gantts           map[string]dataentryconfig.Gantt            `json:"gantts,omitempty"`
 	Dashboard        *dataentryconfig.DashboardConfig            `json:"dashboard,omitempty"`
 	Actions          map[string]dataentryconfig.Action           `json:"actions,omitempty"`
 	Navigation       []dataentryconfig.NavigationEntry           `json:"navigation"`
@@ -704,3 +705,47 @@ type Mention struct {
 	Inaccessible       bool   `json:"inaccessible,omitempty"`
 	InaccessibleReason string `json:"inaccessible_reason,omitempty"`
 }
+
+// GanttResponse is the payload of GET /api/v1/_gantts/{id}: the gated,
+// folded containment forest. Truncated is true when the node cap cut the
+// emission short; it is computed on the ACL-filtered tree only, so it can
+// never disclose that hidden nodes exist.
+type GanttResponse struct {
+	Roots     []GanttNode `json:"roots"`
+	Truncated bool        `json:"truncated,omitempty"`
+}
+
+// GanttNode is one entity in the gantt tree. Planned (the entity's own
+// declared window) and Rolled (the envelope of its descendants) are separate
+// on purpose: merged, a child escaping its parent's window — the breach the
+// view exists to show — would be silently absorbed. Nodes carry no relation
+// properties: edge meta has no redaction on this path.
+type GanttNode struct {
+	ID    string `json:"id"`
+	Type  string `json:"type"`
+	Title string `json:"title,omitempty"`
+	Color string `json:"color,omitempty"`
+	// Planned is the entity's own start/end, absent when it declares none.
+	Planned *GanttSpan `json:"planned,omitempty"`
+	// Rolled is the descendants' envelope, absent for a childless node.
+	Rolled *GanttSpan `json:"rolled,omitempty"`
+	// Committed is an externally promised deadline (date string), or "".
+	Committed string      `json:"committed,omitempty"`
+	Breach    GanttBreach `json:"breach,omitzero"`
+	Children  []GanttNode `json:"children,omitempty"`
+}
+
+// GanttSpan is a date interval; either bound may be empty.
+type GanttSpan struct {
+	Start string `json:"start,omitempty"`
+	End   string `json:"end,omitempty"`
+}
+
+// GanttBreach flags a rolled span escaping the planned window, per direction.
+type GanttBreach struct {
+	Before bool `json:"before,omitempty"`
+	After  bool `json:"after,omitempty"`
+}
+
+// IsZero lets omitzero keep an empty breach off the wire.
+func (b GanttBreach) IsZero() bool { return !b.Before && !b.After }

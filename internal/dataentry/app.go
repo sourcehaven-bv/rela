@@ -248,7 +248,10 @@ type App struct {
 	// /_search, the `_position` search scope and the next-action engine),
 	// the list endpoint's `?q=` id-set helper, and the sort / property-filter
 	// passes those share (TKT-SJ0LRS). Read-only; no writeMu.
-	queries   *queryService
+	queries *queryService
+	// gantt owns the read-only gantt tree endpoint (TKT-MW28U5). Like views,
+	// it never mutates — no writeMu.
+	gantt     *ganttHandler
 	templater templating.Templater
 	cfgLoader config.Loader
 	kv        state.KV
@@ -794,6 +797,7 @@ func NewApp(
 	// first would replace an author's invalid default_view with "month" and
 	// report nothing, turning a typo into silently different behavior.
 	dataentryconfig.NormalizeCalendars(&cfg)
+	dataentryconfig.NormalizeGantts(&cfg)
 
 	// Non-fatal configuration warnings (e.g. a relation filter control whose
 	// incoming direction targets a type the relation never points to). Logged,
@@ -984,6 +988,16 @@ func NewApp(
 	// affordance handles are closures because tests reassign both after
 	// construction — see the type's doc comment.
 	app.queries = newQueryService(app)
+
+	// ganttHandler: the ACL-scoped lister and the field redactor are the two
+	// seams its security pipeline hangs on — both closures over App so test
+	// builders that rebind collaborators stay live.
+	app.gantt = &ganttHandler{
+		schema:   app.State,
+		store:    st,
+		scoped:   app.scopedSortedEntities,
+		redactor: func() visibility.FieldRedactor { return appRedactor(app) },
+	}
 
 	// commandHandler owns the user-configured command surface. Its
 	// collaborators are narrow closures over App: the schema snapshot (command/
