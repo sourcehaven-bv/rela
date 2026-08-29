@@ -6,8 +6,6 @@ import (
 
 	lua "github.com/yuin/gopher-lua"
 
-	"github.com/Sourcehaven-BV/rela/internal/entity"
-	rlua "github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -37,8 +35,8 @@ func (dr *docRuntime) registerModule() {
 		"roles_matrix": dr.luaRolesMatrix,
 		"description":  dr.luaDescription,
 		// Seed (raw store — no entitymanager, no validation).
-		"create": dr.luaCreate,
-		"link":   dr.luaLink,
+		"create": dr.seed.luaCreate,
+		"link":   dr.seed.luaLink,
 		// Tier B — browser capture (fails loud when no capturer is wired).
 		"screenshot": dr.luaScreenshot,
 
@@ -89,55 +87,4 @@ func (dr *docRuntime) luaCount(ls *lua.LState) int {
 	}
 	ls.Push(lua.LNumber(n))
 	return 1
-}
-
-// luaCreate seeds an entity directly into the memstore (raw store — no
-// validation, no state-machine gate, no ACL). create("risico", {props}, body?)
-// returns the created entity as a table (so the author can `link` it).
-func (dr *docRuntime) luaCreate(ls *lua.LState) int {
-	typ := ls.CheckString(1)
-	props := map[string]any{}
-	if tbl, ok := ls.Get(2).(*lua.LTable); ok {
-		props = luaTableToMap(tbl)
-	}
-	content := ls.OptString(3, "")
-
-	id := dr.mintID(typ, props)
-	e := &entity.Entity{ID: id, Type: typ, Properties: props, Content: content}
-	if err := dr.store.CreateEntity(dr.ctx, e); err != nil {
-		return dr.luaFail(ls, "create(%q): %v", typ, err)
-	}
-	// Record for replay into the screenshot temp project (DR-S2).
-	dr.seedOps = append(dr.seedOps, SeedOp{
-		Kind: "create", Type: typ, ID: id, Properties: props, Content: content,
-	})
-	ls.Push(rlua.EntityToTable(ls, e))
-	return 1
-}
-
-// luaLink seeds a relation into the memstore. link(from, type, to) where from
-// may be an id string or an entity table (as returned by create).
-func (dr *docRuntime) luaLink(ls *lua.LState) int {
-	from := idArg(ls, 1)
-	relType := ls.CheckString(2)
-	to := idArg(ls, 3)
-	if _, err := dr.store.CreateRelation(dr.ctx, from, relType, to, nil); err != nil {
-		return dr.luaFail(ls, "link(%q,%q,%q): %v", from, relType, to, err)
-	}
-	dr.seedOps = append(dr.seedOps, SeedOp{Kind: "link", From: from, RelType: relType, To: to})
-	return 0
-}
-
-// mintID derives a stable id for a seeded entity: an explicit props.id if given,
-// else "<type>-<n>" from a per-type counter. Fixture ids need only be unique
-// within the build; the counter avoids an O(n²) full-store scan per create.
-func (dr *docRuntime) mintID(typ string, props map[string]any) string {
-	if v, ok := props["id"].(string); ok && v != "" {
-		return v
-	}
-	if dr.seedCounts == nil {
-		dr.seedCounts = map[string]int{}
-	}
-	dr.seedCounts[typ]++
-	return fmt.Sprintf("%s-%d", typ, dr.seedCounts[typ])
 }

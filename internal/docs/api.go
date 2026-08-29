@@ -105,7 +105,7 @@ func (dr *docRuntime) luaAPI(ls *lua.LState) int {
 
 	req := APIRequest{
 		ProjectDir: dr.projectDir,
-		Seed:       dr.seedOps,
+		Seed:       dr.seed.ops,
 		Method:     fieldString(ls, tbl, "method"),
 		Path:       path,
 		As:         fieldString(ls, tbl, "as"),
@@ -123,7 +123,7 @@ func (dr *docRuntime) luaAPI(ls *lua.LState) int {
 	if identicalTo != nil {
 		other := APIRequest{
 			ProjectDir: dr.projectDir,
-			Seed:       dr.seedOps,
+			Seed:       dr.seed.ops,
 			Method:     fieldStringOf(identicalTo, "method"),
 			Path:       fieldStringOf(identicalTo, "path"),
 			As:         fieldStringOf(identicalTo, "as"),
