@@ -106,6 +106,9 @@ func TestValidateGantts_Valid(t *testing.T) {
 		{"filter control resolving on one source type", withGantt(func(g *Gantt) {
 			g.FilterControls = []FilterControl{{Property: "status"}}
 		})},
+		{"tooltip property on one source type", withGantt(func(g *Gantt) {
+			g.Tooltip = GanttTooltip{Fields: []KanbanCardField{{Property: "status"}}}
+		})},
 	}
 
 	for _, tt := range tests {
@@ -261,6 +264,27 @@ func TestValidateGantts_Invalid(t *testing.T) {
 				g.FilterControls = []FilterControl{{}}
 			}),
 			want: "must specify either property or relation",
+		},
+		{
+			name: "tooltip relation field rejected",
+			g: withGantt(func(g *Gantt) {
+				g.Tooltip = GanttTooltip{Fields: []KanbanCardField{{Relation: "contains"}}}
+			}),
+			want: "relation fields are not supported on gantt tooltips",
+		},
+		{
+			name: "tooltip field with no property",
+			g: withGantt(func(g *Gantt) {
+				g.Tooltip = GanttTooltip{Fields: []KanbanCardField{{}}}
+			}),
+			want: "tooltip.fields[0]: must specify a property",
+		},
+		{
+			name: "tooltip property on no source type",
+			g: withGantt(func(g *Gantt) {
+				g.Tooltip = GanttTooltip{Fields: []KanbanCardField{{Property: "ghost"}}}
+			}),
+			want: `tooltip.fields[0]: property "ghost" not present on any source type`,
 		},
 		{
 			name: "filter control unknown relation",

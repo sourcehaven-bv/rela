@@ -135,7 +135,7 @@ describe('GanttView fetch policy', () => {
     w.unmount()
   })
 
-  it('clicking the drilled root again does not grow the path', async () => {
+  it('clicking the drilled root opens the entity instead of growing the path', async () => {
     getGanttMock.mockResolvedValue(forest(false))
     const w = mountGantt()
     await flushPromises()
@@ -144,9 +144,10 @@ describe('GanttView fetch policy', () => {
     await flushPromises()
     routerPush.mockClear()
 
-    // B is now the top row; clicking its bar must be a no-op.
+    // B is now the top row; it cannot drill into itself — its click opens
+    // the entity page, and the drill path must not grow.
     await w.find('[data-node-id="B"] .bar').trigger('click')
-    expect(routerPush).not.toHaveBeenCalled()
+    expect(routerPush).toHaveBeenCalledWith('/entity/project/B')
     expect(routeQuery.value.path).toBe('B')
     w.unmount()
   })

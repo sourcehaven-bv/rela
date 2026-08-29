@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"sort"
@@ -64,6 +65,9 @@ type ganttNode struct {
 	committed *time.Time
 	rolled    ganttSpan // envelope of descendants, filled by the fold
 	children  []string
+	// props are the configured tooltip property values, read from the
+	// redacted entity — a hidden value is absent, not blank.
+	props map[string]string
 }
 
 // ganttSpan is a nullable date interval.
@@ -232,6 +236,15 @@ func (h *ganttHandler) loadGanttNodes(
 			return nil, &ganttError{http.StatusInternalServerError, "internal", "Failed to list entities", ""}
 		}
 
+		tooltipProps := make([]string, 0, len(g.Tooltip.Fields))
+		for _, f := range g.Tooltip.Fields {
+			if f.Property != "" {
+				if _, ok := entDef.Properties[f.Property]; ok {
+					tooltipProps = append(tooltipProps, f.Property)
+				}
+			}
+		}
+
 		filters, ferr := filter.ParseAll(src.Where)
 		if ferr != nil {
 			// Load validation makes this unreachable; refusing (rather than
@@ -277,6 +290,7 @@ func (h *ganttHandler) loadGanttNodes(
 				start:     ganttDate(red, src.Start, entDef),
 				end:       ganttDate(red, src.End, entDef),
 				committed: ganttDate(red, src.Committed, entDef),
+				props:     ganttProps(red, tooltipProps),
 			}
 		}
 	}
@@ -411,6 +425,7 @@ func emitGanttNode(f *ganttForest, id string, depth, maxDepth int, budget *gantt
 		out.Rolled = &v1.GanttSpan{Start: ganttDateString(n.rolled.start), End: ganttDateString(n.rolled.end)}
 	}
 	out.Committed = ganttDateString(n.committed)
+	out.Props = n.props
 	out.Breach.Before = n.start != nil && n.rolled.start != nil && n.rolled.start.Before(*n.start)
 	out.Breach.After = n.end != nil && n.rolled.end != nil && n.rolled.end.After(*n.end)
 
@@ -465,6 +480,37 @@ func ganttDate(e *entity.Entity, prop string, entDef *metamodel.EntityDef) *time
 		return nil
 	}
 	return &t
+}
+
+// ganttProps reads the configured tooltip properties from the redacted
+// entity. Only present values ship: a hidden or unset property is absent from
+// the map, so the card never renders a blank row for a value the principal
+// may not see.
+func ganttProps(e *entity.Entity, props []string) map[string]string {
+	var out map[string]string
+	for _, prop := range props {
+		raw, ok := e.Properties[prop]
+		if !ok || raw == nil {
+			continue
+		}
+		var v string
+		switch t := raw.(type) {
+		case string:
+			v = t
+		case time.Time:
+			v = t.Format("2006-01-02")
+		default:
+			v = fmt.Sprintf("%v", t)
+		}
+		if v == "" {
+			continue
+		}
+		if out == nil {
+			out = map[string]string{}
+		}
+		out[prop] = v
+	}
+	return out
 }
 
 // ganttDateString renders a date for the wire, date-granular by design: the

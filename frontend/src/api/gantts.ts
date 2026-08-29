@@ -30,6 +30,9 @@ export interface GanttNode {
   /** True when children exist that this response does not carry (depth cap
    * or node budget) — the drill signal for a node that looks like a leaf. */
   has_more_children?: boolean
+  /** Configured tooltip property values, keyed by property name. Read from
+   * the redacted entity server-side: a hidden value is absent, never blank. */
+  props?: Record<string, string>
 }
 
 export interface GanttResponse {

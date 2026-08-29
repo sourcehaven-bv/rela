@@ -741,6 +741,10 @@ type GanttNode struct {
 	// entities. Distinct from Truncated, which is the budget-cut signal for
 	// the response as a whole.
 	HasMoreChildren bool `json:"has_more_children,omitempty"`
+	// Props carries the values of the gantt's configured tooltip properties,
+	// keyed by property name. Values are read from the REDACTED entity, so a
+	// `visible:`-hidden property is simply absent — never blank-but-present.
+	Props map[string]string `json:"props,omitempty"`
 }
 
 // GanttSpan is a date interval; either bound may be empty.

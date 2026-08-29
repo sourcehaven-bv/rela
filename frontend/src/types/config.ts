@@ -473,6 +473,8 @@ export interface GanttConfig {
   max_nodes: number
   /** Date-role mapping keyed by entity TYPE (one mapping per type). */
   sources: Record<string, GanttSourceConfig>
+  /** Extra fields on the hover card. Property fields only (server-enforced). */
+  tooltip?: { fields?: KanbanCardField[] }
   filter_controls?: FilterControl[]
 }
 

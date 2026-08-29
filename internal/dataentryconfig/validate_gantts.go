@@ -46,6 +46,40 @@ func validateGantts(cfg *Config, meta *metamodel.Metamodel) []string {
 			errs = append(errs, validateGanttSource(ganttID, typeName, g.Sources[typeName], meta)...)
 		}
 		errs = append(errs, validateGanttFilterControls(ganttID, g, meta)...)
+		errs = append(errs, validateGanttTooltip(ganttID, g, meta)...)
+	}
+	return errs
+}
+
+// validateGanttTooltip checks the hover-card fields. Same best-effort rule as
+// calendar chips — a property must resolve on at least one source type —
+// plus the property-only restriction the [GanttTooltip] doc explains.
+func validateGanttTooltip(ganttID string, g Gantt, meta *metamodel.Metamodel) []string {
+	var errs []string
+	for i, f := range g.Tooltip.Fields {
+		prefix := fmt.Sprintf("gantt %q: tooltip.fields[%d]", ganttID, i)
+		if f.Relation != "" {
+			errs = append(errs, prefix+": relation fields are not supported on gantt tooltips — "+
+				"neighbor titles would bypass row-gating (use a property field)")
+			continue
+		}
+		if f.Property == "" {
+			errs = append(errs, prefix+": must specify a property")
+			continue
+		}
+		found := false
+		for typeName := range g.Sources {
+			if entDef, ok := meta.GetEntityDef(typeName); ok {
+				if _, ok := entDef.Properties[f.Property]; ok {
+					found = true
+					break
+				}
+			}
+		}
+		if !found {
+			errs = append(errs, fmt.Sprintf(
+				"%s: property %q not present on any source type", prefix, f.Property))
+		}
 	}
 	return errs
 }

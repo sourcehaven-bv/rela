@@ -36,8 +36,9 @@ func newGanttTestApp(t *testing.T, mutate ...func(*dataentryconfig.Gantt)) *App 
 					"planned_start": {Type: "date"},
 					"planned_end":   {Type: "date"},
 					"target_date":   {Type: "date"},
+					"status":        {Type: "string"},
 				},
-				PropertyOrder: []string{"title", "planned_start", "planned_end", "target_date"},
+				PropertyOrder: []string{"title", "planned_start", "planned_end", "target_date", "status"},
 			},
 			"epic": {
 				Label:           "Epic",
@@ -584,6 +585,34 @@ func TestGantt_DrillDepthIsRelative(t *testing.T) {
 		drilled.Roots[0].Children[0].ID != "PRJ-C" {
 
 		t.Errorf("drilling re-roots the depth cap; PRJ-C should now be reachable: %+v", drilled.Roots)
+	}
+}
+
+// TestGantt_TooltipProps pins the configured hover-card fields: present
+// values ship keyed by property, and a `visible:`-hidden value is ABSENT
+// from the map — the redaction runs before props are read, so the tooltip
+// can never render a value the principal may not see.
+func TestGantt_TooltipProps(t *testing.T) {
+	app := newGanttTestApp(t, func(g *dataentryconfig.Gantt) {
+		g.Tooltip = dataentryconfig.GanttTooltip{Fields: []dataentryconfig.KanbanCardField{
+			{Property: "status"},
+		}}
+	})
+	seedProject(app, "PRJ-A", "Root", map[string]any{
+		"planned_start": "2026-01-01", "planned_end": "2026-03-01", "status": "doing"})
+
+	resp := decodeGantt(t, ganttGet(context.Background(), app, "plan"))
+	if got := resp.Roots[0].Props["status"]; got != "doing" {
+		t.Errorf("props[status] = %q, want doing (props=%v)", got, resp.Roots[0].Props)
+	}
+
+	// Hide the property: the key must vanish, not blank out.
+	app.fieldResolver = fakeResolver{fv: FieldVerdicts{
+		Visible: map[string]bool{"status": false},
+	}}
+	resp = decodeGantt(t, ganttGet(context.Background(), app, "plan"))
+	if _, present := resp.Roots[0].Props["status"]; present {
+		t.Errorf("LEAK: hidden property shipped in tooltip props: %v", resp.Roots[0].Props)
 	}
 }
 

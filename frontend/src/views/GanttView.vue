@@ -19,6 +19,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { getGantt, getErrorMessage, type GanttNode, type GanttResponse } from '@/api'
 import { useSchemaStore } from '@/stores/schema'
 import { renderMarkdown } from '@/utils/markdown'
+import { cardFieldLabel, type KanbanCardField } from '@/types/config'
 import {
   barSpan,
   findNode,
@@ -143,10 +144,12 @@ const todayDay = computed(() => {
 })
 
 function drill(node: GanttNode) {
-  // Clicking the drilled root's own bar (always the top row of a drilled
-  // view) must be a no-op, not another breadcrumb of the same id.
-  if (drillPath.value[drillPath.value.length - 1] === node.id) return
-  if (!node.children?.length && !node.has_more_children) {
+  // The drilled root's own row (always the top of a drilled view) cannot
+  // drill further into itself — clicking it opens the entity page instead,
+  // exactly like a leaf. (Appending its id again would stack the breadcrumb
+  // with the same node forever.)
+  const atDrilledRoot = drillPath.value[drillPath.value.length - 1] === node.id
+  if (atDrilledRoot || (!node.children?.length && !node.has_more_children)) {
     router.push(`/entity/${node.type}/${node.id}`)
     return
   }
@@ -302,6 +305,23 @@ function moveTip(ev: MouseEvent) {
 }
 function hideTip() {
   tip.value = null
+}
+
+/** The configured tooltip rows that have a value on this node. Labels via the
+ * shared kanban-card resolution; enum values through the schema's label map. */
+function tooltipRows(node: GanttNode): { label: string; value: string }[] {
+  const fields: KanbanCardField[] = config.value?.tooltip?.fields ?? []
+  const out: { label: string; value: string }[] = []
+  for (const f of fields) {
+    if (!f.property) continue
+    const raw = node.props?.[f.property]
+    if (raw === undefined) continue
+    out.push({
+      label: cardFieldLabel(f),
+      value: schemaStore.getEnumLabel(raw, f.property, node.type) || raw,
+    })
+  }
+  return out
 }
 
 function fmtRange(span?: { start?: string; end?: string }): string {
@@ -546,16 +566,13 @@ const footerHtml = computed(() =>
             <dt>Committed</dt>
             <dd>{{ tip.node.committed }}</dd>
           </template>
+          <template v-for="row in tooltipRows(tip.node)" :key="row.label">
+            <dt>{{ row.label }}</dt>
+            <dd>{{ row.value }}</dd>
+          </template>
         </dl>
         <div v-for="(b, i) in breachLines(tip.node)" :key="i" class="tip-breach" :class="'tip-' + b.kind">
           <span class="tip-glyph">{{ b.kind === 'commit' ? '╱' : '●' }}</span> {{ b.text }}
-        </div>
-        <div class="tip-hint">
-          {{
-            tip.node.children?.length || tip.node.has_more_children
-              ? 'Click to drill in'
-              : 'Click to open the entity'
-          }}
         </div>
       </div>
     </Teleport>
@@ -983,12 +1000,5 @@ const footerHtml = computed(() =>
 }
 .tip-glyph {
   font-weight: 700;
-}
-.tip-hint {
-  margin-top: 0.4rem;
-  font-size: 0.75rem;
-  color: var(--muted-text);
-  border-top: 1px solid var(--border-color);
-  padding-top: 0.3rem;
 }
 </style>

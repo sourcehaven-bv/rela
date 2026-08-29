@@ -3212,6 +3212,7 @@ colour-blindness and greyscale where amber-versus-red alone would not.
 | `max_depth` | int | Levels per **response**, measured from the response's root (default 10). Drilling re-roots the walk, so deeper levels stay reachable; beyond-cap levels still fold into their ancestor's rolled span |
 | `max_nodes` | int | Nodes per response (default 2000); exceeding it flags the response as truncated |
 | `sources` | map | Date-role mapping keyed by entity **type** |
+| `tooltip` | object | Extra fields on the hover card — `fields:` of `- property:` entries with optional `label:`, shared shape with kanban cards. Property fields only: values come from the redacted entity, so field-level `visible:` policy holds; relation fields are refused at load (neighbor titles would bypass row-gating) |
 | `filter_controls` | list | Interactive filters, as on lists and kanbans |
 
 ### Source fields

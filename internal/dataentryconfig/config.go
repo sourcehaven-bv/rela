@@ -910,9 +910,28 @@ type Gantt struct {
 	// reached by traversal but absent here still renders — title only, its
 	// span purely rolled up from descendants.
 	Sources map[string]GanttSource `yaml:"sources" json:"sources"`
+	// Tooltip configures extra fields on the hover card, the [KanbanCard]
+	// analog. Omitted, the card shows the date spans and breach lines alone.
+	Tooltip GanttTooltip `yaml:"tooltip,omitempty" json:"tooltip,omitzero"`
 	// FilterControls are interactive filters, as on lists and kanbans.
 	FilterControls []FilterControl `yaml:"filter_controls,omitempty" json:"filter_controls,omitempty"`
 }
+
+// GanttTooltip configures the hover card's extra content. [KanbanCardField]
+// is shared with kanban cards and calendar chips — the three surfaces render
+// the same thing, so they take the same config.
+//
+// PROPERTY fields only, for now: a field's value is read from the
+// already-redacted entity, so field-level `visible:` policy holds for free.
+// A RELATION field would put neighbor titles on this wire, which need the
+// row-gating the list endpoint does via its include pipeline — a separate
+// piece of work, refused at load rather than shipped ungated.
+type GanttTooltip struct {
+	Fields []KanbanCardField `yaml:"fields,omitempty" json:"fields,omitempty"`
+}
+
+// IsZero lets omitzero keep an unconfigured Tooltip off the wire.
+func (t GanttTooltip) IsZero() bool { return len(t.Fields) == 0 }
 
 // GanttSource maps one entity type onto the gantt's three date roles. All
 // three are independently optional: an entity with only start/end is a plain
