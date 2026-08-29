@@ -644,7 +644,15 @@ export interface NavigationEntry {
 export interface SidebarItem {
   label: string
   href?: string
+  /** Glyph name, or the reserved 'none' when the author suppressed the icon.
+   * Sent as 'none' rather than empty because the field is omitempty on the
+   * wire: an empty string would be dropped and become indistinguishable from
+   * an entry that never had an icon. */
   icon?: string
+  /** The glyph this entry's kind would have produced, sent only when `icon`
+   * suppresses it. The collapsed sidebar falls back to this, since a row with
+   * neither icon nor label is invisible but still clickable. */
+  derivedIcon?: string
   action?: string
 }
 

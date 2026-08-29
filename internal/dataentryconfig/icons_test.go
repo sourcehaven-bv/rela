@@ -1,119 +1,155 @@
 package dataentryconfig
 
 import (
-	"os"
-	"path/filepath"
-	"regexp"
-	"sort"
 	"strings"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig/icondefs"
 )
 
-// iconKeyRe matches an entry in the SPA registry's ICONS map, e.g. `  list: List,`
-// or `  "kanban": Kanban,`. Deliberately anchored to two-space indentation so
-// it matches map entries and not the surrounding prose or imports.
-var iconKeyRe = regexp.MustCompile(`(?m)^\s+"?([a-zA-Z][a-zA-Z0-9-]*)"?:\s*\S`)
-
-// TestIconAllowlistMatchesFrontend pins the Go icon allowlist to the SPA's
-// registry (frontend/src/utils/icons.ts).
+// The Go allowlist, the SPA registry and the documentation table are all
+// GENERATED from internal/dataentryconfig/icondefs, so there is nothing here
+// pinning two hand-written lists to each other any more.
 //
-// The two lists are a contract in BOTH directions, and each kind of drift is a
-// distinct bug:
-//
-//   - A name Go accepts but the SPA cannot render passes config validation and
-//     then silently falls back to a generic icon — the author sees a wrong icon
-//     with no error anywhere.
-//   - A name the SPA knows but Go rejects is a feature an author cannot reach:
-//     the config fails to load with "unknown icon" for something that would
-//     have rendered perfectly.
-//
-// Comparing the two real sources (rather than either against a third literal
-// list in this file) is what makes this a contract test instead of a
-// restatement. The pattern follows TestAppTokensCSSInSyncWithFrontend, which
-// pins the color tokens the same way.
-func TestIconAllowlistMatchesFrontend(t *testing.T) {
-	src, err := os.ReadFile(filepath.Join("..", "..", "frontend", "src", "utils", "icons.ts"))
-	if err != nil {
-		t.Fatalf("read frontend icons.ts: %v", err)
-	}
+// The predecessor of this file parsed frontend/src/utils/icons.ts with a regex
+// to compare name sets, and needed a count check on top because a partial parse
+// (a spread, a nested literal, an aliased import) would silently stop covering
+// a name. That whole class of problem is gone — but the reason it existed is
+// not: the config allowlist and what the SPA can render must agree, or an
+// author gets either a silent fallback glyph or a rejected name that would have
+// worked. Generation is now what guarantees it, and TestGenerateIcons_UpToDate
+// in cmd/gen-icons is what fails when someone hand-edits an output.
 
-	// Scope to the ICONS map body so an unrelated object literal elsewhere in
-	// the file can't contribute phantom names.
-	body := string(src)
-	start := strings.Index(body, "export const ICONS")
-	if start < 0 {
-		t.Fatal("frontend icons.ts no longer exports an ICONS map — update this test with it")
+// TestValidIconNames_Generated checks the generated allowlist is present and
+// substantial, and that it excludes the reserved no-icon name.
+func TestValidIconNames_Generated(t *testing.T) {
+	if len(ValidIconNames) < 120 {
+		t.Errorf("expected a curated set of at least 120 icons, got %d", len(ValidIconNames))
 	}
-	end := strings.Index(body[start:], "\n}")
-	if end < 0 {
-		t.Fatal("could not find the end of the ICONS map in frontend icons.ts")
-	}
-	body = body[start : start+end]
-
-	spa := map[string]bool{}
-	for _, m := range iconKeyRe.FindAllStringSubmatch(body, -1) {
-		spa[m[1]] = true
-	}
-	// A COUNT check, not a non-empty check. The dangerous failure is a PARTIAL
-	// parse: a spread, a nested literal, an aliased import or a commented-out
-	// entry makes one name invisible while the rest still parse, so a
-	// non-empty guard stays silent and the test quietly stops covering that
-	// name. Comparing against the Go list's length turns any parse regression
-	// into a failure, because the two must be the same size by definition.
-	if len(spa) != len(ValidIconNames) {
-		t.Fatalf("parsed %d names from frontend icons.ts but ValidIconNames has %d — "+
-			"either the lists genuinely differ (see the errors below) or the parser "+
-			"has drifted from the file's shape (a spread, nested literal, or aliased "+
-			"import will do it). Parsed: %v",
-			len(spa), len(ValidIconNames), sortedKeys(spa))
-	}
-
-	var missingInGo, missingInSPA []string
-	for name := range spa {
-		if !ValidIconNames[name] {
-			missingInGo = append(missingInGo, name)
-		}
+	if ValidIconNames[NoIcon] {
+		t.Errorf("%q is the reserved no-icon name and must not be a renderable icon: "+
+			"an author writing it expects nothing to be drawn", NoIcon)
 	}
 	for name := range ValidIconNames {
-		if !spa[name] {
-			missingInSPA = append(missingInSPA, name)
+		if strings.ToLower(name) != name {
+			t.Errorf("icon name %q is not lowercase; names are a public config contract", name)
 		}
-	}
-	sort.Strings(missingInGo)
-	sort.Strings(missingInSPA)
-
-	if len(missingInSPA) > 0 {
-		t.Errorf("ValidIconNames accepts %v, which the SPA cannot render — "+
-			"a config using one would validate and then show a fallback icon with no error",
-			missingInSPA)
-	}
-	if len(missingInGo) > 0 {
-		t.Errorf("frontend icons.ts defines %v, which ValidIconNames rejects — "+
-			"an author cannot use icons the SPA already supports",
-			missingInGo)
 	}
 }
 
-// TestValidateIconName covers the allowlist check used by kanban columns and
-// swimlanes.
+// TestValidIconNames_NoRegression pins every name that existed before the set
+// was expanded.
+//
+// These are load-bearing in a way the other ~200 are not: a project may already
+// have authored any of them, so removing or renaming one breaks a config that
+// works today. Listed literally rather than derived, because a derived list
+// would change alongside the thing it is supposed to be pinning.
+func TestValidIconNames_NoRegression(t *testing.T) {
+	original := []string{
+		"dashboard", "list", "kanban", "search", "calendar", "warning",
+		"apps", "settings", "document", "sun", "moon", "inbox", "wrench",
+		"done", "clock", "status",
+	}
+	for _, name := range original {
+		if !ValidIconNames[name] {
+			t.Errorf("icon %q shipped in an earlier release and must keep working", name)
+		}
+	}
+}
+
+// TestValidateIconName covers the allowlist check used by navigation entries,
+// kanban columns and swimlanes.
 func TestValidateIconName(t *testing.T) {
-	if errs := validateIconName("", "kanban \"x\": columns[0]"); len(errs) != 0 {
-		t.Errorf("empty icon means 'no icon' and must be valid, got %v", errs)
+	tests := []struct {
+		name     string
+		icon     string
+		wantErr  bool
+		contains []string
+	}{
+		{name: "empty means use the derived icon", icon: ""},
+		{name: "a known name", icon: "inbox"},
+		{name: "the reserved no-icon name", icon: NoIcon},
+
+		{
+			name: "unknown name is rejected with a suggestion",
+			icon: "inbx", wantErr: true,
+			contains: []string{"columns[2]", `"inbx"`, `did you mean "inbox"`, `"none"`},
+		},
+		{
+			// Names are case-sensitive everywhere else in the config; an
+			// exception here would be the only one, and would leave authors
+			// guessing which fields are forgiving.
+			name: "the no-icon name is case-sensitive",
+			icon: "None", wantErr: true,
+			contains: []string{`unknown icon "None"`},
+		},
+		{
+			name: "a wild typo suggests nothing rather than something irrelevant",
+			icon: "zzzzzzzzzzzz", wantErr: true,
+			contains: []string{"unknown icon"},
+		},
 	}
-	if errs := validateIconName("inbox", "kanban \"x\": columns[0]"); len(errs) != 0 {
-		t.Errorf("known icon must be valid, got %v", errs)
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			errs := validateIconName(tc.icon, `kanban "x": columns[2]`)
+			if !tc.wantErr {
+				if len(errs) != 0 {
+					t.Fatalf("expected %q to be valid, got %v", tc.icon, errs)
+				}
+				return
+			}
+			if len(errs) == 0 {
+				t.Fatalf("expected %q to be rejected", tc.icon)
+			}
+			for _, want := range tc.contains {
+				if !strings.Contains(errs[0], want) {
+					t.Errorf("message must contain %q, got %q", want, errs[0])
+				}
+			}
+		})
 	}
-	errs := validateIconName("nope", "kanban \"x\": columns[2]")
-	if len(errs) == 0 {
-		t.Fatal("unknown icon must be rejected")
+}
+
+// TestValidateIconName_MessageStaysShort guards the reason the message stopped
+// enumerating every valid name.
+//
+// At sixteen icons a full list was helpful. At two hundred it is a multi-
+// kilobyte wall repeated once per bad entry, which buries the one line the
+// author needs. If someone reinstates the enumeration, this fails.
+func TestValidateIconName_MessageStaysShort(t *testing.T) {
+	errs := validateIconName("nope", "navigation \"x\"")
+	if len(errs) != 1 {
+		t.Fatalf("want one error, got %v", errs)
 	}
-	// Locate the offending entry and list the alternatives: a config can hold
-	// dozens of columns, and "unknown icon" alone would send the author hunting.
-	if !strings.Contains(errs[0], "columns[2]") {
-		t.Errorf("message must locate the offending entry, got %q", errs[0])
+	if len(errs[0]) > 300 {
+		t.Errorf("error message is %d bytes; it should point at the docs rather than "+
+			"list every name:\n%s", len(errs[0]), errs[0])
 	}
-	if !strings.Contains(errs[0], "valid:") {
-		t.Errorf("message must list the valid names, got %q", errs[0])
+}
+
+// TestSuggestIcon_IsDeterministic pins tie-breaking.
+//
+// suggestIcon scans sorted rather than iterating the map, because Go randomizes
+// map order: an error message that named a different icon on each run would be
+// untestable and would read like a bug to the author seeing it twice.
+func TestSuggestIcon_IsDeterministic(t *testing.T) {
+	first := suggestIcon("clok")
+	for range 50 {
+		if got := suggestIcon("clok"); got != first {
+			t.Fatalf("suggestion changed between runs: %q then %q", first, got)
+		}
+	}
+	if first != "clock" {
+		t.Errorf(`want "clock" for "clok", got %q`, first)
+	}
+}
+
+// TestNoIconMatchesIcondefs pins the re-export, so the sentinel keeps exactly
+// one definition across the two packages that name it.
+func TestNoIconMatchesIcondefs(t *testing.T) {
+	if NoIcon != icondefs.NoIcon {
+		t.Errorf("NoIcon = %q but icondefs.NoIcon = %q", NoIcon, icondefs.NoIcon)
 	}
 }
 
@@ -130,10 +166,27 @@ func TestNavigationIconValidation(t *testing.T) {
 	}{
 		{"no icon is fine", NavigationEntry{Label: "Tickets", Dashboard: true}, ""},
 		{"known icon on an item", NavigationEntry{Label: "Inbox", Dashboard: true, Icon: "inbox"}, ""},
+		{"none on an item", NavigationEntry{Label: "Plain", Dashboard: true, Icon: NoIcon}, ""},
+		{
+			// An action entry derives no icon, so `none` asks to suppress
+			// something that was never there. Harmless, and rejecting it would
+			// make the author reason about which entry kinds have a derived
+			// glyph — which is precisely what they should not have to do.
+			"none on an action entry is a harmless no-op",
+			NavigationEntry{Label: "Run", Action: "sync", Icon: NoIcon},
+			"",
+		},
 		{"unknown icon is rejected", NavigationEntry{Label: "Inbox", Dashboard: true, Icon: "nope"}, "unknown icon"},
 		{
 			"icon on a group is rejected",
 			NavigationEntry{Group: "Tickets", Icon: "inbox"},
+			"cannot have an icon",
+		},
+		{
+			// The group-specific message must win: "unknown icon" would send
+			// the author looking for a typo in a name that is perfectly valid.
+			"none on a group is rejected with the group message",
+			NavigationEntry{Group: "Tickets", Icon: NoIcon},
 			"cannot have an icon",
 		},
 	}
@@ -159,14 +212,4 @@ func TestNavigationIconValidation(t *testing.T) {
 			}
 		})
 	}
-}
-
-// sortedKeys returns a map's keys sorted, for deterministic failure output.
-func sortedKeys(m map[string]bool) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }

@@ -7,10 +7,12 @@ package dataentryconfig
 import (
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig/icondefs"
 	"github.com/Sourcehaven-BV/rela/internal/git"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
@@ -320,36 +322,6 @@ func (s *Span) UnmarshalYAML(value *yaml.Node) error {
 	return nil
 }
 
-// ValidIconNames is the allowlist of icon names an author may reference from
-// data-entry.yaml. It MUST stay in step with the SPA's registry in
-// frontend/src/utils/icons.ts — TestIconAllowlistMatchesFrontend reads that
-// file and fails on drift, in either direction: a name the config accepts but
-// the SPA can't render silently degrades to a fallback icon, and a name the SPA
-// knows but the config rejects is a feature an author can't reach.
-//
-// Exported so the icon-name check and its test share one source.
-var ValidIconNames = map[string]bool{
-	// Navigation
-	"dashboard": true,
-	"list":      true,
-	"kanban":    true,
-	"search":    true,
-	"calendar":  true,
-	"warning":   true,
-	"apps":      true,
-	"settings":  true,
-	"document":  true,
-	// Theme toggle
-	"sun":  true,
-	"moon": true,
-	// Workflow-ish names, useful for kanban columns
-	"inbox":  true,
-	"wrench": true,
-	"done":   true,
-	"clock":  true,
-	"status": true,
-}
-
 // ValidCalendarColors is the allowlist of palette tokens a calendar source may
 // use to distinguish its events.
 //
@@ -379,18 +351,107 @@ func validateCalendarColor(color, context string) []string {
 		context, color, strings.Join(sortedMapKeys(ValidCalendarColors), ", "))}
 }
 
+// NoIcon is the reserved name meaning "render no icon at all".
+//
+// Re-exported from icondefs so callers in this package need not import it, and
+// so the sentinel has exactly one definition. See icondefs.NoIcon for why it
+// travels as a literal rather than being flattened to "".
+const NoIcon = icondefs.NoIcon
+
+// DerivedIconNames re-exports the glyphs the server picks for a navigation
+// entry from its kind, so the handler names them instead of repeating string
+// literals the SPA must independently agree with.
+var DerivedIconNames = icondefs.DerivedNames
+
 // validateIconName reports a config error for an unknown icon name.
 //
 // Loud at load, like validateSpan: the SPA falls back to a default icon so a
 // stale config still renders, but silently swapping an author's chosen icon for
 // a generic one with no diagnostic is the failure mode strict validation exists
-// to prevent. An empty name means "no icon" and is always valid.
+// to prevent.
+//
+// Two names are valid without being in the registry. An empty name means "use
+// the icon derived from this entry's kind" — the default. NoIcon means "draw
+// nothing", which is a different instruction and deliberately not spelled as
+// the empty string.
+//
+// The message suggests rather than enumerates. It used to join every valid
+// name, which was reasonable at sixteen and is a multi-kilobyte wall at two
+// hundred; the full list now lives in the documentation, which the enumeration
+// existed to substitute for.
 func validateIconName(icon, context string) []string {
-	if icon == "" || ValidIconNames[icon] {
+	if icon == "" || icon == NoIcon || ValidIconNames[icon] {
 		return nil
 	}
-	return []string{fmt.Sprintf("%s: unknown icon %q (valid: %s)",
-		context, icon, strings.Join(sortedMapKeys(ValidIconNames), ", "))}
+	msg := fmt.Sprintf("%s: unknown icon %q", context, icon)
+	if s := suggestIcon(icon); s != "" {
+		msg += fmt.Sprintf(" (did you mean %q?)", s)
+	}
+	return []string{msg + fmt.Sprintf(
+		"; use %q for no icon, or see docs/data-entry.md#icon-names for all %d names",
+		NoIcon, len(ValidIconNames))}
+}
+
+// suggestIcon returns the closest valid icon name, or "" if nothing is close.
+//
+// Scans in sorted order so a tie resolves to the same name every run: an error
+// message that changed between identical runs would be maddening to test and to
+// read. The distance cap keeps a wild typo from suggesting an unrelated name,
+// which is less useful than offering nothing.
+func suggestIcon(name string) string {
+	const maxDistance = 3
+
+	// NoIcon is a candidate even though it is not in the registry: suggestion
+	// cares about what is legal to WRITE, not what draws a glyph. Without it,
+	// `None` — a spelling authors reach for by reflex — scored closest to
+	// "done" and the message confidently recommended a green check mark.
+	candidates := append(sortedMapKeys(ValidIconNames), NoIcon)
+	sort.Strings(candidates)
+
+	best, bestDist := "", maxDistance+1
+	for _, candidate := range candidates {
+		d := editDistance(strings.ToLower(name), candidate)
+		if d < bestDist {
+			best, bestDist = candidate, d
+		}
+	}
+	if bestDist > maxDistance {
+		return ""
+	}
+	return best
+}
+
+// editDistance is the Levenshtein distance between two strings, in BYTES.
+//
+// Bytes, not runes, is safe here because the generator rejects a non-ASCII icon
+// name (isASCIIKebab), so every candidate is single-byte. A multi-byte value
+// can still arrive as the misspelling being matched, and it simply scores
+// further away and falls off the distance cap — no suggestion rather than a
+// wrong one, which is the right direction to fail.
+//
+// Two rolling rows rather than a full matrix: icon names are short, but this
+// runs once per candidate per bad name, so the allocation is worth avoiding.
+func editDistance(a, b string) int {
+	if a == b {
+		return 0
+	}
+	prev := make([]int, len(b)+1)
+	curr := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		curr[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			curr[j] = min(prev[j]+1, min(curr[j-1]+1, prev[j-1]+cost))
+		}
+		prev, curr = curr, prev
+	}
+	return prev[len(b)]
 }
 
 // validateSpan reports a config error for an out-of-range span.

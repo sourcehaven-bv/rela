@@ -2016,9 +2016,13 @@ columns:
 Icons are SVG and inherit the current text colour, so they follow the light /
 dark theme and any styling applied to the header.
 
-An unknown name is a config error at startup **that lists every valid name**, so
-the error message is the authoritative reference — deliberately not repeated
-here, where a copy would silently go stale as icons are added.
+The full set is listed under [Icon names](#icon-names) below. An unknown name is
+a config error at startup, which suggests the closest valid name.
+
+A column with no `icon:` simply has no glyph, and writing `icon: none` gives the
+same result — but only because a *column* derives no glyph from its type. A
+sidebar item does, so for navigation the two differ: see
+[Deliberately having no icon](#deliberately-having-no-icon).
 
 You can still put an emoji directly in `label:` — it renders verbatim, and
 rela will never strip or reinterpret it. But an emoji cannot take the theme's
@@ -2259,13 +2263,364 @@ navigation:
         list: all_tickets # no icon: keeps the derived list glyph
 ```
 
-Valid names are the same set kanban columns use. An unknown name is a config
-error at startup listing them all.
+Valid names are the same set kanban columns use — see
+[Icon names](#icon-names). An unknown name is a config error at startup, which
+suggests the closest valid name.
 
 An `action:` entry derives no icon of its own, so `icon:` is the only way to
 give one a symbol. A **group** cannot take an icon — it renders as a plain
 section title with nowhere to put one — and naming one there is an error
 rather than silently ignored.
+
+##### Deliberately having no icon
+
+Every entry gets a glyph from its *type*, so a sidebar of five lists shows five
+identical list icons. That is not always what you want: Apple's interface
+guidelines advise using menu icons
+[sparingly and with purpose](https://developer.apple.com/design/human-interface-guidelines/menus#Icons),
+and a menu where every row carries a glyph signals no more than one where none
+do. Reserving icons for the entries that deserve emphasis is a real design
+choice, and `icon: none` is how you express it:
+
+```yaml
+navigation:
+  - group: "Tickets"
+    items:
+      - label: "My Tickets"
+        list: my_tickets
+        icon: inbox # the one entry worth calling out
+      - label: "Open Tickets"
+        list: open_tickets
+        icon: none
+      - label: "All Tickets"
+        list: all_tickets
+        icon: none
+```
+
+A `none` entry keeps its place in the icon column, so its label stays aligned
+with the labelled siblings above it rather than jumping left.
+
+Note the difference from leaving `icon:` off altogether: an absent `icon:` means
+*"use the glyph for this entry's type"*, whereas `none` means *"draw nothing"*.
+
+The one exception is the **collapsed** sidebar, which hides every label. A row
+with neither icon nor label would be invisible but still clickable, so a `none`
+entry shows its type glyph again while collapsed — there is nothing left for it
+to be distinguished from.
+
+### Icon names
+
+Icon names are used by `icon:` on navigation items and on kanban columns and
+swimlanes. They are names, not glyphs: rela renders each as an inline SVG that
+inherits the surrounding text colour, so icons follow the light / dark theme
+instead of fighting it the way an emoji does.
+
+<!-- BEGIN generated: icons -->
+The 217 names below are the complete set. This table is **generated** from the
+same definition the server validates against and the app renders from, so it
+cannot fall out of step with either — an earlier hand-written copy went stale
+within a single release, which is why it is machine-written now.
+
+Use `none` to suppress an icon entirely; it is not in the table because it
+draws nothing.
+
+#### Navigation
+
+| Name | Glyph | Description |
+| --- | --- | --- |
+| `dashboard` | House | Home or landing view |
+| `list` | List | List view; the default list glyph |
+| `kanban` | Kanban | Board view; the default kanban glyph |
+| `calendar` | CalendarDays | Calendar view |
+| `search` | Search | Search |
+| `settings` | Settings | Settings or configuration |
+| `apps` | Blocks | Custom apps section |
+| `document` | FileText | Document view; also the fallback glyph |
+| `table` | Table2 | Tabular data |
+| `grid` | LayoutGrid | Grid or tile layout |
+| `layout` | LayoutDashboard | Dashboard or panel layout |
+| `rows` | Rows3 | Row-oriented layout |
+| `columns` | Columns3 | Column-oriented layout |
+| `menu` | Menu | Menu or hamburger |
+| `panel` | PanelLeft | Side panel |
+| `filter` | Funnel | Filter or narrow a result set |
+| `sliders` | SlidersHorizontal | Adjustable settings or controls |
+| `expand` | Maximize2 | Expand or maximize |
+| `collapse` | Minimize2 | Collapse or minimize |
+
+#### Status & workflow
+
+| Name | Glyph | Description |
+| --- | --- | --- |
+| `inbox` | Inbox | Incoming or unstarted work |
+| `status` | CircleDot | Generic status; a dot in a circle |
+| `done` | CircleCheck | Completed or resolved |
+| `check` | Check | A bare check mark |
+| `cancelled` | CircleX | Cancelled or rejected |
+| `blocked` | Ban | Blocked or forbidden |
+| `paused` | CirclePause | Paused or on hold |
+| `active` | CirclePlay | Started; a play triangle in a circle |
+| `progress` | LoaderCircle | Work underway; a partial ring |
+| `skipped` | CircleSlash | Skipped or not applicable |
+| `pending` | CircleEllipsis | Awaiting input; an ellipsis in a circle |
+| `warning` | TriangleAlert | Warning or caution; a TRIANGLE |
+| `alert` | CircleAlert | Alert or error; a CIRCLE |
+| `info` | Info | Informational note |
+| `help` | CircleQuestionMark | Help or unanswered question |
+| `flag` | Flag | Flagged for attention |
+| `star` | Star | Favorite or highlight |
+| `bookmark` | Bookmark | Saved for later |
+| `pin` | Pin | Pinned to the top |
+| `flame` | Flame | Hot or high priority |
+| `loading` | Loader | In-flight or loading |
+| `workflow` | Workflow | A process or pipeline |
+| `milestone` | Milestone | A milestone or checkpoint |
+| `target` | Target | A goal or target |
+
+#### Time
+
+| Name | Glyph | Description |
+| --- | --- | --- |
+| `clock` | Clock | A point in time |
+| `timer` | Timer | Elapsed or remaining time |
+| `hourglass` | Hourglass | Waiting or long-running |
+| `history` | History | Past revisions or an audit trail |
+| `schedule` | CalendarClock | A scheduled or recurring event |
+| `calendar-check` | CalendarCheck | A confirmed or completed date |
+| `alarm` | AlarmClock | A reminder or alarm |
+| `sunrise` | Sunrise | Start of day |
+| `sunset` | Sunset | End of day |
+
+#### People & orgs
+
+| Name | Glyph | Description |
+| --- | --- | --- |
+| `user` | User | A single person |
+| `users` | Users | A team or group |
+| `user-add` | UserPlus | Add or invite a person |
+| `user-check` | UserCheck | An approved or verified person |
+| `user-remove` | UserX | Remove or deactivate a person |
+| `contact` | Contact | A contact record |
+| `organization` | Building2 | A company or organization |
+| `briefcase` | Briefcase | Work or a business matter |
+| `handshake` | Handshake | An agreement or partnership |
+| `award` | Award | A recognition or certification |
+| `trophy` | Trophy | An achievement |
+| `graduation` | GraduationCap | Training or education |
+
+#### Communication
+
+| Name | Glyph | Description |
+| --- | --- | --- |
+| `mail` | Mail | Email |
+| `mail-open` | MailOpen | Read email |
+| `message` | MessageSquare | A comment or single message |
+| `discussion` | MessagesSquare | A thread or discussion |
+| `send` | Send | Send or submit |
+| `phone` | Phone | A phone call |
+| `video` | Video | A video call or recording |
+| `bell` | Bell | Notifications |
+| `bell-active` | BellRing | An active or unread notification |
+| `announce` | Megaphone | An announcement or broadcast |
+| `feed` | Rss | A feed or subscription |
+
+#### Files & storage
+
+| Name | Glyph | Description |
+| --- | --- | --- |
+| `file` | File | A generic file |
+| `files` | Files | Several files |
+| `file-add` | FilePlus | Create a file |
+| `file-check` | FileCheck | An approved or validated file |
+| `file-code` | FileCode | A source or config file |
+| `spreadsheet` | FileSpreadsheet | A spreadsheet or tabular export |
+| `folder` | Folder | A folder |
+| `folder-open` | FolderOpen | An open folder |
+| `hierarchy` | FolderTree | A hierarchy or nested structure |
+| `archive` | Archive | Archived or inactive items |
+| `package` | Package | A package or release |
+| `box` | Box | A container or unit |
+| `boxes` | Boxes | Inventory or a collection |
+| `database` | Database | A database |
+| `server` | Server | A server or host |
+| `disk` | HardDrive | Storage or a disk |
+| `cloud` | Cloud | A cloud service |
+| `upload` | Upload | Upload |
+| `download` | Download | Download |
+| `attachment` | Paperclip | An attachment |
+| `printer` | Printer | Print |
+
+#### Actions
+
+| Name | Glyph | Description |
+| --- | --- | --- |
+| `add` | Plus | Create or add |
+| `remove` | Minus | Remove or subtract |
+| `close` | X | Close or dismiss |
+| `edit` | Pencil | Edit |
+| `write` | PenLine | Compose or annotate |
+| `erase` | Eraser | Clear or erase |
+| `delete` | Trash2 | Delete |
+| `copy` | Copy | Copy |
+| `clipboard` | Clipboard | Paste or clipboard |
+| `checklist` | ClipboardList | A checklist or task list |
+| `approve` | ClipboardCheck | Approve or sign off |
+| `save` | Save | Save |
+| `refresh` | RefreshCw | Refresh or re-run |
+| `undo` | RotateCcw | Undo or revert |
+| `play` | Play | Run or start |
+| `pause` | Pause | Pause |
+| `stop` | Square | Stop |
+| `skip` | SkipForward | Skip ahead |
+| `share` | Share2 | Share |
+| `link` | Link | A link or relation |
+| `external` | ExternalLink | An external link |
+| `cut` | Scissors | Cut or split |
+
+#### Security
+
+| Name | Glyph | Description |
+| --- | --- | --- |
+| `lock` | Lock | Locked or private |
+| `unlock` | LockOpen | Unlocked or public |
+| `key` | KeyRound | A key or credential |
+| `shield` | Shield | Protection or a control |
+| `shield-check` | ShieldCheck | A verified or passing control |
+| `shield-alert` | ShieldAlert | A failing or at-risk control |
+| `visible` | Eye | Visible or watched |
+| `hidden` | EyeOff | Hidden or redacted |
+| `fingerprint` | FingerprintPattern | Identity or authentication |
+
+#### Analysis
+
+| Name | Glyph | Description |
+| --- | --- | --- |
+| `chart-bar` | ChartColumn | A bar chart |
+| `chart-line` | ChartLine | A line chart or trend |
+| `chart-pie` | ChartPie | A pie chart or breakdown |
+| `trending-up` | TrendingUp | An increasing metric |
+| `trending-down` | TrendingDown | A decreasing metric |
+| `activity` | Activity | Activity or a live signal |
+| `gauge` | Gauge | A measure against a threshold |
+| `calculator` | Calculator | A calculation |
+| `percent` | Percent | A proportion |
+| `scale` | Scale | A balance or trade-off |
+| `layers` | Layers | Layers or grouping |
+
+#### Development
+
+| Name | Glyph | Description |
+| --- | --- | --- |
+| `code` | Code | Source code |
+| `terminal` | Terminal | A command or shell |
+| `bug` | Bug | A defect |
+| `branch` | GitBranch | A branch |
+| `commit` | GitCommitHorizontal | A commit |
+| `merge` | GitMerge | A merge |
+| `pull-request` | GitPullRequest | A pull request |
+| `component` | Component | A component or module |
+| `puzzle` | Puzzle | A plugin or extension |
+| `cpu` | Cpu | Compute or hardware |
+| `network` | Network | A network or topology |
+| `wrench` | Wrench | A tool or maintenance task |
+| `hammer` | Hammer | Building or construction |
+| `cog` | Cog | A mechanism or job |
+| `flask` | FlaskConical | A conical flask; an experiment or trial |
+| `beaker` | Beaker | A wide-mouthed beaker; research or measurement |
+| `microscope` | Microscope | Close inspection |
+
+#### Knowledge
+
+| Name | Glyph | Description |
+| --- | --- | --- |
+| `book` | Book | A book or manual |
+| `book-open` | BookOpen | A guide or open reference |
+| `library` | Library | A collection of documents |
+| `news` | Newspaper | News or an article |
+| `scroll` | Scroll | A policy or long document |
+| `note` | StickyNote | A short note |
+| `notebook` | NotebookPen | A notebook or journal |
+| `idea` | Lightbulb | An idea or proposal |
+| `tag` | Tag | A single tag or label |
+| `tags` | Tags | Several tags |
+| `hash` | Hash | An identifier or channel |
+
+#### Places & logistics
+
+| Name | Glyph | Description |
+| --- | --- | --- |
+| `location` | MapPin | A place |
+| `map` | Map | A map or overview |
+| `globe` | Globe | Global or international |
+| `compass` | Compass | Orientation or discovery |
+| `route` | Route | A route or path |
+| `truck` | Truck | Delivery or shipping |
+| `plane` | Plane | Air travel |
+| `car` | Car | Road travel |
+| `train` | TramFront | Rail travel |
+| `ship` | Ship | Sea freight or travel |
+| `bed` | Bed | Accommodation |
+
+#### Commerce
+
+| Name | Glyph | Description |
+| --- | --- | --- |
+| `cart` | ShoppingCart | An order or basket |
+| `card` | CreditCard | A payment method |
+| `money` | Banknote | Cash or an amount |
+| `invoice` | Receipt | An invoice or receipt |
+| `wallet` | Wallet | A budget or account |
+| `price` | CircleDollarSign | A price or cost |
+| `gavel` | Gavel | A legal or judicial matter |
+
+#### Devices & media
+
+| Name | Glyph | Description |
+| --- | --- | --- |
+| `monitor` | Monitor | A desktop or display |
+| `laptop` | Laptop | A laptop |
+| `phone-device` | Smartphone | A mobile device |
+| `tablet` | Tablet | A tablet |
+| `image` | Image | An image |
+| `camera` | Camera | A photo or capture |
+| `mic` | Mic | Audio input |
+| `music` | Music | Audio or music |
+| `headphones` | Headphones | Listening or playback |
+| `wifi` | Wifi | Connectivity |
+| `battery` | Battery | Power level |
+| `power` | Power | On or off |
+| `plug` | Plug | An integration or connection |
+
+#### Health & environment
+
+| Name | Glyph | Description |
+| --- | --- | --- |
+| `heart` | Heart | A favorite or wellbeing |
+| `pulse` | HeartPulse | Health or a live check |
+| `stethoscope` | Stethoscope | A medical or diagnostic matter |
+| `leaf` | Leaf | Sustainability |
+| `tree` | TreePine | Nature or long-term growth |
+| `sprout` | Sprout | Something new or growing |
+| `recycle` | Recycle | Reuse or a cycle |
+| `droplet` | Droplet | Liquid or a measurement |
+| `temperature` | Thermometer | Temperature or intensity |
+| `rain` | CloudRain | Rain or poor conditions |
+| `snow` | Snowflake | Cold or frozen |
+| `wind` | Wind | Wind or airflow |
+
+#### Theme
+
+| Name | Glyph | Description |
+| --- | --- | --- |
+| `sun` | Sun | Light mode |
+| `moon` | Moon | Dark mode |
+| `palette` | Palette | Colors or theming |
+| `brush` | Brush | Styling or appearance |
+| `contrast` | Contrast | Contrast or a display setting |
+| `sparkles` | Sparkles | Something new, generated, or featured |
+| `zap` | Zap | Fast or automated |
+| `rocket` | Rocket | A launch or release |
+<!-- END generated: icons -->
 
 ### Groups
 

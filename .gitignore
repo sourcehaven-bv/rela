@@ -4,6 +4,8 @@ bin/
 /rela-server
 /rela-docs
 /rela-desktop
+# Build-time only; normally run via `go run`, but a stray `go build` drops it here.
+/gen-icons
 coverage.out
 fuzz-failures.txt
 coverage_test.out
