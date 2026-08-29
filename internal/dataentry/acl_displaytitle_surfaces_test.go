@@ -82,7 +82,7 @@ func TestACLSettings_RelationTargetsRedactHiddenTitle(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/settings", http.NoBody)
 	req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
 	rec := httptest.NewRecorder()
-	app.handleAPIGetSettings(rec, req)
+	app.appearance.handleAPIGetSettings(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("settings: got %d, want 200; body=%s", rec.Code, rec.Body)
@@ -109,7 +109,7 @@ func TestACLSettings_RelationTargetsDropUnreadable(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/settings", http.NoBody)
 	req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
 	rec := httptest.NewRecorder()
-	app.handleAPIGetSettings(rec, req)
+	app.appearance.handleAPIGetSettings(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("settings: got %d, want 200; body=%s", rec.Code, rec.Body)

@@ -32,24 +32,24 @@ type APIThemeImportResponse struct {
 // handleAPIThemeExport returns the user's current palette + logo
 // bundled as a `.relatheme` zip download. Always emits a manifest;
 // includes the logo file when one is set.
-func (a *App) handleAPIThemeExport(w http.ResponseWriter, r *http.Request) {
+func (h *appearanceHandler) handleAPIThemeExport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	logoBytes, logoExt, _ := a.logo.Get()
-	manifest := buildExportManifest(a.State(), a.palette.UserPalette(), logoExt)
+	logoBytes, logoExt, _ := h.logo.Get()
+	manifest := buildExportManifest(h.schema(), h.palette.UserPalette(), logoExt)
 	zipBytes, err := buildThemeZip(manifest, logoBytes, logoExt)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "failed to build theme package: "+err.Error())
 		return
 	}
 	filename := safeThemeFilename(manifest.Name) + ".relatheme"
-	h := w.Header()
-	h.Set("Content-Type", "application/zip")
-	h.Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+	hdr := w.Header()
+	hdr.Set("Content-Type", "application/zip")
+	hdr.Set("Content-Disposition", `attachment; filename="`+filename+`"`)
 	// Exports reflect current state — never cache.
-	h.Set("Cache-Control", "no-store")
+	hdr.Set("Cache-Control", "no-store")
 	_, _ = w.Write(zipBytes)
 }
 
@@ -58,7 +58,7 @@ func (a *App) handleAPIThemeExport(w http.ResponseWriter, r *http.Request) {
 // frontend to stage in the existing palette editor. The palette is NOT
 // auto-saved; matches the existing palette UX where colors persist
 // only on explicit Save.
-func (a *App) handleAPIThemeImport(w http.ResponseWriter, r *http.Request) {
+func (h *appearanceHandler) handleAPIThemeImport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -100,7 +100,7 @@ func (a *App) handleAPIThemeImport(w http.ResponseWriter, r *http.Request) {
 
 	logoURL := ""
 	if pkg.Logo != nil {
-		if err := a.logo.Save(r.Context(), pkg.Logo.Bytes, pkg.Logo.Ext); err != nil {
+		if err := h.logo.Save(r.Context(), pkg.Logo.Bytes, pkg.Logo.Ext); err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "failed to save logo: "+err.Error())
 			return
 		}

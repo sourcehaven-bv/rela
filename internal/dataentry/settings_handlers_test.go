@@ -15,7 +15,7 @@ func TestHandleAPIPaletteCRUD(t *testing.T) {
 	t.Run("GET returns empty palette when none set", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/_palette", http.NoBody)
 		w := httptest.NewRecorder()
-		app.handleAPIPaletteCRUD(w, req)
+		app.appearance.handleAPIPaletteCRUD(w, req)
 
 		if w.Code != http.StatusOK {
 			t.Errorf("expected 200, got %d", w.Code)
@@ -29,7 +29,7 @@ func TestHandleAPIPaletteCRUD(t *testing.T) {
 		w := httptest.NewRecorder()
 
 		// Need to hold RLock to simulate reloadLockMiddleware
-		app.handleAPISavePalette(w, req)
+		app.appearance.handleAPISavePalette(w, req)
 		if w.Code != http.StatusOK {
 			t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
 		}
@@ -43,7 +43,7 @@ func TestHandleAPIPaletteCRUD(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/_palette", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-		app.handleAPISavePalette(w, req)
+		app.appearance.handleAPISavePalette(w, req)
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("expected 400, got %d", w.Code)
 		}
@@ -52,7 +52,7 @@ func TestHandleAPIPaletteCRUD(t *testing.T) {
 	t.Run("method not allowed", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/_palette", http.NoBody)
 		w := httptest.NewRecorder()
-		app.handleAPIPaletteCRUD(w, req)
+		app.appearance.handleAPIPaletteCRUD(w, req)
 
 		if w.Code != http.StatusMethodNotAllowed {
 			t.Errorf("expected 405, got %d", w.Code)

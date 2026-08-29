@@ -208,6 +208,9 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		// Late-bound, as in NewApp: tests reassign app.acl after construction.
 		aclImpl: func() acl.ACL { return app.acl },
 	}
+	// appearanceHandler mirrors production wiring (see NewApp): built after
+	// the logo/palette/settings services and viewReader it captures.
+	app.appearance = newAppearanceHandler(app)
 	// commandHandler holds closures over App methods, which read the fields
 	// rebound above — so it stays valid after this rebind. (Rebuilt rather than
 	// relying on a nil zero value, since newHandlerTestApp bypasses NewApp.)
