@@ -1834,40 +1834,46 @@ func applyV1Filters(
 				continue
 			}
 
-			propStr := fmt.Sprintf("%v", propVal)
-
+			// A list-typed property is compared element-wise: ANY element
+			// matching satisfies eq/in/contains, and ne is the exact
+			// complement (NO element matches). A scalar is a one-element
+			// list, so scalar behavior is unchanged. See propertyElements.
 			switch operator {
 			case "eq":
-				if propStr == value {
+				if anyElement(propVal, func(el string) bool { return el == value }) {
 					newFiltered = append(newFiltered, e)
 				}
 			case "ne":
 				// Support comma-separated values as NOT IN
 				vals := strings.Split(value, ",")
-				excluded := false
-				for _, v := range vals {
-					if propStr == strings.TrimSpace(v) {
-						excluded = true
-						break
-					}
-				}
+				excluded := anyElement(propVal, func(el string) bool {
+					return matchesAnyCSV(el, vals)
+				})
 				if !excluded {
 					newFiltered = append(newFiltered, e)
 				}
 			case "contains":
-				if strings.Contains(strings.ToLower(propStr), strings.ToLower(value)) {
+				needle := strings.ToLower(value)
+				matches := anyElement(propVal, func(el string) bool {
+					return strings.Contains(strings.ToLower(el), needle)
+				})
+				if matches {
 					newFiltered = append(newFiltered, e)
 				}
 			case "in":
 				vals := strings.Split(value, ",")
-				for _, v := range vals {
-					if propStr == strings.TrimSpace(v) {
-						newFiltered = append(newFiltered, e)
-						break
-					}
+				matches := anyElement(propVal, func(el string) bool {
+					return matchesAnyCSV(el, vals)
+				})
+				if matches {
+					newFiltered = append(newFiltered, e)
 				}
 			case "lt", "lte", "gt", "gte":
-				match, err := compareValues(propStr, value, operator)
+				// Ordered comparison stays scalar: what it means to order a
+				// list against a bound is a design question, not a defect, so
+				// a list operand keeps the pre-existing whole-value form
+				// rather than gaining new semantics here (BUG-AMK38R).
+				match, err := compareValues(fmt.Sprintf("%v", propVal), value, operator)
 				if err != nil {
 					// Type mismatch (e.g. property is a date, filter value isn't).
 					// Exclude the entity rather than silently lying via lexicographic

@@ -911,3 +911,59 @@ func (a *App) isRelationLinked(formRel, linkRel string) bool {
 	}
 	return false
 }
+
+// propertyElements returns the property value as the list of elements a filter
+// operator compares against: a single-element slice for a scalar, one entry per
+// item for a list-typed property.
+//
+// This exists because a list property has no meaningful single string form. The
+// v1 list filter used to compare `fmt.Sprintf("%v", prop)` against the filter
+// value, which renders []any{"a","b"} as the Go slice literal "[a b]" — so a
+// list property could never equal any selected value, and `ne` returned rows it
+// was asked to exclude (BUG-AMK38R). Comparing per element is the same rule
+// [propertyContains] already applies to static config-authored `filters:`, so
+// the dynamic `filter[...]` path now agrees with the static one.
+//
+// Non-string list elements are rendered with the same `%v` used for scalars, so
+// a []any{1,2} behaves like the scalars 1 and 2 rather than being dropped.
+//
+// Nil: a nil property yields a single empty-string element — the same form the
+// scalar path produced for an absent value, so emptiness checks are unchanged.
+func propertyElements(prop any) []string {
+	switch v := prop.(type) {
+	case string:
+		return []string{v}
+	case []string:
+		return v
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+				continue
+			}
+			out = append(out, fmt.Sprintf("%v", item))
+		}
+		return out
+	default:
+		return []string{fmt.Sprintf("%v", prop)}
+	}
+}
+
+// anyElement reports whether any element of the property satisfies match.
+// Used by the ANY-element operators (eq, in, contains); `ne` is its negation,
+// so "no element matches" stays the exact complement of "some element matches"
+// and the two cannot drift apart.
+func anyElement(prop any, match func(string) bool) bool {
+	return slices.ContainsFunc(propertyElements(prop), match)
+}
+
+// matchesAnyCSV reports whether el equals any of the comma-separated values,
+// each trimmed of surrounding space. Shared by the `in` and `ne` operators so
+// the set they test against cannot drift — `ne` is defined as "no element
+// matches the in-set", and that only holds if both read the set the same way.
+func matchesAnyCSV(el string, vals []string) bool {
+	return slices.ContainsFunc(vals, func(v string) bool {
+		return el == strings.TrimSpace(v)
+	})
+}

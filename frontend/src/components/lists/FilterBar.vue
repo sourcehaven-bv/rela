@@ -3,6 +3,7 @@ import { ref, watch, computed, onBeforeUnmount } from 'vue'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { isCancelledFetch } from '@/composables/usePageData'
 import EntityTargetSelect from '@/components/common/EntityTargetSelect.vue'
+import TagSelect from '@/components/ui/TagSelect.vue'
 import type {
   ListConfig,
   EntityType,
@@ -265,10 +266,14 @@ function handleRelationChange(key: string, value: string) {
   handleFilterChange()
 }
 
-function handleMultiSelectChange(key: string, event: Event) {
-  const select = event.target as HTMLSelectElement
-  const selected = Array.from(select.selectedOptions).map((opt) => opt.value)
+// A multi-select commits the selected values under the `in` operator, not the
+// default `=`. Equality against a comma-joined string ("a,b") matches nothing —
+// `in` is the operator the API defines for multi-value and the one
+// docs/data-entry.md documents for it (BUG-AMK38R). A single selection uses
+// `in` too, so the wire form doesn't change shape with the selection count.
+function handleMultiSelectChange(key: string, selected: string[]) {
   localFilters.value[key] = selected.join(',')
+  preservedOps.value[key] = selected.length > 0 ? 'in' : undefined
   handleFilterChange()
 }
 
@@ -335,23 +340,16 @@ onBeforeUnmount(() => {
           </option>
         </select>
 
-        <!-- Multi-select widget -->
-        <select
+        <!-- Multi-select widget — chip/tag picker with search, the same
+             TagSelect edit forms use via MultiSelectWidget. -->
+        <TagSelect
           v-else-if="filter.widget === 'multi-select'"
-          :id="`filter-${filter.key}`"
-          multiple
-          :class="{ 'has-selection': getMultiSelectValues(filter.key).length > 0 }"
-          @change="(e) => handleMultiSelectChange(filter.key, e)"
-        >
-          <option
-            v-for="option in filter.options"
-            :key="option"
-            :value="option"
-            :selected="getMultiSelectValues(filter.key).includes(option)"
-          >
-            {{ optionText(filter, option) }}
-          </option>
-        </select>
+          :model-value="getMultiSelectValues(filter.key)"
+          :options="filter.options"
+          :option-labels="filter.optionLabels"
+          :placeholder="`Filter by ${filter.label}`"
+          @update:model-value="(v: string[]) => handleMultiSelectChange(filter.key, v)"
+        />
 
         <!-- Relation widget — select (small) or typeahead (large) target
              picker. Commits the target's bare display title as the value,
@@ -449,16 +447,6 @@ onBeforeUnmount(() => {
   color: var(--text-color);
 }
 
-/* Multi-select specific styles */
-.filter-item select[multiple] {
-  min-height: 80px;
-  max-height: 120px;
-}
-
-.filter-item select[multiple].has-selection {
-  border-color: var(--accent-color);
-}
-
 @media (max-width: 768px) {
   .filter-bar {
     border: none;
@@ -489,7 +477,7 @@ onBeforeUnmount(() => {
 
   /* Free-text filters (assignee etc.) get a full row on mobile because
      the input target is more useful at full width. */
-  .filter-item:has(input[type="text"]) {
+  .filter-item:has(input[type='text']) {
     flex: 1 1 100%;
   }
 
@@ -497,11 +485,6 @@ onBeforeUnmount(() => {
   .filter-item input {
     width: 100%;
     min-width: 0;
-  }
-
-  .filter-item select[multiple] {
-    min-height: 60px;
-    max-height: 80px;
   }
 }
 </style>
