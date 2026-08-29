@@ -35,5 +35,9 @@ tool differ).
 
 ## Depends on
 
-TKT-ZIRMGM's migration (`last_edited_by_*` columns) and `store.Attribution` ctx
-carrier being merged.
+**UNBLOCKED as of 2026-07-25.** TKT-ZIRMGM merged to develop (PR #1195, squash
+`6dea82af`), so both prerequisites are in place: migration 0006's
+`last_edited_by_*` columns and the `store.Attribution` ctx carrier
+(`internal/store/attribution.go`, populated at the entitymanager boundary by
+`withStoreAttribution`). This ticket is ready to move to `ready`/`planning`
+whenever prioritized.
