@@ -5,7 +5,7 @@ title: Extract the seed cluster off docRuntime (36 → 33)
 kind: refactor
 priority: medium
 effort: s
-status: review
+status: done
 ---
 
 Sub-ticket of [[TKT-N0IKN9]], part of the `internal/docs` `docRuntime` arc.
