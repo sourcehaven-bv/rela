@@ -3,6 +3,7 @@ import { ref, watch, computed, onBeforeUnmount } from 'vue'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { isCancelledFetch } from '@/composables/usePageData'
 import EntityTargetSelect from '@/components/common/EntityTargetSelect.vue'
+import TagSelect from '@/components/ui/TagSelect.vue'
 import type {
   ListConfig,
   EntityType,
@@ -265,10 +266,21 @@ function handleRelationChange(key: string, value: string) {
   handleFilterChange()
 }
 
-function handleMultiSelectChange(key: string, event: Event) {
-  const select = event.target as HTMLSelectElement
-  const selected = Array.from(select.selectedOptions).map((opt) => opt.value)
+// A multi-select commits under `in` once there is more than one value:
+// equality against a comma-joined string ("a,b") matches nothing, and `in` is
+// the operator the API defines for multi-value (BUG-AMK38R).
+//
+// A SINGLE value stays on `=`. The comma-joined `in` form cannot represent a
+// value that itself contains a comma ("Legal, Risk & Compliance") — the server
+// would split it into two members and match the wrong rows — whereas `=`
+// compares the value whole and is always correct. Keeping one selection on `=`
+// means the common case is exact; only a multi-selection that includes a
+// comma-bearing value is affected, and expressing that needs the repeated
+// `filter[x][in][]=` form, which FilterState (one string per key) cannot carry
+// today. Tracked with the wire-format work in TKT-UTJ24Z.
+function handleMultiSelectChange(key: string, selected: string[]) {
   localFilters.value[key] = selected.join(',')
+  preservedOps.value[key] = selected.length > 1 ? 'in' : undefined
   handleFilterChange()
 }
 
@@ -335,23 +347,16 @@ onBeforeUnmount(() => {
           </option>
         </select>
 
-        <!-- Multi-select widget -->
-        <select
+        <!-- Multi-select widget — chip/tag picker with search, the same
+             TagSelect edit forms use via MultiSelectWidget. -->
+        <TagSelect
           v-else-if="filter.widget === 'multi-select'"
-          :id="`filter-${filter.key}`"
-          multiple
-          :class="{ 'has-selection': getMultiSelectValues(filter.key).length > 0 }"
-          @change="(e) => handleMultiSelectChange(filter.key, e)"
-        >
-          <option
-            v-for="option in filter.options"
-            :key="option"
-            :value="option"
-            :selected="getMultiSelectValues(filter.key).includes(option)"
-          >
-            {{ optionText(filter, option) }}
-          </option>
-        </select>
+          :model-value="getMultiSelectValues(filter.key)"
+          :options="filter.options"
+          :option-labels="filter.optionLabels"
+          :placeholder="`Filter by ${filter.label}`"
+          @update:model-value="(v: string[]) => handleMultiSelectChange(filter.key, v)"
+        />
 
         <!-- Relation widget — select (small) or typeahead (large) target
              picker. Commits the target's bare display title as the value,
@@ -397,6 +402,11 @@ onBeforeUnmount(() => {
   display: flex;
   gap: var(--space-lg);
   flex-wrap: wrap;
+  /* Top-align: the tag picker grows downward as chips wrap onto a second row,
+     and the default `stretch` would drag its neighbours' controls out of line
+     with it. Aligning at the top keeps every label and control on one line
+     regardless of how many chips are selected. */
+  align-items: flex-start;
 }
 
 .filter-item {
@@ -413,11 +423,21 @@ onBeforeUnmount(() => {
   color: var(--muted-text);
 }
 
+/* The multi-enum tag picker (TagSelect → SlimSelect) sits in the same row as
+   scalar selects and text inputs, so the three have to agree on height, radius,
+   font size and min-width or the filter bar looks ragged.
+
+   TagSelect's `<style>` is GLOBAL (no `scoped`), and its DOM therefore carries
+   no `data-v` of this component — `:deep()` cannot reach it from here. Height,
+   radius and font-size live on `.ss-main` in TagSelect itself; only the
+   filter-bar-specific min-width is set here, via a global rule nested under
+   `.filter-bar` so it cannot leak to other TagSelect consumers. */
 .filter-item select,
 .filter-item input {
   padding: 6px 10px;
+  min-height: 38px;
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   font-size: var(--font-size-base);
   min-width: 150px;
   background: var(--input-bg);
@@ -447,16 +467,6 @@ onBeforeUnmount(() => {
 .clear-filters:hover {
   background: var(--hover-bg);
   color: var(--text-color);
-}
-
-/* Multi-select specific styles */
-.filter-item select[multiple] {
-  min-height: 80px;
-  max-height: 120px;
-}
-
-.filter-item select[multiple].has-selection {
-  border-color: var(--accent-color);
 }
 
 @media (max-width: 768px) {
@@ -489,7 +499,7 @@ onBeforeUnmount(() => {
 
   /* Free-text filters (assignee etc.) get a full row on mobile because
      the input target is more useful at full width. */
-  .filter-item:has(input[type="text"]) {
+  .filter-item:has(input[type='text']) {
     flex: 1 1 100%;
   }
 
@@ -498,10 +508,43 @@ onBeforeUnmount(() => {
     width: 100%;
     min-width: 0;
   }
+}
+</style>
 
-  .filter-item select[multiple] {
-    min-height: 60px;
-    max-height: 80px;
+<!-- TagSelect's styles are global and live in ITS OWN route chunk, which the
+     list page does not load — so on this page `.ss-main` would otherwise fall
+     back to browser defaults (notably a 16px font next to the 14px <select>
+     beside it). These rules put the filter-bar's copy in the list chunk.
+
+     Nested under `.filter-bar` so they apply to the list filter row only and
+     cannot reach the same widget in edit forms or Settings, and global rather
+     than `scoped` because TagSelect renders no `data-v` of this component. -->
+<style>
+.filter-bar .filter-item .ss-main {
+  min-width: 150px;
+  min-height: 38px;
+  font-size: var(--font-size-base);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--input-bg);
+  color: var(--text-color);
+}
+
+.filter-bar .filter-item .ss-main .ss-placeholder {
+  color: var(--muted-text);
+}
+
+.filter-bar .filter-item .ss-main:focus-within {
+  border-color: var(--accent-color);
+  box-shadow:
+    0 0 0 2px var(--focus-ring-gap),
+    0 0 0 4px var(--focus-ring);
+}
+
+@media (max-width: 768px) {
+  .filter-bar .filter-item .ss-main {
+    min-width: 0;
+    width: 100%;
   }
 }
 </style>

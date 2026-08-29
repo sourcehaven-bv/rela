@@ -205,24 +205,7 @@ func compareOrdered[T cmp.Ordered](left, right T, operator string) bool {
 // propertyContains checks if a property value contains the given string.
 // Handles string, []string, and []interface{} property types.
 func propertyContains(prop any, value string) bool {
-	if prop == nil {
-		return value == ""
-	}
-	switch v := prop.(type) {
-	case string:
-		return v == value
-	case []string:
-		return slices.Contains(v, value)
-	case []any:
-		for _, item := range v {
-			if s, ok := item.(string); ok && s == value {
-				return true
-			}
-		}
-		return false
-	default:
-		return fmt.Sprintf("%v", prop) == value
-	}
+	return anyElement(prop, func(el string) bool { return el == value })
 }
 
 // propertyIsEmpty checks if a property value is empty/nil.
@@ -908,6 +891,109 @@ func (a *App) isRelationLinked(formRel, linkRel string) bool {
 		if def.Inverse.GetID() == linkRel {
 			return true
 		}
+	}
+	return false
+}
+
+// propertyElements returns the property value as the list of elements a filter
+// operator compares against: a single-element slice for a scalar, one entry per
+// item for a list-typed property.
+//
+// This exists because a list property has no meaningful single string form. The
+// v1 list filter used to compare `fmt.Sprintf("%v", prop)` against the filter
+// value, which renders []any{"a","b"} as the Go slice literal "[a b]" — so a
+// list property could never equal any selected value, and `ne` returned rows it
+// was asked to exclude (BUG-AMK38R). Comparing per element is the same rule
+// [propertyContains] already applies to static config-authored `filters:`, so
+// the dynamic `filter[...]` path now agrees with the static one.
+//
+// Non-string elements render with `%v`, matching what internal/propmatch's
+// Stringify does for a scalar, so a []any{1,2} behaves like the scalars 1 and 2
+// rather than being dropped. (This does not CALL propmatch: arch-lint forbids
+// dataentry depending on it. Keeping the rendering identical is what matters,
+// and TKT-UTJ24Z is where the two converge for real.)
+//
+// Nil: a nil property yields a single empty-string element, so it compares
+// equal to an empty filter value and unequal to any other. Falling through to
+// `%v` instead would produce the Go literal "<nil>", which is a MATCHABLE
+// string: `filter[x][contains]=nil` would then select every entity whose
+// property is explicitly null.
+func propertyElements(prop any) []string {
+	if prop == nil {
+		return []string{""}
+	}
+	switch v := prop.(type) {
+	case string:
+		return []string{v}
+	case []string:
+		return v
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+				continue
+			}
+			out = append(out, fmt.Sprintf("%v", item))
+		}
+		return out
+	default:
+		return []string{fmt.Sprintf("%v", prop)}
+	}
+}
+
+// anyElement reports whether any element of the property satisfies match.
+// Used by the ANY-element operators (eq, in, contains); `ne` is its negation,
+// so "no element matches" stays the exact complement of "some element matches"
+// and the two cannot drift apart.
+func anyElement(prop any, match func(string) bool) bool {
+	return slices.ContainsFunc(propertyElements(prop), match)
+}
+
+// filterSetValues expands the query params of an `in`/`ne` filter into the set
+// of values it tests membership against.
+//
+// The two wire forms are read differently, on purpose:
+//
+//   - Without the `[]` suffix, each param splits on commas — the documented
+//     `filter[x][in]=a,b` form.
+//   - WITH the `[]` suffix (`filter[x][in][]=a&filter[x][in][]=b`), each param
+//     is one member, taken verbatim.
+//
+// The suffix is the signal, not the number of params: a one-element array is
+// indistinguishable from a comma list by count alone, and guessing from the
+// count re-tears exactly the single-value case the array form exists to carry.
+//
+// That split is what lets the repeated form carry a value containing a comma
+// ("Legal, Risk & Compliance"). Splitting it too would tear that value into two
+// members matching rows that hold neither — and leave `ne` unable to exclude
+// the row it names, the same wrong-answer class as BUG-AMK38R. The single-param
+// comma form inherently cannot express such a value; callers with commas in
+// their data must use the repeated form.
+//
+// Each member is trimmed and variable-resolved ($today and friends) exactly as
+// the joined form is, so both representations of a filter agree.
+func filterSetValues(values []string, isArrayForm bool) []string {
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		if isArrayForm {
+			out = append(out, resolveFilterVariable(strings.TrimSpace(v)))
+			continue
+		}
+		for part := range strings.SplitSeq(v, ",") {
+			out = append(out, resolveFilterVariable(strings.TrimSpace(part)))
+		}
+	}
+	return out
+}
+
+// isListValue reports whether a property value is list-typed. Used to decline
+// operators that have no defined meaning over a list rather than answering
+// with a comparison against the rendered slice.
+func isListValue(prop any) bool {
+	switch prop.(type) {
+	case []string, []any:
+		return true
 	}
 	return false
 }
