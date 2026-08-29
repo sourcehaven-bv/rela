@@ -742,4 +742,73 @@ export class FormPage extends BasePage {
   async getPrefixOptions(): Promise<string[]> {
     return this.prefixSelect.locator("option").allTextContents();
   }
+
+  // --- File attachments (TKT-7K3BJF) ---
+  //
+  // The file widget renders one `.file-widget` per `file`-type property,
+  // inside that property's field shell. Scoping by the field id keeps these
+  // helpers usable on a form with several file properties.
+
+  private fileWidget(property: string): Locator {
+    // FieldRenderer passes `id="field-<property>"` to the widget, and
+    // FileWidget binds it to its root — the same convention `#field-title`
+    // already relies on.
+    return this.page.locator(`#field-${property}.file-widget`);
+  }
+
+  /** The hidden `<input type=file>` behind the widget's pick control. */
+  private fileInput(property: string): Locator {
+    return this.fileWidget(property).locator('input[type="file"]');
+  }
+
+  /** Attach a file to a `file` property. In create mode this only STAGES it
+   *  (nothing is uploaded until the entity exists); in edit mode it uploads
+   *  immediately. `name` is the filename the server will see. */
+  async attachFile(property: string, name: string, contents: string, mimeType = "text/plain") {
+    await this.fileInput(property).setInputFiles({
+      name,
+      mimeType,
+      buffer: Buffer.from(contents),
+    });
+  }
+
+  /** Filenames currently listed on a `file` property — staged or uploaded. */
+  async attachedFileNames(property: string): Promise<string[]> {
+    return this.fileWidget(property).locator(".file-name").allInnerTexts();
+  }
+
+  /** Remove the file at `index` from a `file` property's list. */
+  async removeAttachedFile(property: string, index = 0) {
+    await this.fileWidget(property).locator(".file-remove").nth(index).click();
+  }
+
+  /** Whether the add/replace control is offered for a `file` property.
+   *  False at capacity, or when the widget cannot mutate. */
+  async canAddFile(property: string): Promise<boolean> {
+    return (await this.fileWidget(property).locator(".file-dropzone").count()) > 0;
+  }
+
+  /** The widget's inline error text, or '' when none is shown. */
+  async fileErrorText(property: string): Promise<string> {
+    const err = this.fileWidget(property).locator(".file-error");
+    return (await err.count()) > 0 ? err.innerText() : "";
+  }
+
+  /** Submit a create that is expected to also upload `expectedUploads`
+   *  attachments, waiting for the POST and every attachment PUT so the
+   *  assertions that follow don't race the second phase. */
+  async submitAndExpectCreateWithUploads(
+    plural: string,
+    expectedUploads: number,
+  ): Promise<{ id: string }> {
+    const uploads = Array.from({ length: expectedUploads }, () =>
+      this.page.waitForResponse(
+        (r) =>
+          r.url().includes("/_attachments/") && r.request().method() === "PUT",
+      ),
+    );
+    const created = await this.submitAndExpectCreate(plural);
+    await Promise.all(uploads);
+    return created;
+  }
 }

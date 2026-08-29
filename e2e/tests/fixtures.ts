@@ -150,6 +150,12 @@ export interface EntityResponse {
    *  encrypted, no key locally). Each entry names a schema property —
    *  or the special "content" sentinel — that exists but is unreadable. */
   inaccessible?: Array<{ name: string; reason: string }>;
+  /** Per-`file`-property attachment metadata (TKT-7K3BJF/TKT-Q85275). Present
+   *  on a per-entity GET for every file property that holds a file. */
+  _attachments?: Record<
+    string,
+    Array<{ id: string; filename: string; size: number; contentType: string; href: string }>
+  >;
 }
 
 /** Modern JSON:API §9-style relations body for create/update. The
@@ -867,6 +873,14 @@ entities:
         type: priority
       description:
         type: string
+      # TKT-7K3BJF: file properties for create-time attachment staging.
+      # 'screenshot' is single-cap (replace semantics), 'evidence' is
+      # multi-cap so the staged widget's capacity logic is exercised.
+      screenshot:
+        type: file
+      evidence:
+        type: file
+        max: 3
 
   task:
     label: Task
@@ -1076,6 +1090,9 @@ forms:
       - property: priority
       - property: description
         widget: textarea
+      # TKT-7K3BJF: exercised by attachments-create.spec.ts.
+      - property: screenshot
+      - property: evidence
 
   task:
     entity_type: task

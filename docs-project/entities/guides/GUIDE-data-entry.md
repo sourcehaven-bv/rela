@@ -383,6 +383,31 @@ Each entry in `fields:` configures one property input:
 > column headers, relation field labels, view-section fields, and Lua flow
 > fields. `rela migrate` will never remove a `label:` you have written.
 
+### File Properties on Forms
+
+A `file`-type property renders a file control: pick or drag a file, see its
+name, size and (for images) a preview, and remove it. It works on both **create
+and edit** forms.
+
+On an **edit** form the pick uploads immediately — the entity exists, so the
+bytes go straight to it.
+
+On a **create** form there is nothing to upload *to* yet. An attachment is
+stored against an entity id, and the id does not exist until the entity is
+saved, so the form **stages** your pick and uploads it right after the create
+succeeds. In practice this is invisible: you fill the form, attach a file, press
+Create, and the entity is saved with its file. Two details are worth knowing:
+
+- A staged file is marked **"Pending save"** until it is uploaded, and counts
+  toward the property's `max` while staged.
+- Because the upload is a second step, it can fail on its own (a file over the
+  size limit, or one your scan policy rejects). If that happens the entity is
+  still created — you land on it and the message names the files that did not
+  attach, so you can retry them there. Nothing is silently dropped.
+
+Attachments inherit the owning entity's permissions: if you may not update the
+entity, you may not attach to it.
+
 ### Field Layout (`span`)
 
 Fields lay out on a **12-column grid**. A field with no `span` takes the full

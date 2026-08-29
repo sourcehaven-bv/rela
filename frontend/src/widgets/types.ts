@@ -63,7 +63,18 @@ export interface WidgetProps<T = unknown> {
   entityType?: string
   // Owning entity ID, supplied to the file widget for the upload/delete URL
   // in edit mode. Optional — present only on the file-property edit path.
+  //
+  // ABSENT means create mode (the create route sets no entity id), which is
+  // what puts the file widget into STAGED mode: there is no id to upload
+  // against yet, because an attachment cannot be written before the entity
+  // row exists (TKT-7K3BJF). It is genuinely `undefined` here — not a
+  // sentinel; see RR-QTCKCW.
   entityId?: string
+  // Files the user picked in create mode that are not yet uploaded. Owned by
+  // the host form (they must survive this widget re-rendering) and pushed
+  // back through `update:staged-files`. Ignored in edit mode, where a pick
+  // uploads immediately.
+  stagedFiles?: File[]
 }
 
 // WidgetRoutingHint is a lightweight description used by the view-side

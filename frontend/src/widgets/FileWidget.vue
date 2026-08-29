@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { WidgetProps } from './types'
 import type { AttachmentInfo } from '@/types'
 import { uploadAttachment, deleteAttachment, AttachmentError } from '@/api/attachments'
@@ -10,25 +10,92 @@ const emit = defineEmits<{
   // Fired after a successful upload or delete so the parent can refresh
   // the entity (the property value and _attachments changed server-side).
   'attachment-changed': []
+  // Create mode only: the staged (not-yet-uploaded) file list for this
+  // property changed. The host form owns the list — see `stagedFiles`.
+  'update:staged-files': [files: File[]]
 }>()
 
 const files = computed<AttachmentInfo[]>(() => props.attachments ?? [])
+const staged = computed<File[]>(() => props.stagedFiles ?? [])
 const maxCount = computed(() => props.max ?? 1)
 const isSingle = computed(() => maxCount.value <= 1)
-const atCapacity = computed(() => files.value.length >= maxCount.value)
+// Capacity counts BOTH persisted and staged files: in create mode every file
+// is staged, and a form could in principle show both.
+const atCapacity = computed(() => files.value.length + staged.value.length >= maxCount.value)
 
 // Edit mode can mutate only when the widget knows the owning entity and
 // isn't disabled by ACL.
 const canEdit = computed(
   () => props.mode === 'edit' && !props.disabled && !!props.entityType && !!props.entityId
 )
-// The add control shows when editing and there's room (single-cap: shows
-// as "Replace" once a file exists; multi-cap: hidden at capacity).
-const canAdd = computed(() => canEdit.value && (isSingle.value || !atCapacity.value))
+// Create mode (TKT-7K3BJF): no entity id exists yet, so a pick is STAGED
+// rather than uploaded. An attachment cannot be written before the entity
+// row exists, so the host form uploads these after the create returns an id.
+const canStage = computed(() => props.mode === 'edit' && !props.disabled && !props.entityId)
+// The add control shows when editing/staging and there's room (single-cap:
+// shows as "Replace" once a file exists; multi-cap: hidden at capacity).
+const canAdd = computed(
+  () => (canEdit.value || canStage.value) && (isSingle.value || !atCapacity.value)
+)
 
 const busy = ref(false)
 const progress = ref(0)
 const uploadError = ref('')
+
+// Object URLs for staged image previews, keyed by File. Revoked on removal
+// and on unmount — an un-revoked blob URL pins its bytes for the life of the
+// document.
+const stagedPreviews = ref(new Map<File, string>())
+
+function stagedPreviewUrl(file: File): string | undefined {
+  if (!file.type.startsWith('image/')) return undefined
+  let url = stagedPreviews.value.get(file)
+  if (!url) {
+    url = URL.createObjectURL(file)
+    stagedPreviews.value.set(file, url)
+  }
+  return url
+}
+
+function revokeStagedPreview(file: File) {
+  const url = stagedPreviews.value.get(file)
+  if (url) {
+    URL.revokeObjectURL(url)
+    stagedPreviews.value.delete(file)
+  }
+}
+
+// Revoke previews for files that are no longer staged (e.g. the host cleared
+// the list after a successful create), so the map can't outlive its files.
+watch(staged, (current) => {
+  for (const file of [...stagedPreviews.value.keys()]) {
+    if (!current.includes(file)) revokeStagedPreview(file)
+  }
+})
+
+onBeforeUnmount(() => {
+  for (const url of stagedPreviews.value.values()) URL.revokeObjectURL(url)
+  stagedPreviews.value.clear()
+})
+
+function stageFile(file: File) {
+  // Respect the cap at pick time, mirroring edit mode's capacity rule.
+  if (atCapacity.value && !isSingle.value) return
+  // Single-cap replaces rather than appends, matching the server's max:1
+  // semantics (a new upload supersedes the existing file).
+  const next = isSingle.value ? [file] : [...staged.value, file]
+  if (isSingle.value) for (const f of staged.value) revokeStagedPreview(f)
+  uploadError.value = ''
+  emit('update:staged-files', next)
+}
+
+function unstageFile(file: File) {
+  revokeStagedPreview(file)
+  emit(
+    'update:staged-files',
+    staged.value.filter((f) => f !== file)
+  )
+}
 
 function isImage(att: AttachmentInfo): boolean {
   return att.contentType?.startsWith('image/') ?? false
@@ -80,10 +147,17 @@ async function doDelete(att: AttachmentInfo) {
   }
 }
 
+// A picked file is STAGED in create mode and uploaded immediately in edit
+// mode — the single branch that separates the two behaviours.
+function acceptFile(file: File) {
+  if (canStage.value) stageFile(file)
+  else void doUpload(file)
+}
+
 function onFileInput(event: Event) {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
-  if (file) void doUpload(file)
+  if (file) acceptFile(file)
   input.value = '' // allow re-selecting the same file
 }
 
@@ -92,12 +166,12 @@ function onDrop(event: DragEvent) {
   dragOver.value = false
   if (!canAdd.value) return
   const file = event.dataTransfer?.files?.[0]
-  if (file) void doUpload(file)
+  if (file) acceptFile(file)
 }
 </script>
 
 <template>
-  <div class="file-widget">
+  <div :id="id" class="file-widget">
     <!-- The current files (display in any mode). -->
     <ul v-if="files.length" class="file-list">
       <li v-for="att in files" :key="att.id" class="file-item">
@@ -126,7 +200,27 @@ function onDrop(event: DragEvent) {
       </li>
     </ul>
 
-    <span v-else-if="mode !== 'edit'" class="file-empty">No file attached</span>
+    <!-- Staged (not yet uploaded) files — create mode only. Same markup as
+         the persisted list, but the name is plain text: there is nothing to
+         download yet, and the preview comes from a local object URL. -->
+    <ul v-if="staged.length" class="file-list file-list-staged">
+      <li v-for="file in staged" :key="`${file.name}-${file.size}-${file.lastModified}`" class="file-item">
+        <img
+          v-if="stagedPreviewUrl(file)"
+          :src="stagedPreviewUrl(file)"
+          :alt="file.name"
+          class="file-preview"
+        />
+        <div class="file-meta">
+          <span class="file-name">{{ file.name }}</span>
+          <span class="file-size">{{ formatSize(file.size) }}</span>
+          <span class="file-staged-badge">Pending save</span>
+          <button type="button" class="file-remove" @click="unstageFile(file)">Remove</button>
+        </div>
+      </li>
+    </ul>
+
+    <span v-else-if="!files.length && mode !== 'edit'" class="file-empty">No file attached</span>
 
     <!-- Add / replace control (edit mode, with room). -->
     <div
@@ -139,19 +233,21 @@ function onDrop(event: DragEvent) {
     >
       <label class="file-pick">
         <input type="file" :disabled="busy" @change="onFileInput" />
-        <span>{{ isSingle && files.length ? 'Replace file' : 'Add a file' }}</span>
+        <span>{{ isSingle && (files.length || staged.length) ? 'Replace file' : 'Add a file' }}</span>
       </label>
       <span class="file-hint">or drag &amp; drop</span>
-      <span v-if="!isSingle" class="file-count">{{ files.length }} / {{ maxCount }}</span>
+      <span v-if="!isSingle" class="file-count">
+        {{ files.length + staged.length }} / {{ maxCount }}
+      </span>
     </div>
 
     <!-- At capacity in multi mode: explain why no add control. -->
-    <p v-else-if="canEdit && !isSingle && atCapacity" class="file-edit-note">
+    <p v-else-if="(canEdit || canStage) && !isSingle && atCapacity" class="file-edit-note">
       Maximum of {{ maxCount }} files reached — remove one to add another.
     </p>
 
     <!-- Edit mode but the widget can't mutate (no entity context / ACL). -->
-    <p v-else-if="mode === 'edit' && !canEdit" class="file-edit-note">
+    <p v-else-if="mode === 'edit' && !canEdit && !canStage" class="file-edit-note">
       {{ disabled ? 'Editing this attachment is not permitted.' : 'Attachment editing unavailable.' }}
     </p>
 
@@ -232,6 +328,14 @@ function onDrop(event: DragEvent) {
 .file-remove:disabled {
   cursor: not-allowed;
   opacity: 0.5;
+}
+
+/* A staged file is not yet persisted; the badge says so without relying on
+   colour alone. */
+.file-staged-badge {
+  font-size: var(--font-size-sm, 12px);
+  color: var(--text-muted, #6b7280);
+  font-style: italic;
 }
 
 .file-empty {
