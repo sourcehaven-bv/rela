@@ -11,10 +11,22 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-func (s *Server) handleGetSchema(
+// schemaResourceHandler serves the schema tools (get_schema / get_metamodel /
+// list_entity_types / list_relation_types) and the rela:// resource reads in
+// resources.go. One merged type rather than two (the urlHelpers pattern,
+// TKT-MGNE5L): both surfaces answer "describe the graph's shape and read one
+// row of it" from the same two collaborators — the metamodel and the gated
+// [GraphReader]. Identity still arrives on the ctx via
+// Server.principalMiddleware; the handler holds no principal.
+type schemaResourceHandler struct {
+	store GraphReader
+	meta  *metamodel.Metamodel
+}
+
+func (h schemaResourceHandler) handleGetSchema(
 	_ context.Context, _ *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
-	meta := s.deps.Meta
+	meta := h.meta
 	result := map[string]any{
 		"version":   meta.GetVersion(),
 		"namespace": meta.GetNamespace(),
@@ -33,7 +45,7 @@ func (s *Server) handleGetSchema(
 	return textResult(text), nil
 }
 
-func (s *Server) handleListEntityTypes(
+func (h schemaResourceHandler) handleListEntityTypes(
 	ctx context.Context, _ *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
 	type entityTypeInfo struct {
@@ -45,8 +57,8 @@ func (s *Server) handleListEntityTypes(
 		Count      int                              `json:"count"`
 	}
 
-	meta := s.deps.Meta
-	st := s.deps.Store
+	meta := h.meta
+	st := h.store
 	types := meta.EntityTypes()
 	natsort.Strings(types)
 
@@ -74,7 +86,7 @@ func (s *Server) handleListEntityTypes(
 	return textResult(text), nil
 }
 
-func (s *Server) handleListRelationTypes(
+func (h schemaResourceHandler) handleListRelationTypes(
 	ctx context.Context, _ *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
 	type relationTypeInfo struct {
@@ -87,8 +99,8 @@ func (s *Server) handleListRelationTypes(
 		Count       int      `json:"count"`
 	}
 
-	meta := s.deps.Meta
-	st := s.deps.Store
+	meta := h.meta
+	st := h.store
 	types := meta.RelationTypes()
 	natsort.Strings(types)
 

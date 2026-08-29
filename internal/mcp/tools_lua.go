@@ -55,7 +55,20 @@ func toolLuaList() *mcpgo.Tool {
 	)
 }
 
-func (s *Server) handleLuaEval(ctx context.Context, req *mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+// luaHandler serves the lua_eval / lua_run / lua_list tools. A type of its
+// own rather than more methods on [Server] (the urlHelpers pattern,
+// TKT-MGNE5L): the lua tools are the ONLY consumers of the write-capable
+// runtime deps, the script cache, and the project root — holding them here
+// means no other handler in the package can reach a Lua write path. Identity
+// still arrives on the ctx via Server.principalMiddleware; the handler holds
+// no principal.
+type luaHandler struct {
+	writeDeps   lua.WriteDeps
+	cache       *lua.Cache
+	projectRoot string
+}
+
+func (h luaHandler) handleLuaEval(ctx context.Context, req *mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	in := newToolRequest(req)
 	code, err := in.RequireString("code")
 	if err != nil {
@@ -75,8 +88,8 @@ func (s *Server) handleLuaEval(ctx context.Context, req *mcpgo.CallToolRequest) 
 	// LuaWriteDeps.Capabilities is the zero value here and must stay that way;
 	// do not "fix" a script that fails with "attempt to index a nil value
 	// (global http)" by granting it here.
-	runtime, err := script.NewWriterRuntime(s.deps.LuaWriteDeps, "",
-		&output, lua.WithContext(ctx), lua.WithCache(s.deps.LuaCache))
+	runtime, err := script.NewWriterRuntime(h.writeDeps, "",
+		&output, lua.WithContext(ctx), lua.WithCache(h.cache))
 	if err != nil {
 		return errorResult("config error: " + err.Error()), nil
 	}
@@ -107,7 +120,7 @@ func (s *Server) handleLuaEval(ctx context.Context, req *mcpgo.CallToolRequest) 
 	return textResult(result), nil
 }
 
-func (s *Server) handleLuaRun(ctx context.Context, req *mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+func (h luaHandler) handleLuaRun(ctx context.Context, req *mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	in := newToolRequest(req)
 	path, err := in.RequireString("path")
 	if err != nil {
@@ -127,7 +140,7 @@ func (s *Server) handleLuaRun(ctx context.Context, req *mcpgo.CallToolRequest) (
 	// Parse args if provided
 	args := in.GetStringSlice("args", nil)
 
-	projectRoot := s.deps.ProjectRoot
+	projectRoot := h.projectRoot
 
 	// Security: Scripts must be in the scripts/ directory
 	// Use os.Root for traversal-resistant path access
@@ -164,8 +177,8 @@ func (s *Server) handleLuaRun(ctx context.Context, req *mcpgo.CallToolRequest) (
 	// lua_run names a file under scripts/, but the CHOICE of file is the MCP
 	// client's, so this inherits the same posture rather than the operator-shell
 	// default `rela script` uses for the very same files.
-	runtime, err := script.NewWriterRuntime(s.deps.LuaWriteDeps, path,
-		&output, lua.WithContext(ctx), lua.WithCache(s.deps.LuaCache))
+	runtime, err := script.NewWriterRuntime(h.writeDeps, path,
+		&output, lua.WithContext(ctx), lua.WithCache(h.cache))
 	if err != nil {
 		return errorResult("config error: " + err.Error()), nil
 	}
@@ -230,9 +243,9 @@ func luaScriptErrorResult(surface lua.Surface, envelopePath, projectRoot string,
 	return errorResult(string(body))
 }
 
-func (s *Server) handleLuaList(_ context.Context, _ *mcpgo.CallToolRequest,
+func (h luaHandler) handleLuaList(_ context.Context, _ *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
-	projectRoot := s.deps.ProjectRoot
+	projectRoot := h.projectRoot
 
 	// Only search the scripts/ directory (security restriction)
 	scriptsPath := filepath.Join(projectRoot, scriptsDir)

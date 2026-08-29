@@ -160,9 +160,10 @@ type Watcher interface {
 
 // Server wraps the MCP server with rela-specific state.
 //
-// TODO(TKT-N0IKN9): Server is over the 40-method load line (38 methods
-// after the first ratchet). Decompose; ratchet this number down as
-// handlers move out.
+// TODO(TKT-N0IKN9): Server started this arc over the 40-method load line;
+// it is under it now (25 methods). The directive stays pinned to the actual
+// count so extraction gains cannot silently erode; ratchet it further as
+// the remaining handler clusters move out.
 //
 // 48 → 49: [Server.HTTPHandler] (TKT-BDG8U9). It belongs on Server — it
 // exposes THIS server over a second transport, the peer of [Server.Serve] —
@@ -175,31 +176,53 @@ type Watcher interface {
 // traceHandler / exportHandler (store + tracer, and store + resolver,
 // respectively). Each is a field below, wired from Deps in [NewServer];
 // registerTools points the affected AddTool lines at the field's methods.
-// The remaining handlers genuinely span deps — the next TKT-N0IKN9 slice.
 //
-//plimsoll:max-methods=38
+// 38 → 25 (TKT-MGNE5L): the lua tools moved to luaHandler (the sole user of
+// LuaWriteDeps / LuaCache / ProjectRoot), the schema tools + resource reads
+// to schemaResourceHandler (store + metamodel), and the prompt handlers to
+// promptHandler (store + metamodel + tracer + resolver). register* stay on
+// Server and point at the fields' methods. The remaining handlers genuinely
+// span deps — the next TKT-N0IKN9 slice.
+//
+//plimsoll:max-methods=25
 type Server struct {
 	mcp       *mcpgo.Server
 	deps      Deps
 	logger    *slog.Logger
 	principal principal.Principal
 
-	// Extracted handler groups (TKT-YUETL7) — built from deps by
-	// Deps.handlers. Identity is NOT threaded into them: every handler
-	// reads the principal from its ctx, stamped by principalMiddleware.
-	types  typeResolver
-	trace  traceHandler
-	export exportHandler
+	// Extracted handler groups (TKT-YUETL7, TKT-MGNE5L) — built from deps
+	// by Deps.handlers. Embedded so the groups stay addressable as
+	// s.trace/s.export/... Identity is NOT threaded into them: every
+	// handler reads the principal from its ctx, stamped by
+	// principalMiddleware.
+	handlerSet
+}
+
+// handlerSet is the extracted handler groups a [Server] carries, grouped so
+// Deps.handlers has one return value rather than one per group.
+type handlerSet struct {
+	types     typeResolver
+	trace     traceHandler
+	export    exportHandler
+	lua       luaHandler
+	schemaRes schemaResourceHandler
+	prompts   promptHandler
 }
 
 // handlers builds the extracted handler groups a [Server] carries. One
 // derivation shared by [NewServer] and the test helpers that construct
 // Server literals, so the wiring cannot drift between them.
-func (d Deps) handlers() (typeResolver, traceHandler, exportHandler) {
+func (d Deps) handlers() handlerSet {
 	types := typeResolver{meta: d.Meta}
-	return types,
-		traceHandler{store: d.Store, tracer: d.Tracer},
-		exportHandler{store: d.Store, types: types}
+	return handlerSet{
+		types:     types,
+		trace:     traceHandler{store: d.Store, tracer: d.Tracer},
+		export:    exportHandler{store: d.Store, types: types},
+		lua:       luaHandler{writeDeps: d.LuaWriteDeps, cache: d.LuaCache, projectRoot: d.ProjectRoot},
+		schemaRes: schemaResourceHandler{store: d.Store, meta: d.Meta},
+		prompts:   promptHandler{store: d.Store, meta: d.Meta, tracer: d.Tracer, types: types},
+	}
 }
 
 // Option configures a [Server] at construction.
@@ -267,7 +290,7 @@ func NewServer(deps Deps, version string, opts ...Option) (*Server, error) {
 	if err := deps.validate(); err != nil {
 		return nil, err
 	}
-	s.types, s.trace, s.export = deps.handlers()
+	s.handlerSet = deps.handlers()
 
 	// Capabilities are inferred by the go-sdk from the features actually
 	// registered below (tools/resources/prompts each gain listChanged when

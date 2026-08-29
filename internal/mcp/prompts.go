@@ -9,15 +9,31 @@ import (
 
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/tracer"
 )
 
 func (s *Server) registerPrompts() {
-	s.mcp.AddPrompt(promptAnalyzeTraceability(), s.handleAnalyzeTraceabilityPrompt)
-	s.mcp.AddPrompt(promptReviewOrphans(), s.handleReviewOrphansPrompt)
-	s.mcp.AddPrompt(promptSummarizeProject(), s.handleSummarizeProjectPrompt)
-	s.mcp.AddPrompt(promptReviewEntity(), s.handleReviewEntityPrompt)
+	s.mcp.AddPrompt(promptAnalyzeTraceability(), s.prompts.handleAnalyzeTraceabilityPrompt)
+	s.mcp.AddPrompt(promptReviewOrphans(), s.prompts.handleReviewOrphansPrompt)
+	s.mcp.AddPrompt(promptSummarizeProject(), s.prompts.handleSummarizeProjectPrompt)
+	s.mcp.AddPrompt(promptReviewEntity(), s.prompts.handleReviewEntityPrompt)
+}
+
+// promptHandler serves the four registered prompts. A type of its own rather
+// than more methods on [Server] (the urlHelpers pattern, TKT-MGNE5L): a
+// prompt assembles read-only graph context — entity rows via the gated
+// [GraphReader], traversals via the tracer, shape via the metamodel, plus the
+// shared typeResolver for the review-orphans type filter. Identity still
+// arrives on the ctx via Server.principalMiddleware; the handler holds no
+// principal.
+type promptHandler struct {
+	store  GraphReader
+	meta   *metamodel.Metamodel
+	tracer tracer.Tracer
+	types  typeResolver
 }
 
 func promptAnalyzeTraceability() *mcpgo.Prompt {
@@ -59,7 +75,7 @@ func promptReviewEntity() *mcpgo.Prompt {
 
 // --- Prompt Handlers ---
 
-func (s *Server) handleAnalyzeTraceabilityPrompt(
+func (h promptHandler) handleAnalyzeTraceabilityPrompt(
 	ctx context.Context, request *mcpgo.GetPromptRequest,
 ) (*mcpgo.GetPromptResult, error) {
 	id := request.Params.Arguments["id"]
@@ -67,7 +83,7 @@ func (s *Server) handleAnalyzeTraceabilityPrompt(
 		return nil, errors.New("id argument is required")
 	}
 
-	st := s.deps.Store
+	st := h.store
 	e, getErr := st.GetEntity(ctx, id)
 	if getErr != nil {
 		return nil, fmt.Errorf("entity not found: %s", id)
@@ -79,7 +95,7 @@ func (s *Server) handleAnalyzeTraceabilityPrompt(
 	}
 
 	// Get trace trees
-	tracer := s.deps.Tracer
+	tracer := h.tracer
 	traceFrom := tracer.TraceFrom(ctx, id, 0)
 	traceTo := tracer.TraceTo(ctx, id, 0)
 
@@ -124,17 +140,17 @@ Please analyze:
 	}, nil
 }
 
-func (s *Server) handleReviewOrphansPrompt(
+func (h promptHandler) handleReviewOrphansPrompt(
 	ctx context.Context, request *mcpgo.GetPromptRequest,
 ) (*mcpgo.GetPromptResult, error) {
 	entityType := request.Params.Arguments["type"]
 
-	orphanIDs, _ := s.deps.Tracer.FindOrphans(ctx)
+	orphanIDs, _ := h.tracer.FindOrphans(ctx)
 
-	st := s.deps.Store
+	st := h.store
 	var resolved string
 	if entityType != "" {
-		resolved = s.types.resolveType(entityType)
+		resolved = h.types.resolveType(entityType)
 	}
 
 	type orphanSummary struct {
@@ -163,7 +179,7 @@ func (s *Server) handleReviewOrphansPrompt(
 	}
 
 	// Get available relation types
-	meta := s.deps.Meta
+	meta := h.meta
 	relTypes := meta.RelationTypes()
 	natsort.Strings(relTypes)
 	var relInfo strings.Builder
@@ -204,12 +220,12 @@ For each orphan entity:
 	}, nil
 }
 
-func (s *Server) handleSummarizeProjectPrompt(
+func (h promptHandler) handleSummarizeProjectPrompt(
 	ctx context.Context, _ *mcpgo.GetPromptRequest,
 ) (*mcpgo.GetPromptResult, error) {
 	// Entity counts by type
-	meta := s.deps.Meta
-	st := s.deps.Store
+	meta := h.meta
+	st := h.store
 	entityTypes := meta.EntityTypes()
 	natsort.Strings(entityTypes)
 	var entityCounts strings.Builder
@@ -237,7 +253,7 @@ func (s *Server) handleSummarizeProjectPrompt(
 	}
 
 	// Analysis summary
-	orphanIDs, _ := s.deps.Tracer.FindOrphans(ctx)
+	orphanIDs, _ := h.tracer.FindOrphans(ctx)
 	orphanCount := len(orphanIDs)
 
 	content := fmt.Sprintf(`Generate a comprehensive project summary based on the following data.
@@ -278,7 +294,7 @@ Please provide:
 	}, nil
 }
 
-func (s *Server) handleReviewEntityPrompt(
+func (h promptHandler) handleReviewEntityPrompt(
 	ctx context.Context, request *mcpgo.GetPromptRequest,
 ) (*mcpgo.GetPromptResult, error) {
 	id := request.Params.Arguments["id"]
@@ -286,7 +302,7 @@ func (s *Server) handleReviewEntityPrompt(
 		return nil, errors.New("id argument is required")
 	}
 
-	st := s.deps.Store
+	st := h.store
 	entity, getErr := st.GetEntity(ctx, id)
 	if getErr != nil {
 		return nil, fmt.Errorf("entity not found: %s", id)
@@ -298,7 +314,7 @@ func (s *Server) handleReviewEntityPrompt(
 	}
 
 	// Get entity type schema
-	meta := s.deps.Meta
+	meta := h.meta
 	def, _ := meta.GetEntityDef(entity.Type)
 	var schemaText string
 	if def != nil {
