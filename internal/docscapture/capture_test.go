@@ -32,7 +32,9 @@ func protoDir(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(p, "metamodel.yaml")); err != nil {
+	// schema.yaml, not metamodel.yaml: the file was renamed in TKT-FNARO6 and
+	// this guard was missed, so every test using protoDir skipped silently.
+	if _, err := os.Stat(filepath.Join(p, "schema.yaml")); err != nil {
 		t.Skip("prototype project not found")
 	}
 	return p

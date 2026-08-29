@@ -87,6 +87,10 @@ The access model comes straight from `acl.yaml`:
 | `ticket` | update | ✓ |  |
 | `ticket` | delete | ✓ |  |
 
+The table above is rendered from `acl.yaml`. These claims are _checked_ against
+the real authorization path when this handbook builds, so the prose cannot
+outlive the policy it describes:
+
 ## The edit form
 
 This is the ticket edit form as an editor sees it, with the two lifecycle-driving
