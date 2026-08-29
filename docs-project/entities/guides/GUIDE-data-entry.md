@@ -3138,6 +3138,130 @@ A calendar fails config load — rather than breaking on first use — when:
   base date only. `rrule:` remains a feed-export concern.
 - Dragging changes the day, not the time, and events cannot be resized.
 
+## Gantts
+
+A gantt lays entities out against a **continuous time axis**, nested by
+containment relations — which work contains which other work, and how those
+nested spans relate. It is the third member of the view family: kanban shows
+*status* spatially, calendar shows *dates*, a gantt shows *structure over
+time*.
+
+```yaml
+gantts:
+  delivery:
+    title: "Delivery plan"
+    hierarchy: [contains, has-epic, has-ticket]   # traversed as ONE set
+    sources:
+      project: { start: planned_start, end: planned_end, committed: target_date }
+      epic:    { start: start,         end: end }
+      ticket:  { start: scheduled_start, end: due }
+```
+
+Reach it from the sidebar with a `gantt:` navigation entry:
+
+```yaml
+navigation:
+  - label: "Delivery"
+    gantt: delivery
+```
+
+### Recursive containment
+
+The hierarchy is **not** a fixed set of levels. `hierarchy:` names relation
+types traversed parent-to-child as one set, and a self-referential relation
+(`contains: from: [project] to: [project]`) nests to unbounded depth — a
+project may hold sub-projects holding sub-sub-projects.
+
+Because depth is unbounded, it is **navigated rather than displayed**:
+clicking a bar re-roots the chart on that entity and rescales the time axis to
+its subtree, with breadcrumbs leading back out. The twisty beside a name
+expands a subtree in place instead. `default_depth` picks how many levels are
+open on first load; everything deeper stays one click away.
+
+### Planned versus rolled-up spans
+
+Each source maps up to three date roles, all independently optional:
+
+- `start` / `end` — the entity's **own declared window**
+- `committed` — an externally promised deadline
+
+An entity with no dates of its own still renders: its span is the **rolled-up
+envelope** of its descendants, computed on the server. The two spans are kept
+separate on purpose, because their disagreement is the point:
+
+- a child starting before or ending after its parent's declared window renders
+  as an **overrun** (a dotted amber region with the planned window drawn as an
+  inset) — the plan disagreeing with itself
+- a rolled span ending after the `committed` date renders as a **past-commit
+  rule** (red diagonal stripes below the bar) — a broken external promise
+
+The two textures differ deliberately — dots versus stripes survive
+colour-blindness and greyscale where amber-versus-red alone would not.
+
+### Gantt fields
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `title` | string | Heading above the chart (default: the config key) |
+| `header` / `footer` | string | Markdown rendered above / below the chart |
+| `hierarchy` | list | Relation types traversed parent-to-child; at least one required |
+| `multi_parent` | string | `first` (default) or `error` — see below |
+| `on_cycle` | string | `error` (default) or `prune` — see below |
+| `default_depth` | int | Levels expanded on first load (default 2) |
+| `max_depth` | int | Server-side traversal cap (default 10). Deeper levels still fold into their ancestor's rolled span |
+| `max_nodes` | int | Nodes per response (default 2000); exceeding it flags the response as truncated |
+| `sources` | map | Date-role mapping keyed by entity **type** |
+| `filter_controls` | list | Interactive filters, as on lists and kanbans |
+
+### Source fields
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `start` / `end` | no | `date`- or `datetime`-typed properties carrying the entity's own window |
+| `committed` | no | A date property holding a promised deadline |
+| `where` | no | Filter clauses, all ANDed, restricting which entities join the tree |
+| `label` | no | Property used as the bar label (default: the type's display property) |
+| `color` | no | Palette token, as on calendar sources |
+
+A type reached by traversal but absent from `sources:` still renders — title
+only, its span purely rolled up from descendants.
+
+### Multiple parents and cycles
+
+The graph permits shapes a tree cannot show, so both get an explicit policy
+rather than a silent default:
+
+- `multi_parent: first` renders an entity with two parents exactly once, under
+  the parent that sorts first — deterministic, and roll-ups above it stay
+  honest. `error` refuses the request instead, for projects that intend a
+  strict tree. There is deliberately no `duplicate`: rendering one entity
+  under two ancestors double-counts every roll-up above it.
+- `on_cycle: error` refuses the request when containment loops (A contains B
+  contains A); `prune` drops the loop and renders the rest. A cycle is always
+  a data bug — the choice is only between a hard stop and a degraded render.
+
+### Validation
+
+Loading fails when:
+
+- `hierarchy` is empty or names an unknown relation type
+- a source key is not an entity type, or a date role names a property the type
+  does not have, is not `date`/`datetime`-typed, or is a `list` property
+- a `where` clause does not parse (dropping a filter would silently widen the
+  view, so it refuses instead)
+- `multi_parent` or `on_cycle` is not a known value — including
+  `multi_parent: duplicate`, which is named in the error
+- a `label` is omitted for a type with no display property
+- a `filter_controls` entry resolves on no source type
+
+### Limits
+
+- The gantt is **read-only** today: no drag-to-reschedule (moving a parent
+  under roll-up semantics is a cascade write across all descendants).
+- Dependency arrows are not drawn — dependencies are a separate graph from
+  containment and deserve their own view.
+- Dates render at day granularity; `datetime` values are treated as their date.
+
 ## Commands
 
 Commands let you define shell scripts in `data-entry.yaml` that users can trigger from the UI.
