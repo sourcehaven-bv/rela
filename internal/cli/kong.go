@@ -51,11 +51,18 @@ var (
 
 // CLI is the kong-parsed root.
 //
-// TODO(TKT-N0IKN9): CLI has 38 exported fields (kong binds one per subcommand,
+// TODO(TKT-N0IKN9): CLI has 47 exported fields (kong binds one per subcommand,
 // so growth is structural here) — over the 20-field load line. Revisit grouping
 // subcommands into sub-structs; ratchet this number down if/when that lands.
 //
-//plimsoll:max-fields=46
+// Raised 46 → 47 for `secrets` (TKT-RX7I97). Splitting was preferred per
+// CLAUDE.md and rejected: the field count is one-per-subcommand, so the only
+// way to shed fields is to nest EXISTING commands (the history/restore/purge
+// six are the obvious candidates), and that renames user-facing commands —
+// out of scope for a secrets-hygiene change. `secrets` is itself a sub-struct
+// holding its subcommand, so it adds one field rather than one per verb.
+//
+//plimsoll:max-fields=47
 type CLI struct {
 	// Global flags.
 	Project string `help:"Project directory (default: auto-detect from cwd)." env:"RELA_PROJECT"`
@@ -109,6 +116,7 @@ type CLI struct {
 	Scheduler            SchedulerCmd            `cmd:"" help:"Run scheduled Lua tasks."`
 	Renumber             RenumberCmd             `cmd:"" help:"Renumber managed order properties on orderable relations."`
 	Sync                 SyncCmd                 `cmd:"" help:"Sync local changes with a remote rela-server."`
+	Secrets              SecretsCmd              `cmd:"" help:"Inspect how project secrets are supplied."`
 }
 
 // VersionCmd needs no services.
@@ -230,7 +238,7 @@ func requiresProject(cmd string) bool {
 		"template", "create", "update", "delete", "link", "unlink",
 		"detach", "import", "normalize", "script", "scheduler",
 		"rename", "analyze", "acl", "attach", "attachments", "gc", "renumber",
-		"sync", "history", "restore",
+		"sync", "history", "restore", "secrets",
 		"relation-history", "relation-restore", "history-purge", "relation-history-purge":
 		return true
 	case "migrate":

@@ -72,8 +72,28 @@ That is the same file Lua scripts read. An SMTP password is no different in kind
 from an API token, so it goes in the same place rather than in a mechanism unique
 to mail.
 
+Keep that file readable only by its owner — `chmod 700 .rela && chmod 600
+.rela/secrets.yaml`. rela warns when the file is group- or world-readable; the
+directory mode is not checked, so set it yourself.
+
+**On systemd, prefer a credential.** rela reads `$CREDENTIALS_DIRECTORY` when
+the unit passes a credential named for the project — run `rela secrets
+credential-name` to get it:
+
+```ini
+[Service]
+LoadCredentialEncrypted=rela-secrets-acme-6e0bff4c:/etc/rela/acme-secrets.cred
+```
+
+The credential holds the same YAML as `secrets.yaml`, so `smtp_password` goes in
+it alongside every other key. It is decrypted into a per-service tmpfs at mode
+`0400`, is not inherited by child processes, and can be TPM-bound. See
+[Lua scripting → systemd credentials](lua-scripting.md#systemd-credentials) for
+the full setup.
+
 **Or use an environment variable.** If your deployment injects credentials as
-environment variables — containers, systemd units — name the variable instead:
+environment variables — containers, or systemd units not using credentials —
+name the variable instead:
 
 ```yaml
 # .rela/mail.yaml
@@ -81,6 +101,10 @@ password_env: RELA_SMTP_PASSWORD
 ```
 
 `secrets.yaml` takes precedence when both are present.
+
+Note an environment variable is the weakest of the three: every process rela
+spawns inherits it, including the external converters that run for attachment
+processing and view exports. A systemd credential is not inherited.
 
 Either way, **the password never goes in `mail.yaml`**. Writing a literal
 `password:` key there is refused at load with an error pointing you at the

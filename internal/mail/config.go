@@ -3,6 +3,7 @@ package mail
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -238,7 +239,21 @@ func (c *Config) hasPassword() bool {
 func (c *Config) resolvePassword() string {
 	// secrets.yaml first: it is where an operator keeps every other credential,
 	// so it is where they will look for this one.
-	if sec, err := secrets.Load(c.relaDir, ""); err == nil {
+	sec, err := secrets.Load(c.relaDir, "")
+	switch {
+	case errors.Is(err, secrets.ErrNotFound):
+		// No secrets configured at all — the ordinary case for a deployment
+		// using password_env. Fall through silently.
+	case err != nil:
+		// A malformed or unreadable secrets source is NOT the same as an
+		// absent one. Swallowing it here would send the caller on to
+		// password_env and, when that is unset, produce "password_env is
+		// empty or unset" — an error naming the wrong cause entirely. The
+		// send still falls back, because refusing to send mail over a
+		// secrets-file syntax error is worse than trying, but the real fault
+		// is on the record. The error names the path, never the contents.
+		slog.Warn("mail: secrets source unreadable, falling back to password_env", "error", err)
+	default:
 		if v := sec[SecretKey]; v != "" {
 			return v
 		}

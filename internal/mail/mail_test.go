@@ -1,9 +1,11 @@
 package mail_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -844,6 +846,57 @@ func TestOutbox_ConcurrentEnqueue(t *testing.T) {
 }
 
 // --- credential sources ------------------------------------------------------
+
+// TestConfig_MalformedSecretsFallsBackAndWarns pins the distinction between an
+// ABSENT secrets source and a BROKEN one. Both fall back to password_env so a
+// syntax error cannot stop mail entirely, but a broken source must leave a
+// record: without it the operator sees only "password_env is empty or unset",
+// which names the wrong cause and is a genuinely hard bug to chase when the
+// real fault is inside a TPM-encrypted credential they cannot easily read.
+func TestConfig_MalformedSecretsFallsBackAndWarns(t *testing.T) {
+	// No t.Parallel: t.Setenv and slog.SetDefault below.
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "secrets.yaml"),
+		[]byte("{{ this is not yaml\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, mail.ConfigFile),
+		[]byte("transport: smtp\nhost: h\nfrom: f@e.com\nusername: relay\npassword_env: RELA_TEST_SMTP_PW\n"), 0o600))
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	cfg, err := mail.LoadConfig(dir)
+	require.NoError(t, err)
+
+	t.Setenv("RELA_TEST_SMTP_PW", "from-env")
+	require.Equal(t, "from-env", mail.ExportResolvePassword(cfg),
+		"a broken secrets source must still fall back to password_env")
+	require.Contains(t, buf.String(), "secrets source unreadable",
+		"a broken secrets source must be logged, not swallowed")
+	require.NotContains(t, buf.String(), "from-env", "the warning must not echo a credential")
+}
+
+// TestConfig_AbsentSecretsIsSilent is the counterpart: no secrets.yaml at all is
+// the ordinary password_env deployment and must not produce a warning.
+func TestConfig_AbsentSecretsIsSilent(t *testing.T) {
+	// No t.Parallel: t.Setenv and slog.SetDefault below.
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, mail.ConfigFile),
+		[]byte("transport: smtp\nhost: h\nfrom: f@e.com\nusername: relay\npassword_env: RELA_TEST_SMTP_PW2\n"), 0o600))
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	cfg, err := mail.LoadConfig(dir)
+	require.NoError(t, err)
+
+	t.Setenv("RELA_TEST_SMTP_PW2", "from-env")
+	require.Equal(t, "from-env", mail.ExportResolvePassword(cfg))
+	require.Empty(t, buf.String(), "an absent secrets source is not a fault")
+}
 
 // TestConfig_PasswordFromSecretsYAML covers the primary source: the SMTP
 // password lives beside every other credential an operator keeps, rather than
