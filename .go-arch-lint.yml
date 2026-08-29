@@ -326,6 +326,7 @@ deps:
       - metamodel
       - output
       - pgstore
+      - sqlitestore
       - predicate
       - predicatefns
       - principal
@@ -536,6 +537,7 @@ deps:
       - memstore
       - metamodel
       - pgstore
+      - sqlitestore
       - project
       - queryplan
       - script
