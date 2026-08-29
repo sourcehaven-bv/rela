@@ -135,3 +135,84 @@ func TestV1FilteringScalarPropertyUnchanged(t *testing.T) {
 		})
 	}
 }
+
+// TestV1FilteringListProperty_EdgeCases pins the cases a code review probed and
+// found broken in the first cut of this fix: an explicitly-null property, a
+// value containing a comma, and an ordered operator against a list.
+func TestV1FilteringListProperty_EdgeCases(t *testing.T) {
+	const (
+		commaID = "TKT-comma"
+		legalID = "TKT-legal"
+		nilID   = "TKT-nil"
+		plainID = "TKT-plain"
+	)
+
+	newApp := func(t *testing.T) *App {
+		t.Helper()
+		app := newTestAppV1(t)
+		seedEntity(app, &entity.Entity{ID: commaID, Type: "ticket",
+			Properties: map[string]any{"tags": []any{"Legal, Risk & Compliance"}}})
+		seedEntity(app, &entity.Entity{ID: legalID, Type: "ticket",
+			Properties: map[string]any{"tags": []any{"Legal"}}})
+		seedEntity(app, &entity.Entity{ID: nilID, Type: "ticket",
+			Properties: map[string]any{"tags": nil}})
+		seedEntity(app, &entity.Entity{ID: plainID, Type: "ticket",
+			Properties: map[string]any{"tags": []any{"plain"}}})
+		return app
+	}
+
+	tests := []struct {
+		name  string
+		query string
+		want  []string
+	}{
+		{
+			// The repeated-param form keeps each param whole, so a value
+			// containing a comma survives. Joining first would split it into
+			// "Legal" + "Risk & Compliance" and select the WRONG entity.
+			name:  "comma-bearing value matches via the repeated param form",
+			query: "filter[tags][in][]=Legal%2C+Risk+%26+Compliance",
+			want:  []string{commaID},
+		},
+		{
+			// The complement of the case above: ne must exclude the row it
+			// names. Under a join-then-split it did not — the same
+			// wrong-answer class this bug exists to fix.
+			name:  "ne excludes the comma-bearing row it names",
+			query: "filter[tags][ne][]=Legal%2C+Risk+%26+Compliance",
+			want:  []string{legalID, nilID, plainID},
+		},
+		{
+			name:  "a nil property is not the matchable string <nil>",
+			query: "filter[tags][contains]=nil",
+			want:  nil,
+		},
+		{
+			name:  "a nil property is empty, so it matches an empty eq",
+			query: "filter[tags]=",
+			want:  []string{nilID},
+		},
+		{
+			// Ordering a LIST against a bound has no defined meaning, so no
+			// list-valued row matches. Previously every row did, via the
+			// slice literal. TKT-nil is not list-valued — a null property
+			// keeps its pre-existing scalar comparison, which this bug does
+			// not redefine.
+			name:  "ordered operator matches no list-valued row",
+			query: "filter[tags][lt]=zzz",
+			want:  []string{nilID},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := runListFilter(t, newApp(t), tc.query)
+			slices.Sort(got)
+			want := slices.Clone(tc.want)
+			slices.Sort(want)
+			if !slices.Equal(got, want) {
+				t.Errorf("query %q: got %v, want %v", tc.query, got, want)
+			}
+		})
+	}
+}

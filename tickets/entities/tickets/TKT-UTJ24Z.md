@@ -72,3 +72,37 @@ test, whichever way they resolve.
 convergence must not regress the fix that motivated it.
 6. Existing CalDAV, feed, view-section and CLI filter tests pass without
 modification.
+
+## Additional scope (from BUG-AMK38R code review)
+
+Two defects were confirmed during that review, deferred here because fixing
+them changes behavior for SCALAR properties on a path BUG-AMK38R did not
+otherwise touch — the same blast-radius reason this ticket exists.
+
+4. **An empty `in`/`ne` value is not the complement of a populated one.**
+   `strings.Split("", ",")` yields `[""]` — a one-element set containing the
+   empty string, not an empty set — and the top-of-loop missing-property branch
+   (`api_v1.go`, the `!ok` case) special-cases `eq`+empty only, dropping the row
+   for every other operator. So `filter[x][in]=` and `filter[x][ne]=` do not
+   partition the row set. The relation pass already does the sane thing
+   (`if want == "" { continue }`, i.e. no constraint); the property pass should
+   agree. Verified pre-existing: identical before and after BUG-AMK38R.
+
+5. **`in`/`ne` trim the filter side but not the property side.**
+   `filter[x][in]=" leading"` does not match a property value `" leading"`,
+   while `filter[x]=" leading"` does — the same value answered two ways
+   depending on operator. The trim is defensible for hand-typed URLs; the
+   asymmetry with `eq` is not. Decide one rule and apply it to both.
+
+Both are recorded as deferred review-responses on BUG-AMK38R (RR-NTSTPD,
+RR-D3DH50).
+
+## Wire-format note
+
+BUG-AMK38R made the backend read the `[]` array form correctly (each repeated
+param is one member, verbatim), which is what lets a value containing a comma
+round-trip. The SPA still cannot EMIT that form: `FilterState` holds one string
+per key, so a multi-selection is comma-joined and a comma-bearing enum value
+cannot be expressed. Mitigated there by keeping a single selection on `=` (which
+compares whole and is always correct); a full fix means teaching `FilterState`
+to carry multiple values, which belongs with this ticket's wire-format work.

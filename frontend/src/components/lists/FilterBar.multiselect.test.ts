@@ -66,7 +66,7 @@ describe('FilterBar — multi-enum filter (BUG-AMK38R)', () => {
     expect(tag.props('options')).toEqual(['Governance', 'Technologie', 'Privacy'])
   })
 
-  it('emits the selection under the `in` operator, not `=`', async () => {
+  it('emits a single selection under `=`, which is comma-safe', async () => {
     const wrapper = mountBar()
     await flushPromises()
 
@@ -75,14 +75,14 @@ describe('FilterBar — multi-enum filter (BUG-AMK38R)', () => {
 
     const emitted = wrapper.emitted('filter')
     expect(emitted).toBeTruthy()
-    // `eq` against a comma-joined string matches nothing server-side; `in` is
-    // the operator the API defines for multi-value.
+    // One value stays on `=`: it compares whole, so a value containing a comma
+    // still matches. The comma-joined `in` form could not represent it.
     expect(emitted![emitted!.length - 1][0]).toEqual({
-      gebieden: { value: 'Governance', op: 'in' },
+      gebieden: { value: 'Governance' },
     })
   })
 
-  it('joins multiple selections into one `in` clause', async () => {
+  it('switches to `in` once more than one value is selected', async () => {
     const wrapper = mountBar()
     await flushPromises()
 

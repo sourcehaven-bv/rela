@@ -266,14 +266,21 @@ function handleRelationChange(key: string, value: string) {
   handleFilterChange()
 }
 
-// A multi-select commits the selected values under the `in` operator, not the
-// default `=`. Equality against a comma-joined string ("a,b") matches nothing —
-// `in` is the operator the API defines for multi-value and the one
-// docs/data-entry.md documents for it (BUG-AMK38R). A single selection uses
-// `in` too, so the wire form doesn't change shape with the selection count.
+// A multi-select commits under `in` once there is more than one value:
+// equality against a comma-joined string ("a,b") matches nothing, and `in` is
+// the operator the API defines for multi-value (BUG-AMK38R).
+//
+// A SINGLE value stays on `=`. The comma-joined `in` form cannot represent a
+// value that itself contains a comma ("Legal, Risk & Compliance") — the server
+// would split it into two members and match the wrong rows — whereas `=`
+// compares the value whole and is always correct. Keeping one selection on `=`
+// means the common case is exact; only a multi-selection that includes a
+// comma-bearing value is affected, and expressing that needs the repeated
+// `filter[x][in][]=` form, which FilterState (one string per key) cannot carry
+// today. Tracked with the wire-format work in TKT-UTJ24Z.
 function handleMultiSelectChange(key: string, selected: string[]) {
   localFilters.value[key] = selected.join(',')
-  preservedOps.value[key] = selected.length > 0 ? 'in' : undefined
+  preservedOps.value[key] = selected.length > 1 ? 'in' : undefined
   handleFilterChange()
 }
 

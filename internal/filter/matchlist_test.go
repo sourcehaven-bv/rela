@@ -14,6 +14,10 @@ func TestMatchList(t *testing.T) {
 	m := &metamodel.Metamodel{}
 	propDef := &metamodel.PropertyDef{Type: metamodel.PropertyTypeString}
 
+	// Each case runs twice: once with a []string property and once with the
+	// []any shape YAML frontmatter actually decodes to. They must agree — a
+	// divergence there is invisible in production, since only the decoder
+	// decides which one a given entity carries.
 	tests := []struct {
 		name  string
 		list  []string
@@ -31,34 +35,24 @@ func TestMatchList(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			rec := Record{Properties: map[string]any{"tags": tc.list}}
-			f := &Filter{Property: "tags", Operator: tc.op, Value: tc.value}
-			got, err := Match(rec, f, propDef, m)
-			if err != nil {
-				t.Fatalf("Match returned error: %v", err)
-			}
-			if got != tc.want {
-				t.Errorf("list %v %s %q: got %v, want %v", tc.list, tc.op, tc.value, got, tc.want)
-			}
-		})
-	}
-}
+		anyList := make([]any, len(tc.list))
+		for i, s := range tc.list {
+			anyList[i] = s
+		}
+		shapes := map[string]any{"[]string": tc.list, "[]any": anyList}
 
-// TestMatchList_AnyElementViaAnySlice pins that a []any property (the shape
-// YAML frontmatter actually decodes to) is treated the same as []string.
-func TestMatchList_AnyElementViaAnySlice(t *testing.T) {
-	m := &metamodel.Metamodel{}
-	propDef := &metamodel.PropertyDef{Type: metamodel.PropertyTypeString}
-
-	rec := Record{Properties: map[string]any{"tags": []any{"urgent", "blocker"}}}
-	f := &Filter{Property: "tags", Operator: OpEqual, Value: "blocker"}
-
-	got, err := Match(rec, f, propDef, m)
-	if err != nil {
-		t.Fatalf("Match returned error: %v", err)
-	}
-	if !got {
-		t.Error("[]any list should match an element, got false")
+		for shape, prop := range shapes {
+			t.Run(tc.name+"/"+shape, func(t *testing.T) {
+				rec := Record{Properties: map[string]any{"tags": prop}}
+				f := &Filter{Property: "tags", Operator: tc.op, Value: tc.value}
+				got, err := Match(rec, f, propDef, m)
+				if err != nil {
+					t.Fatalf("Match returned error: %v", err)
+				}
+				if got != tc.want {
+					t.Errorf("%s %v %s %q: got %v, want %v", shape, tc.list, tc.op, tc.value, got, tc.want)
+				}
+			})
+		}
 	}
 }

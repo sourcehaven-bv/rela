@@ -1769,7 +1769,13 @@ func applyV1Filters(
 		// optional `[]` array suffix before splitting so we get clean parts.
 		filterKey := strings.TrimPrefix(key, "filter[")
 		filterKey = strings.TrimSuffix(filterKey, "]")
-		filterKey = strings.TrimSuffix(filterKey, "][") // was "...[]"
+		trimmed := strings.TrimSuffix(filterKey, "][") // was "...[]"
+		// An explicit `[]` suffix declares the ARRAY form: each repeated param
+		// is one member, verbatim. Without it, a lone param is the comma form.
+		// The suffix — not the number of params — is the signal, since a
+		// one-element array is indistinguishable from a comma list by count.
+		isArrayForm := trimmed != filterKey
+		filterKey = trimmed
 		parts := strings.Split(filterKey, "][")
 
 		// Validate parsed shape. A malformed key like `filter[prop][][weird]`
@@ -1814,12 +1820,22 @@ func applyV1Filters(
 		}
 
 		// Multi-value support: `in`/`ne` collect ALL repeated values from the
-		// query (e.g. `filter[tags][in][]=a&filter[tags][in][]=b`) and join
-		// them with commas, matching the comma-separated form. Other
+		// query (e.g. `filter[tags][in][]=a&filter[tags][in][]=b`). Other
 		// operators stay last-write-wins on values[len-1] for predictability.
+		//
+		// setValues keeps the repeated params as DISTINCT members rather than
+		// joining them into one comma string: a value may legitimately contain
+		// a comma ("Legal, Risk & Compliance"), and join-then-split would tear
+		// it into two members that match the wrong rows — and make `ne` fail to
+		// exclude the row it names, the same wrong-answer class as BUG-AMK38R.
+		// A single param still splits on commas, which is the documented
+		// `filter[x][in]=a,b` form; that form simply cannot express a value
+		// containing a comma, so the repeated form is the one to use for those.
 		var value string
+		var setValues []string
 		if operator == "in" || operator == "ne" {
 			value = resolveFilterVariablesInList(strings.Join(values, ","))
+			setValues = filterSetValues(values, isArrayForm)
 		} else {
 			value = resolveFilterVariable(values[len(values)-1])
 		}
@@ -1845,9 +1861,8 @@ func applyV1Filters(
 				}
 			case "ne":
 				// Support comma-separated values as NOT IN
-				vals := strings.Split(value, ",")
 				excluded := anyElement(propVal, func(el string) bool {
-					return matchesAnyCSV(el, vals)
+					return slices.Contains(setValues, el)
 				})
 				if !excluded {
 					newFiltered = append(newFiltered, e)
@@ -1861,18 +1876,26 @@ func applyV1Filters(
 					newFiltered = append(newFiltered, e)
 				}
 			case "in":
-				vals := strings.Split(value, ",")
 				matches := anyElement(propVal, func(el string) bool {
-					return matchesAnyCSV(el, vals)
+					return slices.Contains(setValues, el)
 				})
 				if matches {
 					newFiltered = append(newFiltered, e)
 				}
 			case "lt", "lte", "gt", "gte":
-				// Ordered comparison stays scalar: what it means to order a
-				// list against a bound is a design question, not a defect, so
-				// a list operand keeps the pre-existing whole-value form
-				// rather than gaining new semantics here (BUG-AMK38R).
+				// Ordered comparison is scalar-only. What it means to order a
+				// LIST against a bound is a genuine design question, so this
+				// declines to answer rather than guessing: the old code
+				// compared the Go slice literal, which made `tags < "zzz"`
+				// true for every row (including empty and null ones) — a
+				// confident wrong answer, the same class as BUG-AMK38R.
+				// Excluding the row is the fail-closed direction and leaves
+				// the semantics free to be defined later.
+				if isListValue(propVal) {
+					slog.Warn("ordered filter operator on a list property; no rows match",
+						"property", property, "operator", operator)
+					continue
+				}
 				match, err := compareValues(fmt.Sprintf("%v", propVal), value, operator)
 				if err != nil {
 					// Type mismatch (e.g. property is a date, filter value isn't).
