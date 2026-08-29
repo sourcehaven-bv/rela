@@ -77,7 +77,7 @@ type cloneAuthState struct {
 	interval   int
 }
 
-// coverage-ignore: Wails lifecycle callback
+// coverage-ignore-func: Wails lifecycle callback
 func (d *Desktop) startup(ctx context.Context) {
 	d.ctx = principal.With(ctx, principal.Principal{
 		User: principal.SystemUser(),
@@ -609,7 +609,7 @@ func (d *Desktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // openProjectFromMenu handles File > Open Project from the native menu bar.
-// coverage-ignore: menu callback - requires Wails runtime
+// coverage-ignore-func: menu callback - requires Wails runtime
 func (d *Desktop) openProjectFromMenu(_ *menu.CallbackData) {
 	dir, err := runtime.OpenDirectoryDialog(d.ctx, runtime.OpenDialogOptions{
 		Title: "Open Rela Project",
@@ -630,7 +630,7 @@ func (d *Desktop) openProjectFromMenu(_ *menu.CallbackData) {
 
 // cloneFromGitMenu handles File > Clone from Git from the native menu bar.
 // It navigates to the welcome page and triggers the clone dialog.
-// coverage-ignore: menu callback - requires Wails runtime
+// coverage-ignore-func: menu callback - requires Wails runtime
 func (d *Desktop) cloneFromGitMenu(_ *menu.CallbackData) {
 	// Unload current project to show welcome page
 	d.mu.Lock()
@@ -649,7 +649,7 @@ func (d *Desktop) cloneFromGitMenu(_ *menu.CallbackData) {
 }
 
 // showAbout displays a dialog with version and build information.
-// coverage-ignore: menu callback - requires Wails runtime
+// coverage-ignore-func: menu callback - requires Wails runtime
 func (d *Desktop) showAbout(_ *menu.CallbackData) {
 	runtime.MessageDialog(d.ctx, runtime.MessageDialogOptions{ //nolint:errcheck // best-effort
 		Type:    runtime.InfoDialog,
@@ -738,7 +738,7 @@ func (d *Desktop) refreshMenu() {
 	runtime.MenuUpdateApplicationMenu(d.ctx)
 }
 
-// coverage-ignore: main function - entry point
+// coverage-ignore-func: main function - entry point
 func main() {
 	projectDir := flag.String("project", ".", "Path to the rela project directory")
 	verbose := flag.Bool("verbose", false, "Verbose (debug) logging")

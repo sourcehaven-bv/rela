@@ -141,7 +141,7 @@ func (b *eventBroker) broadcastGitStatus() {
 // subscription — the store-watcher lifecycle is owned by the store
 // (closed when the store is closed).
 //
-// coverage-ignore: requires real filesystem events via fsnotify
+// coverage-ignore-func: requires real filesystem events via fsnotify
 func (a *App) StartWatching() error {
 	// (1) data-entry.yaml subscription.
 	if sub, ok := a.cfgLoader.(config.Subscriber); ok {
@@ -238,7 +238,7 @@ func (a *App) pumpStoreEvents(events <-chan store.Event) {
 // StartGitFetch begins periodic git fetch in the background.
 // Returns a stop function to shut down the fetcher.
 //
-// coverage-ignore: background goroutine with timer
+// coverage-ignore-func: background goroutine with timer
 func (a *App) StartGitFetch() (stop func()) {
 	gitOps := a.gitOps
 	cfg := a.State().Cfg.Git

@@ -130,12 +130,12 @@ func (c *VersionCmd) Run() error {
 
 // Execute is the process entry point.
 //
-// coverage-ignore: CLI entry point - tested via integration tests
+// coverage-ignore-func: CLI entry point - tested via integration tests
 func Execute() {
 	os.Exit(runKong())
 }
 
-// coverage-ignore: CLI entry point - tested via integration tests
+// coverage-ignore-func: CLI entry point - tested via integration tests
 func runKong() int {
 	var cli CLI
 	ktx := kong.Parse(&cli,

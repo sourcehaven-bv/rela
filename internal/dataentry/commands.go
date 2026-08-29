@@ -609,7 +609,7 @@ func (h *commandHandler) handleCommandCancel(w http.ResponseWriter, r *http.Requ
 
 // handleOpenFile handles POST /api/open-file to open or reveal files.
 //
-// coverage-ignore: requires OS interaction
+// coverage-ignore-func: requires OS interaction
 func (h *commandHandler) handleOpenFile(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -698,7 +698,7 @@ func openFileCommand(goos, action, filePath string) *exec.Cmd {
 
 // handleOpenURL handles POST /api/open-url to open URLs in the default browser.
 //
-// coverage-ignore: requires OS interaction
+// coverage-ignore-func: requires OS interaction
 func (h *commandHandler) handleOpenURL(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

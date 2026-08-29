@@ -181,7 +181,7 @@ func escapeLabel(s string) string {
 	return s
 }
 
-// coverage-ignore: requires external graphviz installation
+// coverage-ignore-func: requires external graphviz installation
 func renderWithGraphviz(ctx context.Context, dot, outputPath, format string) error {
 	_, err := exec.LookPath("dot")
 	if err != nil {
