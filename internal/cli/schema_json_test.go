@@ -51,7 +51,7 @@ func (r *mockSchemaRelationDef) GetMaxIncoming() *int { return r.tgtMax }
 // TestSchemaJSONOverview tests schema overview output
 func TestSchemaJSONOverview(t *testing.T) {
 	buf := &bytes.Buffer{}
-	w := schemaJSONWriter{buf}
+	w := schemaJSONWriter{out: buf}
 
 	mock := &mockSchemaMetamodel{}
 	if err := w.writeOverview(mock); err != nil {
@@ -70,7 +70,7 @@ func TestSchemaJSONOverview(t *testing.T) {
 // TestSchemaJSONEntities tests schema entities output
 func TestSchemaJSONEntities(t *testing.T) {
 	buf := &bytes.Buffer{}
-	w := schemaJSONWriter{buf}
+	w := schemaJSONWriter{out: buf}
 
 	mock := &mockSchemaMetamodel{}
 	if err := w.writeEntities(mock); err != nil {
@@ -86,7 +86,7 @@ func TestSchemaJSONEntities(t *testing.T) {
 // TestSchemaJSONRelations tests schema relations output
 func TestSchemaJSONRelations(t *testing.T) {
 	buf := &bytes.Buffer{}
-	w := schemaJSONWriter{buf}
+	w := schemaJSONWriter{out: buf}
 
 	mock := &mockSchemaMetamodel{}
 	if err := w.writeRelations(mock); err != nil {
@@ -102,7 +102,7 @@ func TestSchemaJSONRelations(t *testing.T) {
 // TestSchemaJSONTypes tests schema types output
 func TestSchemaJSONTypes(t *testing.T) {
 	buf := &bytes.Buffer{}
-	w := schemaJSONWriter{buf}
+	w := schemaJSONWriter{out: buf}
 
 	mock := &mockSchemaMetamodel{}
 	if err := w.writeTypes(mock); err != nil {
@@ -118,7 +118,7 @@ func TestSchemaJSONTypes(t *testing.T) {
 // TestSchemaJSONEntityDetail tests entity detail output
 func TestSchemaJSONEntityDetail(t *testing.T) {
 	buf := &bytes.Buffer{}
-	w := schemaJSONWriter{buf}
+	w := schemaJSONWriter{out: buf}
 
 	mockDef := &mockSchemaEntityDef{}
 	if err := w.writeEntityDetail("test", mockDef); err != nil {
@@ -137,7 +137,7 @@ func TestSchemaJSONEntityDetail(t *testing.T) {
 // TestSchemaJSONRelationDetail tests relation detail output
 func TestSchemaJSONRelationDetail(t *testing.T) {
 	buf := &bytes.Buffer{}
-	w := schemaJSONWriter{buf}
+	w := schemaJSONWriter{out: buf}
 
 	mockDef := &mockSchemaRelationDef{}
 	if err := w.writeRelationDetail("test_relation", mockDef); err != nil {
@@ -154,7 +154,7 @@ func TestSchemaJSONRelationDetail(t *testing.T) {
 
 	// Test with all optional fields
 	buf2 := &bytes.Buffer{}
-	w2 := schemaJSONWriter{buf2}
+	w2 := schemaJSONWriter{out: buf2}
 
 	srcMin := 1
 	srcMax := 5
