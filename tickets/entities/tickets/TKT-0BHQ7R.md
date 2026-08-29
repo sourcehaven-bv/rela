@@ -5,7 +5,7 @@ title: Extract Tier-B capability bindings off docRuntime (36 → 31)
 kind: refactor
 priority: medium
 effort: s
-status: review
+status: done
 ---
 
 Sub-ticket of [[TKT-N0IKN9]], opening the `internal/docs` `docRuntime` arc.
