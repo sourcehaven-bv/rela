@@ -432,7 +432,7 @@ func TestQueryPushdown_MatchesGoSideFiltering(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := app.executeQuery(aliceCtx(), tc.query)
+			got, err := app.queries.executeQuery(aliceCtx(), tc.query)
 			require.NoError(t, err)
 
 			ids := make([]string, 0, len(got))
@@ -541,7 +541,7 @@ func TestQueryPushdown_PreservesTypedSemantics(t *testing.T) {
 
 	// Typed comparison accepts the zero-padded form; a string comparison does
 	// not. The Go pass must remain authoritative.
-	got, err := app.executeQuery(aliceCtx(), "type:ticket prop:count=03")
+	got, err := app.queries.executeQuery(aliceCtx(), "type:ticket prop:count=03")
 	require.NoError(t, err)
 	require.Len(t, got, 1,
 		"an integer property must compare numerically, not by string form")

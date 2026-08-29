@@ -267,7 +267,7 @@ func TestACLSearch_ScopeErrorMapping(t *testing.T) {
 	}
 
 	// Sentinel wrapping (AC7b): the _position consumer relies on it.
-	_, qErr := app.executeQuery(gateCtxFor(aliceCtx(), t, d), "alpha")
+	_, qErr := app.queries.executeQuery(gateCtxFor(aliceCtx(), t, d), "alpha")
 	if !errors.Is(qErr, errACLListQuery) {
 		t.Errorf("executeQuery scope error = %v, want errACLListQuery wrap", qErr)
 	}
@@ -325,7 +325,7 @@ func TestACLSearch_BackendErrorMapping(t *testing.T) {
 		t.Errorf("raw backend error leaked to the wire: %s", body)
 	}
 
-	_, qErr := app.executeQuery(context.Background(), "alpha")
+	_, qErr := app.queries.executeQuery(context.Background(), "alpha")
 	if qErr == nil || errors.Is(qErr, errACLListQuery) {
 		t.Errorf("backend error = %v, want non-nil and NOT errACLListQuery", qErr)
 	}
