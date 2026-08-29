@@ -71,6 +71,12 @@ function handleUpdate(value: string[]) {
   min-height: 38px;
   background: var(--input-bg);
   color: var(--text-color);
+  /* SlimSelect ships a 16px default, but every other rela control (inputs,
+     selects, the form widgets this sits beside) is --font-size-base. Without
+     this the picker's placeholder and chips read a size larger than the
+     control next to it — most visible in the list FilterBar, where a tag
+     picker and a plain <select> sit side by side. */
+  font-size: var(--font-size-base);
 }
 
 .ss-main:focus-within {

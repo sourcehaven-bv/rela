@@ -402,6 +402,11 @@ onBeforeUnmount(() => {
   display: flex;
   gap: var(--space-lg);
   flex-wrap: wrap;
+  /* Top-align: the tag picker grows downward as chips wrap onto a second row,
+     and the default `stretch` would drag its neighbours' controls out of line
+     with it. Aligning at the top keeps every label and control on one line
+     regardless of how many chips are selected. */
+  align-items: flex-start;
 }
 
 .filter-item {
@@ -418,11 +423,21 @@ onBeforeUnmount(() => {
   color: var(--muted-text);
 }
 
+/* The multi-enum tag picker (TagSelect → SlimSelect) sits in the same row as
+   scalar selects and text inputs, so the three have to agree on height, radius,
+   font size and min-width or the filter bar looks ragged.
+
+   TagSelect's `<style>` is GLOBAL (no `scoped`), and its DOM therefore carries
+   no `data-v` of this component — `:deep()` cannot reach it from here. Height,
+   radius and font-size live on `.ss-main` in TagSelect itself; only the
+   filter-bar-specific min-width is set here, via a global rule nested under
+   `.filter-bar` so it cannot leak to other TagSelect consumers. */
 .filter-item select,
 .filter-item input {
   padding: 6px 10px;
+  min-height: 38px;
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   font-size: var(--font-size-base);
   min-width: 150px;
   background: var(--input-bg);
@@ -492,6 +507,44 @@ onBeforeUnmount(() => {
   .filter-item input {
     width: 100%;
     min-width: 0;
+  }
+}
+</style>
+
+<!-- TagSelect's styles are global and live in ITS OWN route chunk, which the
+     list page does not load — so on this page `.ss-main` would otherwise fall
+     back to browser defaults (notably a 16px font next to the 14px <select>
+     beside it). These rules put the filter-bar's copy in the list chunk.
+
+     Nested under `.filter-bar` so they apply to the list filter row only and
+     cannot reach the same widget in edit forms or Settings, and global rather
+     than `scoped` because TagSelect renders no `data-v` of this component. -->
+<style>
+.filter-bar .filter-item .ss-main {
+  min-width: 150px;
+  min-height: 38px;
+  font-size: var(--font-size-base);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--input-bg);
+  color: var(--text-color);
+}
+
+.filter-bar .filter-item .ss-main .ss-placeholder {
+  color: var(--muted-text);
+}
+
+.filter-bar .filter-item .ss-main:focus-within {
+  border-color: var(--accent-color);
+  box-shadow:
+    0 0 0 2px var(--focus-ring-gap),
+    0 0 0 4px var(--focus-ring);
+}
+
+@media (max-width: 768px) {
+  .filter-bar .filter-item .ss-main {
+    min-width: 0;
+    width: 100%;
   }
 }
 </style>
