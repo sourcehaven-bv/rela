@@ -2,82 +2,29 @@
 id: REV-FK6U62
 type: review-checklist
 title: 'Review: Extract dataentry query/search leaf off App (92 → ~87), de-risking the read-pipeline steps'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Automated Checks
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Comment lint gate clean (`just comment-lint`)
-- [ ] Coverage maintained (`just coverage-check`)
-
-**Comment findings.** `just comment-report` lists the advisory rules
-(duplication, nil-contract, param-contract, restatement). They are not a merge
-gate, but a finding your diff *introduces* should be fixed or suppressed — don't
-grow the backlog.
-
-Every rule is a heuristic over prose, so false positives are expected. To
-suppress one, prefer the inline form on the declaration line, which travels with
-the code and is reviewed in this diff:
-
-```go
-func f(p string) {} //commentlint:ignore param-contract  p is contained by Clone
-```
-
-Use `.commentlint.yml` (`ignore:` path globs, `allow-phrases:`) only when the
-same prose recurs across many sites. A reason is required either way — an
-unexplained suppression is a finding nobody can re-evaluate later.
+- [x] All tests pass (`-count=1` and `-race` on dataentry, verified in the correct worktree with branch identity echoed alongside)
+- [x] Linters pass (golangci-lint 0 issues, plimsoll at 86, arch-lint, comment-lint clean across 11081 comments, go vet)
+- [x] Coverage floors hold (78.2%)
 
 ## Code Review
 
-- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
-- [ ] All critical review-responses addressed
-- [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
+- [x] `/code-review` run (cranky-code-reviewer, diffed against the STACKED base tkt-8aj1pm-dataentry-appearance)
+- [x] All critical/significant findings addressed: [[RR-LJHL3F]] — the reviewer's "plimsoll is inert on App" claim was investigated and **refuted**; the gate fires correctly (verified twice, exit status 3 in both the main checkout and the PR worktree)
+- [x] Minor/nit findings addressed: [[RR-RYTNDG]] (overstated no-store claim precised; doubled godoc lead merged)
 
-**Review Responses:** <!-- List IDs of review-response entities created, e.g.,
-RR-xxxx -->
+## Verification
 
-## Acceptance Verification
-
-- [ ] Each acceptance criterion tested (reference planning checklist)
-- [ ] Test evidence documented in implementation checklist
-
-**Acceptance Status:**
-<!-- For each acceptance criterion, state PASS/FAIL with evidence -->
-
-## Documentation (enhancements only)
-
-Skip this section for bugs and internal refactors.
-
-- [ ] Docs-checklist created and linked via `has-docs`
-- [ ] User-facing documentation updated
-- [ ] Docs-checklist marked as done
-
-**Docs Checklist:** <!-- e.g., DOCS-xxxx -->
-
-## Final Checks
-
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
-
-## Pull Request
-
-- [ ] Run `/pr` command to create PR and monitor CI
-
-<!--
-Deliberately NOT tracked here: the PR URL and whether CI passed.
-
-Both post-date this checklist. `/pr` requires the ticket to be `done` and
-validating clean before it opens the PR, and a `done` review-checklist may have
-no unchecked items — so an item asking for the PR URL can only be satisfied by a
-PR that does not exist yet. Checking it early would mean asserting "CI passed"
-before CI ran, which turns the checklist from evidence into a formality.
-
-GitHub records both authoritatively, and the branch and commit messages carry
-the ticket ID, so the ticket-to-PR link is recoverable without duplicating it
-here. See TKT-UFV01M. -->
+- [x] **ACL invariant intact and NOT vacuous.** The seam is `search.VisibleSearcher` throughout; no path to a plain `search.Searcher`; `readGateFromContext` consulted identically with the deny-all short-circuit still ordered before any backend work. `TestACLSearch_DenyAllShortCircuit` carries a positive control asserting the backend runs exactly once for a granted search, so it cannot pass by never reaching the searcher. All 10 `TestACLSearch_*` pass under `-race`
+- [x] **The closure deviation was proven empirically, not argued.** The reviewer implemented the rejected by-value design and ran the suite: four ACL tests fail, most damningly `TestACLSearch_ScopeErrorMapping` returning 200 with entity data where a 500 ACL failure was expected. A by-value capture keeps the construction-time searcher, so the injected failing searcher is never consulted and the test passes vacuously. The closures are load-bearing
+- [x] `isRelationLinked` genuinely dead: only references were its definition and its own test; unexported, so no external dispatch; no reflection in the package. Deleted with its test
+- [x] All five moved methods are pure moves — only substantive edits are a forced local rename (`q` → `sQuery`, since `q` now names the receiver) and one signature line-wrap
+- [x] All call sites re-pointed (api_v1.go:326,1536; nextaction.go:66,107; scope.go:110); no survivors, none double-wrapped
+- [x] Directive exact: 86 declared, 86 actual; the 92→86 delta reconciles precisely (5 moved + 1 deleted)
+- [x] Zero lint suppressions added; test changes are mechanical re-points plus the one deletion, no assertion weakened

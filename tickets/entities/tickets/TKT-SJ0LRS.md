@@ -5,7 +5,7 @@ title: Extract dataentry query/search leaf off App (92 → ~87), de-risking the 
 kind: refactor
 priority: medium
 effort: s
-status: review
+status: done
 ---
 
 Sub-ticket of the [[TKT-R68TV8]] `dataentry.App` decomposition arc, following
