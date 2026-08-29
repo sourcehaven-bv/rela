@@ -123,6 +123,38 @@ func (d *Desktop) failLoad(err error) string {
 }
 
 // LoadProject loads a rela project from the given directory.
+// releaseLoadedProject stops the scheduler and closes the services of the
+// currently-loaded project, leaving no project loaded.
+//
+// Called BEFORE opening the next project's store, which is the ordering that
+// matters. The old order (open new, close old afterwards) worked only because
+// no backend held an exclusive resource: the sqlite backend takes an exclusive
+// lock on the database file at Open, so re-selecting the ALREADY-OPEN project
+// — an ordinary click in the recent-projects menu — would fail against this
+// process's own lock, with an error naming this very pid as the culprit.
+//
+// Consequence worth knowing: a load that then fails leaves NO project open
+// rather than the previous one. That is the honest outcome — the alternative
+// is holding a store the caller believes it replaced.
+func (d *Desktop) releaseLoadedProject() {
+	d.mu.Lock()
+	prevSvc := d.svc
+	prevStopScheduler := d.stopScheduler
+	d.svc = nil
+	d.app = nil
+	d.handler = nil
+	d.stopScheduler = nil
+	d.mu.Unlock()
+
+	// Scheduler first, so no in-flight tick lands on a closing store.
+	if prevStopScheduler != nil {
+		prevStopScheduler()
+	}
+	if prevSvc != nil {
+		_ = prevSvc.Close()
+	}
+}
+
 func (d *Desktop) LoadProject(dir string) string {
 	fs, projCtx, err := discoverProject(dir)
 	if err != nil {
@@ -141,6 +173,8 @@ func (d *Desktop) LoadProject(dir string) string {
 		d.mu.Unlock()
 		return "needs_setup"
 	}
+
+	d.releaseLoadedProject()
 
 	auditSink, auditErr := audit.NewFilesystem(filepath.Join(projCtx.CacheDir, "audit"))
 	if auditErr != nil {
@@ -178,14 +212,8 @@ func (d *Desktop) LoadProject(dir string) string {
 		return d.failLoad(err)
 	}
 	d.mu.Lock()
-	// Stop previous scheduler and close previous services in
-	// dependency order: scheduler first so no in-flight tick lands
-	// on a closed store, then svc.Close() releases the store + bleve.
-	if d.stopScheduler != nil {
-		d.stopScheduler()
-		d.stopScheduler = nil
-	}
-	prevSvc := d.svc
+	// The previous project's scheduler and services were already stopped and
+	// closed above, before the new store was opened — see the comment there.
 	d.svc = svc
 	d.app = app
 	d.handler = app.NewRouter()
@@ -198,12 +226,6 @@ func (d *Desktop) LoadProject(dir string) string {
 	schedCtx, schedCancel := context.WithCancel(context.Background())
 	d.stopScheduler = schedCancel
 	d.mu.Unlock()
-
-	// Close the previous project's services outside the lock so the
-	// store/index Close doesn't block other Desktop methods.
-	if prevSvc != nil {
-		_ = prevSvc.Close()
-	}
 
 	scheduler.StartBackground(schedCtx, svc, slog.Default())
 

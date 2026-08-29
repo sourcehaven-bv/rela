@@ -68,7 +68,7 @@ func stripShebang(code string) string {
 // of entities and relations) registered at all; calling those from Lua raises
 // a "attempt to call a nil value" error from the VM itself.
 //
-// TODO(TKT-N0IKN9): Runtime is a god-object (105 methods). Decompose toward the
+// TODO(TKT-N0IKN9): Runtime is a god-object (60 methods). Decompose toward the
 // 40-method load line; ratchet this number down as bindings move out.
 //
 // 119 → 120 (TKT-ZF2DTV): reader(), the single choke point every read binding
@@ -83,14 +83,17 @@ func stripShebang(code string) string {
 // struct's API. The remaining bindings are not free like this; they genuinely
 // use deps and callerCtx, which is what makes them TKT-N0IKN9's job.
 //
-// The count is 106 rather than 105 because mail.send must be a method value:
-// contextcheck follows a registration CLOSURE back to every NewReader/NewWriter
-// call site and demands a context be threaded into runtime construction, which
-// is not a thing that exists. ai.* and http.* register method values for the
-// same reason. See registerMailModule. The ceiling is a ratchet against drift,
-// not a hard budget, and the fix for a full Runtime is still TKT-N0IKN9.
+// 105 → 60 (TKT-4WBLG6): the markdown AST cluster moved to mdHelpers (42
+// methods that used nothing but the Lua state) and mdEntityRefs (the one
+// graph-coupled binding, now holding just meta + reader + ctx closure).
 //
-//plimsoll:max-methods=106
+// 60 → 61 (TKT-XWZIOB): mail.send must be a method value: contextcheck follows
+// a registration CLOSURE back to every NewReader/NewWriter call site and demands
+// a context be threaded into runtime construction, which is not a thing that
+// exists. ai.* and http.* register method values for the same reason. See
+// registerMailModule.
+//
+//plimsoll:max-methods=61
 type Runtime struct {
 	L             *lua.LState
 	deps          WriteDeps // EntityManager is nil on a reader runtime.

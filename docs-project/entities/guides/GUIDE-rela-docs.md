@@ -62,6 +62,9 @@ available without the `doc.` prefix.
 | `count{type}` | the number of seeded entities of a type (echo-friendly) |
 | `roles_matrix{type}` | a role × verb capability table from `acl.yaml` (omit `type` for every type) |
 | `description()` | the metamodel's top-level `description:` (echo-friendly) |
+| `shows{type, contains\|absent\|exactly}` | **asserts** which entities of a type exist (emits nothing) |
+| `refuses{who, op, type, because, unassigned}` / `permits{...}` | **asserts** an authorization outcome (emits nothing) |
+| `api{path, status, error, as, identical_to}` | **asserts** an API contract against a real server (emits nothing) |
 | `h1/h2/h3(text)`, `md(text)` | structural Markdown emitted from Lua |
 
 ### Relation graphs
@@ -107,6 +110,108 @@ validation, no state-machine gate, and no ACL. A fixture is exactly what
 you write, so `create("risico", { status = "done" })` is fine even if
 `done` is not a legal entry state. This keeps fixtures honest and
 self-contained; it never touches the project on disk.
+
+## Assertions
+
+A manual can *check* the claims its prose makes. Assertion islands emit no
+output — they either pass, or they fail the build with the mismatch:
+
+```rela
+create("risico", { titel = "Leak", kans = 3, impact = 4, status = "todo" })
+
+shows{ type = "risico", exactly = { "risico-1" } }
+refuses{ who = "bob@example.com", op = "update", type = "risico" }
+```
+
+This is what keeps a handbook from outliving the system it describes. If
+someone widens `viewer` in `acl.yaml`, the `refuses{}` above stops holding and
+the manual refuses to build, naming the rule that fired:
+
+```text
+manual:80: resolve: refuses{who="bob@example.com", op="update", type="risico"} failed
+  claimed: refused
+  actual:  PERMITTED
+  rule:    role-grant/viewer
+```
+
+**Every argument is optional except the target.** A paragraph about visibility
+says nothing about buttons, so `shows{}` asserts only the claims you give it.
+But **a call that asserts nothing is an error** — `shows{type="risico"}` looks
+like a test and checks nothing, which is the one failure mode worse than having
+no test at all.
+
+Prefer `exactly` over `contains` for a set you fully control: `contains` cannot
+see an over-inclusive result, and over-inclusion (a leaked row, a duplicate) is
+usually the interesting bug. `exactly = {}` is a real claim — "this type has no
+entities" — not an empty one.
+
+`who` must name a principal in `acl.yaml`'s `assignments`. An unknown one is
+refused, because a principal with no assignment has no grants and is therefore
+denied *by construction* — so a `refuses{}` with a misspelled `who` would pass
+forever, unable to ever fail. When the missing assignment IS the point ("there
+is no self-service sign-up"), say `unassigned = true`; without it, an intended
+claim and a typo look identical to a reviewer.
+
+`refuses{}` / `permits{}` evaluate through the **same authorization path the
+write path uses**, not by re-reading `acl.yaml`. Answering from the policy file
+would only prove that the manual and the file agree, which they would even if
+the gate were never consulted. This is the deliberate exception to the
+"seed writes bypass ACL" rule above: seeding is a fixture, an assertion is a
+claim about real behaviour. Add `because = "..."` to also pin *why* a decision
+came out that way — a deny arriving from an unintended rule is a green check
+over a real regression.
+
+### API assertions
+
+`api{}` issues a real request against the documented project's API, served over
+a throwaway temp copy seeded with the manual's own fixtures:
+
+```rela
+create("ticket", { id = "TKT-1", title = "Login 500s", status = "open" })
+
+api{ path = "/api/v1/tickets/TKT-1", as = "editor", status = 200 }
+api{ path = "/api/v1/tickets/NOPE", as = "editor", error = "https://rela.dev/errors/not_found" }
+```
+
+`error=` claims the **machine-readable code**, not the prose title: a message
+gets reworded, the code is the contract. Asserting the message gives a check
+that fails on a copy edit and passes on a real behaviour change.
+
+`as=` names a role from `acl.yaml`, so an ACL claim can be stated as the
+response a real caller gets.
+
+Unlike `screenshot{}`, `api{}` needs no browser and no built frontend — it only
+reaches the `/api/v1` handlers, so it can gate CI unconditionally. Like
+`screenshot{}` it is unavailable on the `postgres` build, where seeding a
+"throwaway" project would write into the live database.
+
+#### `identical_to` — the existence-oracle property
+
+Some properties are not about one response but about two being the **same**.
+"A denied read is indistinguishable from a missing entity" cannot be stated by
+asserting a status, because the whole claim is that two requests answer alike:
+
+```rela
+api{
+  path = "/api/v1/tickets/HIDDEN", as = "viewer", status = 404,
+  identical_to = { path = "/api/v1/tickets/NO-SUCH-THING", as = "viewer" },
+}
+```
+
+The comparison covers status, body, and the response headers that can by
+themselves disclose existence (`ETag`, `Last-Modified` — a denied GET that
+emits an ETag lets a replayed `If-None-Match` return 304, confirming the entity
+exists). It **excludes** the problem-details `instance` member, which echoes the requested URL: two requests to different
+urls necessarily differ there, so including it would make the check fail on
+every pair — a check that never passes is not checking anything. `instance`
+reflects only what the caller already typed, so it leaks nothing; every other
+field must match exactly.
+
+The exclusion is minimal and route-specific: on `/api/v1/{plural}/{id}` the two
+404s differ only in `instance`. Some other routes interpolate the request into
+the problem `title` (`entity %q not found`), so `identical_to` will fail there —
+in the safe direction, but it means the verb is meaningful on the entity routes
+and needs checking before use elsewhere.
 
 ## Building
 

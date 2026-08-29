@@ -271,3 +271,85 @@ describe('DynamicForm edit-mode affordance filter', () => {
     })
   })
 })
+
+// TKT-DPBQ7S: DynamicForm must hand `loadEntity`'s server state to
+// `useAutoSave` as the merge base.
+//
+// Why this is tested through no-op suppression rather than by reading
+// `lastSeenServer`: the baseline is closed-over state inside the composable,
+// with no accessor. Suppression is its only externally visible consequence —
+// `fireDue` drops an entry whose value still `deepEqual`s `lastSeenServer[key]`
+// (useAutoSave.ts:352-356). So "a PATCH was issued for a value identical to
+// what the server sent" is precisely "no baseline was recorded", which is the
+// bug: SectionEditForm passes `initialServerSnapshot` and EntityDetail calls
+// `recordServerSnapshot`, but DynamicForm did neither, leaving the main edit
+// form with `lastSeenServer = {}` until its first PATCH response.
+describe('DynamicForm autosave merge base', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.restoreAllMocks()
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  // Drive one field edit and let the 800ms property debounce elapse.
+  async function editField(wrapper: VueWrapper, property: string, value: string) {
+    const input = wrapper.find(`#field-${property}`)
+    await input.setValue(value)
+    await vi.advanceTimersByTimeAsync(1000)
+    await flushPromises()
+  }
+
+  it('suppresses a PATCH that would rewrite the loaded server value', async () => {
+    const { wrapper, update } = await mountEdit(FLAT_FORM, {
+      properties: { title: 'Original' },
+    })
+
+    // Retype the value the server already holds. With the baseline seeded
+    // from loadEntity this is a no-op; without it, `lastSeenServer.title` is
+    // undefined, the entry looks live, and a pointless PATCH goes out.
+    await editField(wrapper as VueWrapper, 'title', 'Original')
+
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it('still PATCHes a value that genuinely differs from the server', async () => {
+    const { wrapper, update } = await mountEdit(FLAT_FORM, {
+      properties: { title: 'Original' },
+    })
+
+    await editField(wrapper as VueWrapper, 'title', 'Changed')
+
+    expect(update).toHaveBeenCalledTimes(1)
+    expect(update).toHaveBeenCalledWith(
+      'ticket',
+      'TKT-001',
+      expect.objectContaining({ properties: { title: 'Changed' } }),
+      undefined,
+      expect.anything(),
+    )
+  })
+
+  // The base must be a CLONE taken before the form mutates it. If it aliased
+  // the object spread into `formData`, later keystrokes would mutate the
+  // "server" side too — base would always equal ours and a three-way merge
+  // would silently degenerate into a two-way one. Editing then reverting is
+  // the observable form of that: it only suppresses if the baseline held
+  // still while the form moved.
+  it('does not alias the form copy — an edit-then-revert is suppressed', async () => {
+    const { wrapper, update } = await mountEdit(FLAT_FORM, {
+      properties: { title: 'Original' },
+    })
+
+    const input = wrapper.find('#field-title')
+    await input.setValue('Changed')
+    await input.setValue('Original')
+    await vi.advanceTimersByTimeAsync(1000)
+    await flushPromises()
+
+    expect(update).not.toHaveBeenCalled()
+  })
+})

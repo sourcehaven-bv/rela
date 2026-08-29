@@ -51,6 +51,7 @@ components:
   appbuild:         { in: internal/appbuild }
   appbuildtest:     { in: internal/appbuild/appbuildtest }
   backendtest:      { in: internal/appbuild/backendtest }
+  tenant:           { in: internal/tenant }
 
   # Domain services
   analysis:         { in: internal/analysis }
@@ -326,6 +327,7 @@ deps:
       - metamodel
       - output
       - pgstore
+      - sqlitestore
       - predicate
       - predicatefns
       - principal
@@ -337,6 +339,12 @@ deps:
       - schema
       - script
       - search
+      # `rela secrets credential-name` only DERIVES the systemd credential name
+      # for the project — it reads no secret values. The name embeds a hash of
+      # the project path (so two same-named projects cannot share a credential),
+      # which makes it underivable by hand, so an operator needs a way to print
+      # it for their unit file.
+      - secrets
       - state
       - storage
       - store
@@ -540,6 +548,7 @@ deps:
       - mailtemplate
       - scheduler
       - pgstore
+      - sqlitestore
       - project
       - queryplan
       - script
@@ -560,6 +569,22 @@ deps:
       - appbuild
     canUse:
       - pgx
+  # tenant resolves a verified org to the store it may reach (RES-D54281). It
+  # sits ABOVE appbuild — it assembles per-tenant Services over one shared
+  # configuration — so appbuild must never depend on it: a tenant map is a
+  # deployment concern, and appbuild is the wiring facade the single-store
+  # binaries and the desktop app also use.
+  #
+  # pgx is confined to the postgres-tagged dsn file, which the default build
+  # does not compile — the same arrangement pgstore and backendtest use, and
+  # the reason CI's "default build must not link pgx" assertion keeps holding
+  # once a host wires this package.
+  tenant:
+    mayDependOn:
+      - appbuild
+    canUse:
+      - pgx
+      - yaml
   appbuildtest:
     mayDependOn:
       - acl
@@ -749,6 +774,12 @@ deps:
       - acl
       - entity
       - lua
+      # principal: the refuses{}/permits{} assertion verbs authorize through
+      # acl.Declarative, whose API takes a principal.Principal — so this is
+      # implied by the acl dependency above rather than a new reach. The
+      # package is a dependency-free leaf; docscapture lists it for the same
+      # reason (TKT-DOCASSERT).
+      - principal
       # visibility: only for visibility.Unrestricted, which NAMES the
       # docs runtime's deliberately ungated reads (TKT-1WV50C). It reads a
       # throwaway memstore the doc build just seeded itself.

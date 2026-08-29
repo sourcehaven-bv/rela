@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 	"github.com/Sourcehaven-BV/rela/internal/docs"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
@@ -90,14 +89,13 @@ func TestCopyProjectSchema(t *testing.T) {
 }
 
 // standUp builds a working server over a temp project + seed (no browser).
+// Asserts an /api/v1 route, so it passes needSPA=false and no longer skips when
+// the frontend bundle is absent — the same property that lets api{} gate CI.
 func TestStandUp_ServesSeededEntity(t *testing.T) {
-	if err := checkSPA(); err != nil {
-		t.Skip(err.Error())
-	}
 	p, err := standUp(context.Background(), protoDir(t), []docs.SeedOp{{
 		Kind: "create", Type: "ticket", ID: "TICKET-su",
 		Properties: map[string]any{"title": "x", "status": "open", "priority": "low", "reporter": "a@b.c"},
-	}})
+	}}, false)
 	if err != nil {
 		t.Fatalf("standUp: %v", err)
 	}
@@ -135,10 +133,4 @@ func mustWrite(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-}
-
-// checkSPA skips server tests when the SPA isn't built (no browser needed for
-// these, but the App requires the embedded SPA to construct its router).
-func checkSPA() error {
-	return dataentry.CheckEmbeddedSPA()
 }

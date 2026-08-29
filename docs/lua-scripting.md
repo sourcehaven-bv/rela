@@ -1172,6 +1172,76 @@ overrides:
 - Keys under `overrides.<script-path>` apply only to that script and override globals
 - All values are plain strings
 
+**Keep the file readable only by its owner:**
+
+```bash
+chmod 700 .rela
+chmod 600 .rela/secrets.yaml
+```
+
+Both matter. `rela init` creates `.rela/` as `0755`, so tightening the file
+alone still leaves the directory listable — and a group-writable parent would
+let another user replace `secrets.yaml` outright.
+
+rela does not create the secrets file, so its permissions are whatever your
+editor and umask produced. When it is group- or world-readable, rela logs a
+warning naming the path and mode and loads it anyway — failing closed would
+break a working deployment on upgrade. The warning repeats only if the mode
+changes, so a fixed-then-regressed file is reported again rather than silently
+passing. It never echoes a key name or value.
+
+The check covers the file, not the directory: `chmod 700 .rela` is on you.
+
+#### systemd credentials
+
+On a server, prefer systemd's credential mechanism over a file in the project.
+rela reads `$CREDENTIALS_DIRECTORY` when systemd passes a credential whose name
+matches the project. Ask rela for the name rather than deriving it:
+
+```bash
+$ rela secrets credential-name
+rela-secrets-acme-6e0bff4c
+```
+
+The name is `rela-secrets-<project>-<hash>`: the readable directory name so you
+can tell which unit-file line belongs to which project, plus a short hash of the
+project's absolute path so two projects that happen to share a directory name
+never resolve to the same credential.
+
+```ini
+[Service]
+LoadCredentialEncrypted=rela-secrets-acme-6e0bff4c:/etc/rela/acme-secrets.cred
+```
+
+Encrypt the file with `systemd-creds` before deploying it:
+
+```bash
+systemd-creds encrypt --name=rela-secrets-acme-6e0bff4c secrets.yaml /etc/rela/acme-secrets.cred
+```
+
+The credential has the same YAML format as `secrets.yaml`. Why this is better
+than a plaintext file or an environment variable:
+
+- It is decrypted into a per-service tmpfs at mode `0400`, owned by the service
+  user — never written to persistent storage in the clear.
+- It is **not inherited by child processes**, unlike an environment variable.
+  That matters because rela runs external converters for attachments and view
+  exports; those inherit rela's environment but cannot see a credential.
+- `systemd-creds` can bind the encryption key to the host TPM, so the file on
+  disk is useless if copied elsewhere.
+
+The credential name is per-project deliberately: `$CREDENTIALS_DIRECTORY` is
+process-global, so a single shared name would hand one project's secrets to
+every other project served by the same process.
+
+The name changes if you move the project directory, since it includes a hash of
+the absolute path. Re-run `rela secrets credential-name` and update the unit
+file after a move.
+
+When systemd passes a credential for the project it wins over
+`.rela/secrets.yaml`. Otherwise rela falls back to the project file — including
+when the unit loads other, unrelated credentials.
+
 #### Usage in Lua
 
 ```lua

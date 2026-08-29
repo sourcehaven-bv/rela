@@ -3,7 +3,7 @@
 `rela description()`
 
 This handbook is authored in Markdown; the tables, diagrams, and screenshot
-below are resolved from the project's `metamodel.yaml` and `acl.yaml` by
+below are resolved from the project's `schema.yaml` and `acl.yaml` by
 `rela-docs build`, so they can never drift from the schema. It doubles as a
 worked example of the rela-docs generator — see
 [the guide](../rela-docs.md).
@@ -51,12 +51,38 @@ entity{ id = t.id, fields = { "title", "status" } }
 
 There is `rela count{ type = "ticket" }` seeded ticket in this example.
 
+```rela
+shows{ type = "ticket", exactly = { "ticket-1" } }
+```
+
 ## Who can do what
 
 The access model comes straight from `acl.yaml`:
 
 ```rela
 roles_matrix{ type = "ticket" }
+```
+
+The table above is rendered from `acl.yaml`. These claims are _checked_ against
+the real authorization path when this handbook builds, so the prose cannot
+outlive the policy it describes:
+
+```rela
+-- An editor maintains the backlog.
+permits{ who = "alice@example.com", op = "update", type = "ticket" }
+permits{ who = "alice@example.com", op = "delete", type = "ticket" }
+
+-- A viewer browses and nothing more. If someone widens `viewer` in acl.yaml,
+-- this handbook stops building rather than quietly describing a policy that
+-- is no longer in force.
+refuses{ who = "bob@example.com", op = "update", type = "ticket" }
+refuses{ who = "bob@example.com", op = "create", type = "ticket" }
+refuses{ who = "bob@example.com", op = "delete", type = "ticket" }
+
+-- There is no self-service sign-up: an unassigned principal gets nothing.
+-- `unassigned = true` states that the missing assignment IS the claim, so this
+-- cannot be confused with a typo in the principal name.
+refuses{ who = "carol@example.com", op = "update", type = "ticket", unassigned = true }
 ```
 
 ## The edit form

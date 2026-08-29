@@ -428,6 +428,11 @@ async function loadEntity(force = false) {
     // a later reveal reads it back from `properties`.
     hiddenPolicy.releaseAll()
     formGeneration.value++
+    // Take the autosave merge base HERE — this is the one moment we hold
+    // unmodified server state, before the spreads below hand it to the form
+    // (TKT-DPBQ7S). Taken before mutation, and cloned, so the baseline can
+    // never alias the form's working copy.
+    recordServerBaseline(entity)
     formData.value = { ...entity.properties }
     relations.value = entity.relations ? { ...entity.relations } : {}
     content.value = entity.content || ''
@@ -1287,6 +1292,44 @@ const autoSave = computed(() => {
 })
 // Lazy holder so we construct the composable once per (entityId, formId).
 const _autoSaveInstance = ref<ReturnType<typeof useAutoSave> | null>(null)
+
+// Last server state seen by `loadEntity`, kept as the autosave merge base
+// (TKT-DPBQ7S). SectionEditForm passes `initialServerSnapshot` and
+// EntityDetail calls `recordServerSnapshot`; DynamicForm did NEITHER, so
+// `lastSeenServer` stayed empty on the main edit form until the first PATCH
+// response came back — leaving no baseline for no-op suppression or any
+// future three-way merge.
+//
+// This MUST be a clone, not the entity object the form goes on to spread
+// into `formData`/`content`: if the base aliased the form's own copy, every
+// later keystroke would mutate the "server" side too and a three-way merge
+// would degenerate into a two-way one (base === ours, always).
+let _pendingServerSnapshot: Entity | null = null
+
+function snapshotServerState(entity: Entity): Entity {
+  const snap: Entity = {
+    ...entity,
+    properties: { ...(entity.properties ?? {}) },
+    relations: entity.relations ? { ...entity.relations } : entity.relations,
+  }
+  // Freeze the properties bag so an accidental write to the baseline fails
+  // loudly in dev instead of silently corrupting the merge base.
+  Object.freeze(snap.properties)
+  return Object.freeze(snap)
+}
+
+// Hand a fresh server snapshot to autosave. Before the composable exists
+// (first load runs ahead of construction in onMounted) it is parked in
+// `_pendingServerSnapshot` and passed as `initialServerSnapshot`.
+function recordServerBaseline(entity: Entity) {
+  const snap = snapshotServerState(entity)
+  if (_autoSaveInstance.value) {
+    _autoSaveInstance.value.recordServerSnapshot(snap)
+    _pendingServerSnapshot = null
+  } else {
+    _pendingServerSnapshot = snap
+  }
+}
 // Dirty-registry cleanup, assigned in onMounted (after awaits) and run
 // from the top-level onBeforeUnmount.
 let unregisterDirtyForm: (() => void) | null = null
@@ -1478,6 +1521,10 @@ onMounted(async () => {
       getEntityId: () => props.entityId!,
       formData,
       contentRef: content,
+      // Seed the merge base from the load that already happened above
+      // (TKT-DPBQ7S). `loadEntity` runs before this construction, so the
+      // snapshot is parked rather than recorded; hand it over here.
+      ...(_pendingServerSnapshot ? { initialServerSnapshot: _pendingServerSnapshot } : {}),
       inverseToCanonical,
       buildRelationsBody: () => buildAutoSaveRelationsBody(),
       applyServerProperty: (property, value) => {
@@ -1502,6 +1549,9 @@ onMounted(async () => {
       },
       onError: (msg) => uiStore.error(msg),
     })
+    // Consumed by the constructor above; later loads go through
+    // `recordServerSnapshot` on the live instance instead.
+    _pendingServerSnapshot = null
     // Register with the dirty registry so SSE-driven re-fetches in
     // other forms on the same entity preserve this form's dirty state.
     // The cleanup runs from the top-level onBeforeUnmount below —

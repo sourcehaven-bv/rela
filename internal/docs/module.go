@@ -41,6 +41,12 @@ func (dr *docRuntime) registerModule() {
 		"link":   dr.luaLink,
 		// Tier B — browser capture (fails loud when no capturer is wired).
 		"screenshot": dr.luaScreenshot,
+
+		// Assertions (TKT-DOCASSERT): a manual proves its own claims.
+		"shows":   dr.luaShows,
+		"refuses": dr.luaRefuses,
+		"permits": dr.luaPermits,
+		"api":     dr.luaAPI,
 	}
 	for name, fn := range fns {
 		nf := L.NewFunction(fn)
