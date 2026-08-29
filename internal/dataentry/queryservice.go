@@ -36,8 +36,10 @@ import (
 // The searcher seam is deliberately [search.VisibleSearcher], never a plain
 // search.Searcher: executeQuery's free-text branch must only ever see hits
 // the request principal may read (TKT-BA8BSX). This type also holds NO
-// store.Store — the store reads it needs arrive through the Services bundle,
-// whose gating is applied by the free functions in helpers.go
+// store.Store FIELD — it never carries an independent store handle, so a
+// read cannot bypass the request-scoped bundle. The store reads it does
+// perform arrive through the Services bundle passed in per call, whose
+// gating is applied by the free functions in helpers.go
 // (visibleListByTypes / visibleEntitiesOfType) against the resolved scope.
 type queryService struct {
 	// schema is the reloadable snapshot; the sort and property-filter passes
@@ -70,7 +72,8 @@ func newQueryService(app *App) *queryService {
 // It supports the same query syntax as the search page: type:, prop:, status:,
 // and free text. Free-text words use OR logic with fuzzy matching via Bleve;
 // results are ranked by score.
-// executeQuery runs the search-view pipeline under the ctx principal's
+//
+// It runs the search-view pipeline under the ctx principal's
 // read scope (TKT-BA8BSX). Every consumer — handleV1Search, the
 // _position search scope (resolveScope), and the next-action engine —
 // inherits the gate from here, so no future consumer can run an ungated
