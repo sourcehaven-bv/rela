@@ -95,9 +95,8 @@ func (h promptHandler) handleAnalyzeTraceabilityPrompt(
 	}
 
 	// Get trace trees
-	tracer := h.tracer
-	traceFrom := tracer.TraceFrom(ctx, id, 0)
-	traceTo := tracer.TraceTo(ctx, id, 0)
+	traceFrom := h.tracer.TraceFrom(ctx, id, 0)
+	traceTo := h.tracer.TraceTo(ctx, id, 0)
 
 	var traceFromText, traceToText string
 	if traceFrom != nil {

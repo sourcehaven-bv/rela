@@ -199,8 +199,16 @@ type Server struct {
 	handlerSet
 }
 
-// handlerSet is the extracted handler groups a [Server] carries, grouped so
-// Deps.handlers has one return value rather than one per group.
+// handlerSet is the extracted handler groups a [Server] carries.
+//
+// Grouping them in one struct is load-bearing, not cosmetic: every
+// construction site wires them with a SINGLE whole-struct assignment
+// (s.handlerSet = deps.handlers()), so a partially-wired Server cannot be
+// built. Adding a seventh group adds a field here and every site picks it
+// up — with per-field assignment, a site that forgot one would compile and
+// then nil-panic at request time, which is how this was structured before
+// and what the grouping exists to prevent. Keep it one value; do not
+// spread these back out into separate returns.
 type handlerSet struct {
 	types     typeResolver
 	trace     traceHandler
