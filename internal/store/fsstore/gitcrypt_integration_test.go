@@ -179,7 +179,7 @@ func TestScan_SkipsUnknownEntityTypeDirectories(t *testing.T) {
 	// A directory whose plural does not map to any metamodel-declared
 	// type must be skipped at scan time. This is the invariant that
 	// makes buildInaccessibleEntity safe to assume entityType is always
-	// in s.schemas.
+	// in the layout's schemas.
 	fs := storage.NewMemFS()
 	require.NoError(t, fs.MkdirAll("/entities/unknowns", 0o755))
 	require.NoError(t, fs.WriteFile("/entities/unknowns/UNK-1.md", []byte(`---
