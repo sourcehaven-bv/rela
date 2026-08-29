@@ -2,6 +2,7 @@
 id: BUG-J3YJCC
 type: bug
 title: internal/dataentry/e2e_test.go does not compile under -tags e2e (NewApp signature drift)
+description: 'go vet -tags e2e ./internal/dataentry/ fails to compile: e2e_test.go calls NewApp with 9 arguments but the current signature takes 12 (store.VersionService, search.VisibleSearcher and state.KV were added since). The e2e build tag is therefore already red on develop, so nothing guarded by it can catch regressions. Pre-existing; found during the TKT-NS3XPE review.'
 priority: medium
 effort: s
 why1: e2e_test.go calls NewApp with 9 arguments; the current signature takes 12 (store.VersionService, search.VisibleSearcher and state.KV were added since).
