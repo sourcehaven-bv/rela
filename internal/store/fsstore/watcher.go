@@ -82,10 +82,10 @@ func (s *FSStore) StartWatching() error {
 	s.mu.Unlock()
 
 	var dirs []string
-	if abs := s.absPath(s.entitiesKey); abs != "" {
+	if abs := s.layout.absPath(s.layout.entitiesKey); abs != "" {
 		dirs = append(dirs, abs)
 	}
-	if abs := s.absPath(s.relationsKey); abs != "" {
+	if abs := s.layout.absPath(s.layout.relationsKey); abs != "" {
 		dirs = append(dirs, abs)
 	}
 	if len(dirs) == 0 {
@@ -153,13 +153,13 @@ func (s *FSStore) handleExternalEvent(ev storage.ChangeEvent) {
 // isEntityPath reports whether path lives under the entities directory.
 // path is absolute (from fsnotify); converted via absPath(entitiesKey).
 func (s *FSStore) isEntityPath(path string) bool {
-	abs := s.absPath(s.entitiesKey)
+	abs := s.layout.absPath(s.layout.entitiesKey)
 	return abs != "" && hasPathPrefix(path, abs)
 }
 
 // isRelationPath reports whether path lives under the relations directory.
 func (s *FSStore) isRelationPath(path string) bool {
-	abs := s.absPath(s.relationsKey)
+	abs := s.layout.absPath(s.layout.relationsKey)
 	return abs != "" && hasPathPrefix(path, abs)
 }
 
@@ -265,8 +265,8 @@ func (s *FSStore) entityIdentityFromPath(path string) (id, entityType string, ok
 	if parent == "" {
 		return "", "", false
 	}
-	pluralToType := s.buildPluralToTypeMap()
-	entityType = s.resolveEntityType(parent, pluralToType)
+	pluralToType := s.layout.buildPluralToTypeMap()
+	entityType = s.layout.resolveEntityType(parent, pluralToType)
 	if entityType == "" {
 		return "", "", false
 	}
@@ -337,8 +337,8 @@ func (s *FSStore) parseEntityFromPath(data []byte, path string) (*entity.Entity,
 		if !ok {
 			return nil, errors.New("encrypted entity file: cannot derive id/type from path")
 		}
-		key := s.entityFileKey(entityType, id)
-		return s.buildInaccessibleEntity(key, id, entityType, entity.InaccessibleReasonGitCrypt), nil
+		key := s.layout.entityFileKey(entityType, id)
+		return s.codec.buildInaccessibleEntity(key, id, entityType, entity.InaccessibleReasonGitCrypt), nil
 	}
 	doc, err := parseDocument(string(data))
 	if err != nil {

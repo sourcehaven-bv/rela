@@ -13,6 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/frontmatter"
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // errConflictedFile is returned when a file has unresolved git conflict markers.
@@ -190,19 +191,37 @@ func formatMarkdown(content string) string {
 
 // --- entity I/O ---
 
+// mdCodec reads and writes entity/relation markdown files — the
+// serialization seam between domain types and on-disk bytes, fixed at
+// [New]. Like [fileLayout] it is immutable after construction and
+// touches none of the store's mutable state (no mu, no index maps, no
+// observers), so its methods are safe with or without the store's
+// locks held; all I/O flows through the same RootedFS barrier the
+// store uses. Git-crypt-encrypted files are recognized here and
+// returned as inaccessible shells rather than parse errors.
+type mdCodec struct {
+	// rooted is the validated-key I/O surface for reads, writes, and
+	// the Stat calls that populate UpdatedAt.
+	rooted *storage.RootedFS
+
+	// layout resolves file keys and schema property order for the
+	// write paths and inaccessible-shell construction.
+	layout fileLayout
+}
+
 // readEntityFile reads and parses an entity from a markdown file key.
 //
 // id and entityType are caller-supplied (the caller already knows them
 // from the index); they are used to populate the resulting entity if the
 // file is git-crypt encrypted and its frontmatter cannot be read.
-func (s *FSStore) readEntityFile(key, id, entityType string) (*entity.Entity, error) {
-	data, err := s.readDataFile(key)
+func (c mdCodec) readEntityFile(key, id, entityType string) (*entity.Entity, error) {
+	data, err := c.readDataFile(key)
 	if err != nil {
 		return nil, err
 	}
 
 	if isGitCryptEncrypted(data) {
-		return s.buildInaccessibleEntity(key, id, entityType, entity.InaccessibleReasonGitCrypt), nil
+		return c.buildInaccessibleEntity(key, id, entityType, entity.InaccessibleReasonGitCrypt), nil
 	}
 
 	doc, err := parseDocument(string(data))
@@ -216,7 +235,7 @@ func (s *FSStore) readEntityFile(key, id, entityType string) (*entity.Entity, er
 	e := entity.New(docID, docType)
 	e.Content = doc.content
 
-	if info, err := s.rooted.Stat(key); err == nil {
+	if info, err := c.rooted.Stat(key); err == nil {
 		e.UpdatedAt = info.ModTime()
 	}
 
@@ -236,17 +255,17 @@ func (s *FSStore) readEntityFile(key, id, entityType string) (*entity.Entity, er
 // that names the markdown body, so consumers know exactly which fields
 // exist but are unreadable.
 //
-// Invariant: entityType is always present in s.schemas. [New] rejects
+// Invariant: entityType is always present in the layout's schemas. [New] rejects
 // stores constructed without a populated Schemas map, and unknown-type
 // directories are skipped at scan time and in the watcher path. The
 // resulting Inaccessible slice always has at least one entry (the
 // content marker), so every IsLocked() guard fires reliably.
-func (s *FSStore) buildInaccessibleEntity(key, id, entityType string, reason entity.InaccessibleReason) *entity.Entity {
+func (c mdCodec) buildInaccessibleEntity(key, id, entityType string, reason entity.InaccessibleReason) *entity.Entity {
 	e := entity.New(id, entityType)
-	if info, err := s.rooted.Stat(key); err == nil {
+	if info, err := c.rooted.Stat(key); err == nil {
 		e.UpdatedAt = info.ModTime()
 	}
-	props := s.propertyOrder(entityType)
+	props := c.layout.propertyOrder(entityType)
 	e.Inaccessible = make([]entity.InaccessibleField, 0, len(props)+1)
 	for _, name := range props {
 		e.Inaccessible = append(e.Inaccessible, entity.InaccessibleField{Name: name, Reason: reason})
@@ -279,14 +298,14 @@ func formatEntity(e *entity.Entity, propertyOrder []string) (string, error) {
 }
 
 // writeEntityFile writes an entity to a markdown file using temp-file + rename.
-func (s *FSStore) writeEntityFile(e *entity.Entity) error {
-	key := s.entityFileKey(e.Type, e.ID)
-	order := s.propertyOrder(e.Type)
+func (c mdCodec) writeEntityFile(e *entity.Entity) error {
+	key := c.layout.entityFileKey(e.Type, e.ID)
+	order := c.layout.propertyOrder(e.Type)
 	content, err := formatEntity(e, order)
 	if err != nil {
 		return err
 	}
-	return s.writeDataFile(key, []byte(content), 0o644)
+	return c.writeDataFile(key, []byte(content), 0o644)
 }
 
 // --- relation I/O ---
@@ -296,14 +315,14 @@ func (s *FSStore) writeEntityFile(e *entity.Entity) error {
 // from, relType, to are caller-supplied (derived from the filename); they
 // are used to populate the resulting relation if the file is git-crypt
 // encrypted and its frontmatter cannot be read.
-func (s *FSStore) readRelationFile(key, from, relType, to string) (*entity.Relation, error) {
-	data, err := s.readDataFile(key)
+func (c mdCodec) readRelationFile(key, from, relType, to string) (*entity.Relation, error) {
+	data, err := c.readDataFile(key)
 	if err != nil {
 		return nil, err
 	}
 
 	if isGitCryptEncrypted(data) {
-		return s.buildInaccessibleRelation(key, from, relType, to, entity.InaccessibleReasonGitCrypt), nil
+		return c.buildInaccessibleRelation(key, from, relType, to, entity.InaccessibleReasonGitCrypt), nil
 	}
 
 	doc, err := parseDocument(string(data))
@@ -318,7 +337,7 @@ func (s *FSStore) readRelationFile(key, from, relType, to string) (*entity.Relat
 	)
 	r.Content = doc.content
 
-	if info, err := s.rooted.Stat(key); err == nil {
+	if info, err := c.rooted.Stat(key); err == nil {
 		r.UpdatedAt = info.ModTime()
 	}
 
@@ -338,12 +357,12 @@ func (s *FSStore) readRelationFile(key, from, relType, to string) (*entity.Relat
 // whose content cannot be read. The endpoints are caller-supplied. The
 // relation has no metamodel-declared properties (unlike entities), so
 // the sole inaccessible entry names the markdown body.
-func (s *FSStore) buildInaccessibleRelation(
+func (c mdCodec) buildInaccessibleRelation(
 	key, from, relType, to string,
 	reason entity.InaccessibleReason,
 ) *entity.Relation {
 	r := entity.NewRelation(from, relType, to)
-	if info, err := s.rooted.Stat(key); err == nil {
+	if info, err := c.rooted.Stat(key); err == nil {
 		r.UpdatedAt = info.ModTime()
 	}
 	r.Inaccessible = []entity.InaccessibleField{
@@ -372,13 +391,13 @@ func formatRelation(r *entity.Relation) (string, error) {
 }
 
 // writeRelationFile writes a relation to a markdown file using temp-file + rename.
-func (s *FSStore) writeRelationFile(r *entity.Relation) error {
-	key := s.relationFileKey(r.From, r.Type, r.To)
+func (c mdCodec) writeRelationFile(r *entity.Relation) error {
+	key := c.layout.relationFileKey(r.From, r.Type, r.To)
 	content, err := formatRelation(r)
 	if err != nil {
 		return err
 	}
-	return s.writeDataFile(key, []byte(content), 0o644)
+	return c.writeDataFile(key, []byte(content), 0o644)
 }
 
 // writeDataFile writes content to the given key through RootedFS.
@@ -391,13 +410,13 @@ func (s *FSStore) writeRelationFile(r *entity.Relation) error {
 // MemFS.OnPostWrite for tests). That's where the actual on-disk
 // bytes are visible — fsstore sees only plaintext here and must not
 // record a plaintext hash the watcher can't match.
-func (s *FSStore) writeDataFile(key string, content []byte, perm os.FileMode) error {
-	return s.rooted.WriteFile(key, content, perm)
+func (c mdCodec) writeDataFile(key string, content []byte, perm os.FileMode) error {
+	return c.rooted.WriteFile(key, content, perm)
 }
 
 // readDataFile reads the given key through RootedFS. RootedFS
 // validates the key and delegates to the underlying FS (which applies
 // any decoding decorators — none currently in production).
-func (s *FSStore) readDataFile(key string) ([]byte, error) {
-	return s.rooted.ReadFile(key)
+func (c mdCodec) readDataFile(key string) ([]byte, error) {
+	return c.rooted.ReadFile(key)
 }

@@ -19,8 +19,8 @@ func (s *FSStore) FormatEntity(ctx context.Context, id string, dryRun bool) (boo
 	}
 
 	s.mu.RLock()
-	order := s.propertyOrder(e.Type)
-	key := s.entityFileKey(e.Type, e.ID)
+	order := s.layout.propertyOrder(e.Type)
+	key := s.layout.entityFileKey(e.Type, e.ID)
 	s.mu.RUnlock()
 
 	formatted, err := formatEntity(e, order)
@@ -56,7 +56,7 @@ func (s *FSStore) FormatRelation(ctx context.Context, from, relType, to string, 
 	}
 
 	s.mu.RLock()
-	key := s.relationFileKey(from, relType, to)
+	key := s.layout.relationFileKey(from, relType, to)
 	s.mu.RUnlock()
 
 	formatted, err := formatRelation(r)
