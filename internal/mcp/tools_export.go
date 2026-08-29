@@ -15,7 +15,17 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-func (s *Server) handleExport(
+// exportHandler serves the export tool. A type of its own rather than more
+// methods on [Server] (the urlHelpers pattern, TKT-YUETL7): exporting needs
+// only the gated [GraphReader] to enumerate rows, plus the shared
+// typeResolver for the optional type filter — no tracer, no writer, no
+// request state beyond the ctx each call receives.
+type exportHandler struct {
+	store GraphReader
+	types typeResolver
+}
+
+func (h exportHandler) handleExport(
 	ctx context.Context, request *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
 	args := newToolRequest(request)
@@ -25,10 +35,10 @@ func (s *Server) handleExport(
 	}
 	entityType := args.GetString("type", "")
 
-	st := s.deps.Store
+	st := h.store
 	q := store.EntityQuery{}
 	if entityType != "" {
-		q.Type = s.resolveType(entityType)
+		q.Type = h.types.resolveType(entityType)
 	}
 
 	entities := make([]*entity.Entity, 0)
@@ -51,17 +61,17 @@ func (s *Server) handleExport(
 
 	switch format {
 	case "json":
-		return s.exportJSON(entities, relations, entityType)
+		return h.exportJSON(entities, relations, entityType)
 	case "yaml":
-		return s.exportYAML(entities, relations, entityType)
+		return h.exportYAML(entities, relations, entityType)
 	case "csv":
-		return s.exportCSV(entities)
+		return h.exportCSV(entities)
 	default:
 		return errorResult("unsupported format: " + format), nil
 	}
 }
 
-func (s *Server) exportJSON(
+func (h exportHandler) exportJSON(
 	entities []*entity.Entity, relations []*entity.Relation, entityType string,
 ) (*mcpgo.CallToolResult, error) {
 	if entityType != "" {
@@ -107,7 +117,7 @@ func (s *Server) exportJSON(
 	return textResult(text), nil
 }
 
-func (s *Server) exportYAML(
+func (h exportHandler) exportYAML(
 	entities []*entity.Entity, relations []*entity.Relation, entityType string,
 ) (*mcpgo.CallToolResult, error) {
 	var data any
@@ -151,7 +161,7 @@ func (s *Server) exportYAML(
 	return textResult(string(out)), nil
 }
 
-func (s *Server) exportCSV(entities []*entity.Entity) (*mcpgo.CallToolResult, error) {
+func (h exportHandler) exportCSV(entities []*entity.Entity) (*mcpgo.CallToolResult, error) {
 	if len(entities) == 0 {
 		return textResult(""), nil
 	}

@@ -18,9 +18,9 @@ func (s *Server) registerTools() {
 	s.mcp.AddTool(toolDeleteRelation(), s.handleDeleteRelation)
 
 	// Trace tools
-	s.mcp.AddTool(toolTraceFrom(), s.handleTraceFrom)
-	s.mcp.AddTool(toolTraceTo(), s.handleTraceTo)
-	s.mcp.AddTool(toolFindPath(), s.handleFindPath)
+	s.mcp.AddTool(toolTraceFrom(), s.trace.handleTraceFrom)
+	s.mcp.AddTool(toolTraceTo(), s.trace.handleTraceTo)
+	s.mcp.AddTool(toolFindPath(), s.trace.handleFindPath)
 
 	// Analysis tools
 	s.mcp.AddTool(toolAnalyzeOrphans(), s.handleAnalyzeOrphans)
@@ -37,7 +37,7 @@ func (s *Server) registerTools() {
 	s.mcp.AddTool(toolListRelationTypes(), s.handleListRelationTypes)
 
 	// Utility tools
-	s.mcp.AddTool(toolExport(), s.handleExport)
+	s.mcp.AddTool(toolExport(), s.export.handleExport)
 
 	// Lua scripting tools
 	s.mcp.AddTool(toolLuaEval(), s.handleLuaEval)

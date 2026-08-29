@@ -2,7 +2,7 @@
 
 This is the in-depth version of the "Define interfaces at the call site"
 rule in the root `CLAUDE.md`. The worked code examples live as godoc on the
-real types (`autocascade.Host`, `mcp.Services`, `scheduler.WorkspaceProvider`,
+real types (`autocascade.Host`, `mcp.GraphReader`, `scheduler.WorkspaceProvider`,
 `store.EntityObserver`) — read those alongside this.
 
 ## The rule
@@ -50,7 +50,7 @@ cycle disappears because `Runner` borrows a Host for the duration of
   method (e.g. `autocascade.Host`, `store.EntityObserver`). Fully dissolves
   cycles.
 - **Constructor field** when the consumer holds the relationship across many
-  calls (e.g. `mcp.Services`, `scheduler.WorkspaceProvider`). Used when there
+  calls (e.g. `mcp.GraphReader`, `scheduler.WorkspaceProvider`). Used when there
   is no cycle, just a desire to keep the consumer's contract narrow.
 
 ## What this pattern rules out
@@ -149,8 +149,9 @@ at the same time.
 
 ## Existing examples to study
 
-- **`mcp.Services`** (`internal/mcp/server.go`) — scoped consumer-side
-  interface; Workspace satisfies it. Constructor-field form.
+- **`mcp.GraphReader`** (`internal/mcp/server.go`) — scoped consumer-side
+  read interface, held via the `mcp.Deps` capability bundle; `store.Store`
+  satisfies it structurally. Constructor-field form.
 - **`scheduler.WorkspaceProvider`** (`internal/scheduler/scheduler.go`) —
   four-method interface for what the scheduler needs. Constructor-field form.
 - **`store.EntityObserver`** (`internal/store/store.go`) — the *inverse*

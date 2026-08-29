@@ -25,7 +25,7 @@ func (s *Server) handleAnalyzeOrphans(
 	st := s.deps.Store
 	resolved := ""
 	if entityType != "" {
-		resolved = s.resolveType(entityType)
+		resolved = s.types.resolveType(entityType)
 	}
 
 	type orphanInfo struct {

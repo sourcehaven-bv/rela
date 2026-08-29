@@ -11,9 +11,22 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
-func (s *Server) resolveType(typeName string) string {
+// typeResolver maps user-supplied type names onto metamodel entity types —
+// alias resolution, plural stripping, and property-name validation shared by
+// the entity, analysis, export, and prompt handlers.
+//
+// A type of its own rather than more methods on [Server] (the urlHelpers
+// pattern, TKT-YUETL7): these helpers need exactly one thing from the server —
+// the metamodel — no store, no tracer, no request state. Holding that one
+// field makes the dependency visible where methods on Server let every helper
+// reach all of deps.
+type typeResolver struct {
+	meta *metamodel.Metamodel
+}
+
+func (r typeResolver) resolveType(typeName string) string {
 	typeName = strings.TrimSpace(typeName)
-	meta := s.deps.Meta
+	meta := r.meta
 	resolved := meta.ResolveAlias(typeName)
 	if _, ok := meta.GetEntityDef(resolved); ok {
 		return resolved
@@ -37,9 +50,9 @@ func trimID(id string) string {
 	return strings.TrimSpace(id)
 }
 
-func (s *Server) resolveEntityType(typeName string) (string, *metamodel.EntityDef, error) {
-	resolved := s.resolveType(typeName)
-	def, ok := s.deps.Meta.GetEntityDef(resolved)
+func (r typeResolver) resolveEntityType(typeName string) (string, *metamodel.EntityDef, error) {
+	resolved := r.resolveType(typeName)
+	def, ok := r.meta.GetEntityDef(resolved)
 	if !ok {
 		return "", nil, fmt.Errorf("unknown entity type: %s", typeName)
 	}
@@ -124,13 +137,12 @@ func filterProperties(props map[string]any, keepNil bool) map[string]any {
 // (a nil value means "delete" in update_entity; deleting a required property would leave
 // the entity invalid, so we surface that as an actionable error rather than a misleading
 // success that analyze_validations later catches).
-func (s *Server) validatePropertyNames(entityType string, properties map[string]any) *mcpgo.CallToolResult {
+func (r typeResolver) validatePropertyNames(entityType string, properties map[string]any) *mcpgo.CallToolResult {
 	if properties == nil {
 		return nil
 	}
 
-	meta := s.deps.Meta
-	entityDef, ok := meta.GetEntityDef(entityType)
+	entityDef, ok := r.meta.GetEntityDef(entityType)
 	if !ok {
 		return nil // Type validation will catch this
 	}

@@ -85,10 +85,13 @@ func makeTestServerWithStore(t *testing.T) (*Server, *memstore.MemStore) {
 	t.Helper()
 
 	meta, st := makeTestFixture(t)
-	return &Server{
-		deps:   newTestDeps(t, meta, st),
+	deps := newTestDeps(t, meta, st)
+	srv := &Server{
+		deps:   deps,
 		logger: slog.New(slog.DiscardHandler),
-	}, st
+	}
+	srv.types, srv.trace, srv.export = deps.handlers()
+	return srv, st
 }
 
 func getResultText(t *testing.T, result *mcpgo.CallToolResult) string {
@@ -763,7 +766,7 @@ func TestHandleTraceFrom(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]any{"id": "REQ-001"})
-	result, err := s.handleTraceFrom(context.Background(), req)
+	result, err := s.trace.handleTraceFrom(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -777,7 +780,7 @@ func TestHandleTraceFrom_NotFound(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]any{"id": "NONEXISTENT"})
-	result, err := s.handleTraceFrom(context.Background(), req)
+	result, err := s.trace.handleTraceFrom(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -790,7 +793,7 @@ func TestHandleTraceTo(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]any{"id": "REQ-001"})
-	result, err := s.handleTraceTo(context.Background(), req)
+	result, err := s.trace.handleTraceTo(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -804,7 +807,7 @@ func TestHandleFindPath(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]any{"from": "DEC-001", "to": "REQ-001"})
-	result, err := s.handleFindPath(context.Background(), req)
+	result, err := s.trace.handleFindPath(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -818,7 +821,7 @@ func TestHandleFindPath_NoPath(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]any{"from": "REQ-002", "to": "REQ-003"})
-	result, err := s.handleFindPath(context.Background(), req)
+	result, err := s.trace.handleFindPath(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -832,7 +835,7 @@ func TestHandleFindPath_NotFound(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]any{"from": "NONEXISTENT", "to": "REQ-001"})
-	result, err := s.handleFindPath(context.Background(), req)
+	result, err := s.trace.handleFindPath(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1090,7 +1093,7 @@ func TestResolveType(t *testing.T) {
 		{"unknown", "unknown"}, // falls through
 	}
 	for _, tt := range tests {
-		got := s.resolveType(tt.input)
+		got := s.types.resolveType(tt.input)
 		if got != tt.expected {
 			t.Errorf("resolveType(%q) = %q, want %q", tt.input, got, tt.expected)
 		}
@@ -1100,7 +1103,7 @@ func TestResolveType(t *testing.T) {
 func TestResolveEntityType(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	resolved, def, err := s.resolveEntityType("requirement")
+	resolved, def, err := s.types.resolveEntityType("requirement")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1115,7 +1118,7 @@ func TestResolveEntityType(t *testing.T) {
 func TestResolveEntityType_Unknown(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	_, _, err := s.resolveEntityType("nonexistent")
+	_, _, err := s.types.resolveEntityType("nonexistent")
 	if err == nil {
 		t.Error("expected error for unknown type")
 	}

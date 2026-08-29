@@ -8,7 +8,7 @@
   three methods). When a callback would create a constructor cycle, the
   consumer defines the narrow interface and the wiring site supplies it —
   see `docs/architecture/consumer-side-interfaces.md` and the godoc on
-  `autocascade.Host`, `mcp.Services`, `scheduler.WorkspaceProvider`.
+  `autocascade.Host`, `mcp.GraphReader`, `scheduler.WorkspaceProvider`.
 - **Capability bundles, not service locators.** When a subsystem needs
   several collaborators, group them in a purpose-specific struct (see
   `internal/lua/deps.go` with `ReadDeps` / `WriteDeps`), split by read vs.
