@@ -98,6 +98,39 @@ test.describe('Attachments on entity create', () => {
     expect(await formPage.canAddFile('evidence')).toBe(false);
   });
 
+  // The accepted tradeoff of the two-phase design: create can succeed and the
+  // upload fail on its own. The whole feature rests on that being loud, so it
+  // is worth proving against a real server rejection rather than a mock.
+  test('an oversize file fails loudly after the entity is created', async ({ appPage, api }) => {
+    const listPage = new ListPage(appPage);
+    const formPage = new FormPage(appPage);
+
+    await listPage.navigateToList('bugs');
+    await listPage.clickCreateButton();
+    await formPage.fillField('title', 'Bug with an oversize file');
+
+    // The fixture caps attachments at 1 KiB; 4 KiB is a real 413 from the
+    // server's ingress guard, not a simulated one.
+    await formPage.attachFile('screenshot', 'huge.txt', 'x'.repeat(4096));
+
+    const created = await formPage.submitAndExpectCreate('bugs');
+
+    // The entity exists and the user is on it — losing the entity would be
+    // worse than losing the file.
+    await expect(appPage).toHaveURL(new RegExp(`/entity/bug/${created.id}`));
+
+    // The failure is reported, names the file, and says where to fix it.
+    const toast = await formPage.errorToastText();
+    expect(toast).toContain('huge.txt');
+    expect(toast).toContain('too large');
+    expect(toast).toContain('Re-attach on the entity');
+
+    // Nothing was attached, and no half-written property was stamped.
+    const entity = await api.getEntity('bugs', created.id);
+    expect(entity._attachments?.screenshot ?? []).toHaveLength(0);
+    expect(entity.properties.screenshot ?? '').toBe('');
+  });
+
   test('creating without touching a file property is unchanged', async ({ appPage, api }) => {
     // The common case by far: it must not gain a request or change behaviour.
     const listPage = new ListPage(appPage);

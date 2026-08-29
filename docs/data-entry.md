@@ -396,8 +396,10 @@ Create, and the entity is saved with its file. Two details are worth knowing:
   toward the property's `max` while staged.
 - Because the upload is a second step, it can fail on its own (a file over the
   size limit, or one your scan policy rejects). If that happens the entity is
-  still created — you land on it and the message names the files that did not
-  attach, so you can retry them there. Nothing is silently dropped.
+  **still created**: you land on it, and the message names the files that did
+  not attach so you can re-attach them there, on the entity's own file control.
+  Nothing is silently dropped — but the failed files do have to be picked
+  again, since the form that held them is gone by then.
 
 Attachments inherit the owning entity's permissions: if you may not update the
 entity, you may not attach to it.

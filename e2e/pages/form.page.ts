@@ -794,6 +794,15 @@ export class FormPage extends BasePage {
     return (await err.count()) > 0 ? err.innerText() : "";
   }
 
+  /** Text of the error toast, waited for. Used by the create-with-attachments
+   *  failure path, where the entity IS created but an upload was rejected —
+   *  the message is the only thing telling the user which files to re-attach. */
+  async errorToastText(): Promise<string> {
+    const toast = this.toastContainer.first();
+    await expect(toast).toBeVisible();
+    return toast.innerText();
+  }
+
   /** Submit a create that is expected to also upload `expectedUploads`
    *  attachments, waiting for the POST and every attachment PUT so the
    *  assertions that follow don't race the second phase. */

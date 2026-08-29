@@ -31,11 +31,20 @@ const { mockUpload, mockDelete, MockAttachmentError } = vi.hoisted(() => {
     MockAttachmentError,
   }
 })
-vi.mock('@/api/attachments', () => ({
-  uploadAttachment: mockUpload,
-  deleteAttachment: mockDelete,
-  AttachmentError: MockAttachmentError,
-}))
+// Stub only the two network functions; keep the real `attachmentErrorReason`
+// so the status→message mapping under test is the shipped one. Note it is the
+// REAL AttachmentError that the helper instanceof-checks, so tests that want a
+// status branch must throw a MockAttachmentError AND the helper must still
+// resolve it — hence importActual rather than a bare object literal.
+vi.mock('@/api/attachments', async () => {
+  const actual = await vi.importActual<Record<string, unknown>>('@/api/attachments')
+  return {
+    ...actual,
+    uploadAttachment: mockUpload,
+    deleteAttachment: mockDelete,
+    AttachmentError: MockAttachmentError,
+  }
+})
 
 describe('TextWidget', () => {
   it('renders the value and emits update:modelValue on input', async () => {

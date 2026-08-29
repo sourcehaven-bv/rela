@@ -982,6 +982,10 @@ version: "1.0"
 app:
   name: "E2E Test App"
   description: "Test project for Playwright E2E tests"
+  # TKT-7K3BJF: a deliberately tiny attachment cap so the create-form failure
+  # path (create succeeds, upload 413s) can be driven end-to-end with a small
+  # file. Every fixture attachment in the suite is well under 1 KiB.
+  max_attachment_bytes: 1024
 
 # Enable dark mode so the theme toggle renders in the status bar. Palette
 # config is validated strictly; unknown keys raise startup errors.

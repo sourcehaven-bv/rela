@@ -5,7 +5,7 @@ title: 'Attachments on entity create: stage files in the create form, upload aft
 kind: enhancement
 priority: medium
 effort: m
-status: in-progress
+status: done
 ---
 
 ## Description

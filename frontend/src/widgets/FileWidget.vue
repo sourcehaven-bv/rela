@@ -1,8 +1,13 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import type { WidgetProps } from './types'
 import type { AttachmentInfo } from '@/types'
-import { uploadAttachment, deleteAttachment, AttachmentError } from '@/api/attachments'
+import {
+  uploadAttachment,
+  deleteAttachment,
+  attachmentErrorReason,
+  AttachmentError,
+} from '@/api/attachments'
 
 const props = defineProps<WidgetProps>()
 
@@ -17,7 +22,10 @@ const emit = defineEmits<{
 
 const files = computed<AttachmentInfo[]>(() => props.attachments ?? [])
 const staged = computed<File[]>(() => props.stagedFiles ?? [])
-const maxCount = computed(() => props.max ?? 1)
+// A declared `max` of 0 (or negative) means the property accepts no files;
+// without the floor it would fall through `isSingle` and offer a picker
+// (RR-1556G1 M2).
+const maxCount = computed(() => Math.max(0, props.max ?? 1))
 const isSingle = computed(() => maxCount.value <= 1)
 // Capacity counts BOTH persisted and staged files: in create mode every file
 // is staged, and a form could in principle show both.
@@ -31,69 +39,84 @@ const canEdit = computed(
 // Create mode (TKT-7K3BJF): no entity id exists yet, so a pick is STAGED
 // rather than uploaded. An attachment cannot be written before the entity
 // row exists, so the host form uploads these after the create returns an id.
-const canStage = computed(() => props.mode === 'edit' && !props.disabled && !props.entityId)
+// `entityType` is checked here as well as in canEdit (RR-1556G1 M1): it is
+// what builds the upload URL, so the two predicates should differ only on the
+// axis that actually distinguishes them — whether an entity id exists yet.
+const canStage = computed(
+  () => props.mode === 'edit' && !props.disabled && !!props.entityType && !props.entityId
+)
 // The add control shows when editing/staging and there's room (single-cap:
 // shows as "Replace" once a file exists; multi-cap: hidden at capacity).
 const canAdd = computed(
-  () => (canEdit.value || canStage.value) && (isSingle.value || !atCapacity.value)
+  () =>
+    maxCount.value > 0 &&
+    (canEdit.value || canStage.value) &&
+    (isSingle.value || !atCapacity.value)
 )
 
 const busy = ref(false)
 const progress = ref(0)
 const uploadError = ref('')
 
-// Object URLs for staged image previews, keyed by File. Revoked on removal
-// and on unmount — an un-revoked blob URL pins its bytes for the life of the
-// document.
-const stagedPreviews = ref(new Map<File, string>())
+// Object URLs for staged image previews, keyed by File.
+//
+// A watcher owns the whole lifecycle rather than the render path minting URLs
+// on demand (RR-1556G1 M3): creating one inside `stagedPreviewUrl` mutated
+// reactive state from a render function. Here a file entering the staged list
+// gets a URL, one leaving has its URL revoked, and whatever remains is revoked
+// on unmount — an un-revoked blob URL pins its bytes for the life of the
+// document. shallowRef because the Map is replaced wholesale, never mutated in
+// place for reactivity's sake.
+const stagedPreviews = shallowRef(new Map<File, string>())
 
 function stagedPreviewUrl(file: File): string | undefined {
-  if (!file.type.startsWith('image/')) return undefined
-  let url = stagedPreviews.value.get(file)
-  if (!url) {
-    url = URL.createObjectURL(file)
-    stagedPreviews.value.set(file, url)
-  }
-  return url
+  return stagedPreviews.value.get(file)
 }
 
-function revokeStagedPreview(file: File) {
-  const url = stagedPreviews.value.get(file)
-  if (url) {
-    URL.revokeObjectURL(url)
-    stagedPreviews.value.delete(file)
-  }
-}
-
-// Revoke previews for files that are no longer staged (e.g. the host cleared
-// the list after a successful create), so the map can't outlive its files.
-watch(staged, (current) => {
-  for (const file of [...stagedPreviews.value.keys()]) {
-    if (!current.includes(file)) revokeStagedPreview(file)
-  }
-})
+watch(
+  staged,
+  (current) => {
+    const next = new Map(stagedPreviews.value)
+    for (const [file, url] of stagedPreviews.value) {
+      if (!current.includes(file)) {
+        URL.revokeObjectURL(url)
+        next.delete(file)
+      }
+    }
+    for (const file of current) {
+      if (file.type.startsWith('image/') && !next.has(file)) {
+        next.set(file, URL.createObjectURL(file))
+      }
+    }
+    stagedPreviews.value = next
+  },
+  { immediate: true }
+)
 
 onBeforeUnmount(() => {
   for (const url of stagedPreviews.value.values()) URL.revokeObjectURL(url)
-  stagedPreviews.value.clear()
+  stagedPreviews.value = new Map()
 })
 
 function stageFile(file: File) {
   // Respect the cap at pick time, mirroring edit mode's capacity rule.
+  if (maxCount.value <= 0) return
   if (atCapacity.value && !isSingle.value) return
   // Single-cap replaces rather than appends, matching the server's max:1
   // semantics (a new upload supersedes the existing file).
   const next = isSingle.value ? [file] : [...staged.value, file]
-  if (isSingle.value) for (const f of staged.value) revokeStagedPreview(f)
   uploadError.value = ''
   emit('update:staged-files', next)
 }
 
-function unstageFile(file: File) {
-  revokeStagedPreview(file)
+// Remove by INDEX, not by object identity (RR-C6CXU1): the same File reference
+// can legitimately appear twice — the input is reset after each pick precisely
+// so a file can be re-selected, and one DataTransfer can be dropped twice — and
+// an identity filter would remove every copy instead of the one clicked.
+function unstageFileAt(index: number) {
   emit(
     'update:staged-files',
-    staged.value.filter((f) => f !== file)
+    staged.value.filter((_, i) => i !== index)
   )
 }
 
@@ -124,13 +147,9 @@ async function doUpload(file: File) {
   }
 }
 
+// Frames the shared reason (RR-1556G1 M4) as a sentence for inline display.
 function uploadErrorMessage(err: unknown): string {
-  if (err instanceof AttachmentError) {
-    if (err.status === 413) return 'File is too large.'
-    if (err.status === 409) return 'This field already holds the maximum number of files.'
-    return err.message
-  }
-  return 'Upload failed.'
+  return `Upload failed: ${attachmentErrorReason(err)}.`
 }
 
 async function doDelete(att: AttachmentInfo) {
@@ -204,7 +223,11 @@ function onDrop(event: DragEvent) {
          the persisted list, but the name is plain text: there is nothing to
          download yet, and the preview comes from a local object URL. -->
     <ul v-if="staged.length" class="file-list file-list-staged">
-      <li v-for="file in staged" :key="`${file.name}-${file.size}-${file.lastModified}`" class="file-item">
+      <!-- Keyed by index, not by file content (RR-C6CXU1): name+size+mtime
+           collides for two copies of the same file, which is reachable — the
+           picker is reset after each pick so the same file can be chosen
+           twice. The list is small and only appended to or filtered. -->
+      <li v-for="(file, i) in staged" :key="i" class="file-item">
         <img
           v-if="stagedPreviewUrl(file)"
           :src="stagedPreviewUrl(file)"
@@ -215,7 +238,7 @@ function onDrop(event: DragEvent) {
           <span class="file-name">{{ file.name }}</span>
           <span class="file-size">{{ formatSize(file.size) }}</span>
           <span class="file-staged-badge">Pending save</span>
-          <button type="button" class="file-remove" @click="unstageFile(file)">Remove</button>
+          <button type="button" class="file-remove" @click="unstageFileAt(i)">Remove</button>
         </div>
       </li>
     </ul>
