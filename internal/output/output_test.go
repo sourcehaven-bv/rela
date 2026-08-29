@@ -299,53 +299,6 @@ func TestWriteEntityJSON(t *testing.T) {
 	}
 }
 
-// TestWriteRelations tests writing relations
-func TestWriteRelations(t *testing.T) {
-	buf := &bytes.Buffer{}
-	w := NewWithWriter(buf, FormatTable)
-
-	relations := []*entity.Relation{
-		{From: "REQ-001", Type: "implements", To: "DEC-001"},
-		{From: "REQ-002", Type: "depends_on", To: "REQ-001"},
-	}
-
-	err := w.WriteRelations(relations)
-	if err != nil {
-		t.Fatalf("WriteRelations failed: %v", err)
-	}
-
-	output := buf.String()
-	if !strings.Contains(output, "REQ-001") {
-		t.Error("expected output to contain REQ-001")
-	}
-	if !strings.Contains(output, "implements") {
-		t.Error("expected output to contain relation type")
-	}
-}
-
-// TestWriteRelationsJSON tests writing relations in JSON format
-func TestWriteRelationsJSON(t *testing.T) {
-	buf := &bytes.Buffer{}
-	w := NewWithWriter(buf, FormatJSON)
-
-	relations := []*entity.Relation{
-		{From: "REQ-001", Type: "implements", To: "DEC-001"},
-	}
-
-	err := w.WriteRelations(relations)
-	if err != nil {
-		t.Fatalf("WriteRelations failed: %v", err)
-	}
-
-	var result []*entity.Relation
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("failed to parse JSON output: %v", err)
-	}
-	if len(result) != 1 {
-		t.Errorf("expected 1 relation in JSON, got %d", len(result))
-	}
-}
-
 // TestWriteTrace tests writing trace results
 func TestWriteTrace(t *testing.T) {
 	buf := &bytes.Buffer{}
@@ -782,7 +735,7 @@ func TestWriteSeparator(t *testing.T) {
 	// Test with no color
 	buf := &bytes.Buffer{}
 	w := NewWithWriter(buf, FormatTable)
-	w.WriteSeparator()
+	w.writeSeparator()
 	output := buf.String()
 	if !strings.Contains(output, "─") {
 		t.Error("expected separator to contain line character")
@@ -793,7 +746,7 @@ func TestWriteSeparator(t *testing.T) {
 	w2 := New(FormatTable)
 	w2.Out = buf2
 	w2.NoColor = false
-	w2.WriteSeparator()
+	w2.writeSeparator()
 	output2 := buf2.String()
 	if !strings.Contains(output2, "─") {
 		t.Error("expected separator to contain line character with colors")
@@ -805,7 +758,7 @@ func TestWriteFooterSummary(t *testing.T) {
 	// Test with no color
 	buf := &bytes.Buffer{}
 	w := NewWithWriter(buf, FormatTable)
-	w.WriteFooterSummary("Summary text")
+	w.writeFooterSummary("Summary text")
 	output := buf.String()
 	if !strings.Contains(output, "Summary text") {
 		t.Error("expected footer summary to contain text")
@@ -816,7 +769,7 @@ func TestWriteFooterSummary(t *testing.T) {
 	w2 := New(FormatTable)
 	w2.Out = buf2
 	w2.NoColor = false
-	w2.WriteFooterSummary("Summary text")
+	w2.writeFooterSummary("Summary text")
 	output2 := buf2.String()
 	if !strings.Contains(output2, "Summary text") {
 		t.Error("expected footer summary to contain text with colors")
@@ -899,199 +852,6 @@ func TestWriteAnalysisResultJSON(t *testing.T) {
 	}
 	if parsed.Count != 5 {
 		t.Errorf("expected count 5, got %d", parsed.Count)
-	}
-}
-
-// Mock types for schema testing
-type mockMetamodel struct{}
-
-func (m *mockMetamodel) GetVersion() string   { return "1.0" }
-func (m *mockMetamodel) GetNamespace() string { return "test" }
-func (m *mockMetamodel) GetEntities() any     { return map[string]any{} }
-func (m *mockMetamodel) GetRelations() any    { return map[string]any{} }
-func (m *mockMetamodel) GetTypes() any        { return map[string]any{} }
-
-type mockEntityDef struct{}
-
-func (e *mockEntityDef) GetLabel() string        { return "Test Entity" }
-func (e *mockEntityDef) GetAliases() []string    { return []string{"test"} }
-func (e *mockEntityDef) GetIDPatterns() []string { return []string{"TEST-*"} }
-func (e *mockEntityDef) GetProperties() any      { return map[string]any{} }
-func (e *mockEntityDef) GetRDFType() string      { return "test:Entity" }
-func (e *mockEntityDef) GetColor() string        { return "#FF0000" }
-func (e *mockEntityDef) GetBorderColor() string  { return "#000000" }
-
-type mockRelationDef struct {
-	symmetric bool
-	desc      string
-	inverse   any
-	srcMin    *int
-	srcMax    *int
-	tgtMin    *int
-	tgtMax    *int
-}
-
-func (r *mockRelationDef) GetLabel() string  { return "Test Relation" }
-func (r *mockRelationDef) GetFrom() []string { return []string{"Entity1"} }
-func (r *mockRelationDef) GetTo() []string   { return []string{"Entity2"} }
-func (r *mockRelationDef) GetDescription() string {
-	if r.desc != "" {
-		return r.desc
-	}
-	return ""
-}
-func (r *mockRelationDef) GetInverse() any      { return r.inverse }
-func (r *mockRelationDef) IsSymmetric() bool    { return r.symmetric }
-func (r *mockRelationDef) GetMinOutgoing() *int { return r.srcMin }
-func (r *mockRelationDef) GetMaxOutgoing() *int { return r.srcMax }
-func (r *mockRelationDef) GetMinIncoming() *int { return r.tgtMin }
-func (r *mockRelationDef) GetMaxIncoming() *int { return r.tgtMax }
-
-// TestWriteSchemaOverview tests schema overview output
-func TestWriteSchemaOverview(t *testing.T) {
-	buf := &bytes.Buffer{}
-	w := NewWithWriter(buf, FormatJSON)
-
-	mock := &mockMetamodel{}
-	err := w.WriteSchemaOverview(mock)
-	if err != nil {
-		t.Fatalf("WriteSchemaOverview failed: %v", err)
-	}
-
-	var result map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("failed to parse JSON output: %v", err)
-	}
-	if result["version"] != "1.0" {
-		t.Error("expected version in output")
-	}
-}
-
-// TestWriteSchemaEntities tests schema entities output
-func TestWriteSchemaEntities(t *testing.T) {
-	buf := &bytes.Buffer{}
-	w := NewWithWriter(buf, FormatJSON)
-
-	mock := &mockMetamodel{}
-	err := w.WriteSchemaEntities(mock)
-	if err != nil {
-		t.Fatalf("WriteSchemaEntities failed: %v", err)
-	}
-
-	var result map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("failed to parse JSON output: %v", err)
-	}
-}
-
-// TestWriteSchemaRelations tests schema relations output
-func TestWriteSchemaRelations(t *testing.T) {
-	buf := &bytes.Buffer{}
-	w := NewWithWriter(buf, FormatJSON)
-
-	mock := &mockMetamodel{}
-	err := w.WriteSchemaRelations(mock)
-	if err != nil {
-		t.Fatalf("WriteSchemaRelations failed: %v", err)
-	}
-
-	var result map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("failed to parse JSON output: %v", err)
-	}
-}
-
-// TestWriteSchemaTypes tests schema types output
-func TestWriteSchemaTypes(t *testing.T) {
-	buf := &bytes.Buffer{}
-	w := NewWithWriter(buf, FormatJSON)
-
-	mock := &mockMetamodel{}
-	err := w.WriteSchemaTypes(mock)
-	if err != nil {
-		t.Fatalf("WriteSchemaTypes failed: %v", err)
-	}
-
-	var result map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("failed to parse JSON output: %v", err)
-	}
-}
-
-// TestWriteSchemaEntityDetail tests entity detail output
-func TestWriteSchemaEntityDetail(t *testing.T) {
-	buf := &bytes.Buffer{}
-	w := NewWithWriter(buf, FormatJSON)
-
-	mockDef := &mockEntityDef{}
-	mockMeta := &mockMetamodel{}
-	err := w.WriteSchemaEntityDetail("test", mockDef, mockMeta)
-	if err != nil {
-		t.Fatalf("WriteSchemaEntityDetail failed: %v", err)
-	}
-
-	var result map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("failed to parse JSON output: %v", err)
-	}
-	if result["name"] != "test" {
-		t.Error("expected name in output")
-	}
-}
-
-// TestWriteSchemaRelationDetail tests relation detail output
-func TestWriteSchemaRelationDetail(t *testing.T) {
-	buf := &bytes.Buffer{}
-	w := NewWithWriter(buf, FormatJSON)
-
-	mockDef := &mockRelationDef{}
-	err := w.WriteSchemaRelationDetail("test_relation", mockDef)
-	if err != nil {
-		t.Fatalf("WriteSchemaRelationDetail failed: %v", err)
-	}
-
-	var result map[string]any
-	if unmarshalErr := json.Unmarshal(buf.Bytes(), &result); unmarshalErr != nil {
-		t.Fatalf("failed to parse JSON output: %v", unmarshalErr)
-	}
-	if result["name"] != "test_relation" {
-		t.Error("expected name in output")
-	}
-
-	// Test with all optional fields
-	buf2 := &bytes.Buffer{}
-	w2 := NewWithWriter(buf2, FormatJSON)
-
-	srcMin := 1
-	srcMax := 5
-	tgtMin := 2
-	tgtMax := 10
-	mockDef2 := &mockRelationDef{
-		desc:      "Test description",
-		inverse:   "test_inverse",
-		symmetric: true,
-		srcMin:    &srcMin,
-		srcMax:    &srcMax,
-		tgtMin:    &tgtMin,
-		tgtMax:    &tgtMax,
-	}
-	err = w2.WriteSchemaRelationDetail("test_relation2", mockDef2)
-	if err != nil {
-		t.Fatalf("WriteSchemaRelationDetail with optional fields failed: %v", err)
-	}
-
-	var result2 map[string]any
-	if err := json.Unmarshal(buf2.Bytes(), &result2); err != nil {
-		t.Fatalf("failed to parse JSON output: %v", err)
-	}
-	if result2["description"] != "Test description" {
-		t.Error("expected description in output")
-	}
-	if result2["symmetric"] != true {
-		t.Error("expected symmetric in output")
-	}
-	if result2["min_outgoing"] != float64(1) {
-		t.Error("expected min_outgoing in output")
 	}
 }
 
