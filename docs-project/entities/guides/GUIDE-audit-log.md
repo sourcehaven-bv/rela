@@ -179,14 +179,26 @@ the operator who started the server is the right grain for forensics.
 When a write is caused by an automation cascade or scheduler task,
 `triggered_by` distinguishes it from direct user actions:
 
-- `automation:<name>` — a scripted automation action.
-- `automation` — a non-scripted automation action (relation create,
-  cascaded entity create). Generic label by design — the engine
-  doesn't currently thread the originating automation name through
-  these paths.
+- `automation:<name>` — an automation action, named after the
+  automation that produced it. Scripted (`lua:`) and non-scripted
+  (relation create, cascaded entity create, and the delete half of an
+  `if_exists: replace`) actions alike.
+- `automation` — the fallback for an automation declared without a
+  `name:`. Note `name:` is an optional field on an `automations:` list
+  entry and nothing rejects an automation that omits it, so this label
+  means "the schema did not say which rule this was" — not that
+  something went wrong.
 - `schedule:<task-name>` — a scheduler-driven Lua task.
 - `cascade:delete-entity:<id>` — a relation deleted as a side effect
   of `delete-entity` with `cascade=true`.
+
+**One label per record: the outermost cause wins.** A write can have
+more than one true cause — a scheduled task whose write trips an
+automation, for instance — but `triggered_by` is a single string, not a
+stack. The enclosing label is kept, so every row a scheduled task
+produced (including the ones an automation cascaded underneath it)
+answers `triggered_by == "schedule:<task>"`. Querying "what did last
+night's run do?" therefore returns the complete set.
 
 ## Known gaps
 
@@ -206,15 +218,6 @@ If the gap is unacceptable for your operational model, consider:
   `O_SYNC` via a fork — not built in).
 - Forwarding records to an external append-only sink in a future
   phase.
-
-### Per-automation attribution for cascaded relations / entities
-
-When an `on: created` automation fires `create_relation` or
-`create_entity` actions, the resulting records carry `triggered_by:
-"automation"` (generic) rather than `automation:<originating-name>`.
-The automation engine's Result type doesn't carry the per-action
-originating-name today. Scripted actions (`lua: |` blocks) do carry
-the specific name as `automation:<name>`.
 
 ### Retention
 
