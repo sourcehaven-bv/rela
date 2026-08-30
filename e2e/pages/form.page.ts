@@ -761,10 +761,24 @@ export class FormPage extends BasePage {
     return this.fileWidget(property).locator('input[type="file"]');
   }
 
+  /** Wait for a `file` property's widget to render.
+   *
+   *  Necessary because a create form does not render its fields until the
+   *  staged-affordance dry-run POST resolves (`affordanceVisible` gates on
+   *  `stagedAffordancesReady`), and `clickCreateButton` only waits for
+   *  `domcontentloaded`. On an unloaded machine the dry-run lands first and
+   *  the widget is there immediately; under parallel load it does not, so
+   *  asserting on the widget without this wait is a race that only shows up
+   *  in a full-suite run. */
+  async waitForFileWidget(property: string) {
+    await expect(this.fileWidget(property)).toBeVisible();
+  }
+
   /** Attach a file to a `file` property. In create mode this only STAGES it
    *  (nothing is uploaded until the entity exists); in edit mode it uploads
    *  immediately. `name` is the filename the server will see. */
   async attachFile(property: string, name: string, contents: string, mimeType = "text/plain") {
+    await this.waitForFileWidget(property);
     await this.fileInput(property).setInputFiles({
       name,
       mimeType,
@@ -774,6 +788,7 @@ export class FormPage extends BasePage {
 
   /** Filenames currently listed on a `file` property — staged or uploaded. */
   async attachedFileNames(property: string): Promise<string[]> {
+    await this.waitForFileWidget(property);
     return this.fileWidget(property).locator(".file-name").allInnerTexts();
   }
 
@@ -785,6 +800,7 @@ export class FormPage extends BasePage {
   /** Whether the add/replace control is offered for a `file` property.
    *  False at capacity, or when the widget cannot mutate. */
   async canAddFile(property: string): Promise<boolean> {
+    await this.waitForFileWidget(property);
     return (await this.fileWidget(property).locator(".file-dropzone").count()) > 0;
   }
 
