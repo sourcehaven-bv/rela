@@ -5,7 +5,7 @@ title: Ctrl/Cmd-click (and middle-click) should open data-entry rows and cards i
 kind: enhancement
 priority: medium
 effort: m
-status: review
+status: done
 ---
 
 ## Problem
@@ -29,7 +29,12 @@ openable in a background tab.
 
 - `components/lists/EntityList.vue` — desktop `<tr class="entity-row" @click="navigateToEntity(entity)">` and the mobile `<div class="mobile-card" @click>`
 - `views/KanbanView.vue` — card `<div @click="openCard(entity)">` (two call sites)
-- `components/calendar/CalendarEventChip.vue` — `@click="$emit('open', event)"`
+- ~~`components/calendar/CalendarEventChip.vue`~~ — **deliberately excluded.**
+The chip's click opens an `EntityPreviewModal`, not a route, so there is no URL
+to put in a new tab. Its target is known only to the parent via an `open` emit,
+making a real href a design change rather than a mechanical conversion. (The
+modal's own "Open full page" button is a genuine navigation and could be
+anchored separately.)
 - `components/forms/SidePanel.vue`, `components/forms/RelationCards.vue` — entry click handlers
 - `components/common/IssuesTable.vue` — row click
 - `views/SearchView.vue` — result click

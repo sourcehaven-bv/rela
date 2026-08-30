@@ -36,8 +36,15 @@ export function shouldDeferToBrowser(event: MouseEvent): boolean {
 // so that if that allowlist is ever loosened, the render layer does not
 // silently become an XSS sink.
 //
-// Requires exactly one leading slash: `//evil.com` is protocol-relative and
-// navigates off-origin, so a bare `startsWith('/')` is not sufficient.
+// Requires exactly one leading slash, and rejects a following slash OR
+// backslash: `//evil.com` is protocol-relative, and browsers normalise `\` to
+// `/` in URLs so `/\evil.com` resolves the same way. A bare
+// `startsWith('/')` admits both.
+//
+// Used on the one path where a server-supplied string reaches an href — the
+// list's column `link:` (`cellLink`). The other surfaces build their paths from
+// `entity.type`/`entity.id`, whose grammar is pinned by
+// internal/entity/id.go's ValidateID.
 export function safeInternalHref(path: string): boolean {
-  return /^\/(?!\/)/.test(path)
+  return /^\/(?![/\\])/.test(path)
 }

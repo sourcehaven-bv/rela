@@ -295,6 +295,11 @@ const showNoMatches = computed(
             :aria-selected="idx === highlightedIndex"
             @mouseenter="highlightedIndex = idx"
           >
+            <!-- The option's content renders in BOTH branches. Guarding only
+                 the link would leave an entity with no resolvable route as an
+                 empty, zero-height <li role="option">: invisible to the eye,
+                 still counted by the arrow-key highlight, and nameless to a
+                 screen reader. -->
             <RouterLink
               v-if="entityDetailHref(entity)"
               class="cmdk-option-link"
@@ -306,6 +311,11 @@ const showNoMatches = computed(
               <span class="cmdk-title">{{ entityLabel(entity) }}</span>
               <span class="cmdk-id">{{ entity.id }}</span>
             </RouterLink>
+            <span v-else class="cmdk-option-link">
+              <span class="cmdk-type">{{ entityTypeLabel(entity.type) }}</span>
+              <span class="cmdk-title">{{ entityLabel(entity) }}</span>
+              <span class="cmdk-id">{{ entity.id }}</span>
+            </span>
           </li>
         </ul>
       </div>

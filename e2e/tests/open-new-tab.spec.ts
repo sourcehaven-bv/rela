@@ -1,6 +1,7 @@
 import { test, expect } from './fixtures';
 import { ListPage } from '../pages/list.page';
 import { KanbanPage } from '../pages/kanban.page';
+import { EntityPage } from '../pages/entity.page';
 
 // TKT-3CSZRG. Navigable rows and cards used to be plain <div>/<tr> elements with
 // an @click calling router.push, so the browser had no link to act on:
@@ -57,6 +58,30 @@ test.describe('Open in a new tab', () => {
     await listPage.clickRow(0);
 
     await expect(appPage).toHaveURL(/\/entity\//);
+  });
+
+  test('cmd/ctrl-click on an entity-detail section table cell opens a background tab', async ({
+    appPage,
+  }) => {
+    // These cells were already real <a href> elements, but carried an
+    // unconditional @click.prevent that suppressed the browser's default on
+    // EVERY click — so cmd-click navigated in place. Exactly the bug this
+    // ticket exists to fix, in an anchor that already looked correct.
+    const detail = new EntityPage(appPage);
+    // The task view has the table-display section; TASK-001 implements FEAT-001.
+    await detail.navigateTo('/entity/task/TASK-001');
+
+    const cellLink = appPage.locator('.sections .data-table a[href]').first();
+    await expect(cellLink).toBeVisible();
+
+    const before = appPage.url();
+    const popupPromise = appPage.context().waitForEvent('page');
+    await cellLink.click({ modifiers: ['Meta'] });
+    const popup = await popupPromise;
+
+    await expect(popup).toHaveURL(/\/entity\//);
+    expect(appPage.url()).toBe(before);
+    await popup.close();
   });
 
   test('cmd/ctrl-click on a kanban card opens a background tab', async ({ appPage }) => {

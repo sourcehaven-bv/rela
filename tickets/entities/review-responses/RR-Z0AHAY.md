@@ -2,7 +2,9 @@
 id: RR-Z0AHAY
 type: review-response
 title: ID-encoding guarantee miscited; wantsNewTab misnamed; row tab-stops 0->N
+finding: 'Three items: the plan''s edge cases required testing entity IDs containing #/?//spaces/unicode, which internal/entity/id.go:134 makes impossible (ValidateID pins IDs to ^[A-Za-z0-9][A-Za-z0-9_-]*$), so the security reasoning cited encoding when the real guarantee is the grammar; wantsNewTab was misnamed since it also covers defaultPrevented, which means the opposite of ''open a tab''; and row tab stops go from 0 to N per page, a real interaction change with the existing j/k keyboard model.'
 severity: minor
+resolution: The helper is named shouldDeferToBrowser, with a comment explaining why (defaultPrevented means nothing should happen, not open a tab) and that callers use it only to skip their own push. The plan now cites entity/id.go's ValidateID as the path-safety guarantee instead of encoding, and names cellLink as the genuinely unconstrained input — which is what the new hostile-link tests cover. The 0-to-N tab-stop change is accepted deliberately (links should be reachable) with one anchor per row, not per cell; the row itself stays non-focusable as before.
 status: addressed
 ---
 

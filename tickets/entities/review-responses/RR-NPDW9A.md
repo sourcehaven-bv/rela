@@ -2,7 +2,9 @@
 id: RR-NPDW9A
 type: review-response
 title: Anchors inside RelationCards/Kanban drag sources break drag-reorder
+finding: 'Making RelationCards.vue:562/565 spans into anchors risks breaking drag-reorder: anchors are natively draggable, and unlike Kanban, RelationCards.onDragStart early-returns when !isOrderable, so a non-orderable list would get the browser''s default link-drag. The spans also have no .stop, so clicks already bubble to the draggable card.'
 severity: critical
+resolution: 'draggable="false" added to both RelationCards anchors. Kanban deliberately does NOT get it — there the card is both the anchor and the drag source, so the attribute would disable reordering; that reasoning is now a comment at the binding (see RR-WEJM54). Both drag surfaces verified: kanban.spec.ts 15/15 including ''drag updates the entity status'', relation-cards.spec.ts 12/12.'
 status: addressed
 ---
 

@@ -103,7 +103,7 @@ const dom = {
   // The option's navigation lives on an inner anchor (TKT-3CSZRG) so that
   // cmd/middle-click opens a tab; plain clicks still route in place.
   optionLinks: () =>
-    Array.from(document.querySelectorAll<HTMLAnchorElement>('.cmdk-option-link')),
+    Array.from(document.querySelectorAll<HTMLAnchorElement>('a.cmdk-option-link')),
   hint: () => document.querySelector<HTMLElement>('.cmdk-hint')?.textContent?.trim(),
   spinner: () => document.querySelector<HTMLElement>('.cmdk-spinner'),
 }
@@ -560,6 +560,22 @@ describe('CommandPaletteModal', () => {
 
       expect(routerPush).toHaveBeenCalledWith(`/entity/${entity.type}/${entity.id}`)
       expect(wrapper.emitted('close')).toHaveLength(1)
+    })
+
+    it('still renders the option text when there is no resolvable href', async () => {
+      // Guarding only the link would leave an empty, zero-height <li
+      // role="option">: invisible, still counted by the arrow-key highlight,
+      // and nameless to a screen reader — worse than the inert row it replaced.
+      const entity = makeEntity({ type: '' })
+      searchSpy.mockResolvedValueOnce(listResponse([entity]))
+      factory()
+      await typeQuery('xx')
+
+      expect(optionLinks()).toHaveLength(0)
+      const option = options()[0]
+      expect(option).toBeTruthy()
+      expect(option.textContent).toContain(entity.id)
+      expect(option.querySelector('.cmdk-option-link')).not.toBeNull()
     })
 
     it('does not navigate when entity has no type (empty href)', async () => {

@@ -14,6 +14,7 @@ import { toggleCheckboxInSource } from '@/utils/checkboxToggle'
 import type { Command } from '@/types'
 import { getEditFormId } from '@/types'
 import { entityDetailHref } from '@/utils/entityRoute'
+import { shouldDeferToBrowser } from '@/utils/openIntent'
 import { computeActionAllowed } from '@/utils/affordancesWarning'
 import { isInputFocused } from '@/utils/dom'
 import { isAnyModalOpen } from '@/composables/modalStack'
@@ -470,6 +471,21 @@ function navigateToEntity(entity: { id: string; type: string }, cellLink?: strin
   const path = entityDetailHref(entity, { cellLink })
   if (!path) return
   router.push(path)
+}
+
+// Click handler for the section-table cell anchors. Those are real <a href>
+// elements, so a modifier or middle click must reach the BROWSER — it is what
+// opens the new tab. Only a plain left-click is ours to intercept, and only
+// then do we preventDefault and route in-SPA. An unconditional `.prevent` here
+// suppressed cmd/ctrl/shift/middle clicks too, which was this ticket's own bug.
+function onCellLinkClick(
+  event: MouseEvent,
+  entity: { id: string; type: string },
+  cellLink?: string,
+) {
+  if (shouldDeferToBrowser(event)) return
+  event.preventDefault()
+  navigateToEntity(entity, cellLink)
 }
 
 function navigateToEdit(formId: string, entityId: string) {
@@ -1179,8 +1195,9 @@ watch(
                         <a
                           v-if="cell.link"
                           :href="cell.link"
-                          @click.prevent="
-                            navigateToEntity(
+                          @click="
+                            onCellLinkClick(
+                              $event,
                               {
                                 id: cell.entityId || row.entityId,
                                 type: cell.entityType || row.entityType,
@@ -1242,8 +1259,9 @@ watch(
                     <a
                       v-if="cell.link"
                       :href="cell.link"
-                      @click.prevent="
-                        navigateToEntity(
+                      @click="
+                        onCellLinkClick(
+                          $event,
                           {
                             id: cell.entityId || row.entityId,
                             type: cell.entityType || row.entityType,
@@ -1584,7 +1602,9 @@ watch(
   align-items: center;
   gap: var(--space-sm);
   margin-bottom: 12px;
-  cursor: pointer;
+  /* No cursor: pointer — the header is no longer clickable as a whole; the
+     pointer comes from .card-header-link, so the padding beside it must not
+     advertise a click that does nothing. */
 }
 
 .content-card .card-header:hover .entity-title {

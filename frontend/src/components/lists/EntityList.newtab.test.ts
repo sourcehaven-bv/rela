@@ -111,7 +111,10 @@ describe('EntityList row links (new-tab affordance)', () => {
     const href = wrapper.find('.entity-row .row-link').attributes('href') ?? ''
     expect(href).toContain('/entity/ticket/TKT-1')
     expect(href).toContain(`from=${listId}`)
-    expect(href).toContain(`scope=list%3A${listId}`)
+    // Encoding-agnostic: the test stub and vue-router disagree on whether `:`
+    // is percent-encoded, and the fact under test is that the scope is CARRIED,
+    // not how it is spelled. open-new-tab.spec.ts pins the real encoding.
+    expect(href).toMatch(new RegExp(`scope=list(:|%3A)${listId}`))
   })
 
   it('a plain left-click still navigates in-SPA', async () => {

@@ -586,6 +586,13 @@ function createNew() {
         </div>
 
         <div class="column-cards">
+          <!-- The card is BOTH the link and the drag source. Deliberately no
+               draggable="false" here (unlike RelationCards, RR-NPDW9A): that
+               attribute is for an anchor nested INSIDE a drag source, and
+               setting it on the drag source itself would disable reordering.
+               onDragStart sets dataTransfer unconditionally, so the native
+               link-drag is overridden in both the draggable and non-draggable
+               branches. -->
           <RouterLink
             v-for="entity in entitiesByColumn[column.value]"
             :key="entity.id"

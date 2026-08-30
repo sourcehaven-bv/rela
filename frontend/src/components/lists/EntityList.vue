@@ -552,7 +552,7 @@ function entityTarget(entity: Entity): RouteLocationRaw | undefined {
 // it cannot be an anchor; the link affordance comes from the stretched
 // .row-link in the first cell, which is what cmd/middle/right-click act on.
 function navigateToEntity(entity: Entity) {
-  const target = entityTarget(entity)
+  const target = rowTargets.value.get(entity.id) ?? entityTarget(entity)
   if (!target) return
   router.push(target)
 }
@@ -564,6 +564,20 @@ function onRowClick(entity: Entity, event: MouseEvent) {
   if (shouldDeferToBrowser(event)) return
   navigateToEntity(entity)
 }
+
+// Row targets, computed ONCE per entity rather than per template reference
+// (RR-SYFX1B -- the same reason columnWidgets below is per-column, not
+// per-cell). entityTarget walks route.query, maps sortSpecs and scans columns,
+// and the template reads it twice per row (the v-else-if and the :to), so at 25
+// rows that was 50 traversals per render, re-running on every reactive tick
+// including hover-driven selectedIndex changes.
+const rowTargets = computed(() => {
+  const byId = new Map<string, RouteLocationRaw | undefined>()
+  for (const entity of entities.value) {
+    byId.set(entity.id, entityTarget(entity))
+  }
+  return byId
+})
 
 // Widget resolution for property cells, keyed by column property name and
 // computed ONCE per column rather than per cell (RR-UD2A -- the same reason
@@ -915,9 +929,9 @@ watch(searchQuery, () => {
                  interactive content — so the link wraps the title, not the
                  card. Stretched over the card by .mobile-card-title::after. -->
             <RouterLink
-              v-if="entityTarget(entity)"
+              v-if="rowTargets.get(entity.id)"
               class="mobile-card-title text-wrap-anywhere text-clamp-2"
-              :to="entityTarget(entity)!"
+              :to="rowTargets.get(entity.id)!"
             >
               {{ getFormattedCellValue(entity, listConfig.columns[0]) }}
             </RouterLink>
@@ -1049,9 +1063,9 @@ watch(searchQuery, () => {
                    cmd/middle/right-click and a hover URL preview. It wraps real
                    text (not an empty box) so it has an accessible name. -->
               <RouterLink
-                v-else-if="colIndex === 0 && entityTarget(entity)"
+                v-else-if="colIndex === 0 && rowTargets.get(entity.id)"
                 class="row-link"
-                :to="entityTarget(entity)!"
+                :to="rowTargets.get(entity.id)!"
               >
                 <component
                   :is="resolveCell(entity, column)!.component"

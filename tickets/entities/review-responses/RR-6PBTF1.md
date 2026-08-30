@@ -3,6 +3,7 @@ id: RR-6PBTF1
 type: review-response
 title: Title-cell href silently drops the query/scope context router.push builds
 severity: critical
+resolution: 'Made mandatory rather than optional. Each surface now exposes one entityTarget()/cardTarget()/resultTarget() returning path AND query, consumed by both router.push and the link''s :to. Pinned by a test that derives the expectation from the actual push payload rather than a literal, so a new query param cannot make the two diverge silently. Mutation-verified: replacing :to with a bare /entity/type/id fails the two scope tests. Confirmed live in a browser — the popup URL matches the href character-for-character including from= and scope=.'
 status: addressed
 ---
 

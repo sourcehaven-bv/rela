@@ -50,6 +50,10 @@ describe('safeInternalHref', () => {
     expect(safeInternalHref('//evil.com')).toBe(false)
   })
 
+  it('rejects the backslash variant, which browsers normalise to //', () => {
+    expect(safeInternalHref('/\\evil.com')).toBe(false)
+  })
+
   it.each(['javascript:alert(1)', 'JavaScript:alert(1)', 'data:text/html,x', 'https://evil.com', '', 'entity/x'])(
     'rejects %s',
     (path) => {

@@ -3,6 +3,7 @@ id: RR-I4WQPX
 type: review-response
 title: <tr> compromise is a half-feature; justification misstates DOM event behaviour
 severity: critical
+resolution: 'Option (a) chosen and approved by the user: a stretched-link overlay (.row-link::after { inset: 0 }) makes the whole row cmd-clickable, with .select-cell/.actions-cell lifted to z-index 1. The incorrect DOM-event claim was deleted from the plan. Accepted trade-off, explicitly approved: text selection within a row is not possible — documented in a code comment and in docs/data-entry.md. Verified in a real browser that the delete button and checkbox remain clickable (crud.spec.ts delete-from-list and cancel both pass).'
 status: addressed
 ---
 

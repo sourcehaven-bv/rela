@@ -1294,6 +1294,19 @@ views:
           - property: priority
             render: input
         empty_message: "No implemented features"
+      # TKT-3CSZRG: a table-display section whose first column carries a
+      # link:. Its cells render real anchors, and their click handler must
+      # defer modifier/middle clicks to the browser instead of preventing
+      # the default. Without this fixture the entity-detail table display had
+      # no e2e coverage at all, which is how an unconditional @click.prevent
+      # survived on those anchors.
+      - heading: "Linked features"
+        source: implemented
+        display: table
+        columns:
+          - property: title
+            link: detail
+          - property: status
 
 kanbans:
   feature-board:

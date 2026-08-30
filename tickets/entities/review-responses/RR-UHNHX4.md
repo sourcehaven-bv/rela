@@ -2,7 +2,9 @@
 id: RR-UHNHX4
 type: review-response
 title: IssuesTable a11y conversion under-specified; mobile variant and palette ARIA missed
+finding: IssuesTable's a11y conversion was under-specified and the MOBILE variant was missed — both the desktop cell (:100-109) and the mobile card (:170-178) use the identical role=button + tabindex + keydown.enter + keydown.space.prevent pattern, but the scope table listed only 'entity-title cell', singular. Separately, CommandPaletteModal's <li role=option> sits in a role=listbox driven by aria-activedescendant, so a focusable anchor inside it breaks the roving-focus model.
 severity: significant
+resolution: Both IssuesTable variants converted to RouterLink with role/tabindex/both keydown handlers removed; entity-less rows (canNavigate false) render a plain span with no role. Space no longer activates, which is correct link semantics and restores scroll-on-space. The palette anchor got tabindex=-1 so it is not a tab stop and aria-activedescendant roving focus is preserved; palette keyboard tests (36) all pass. The unused useRouter import in IssuesTable was removed — with real links the component needs no router at all.
 status: addressed
 ---
 

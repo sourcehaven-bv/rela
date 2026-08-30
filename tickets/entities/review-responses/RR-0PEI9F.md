@@ -2,7 +2,9 @@
 id: RR-0PEI9F
 type: review-response
 title: 'link: security prose misplaces the protection; startsWith(''/'') admits //evil.com'
+finding: 'The plan claimed column link: values become a new javascript: XSS sink. Verified false: resolveLinkTarget is a closed allowlist over ''detail'' and ''document/*'' in BOTH the Go copy (internal/dataentry/views_handler.go:713-725) and the TS mirror (EntityList.vue:475-483); everything else returns empty. Separately, the stated guard startsWith(''/'') admits protocol-relative //evil.com.'
 severity: significant
+resolution: 'Security prose corrected — the plan now records this as integrity/defence-in-depth, explicitly NOT confidentiality, per CLAUDE.md''s ''write down which of the two you mean''. Predicate tightened to /^\/(?![/\\])/ (also rejecting the backslash variant, RR-5Z83S0) and wired into EntityList.entityTarget, the one path where a server-supplied cellLink reaches an href. The allowlist itself is now pinned on both sides: a new Go test (internal/dataentry/link_target_test.go) asserts 13 hostile inputs resolve to empty, and TS tests assert no hostile link: value is ever bound as an href.'
 status: addressed
 ---
 
