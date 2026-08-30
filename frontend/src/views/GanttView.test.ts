@@ -152,6 +152,25 @@ describe('GanttView fetch policy', () => {
     w.unmount()
   })
 
+  it('tree name opens the entity; the bar drills', async () => {
+    getGanttMock.mockResolvedValue(forest(false))
+    const w = mountGantt()
+    await flushPromises()
+    routerPush.mockClear()
+
+    // Name in the tree column → entity page, drill path untouched.
+    await w.find('[data-node-id="A"] .tname').trigger('click')
+    expect(routerPush).toHaveBeenCalledWith('/entity/project/A')
+    expect(routeQuery.value.path).toBeUndefined()
+
+    // Bar in the chart → drill.
+    routerPush.mockClear()
+    await w.find('[data-node-id="A"] .bar').trigger('click')
+    await flushPromises()
+    expect(routeQuery.value.path).toBe('A')
+    w.unmount()
+  })
+
   it('shows the fetch error instead of an empty chart', async () => {
     getGanttMock.mockRejectedValue(new Error('boom'))
     const w = mountGantt()

@@ -143,14 +143,19 @@ const todayDay = computed(() => {
   )
 })
 
+/** openEntity navigates to the node's entity page — the tree-column name's
+ * click, and the fallback for chart clicks that cannot drill. */
+function openEntity(node: GanttNode) {
+  router.push(`/entity/${node.type}/${node.id}`)
+}
+
 function drill(node: GanttNode) {
   // The drilled root's own row (always the top of a drilled view) cannot
-  // drill further into itself — clicking it opens the entity page instead,
-  // exactly like a leaf. (Appending its id again would stack the breadcrumb
-  // with the same node forever.)
+  // drill further into itself, and a leaf has nothing to drill into —
+  // both fall back to the entity page rather than a dead click.
   const atDrilledRoot = drillPath.value[drillPath.value.length - 1] === node.id
   if (atDrilledRoot || (!node.children?.length && !node.has_more_children)) {
-    router.push(`/entity/${node.type}/${node.id}`)
+    openEntity(node)
     return
   }
   const titles = new Map(crumbTitles.value)
@@ -437,7 +442,7 @@ const footerHtml = computed(() =>
             >
               {{ isRowExpanded(row, defaultDepth, expanded) ? '▾' : '▸' }}
             </button>
-            <button class="tname" :title="row.node.id" @click="drill(row.node)">
+            <button class="tname" :title="row.node.id" @click="openEntity(row.node)">
               {{ row.node.title || row.node.id }}
             </button>
             <span class="kind">{{ row.node.type }}</span>
