@@ -46,10 +46,10 @@ export function dayToDate(day: number): Date {
  */
 export function barSpan(node: GanttNode): DaySpan {
   const s = [parseDay(node.planned?.start), parseDay(node.rolled?.start)].filter(
-    (v): v is number => v !== null,
+    (v): v is number => v !== null
   )
   const e = [parseDay(node.planned?.end), parseDay(node.rolled?.end)].filter(
-    (v): v is number => v !== null,
+    (v): v is number => v !== null
   )
   return {
     start: s.length ? Math.min(...s) : null,
@@ -72,10 +72,47 @@ export function forestSpan(roots: GanttNode[]): { start: number; end: number } |
   return { start: start - pad, end: end + pad }
 }
 
-/** pct positions a day on the axis as a 0-100 percentage. */
+/** pct positions a day on the axis as a 0-100 percentage, linearly in days.
+ * The VIEW renders through scaleFor instead (equal-width period columns);
+ * this stays as the fallback when no ticks exist. */
 export function pct(day: number, axis: { start: number; end: number }): number {
   const span = Math.max(axis.end - axis.start, 1)
   return ((day - axis.start) / span) * 100
+}
+
+/**
+ * scaleFor builds the chart's horizontal scale: every tick period renders at
+ * EQUAL width (the calendar-grid convention — a February column as wide as
+ * an August one), with days interpolated linearly INSIDE each period.
+ *
+ * Bars, gridlines, markers and the axis labels all position through this one
+ * function, so they cannot drift apart: a purely day-linear scale made month
+ * columns visibly uneven (28 vs 31 days) and let CSS background-position
+ * round differently from element `left`.
+ */
+export function scaleFor(
+  axis: { start: number; end: number },
+  ticks: GanttTick[]
+): (day: number) => number {
+  // Segment boundaries: axis start, each tick, axis end (exclusive).
+  const bounds: number[] = [axis.start]
+  for (const t of ticks) {
+    if (t.day > bounds[bounds.length - 1]) bounds.push(t.day)
+  }
+  const end = axis.end + 1
+  if (end > bounds[bounds.length - 1]) bounds.push(end)
+  const segments = bounds.length - 1
+  if (segments < 1) return (day) => pct(day, axis)
+
+  return (day: number): number => {
+    if (day <= bounds[0]) return 0
+    if (day >= bounds[segments]) return 100
+    let i = 0
+    while (i < segments - 1 && day >= bounds[i + 1]) i++
+    const segStart = bounds[i]
+    const segSpan = Math.max(bounds[i + 1] - segStart, 1)
+    return ((i + (day - segStart) / segSpan) / segments) * 100
+  }
 }
 
 /** An axis tick: position day plus a short label. */
@@ -123,17 +160,45 @@ export function ticksFor(axis: { start: number; end: number }, zoom: GanttZoom):
 
   const spanDays = axis.end - axis.start + 1
   const periodDays = zoom === 'quarter' ? 91 : zoom === 'month' ? 30 : 7
-  const stride = Math.max(1, Math.ceil(spanDays / periodDays / MAX_TICKS))
+  let stride = Math.max(1, Math.ceil(spanDays / periodDays / MAX_TICKS))
+  // Month/quarter strides are rounded UP to a divisor of the year (12 or 4)
+  // and anchored to the CALENDAR index, not the iteration index: a stride
+  // that skips freely plus a force-emitted January produced uneven columns
+  // (Oct→Dec two months wide, Dec→Jan one) with months silently missing.
+  // Anchored, every January (or Q1) lands on the stride by construction and
+  // all intervals are uniform.
+  if (zoom === 'month') {
+    for (const d of [1, 2, 3, 4, 6, 12]) {
+      if (d >= stride) {
+        stride = d
+        break
+      }
+    }
+  } else if (zoom === 'quarter') {
+    for (const d of [1, 2, 4]) {
+      if (d >= stride) {
+        stride = d
+        break
+      }
+    }
+  }
 
   const endMs = (axis.end + 1) * MS_PER_DAY
   let guard = 0
   let i = 0
   while (cur.getTime() < endMs && guard++ < 800) {
     const day = Math.floor(cur.getTime() / MS_PER_DAY)
-    // January is always emitted at month zoom: it carries the year, and a
-    // stride that happened to skip it would leave a multi-year axis with no
-    // year anchor at all.
-    const emit = i % stride === 0 || (zoom === 'month' && cur.getUTCMonth() === 0)
+    // Calendar-anchored emission (see the stride note above): months stride
+    // on the month-of-year index, quarters on the quarter index, weeks on
+    // the iteration index (they have no calendar anchor worth preserving).
+    let emit: boolean
+    if (zoom === 'month') {
+      emit = cur.getUTCMonth() % stride === 0
+    } else if (zoom === 'quarter') {
+      emit = Math.floor(cur.getUTCMonth() / 3) % stride === 0
+    } else {
+      emit = i % stride === 0
+    }
     i++
     if (zoom === 'quarter') {
       if (emit) {
@@ -168,7 +233,7 @@ export function ticksFor(axis: { start: number; end: number }, zoom: GanttZoom):
 export function flattenRows(
   roots: GanttNode[],
   defaultDepth: number,
-  expanded: ReadonlySet<string>,
+  expanded: ReadonlySet<string>
 ): GanttRow[] {
   const rows: GanttRow[] = []
   const walk = (nodes: GanttNode[], depth: number, indent: number) => {
@@ -198,7 +263,7 @@ export function findNode(roots: GanttNode[], id: string): GanttNode | null {
 export function isRowExpanded(
   row: GanttRow,
   defaultDepth: number,
-  expanded: ReadonlySet<string>,
+  expanded: ReadonlySet<string>
 ): boolean {
   return row.indent + 1 < defaultDepth || expanded.has(row.node.id)
 }

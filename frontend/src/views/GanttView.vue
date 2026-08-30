@@ -28,7 +28,7 @@ import {
   forestSpan,
   isRowExpanded,
   parseDay,
-  pct,
+  scaleFor,
   ticksFor,
   type GanttZoom,
 } from '@/utils/ganttLayout'
@@ -128,6 +128,11 @@ const crumbs = computed<{ id: string; title: string }[]>(() => {
 const axis = computed(() => forestSpan(currentRoots.value))
 const ticks = computed(() => (axis.value ? ticksFor(axis.value, zoom.value) : []))
 
+/** The shared horizontal scale: equal-width period columns, days
+ * interpolated inside each (see scaleFor). Every positioned element —
+ * bars, gridlines, ticks, markers — goes through it, so nothing drifts. */
+const scale = computed(() => (axis.value ? scaleFor(axis.value, ticks.value) : null))
+
 /**
  * Gridlines as ONE shared multi-background style instead of per-row spans:
  * rows × ticks gridline elements dominated the DOM (34k of 52k nodes on a
@@ -141,7 +146,7 @@ const gridStyle = computed(() => {
     backgroundImage: ticks.value
       .map(() => 'linear-gradient(to right, var(--border-color) 1px, transparent 1px)')
       .join(', '),
-    backgroundPosition: ticks.value.map((t) => `${pct(t.day, a)}% 0`).join(', '),
+    backgroundPosition: ticks.value.map((t) => `${scale.value!(t.day)}% 0`).join(', '),
     backgroundSize: '1px 100%',
     backgroundRepeat: 'no-repeat',
   }
@@ -199,11 +204,11 @@ function toggleExpand(node: GanttNode) {
 
 /** Bar geometry for one row, all values 0-100 percentages of the axis. */
 function barStyle(node: GanttNode) {
-  const a = axis.value
+  const pos = scale.value
   const span = barSpan(node)
-  if (!a || span.start === null || span.end === null) return null
-  const left = Math.max(0, pct(span.start, a))
-  const width = Math.max(Math.min(100, pct(span.end, a)) - left, 0.6)
+  if (!pos || span.start === null || span.end === null) return null
+  const left = Math.max(0, pos(span.start))
+  const width = Math.max(Math.min(100, pos(span.end)) - left, 0.6)
   return { left: `${left}%`, width: `${width}%` }
 }
 
@@ -216,49 +221,51 @@ function barStyle(node: GanttNode) {
  * on the row background — the row is the label's own clean strip.
  */
 function labelStyle(node: GanttNode) {
-  const a = axis.value
+  const pos = scale.value
   const span = barSpan(node)
-  if (!a || span.start === null || span.end === null) return null
-  const startPct = Math.max(0, pct(span.start, a))
+  if (!pos || span.start === null || span.end === null) return null
+  const startPct = Math.max(0, pos(span.start))
   if (startPct <= 60) return { left: `${startPct}%` }
-  return { right: `${100 - Math.min(100, pct(span.end, a))}%` }
+  return { right: `${100 - Math.min(100, pos(span.end))}%` }
 }
 
 /** The planned window inset, relative to the BAR (not the axis). */
 function plannedStyle(node: GanttNode) {
+  const pos = scale.value
   const span = barSpan(node)
   const ps = parseDay(node.planned?.start)
   const pe = parseDay(node.planned?.end)
-  if (span.start === null || span.end === null || ps === null || pe === null) return null
+  if (!pos || span.start === null || span.end === null || ps === null || pe === null) return null
   if (!node.breach?.before && !node.breach?.after) return null
-  const total = Math.max(span.end - span.start, 1)
+  const barLeft = pos(span.start)
+  const barW = Math.max(pos(span.end) - barLeft, 0.001)
   return {
-    left: `${((ps - span.start) / total) * 100}%`,
-    width: `${((pe - ps) / total) * 100}%`,
+    left: `${((pos(ps) - barLeft) / barW) * 100}%`,
+    width: `${((pos(pe) - pos(ps)) / barW) * 100}%`,
   }
 }
 
 /** Overrun (dotted amber) regions inside the bar, one per breach direction. */
 function overrunStyles(node: GanttNode) {
+  const pos = scale.value
   const span = barSpan(node)
   const ps = parseDay(node.planned?.start)
   const pe = parseDay(node.planned?.end)
-  if (span.start === null || span.end === null) return []
-  const total = Math.max(span.end - span.start, 1)
+  if (!pos || span.start === null || span.end === null) return []
+  const barLeft = pos(span.start)
+  const barW = Math.max(pos(span.end) - barLeft, 0.001)
+  const rel = (d: number) => ((pos(d) - barLeft) / barW) * 100
   const out: { cls: string; style: Record<string, string> }[] = []
   if (node.breach?.before && ps !== null) {
     out.push({
       cls: 'overrun left',
-      style: { left: '0%', width: `${((ps - span.start) / total) * 100}%` },
+      style: { left: '0%', width: `${rel(ps)}%` },
     })
   }
   if (node.breach?.after && pe !== null) {
     out.push({
       cls: 'overrun right',
-      style: {
-        left: `${((pe - span.start) / total) * 100}%`,
-        width: `${((span.end - pe) / total) * 100}%`,
-      },
+      style: { left: `${rel(pe)}%`, width: `${100 - rel(pe)}%` },
     })
   }
   return out
@@ -266,20 +273,20 @@ function overrunStyles(node: GanttNode) {
 
 /** Committed marker + past-commit rule, axis-relative. */
 function committedStyle(node: GanttNode) {
-  const a = axis.value
+  const pos = scale.value
   const c = parseDay(node.committed)
-  if (!a || c === null) return null
-  return { left: `${pct(c, a)}%` }
+  if (!pos || c === null) return null
+  return { left: `${pos(c)}%` }
 }
 
 function pastCommitStyle(node: GanttNode) {
-  const a = axis.value
+  const pos = scale.value
   const c = parseDay(node.committed)
   const span = barSpan(node)
-  if (!a || c === null || span.end === null || span.end <= c) return null
+  if (!pos || c === null || span.end === null || span.end <= c) return null
   return {
-    left: `${pct(c, a)}%`,
-    width: `${Math.min(100, pct(span.end, a)) - pct(c, a)}%`,
+    left: `${pos(c)}%`,
+    width: `${Math.min(100, pos(span.end)) - pos(c)}%`,
   }
 }
 
@@ -413,14 +420,14 @@ const footerHtml = computed(() =>
               v-for="t in ticks"
               :key="t.day"
               class="tick"
-              :style="{ left: pct(t.day, axis) + '%' }"
+              :style="{ left: scale!(t.day) + '%' }"
             >
               {{ t.label }}
             </span>
             <span
               v-if="todayDay !== null && todayDay >= axis.start && todayDay <= axis.end"
               class="today-flag"
-              :style="{ left: pct(todayDay, axis) + '%' }"
+              :style="{ left: scale!(todayDay) + '%' }"
             />
           </div>
         </div>
@@ -504,7 +511,7 @@ const footerHtml = computed(() =>
             <span
               v-if="todayDay !== null && todayDay >= axis.start && todayDay <= axis.end"
               class="today-line"
-              :style="{ left: pct(todayDay, axis) + '%' }"
+              :style="{ left: scale!(todayDay) + '%' }"
             />
           </div>
         </div>
