@@ -26,7 +26,7 @@ status: done
 ## Manual Verification
 
 - [x] Feature manually tested end-to-end (`go test ./internal/...` green — the acceptance proof for a behavior-preserving refactor)
-- [x] Each acceptance criterion verified (docRuntime at 31 methods, verified by count)
+- [x] Each acceptance criterion verified (docRuntime at 28 methods after rebase, verified by count)
 - [x] ~~Edge cases manually verified~~ (N/A: the end-to-end screenshot replay needs Chrome + a built SPA and was not run; ApplySeed/SeedOp are unchanged in shape and the moved bodies are byte-identical apart from the receiver)
 
 ## Quality

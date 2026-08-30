@@ -50,7 +50,9 @@ than the whole runtime.
 ## Preventive, not a gate fix
 
 On `develop` `docRuntime` is at 36 — under the 40-method line, carrying no
-`//plimsoll:max-*` directive. This ratchets to 31 for headroom; the type is a
+`//plimsoll:max-*` directive. This PR removes 5 methods (36 → 31 measured
+against develop at the time it was written); rebased onto the merged seed PR
+(#1475, −3) the type now sits at **28**. The type is a
 façade over the `doc.*` Lua binding table (33 of 45 methods on the worlds branch
 are one-verb `luaX` callbacks), so it grows with the doc language.
 
@@ -60,7 +62,7 @@ seam (mechanical) and settles the final count.
 
 ## Done when
 
-- [x] `docRuntime` at 31 methods
+- [x] `docRuntime` at 28 methods (rebased after the seed PR merged; 36 − 5 Tier-B − 3 seed)
 - [x] `go build ./...` and `-tags postgres` clean
 - [x] `go test ./internal/...` passes
 - [x] `just arch-lint` OK

@@ -21,7 +21,7 @@ status: done
 
 ## Verification
 
-- [x] Method count independently verified: docRuntime at 31
+- [x] Method count independently verified: docRuntime at 28 (after rebase onto the merged seed PR)
 - [x] Fail-loud messages for nil capturer / nil apiClient verified byte-identical
 - [x] `seed func() []SeedOp` verified to read live ops — registration runs once before any island while ops accumulate during execution, so a captured slice would always be empty
 - [x] `luaFailer` confirmed in use at assert.go (consumer-side interface, not dead code)
