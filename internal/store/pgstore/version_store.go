@@ -32,7 +32,13 @@ type VersionStore struct {
 // service it injects; it reads the same pool the store queries, so the two never
 // diverge. Returns a fresh lightweight wrapper each call (it holds only the
 // shared handle). (The reconciliation sweep is separate — see StartVersionSweep.)
-func (s *Store) VersionStore() *VersionStore {
+//
+// Returns the [store.VersionService] INTERFACE rather than the concrete type so
+// the capability is satisfiable without importing this package (TKT-L3FNEN).
+// It is never nil here — the wrapper holds only a handle and cannot fail to
+// construct — but callers must still nil-check, because the interface admits
+// implementations that can.
+func (s *Store) VersionStore() store.VersionService {
 	return &VersionStore{db: s.db}
 }
 
