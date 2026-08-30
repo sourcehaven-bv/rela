@@ -323,7 +323,7 @@ func (a *App) scopedSortedEntities(
 	// over relevance ranking, same approach SearchView uses for filtering.
 	// Backend errors surface as HTTP 500 rather than rendering an empty list
 	// and pretending the search succeeded.
-	searchResult, err := a.freeTextIDsForType(ctx, queryGet(query, "q"), typeName)
+	searchResult, err := a.queries.freeTextIDsForType(ctx, queryGet(query, "q"), typeName)
 	if err != nil {
 		return nil, err
 	}
@@ -1533,7 +1533,7 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 	// executeQuery is read-gated (TKT-BA8BSX): only entities the
 	// request principal may read come back, and gate/load/search
 	// failures surface instead of silently truncating.
-	entities, err := a.executeQuery(r.Context(), query)
+	entities, err := a.queries.executeQuery(r.Context(), query)
 	if err != nil {
 		writeListPipelineError(w, r, err)
 		return

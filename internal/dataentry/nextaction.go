@@ -63,7 +63,7 @@ func (a *App) nextActionCandidates() nextaction.CandidateFunc {
 // SPA: a client-side fetch would be a second read surface to gate.
 func (a *App) nextActionOptions() nextaction.OptionFunc {
 	return func(ctx context.Context, query string, limit int) ([]nextaction.PickOption, error) {
-		entities, err := a.executeQuery(ctx, query)
+		entities, err := a.queries.executeQuery(ctx, query)
 		if err != nil {
 			return nil, fmt.Errorf("next-action pick_one query %q: %w", query, err)
 		}
@@ -104,7 +104,7 @@ func (a *App) nextActionOptions() nextaction.OptionFunc {
 // a type whose title is hidden by `visible:` would put the hidden value on
 // the wire — the BUG-R9EHKV leak class, through a new door.
 func (a *App) queryCandidates(ctx context.Context, query string) ([]nextaction.Candidate, error) {
-	entities, err := a.executeQuery(ctx, query)
+	entities, err := a.queries.executeQuery(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("next-action query %q: %w", query, err)
 	}

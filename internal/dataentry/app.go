@@ -113,7 +113,12 @@ const userPaletteFile = "palette.yaml"
 // /_theme export/import pair, and the /_settings + /_palette CRUD) moved to
 // appearanceHandler (TKT-8AJ1PM, 104 → 92).
 //
-//plimsoll:max-methods=92
+// The search-query pipeline (5 methods — executeQuery and its free-text
+// branch, the list `?q=` id-set helper, and the sort / property-filter passes
+// they share) moved to queryService, and the dead isRelationLinked was deleted
+// (TKT-SJ0LRS, 92 → 86).
+//
+//plimsoll:max-methods=86
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS
@@ -239,10 +244,15 @@ type App struct {
 	// Pure glue over the self-synchronized logo/palette/settings services
 	// — no writeMu.
 	appearance *appearanceHandler
-	templater  templating.Templater
-	cfgLoader  config.Loader
-	kv         state.KV
-	acl        acl.ACL
+	// queries owns the search-query pipeline: executeQuery (shared by
+	// /_search, the `_position` search scope and the next-action engine),
+	// the list endpoint's `?q=` id-set helper, and the sort / property-filter
+	// passes those share (TKT-SJ0LRS). Read-only; no writeMu.
+	queries   *queryService
+	templater templating.Templater
+	cfgLoader config.Loader
+	kv        state.KV
+	acl       acl.ACL
 
 	// attachmentRunner drives external scan/transform commands for uploads.
 	// nil out-of-box → uploads get native MIME validation only (Phase 2 wires
@@ -969,6 +979,11 @@ func NewApp(
 	// appearanceHandler owns the theme/settings/palette routes; wired after
 	// the logo/palette/settings services and viewReader it captures.
 	app.appearance = newAppearanceHandler(app)
+
+	// queryService owns the search-query pipeline. Its searcher and
+	// affordance handles are closures because tests reassign both after
+	// construction — see the type's doc comment.
+	app.queries = newQueryService(app)
 
 	// commandHandler owns the user-configured command surface. Its
 	// collaborators are narrow closures over App: the schema snapshot (command/

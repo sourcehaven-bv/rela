@@ -281,7 +281,7 @@ func TestSortEntitiesMulti(t *testing.T) {
 
 	t.Run("nil specs does nothing", func(t *testing.T) {
 		entities := makeEntities()
-		app.sortEntitiesMulti(entities, nil)
+		app.queries.sortEntitiesMulti(entities, nil)
 		if entities[0].ID != "E-003" {
 			t.Errorf("expected no reorder, got %s first", entities[0].ID)
 		}
@@ -289,7 +289,7 @@ func TestSortEntitiesMulti(t *testing.T) {
 
 	t.Run("empty specs does nothing", func(t *testing.T) {
 		entities := makeEntities()
-		app.sortEntitiesMulti(entities, []filter.SortSpec{})
+		app.queries.sortEntitiesMulti(entities, []filter.SortSpec{})
 		if entities[0].ID != "E-003" {
 			t.Errorf("expected no reorder, got %s first", entities[0].ID)
 		}
@@ -297,7 +297,7 @@ func TestSortEntitiesMulti(t *testing.T) {
 
 	t.Run("ascending sort", func(t *testing.T) {
 		entities := makeEntities()
-		app.sortEntitiesMulti(entities, []filter.SortSpec{{Property: "name", Direction: "asc"}})
+		app.queries.sortEntitiesMulti(entities, []filter.SortSpec{{Property: "name", Direction: "asc"}})
 		if entities[0].ID != "E-001" || entities[1].ID != "E-002" || entities[2].ID != "E-003" {
 			t.Errorf("expected Alice, Bob, Charlie; got %s, %s, %s",
 				entities[0].Properties["name"], entities[1].Properties["name"], entities[2].Properties["name"])
@@ -306,7 +306,7 @@ func TestSortEntitiesMulti(t *testing.T) {
 
 	t.Run("descending sort", func(t *testing.T) {
 		entities := makeEntities()
-		app.sortEntitiesMulti(entities, []filter.SortSpec{{Property: "name", Direction: "desc"}})
+		app.queries.sortEntitiesMulti(entities, []filter.SortSpec{{Property: "name", Direction: "desc"}})
 		if entities[0].ID != "E-003" || entities[1].ID != "E-002" || entities[2].ID != "E-001" {
 			t.Errorf("expected Charlie, Bob, Alice; got %s, %s, %s",
 				entities[0].Properties["name"], entities[1].Properties["name"], entities[2].Properties["name"])
@@ -320,7 +320,7 @@ func TestSortEntitiesMulti(t *testing.T) {
 			testutil.Entity("item").ID("E-002").Build(),
 			testutil.Entity("item").ID("E-003").With("name", "Alice").Build(),
 		}
-		app.sortEntitiesMulti(entities, []filter.SortSpec{{Property: "name", Direction: "asc"}})
+		app.queries.sortEntitiesMulti(entities, []filter.SortSpec{{Property: "name", Direction: "asc"}})
 		// With type-aware sorting, nil values sort to end
 		if entities[0].ID != "E-003" {
 			t.Errorf("expected Alice first, got %s", entities[0].ID)
@@ -748,67 +748,6 @@ func TestResolveRelationColumnValue(t *testing.T) {
 			t.Errorf("got %v, want empty slice", got)
 		}
 	})
-}
-
-func TestIsRelationLinked(t *testing.T) {
-	meta := &metamodel.Metamodel{
-		Relations: map[string]metamodel.RelationDef{
-			"assessedBy": {
-				Label:   "assessed by",
-				From:    []string{"annex_a_control"},
-				To:      []string{"iso_control_assessment"},
-				Inverse: &metamodel.InverseDef{ID: "assesses"},
-			},
-			"depends_on": {
-				Label: "depends on",
-				From:  []string{"ticket"},
-				To:    []string{"ticket"},
-			},
-		},
-	}
-	app := newAppFromParts(nil, meta, nil)
-
-	tests := []struct {
-		name     string
-		formRel  string
-		linkRel  string
-		expected bool
-	}{
-		{
-			name:     "direct match",
-			formRel:  "depends_on",
-			linkRel:  "depends_on",
-			expected: true,
-		},
-		{
-			name:     "inverse of link relation matches form relation",
-			formRel:  "assesses",
-			linkRel:  "assessedBy",
-			expected: true,
-		},
-		{
-			name:     "no match",
-			formRel:  "assesses",
-			linkRel:  "depends_on",
-			expected: false,
-		},
-		{
-			name:     "unknown relations",
-			formRel:  "unknown_a",
-			linkRel:  "unknown_b",
-			expected: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := app.isRelationLinked(tt.formRel, tt.linkRel)
-			if got != tt.expected {
-				t.Errorf("isRelationLinked(%q, %q) = %v, want %v",
-					tt.formRel, tt.linkRel, got, tt.expected)
-			}
-		})
-	}
 }
 
 func TestResolveFilterVariable(t *testing.T) {
