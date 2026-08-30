@@ -105,7 +105,18 @@ func (f *fakeReconciler) Reconcile(
 // store.VersionService is what produces a non-nil interface wrapping nil.
 type fakeNilVersionStore struct{ fakeStore }
 
-func (fakeNilVersionStore) VersionStore() *pgstore.VersionStore { return nil }
+// Returns a TYPED nil: a nil pointer boxed into store.VersionService, which is
+// a NON-nil interface. That is the only shape the guard must catch — a plain
+// `return nil` here would be an untyped nil and would prove nothing.
+//
+// This signature must track versionServiceProvider. It previously returned
+// *pgstore.VersionStore, and when the interface widened this fake silently
+// stopped satisfying it — the test kept compiling and passing while testing
+// the wrong branch entirely (TKT-L3FNEN).
+func (fakeNilVersionStore) VersionStore() store.VersionService {
+	var typedNil *pgstore.VersionStore
+	return typedNil
+}
 
 // fakeNilUserState returns (nil, nil): no handle, no error.
 type fakeNilUserState struct{ fakeStore }
@@ -206,14 +217,17 @@ dashboard:
 	want := store.DerivedObjectSpec{
 		Kind: store.DerivedQueryIndex, Type: "task", Properties: []string{"status"},
 	}
-	if !slices.ContainsFunc(f.desired, func(got store.DerivedObjectSpec) bool {
+	hasWanted := slices.ContainsFunc(f.desired, func(got store.DerivedObjectSpec) bool {
 		return got.Kind == want.Kind && got.Type == want.Type && slices.Equal(got.Properties, want.Properties)
-	}) {
+	})
+	if !hasWanted {
 		t.Fatalf("desired = %#v, missing %#v", f.desired, want)
 	}
-	if slices.ContainsFunc(f.specsPublished, func(got store.DerivedObjectSpec) bool {
+
+	leaked := slices.ContainsFunc(f.specsPublished, func(got store.DerivedObjectSpec) bool {
 		return got.Kind == store.DerivedQueryIndex
-	}) {
+	})
+	if leaked {
 		t.Fatalf("query specs leaked into unique-violation provider: %#v", f.specsPublished)
 	}
 }
@@ -293,6 +307,20 @@ func TestUserStateErrorYieldsUntypedNil(t *testing.T) {
 		t.Errorf("storeUserStateFor = %#v on error, want untyped nil", got)
 	}
 }
+
+// Pins the ALIAS decision (TKT-L3FNEN): pgstore.SweepConfig must stay
+// `= store.SweepConfig`, not become a named type.
+//
+// This has to live in THIS file, because proving it requires naming both
+// packages and backendneutral_postgres_test.go deliberately does not import
+// pgstore. With a named type these assignments would need explicit conversions
+// and the build would break here — which is the assertion. A runtime test
+// comparing a value to itself could not express that.
+var (
+	_ store.SweepConfig        = pgstore.SweepConfig{}
+	_ pgstore.SweepConfig      = store.SweepConfig{}
+	_ store.ProjectionProvider = pgstore.ProjectionProvider(nil)
+)
 
 // --- AC-2: pgstore still satisfies every widened interface ----------------
 

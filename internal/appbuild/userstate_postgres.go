@@ -41,11 +41,11 @@ func storeUserStateFor(st store.Store) userstate.Store {
 		slog.Warn("next-action state: store backend unavailable", "error", err)
 		return nil
 	}
-	if us == nil {
-		// Belt-and-braces alongside the error check: a provider that returns
-		// (nil, nil) must not be mistaken for a working handle. Cheap here,
-		// and the alternative is a nil-pointer panic on the first snooze.
-		slog.Warn("next-action state: store returned no backend and no error")
+	// userstate.Store is an interface, so `us == nil` alone cannot see a nil
+	// pointer boxed inside it — a provider returning (typed-nil, nil) would
+	// otherwise be mistaken for a working handle and panic on the first snooze.
+	if guarded := nonNilCapability(us); guarded == nil {
+		slog.Warn("next-action state: store returned no usable backend and no error")
 		return nil
 	}
 	return us
