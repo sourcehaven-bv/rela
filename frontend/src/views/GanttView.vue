@@ -244,28 +244,6 @@ function overrunStyles(node: GanttNode) {
   return out
 }
 
-/** Peek segments: children drawn as a recessed strip inside the parent bar. */
-function peekStyles(node: GanttNode) {
-  const span = barSpan(node)
-  if (span.start === null || span.end === null || !node.children?.length) return []
-  const total = Math.max(span.end - span.start, 1)
-  const out: { deep: boolean; title: string; style: Record<string, string> }[] = []
-  for (const child of node.children) {
-    const cs = barSpan(child)
-    if (cs.start === null || cs.end === null) continue
-    const left = Math.max(0, ((cs.start - span.start) / total) * 100)
-    out.push({
-      deep: Boolean(child.children?.length),
-      title: child.title || child.id,
-      style: {
-        left: `${left}%`,
-        width: `${Math.max(1, Math.min(100 - left, ((cs.end - cs.start) / total) * 100))}%`,
-      },
-    })
-  }
-  return out
-}
-
 /** Committed marker + past-commit rule, axis-relative. */
 function committedStyle(node: GanttNode) {
   const a = axis.value
@@ -475,16 +453,6 @@ const footerHtml = computed(() =>
                   :class="o.cls"
                   :style="o.style"
                 />
-                <div v-if="peekStyles(row.node).length" class="peek-lane">
-                  <span
-                    v-for="(p, i) in peekStyles(row.node)"
-                    :key="i"
-                    class="peek"
-                    :class="{ deep: p.deep }"
-                    :style="p.style"
-                    :title="p.title"
-                  />
-                </div>
               </div>
               <button
                 v-if="labelStyle(row.node)"
@@ -530,7 +498,7 @@ const footerHtml = computed(() =>
 
       <div class="legend">
         <span><i class="sw leaf-sw" /> work item</span>
-        <span><i class="sw parent-sw" /> derived envelope</span>
+        <span><i class="sw parent-sw" /> project window</span>
         <span><i class="sw planned-sw" /> planned window</span>
         <span><i class="sw overrun-sw" /> ● outside planned window</span>
         <span><i class="sw commit-sw" /> ╱ past committed date</span>
@@ -712,7 +680,7 @@ const footerHtml = computed(() =>
    the bar fill or the breach textures. */
 .row {
   display: flex;
-  height: 62px;
+  height: 58px;
   border-bottom: 1px solid var(--border-color);
 }
 .row:hover {
@@ -817,10 +785,13 @@ const footerHtml = computed(() =>
   height: 18px;
   background: var(--accent-color);
 }
+/* A parent is ONE slim bar: its own planned window as the body, the
+   children's spill before/after it as the dotted regions. Child detail
+   lives one drill away, not in a second tier. */
 .bar.parent {
-  top: 26px;
-  height: 26px;
-  background: color-mix(in srgb, var(--accent-color) 8%, transparent);
+  top: 30px;
+  height: 18px;
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
   /* Solid accent border: a meaningful boundary needs ≥3:1 (WCAG 1.4.11);
      the earlier 50%-alpha border was ~1.6:1 against the card. */
   border: 1px solid var(--accent-color);
@@ -848,29 +819,10 @@ const footerHtml = computed(() =>
   background-size: 5px 5px;
   background-color: rgba(217, 119, 6, 0.14);
 }
-.peek-lane {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 11px;
-  background: color-mix(in srgb, var(--accent-color) 6%, transparent);
-  border-top: 1px solid color-mix(in srgb, var(--accent-color) 35%, transparent);
-}
-.peek {
-  position: absolute;
-  top: 2px;
-  height: 6px;
-  background: var(--accent-color);
-  border-radius: 2px;
-}
-.peek.deep {
-  opacity: 0.55;
-}
 .commit {
   position: absolute;
-  top: 24px;
-  height: 30px;
+  top: 27px;
+  height: 24px;
   width: 2px;
   background: var(--error-color);
   z-index: 2;
@@ -878,7 +830,7 @@ const footerHtml = computed(() =>
 /* Past-commit: red diagonal STRIPES on their own tier under the bar. */
 .past-commit {
   position: absolute;
-  top: 55px;
+  top: 51px;
   height: 4px;
   border-radius: 2px;
   background: repeating-linear-gradient(45deg, #dc2626 0 2px, rgba(220, 38, 38, 0.18) 2px 6px);
