@@ -5,7 +5,7 @@ title: Audit already-deleted relations when a cascade delete fails partway
 kind: enhancement
 priority: low
 effort: s
-status: ready
+status: backlog
 ---
 
 ## Description
