@@ -30,19 +30,20 @@ func (s *Server) registerTools() {
 	s.mcp.AddTool(toolAnalyzeValidations(), s.handleAnalyzeValidations)
 	s.mcp.AddTool(toolAnalyzeSchema(), s.handleAnalyzeSchema)
 
-	// Schema tools
-	s.mcp.AddTool(toolGetSchema(), s.handleGetSchema)
-	s.mcp.AddTool(toolGetMetamodel(), s.handleGetSchema)
-	s.mcp.AddTool(toolListEntityTypes(), s.handleListEntityTypes)
-	s.mcp.AddTool(toolListRelationTypes(), s.handleListRelationTypes)
+	// Schema tools (get_metamodel intentionally shares get_schema's
+	// handler — see toolGetMetamodel)
+	s.mcp.AddTool(toolGetSchema(), s.schemaRes.handleGetSchema)
+	s.mcp.AddTool(toolGetMetamodel(), s.schemaRes.handleGetSchema)
+	s.mcp.AddTool(toolListEntityTypes(), s.schemaRes.handleListEntityTypes)
+	s.mcp.AddTool(toolListRelationTypes(), s.schemaRes.handleListRelationTypes)
 
 	// Utility tools
 	s.mcp.AddTool(toolExport(), s.export.handleExport)
 
 	// Lua scripting tools
-	s.mcp.AddTool(toolLuaEval(), s.handleLuaEval)
-	s.mcp.AddTool(toolLuaRun(), s.handleLuaRun)
-	s.mcp.AddTool(toolLuaList(), s.handleLuaList)
+	s.mcp.AddTool(toolLuaEval(), s.lua.handleLuaEval)
+	s.mcp.AddTool(toolLuaRun(), s.lua.handleLuaRun)
+	s.mcp.AddTool(toolLuaList(), s.lua.handleLuaList)
 }
 
 // --- Tool Definitions ---
