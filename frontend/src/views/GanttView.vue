@@ -20,6 +20,7 @@ import { getGantt, getErrorMessage, type GanttNode, type GanttResponse } from '@
 import { useSchemaStore } from '@/stores/schema'
 import { renderMarkdown } from '@/utils/markdown'
 import { cardFieldLabel, type KanbanCardField } from '@/types/config'
+import { ICONS } from '@/utils/icons'
 import {
   barSpan,
   findNode,
@@ -473,10 +474,13 @@ const footerHtml = computed(() =>
               </button>
               <div
                 v-if="committedStyle(row.node)"
-                class="commit"
+                class="commit-marker"
                 :style="committedStyle(row.node)!"
                 :title="'Committed ' + row.node.committed"
-              />
+              >
+                <component :is="ICONS.flag" class="commit-flag" />
+                <span class="commit-line" />
+              </div>
               <div
                 v-if="pastCommitStyle(row.node)"
                 class="past-commit"
@@ -819,13 +823,30 @@ const footerHtml = computed(() =>
   background-size: 5px 5px;
   background-color: rgba(217, 119, 6, 0.14);
 }
-.commit {
+/* Committed-date marker: a flag at label height with its pole dropping
+   through the bar — a bare line was too easy to read as a gridline. */
+.commit-marker {
   position: absolute;
-  top: 27px;
-  height: 24px;
+  top: 2px;
+  bottom: 4px;
+  width: 0;
+  z-index: 2;
+}
+.commit-flag {
+  position: absolute;
+  top: 0;
+  left: -2px;
+  width: 15px;
+  height: 15px;
+  color: var(--error-color);
+}
+.commit-line {
+  position: absolute;
+  top: 13px;
+  bottom: 0;
+  left: 0;
   width: 2px;
   background: var(--error-color);
-  z-index: 2;
 }
 /* Past-commit: red diagonal STRIPES on their own tier under the bar. */
 .past-commit {
