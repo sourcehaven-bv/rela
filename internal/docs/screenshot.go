@@ -105,7 +105,7 @@ func (dr *docRuntime) luaScreenshot(ls *lua.LState) int {
 
 	spec := CaptureSpec{
 		ProjectDir: dr.projectDir,
-		Seed:       dr.seedOps,
+		Seed:       dr.seed.ops,
 		View:       fieldStringDefault(ls, tbl, "view", "form"),
 		Type:       fieldString(ls, tbl, "type"),
 		Entity:     fieldString(ls, tbl, "entity"),

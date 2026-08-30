@@ -90,13 +90,10 @@ type docRuntime struct {
 	// it through the Lua error channel (which would lose the type + line).
 	pending *BuildError
 
-	// seedCounts is a per-type auto-id counter for the seed's mintID, avoiding a
-	// full-store scan per create().
-	seedCounts map[string]int
-
-	// seedOps records every create/link so a screenshot{} island can replay them
-	// against a fresh fsstore temp project (DR-S2).
-	seedOps []SeedOp
+	// seed owns the doc.create()/doc.link() write side and the state that serves
+	// it (the auto-id counter and the replay op log). Read-side islands reach
+	// the recorded ops through seed.ops; nothing else may touch its internals.
+	seed *seedBindings
 
 	// capturer renders screenshot{} islands. nil ⇒ screenshot{} fails loud (the
 	// Tier-B browser dependency is injected only by the CLI, keeping core docs
@@ -199,6 +196,9 @@ func Build(ctx context.Context, src string, opts Options) (string, error) {
 		projectDir:   opts.ProjectDir,
 		outDir:       opts.OutDir,
 	}
+	// Wired after dr exists: the seeder reports failures through the runtime's
+	// pending-BuildError channel, which only dr can own.
+	dr.seed = &seedBindings{store: st, ctx: ctx, fail: dr.luaFail}
 
 	// A reader runtime gives us the sandbox (no io/os) plus rela.* read bindings;
 	// we layer the doc.* module (emit + resolvers + raw-store seed) on top. The
