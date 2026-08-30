@@ -128,6 +128,25 @@ const crumbs = computed<{ id: string; title: string }[]>(() => {
 const axis = computed(() => forestSpan(currentRoots.value))
 const ticks = computed(() => (axis.value ? ticksFor(axis.value, zoom.value) : []))
 
+/**
+ * Gridlines as ONE shared multi-background style instead of per-row spans:
+ * rows × ticks gridline elements dominated the DOM (34k of 52k nodes on a
+ * 2000-row view, measured) for purely decorative lines. A 1px gradient per
+ * tick, positioned by percentage, costs zero nodes.
+ */
+const gridStyle = computed(() => {
+  const a = axis.value
+  if (!a || !ticks.value.length) return {}
+  return {
+    backgroundImage: ticks.value
+      .map(() => 'linear-gradient(to right, var(--border-color) 1px, transparent 1px)')
+      .join(', '),
+    backgroundPosition: ticks.value.map((t) => `${pct(t.day, a)}% 0`).join(', '),
+    backgroundSize: '1px 100%',
+    backgroundRepeat: 'no-repeat',
+  }
+})
+
 const defaultDepth = computed(() => config.value?.default_depth ?? 2)
 const rows = computed(() =>
   axis.value ? flattenRows(currentRoots.value, defaultDepth.value, expanded.value) : [],
@@ -427,13 +446,7 @@ const footerHtml = computed(() =>
             <span class="kind">{{ row.node.type }}</span>
           </div>
 
-          <div class="cell-bars">
-            <span
-              v-for="t in ticks"
-              :key="t.day"
-              class="gridline"
-              :style="{ left: pct(t.day, axis) + '%' }"
-            />
+          <div class="cell-bars" :style="gridStyle">
             <template v-if="barStyle(row.node)">
               <div
                 class="bar"
@@ -745,13 +758,6 @@ const footerHtml = computed(() =>
   position: relative;
   min-width: 300px;
   overflow: hidden;
-}
-.gridline {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  border-left: 1px solid var(--border-color);
-  opacity: 0.5;
 }
 /* The label strip: body text color on the row background (≥12:1 in both
    themes), anchored above the bar's start. */
