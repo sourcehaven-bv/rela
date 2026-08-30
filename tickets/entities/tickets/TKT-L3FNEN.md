@@ -5,7 +5,7 @@ title: Promote ProjectionProvider, SweepConfig and VersionStore into internal/st
 kind: refactor
 priority: low
 effort: m
-status: backlog
+status: review
 ---
 
 ## Description
@@ -31,33 +31,33 @@ performs its own `st.(*Store)` assertion internally and returns a concrete
 
 ## Why this matters more than "residual coupling"
 
-Code review of TKT-415WA7 sharpened this. Naming pgstore types in the
-signatures is not merely aesthetic debt: **the half-migration opened a real
-nil-contract gap.**
+Code review of TKT-415WA7 sharpened this. Naming pgstore types in the signatures
+is not merely aesthetic debt: **the half-migration opened a real nil-contract
+gap.**
 
-Asserting `st.(*pgstore.Store)` bounded the reachable implementations to
-exactly one, whose `VersionStore()` is unconditionally non-nil. Widening
-discovery to an interface removed that bound while the return type stayed
+Asserting `st.(*pgstore.Store)` bounded the reachable implementations to exactly
+one, whose `VersionStore()` is unconditionally non-nil. Widening discovery to an
+interface removed that bound while the return type stayed
 `*pgstore.VersionStore` — so the code still *read* as though the old guarantee
 held. It did not. A nil pointer boxed into `store.VersionService` yields a
 NON-nil interface, so every downstream nil-check passes and the panic lands at
 write time.
 
 That specific hole is fixed in TKT-415WA7 with explicit nil guards plus
-`TestCapabilityPresentButHandleNilYieldsUntypedNil`. The lesson for THIS
-ticket: when the return types are finally promoted, the guards must stay —
-they are what makes the contract independent of any one implementation.
+`TestCapabilityPresentButHandleNilYieldsUntypedNil`. The lesson for THIS ticket:
+when the return types are finally promoted, the guards must stay — they are what
+makes the contract independent of any one implementation.
 
 ## Also in scope: stateKVFor was left out entirely
 
-`stateKVFor` still discovers via `pgstore.StateStoreFor(st)`, which
-type-asserts `*pgstore.Store` internally (`statekv.go:72`). So a second backend
-would get version sweeps, user state and derived schema by interface, then
-**silently fall back to node-local FSKV for state**. That partial adoption is
-worse than none: it degrades quietly at runtime instead of failing loudly at
-wiring, and `stateKVFor`'s own comment documents the consequence (an operator's
-logo upload lands on one node and every other keeps serving the old one, with
-no error anywhere).
+`stateKVFor` still discovers via `pgstore.StateStoreFor(st)`, which type-asserts
+`*pgstore.Store` internally (`statekv.go:72`). So a second backend would get
+version sweeps, user state and derived schema by interface, then **silently fall
+back to node-local FSKV for state**. That partial adoption is worse than none:
+it degrades quietly at runtime instead of failing loudly at wiring, and
+`stateKVFor`'s own comment documents the consequence (an operator's logo upload
+lands on one node and every other keeps serving the old one, with no error
+anywhere).
 
 Must be closed before a second backend ships, not merely before it is
 "complete".
