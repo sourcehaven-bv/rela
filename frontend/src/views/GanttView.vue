@@ -827,7 +827,7 @@ const footerHtml = computed(() =>
    through the bar — a bare line was too easy to read as a gridline. */
 .commit-marker {
   position: absolute;
-  top: 2px;
+  top: 9px;
   bottom: 4px;
   width: 0;
   z-index: 2;
@@ -835,17 +835,20 @@ const footerHtml = computed(() =>
 .commit-flag {
   position: absolute;
   top: 0;
-  left: -2px;
+  /* Offset so the icon's own pole (x=4 in the 24-unit viewBox) sits exactly
+     over the dropline — one continuous staff, not two misaligned strokes. */
+  left: -1.75px;
   width: 15px;
   height: 15px;
   color: var(--error-color);
+  stroke-width: 2.4; /* renders ~1.5px at this size, matching the line */
 }
 .commit-line {
   position: absolute;
-  top: 13px;
+  top: 12px;
   bottom: 0;
   left: 0;
-  width: 2px;
+  width: 1.5px;
   background: var(--error-color);
 }
 /* Past-commit: red diagonal STRIPES on their own tier under the bar. */
