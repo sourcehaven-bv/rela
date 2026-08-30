@@ -17,7 +17,7 @@
   a cross-subsystem grab-bag is not.
 - **No repository or transaction abstractions.** Depend directly on
   `store.Store`, `tracer.Tracer`, `search.Searcher`,
-  `entitymanager.EntityManager`. The old `repo` and `tx` layers are gone
+  `entitymanager.Manager`. The old `repo` and `tx` layers are gone
   — do not reintroduce equivalents. The one sanctioned transaction seam
   is `store.Store.Tx` itself (DEC-8UIL0): a contract ON the store with
   per-backend meaning (fs/mem: write mutex, mutual exclusion only;
