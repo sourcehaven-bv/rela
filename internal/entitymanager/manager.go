@@ -1028,7 +1028,13 @@ func (m *Manager) deleteEntityInTx(
 	// never deleted while a relation is left behind (issue #888).
 	res, delErr := tx.DeleteEntity(ctx, id, cascade)
 	if delErr != nil {
-		return nil, nil, fmt.Errorf("delete entity: %w", delErr)
+		// Propagate res AND the capture, not nil: a non-transactional backend
+		// reports the relations it DID remove before aborting, and the caller
+		// needs both to record them — audit AND version history (issue #929).
+		// Capturing only one leaves the two logs contradicting each other.
+		// res is nil on a transactional backend, which the caller handles.
+		return res, &cascadeCapture{incoming: incoming, outgoing: outgoing},
+			fmt.Errorf("delete entity: %w", delErr)
 	}
 	return res, &cascadeCapture{incoming: incoming, outgoing: outgoing}, nil
 }
@@ -1096,6 +1102,17 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 		return dErr
 	})
 	if txErr != nil {
+		// A non-transactional backend can fail partway through a cascade with
+		// some relation files already off disk, and it reports those in a
+		// partial result (issue #929). Audit them before propagating: the
+		// deletion really happened, and a log that omits it is a log that
+		// denies the system's actual state.
+		//
+		// Same label and same emitter as the success path below, so a partial
+		// and a complete cascade are indistinguishable in the log except by
+		// how many rows they produced. No delete-entity record: the entity
+		// survived, and claiming otherwise would be the opposite error.
+		m.recordPartialCascade(ctx, id, res, captured)
 		return nil, txErr
 	}
 
@@ -1147,6 +1164,57 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 		DeletedEntities:  []*entity.Entity{current},
 		DeletedRelations: res.DeletedRelations,
 	}, nil
+}
+
+// recordPartialCascade records the relations a FAILED cascade delete had
+// already removed from disk, so BOTH logs reflect what genuinely happened
+// rather than nothing at all (TKT-A23L87 / issue #929).
+//
+// Audit and version history together, deliberately. RR-181AFY made
+// DeleteResult.DeletedRelations the single source for ALL relation-delete
+// capture precisely so the two cannot drift; recording only the audit half
+// here would leave the log asserting a deletion that history denies, and the
+// rows are already off disk so no sweep could backfill them.
+//
+// Driven by res.DeletedRelations, not by the captured incident set: only the
+// relations the store actually removed may be recorded. The capture supplies
+// the pre-delete snapshots those ids need.
+//
+// Nil-safe throughout: a transactional backend returns nil on error, and a
+// failure on the first relation removes nothing. Either way this is a no-op.
+func (m *Manager) recordPartialCascade(
+	ctx context.Context, id string, res *store.DeleteResult, captured *cascadeCapture,
+) {
+	if res == nil || len(res.DeletedRelations) == 0 {
+		return
+	}
+	cascadeTB := "cascade:delete-entity:" + id
+	cascadeCtx := audit.WithTriggeredBy(ctx, cascadeTB)
+
+	// Index the captured pre-delete snapshots so each removed relation is
+	// versioned from the state it actually had, not from a reconstruction.
+	snapshots := make(map[string]*entity.Relation)
+	if captured != nil {
+		for _, rel := range append(append([]*entity.Relation{}, captured.incoming...), captured.outgoing...) {
+			snapshots[relationKey(rel)] = rel
+		}
+	}
+
+	for _, rel := range res.DeletedRelations {
+		m.recordRelationAudit(cascadeCtx, audit.OpDeleteRelation, rel, "deleted")
+
+		snap := rel
+		if s, ok := snapshots[relationKey(rel)]; ok {
+			snap = s
+		}
+		m.recordRelationVersion(ctx, store.VersionOpDelete, snap, "", "", cascadeTB)
+	}
+}
+
+// relationKey is the (from, type, to) identity of a relation, used to pair a
+// store-reported deletion with its pre-delete snapshot.
+func relationKey(r *entity.Relation) string {
+	return r.From + "--" + r.Type + "--" + r.To
 }
 
 // RenameEntity changes an entity's ID and rewrites all incident

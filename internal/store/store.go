@@ -291,6 +291,20 @@ type EntityWriter interface {
 
 	// DeleteEntity removes an entity and optionally its relations.
 	// Returns ErrNotFound if the entity does not exist.
+	//
+	// A non-nil *DeleteResult MAY accompany a non-nil error — the one place
+	// this package departs from "error means ignore the value". A
+	// non-transactional backend (fsstore: Tx is a write mutex with no
+	// rollback) can fail partway through a cascade with some relation files
+	// already off disk. It then returns what it genuinely removed, so the
+	// caller's audit log can reflect the real state rather than denying a
+	// deletion that happened (issue #929). Transactional backends
+	// (pgstore, sqlitestore) roll back and return nil.
+	//
+	// A partial result is NOT success: the caller must still return the
+	// error. It lists only what really happened — DeletedEntities is
+	// populated if and only if the entity file was removed, so on a partial
+	// cascade (which aborts before or at that removal) it is empty.
 	DeleteEntity(ctx context.Context, id string, cascade bool) (*DeleteResult, error)
 
 	// RenameEntity changes an entity's ID. All relations referencing the
