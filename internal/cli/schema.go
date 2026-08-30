@@ -92,7 +92,7 @@ func (c *SchemaRelationCmd) Run(svc *readServices) error {
 func runSchemaOverview(ctx context.Context, svc *readServices) error {
 	meta := svc.Meta
 	if out.Format == "json" {
-		return out.WriteSchemaOverview(meta)
+		return schemaJSONWriter{out: out.Out}.writeOverview(meta)
 	}
 
 	out.WriteSectionHeader("Metamodel Overview")
@@ -153,7 +153,7 @@ func runSchemaOverview(ctx context.Context, svc *readServices) error {
 
 func runSchemaEntities(meta *metamodel.Metamodel) error {
 	if out.Format == "json" {
-		return out.WriteSchemaEntities(meta)
+		return schemaJSONWriter{out: out.Out}.writeEntities(meta)
 	}
 	entityNames := getSortedEntityNames(meta)
 	if len(entityNames) == 0 {
@@ -185,7 +185,7 @@ func runSchemaEntities(meta *metamodel.Metamodel) error {
 
 func runSchemaRelations(meta *metamodel.Metamodel) error {
 	if out.Format == "json" {
-		return out.WriteSchemaRelations(meta)
+		return schemaJSONWriter{out: out.Out}.writeRelations(meta)
 	}
 	relationNames := getSortedRelationNames(meta)
 	if len(relationNames) == 0 {
@@ -231,7 +231,7 @@ func runSchemaRelations(meta *metamodel.Metamodel) error {
 
 func runSchemaTypes(meta *metamodel.Metamodel) error {
 	if out.Format == "json" {
-		return out.WriteSchemaTypes(meta)
+		return schemaJSONWriter{out: out.Out}.writeTypes(meta)
 	}
 	typeNames := getSortedTypeNames(meta)
 	if len(typeNames) == 0 {
@@ -260,7 +260,7 @@ func runSchemaEntity(meta *metamodel.Metamodel, name string) error {
 		return fmt.Errorf("unknown entity type: %s", name)
 	}
 	if out.Format == "json" {
-		return out.WriteSchemaEntityDetail(resolved, def, meta)
+		return schemaJSONWriter{out: out.Out}.writeEntityDetail(resolved, def)
 	}
 
 	out.WriteMessage("Entity Type: %s", def.Label)
@@ -372,7 +372,7 @@ func runSchemaRelation(meta *metamodel.Metamodel, name string) error {
 		return fmt.Errorf("unknown relation type: %s", name)
 	}
 	if out.Format == "json" {
-		return out.WriteSchemaRelationDetail(name, def)
+		return schemaJSONWriter{out: out.Out}.writeRelationDetail(name, def)
 	}
 	out.WriteMessage("Relation Type: %s", def.Label)
 	out.WriteMessage("==============%s", strings.Repeat("=", len(def.Label)+1))

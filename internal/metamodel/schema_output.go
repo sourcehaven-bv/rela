@@ -158,7 +158,7 @@ func (e *EntityDef) GetIDPatterns() []string {
 }
 
 // GetProperties returns the entity properties for JSON output.
-// Note: This returns interface{} to satisfy the SchemaEntityDef interface.
+// Note: This returns any to satisfy the schema-JSON entity view in internal/cli.
 // For typed access, use PropertyDefs() which implements PropertySchema.
 func (e *EntityDef) GetProperties() any {
 	return e.Properties
