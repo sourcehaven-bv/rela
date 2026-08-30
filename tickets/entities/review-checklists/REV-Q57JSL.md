@@ -2,17 +2,17 @@
 id: REV-Q57JSL
 type: review-checklist
 title: 'Review: Promote ProjectionProvider, SweepConfig and VersionStore into internal/store so sweep capabilities are backend-neutral'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Automated Checks
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Comment lint gate clean (`just comment-lint`)
-- [ ] Coverage maintained (`just coverage-check`)
+- [x] All tests pass (`just test`)
+- [x] Lint clean (`just lint`) — clean under default and `--build-tags postgres` for the touched packages; one pre-existing `govet: shadow` in `derivedschema_postgres.go:55` is untouched by this diff
+- [x] Comment lint gate clean (`just comment-lint`) — no unresolvable doc links across 11445 comments; `comment-report` shows no advisory finding introduced by this diff
+- [x] Coverage maintained (`just coverage-check`) — 78.5% total, package and total thresholds PASS
 
 **Comment findings.** `just comment-report` lists the advisory rules
 (duplication, nil-contract, param-contract, restatement). They are not a merge
@@ -33,41 +33,71 @@ unexplained suppression is a finding nobody can re-evaluate later.
 
 ## Code Review
 
-- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
-- [ ] All critical review-responses addressed
-- [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
+- [x] Run `/code-review` command (invokes cranky-code-reviewer agent)
+- [x] All critical review-responses addressed (RR-BJDCMI, RR-P8HARP)
+- [x] All significant review-responses addressed (RR-CNY4SZ, RR-UZ83ET, RR-D3OH9M)
+- [x] Self-reviewed the diff for unrelated changes — 9 files, all in the capability-widening path; no TODO/FIXME introduced
 
-**Review Responses:** <!-- List IDs of review-response entities created, e.g.,
-RR-xxxx -->
+**Review Responses:** RR-BJDCMI (critical), RR-P8HARP (critical),
+RR-CNY4SZ (significant), RR-UZ83ET (significant), RR-D3OH9M (significant),
+RR-B615WK (minor), RR-O2HRM3 (minor) — all `addressed`.
+
+The two criticals are the finding of record: widening `VersionStore()` to an
+interface **disabled** the typed-nil guard the same commit claimed to
+strengthen, and both tests covering that guard were vacuous — one had silently
+stopped satisfying the widened interface, the other used an untyped nil that
+never enters the guard's real path. Full green over a broken guard. Fixed with
+one shared `nonNilCapability` helper rather than three hand-rolled checks, and
+both tests mutation-verified: with the helper deleted they fail, with it
+present they pass.
 
 ## Acceptance Verification
 
-- [ ] Each acceptance criterion tested (reference planning checklist)
-- [ ] Test evidence documented in implementation checklist
+- [x] Each acceptance criterion tested (reference planning checklist)
+- [x] Test evidence documented in implementation checklist
 
 **Acceptance Status:**
-<!-- For each acceptance criterion, state PASS/FAIL with evidence -->
+
+1. **PASS** — no pgstore type appears in a capability interface or its return
+   type. `rawStateStoreFor` still *calls* `pgstore.StateStoreFor` in its body,
+   which is correct: that is the backend-specific discovery site, in a
+   `_postgres.go` file, and its return is now an interface.
+2. **PASS** — `backendneutral_postgres_test.go` builds doubles for every
+   capability from store-package types alone and does not import pgstore. A
+   pgstore type creeping back into a signature makes the file stop compiling.
+3. **PASS** — exported method count on `pgstore.Store` unchanged (1 before, 1
+   after in `version_store.go`); `just plimsoll` clean.
+4. **PASS** — `go test -tags postgres -race` green for `internal/appbuild` and
+   `internal/store/pgstore` against a real database; default-build store suites
+   green (fsstore, memstore, pgstore, sqlitestore, storetest, storeutil).
+5. **PASS** — `just arch-lint` OK; golangci-lint clean under both tag sets for
+   the touched packages.
+
+Additionally verified beyond the stated criteria: the alias decision is now
+pinned by a compile-time assertion that was regression-tested — converting
+`pgstore.SweepConfig` from an alias to a named type breaks the build at those
+lines in both directions. And `go build -tags sqlite ./...` succeeds, which is
+the downstream reason this ticket exists.
 
 ## Documentation (enhancements only)
 
 Skip this section for bugs and internal refactors.
 
-- [ ] Docs-checklist created and linked via `has-docs`
-- [ ] User-facing documentation updated
-- [ ] Docs-checklist marked as done
+- [x] ~~Docs-checklist created and linked via `has-docs`~~ (N/A: internal refactor, no user-facing surface)
+- [x] ~~User-facing documentation updated~~ (N/A: internal refactor, no user-facing surface)
+- [x] ~~Docs-checklist marked as done~~ (N/A: internal refactor, no user-facing surface)
 
 **Docs Checklist:** <!-- e.g., DOCS-xxxx -->
 
 ## Final Checks
 
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
+- [x] Commit message explains the why, not just what
+- [x] No TODOs or FIXMEs left unaddressed
+- [x] Ready for another developer to use — TKT-G91TBK is the consumer; the sqlite build compiles against the promoted types
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
+- [x] Run `/pr` command to create PR and monitor CI — PR #1478
 
 <!--
 Deliberately NOT tracked here: the PR URL and whether CI passed.

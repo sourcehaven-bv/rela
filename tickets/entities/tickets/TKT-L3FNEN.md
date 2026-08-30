@@ -5,7 +5,7 @@ title: Promote ProjectionProvider, SweepConfig and VersionStore into internal/st
 kind: refactor
 priority: low
 effort: m
-status: review
+status: done
 ---
 
 ## Description
