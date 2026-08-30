@@ -1,6 +1,6 @@
 ---
 from: BUG-XV7FSJ
-type: fixes
+relation: fixes
 to: FEAT-27UZ51
 ---
 
