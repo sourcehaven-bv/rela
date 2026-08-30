@@ -74,8 +74,8 @@ func NewStateKV(db DBTX) (*StateKV, error) {
 // state.KV would read as the tidier decoupling, but pgstore must not import
 // internal/state — arch-lint forbids a store depending on an application
 // package, and that rule is what keeps key validation the state package's job
-// (see the storeStateProvider interface in appbuild, which does the widening
-// on the consumer side where it belongs).
+// (see the rawStateStore interface in appbuild, which does the widening on the
+// consumer side where it belongs).
 func StateStoreFor(st store.Store) *StateKV {
 	s, ok := st.(*Store)
 	if !ok {

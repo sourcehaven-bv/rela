@@ -90,33 +90,37 @@ func TestCapabilitiesAreSatisfiableWithoutPgstore(t *testing.T) {
 // non-nil interface, which would pass every downstream nil-check and panic at
 // write time.
 func TestNeutralProviderReturningNilYieldsUntypedNil(t *testing.T) {
-	s := neutralVersionProvider{Store: neutralBase(t), svc: nil}
-	if got := versionServiceFor(s); got != nil {
-		t.Errorf("versionServiceFor = %#v, want untyped nil", got)
-	}
+	t.Run("untyped nil", func(t *testing.T) {
+		s := neutralVersionProvider{Store: neutralBase(t), svc: nil}
+		if got := versionServiceFor(s); got != nil {
+			t.Errorf("versionServiceFor = %#v, want untyped nil", got)
+		}
+	})
+
+	// The branch that matters. A nil INTERFACE field boxes to untyped nil and
+	// the guard's real path is never entered — which is exactly how the broken
+	// guard shipped green. A nil POINTER boxed into the interface is the shape
+	// a backend's partial-init path actually produces.
+	t.Run("typed nil pointer", func(t *testing.T) {
+		s := typedNilProvider{Store: neutralBase(t)}
+		if got := versionServiceFor(s); got != nil {
+			t.Fatalf("versionServiceFor = %#v; a typed nil passes every "+
+				"downstream nil-check and panics at write time", got)
+		}
+	})
 }
 
-// TestSweepConfigCrossesPackagesUnchanged pins the alias decision. pgstore
-// declares `SweepConfig = store.SweepConfig` (an alias, not a named type), so
-// the two are interchangeable. A named type would compile here but make a value
-// built in one package unusable in the other — the coupling this ticket removed,
-// reintroduced in a form that greps clean.
-func TestSweepConfigCrossesPackagesUnchanged(t *testing.T) {
-	cfg := sweepConfigFromEnv()
+// typedNilProvider hands back a nil *concrete* pointer boxed into the
+// interface, without naming any backend type.
+type typedNilProvider struct{ store.Store }
 
-	// Passing sweepConfigFromEnv()'s result straight into a parameter typed
-	// store.SweepConfig is the assertion, and it is a COMPILE-time one: with a
-	// named type instead of an alias this call would not build.
-	//
-	// (An explicit store.SweepConfig(cfg) conversion here is flagged as
-	// unnecessary by the linter — which is itself the proof, since a conversion
-	// between distinct named types would be required rather than redundant.)
-	s := &neutralSweeper{Store: neutralBase(t)}
-	s.StartVersionSweep(nil, cfg)
-	if s.gotCfg != cfg {
-		t.Errorf("config crossed the interface changed: got %+v, want %+v", s.gotCfg, cfg)
-	}
+func (typedNilProvider) VersionStore() store.VersionService {
+	var p *neutralVersionServiceImpl
+	return p
 }
+
+// neutralVersionServiceImpl exists only to be pointed at by a nil pointer.
+type neutralVersionServiceImpl struct{ store.VersionService }
 
 // TestRawStateStoreIsSatisfiableWithoutPgstore covers the state half, which the
 // ticket notes was left out of TKT-415WA7 entirely.

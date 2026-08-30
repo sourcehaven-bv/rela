@@ -39,9 +39,13 @@ func (p metaProjectionProvider) Projection() (hash string, projectionJSON []byte
 // versions.
 //
 // The signature names only store-package types, so any backend can satisfy it
-// without importing pgstore (TKT-L3FNEN). store.VersionSweeper says the same
-// thing; this stays declared here because CLAUDE.md asks consumers to name the
-// minimum interface they use at the call site.
+// without importing pgstore (TKT-L3FNEN).
+//
+// An ALIAS for store.VersionSweeper, not a locally-declared interface: the
+// consumer-side rule is about owning the minimum method list, and at one method
+// there is nothing to narrow. The local name exists so the call site and the
+// compile-time assertions in widen_assertions_postgres_test.go keep referring to
+// one identifier.
 type versionSweeper = store.VersionSweeper
 
 // startVersionSweepIfSupported starts the store's reconciliation sweep. A store
@@ -101,7 +105,8 @@ func sweepConfigFromEnv() store.SweepConfig {
 // sharing its own pool.
 //
 // Returns the store.VersionService interface, so a backend satisfies this
-// without importing pgstore (TKT-L3FNEN).
+// without importing pgstore (TKT-L3FNEN). An alias for the same reason as
+// versionSweeper above.
 type versionServiceProvider = store.VersionServiceProvider
 
 // versionServiceFor returns the store's versioning service (history reads,
@@ -109,43 +114,20 @@ type versionServiceProvider = store.VersionServiceProvider
 // never a typed nil — both for a store without the capability and for one whose
 // handle came back nil, so nil-checks downstream behave correctly.
 //
-// The explicit nil-pointer guard is load-bearing, and it became necessary when
-// discovery widened from a concrete type to an interface. Asserting
-// st.(*pgstore.Store) bounded the reachable implementations to exactly one,
-// whose VersionStore() is unconditionally non-nil; an interface admits any
-// implementation, including one that returns a nil pointer on a partial-init
-// path. Boxing that into store.VersionService yields a NON-nil interface, so
-// versionRecorderFor (appbuild.go) and startDataMigration would both pass their
-// nil-checks and then panic on first use — at write time, in production.
+// The guard goes through nonNilCapability rather than a bare `== nil`, and that
+// distinction is the whole point: VersionStore() returns an INTERFACE, so a
+// backend returning a nil pointer yields a non-nil interface that a plain check
+// cannot see. versionRecorderFor (appbuild.go) and startDataMigration would
+// both pass their nil-checks and panic on first use — at write time, in
+// production. See capability_postgres.go.
 func versionServiceFor(st store.Store) store.VersionService {
 	s, ok := st.(versionServiceProvider)
 	if !ok {
 		return nil
 	}
-	vs := s.VersionStore()
-	if vs == nil {
-		return nil
-	}
-	return vs
+	return nonNilCapability(s.VersionStore())
 }
 
-// stateKVFor returns a database-backed [state.KV] sharing the store's pool, so
-// the document render cache, user settings, the operator logo and scheduler
-// bookkeeping are shared by every process serving this schema instead of living
-// in each node's own .rela/ directory (TKT-VC27L3).
-//
-// That matters for the multi-process deployment docs/postgres-backend.md already
-// documents: with an FSKV, an operator's logo upload lands on whichever node
-// served the POST and every other node keeps serving the old one, with no error
-// anywhere. It also means a schema-per-tenant deployment gets per-tenant state
-// for free — the search_path that scopes entities scopes this table.
-//
-// Returns a genuinely nil interface for a non-pgstore store so the caller's
-// nil-check falls back to the filesystem KV.
-//
-// NOT widened by TKT-415WA7, unlike the three resolvers above: discovery still
-// goes through pgstore.StateStoreFor, which type-asserts *pgstore.Store
-// internally. So a second backend gets version sweeps, user state and derived
 // stateKVFor returns a database-backed [state.KV] sharing the store's pool, so
 // the document render cache, user settings, the operator logo and scheduler
 // bookkeeping are shared by every process serving this schema instead of living
@@ -192,6 +174,11 @@ func stateKVFor(st store.Store) state.KV {
 // backend cannot declare it returns a state.KV even though it satisfies one.
 // Matching structurally lets the wiring site accept any such handle and wrap it
 // in state.ValidatedKV, which is where the key rules are applied.
+//
+// The coupling is real but self-announcing: if state.KV gains a method,
+// state.NewValidatedKV below stops accepting a rawStateStore and the build
+// breaks HERE, at the call, with a clear message. That is the intended
+// enforcement — by the compiler rather than by this comment.
 type rawStateStore interface {
 	Get(ctx context.Context, key string) ([]byte, error)
 	Put(ctx context.Context, key string, data []byte) error
