@@ -105,14 +105,31 @@ func (h *ganttHandler) handleV1Gantt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	forest, err := h.buildGanttForest(r.Context(), s, g)
-	if err != nil {
-		err.write(w, r)
-		return
+	rootParam := r.URL.Query().Get("root")
+
+	// Drilled requests try the SQL-scoped subtree first (TKT-5LUGYP): the
+	// full forest is built only when the fast path cannot answer with
+	// identical ACL semantics.
+	var forest *ganttForest
+	if rootParam != "" {
+		sub, gerr := h.buildGanttSubtree(r.Context(), s, g, rootParam)
+		if gerr != nil {
+			gerr.write(w, r)
+			return
+		}
+		forest = sub // nil means "fast path declined": the full build answers
+	}
+	if forest == nil {
+		full, gerr := h.buildGanttForest(r.Context(), s, g)
+		if gerr != nil {
+			gerr.write(w, r)
+			return
+		}
+		forest = full
 	}
 
 	rootIDs := forest.roots
-	if rootParam := r.URL.Query().Get("root"); rootParam != "" {
+	if rootParam != "" {
 		// Drill-down re-root. Reachable-and-visible is the only way in; a
 		// hidden root was never in the forest, so it falls into the same
 		// uniform 404 as a genuinely absent id.
@@ -163,14 +180,28 @@ func (h *ganttHandler) buildGanttForest(
 	if gerr != nil {
 		return nil, gerr
 	}
+	f, _, gerr := h.finishGanttForest(ctx, g, nodes, "")
+	return f, gerr
+}
 
-	parent, multiParent, gerr := h.linkGanttParents(ctx, g, nodes)
+// finishGanttForest runs the shared tail of both build paths: edge linking,
+// the multi-parent and cycle policies, and the fold. Shared so the subtree
+// fast path cannot drift from the full build's semantics. subtreeRoot is ""
+// for the full build; set, it arms the external-parent detection whose true
+// return tells the fast path to decline (see buildGanttSubtree).
+func (h *ganttHandler) finishGanttForest(
+	ctx context.Context, g dataentryconfig.Gantt, nodes map[string]*ganttNode, subtreeRoot string,
+) (*ganttForest, bool, *ganttError) {
+	parent, multiParent, external, gerr := h.linkGanttParents(ctx, g, nodes, subtreeRoot)
 	if gerr != nil {
-		return nil, gerr
+		return nil, false, gerr
+	}
+	if external {
+		return nil, true, nil
 	}
 	if g.MultiParent == "error" && len(multiParent) > 0 {
 		sort.Strings(multiParent)
-		return nil, &ganttError{http.StatusUnprocessableEntity, "multi_parent",
+		return nil, false, &ganttError{http.StatusUnprocessableEntity, "multi_parent",
 			"Entity has multiple parents",
 			"multi_parent is \"error\" and these entities are contained by more than one parent: " +
 				strings.Join(dedupSorted(multiParent), ", ")}
@@ -199,7 +230,7 @@ func (h *ganttHandler) buildGanttForest(
 		if g.OnCycle == "prune" {
 			// The loop members simply do not render; nothing visible is lost
 			// (no root can reach them) and nothing hidden is disclosed.
-			return f, nil
+			return f, false, nil
 		}
 		var cyclic []string
 		for id := range nodes {
@@ -208,116 +239,356 @@ func (h *ganttHandler) buildGanttForest(
 			}
 		}
 		sort.Strings(cyclic)
-		return nil, &ganttError{http.StatusUnprocessableEntity, "containment_cycle",
+		return nil, false, &ganttError{http.StatusUnprocessableEntity, "containment_cycle",
 			"Containment cycle detected",
 			"these entities form a containment loop no root can reach: " + strings.Join(cyclic, ", ")}
 	}
-	return f, nil
+	return f, false, nil
 }
 
 // loadGanttNodes runs pipeline steps 1-2: list each source type through the
-// ACL-scoped lister, redact each entity once, then apply the source filters
-// and parse the date roles from what survives.
+// read gate, redact each entity once, then apply the source filters and parse
+// the date roles from what survives.
 func (h *ganttHandler) loadGanttNodes(
 	ctx context.Context, s *Schema, g dataentryconfig.Gantt,
 ) (map[string]*ganttNode, *ganttError) {
 	nodes := map[string]*ganttNode{}
-
 	for _, typeName := range ganttSortedKeys(g.Sources) {
-		src := g.Sources[typeName]
-		entDef, ok := s.Meta.GetEntityDef(typeName)
-		if !ok {
-			continue // validated at load; a raced schema change degrades, not panics
+		ents, gerr := h.loadGanttType(ctx, typeName)
+		if gerr != nil {
+			return nil, gerr
 		}
+		if gerr := h.addGanttNodes(s, g, typeName, ents, nodes); gerr != nil {
+			return nil, gerr
+		}
+	}
+	return nodes, nil
+}
 
-		// Step 1: row-gate. Only the ACL-scoped lister, never the raw store.
+// ganttVerdict is the read-gate outcome for one source type, resolved through
+// ONE shared helper so the defensive zero-value arm cannot be lost in a copy:
+// a zero ReadQueryResult would otherwise alias AllowAll (the exact hazard
+// scopedSortedEntities guards against), so it fails loud here, once.
+type ganttVerdict int
+
+const (
+	ganttDeny ganttVerdict = iota
+	ganttAllow
+	ganttScoped
+)
+
+func ganttReadVerdict(ctx context.Context, typeName string) (ganttVerdict, *ganttError) {
+	rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
+	switch {
+	case rqr.DenyAll:
+		return ganttDeny, nil
+	case rqr.AllowAll:
+		return ganttAllow, nil
+	case rqr.Query == nil:
+		// Defensive: fail loud instead of silently widening (see
+		// scopedSortedEntities, which carries the same arm).
+		return ganttDeny, &ganttError{http.StatusInternalServerError, "internal",
+			"Invalid read verdict", ""}
+	default:
+		return ganttScoped, nil
+	}
+}
+
+// loadGanttType returns the REDACTED entities of one source type, honoring
+// the per-request read-gate verdict (TKT-5LUGYP):
+//
+//   - DenyAll: nothing.
+//   - AllowAll: the fast path — store.ListEntityHeaders streams
+//     ID/Type/Properties WITHOUT markdown bodies (which the gantt never
+//     reads; profiling showed body decode dominated the request), redacted
+//     via visibility.RedactHeader.
+//   - scoped Query verdict: the ACL pushdown has no header variant, so this
+//     falls back to the full-entity scoped lister — correct, slower. Falling
+//     back rather than approximating keeps the failure direction closed.
+//
+// Redaction happens HERE, exactly once per entity on either path
+// (visibility.Redact/RedactHeader must never see already-redacted input).
+func (h *ganttHandler) loadGanttType(
+	ctx context.Context, typeName string,
+) ([]*entity.Entity, *ganttError) {
+	verdict, gerr := ganttReadVerdict(ctx, typeName)
+	if gerr != nil {
+		return nil, gerr
+	}
+	switch verdict {
+	case ganttDeny:
+		return nil, nil
+	case ganttAllow:
+		var out []*entity.Entity
+		for hdr, err := range store.ListEntityHeaders(ctx, h.store, store.EntityQuery{Type: typeName}) {
+			if err != nil {
+				slog.Error("gantt: header list failed", "type", typeName, "error", err)
+				return nil, &ganttError{http.StatusInternalServerError, "internal", "Failed to list entities", ""}
+			}
+			red := visibility.RedactHeader(ctx, h.redactor(), hdr)
+			out = append(out, &entity.Entity{ID: red.ID, Type: red.Type, Properties: red.Properties})
+		}
+		return out, nil
+	default:
 		ents, err := h.scoped(ctx, typeName, map[string][]string{})
 		if err != nil {
 			return nil, &ganttError{http.StatusInternalServerError, "internal", "Failed to list entities", ""}
 		}
-
-		tooltipProps := make([]string, 0, len(g.Tooltip.Fields))
-		for _, f := range g.Tooltip.Fields {
-			if f.Property != "" {
-				if _, ok := entDef.Properties[f.Property]; ok {
-					tooltipProps = append(tooltipProps, f.Property)
-				}
-			}
-		}
-
-		filters, ferr := filter.ParseAll(src.Where)
-		if ferr != nil {
-			// Load validation makes this unreachable; refusing (rather than
-			// proceeding unfiltered) keeps the failure direction closed.
-			return nil, &ganttError{http.StatusInternalServerError, "internal", "Invalid source filter", ""}
-		}
-
+		out := make([]*entity.Entity, 0, len(ents))
 		for _, e := range ents {
-			// Step 2: redact ONCE, on the raw store entity, before any
-			// property is read. Everything below — where-matching, date
-			// parsing, the title — sees only what the principal may see.
-			// (visibility.Redact must never run on an already-redacted
-			// entity, so this is the single redaction point on this path.)
-			red := visibility.Redact(ctx, h.redactor(), e)
+			out = append(out, visibility.Redact(ctx, h.redactor(), e))
+		}
+		return out, nil
+	}
+}
 
-			if len(filters) > 0 {
-				// Evaluated post-redact by design: membership must not
-				// reflect a predicate over a value the principal cannot
-				// read. A where: on a hidden property therefore matches
-				// nothing for that principal.
-				matched, merr := filter.MatchAll(entityRecord(red), filters, entDef, s.Meta)
-				if merr != nil {
-					// A match ERROR (an unparseable stored value, not a
-					// non-match) excludes the entity — for a filter that is
-					// the closed direction — but never silently: exclusion
-					// also narrows every ancestor's rolled span, which is
-					// exactly the "looks on schedule" failure this view
-					// exists to prevent, so the drop is logged.
-					slog.Warn("gantt: where filter errored; entity excluded",
-						"entity", red.ID, "error", merr)
-					continue
-				}
-				if !matched {
-					continue
-				}
-			}
-
-			nodes[red.ID] = &ganttNode{
-				id:        red.ID,
-				entType:   typeName,
-				title:     ganttTitle(red, src, entDef),
-				color:     src.Color,
-				start:     ganttDate(red, src.Start, entDef),
-				end:       ganttDate(red, src.End, entDef),
-				committed: ganttDate(red, src.Committed, entDef),
-				props:     ganttProps(red, tooltipProps),
+// addGanttNodes filters ALREADY-REDACTED entities through the source's
+// where: clauses and builds their nodes. Filters evaluate post-redact by
+// design: membership must not reflect a predicate over a value the principal
+// cannot read.
+func (h *ganttHandler) addGanttNodes(
+	s *Schema, g dataentryconfig.Gantt,
+	typeName string, ents []*entity.Entity, nodes map[string]*ganttNode,
+) *ganttError {
+	src := g.Sources[typeName]
+	entDef, ok := s.Meta.GetEntityDef(typeName)
+	if !ok {
+		return nil // validated at load; a raced schema change degrades, not panics
+	}
+	tooltipProps := make([]string, 0, len(g.Tooltip.Fields))
+	for _, f := range g.Tooltip.Fields {
+		if f.Property != "" {
+			if _, ok := entDef.Properties[f.Property]; ok {
+				tooltipProps = append(tooltipProps, f.Property)
 			}
 		}
 	}
-	return nodes, nil
+	filters, ferr := filter.ParseAll(src.Where)
+	if ferr != nil {
+		// Load validation makes this unreachable; refusing (rather than
+		// proceeding unfiltered) keeps the failure direction closed.
+		return &ganttError{http.StatusInternalServerError, "internal", "Invalid source filter", ""}
+	}
+	for _, red := range ents {
+		if len(filters) > 0 {
+			matched, merr := filter.MatchAll(entityRecord(red), filters, entDef, s.Meta)
+			if merr != nil {
+				// A match ERROR (an unparseable stored value, not a
+				// non-match) excludes the entity — for a filter that is
+				// the closed direction — but never silently: exclusion
+				// also narrows every ancestor's rolled span, which is
+				// exactly the "looks on schedule" failure this view
+				// exists to prevent, so the drop is logged.
+				slog.Warn("gantt: where filter errored; entity excluded",
+					"entity", red.ID, "error", merr)
+				continue
+			}
+			if !matched {
+				continue
+			}
+		}
+		nodes[red.ID] = &ganttNode{
+			id:        red.ID,
+			entType:   typeName,
+			title:     ganttTitle(red, src, entDef),
+			color:     src.Color,
+			start:     ganttDate(red, src.Start, entDef),
+			end:       ganttDate(red, src.End, entDef),
+			committed: ganttDate(red, src.Committed, entDef),
+			props:     ganttProps(red, tooltipProps),
+		}
+	}
+	return nil
+}
+
+// ganttClosureRoundDepth is the per-round depth passed to GraphQuery when
+// resolving the drilled subtree. Every backend CLAMPS RelationPredicate.Depth
+// to 5 (graphquerynaive.DepthCap; pgstore's cappedDepth mirrors it so SQL and
+// Go agree), so asking for more is a silent fiction — the closure is instead
+// resolved ITERATIVELY: each round expands the frontier by up to this many
+// levels, and the loop runs until the descendant set stabilizes. The round
+// value therefore only tunes how many queries a deep hierarchy needs, never
+// which nodes are found.
+const ganttClosureRoundDepth = 5
+
+// ganttClosureMaxRounds is a non-termination backstop for the iterative
+// closure (covers hierarchies ~150 levels deep). Hitting it does NOT truncate:
+// the fast path declines and the full build answers instead — silently
+// returning a smaller, differently-folded tree is the one unacceptable
+// failure mode (it would hide exactly the overruns this view exists to show).
+const ganttClosureMaxRounds = 25
+
+// ganttSubtreeVerdicts resolves every source type's verdict for the fast
+// path. A nil map means the caller must not take it: either a scoped verdict
+// appeared (nil error) or verdict resolution itself failed.
+func ganttSubtreeVerdicts(
+	ctx context.Context, g dataentryconfig.Gantt,
+) (map[string]bool, *ganttError) {
+	verdicts := map[string]bool{} // type -> AllowAll
+	for _, typeName := range ganttSortedKeys(g.Sources) {
+		verdict, gerr := ganttReadVerdict(ctx, typeName)
+		if gerr != nil {
+			return nil, gerr
+		}
+		switch verdict {
+		case ganttDeny:
+			verdicts[typeName] = false
+		case ganttAllow:
+			verdicts[typeName] = true
+		default:
+			return nil, nil // scoped verdict: full build only
+		}
+	}
+	return verdicts, nil
+}
+
+// buildGanttSubtree is the ?root= fast path (TKT-5LUGYP, closes RR-FJWAZS):
+// resolve the drilled subtree with per-type GraphQuery pushdown instead of
+// building and discarding the global forest.
+//
+// EQUIVALENCE IS THE CONTRACT: for any input this path answers, the response
+// must be byte-identical to the full build's subtree (pinned by
+// TestGantt_SubtreeDrillMatchesFullBuild and the generated-graph property
+// test). Where equivalence cannot be guaranteed the path DECLINES (returns
+// nil forest, no error) and the caller runs the full build:
+//
+//   - a scoped ACL Query verdict on any source type (cannot compose with the
+//     subtree predicate in one query);
+//   - multi_parent "error" (a global integrity check — an offender outside
+//     the subtree must still fail the request, and the policy is opt-in so
+//     the cost of declining is paid only by those who asked for it);
+//   - an edge from a parent OUTSIDE the loaded subtree to a node inside it
+//     (parent selection would otherwise pick a different winner than the
+//     full build — detected during linking and bailed on);
+//   - a closure that does not stabilize within ganttClosureMaxRounds.
+//
+// on_cycle "error" (the DEFAULT) does NOT decline: the cycle diagnostic is
+// evaluated over the drilled SUBTREE. A cycle inside it 422s exactly like the
+// full build; a cycle through the drilled root bails to the full build (the
+// external-edge rule above); a cycle DISJOINT from the subtree is reported by
+// the root view, not by this drill — the one deliberate divergence, chosen
+// because declining would forfeit the fast path for every default-config
+// gantt while the landing view still surfaces the corruption.
+//
+// A root that is denied, missing, not a source type, or filtered out by its
+// where: clause yields an empty forest, which the caller turns into the
+// uniform entity 404.
+func (h *ganttHandler) buildGanttSubtree(
+	ctx context.Context, s *Schema, g dataentryconfig.Gantt, rootID string,
+) (*ganttForest, *ganttError) {
+	if g.MultiParent == "error" {
+		return nil, nil // global integrity policy needs the global build
+	}
+	verdicts, verdictErr := ganttSubtreeVerdicts(ctx, g)
+	if verdicts == nil {
+		return nil, verdictErr // scoped verdict (nil,nil) or a real error
+	}
+
+	nodes := map[string]*ganttNode{}
+	empty := &ganttForest{nodes: nodes, reachable: map[string]bool{}}
+
+	// The root itself: must exist, be a permitted source type, and survive
+	// its own where: filter — otherwise it is indistinguishable from absent.
+	rootEnt, err := h.store.GetEntity(ctx, rootID)
+	if err != nil || rootEnt == nil {
+		return empty, nil
+	}
+	if _, isSource := g.Sources[rootEnt.Type]; !isSource || !verdicts[rootEnt.Type] {
+		return empty, nil
+	}
+	red := visibility.Redact(ctx, h.redactor(), rootEnt)
+	if gerr := h.addGanttNodes(s, g, red.Type, []*entity.Entity{red}, nodes); gerr != nil {
+		return nil, gerr
+	}
+
+	// Iterative descendant closure: query descendants of the frontier, feed
+	// newly discovered ids back in, stop when a round finds nothing new.
+	frontier := []string{rootID}
+	for round := 0; len(frontier) > 0; round++ {
+		if round >= ganttClosureMaxRounds {
+			return nil, nil // did not stabilize: decline, never truncate
+		}
+		next, gerr := h.collectGanttRound(ctx, s, g, verdicts, frontier, nodes)
+		if gerr != nil {
+			return nil, gerr
+		}
+		frontier = next
+	}
+
+	f, external, gerr := h.finishGanttForest(ctx, g, nodes, rootID)
+	if gerr != nil {
+		return nil, gerr
+	}
+	if external {
+		return nil, nil // out-of-subtree parent edge: full build decides placement
+	}
+	return f, nil
+}
+
+// collectGanttRound runs one closure round: for each permitted source type,
+// query descendants of the frontier, redact and add the unseen ones, and
+// return their ids as the next frontier.
+func (h *ganttHandler) collectGanttRound(
+	ctx context.Context, s *Schema, g dataentryconfig.Gantt,
+	verdicts map[string]bool, frontier []string, nodes map[string]*ganttNode,
+) ([]string, *ganttError) {
+	var next []string
+	for _, typeName := range ganttSortedKeys(g.Sources) {
+		if !verdicts[typeName] {
+			continue
+		}
+		q := store.GraphQuery{
+			EntityType: typeName,
+			HasInbound: &store.RelationPredicate{
+				// Endpoints expand through the hierarchy closure, so the
+				// predicate matches descendants of the frontier.
+				Endpoints:      frontier,
+				OfTypes:        g.Hierarchy,
+				InheritThrough: g.Hierarchy,
+				Depth:          ganttClosureRoundDepth,
+			},
+		}
+		var fresh []*entity.Entity
+		for e, qerr := range h.store.GraphQuery(ctx, q) {
+			if qerr != nil {
+				slog.Error("gantt: subtree query failed", "type", typeName, "error", qerr)
+				return nil, &ganttError{http.StatusInternalServerError, "internal", "Failed to query subtree", ""}
+			}
+			if _, seen := nodes[e.ID]; seen {
+				continue
+			}
+			fresh = append(fresh, visibility.Redact(ctx, h.redactor(), e))
+			next = append(next, e.ID)
+		}
+		if gerr := h.addGanttNodes(s, g, typeName, fresh, nodes); gerr != nil {
+			return nil, gerr
+		}
+	}
+	return next, nil
 }
 
 // linkGanttParents loads the hierarchy edges (one bulk query per relation
 // type) and picks each node's parent. An edge is used only when both
 // endpoints are already in the gated node set; extra parents are collected
 // for the multi_parent policy rather than silently dropped.
+//
+// In subtree mode (subtreeRoot != "") it additionally reports external=true
+// when an edge from OUTSIDE the node set claims a node inside it (other than
+// the root's own ancestry, which every drill legitimately has), or when an
+// in-set edge points back AT the root (a cycle through the root). In either
+// shape parent selection could differ from the full build's, so the fast
+// path must decline rather than guess.
 func (h *ganttHandler) linkGanttParents(
-	ctx context.Context, g dataentryconfig.Gantt, nodes map[string]*ganttNode,
-) (parent map[string]string, multiParent []string, gerr *ganttError) {
+	ctx context.Context, g dataentryconfig.Gantt, nodes map[string]*ganttNode, subtreeRoot string,
+) (parent map[string]string, multiParent []string, external bool, gerr *ganttError) {
 	parent = map[string]string{}
 	for _, relType := range g.Hierarchy {
-		var edges [][2]string
-		for rel, err := range h.store.ListRelations(ctx, store.RelationQuery{Type: relType}) {
-			if err != nil {
-				return nil, nil, &ganttError{http.StatusInternalServerError, "internal", "Failed to list relations", ""}
-			}
-			if rel.From == rel.To {
-				continue // self-loop: degenerate cycle, never a tree edge
-			}
-			if nodes[rel.From] == nil || nodes[rel.To] == nil {
-				continue
-			}
-			edges = append(edges, [2]string{rel.From, rel.To})
+		edges, ext, gerr := h.ganttEdgesForType(ctx, relType, nodes, subtreeRoot)
+		if gerr != nil {
+			return nil, nil, false, gerr
+		}
+		if ext {
+			return nil, nil, true, nil
 		}
 		// Deterministic parent choice under multi_parent:first — sort within
 		// the relation type, and relation types apply in config order.
@@ -343,7 +614,7 @@ func (h *ganttHandler) linkGanttParents(
 			}
 		}
 	}
-	return parent, multiParent, nil
+	return parent, multiParent, false, nil
 }
 
 // ganttBudget is the node-cap accounting shared by every emission site, so
@@ -365,6 +636,36 @@ func (b *ganttBudget) take() bool {
 	}
 	b.remaining--
 	return true
+}
+
+// ganttEdgesForType streams one relation type's edges, keeping those whose
+// endpoints are both in the gated node set. In subtree mode it reports
+// external=true for the shapes linkGanttParents' doc describes.
+func (h *ganttHandler) ganttEdgesForType(
+	ctx context.Context, relType string, nodes map[string]*ganttNode, subtreeRoot string,
+) (edges [][2]string, external bool, gerr *ganttError) {
+	for rel, err := range h.store.ListRelations(ctx, store.RelationQuery{Type: relType}) {
+		if err != nil {
+			slog.Error("gantt: relation list failed", "relation", relType, "error", err)
+			return nil, false, &ganttError{http.StatusInternalServerError, "internal", "Failed to list relations", ""}
+		}
+		if rel.From == rel.To {
+			continue // self-loop: degenerate cycle, never a tree edge
+		}
+		if subtreeRoot != "" && nodes[rel.To] != nil {
+			if rel.To == subtreeRoot && nodes[rel.From] != nil {
+				return nil, true, nil // cycle through the drilled root
+			}
+			if rel.To != subtreeRoot && nodes[rel.From] == nil {
+				return nil, true, nil // out-of-subtree parent claims an in-set node
+			}
+		}
+		if nodes[rel.From] == nil || nodes[rel.To] == nil {
+			continue
+		}
+		edges = append(edges, [2]string{rel.From, rel.To})
+	}
+	return edges, false, nil
 }
 
 // foldGantt computes every node's rolled span, post-order, and marks

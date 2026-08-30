@@ -1,9 +1,12 @@
 package dataentry
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"maps"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -585,6 +588,245 @@ func TestGantt_DrillDepthIsRelative(t *testing.T) {
 		drilled.Roots[0].Children[0].ID != "PRJ-C" {
 
 		t.Errorf("drilling re-roots the depth cap; PRJ-C should now be reachable: %+v", drilled.Roots)
+	}
+}
+
+// TestGantt_SubtreeDrillMatchesFullBuild pins the TKT-5LUGYP fast path: a
+// drilled response must be indistinguishable from the same subtree cut out
+// of the full build — same fold, same breaches, same children.
+func TestGantt_SubtreeDrillMatchesFullBuild(t *testing.T) {
+	app := newGanttTestApp(t)
+	seedProject(app, "PRJ-A", "Root", nil)
+	seedProject(app, "PRJ-B", "Mid", map[string]any{
+		"planned_start": "2026-02-01", "planned_end": "2026-04-01"})
+	seedProject(app, "PRJ-C", "Deep", nil)
+	seedEpic(app, "EPIC-D", "Leaf", "2026-03-01", "2026-06-15") // overruns PRJ-B
+	seedRelation(app, &entity.Relation{From: "PRJ-A", Type: "contains", To: "PRJ-B"})
+	seedRelation(app, &entity.Relation{From: "PRJ-B", Type: "contains", To: "PRJ-C"})
+	seedRelation(app, &entity.Relation{From: "PRJ-C", Type: "has-epic", To: "EPIC-D"})
+
+	full := decodeGantt(t, ganttGet(context.Background(), app, "plan"))
+	var fromFull *v1.GanttNode
+	var find func(ns []v1.GanttNode)
+	find = func(ns []v1.GanttNode) {
+		for i := range ns {
+			if ns[i].ID == "PRJ-B" {
+				fromFull = &ns[i]
+			}
+			find(ns[i].Children)
+		}
+	}
+	find(full.Roots)
+	if fromFull == nil {
+		t.Fatal("PRJ-B missing from full build")
+	}
+
+	drilled := decodeGantt(t, ganttGet(context.Background(), app, "plan?root=PRJ-B"))
+	if len(drilled.Roots) != 1 {
+		t.Fatalf("drill should return exactly the subtree root: %+v", drilled.Roots)
+	}
+	got, _ := json.Marshal(drilled.Roots[0])
+	want, _ := json.Marshal(*fromFull)
+	if !bytes.Equal(got, want) {
+		t.Errorf("subtree fast path diverges from full build:\n got %s\nwant %s", got, want)
+	}
+	// The deep descendant's date must have folded through the SQL closure.
+	if drilled.Roots[0].Rolled == nil || drilled.Roots[0].Rolled.End != "2026-06-15" {
+		t.Errorf("deep descendant not folded: %+v", drilled.Roots[0].Rolled)
+	}
+	if !drilled.Roots[0].Breach.After {
+		t.Errorf("breach must survive the fast path")
+	}
+}
+
+// TestGantt_SubtreeDrillWhereExcludedRoot pins that a root filtered out by
+// its source's where: clause 404s on the fast path exactly like a missing id.
+func TestGantt_SubtreeDrillWhereExcludedRoot(t *testing.T) {
+	app := newGanttTestApp(t, func(g *dataentryconfig.Gantt) {
+		g.Sources["project"] = dataentryconfig.GanttSource{
+			Start: "planned_start", End: "planned_end",
+			Where: []string{"status=active"},
+		}
+	})
+	seedProject(app, "PRJ-X", "Filtered", map[string]any{"status": "archived"})
+
+	rec := ganttGet(context.Background(), app, "plan?root=PRJ-X")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("where-excluded root: got %d, want 404", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), entityNotFoundTitle) {
+		t.Errorf("must be the uniform entity 404: %s", rec.Body)
+	}
+}
+
+// TestGantt_SubtreeDrillDeepChain pins the iterative closure against the
+// store-side depth clamp (every backend clamps RelationPredicate.Depth to 5):
+// a 9-deep chain must drill with a complete fold. Before the iterative
+// closure this silently truncated at depth ~6 and reported a five-year
+// overrun as on-schedule.
+func TestGantt_SubtreeDrillDeepChain(t *testing.T) {
+	app := newGanttTestApp(t)
+	const depth = 9
+	for i := range depth {
+		props := map[string]any{}
+		if i == 0 {
+			props["planned_start"] = "2030-01-01"
+			props["planned_end"] = "2030-02-01"
+		}
+		if i == depth-1 {
+			props["planned_start"] = "2034-01-01"
+			props["planned_end"] = "2035-01-01" // deep overrun of the root window
+		}
+		seedProject(app, fmt.Sprintf("PRJ-%d", i), fmt.Sprintf("L%d", i), props)
+		if i > 0 {
+			seedRelation(app, &entity.Relation{
+				From: fmt.Sprintf("PRJ-%d", i-1), Type: "contains", To: fmt.Sprintf("PRJ-%d", i)})
+		}
+	}
+
+	drilled := decodeGantt(t, ganttGet(context.Background(), app, "plan?root=PRJ-0"))
+	root := drilled.Roots[0]
+	if root.Rolled == nil || root.Rolled.End != "2035-01-01" {
+		t.Fatalf("TRUNCATED FOLD: deep descendant missing from drill: rolled=%+v", root.Rolled)
+	}
+	if !root.Breach.After {
+		t.Errorf("the deep overrun must survive the drill")
+	}
+	count := 0
+	var walk func(n v1.GanttNode)
+	walk = func(n v1.GanttNode) {
+		count++
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(root)
+	if count != depth {
+		t.Errorf("drill rendered %d of %d chain nodes", count, depth)
+	}
+}
+
+// TestGantt_SubtreeDrillExternalParentMatchesFull pins the equivalence
+// contract for the shapes that previously diverged: a node with a second
+// parent OUTSIDE the drilled subtree (under both first and prune defaults)
+// must render identically to the full build's subtree — the fast path
+// declines and the full build decides placement.
+func TestGantt_SubtreeDrillExternalParentMatchesFull(t *testing.T) {
+	app := newGanttTestApp(t)
+	seedProject(app, "PRJ-AAA", "WinsLexically", nil)
+	seedProject(app, "PRJ-ROOT", "Drilled", nil)
+	seedProject(app, "PRJ-DUAL", "Shared", map[string]any{
+		"planned_start": "2027-01-01", "planned_end": "2027-06-01"})
+	seedRelation(app, &entity.Relation{From: "PRJ-AAA", Type: "contains", To: "PRJ-DUAL"})
+	seedRelation(app, &entity.Relation{From: "PRJ-ROOT", Type: "contains", To: "PRJ-DUAL"})
+
+	full := decodeGantt(t, ganttGet(context.Background(), app, "plan"))
+	var fullRoot *v1.GanttNode
+	for i := range full.Roots {
+		if full.Roots[i].ID == "PRJ-ROOT" {
+			fullRoot = &full.Roots[i]
+		}
+	}
+	if fullRoot == nil {
+		t.Fatal("PRJ-ROOT missing from full build")
+	}
+	// Full build: PRJ-AAA wins the parent slot, so PRJ-ROOT is childless.
+	if len(fullRoot.Children) != 0 {
+		t.Fatalf("fixture expectation: PRJ-ROOT should be childless in the full build: %+v", fullRoot.Children)
+	}
+
+	drilled := decodeGantt(t, ganttGet(context.Background(), app, "plan?root=PRJ-ROOT"))
+	got, _ := json.Marshal(drilled.Roots[0])
+	want, _ := json.Marshal(*fullRoot)
+	if !bytes.Equal(got, want) {
+		t.Errorf("drill diverges from full build on external-parent shape:\n got %s\nwant %s", got, want)
+	}
+}
+
+// TestGantt_SubtreeDrillPropertyEquivalence is the generated-graph guard:
+// random forests (multi-parent edges, occasional cycles, mixed types), and
+// for EVERY node the drilled response must byte-equal the same subtree cut
+// from the full build. This is the executable form of the ticket's AC1 —
+// hand-drawn fixtures kept passing while depth/multi-parent shapes diverged.
+func TestGantt_SubtreeDrillPropertyEquivalence(t *testing.T) {
+	rng := rand.New(rand.NewSource(42))
+	for trial := range 8 {
+		app := newGanttTestApp(t, func(g *dataentryconfig.Gantt) {
+			g.MaxDepth = 99
+			g.MaxNodes = 10_000
+			// prune: generated graphs contain cycles, and under the default
+			// error policy the full build 422s — equivalence over the built
+			// tree is what this test guards.
+			g.OnCycle = "prune"
+		})
+		nodeCount := 12 + rng.Intn(20)
+		ids := make([]string, nodeCount)
+		for i := range ids {
+			if rng.Intn(4) == 0 && i > 0 {
+				ids[i] = fmt.Sprintf("EPIC-%02d-%02d", trial, i)
+				seedEpic(app, ids[i], fmt.Sprintf("E%d", i),
+					fmt.Sprintf("2026-%02d-01", 1+rng.Intn(12)), fmt.Sprintf("2027-%02d-15", 1+rng.Intn(12)))
+			} else {
+				ids[i] = fmt.Sprintf("PRJ-%02d-%02d", trial, i)
+				props := map[string]any{}
+				if rng.Intn(2) == 0 {
+					props["planned_start"] = fmt.Sprintf("2026-%02d-01", 1+rng.Intn(12))
+					props["planned_end"] = fmt.Sprintf("2027-%02d-01", 1+rng.Intn(12))
+				}
+				seedProject(app, ids[i], fmt.Sprintf("P%d", i), props)
+			}
+		}
+		seeded := map[string]bool{}
+		addRel := func(from, relType, to string) {
+			key := from + "|" + relType + "|" + to
+			if from == to || seeded[key] {
+				return
+			}
+			seeded[key] = true
+			seedRelation(app, &entity.Relation{From: from, Type: relType, To: to})
+		}
+		for i := 1; i < nodeCount; i++ {
+			// mostly-forest edges, plus occasional extra parents and cycles
+			from := ids[rng.Intn(i)]
+			to := ids[i]
+			relType := "contains"
+			if to[:4] == "EPIC" {
+				relType = "has-epic"
+			}
+			if from[:4] == "EPIC" {
+				continue // epics are leaves in this metamodel
+			}
+			addRel(from, relType, to)
+			if rng.Intn(5) == 0 { // extra parent
+				from2 := ids[rng.Intn(nodeCount)]
+				if from2[:4] != "EPIC" {
+					addRel(from2, relType, to)
+				}
+			}
+		}
+
+		full := decodeGantt(t, ganttGet(context.Background(), app, "plan"))
+		subtreeOf := map[string]*v1.GanttNode{}
+		var index func(ns []v1.GanttNode)
+		index = func(ns []v1.GanttNode) {
+			for i := range ns {
+				subtreeOf[ns[i].ID] = &ns[i]
+				index(ns[i].Children)
+			}
+		}
+		index(full.Roots)
+
+		for id, want := range subtreeOf {
+			drilled := decodeGantt(t, ganttGet(context.Background(), app, "plan?root="+id))
+			if len(drilled.Roots) != 1 {
+				t.Fatalf("trial %d root %s: drill returned %d roots", trial, id, len(drilled.Roots))
+			}
+			g, _ := json.Marshal(drilled.Roots[0])
+			w, _ := json.Marshal(*want)
+			if !bytes.Equal(g, w) {
+				t.Errorf("trial %d: drill(%s) != subtree_of(full):\n got %s\nwant %s", trial, id, g, w)
+			}
+		}
 	}
 }
 
