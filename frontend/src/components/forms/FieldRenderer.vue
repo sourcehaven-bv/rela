@@ -30,12 +30,16 @@ const props = defineProps<{
   entityType?: string
   entityId?: string
   attachments?: AttachmentInfo[]
+  // Create-mode staged files for a `file` property (TKT-7K3BJF). Only the
+  // file-property create path supplies these.
+  stagedFiles?: File[]
   max?: number
 }>()
 
 const emit = defineEmits<{
   update: [value: unknown]
   'attachment-changed': []
+  'update:staged-files': [files: File[]]
 }>()
 
 const fieldId = computed(() => `field-${props.field.property}`)
@@ -99,11 +103,13 @@ const currentValue = computed(() => (props.value == null ? '' : String(props.val
       :option-verdicts="optionVerdicts"
       :transitions="field.transitions"
       :attachments="attachments"
+      :staged-files="stagedFiles"
       :max="max"
       :entity-type="entityType"
       :entity-id="entityId"
       @update:model-value="emit('update', $event)"
       @attachment-changed="emit('attachment-changed')"
+      @update:staged-files="emit('update:staged-files', $event)"
     />
   </FieldShell>
 </template>

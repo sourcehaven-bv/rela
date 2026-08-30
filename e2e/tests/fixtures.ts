@@ -150,6 +150,12 @@ export interface EntityResponse {
    *  encrypted, no key locally). Each entry names a schema property —
    *  or the special "content" sentinel — that exists but is unreadable. */
   inaccessible?: Array<{ name: string; reason: string }>;
+  /** Per-`file`-property attachment metadata (TKT-7K3BJF/TKT-Q85275). Present
+   *  on a per-entity GET for every file property that holds a file. */
+  _attachments?: Record<
+    string,
+    Array<{ id: string; filename: string; size: number; contentType: string; href: string }>
+  >;
 }
 
 /** Modern JSON:API §9-style relations body for create/update. The
@@ -867,6 +873,14 @@ entities:
         type: priority
       description:
         type: string
+      # TKT-7K3BJF: file properties for create-time attachment staging.
+      # 'screenshot' is single-cap (replace semantics), 'evidence' is
+      # multi-cap so the staged widget's capacity logic is exercised.
+      screenshot:
+        type: file
+      evidence:
+        type: file
+        max: 3
 
   task:
     label: Task
@@ -968,6 +982,10 @@ version: "1.0"
 app:
   name: "E2E Test App"
   description: "Test project for Playwright E2E tests"
+  # TKT-7K3BJF: a deliberately tiny attachment cap so the create-form failure
+  # path (create succeeds, upload 413s) can be driven end-to-end with a small
+  # file. Every fixture attachment in the suite is well under 1 KiB.
+  max_attachment_bytes: 1024
 
 # Enable dark mode so the theme toggle renders in the status bar. Palette
 # config is validated strictly; unknown keys raise startup errors.
@@ -1076,6 +1094,9 @@ forms:
       - property: priority
       - property: description
         widget: textarea
+      # TKT-7K3BJF: exercised by attachments-create.spec.ts.
+      - property: screenshot
+      - property: evidence
 
   task:
     entity_type: task
