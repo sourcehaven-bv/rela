@@ -71,13 +71,11 @@ test.describe('Open in a new tab', () => {
     // The task view has the table-display section; TASK-001 implements FEAT-001.
     await detail.navigateTo('/entity/task/TASK-001');
 
-    const cellLink = appPage.locator('.sections .data-table a[href]').first();
+    const cellLink = detail.sectionTableLink;
     await expect(cellLink).toBeVisible();
 
     const before = appPage.url();
-    const popupPromise = appPage.context().waitForEvent('page');
-    await cellLink.click({ modifiers: ['Meta'] });
-    const popup = await popupPromise;
+    const popup = await detail.openInNewTab(cellLink);
 
     await expect(popup).toHaveURL(/\/entity\//);
     expect(appPage.url()).toBe(before);
@@ -94,20 +92,19 @@ test.describe('Open in a new tab', () => {
     await listPage.clickRow(0);
     await expect(appPage).toHaveURL(/\/entity\//);
 
-    const history = appPage.getByRole('link', { name: 'History' });
+    const detail = new EntityPage(appPage);
+    const history = detail.navLink('History');
     await expect(history).toBeVisible();
 
     const before = appPage.url();
-    const popupPromise = appPage.context().waitForEvent('page');
-    await history.click({ modifiers: ['Meta'] });
-    const popup = await popupPromise;
+    const popup = await detail.openInNewTab(history);
 
     await expect(popup).toHaveURL(/\/history\//);
     expect(appPage.url()).toBe(before);
     await popup.close();
 
-    // Delete must NOT have become a link.
-    await expect(appPage.getByRole('link', { name: /Delete/ })).toHaveCount(0);
+    // Delete must NOT have become a link — it mutates.
+    await expect(detail.navLink(/Delete/)).toHaveCount(0);
   });
 
   test('cmd/ctrl-click on a kanban card opens a background tab', async ({ appPage }) => {

@@ -385,4 +385,27 @@ export class EntityPage extends BasePage {
     await this.contentEntityRefLink(entityType, id).click();
     await this.page.waitForURL(new RegExp(`/entity/${entityType}/${id}(\\?|$)`));
   }
+
+  // ── New-tab affordances (TKT-3CSZRG) ────────────────────────────────────
+  // Navigable rows, cells and non-mutating nav controls are real <a href>
+  // elements so the browser can open them in a tab. These helpers expose the
+  // link elements and the modifier-click gesture.
+
+  /** The first link inside a table-display section on the entity detail page. */
+  get sectionTableLink(): Locator {
+    return this.page.locator('.sections .data-table a[href]').first();
+  }
+
+  /** A header nav affordance rendered as a link (Prev/Next, Edit, History). */
+  navLink(name: string | RegExp): Locator {
+    return this.page.getByRole('link', { name });
+  }
+
+  /** Modifier-click a locator and return the tab the browser opens. Used to
+   *  prove the BROWSER opened the tab, rather than the SPA emulating one. */
+  async openInNewTab(target: Locator, modifier: 'Meta' | 'Control' = 'Meta') {
+    const popupPromise = this.page.context().waitForEvent('page');
+    await target.click({ modifiers: [modifier] });
+    return popupPromise;
+  }
 }
