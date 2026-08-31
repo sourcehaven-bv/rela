@@ -45,7 +45,7 @@ export class KanbanPage extends BasePage {
   }
 
   /** Modifier-click a kanban card and return the tab it opens (TKT-3CSZRG). */
-  async openCardInNewTab(cardId: string, modifier: 'Meta' | 'Control' = 'Meta') {
+  async openCardInNewTab(cardId: string, modifier: 'ControlOrMeta' = 'ControlOrMeta') {
     const popupPromise = this.page.context().waitForEvent('page');
     await this.cards.filter({ hasText: cardId }).click({ modifiers: [modifier] });
     return popupPromise;

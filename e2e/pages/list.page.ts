@@ -70,13 +70,13 @@ export class ListPage extends BasePage {
   /** Modifier/middle-click a row and return the tab it opens (TKT-3CSZRG).
    *  Rows are real links, so the browser — not the SPA — opens the tab; this
    *  waits on the resulting popup rather than on an in-page navigation. */
-  async openRowInNewTab(index: number, how: { modifier?: 'Meta' | 'Control'; middle?: boolean }) {
+  async openRowInNewTab(index: number, how: { modifier?: 'ControlOrMeta'; middle?: boolean }) {
     const row = this.page.locator('.entity-row, tbody tr').nth(index);
     const popupPromise = this.page.context().waitForEvent('page');
     if (how.middle) {
       await row.click({ button: 'middle' });
     } else {
-      await row.click({ modifiers: [how.modifier ?? 'Meta'] });
+      await row.click({ modifiers: [how.modifier ?? 'ControlOrMeta'] });
     }
     return popupPromise;
   }

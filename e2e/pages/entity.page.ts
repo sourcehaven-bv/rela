@@ -402,8 +402,10 @@ export class EntityPage extends BasePage {
   }
 
   /** Modifier-click a locator and return the tab the browser opens. Used to
-   *  prove the BROWSER opened the tab, rather than the SPA emulating one. */
-  async openInNewTab(target: Locator, modifier: 'Meta' | 'Control' = 'Meta') {
+   *  prove the BROWSER opened the tab, rather than the SPA emulating one.
+   *  `ControlOrMeta` resolves per platform (Meta on macOS, Control elsewhere) —
+   *  hardcoding either one passes on the author's machine and fails on CI. */
+  async openInNewTab(target: Locator, modifier: 'ControlOrMeta' = 'ControlOrMeta') {
     const popupPromise = this.page.context().waitForEvent('page');
     await target.click({ modifiers: [modifier] });
     return popupPromise;

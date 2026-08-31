@@ -15,7 +15,7 @@ test.describe('Open in a new tab', () => {
     const listPage = new ListPage(appPage);
     await listPage.navigateToList('features');
 
-    const popup = await listPage.openRowInNewTab(0, { modifier: 'Meta' });
+    const popup = await listPage.openRowInNewTab(0, { modifier: 'ControlOrMeta' });
 
     await expect(popup).toHaveURL(/\/entity\//);
     // The original tab must NOT have navigated — that was the old behaviour.
