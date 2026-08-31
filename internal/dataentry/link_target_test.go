@@ -9,7 +9,7 @@ import "testing"
 //
 // Nothing in the current code can produce one, which is exactly why this test
 // exists: it fails if someone later adds a passthrough branch, rather than
-// leaving the SPA's defence-in-depth check as the only thing standing between a
+// leaving the SPA's defense-in-depth check as the only thing standing between a
 // config value and a `javascript:` URL.
 func TestResolveLinkTarget_RejectsEverythingOutsideTheAllowlist(t *testing.T) {
 	hostile := []string{
