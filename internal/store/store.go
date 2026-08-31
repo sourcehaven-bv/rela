@@ -656,12 +656,13 @@ type VersionWriter interface {
 //     stops polling and is stale forever. Trading a one-bit signal for silent
 //     data loss is not a security improvement.
 //   - Teaching the tombstone to remember the driver relation would make that
-//     scope reconstructible, and it is the option that looks cheapest from
-//     pgstore's two-column INSERT. It is not a schema question. The row would
-//     then assert "this deleted subject belonged to that project", so a
-//     relational fact about a person SURVIVES their deletion — which inverts
-//     what deletion is for and is a GDPR/AVG question before it is a
-//     performance one. Answer that first, or do not start.
+//     scope reconstructible, and from pgstore's writeEntityTombstone it looks
+//     like one more column. It is not a schema question. The row would then
+//     assert "this deleted subject belonged to that project", so a relational
+//     fact about a person SURVIVES their deletion — which inverts what deletion
+//     is for and is a GDPR/AVG question before it is a performance one. That is
+//     the precondition: answer it, then widen the tombstone, then narrow the
+//     watermark. Not in the other order.
 //   - Falling back to per-entry ETag hashing is not an alternative design; it is
 //     what happens already when the store is not a TypeWatermark, and it costs
 //     exactly what "Why this exists" above says this interface exists to avoid.
