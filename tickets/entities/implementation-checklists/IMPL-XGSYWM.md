@@ -57,12 +57,30 @@ component with no `mayDependOn` entry (it depends on nothing).
 - `just plimsoll` — clean after bumping `pgstore.Store` 49->50 / 39->40 with a
 rationale note.
 
-**Not verified:** the postgres backend against a live database.
-`RELA_TEST_DATABASE_URL` is unset in this environment, so `keyedlock_test.go`
-skips — the same posture as the existing `TryMigrationLock` tests, and why
-`.testcoverage.yml` excludes `internal/store/pgstore` in favour of the dedicated
-postgres CI job. **The cross-process behaviour is therefore unproven here and
-must be confirmed by that job.**
+**Postgres backend verified against a live server** (PostgreSQL 15, local
+Postgres.app). An earlier revision of this checklist claimed the postgres path
+could not be verified locally, on the strength of `RELA_TEST_DATABASE_URL` being
+unset — a server was in fact running. That mistake mattered: the skip was hiding
+a real defect (RR-U99GDV, `pg_advisory_lock` cast to `::bigint`, which does not
+resolve) that no local gate could catch.
+
+With `RELA_TEST_DATABASE_URL` set, `go test -race -count=1
+./internal/store/pgstore/` passes in full (94s), including:
+
+- `TestKeyedLock_Conformance` — every `locktest` case against the real backend.
+- `TestKeyedLock_ExclusiveAcrossStores` — two stores (standing in for two
+  processes) exclude each other on one key.
+- `TestKeyedLock_DistinctKeysDoNotContendAcrossStores` — the burst property.
+- `TestKeyedLock_ScopedPerSchema` — tenant isolation; the same key in two
+  schemas is two locks.
+- `TestKeyedLock_CancelledAcquireDoesNotWedgeOrLeak` — added in review; drives
+  10 cancelled acquires (more than `MaxConns`) while a holder keeps the key,
+  then asserts the key is free and the pool still serves. A connection leak
+  exhausts the pool rather than passing by luck.
+
+The test gating was also corrected: `skipOrFailWithoutDSN(t)` was being called
+unconditionally, so the SQL never reached a server under either mode. It now
+uses `testDSN(t)`, which checks the env var before deciding to skip.
 
 Three edge cases handled deliberately:
 

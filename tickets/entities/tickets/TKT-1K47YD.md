@@ -5,7 +5,7 @@ title: 'Keyed lock seam (internal/lock): named mutual exclusion with per-tier ba
 kind: enhancement
 priority: medium
 effort: m
-status: review
+status: done
 ---
 
 A narrow seam for **named mutual exclusion**: callers ask for a lock on a string
