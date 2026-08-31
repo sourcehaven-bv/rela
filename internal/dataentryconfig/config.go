@@ -80,6 +80,16 @@ func (d Direction) IsIncoming() bool {
 }
 
 // Config is the top-level configuration for a data entry application.
+//
+// The field count is a DOCUMENTED SHAPE EXCEPTION rather than a ratchet target,
+// in the same sense as a store implementation's mandated interface: each
+// exported field is one top-level `data-entry.yaml` key, so the struct's width
+// is the config format's width. Grouping fields into sub-structs to get under
+// the line would change the operator-facing YAML — a breaking change to every
+// project's config file, made purely to satisfy a lint. Adding a genuinely new
+// top-level key (webhooks, TKT-1EM4KL) therefore raises the pin by one.
+//
+//plimsoll:max-fields=21
 type Config struct {
 	Version     string                       `yaml:"version"`
 	App         AppConfig                    `yaml:"app"`
@@ -98,6 +108,7 @@ type Config struct {
 	Dashboard   *DashboardConfig             `yaml:"dashboard,omitempty"`
 	Commands    map[string]CommandConfig     `yaml:"commands,omitempty"`
 	Actions     map[string]Action            `yaml:"actions,omitempty"`
+	Webhooks    map[string]Webhook           `yaml:"webhooks,omitempty" json:"webhooks,omitempty"`
 	Navigation  []NavigationEntry            `yaml:"navigation"`
 
 	// NextActionBands is the operator's ordered priority vocabulary; list
