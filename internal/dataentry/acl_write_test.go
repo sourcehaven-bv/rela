@@ -101,13 +101,13 @@ func TestACLWrite_DeleteOnHiddenIs404(t *testing.T) {
 	}
 }
 
-// (Visible-but-write-denied → 403 is preserved by AuthorizeWrite in
-// entitymanager; covered by `internal/entitymanager/acl_test.go`.
-// The dataentry-level test here would require wiring the test
-// entitymanager with the same ACL, which `newTestAppV1` does not do.
-// What this PR pins is that the per-entity Visible gate runs BEFORE
-// AuthorizeWrite — the cases that matter for that ordering are the
-// two hidden-target tests above.)
+// (Visible-but-write-denied → 403 IS now covered at the dataentry level, in
+// acl_deny_403_test.go — appbuildtest.WithDeclarative wires the test
+// entitymanager with the same ACL, which `newTestAppV1` still does not do but
+// no longer needs to. That test pins the structured 403 body (AC1.7,
+// TKT-RPBFAO / gh#1044); what the two hidden-target tests above pin is the
+// ORDERING — the per-entity Visible gate runs BEFORE AuthorizeWrite, so a
+// hidden target 404s rather than 403ing and confirming its existence.)
 
 // ---- helpers ----
 

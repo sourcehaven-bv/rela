@@ -1,5 +1,5 @@
 ---
 from: TKT-SNBQX0
-type: has-docs
+relation: has-docs
 to: DOCS-CDV001
 ---
