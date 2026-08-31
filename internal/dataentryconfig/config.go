@@ -134,8 +134,8 @@ type Action struct {
 	Set         map[string]string `yaml:"set,omitempty" json:"set,omitempty"`
 
 	// Capabilities declares which ambient capabilities this action's script
-	// may reach — http, ai, write_file, and named secrets (TKT-YH52OM).
-	// Omitting it grants NONE of them.
+	// may reach — http, ai, mail, write_file, and named secrets (TKT-YH52OM,
+	// TKT-JVHSOZ). Omitting it grants NONE of them.
 	//
 	// An action is invoked over HTTP by whoever may POST /_action/{id}, so it
 	// is not an operator-shell surface: the grant has to be written down by

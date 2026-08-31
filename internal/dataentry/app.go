@@ -813,6 +813,12 @@ func NewApp(
 		}
 	}
 
+	// Warn about scripts that mail without the grant (TKT-JVHSOZ). AFTER the
+	// existence check above, so a project with a missing script fails on that
+	// rather than on a lint that could not read it. See mailgate.go for why
+	// this is a hint rather than a check.
+	warnUngatedMailActionsFromDisk(cfg.Actions, paths.Root)
+
 	// Verify document scripts exist on disk. Shell-command documents are
 	// not checkable this way (the binary may be on PATH at render time
 	// but unavailable now); Lua scripts live in scripts/ under the
