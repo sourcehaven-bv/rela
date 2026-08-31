@@ -2,7 +2,7 @@
 id: REV-QSYRAR
 type: review-checklist
 title: 'Review: Document why rela import bypasses transition guards'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -107,7 +107,7 @@ does not READ as settled invites the same question repeatedly.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
+- [x] Run `/pr` command to create PR and monitor CI
 
 <!--
 Deliberately NOT tracked here: the PR URL and whether CI passed.
