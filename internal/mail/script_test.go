@@ -916,6 +916,14 @@ func TestLuaSender_ValidationStillApplies(t *testing.T) {
 // recurse: the runtime a ScriptSender builds has no mail sender wired, so a
 // script calling mail.send gets not_configured rather than an unbounded chain
 // of runtimes.
+//
+// The expected kind is `not_configured` and NOT `denied`, which makes this an
+// incidental but load-bearing check on ScriptCapabilities.toLua hard-wiring
+// Mail: true (TKT-JVHSOZ). Reaching not_configured means the call got PAST the
+// capability gate and failed on the absent sender — i.e. the send script is
+// authorized to mail and simply has nothing to mail through. If this ever
+// reports `denied`, the hard-wire has been removed and the mail subsystem is
+// refusing itself permission to send.
 func TestScriptSender_InnerRuntimeHasNoMailSender(t *testing.T) {
 	t.Parallel()
 

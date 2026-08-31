@@ -201,15 +201,17 @@ type ScriptCapabilities struct {
 // back door: `mail` authorizes the mail.send binding, and reaching a recipient
 // still means going through the transport the operator configured.
 //
-// It is currently BELT-AND-BRACES rather than load-bearing, and that is worth
-// knowing before someone deletes it as dead: buildRuntime passes no
-// WithMailSender, so a send script calling mail.send today gets
-// `not_configured` regardless of this field — recursing into the mail system
-// from inside it is not a thing the design intends. The grant is written down
-// anyway because the alternative is a landmine: the day anyone wires a sender
-// here (a fallback transport, a test harness, an outbox hop) the failure would
-// be a mail system that cannot mail, reported as a capability denial in the one
-// place an operator would never think to look for one.
+// Note also what this field does NOT unblock today: buildRuntime passes no
+// WithMailSender, so a send script calling mail.send still gets
+// `not_configured` — recursing into the mail system from inside it is not
+// something the design intends, and that is pinned by
+// TestScriptSender_InnerRuntimeHasNoMailSender.
+//
+// The distinction is worth keeping straight, because it is what the grant buys:
+// `not_configured` means the call was AUTHORIZED and found no transport, which
+// is the honest answer. Drop this field and the same call reports `denied` —
+// the mail subsystem refusing itself permission to mail, in the one place an
+// operator would never think to look for a capability problem.
 func (c ScriptCapabilities) toLua() lua.Capabilities {
 	return lua.Capabilities{
 		HTTP:      c.HTTP,
