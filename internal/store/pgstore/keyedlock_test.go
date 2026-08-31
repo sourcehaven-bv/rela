@@ -117,3 +117,40 @@ func TestKeyedLockerFor_DiscoversCapability(t *testing.T) {
 	require.NotNil(t, pgstore.KeyedLockerFor(st), "a pgstore must offer the keyed-lock capability")
 	require.Nil(t, pgstore.KeyedLockerFor(struct{}{}), "an unrelated type must not")
 }
+
+// TestKeyedLock_CancelledAcquireDoesNotWedgeOrLeak pins the Hijack().Close()
+// path, which has no in-process equivalent and so is invisible to locktest.
+//
+// A cancelled acquire may have been GRANTED as the cancellation arrived, so the
+// connection is destroyed rather than pooled — a session-scoped lock dies with
+// its session, releasing the key. Two things can go wrong and only a live
+// server shows either: the key stays held (wedged for the process lifetime), or
+// the destroyed connections are not replaced and the pool drains. The loop runs
+// more times than MaxConns so a leak exhausts the pool rather than passing by
+// luck.
+func TestKeyedLock_CancelledAcquireDoesNotWedgeOrLeak(t *testing.T) {
+	_ = testDSN(t)
+	st, err := pgstore.New(newScopedPool(t))
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	rel, err := st.AcquireKeyedLock(ctx, "wedge/probe")
+	require.NoError(t, err)
+
+	for range 10 {
+		wctx, cancel := context.WithTimeout(ctx, 60*time.Millisecond)
+		_, err := st.AcquireKeyedLock(wctx, "wedge/probe")
+		require.Error(t, err, "a waiter must not acquire a key another holder has")
+		cancel()
+	}
+
+	rel()
+
+	got, err := st.AcquireKeyedLock(ctx, "wedge/probe")
+	require.NoError(t, err, "key wedged or pool exhausted after cancelled acquires")
+	got()
+
+	other, err := st.AcquireKeyedLock(ctx, "wedge/other")
+	require.NoError(t, err, "pool drained by destroyed connections")
+	other()
+}
