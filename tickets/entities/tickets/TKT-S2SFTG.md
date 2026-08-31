@@ -2,7 +2,7 @@
 id: TKT-S2SFTG
 type: ticket
 title: Require BaseDir on git.Clone
-kind: bug
+kind: refactor
 priority: medium
 effort: xs
 status: done

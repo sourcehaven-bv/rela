@@ -2,7 +2,7 @@
 id: REV-93QYQY
 type: review-checklist
 title: 'Review: Require BaseDir on git.Clone'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -160,7 +160,7 @@ caller forgot. Comment and code now agree.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
+- [x] Run `/pr` command to create PR and monitor CI
 
 <!--
 Deliberately NOT tracked here: the PR URL and whether CI passed.
