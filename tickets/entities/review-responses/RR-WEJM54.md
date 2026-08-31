@@ -2,6 +2,7 @@
 id: RR-WEJM54
 type: review-response
 title: Kanban/RelationCards drag asymmetry correct but undocumented; RR-NPDW9A's test never written
+finding: The Kanban/RelationCards drag asymmetry is correct but was undocumented, and the test RR-NPDW9A asked for was never written. RR-NPDW9A's draggable=false prescription targets an anchor CHILD of a drag source; in Kanban the card is both the anchor and the drag source, so setting it there would disable dragging entirely. Without that reasoning in the code, the next reader sees no draggable=false on the Kanban card and 'fixes' it, breaking reorder. Separately, RelationCards drag-reorder had no test at any level.
 severity: significant
 resolution: 'Added a comment at the Kanban card explaining why it deliberately has NO draggable=false (the card is both the link and the drag source; the attribute is for an anchor nested inside one, and setting it here would disable reordering, while onDragStart sets dataTransfer unconditionally). Verified both drag surfaces still work: kanban.spec.ts 15/15 including ''drag updates the entity status'', relation-cards.spec.ts 12/12.'
 status: addressed

@@ -2,6 +2,7 @@
 id: RR-6PBTF1
 type: review-response
 title: Title-cell href silently drops the query/scope context router.push builds
+finding: 'The plan left ''extend entityDetailHref to build path + query'' as possibly optional. EntityList.navigateToEntity builds ~40 lines of reactive query state (from, scope, sort from live sortSpecs else default_sort, every filter[*] including arrays, and q). An href built separately in the template would be a bare /entity/<type>/<id>, so a plain click would carry the full scope and a cmd-click would not. The failure is silent: both paths render a valid page, but the new tab has dead prev/next and a wrong back target. Same applies to SearchView (from=search + q) and Kanban''s edit_form branch.'
 severity: critical
 resolution: 'Made mandatory rather than optional. Each surface now exposes one entityTarget()/cardTarget()/resultTarget() returning path AND query, consumed by both router.push and the link''s :to. Pinned by a test that derives the expectation from the actual push payload rather than a literal, so a new query param cannot make the two diverge silently. Mutation-verified: replacing :to with a bare /entity/type/id fails the two scope tests. Confirmed live in a browser — the popup URL matches the href character-for-character including from= and scope=.'
 status: addressed

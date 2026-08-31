@@ -2,6 +2,7 @@
 id: RR-I4WQPX
 type: review-response
 title: <tr> compromise is a half-feature; justification misstates DOM event behaviour
+finding: 'The <tr> compromise shipped a half-feature on a justification that was factually wrong about DOM events. The plan claimed ''cmd-click anywhere on the row is handled by the guard letting the event through to that anchor'' — returning early from the <tr> handler does not route the event to the anchor; an anchor''s default action fires only when the click lands physically inside it. As specified, cmd-click would do nothing on ~6 of 7 cells with no feedback, which is the ambiguous fail-direction: the user cannot tell ''unsupported'' from ''my modifier key did not register''.'
 severity: critical
 resolution: 'Option (a) chosen and approved by the user: a stretched-link overlay (.row-link::after { inset: 0 }) makes the whole row cmd-clickable, with .select-cell/.actions-cell lifted to z-index 1. The incorrect DOM-event claim was deleted from the plan. Accepted trade-off, explicitly approved: text selection within a row is not possible — documented in a code comment and in docs/data-entry.md. Verified in a real browser that the delete button and checkbox remain clickable (crud.spec.ts delete-from-list and cancel both pass).'
 status: addressed
