@@ -882,6 +882,21 @@ entities:
         type: file
         max: 3
 
+  # BUG-L1DHC5: a dedicated type whose file property is REQUIRED. Separate from
+  # 'bug' on purpose — a required property on a shared type makes every other
+  # test's entity emit a required_property_unset warning.
+  signoff:
+    label: Sign-off
+    id_type: sequential
+    id_prefix: SIGN
+    properties:
+      title:
+        type: string
+        required: true
+      document:
+        type: file
+        required: true
+
   task:
     label: Task
     id_type: sequential
@@ -1097,6 +1112,16 @@ forms:
       # TKT-7K3BJF: exercised by attachments-create.spec.ts.
       - property: screenshot
       - property: evidence
+
+  # BUG-L1DHC5: a form whose file property is REQUIRED. Kept SEPARATE from the
+  # 'bug' form on purpose — adding a required field there would block every
+  # other bug-creation test in the suite.
+  bug_signoff:
+    entity_type: signoff
+    title: "Sign-off"
+    fields:
+      - property: title
+      - property: document
 
   task:
     entity_type: task
