@@ -2,7 +2,7 @@
 id: TKT-ZP1EE3
 type: ticket
 title: 'ClamAV attachment scanning is unusable out of the box: --fdpass, missing clamd.conf bind, and hardened systemd units all break it'
-kind: docs
+kind: enhancement
 priority: high
 effort: m
 status: done
