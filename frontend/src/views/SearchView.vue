@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { RouterLink, useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import { searchEntities } from '@/api'
 import { useSchemaStore } from '@/stores'
 import { parseFilterQueryParams } from '@/utils/filters'
@@ -236,18 +236,27 @@ function focusInput() {
   })
 }
 
-function navigateToResult(index: number) {
-  const entity = results.value[index]
-  if (!entity) return
-  // Pass the search scope so the detail page can show prev/next across the
-  // exact result set the user saw (#844 / scope.go). `from=search` selects the
-  // search origin in useScopeNavigation; `q` is the *full* query string
-  // (including any type:/prop: chips), so the backend's executeQuery
-  // reproduces the identical ordered, possibly-mixed-type result.
+// resultTarget is the SINGLE source of truth for where a result goes — bound to
+// the RouterLink's `to` AND used by the keyboard handler's push, so a
+// cmd-clicked tab and an Enter press land on the identical URL. Building the
+// href separately from the push is how the scope below silently goes missing.
+//
+// Pass the search scope so the detail page can show prev/next across the exact
+// result set the user saw (#844 / scope.go). `from=search` selects the search
+// origin in useScopeNavigation; `q` is the *full* query string (including any
+// type:/prop: chips), so the backend's executeQuery reproduces the identical
+// ordered, possibly-mixed-type result.
+function resultTarget(entity: Entity): RouteLocationRaw {
   const scopeQuery: Record<string, string> = { from: 'search' }
   const full = fullSearchQuery.value
   if (full) scopeQuery.q = full
-  router.push({ path: `/entity/${entity.type}/${entity.id}`, query: scopeQuery })
+  return { path: `/entity/${entity.type}/${entity.id}`, query: scopeQuery }
+}
+
+function navigateToResult(index: number) {
+  const entity = results.value[index]
+  if (!entity) return
+  router.push(resultTarget(entity))
 }
 
 // Clear selection when results change
@@ -427,17 +436,17 @@ watch(
       <p class="results-count">{{ results.length }} result{{ results.length !== 1 ? 's' : '' }} found</p>
 
       <div class="results-list">
-        <div
+        <RouterLink
           v-for="(entity, index) in results"
           :key="entity.id"
           class="result-item"
           :class="{ selected: index === selectedIndex }"
-          @click="navigateToResult(index)"
+          :to="resultTarget(entity)"
         >
           <span class="result-type">{{ getEntityTypeLabel(entity.type) }}</span>
           <span class="result-id">{{ entity.id }}</span>
           <span class="result-title">{{ getEntityLabel(entity) }}</span>
-        </div>
+        </RouterLink>
       </div>
     </div>
   </div>

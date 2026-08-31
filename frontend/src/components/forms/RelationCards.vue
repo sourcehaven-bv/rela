@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import SlimSelect from 'slim-select/vue'
 import 'slim-select/styles'
 import { useSchemaStore } from '@/stores'
@@ -178,11 +178,15 @@ function getEntityTitle(id: string): string {
   return entityDisplayTitle(entity)
 }
 
-function navigateToEntity(id: string) {
+// entityTarget is the entity route for a related entry, bound to a RouterLink so
+// cmd/middle-click opens a tab.
+// Nil: returns undefined when the entry is not in entityCache (its type is
+// unknown, so no route can be built). The template then renders a plain span —
+// the same inert behaviour this had before, rather than a broken link.
+function entityTarget(id: string): string | undefined {
   const entity = entityCache.value.get(id)
-  if (entity) {
-    router.push(`/entity/${entity.type}/${id}`)
-  }
+  if (!entity) return undefined
+  return `/entity/${entity.type}/${id}`
 }
 
 // openRelationHistory navigates to the relation's version history. Only offered
@@ -559,12 +563,18 @@ function onDragEnd() {
             >⋮⋮</span
           >
           <div class="card-identity">
-            <span class="entity-id" @click="navigateToEntity(entry.id)">
-              {{ entry.id }}
-            </span>
-            <span class="entity-title" @click="navigateToEntity(entry.id)">
-              {{ getEntityTitle(entry.id) }}
-            </span>
+            <template v-if="entityTarget(entry.id)">
+              <RouterLink class="entity-id" :to="entityTarget(entry.id)!" draggable="false">
+                {{ entry.id }}
+              </RouterLink>
+              <RouterLink class="entity-title" :to="entityTarget(entry.id)!" draggable="false">
+                {{ getEntityTitle(entry.id) }}
+              </RouterLink>
+            </template>
+            <template v-else>
+              <span class="entity-id">{{ entry.id }}</span>
+              <span class="entity-title">{{ getEntityTitle(entry.id) }}</span>
+            </template>
           </div>
           <button
             v-if="!isIncoming"
@@ -874,6 +884,9 @@ function onDragEnd() {
   font-size: 12px;
   color: var(--accent-color, #6366f1);
   white-space: nowrap;
+  /* Real links now; keep the previous resting appearance. */
+  text-decoration: none;
+  cursor: pointer;
 }
 
 .entity-id:hover {
@@ -886,6 +899,8 @@ function onDragEnd() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  text-decoration: none;
+  cursor: pointer;
 }
 
 .entity-title:hover {
