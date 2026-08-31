@@ -51,7 +51,7 @@ Every record is one line of JSON:
 | Field         | Meaning                                                             |
 |---------------|---------------------------------------------------------------------|
 | `time`        | UTC timestamp                                                        |
-| `op`          | `create-entity`, `update-entity`, `delete-entity`, `rename-entity`, `create-relation`, `update-relation`, `delete-relation`, `denied-write` |
+| `op`          | See the op list below |
 | `subject`     | The thing acted on (see "Subject shape" below)                       |
 | `before` / `after` | For `rename-entity` only — the identity diff                   |
 | `principal.user` | The OS user (from `$USER`) that initiated the operation           |
@@ -61,6 +61,18 @@ Every record is one line of JSON:
 | `principal.roles` | Optional. The `roles` claim from a verified identity assertion |
 | `triggered_by` | Optional. Engine-initiated writes carry `automation:<name>`, `schedule:<task-name>`, or `cascade:delete-entity:<id>` |
 | `summary`     | One-line human-readable summary; for updates names *which* properties changed but never their values (secret-leak defense) |
+
+### Operations
+
+| `op` | Meaning |
+|------|---------|
+| `create-entity`, `update-entity`, `delete-entity`, `rename-entity` | Entity writes |
+| `create-relation`, `update-relation`, `delete-relation` | Relation writes |
+| `denied-write` | A write the ACL refused, or an upload the attachment policy refused. Subject names the would-be target; the summary carries the rule that fired |
+| `acl-bypass`, `acl-bypass-read` | A write or read that skipped the ACL through an elevated automation handle. The principal is the REAL triggering identity |
+| `acl-query` | An effective-access query (`rela acl who-can`) — who asked, when, and about which entity. **The answer is deliberately not recorded**: it is a list of principals and their access routes, so logging it would duplicate the disclosure rather than record it |
+| `purge-version` | An operator hard-delete of version history for compliance redaction. Never contains the purged content |
+| `data-migration`, `data-gc` | Schema-driven data migration and garbage collection |
 
 ### `denied-write` records
 
