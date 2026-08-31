@@ -102,12 +102,13 @@ var spaChromeNames = map[string]string{
 // name them instead of repeating string literals, which is what makes the
 // rename a compile error on the Go side too.
 var DerivedNames = struct {
-	Dashboard, List, Kanban, Calendar, Search, Settings, Document, Action string
+	Dashboard, List, Kanban, Calendar, Gantt, Search, Settings, Document, Action string
 }{
 	Dashboard: "dashboard",
 	List:      "list",
 	Kanban:    "kanban",
 	Calendar:  "calendar",
+	Gantt:     "gantt",
 	Search:    "search",
 	Settings:  "settings",
 	Document:  "document",
@@ -157,6 +158,7 @@ func All() []IconDef {
 		{"list", "List", "Navigation", "List view; the default list glyph"},
 		{"kanban", "Kanban", "Navigation", "Board view; the default kanban glyph"},
 		{"calendar", "CalendarDays", "Navigation", "Calendar view"},
+		{"gantt", "ChartGantt", "Navigation", "Gantt view"},
 		{"search", "Search", "Navigation", "Search"},
 		{"settings", "Settings", "Navigation", "Settings or configuration"},
 		{"apps", "Blocks", "Navigation", "Custom apps section"},

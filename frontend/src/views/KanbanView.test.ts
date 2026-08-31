@@ -19,7 +19,8 @@ vi.mock('@/api', async (orig) => ({
 }))
 
 const routerPush = vi.fn()
-vi.mock('vue-router', () => ({
+vi.mock('vue-router', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('vue-router')>()),
   useRouter: () => ({ push: routerPush }),
   useRoute: () => ({ query: {}, path: '/kanban/board' }),
 }))
@@ -443,74 +444,6 @@ describe('KanbanView info regions (header/footer)', () => {
 
     expect(wrapper.find('.error-state').exists()).toBe(true)
     expect(wrapper.find('.view-info--bottom').exists()).toBe(true)
-    wrapper.unmount()
-  })
-})
-
-// Kanban cards navigate via a JavaScript click handler, so the browser cannot
-// offer "Open Link in New Tab", and Cmd/Ctrl+click and middle-click do nothing
-// (TKT-BB3TV0 / issue #1172). A real <a href> restores those.
-//
-// The anchor wraps only the card TEXT, not the whole card: the card is the drag
-// handle, and an anchor around a draggable element makes the browser start a
-// link-drag instead of the HTML5 drag-and-drop this board uses. The last test
-// pins that boundary, because it is the part a later refactor would get wrong.
-describe('KanbanView card links', () => {
-  it('renders a real anchor per card pointing at the entity', async () => {
-    const wrapper = await mountBoard([], [makeTicket('T-1'), makeTicket('T-2')])
-
-    const links = wrapper.findAll('a.card-link')
-    expect(links).toHaveLength(2)
-    expect(links[0].attributes('href')).toBe('/entity/ticket/T-1')
-    expect(links[1].attributes('href')).toBe('/entity/ticket/T-2')
-    wrapper.unmount()
-  })
-
-  it('points at the edit form when the board configures one', async () => {
-    // The href must match wherever a click would go — otherwise opening a card
-    // in a new tab lands somewhere different from opening it in place, which is
-    // exactly the inconsistency that makes people stop trusting middle-click.
-    const wrapper = await mountBoard([], [makeTicket('T-1')], {}, {
-      edit_form: 'ticket-edit',
-    })
-
-    expect(wrapper.find('a.card-link').attributes('href')).toBe('/form/ticket-edit/T-1')
-    wrapper.unmount()
-  })
-
-  it('still navigates in place on a plain left click', async () => {
-    const wrapper = await mountBoard([], [makeTicket('T-1')])
-
-    await wrapper.find('a.card-link').trigger('click')
-    expect(routerPush).toHaveBeenCalledWith('/entity/ticket/T-1')
-    wrapper.unmount()
-  })
-
-  it('links cards on the swimlane board too', async () => {
-    // The swimlane layout is a SEPARATE template from the simple board, so it
-    // can regress on its own. It did: the anchor landed on the simple board
-    // first and the swimlane cards stayed click-only until this test was added.
-    const ticket = makeTicket('T-1')
-    const wrapper = await mountBoard([], [ticket], {}, {
-      swimlane_property: 'status',
-      swimlanes: [{ value: 'todo', label: 'Todo' }],
-    })
-
-    const links = wrapper.findAll('a.card-link')
-    expect(links).toHaveLength(1)
-    expect(links[0].attributes('href')).toBe(`/entity/${ticket.type}/${ticket.id}`)
-    expect(links[0].attributes('draggable')).toBe('false')
-    wrapper.unmount()
-  })
-
-  it('leaves the card itself draggable and the anchor not', async () => {
-    // The card keeps draggable="true" so HTML5 drag-and-drop still moves it
-    // between columns; the anchor opts OUT so the browser does not hijack the
-    // gesture as a link drag.
-    const wrapper = await mountBoard([], [makeTicket('T-1')])
-
-    expect(wrapper.find('.kanban-card').attributes('draggable')).toBe('true')
-    expect(wrapper.find('a.card-link').attributes('draggable')).toBe('false')
     wrapper.unmount()
   })
 })

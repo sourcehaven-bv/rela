@@ -9,7 +9,8 @@ import type { AnalyzeIssue, AnalyzeResult } from '@/types'
 import type { ScriptError } from '@/types/scriptError'
 
 const routerPush = vi.fn()
-vi.mock('vue-router', () => ({
+vi.mock('vue-router', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('vue-router')>()),
   useRouter: () => ({ push: routerPush }),
   useRoute: () => ({ query: {}, path: '/analyze' }),
 }))
@@ -105,9 +106,13 @@ describe('AnalyzeView click discrimination', () => {
     ])
 
     const store = useScriptErrorStore()
-    await wrapper.find('.entity-title').trigger('click')
 
-    expect(routerPush).toHaveBeenCalledWith('/entity/note/note-2')
+    // The entity title is a real link now (TKT-3CSZRG), so navigation is the
+    // anchor's href rather than a router.push call — that is what makes
+    // cmd/middle-click open a new tab.
+    const link = wrapper.find('.entity-title')
+    expect(link.element.tagName).toBe('A')
+    expect(link.attributes('href')).toBe('/entity/note/note-2')
     expect(store.current).toBeNull()
 
     // A plain violation (no detail, no scriptError) has no interactive

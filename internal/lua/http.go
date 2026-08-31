@@ -99,17 +99,31 @@ func newHTTPClient() *http.Client {
 // scheduler ticks, MCP tool calls).
 var httpClient = newHTTPClient()
 
+// httpBindings implements the http.* module bindings: request plus the
+// per-method convenience functions. A type of its own rather than more
+// methods on [Runtime] (the urlHelpers rationale in urls.go): these
+// functions need nothing from the runtime — no store, no deps, no
+// capabilities, not even the Lua state, since each receives the
+// *lua.LState it is called with and the request context comes from that
+// state (see httpContext). The capability gate stays where it was:
+// registerBindings on Runtime registers this module only when caps.HTTP
+// was granted.
+//
+// Nil: the zero value is ready to use; it holds no state to initialize.
+type httpBindings struct{}
+
 // registerHTTPModule installs the top-level `http` global with `request`
 // plus the per-method convenience functions (get, post, put, patch, delete).
 // JSON helpers live separately under rela.json (see json.go).
 func (r *Runtime) registerHTTPModule() {
+	h := httpBindings{}
 	tbl := r.L.NewTable()
-	r.L.SetField(tbl, "request", r.L.NewFunction(r.luaHTTPRequest))
-	r.L.SetField(tbl, "get", r.L.NewFunction(r.luaHTTPGet))
-	r.L.SetField(tbl, "post", r.L.NewFunction(r.luaHTTPPost))
-	r.L.SetField(tbl, "put", r.L.NewFunction(r.luaHTTPPut))
-	r.L.SetField(tbl, "patch", r.L.NewFunction(r.luaHTTPPatch))
-	r.L.SetField(tbl, "delete", r.L.NewFunction(r.luaHTTPDelete))
+	r.L.SetField(tbl, "request", r.L.NewFunction(h.luaHTTPRequest))
+	r.L.SetField(tbl, "get", r.L.NewFunction(h.luaHTTPGet))
+	r.L.SetField(tbl, "post", r.L.NewFunction(h.luaHTTPPost))
+	r.L.SetField(tbl, "put", r.L.NewFunction(h.luaHTTPPut))
+	r.L.SetField(tbl, "patch", r.L.NewFunction(h.luaHTTPPatch))
+	r.L.SetField(tbl, "delete", r.L.NewFunction(h.luaHTTPDelete))
 	r.L.SetGlobal("http", tbl)
 }
 
@@ -124,39 +138,39 @@ func (r *Runtime) registerHTTPModule() {
 //	timeout    (number, optional, seconds)
 //
 // Returns (response_table, nil) on success, (nil, err_table) on failure.
-func (r *Runtime) luaHTTPRequest(ls *lua.LState) int {
+func (h httpBindings) luaHTTPRequest(ls *lua.LState) int {
 	opts := ls.CheckTable(1)
 	parsed, err := parseHTTPRequestOpts(opts)
 	if err != nil {
 		ls.RaiseError("http.request: %s", err.Error())
 		return 0
 	}
-	return r.doHTTPRequest(ls, "http.request", parsed)
+	return h.doHTTPRequest(ls, "http.request", parsed)
 }
 
 // luaHTTPGet implements http.get(url, opts?) -> (response, nil) | (nil, err).
-func (r *Runtime) luaHTTPGet(ls *lua.LState) int {
-	return r.luaHTTPSimple(ls, "http.get", http.MethodGet, false)
+func (h httpBindings) luaHTTPGet(ls *lua.LState) int {
+	return h.luaHTTPSimple(ls, "http.get", http.MethodGet, false)
 }
 
 // luaHTTPPost implements http.post(url, body, opts?) -> (response, nil) | (nil, err).
-func (r *Runtime) luaHTTPPost(ls *lua.LState) int {
-	return r.luaHTTPSimple(ls, "http.post", http.MethodPost, true)
+func (h httpBindings) luaHTTPPost(ls *lua.LState) int {
+	return h.luaHTTPSimple(ls, "http.post", http.MethodPost, true)
 }
 
 // luaHTTPPut implements http.put(url, body, opts?) -> (response, nil) | (nil, err).
-func (r *Runtime) luaHTTPPut(ls *lua.LState) int {
-	return r.luaHTTPSimple(ls, "http.put", http.MethodPut, true)
+func (h httpBindings) luaHTTPPut(ls *lua.LState) int {
+	return h.luaHTTPSimple(ls, "http.put", http.MethodPut, true)
 }
 
 // luaHTTPPatch implements http.patch(url, body, opts?) -> (response, nil) | (nil, err).
-func (r *Runtime) luaHTTPPatch(ls *lua.LState) int {
-	return r.luaHTTPSimple(ls, "http.patch", http.MethodPatch, true)
+func (h httpBindings) luaHTTPPatch(ls *lua.LState) int {
+	return h.luaHTTPSimple(ls, "http.patch", http.MethodPatch, true)
 }
 
 // luaHTTPDelete implements http.delete(url, opts?) -> (response, nil) | (nil, err).
-func (r *Runtime) luaHTTPDelete(ls *lua.LState) int {
-	return r.luaHTTPSimple(ls, "http.delete", http.MethodDelete, false)
+func (h httpBindings) luaHTTPDelete(ls *lua.LState) int {
+	return h.luaHTTPSimple(ls, "http.delete", http.MethodDelete, false)
 }
 
 // luaHTTPSimple implements the convenience-method shape:
@@ -166,7 +180,7 @@ func (r *Runtime) luaHTTPDelete(ls *lua.LState) int {
 //
 // fnName ("http.get", etc.) is used as the prefix on raised errors so
 // scripts see the entry-point name in error messages, not "http.request".
-func (r *Runtime) luaHTTPSimple(ls *lua.LState, fnName, method string, withBody bool) int {
+func (h httpBindings) luaHTTPSimple(ls *lua.LState, fnName, method string, withBody bool) int {
 	rawURL := ls.CheckString(1)
 	body := ""
 	optsPos := 2
@@ -187,7 +201,7 @@ func (r *Runtime) luaHTTPSimple(ls *lua.LState, fnName, method string, withBody 
 	opts.method = method
 	opts.url = reqURL
 	opts.body = body
-	return r.doHTTPRequest(ls, fnName, opts)
+	return h.doHTTPRequest(ls, fnName, opts)
 }
 
 // doHTTPRequest performs the actual HTTP request and pushes the result
@@ -199,8 +213,8 @@ func (r *Runtime) luaHTTPSimple(ls *lua.LState, fnName, method string, withBody 
 // convenience methods and http.request now agree on a growing set of request
 // features (body, form, basic auth), and a parameter list that grows with each
 // one is how a caller ends up passing headers where the body goes.
-func (r *Runtime) doHTTPRequest(ls *lua.LState, fnName string, o httpRequestOpts) int {
-	ctx := httpContext(r)
+func (h httpBindings) doHTTPRequest(ls *lua.LState, fnName string, o httpRequestOpts) int {
+	ctx := httpContext(ls)
 	if o.timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, o.timeout)
@@ -249,9 +263,9 @@ func (r *Runtime) doHTTPRequest(ls *lua.LState, fnName string, o httpRequestOpts
 }
 
 // httpContext returns the context for HTTP calls, propagating the
-// runtime's Lua-state context (for timeout) or falling back to Background.
-func httpContext(r *Runtime) context.Context {
-	if ctx := r.L.Context(); ctx != nil {
+// Lua state's context (for timeout) or falling back to Background.
+func httpContext(ls *lua.LState) context.Context {
+	if ctx := ls.Context(); ctx != nil {
 		return ctx
 	}
 	return context.Background()
