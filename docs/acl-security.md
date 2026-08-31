@@ -1080,6 +1080,18 @@ strip). Grant it only to trusted audit/compliance roles — it exposes fields th
 live `visible:` policy would redact. A non-holder always sees the fail-closed
 redaction described above.
 
+**Every reveal is audited** (`history-reveal`) *under a configured policy*, so
+"who saw which hidden historical values, and when" is answerable after the fact.
+With no `acl.yaml` there is nothing to reveal — no field is redacted — so those
+reads are not recorded; otherwise every history read in an unconfigured
+deployment would log a reveal that revealed nothing. The row names the
+entity and the version read, and the principal who read it — it does *not*
+record the revealed values, nor which fields were revealed (that list is itself
+a map of what the policy hides). Ordinary redacted history reads are **not**
+recorded: they disclose nothing this permission governs, and logging them would
+bury the privileged reads the row exists to surface. Isolate reveals with `op ==
+"history-reveal"`.
+
 **Relation history is governed by the current live world — deliberately unlike
 entity history.** Where *entity* history reconstructs the moment of capture and
 adds a `history:read-redacted` audit reveal, *relation* history takes a simpler,

@@ -68,6 +68,38 @@ const (
 	//nolint:gosec // G101 false positive: an audit op name, not a credential.
 	OpACLBypassRead = "acl-bypass-read"
 
+	// OpHistoryReveal records that a holder of acl.PermHistoryReadRedacted
+	// read a historical entity version with the redaction OVERRIDDEN --
+	// TKT-LVSPSB. The permission exists so a small audited group can see
+	// frozen field values (salary/PII class, TKT-73C6B2) that are hidden from
+	// ordinary readers; without this record, "who saw which hidden historical
+	// values, and when" was unanswerable, since internal/audit otherwise logs
+	// only writes.
+	//
+	// Separate op rather than a flag on an existing one, for the same reason
+	// OpACLBypassRead is separate from OpACLBypass: folding a read into an
+	// existing op silently changes what every stored query for that op means.
+	//
+	// Distinct from OpACLBypassRead despite the family resemblance -- no
+	// bypass_acl closure is involved, and reusing that op would pollute a
+	// forensic query about elevated automation with ordinary auditor traffic.
+	// Unlike OpACLBypassRead this record DOES carry a Subject: a bypass
+	// closure's read set is unbounded (one admin.list_entities can walk the
+	// graph), while a reveal is one entity at one version -- bounded, known,
+	// and worth naming.
+	//
+	// Recorded ONLY on the reveal arm: an ordinary, redacted history read
+	// emits nothing. A record that appeared for every read would bury the
+	// privileged ones it exists to surface.
+	//
+	// Subject names the entity (Type from the stored SNAPSHOT, never the
+	// caller-supplied URL segment, so the recorded type cannot be spoofed);
+	// Summary carries the version. The revealed VALUES are never recorded, and
+	// neither are the revealed field NAMES -- that list is a map of what the
+	// policy hides, which is close to the thing being protected. Isolate with
+	// `op == "history-reveal"`.
+	OpHistoryReveal = "history-reveal"
+
 	// OpPurgeVersion records an operator hard-delete of version snapshot rows
 	// (TKT-BW6UUL) — the deliberate, irreversible exception to append-only
 	// history, for compliance redaction. Subject names the entity/relation whose
