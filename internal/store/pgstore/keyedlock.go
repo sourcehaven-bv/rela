@@ -73,7 +73,7 @@ func (s *Store) AcquireKeyedLock(ctx context.Context, key string) (release func(
 	// a session-scoped lock dies with its session, so the key is released
 	// instead of being held by a pooled connection nobody knows is a holder.
 	if _, err := conn.Exec(ctx,
-		`SELECT pg_advisory_lock($1::bigint, hashtext(current_schema() || '/' || $2::text))`,
+		`SELECT pg_advisory_lock($1::int, hashtext(current_schema() || '/' || $2::text))`,
 		keyedLockClassKey, key,
 	); err != nil {
 		conn.Hijack().Close(context.WithoutCancel(ctx))
@@ -89,7 +89,7 @@ func (s *Store) AcquireKeyedLock(ctx context.Context, key string) (release func(
 			// connection to the pool rather than one carrying a held lock.
 			unlockCtx := context.WithoutCancel(ctx)
 			if _, err := conn.Exec(unlockCtx,
-				`SELECT pg_advisory_unlock($1::bigint, hashtext(current_schema() || '/' || $2::text))`,
+				`SELECT pg_advisory_unlock($1::int, hashtext(current_schema() || '/' || $2::text))`,
 				keyedLockClassKey, key,
 			); err != nil {
 				// A session lock dies with its session, so a failed unlock

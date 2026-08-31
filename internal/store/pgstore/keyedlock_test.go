@@ -16,7 +16,7 @@ import (
 // PostgreSQL backend, so it is held to exactly the same contract as the
 // in-process locker rather than to a prose approximation of it.
 func TestKeyedLock_Conformance(t *testing.T) {
-	skipOrFailWithoutDSN(t)
+	_ = testDSN(t)
 	locktest.RunAll(t, func(tb testing.TB) lock.Locker {
 		// A fresh schema per subtest: advisory locks are database-global, so
 		// subtests sharing a schema would contend on the same keys.
@@ -34,7 +34,7 @@ func TestKeyedLock_Conformance(t *testing.T) {
 // instances (standing in for two rela-server processes) exclude each other on
 // the same key.
 func TestKeyedLock_ExclusiveAcrossStores(t *testing.T) {
-	skipOrFailWithoutDSN(t)
+	_ = testDSN(t)
 	pool := newScopedPool(t)
 	a, err := pgstore.New(pool)
 	require.NoError(t, err)
@@ -63,7 +63,7 @@ func TestKeyedLock_ExclusiveAcrossStores(t *testing.T) {
 // processes locking DIFFERENT keys never wait on each other. If this regressed,
 // a monitoring fan-out would serialize database-wide.
 func TestKeyedLock_DistinctKeysDoNotContendAcrossStores(t *testing.T) {
-	skipOrFailWithoutDSN(t)
+	_ = testDSN(t)
 	pool := newScopedPool(t)
 	a, err := pgstore.New(pool)
 	require.NoError(t, err)
@@ -87,7 +87,7 @@ func TestKeyedLock_DistinctKeysDoNotContendAcrossStores(t *testing.T) {
 // without the schema in the hash one tenant's webhook would block another's —
 // the BUG-CA3VY0 class.
 func TestKeyedLock_ScopedPerSchema(t *testing.T) {
-	skipOrFailWithoutDSN(t)
+	_ = testDSN(t)
 	poolA := newScopedPool(t)
 	poolB := newScopedPool(t)
 	a, err := pgstore.New(poolA)
@@ -110,7 +110,7 @@ func TestKeyedLock_ScopedPerSchema(t *testing.T) {
 // TestKeyedLockerFor_DiscoversCapability pins the type-assert discovery used at
 // the wiring site.
 func TestKeyedLockerFor_DiscoversCapability(t *testing.T) {
-	skipOrFailWithoutDSN(t)
+	_ = testDSN(t)
 	st, err := pgstore.New(newScopedPool(t))
 	require.NoError(t, err)
 
