@@ -84,6 +84,32 @@ test.describe('Open in a new tab', () => {
     await popup.close();
   });
 
+  test('header nav affordances (Prev/Next, Edit, History) open in a new tab', async ({
+    appPage,
+  }) => {
+    // Navigation buttons that trigger no mutation are links too. Delete stays a
+    // <button> on purpose — it mutates, so a new tab makes no sense for it.
+    const listPage = new ListPage(appPage);
+    await listPage.navigateToList('features');
+    await listPage.clickRow(0);
+    await expect(appPage).toHaveURL(/\/entity\//);
+
+    const history = appPage.getByRole('link', { name: 'History' });
+    await expect(history).toBeVisible();
+
+    const before = appPage.url();
+    const popupPromise = appPage.context().waitForEvent('page');
+    await history.click({ modifiers: ['Meta'] });
+    const popup = await popupPromise;
+
+    await expect(popup).toHaveURL(/\/history\//);
+    expect(appPage.url()).toBe(before);
+    await popup.close();
+
+    // Delete must NOT have become a link.
+    await expect(appPage.getByRole('link', { name: /Delete/ })).toHaveCount(0);
+  });
+
   test('cmd/ctrl-click on a kanban card opens a background tab', async ({ appPage }) => {
     const kanbanPage = new KanbanPage(appPage);
     await kanbanPage.navigateToKanban('feature-board');

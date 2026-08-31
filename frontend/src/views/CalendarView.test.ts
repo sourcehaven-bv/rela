@@ -43,7 +43,8 @@ const routerReplace = vi.fn((to: { query?: Record<string, string> }) => {
   if (to?.query) routeQuery.value = { ...to.query }
   return Promise.resolve()
 })
-vi.mock('vue-router', () => ({
+vi.mock('vue-router', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('vue-router')>()),
   useRouter: () => ({
     push: routerPush,
     replace: (to: { query?: Record<string, string> }) => routerReplace(to),
@@ -627,8 +628,9 @@ describe('CalendarView event click', () => {
     expect(modal).not.toBeNull()
     expect(modal.querySelector('.header-actions')).toBeNull()
 
-    // The footer still offers exactly one Edit.
-    const footerButtons = [...modal.querySelectorAll('.modal-actions button')].map((b) =>
+    // The footer still offers exactly one Edit. Both actions are real links
+    // now (TKT-3CSZRG) so cmd/middle-click opens them in a tab.
+    const footerButtons = [...modal.querySelectorAll('.modal-actions button, .modal-actions a')].map((b) =>
       b.textContent?.trim()
     )
     expect(footerButtons).toEqual(['Open full page', 'Edit'])
@@ -642,7 +644,7 @@ describe('CalendarView event click', () => {
     await flushPromises()
 
     const modal = document.querySelector('.entity-preview') as HTMLElement
-    const footerButtons = [...modal.querySelectorAll('.modal-actions button')].map((b) =>
+    const footerButtons = [...modal.querySelectorAll('.modal-actions button, .modal-actions a')].map((b) =>
       b.textContent?.trim()
     )
     expect(footerButtons).toEqual(['Open full page'])

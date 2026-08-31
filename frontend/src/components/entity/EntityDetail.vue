@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, onUnmounted } from 'vue'
-import { RouterLink, useRouter } from 'vue-router'
+import { RouterLink, useRouter, type RouteLocationRaw } from 'vue-router'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { useScopeNavigation } from '@/composables'
 import { useBackTarget } from '@/composables/useBackTarget'
@@ -84,7 +84,7 @@ const { confirm } = useConfirm()
 // (return_to / from precedence). Two parallel concerns: scope-nav walks
 // a list; backTarget answers "where do I go back to". Both can be active
 // at once.
-const { scopeNav, loadScopeNav, navigateScope } = useScopeNavigation(() => props.entityId)
+const { scopeNav, loadScopeNav, scopeTarget, navigateScope } = useScopeNavigation(() => props.entityId)
 const backTarget = useBackTarget()
 
 // State
@@ -113,9 +113,15 @@ const showOverflowMenu = ref(false)
 
 const commandModalRef = ref<InstanceType<typeof CommandModal> | null>(null)
 
-function openHistory() {
-  router.push(`/history/${props.entityType}/${props.entityId}`)
-}
+// historyTarget / editTarget back the header's History and Edit affordances.
+// Both are pure navigation (no mutation), so they render as real links and
+// support cmd/ctrl/middle-click — unlike Delete, which stays a <button>.
+// Each is the single source of truth for its destination, shared with the
+// keyboard shortcut so both routes agree.
+const historyTarget = computed(
+  () => `/history/${props.entityType}/${props.entityId}`
+)
+
 const contentRef = ref<HTMLElement | null>(null)
 
 // Computed
@@ -146,6 +152,14 @@ const isInaccessible = computed(() => (entry.value?.inaccessible?.length ?? 0) >
 // Affordance gates: `_actions` map from the server. `false` → hide;
 // anything else → render. See frontend/src/utils/affordancesWarning.ts.
 const canUpdate = computeActionAllowed(entry, 'update')
+
+// Nil: undefined when editing is unavailable (no configured form, an
+// inaccessible/git-crypt entity, or no update permission). The template then
+// renders nothing rather than a link to a page that would refuse the write.
+const editTarget = computed<RouteLocationRaw | undefined>(() => {
+  if (!editFormId.value || isInaccessible.value || !canUpdate.value) return undefined
+  return { name: 'form-edit', params: { id: editFormId.value, entityId: props.entityId } }
+})
 const canDelete = computeActionAllowed(entry, 'delete')
 
 // The entry's content section gets a custom renderer (mermaid + interactive
@@ -805,15 +819,23 @@ watch(
       <div v-if="backTarget || scopeNav" class="scope-nav mobile-topbar">
         <BackButton v-if="backTarget" :target="backTarget" />
         <template v-if="scopeNav">
-          <button v-if="scopeNav.prev" class="scope-nav-btn" @click="navigateScope('prev')">
+          <RouterLink
+            v-if="scopeTarget('prev')"
+            class="scope-nav-btn"
+            :to="scopeTarget('prev')!"
+          >
             ← Prev <kbd>P</kbd>
-          </button>
+          </RouterLink>
           <span v-else class="scope-nav-btn disabled">← Prev</span>
           <span class="scope-nav-progress">[{{ scopeNav.current }}/{{ scopeNav.total }}]</span>
           <span class="scope-nav-label">{{ scopeNav.label }}</span>
-          <button v-if="scopeNav.next" class="scope-nav-btn" @click="navigateScope('next')">
+          <RouterLink
+            v-if="scopeTarget('next')"
+            class="scope-nav-btn"
+            :to="scopeTarget('next')!"
+          >
             Next → <kbd>N</kbd>
-          </button>
+          </RouterLink>
           <span v-else class="scope-nav-btn disabled">Next →</span>
         </template>
       </div>
@@ -833,14 +855,14 @@ watch(
           >
             {{ cmd.label }}
           </button>
-          <button
-            v-if="editFormId && !isInaccessible && canUpdate"
+          <RouterLink
+            v-if="editTarget"
             class="btn btn-secondary"
-            @click="editEntity"
+            :to="editTarget"
           >
             Edit <kbd>E</kbd>
-          </button>
-          <button class="btn btn-secondary" @click="openHistory">History</button>
+          </RouterLink>
+          <RouterLink class="btn btn-secondary" :to="historyTarget">History</RouterLink>
           <ExportMenu :url-for="(t: string) => entityExportUrl(entityType, entityId, t)" />
           <button v-if="canDelete" class="btn btn-danger" @click="requestDelete">
             Delete <kbd>Del</kbd>
@@ -849,13 +871,9 @@ watch(
 
         <!-- Mobile actions: Edit primary, delete icon, overflow menu for commands -->
         <div v-if="!props.hideActions" class="header-actions mobile-actions">
-          <button
-            v-if="editFormId && !isInaccessible && canUpdate"
-            class="btn btn-secondary"
-            @click="editEntity"
-          >
+          <RouterLink v-if="editTarget" class="btn btn-secondary" :to="editTarget">
             Edit
-          </button>
+          </RouterLink>
           <button
             v-if="canDelete"
             class="btn btn-danger mobile-delete-btn"
