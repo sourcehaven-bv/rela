@@ -12,8 +12,8 @@ import (
 
 // LocalApplier is the id-preserving, automation-suppressed write path the pull
 // command uses to land remote records locally. Declared at the call site
-// (CLAUDE.md): *entitymanager.Manager satisfies it, but the broad EntityManager
-// interface deliberately omits ApplyEntity/ApplyRelation — sync is their only
+// (CLAUDE.md): *entitymanager.Manager satisfies it, and no other consumer's
+// write interface names ApplyEntity/ApplyRelation — sync is their only
 // consumer, mirroring the server side. Delete uses the manager's standard
 // delete (a mirrored remote delete). Exported so the CLI wiring can type-assert
 // the entity manager to it.
@@ -51,8 +51,17 @@ type Engine struct {
 	local *LocalSchema
 }
 
-// NewEngine constructs a sync engine. applier may be nil for a push-only run
-// (push never writes locally); pull requires it and errors if it is nil.
+// NewEngine constructs a sync engine.
+//
+// applier may be nil, but ONLY for a run that never writes locally. That is
+// narrower than "push-only": pull and force-pull obviously write, and push does
+// too on its id-adoption path (the primary mints an id differing from the local
+// temp id, and adopting it is a local rename). Each of those three checks for
+// nil and returns errLocalApplierRequired; none dereferences it blind.
+//
+// Production always supplies one — the CLI wiring holds it as a typed
+// writeServices.SyncApplier field, so a missing applier is a compile error
+// there. The nil case exists for tests that exercise read-only paths.
 func NewEngine(client *Client, st store.Store, applier LocalApplier, idx *State) (*Engine, error) {
 	if client == nil {
 		return nil, errors.New("sync engine: client is required")
