@@ -68,6 +68,12 @@ const routes: RouteRecordRaw[] = [
     props: true,
   },
   {
+    path: '/gantt/:id',
+    name: 'gantt',
+    component: () => import('@/views/GanttView.vue'),
+    props: true,
+  },
+  {
     path: '/search',
     name: 'search',
     component: () => import('@/views/SearchView.vue'),
