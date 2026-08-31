@@ -144,11 +144,261 @@ type Config struct {
 	// reach the network rather than one that quietly can.
 	Capabilities ScriptCapabilities `yaml:"capabilities"`
 
+	// Recipients declares who mail.send may address (TKT-USQNA3).
+	//
+	// A POINTER, and that is the whole design. Absent (`nil`) must be
+	// distinguishable from present-but-empty, because the two get different
+	// errors: nil says "add a recipients: block", empty-but-valid says "this
+	// address is not in the set you declared". A value type collapses both
+	// into the zero struct and the operator gets sent to the wrong place.
+	//
+	// Absent DENIES EVERYTHING. That inverts this file's usual rule — an
+	// absent mail.yaml means "mail is off", an absent port means 587 — and
+	// the inversion is deliberate. Permitting on absence fails silently and
+	// irreversibly (mail leaves the ACL perimeter and nobody knows until the
+	// recipient replies); refusing on absence fails loudly and harmlessly (a
+	// typed error naming this key, and four lines of YAML to fix it). A
+	// control whose unconfigured state is "allow" is not a control.
+	Recipients *RecipientConfig `yaml:"recipients"`
+
 	// Password is REJECTED by Validate. It exists as a field only so that
 	// writing it produces a clear error naming password_env, rather than
 	// yaml silently ignoring an unknown key and the operator wondering why
 	// authentication fails.
 	Password string `yaml:"password"`
+}
+
+// RecipientConfig is the `recipients:` block of .rela/mail.yaml.
+//
+// This package PARSES and VALIDATES it; it resolves nothing. Resolution needs
+// store, filter and metamodel, and .go-arch-lint.yml withholds all three from
+// internal/mail precisely so a send script cannot reach the graph. So the
+// enforcement lives in internal/lua — which already holds the reader seam —
+// and this type's only job is to be the operator-facing shape and to convert
+// itself into a [lua.RecipientPolicy] the moment it is loaded.
+type RecipientConfig struct {
+	// Query selects recipient entities from the graph, in the form
+	// `TYPE [where EXPR [and EXPR]...]` — e.g. `person where status =
+	// 'active'`. The type alone is legal and means every entity of that type.
+	//
+	// This is the PRIMARY mechanism, because a recipient is normally an
+	// entity: an allowlist derived from the graph tracks reality as people
+	// join and leave, where a hand-maintained address list drifts the moment
+	// somebody forgets to edit it.
+	Query string `yaml:"query"`
+
+	// Property names the entity property holding the address, e.g. `email`.
+	// Required whenever Query is set — an entity set with no address property
+	// names nobody.
+	Property string `yaml:"property"`
+
+	// AlsoAllow holds literal addresses that are NOT entities: an ops alias,
+	// an external auditor's mailbox, a monitoring endpoint. Unioned with the
+	// query result.
+	//
+	// LITERAL ONLY. A wildcard such as `*@example.com` is REFUSED at load —
+	// see validateAlsoAllow for why refusing beats both ignoring it and
+	// implementing it.
+	AlsoAllow []string `yaml:"also_allow"`
+
+	// AllowAny disables the check entirely: every address is permitted.
+	//
+	// The escape hatch for a deployment that has decided this constraint is
+	// not for them. It must be a deliberate `allow_any: true` line in the
+	// file — it is never a default, never inferred from an empty block, and
+	// never reached by omission, so it stays greppable in a config review.
+	AllowAny bool `yaml:"allow_any"`
+}
+
+// Policy converts the operator's block into the runtime's gate input.
+//
+// Address normalization happens HERE, once at load, through
+// [lua.NormalizeRecipient] rather than a local copy: both sides must fold
+// addresses by the identical rule, and two independent normalizations that
+// drift is how an allowlist starts admitting what it should not.
+func (r *RecipientConfig) Policy() (lua.RecipientPolicy, error) {
+	if r == nil {
+		// The zero policy, which denies. Reachable only from a Config whose
+		// block is absent; the caller relies on this rather than checking nil
+		// itself, so "absent" has one meaning in one place.
+		return lua.RecipientPolicy{}, nil
+	}
+	policy := lua.RecipientPolicy{Configured: true, AllowAny: r.AllowAny, Property: r.Property}
+	for _, addr := range r.AlsoAllow {
+		policy.AlsoAllow = append(policy.AlsoAllow, lua.NormalizeRecipient(addr))
+	}
+	entityType, filters, err := parseRecipientQuery(r.Query)
+	if err != nil {
+		return lua.RecipientPolicy{}, err
+	}
+	policy.EntityType = entityType
+	policy.Filters = filters
+	return policy, nil
+}
+
+// validateRecipients checks the `recipients:` block.
+//
+// Called from validateCommon so it applies to every transport: which server
+// carries the mail has no bearing on who may receive it.
+func (c *Config) validateRecipients() error {
+	r := c.Recipients
+	if r == nil {
+		// Absent is VALID configuration that DENIES at send time. Refusing to
+		// load would be wrong: a project with no mail.yaml at all already
+		// starts fine, and a project that configures a transport but has not
+		// yet decided its recipients must still run every other command. The
+		// refusal belongs at the send, where it can name the key.
+		return nil
+	}
+	if strings.TrimSpace(r.Query) == "" && len(r.AlsoAllow) == 0 && !r.AllowAny {
+		// A block that permits nothing is refused rather than accepted as a
+		// deny-everything policy. It LOOKS configured, so the operator would
+		// read the resulting denials as a bug in rela rather than as their own
+		// empty block — and "deny everything" is already available by deleting
+		// the block, which at least produces an error that says so.
+		return errors.New("recipients must set at least one of query, also_allow or allow_any " +
+			"(an empty block permits nobody; omit it entirely to deny by default)")
+	}
+	if strings.TrimSpace(r.Query) != "" && strings.TrimSpace(r.Property) == "" {
+		return errors.New("recipients.property is required when recipients.query is set " +
+			"(it names the entity property holding the address, e.g. `property: email`)")
+	}
+	if _, _, err := parseRecipientQuery(r.Query); err != nil {
+		// Parsed at LOAD as well as at send, so a typo in the query surfaces
+		// from `rela validate` rather than from the first message that fails
+		// to go out.
+		return fmt.Errorf("recipients.query: %w", err)
+	}
+	return validateAlsoAllow(r.AlsoAllow)
+}
+
+// validateAlsoAllow checks the literal-address list.
+//
+// # Wildcards are refused, deliberately and with the syntax reserved
+//
+// `*@example.com` does not work, and a `*` anywhere in an entry is an error
+// rather than an ordinary character.
+//
+// Refusing beats ignoring. A literal-only matcher that silently treated `*` as
+// a normal character would accept the config, match nothing, and present as
+// "mail is mysteriously denied" — the operator believing they allowed a domain
+// while the behaviour is that they allowed an address that cannot exist.
+//
+// Refusing also RESERVES the syntax, which is the real reason to decide this
+// now rather than later. If `*` meant "literal asterisk" in a shipped config
+// key, making it a metacharacter afterwards would break every deployment that
+// had (however improbably) relied on it. With `*` refused today, adding domain
+// wildcards later can only ever turn an error into a success — compatible by
+// construction.
+//
+// Why not simply implement them now: a domain wildcard is a strictly weaker
+// control than a query. `*@example.com` permits every address at the domain,
+// including ones belonging to nobody in the graph and ones that never existed,
+// while `query` tracks who actually exists. Shipping the weaker control
+// alongside the stronger one invites it to become the default. It is one
+// function away when a deployment genuinely needs it.
+func validateAlsoAllow(addrs []string) error {
+	for i, addr := range addrs {
+		if strings.TrimSpace(addr) == "" {
+			return fmt.Errorf("recipients.also_allow[%d] is empty", i)
+		}
+		if strings.Contains(addr, "*") {
+			return fmt.Errorf("recipients.also_allow[%d] %q contains a wildcard; "+
+				"only literal addresses are supported — use recipients.query to select "+
+				"recipients from the graph instead", i, addr)
+		}
+		// also_allow entries reach an SMTP envelope, so they get the same
+		// header-injection check every other caller-supplied address gets.
+		if err := validateHeaderValue(fmt.Sprintf("recipients.also_allow[%d]", i), addr); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// recipientQueryKeyword separates the entity type from its conditions.
+const recipientQueryKeyword = " where "
+
+// recipientFilterSeparator joins conditions inside a query.
+const recipientFilterSeparator = " and "
+
+// parseRecipientQuery lowers `TYPE [where EXPR [and EXPR]...]` onto the pieces
+// that already exist: an entity type plus [filter] expressions.
+//
+// The ticket specifies the SQL-ish surface, but rela has no such parser and
+// inventing a second query dialect for one config key would mean an operator
+// learning two ways to say `status=active`. So this is a lowering, not a
+// language: the leading word is the type, the rest is split on ` and ` and
+// handed to filter.Parse. Every semantic question — globs, ranges, regex,
+// what `=` means for a date — is therefore answered identically here and in
+// schedules.yaml's for_each.
+//
+// Quotes around a value are stripped because the ticket's own example writes
+// `status = 'active'` and filter.Parse would otherwise match the literal
+// four-character value `active` including its quotes — a config that looks
+// right, parses, and matches nothing.
+//
+// An empty query is not an error: it means no query was configured, which is
+// legal as long as also_allow or allow_any carries the policy. Validate
+// enforces that.
+func parseRecipientQuery(q string) (entityType string, filters []*filter.Filter, err error) {
+	q = strings.TrimSpace(q)
+	if q == "" {
+		return "", nil, nil
+	}
+	head, tail, hasWhere := strings.Cut(strings.ToLower(q), strings.TrimSpace(recipientQueryKeyword))
+	// Cut on the lowercased copy to accept `WHERE`, but slice the ORIGINAL so
+	// a property name or value keeps its case — entity types and property
+	// values are case-sensitive and folding them here would break the match.
+	if hasWhere {
+		head, tail = q[:len(head)], q[len(q)-len(tail):]
+	} else {
+		head, tail = q, ""
+	}
+	entityType = strings.TrimSpace(head)
+	if entityType == "" {
+		return "", nil, fmt.Errorf("query %q does not name an entity type", q)
+	}
+	if strings.ContainsAny(entityType, " \t") {
+		// Catches `person status = 'active'` — a missing `where` that would
+		// otherwise become an entity type nothing can match.
+		return "", nil, fmt.Errorf("query %q: expected `TYPE` or `TYPE where CONDITION`", q)
+	}
+	if strings.TrimSpace(tail) == "" {
+		if hasWhere {
+			return "", nil, fmt.Errorf("query %q has a `where` with no condition after it", q)
+		}
+		return entityType, nil, nil
+	}
+	for _, expr := range strings.Split(tail, recipientFilterSeparator) {
+		f, parseErr := filter.Parse(stripQuotes(expr))
+		if parseErr != nil {
+			return "", nil, fmt.Errorf("query %q: %w", q, parseErr)
+		}
+		filters = append(filters, f)
+	}
+	return entityType, filters, nil
+}
+
+// stripQuotes removes matching single or double quotes from a filter
+// expression's VALUE side, so `status = 'active'` compares against `active`.
+//
+// The value side only: a quote in a property name is a typo, and stripping
+// quotes blindly across the whole expression would silently accept it.
+func stripQuotes(expr string) string {
+	expr = strings.TrimSpace(expr)
+	for _, op := range []string{"!=", ">=", "<=", "=~", "=", ">", "<", "~"} {
+		lhs, rhs, found := strings.Cut(expr, op)
+		if !found {
+			continue
+		}
+		rhs = strings.TrimSpace(rhs)
+		if len(rhs) >= 2 && (rhs[0] == '\'' || rhs[0] == '"') && rhs[len(rhs)-1] == rhs[0] {
+			rhs = rhs[1 : len(rhs)-1]
+		}
+		return strings.TrimSpace(lhs) + op + rhs
+	}
+	return expr
 }
 
 // ScriptCapabilities is the YAML face of [lua.Capabilities] for a send script.
