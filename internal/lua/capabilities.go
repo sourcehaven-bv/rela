@@ -6,16 +6,16 @@ import (
 )
 
 // Capabilities declares which ambient, non-graph capabilities a Lua runtime
-// may reach: outbound HTTP, the AI provider, named secrets, and file writes
-// under output/.
+// may reach: outbound HTTP, the AI provider, outbound mail, named secrets, and
+// file writes under output/.
 //
 // # Fail-closed
 //
-// The zero value grants NOTHING (TKT-YH52OM). A runtime built without a grant
-// from EITHER source — [ReadDeps.Capabilities] or [WithCapabilities] — has no
-// `http` global, no `ai` global, an empty `rela.secrets`, and no
-// `rela.write_file`; calling any of them raises "attempt to call a nil value"
-// rather than succeeding quietly.
+// The zero value grants NOTHING (TKT-YH52OM, TKT-JVHSOZ). A runtime built
+// without a grant from EITHER source — [ReadDeps.Capabilities] or
+// [WithCapabilities] — has no `http` global, no `ai` global, an empty
+// `rela.secrets`, no `rela.write_file`, and a `mail.send` that refuses;
+// reaching for any of them fails rather than succeeding quietly.
 //
 // Because the zero value means "nothing", it is also treated as "no opinion":
 // an empty [WithCapabilities] does not revoke a grant carried on the deps. See
@@ -57,6 +57,21 @@ type Capabilities struct {
 	// billable, so this gate is a cost control as well as a security one.
 	AI bool
 
+	// Mail authorizes mail.send (TKT-JVHSOZ). Mail is an outbound transfer
+	// facility, so pairing it with Secrets is the same two-call exfiltration
+	// path HTTP is gated for — and it was reachable from every runtime,
+	// including read-only ones, until this field existed.
+	//
+	// Unlike HTTP and AI, this gate does NOT work by withholding the binding:
+	// the `mail` global is registered either way and mail.send returns a
+	// `denied` error table instead. That asymmetry is deliberate and mail.go
+	// argues it in full — in short, registration answers "can a script
+	// feature-detect and get a useful message", authorization answers "may
+	// this script send", and only the second is a security question. A
+	// vanished binding would answer the first badly to buy nothing on the
+	// second.
+	Mail bool
+
 	// WriteFile registers rela.write_file. Writes are already confined to
 	// output/ by luaWriteFile, so this is the narrowest of the four; it is
 	// gated for consistency and because "may this script touch the disk at
@@ -91,7 +106,7 @@ type Capabilities struct {
 // carries nothing, which is what makes it safe for [WithCapabilities] to treat
 // an empty grant as "no opinion" rather than as a revocation.
 func (c Capabilities) Any() bool {
-	return c.HTTP || c.AI || c.WriteFile || c.AllSecrets || len(c.Secrets) > 0
+	return c.HTTP || c.AI || c.Mail || c.WriteFile || c.AllSecrets || len(c.Secrets) > 0
 }
 
 // AllowsSecret reports whether name is exposed to the runtime.
@@ -129,5 +144,5 @@ func (c Capabilities) filterSecrets(all map[string]string) map[string]string {
 // the automation engine, or the MCP lua_eval / lua_run tools: those take input
 // from someone other than the person who owns the shell.
 func TrustedCapabilities() Capabilities {
-	return Capabilities{HTTP: true, AI: true, WriteFile: true, AllSecrets: true}
+	return Capabilities{HTTP: true, AI: true, Mail: true, WriteFile: true, AllSecrets: true}
 }

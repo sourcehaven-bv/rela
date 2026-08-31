@@ -39,6 +39,12 @@ type Capabilities struct {
 	// AI grants the `ai` global. Note ai.* calls are billable.
 	AI bool `yaml:"ai,omitempty"`
 
+	// Mail grants mail.send (TKT-JVHSOZ). Without it the binding still
+	// exists — so a script can feature-detect — but refuses with
+	// `err.kind == "denied"`. See the Mail field on lua.Capabilities for why
+	// this one gate does not work by withholding the binding.
+	Mail bool `yaml:"mail,omitempty"`
+
 	// WriteFile grants rela.write_file (already confined to output/).
 	WriteFile bool `yaml:"write_file,omitempty"`
 
@@ -53,7 +59,7 @@ type Capabilities struct {
 // there is no "all secrets" spelling in YAML, so a config block can only grant
 // via the named list. See the AllSecrets field on lua.Capabilities.
 func (c Capabilities) Any() bool {
-	return c.HTTP || c.AI || c.WriteFile || len(c.Secrets) > 0
+	return c.HTTP || c.AI || c.Mail || c.WriteFile || len(c.Secrets) > 0
 }
 
 // Fields returns the grant as plain values.
@@ -69,8 +75,8 @@ func (c Capabilities) Any() bool {
 // Each consumer converts at its own boundary, but they all read the fields from
 // here, so adding a capability means changing this signature — a COMPILE error
 // at every consumer rather than a silent per-surface omission.
-func (c Capabilities) Fields() (http, ai, writeFile bool, secrets []string) {
-	return c.HTTP, c.AI, c.WriteFile, c.Secrets
+func (c Capabilities) Fields() (http, ai, mail, writeFile bool, secrets []string) {
+	return c.HTTP, c.AI, c.Mail, c.WriteFile, c.Secrets
 }
 
 // UnmarshalYAML decodes the mapping form and REFUSES a bare boolean.

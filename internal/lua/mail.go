@@ -9,24 +9,57 @@
 // so a script cannot reach a delivery path the operator did not configure, and
 // cannot send through a transport the project has switched off.
 //
-// # Always registered, never silently absent
+// # Two separate questions: may it be CALLED, and may it SEND
+//
+// mail.send is subject to both, and they are answered in different places for
+// different reasons. Conflating them is what left the exfiltration hole this
+// package doc used to argue was not one (TKT-JVHSOZ).
+//
+// ## Always registered, never silently absent
 //
 // Unlike ai.* and http.*, the `mail` global exists on every runtime, whether
-// or not mail is configured. That is deliberate and it is the opposite of the
-// capability-gating rule for the other two, so the reasoning matters:
+// or not mail is configured and whether or not the script may send. That is
+// deliberate, and the reasoning is about ERGONOMICS, not authorization:
 //
-// http and ai are CAPABILITIES — absence is the security control, and a script
-// that finds `http` missing has been denied something. mail.send is not a
-// capability the script holds; it is a service the PROJECT either has or has
-// not configured, and the answer is identical for every script. A binding that
-// vanished when mail.yaml was absent would make `mail.send(...)` raise
-// "attempt to call a nil value" — a message that says nothing about mail — in
-// exactly the deployment where the operator most needs to be told "mail is not
-// configured". So the function is always there and returns a typed
-// `not_configured` error instead, which a script can feature-detect on:
+// A binding that vanished when mail.yaml was absent would make
+// `mail.send(...)` raise "attempt to call a nil value" — a message that says
+// nothing about mail — in exactly the deployment where the operator most needs
+// to be told "mail is not configured". So the function is always there and
+// returns a typed error instead, which a script can feature-detect on:
 //
 //	local ok, err = mail.send{...}
 //	if not ok and err.kind == "not_configured" then ... end
+//
+// That argument holds with MORE force for a denied capability, not less: a nil
+// global cannot name the YAML key an operator has to add, and a denial is
+// exactly the moment they need to be told which one.
+//
+// ## Authorized by [Capabilities.Mail]
+//
+// The registration argument above is about the quality of an error message. It
+// says nothing about WHO may send, and for a long time nothing else did
+// either: the binding was reachable from every runtime, so any script holding
+// `rela.secrets` could mail a credential to an address of its choosing without
+// holding `http` or `ai`. That is the same two-call exfiltration path those two
+// are gated to close (TKT-YH52OM), reached through a door nobody had gated.
+//
+// The old rationale for leaving it open was that "mail.send is not a capability
+// the script holds; it is a service the PROJECT either has or has not
+// configured". The first half of that is what does not survive: it establishes
+// that the TRANSPORT is operator configuration — a script cannot invent an SMTP
+// server — but not that every script may reach it. The operator asymmetry is
+// the whole point of the capability system. An unexpected `mail: true` on a
+// 500-line script stands out in a config file an operator reviews; the same
+// reach buried in that script's code does not.
+//
+// So: registered unconditionally, refuses without the grant. A denied call
+// returns `err.kind == "denied"` and NOTHING is handed to the sender.
+//
+// The grant is checked FIRST, before the sender lookup and before the argument
+// table is parsed. An unauthorized script therefore cannot learn whether the
+// project has mail configured at all — and, more practically, an operator
+// debugging a denial is pointed at their `capabilities:` block rather than at
+// a mail.yaml that has nothing wrong with it.
 //
 // # Error convention
 //
@@ -78,6 +111,18 @@ type MailMessage struct {
 // condition this package reports when no sender was wired at all.
 var errMailNotConfigured = errors.New("mail is not configured for this project")
 
+// errMailDenied is what an ungranted mail.send reports (TKT-JVHSOZ).
+//
+// The message names the exact YAML key to add, because the operator reading it
+// is the one who can fix it and the fix is one line. It deliberately says
+// nothing about whether mail is configured, what transport is in use, or who
+// the caller is: a script that was not authorized to send has not earned any
+// facts about the deployment, and the omission costs a legitimate operator
+// nothing they cannot see in their own config.
+var errMailDenied = errors.New(
+	"mail.send is not permitted: this script has no `mail` capability " +
+		"(add `mail: true` to its `capabilities:` block)")
+
 // registerMailModule installs the top-level `mail` global.
 //
 // A free function rather than a *Runtime method, matching crypto.go: Runtime
@@ -117,6 +162,17 @@ func registerMailModule(r *Runtime) {
 // this binding and every other mail caller agree on what a valid message is
 // rather than having two definitions that can drift.
 func (r *Runtime) luaMailSend(ls *lua.LState) int {
+	// The capability check comes FIRST — ahead of the sender lookup and ahead
+	// of parsing the opts table. Ordering is load-bearing twice over: an
+	// ungranted script learns nothing about whether the project has mail
+	// configured, and an operator debugging a denial is sent to the
+	// `capabilities:` block rather than to a mail.yaml that is fine. Parsing
+	// first would also let a denied caller distinguish a valid message from an
+	// invalid one by whether the call raised.
+	if !r.caps.Mail {
+		return pushMailError(ls, "denied", errMailDenied.Error())
+	}
+
 	opts := ls.CheckTable(1)
 
 	sender := r.mailSender

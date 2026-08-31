@@ -180,10 +180,41 @@ type ScriptCapabilities struct {
 // AI and WriteFile are hard-wired false, not merely unset: a send script has
 // no legitimate use for either, and a zero value that happened to change
 // meaning later should not silently grant them here.
+//
+// Mail is hard-wired TRUE, and it is the one grant in the codebase that is not
+// the operator's to withhold. mail.send is capability-gated everywhere else
+// (TKT-JVHSOZ), but THIS runtime is the implementation of mail.send: it is the
+// script `transport: script` invokes to actually deliver a message. Gating it
+// would be circular — the runtime whose entire job is sending mail would need
+// permission from the subsystem it IS in order to do that job, and an operator
+// who forgot the key would get a mail system that silently refuses to mail.
+//
+// The gate loses nothing by conceding this. Its purpose is to stop an ARBITRARY
+// script from reaching an outbound channel, and this is not an arbitrary
+// script: mail.yaml names it, mail.yaml lives in the same audited operator tier
+// as acl.yaml, and configuring a send script is already the act of saying "this
+// code sends mail". There is deliberately no `mail:` key on ScriptCapabilities
+// for an operator to set — a knob whose only correct position is "on" is a
+// knob that can be turned off by mistake.
+//
+// Note this does NOT hand the send script an unbounded outbound channel by the
+// back door: `mail` authorizes the mail.send binding, and reaching a recipient
+// still means going through the transport the operator configured.
+//
+// It is currently BELT-AND-BRACES rather than load-bearing, and that is worth
+// knowing before someone deletes it as dead: buildRuntime passes no
+// WithMailSender, so a send script calling mail.send today gets
+// `not_configured` regardless of this field — recursing into the mail system
+// from inside it is not a thing the design intends. The grant is written down
+// anyway because the alternative is a landmine: the day anyone wires a sender
+// here (a fallback transport, a test harness, an outbox hop) the failure would
+// be a mail system that cannot mail, reported as a capability denial in the one
+// place an operator would never think to look for one.
 func (c ScriptCapabilities) toLua() lua.Capabilities {
 	return lua.Capabilities{
 		HTTP:      c.HTTP,
 		AI:        false,
+		Mail:      true,
 		WriteFile: false,
 		Secrets:   c.Secrets,
 	}
