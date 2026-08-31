@@ -80,10 +80,18 @@ type Locker interface {
 // shared suite in lock/locktest exercises the same key table against all of
 // them.
 //
-// The rules mirror state.ValidateKey rather than inventing a second dialect,
-// minus the filesystem-specific clauses that only matter when a key becomes a
-// path. Keep them aligned: a caller deriving a lock key and a state key from
-// the same source should not have to remember two contracts.
+// The rules are state.ValidateKey's, minus the clauses that only bite when a
+// key becomes a real path, plus a length bound. Concretely, this is STRICTLY
+// WEAKER than state.ValidateKey: it accepts a colon ("a:b"), a Windows reserved
+// name ("con", "nul.txt", "a/con/b") and rejects a leading slash only as an
+// empty segment. Those three are FSKV concerns inherited from
+// storage.RootedFS, and no Locker backend resolves a key to a path today.
+//
+// So a key valid here is NOT necessarily valid as a state key. A caller
+// deriving both from one source must validate against state.ValidateKey, which
+// is the stricter of the two — do not assume passing this implies passing that.
+// If a filesystem-backed Locker is ever added, the missing clauses must come
+// with it, and this comment must stop saying they are absent.
 func ValidateKey(key string) error {
 	if key == "" {
 		return errors.New("lock: key must not be empty")

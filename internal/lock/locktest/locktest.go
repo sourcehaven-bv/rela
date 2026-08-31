@@ -272,8 +272,10 @@ func testRejectsInvalidKeys(t *testing.T, newLocker Factory) {
 	l := newLocker(t)
 	ctx := context.Background()
 
-	// Held to the same table as state.ValidateKey so a caller deriving both a
-	// lock key and a state key from one source meets one contract, not two.
+	// A subset of state.ValidateKey's table: the cases every Locker backend
+	// must reject. lock.ValidateKey is deliberately weaker than
+	// state.ValidateKey (no colon / Windows-reserved-name clause — see its
+	// doc), so keys valid here are not automatically valid as state keys.
 	for _, key := range []string{
 		"",
 		"..",
