@@ -30,8 +30,9 @@
  * go see it properly.
  */
 import { computed, nextTick, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { RouterLink } from 'vue-router'
 import { useModalStack } from '@/composables/modalStack'
+import { shouldDeferToBrowser } from '@/utils/openIntent'
 import EntityDetail from '@/components/entity/EntityDetail.vue'
 
 const props = defineProps<{
@@ -44,7 +45,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{ (e: 'close'): void }>()
 
-const router = useRouter()
 const dialog = ref<HTMLElement | null>(null)
 const previouslyFocused = ref<HTMLElement | null>(null)
 
@@ -76,15 +76,18 @@ function onKeydown(event: KeyboardEvent) {
   }
 }
 
-function openFullPage() {
-  close()
-  void router.push(`/entity/${props.entityType}/${props.entityId}`)
-}
+// Both footer actions are pure navigation, so they render as real links and
+// support cmd/ctrl/middle-click. On a modifier click the browser opens a tab
+// and the modal deliberately STAYS OPEN — closing it would drop the preview the
+// user was reading. A plain click still closes and routes in place.
+const fullPageTarget = computed(() => `/entity/${props.entityType}/${props.entityId}`)
+const editFormTarget = computed(() =>
+  props.editForm ? `/form/${props.editForm}/${props.entityId}` : undefined
+)
 
-function openEditForm() {
-  if (!props.editForm) return
+function onNavigate(event: MouseEvent) {
+  if (shouldDeferToBrowser(event)) return
   close()
-  void router.push(`/form/${props.editForm}/${props.entityId}`)
 }
 
 </script>
@@ -119,10 +122,17 @@ function openEditForm() {
         </div>
 
         <footer class="modal-actions">
-          <button type="button" class="btn" @click="openFullPage">Open full page</button>
-          <button v-if="editForm" type="button" class="btn btn-primary" @click="openEditForm">
+          <RouterLink class="btn" :to="fullPageTarget" @click="onNavigate">
+            Open full page
+          </RouterLink>
+          <RouterLink
+            v-if="editFormTarget"
+            class="btn btn-primary"
+            :to="editFormTarget"
+            @click="onNavigate"
+          >
             Edit
-          </button>
+          </RouterLink>
         </footer>
       </div>
     </div>

@@ -19,7 +19,8 @@ vi.mock('@/api', async (orig) => ({
 }))
 
 const routerPush = vi.fn()
-vi.mock('vue-router', () => ({
+vi.mock('vue-router', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('vue-router')>()),
   useRouter: () => ({ push: routerPush }),
   useRoute: () => ({ query: {}, path: '/kanban/board' }),
 }))
