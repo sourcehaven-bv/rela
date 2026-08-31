@@ -52,8 +52,9 @@ intended behaviour.
 ### Opening things in a new tab
 
 Anything that navigates is a real link: list rows, kanban cards, search
-results, side-panel entries, related-entity titles and quick-search results.
-So the usual browser gestures all work as you would expect:
+results, side-panel entries, related-entity titles and quick-search results,
+along with the Prev/Next, Edit and History controls on an entity page. So the
+usual browser gestures all work as you would expect:
 
 - **Cmd-click** (macOS) or **Ctrl-click** (Windows/Linux) opens it in a new
   background tab.
@@ -65,6 +66,9 @@ So the usual browser gestures all work as you would expect:
 A plain click still navigates in place, without a full page reload. A new tab
 opened this way keeps the context of the list you came from, so the
 previous/next controls on the entity page still walk the same result set.
+
+Buttons that change data — Delete in particular — stay buttons, since opening
+one in a new tab would mean nothing.
 
 Note that a list row is a link across its whole width, which means dragging to
 select text inside a row is not possible; use the entity page for that.
