@@ -54,6 +54,19 @@ func (s *Store) AcquireKeyedLock(ctx context.Context, key string) (release func(
 		// caller's own writes acquire others from the same pool — at
 		// pool_max_conns=1 that is a guaranteed self-deadlock, so refuse up
 		// front with the remedy in the message.
+		//
+		// This guard covers ONE holder, not N. Because each held lock pins a
+		// connection, C concurrent holders that also write need C+1 <= MaxConns
+		// to make progress: at C == MaxConns every connection is a lock and the
+		// writes wait for one that only frees on release. That is a genuine
+		// ceiling on lock concurrency, not something a larger constant fixes —
+		// size the pool above the expected number of simultaneously-held locks,
+		// and prefer a conditional write (unique: / If-Match) over a lock when
+		// the critical section is a single write anyway.
+		//
+		// It is not silent: pgxpool.Acquire blocks, so the symptom is latency
+		// bounded by the caller's ctx deadline rather than corruption. Callers
+		// MUST pass a deadline; that is why Acquire's contract insists on it.
 		return nil, errors.New(
 			"pgstore: keyed lock needs pool_max_conns >= 2 (the lock pins one connection while the caller's writes use others)")
 	}
