@@ -1,0 +1,119 @@
+package pgstore_test
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/Sourcehaven-BV/rela/internal/lock"
+	"github.com/Sourcehaven-BV/rela/internal/lock/locktest"
+	"github.com/Sourcehaven-BV/rela/internal/store/pgstore"
+)
+
+// TestKeyedLock_Conformance runs the shared lock.Locker suite against the real
+// PostgreSQL backend, so it is held to exactly the same contract as the
+// in-process locker rather than to a prose approximation of it.
+func TestKeyedLock_Conformance(t *testing.T) {
+	skipOrFailWithoutDSN(t)
+	locktest.RunAll(t, func(tb testing.TB) lock.Locker {
+		// A fresh schema per subtest: advisory locks are database-global, so
+		// subtests sharing a schema would contend on the same keys.
+		pool := newScopedPool(tb.(*testing.T))
+		st, err := pgstore.New(pool)
+		require.NoError(tb, err)
+		l, err := lock.NewBackendLocker(st)
+		require.NoError(tb, err)
+		return l
+	})
+}
+
+// TestKeyedLock_ExclusiveAcrossStores pins the property the in-process locker
+// cannot provide and the whole postgres backend exists for: two SEPARATE store
+// instances (standing in for two rela-server processes) exclude each other on
+// the same key.
+func TestKeyedLock_ExclusiveAcrossStores(t *testing.T) {
+	skipOrFailWithoutDSN(t)
+	pool := newScopedPool(t)
+	a, err := pgstore.New(pool)
+	require.NoError(t, err)
+	b, err := pgstore.New(pool)
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	release, err := a.AcquireKeyedLock(ctx, "incident/web01")
+	require.NoError(t, err)
+
+	// b must NOT get the same key while a holds it.
+	waitCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancel()
+	_, err = b.AcquireKeyedLock(waitCtx, "incident/web01")
+	require.Error(t, err, "a second store must block on a key the first holds")
+
+	release()
+
+	// After release b proceeds.
+	got, err := b.AcquireKeyedLock(ctx, "incident/web01")
+	require.NoError(t, err, "release must hand the key to the waiting store")
+	got()
+}
+
+// TestKeyedLock_DistinctKeysDoNotContendAcrossStores is the burst property: two
+// processes locking DIFFERENT keys never wait on each other. If this regressed,
+// a monitoring fan-out would serialize database-wide.
+func TestKeyedLock_DistinctKeysDoNotContendAcrossStores(t *testing.T) {
+	skipOrFailWithoutDSN(t)
+	pool := newScopedPool(t)
+	a, err := pgstore.New(pool)
+	require.NoError(t, err)
+	b, err := pgstore.New(pool)
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	relA, err := a.AcquireKeyedLock(ctx, "incident/web01")
+	require.NoError(t, err)
+	defer relA()
+
+	waitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	relB, err := b.AcquireKeyedLock(waitCtx, "incident/db02")
+	require.NoError(t, err, "a different key must not contend")
+	relB()
+}
+
+// TestKeyedLock_ScopedPerSchema pins the tenant-isolation clause: the same key
+// in two schemas is two different locks. Advisory locks are database-global, so
+// without the schema in the hash one tenant's webhook would block another's —
+// the BUG-CA3VY0 class.
+func TestKeyedLock_ScopedPerSchema(t *testing.T) {
+	skipOrFailWithoutDSN(t)
+	poolA := newScopedPool(t)
+	poolB := newScopedPool(t)
+	a, err := pgstore.New(poolA)
+	require.NoError(t, err)
+	b, err := pgstore.New(poolB)
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	relA, err := a.AcquireKeyedLock(ctx, "shared-key")
+	require.NoError(t, err)
+	defer relA()
+
+	waitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	relB, err := b.AcquireKeyedLock(waitCtx, "shared-key")
+	require.NoError(t, err, "the same key in a different schema must be a different lock")
+	relB()
+}
+
+// TestKeyedLockerFor_DiscoversCapability pins the type-assert discovery used at
+// the wiring site.
+func TestKeyedLockerFor_DiscoversCapability(t *testing.T) {
+	skipOrFailWithoutDSN(t)
+	st, err := pgstore.New(newScopedPool(t))
+	require.NoError(t, err)
+
+	require.NotNil(t, pgstore.KeyedLockerFor(st), "a pgstore must offer the keyed-lock capability")
+	require.Nil(t, pgstore.KeyedLockerFor(struct{}{}), "an unrelated type must not")
+}
