@@ -47,7 +47,7 @@ exactly as before — an absent config is a normal state, not an error.
 | `password_env` | no | **Name of an environment variable** holding the credential. Optional — see below |
 | `account_id` | for http | Provider account the API endpoint is scoped to |
 | `script` | for script | Project-relative path to a `.lua` send script |
-| `capabilities` | for script | What the send script may reach — see below |
+| `capabilities` | for script | What the **send script** may reach — `http` and `secrets` only. Not the same as a script's own `mail:` grant; see below |
 | `from` | yes | Envelope and header sender |
 | `from_name` | no | Display name for the sender |
 | `timeout_seconds` | no | Per-send timeout. Defaults to `30` |
@@ -184,6 +184,18 @@ Absolute paths and paths escaping the project are refused at load: a send script
 runs with outbound HTTP and a credential, so where it comes from is worth being
 strict about.
 
+This `capabilities:` block accepts **`http` and `secrets` only.** `ai` and
+`write_file` are refused — a mail transport has no business spending money on
+inference or writing files. There is no `mail:` key either, and that is not an
+oversight: a send script is the *implementation* of `mail.send`, so requiring it
+to hold the `mail` capability would be circular. It is authorized to mail by the
+fact that `mail.yaml` names it.
+
+Note the direction this runs in. Naming a script here does **not** let it call
+`mail.send` on other messages — the runtime it gets has no sender wired at all,
+so such a call returns `not_configured`. It is handed one message, by rela, and
+its job is to deliver that one.
+
 ### What the script gets
 
 A global `message` table:
@@ -271,12 +283,35 @@ end
 ```
 
 It delivers through whichever transport the project configured, so a script
-cannot reach a destination you did not set up. The binding is **always present**,
-even with no `mail.yaml` — when mail is off it returns
-`err.kind == "not_configured"` rather than vanishing, so a script can
-feature-detect. A delivery failure returns `(nil, err)` and never raises: a
-script that mails a summary at the end of a run should not lose the run because
-the mail server was rebooting.
+cannot reach a destination you did not set up.
+
+**The script must be granted the `mail` capability.** Mail is an outbound
+channel, so it is gated like `http` and `ai`: a script that was not granted it
+gets `err.kind == "denied"` and nothing reaches the transport.
+
+```yaml
+# data-entry.yaml (also schema.yaml automations, schedules.yaml tasks)
+actions:
+  send_digest:
+    script: digest.lua
+    capabilities:
+      mail: true
+```
+
+The binding itself is **always present**, even without the grant and even with
+no `mail.yaml`, so a script can feature-detect rather than crash: an
+unauthorized call returns `denied`, an unconfigured one `not_configured`. A
+delivery failure returns `(nil, err)` and never raises — a script that mails a
+summary at the end of a run should not lose the run because the mail server was
+rebooting.
+
+> **Two different `capabilities:` blocks, do not confuse them.** The block above
+> sits next to an ordinary script and controls whether *that script* may call
+> `mail.send`. The `capabilities:` block in `.rela/mail.yaml`
+> ([The script transport](#the-script-transport) below) is a different thing
+> entirely: it controls what the **send script** — the one implementing a
+> transport — may reach, and it has no `mail:` key at all, because a script
+> whose whole job is delivering mail is authorized to do so by definition.
 
 ## Delivery is best-effort
 
@@ -413,6 +448,14 @@ TLS at a relay.
 
 **A send script fails with "attempt to call a nil value" on `http`.** You did not
 grant the capability. Add `capabilities: {http: true}` to `mail.yaml`.
+
+**`mail.send` returns `err.kind == "denied"`.** The *calling* script has no
+`mail` capability. Add `mail: true` to that script's `capabilities:` block —
+in `data-entry.yaml`, `schema.yaml` or `schedules.yaml`, wherever the script is
+declared. This is **not** `mail.yaml`: the block there configures the send
+script, not the caller. Since the gate defaults closed, a script that mailed
+before an upgrade needs the grant added; the server also logs a warning at
+startup naming any data-entry action that appears to be affected.
 
 **A send script reads `nil` for a secret it expects.** The key is not in
 `capabilities.secrets`. That list is exact — a key you did not name is absent,

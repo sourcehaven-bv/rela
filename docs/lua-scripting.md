@@ -959,6 +959,19 @@ The other three raise on a wrong-type argument, as `rela.json.encode` does.
 configured in `.rela/mail.yaml`. A script cannot reach a destination the
 operator did not set up.
 
+**`mail.send` requires the `mail` capability.** Like `http` and `ai`, it is not
+granted by default — see [Capabilities](#capabilities--http-ai-mail-secrets-write_file)
+below.
+
+```yaml
+# data-entry.yaml
+actions:
+  send_digest:
+    script: digest.lua
+    capabilities:
+      mail: true
+```
+
 ```lua
 local ok, err = mail.send{
   to      = "alice@example.com",      -- or {"a@example.com", "b@example.com"}
@@ -976,17 +989,38 @@ table has the same shape as `ai.*` and `http.*`:
 
 | `err.kind` | When |
 |---|---|
+| `denied` | The script has no `mail` capability |
 | `not_configured` | The project has no `.rela/mail.yaml` |
 | `timeout` | The send exceeded its deadline or was canceled |
 | `delivery_failed` | The transport rejected it or could not reach the server |
 
-**The binding is always registered**, even when mail is not configured — unlike
-`http` and `ai`, whose absence *is* the capability gate. `mail.send` is not a
-capability a script holds; it is a service the project either has or has not
-configured, and the answer is the same for every script. So it is present and
-returns `not_configured`, which a script can feature-detect on, rather than
-raising "attempt to call a nil value" in exactly the deployment where the
-operator most needs to be told that mail is off.
+**The binding is always registered**, even without the capability and even when
+mail is not configured. This is where `mail.send` differs from `http` and `ai`:
+those are gated by *absence* — no grant, no global — whereas `mail` is always
+present and refuses.
+
+That is a difference in how the denial is *delivered*, not in whether one
+happens. Two separate questions are at work:
+
+- **May the script call it?** Always yes, so that `mail.send` can report what is
+  actually wrong. "Attempt to call a nil value" cannot distinguish "mail is not
+  configured" from "you were not granted mail", and both are things an operator
+  needs told precisely. It also lets a script feature-detect:
+
+  ```lua
+  local ok, err = mail.send{...}
+  if not ok and err.kind == "not_configured" then
+    -- fall back to writing the report to disk
+  end
+  ```
+
+- **May the script send?** Only with the `mail` capability. Without it the call
+  returns `err.kind == "denied"` and nothing is handed to the transport.
+
+`denied` takes precedence over `not_configured`: a script that was never
+authorized to send is not told whether the deployment has mail configured, and
+the operator debugging it is pointed at the `capabilities:` block rather than at
+a `mail.yaml` that is perfectly fine.
 
 A delivery failure **never raises**: a script that mails a summary at the end of
 a run must not lose the run because the mail server was rebooting. Argument
@@ -1098,12 +1132,19 @@ not by the document config. Two `documents:` entries that share one
 script caches work across all its callers). If you need doc-scoped
 keys, include `rela.document.id` in your cache key explicitly.
 
-### Capabilities — `http`, `ai`, `secrets`, `write_file`
+### Capabilities — `http`, `ai`, `mail`, `secrets`, `write_file`
 
-Four things a script can reach are **not** granted by default: outbound HTTP,
-the AI provider, named secrets, and `rela.write_file`. A script that has not
-been granted one does not merely fail the call — the binding is **absent**, so
-you get `attempt to index a nil value (global 'http')`.
+Five things a script can reach are **not** granted by default: outbound HTTP,
+the AI provider, outbound mail, named secrets, and `rela.write_file`.
+
+For `http`, `ai`, `secrets` and `write_file`, a script that has not been granted
+one does not merely fail the call — the binding is **absent**, so you get
+`attempt to index a nil value (global 'http')`.
+
+`mail` is the exception: the binding stays present and `mail.send` returns
+`err.kind == "denied"`. The denial is just as complete — nothing reaches the
+transport — but the error can name the missing grant, which "attempt to call a
+nil value" cannot. See [Mail Functions](#mail-functions) above.
 
 Declare what a script needs with a `capabilities:` block next to its `script:`
 reference:
@@ -1127,11 +1168,20 @@ database DSN and every other API key in `.rela/secrets.yaml`. A key you did not
 name is absent from `rela.secrets`, so a typo shows up as a `nil` at the use
 site rather than as a silently-empty credential sent to an upstream.
 
-Why closed by default: a script holding `secrets` **and** `http` can read a
-credential and post it anywhere in two calls. That combination used to be
-granted to *every* script on every surface — including read-only document
+Why closed by default: a script holding `secrets` **and** an outbound channel
+can read a credential and send it anywhere in two calls. That combination used
+to be granted to *every* script on every surface — including read-only document
 renders and validation rules, which cannot even write to the graph. Requiring
 the grant means the capability appears only where an operator wrote it down.
+
+`mail` is gated for the same reason and joined this list later: `mail.send` is
+an outbound channel too, so pairing it with `secrets` exfiltrates a credential
+just as `http` does, and for a while it was the one such channel that needed no
+grant at all.
+
+The asymmetry that makes this worth a config key: an unexpected `mail: true` on
+a 500-line script **stands out** in a file an operator reviews. The same reach,
+written as one line in the middle of that script, does not.
 
 Two surfaces differ, both deliberately:
 
@@ -1149,7 +1199,7 @@ Secrets are loaded from `.rela/secrets.yaml`, which lives inside the gitignored 
 directory.
 
 A script only sees the keys its `capabilities.secrets` list names (see
-[Capabilities](#capabilities--http-ai-secrets-write_file) above); everything
+[Capabilities](#capabilities--http-ai-mail-secrets-write_file) above); everything
 below describes how the *values* are resolved once a key has been granted.
 
 #### Configuration
