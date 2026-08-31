@@ -29,6 +29,35 @@ var DefaultScannerSockets = []string{
 	"/tmp/clamd.socket", // some source builds / RHEL
 }
 
+// DefaultScannerConfigs are well-known scanner CONFIG FILES, bound read-only so
+// a scan command can read its own configuration.
+//
+// This is separate from [DefaultScannerSockets] because reaching the daemon takes
+// two distinct things, and having only the socket looks like having neither:
+// clamdscan parses clamd.conf at STARTUP to learn where LocalSocket is, before it
+// ever connects, so an unreadable config fails with "Can't parse clamd
+// configuration file" and the socket bind never comes into play. readOnlyPaths
+// deliberately excludes /etc wholesale (passwd, shadow, rela's own config), which
+// is why these files must be named individually.
+//
+// Each entry is one FILE, never the enclosing directory: /etc/clamav also holds
+// the signature databases and freshclam.conf, which can carry a DatabaseMirror
+// proxy credential. Non-existent paths are skipped, so listing several distro
+// defaults is harmless. An operator whose config lives elsewhere extends this via
+// [WithExtraReadOnly].
+//
+// Scope of the exposure, since it is wider than "the scanner": binds are
+// per-RUNNER, and internal/attachment shares one runner between scans and
+// attachment `cmd:` transform steps, so exiftool/qpdf and friends also see these
+// files. That is acceptable for a stock clamd.conf (mode 0644, paths and
+// tunables, no credential) but is why the list must stay minimal and
+// file-scoped. Export and document rendering build their OWN runners with no
+// extra binds, so pandoc/ghostscript never see them.
+var DefaultScannerConfigs = []string{
+	"/etc/clamav/clamd.conf",           // Debian/Ubuntu
+	"/usr/local/etc/clamav/clamd.conf", // source builds, BSD, Homebrew
+}
+
 // WithExtraReadOnly binds additional host paths read-only into every command's
 // sandbox, on top of the standard allowlist. The motivating case is a scanner
 // daemon's unix socket — a socket is a filesystem object, so binding it grants
@@ -91,6 +120,38 @@ func unconfinedDefault() bool { return unconfinedByDefault.Load() }
 // crashing converter. A separate pre-check would be a second code path to keep
 // in sync and a window for the state to change between check and use.
 //
+// ExtraReadOnly returns the host paths this runner binds read-only into every
+// command's sandbox, on top of the standard allowlist.
+//
+// Diagnostic and test-support only: it lets a caller assert it was WIRED with
+// the binds it needs. Do not use it to decide whether a command can run — that
+// remains [Runner.Run]'s error to report.
+func (r *Runner) ExtraReadOnly() []string {
+	out := make([]string, len(r.extraReadOnly))
+	copy(out, r.extraReadOnly)
+	return out
+}
+
+// SandboxErr reports why commands run by this runner will FAIL, or nil when they
+// will run.
+//
+// Nil: does NOT mean "confined". It is also nil when the operator opted out via
+// [WithSandboxDisabled], where commands run unconfined but do run. The question
+// this answers is "will a command fail?", not "is it sandboxed?" — use
+// [Runner.Describe] for the posture.
+//
+// It exists so a composition root can WARN AT STARTUP that configured
+// scan/transform commands will all fail closed, instead of the operator learning
+// it from a rejected upload.
+//
+// Never branch a SECURITY CONTROL on it. Skipping a scan because this is non-nil
+// converts a fail-closed rejection into an unscanned upload — the one change
+// that turns a broken sandbox from an outage into a vulnerability. It is equally
+// not the "can I run?" predicate [Runner.Describe] documents as deliberately
+// absent: call [Runner.Run] and handle its error, which stays the single
+// execution path.
+func (r *Runner) SandboxErr() error { return r.sandboxErr }
+
 // Diagnostic only — never branch on this string.
 func (r *Runner) Describe() string {
 	switch {

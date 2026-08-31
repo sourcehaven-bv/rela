@@ -123,6 +123,39 @@ func (p AttachmentPolicy) ScanSockets() []string {
 	return p.m.Attachments.ScanSockets
 }
 
+// HasConfiguredScan reports whether at least one `file` property will actually
+// be scanned — i.e. some property resolves to a scan command through
+// [AttachmentPolicy.ScanCommandFor], which already honors `scan: off` and the
+// property-over-global override.
+//
+// This is NOT the negation of [AttachmentPolicy.HasUnconfiguredScan]: that one
+// asks whether ANY file property lacks a scanner, so a metamodel with one
+// scanned property and one `scan: off` property makes both methods report true.
+// They answer different questions — "is anything unprotected?" versus "will
+// anything be scanned?" — and the composition root needs the latter to decide
+// whether a broken sandbox will actually reject uploads.
+//
+// Nil: a nil metamodel reports false rather than panicking. This is a STARTUP
+// DIAGNOSTIC — a check whose whole purpose is to make a degraded state visible
+// must not be able to take the server down instead — and [NewAttachmentPolicy]
+// returns a value, so it cannot reject nil itself.
+func (p AttachmentPolicy) HasConfiguredScan() bool {
+	if p.m == nil {
+		return false
+	}
+	for _, def := range p.m.Entities {
+		for _, prop := range def.Properties {
+			if prop.Type != PropertyTypeFile {
+				continue
+			}
+			if len(p.ScanCommandFor(prop)) > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // HasUnconfiguredScan reports whether the metamodel declares at least one
 // `file`-type property while no scan command is configured for it (no global
 // command, no property command) and it has not explicitly opted out with
