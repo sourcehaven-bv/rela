@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -365,8 +366,8 @@ relations:
 	req := autocascade.Request{
 		Trigger: trigger,
 		Result: &automation.Result{
-			RelationsToCreate: []*entity.Relation{
-				entity.NewRelation("", "references", "DEC-001"),
+			RelationsToCreate: []automation.RelationToCreate{
+				{Relation: entity.NewRelation("", "references", "DEC-001")},
 			},
 		},
 	}
@@ -438,8 +439,8 @@ relations:
 			LuaToExecute: []automation.LuaToExecute{
 				{Code: "print('hi')", AutomationName: "test-lua"},
 			},
-			RelationsToCreate: []*entity.Relation{
-				entity.NewRelation("", "references", "DEC-001"),
+			RelationsToCreate: []automation.RelationToCreate{
+				{Relation: entity.NewRelation("", "references", "DEC-001")},
 			},
 			EntitiesToCreate: []automation.EntityToCreate{
 				{Type: "checklist"},
@@ -547,4 +548,100 @@ type failingScriptRunner struct {
 
 func (f *failingScriptRunner) Run(_ context.Context, _ autocascade.ScriptAction, _ autocascade.Mutator) error {
 	return f.err
+}
+
+// ctxCapturingScriptRunner records the ctx each scripted action runs under, so
+// a test can assert the audit `triggered_by` label the cascade stamped.
+type ctxCapturingScriptRunner struct {
+	labels []string
+}
+
+func (c *ctxCapturingScriptRunner) Run(
+	ctx context.Context, _ autocascade.ScriptAction, _ autocascade.Mutator,
+) error {
+	c.labels = append(c.labels, audit.TriggeredByFrom(ctx))
+	return nil
+}
+
+// TestRunnerScriptActionTriggeredByLabel pins the label a scripted action runs
+// under (TKT-JJRVX9).
+//
+// The empty-name case is the point. This path used to stamp
+// `audit.WithTriggeredBy(ctx, "automation:"+name)` unguarded, which wrote a
+// literal dangling `"automation:"` for a nameless automation — an automation
+// name is an ordinary optional field on a YAML list entry with no loader
+// validation behind it, so "" is reachable. It now routes through
+// triggeredByCtx like the relation and entity paths, leaving the ctx untagged
+// so the audit layer supplies the generic `automation` label instead.
+func TestRunnerScriptActionTriggeredByLabel(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		automation    string
+		wantLabel     string
+		wantLabelDesc string
+	}{
+		{
+			name:          "named automation is attributed",
+			automation:    "notify-owner",
+			wantLabel:     "automation:notify-owner",
+			wantLabelDesc: "the automation's own name",
+		},
+		{
+			name:          "nameless automation leaves ctx untagged",
+			automation:    "",
+			wantLabel:     "",
+			wantLabelDesc: "no label, so the audit layer falls back to generic \"automation\"",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			scripts := &ctxCapturingScriptRunner{}
+			r := newRunner(t, nil)
+			// The Result carries only a scripted action, so the host is never
+			// asked to write anything — a bare metamodel is enough.
+			meta, err := metamodel.Parse([]byte(`version: "1.0"
+entities:
+  requirement:
+    label: Requirement
+    plural: requirements
+    id_prefix: "REQ-"
+    id_type: short
+    properties:
+      title:
+        type: string
+`))
+			if err != nil {
+				t.Fatalf("metamodel.Parse: %v", err)
+			}
+			host := &stubHost{t: t, meta: meta, store: memstore.New()}
+
+			outcome, err := r.Process(context.Background(), host, autocascade.Request{
+				Trigger: entity.New("REQ-001", "requirement"),
+				Scripts: scripts,
+				Result: &automation.Result{
+					LuaToExecute: []automation.LuaToExecute{
+						{Code: "print('hi')", AutomationName: tc.automation},
+					},
+				},
+			})
+			if err != nil {
+				t.Fatalf("Process: %v", err)
+			}
+			if len(outcome.Errors) != 0 {
+				t.Fatalf("unexpected errors: %v", outcome.Errors)
+			}
+
+			if len(scripts.labels) != 1 {
+				t.Fatalf("want 1 script invocation, got %d", len(scripts.labels))
+			}
+			if scripts.labels[0] != tc.wantLabel {
+				t.Errorf("triggered_by: want %q (%s), got %q",
+					tc.wantLabel, tc.wantLabelDesc, scripts.labels[0])
+			}
+		})
+	}
 }
