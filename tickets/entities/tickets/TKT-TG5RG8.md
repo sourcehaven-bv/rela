@@ -5,7 +5,7 @@ title: Document the help endpoint as public by design
 kind: docs
 priority: low
 effort: xs
-status: backlog
+status: planning
 ---
 
 ## Description
