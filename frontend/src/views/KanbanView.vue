@@ -495,12 +495,22 @@ function onDragEnd() {
   draggedCard.value = null
 }
 
-function openCard(entity: Entity) {
+// cardHref is where a card navigates: the configured edit form when there is
+// one, otherwise the entity detail page.
+//
+// Split out of openCard so the card's ANCHOR and its click handler cannot
+// disagree about the destination (TKT-BB3TV0). The href is what makes
+// right-click "Open in New Tab", Cmd/Ctrl+click and middle-click work — none
+// of which a @click handler can provide.
+function cardHref(entity: Entity): string {
   if (kanbanConfig.value?.edit_form) {
-    router.push(`/form/${kanbanConfig.value.edit_form}/${entity.id}`)
-  } else {
-    router.push(`/entity/${entity.type}/${entity.id}`)
+    return `/form/${kanbanConfig.value.edit_form}/${entity.id}`
   }
+  return `/entity/${entity.type}/${entity.id}`
+}
+
+function openCard(entity: Entity) {
+  router.push(cardHref(entity))
 }
 
 function createNew() {
@@ -592,8 +602,29 @@ function createNew() {
             @dragend="onDragEnd"
             @click="openCard(entity)"
           >
-            <div class="card-id">{{ entity.id }}</div>
-            <div class="card-title text-wrap-anywhere">{{ getCardTitle(entity) }}</div>
+            <!--
+              The id and title render inside a real <a href> so the browser's
+              own affordances work on a card: right-click "Open Link in New
+              Tab", Cmd/Ctrl+click, middle-click (TKT-BB3TV0 / issue #1172).
+
+              The anchor wraps only the text, not the whole card: the card is
+              the drag handle, and an anchor around a draggable element makes
+              the browser start a LINK drag instead of the HTML5 drag-and-drop
+              this board uses. draggable="false" on the anchor is the same
+              guard from the other direction.
+
+              @click.stop leaves the plain left-click to the card handler, so
+              clicking the title and clicking the card behave identically.
+            -->
+            <a
+              :href="cardHref(entity)"
+              class="card-link"
+              draggable="false"
+              @click.stop="openCard(entity)"
+            >
+              <div class="card-id">{{ entity.id }}</div>
+              <div class="card-title text-wrap-anywhere">{{ getCardTitle(entity) }}</div>
+            </a>
             <CardFieldList
               :fields="resolvedCardFields(entity)"
               :entity-type="kanbanConfig?.entity"
@@ -660,8 +691,19 @@ function createNew() {
             @dragend="onDragEnd"
             @click="openCard(entity)"
           >
-            <div class="card-id">{{ entity.id }}</div>
-            <div class="card-title text-wrap-anywhere">{{ getCardTitle(entity) }}</div>
+            <!-- Same anchor as the simple board above; see the comment there.
+                 The swimlane board is a separate template, so it needs its own
+                 copy — a card that is a link on one board and not the other is
+                 exactly the inconsistency this ticket is removing. -->
+            <a
+              :href="cardHref(entity)"
+              class="card-link"
+              draggable="false"
+              @click.stop="openCard(entity)"
+            >
+              <div class="card-id">{{ entity.id }}</div>
+              <div class="card-title text-wrap-anywhere">{{ getCardTitle(entity) }}</div>
+            </a>
             <CardFieldList
               :fields="resolvedCardFields(entity)"
               :entity-type="kanbanConfig?.entity"
@@ -854,6 +896,16 @@ function createNew() {
   flex-direction: column;
   gap: var(--space-sm);
   overflow-y: auto;
+}
+
+/* Same rationale as .row-link in EntityList: present for the browser's
+   navigation affordances, invisible to the eye. Not display:contents here —
+   the anchor wraps two block children and needs to stay a block so the card's
+   own spacing is unchanged. */
+.card-link {
+  display: block;
+  color: inherit;
+  text-decoration: none;
 }
 
 .kanban-card {

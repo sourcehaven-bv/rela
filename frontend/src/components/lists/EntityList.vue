@@ -482,7 +482,15 @@ function resolveLinkTarget(link: string, entityType: string, entityId: string): 
   return ''
 }
 
-function navigateToEntity(entity: Entity) {
+// entityRowLocation builds the router location a row click navigates to —
+// path plus the list-state query (sort, filters, search) that the detail view
+// needs to offer prev/next and a back-button that returns to the same list.
+//
+// Split out of navigateToEntity so the ROW ANCHOR and the click handler are
+// guaranteed to produce the same destination (TKT-BB3TV0). Two code paths
+// computing "where does this row go" is how a Cmd+click starts landing
+// somewhere subtly different from a plain click.
+function entityRowLocation(entity: Entity): { path: string; query: Record<string, string | string[]> } | null {
   // Build query params to preserve navigation context.
   // Filters are already in `route.query` via useUrlFilterSync — we just
   // forward all `filter[*]` entries unchanged so the bracket format is the
@@ -536,8 +544,124 @@ function navigateToEntity(entity: Entity) {
     { id: entity.id, type: entity.type },
     { cellLink: columnLink },
   )
-  if (!path) return
-  router.push({ path, query })
+  if (!path) return null
+  return { path, query }
+}
+
+// navigateToEntity is the plain-left-click path: same destination as the row's
+// anchor, pushed through the router so the SPA does not do a full page load.
+function navigateToEntity(entity: Entity) {
+  const loc = entityRowLocation(entity)
+  if (loc) router.push(loc)
+}
+
+// entityRowHref renders the row's destination as a URL string for the <a href>.
+//
+// The href is what makes the browser's own affordances work — right-click
+// "Open in New Tab", Cmd/Ctrl+click, middle-click — none of which a @click
+// handler can provide.
+//
+// Encoded by hand rather than with router.resolve() deliberately: this runs
+// once per rendered row, and resolve() would pull the whole matcher into a hot
+// path for a string the router is not asked to navigate. It also keeps the
+// function pure, so it needs no router instance in tests. See encodeRoutePath
+// and encodeRouteQuery for why URLSearchParams is not the right tool either.
+function entityRowHref(entity: Entity): string {
+  const loc = entityRowLocation(entity)
+  if (!loc) return ''
+  const qs = encodeRouteQuery(loc.query)
+  return qs ? `${encodeRoutePath(loc.path)}?${qs}` : encodeRoutePath(loc.path)
+}
+
+// encodeRoutePath percent-encodes each segment of a router path so it survives
+// being concatenated into an href.
+//
+// router.push({path}) treats its argument as a PATH and encodes it; a raw href
+// is parsed by the BROWSER, where a `?` or `#` in the string splits off a query
+// or fragment instead of staying in the path. So the same location would send a
+// plain click and a Cmd+click to different places -- the exact divergence this
+// ticket exists to remove.
+//
+// Entity ids cannot contain those characters (the backend constrains them), but
+// the path may come from a column's `link` config, which is operator-authored
+// and unconstrained. Separators are preserved; only the segments are encoded,
+// and encodeURIComponent is idempotent-safe here because router paths are built
+// from raw values rather than pre-encoded ones.
+function encodeRoutePath(path: string): string {
+  return path.split('/').map(encodeURIComponent).join('/')
+}
+
+// encodeRouteQuery serialises a query the way vue-router does, NOT the way
+// URLSearchParams does. The two differ on space: URLSearchParams emits `+`,
+// vue-router emits `%20`. Both decode identically, so this is not a
+// correctness bug -- but it would put a different string in the address bar
+// depending on whether the row was clicked or opened in a new tab, which
+// undercuts the "same destination either way" property.
+function encodeRouteQuery(query: Record<string, string | string[]>): string {
+  const parts: string[] = []
+  const push = (key: string, value: string) => {
+    parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+  }
+  for (const [key, value] of Object.entries(query)) {
+    if (Array.isArray(value)) {
+      for (const v of value) push(key, v)
+    } else {
+      push(key, value)
+    }
+  }
+  return parts.join('&')
+}
+
+type RowCellWrapper = {
+  tag: string
+  href?: string
+  class: string
+  onClick?: (e: MouseEvent) => void
+}
+
+// A row's href is the same for all its columns, so it is built ONCE per row
+// rather than per cell -- same reason as columnWidgets above (RR-UD2A).
+// entityRowLocation walks route.query and listConfig.columns and builds a query
+// string; on a 200-row dense list with 6 columns, doing that per cell would be
+// 1200 of those per render instead of 200. The template also reads the wrapper
+// four times (tag, href, class, onClick), which without this map would multiply
+// it again.
+const rowLinks = computed(() => {
+  const byEntity = new Map<string, RowCellWrapper>()
+  for (const entity of entities.value ?? []) {
+    const href = entityRowHref(entity)
+    if (!href) continue
+    byEntity.set(entity.id, {
+      tag: 'a',
+      href,
+      class: 'row-link',
+      onClick: (e: MouseEvent) => {
+        // The ROW owns the plain left-click so behaviour is identical wherever
+        // you click; stop here so the anchor does not also push and double up.
+        e.stopPropagation()
+        navigateToEntity(entity)
+      },
+    })
+  }
+  return byEntity
+})
+
+const inertCell: RowCellWrapper = { tag: 'span', class: 'row-cell' }
+
+// rowCellWrapper describes the element a cell body renders inside: an anchor
+// for the first column of a navigable row, an inert <span> otherwise.
+//
+// One wrapper for both cases keeps the cell body written once. The catch is the
+// click handler. Vue resolves the `.stop` modifier at COMPILE time, so
+// `@click.stop="cond ? handler() : undefined"` on a shared element stops
+// propagation for EVERY column -- the ternary only picks the handler body. The
+// non-first columns would then swallow clicks that must reach the row's own
+// handler, and because .row-cell is display:contents the dead zone is exactly
+// the rendered text, not the surrounding cell padding. Returning the handler
+// (or `undefined`, to leave propagation alone) makes that a runtime decision.
+function rowCellWrapper(entity: Entity, colIndex: number): RowCellWrapper {
+  if (colIndex !== 0) return inertCell
+  return rowLinks.value.get(entity.id) ?? inertCell
 }
 
 // Widget resolution for property cells, keyed by column property name and
@@ -886,7 +1010,19 @@ watch(searchQuery, () => {
           @click="navigateToEntity(entity)"
         >
           <div class="mobile-card-header">
-            <span class="mobile-card-title text-wrap-anywhere text-clamp-2">
+            <!-- The mobile layout is a separate template from the table above
+                 and needs its own anchor; see the comment on the table row.
+                 Long-press "Open in New Tab" is the mobile counterpart of the
+                 desktop right-click menu, so this matters here too. -->
+            <a
+              v-if="entityRowHref(entity)"
+              :href="entityRowHref(entity)"
+              class="plain-link mobile-card-title text-wrap-anywhere text-clamp-2"
+              @click.stop="navigateToEntity(entity)"
+            >
+              {{ getFormattedCellValue(entity, listConfig.columns[0]) }}
+            </a>
+            <span v-else class="mobile-card-title text-wrap-anywhere text-clamp-2">
               {{ getFormattedCellValue(entity, listConfig.columns[0]) }}
             </span>
             <button
@@ -1000,25 +1136,53 @@ watch(searchQuery, () => {
               />
             </td>
             <td
-              v-for="column in listConfig.columns"
+              v-for="(column, colIndex) in listConfig.columns"
               :key="column.property || column.relation"
             >
-              <span
-                v-if="isCellInaccessible(entity, column)"
-                class="inaccessible-cell"
-                title="inaccessible"
-              >🔒</span>
+              <!--
+                The FIRST cell wraps its content in a real <a href>, which is
+                what gives the row the browser's own navigation affordances:
+                right-click "Open Link in New Tab", Cmd/Ctrl+click, middle-click
+                (TKT-BB3TV0 / issue #1172). A <tr> cannot itself be an anchor,
+                and wrapping every cell would put a link around checkboxes and
+                delete buttons — so one cell carries it.
+
+                The wrapper is a dynamic tag rather than a v-if/v-else pair so
+                the cell body below is written once: duplicating it would let
+                the linked and unlinked columns drift apart. It degrades to a
+                plain <span> for every other column, and for a row with nowhere
+                to point.
+
+                Every attribute comes from rowCellWrapper() — including the
+                click handler, which must be bound as :onClick rather than
+                written @click.stop here. `.stop` is resolved at COMPILE time,
+                so on a shared wrapper it would halt propagation for every
+                column, not just the anchor, and the plain columns would swallow
+                the click that the row handler needs. See the helper.
+              -->
               <component
-                :is="resolveCell(entity, column)!.component"
-                v-else-if="resolveCell(entity, column)"
-                :model-value="resolveCell(entity, column)!.modelValue"
-                :mode="'display'"
-                :property-name="resolveCell(entity, column)!.propertyName"
-                :entity-type="listConfig.entity"
-              />
-              <span v-else>
-                {{ getFormattedCellValue(entity, column) }}
-              </span>
+                :is="rowCellWrapper(entity, colIndex).tag"
+                :href="rowCellWrapper(entity, colIndex).href"
+                :class="rowCellWrapper(entity, colIndex).class"
+                :onClick="rowCellWrapper(entity, colIndex).onClick"
+              >
+                <span
+                  v-if="isCellInaccessible(entity, column)"
+                  class="inaccessible-cell"
+                  title="inaccessible"
+                >🔒</span>
+                <component
+                  :is="resolveCell(entity, column)!.component"
+                  v-else-if="resolveCell(entity, column)"
+                  :model-value="resolveCell(entity, column)!.modelValue"
+                  :mode="'display'"
+                  :property-name="resolveCell(entity, column)!.propertyName"
+                  :entity-type="listConfig.entity"
+                />
+                <span v-else>
+                  {{ getFormattedCellValue(entity, column) }}
+                </span>
+              </component>
             </td>
             <td class="actions-cell">
               <button
@@ -1314,6 +1478,39 @@ watch(searchQuery, () => {
   padding: 12px 16px;
   border-bottom: 1px solid var(--border-color);
   font-size: var(--font-size-base);
+}
+
+/* The row link exists so the browser can offer "Open in New Tab" and honour
+   Cmd/middle-click. It must NOT look like a link: the row already signals
+   clickability, and a blue underlined first column would be a visual
+   regression dressed up as an accessibility win.
+
+   Deliberately `inline`, NOT `display: contents`. WebKit drops an element's
+   implicit ARIA role under display:contents, so the anchor would stop being
+   exposed as a link to VoiceOver — losing the semantics this whole change
+   exists to add, on the one browser where it would be hardest to notice. The
+   cell body is inline content in a <td>, so an inline anchor changes no
+   layout; contents was buying nothing. */
+.row-link {
+  display: inline;
+  color: inherit;
+  text-decoration: none;
+}
+
+/* The unlinked counterpart of .row-link. Every cell body renders inside a
+   wrapper so the markup is written once; display:contents means the wrapper
+   the non-first columns get is invisible to layout. Safe here precisely
+   because this element carries no role to lose. */
+.row-cell {
+  display: contents;
+}
+
+/* Strips link APPEARANCE only, keeping the element's own box. The mobile card
+   title carries `flex: 1; min-width: 0`, which display:contents would throw
+   away — so it cannot reuse .row-link. */
+.plain-link {
+  color: inherit;
+  text-decoration: none;
 }
 
 .entity-row {
