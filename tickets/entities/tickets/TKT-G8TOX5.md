@@ -5,7 +5,7 @@ title: Document why rela import bypasses transition guards
 kind: docs
 priority: low
 effort: xs
-status: backlog
+status: done
 ---
 
 ## Description

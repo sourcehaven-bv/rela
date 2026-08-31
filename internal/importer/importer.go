@@ -399,7 +399,38 @@ func (imp *Importer) validateRelationData(rd *RelationData, knownIDs map[string]
 	return imp.meta.ValidateRelation(rd.Relation, fromType, toType)
 }
 
-// importEntity creates or updates an entity
+// importEntity creates or updates an entity.
+//
+// Writes to the store DIRECTLY, not through entitymanager, so
+// Transitions.EnforceCreate/Update do not apply and an imported entity may
+// carry any status. That is deliberate (TKT-G8TOX5 / issue #1155), for three
+// reasons that should be weighed together rather than one at a time:
+//
+//   - Import loads data whose states ALREADY EXIST. A record that was `done`
+//     five years ago in the system being migrated from is a historical fact,
+//     not a transition being made now. Applying "you must enter at todo" to it
+//     would reject the true value, so the guard would not prevent bad states —
+//     it would prevent correct ones.
+//   - The importer is CLI-only. internal/cli/import.go is its sole non-test
+//     caller; there is no HTTP, MCP or automation path in.
+//   - A guard here is a speed bump, not a boundary. An operator running
+//     `rela import` already has store access — fsstore is markdown on disk, and
+//     a pgstore operator holds the connection string. Anything the guard would
+//     stop, the same person can do with a text editor.
+//
+// This DIVERGES from the sync path, which enforces (RR-NB135), and the
+// difference is the point rather than an oversight: sync is an ongoing channel
+// carrying a peer's NEW transitions, where entry-state rules are meaningful.
+// Import is a one-shot operator load of historical fact.
+//
+// What would change the answer: a non-CLI caller. If import ever becomes
+// reachable from a request path, the third reason above evaporates and this
+// should be revisited rather than inherited.
+//
+// Note this is the ONLY CLI path that both bypasses the guards and can set an
+// arbitrary status. `rela create` and `rela restore` go through EntityManager
+// and ARE guarded; `rela normalize` writes to the store directly but only
+// rewrites markdown headers, so transitions never apply to it.
 func (imp *Importer) importEntity(ed *EntityData) (created bool, err error) {
 	entityDef, _ := imp.meta.GetEntityDef(ed.Type)
 	ctx := context.Background()
