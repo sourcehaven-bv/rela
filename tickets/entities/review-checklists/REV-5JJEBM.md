@@ -107,11 +107,14 @@ Skip this section for bugs and internal refactors.
 - [x] User-facing documentation updated
 - [x] Docs-checklist marked as done
 
-**Docs Checklist:** N/A — no documented behaviour changes. Where a click goes is
-unchanged; the affordances this restores (open-in-new-tab, Cmd/middle-click) are
-standard link behaviour users already expect, and `docs/data-entry.md` never
-documented their absence. Marked in the planning checklist under Documentation
-Impact.
+**Docs Checklist:** DOCS-DU13U8 (done).
+
+Its conclusion is that no `docs/` change is needed: where a click goes is
+unchanged, and the affordances this restores are standard link behaviour users
+already expect — `docs/data-entry.md` never documented their absence, and no
+config surface is added. The checklist exists to record *that reasoning*, and
+the code-documentation section is not N/A: it catalogues the three comments that
+stop a later reader from undoing a deliberate choice.
 
 ## Final Checks
 
@@ -121,7 +124,7 @@ Impact.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
+- [x] Run `/pr` command to create PR and monitor CI
 
 <!--
 Deliberately NOT tracked here: the PR URL and whether CI passed.
