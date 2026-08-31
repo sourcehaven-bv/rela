@@ -244,6 +244,24 @@ func logFields(event, namespacedKey string) []any {
 	}
 }
 
+// cacheBindings implements the rela.cache.* bindings: get, set, and
+// memoize. A type of its own rather than more methods on [Runtime]
+// (the urlHelpers rationale in urls.go): the bindings need exactly two
+// things from the runtime — the cache backend and the current script
+// path — so they hold those and nothing else.
+//
+// scriptPath is a func, not a captured string, because the runtime's
+// scriptPath is MUTABLE after registration: RunFile/RunFileContent set
+// it per run and external callers change it via [Runtime.SetScriptPath]
+// between RunString calls. A value captured at construction would
+// freeze the cache namespace at whatever the path was when bindings
+// were registered — usually "" — permanently disabling (or worse,
+// cross-contaminating) the cache. The closure reads the live field.
+type cacheBindings struct {
+	cache      cacheStore
+	scriptPath func() string
+}
+
 // registerCacheBindings installs rela.cache.{get,set,memoize} on the
 // supplied rela table. It is a no-op if the runtime has no cache wired.
 // Each binding guards against the inline/eval case (no scriptPath) by
@@ -254,10 +272,14 @@ func (r *Runtime) registerCacheBindings(rela *glua.LTable) {
 	if r.cache == nil {
 		return
 	}
+	c := &cacheBindings{
+		cache:      r.cache,
+		scriptPath: func() string { return r.scriptPath },
+	}
 	tbl := r.L.NewTable()
-	r.L.SetField(tbl, "get", r.L.NewFunction(r.luaCacheGet))
-	r.L.SetField(tbl, "set", r.L.NewFunction(r.luaCacheSet))
-	r.L.SetField(tbl, "memoize", r.L.NewFunction(r.luaCacheMemoize))
+	r.L.SetField(tbl, "get", r.L.NewFunction(c.luaCacheGet))
+	r.L.SetField(tbl, "set", r.L.NewFunction(c.luaCacheSet))
+	r.L.SetField(tbl, "memoize", r.L.NewFunction(c.luaCacheMemoize))
 	r.L.SetField(rela, "cache", tbl)
 }
 
@@ -273,8 +295,9 @@ func (r *Runtime) registerCacheBindings(rela *glua.LTable) {
 // any reliance on the user key not containing the separator. Raw
 // script paths are never stored in cache keys (they'd leak structure
 // on any memory dump).
-func (r *Runtime) requireCacheContext(ls *glua.LState, userKey string) string {
-	if r.scriptPath == "" {
+func (c *cacheBindings) requireCacheContext(ls *glua.LState, userKey string) string {
+	path := c.scriptPath()
+	if path == "" {
 		ls.RaiseError("cache: not available in inline/eval contexts")
 		return ""
 	}
@@ -283,7 +306,7 @@ func (r *Runtime) requireCacheContext(ls *glua.LState, userKey string) string {
 			len(userKey), maxCacheKeyBytes)
 		return ""
 	}
-	return hashKey(r.scriptPath) + userKey
+	return hashKey(path) + userKey
 }
 
 // cacheOptions captures the parsed options table for set/memoize.
@@ -397,15 +420,15 @@ var (
 // luaCacheGet implements rela.cache.get(key) -> value|nil. It accepts no
 // options; a second argument raises a Lua error to prevent the
 // "user passed opts expecting them to do something" footgun.
-func (r *Runtime) luaCacheGet(ls *glua.LState) int {
+func (c *cacheBindings) luaCacheGet(ls *glua.LState) int {
 	userKey := ls.CheckString(1)
 	// Hard-reject any second argument: get has no options.
 	if ls.GetTop() > 1 && ls.Get(2) != glua.LNil {
 		ls.RaiseError("cache.get: takes 1 argument (key); no options accepted")
 		return 0
 	}
-	namespacedKey := r.requireCacheContext(ls, userKey)
-	values, ok := r.cache.get(namespacedKey)
+	namespacedKey := c.requireCacheContext(ls, userKey)
+	values, ok := c.cache.get(namespacedKey)
 	if !ok {
 		slog.Debug("cache miss", logFields("miss", namespacedKey)...)
 		ls.Push(glua.LNil)
@@ -433,17 +456,17 @@ func (r *Runtime) luaCacheGet(ls *glua.LState) int {
 // Lua values (functions, userdata, coroutines) at API time, so scripts
 // cannot accidentally poison the cache with a handle that will
 // eventually be stale.
-func (r *Runtime) luaCacheSet(ls *glua.LState) int {
+func (c *cacheBindings) luaCacheSet(ls *glua.LState) int {
 	userKey := ls.CheckString(1)
 	valArg := ls.Get(2)
 	opts := parseCacheOptions(ls, 3, setAllowedOpts)
 
-	namespacedKey := r.requireCacheContext(ls, userKey)
+	namespacedKey := c.requireCacheContext(ls, userKey)
 
 	// Nil value -> delete. This matches Lua table semantics ("nil means
 	// absent") and avoids a separate rela.cache.delete surface.
 	if valArg == glua.LNil {
-		r.cache.delete(namespacedKey)
+		c.cache.delete(namespacedKey)
 		slog.Debug("cache delete", logFields("delete", namespacedKey)...)
 		return 0
 	}
@@ -455,7 +478,7 @@ func (r *Runtime) luaCacheSet(ls *glua.LState) int {
 		return 0
 	}
 
-	r.cache.set(namespacedKey, []any{luaValueToGo(valArg)}, opts.ttlOrDefault())
+	c.cache.set(namespacedKey, []any{luaValueToGo(valArg)}, opts.ttlOrDefault())
 	slog.Debug("cache store", logFields("store", namespacedKey)...)
 	return 0
 }
@@ -478,16 +501,16 @@ func (r *Runtime) luaCacheSet(ls *glua.LState) int {
 // alongside memoization must use a different key (e.g. `key .. ":aux"`).
 // Detecting and skipping the overwrite would require versioning every
 // entry, and is not worth the complexity for an uncommon pattern.
-func (r *Runtime) luaCacheMemoize(ls *glua.LState) int {
+func (c *cacheBindings) luaCacheMemoize(ls *glua.LState) int {
 	userKey := ls.CheckString(1)
 	fn := ls.CheckFunction(2)
 	opts := parseCacheOptions(ls, 3, memoizeAllowedOpts)
 
-	namespacedKey := r.requireCacheContext(ls, userKey)
+	namespacedKey := c.requireCacheContext(ls, userKey)
 
 	// Check cache unless explicitly bypassed.
 	if !opts.bypass {
-		if values, ok := r.cache.get(namespacedKey); ok {
+		if values, ok := c.cache.get(namespacedKey); ok {
 			slog.Debug("cache hit", logFields("hit", namespacedKey)...)
 			for _, v := range values {
 				ls.Push(GoToLuaValue(ls, v))
@@ -528,7 +551,7 @@ func (r *Runtime) luaCacheMemoize(ls *glua.LState) int {
 		goValues[i] = luaValueToGo(ls.Get(topBefore + 1 + i))
 	}
 
-	r.cache.set(namespacedKey, goValues, opts.ttlOrDefault())
+	c.cache.set(namespacedKey, goValues, opts.ttlOrDefault())
 	slog.Debug("cache store", logFields("store", namespacedKey)...)
 
 	// The returns are already on the stack; just report the count.

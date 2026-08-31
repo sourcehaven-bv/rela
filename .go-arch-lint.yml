@@ -17,6 +17,9 @@ exclude:
   - frontend
   - e2e
   - .claude
+  # Gitignored local scratch (perf harnesses etc). CI never sees it, but the
+  # linter scans the working tree, so a local run must not trip on it.
+  - .ignored
 
 excludeFiles:
   - "_test\\.go$"

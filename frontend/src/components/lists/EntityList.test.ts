@@ -30,7 +30,8 @@ vi.mock('@/api', async (orig) => ({
 const routerPush = vi.fn()
 const routerReplace = vi.fn()
 const mockRoute = { query: {} as Record<string, string>, path: '/list/tickets-list', name: 'list' }
-vi.mock('vue-router', () => ({
+vi.mock('vue-router', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('vue-router')>()),
   useRouter: () => ({ push: routerPush, replace: routerReplace }),
   useRoute: () => mockRoute,
 }))
