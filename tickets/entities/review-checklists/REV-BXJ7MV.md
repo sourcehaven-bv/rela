@@ -2,7 +2,7 @@
 id: REV-BXJ7MV
 type: review-checklist
 title: 'Review: Operator-configured recipient allowlist for mail.send'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -129,7 +129,7 @@ which is a script mailing an attacker-chosen address.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
+- [x] Run `/pr` command to create PR and monitor CI
 
 <!--
 Deliberately NOT tracked here: the PR URL and whether CI passed.
