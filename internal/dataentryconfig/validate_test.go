@@ -2416,6 +2416,11 @@ func TestValidateApp_PlantUMLServerURL(t *testing.T) {
 		{name: "http elsewhere in 127/8 is valid", url: "http://127.1.2.3:8080", wantErr: ""},
 		{name: "http to ::1 is valid", url: "http://[::1]:8080", wantErr: ""},
 		{name: "https to a remote host stays valid", url: "https://plantuml.internal.example.com", wantErr: ""},
+		// Fully-qualified spellings of the same local machine.
+		{name: "http to localhost with trailing dot is valid", url: "http://localhost.:8080", wantErr: ""},
+		{name: "http to 127.0.0.1 with trailing dot is valid", url: "http://127.0.0.1.:8080", wantErr: ""},
+		{name: "http to IPv4-mapped loopback is valid", url: "http://[::ffff:127.0.0.1]:8080", wantErr: ""},
+		{name: "http to expanded ::1 is valid", url: "http://[0:0:0:0:0:0:0:1]:8080", wantErr: ""},
 
 		{name: "http to a remote host rejected", url: "http://plantuml.example.com", wantErr: "cleartext"},
 		{name: "http to a public IP rejected", url: "http://93.184.216.34", wantErr: "cleartext"},
@@ -2429,6 +2434,12 @@ func TestValidateApp_PlantUMLServerURL(t *testing.T) {
 		{name: "loopback-IP-prefixed domain rejected", url: "http://127.0.0.1.evil.com", wantErr: "cleartext"},
 		{name: "loopback in userinfo rejected", url: "http://localhost@evil.com", wantErr: "cleartext"},
 		{name: "loopback-suffixed domain rejected", url: "http://evil-localhost.com", wantErr: "cleartext"},
+		// Stripping one trailing dot must not turn a remote name local.
+		{name: "lookalike with trailing dot rejected", url: "http://localhost.evil.com.", wantErr: "cleartext"},
+		{name: "double trailing dot rejected", url: "http://localhost..", wantErr: "cleartext"},
+		// Unusual encodings of 127.0.0.1 are refused, not decoded (fails safe).
+		{name: "decimal-encoded loopback rejected", url: "http://2130706433", wantErr: "cleartext"},
+		{name: "unspecified address rejected", url: "http://0.0.0.0:8080", wantErr: "cleartext"},
 		{name: "javascript scheme rejected", url: "javascript:alert(1)", wantErr: "scheme must be http or https"},
 		{name: "data scheme rejected", url: "data:text/html,x", wantErr: "scheme must be http or https"},
 		{name: "protocol-relative rejected", url: "//evil.example", wantErr: "scheme must be http or https"},

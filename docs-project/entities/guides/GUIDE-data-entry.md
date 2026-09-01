@@ -244,6 +244,10 @@ A hostname that merely looks local (`localhost.example.com`) is treated as
 remote. Invalid combinations are rejected when the config loads, not silently at
 render time.
 
+The check covers the URL you configure, not where it ends up: an `https://` URL
+whose server redirects to `http://` still sends the source in cleartext, and
+rela cannot see that. Point this at a server you control.
+
 ## Git
 
 Configure git synchronization behavior:

@@ -4,7 +4,7 @@ type: ticket
 title: Reject cleartext http:// for plantuml_server_url except loopback
 kind: enhancement
 priority: low
-status: review
+status: done
 ---
 
 ## Problem
