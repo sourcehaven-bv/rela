@@ -250,7 +250,7 @@ func TestContainedPath_RejectsRootBase(t *testing.T) {
 	}
 }
 
-// The root-base guard must recognise a WINDOWS root too (TKT-T7G7LT / issue
+// The root-base guard must recognize a WINDOWS root too (TKT-T7G7LT / issue
 // #1498). rela-desktop ships as a Windows MSI, and until this test existed the
 // guard compared only against "/" — so on Windows a base of `C:\` sailed
 // through, filepath.Rel succeeded for every path on the drive, and the
@@ -329,7 +329,7 @@ func TestIsFilesystemRoot(t *testing.T) {
 		// in volumeNameLen keys on the `.` form, so the `?` form falls to the
 		// generic `\\?` branch and the volume is `\\?\UNC` rather than the
 		// share — which would make `\\?\UNC\host\share` a path UNDER a volume,
-		// not a root. That is a claim about stdlib behaviour this file cannot
+		// not a root. That is a claim about stdlib behavior this file cannot
 		// verify (it is not in the stdlib's own test table either), and the
 		// whole point of RR-S2X70O is that unverified transcriptions pass green
 		// while being wrong. Left out rather than guessed.
