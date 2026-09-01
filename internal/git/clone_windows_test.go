@@ -22,7 +22,7 @@ import (
 // the input and feeds the result straight through, so it cannot inherit a
 // mistaken belief about Clean. It does not run on Linux CI, so it is not a
 // replacement for the table — it is what stops the table drifting from reality
-// the next time Clean's behaviour moves, and what a maintainer on Windows can
+// the next time Clean's behavior moves, and what a maintainer on Windows can
 // run to check the claim directly.
 //
 // `\\?\UNC\host\share` is deliberately absent. volumeNameLen's `\\.\UNC`
