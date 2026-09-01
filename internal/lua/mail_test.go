@@ -43,7 +43,7 @@ func (s *recordingMailSender) messages() []MailMessage {
 // newMailRuntime builds a reader runtime with the given sender wired and the
 // `mail` capability GRANTED.
 //
-// Granted by default because these tests are about the binding's behaviour
+// Granted by default because these tests are about the binding's behavior
 // once a script is authorized — error classification, argument handling,
 // feature detection — and a runtime that refuses everything would test the
 // gate over and over instead. The gate has its own tests, which build their

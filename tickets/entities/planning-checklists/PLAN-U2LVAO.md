@@ -18,73 +18,70 @@ status: done
 IN:
 
 - `Mail bool` on `lua.Capabilities` and on `metamodel.Capabilities` (the YAML
-  face), carried through `metamodel.Capabilities.Fields` — the single
-  translation seam — to every runtime consumer.
+face), carried through `metamodel.Capabilities.Fields` — the single translation
+seam — to every runtime consumer.
 - `luaMailSend` returns a typed `denied` error table when the grant is absent.
 - The binding stays **registered unconditionally**. The two concerns are
-  separable and the existing `internal/lua/mail.go` package doc is right about
-  the first: registration is about *ergonomics* (feature detection, a useful
-  error in an unconfigured deployment), the gate is about *authorization*.
-  Always present, refuses to send.
+separable and the existing `internal/lua/mail.go` package doc is right about the
+first: registration is about *ergonomics* (feature detection, a useful error in
+an unconfigured deployment), the gate is about *authorization*. Always present,
+refuses to send.
 - `Mail: true` hard-wired in `internal/mail/config.go`'s
-  `ScriptCapabilities.toLua()` — mail's own send-script runtime is the one
-  place the gate cannot apply, and the code must say why.
+`ScriptCapabilities.toLua()` — mail's own send-script runtime is the one place
+the gate cannot apply, and the code must say why.
 - Startup warning naming data-entry actions whose script calls `mail.send`
-  without the grant.
+without the grant.
 
 OUT:
 
 - Backwards compatibility. Explicitly waived by the project owner: the gate
-  defaults closed and existing projects must add `mail: true`. No transition
-  period, no env-var escape hatch — either would reproduce the defect for
-  anyone who did not read the release note.
+defaults closed and existing projects must add `mail: true`. No transition
+period, no env-var escape hatch — either would reproduce the defect for anyone
+who did not read the release note.
 - Recipient constraints (an allowlist of destination addresses). Separate
-  ticket; a sibling branch `mail-recipient-allowlist` is doing it.
+ticket; a sibling branch `mail-recipient-allowlist` is doing it.
 - Gating the *outbox* or the declarative `mail_templates:` path. Those are
-  operator-authored config, not script code; the asymmetry this ticket rests on
-  (config is reviewed, a line buried in a 500-line script is not) does not
-  apply to them.
+operator-authored config, not script code; the asymmetry this ticket rests on
+(config is reviewed, a line buried in a 500-line script is not) does not apply
+to them.
 
 **Acceptance Criteria:**
 
 1. **AC1 — denied without the grant.** A runtime built with a wired sender but
-   `Capabilities{}` runs `mail.send{...}`; the call returns `(nil, err)` with
-   `err.kind == "denied"` and the sender records **zero** messages.
-   *Test:* `TestMailSend_DeniedWithoutCapability` in `internal/lua/mail_test.go`.
+`Capabilities{}` runs `mail.send{...}`; the call returns `(nil, err)` with
+`err.kind == "denied"` and the sender records **zero** messages. *Test:*
+`TestMailSend_DeniedWithoutCapability` in `internal/lua/mail_test.go`.
 2. **AC2 — the exfiltration probe from the ticket is closed.** The exact
-   scenario in the issue — `secrets` granted, `http`/`ai` absent, `mail.send`
-   to an attacker address — must not deliver.
-   *Test:* `TestMailSend_SecretsExfiltrationIsDenied`, which asserts the secret
-   *is* readable in Lua (so the test fails for the right reason: the gate, not
-   a missing secret) and that nothing reached the sender.
+scenario in the issue — `secrets` granted, `http`/`ai` absent, `mail.send` to an
+attacker address — must not deliver. *Test:*
+`TestMailSend_SecretsExfiltrationIsDenied`, which asserts the secret *is*
+readable in Lua (so the test fails for the right reason: the gate, not a missing
+secret) and that nothing reached the sender.
 3. **AC3 — sends with the grant.** `Capabilities{Mail: true}` delivers.
-   *Test:* `TestMailSend_Succeeds` and every other positive test in
-   `mail_test.go`, via the `newMailRuntime` helper.
+*Test:* `TestMailSend_Succeeds` and every other positive test in `mail_test.go`,
+via the `newMailRuntime` helper.
 4. **AC4 — the binding is still there without the grant.** `type(mail.send)`
-   is `"function"` with no grant; a script can feature-detect rather than
-   crashing on a nil index.
-   *Test:* `TestMailSend_DeniedWithoutCapability` asserts this in the same run.
+is `"function"` with no grant; a script can feature-detect rather than crashing
+on a nil index. *Test:* `TestMailSend_DeniedWithoutCapability` asserts this in
+the same run.
 5. **AC5 — `denied` outranks `not_configured`.** With neither grant nor sender,
-   the answer is `denied`. Reporting "mail is not configured" to a script that
-   was never authorized leaks a fact about the deployment and sends the
-   operator to the wrong file.
-   *Test:* `TestMailSend_DeniedOutranksNotConfigured`.
+the answer is `denied`. Reporting "mail is not configured" to a script that was
+never authorized leaks a fact about the deployment and sends the operator to the
+wrong file. *Test:* `TestMailSend_DeniedOutranksNotConfigured`.
 6. **AC6 — the YAML grant reaches every surface.** `capabilities: {mail: true}`
-   in `data-entry.yaml`, `schema.yaml` automations and `schedules.yaml` tasks
-   arrives as `lua.Capabilities.Mail`.
-   *Tests:* `TestLuaCapabilities_CarriesMail` (dataentry),
-   `TestCapabilitiesRoundTrip*` (scheduler payload), `Fields` consumers are
-   compile-time-checked.
+in `data-entry.yaml`, `schema.yaml` automations and `schedules.yaml` tasks
+arrives as `lua.Capabilities.Mail`. *Tests:* `TestLuaCapabilities_CarriesMail`
+(dataentry), `TestCapabilitiesRoundTrip*` (scheduler payload), `Fields`
+consumers are compile-time-checked.
 7. **AC7 — the scheduler payload round-trips it.** A task enqueued with
-   `mail: true` still has it after the JSON hop, and an unknown/garbage payload
-   value fails closed.
-   *Test:* extended `internal/scheduler/jobs_test.go` cases.
+`mail: true` still has it after the JSON hop, and an unknown/garbage payload
+value fails closed. *Test:* extended `internal/scheduler/jobs_test.go` cases.
 8. **AC8 — the send-script runtime can still send.** `ScriptCapabilities.toLua()`
-   returns `Mail: true` regardless of YAML.
-   *Test:* `TestScriptCapabilities_ToLua_HardWiresMail`.
+returns `Mail: true` regardless of YAML. *Test:*
+`TestScriptCapabilities_ToLua_HardWiresMail`.
 9. **AC9 — startup warning.** A project with an action script containing
-   `mail.send` and no `mail:` grant logs one warning naming the action.
-   *Test:* `TestCollectUngatedMailActions`.
+`mail.send` and no `mail:` grant logs one warning naming the action. *Test:*
+`TestCollectUngatedMailActions`.
 
 ## Research
 
@@ -102,20 +99,20 @@ mechanism. The prior art is in-repo and complete.
 No library involved; this is an in-repo authorization mechanism.
 
 - **TKT-YH52OM** built the whole capability system and is the direct precedent.
-  Its reasoning transfers unchanged: `http` + `secrets` is a two-call
-  exfiltration path, therefore the outbound primitive is gated. `mail` is an
-  outbound primitive that was missed.
+Its reasoning transfers unchanged: `http` + `secrets` is a two-call exfiltration
+path, therefore the outbound primitive is gated. `mail` is an outbound primitive
+that was missed.
 - `internal/metamodel/capabilities.go:72` — `Capabilities.Fields()` is the
-  declared single translation seam, and its godoc says explicitly that adding a
-  capability *should* break the build at every consumer. That is a design
-  affordance left for exactly this change; using it is the whole plan.
+declared single translation seam, and its godoc says explicitly that adding a
+capability *should* break the build at every consumer. That is a design
+affordance left for exactly this change; using it is the whole plan.
 - `internal/lua/runtime.go:806-818` — how `http`/`ai` gate: absence of the
-  global. Deliberately **not** copied, see Approach.
+global. Deliberately **not** copied, see Approach.
 - `internal/appbuild/appbuild.go:1016` `warnUngatedMembership` — the shape for
-  a startup security warning: `slog.Warn` with a `fix` key naming the concrete
-  remedy and a `docs` key.
+a startup security warning: `slog.Warn` with a `fix` key naming the concrete
+remedy and a `docs` key.
 - `internal/mail/config.go:183` `ScriptCapabilities.toLua` — already hard-wires
-  `AI: false` with a stated reason. The comment style to follow for `Mail: true`.
+`AI: false` with a stated reason. The comment style to follow for `Mail: true`.
 
 ## Approach
 
@@ -144,8 +141,8 @@ nothing, whereas `denied` can name the exact YAML key to add. The doc is silent
 on authorization only because authorization was never considered; the two
 concerns compose rather than conflict.
 
-*Why `denied` outranks `not_configured`:* order the checks grant-first. A
-script that was never authorized should not learn whether the project has mail
+*Why `denied` outranks `not_configured`:* order the checks grant-first. A script
+that was never authorized should not learn whether the project has mail
 configured — that is a fact about the deployment, and the answer also sends the
 operator to the wrong file (`mail.yaml` instead of their `capabilities:` block).
 
@@ -172,18 +169,18 @@ operator to the wrong file (`mail.yaml` instead of their `capabilities:` block).
 **Alternatives considered:**
 
 - *Skip registration when ungated, like http/ai.* Rejected — the package doc's
-  argument against a vanishing binding is sound and the ticket is explicit that
-  it must be preserved. A `nil` global is a bad error precisely where a good one
-  is needed.
+argument against a vanishing binding is sound and the ticket is explicit that it
+must be preserved. A `nil` global is a bad error precisely where a good one is
+needed.
 - *Grandfather existing projects (warn-and-allow for a release).* Rejected —
-  explicitly waived by the project owner. A gate that logs and then sends is
-  not a gate, and the log line is read after the exfiltration, not before.
+explicitly waived by the project owner. A gate that logs and then sends is not a
+gate, and the log line is read after the exfiltration, not before.
 - *Reuse `Capabilities.HTTP` for mail.* Rejected — different blast radius and
-  a script needing mail would get the whole network. The per-capability
-  granularity is the point of the type.
+a script needing mail would get the whole network. The per-capability
+granularity is the point of the type.
 - *Scan for `mail.send` in automation/scheduler scripts too, not just
-  data-entry actions.* Deferred — see Risks. Data-entry actions are the surface
-  where the boot-time enumeration already exists and already reads bodies.
+data-entry actions.* Deferred — see Risks. Data-entry actions are the surface
+where the boot-time enumeration already exists and already reads bodies.
 
 ## Security Considerations
 
@@ -207,15 +204,15 @@ wildcard spelling reachable from YAML.
 **Security-Sensitive Operations:**
 
 - `mail.send` — the operation being gated. It is an outbound transfer facility
-  (CONTROL-5-14) and, paired with `rela.secrets`, an exfiltration primitive.
+(CONTROL-5-14) and, paired with `rela.secrets`, an exfiltration primitive.
 - The gate is checked **before** the sender is consulted and before the opts
-  table is parsed, so a denied script cannot use argument-parsing side effects
-  or error text to probe whether mail is configured.
+table is parsed, so a denied script cannot use argument-parsing side effects or
+error text to probe whether mail is configured.
 - The denial error text contains no secret, no recipient and no configuration
-  detail — only the name of the YAML key to add. It is a constant string.
+detail — only the name of the YAML key to add. It is a constant string.
 - `ScriptCapabilities.toLua` is the single deliberate exception, and it is
-  reachable only from `.rela/mail.yaml`, which is operator-authored config at
-  the same audited tier as `acl.yaml`.
+reachable only from `.rela/mail.yaml`, which is operator-authored config at the
+same audited tier as `acl.yaml`.
 
 ## Test Plan
 
@@ -227,9 +224,9 @@ wildcard spelling reachable from YAML.
 **Test Scenarios:** see the AC table above — each criterion names its test.
 
 Integration (not just unit): AC6/AC7 exercise the config→runtime path
-(`luaCapabilities`, the scheduler's JSON payload hop) rather than only the
-`lua` package in isolation; AC9 exercises boot-time collection over a real
-temp-dir project with a real `actions/*.lua` file on disk.
+(`luaCapabilities`, the scheduler's JSON payload hop) rather than only the `lua`
+package in isolation; AC9 exercises boot-time collection over a real temp-dir
+project with a real `actions/*.lua` file on disk.
 
 **Edge Cases:**
 
@@ -251,7 +248,7 @@ temp-dir project with a real `actions/*.lua` file on disk.
 - `TestMailSend_DeniedOutranksNotConfigured` — ordering.
 - `TestCapabilitiesFromPayload_*` — garbage payload values fail closed.
 - Mutation testing in both directions (always-deny and always-allow) is
-  required by the ticket; recorded in the implementation checklist.
+required by the ticket; recorded in the implementation checklist.
 
 ## Risk Assessment
 
@@ -283,17 +280,16 @@ For enhancements: identify what documentation needs updating.
 **Documentation Impact:**
 
 - [x] `docs-project/entities/guides/GUIDE-lua-scripting.md` — **contradicts what
-      is being built.** Line 990 states "unlike `http` and `ai`, whose absence
-      *is* the capability gate, `mail.send` is not a capability a script holds".
-      Must be rewritten, not merely amended. The `### Capabilities` heading also
-      needs `mail` added, which changes its anchor — one inbound link at :1157
-      must move with it.
+is being built.** Line 990 states "unlike `http` and `ai`, whose absence *is*
+the capability gate, `mail.send` is not a capability a script holds". Must be
+rewritten, not merely amended. The `### Capabilities` heading also needs `mail`
+added, which changes its anchor — one inbound link at :1157 must move with it.
 - [x] `docs-project/entities/guides/GUIDE-mail.md` — the "Sending mail from any
-      script" section (:265) says the binding is always present and stops there;
-      it needs the grant. The troubleshooting entries at :56/:183/:421 concern
-      `mail.yaml`'s **send-script** `capabilities:` block, which is a *different
-      thing* from a script-side `mail:` grant — they are not wrong, but the two
-      now look confusingly alike and must be disambiguated explicitly.
+script" section (:265) says the binding is always present and stops there; it
+needs the grant. The troubleshooting entries at :56/:183/:421 concern
+`mail.yaml`'s **send-script** `capabilities:` block, which is a *different
+thing* from a script-side `mail:` grant — they are not wrong, but the two now
+look confusingly alike and must be disambiguated explicitly.
 - [ ] `docs/metamodel.md` — N/A
 - [ ] `docs/cli-reference.md` — N/A
 - [x] `docs/data-entry.md` — regenerated via `just docs` (guides are the source)
@@ -314,14 +310,13 @@ package doc, which is the strongest existing statement of the opposing view.
 Three findings, all addressed above:
 
 1. *The package doc's argument must be preserved, not overturned.* It defends
-   unconditional **registration** and it is correct. The gate is about
-   **authorization**. Resolved by separating the two in both the code and the
-   doc rather than deleting the existing reasoning — the rewritten doc keeps
-   the original argument and adds the axis it never considered.
+unconditional **registration** and it is correct. The gate is about
+**authorization**. Resolved by separating the two in both the code and the doc
+rather than deleting the existing reasoning — the rewritten doc keeps the
+original argument and adds the axis it never considered.
 2. *Check ordering is security-relevant, not arbitrary.* `denied` must precede
-   `not_configured`, or an unauthorized script probes deployment state and the
-   operator is pointed at the wrong file. Promoted to AC5 with its own test.
+`not_configured`, or an unauthorized script probes deployment state and the
+operator is pointed at the wrong file. Promoted to AC5 with its own test.
 3. *The startup warning must not overstate itself.* A substring scan cannot see
-   through aliasing. Rather than build something fragile and imply it is
-   complete, it is documented as a best-effort hint whose backstop is the
-   runtime gate.
+through aliasing. Rather than build something fragile and imply it is complete,
+it is documented as a best-effort hint whose backstop is the runtime gate.

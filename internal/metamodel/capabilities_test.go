@@ -59,7 +59,7 @@ func TestCapabilities_FieldsCoversEveryField(t *testing.T) {
 	// Every bool field set, so a dropped one shows as a false in the results.
 	all := Capabilities{HTTP: true, AI: true, Mail: true, WriteFile: true, Secrets: []string{"k"}}
 
-	structFields := reflect.TypeOf(all).NumField()
+	structFields := reflect.TypeFor[Capabilities]().NumField()
 	http, ai, mail, writeFile, secrets := all.Fields()
 
 	returned := []any{http, ai, mail, writeFile, secrets}
