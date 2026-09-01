@@ -70,6 +70,11 @@ type Options struct {
 // docRuntime owns the per-build state the doc.* bindings close over: the real
 // metamodel + policy (read), an ephemeral seeded memstore (read+write), the
 // output buffer statement islands append to, and the strict flag.
+//
+// The Tier-B injected capabilities live on [tierBBindings] rather than here, so
+// screenshot{} and api{} cannot reach the metamodel, policy, store or tracer.
+//
+//plimsoll:max-methods=31
 type docRuntime struct {
 	meta   *metamodel.Metamodel
 	policy *acl.Policy
@@ -90,37 +95,16 @@ type docRuntime struct {
 	// it through the Lua error channel (which would lose the type + line).
 	pending *BuildError
 
-	// seedCounts is a per-type auto-id counter for the seed's mintID, avoiding a
-	// full-store scan per create().
-	seedCounts map[string]int
+	// seed owns the doc.create()/doc.link() write side and the state that serves
+	// it (the auto-id counter and the replay op log). Read-side islands reach
+	// the recorded ops through seed.ops; nothing else may touch its internals.
+	seed *seedBindings
 
-	// seedOps records every create/link so a screenshot{} island can replay them
-	// against a fresh fsstore temp project (DR-S2).
-	seedOps []SeedOp
-
-	// capturer renders screenshot{} islands. nil ⇒ screenshot{} fails loud (the
-	// Tier-B browser dependency is injected only by the CLI, keeping core docs
-	// browser-free). See screenshot.go.
-	capturer Capturer
-	// capturerErr is the reason the capturer could not be constructed (e.g. no
-	// Chrome), surfaced in the fail-loud message when a screenshot{} needs it.
-	capturerErr string
-
-	// apiClient serves api{} islands. nil ⇒ api{} fails loud, for the same
-	// reason a nil capturer does: a skipped assertion looks exactly like a
-	// passing one. Unlike the capturer it needs no browser or built frontend.
-	apiClient APIClient
-	// apiClientErr is why the client could not be constructed, surfaced in the
-	// fail-loud message.
-	apiClientErr string
-
-	// projectDir is the documented project's root (schema/config copied into the
-	// screenshot temp project). Empty in a schema-only build.
-	projectDir string
-
-	// outDir is where screenshot{} PNGs are written (derived from the build's
-	// --out); empty ⇒ PNGs written next to the cwd and referenced by basename.
-	outDir string
+	// tierB holds the injected, may-be-nil Tier-B capabilities (the browser
+	// Capturer behind screenshot{} and the APIClient behind api{}) with the
+	// paths and fail-loud reasons that belong to them. Kept off this struct so
+	// those bindings cannot reach the metamodel, policy, store or tracer.
+	tierB *tierBBindings
 
 	// warnings accumulates non-fatal issues (empty resolves in non-strict mode).
 	warnings []string
@@ -185,20 +169,34 @@ func Build(ctx context.Context, src string, opts Options) (string, error) {
 
 	st := memstore.New()
 	dr := &docRuntime{
-		meta:         opts.Meta,
-		policy:       opts.Policy,
-		apiClient:    opts.APIClient,
-		apiClientErr: opts.APIClientErr,
-		store:        st,
-		tracer:       tracer.New(st),
-		strict:       opts.Strict,
-		out:          &strings.Builder{},
-		ctx:          ctx,
+		meta:   opts.Meta,
+		policy: opts.Policy,
+		store:  st,
+		tracer: tracer.New(st),
+		strict: opts.Strict,
+		out:    &strings.Builder{},
+		ctx:    ctx,
+	}
+	dr.tierB = &tierBBindings{
 		capturer:     opts.Capturer,
 		capturerErr:  opts.CapturerErr,
+		apiClient:    opts.APIClient,
+		apiClientErr: opts.APIClientErr,
 		projectDir:   opts.ProjectDir,
 		outDir:       opts.OutDir,
+		ctx:          ctx,
+		emit:         dr.emit,
+		fail:         dr.luaFail,
+		// A closure, not a captured slice: registration happens once, before
+		// any island runs, so a snapshot taken here would always be empty. It
+		// also defers reading dr.seed itself, which is assigned below. The
+		// bindings must see the ops create()/link() have recorded by the time
+		// the screenshot{} or api{} island executes.
+		seed: func() []SeedOp { return dr.seed.ops },
 	}
+	// Wired after dr exists: the seeder reports failures through the runtime's
+	// pending-BuildError channel, which only dr can own.
+	dr.seed = &seedBindings{store: st, ctx: ctx, fail: dr.luaFail}
 
 	// A reader runtime gives us the sandbox (no io/os) plus rela.* read bindings;
 	// we layer the doc.* module (emit + resolvers + raw-store seed) on top. The

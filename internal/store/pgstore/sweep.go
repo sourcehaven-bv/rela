@@ -18,32 +18,27 @@ import (
 // two locks must never alias. "RELV" (RELA Versions).
 const sweepAdvisoryLockKey int64 = 0x52_45_4c_56
 
-// ProjectionProvider yields the current render-schema projection (its content
-// hash and its JSON form) for stamping onto swept create/update versions. It is
-// supplied by the wiring layer, which holds the metamodel; the store itself is
-// metamodel-agnostic. Called once per sweep tick, not per entity, so a hot edit
-// to the metamodel is picked up on the next tick.
-type ProjectionProvider interface {
-	Projection() (hash string, projectionJSON []byte)
-}
+// ProjectionProvider and SweepConfig are ALIASES for the store-package types,
+// not redefinitions.
+//
+// Aliases specifically: a named type would make pgstore.SweepConfig and
+// store.SweepConfig non-interchangeable, so a caller holding one could not pass
+// it where the other is wanted — the coupling this promotion removed, back in a
+// subtler form. With aliases they are the same type, so existing call sites
+// keep compiling and a second backend can satisfy the capability without
+// importing pgstore (TKT-L3FNEN).
+type (
+	ProjectionProvider = store.ProjectionProvider
+	SweepConfig        = store.SweepConfig
+)
 
-// SweepConfig tunes the reconciliation sweep. Zero values fall back to
-// defaults (see defaultSweepConfig).
-type SweepConfig struct {
-	// Interval is how often a tick runs. Default 5m.
-	Interval time.Duration
-	// Idle is how long an entity must be un-touched (updated_at older than
-	// now-Idle) before its settled state is snapshotted — the debounce. Default 5m.
-	Idle time.Duration
-	// MaxStaleness forces a snapshot of a continuously-edited entity whose
-	// latest version is older than this, even if it never settles. Default 1h.
-	MaxStaleness time.Duration
-	// Batch caps how many entities one tick processes, so a bulk-import burst
-	// drains across ticks instead of running unboundedly. Default 500.
-	Batch int
-}
-
-func (c SweepConfig) withDefaults() SweepConfig {
+// sweepDefaults fills the zero fields of cfg with pgstore's production cadence.
+//
+// A function rather than a method because SweepConfig is now an alias for the
+// store-package type, and Go does not allow methods on a non-local type. That
+// is the right split anyway: the FIELDS are a backend-neutral contract, but the
+// DEFAULTS are this backend's tuning and should not be imposed on another.
+func sweepDefaults(c SweepConfig) SweepConfig {
 	if c.Interval <= 0 {
 		c.Interval = 5 * time.Minute
 	}
@@ -126,7 +121,7 @@ func startSweep(pool *pgxpool.Pool, provider ProjectionProvider, cfg SweepConfig
 	s := &sweep{
 		pool:     pool,
 		provider: provider,
-		cfg:      cfg.withDefaults(),
+		cfg:      sweepDefaults(cfg),
 		cancel:   cancel,
 		done:     make(chan struct{}),
 	}

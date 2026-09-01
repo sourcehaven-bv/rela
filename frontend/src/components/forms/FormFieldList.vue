@@ -30,6 +30,9 @@ defineProps<{
   errors: Record<string, string>
   relationAffordances: Record<string, RelationAffordance>
   attachments: Record<string, AttachmentInfo[]>
+  // Create-mode staged files per `file` property (TKT-7K3BJF). Absent in
+  // edit mode, where a pick uploads immediately.
+  stagedFiles?: Record<string, File[]>
   saveGeneration: number
   getPropertyDef: (name: string) => PropertyDef | undefined
   isFieldReadonly: (field: FormFieldOrRelation) => boolean
@@ -42,6 +45,7 @@ defineProps<{
 const emit = defineEmits<{
   (e: 'update-field', property: string, value: unknown): void
   (e: 'attachment-changed', ...args: unknown[]): void
+  (e: 'update-staged-files', property: string, files: File[]): void
   (e: 'update-relation', relation: string, value: string[]): void
   (e: 'update-relation-types', relation: string, types: Map<string, string>): void
   (e: 'incoming-changed', relation: string, state: RelationPickerIncomingState): void
@@ -66,9 +70,11 @@ const emit = defineEmits<{
       :entity-type="entityType"
       :entity-id="entityId"
       :attachments="attachments[field.property]"
+      :staged-files="stagedFiles?.[field.property]"
       :max="getPropertyDef(field.property)?.max"
       @update="emit('update-field', field.property!, $event)"
       @attachment-changed="emit('attachment-changed', $event)"
+      @update:staged-files="emit('update-staged-files', field.property!, $event)"
     />
     <RelationCards
       v-else-if="field.relation && field.widget === 'cards' && entityId"

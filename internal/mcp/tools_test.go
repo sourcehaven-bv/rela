@@ -90,7 +90,7 @@ func makeTestServerWithStore(t *testing.T) (*Server, *memstore.MemStore) {
 		deps:   deps,
 		logger: slog.New(slog.DiscardHandler),
 	}
-	srv.types, srv.trace, srv.export = deps.handlers()
+	srv.handlerSet = deps.handlers()
 	return srv, st
 }
 
@@ -941,7 +941,7 @@ func TestHandleAnalyzeValidations_NoRules(t *testing.T) {
 func TestHandleGetMetamodel(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	result, err := s.handleGetSchema(context.Background(), &mcpgo.CallToolRequest{})
+	result, err := s.schemaRes.handleGetSchema(context.Background(), &mcpgo.CallToolRequest{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -961,7 +961,7 @@ func TestHandleGetMetamodel(t *testing.T) {
 func TestHandleListEntityTypes(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	result, err := s.handleListEntityTypes(context.Background(), &mcpgo.CallToolRequest{})
+	result, err := s.schemaRes.handleListEntityTypes(context.Background(), &mcpgo.CallToolRequest{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -978,7 +978,7 @@ func TestHandleListEntityTypes(t *testing.T) {
 func TestHandleListRelationTypes(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	result, err := s.handleListRelationTypes(context.Background(), &mcpgo.CallToolRequest{})
+	result, err := s.schemaRes.handleListRelationTypes(context.Background(), &mcpgo.CallToolRequest{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -999,7 +999,7 @@ func TestHandleReadEntity(t *testing.T) {
 	s := makeTestServer(t)
 	req := &mcpgo.ReadResourceRequest{Params: &mcpgo.ReadResourceParams{}}
 	req.Params.URI = "rela://entity/requirement/REQ-001"
-	contents, err := s.handleReadEntity(context.Background(), req)
+	contents, err := s.schemaRes.handleReadEntity(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1017,7 +1017,7 @@ func TestHandleReadEntity_TypeMismatch(t *testing.T) {
 	s := makeTestServer(t)
 	req := &mcpgo.ReadResourceRequest{Params: &mcpgo.ReadResourceParams{}}
 	req.Params.URI = "rela://entity/decision/REQ-001"
-	_, err := s.handleReadEntity(context.Background(), req)
+	_, err := s.schemaRes.handleReadEntity(context.Background(), req)
 	if err == nil {
 		t.Error("expected error for type mismatch")
 	}
@@ -1031,7 +1031,7 @@ func TestHandleReadEntity_NotFound(t *testing.T) {
 	s := makeTestServer(t)
 	req := &mcpgo.ReadResourceRequest{Params: &mcpgo.ReadResourceParams{}}
 	req.Params.URI = "rela://entity/requirement/REQ-999"
-	_, err := s.handleReadEntity(context.Background(), req)
+	_, err := s.schemaRes.handleReadEntity(context.Background(), req)
 	if err == nil {
 		t.Error("expected error for nonexistent entity")
 	}
@@ -1042,7 +1042,7 @@ func TestHandleReadEntity_InvalidURI(t *testing.T) {
 	s := makeTestServer(t)
 	req := &mcpgo.ReadResourceRequest{Params: &mcpgo.ReadResourceParams{}}
 	req.Params.URI = "rela://entity/onlyone"
-	_, err := s.handleReadEntity(context.Background(), req)
+	_, err := s.schemaRes.handleReadEntity(context.Background(), req)
 	if err == nil {
 		t.Error("expected error for invalid URI")
 	}
@@ -1053,7 +1053,7 @@ func TestHandleReadRelation(t *testing.T) {
 	s := makeTestServer(t)
 	req := &mcpgo.ReadResourceRequest{Params: &mcpgo.ReadResourceParams{}}
 	req.Params.URI = "rela://relation/DEC-001/addresses/REQ-001"
-	contents, err := s.handleReadRelation(context.Background(), req)
+	contents, err := s.schemaRes.handleReadRelation(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1071,7 +1071,7 @@ func TestHandleReadRelation_NotFound(t *testing.T) {
 	s := makeTestServer(t)
 	req := &mcpgo.ReadResourceRequest{Params: &mcpgo.ReadResourceParams{}}
 	req.Params.URI = "rela://relation/REQ-001/nonexistent/REQ-002"
-	_, err := s.handleReadRelation(context.Background(), req)
+	_, err := s.schemaRes.handleReadRelation(context.Background(), req)
 	if err == nil {
 		t.Error("expected error for nonexistent relation")
 	}

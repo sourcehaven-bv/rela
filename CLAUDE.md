@@ -89,6 +89,20 @@
   never inferred from identity. Write-prep reads (entitymanager
   diffing) keep raw store access: a redacted read-modify-write would
   clobber hidden fields.
+- **Aggregates computed over the graph gate BEFORE they fold.** The gantt
+  endpoint (`internal/dataentry/gantt_handler.go`, TKT-MW28U5) pins the
+  pattern: row-gate the node set, redact each entity ONCE, then run the
+  roll-up fold, then compute caps/`truncated` — all on the filtered tree.
+  The `_views` pipeline's traverse-raw-then-redact-on-the-way-out order is
+  safe for flat collections but NOT for an aggregate: folding raw values
+  launders a hidden entity's dates into a visible parent's rolled span (a
+  value disclosure, not the accepted one-bit membership channel), and a
+  pre-filter count or truncation flag is an existence oracle
+  (`TestGantt_ACLRollupExcludesHiddenChild`, `TestGantt_TruncatedIsPostFilter`).
+  Any new derived-over-subtree value (sums, progress %, counts) follows the
+  same order, and the result is per-principal — never cache it across
+  principals. `visibility.Redact` is non-composable (raw store entities in,
+  exactly once), so the redaction point stays single.
 - **Partial writes go through `entitymanager.Manager.PatchEntity`, never
   read-modify-write.** Name the properties you are changing in an
   `entity.Patch` (`Properties` upserts, `MetaUnset` removes, `Content` is a

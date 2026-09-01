@@ -37,6 +37,28 @@ function toAttachmentError(err: unknown): AttachmentError {
   return new AttachmentError('Request failed', 0)
 }
 
+/** The human reason an attachment write was refused, as a bare noun phrase
+ *  ("too large") so a caller can frame it either as a sentence or inside a
+ *  list of filenames. Hoisted here (RR-1556G1 M4) because both the file widget
+ *  and the create form map these statuses, and they had already drifted — one
+ *  lacked a 403 branch. Falls back to the server's problem+json detail, which
+ *  is written for client display. */
+export function attachmentErrorReason(err: unknown): string {
+  // Duck-typed on `status` rather than `instanceof AttachmentError`: the class
+  // identity is not stable across module boundaries (a vi.mock factory, or two
+  // copies of the module in a bundle), and silently degrading a 413 to a
+  // generic "upload failed" because the prototype chain differs is exactly the
+  // failure this helper exists to prevent.
+  const status = typeof err === 'object' && err !== null ? (err as { status?: unknown }).status : undefined
+  const message = typeof err === 'object' && err !== null ? (err as { message?: unknown }).message : undefined
+  if (typeof status === 'number') {
+    if (status === 413) return 'too large'
+    if (status === 409) return 'at the maximum number of files'
+    if (status === 403) return 'not permitted'
+  }
+  return typeof message === 'string' && message ? message : 'upload failed'
+}
+
 /** Upload (append, or replace at max:1) a file on a property. `onProgress`
  *  receives a 0..1 fraction. Returns the updated entity (its
  *  `_attachments` reflects the new file). Throws AttachmentError on a

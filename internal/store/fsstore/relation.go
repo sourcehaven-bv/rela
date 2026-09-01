@@ -218,11 +218,11 @@ func (s *FSStore) deleteRelation(_ context.Context, from, relType, to string) er
 	}
 
 	// Delete file.
-	fileKey := s.relationFileKey(from, relType, to)
+	fileKey := s.layout.relationFileKey(from, relType, to)
 	if err := s.rooted.Remove(fileKey); err != nil {
 		return err
 	}
-	s.echoes.Forget(s.absPath(fileKey))
+	s.echoes.Forget(s.layout.absPath(fileKey))
 
 	// Update index.
 	delete(s.relations, key)
@@ -239,5 +239,5 @@ func (s *FSStore) deleteRelation(_ context.Context, from, relType, to string) er
 
 // writeRelation writes a relation to disk using temp-file + rename.
 func (s *FSStore) writeRelation(r *entity.Relation) error {
-	return s.writeRelationFile(r)
+	return s.codec.writeRelationFile(r)
 }

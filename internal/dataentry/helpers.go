@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"errors"
 	"fmt"
 	"html/template"
 	"iter"
@@ -205,24 +204,7 @@ func compareOrdered[T cmp.Ordered](left, right T, operator string) bool {
 // propertyContains checks if a property value contains the given string.
 // Handles string, []string, and []interface{} property types.
 func propertyContains(prop any, value string) bool {
-	if prop == nil {
-		return value == ""
-	}
-	switch v := prop.(type) {
-	case string:
-		return v == value
-	case []string:
-		return slices.Contains(v, value)
-	case []any:
-		for _, item := range v {
-			if s, ok := item.(string); ok && s == value {
-				return true
-			}
-		}
-		return false
-	default:
-		return fmt.Sprintf("%v", prop) == value
-	}
+	return anyElement(prop, func(el string) bool { return el == value })
 }
 
 // propertyIsEmpty checks if a property value is empty/nil.
@@ -281,23 +263,6 @@ func applyFilters(entities []*entity.Entity, filters []FilterConfig) []*entity.E
 		}
 	}
 	return result
-}
-
-// sortEntitiesMulti sorts entities by multiple sort specs using type-aware comparison.
-func (a *App) sortEntitiesMulti(entities []*entity.Entity, specs []filter.SortSpec) {
-	if len(specs) == 0 {
-		return
-	}
-	s := a.State()
-	entityDefs := make(map[string]*metamodel.EntityDef)
-	for _, e := range entities {
-		if _, ok := entityDefs[e.Type]; !ok {
-			if def, ok := s.Meta.GetEntityDef(e.Type); ok {
-				entityDefs[e.Type] = def
-			}
-		}
-	}
-	filter.SortMulti(entities, entityRecord, specs, entityDefs, s.Meta)
 }
 
 // resolvePropertyValues returns allowed values for a property from its definition or custom type.
@@ -413,145 +378,6 @@ func addCheckboxIndices(s string) string {
 		idx++
 		return result
 	})
-}
-
-// executeQuery parses a search query and returns all matching entities.
-// It supports the same query syntax as the search page: type:, prop:, status:,
-// and free text. Free-text words use OR logic with fuzzy matching via Bleve;
-// results are ranked by score.
-// executeQuery runs the search-view pipeline under the ctx principal's
-// read scope (TKT-BA8BSX). Both consumers — handleV1Search and the
-// _position search scope (resolveScope) — inherit the gate from here,
-// so no future consumer can run an ungated search by accident.
-//
-// Ordering of the gate: the scope resolves FIRST, and an
-// all-effective-DenyAll scope returns before any backend work — a
-// denied principal must not be able to probe search-backend latency
-// (RR-X56H pattern, pinned with a recording searcher in
-// acl_search_test.go). The free-text branch then runs through
-// search.VisibleSearcher so hidden hits never have their bodies
-// loaded; the type-listing branch resolves the per-type verdict
-// against the store directly.
-//
-// The maxFreeTextSearchResults bound counts entities that survived
-// BOTH visibility and property filters (post-visibility truncation —
-// a pre-visibility cap starves restricted principals; a pre-filter
-// cap would starve filtered queries the same way).
-//
-// Errors: visibility-scope failures wrap errACLListQuery (mapped by
-// writeGateError: cancel-silent / 504 / 500 acl_query_failed with
-// constant detail), store-load failures wrap errListLoad, and plain
-// search-backend failures pass through (500 search_failed). The
-// pre-TKT-BA8BSX version swallowed both error classes into silently
-// truncated results.
-func (a *App) executeQuery(ctx context.Context, query string) ([]*entity.Entity, error) {
-	sq := searchparser.ParseQuery(query)
-	if sq.IsEmpty() {
-		return nil, nil
-	}
-
-	svc := a.Services()
-	typeNames := make([]string, 0, len(svc.Meta.Entities))
-	for name := range svc.Meta.Entities {
-		typeNames = append(typeNames, name)
-	}
-	slices.Sort(typeNames)
-	scope := readGateFromContext(ctx).SearchScope(ctx, typeNames)
-	if len(scope) == 0 {
-		return []*entity.Entity{}, nil
-	}
-
-	var candidates []*entity.Entity
-	var err error
-	if sq.HasFreeText() {
-		// Hits arrive in relevance order. Scores are dropped because
-		// executeQuery never sorted by them.
-		candidates, err = a.runVisibleFreeTextSearch(ctx, svc, sq, scope)
-	} else {
-		// Push the equality filters into the store as a PRE-FILTER, cutting
-		// the rows loaded. The Go pass below still evaluates every filter,
-		// including the pushed ones, and remains authoritative.
-		//
-		// That belt-and-braces is deliberate rather than redundant.
-		// store.PropPredicate compares by STRING FORM; filter.MatchAll is
-		// metamodel-aware. On a typed property they disagree — `count!=03`
-		// against an integer 3 is a non-match typed and a match as strings,
-		// and an enum filter naming an undeclared value ERRORS in Go
-		// (surfacing the operator's typo) while the store silently returns
-		// nothing. Dropping a pushed filter from the Go pass would let the
-		// looser of the two decide, WIDENING results on a path /_search and
-		// scope navigation share.
-		//
-		// Keeping both makes the outcome provably identical to the
-		// pre-pushdown behavior — the store can only ever remove rows the Go
-		// pass would also have removed — while still winning the I/O.
-		pushed := pushdownPrefilters(sq.PropertyFilters, svc.Meta, sq.EntityTypes)
-		candidates, err = visibleListByTypes(ctx, svc, sq.EntityTypes, scope, pushed)
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	results := make([]*entity.Entity, 0, len(candidates))
-	for _, e := range candidates {
-		if !a.matchesPropertyFilters(e, sq.PropertyFilters) {
-			continue
-		}
-		results = append(results, e)
-		if sq.HasFreeText() && len(results) >= maxFreeTextSearchResults {
-			break
-		}
-	}
-
-	// Apply sort from query syntax (free-text results are already ranked by relevance)
-	if sq.HasSort() {
-		a.sortEntitiesMulti(results, sq.SortClauses)
-	}
-
-	return results, nil
-}
-
-// runVisibleFreeTextSearch is executeQuery's free-text branch: the
-// same phrase re-quoting as runFreeTextSearchE, routed through the
-// ACL-scoped searcher. The backend-side limit is only set when no
-// property filters remain — with Go-side filters pending, truncation
-// happens in executeQuery after them, or the filter gap would re-open
-// the starvation the post-visibility limit closes.
-func (a *App) runVisibleFreeTextSearch(
-	ctx context.Context, svc Services, sq *searchparser.SearchQuery, scope map[string]search.TypeScope,
-) ([]*entity.Entity, error) {
-	parts := make([]string, 0, len(sq.FreeTextWords)+len(sq.FreeTextPhrases))
-	parts = append(parts, sq.FreeTextWords...)
-	for _, p := range sq.FreeTextPhrases {
-		parts = append(parts, `"`+p+`"`)
-	}
-	limit := 0
-	if len(sq.PropertyFilters) == 0 {
-		limit = maxFreeTextSearchResults
-	}
-	q := search.Query{
-		Text:  strings.Join(parts, " "),
-		Types: sq.EntityTypes,
-		Limit: limit,
-	}
-	out := make([]*entity.Entity, 0)
-	for hit, err := range searchVisibleHits(ctx, a.visibleSearcher, a.affordances, q, scope) {
-		if err != nil {
-			if errors.Is(err, search.ErrScope) {
-				return nil, fmt.Errorf("%w: %w", errACLListQuery, err)
-			}
-			return nil, fmt.Errorf("free-text search: %w", err)
-		}
-		e, getErr := svc.Store.GetEntity(ctx, hit.ID)
-		if getErr != nil {
-			// Stale index hit (entity deleted between index query and
-			// store read). Skip silently — the result stays a coherent
-			// set of currently-existing entities.
-			continue
-		}
-		out = append(out, e)
-	}
-	return out, nil
 }
 
 // searchVisibleHits runs the ACL-scoped search with property-level redaction
@@ -713,39 +539,6 @@ type freeTextIDsForTypeResult struct {
 	HasFilter bool
 }
 
-// freeTextIDsForType runs a free-text search constrained to the given entity
-// type and returns the matching ids. Empty / whitespace queries (and queries
-// like `prop:status=open` that have no free-text words) return HasFilter=false
-// so the caller skips intersection entirely. Searcher errors are surfaced —
-// the list handler converts them to HTTP 500 rather than rendering an empty
-// list and pretending the search succeeded.
-//
-// Used by the list endpoint to support `?q=` without going through the full
-// executeQuery path: a list is already type-scoped, so any `type:` token from
-// the query string is intentionally ignored — we always pin the type to the
-// list's type to keep the surface predictable.
-func (a *App) freeTextIDsForType(ctx context.Context, query, typeName string) (freeTextIDsForTypeResult, error) {
-	query = strings.TrimSpace(query)
-	if query == "" {
-		return freeTextIDsForTypeResult{}, nil
-	}
-	sq := searchparser.ParseQuery(query)
-	if sq.IsEmpty() || !sq.HasFreeText() {
-		return freeTextIDsForTypeResult{}, nil
-	}
-	sq.EntityTypes = []string{typeName}
-
-	hits, err := runFreeTextSearchE(ctx, a.Services(), sq, maxFreeTextSearchResults)
-	if err != nil {
-		return freeTextIDsForTypeResult{}, err
-	}
-	ids := make(map[string]struct{}, len(hits))
-	for _, e := range hits {
-		ids[e.ID] = struct{}{}
-	}
-	return freeTextIDsForTypeResult{IDs: ids, HasFilter: true}, nil
-}
-
 // maxFreeTextSearchResults caps the number of hits the searcher is asked to
 // return. Hoisted to a package constant so executeQuery and the list-search
 // path stay in lockstep on the bound.
@@ -838,8 +631,6 @@ func relationDirection(d dataentryconfig.Direction) store.Direction {
 	return store.DirectionOutgoing
 }
 
-// matchesPropertyFilters checks whether an entity matches the given property filters.
-// Returns true if no filters are specified or all filters match.
 // pushdownPrefilters returns the store-evaluable subset of the property
 // filters, as a PRE-FILTER only — the caller must still run every filter
 // through the metamodel-aware Go pass.
@@ -875,39 +666,105 @@ func pushdownPrefilters(
 	return queryplan.PushdownPrefilters(filters, meta, types)
 }
 
-func (a *App) matchesPropertyFilters(e *entity.Entity, filters []*filter.Filter) bool {
-	if len(filters) == 0 {
-		return true
+// propertyElements returns the property value as the list of elements a filter
+// operator compares against: a single-element slice for a scalar, one entry per
+// item for a list-typed property.
+//
+// This exists because a list property has no meaningful single string form. The
+// v1 list filter used to compare `fmt.Sprintf("%v", prop)` against the filter
+// value, which renders []any{"a","b"} as the Go slice literal "[a b]" — so a
+// list property could never equal any selected value, and `ne` returned rows it
+// was asked to exclude (BUG-AMK38R). Comparing per element is the same rule
+// [propertyContains] already applies to static config-authored `filters:`, so
+// the dynamic `filter[...]` path now agrees with the static one.
+//
+// Non-string elements render with `%v`, matching what internal/propmatch's
+// Stringify does for a scalar, so a []any{1,2} behaves like the scalars 1 and 2
+// rather than being dropped. (This does not CALL propmatch: arch-lint forbids
+// dataentry depending on it. Keeping the rendering identical is what matters,
+// and TKT-UTJ24Z is where the two converge for real.)
+//
+// Nil: a nil property yields a single empty-string element, so it compares
+// equal to an empty filter value and unequal to any other. Falling through to
+// `%v` instead would produce the Go literal "<nil>", which is a MATCHABLE
+// string: `filter[x][contains]=nil` would then select every entity whose
+// property is explicitly null.
+func propertyElements(prop any) []string {
+	if prop == nil {
+		return []string{""}
 	}
-	s := a.State()
-	entDef, ok := s.Meta.GetEntityDef(e.Type)
-	if !ok {
-		return false
+	switch v := prop.(type) {
+	case string:
+		return []string{v}
+	case []string:
+		return v
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+				continue
+			}
+			out = append(out, fmt.Sprintf("%v", item))
+		}
+		return out
+	default:
+		return []string{fmt.Sprintf("%v", prop)}
 	}
-	matched, err := filter.MatchAll(entityRecord(e), filters, entDef, s.Meta)
-	return err == nil && matched
 }
 
-// isRelationLinked checks whether a form relation field (formRel) corresponds
-// to a link relation (linkRel) coming from a view's "Add" button. It returns
-// true when the link relation's inverse matches the form relation, when the
-// form relation's inverse matches the link relation, or when they are equal.
-func (a *App) isRelationLinked(formRel, linkRel string) bool {
-	if formRel == linkRel {
+// anyElement reports whether any element of the property satisfies match.
+// Used by the ANY-element operators (eq, in, contains); `ne` is its negation,
+// so "no element matches" stays the exact complement of "some element matches"
+// and the two cannot drift apart.
+func anyElement(prop any, match func(string) bool) bool {
+	return slices.ContainsFunc(propertyElements(prop), match)
+}
+
+// filterSetValues expands the query params of an `in`/`ne` filter into the set
+// of values it tests membership against.
+//
+// The two wire forms are read differently, on purpose:
+//
+//   - Without the `[]` suffix, each param splits on commas — the documented
+//     `filter[x][in]=a,b` form.
+//   - WITH the `[]` suffix (`filter[x][in][]=a&filter[x][in][]=b`), each param
+//     is one member, taken verbatim.
+//
+// The suffix is the signal, not the number of params: a one-element array is
+// indistinguishable from a comma list by count alone, and guessing from the
+// count re-tears exactly the single-value case the array form exists to carry.
+//
+// That split is what lets the repeated form carry a value containing a comma
+// ("Legal, Risk & Compliance"). Splitting it too would tear that value into two
+// members matching rows that hold neither — and leave `ne` unable to exclude
+// the row it names, the same wrong-answer class as BUG-AMK38R. The single-param
+// comma form inherently cannot express such a value; callers with commas in
+// their data must use the repeated form.
+//
+// Each member is trimmed and variable-resolved ($today and friends) exactly as
+// the joined form is, so both representations of a filter agree.
+func filterSetValues(values []string, isArrayForm bool) []string {
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		if isArrayForm {
+			out = append(out, resolveFilterVariable(strings.TrimSpace(v)))
+			continue
+		}
+		for part := range strings.SplitSeq(v, ",") {
+			out = append(out, resolveFilterVariable(strings.TrimSpace(part)))
+		}
+	}
+	return out
+}
+
+// isListValue reports whether a property value is list-typed. Used to decline
+// operators that have no defined meaning over a list rather than answering
+// with a comparison against the rendered slice.
+func isListValue(prop any) bool {
+	switch prop.(type) {
+	case []string, []any:
 		return true
-	}
-	s := a.State()
-	// Check if linkRel has an inverse that equals formRel.
-	if def, ok := s.Meta.GetRelationDef(linkRel); ok && def.Inverse != nil {
-		if def.Inverse.GetID() == formRel {
-			return true
-		}
-	}
-	// Check if formRel has an inverse that equals linkRel.
-	if def, ok := s.Meta.GetRelationDef(formRel); ok && def.Inverse != nil {
-		if def.Inverse.GetID() == linkRel {
-			return true
-		}
 	}
 	return false
 }

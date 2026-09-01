@@ -113,7 +113,12 @@ const userPaletteFile = "palette.yaml"
 // /_theme export/import pair, and the /_settings + /_palette CRUD) moved to
 // appearanceHandler (TKT-8AJ1PM, 104 → 92).
 //
-//plimsoll:max-methods=92
+// The search-query pipeline (5 methods — executeQuery and its free-text
+// branch, the list `?q=` id-set helper, and the sort / property-filter passes
+// they share) moved to queryService, and the dead isRelationLinked was deleted
+// (TKT-SJ0LRS, 92 → 86).
+//
+//plimsoll:max-methods=86
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS
@@ -239,10 +244,18 @@ type App struct {
 	// Pure glue over the self-synchronized logo/palette/settings services
 	// — no writeMu.
 	appearance *appearanceHandler
-	templater  templating.Templater
-	cfgLoader  config.Loader
-	kv         state.KV
-	acl        acl.ACL
+	// queries owns the search-query pipeline: executeQuery (shared by
+	// /_search, the `_position` search scope and the next-action engine),
+	// the list endpoint's `?q=` id-set helper, and the sort / property-filter
+	// passes those share (TKT-SJ0LRS). Read-only; no writeMu.
+	queries *queryService
+	// gantt owns the read-only gantt tree endpoint (TKT-MW28U5). Like views,
+	// it never mutates — no writeMu.
+	gantt     *ganttHandler
+	templater templating.Templater
+	cfgLoader config.Loader
+	kv        state.KV
+	acl       acl.ACL
 
 	// attachmentRunner drives external scan/transform commands for uploads.
 	// nil out-of-box → uploads get native MIME validation only (Phase 2 wires
@@ -784,6 +797,7 @@ func NewApp(
 	// first would replace an author's invalid default_view with "month" and
 	// report nothing, turning a typo into silently different behavior.
 	dataentryconfig.NormalizeCalendars(&cfg)
+	dataentryconfig.NormalizeGantts(&cfg)
 
 	// Non-fatal configuration warnings (e.g. a relation filter control whose
 	// incoming direction targets a type the relation never points to). Logged,
@@ -969,6 +983,21 @@ func NewApp(
 	// appearanceHandler owns the theme/settings/palette routes; wired after
 	// the logo/palette/settings services and viewReader it captures.
 	app.appearance = newAppearanceHandler(app)
+
+	// queryService owns the search-query pipeline. Its searcher and
+	// affordance handles are closures because tests reassign both after
+	// construction — see the type's doc comment.
+	app.queries = newQueryService(app)
+
+	// ganttHandler: the ACL-scoped lister and the field redactor are the two
+	// seams its security pipeline hangs on — both closures over App so test
+	// builders that rebind collaborators stay live.
+	app.gantt = &ganttHandler{
+		schema:   app.State,
+		store:    st,
+		scoped:   app.scopedSortedEntities,
+		redactor: func() visibility.FieldRedactor { return appRedactor(app) },
+	}
 
 	// commandHandler owns the user-configured command surface. Its
 	// collaborators are narrow closures over App: the schema snapshot (command/

@@ -15,13 +15,14 @@
  * behind the overlay (we don't have a generic useFocusTrap composable yet).
  */
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import { searchEntities } from '@/api'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { useSchemaStore } from '@/stores'
 import { useModalStack } from '@/composables/modalStack'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { entityDetailHref } from '@/utils/entityRoute'
+import { shouldDeferToBrowser } from '@/utils/openIntent'
 import type { Entity } from '@/types'
 
 // Perceptually-instant on a fast connection; tune up if the API is slow.
@@ -155,7 +156,11 @@ function entityTypeLabel(type: string): string {
   return schemaStore.entityTypes.get(type)?.label || type
 }
 
-function selectEntity(entity: Entity): void {
+// A modifier/middle click is the browser's to handle: it opens a tab from the
+// anchor's own href, and the palette deliberately STAYS OPEN so the user can
+// collect several entities into tabs without reopening it each time.
+function selectEntity(entity: Entity, event?: MouseEvent): void {
+  if (event && shouldDeferToBrowser(event)) return
   const href = entityDetailHref(entity)
   if (!href) return
   router.push(href)
@@ -288,12 +293,29 @@ const showNoMatches = computed(
             :class="{ 'cmdk-option-active': idx === highlightedIndex }"
             role="option"
             :aria-selected="idx === highlightedIndex"
-            @click="selectEntity(entity)"
             @mouseenter="highlightedIndex = idx"
           >
-            <span class="cmdk-type">{{ entityTypeLabel(entity.type) }}</span>
-            <span class="cmdk-title">{{ entityLabel(entity) }}</span>
-            <span class="cmdk-id">{{ entity.id }}</span>
+            <!-- The option's content renders in BOTH branches. Guarding only
+                 the link would leave an entity with no resolvable route as an
+                 empty, zero-height <li role="option">: invisible to the eye,
+                 still counted by the arrow-key highlight, and nameless to a
+                 screen reader. -->
+            <RouterLink
+              v-if="entityDetailHref(entity)"
+              class="cmdk-option-link"
+              :to="entityDetailHref(entity)"
+              tabindex="-1"
+              @click="selectEntity(entity, $event)"
+            >
+              <span class="cmdk-type">{{ entityTypeLabel(entity.type) }}</span>
+              <span class="cmdk-title">{{ entityLabel(entity) }}</span>
+              <span class="cmdk-id">{{ entity.id }}</span>
+            </RouterLink>
+            <span v-else class="cmdk-option-link">
+              <span class="cmdk-type">{{ entityTypeLabel(entity.type) }}</span>
+              <span class="cmdk-title">{{ entityLabel(entity) }}</span>
+              <span class="cmdk-id">{{ entity.id }}</span>
+            </span>
           </li>
         </ul>
       </div>
@@ -380,12 +402,19 @@ const showNoMatches = computed(
 }
 
 .cmdk-option {
+  cursor: pointer;
+  font-size: 14px;
+}
+
+/* Padding lives on the link, not the <li>, so the whole option row is inside
+   the anchor's hit area (and its href) rather than only the text. */
+.cmdk-option-link {
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 10px 18px;
-  cursor: pointer;
-  font-size: 14px;
+  color: inherit;
+  text-decoration: none;
 }
 
 .cmdk-option-active {

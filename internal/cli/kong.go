@@ -51,9 +51,14 @@ var (
 
 // CLI is the kong-parsed root.
 //
-// TODO(TKT-N0IKN9): CLI has 47 exported fields (kong binds one per subcommand,
-// so growth is structural here) — over the 20-field load line. Revisit grouping
-// subcommands into sub-structs; ratchet this number down if/when that lands.
+// 47 exported fields (4 global flags + 43 subcommands) — a documented
+// structural exception to the 20-field load line, not a ratchet target
+// (TKT-NS3XPE). The count is dictated by kong's one-field-per-subcommand
+// binding convention: the subcommand fields are dispatched by kong and read
+// by nothing else, and the 4 globals are read once, in runKong. The width is
+// therefore not a coupling surface, and the pinned directive still prevents
+// unmanaged growth. Same treatment CLAUDE.md gives the store
+// implementations' mandated interface.
 //
 // Raised 46 → 47 for `secrets` (TKT-RX7I97). Splitting was preferred per
 // CLAUDE.md and rejected: the field count is one-per-subcommand, so the only

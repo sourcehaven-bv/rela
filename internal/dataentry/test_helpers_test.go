@@ -211,6 +211,16 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	// appearanceHandler mirrors production wiring (see NewApp): built after
 	// the logo/palette/settings services and viewReader it captures.
 	app.appearance = newAppearanceHandler(app)
+	// queryService mirrors production wiring (see NewApp). Its searcher and
+	// affordance handles are closures, so the rebinds tests perform after this
+	// point (rebindVisibleSearcher, app.affordances = ...) are picked up.
+	app.queries = newQueryService(app)
+	app.gantt = &ganttHandler{
+		schema:   app.State,
+		store:    app.store,
+		scoped:   app.scopedSortedEntities,
+		redactor: func() visibility.FieldRedactor { return appRedactor(app) },
+	}
 	// commandHandler holds closures over App methods, which read the fields
 	// rebound above — so it stays valid after this rebind. (Rebuilt rather than
 	// relying on a nil zero value, since newHandlerTestApp bypasses NewApp.)

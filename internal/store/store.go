@@ -915,6 +915,62 @@ type VersionService interface {
 	RelationVersionPurger
 }
 
+// ProjectionProvider yields the current render-schema projection (its content
+// hash and its JSON form) for stamping onto swept create/update versions.
+//
+// Supplied by the wiring layer, which holds the metamodel; a store is
+// metamodel-agnostic and must stay that way. Called once per sweep tick rather
+// than per entity, so an edit to the metamodel is picked up on the next tick.
+//
+// Lives here rather than in a backend because it is the CONTRACT for an
+// optional capability, like [VersionService] and [DerivedObjectSpec] above: a
+// backend that implements versioning must be able to accept one without
+// importing whichever backend happened to define it first (TKT-L3FNEN).
+type ProjectionProvider interface {
+	Projection() (hash string, projectionJSON []byte)
+}
+
+// SweepConfig tunes a backend's version-reconciliation sweep. Zero values fall
+// back to the implementation's defaults, so the zero SweepConfig is valid and
+// means "use production cadence".
+//
+// The fields describe INTENT — how often to look, how settled a record must be,
+// when to give up waiting for it to settle, how much to do at once — not any
+// one backend's mechanism, which is why they are expressible here.
+type SweepConfig struct {
+	// Interval is how often a tick runs.
+	Interval time.Duration
+	// Idle is how long an entity must be un-touched (updated_at older than
+	// now-Idle) before its settled state is snapshotted — the debounce.
+	Idle time.Duration
+	// MaxStaleness forces a snapshot of a continuously-edited entity whose
+	// latest version is older than this, even if it never settles.
+	MaxStaleness time.Duration
+	// Batch caps how many entities one tick processes, so a bulk-import burst
+	// drains across ticks instead of running unboundedly.
+	Batch int
+}
+
+// VersionSweeper is a store that runs its own debounced reconciliation sweep to
+// capture create/update versions.
+//
+// Optional, type-asserted at the wiring site like [Formatter] and
+// [HistoryReader] — not part of [Store].
+type VersionSweeper interface {
+	StartVersionSweep(provider ProjectionProvider, cfg SweepConfig)
+}
+
+// VersionServiceProvider is a store that can hand out a [VersionService]
+// sharing its own connection or handle.
+//
+// Nil: an implementation MAY return nil (a partially-initialized backend, say).
+// Callers must treat a nil return as "no versioning" rather than boxing it into
+// the interface — a nil pointer inside a non-nil interface passes every
+// downstream nil-check and panics at write time instead.
+type VersionServiceProvider interface {
+	VersionStore() VersionService
+}
+
 // EntityObserver receives notifications when entities are created, updated,
 // deleted, or renamed. Stores call observers synchronously after each write.
 // Implementations must be safe for concurrent use.
