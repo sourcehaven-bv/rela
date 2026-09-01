@@ -33,6 +33,32 @@ if uid == "" or org == "" then
   return { message_type = "error", message = "idp-sync: missing user_id/org_id param" }
 end
 
+-- Validate the identifiers before interpolating them into a request path and an
+-- entity query below.
+--
+-- They arrive from a cryptographically verified webhook JWT, so this is
+-- defence in depth rather than the primary control — but it is the cheap half
+-- of it. A compromised or misconfigured IdP that emits a `sub` containing `/`,
+-- `?`, `#` or a newline would otherwise reshape the outbound operator-API path
+-- or the entity filter (rela#1083). An allowlist, not a blocklist: enumerate
+-- what an identifier may contain rather than guessing what it may not.
+--
+-- The set covers the usual shapes: UUIDs, ULIDs, emails, and slugs. Some IdPs
+-- issue subjects it rejects — Auth0's `auth0|abc123` is the common one — so
+-- widen the pattern if yours does. Widen it deliberately, character by
+-- character, and never to `.*`: the point is that a `/` or a newline in a
+-- subject cannot reshape the request path built below.
+local function valid_id(v)
+  return v:match("^[%w._@%-]+$") ~= nil
+end
+
+if not valid_id(uid) or not valid_id(org) then
+  return {
+    message_type = "error",
+    message = "idp-sync: user_id/org_id contains characters outside the allowed set",
+  }
+end
+
 -- Build the Pratique operator-API request path and its HMAC signature. The
 -- canonical string + header names are Pratique's wire format (see its
 -- docs/04-architecture.md §operator API):
