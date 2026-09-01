@@ -321,9 +321,18 @@ func TestIsFilesystemRoot(t *testing.T) {
 		{"unc share root bare volume", `\\server\share`, `\\server\share`, windowsSep, true},
 		{"unc directory on share", `\\server\share`, `\\server\share\repos`, windowsSep, false},
 
-		// Same bare-volume shape in the extended-length spellings, which Clean
-		// also returns verbatim.
-		{"extended unc share root", `\\?\UNC\server\share`, `\\?\UNC\server\share`, windowsSep, true},
+		// Extended-length drive spelling. VolumeName(`\\?\C:`) is the whole
+		// string (the stdlib's own volumenametests pins `\\?\x` → `\\?\x`), so
+		// both the bare and trailing-separator forms are volume roots.
+		//
+		// NOT asserted here: `\\?\UNC\host\share`. The `\\.\UNC` special case
+		// in volumeNameLen keys on the `.` form, so the `?` form falls to the
+		// generic `\\?` branch and the volume is `\\?\UNC` rather than the
+		// share — which would make `\\?\UNC\host\share` a path UNDER a volume,
+		// not a root. That is a claim about stdlib behaviour this file cannot
+		// verify (it is not in the stdlib's own test table either), and the
+		// whole point of RR-S2X70O is that unverified transcriptions pass green
+		// while being wrong. Left out rather than guessed.
 		{"extended drive volume", `\\?\C:`, `\\?\C:`, windowsSep, true},
 		{"extended drive root", `\\?\C:`, `\\?\C:\`, windowsSep, true},
 

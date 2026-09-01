@@ -24,6 +24,13 @@ import (
 // replacement for the table — it is what stops the table drifting from reality
 // the next time Clean's behaviour moves, and what a maintainer on Windows can
 // run to check the claim directly.
+//
+// `\\?\UNC\host\share` is deliberately absent. volumeNameLen's `\\.\UNC`
+// special case keys on the `.` form, so the `?` form takes the generic `\\?`
+// branch and its volume is `\\?\UNC` — making the share a path under a volume
+// rather than a root. Neither this file nor the stdlib's own volumenametests
+// pins that, so asserting either answer would be the same unverified guess the
+// bare-UNC row already cost us once.
 func TestIsFilesystemRoot_RealWindowsPaths(t *testing.T) {
 	tests := []struct {
 		name string
@@ -44,7 +51,7 @@ func TestIsFilesystemRoot_RealWindowsPaths(t *testing.T) {
 		{"directory on share", `\\server\share\repos`, false},
 
 		{"extended drive root", `\\?\C:\`, true},
-		{"extended unc share root", `\\?\UNC\server\share`, true},
+		{"extended drive volume", `\\?\C:`, true},
 		{"directory under extended drive", `\\?\C:\Users`, false},
 	}
 

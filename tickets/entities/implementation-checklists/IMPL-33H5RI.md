@@ -118,10 +118,11 @@ pre-fix code was right on Unix.
 Reddened `TestContainedPath_RejectsRootBase`. This is the mutation a predicate
 table alone cannot catch: a correct predicate that nothing calls.
 3. *Bare-volume clause disabled* — `if false && volumeName != "" && ...`
-(clone.go:194). Reddened exactly `unc share root bare volume`,
-`extended unc share root` and `extended drive volume`, and nothing else. This is
-the mutation that pins RR-0DTTMS: before that fix, all three of those rows were
-the failing state of real code.
+(clone.go:194). Reddened exactly `unc share root bare volume` and
+`extended drive volume`, and nothing else. This is the mutation that pins
+RR-0DTTMS: before that fix, both rows were the failing state of real code.
+Re-run after the RR-IX0Q97 row removal, to confirm the narrowed table had not
+lost its grip on the fix — it had not.
 4. *Non-empty-volume guard dropped* — `if cleanedPath == volumeName`
 (clone.go:194). Reddened `empty path no volume`
 (`isFilesystemRoot("", "", "/") = true, want false`). This is the over-refusal

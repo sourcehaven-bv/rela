@@ -31,7 +31,7 @@ to leave behind.
 - [x] Self-reviewed the diff for unrelated changes
 
 **Review Responses:** RR-0DTTMS (critical, addressed), RR-S2X70O (significant,
-addressed), RR-T1XVAX (minor, addressed).
+addressed), RR-IX0Q97 (significant, addressed), RR-T1XVAX (minor, addressed).
 
 The critical finding was that the first implementation still failed open for UNC
 shares: `filepath.Clean` returns `\\server\share` unchanged (the whole string is
@@ -45,6 +45,21 @@ it passed green over a string Windows never produces while the string it does
 produce went unguarded. That is the same defect shape as the ticket itself,
 reproduced one level up in the tests. RR-S2X70O is the structural answer.
 
+And then it happened AGAIN, inside the fix for it (RR-IX0Q97): a
+`\\?\UNC\server\share` row was added to both files by pattern-matching from the
+bare-UNC case, without checking `volumeNameLen`. The `\\.\UNC` special case keys
+on the `.` form, so the `?` form yields a volume of `\\?\UNC` and the row would
+have failed on Windows. Caught by re-deriving it from the stdlib rather than by
+any check in the pipeline — the Linux table is self-consistent whatever it
+claims, and the Windows file does not run on CI. Removed rather than corrected,
+since the correct answer is not pinned by the stdlib's own tests either.
+
+The recurrence is the honest finding of this ticket. The technique gets the
+Windows branch executing on Linux; it does not make the inputs true, and there
+is no automated backstop for that on a Linux runner. Every Windows value in
+these tests is only as good as the stdlib reading behind it, and two of them
+were wrong on first writing.
+
 Diff self-review: three files, all in `internal/git`. No unrelated changes. The
 `tickets/` entities are workflow bookkeeping, not product code.
 
@@ -57,6 +72,8 @@ Diff self-review: three files, all in `internal/git`. No unrelated changes. The
 
 - AC1 (Windows drive root refused) — PASS. `windows drive root`,
 `windows drive root lowercase`, `extended drive volume`, `extended drive root`.
+`\\?\UNC` is deliberately unasserted (RR-IX0Q97) — an unverifiable claim is not
+coverage.
 - AC2 (UNC share root refused) — PASS, after correction. BOTH
 `unc share root trailing separator` and `unc share root bare volume`; the latter
 is the spelling that actually occurs and was added in review.
