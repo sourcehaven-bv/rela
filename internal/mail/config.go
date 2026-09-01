@@ -144,11 +144,171 @@ type Config struct {
 	// reach the network rather than one that quietly can.
 	Capabilities ScriptCapabilities `yaml:"capabilities"`
 
+	// Recipients declares who mail.send may address (TKT-USQNA3).
+	//
+	// A POINTER, and that is the whole design. Absent (`nil`) must be
+	// distinguishable from present-but-empty, because the two get different
+	// errors: nil says "add a recipients: block", empty-but-valid says "this
+	// address is not in the set you declared". A value type collapses both
+	// into the zero struct and the operator gets sent to the wrong place.
+	//
+	// Absent DENIES EVERYTHING. That inverts this file's usual rule — an
+	// absent mail.yaml means "mail is off", an absent port means 587 — and
+	// the inversion is deliberate. Permitting on absence fails silently and
+	// irreversibly (mail leaves the ACL perimeter and nobody knows until the
+	// recipient replies); refusing on absence fails loudly and harmlessly (a
+	// typed error naming this key, and four lines of YAML to fix it). A
+	// control whose unconfigured state is "allow" is not a control.
+	Recipients *RecipientConfig `yaml:"recipients"`
+
 	// Password is REJECTED by Validate. It exists as a field only so that
 	// writing it produces a clear error naming password_env, rather than
 	// yaml silently ignoring an unknown key and the operator wondering why
 	// authentication fails.
 	Password string `yaml:"password"`
+}
+
+// RecipientConfig is the `recipients:` block of .rela/mail.yaml.
+//
+// This package PARSES and VALIDATES it; it resolves nothing. Resolution needs
+// store, filter and metamodel, and .go-arch-lint.yml withholds all three from
+// internal/mail precisely so a send script cannot reach the graph. So the
+// enforcement lives in internal/lua — which already holds the reader seam —
+// and this type's only job is to be the operator-facing shape and to convert
+// itself into a [lua.RecipientPolicy] the moment it is loaded.
+type RecipientConfig struct {
+	// AlsoAllow holds the permitted recipients: literal addresses, or domain
+	// patterns of the form `*@example.com`.
+	//
+	// A domain pattern is the workhorse. The threat is a script mailing an
+	// ATTACKER-chosen address, and `*@sourcehaven.nl` stops that without the
+	// config needing to know which people currently exist — so it does not
+	// drift as staff join and leave, which a literal-only list does.
+	//
+	// Literals cover the addresses that are not people: an ops alias, an
+	// external auditor's mailbox, a monitoring endpoint.
+	//
+	// A pattern must be exactly a leading `*@` followed by a domain. Anything
+	// else containing `*` is REFUSED at load rather than treated as a literal
+	// — see validateAlsoAllow.
+	AlsoAllow []string `yaml:"also_allow"`
+
+	// AllowAny disables the check entirely: every address is permitted.
+	//
+	// The escape hatch for a deployment that has decided this constraint is
+	// not for them. It must be a deliberate `allow_any: true` line in the
+	// file — it is never a default, never inferred from an empty block, and
+	// never reached by omission, so it stays greppable in a config review.
+	AllowAny bool `yaml:"allow_any"`
+}
+
+// Policy converts the operator's block into the runtime's gate input.
+//
+// Address normalization happens HERE, once at load, through
+// [lua.NormalizeRecipient] rather than a local copy: both sides must fold
+// addresses by the identical rule, and two independent normalizations that
+// drift is how an allowlist starts admitting what it should not.
+func (r *RecipientConfig) Policy() (lua.RecipientPolicy, error) {
+	if r == nil {
+		// The zero policy, which denies. Reachable only from a Config whose
+		// block is absent; the caller relies on this rather than checking nil
+		// itself, so "absent" has one meaning in one place.
+		return lua.RecipientPolicy{}, nil
+	}
+	policy := lua.RecipientPolicy{Configured: true, AllowAny: r.AllowAny}
+	for _, addr := range r.AlsoAllow {
+		policy.AlsoAllow = append(policy.AlsoAllow, lua.NormalizeRecipient(addr))
+	}
+	return policy, nil
+}
+
+// validateRecipients checks the `recipients:` block.
+//
+// Called from validateCommon so it applies to every transport: which server
+// carries the mail has no bearing on who may receive it.
+func (c *Config) validateRecipients() error {
+	r := c.Recipients
+	if r == nil {
+		// Absent is VALID configuration that DENIES at send time. Refusing to
+		// load would be wrong: a project with no mail.yaml at all already
+		// starts fine, and a project that configures a transport but has not
+		// yet decided its recipients must still run every other command. The
+		// refusal belongs at the send, where it can name the key.
+		return nil
+	}
+	if len(r.AlsoAllow) == 0 && !r.AllowAny {
+		// A block that permits nothing is refused rather than accepted as a
+		// deny-everything policy. It LOOKS configured, so the operator would
+		// read the resulting denials as a bug in rela rather than as their own
+		// empty block — and "deny everything" is already available by deleting
+		// the block, which at least produces an error that says so.
+		return errors.New("recipients must set also_allow or allow_any " +
+			"(an empty block permits nobody; omit it entirely to deny by default)")
+	}
+	return validateAlsoAllow(r.AlsoAllow)
+}
+
+// validateAlsoAllow checks the literal-address list.
+//
+// # Wildcards are refused, deliberately and with the syntax reserved
+//
+// `*@example.com` does not work, and a `*` anywhere in an entry is an error
+// rather than an ordinary character.
+//
+// Refusing beats ignoring. A literal-only matcher that silently treated `*` as
+// a normal character would accept the config, match nothing, and present as
+// "mail is mysteriously denied" — the operator believing they allowed a domain
+// while the behavior is that they allowed an address that cannot exist.
+//
+// Refusing also RESERVES the syntax, which is the real reason to decide this
+// now rather than later. If `*` meant "literal asterisk" in a shipped config
+// key, making it a metacharacter afterwards would break every deployment that
+// had (however improbably) relied on it. With `*` refused today, adding domain
+// wildcards later can only ever turn an error into a success — compatible by
+// construction.
+//
+// Why not simply implement them now: a domain wildcard is a strictly weaker
+// control than a query. `*@example.com` permits every address at the domain,
+// including ones belonging to nobody in the graph and ones that never existed,
+// while `query` tracks who actually exists. Shipping the weaker control
+// alongside the stronger one invites it to become the default. It is one
+// function away when a deployment genuinely needs it.
+func validateAlsoAllow(addrs []string) error {
+	for i, addr := range addrs {
+		if strings.TrimSpace(addr) == "" {
+			return fmt.Errorf("recipients.also_allow[%d] is empty", i)
+		}
+		if strings.Contains(addr, "*") && !isDomainPattern(addr) {
+			// A partial wildcard (`ops-*@x.com`, `*ops@x.com`, `*`) is refused
+			// rather than matched loosely. Refusing beats implementing it:
+			// every extra wildcard position is another way to write a pattern
+			// that admits more than the operator pictured. And it beats
+			// ignoring it — a `*` silently treated as a literal would produce
+			// an allowlist that matches nothing and denies everything, which
+			// the operator would read as a rela bug rather than their typo.
+			return fmt.Errorf("recipients.also_allow[%d] %q: a wildcard is only "+
+				"supported as a whole-domain pattern `*@example.com`", i, addr)
+		}
+		// also_allow entries reach an SMTP envelope, so they get the same
+		// header-injection check every other caller-supplied address gets.
+		if err := validateHeaderValue(fmt.Sprintf("recipients.also_allow[%d]", i), addr); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// isDomainPattern reports whether addr is a whole-domain pattern: exactly a
+// leading `*@` followed by a domain containing no further wildcard.
+//
+// Deliberately the ONLY wildcard shape accepted. A domain pattern answers the
+// question the allowlist exists for — "may mail leave the organization?" —
+// while every additional wildcard position adds a way to write a pattern that
+// admits more than the operator pictured. `*@*.com` and `ops-*@x.com` are
+// refused for that reason, not because they are hard to implement.
+func isDomainPattern(addr string) bool {
+	rest, ok := strings.CutPrefix(addr, "*@")
+	return ok && rest != "" && !strings.Contains(rest, "*")
 }
 
 // ScriptCapabilities is the YAML face of [lua.Capabilities] for a send script.
@@ -309,7 +469,7 @@ func (c *Config) validateCommon() error {
 	if c.BaseURL != "" && !hasScheme {
 		return fmt.Errorf("base_url must start with http:// or https://, got %q", c.BaseURL)
 	}
-	return nil
+	return c.validateRecipients()
 }
 
 // WithRelaDir points a programmatically-built Config at a .rela directory so it
