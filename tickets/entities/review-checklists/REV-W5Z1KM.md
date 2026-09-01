@@ -2,7 +2,7 @@
 id: REV-W5Z1KM
 type: review-checklist
 title: 'Review: yaml.v3 emits a block scalar it cannot re-parse for leading-newline strings'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -115,7 +115,7 @@ regression here. Its seed is parked at `.ignored/issue-round/fuzz-utf8/`.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
+- [x] Run `/pr` command to create PR and monitor CI
 
 <!--
 Deliberately NOT tracked here: the PR URL and whether CI passed.
