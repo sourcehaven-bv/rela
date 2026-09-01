@@ -164,7 +164,23 @@ An unresolved reference becomes the **empty string**, not the literal text. A
 stored `{{body.host}}` would be a silent corruption that looks like a template
 bug forever; empty is visibly missing and cannot be mistaken for data.
 
-Bodies may be JSON (default) or `application/x-www-form-urlencoded`.
+### Body encodings
+
+Bodies may be JSON (the default) or `application/x-www-form-urlencoded`. The
+media type is read from `Content-Type`; parameters and case are ignored, so
+`application/json; charset=utf-8` and `APPLICATION/JSON` both work. Anything
+unrecognised — including a missing `Content-Type` — is parsed as JSON.
+
+Two differences follow from a form body being a flat list of string pairs:
+
+- **Nested paths do not resolve.** `{{body.alert.host}}` addresses nested JSON;
+  a form has no nesting, so with a form body it resolves to the empty string.
+  Send JSON if you need structure.
+- **A repeated key keeps the FIRST value.** `tag=a&tag=b` yields `a`; `b` is
+  dropped. One key addresses one value, and a flat body cannot represent both.
+
+An empty body is valid — useful for a hook driven entirely by `{{query.*}}`.
+An unparseable body of either kind is a `400` and writes nothing.
 
 ## Headers are an allowlist
 

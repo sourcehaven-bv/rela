@@ -420,6 +420,90 @@ func TestWebhookRoutes_FormEncodedBody(t *testing.T) {
 	}
 }
 
+// TestWebhookRoutes_ContentTypeVariants pins the media-type dispatch across the
+// shapes real producers send. The parameter and case handling matter because a
+// Content-Type is routinely "application/json; charset=utf-8" rather than the
+// bare type, and a naive equality check would silently fall through to the JSON
+// branch for a form body — parsing "a=1&b=2" as JSON, failing, and 400-ing a
+// delivery the producer will never resend.
+//
+// Repeated keys are pinned deliberately: url.Values.Get returns the FIRST value,
+// so "tag=a&tag=b" keeps "a" and drops "b". A flat map[string]any body cannot
+// represent both, and a webhook template addresses one value per key, so this is
+// the intended shape rather than an oversight — but it is silent, hence a test
+// that says so out loud.
+func TestWebhookRoutes_ContentTypeVariants(t *testing.T) {
+	tests := []struct {
+		name        string
+		contentType string
+		body        string
+		wantTitle   string
+	}{
+		{"json", "application/json", `{"subject":"plain json"}`, "plain json"},
+		{"json with charset", "application/json; charset=utf-8", `{"subject":"json cs"}`, "json cs"},
+		{"absent content type defaults to json", "", `{"subject":"no ct"}`, "no ct"},
+		{"form", "application/x-www-form-urlencoded", "subject=a+form", "a form"},
+		{"form with charset", "application/x-www-form-urlencoded; charset=utf-8", "subject=form+cs", "form cs"},
+		{"form uppercase media type", "APPLICATION/X-WWW-FORM-URLENCODED", "subject=upper", "upper"},
+		{"form repeated key keeps the first", "application/x-www-form-urlencoded", "subject=first&subject=second", "first"},
+		{"form percent-encoded", "application/x-www-form-urlencoded", "subject=%C3%BCber+alles", "über alles"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newHookTestApp(t, map[string]dataentryconfig.Webhook{
+				"intake": {CreateIfMissing: &dataentryconfig.WebhookCreate{
+					Type: "ticket", Properties: map[string]string{"title": "{{body.subject}}"},
+				}},
+			})
+
+			req := httptest.NewRequest(http.MethodPost, "/hooks/intake", strings.NewReader(tc.body))
+			if tc.contentType != "" {
+				req.Header.Set("Content-Type", tc.contentType)
+			}
+			req.Host = "127.0.0.1:8080"
+			rec := httptest.NewRecorder()
+			app.NewRouter().ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+			}
+			tickets := listTickets(t, app)
+			if len(tickets) != 1 {
+				t.Fatalf("got %d tickets, want 1", len(tickets))
+			}
+			if got := tickets[0].Properties["title"]; got != tc.wantTitle {
+				t.Errorf("title = %q, want %q", got, tc.wantTitle)
+			}
+		})
+	}
+}
+
+// TestWebhookRoutes_MalformedFormRejected pins that an unparseable FORM body is
+// a 400 and writes nothing, mirroring the JSON case below. Without the explicit
+// media-type branch this input would reach the JSON decoder instead and fail
+// with a misleading error.
+func TestWebhookRoutes_MalformedFormRejected(t *testing.T) {
+	app := newHookTestApp(t, map[string]dataentryconfig.Webhook{
+		"intake": {CreateIfMissing: &dataentryconfig.WebhookCreate{
+			Type: "ticket", Properties: map[string]string{"title": "{{body.subject}}"},
+		}},
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/hooks/intake", strings.NewReader("subject=%zz"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Host = "127.0.0.1:8080"
+	rec := httptest.NewRecorder()
+	app.NewRouter().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+	if tickets := listTickets(t, app); len(tickets) != 0 {
+		t.Errorf("got %d tickets, want 0 — a malformed body must write nothing", len(tickets))
+	}
+}
+
 // TestWebhookRoutes_MalformedJSONRejected pins that an unparseable body is a
 // 400 and writes nothing, rather than creating an entity from an empty scope.
 func TestWebhookRoutes_MalformedJSONRejected(t *testing.T) {
