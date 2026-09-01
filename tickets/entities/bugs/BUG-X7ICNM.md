@@ -28,8 +28,22 @@ gets back is not the value they wrote.
 
 Found while fixing BUG-B1RA3J: 90s of `go test -fuzz` on
 `FuzzPropertyValuesTypeZoo` after that fix surfaced this as the next failure.
-Crashing input parked at `.ignored/issue-round/fuzz-utf8/b3590ff4d257b00d`
-rather than committed — on its own it is a deliberately-failing seed.
+Crashing input NOT committed as a corpus file — on its own it is a
+deliberately-failing seed, so adding it to `testdata/` would redden the suite
+before the fix exists. Recorded here instead, so the reproducer travels with the
+bug:
+
+```text
+go test fuzz v1
+string("0")
+int(178)
+string("\n\xc80")
+```
+
+The third value is the payload: `\xc8` starts a 2-byte UTF-8 sequence and `0`
+is not a valid continuation byte, so the string is not valid UTF-8. Write it to
+`testdata/fuzz/FuzzPropertyValuesTypeZoo/` when fixing, and it becomes the
+regression seed.
 
 ## Why this is the opposite of BUG-B1RA3J
 
