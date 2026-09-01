@@ -5,7 +5,7 @@ title: Operator-configured recipient allowlist for mail.send
 kind: enhancement
 priority: medium
 effort: m
-status: planning
+status: backlog
 ---
 
 ## Description

@@ -2,7 +2,7 @@
 id: REV-6RFQYU
 type: review-checklist
 title: 'Review: Document the help endpoint as public by design'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -114,7 +114,7 @@ protection is worse than a documented absence of one.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
+- [x] Run `/pr` command to create PR and monitor CI
 
 <!--
 Deliberately NOT tracked here: the PR URL and whether CI passed.
