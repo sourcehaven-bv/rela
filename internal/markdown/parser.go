@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -189,12 +190,110 @@ func marshalOrdered(data map[string]any, keyOrder []string) ([]byte, error) {
 }
 
 // valueToNode converts a Go value to a yaml.Node.
+// ValueToNode encodes a property value as a YAML node, working around a
+// yaml.v3 emitter defect for strings that would otherwise become an
+// unreadable block scalar (BUG-B1RA3J / issue #993).
+//
+// Exported so fsstore shares this one implementation. It was duplicated there
+// until BUG-B1RA3J, where fixing one copy and re-running the fuzz target still
+// failed — entity writes and relation writes must not disagree about how a
+// value is encoded.
+func ValueToNode(val any) (*yaml.Node, error) {
+	return valueToNode(val)
+}
+
 func valueToNode(val any) (*yaml.Node, error) {
+	if node, ok := quotedScalarNode(val); ok {
+		return node, nil
+	}
 	var node yaml.Node
 	if err := node.Encode(val); err != nil {
 		return nil, err
 	}
 	return &node, nil
+}
+
+// quotedScalarNode builds a double-quoted scalar node directly for values
+// yaml.v3 cannot round-trip through a block scalar, and reports whether it did
+// (BUG-B1RA3J / issue #993).
+//
+// The upstream defect: for a string starting with a newline, the emitter writes
+// an indent indicator that disagrees with the body it then writes.
+//
+//	yaml.Marshal([]string{"\n0"})  ->  "- |4-\n  0\n"
+//
+// The indicator says 4, the body is indented 2, and Unmarshal rejects yaml.v3's
+// own output. A lone "\n" is worse than an error: it emits "|4+" and reads back
+// as "", losing the value silently.
+//
+// Built BEFORE Encode rather than fixing up its result, because Node.Encode
+// round-trips internally and returns the error itself — there is no node to
+// post-process.
+//
+// Quoting rather than REJECTING is deliberate. pgstore serializes properties
+// with json.Marshal, where these strings round-trip fine, so refusing them here
+// would make the two backends disagree about what a valid entity is: the same
+// write would succeed on Postgres and fail on fsstore. A storage-layer
+// serialization limit must not become a data-validity rule. The store persists
+// what it is given or fails loudly; it does not hold an opinion about which
+// strings are worth keeping.
+//
+// Scoped to values that ACTUALLY break, so ordinary multi-line strings keep
+// block style and no reflow churn lands on unrelated files.
+func quotedScalarNode(val any) (*yaml.Node, bool) {
+	switch v := val.(type) {
+	case string:
+		if !needsQuoting(v) {
+			return nil, false
+		}
+		return &yaml.Node{
+			Kind:  yaml.ScalarNode,
+			Tag:   "!!str",
+			Value: v,
+			Style: yaml.DoubleQuotedStyle,
+		}, true
+	case []string:
+		if !slices.ContainsFunc(v, needsQuoting) {
+			return nil, false
+		}
+		seq := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+		for _, item := range v {
+			node := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: item}
+			if needsQuoting(item) {
+				node.Style = yaml.DoubleQuotedStyle
+			}
+			seq.Content = append(seq.Content, node)
+		}
+		return seq, true
+	case []any:
+		anyBreaks := slices.ContainsFunc(v, func(e any) bool {
+			s, ok := e.(string)
+			return ok && needsQuoting(s)
+		})
+		if !anyBreaks {
+			return nil, false
+		}
+		seq := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+		for _, item := range v {
+			child, handled := quotedScalarNode(item)
+			if !handled {
+				child = &yaml.Node{}
+				if err := child.Encode(item); err != nil {
+					return nil, false
+				}
+			}
+			seq.Content = append(seq.Content, child)
+		}
+		return seq, true
+	}
+	return nil, false
+}
+
+// needsQuoting reports whether s would emit a block scalar that yaml.v3 cannot
+// read back. Only a LEADING newline trips the emitter; interior and trailing
+// newlines are handled correctly, so "a\nb" and "0\n" keep block style.
+func needsQuoting(s string) bool {
+	return strings.HasPrefix(s, "\n")
 }
 
 // GetString extracts a string value from frontmatter
