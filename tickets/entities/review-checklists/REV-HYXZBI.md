@@ -115,7 +115,7 @@ digest that silently stopped arriving.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
+- [x] Run `/pr` command to create PR and monitor CI
 
 <!--
 Deliberately NOT tracked here: the PR URL and whether CI passed.

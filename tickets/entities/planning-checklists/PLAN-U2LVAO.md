@@ -290,11 +290,11 @@ needs the grant. The troubleshooting entries at :56/:183/:421 concern
 `mail.yaml`'s **send-script** `capabilities:` block, which is a *different
 thing* from a script-side `mail:` grant — they are not wrong, but the two now
 look confusingly alike and must be disambiguated explicitly.
-- [ ] `docs/metamodel.md` — N/A
-- [ ] `docs/cli-reference.md` — N/A
+- [x] ~~`docs/metamodel.md`~~ — N/A: no metamodel feature changes; the capability is declared in existing `capabilities:` blocks
+- [x] ~~`docs/cli-reference.md`~~ — N/A: no command or flag changes
 - [x] `docs/data-entry.md` — regenerated via `just docs` (guides are the source)
-- [ ] `CLAUDE.md` — N/A, no new pattern
-- [ ] `README.md` — N/A
+- [x] ~~`CLAUDE.md`~~ — N/A: applies the existing capability-gating pattern to a third binding rather than introducing one
+- [x] ~~`README.md`~~ — N/A: no project-level change
 
 `docs/` is generated; edits go in `docs-project/` followed by `just docs`.
 
