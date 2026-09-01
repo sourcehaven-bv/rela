@@ -264,13 +264,13 @@ question inverts.
 
 - [x] `docs/caldav.md` — via `docs-project/entities/guides/GUIDE-caldav.md`.
 One `Constraints` bullet.
-- [ ] `docs/metamodel.md` — no metamodel change.
-- [ ] `docs/cli-reference.md` — no command change.
-- [ ] `docs/data-entry.md` — describes the `caldav:` config block; the config
+- [x] ~~`docs/metamodel.md`~~ — no metamodel change.
+- [x] ~~`docs/cli-reference.md`~~ — no command change.
+- [x] ~~`docs/data-entry.md`~~ — describes the `caldav:` config block; the config
 surface is unchanged, and the caveat belongs with the deployment guide rather
 than the key reference.
-- [ ] `CLAUDE.md` — no new pattern or convention.
-- [ ] `README.md` — far below project-level.
+- [x] ~~`CLAUDE.md`~~ — no new pattern or convention.
+- [x] ~~`README.md`~~ — far below project-level.
 
 Plus `internal/store/store.go`, which is developer documentation but not a
 `docs/` page.
