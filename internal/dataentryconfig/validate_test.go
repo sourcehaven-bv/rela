@@ -2407,6 +2407,28 @@ func TestValidateApp_PlantUMLServerURL(t *testing.T) {
 		{name: "https is valid", url: "https://plantuml.example.com", wantErr: ""},
 		{name: "http is valid", url: "http://localhost:8080", wantErr: ""},
 		{name: "https with path is valid", url: "https://example.com/plantuml", wantErr: ""},
+
+		// http is confined to loopback: the SPA puts the diagram source in the
+		// URL, so cleartext to anywhere else publishes it on the wire.
+		{name: "http to localhost without port is valid", url: "http://localhost", wantErr: ""},
+		{name: "http to localhost uppercase is valid", url: "http://LOCALHOST:8080", wantErr: ""},
+		{name: "http to 127.0.0.1 is valid", url: "http://127.0.0.1:8080", wantErr: ""},
+		{name: "http elsewhere in 127/8 is valid", url: "http://127.1.2.3:8080", wantErr: ""},
+		{name: "http to ::1 is valid", url: "http://[::1]:8080", wantErr: ""},
+		{name: "https to a remote host stays valid", url: "https://plantuml.internal.example.com", wantErr: ""},
+
+		{name: "http to a remote host rejected", url: "http://plantuml.example.com", wantErr: "cleartext"},
+		{name: "http to a public IP rejected", url: "http://93.184.216.34", wantErr: "cleartext"},
+		// A private range is still a real network segment with other hosts on
+		// it, so it gets no exemption.
+		{name: "http to an RFC1918 host rejected", url: "http://192.168.1.10:8080", wantErr: "cleartext"},
+
+		// Hosts that only look like loopback. Each of these defeats a naive
+		// prefix/suffix/contains check and resolves wherever its owner points it.
+		{name: "loopback-prefixed domain rejected", url: "http://localhost.evil.com", wantErr: "cleartext"},
+		{name: "loopback-IP-prefixed domain rejected", url: "http://127.0.0.1.evil.com", wantErr: "cleartext"},
+		{name: "loopback in userinfo rejected", url: "http://localhost@evil.com", wantErr: "cleartext"},
+		{name: "loopback-suffixed domain rejected", url: "http://evil-localhost.com", wantErr: "cleartext"},
 		{name: "javascript scheme rejected", url: "javascript:alert(1)", wantErr: "scheme must be http or https"},
 		{name: "data scheme rejected", url: "data:text/html,x", wantErr: "scheme must be http or https"},
 		{name: "protocol-relative rejected", url: "//evil.example", wantErr: "scheme must be http or https"},

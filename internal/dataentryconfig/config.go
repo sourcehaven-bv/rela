@@ -175,6 +175,9 @@ type AppConfig struct {
 	// leaves the browser. Deliberately not defaulted to the public
 	// plantuml.com server: that would silently publish private diagram source
 	// to a third party. Operators opt in by configuring a server they trust.
+	// For the same reason http:// is accepted only for loopback hosts (the
+	// local-sidecar case, where there is no network segment to observe); any
+	// other host must use https, since the source travels inside the URL.
 	PlantUMLServerURL string `yaml:"plantuml_server_url,omitempty" json:"plantuml_server_url,omitempty"`
 	// DisableCustomInjection turns off referencing the operator's
 	// custom/custom.css and custom/custom.js from the SPA shell, guaranteeing a
