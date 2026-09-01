@@ -177,28 +177,20 @@ type Config struct {
 // and this type's only job is to be the operator-facing shape and to convert
 // itself into a [lua.RecipientPolicy] the moment it is loaded.
 type RecipientConfig struct {
-	// Query selects recipient entities from the graph, in the form
-	// `TYPE [where EXPR [and EXPR]...]` — e.g. `person where status =
-	// 'active'`. The type alone is legal and means every entity of that type.
+	// AlsoAllow holds the permitted recipients: literal addresses, or domain
+	// patterns of the form `*@example.com`.
 	//
-	// This is the PRIMARY mechanism, because a recipient is normally an
-	// entity: an allowlist derived from the graph tracks reality as people
-	// join and leave, where a hand-maintained address list drifts the moment
-	// somebody forgets to edit it.
-	Query string `yaml:"query"`
-
-	// Property names the entity property holding the address, e.g. `email`.
-	// Required whenever Query is set — an entity set with no address property
-	// names nobody.
-	Property string `yaml:"property"`
-
-	// AlsoAllow holds literal addresses that are NOT entities: an ops alias,
-	// an external auditor's mailbox, a monitoring endpoint. Unioned with the
-	// query result.
+	// A domain pattern is the workhorse. The threat is a script mailing an
+	// ATTACKER-chosen address, and `*@sourcehaven.nl` stops that without the
+	// config needing to know which people currently exist — so it does not
+	// drift as staff join and leave, which a literal-only list does.
 	//
-	// LITERAL ONLY. A wildcard such as `*@example.com` is REFUSED at load —
-	// see validateAlsoAllow for why refusing beats both ignoring it and
-	// implementing it.
+	// Literals cover the addresses that are not people: an ops alias, an
+	// external auditor's mailbox, a monitoring endpoint.
+	//
+	// A pattern must be exactly a leading `*@` followed by a domain. Anything
+	// else containing `*` is REFUSED at load rather than treated as a literal
+	// — see validateAlsoAllow.
 	AlsoAllow []string `yaml:"also_allow"`
 
 	// AllowAny disables the check entirely: every address is permitted.
@@ -223,16 +215,10 @@ func (r *RecipientConfig) Policy() (lua.RecipientPolicy, error) {
 		// itself, so "absent" has one meaning in one place.
 		return lua.RecipientPolicy{}, nil
 	}
-	policy := lua.RecipientPolicy{Configured: true, AllowAny: r.AllowAny, Property: r.Property}
+	policy := lua.RecipientPolicy{Configured: true, AllowAny: r.AllowAny}
 	for _, addr := range r.AlsoAllow {
 		policy.AlsoAllow = append(policy.AlsoAllow, lua.NormalizeRecipient(addr))
 	}
-	entityType, filters, err := parseRecipientQuery(r.Query)
-	if err != nil {
-		return lua.RecipientPolicy{}, err
-	}
-	policy.EntityType = entityType
-	policy.Filters = filters
 	return policy, nil
 }
 
@@ -250,24 +236,14 @@ func (c *Config) validateRecipients() error {
 		// refusal belongs at the send, where it can name the key.
 		return nil
 	}
-	if strings.TrimSpace(r.Query) == "" && len(r.AlsoAllow) == 0 && !r.AllowAny {
+	if len(r.AlsoAllow) == 0 && !r.AllowAny {
 		// A block that permits nothing is refused rather than accepted as a
 		// deny-everything policy. It LOOKS configured, so the operator would
 		// read the resulting denials as a bug in rela rather than as their own
 		// empty block — and "deny everything" is already available by deleting
 		// the block, which at least produces an error that says so.
-		return errors.New("recipients must set at least one of query, also_allow or allow_any " +
+		return errors.New("recipients must set also_allow or allow_any " +
 			"(an empty block permits nobody; omit it entirely to deny by default)")
-	}
-	if strings.TrimSpace(r.Query) != "" && strings.TrimSpace(r.Property) == "" {
-		return errors.New("recipients.property is required when recipients.query is set " +
-			"(it names the entity property holding the address, e.g. `property: email`)")
-	}
-	if _, _, err := parseRecipientQuery(r.Query); err != nil {
-		// Parsed at LOAD as well as at send, so a typo in the query surfaces
-		// from `rela validate` rather than from the first message that fails
-		// to go out.
-		return fmt.Errorf("recipients.query: %w", err)
 	}
 	return validateAlsoAllow(r.AlsoAllow)
 }
@@ -282,7 +258,7 @@ func (c *Config) validateRecipients() error {
 // Refusing beats ignoring. A literal-only matcher that silently treated `*` as
 // a normal character would accept the config, match nothing, and present as
 // "mail is mysteriously denied" — the operator believing they allowed a domain
-// while the behaviour is that they allowed an address that cannot exist.
+// while the behavior is that they allowed an address that cannot exist.
 //
 // Refusing also RESERVES the syntax, which is the real reason to decide this
 // now rather than later. If `*` meant "literal asterisk" in a shipped config
@@ -302,10 +278,16 @@ func validateAlsoAllow(addrs []string) error {
 		if strings.TrimSpace(addr) == "" {
 			return fmt.Errorf("recipients.also_allow[%d] is empty", i)
 		}
-		if strings.Contains(addr, "*") {
-			return fmt.Errorf("recipients.also_allow[%d] %q contains a wildcard; "+
-				"only literal addresses are supported — use recipients.query to select "+
-				"recipients from the graph instead", i, addr)
+		if strings.Contains(addr, "*") && !isDomainPattern(addr) {
+			// A partial wildcard (`ops-*@x.com`, `*ops@x.com`, `*`) is refused
+			// rather than matched loosely. Refusing beats implementing it:
+			// every extra wildcard position is another way to write a pattern
+			// that admits more than the operator pictured. And it beats
+			// ignoring it — a `*` silently treated as a literal would produce
+			// an allowlist that matches nothing and denies everything, which
+			// the operator would read as a rela bug rather than their typo.
+			return fmt.Errorf("recipients.also_allow[%d] %q: a wildcard is only "+
+				"supported as a whole-domain pattern `*@example.com`", i, addr)
 		}
 		// also_allow entries reach an SMTP envelope, so they get the same
 		// header-injection check every other caller-supplied address gets.
@@ -316,89 +298,17 @@ func validateAlsoAllow(addrs []string) error {
 	return nil
 }
 
-// recipientQueryKeyword separates the entity type from its conditions.
-const recipientQueryKeyword = " where "
-
-// recipientFilterSeparator joins conditions inside a query.
-const recipientFilterSeparator = " and "
-
-// parseRecipientQuery lowers `TYPE [where EXPR [and EXPR]...]` onto the pieces
-// that already exist: an entity type plus [filter] expressions.
+// isDomainPattern reports whether addr is a whole-domain pattern: exactly a
+// leading `*@` followed by a domain containing no further wildcard.
 //
-// The ticket specifies the SQL-ish surface, but rela has no such parser and
-// inventing a second query dialect for one config key would mean an operator
-// learning two ways to say `status=active`. So this is a lowering, not a
-// language: the leading word is the type, the rest is split on ` and ` and
-// handed to filter.Parse. Every semantic question — globs, ranges, regex,
-// what `=` means for a date — is therefore answered identically here and in
-// schedules.yaml's for_each.
-//
-// Quotes around a value are stripped because the ticket's own example writes
-// `status = 'active'` and filter.Parse would otherwise match the literal
-// four-character value `active` including its quotes — a config that looks
-// right, parses, and matches nothing.
-//
-// An empty query is not an error: it means no query was configured, which is
-// legal as long as also_allow or allow_any carries the policy. Validate
-// enforces that.
-func parseRecipientQuery(q string) (entityType string, filters []*filter.Filter, err error) {
-	q = strings.TrimSpace(q)
-	if q == "" {
-		return "", nil, nil
-	}
-	head, tail, hasWhere := strings.Cut(strings.ToLower(q), strings.TrimSpace(recipientQueryKeyword))
-	// Cut on the lowercased copy to accept `WHERE`, but slice the ORIGINAL so
-	// a property name or value keeps its case — entity types and property
-	// values are case-sensitive and folding them here would break the match.
-	if hasWhere {
-		head, tail = q[:len(head)], q[len(q)-len(tail):]
-	} else {
-		head, tail = q, ""
-	}
-	entityType = strings.TrimSpace(head)
-	if entityType == "" {
-		return "", nil, fmt.Errorf("query %q does not name an entity type", q)
-	}
-	if strings.ContainsAny(entityType, " \t") {
-		// Catches `person status = 'active'` — a missing `where` that would
-		// otherwise become an entity type nothing can match.
-		return "", nil, fmt.Errorf("query %q: expected `TYPE` or `TYPE where CONDITION`", q)
-	}
-	if strings.TrimSpace(tail) == "" {
-		if hasWhere {
-			return "", nil, fmt.Errorf("query %q has a `where` with no condition after it", q)
-		}
-		return entityType, nil, nil
-	}
-	for _, expr := range strings.Split(tail, recipientFilterSeparator) {
-		f, parseErr := filter.Parse(stripQuotes(expr))
-		if parseErr != nil {
-			return "", nil, fmt.Errorf("query %q: %w", q, parseErr)
-		}
-		filters = append(filters, f)
-	}
-	return entityType, filters, nil
-}
-
-// stripQuotes removes matching single or double quotes from a filter
-// expression's VALUE side, so `status = 'active'` compares against `active`.
-//
-// The value side only: a quote in a property name is a typo, and stripping
-// quotes blindly across the whole expression would silently accept it.
-func stripQuotes(expr string) string {
-	expr = strings.TrimSpace(expr)
-	for _, op := range []string{"!=", ">=", "<=", "=~", "=", ">", "<", "~"} {
-		lhs, rhs, found := strings.Cut(expr, op)
-		if !found {
-			continue
-		}
-		rhs = strings.TrimSpace(rhs)
-		if len(rhs) >= 2 && (rhs[0] == '\'' || rhs[0] == '"') && rhs[len(rhs)-1] == rhs[0] {
-			rhs = rhs[1 : len(rhs)-1]
-		}
-		return strings.TrimSpace(lhs) + op + rhs
-	}
-	return expr
+// Deliberately the ONLY wildcard shape accepted. A domain pattern answers the
+// question the allowlist exists for — "may mail leave the organization?" —
+// while every additional wildcard position adds a way to write a pattern that
+// admits more than the operator pictured. `*@*.com` and `ops-*@x.com` are
+// refused for that reason, not because they are hard to implement.
+func isDomainPattern(addr string) bool {
+	rest, ok := strings.CutPrefix(addr, "*@")
+	return ok && rest != "" && !strings.Contains(rest, "*")
 }
 
 // ScriptCapabilities is the YAML face of [lua.Capabilities] for a send script.
@@ -559,7 +469,7 @@ func (c *Config) validateCommon() error {
 	if c.BaseURL != "" && !hasScheme {
 		return fmt.Errorf("base_url must start with http:// or https://, got %q", c.BaseURL)
 	}
-	return nil
+	return c.validateRecipients()
 }
 
 // WithRelaDir points a programmatically-built Config at a .rela directory so it

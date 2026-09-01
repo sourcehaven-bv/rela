@@ -38,14 +38,9 @@
 package lua
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"strings"
-
-	"github.com/Sourcehaven-BV/rela/internal/filter"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // RecipientPolicy is the operator's declared recipient set, parsed from
@@ -81,16 +76,6 @@ type RecipientPolicy struct {
 	// omission — a deployment that has decided this constraint is not for
 	// them says so in one line, and that line is greppable in a config review.
 	AllowAny bool
-
-	// EntityType and Filters are the resolved form of the `query` key:
-	// `person where status = 'active'` becomes EntityType "person" and one
-	// filter. Empty EntityType means no query was configured, which is legal
-	// as long as AlsoAllow or AllowAny carries the policy.
-	EntityType string
-	Filters    []*filter.Filter
-
-	// Property is the entity property holding the address, e.g. `email`.
-	Property string
 
 	// AlsoAllow holds literal addresses that are NOT entities — an ops alias,
 	// an external auditor's mailbox — unioned with the query result.
@@ -187,111 +172,51 @@ func recipientPolicyFor(sender MailSender) RecipientPolicy {
 //
 // Nil: a nil reader or metamodel DENIES; it never falls back to an ungated
 // read or an empty-and-therefore-permissive set (RR-X9NVHI).
-func checkRecipients(
-	ctx context.Context, policy RecipientPolicy, to []string,
-	reader EntityReader, meta *metamodel.Metamodel,
-) error {
+func checkRecipients(policy RecipientPolicy, to []string) error {
 	if policy.AllowAny {
-		// Short-circuits BEFORE resolution: `allow_any: true` alongside a
-		// `query` must not pay for a graph scan whose answer cannot matter.
 		return nil
 	}
 	if !policy.Configured {
 		return errRecipientsNotConfigured
 	}
 
-	allowed, err := resolveRecipients(ctx, policy, reader, meta)
-	if err != nil {
-		// A resolution failure DENIES. The alternative — treat an unresolvable
-		// query as an empty allowlist and carry on with also_allow — would
-		// turn a broken metamodel or an unreachable store into a quietly
-		// narrower policy, and a broken reader into a quietly wider one if the
-		// error ever moved. Refusing keeps the failure visible.
-		return fmt.Errorf("mail.send: cannot resolve the configured recipients allowlist: %w", err)
-	}
-
 	for _, addr := range to {
-		if _, ok := allowed[NormalizeRecipient(addr)]; !ok {
+		if !policy.permits(addr) {
 			// The refused address IS echoed: it is not a credential, and it is
 			// the one fact the operator needs. The allowed SET is not — one
-			// denied send must not enumerate every active person's address.
+			// denied send must not enumerate every permitted address.
 			return fmt.Errorf(
 				"mail.send: recipient %q is not in the configured recipients allowlist; "+
-					"add it to `recipients.also_allow` or widen `recipients.query` in .rela/mail.yaml",
+					"add it or a `*@domain` pattern to `recipients.also_allow` in .rela/mail.yaml",
 				addr)
 		}
 	}
 	return nil
 }
 
-// resolveRecipients builds the permitted address set: the query result unioned
-// with the literal also_allow entries.
+// permits reports whether addr matches any entry: a literal address, or a
+// whole-domain `*@example.com` pattern.
 //
-// Returns a set rather than a slice because the caller does N lookups against
-// it and the graph side can be large; a linear scan per recipient would make a
-// 200-way fan-out quadratic for no reason.
-func resolveRecipients(
-	ctx context.Context, policy RecipientPolicy,
-	reader EntityReader, meta *metamodel.Metamodel,
-) (map[string]struct{}, error) {
-	allowed := make(map[string]struct{}, len(policy.AlsoAllow))
-	for _, addr := range policy.AlsoAllow {
-		allowed[addr] = struct{}{}
-	}
-
-	if policy.EntityType == "" {
-		// No query configured. Legal: a deployment may allowlist a handful of
-		// literal addresses and nothing else. internal/mail refuses a block
-		// that configures nothing at all, so this is never a silent no-op.
-		return allowed, nil
-	}
-
-	if reader == nil {
-		return nil, errors.New("no entity reader is wired, so the recipients query cannot be resolved")
-	}
-	if meta == nil {
-		return nil, errors.New("no metamodel is wired, so the recipients query cannot be resolved")
-	}
-	def, ok := meta.GetEntityDef(policy.EntityType)
-	if !ok {
-		return nil, fmt.Errorf("recipients.query names unknown entity type %q", policy.EntityType)
-	}
-
-	// Reads go through EntityReader, so the allowed set is bounded by what
-	// this runtime's identity may see. A script cannot widen its own allowlist
-	// by reading entities it is not permitted to read. That is a consequence
-	// of the seam, not a concealment claim — the operator's allowlist is
-	// config, and config is not a secret (CLAUDE.md).
-	for e, listErr := range reader.ListEntities(ctx, store.EntityQuery{Type: policy.EntityType}) {
-		if listErr != nil {
-			return nil, fmt.Errorf("list %s: %w", policy.EntityType, listErr)
+// Linear over AlsoAllow rather than a map, because the list is operator-written
+// config — a handful of entries — and half of them are patterns that a map
+// lookup could not answer anyway. A set would buy nothing and would need the
+// pattern scan beside it regardless.
+func (p RecipientPolicy) permits(addr string) bool {
+	norm := NormalizeRecipient(addr)
+	for _, entry := range p.AlsoAllow {
+		if entry == norm {
+			return true
 		}
-		matched, matchErr := filter.MatchAll(filter.Record{
-			ID: e.ID, Type: e.Type, Properties: e.Properties, ModifiedAt: e.UpdatedAt,
-		}, policy.Filters, def, meta)
-		if matchErr != nil {
-			return nil, fmt.Errorf("match %s: %w", e.ID, matchErr)
-		}
-		if !matched {
-			continue
-		}
-		// A property that is missing, not a string, or empty contributes
-		// NOTHING. Coercing it would be worse than skipping: a nil or numeric
-		// `email` rendered as "" would put the empty string in the allowlist
-		// and make `to = ""` a permitted recipient.
-		raw, has := e.Properties[policy.Property]
-		if !has {
-			continue
-		}
-		text, isString := raw.(string)
-		if !isString {
-			continue
-		}
-		if norm := NormalizeRecipient(text); norm != "" {
-			allowed[norm] = struct{}{}
+		if domain, ok := strings.CutPrefix(entry, "*@"); ok {
+			// Compare the address's domain, not a suffix of the whole string:
+			// a suffix test would let `evil-example.com` match `*@example.com`
+			// — the classic allowlist bypass.
+			if at := strings.LastIndex(norm, "@"); at >= 0 && norm[at+1:] == domain {
+				return true
+			}
 		}
 	}
-	return allowed, nil
+	return false
 }
 
 // NormalizeRecipient puts an address into the form the allowlist compares on:

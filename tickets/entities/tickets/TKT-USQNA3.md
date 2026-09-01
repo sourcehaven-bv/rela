@@ -5,7 +5,7 @@ title: Operator-configured recipient allowlist for mail.send
 kind: enhancement
 priority: medium
 effort: m
-status: in-progress
+status: done
 ---
 
 ## Description
@@ -14,68 +14,75 @@ status: in-progress
 Even with the capability gate (TKT-JVHSOZ), a script that legitimately holds the
 `mail` grant can address any recipient it likes.
 
-In normal use a recipient IS a user in the system — the scheduled-mail fan-out
-derives them from the graph, and no counter-example surfaced when the project
-owner and I each went looking. So an operator-declared recipient set is
-expressible without breaking the real use case.
+## Scope — RESCOPED
 
-## Scope
+Originally specified as a graph query (`person where status = 'active'`) with a
+literal fallback. **Rescoped by the project owner to domains and literals
+first**, deferring the query form.
 
-IN: `recipients:` block in `.rela/mail.yaml`, DENY-BY-DEFAULT.
+Two reasons, and the second is the one that actually decided it:
+
+**1. The query form has an unresolved architectural question.** Resolving
+`person where status = 'active'` needs `filter`, and `.go-arch-lint.yml`
+withholds it from `internal/mail` deliberately — the dependency comment there
+says a send script has no graph access "by construction rather than by
+convention". That is a boundary worth keeping, and working around it is a design
+decision rather than an import fix.
+
+**2. Domains deliver most of the value at a fraction of the cost.** The threat
+is a script mailing an attacker-chosen address. `*@sourcehaven.nl` stops that
+without needing to know which people currently exist. The query form's advantage
+— tracking the graph as people join and leave — matters for WHO inside the org
+receives mail, not for whether mail leaves the org at all.
+
+IN:
 
 ```yaml
 recipients:
-  query: "person where status = 'active'"
-  property: email
   also_allow:
-    - "ops@example.com"
+    - "*@sourcehaven.nl"     # domain pattern
+    - "ops@example.com"      # literal
+  # or
+  allow_any: true
 ```
 
-- `query` + `property` resolve against the graph, so the allowlist tracks
-reality instead of drifting. This is the primary mechanism because recipients
-are normally entities.
-- `also_allow` carries literal addresses that are NOT entities — an ops alias, an
-external auditor. Union with the query result.
-- `allow_any: true` is the explicit escape hatch, for a deployment that has
-decided this constraint is not for them. It must be a deliberate line in the
-file, never a default.
-- **Absent means DENY ALL.** A `recipients:` block that is missing is not
-"unconfigured, so permit" — it is "not yet decided, so refuse". That is the
-opposite of how the current code treats absent mail config, and it is
-deliberate: the failure mode of permitting is a silent data leak, the failure
-mode of refusing is a visible error naming the missing config.
+- **Absent means DENY ALL.** Deliberately inverting this file's usual rule (an
+absent `mail.yaml` means mail is off; an absent port means 587). Permitting on
+absence fails silently and irreversibly — mail leaves the ACL perimeter and
+nobody knows until the recipient replies. Refusing on absence fails loudly and
+harmlessly: a typed error naming the key, and four lines of YAML to fix it. A
+control whose unconfigured state is "allow" is not a control.
+- `allow_any: true` is the explicit escape hatch. Never a default, never
+inferred from an empty block, never reached by omission — so it stays greppable
+in a config review.
 
-OUT:
-- The capability gate itself (TKT-JVHSOZ).
-- Backwards compatibility — waived by the project owner, consistent with the
-sibling ticket.
+OUT, deferred to a follow-up:
 
-## Design notes
+- The `query:` / `property:` graph form. The architecture question above needs
+answering first: either resolve the query outside `mail` and pass the address
+set in, or widen the arch-lint boundary with a stated reason.
 
-The denial must be a TYPED error, matching the `not_configured` convention
-already in `internal/lua/mail.go`, so a script can feature-detect and an
-operator gets a message naming the config rather than a generic failure.
+OUT: backwards compatibility, waived by the project owner, consistent with
+TKT-JVHSOZ.
 
-Resolve the query ONCE per send, not per recipient: a fan-out mailing 200 people
-must not run 200 queries. Consider whether the resolved set is cacheable within
-a run and what invalidates it — an entity gaining `status = 'active'` mid-run is
-an edge case worth deciding deliberately rather than by accident.
+## Design note carried forward
 
-`also_allow` should support the same shape the rest of the config does. Decide
-explicitly whether wildcards (`*@sourcehaven.nl`) are in scope; a domain
-wildcard is the obvious next request, and it is easier to add deliberately now
-than to retrofit around a literal-only matcher.
+The parse/enforce split the earlier draft established is CORRECT and stays:
+`internal/mail` parses and validates the block; `internal/lua` enforces it,
+because that is where the send actually happens. When the query form lands it
+must not disturb that — resolution needs graph access, and the whole point of
+the split is that `mail` does not have it.
 
 ## Verification
 
-The load-bearing tests are the negatives:
+The load-bearing tests are the NEGATIVES, and deny-by-default most of all: a
+config mistake that silently permits is the exact failure this prevents, and a
+positive-only suite would never catch it.
 
-- no `recipients:` block at all → send DENIED, error names the missing config.
-- `recipients:` present, address not in the resolved set → DENIED.
-- address in the query result → allowed.
-- address only in `also_allow` → allowed.
-- `allow_any: true` → any address allowed.
-
-Mutation-check the deny-by-default case specifically. A configuration mistake
-that silently permits is the failure this ticket exists to prevent, and it is
-the one a positive-only test suite would never catch.
+- no `recipients:` block → DENIED, error names the missing config
+- address matching no pattern → DENIED
+- literal match → allowed
+- domain-pattern match → allowed
+- `allow_any: true` → any address allowed
+- a pattern that is not a leading `*@` → refused at LOAD, not silently treated
+as a literal

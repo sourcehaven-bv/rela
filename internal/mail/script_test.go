@@ -897,3 +897,41 @@ http.request({
 
 	require.Equal(t, []string{"not_configured"}, bodies())
 }
+
+// The operator's `recipients:` block must reach the Lua binding, or the whole
+// allowlist is inert in production (TKT-USQNA3).
+//
+// This is the seam the enforcement depends on: internal/lua does the checking,
+// but it can only check a policy something handed it. Every other test in this
+// area builds a policy directly, so nothing else would notice if LuaSender
+// stopped carrying one.
+func TestLuaSender_CarriesRecipientPolicy(t *testing.T) {
+	cfg := &mail.Config{
+		From: "noreply@example.com",
+		Recipients: &mail.RecipientConfig{
+			AlsoAllow: []string{"*@sourcehaven.nl", "ops@example.com"},
+		},
+	}
+	ls, err := mail.NewLuaSender(mail.NewMemorySender(4), cfg)
+	require.NoError(t, err)
+
+	got := ls.RecipientPolicy()
+	require.True(t, got.Configured, "an operator wrote a block, so the policy is configured")
+	require.False(t, got.AllowAny)
+	require.ElementsMatch(t, []string{"*@sourcehaven.nl", "ops@example.com"}, got.AlsoAllow)
+}
+
+// An absent block yields the zero policy, which DENIES. Checked explicitly
+// because "absent" traveling as "configured but empty" would permit nothing
+// while reporting a different reason — and worse, a future change treating an
+// empty AlsoAllow as permissive would then have no test in its way.
+func TestLuaSender_AbsentRecipientsDenies(t *testing.T) {
+	cfg := &mail.Config{From: "noreply@example.com"}
+	ls, err := mail.NewLuaSender(mail.NewMemorySender(4), cfg)
+	require.NoError(t, err)
+
+	got := ls.RecipientPolicy()
+	require.False(t, got.Configured, "an absent block must not look configured")
+	require.False(t, got.AllowAny)
+	require.Empty(t, got.AlsoAllow)
+}
