@@ -490,6 +490,97 @@ func (s *Store) UpdateEntity(ctx context.Context, e *entity.Entity) error {
 	return nil
 }
 
+// UpdateEntityIf implements the compare-and-swap write (TKT-34XS2R).
+//
+// # Why a row lock rather than a WHERE predicate
+//
+// The obvious shape — fold the expected version into the UPDATE's WHERE and
+// treat zero rows affected as the conflict — does not work here: the version
+// is a hash over DECODED properties (see [store.VersionOf]), and `properties`
+// is JSONB whose stored byte encoding is not canonical. Two encodings of the
+// same map would hash differently, so the predicate would reject writes that
+// ought to succeed. Recomputing the hash in SQL would mean reimplementing
+// Go's map ordering and value formatting in PL/pgSQL and keeping the two
+// byte-identical forever — a correctness trap, not an optimization.
+//
+// So the compare is done in Go, over a row read with `FOR UPDATE` inside the
+// same transaction as the write. That is what makes this atomic ACROSS
+// PROCESSES, which is the whole point of the ticket: the row lock is held
+// until commit, so a second process running this same path blocks at its own
+// SELECT until the first commits, then reads the NEW version and correctly
+// reports a conflict. It cannot observe the pre-write value and overwrite.
+//
+// Contrast the pre-CAS behavior, which is what `writeMu` could never fix: two
+// rela-server processes against one database (docs/postgres-backend.md) each
+// read, each compute, and the later write silently discards the earlier one.
+func (s *Store) UpdateEntityIf(
+	ctx context.Context, e *entity.Entity, cond store.UpdateCondition,
+) (store.EntityVersion, error) {
+	if cond.IsZero() {
+		return store.VersionOf(e), s.UpdateEntity(ctx, e)
+	}
+
+	props, err := marshalProps(e.Properties)
+	if err != nil {
+		return "", err
+	}
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
+
+	// FOR UPDATE: hold the row until commit so a concurrent writer on another
+	// connection (and another PROCESS) serializes behind us instead of racing.
+	current, err := scanEntity(tx.QueryRow(ctx,
+		`SELECT id, type, properties, content, updated_at
+		 FROM entities WHERE id = $1 FOR UPDATE`, e.ID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", store.ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	if actual := store.VersionOf(current); actual != cond.ExpectedVersion {
+		// Return before committing; the deferred rollback releases the lock
+		// and guarantees nothing was written.
+		return "", &store.VersionConflictError{
+			ID: e.ID, Expected: cond.ExpectedVersion, Actual: actual,
+		}
+	}
+
+	editorUser, editorTool := attributionValues(ctx)
+	const q = `
+		UPDATE entities
+		SET type = $2, properties = $3, content = $4, search_text = $5,
+		    updated_at = now(), seq = nextval('rela_seq'),
+		    last_edited_by_user = $6, last_edited_by_tool = $7
+		WHERE id = $1
+		RETURNING updated_at`
+	var updatedAt time.Time
+	err = tx.QueryRow(ctx, q, e.ID, e.Type, props, e.Content, entitySearchText(e),
+		editorUser, editorTool).Scan(&updatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", store.ErrNotFound
+	}
+	if err != nil {
+		return "", s.mapConflict(err)
+	}
+
+	ev := store.Event{Op: store.EventEntityUpdated, EntityType: e.Type, EntityID: e.ID}
+	s.notify(ctx, tx, ev)
+	if err := tx.Commit(ctx); err != nil {
+		return "", err
+	}
+
+	stored := e.Clone()
+	stored.UpdatedAt = updatedAt
+	s.notifyPut(stored)
+	s.emit(ev)
+	return store.VersionOf(stored), nil
+}
+
 // DeleteEntity removes an entity. Without cascade, returns store.ErrHasRelations
 // if any relation references it. With cascade, deletes referencing relations
 // and the entity's attachments in one transaction, returning the removed rows.
