@@ -16,28 +16,62 @@ restriction on who can create one. **If you use groups in
 `assignments`, you must gate writes to the membership relation**, or
 any user who can create such a relation can grant themselves any role.
 
-The simplest hardening is to require a `member-of:create` permission
+The simplest hardening is to require a `delegate-membership` permission
 on the relation and grant it only to administrative roles:
 
 ```yaml
 role_relations:
   member-of:
-    requires_permission: member-of:create
+    requires_permission: delegate-membership
 
 roles:
   admin:
-    permissions: [member-of:create]
+    permissions: [delegate-membership]
     create: ["*"]
     update: ["*"]
     delete: ["*"]
     read: ["*"]
 ```
 
-With that in place, only principals who hold `member-of:create`
+With that in place, only principals who hold `delegate-membership`
 (directly or via inherited role) can add someone to a group.
 Operators of single-user instances who don't use groups can ignore
 this; the moment you add an `assignments` mapping for a group, this
 is mandatory.
+
+### The gate covers every verb
+
+`requires_permission:` takes one permission name, and it gates **all**
+write verbs on the relation — create, update and delete alike. There is
+no `create:`/`update:`/`delete:` form here, and that is deliberate: the
+escalation this gate stops is a *create*
+(`alice --member-of--> admins`), so a policy gating only some verbs
+would read as hardened while stopping nothing. Removing a conferred
+edge is an availability attack in its own right, so `delete` is not
+safely left open either. Naming the permission after a verb
+(`member-of:create`) is therefore misleading — prefer
+`delegate-membership`, which says what holding it lets you do.
+
+Writing a verb key under `role_relations:` is refused at load rather
+than ignored, so a policy that reaches for one fails loudly instead of
+booting un-gated:
+
+```console
+$ rela acl audit
+appbuild: load acl.yaml: acl: parse /srv/rela/acl.yaml: role_relations:
+"create" is not supported — `requires_permission:` gates ALL write verbs
+on a role-conferring relation, by design. Per-verb permissions are
+`relation_grants:`, which is refused on a type that confers a role
+```
+
+The policy fails to load at all, so this stops the server rather than
+only the linter — which is the point: an un-gated membership relation
+should not boot.
+
+Per-verb relation permissions do exist — as `relation_grants:`, covered
+in [GUIDE-acl-overview]. They apply only to relation types that do
+**not** confer a role; naming a gated `role_relations:` type there is
+refused, so the two can never disagree about one relation.
 
 If you point `membership_relation:` at a domain-specific relation
 (e.g. `heeft_rol` in a Dutch-language ISMS), the same hardening
@@ -48,7 +82,7 @@ the relation you actually configured:
 membership_relation: heeft_rol
 role_relations:
   heeft_rol:
-    requires_permission: member-of:create
+    requires_permission: delegate-membership
 ```
 
 The `rela acl audit` linter (below) flags an un-gated membership
