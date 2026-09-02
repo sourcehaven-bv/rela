@@ -7,7 +7,7 @@ priority: high
 effort: l
 tags:
     - needs-design
-status: in-progress
+status: ready
 ---
 
 rela has **no compare-and-swap for updates**. `store.Store.UpdateEntity(ctx, e)`
