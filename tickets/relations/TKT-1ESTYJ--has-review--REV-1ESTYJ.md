@@ -1,5 +1,5 @@
 ---
 from: TKT-1ESTYJ
-type: has-review
+relation: has-review
 to: REV-1ESTYJ
 ---

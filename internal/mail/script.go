@@ -352,7 +352,21 @@ type LuaSender struct {
 	// read from the Lua call, where a script could forge it.
 	from     string
 	fromName string
+
+	// policy is the operator's recipients allowlist, captured from the same
+	// config as `from` and for the same reason: a script must not choose who
+	// may receive mail any more than it chooses who it comes from.
+	policy lua.RecipientPolicy
 }
+
+// RecipientPolicy satisfies lua.RecipientPolicyCarrier, so the binding can
+// enforce the allowlist without mail needing to know how enforcement works.
+//
+// Carried by the SENDER rather than passed separately into the runtime,
+// because the sender is already the thing built from mail.yaml — a second
+// wiring step would be a second thing to forget, and forgetting it would fail
+// OPEN if the default were anything but deny.
+func (l *LuaSender) RecipientPolicy() lua.RecipientPolicy { return l.policy }
 
 // NewLuaSender adapts sender for use by the mail.send Lua binding.
 //
@@ -366,7 +380,16 @@ func NewLuaSender(sender Sender, cfg *Config) (*LuaSender, error) {
 	if cfg == nil {
 		return nil, errors.New("mail: nil config")
 	}
-	return &LuaSender{sender: sender, from: cfg.From, fromName: cfg.FromName}, nil
+	policy, err := cfg.Recipients.Policy()
+	if err != nil {
+		// A malformed recipients block is refused at construction rather than
+		// at the first send: the operator finds out from `rela validate` or
+		// startup, not from a message that quietly failed to go out.
+		return nil, fmt.Errorf("mail: recipients: %w", err)
+	}
+	return &LuaSender{
+		sender: sender, from: cfg.From, fromName: cfg.FromName, policy: policy,
+	}, nil
 }
 
 // SendMail satisfies lua.MailSender.

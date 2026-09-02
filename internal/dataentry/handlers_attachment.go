@@ -216,12 +216,51 @@ func (h *attachmentHandler) handleV1PutAttachment(
 	propDef := filePropertyDef(s, typeName, property)
 	capped := store.CapAttachmentReader(file, limit)
 	if _, err := svc.WriteAttachment(ctx, entity, propDef, property, header.Filename, capped); err != nil {
+		h.auditRejectedUpload(ctx, entity, property, header.Filename, err)
 		writeAttachmentWriteError(w, r, limit, err)
 		return
 	}
 
 	result := h.serializer.forWire(ctx, entity, h.reader.outgoingRelations(ctx, entity.ID), s.Meta, plural)
 	writeV1JSON(w, http.StatusOK, result)
+}
+
+// auditRejectedUpload records an upload the attachment processor refused —
+// a disallowed MIME type, or a failed/positive scan (TKT-6O8D0L, CONTROL-8-15).
+//
+// A refused upload is a security-relevant exception: it may be an attempt to
+// place a disallowed file type or malware into the project, and "what did this
+// user try to upload that they weren't allowed to?" is exactly the forensic
+// question the audit log exists to answer. The ACL denial on this same handler
+// was already recorded; this closes the gap for the policy denial beside it.
+//
+// Deliberately the SAME op as the ACL denial (OpDeniedWrite) rather than a new
+// one: an operator filtering `op == "denied-write"` should see both kinds of
+// refused upload without knowing there are two. The Summary distinguishes them.
+//
+// Records ONLY ErrRejected. A size cap, an at-capacity property or a transient
+// I/O failure are ordinary client or server errors, not security events, and
+// auditing them would dilute the signal this record carries.
+//
+// Lives at the call site rather than inside writeAttachmentWriteError because
+// that helper is a package function with neither the audit sink nor the entity
+// in scope — and the record needs both.
+func (h *attachmentHandler) auditRejectedUpload(
+	ctx context.Context, e *entityPkg.Entity, property, fileName string, err error,
+) {
+	if !errors.Is(err, attachment.ErrRejected) {
+		return
+	}
+	h.audit().Record(audit.Record{
+		Time:        time.Now().UTC(),
+		Op:          audit.OpDeniedWrite,
+		Subject:     &audit.Subject{Kind: "entity", Type: e.Type, ID: e.ID},
+		Principal:   principal.From(ctx),
+		TriggeredBy: audit.TriggeredByFrom(ctx),
+		Summary: fmt.Sprintf("rejected upload %q to property %q: %s (op=attachment-write)",
+			fileName, property,
+			strings.TrimPrefix(err.Error(), "attachment: rejected by processor: ")),
+	})
 }
 
 // writeAttachmentWriteError maps a Service.WriteAttachment failure to the

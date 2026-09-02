@@ -68,7 +68,7 @@ func stripShebang(code string) string {
 // of entities and relations) registered at all; calling those from Lua raises
 // a "attempt to call a nil value" error from the VM itself.
 //
-// TODO(TKT-N0IKN9): Runtime is a god-object (60 methods). Decompose toward the
+// TODO(TKT-N0IKN9): Runtime is a god-object (45 methods). Decompose toward the
 // 40-method load line; ratchet this number down as bindings move out.
 //
 // 119 → 120 (TKT-ZF2DTV): reader(), the single choke point every read binding
@@ -93,7 +93,13 @@ func stripShebang(code string) string {
 // exists. ai.* and http.* register method values for the same reason. See
 // registerMailModule.
 //
-//plimsoll:max-methods=61
+// 61 → 46 (TKT-DOPCTI): the HTTP, cache, and AI clusters moved to
+// httpBindings (stateless), cacheBindings (cacheStore + a scriptPath
+// closure over the runtime's mutable field), and aiBindings (just the
+// provider). The register* wiring seams stay here, as do the caps.AI /
+// caps.HTTP gates in registerBindings.
+//
+//plimsoll:max-methods=46
 type Runtime struct {
 	L             *lua.LState
 	deps          WriteDeps // EntityManager is nil on a reader runtime.

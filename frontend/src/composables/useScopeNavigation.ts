@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import { useSchemaStore } from '@/stores'
 import { toApiOperator, parseFilterQueryParams, filterStateToApiParams } from '@/utils/filters'
 import { getEntityPosition, type ScopeDescriptor, type PositionRef } from '@/api/entities'
@@ -122,24 +122,38 @@ export function useScopeNavigation(entityId: () => string) {
     return { scope, label: listConfig.title || listId }
   }
 
-  function navigateScope(direction: 'prev' | 'next') {
-    if (!scopeNav.value) return
+  // scopeTarget is the single source of truth for where prev/next goes — bound
+  // to the nav links' `to` AND used by navigateScope, so a cmd-clicked tab and
+  // the keyboard shortcut land on the identical URL.
+  //
+  // Use the target's OWN type, not the current entity's — a search scope can
+  // span types, so the next/prev entity may be a different type. Preserve all
+  // query params so the scope (from=, q=, …) survives the hop.
+  //
+  // Nil: returns undefined when there is no scope or no neighbour in that
+  // direction; callers render a disabled affordance rather than a dead link.
+  function scopeTarget(direction: 'prev' | 'next'): RouteLocationRaw | undefined {
+    if (!scopeNav.value) return undefined
 
     const target = direction === 'prev' ? scopeNav.value.prev : scopeNav.value.next
-    if (!target) return
+    if (!target) return undefined
 
-    // Use the target's OWN type, not the current entity's — a search scope can
-    // span types, so the next/prev entity may be a different type. Preserve all
-    // query params so the scope (from=, q=, …) survives the hop.
-    router.push({
+    return {
       path: `/entity/${target.type}/${target.id}`,
       query: route.query,
-    })
+    }
+  }
+
+  function navigateScope(direction: 'prev' | 'next') {
+    const target = scopeTarget(direction)
+    if (!target) return
+    router.push(target)
   }
 
   return {
     scopeNav,
     loadScopeNav,
+    scopeTarget,
     navigateScope,
   }
 }
