@@ -1,6 +1,7 @@
 package markdown
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/yuin/goldmark"
@@ -72,11 +73,13 @@ func AppendToSection(content, title, line string) string {
 		insert--
 	}
 
-	out := make([]string, 0, len(lines)+1)
-	out = append(out, lines[:insert]...)
-	out = append(out, line)
-	out = append(out, lines[insert:]...)
-	return strings.Join(out, "\n")
+	// slices.Insert rather than a hand-rolled make(len+1) + three appends:
+	// same result, but no capacity arithmetic on a length derived from
+	// caller-supplied content. The old form tripped CodeQL's
+	// allocation-size-overflow rule — not reachable here, since `lines` is a
+	// split of a string already in memory, but the arithmetic is what the rule
+	// keys on and removing it is cheaper than justifying it forever.
+	return strings.Join(slices.Insert(lines, insert, line), "\n")
 }
 
 // findHeading returns the 0-based line index of the first heading whose
