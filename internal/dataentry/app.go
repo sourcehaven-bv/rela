@@ -47,6 +47,37 @@ const userDefaultsFile = "user-defaults.yaml"
 // userPaletteFile is the filename for user-specific palette overrides within the .rela directory.
 const userPaletteFile = "palette.yaml"
 
+// appEntityWriter is the write surface App itself calls — the CalDAV write
+// path, entity/relation history restore, and the value it hands to the Lua
+// writer runtime. See the internal/entitymanager package doc for the
+// consumer-side rule this follows (TKT-IVSJV6).
+//
+// Exactly the seven methods App invokes. RenameEntity and ValidateCreate are
+// absent: the SPA has no rename affordance (renames are a CLI and MCP
+// operation), and the form's dry-run preview lives on writeHandler, which
+// declares its own narrower entityMutator.
+//
+// This stays minimal because NewApp takes the CONCRETE *entitymanager.Manager
+// and passes that to the sub-handler constructors, rather than distributing
+// this narrowed value. Otherwise App would have to hold the union of its own
+// calls and every child's — ValidateCreate for writeHandler, and so on — which
+// is the "wide because it is a distributor" problem this ticket removed one
+// level up. A composition root taking the concrete type is the right shape;
+// each handler narrows at its own field.
+type appEntityWriter interface {
+	CreateEntity(ctx context.Context, e *entity.Entity, opts entity.CreateOptions) (*entity.CreateResult, error)
+	UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.UpdateResult, error)
+	PatchEntity(ctx context.Context, id string, p entity.Patch) (*entity.UpdateResult, error)
+	DeleteEntity(ctx context.Context, id string, cascade bool) (*entity.DeleteResult, error)
+	CreateRelation(
+		ctx context.Context, from, relType, to string, opts entity.RelationOptions,
+	) (*entity.Relation, error)
+	UpdateRelation(
+		ctx context.Context, from, relType, to string, opts entity.RelationOptions,
+	) (*entity.Relation, error)
+	DeleteRelation(ctx context.Context, from, relType, to string) error
+}
+
 // App is the central application struct for the data-entry server.
 //
 // # Concurrency model
@@ -133,7 +164,7 @@ type App struct {
 	// history endpoints return 501. The history handlers bind the narrow
 	// sub-interface they need rather than type-asserting the store.
 	versions      store.VersionService
-	entityManager entitymanager.EntityManager
+	entityManager appEntityWriter
 
 	// caldavAliases links CalDAV resources to entities. Optional: nil when no
 	// alias service is wired, in which case the CalDAV routes are not served
@@ -713,7 +744,7 @@ func NewApp(
 	meta *metamodel.Metamodel,
 	st store.Store,
 	versions store.VersionService,
-	em entitymanager.EntityManager,
+	em *entitymanager.Manager,
 	searcher search.Searcher,
 	visibleSearcher search.VisibleSearcher,
 	aclImpl acl.ACL,
@@ -1074,9 +1105,12 @@ func NewApp(
 	// store/manager handles are fixed for App's lifetime. writeMu is shared by
 	// pointer so attachment writes serialize with every other mutation handler.
 	app.attachments = &attachmentHandler{
-		schema:     app.State,
-		store:      st,
-		manager:    app.entityManager,
+		schema: app.State,
+		store:  st,
+		// The concrete manager, not app.entityManager: each sub-handler
+		// narrows to its OWN interface at its own field, so App's stays
+		// exactly what App calls (TKT-IVSJV6).
+		manager:    em,
 		runner:     func() attachment.CommandRunner { return app.attachmentRunner },
 		reader:     app.reader,
 		serializer: app.serializer,
@@ -1095,9 +1129,10 @@ func NewApp(
 	// so both paths stay behaviorally identical. writeMu is shared by pointer
 	// so these writes serialize with every other mutation handler.
 	app.write = &writeHandler{
-		schema:             app.State,
-		store:              st,
-		manager:            app.entityManager,
+		schema:  app.State,
+		store:   st,
+		manager: em, // concrete; writeHandler narrows to entityMutator
+
 		reader:             app.reader,
 		serializer:         app.serializer,
 		affordances:        app.affordances,

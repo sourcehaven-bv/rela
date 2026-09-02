@@ -1,14 +1,16 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/Sourcehaven-BV/rela/internal/analysis"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
+	syncclient "github.com/Sourcehaven-BV/rela/internal/cli/sync"
 	"github.com/Sourcehaven-BV/rela/internal/config"
-	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -53,12 +55,60 @@ type readServices struct {
 // writes to.
 type writeServices struct {
 	readServices
-	EntityManager entitymanager.EntityManager
-	Validator     validator.Validator
-	Audit         audit.Audit
-	LuaCache      *lua.Cache
-	LuaWriteDeps  lua.WriteDeps
-	State         state.KV
+	EntityManager entityWriter
+
+	// SyncApplier is the id-preserving, automation-suppressed write path
+	// `rela sync` needs (syncclient.LocalApplier). It is a SEPARATE typed
+	// field, not a type assertion on EntityManager, for two reasons.
+	//
+	// First, it is a genuinely distinct capability: ApplyEntity/ApplyRelation
+	// land a remote record verbatim, which is not part of the human-intent
+	// write surface the other subcommands use — so it is its own dependency,
+	// declared as one (CLAUDE.md: define a typed dependency rather than a
+	// type-assertion back-channel).
+	//
+	// Second, the assertion it replaces failed OPEN: it set the applier to nil
+	// on a miss, and `sync push` dereferences it on the create-id-adoption path
+	// (push.go, `newID != ch.Key`), so a miss was a panic rather than the
+	// "only breaks pull" the old comment claimed. The wiring site holds the
+	// concrete *entitymanager.Manager, so assigning this field is checked by
+	// the compiler and the failure mode is gone (TKT-IVSJV6).
+	SyncApplier  syncclient.LocalApplier
+	Validator    validator.Validator
+	Audit        audit.Audit
+	LuaCache     *lua.Cache
+	LuaWriteDeps lua.WriteDeps
+	State        state.KV
+}
+
+// entityWriter is the write surface the CLI's mutating subcommands call. See
+// the internal/entitymanager package doc for why each consumer declares its own
+// interface rather than sharing one (TKT-IVSJV6).
+//
+// Eight of the manager's nine write methods. ValidateCreate is absent because
+// no subcommand dry-runs a create — the CLI either writes or it doesn't, and
+// the advisory path exists for the data-entry form.
+//
+// Note `rela sync pull` additionally type-asserts this value to
+// syncclient.LocalApplier for the id-preserving applier — see buildSyncEngine.
+// Those methods stay off this interface deliberately: they are a distinct
+// capability (apply a remote record verbatim), not part of the human-intent
+// write surface the other subcommands use.
+type entityWriter interface {
+	CreateEntity(ctx context.Context, e *entity.Entity, opts entity.CreateOptions) (*entity.CreateResult, error)
+	UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.UpdateResult, error)
+	PatchEntity(ctx context.Context, id string, p entity.Patch) (*entity.UpdateResult, error)
+	DeleteEntity(ctx context.Context, id string, cascade bool) (*entity.DeleteResult, error)
+	RenameEntity(
+		ctx context.Context, oldID, newID string, opts entity.RenameOptions,
+	) (*entity.RenameResult, error)
+	CreateRelation(
+		ctx context.Context, from, relType, to string, opts entity.RelationOptions,
+	) (*entity.Relation, error)
+	UpdateRelation(
+		ctx context.Context, from, relType, to string, opts entity.RelationOptions,
+	) (*entity.Relation, error)
+	DeleteRelation(ctx context.Context, from, relType, to string) error
 }
 
 // cliBundles is everything the kong wiring binds for command Run methods:
@@ -122,6 +172,7 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 	write := writeServices{
 		readServices:  read,
 		EntityManager: svc.EntityManager(),
+		SyncApplier:   svc.EntityManager(),
 		Validator:     svc.Validator(),
 		Audit:         svc.Audit(),
 		LuaCache:      svc.ScriptEngine().LuaCache(),

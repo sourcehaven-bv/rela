@@ -456,8 +456,14 @@ func TestAudit_AC5_TriggeredByOnAutomationCascade(t *testing.T) {
 	records := mem.Records()
 	// Expect:
 	//   - 1 create-entity record for the requirement (no triggered_by).
-	//   - 1 create-entity record for the cascaded checklist (triggered_by=automation).
-	//   - 1 create-relation record for has-checklist (triggered_by=automation).
+	//   - 1 create-entity record for the cascaded checklist.
+	//   - 1 create-relation record for has-checklist.
+	//
+	// Both cascaded records name the ORIGINATING automation
+	// (`automation:create-checklist-for-req`), not the generic `automation`
+	// label. Tightened from "non-empty" by TKT-JJRVX9 — the generic label
+	// could not tell an operator which of several on:created rules fired.
+	const wantLabel = "automation:create-checklist-for-req"
 	var direct, cascadedEntity, cascadedRelation int
 	for _, r := range records {
 		switch {
@@ -465,8 +471,14 @@ func TestAudit_AC5_TriggeredByOnAutomationCascade(t *testing.T) {
 			direct++
 		case r.Op == audit.OpCreateEntity && r.TriggeredBy != "":
 			cascadedEntity++
+			if r.TriggeredBy != wantLabel {
+				t.Errorf("cascaded create-entity: want TriggeredBy=%q, got %q", wantLabel, r.TriggeredBy)
+			}
 		case r.Op == audit.OpCreateRelation && r.TriggeredBy != "":
 			cascadedRelation++
+			if r.TriggeredBy != wantLabel {
+				t.Errorf("cascaded create-relation: want TriggeredBy=%q, got %q", wantLabel, r.TriggeredBy)
+			}
 		}
 		// All records must inherit the user's Principal.
 		if r.Principal.User != "alice" {
@@ -482,6 +494,74 @@ func TestAudit_AC5_TriggeredByOnAutomationCascade(t *testing.T) {
 	}
 	if cascadedRelation == 0 {
 		t.Errorf("want >=1 cascaded create-relation records with TriggeredBy, got 0")
+	}
+}
+
+// TestAudit_IfExistsReplaceAttributesDeleteToTheAutomation pins that BOTH
+// halves of an `if_exists: replace` carry the same automation label
+// (TKT-JJRVX9).
+//
+// Replace is one operation with two writes: delete the superseded entity, then
+// create its replacement. Before this ticket the create carried the specific
+// label and the delete carried the generic `automation`, because the runner
+// derived its tagged ctx AFTER calling handleIfExists. Two labels on adjacent
+// rows of one operation meant an operator filtering on the automation's name
+// got the create and silently missed the delete — the exact question this
+// ticket exists to make answerable.
+//
+// The cascaded relation-deletes underneath keep `cascade:delete-entity:<id>`;
+// that is asserted by TestAudit_IfExistsReplaceUsesCascadeLabel below, and the
+// two together describe the full label set for a replace.
+func TestAudit_IfExistsReplaceAttributesDeleteToTheAutomation(t *testing.T) {
+	t.Parallel()
+	mem := audit.NewMemory()
+
+	const autoName = "replace-checklist-on-active"
+	autos := []automation.Automation{{
+		Name: autoName,
+		On: automation.Trigger{
+			Entity:   []string{"requirement"},
+			Property: "status",
+			Becomes:  "accepted",
+		},
+		Do: []automation.Action{{
+			CreateEntity: &automation.CreateEntityAction{
+				Type:     "checklist",
+				Relation: "has-checklist",
+				IfExists: automation.IfExistsReplace,
+			},
+		}},
+	}}
+	mgr := newManagerWithAudit(t, mem, autos)
+	ctx := ctxWithPrincipal("alice", principal.ToolCLI)
+
+	res, err := mgr.CreateEntity(ctx, entity.New("", "requirement"), entity.CreateOptions{})
+	if err != nil {
+		t.Fatalf("CreateEntity: %v", err)
+	}
+	// Trip the automation, drop out of the triggering state, then trip it
+	// again — the second run is the one that finds an existing checklist and
+	// takes the replace path.
+	req := res.Entity
+	for _, status := range []string{"accepted", "draft", "accepted"} {
+		req.SetString("status", status)
+		if _, uerr := mgr.UpdateEntity(ctx, req); uerr != nil {
+			t.Fatalf("UpdateEntity(status=%s): %v", status, uerr)
+		}
+	}
+
+	var sawDelete bool
+	for _, r := range mem.Records() {
+		if r.Op != audit.OpDeleteEntity || r.Subject == nil || r.Subject.Type != "checklist" {
+			continue
+		}
+		sawDelete = true
+		if r.TriggeredBy != "automation:"+autoName {
+			t.Errorf("replace-delete: want TriggeredBy=%q, got %q", "automation:"+autoName, r.TriggeredBy)
+		}
+	}
+	if !sawDelete {
+		t.Fatal("no delete-entity record for the superseded checklist; the replace path did not run")
 	}
 }
 
@@ -649,6 +729,300 @@ func TestAudit_AC11_NopRecordsNothing(t *testing.T) {
 
 // --- AC12: nil Audit is rejected at construction (already covered by
 // TestNew_RejectsNilAudit in manager_test.go) ---
+
+// TestAudit_PerAutomationAttribution is the discriminating test for
+// TKT-JJRVX9: TWO automations on the same trigger, with different names, each
+// producing a cascade write. Each resulting audit record must name ITS OWN
+// automation.
+//
+// Two is the minimum that catches the bug this ticket is really about. With a
+// single automation, an implementation that hoists the `triggered_by` ctx wrap
+// out of the per-entry loop — attributing every write to whichever name it saw
+// last — passes anyway. With two, it cannot.
+func TestAudit_PerAutomationAttribution(t *testing.T) {
+	t.Parallel()
+	mem := audit.NewMemory()
+
+	// Both fire on requirement-created, and BOTH emit a create_relation. That
+	// matters: Engine.Process aggregates every matching automation into ONE
+	// Result, so the two relations arrive in a single RelationsToCreate slice.
+	// A per-entry ctx tag attributes each correctly; a tag hoisted out of the
+	// loop gives both whichever name came last. `spawn-checklist` also creates
+	// an entity, covering the create_entity path in the same run.
+	autos := []automation.Automation{
+		{
+			Name: "spawn-checklist",
+			On:   automation.Trigger{Entity: []string{"requirement"}, Created: true},
+			Do: []automation.Action{
+				{
+					CreateEntity: &automation.CreateEntityAction{
+						Type:     "checklist",
+						Relation: "has-checklist",
+					},
+				},
+				{
+					CreateRelation: &automation.CreateRelationAction{
+						Relation: "informed-by",
+						To:       "DEC-001",
+					},
+				},
+			},
+		},
+		{
+			Name: "link-decision",
+			On:   automation.Trigger{Entity: []string{"requirement"}, Created: true},
+			Do: []automation.Action{{
+				CreateRelation: &automation.CreateRelationAction{
+					Relation: "supersedes",
+					To:       "DEC-001",
+				},
+			}},
+		},
+	}
+	mgr := newManagerWithAudit(t, mem, autos)
+	ctx := ctxWithPrincipal("alice", principal.ToolCLI)
+
+	// The relation target must exist before the trigger fires.
+	if _, err := mgr.CreateEntity(ctx, entity.New("DEC-001", "decision"), entity.CreateOptions{}); err != nil {
+		t.Fatalf("seed decision: %v", err)
+	}
+	if _, err := mgr.CreateEntity(ctx, entity.New("", "requirement"), entity.CreateOptions{}); err != nil {
+		t.Fatalf("CreateEntity requirement: %v", err)
+	}
+
+	// Collect the cascade-attributed records by relation type / entity type.
+	var sawChecklistEntity, sawHasChecklist, sawInformedBy, sawSupersedes bool
+	for _, r := range mem.Records() {
+		if r.TriggeredBy == "" || r.Subject == nil {
+			continue // direct writes
+		}
+		switch {
+		case r.Op == audit.OpCreateEntity && r.Subject.Type == "checklist":
+			sawChecklistEntity = true
+			if r.TriggeredBy != "automation:spawn-checklist" {
+				t.Errorf("checklist entity: want automation:spawn-checklist, got %q", r.TriggeredBy)
+			}
+		case r.Op == audit.OpCreateRelation && r.Subject.RelationType == "has-checklist":
+			sawHasChecklist = true
+			// The trigger relation belongs to the automation that created the
+			// entity, not to whichever automation ran last.
+			if r.TriggeredBy != "automation:spawn-checklist" {
+				t.Errorf("has-checklist relation: want automation:spawn-checklist, got %q", r.TriggeredBy)
+			}
+		case r.Op == audit.OpCreateRelation && r.Subject.RelationType == "informed-by":
+			sawInformedBy = true
+			if r.TriggeredBy != "automation:spawn-checklist" {
+				t.Errorf("informed-by relation: want automation:spawn-checklist, got %q", r.TriggeredBy)
+			}
+		case r.Op == audit.OpCreateRelation && r.Subject.RelationType == "supersedes":
+			sawSupersedes = true
+			if r.TriggeredBy != "automation:link-decision" {
+				t.Errorf("supersedes relation: want automation:link-decision, got %q", r.TriggeredBy)
+			}
+		}
+	}
+
+	if !sawChecklistEntity {
+		t.Error("no cascade-attributed create-entity record for the checklist")
+	}
+	if !sawHasChecklist {
+		t.Error("no cascade-attributed create-relation record for has-checklist")
+	}
+	if !sawInformedBy {
+		t.Error("no cascade-attributed create-relation record for informed-by")
+	}
+	if !sawSupersedes {
+		t.Error("no cascade-attributed create-relation record for supersedes")
+	}
+}
+
+// TestAudit_UnnamedAutomationKeepsGenericLabel pins the fallback (TKT-JJRVX9):
+// a cascade entry carrying no automation name must record the generic
+// "automation" label, NOT a dangling "automation:".
+//
+// This is reachable from a user-authored schema, not hypothetical: `name:` is
+// an ordinary optional field on an `automations:` list entry, and no loader
+// validation rejects an automation that omits it. So the test drives the FULL
+// production path — Manager.CreateEntity through the engine, runner and audit
+// sink — with a nameless automation, rather than poking the runner directly.
+func TestAudit_UnnamedAutomationKeepsGenericLabel(t *testing.T) {
+	t.Parallel()
+	mem := audit.NewMemory()
+
+	// An automation with an EMPTY name: the engine plumbs "" through, and the
+	// cascade must fall back rather than emit "automation:".
+	autos := []automation.Automation{{
+		Name: "",
+		On:   automation.Trigger{Entity: []string{"requirement"}, Created: true},
+		Do: []automation.Action{{
+			CreateEntity: &automation.CreateEntityAction{
+				Type:     "checklist",
+				Relation: "has-checklist",
+			},
+		}},
+	}}
+	mgr := newManagerWithAudit(t, mem, autos)
+	ctx := ctxWithPrincipal("alice", principal.ToolCLI)
+
+	if _, err := mgr.CreateEntity(ctx, entity.New("", "requirement"), entity.CreateOptions{}); err != nil {
+		t.Fatalf("CreateEntity: %v", err)
+	}
+
+	var cascaded int
+	for _, r := range mem.Records() {
+		if r.TriggeredBy == "" {
+			continue
+		}
+		cascaded++
+		if r.TriggeredBy != "automation" {
+			t.Errorf("unnamed automation: want generic %q, got %q", "automation", r.TriggeredBy)
+		}
+	}
+	// Assert the exact count, not just non-zero: a future change that stopped
+	// one of the two cascade writes firing would otherwise quietly reduce this
+	// test's coverage instead of failing.
+	if cascaded != 2 {
+		t.Errorf("want 2 cascade-attributed records (checklist entity + has-checklist relation), got %d", cascaded)
+	}
+}
+
+// TestAudit_NestedCascadeAttribution covers the multi-level case for
+// TKT-JJRVX9: automation "outer" creates a checklist, which itself triggers
+// automation "inner". Each write must name the automation that actually
+// produced it, not the one that started the chain.
+//
+// This works because the cascade runner queues one item per created entity,
+// each carrying its OWN automation Result — so the name travels with the work
+// rather than being derived from the originating trigger. Pinned here because
+// a future change that hoisted attribution to the cascade's entry point would
+// silently collapse every level onto the outermost automation.
+func TestAudit_NestedCascadeAttribution(t *testing.T) {
+	t.Parallel()
+	mem := audit.NewMemory()
+
+	autos := []automation.Automation{
+		{
+			Name: "outer",
+			On:   automation.Trigger{Entity: []string{"requirement"}, Created: true},
+			Do: []automation.Action{{
+				CreateEntity: &automation.CreateEntityAction{
+					Type:     "checklist",
+					Relation: "has-checklist",
+				},
+			}},
+		},
+		{
+			Name: "inner",
+			On:   automation.Trigger{Entity: []string{"checklist"}, Created: true},
+			Do: []automation.Action{{
+				CreateRelation: &automation.CreateRelationAction{
+					Relation: "covers",
+					To:       "DEC-001",
+				},
+			}},
+		},
+	}
+	mgr := newManagerWithAudit(t, mem, autos)
+	ctx := ctxWithPrincipal("alice", principal.ToolCLI)
+
+	if _, err := mgr.CreateEntity(ctx, entity.New("DEC-001", "decision"), entity.CreateOptions{}); err != nil {
+		t.Fatalf("seed decision: %v", err)
+	}
+	if _, err := mgr.CreateEntity(ctx, entity.New("", "requirement"), entity.CreateOptions{}); err != nil {
+		t.Fatalf("CreateEntity requirement: %v", err)
+	}
+
+	var sawOuterEntity, sawInnerRelation bool
+	for _, r := range mem.Records() {
+		if r.TriggeredBy == "" || r.Subject == nil {
+			continue
+		}
+		switch {
+		case r.Op == audit.OpCreateEntity && r.Subject.Type == "checklist":
+			sawOuterEntity = true
+			if r.TriggeredBy != "automation:outer" {
+				t.Errorf("checklist entity: want automation:outer, got %q", r.TriggeredBy)
+			}
+		case r.Op == audit.OpCreateRelation && r.Subject.RelationType == "covers":
+			sawInnerRelation = true
+			// The decisive assertion: this write came from the SECOND-level
+			// automation, so it must not inherit "outer".
+			if r.TriggeredBy != "automation:inner" {
+				t.Errorf("covers relation: want automation:inner, got %q", r.TriggeredBy)
+			}
+		}
+	}
+
+	if !sawOuterEntity {
+		t.Error("no cascade-attributed create-entity record for the checklist")
+	}
+	if !sawInnerRelation {
+		t.Error("no cascade-attributed create-relation record for covers (second-level automation did not fire)")
+	}
+}
+
+// TestAudit_OuterLabelSurvivesCascade pins the composition policy for
+// `triggered_by`: when a write has two true causes, the OUTERMOST one wins.
+//
+// The case that matters is a scheduler task whose write trips an on:created
+// automation. "What did last night's task write?" is the most obvious audit
+// query for a scheduler, and answering it requires the cascaded rows to keep
+// `schedule:<task>` rather than being relabelled with the inner automation.
+//
+// This is a REGRESSION TEST in the literal sense: the first version of
+// TKT-JJRVX9 tagged the cascade ctx unconditionally, and
+// `audit.WithTriggeredBy` is an unconditional context.WithValue — so the
+// cascaded rows silently changed from `schedule:nightly` to
+// `automation:<name>`, shrinking that query's result set with nothing to
+// error on. The guard lives in autocascade's triggeredByCtx.
+//
+// Note this could NOT be caught by TestAudit_IfExistsReplaceUsesCascadeLabel:
+// that one asserts a label cascadeHost.DeleteEntity stamps internally,
+// downstream of the runner's wrap, so it never exercises an enclosing label.
+func TestAudit_OuterLabelSurvivesCascade(t *testing.T) {
+	t.Parallel()
+	mem := audit.NewMemory()
+
+	autos := []automation.Automation{{
+		Name: "spawn-checklist",
+		On:   automation.Trigger{Entity: []string{"requirement"}, Created: true},
+		Do: []automation.Action{{
+			CreateEntity: &automation.CreateEntityAction{
+				Type:     "checklist",
+				Relation: "has-checklist",
+			},
+		}},
+	}}
+	mgr := newManagerWithAudit(t, mem, autos)
+
+	// Exactly what scheduler.go does before running a task.
+	const outer = "schedule:nightly"
+	ctx := audit.WithTriggeredBy(ctxWithPrincipal("alice", principal.ToolScheduler), outer)
+
+	if _, err := mgr.CreateEntity(ctx, entity.New("", "requirement"), entity.CreateOptions{}); err != nil {
+		t.Fatalf("CreateEntity: %v", err)
+	}
+
+	records := mem.Records()
+	if len(records) == 0 {
+		t.Fatal("no audit records emitted")
+	}
+	// EVERY record in this run — the direct write and both cascaded ones —
+	// must carry the schedule label, so a `triggered_by == "schedule:nightly"`
+	// query returns the complete set of what the task did.
+	var cascaded int
+	for _, r := range records {
+		if r.TriggeredBy != outer {
+			t.Errorf("op=%s: want TriggeredBy=%q, got %q", r.Op, outer, r.TriggeredBy)
+		}
+		if r.Subject != nil && (r.Subject.Type == "checklist" || r.Subject.RelationType == "has-checklist") {
+			cascaded++
+		}
+	}
+	if cascaded != 2 {
+		t.Errorf("want 2 cascaded records (checklist entity + has-checklist relation), got %d", cascaded)
+	}
+}
 
 // partialCascadeStore is a store whose cascade DeleteEntity fails but reports
 // the relations it removed first — the shape a non-transactional backend

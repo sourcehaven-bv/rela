@@ -29,9 +29,12 @@ import (
 // Audit: cascadeHost emits audit records directly (bypassing
 // Manager's recordEntityAudit / recordRelationAudit) because it
 // bypasses Manager itself — going through createCore / direct store
-// writes to avoid double-cascading. Records carry triggered_by="automation"
-// (or the cascade-delete label when invoked from IfExistsReplace) to
-// distinguish them from direct writes.
+// writes to avoid double-cascading. Records carry a triggered_by label
+// distinguishing them from direct writes: normally
+// `automation:<name>`, stamped on the ctx by the autocascade runner
+// (TKT-JJRVX9); `cascade:delete-entity:<id>` for the relation deletes
+// under an IfExistsReplace; and a bare `automation` only when the
+// automation was declared without a name.
 type cascadeHost struct {
 	deps Deps
 }
@@ -258,12 +261,18 @@ func relationSubject(r *entity.Relation) *audit.Subject {
 	}
 }
 
-// recordCascade emits one audit record from the cascade path. If ctx
-// doesn't already carry a triggered_by, "automation" is stamped as
-// the generic label (per runner.go applyRelationCreations rationale —
-// automation.Result doesn't carry per-action names through the
-// engine). Callers that already wrapped ctx with a specific label
-// (e.g. cascade:delete-entity:<id>) keep that label.
+// recordCascade emits one audit record from the cascade path.
+//
+// The ctx label wins when there is one: the autocascade runner stamps
+// `automation:<name>` per entry, and a caller may have stamped something more
+// specific still (`cascade:delete-entity:<id>`). "automation" is only the
+// fallback for a cascade whose originating automation had no name — since
+// TKT-JJRVX9 it is no longer the normal case, and this `if` is now what makes
+// the runner's per-entry label survive rather than what supplies attribution.
+//
+// The same `if` is mirrored one layer up in autocascade's triggeredByCtx,
+// which likewise declines to overwrite an existing label — that is what keeps
+// a scheduler's `schedule:<task>` on rows an automation cascaded underneath it.
 //
 // One emitter for both entity and relation subjects — the Subject
 // pointer carries the shape; the rest of the Record envelope is

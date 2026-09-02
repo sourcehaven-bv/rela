@@ -45,7 +45,7 @@ Every record is one line of JSON:
 | Field         | Meaning                                                             |
 |---------------|---------------------------------------------------------------------|
 | `time`        | UTC timestamp                                                        |
-| `op`          | `create-entity`, `update-entity`, `delete-entity`, `rename-entity`, `create-relation`, `update-relation`, `delete-relation`, `denied-write` |
+| `op`          | See the op list below |
 | `subject`     | The thing acted on (see "Subject shape" below)                       |
 | `before` / `after` | For `rename-entity` only — the identity diff                   |
 | `principal.user` | The OS user (from `$USER`) that initiated the operation           |
@@ -55,6 +55,18 @@ Every record is one line of JSON:
 | `principal.roles` | Optional. The `roles` claim from a verified identity assertion |
 | `triggered_by` | Optional. Engine-initiated writes carry `automation:<name>`, `schedule:<task-name>`, or `cascade:delete-entity:<id>` |
 | `summary`     | One-line human-readable summary; for updates names *which* properties changed but never their values (secret-leak defense) |
+
+### Operations
+
+| `op` | Meaning |
+|------|---------|
+| `create-entity`, `update-entity`, `delete-entity`, `rename-entity` | Entity writes |
+| `create-relation`, `update-relation`, `delete-relation` | Relation writes |
+| `denied-write` | A write the ACL refused, or an upload the attachment policy refused. Subject names the would-be target; the summary carries the rule that fired |
+| `acl-bypass`, `acl-bypass-read` | A write or read that skipped the ACL through an elevated automation handle. The principal is the REAL triggering identity |
+| `acl-query` | An effective-access query (`rela acl who-can`) — who asked, when, and about which entity. **The answer is deliberately not recorded**: it is a list of principals and their access routes, so logging it would duplicate the disclosure rather than record it |
+| `purge-version` | An operator hard-delete of version history for compliance redaction. Never contains the purged content |
+| `data-migration`, `data-gc` | Schema-driven data migration and garbage collection |
 
 ### `denied-write` records
 
@@ -173,14 +185,26 @@ the operator who started the server is the right grain for forensics.
 When a write is caused by an automation cascade or scheduler task,
 `triggered_by` distinguishes it from direct user actions:
 
-- `automation:<name>` — a scripted automation action.
-- `automation` — a non-scripted automation action (relation create,
-  cascaded entity create). Generic label by design — the engine
-  doesn't currently thread the originating automation name through
-  these paths.
+- `automation:<name>` — an automation action, named after the
+  automation that produced it. Scripted (`lua:`) and non-scripted
+  (relation create, cascaded entity create, and the delete half of an
+  `if_exists: replace`) actions alike.
+- `automation` — the fallback for an automation declared without a
+  `name:`. Note `name:` is an optional field on an `automations:` list
+  entry and nothing rejects an automation that omits it, so this label
+  means "the schema did not say which rule this was" — not that
+  something went wrong.
 - `schedule:<task-name>` — a scheduler-driven Lua task.
 - `cascade:delete-entity:<id>` — a relation deleted as a side effect
   of `delete-entity` with `cascade=true`.
+
+**One label per record: the outermost cause wins.** A write can have
+more than one true cause — a scheduled task whose write trips an
+automation, for instance — but `triggered_by` is a single string, not a
+stack. The enclosing label is kept, so every row a scheduled task
+produced (including the ones an automation cascaded underneath it)
+answers `triggered_by == "schedule:<task>"`. Querying "what did last
+night's run do?" therefore returns the complete set.
 
 ## Known gaps
 
@@ -220,15 +244,6 @@ as under-reporting, and harder to notice.
 
 The PostgreSQL and SQLite backends roll back, so a partial cascade
 cannot persist there and the question does not arise.
-
-### Per-automation attribution for cascaded relations / entities
-
-When an `on: created` automation fires `create_relation` or
-`create_entity` actions, the resulting records carry `triggered_by:
-"automation"` (generic) rather than `automation:<originating-name>`.
-The automation engine's Result type doesn't carry the per-action
-originating-name today. Scripted actions (`lua: |` blocks) do carry
-the specific name as `automation:<name>`.
 
 ### Retention
 

@@ -134,6 +134,14 @@ func (r *Runtime) luaMailSend(ls *lua.LState) int {
 		return 0
 	}
 
+	// Enforce the operator's recipients allowlist BEFORE handing anything to
+	// the transport (TKT-USQNA3). A denial is a returned error, not a raise:
+	// it is a fact about configuration the script may reasonably handle, in
+	// the same class as a delivery failure rather than a malformed call.
+	if err := checkRecipients(recipientPolicyFor(sender), msg.To); err != nil {
+		return pushMailError(ls, recipientDeniedKind, err.Error())
+	}
+
 	// callerCtx is the runtime's caller context — the same one the write
 	// bindings use for audit attribution — so a send inherits the caller's
 	// cancellation. It is the LState's context that carries the script
