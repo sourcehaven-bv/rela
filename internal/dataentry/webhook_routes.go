@@ -57,6 +57,13 @@ const webhookExecTimeout = 30 * time.Second
 // (the caller may usefully retry) rather than 500.
 var errWebhookConflictExhausted = errors.New("dataentry: webhook conflict retries exhausted")
 
+// errWebhookBusy reports that the in-flight bound was reached. Answered as 503
+// with Retry-After rather than 429: the caller did nothing wrong and is not
+// rate-limited per se — the server is momentarily saturated, which is what 503
+// means. A monitoring producer treats both as retryable, but 503 is the honest
+// one.
+var errWebhookBusy = errors.New("dataentry: webhook busy")
+
 // webhookResult is the outcome of one delivery, serialized to the caller.
 type webhookResult struct {
 	Hook     string `json:"hook"`
@@ -82,7 +89,36 @@ type webhookRouter struct {
 	// in applySteps. Reads that decide what a delivery acts on go through
 	// write.luaDeps().VisibleReader instead.
 	rawStore store.Store
+
+	// admit bounds how many deliveries may be in the pipeline at once.
+	//
+	// This endpoint is unauthenticated BY DESIGN (the fronting proxy owns
+	// producer auth), so anyone who can reach the port can reach the write
+	// path. Each delivery takes the process-wide writeMu and holds it across a
+	// full type scan and the write, so without a bound a flood queues unbounded
+	// goroutines that stall every other writer — the SPA, actions, sync. That is
+	// the shape TKT-X06LA2 fixed on the sibling action surface by moving the
+	// authorization gate ahead of the lock; here there is no gate to move, so
+	// the bound IS the mitigation.
+	//
+	// Buffered channel rather than a semaphore package: the non-blocking send
+	// gives "reject immediately when full" for free, which is what a producer
+	// wants — a fast 429 it can retry beats a slow success it has timed out on.
+	//
+	// Built ONCE per router and shared, like cmdexec's pool. A per-request
+	// bound would bound nothing.
+	admit chan struct{}
 }
+
+// webhookMaxInFlight caps concurrent deliveries across all hooks.
+//
+// Sized for the mutex, not for CPU: deliveries serialize on writeMu anyway, so
+// admitting many more than this only grows a queue whose tail has already
+// timed out on the producer's side. Small enough that a flood is shed rather
+// than absorbed, large enough that a legitimate burst from a monitoring fan-out
+// (Icinga dispatches notifications concurrently with no cap of its own) is not
+// rejected in normal operation.
+const webhookMaxInFlight = 8
 
 // registerDeclarativeWebhookRoutes mounts POST /hooks/{id} for every configured
 // webhook.
@@ -194,6 +230,12 @@ func (h *webhookRouter) handle(w http.ResponseWriter, r *http.Request, hookID st
 // while a 422 says "this payload cannot produce a valid entity" and is not.
 func writeWebhookError(w http.ResponseWriter, hookID string, err error) {
 	switch {
+	case errors.Is(err, errWebhookBusy):
+		// Retry-After is what makes this actionable: a producer that honors it
+		// backs off instead of adding to the saturation it just hit.
+		w.Header().Set("Retry-After", "2")
+		slog.Warn("webhook shed load", "hook", hookID, "max_in_flight", webhookMaxInFlight)
+		http.Error(w, "server busy, retry shortly", http.StatusServiceUnavailable)
 	case errors.Is(err, errWebhookConflictExhausted):
 		slog.Warn("webhook conflict retries exhausted", "hook", hookID)
 		http.Error(w, "conflict: concurrent writes to the same entity", http.StatusConflict)
@@ -211,12 +253,46 @@ func writeWebhookError(w http.ResponseWriter, hookID string, err error) {
 // runWebhookPipeline executes find → create-if-missing → then-steps under the
 // conflict-retry budget.
 //
-// Serialized on writeMu like every other mutation on this surface, so the
-// read-compare-write of the append step is atomic WITHIN the process; the
-// conditional writes are what make it safe ACROSS processes.
+// Serialized on writeMu like every other mutation on this surface. Be precise
+// about what that buys, because the two halves differ:
+//
+//   - CREATE is genuinely conflict-detecting, with or without the lock. A
+//     racing create loses on the `unique:` constraint and the retry loop
+//     re-finds the winner, which works across processes because the postgres
+//     derived index is atomic.
+//   - APPEND is not. Patch.Content is an ABSOLUTE replacement computed from a
+//     base read moments earlier, and nothing below this is a compare-and-swap,
+//     so it is a read-modify-write that writeMu alone makes safe — and only
+//     within one process. Removing the lock fails
+//     TestWebhookConflict_PipelineAppendsAllLand on every run; across processes
+//     TestWebhookConflict_CrossProcessAppendsCanBeLost shows an append being
+//     lost even WITH it.
+//
+// The lock is therefore a stopgap for the append path, not the design. The fix
+// is store-level optimistic concurrency (TKT-34XS2R): an expected-version on
+// entity.Patch carried into store.UpdateEntity, so the append becomes a real
+// CAS and this lock can go. Nothing here should grow to depend on the lock in
+// a way that makes that removal harder.
+//
+// Note the same limitation sits under the data-entry API's If-Match, which also
+// reads-compares-writes inside writeMu rather than issuing a conditional write.
 func (h *webhookRouter) runPipeline(
 	ctx context.Context, hookID string, hook dataentryconfig.Webhook, payload webhookPayload,
 ) (webhookResult, error) {
+	// Shed load BEFORE taking the write lock. Queueing here instead would mean
+	// an unauthenticated flood parks goroutines that each go on to stall every
+	// other writer; a 429 the producer can retry is the better answer. A nil
+	// channel means unbounded, which only happens in tests that construct the
+	// router directly.
+	if h.admit != nil {
+		select {
+		case h.admit <- struct{}{}:
+			defer func() { <-h.admit }()
+		default:
+			return webhookResult{}, errWebhookBusy
+		}
+	}
+
 	h.write.writeMu.Lock()
 	defer h.write.writeMu.Unlock()
 

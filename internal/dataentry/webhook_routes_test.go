@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -681,5 +682,57 @@ func TestWebhookRoutes_ResponseIsNoStore(t *testing.T) {
 	rec := postHook(t, app, "intake", `{"t":"x"}`)
 	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
 		t.Errorf("Cache-Control = %q, want %q", got, "no-store")
+	}
+}
+
+// TestWebhookRoutes_ShedsLoadWhenSaturated pins the in-flight bound.
+//
+// The endpoint is unauthenticated by design, so anyone who can reach the port
+// can reach the write path, and each delivery holds the process-wide write lock.
+// Without a bound a flood parks goroutines that stall every other writer — the
+// shape TKT-X06LA2 fixed on the action surface by gating before the lock, which
+// is not available here because there is no gate.
+func TestWebhookRoutes_ShedsLoadWhenSaturated(t *testing.T) {
+	app := newHookTestApp(t, map[string]dataentryconfig.Webhook{
+		"intake": {CreateIfMissing: &dataentryconfig.WebhookCreate{
+			Type: "ticket", Properties: map[string]string{"title": "{{body.t}}"},
+		}},
+	})
+
+	// Saturate the bound directly: a router whose admission channel is already
+	// full must shed rather than queue. Driving it with real concurrent requests
+	// would race on how many happen to be in flight at once.
+	router := &webhookRouter{
+		state: app.State, write: app.write, rawStore: app.store,
+		admit: make(chan struct{}, 1),
+	}
+	router.admit <- struct{}{} // occupy the only slot
+
+	_, err := router.runPipeline(context.Background(), "intake",
+		app.State().Cfg.Webhooks["intake"], webhookPayload{body: map[string]any{"t": "x"}})
+	if !errors.Is(err, errWebhookBusy) {
+		t.Fatalf("err = %v, want errWebhookBusy", err)
+	}
+
+	// Freeing the slot must let the next delivery through — the bound sheds
+	// under saturation, it does not latch.
+	<-router.admit
+	if _, err := router.runPipeline(context.Background(), "intake",
+		app.State().Cfg.Webhooks["intake"], webhookPayload{body: map[string]any{"t": "y"}}); err != nil {
+		t.Fatalf("delivery after the slot freed: %v", err)
+	}
+}
+
+// TestWebhookRoutes_BusyIsRetryable pins the wire contract for a shed delivery:
+// 503 with Retry-After, not a 4xx a producer would treat as permanent.
+func TestWebhookRoutes_BusyIsRetryable(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeWebhookError(rec, "intake", errWebhookBusy)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503", rec.Code)
+	}
+	if got := rec.Header().Get("Retry-After"); got == "" {
+		t.Error("Retry-After is unset; a producer cannot back off correctly")
 	}
 }

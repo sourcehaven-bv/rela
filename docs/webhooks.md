@@ -136,7 +136,28 @@ That last row is a real limitation, not a theoretical one — it is reproduced b
 `rela-server` processes against one PostgreSQL database and rely on
 `append_section`, be aware that a simultaneous delivery to the *same* entity from
 two processes can drop one line. Property `set:` steps are unaffected (they merge
-server-side). A server-side append mode is the planned fix.
+server-side).
+
+The planned fix is store-level optimistic concurrency (TKT-34XS2R): an
+expected-version carried into the update, so an append becomes a real
+compare-and-swap and the loser retries instead of overwriting. That also removes
+this path's dependence on the in-process write lock. Until then, the safe
+configuration for a multi-process deployment is to prefer `set:` steps over
+`append_section`, or to run a single writer.
+
+## Load shedding
+
+At most 8 deliveries run at once, across all hooks. Beyond that a delivery is
+refused with **503** and a `Retry-After` header rather than queued.
+
+The bound exists because this endpoint is unauthenticated by rela (the proxy in
+front owns that), and each delivery takes the process-wide write lock — so an
+unbounded flood would stall every other writer, including the UI. Shedding early
+is better than a slow success the producer has already timed out on.
+
+Producers should treat 503 as retryable and honor `Retry-After`. Icinga does
+not retry at all, so pair it with a NotificationCommand that does
+(`curl --retry`).
 
 ## Delivery loss is the sender's to solve
 

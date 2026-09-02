@@ -120,6 +120,7 @@ func (a *App) NewRouter() http.Handler {
 	// unreachable behind the SPA catch-all (BUG-F3ADZO).
 	registerDeclarativeWebhookRoutes(mux, &webhookRouter{
 		state: a.State, write: a.write, rawStore: a.store,
+		admit: make(chan struct{}, webhookMaxInFlight),
 	})
 
 	// Operator customisation assets from the project's custom/ directory —
