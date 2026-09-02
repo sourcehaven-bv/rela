@@ -1,5 +1,5 @@
 ---
 from: BUG-E9DYW5
-type: adds-measure
+relation: adds-measure
 to: AM-feed-field-redaction
 ---

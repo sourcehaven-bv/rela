@@ -277,6 +277,15 @@ Load-bearing details:
   for *every* request, so every principal would look unmatched and be
   rejected). Setting `reject` without them is a **load error**, not a
   runtime foot-gun.
+- **`reject` also needs a wired JWT gate.** It keys on identity having
+  come from the fail-closed JWT gate, so a deployment that sets `reject`
+  without wiring one gets a key with **no effect** — unmatched principals
+  are treated as `anonymous`, exactly as before the key was added. This
+  cannot be a load error like the lookup requirement above, because
+  `acl.yaml` cannot see server wiring; rela logs a warning at startup
+  instead, naming which of the two conditions is missing. If you
+  configured `reject` and writes are still going through, check that
+  warning first.
 - **`provision` additionally requires the `system:provisioner` grant.**
   The stub create is ACL-authorized like any other write, so the policy
   must grant `system:provisioner` `create` on the `user_entity_type`. The

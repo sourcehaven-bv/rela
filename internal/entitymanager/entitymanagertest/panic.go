@@ -1,24 +1,27 @@
-// Package entitymanagertest provides test doubles for the
-// entitymanager.EntityManager interface.
+// Package entitymanagertest provides test doubles for the entity-manager
+// write path.
 //
-// PanicOnUse satisfies the interface but panics from every method. Wire it
-// into tests that need to construct a writer runtime (which requires a
-// non-nil EntityManager) but exercise only read paths — an accidental
-// mutation will fail loudly instead of silently no-oping.
+// PanicOnUse panics from every method. Wire it into tests that need to
+// construct a writer runtime (which requires a non-nil write handle) but
+// exercise only read paths — an accidental mutation will fail loudly instead
+// of silently no-oping.
 package entitymanagertest
 
 import (
 	"context"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 )
 
-// PanicOnUse is an entitymanager.EntityManager whose every method panics.
-// Use it when a test's code path should never reach a mutation.
+// PanicOnUse is a write handle whose every method panics. Use it when a
+// test's code path should never reach a mutation.
+//
+// It keeps the FULL nine-method set that entitymanager.Manager exposes, even
+// though no single consumer needs all of them: since TKT-IVSJV6 each consumer
+// declares its own narrow write interface at its call site, and a superset
+// satisfies every one of them structurally. Dropping a method here would
+// silently stop this double from being wirable somewhere.
 type PanicOnUse struct{}
-
-var _ entitymanager.EntityManager = PanicOnUse{}
 
 func (PanicOnUse) CreateEntity(context.Context, *entity.Entity,
 	entity.CreateOptions) (*entity.CreateResult, error) {

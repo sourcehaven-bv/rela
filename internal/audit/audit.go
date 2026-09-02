@@ -68,6 +68,23 @@ const (
 	//nolint:gosec // G101 false positive: an audit op name, not a credential.
 	OpACLBypassRead = "acl-bypass-read"
 
+	// OpACLQuery records an execution of an effective-access query
+	// (`rela acl who-can`) — a read that produces a confidentiality
+	// attestation: who may act on an entity, and by which roles, groups and
+	// graph edges (TKT-M86UY8, CONTROL-8-15).
+	//
+	// Subject names the entity queried; Summary carries the verb. The RESULT
+	// is deliberately NOT recorded: the answer is a list of principals and
+	// the routes by which they hold access, and copying that into the audit
+	// log would duplicate the disclosure rather than record it — the same
+	// rule OpACLBypassRead applies to elevated reads.
+	//
+	// Worth logging because the output is exactly the reconnaissance an
+	// attacker with shell access wants before choosing a target, and exactly
+	// the question an investigator asks afterwards. Isolate with
+	// `op == "acl-query"`.
+	OpACLQuery = "acl-query"
+
 	// OpHistoryReveal records that a holder of acl.PermHistoryReadRedacted
 	// read a historical entity version with the redaction OVERRIDDEN --
 	// TKT-LVSPSB. The permission exists so a small audited group can see

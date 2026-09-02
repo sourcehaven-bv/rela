@@ -113,7 +113,7 @@ type Services struct {
 	// the pgstore-native implementation on the postgres build.
 	visibleSearcher search.VisibleSearcher
 	userState       userstate.Store
-	entityManager   entitymanager.EntityManager
+	entityManager   *entitymanager.Manager
 	tracer          tracer.Tracer
 	validator       validator.Validator
 	templater       templating.Templater
@@ -230,7 +230,15 @@ func newUserState(st store.Store, kv state.KV) userstate.Store {
 func (s *Services) UserState() userstate.Store { return s.userState }
 
 // EntityManager returns the production write path.
-func (s *Services) EntityManager() entitymanager.EntityManager { return s.entityManager }
+//
+// The concrete *[entitymanager.Manager], not an interface: it is the sole
+// implementation, and handing out the concrete type lets each consumer
+// declare its own narrow write interface at its call site (CLAUDE.md
+// "interfaces at the call site") and be satisfied structurally, with no
+// wiring change here. It is also what lets internal/cli assert the
+// id-preserving sync applier against a concrete type rather than
+// interface-to-interface (TKT-IVSJV6).
+func (s *Services) EntityManager() *entitymanager.Manager { return s.entityManager }
 
 // ACL returns the authorization gate wired into entitymanager. Exposed
 // so entry points (rela-server) can render operator warnings based on
@@ -430,7 +438,7 @@ func scriptTracer(
 
 // LuaWriteDeps materializes the read-write Lua capability bundle with
 // UNRESTRICTED reads (see [Services.LuaReadDeps] for when that is right).
-// EntityManager goes in as the wide entitymanager.EntityManager; the
+// EntityManager goes in as the concrete *entitymanager.Manager; the
 // lua.WriteDeps.EntityManager field is narrower (lua.Mutator) and
 // accepts any structural match.
 func (s *Services) LuaWriteDeps() lua.WriteDeps {
@@ -623,7 +631,7 @@ type Collaborators struct {
 	// correct implementation for every in-process store. Only wire it
 	// explicitly to exercise a native implementation.
 	VisibleSearcher search.VisibleSearcher
-	EntityManager   entitymanager.EntityManager
+	EntityManager   *entitymanager.Manager
 	Tracer          tracer.Tracer
 	Validator       validator.Validator
 	Templater       templating.Templater

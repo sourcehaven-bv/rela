@@ -1,5 +1,5 @@
 ---
 from: TKT-MF1CWZ
-type: has-docs
+relation: has-docs
 to: DOCS-CDV003
 ---

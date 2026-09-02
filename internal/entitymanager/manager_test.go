@@ -65,6 +65,18 @@ relations:
     label: HasChecklist
     from: [requirement]
     to: [checklist]
+  informed-by:
+    label: InformedBy
+    from: [requirement]
+    to: [decision]
+  supersedes:
+    label: Supersedes
+    from: [requirement]
+    to: [decision]
+  covers:
+    label: Covers
+    from: [checklist]
+    to: [decision]
 types:
   status:
     values: [draft, proposed, accepted]

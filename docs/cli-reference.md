@@ -1279,6 +1279,51 @@ $ rela analyze validations
 Found 2 errors, 1 warnings across 2 rules
 ```
 
+#### rela analyze relation-files
+
+Find relation files whose **filename** disagrees with their **content**.
+
+```bash
+rela analyze relation-files
+```
+
+Relations are stored as `relations/FROM--TYPE--TO.md`, and rela indexes them
+**by filename**. If a file is renamed or hand-edited so that its name and its
+`from` / `relation` / `to` frontmatter describe different relations, the
+relation the content describes does not exist as far as the graph is concerned
+— while the one the filename describes points at entities that may not.
+
+The symptom shows up somewhere else entirely: `analyze cardinality` reports the
+correctly-referenced entity as having zero relations, with nothing pointing back
+at the offending file. This check names the file directly.
+
+It reports three kinds of problem:
+
+| Finding | Meaning |
+| --- | --- |
+| filename and content describe different relations | The store indexed the _filename_ triple; the relation the content describes is not in the graph. |
+| filename is not `FROM--TYPE--TO` | The store skips the file entirely — the relation does not exist at all. |
+| legacy `type:` key | The frontmatter spells the relation type `type:` instead of `relation:`. The store reads only `relation:`, so the relation loads with an **empty type** while the index says otherwise. |
+
+**Example output:**
+
+```text
+$ rela analyze relation-files
+⚠ relations/A--doet--FN-8Q7E.md: indexed as "A--doet--FN-8Q7E"
+  but content says "A--doet--FN-0Q7E"
+⚠ relations/B--covers--FEAT-x.md: uses `type:` instead of `relation:`
+  — loads with an EMPTY relation type
+⚠ Found 2 relation file(s) with filename/content problems
+```
+
+To fix a mismatch, rename the file to match its content (or correct the content
+to match the name — whichever is right for that relation). To fix a legacy
+`type:` key, rename the key to `relation:`; the value is already correct.
+
+Renaming an entity through rela keeps filename and content in step
+automatically; this check exists for files that were moved, hand-edited, or
+merged outside it.
+
 #### rela analyze properties
 
 Validate entity property values against the metamodel schema.

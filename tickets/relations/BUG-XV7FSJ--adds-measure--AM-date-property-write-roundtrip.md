@@ -1,5 +1,5 @@
 ---
 from: BUG-XV7FSJ
-type: adds-measure
+relation: adds-measure
 to: AM-date-property-write-roundtrip
 ---
