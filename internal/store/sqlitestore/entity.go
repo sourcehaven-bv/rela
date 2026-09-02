@@ -200,6 +200,58 @@ func (s *Store) UpdateEntity(ctx context.Context, e *entity.Entity) error {
 	return nil
 }
 
+// UpdateEntityIf implements the compare-and-swap write (TKT-34XS2R).
+//
+// The compare cannot be a SQL predicate: the version is a hash over DECODED
+// properties (see [store.VersionOf]), and the stored `properties` column is
+// JSON whose byte encoding is not canonical — two encodings of the same map
+// would compare unequal, so a `WHERE version = ?` would reject writes that
+// ought to succeed. The read and the write therefore run inside one
+// transaction instead.
+//
+// That transaction is what makes this atomic rather than a check-then-write:
+// Tx opens with BEGIN IMMEDIATE, taking SQLite's write lock up front, so no
+// other writer can land between the read and the UPDATE. Nesting is safe — a
+// call from inside an existing Tx joins it (see [Store.Tx]).
+//
+// Note sqlitestore is single-process by construction (DEC-LFSYNY takes an
+// exclusive sidecar lock on open), so the cross-process case pgstore must
+// handle cannot arise here. The CAS is still load-bearing for concurrent
+// goroutines within the one permitted process.
+func (s *Store) UpdateEntityIf(
+	ctx context.Context, e *entity.Entity, cond store.UpdateCondition,
+) (store.EntityVersion, error) {
+	if cond.IsZero() {
+		return store.VersionOf(e), s.UpdateEntity(ctx, e)
+	}
+
+	var version store.EntityVersion
+	err := s.Tx(ctx, func(tx store.Store) error {
+		view, ok := tx.(*Store)
+		if !ok { // unreachable: Tx always hands back our own view type
+			return errors.New("sqlitestore: unexpected transaction view type")
+		}
+		current, gErr := view.GetEntity(ctx, e.ID)
+		if gErr != nil {
+			return gErr // already ErrNotFound-wrapped by GetEntity
+		}
+		if actual := store.VersionOf(current); actual != cond.ExpectedVersion {
+			return &store.VersionConflictError{
+				ID: e.ID, Expected: cond.ExpectedVersion, Actual: actual,
+			}
+		}
+		if uErr := view.UpdateEntity(ctx, e); uErr != nil {
+			return uErr
+		}
+		version = store.VersionOf(e)
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return version, nil
+}
+
 // DeleteEntity refuses an entity with relations unless cascade is set. The
 // stress test tolerates ErrNotFound and ErrHasRelations here and nothing
 // else, so both must be reported precisely.
