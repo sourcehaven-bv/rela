@@ -7,7 +7,7 @@ priority: high
 effort: l
 tags:
     - needs-design
-status: ready
+status: backlog
 ---
 
 Declarative webhook interpolation ([[TKT-1EM4KL]]) cannot index into JSON
