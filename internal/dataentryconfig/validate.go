@@ -1902,6 +1902,8 @@ func validateActions(cfg *Config, meta *metamodel.Metamodel) []string {
 			}
 		}
 
+		errs = append(errs, validateActionRequest(id, action, hasScript)...)
+
 		// Key validation (optional — only required when referenced by a list)
 		if action.Key != "" {
 			if !actionKeyRegex.MatchString(action.Key) {
