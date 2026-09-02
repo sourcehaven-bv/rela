@@ -204,13 +204,19 @@ func RunCASTests(t *testing.T, f Factory) {
 		const appenders = 8
 		const maxAttempts = 200 // generous: contention is the point, not the budget
 
+		// No trailing newline in the marker: fsstore round-trips the body
+		// through markdown, which normalizes trailing whitespace. That is a
+		// storage-format detail and NOT part of the CAS contract, so the
+		// assertion must not depend on it.
+		marker := func(i int) string { return fmt.Sprintf("[line-%d]", i) }
+
 		var wg sync.WaitGroup
 		errs := make([]error, appenders)
 		for i := range appenders {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				line := fmt.Sprintf("line-%d\n", i)
+				line := marker(i)
 				for attempt := 0; attempt < maxAttempts; attempt++ {
 					cur, err := s.GetEntity(ctx(), e.ID)
 					if err != nil {
@@ -241,7 +247,7 @@ func RunCASTests(t *testing.T, f Factory) {
 		got, err := s.GetEntity(ctx(), e.ID)
 		require.NoError(t, err)
 		for i := range appenders {
-			assert.Containsf(t, got.Content, fmt.Sprintf("line-%d\n", i),
+			assert.Containsf(t, got.Content, marker(i),
 				"appender %d's write was lost despite CAS", i)
 		}
 	})
