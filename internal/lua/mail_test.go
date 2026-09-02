@@ -40,6 +40,15 @@ func (s *recordingMailSender) messages() []MailMessage {
 	return out
 }
 
+// allowAnySender wraps a sender with an allow-any recipients policy, so tests
+// about the SEND path are not also testing the allowlist. The allowlist has its
+// own suite; see mailrecipients_test.go.
+type allowAnySender struct{ MailSender }
+
+func (allowAnySender) RecipientPolicy() RecipientPolicy {
+	return RecipientPolicy{Configured: true, AllowAny: true}
+}
+
 // newMailRuntime builds a reader runtime with the given sender wired and the
 // `mail` capability GRANTED.
 //
@@ -54,7 +63,12 @@ func newMailRuntime(t *testing.T, sender MailSender) (*Runtime, *strings.Builder
 	var sb strings.Builder
 	opts := []Option{WithCapabilities(Capabilities{Mail: true})}
 	if sender != nil {
-		opts = append(opts, WithMailSender(sender))
+		// allowAnySender because these tests are about the SEND path, not the
+		// allowlist — which has its own suite in mailrecipients_test.go.
+		// Without it every one of them would fail on the deny-by-default
+		// recipients policy (TKT-USQNA3), testing that instead of what they
+		// are named for.
+		opts = append(opts, WithMailSender(allowAnySender{sender}))
 	}
 	rt := NewReader(ReadDeps{}, &sb, opts...)
 	t.Cleanup(rt.Close)
@@ -261,7 +275,7 @@ func TestMailSend_DeniedWithoutCapability(t *testing.T) {
 
 	sender := &recordingMailSender{}
 	var sb strings.Builder
-	rt := NewReader(ReadDeps{}, &sb, WithMailSender(sender))
+	rt := NewReader(ReadDeps{}, &sb, WithMailSender(allowAnySender{sender}))
 	t.Cleanup(rt.Close)
 
 	require.NoError(t, rt.RunString(`
@@ -299,7 +313,7 @@ func TestMailSend_SendsWithCapability(t *testing.T) {
 
 	sender := &recordingMailSender{}
 	rt := NewReader(ReadDeps{}, &bytes.Buffer{},
-		WithMailSender(sender),
+		WithMailSender(allowAnySender{sender}),
 		WithCapabilities(Capabilities{Mail: true}))
 	t.Cleanup(rt.Close)
 
@@ -405,7 +419,7 @@ func TestMailSend_OnWriterRuntime(t *testing.T) {
 
 	sender := &recordingMailSender{}
 	rt := NewWriter(WriteDeps{EntityManager: &recordingMutator{}}, &bytes.Buffer{},
-		WithMailSender(sender),
+		WithMailSender(allowAnySender{sender}),
 		WithCapabilities(Capabilities{Mail: true}))
 	t.Cleanup(rt.Close)
 

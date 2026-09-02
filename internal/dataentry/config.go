@@ -46,6 +46,7 @@ type (
 	FilterControl    = dataentryconfig.FilterControl
 	Kanban           = dataentryconfig.Kanban
 	Calendar         = dataentryconfig.Calendar
+	Gantt            = dataentryconfig.Gantt
 	CalendarSource   = dataentryconfig.CalendarSource
 	KanbanColumn     = dataentryconfig.KanbanColumn
 	KanbanSwimlane   = dataentryconfig.KanbanSwimlane

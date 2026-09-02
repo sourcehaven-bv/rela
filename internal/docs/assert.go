@@ -247,7 +247,10 @@ func hasField(tbl *lua.LTable, key string) bool {
 //
 // Rejecting unknown keys is safe here because these tables are a closed
 // vocabulary — an assertion has no user-extensible options.
-func rejectUnknownKeys(dr *docRuntime, ls *lua.LState, verb string, tbl *lua.LTable, known ...string) bool {
+//
+// It takes a [luaFailer] rather than the whole runtime so the Tier-B bindings,
+// which hold only their own injected capabilities, can share it.
+func rejectUnknownKeys(dr luaFailer, ls *lua.LState, verb string, tbl *lua.LTable, known ...string) bool {
 	allowed := make(map[string]bool, len(known))
 	for _, k := range known {
 		allowed[k] = true

@@ -810,6 +810,34 @@ export class FormPage extends BasePage {
     return (await err.count()) > 0 ? err.innerText() : "";
   }
 
+  /** The inline validation error rendered under a field, or '' when none.
+   *  FieldShell renders `.field-error` for every field type, file included. */
+  async fieldErrorText(property: string): Promise<string> {
+    const err = this.page.locator(`#field-${property}`).locator("xpath=..").locator(".field-error");
+    return (await err.count()) > 0 ? err.first().innerText() : "";
+  }
+
+  /** Click Create and assert NO create request is issued — the client-side
+   *  required gate should stop it. Waits a beat so a POST that was going to
+   *  fire has time to. */
+  async submitExpectingNoCreate(plural: string) {
+    let posted = false;
+    const listener = (r: { url: () => string; method: () => string }) => {
+      // `?dry_run=true` POSTs the same path on every keystroke to re-derive
+      // create-mode affordances — it persists nothing, so it must not count
+      // as a create here.
+      const url = r.url();
+      if (url.includes(`/api/v1/${plural}`) && !url.includes("dry_run") && r.method() === "POST") {
+        posted = true;
+      }
+    };
+    this.page.on("request", listener);
+    await this.submitButton.first().click();
+    await this.page.waitForTimeout(500);
+    this.page.off("request", listener);
+    expect(posted, "a blocked submit must not POST").toBe(false);
+  }
+
   /** Text of the error toast, waited for. Used by the create-with-attachments
    *  failure path, where the entity IS created but an upload was rejected —
    *  the message is the only thing telling the user which files to re-attach. */

@@ -53,7 +53,7 @@ import (
 // gated/rejected by normal authorization — fail-closed, never fail-open to a
 // forged identity.
 func maybeProvision(
-	ctx context.Context, d *acl.Declarative, m entitymanager.EntityManager, meta metaView,
+	ctx context.Context, d *acl.Declarative, m entityProvisioner, meta metaView,
 ) context.Context {
 	// Fast path: only a verified-but-unmatched principal under a provision
 	// policy does anything. Both are cheap ctx/field reads.
@@ -158,6 +158,18 @@ func buildStubEntity(pol *acl.Policy, meta metaView, p principal.Principal) *ent
 		props["org_slug"] = p.OrgSlug()
 	}
 	return &entity.Entity{Type: pol.UserEntityType, Properties: props}
+}
+
+// entityProvisioner is the narrow write surface maybeProvision needs: creating
+// the stub entity for a verified-but-unmatched principal. Defined at the call
+// site (CLAUDE.md consumer-side interfaces), same rationale as [metaView]
+// below — provisioning creates one entity and does nothing else, so it has no
+// business holding a delete or a rename (TKT-IVSJV6).
+//
+// The create still routes through the manager, so the stub is validated,
+// audited and runs automations exactly like any other entity.
+type entityProvisioner interface {
+	CreateEntity(ctx context.Context, e *entity.Entity, opts entity.CreateOptions) (*entity.CreateResult, error)
 }
 
 // metaView is the narrow schema query maybeProvision needs: whether a property

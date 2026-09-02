@@ -1,5 +1,5 @@
 ---
 from: TKT-DOCASSERT
-type: has-review-response
+relation: has-review-response
 to: RR-DOCA01
 ---

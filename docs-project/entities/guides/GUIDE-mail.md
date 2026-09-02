@@ -288,8 +288,8 @@ if not ok then
 end
 ```
 
-It delivers through whichever transport the project configured, so a script
-cannot reach a destination you did not set up.
+It delivers through whichever transport the project configured, and only to a
+recipient you allowed — see below.
 
 **The script must be granted the `mail` capability.** Mail is an outbound
 channel, so it is gated like `http` and `ai`: a script that was not granted it
@@ -318,6 +318,46 @@ rebooting.
 > entirely: it controls what the **send script** — the one implementing a
 > transport — may reach, and it has no `mail:` key at all, because a script
 > whose whole job is delivering mail is authorized to do so by definition.
+
+### Who may receive mail
+
+`mail.send` takes its `to` from the script, so without a constraint a script
+could address anyone. The `recipients:` block bounds that:
+
+```yaml
+recipients:
+  also_allow:
+    - "*@sourcehaven.nl"     # anyone at your domain
+    - "auditor@example.com"  # a specific outside address
+```
+
+An entry is either a literal address or a whole-domain pattern `*@domain`.
+Nothing else containing `*` is accepted — a partial wildcard like
+`ops-*@example.com` is **refused at load**, because every extra wildcard
+position is another way to write a pattern that admits more than you pictured.
+
+**An absent `recipients:` block denies every address.** That is deliberate, and
+it is the opposite of how the rest of this file behaves — an absent `mail.yaml`
+means mail is off, an absent `port` means 587. Permitting on absence would fail
+silently and irreversibly: mail leaves your ACL perimeter and nobody finds out
+until the recipient replies. Refusing on absence fails loudly and harmlessly —
+you get an error naming the key, and three lines of YAML fixes it. A control
+whose unconfigured state is "allow" is not a control.
+
+If you have decided this constraint is not for you:
+
+```yaml
+recipients:
+  allow_any: true
+```
+
+That must be a deliberate line. It is never a default, never inferred from an
+empty block, and never reached by omission — so it stays greppable when someone
+reviews the config.
+
+A denied send returns `err.kind == "recipient_denied"` and names the address it
+refused. It does not list what *is* allowed: one denied send should not hand a
+script every address on your allowlist.
 
 ## Delivery is best-effort
 

@@ -310,12 +310,26 @@ func (d *Desktop) GenerateDataEntryConfig(appName string) string {
 	return d.LoadProject(dir)
 }
 
-// GetDefaultCloneDir returns the default directory for cloning repositories.
+// GetDefaultCloneDir returns the default directory for cloning repositories,
+// or "" when there is no home directory to derive one from.
+//
+// The empty return is deliberate. Discarding the os.UserHomeDir error left
+// homeDir == "" and returned the RELATIVE path "rela-projects", which
+// containedPath then resolves against the process working directory — so the
+// clone lands somewhere the user never chose. Containment still holds (it is a
+// real base), which is what makes it easy to miss: the guard passes while the
+// destination is wrong. Returning "" instead makes CloneProject refuse rather
+// than guess, matching the reasoning on git.CloneOptions.BaseDir that a
+// silently-relocated boundary is a different surprise, not a smaller one
+// (TKT-S2SFTG).
 func (d *Desktop) GetDefaultCloneDir() string {
 	if d.prefs.CloneDir != "" {
 		return d.prefs.CloneDir
 	}
-	homeDir, _ := os.UserHomeDir()
+	homeDir, err := os.UserHomeDir()
+	if err != nil || homeDir == "" {
+		return ""
+	}
 	return filepath.Join(homeDir, "rela-projects")
 }
 
@@ -352,12 +366,10 @@ func (d *Desktop) CloneProject(repoURL, baseDir string) map[string]any {
 	if baseDir == "" {
 		baseDir = d.GetDefaultCloneDir()
 	}
+	if baseDir == "" {
+		return map[string]any{"error": "Could not determine a clone directory. Choose one explicitly."}
+	}
 	targetDir := filepath.Join(baseDir, repoName)
-
-	// Store clone dir for later use
-	d.mu.Lock()
-	d.lastCloneDir = targetDir
-	d.mu.Unlock()
 
 	// repoName is the URL's last path segment, so a hostile URL can make it
 	// ".." — BaseDir makes Clone reject a targetDir that escapes baseDir.
@@ -370,6 +382,14 @@ func (d *Desktop) CloneProject(repoURL, baseDir string) map[string]any {
 	if err != nil {
 		return map[string]any{"error": fmt.Sprintf("Clone failed: %v", err)}
 	}
+
+	// Cached only AFTER Clone validates containment (TKT-S2SFTG). Caching
+	// before meant a REJECTED traversal still left the escaping path in app
+	// state, where InitRelaProject would later MkdirAll it — so containment
+	// stopped the clone and the poisoned value walked around it.
+	d.mu.Lock()
+	d.lastCloneDir = targetDir
+	d.mu.Unlock()
 
 	// Scan for rela projects (directories containing a schema file)
 	projects := scanForRelaProjects(targetDir)

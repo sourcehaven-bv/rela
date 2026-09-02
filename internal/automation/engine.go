@@ -228,7 +228,7 @@ func (e *Engine) SetTemplateVars(vars TemplateVars) {
 func (e *Engine) Process(ctx context.Context, event Event) *Result {
 	result := &Result{
 		PropertiesSet:     make(map[string]string),
-		RelationsToCreate: make([]*entity.Relation, 0),
+		RelationsToCreate: make([]RelationToCreate, 0),
 		EntitiesToCreate:  make([]EntityToCreate, 0),
 		LuaToExecute:      make([]LuaToExecute, 0),
 		Warnings:          make([]string, 0),
@@ -394,7 +394,8 @@ func (e *Engine) executeAction(action Action, event Event, result *Result, autom
 		targetID := e.interpolate(action.CreateRelation.To, event)
 		if targetID != "" && event.Entity != nil {
 			rel := entity.NewRelation(event.Entity.ID, action.CreateRelation.Relation, targetID)
-			result.RelationsToCreate = append(result.RelationsToCreate, rel)
+			result.RelationsToCreate = append(result.RelationsToCreate,
+				RelationToCreate{Relation: rel, AutomationName: automationName})
 		}
 	}
 
@@ -432,6 +433,7 @@ func (e *Engine) executeAction(action Action, event Event, result *Result, autom
 			Properties:          props,
 			RelationFromTrigger: action.CreateEntity.Relation,
 			IfExists:            ifExists,
+			AutomationName:      automationName,
 		})
 	}
 
