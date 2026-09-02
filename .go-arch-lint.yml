@@ -13,6 +13,7 @@ exclude:
   - internal/jobs/jobstest
   - internal/mail/mailtest
   - internal/userstate/userstatetest
+  - internal/comments/commentstest
   - internal/schedulerstate/schedulerstatetest
   - frontend
   - e2e
@@ -118,6 +119,9 @@ components:
   nextaction:       { in: internal/nextaction }
   memuserstate:     { in: internal/userstate/memuserstate }
   kvuserstate:      { in: internal/userstate/kvuserstate }
+  comments:         { in: internal/comments }
+  memcomments:      { in: internal/comments/memcomments }
+  filecomments:     { in: internal/comments/filecomments }
   schedulerstate:   { in: internal/schedulerstate }
   kvschedstate:     { in: internal/schedulerstate/kvstate }
   pattern:          { in: internal/pattern }
@@ -1014,6 +1018,28 @@ deps:
     mayDependOn:
       - state
       - userstate
+  # comments is user commentary ABOUT entities, not graph content — a remark on
+  # a property is not a fact the operator declared in schema.yaml. It therefore
+  # depends on entity (for the EntityObserver signature it implements) and
+  # principal (to stamp an unforgeable author), but deliberately NOT on store or
+  # entitymanager: routing commentary through the graph write path would drag it
+  # into the audit log, version capture, search and /_schema, none of which are
+  # wanted for a note someone left on a field.
+  comments:
+    mayDependOn:
+      - entity
+      - principal
+  memcomments:
+    mayDependOn:
+      - comments
+  # The default backend writes one YAML document per target through the shared
+  # storage seam, so a thread is diffable like the entities it annotates.
+  filecomments:
+    mayDependOn:
+      - comments
+      - storage
+    canUse:
+      - yaml
   # schedulerstate is the per-task scheduler bookkeeping seam (last successful
   # run, failure count, next retry). Deliberately NOT dependent on store: a
   # last-run stamp is a fact about a deployment's operation, not graph content,
