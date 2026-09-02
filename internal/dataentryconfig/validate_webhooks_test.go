@@ -276,3 +276,107 @@ func TestConfig_WebhooksIsAValidTopLevelKey(t *testing.T) {
 		t.Fatal("`webhooks` must be a recognized top-level data-entry.yaml key")
 	}
 }
+
+// TestValidateWebhooks_StepTypesCoverFindAndCreate pins that a then: step is
+// checked against BOTH the found type and the created type when a hook declares
+// different ones.
+//
+// Checking only one is wrong in both directions: it refuses a legitimate hook
+// whose step targets the created type, and admits a broken one whose step is
+// invalid there — which then fails at request time, defeating the load-error
+// contract.
+func TestValidateWebhooks_StepTypesCoverFindAndCreate(t *testing.T) {
+	meta := &metamodel.Metamodel{Entities: map[string]metamodel.EntityDef{
+		"alpha": {Properties: map[string]metamodel.PropertyDef{
+			"shared": {Type: "string"}, "a_only": {Type: "string"},
+		}},
+		"beta": {Properties: map[string]metamodel.PropertyDef{
+			"shared": {Type: "string"}, "b_only": {Type: "string"},
+		}},
+	}}
+
+	mismatched := func(set map[string]string) Webhook {
+		return Webhook{
+			Find:            &WebhookFind{Type: "alpha", Match: []string{"shared"}},
+			CreateIfMissing: &WebhookCreate{Type: "beta"},
+			Then:            []WebhookStep{{Set: set}},
+		}
+	}
+
+	tests := []struct {
+		name    string
+		set     map[string]string
+		wantErr bool
+	}{
+		{"property on both types is accepted", map[string]string{"shared": "x"}, false},
+		{"property only on the FOUND type is rejected", map[string]string{"a_only": "x"}, true},
+		{"property only on the CREATED type is rejected", map[string]string{"b_only": "x"}, true},
+		{"property on neither type is rejected", map[string]string{"nope": "x"}, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			errs := validateWebhooks(&Config{Webhooks: map[string]Webhook{"h": mismatched(tc.set)}}, meta)
+			if tc.wantErr && len(errs) == 0 {
+				t.Errorf("want a validation error, got none")
+			}
+			if !tc.wantErr && len(errs) > 0 {
+				t.Errorf("want no error, got %v", errs)
+			}
+		})
+	}
+}
+
+// TestValidateWebhooks_ForbiddenHeaderFamilies pins the prefix refusal. The
+// exact-name list was already incomplete once — it named the DOCUMENTED
+// oauth2-proxy spelling while every other proxy's went unprotected.
+func TestValidateWebhooks_ForbiddenHeaderFamilies(t *testing.T) {
+	for _, header := range []string{
+		"Authorization", "Cookie",
+		"X-Forwarded-User", "X-Forwarded-Anything-New",
+		"X-Auth-Request-Email", "X-Remote-Groups",
+		"X-Authentik-Username", "X-Pomerium-Claim-Email",
+	} {
+		t.Run(header, func(t *testing.T) {
+			errs := validateWebhooks(&Config{Webhooks: map[string]Webhook{
+				"h": {Headers: []string{header}, CreateIfMissing: &WebhookCreate{Type: "incident"}},
+			}}, hookTestMeta())
+			if len(errs) == 0 {
+				t.Errorf("header %q was accepted; it carries credentials or a proxy-asserted identity", header)
+			}
+		})
+	}
+
+	// A benign header must still be allowed, or the rule is useless.
+	errs := validateWebhooks(&Config{Webhooks: map[string]Webhook{
+		"h": {Headers: []string{"X-Alert-Source"}, CreateIfMissing: &WebhookCreate{Type: "incident"}},
+	}}, hookTestMeta())
+	if len(errs) > 0 {
+		t.Errorf("benign header rejected: %v", errs)
+	}
+}
+
+// TestForbidWebhookHeader_RegistersDeploymentPrincipalHeader pins the
+// wiring-time hook: the deployment's own -principal-header is an arbitrary
+// string the static list cannot name, yet it is the header most certain to
+// carry an authenticated identity.
+func TestForbidWebhookHeader_RegistersDeploymentPrincipalHeader(t *testing.T) {
+	const custom = "X-Pratique-User"
+	t.Cleanup(func() { delete(extraForbiddenWebhookHeaders, strings.ToLower(custom)) })
+
+	before := validateWebhooks(&Config{Webhooks: map[string]Webhook{
+		"h": {Headers: []string{custom}, CreateIfMissing: &WebhookCreate{Type: "incident"}},
+	}}, hookTestMeta())
+	if len(before) != 0 {
+		t.Fatalf("precondition: %q should be accepted before registration, got %v", custom, before)
+	}
+
+	ForbidWebhookHeader(custom)
+
+	after := validateWebhooks(&Config{Webhooks: map[string]Webhook{
+		"h": {Headers: []string{custom}, CreateIfMissing: &WebhookCreate{Type: "incident"}},
+	}}, hookTestMeta())
+	if len(after) == 0 {
+		t.Errorf("%q was accepted after ForbidWebhookHeader registered it", custom)
+	}
+}

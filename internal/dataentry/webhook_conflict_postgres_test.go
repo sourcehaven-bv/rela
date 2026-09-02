@@ -4,6 +4,7 @@ package dataentry
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -248,34 +249,84 @@ func TestWebhookConflict_LoserRefindsAndProceeds(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close(); _ = closer.Close() })
 	reconcileUnique(t, st, meta)
 
-	const key = "shared-alert-key"
+	hooks := map[string]dataentryconfig.Webhook{
+		"alert": {
+			Find: &dataentryconfig.WebhookFind{
+				Type:  "incident",
+				Match: []string{"alert_key"},
+				// The payload field is "key", not "alert_key", so the match
+				// must say so; the default would read {{body.alert_key}}, find
+				// nothing, and create a duplicate on every delivery.
+				Values: map[string]string{"alert_key": "{{body.key}}"},
+			},
+			CreateIfMissing: &dataentryconfig.WebhookCreate{
+				Type: "incident",
+				Properties: map[string]string{
+					"title":     "{{body.title}}",
+					"alert_key": "{{body.key}}",
+					"status":    "open",
+				},
+			},
+		},
+	}
+	app := newPostgresHookApp(t, st, hooks)
+	router := app.NewRouter()
 
-	// The winner is already stored, exactly as it would be when a racing
-	// delivery lost the create.
-	winner := entity.New("INC-WINNER", "incident")
-	winner.Properties = map[string]any{"title": "web01/http", "alert_key": key, "status": "open"}
-	require.NoError(t, st.CreateEntity(ctx, winner))
+	// Two deliveries for the SAME alert_key, concurrent. One wins the create;
+	// the other must LOSE on the unique constraint, re-find the winner, and
+	// still answer 200 carrying the winner's id.
+	//
+	// Driving the real router is the point. The previous version of this test
+	// called st.CreateEntity directly and asserted the store's behaviour, so it
+	// could not observe that the pipeline never recognises the conflict — which
+	// is exactly the defect it was supposed to guard (RR-HI9QIU / RR-SG8P1N).
+	const deliveries = 8
+	var wg sync.WaitGroup
+	codes := make([]int, deliveries)
+	ids := make([]string, deliveries)
+	start := make(chan struct{})
 
-	// The loser attempts the same create and must be rejected atomically...
-	loser := entity.New("INC-LOSER", "incident")
-	loser.Properties = map[string]any{"title": "web01/http", "alert_key": key, "status": "open"}
-	createErr := st.CreateEntity(ctx, loser)
+	for i := range deliveries {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			body := `{"title":"web01/http","key":"shared-alert-key"}`
+			req := httptest.NewRequest(http.MethodPost, "/hooks/alert", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Host = "127.0.0.1:8080"
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+			codes[i] = rec.Code
+			var resp struct {
+				EntityID string `json:"entity_id"`
+			}
+			_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+			ids[i] = resp.EntityID
+		}()
+	}
+	close(start)
+	wg.Wait()
 
-	var unique store.UniquePropertyError
-	require.ErrorAs(t, createErr, &unique,
-		"the loser must get UniquePropertyError so the pipeline knows to re-find")
+	// Every delivery must succeed: the loser's whole purpose is to re-find and
+	// proceed rather than surface the race to the producer. Icinga never
+	// retries, so a 5xx here is a permanently lost alert.
+	for i, code := range codes {
+		require.Equalf(t, http.StatusOK, code,
+			"delivery %d got %d; a create-conflict loser must re-find and proceed", i, code)
+	}
 
-	// ...and the re-find that the pipeline performs must locate the winner, so
-	// the delivery proceeds as an update instead of being lost.
-	var found *entity.Entity
+	// Exactly one entity, and every delivery reports the same id.
+	var stored []*entity.Entity
 	for e, listErr := range st.ListEntities(ctx, store.EntityQuery{Type: "incident"}) {
 		require.NoError(t, listErr)
-		if e.Properties["alert_key"] == key {
-			found = e
-		}
+		stored = append(stored, e)
 	}
-	require.NotNil(t, found, "the re-find must locate the winner")
-	require.Equal(t, "INC-WINNER", found.ID)
+	require.Len(t, stored, 1, "the unique constraint must admit exactly one incident")
+	for i, id := range ids {
+		require.Equalf(t, stored[0].ID, id,
+			"delivery %d reported %q but the stored entity is %q", i, id, stored[0].ID)
+	}
 }
 
 // TestWebhookConflict_BlindUpdateLosesAppends documents WHY applyWebhookSteps

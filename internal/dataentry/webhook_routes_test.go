@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -604,5 +605,81 @@ func TestWebhookRoutes_AppendSectionCreatesMissingSection(t *testing.T) {
 	}
 	if !strings.Contains(got.Content, "Just a summary") {
 		t.Errorf("original body lost; body = %q", got.Content)
+	}
+}
+
+// TestWebhookRoutes_AppendSectionFlattensNewlines pins that a payload cannot
+// emit its own markdown structure into a section it was scoped to.
+//
+// The operator's template is one line; without flattening, a newline in the
+// value lets the payload plant a sibling heading, so every later delivery
+// targeting that section lands above it and the document silently reshapes.
+func TestWebhookRoutes_AppendSectionFlattensNewlines(t *testing.T) {
+	app := newHookTestApp(t, map[string]dataentryconfig.Webhook{
+		"alert": {
+			Find: &dataentryconfig.WebhookFind{
+				Type:   "ticket",
+				Match:  []string{"title"},
+				Values: map[string]string{"title": "{{body.title}}"},
+			},
+			CreateIfMissing: &dataentryconfig.WebhookCreate{
+				Type:       "ticket",
+				Properties: map[string]string{"title": "{{body.title}}"},
+			},
+			Then: []dataentryconfig.WebhookStep{{
+				AppendSection: &dataentryconfig.WebhookAppendSection{
+					Section: "Notifications", Content: "- {{body.msg}}",
+				},
+			}},
+		},
+	})
+
+	const evil = "first\n\n## Injected\n\n<script>alert(1)</script>"
+	body, err := json.Marshal(map[string]string{"title": "T", "msg": evil})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/hooks/alert", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Host = "127.0.0.1:8080"
+	rec := httptest.NewRecorder()
+	app.NewRouter().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	tickets := listTickets(t, app)
+	if len(tickets) != 1 {
+		t.Fatalf("got %d tickets, want 1", len(tickets))
+	}
+	content := tickets[0].Content
+
+	// The payload's heading must not have become a real heading.
+	for line := range strings.SplitSeq(content, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "## Injected") {
+			t.Errorf("payload planted a sibling heading:\n%s", content)
+		}
+	}
+	// The text is still there — flattened, not dropped. Losing an alert would
+	// be worse than storing it on one line.
+	if !strings.Contains(content, "Injected") {
+		t.Errorf("content was dropped rather than flattened:\n%s", content)
+	}
+	if !strings.Contains(content, "first") {
+		t.Errorf("leading value lost:\n%s", content)
+	}
+}
+
+// TestWebhookRoutes_ResponseIsNoStore pins the cache header: the body names an
+// entity id, and this route is outside /api/ where noCacheMiddleware runs.
+func TestWebhookRoutes_ResponseIsNoStore(t *testing.T) {
+	app := newHookTestApp(t, map[string]dataentryconfig.Webhook{
+		"intake": {CreateIfMissing: &dataentryconfig.WebhookCreate{
+			Type: "ticket", Properties: map[string]string{"title": "{{body.t}}"},
+		}},
+	})
+	rec := postHook(t, app, "intake", `{"t":"x"}`)
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q, want %q", got, "no-store")
 	}
 }

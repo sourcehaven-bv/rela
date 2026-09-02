@@ -264,4 +264,10 @@ miss. A hook whose principal cannot see the matching entity will therefore
 *create* a new one rather than silently updating an invisible row.
 
 Writes go through `entitymanager`, so they are audited like any other write and
-attributed to `webhook:<hook-id>`.
+attributed to `system:webhook:<hook-id>`.
+
+The `system:` prefix is deliberate. A hook is granted its write rights in
+`acl.yaml`, so its principal is both grantable and privileged — exactly what
+`principal.IsReserved` protects. Reserving it stops a caller asserting
+`system:webhook:my-hook` through `-principal-header` on the ordinary API and
+inheriting the hook's grants.

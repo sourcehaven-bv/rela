@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -43,6 +44,66 @@ var forbiddenWebhookHeaders = map[string]bool{
 	"x-auth-request-email":           true,
 	"x-auth-request-access-token":    true,
 	"x-remote-user":                  true,
+	// Other identity-proxy families seen in the wild.
+	"x-authentik-username": true,
+	"x-authentik-email":    true,
+	"x-authentik-groups":   true,
+	"x-vouch-user":         true,
+	"x-vouch-idp-claims":   true,
+}
+
+// forbiddenWebhookHeaderPrefixes refuses whole identity-proxy families rather
+// than named members.
+//
+// The exact-name list above was already incomplete once — it covered
+// `x-forwarded-user` because that is the DOCUMENTED example, while every other
+// proxy's spelling went unprotected. A prefix rule fails safe for the next
+// proxy nobody has heard of yet, at the cost of refusing an occasional benign
+// header an operator would have to rename. That trade is right: the failure
+// mode it prevents is persisting an authenticated identity into entity content
+// as if it were payload data.
+var forbiddenWebhookHeaderPrefixes = []string{
+	"x-forwarded-",
+	"x-auth-request-",
+	"x-remote-",
+	"x-authentik-",
+	"x-pomerium-",
+}
+
+// extraForbiddenWebhookHeaders holds names registered at wiring time, for
+// header names that are only knowable at startup.
+//
+// The deployment's own principal header is the motivating case: it is set by
+// -principal-header (or $RELA_PRINCIPAL_HEADER) to an ARBITRARY name, so the
+// static list above cannot name it. It is also the single header most certain
+// to carry an authenticated identity in that deployment — precisely the one the
+// floor must cover. Registration is process-global because config load has no
+// handle on server flags; that is acceptable for a value fixed at startup.
+var extraForbiddenWebhookHeaders = map[string]bool{}
+
+// ForbidWebhookHeader registers a header name that webhook configs may not
+// expose, in addition to the built-in list. Call it at wiring time, before
+// config load. Case-insensitive; an empty name is ignored.
+func ForbidWebhookHeader(name string) {
+	if name = strings.ToLower(strings.TrimSpace(name)); name != "" {
+		extraForbiddenWebhookHeaders[name] = true
+	}
+}
+
+// isForbiddenWebhookHeader reports whether a header name may not be exposed to
+// a hook's templates. Name is compared lowercase against the exact-name list,
+// the wiring-time registrations, and the family prefixes.
+func isForbiddenWebhookHeader(name string) bool {
+	lower := strings.ToLower(name)
+	if forbiddenWebhookHeaders[lower] || extraForbiddenWebhookHeaders[lower] {
+		return true
+	}
+	for _, prefix := range forbiddenWebhookHeaderPrefixes {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // maxWebhookBodyCap is the ceiling an operator may set for max_body_bytes. A
@@ -160,7 +221,7 @@ func validateWebhookHeaders(id string, hook Webhook) []string {
 				"webhooks: %q header %q is not a valid HTTP header name", id, h))
 			continue
 		}
-		if forbiddenWebhookHeaders[strings.ToLower(h)] {
+		if isForbiddenWebhookHeader(h) {
 			errs = append(errs, fmt.Sprintf(
 				"webhooks: %q may not expose header %q (it carries credentials or a proxy-asserted identity)", id, h))
 		}
@@ -192,11 +253,15 @@ func validateWebhookRespond(id string, hook Webhook) []string {
 func validateWebhookSteps(id string, hook Webhook, meta *metamodel.Metamodel) []string {
 	var errs []string
 
-	// The type steps mutate: the found type, else the created type.
-	stepType := hook.CreateType()
-	if hook.Find != nil {
-		stepType = hook.Find.Type
-	}
+	// A step runs against whichever entity the pipeline ended up with: the FOUND
+	// one, or the one it CREATED. Those can be different types (a hook may find
+	// `alpha` and create `beta`), and a step must therefore be valid on every
+	// type it could reach — checking only one is wrong in both directions. It
+	// rejects a legitimate hook whose step targets the created type, and it
+	// admits a broken one whose step is invalid there, which then fails at
+	// request time. That is precisely what the load-error contract exists to
+	// prevent.
+	stepTypes := webhookStepTypes(hook)
 
 	for i, step := range hook.Then {
 		set := 0
@@ -222,7 +287,10 @@ func validateWebhookSteps(id string, hook Webhook, meta *metamodel.Metamodel) []
 				"webhooks: %q then[%d] append_section requires content", id, i))
 		}
 
-		if len(step.Set) > 0 && stepType != "" {
+		for _, stepType := range stepTypes {
+			if len(step.Set) == 0 || stepType == "" {
+				continue
+			}
 			if def, ok := metaEntityDef(meta, stepType); ok {
 				for _, prop := range sortedKeysOfStringMap(step.Set) {
 					if _, known := def.Properties[prop]; !known {
@@ -234,6 +302,28 @@ func validateWebhookSteps(id string, hook Webhook, meta *metamodel.Metamodel) []
 		}
 	}
 	return errs
+}
+
+// webhookStepTypes returns every entity type a then: step could run against,
+// deduplicated: the found type and the created type, which a find-or-create
+// hook may declare independently.
+//
+// A property named by a step must exist on ALL of them. The pipeline does not
+// know at load time which branch a given delivery will take, so "valid on the
+// type we happen to check" is not a property worth enforcing — the step has to
+// be valid whichever entity it lands on.
+func webhookStepTypes(hook Webhook) []string {
+	var types []string
+	add := func(t string) {
+		if t != "" && !slices.Contains(types, t) {
+			types = append(types, t)
+		}
+	}
+	if hook.Find != nil {
+		add(hook.Find.Type)
+	}
+	add(hook.CreateType())
+	return types
 }
 
 // metaEntityDef looks up an entity definition, tolerating a nil metamodel so

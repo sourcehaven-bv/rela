@@ -16,7 +16,9 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -154,8 +156,19 @@ func (h *webhookRouter) handle(w http.ResponseWriter, r *http.Request, hookID st
 
 	// Attribute the write to the hook rather than to the data-entry default, so
 	// the audit log names which endpoint produced the entity.
+	//
+	// The name is under principal.ReservedPrefix deliberately. A hook is granted
+	// its write rights in acl.yaml — that is the only way it gets any — so this
+	// name is BOTH grantable and privileged, exactly the shape the reserved
+	// namespace exists to protect. Without the prefix, a deployment using
+	// -principal-header would let a caller assert `webhook:icinga-alert` on the
+	// ordinary /api/ surface and inherit the hook's grants, because the ACL
+	// resolves a principal by matching the raw string and cannot tell where it
+	// came from. Reusing the existing prefix inherits principal.IsReserved's
+	// refusal at every request-path entry point rather than adding a second
+	// boundary that must be remembered.
 	ctx = principal.With(ctx, principal.Principal{
-		User: "webhook:" + hookID,
+		User: principal.ReservedPrefix + "webhook:" + hookID,
 		Tool: principal.ToolWebhookReceiver,
 	})
 
@@ -166,6 +179,11 @@ func (h *webhookRouter) handle(w http.ResponseWriter, r *http.Request, hookID st
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	// The response names the entity it wrote, and entity ids are the one
+	// identifier rela treats as secret (hence the uniform 404 on reads). This
+	// route sits outside /api/, so noCacheMiddleware never runs for it — set the
+	// header here rather than relying on a middleware that does not apply.
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(hook.Respond.StatusOrDefault())
 	_ = json.NewEncoder(w).Encode(result)
 }
@@ -457,7 +475,7 @@ func (h *webhookRouter) applySteps(
 	for i, step := range hook.Then {
 		switch {
 		case step.AppendSection != nil:
-			line := payload.interpolate(step.AppendSection.Content)
+			line := flattenToLine(payload.interpolate(step.AppendSection.Content))
 			content = markdown.AppendToSection(content, step.AppendSection.Section, line)
 			contentChanged = true
 		case len(step.Set) > 0:
@@ -496,6 +514,36 @@ func webhookNeedsBody(hook dataentryconfig.Webhook) bool {
 	return false
 }
 
+// flattenToLine collapses newlines and NULs so an interpolated value stays on
+// the single markdown line the operator's template describes.
+//
+// The template author writes a one-line step ("- {{body.msg}}") and the payload
+// decides what lands in it. Without this, a producer-supplied newline lets the
+// payload emit its own markdown structure: a `## Heading` in the value becomes a
+// SIBLING of the section being appended to, so every later delivery targeting
+// that section lands above it and the document silently reshapes itself.
+//
+// It is done HERE and not in [markdown.AppendToSection] because this is where
+// the destination context is known — "one line inside a named section". That
+// function is a general utility whose other callers may legitimately append
+// multi-line markdown. Same reasoning as internal/mail validating CR/LF in
+// caller-supplied header values rather than expecting the SMTP library to.
+//
+// Nil: never returns an error — a value that cannot be represented on one line
+// is flattened, not rejected, because refusing would discard an alert whose
+// producer will not resend it.
+func flattenToLine(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case '\n', '\r':
+			return ' '
+		case 0:
+			return -1
+		}
+		return r
+	}, s)
+}
+
 // isWebhookConflict reports whether err is a write conflict worth retrying: a
 // uniqueness collision on create, or a generic store conflict (the shape a
 // stale-state update surfaces as).
@@ -503,6 +551,25 @@ func isWebhookConflict(err error) bool {
 	var unique store.UniquePropertyError
 	if errors.As(err, &unique) {
 		return true
+	}
+	// A unique violation reaches us as a VALIDATION error, not a store error,
+	// and by two different routes: entitymanager's pre-write scan raises one
+	// directly (no store error exists to wrap), while pgstore's derived index
+	// raises store.UniquePropertyError which the manager then re-presents as
+	// the same 422. Matching on the validation type covers both, and is what
+	// makes the retry loop reachable at all — matching only the store error
+	// left it dead on the path most conflicts actually take.
+	//
+	// Deliberately narrow: ONLY ValidationErrorUnique counts. Any other
+	// validation failure ("status must be one of...") is a genuine rejection
+	// that re-running would reproduce forever, so it must NOT be retried.
+	var invalid *entitymanager.ValidationError
+	if errors.As(err, &invalid) {
+		for _, v := range invalid.Errors {
+			if v.Type == metamodel.ValidationErrorUnique {
+				return true
+			}
+		}
 	}
 	return errors.Is(err, store.ErrConflict)
 }
