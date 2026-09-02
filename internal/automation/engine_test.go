@@ -210,7 +210,7 @@ func TestEngine_CreateRelation(t *testing.T) {
 	if len(result.RelationsToCreate) != 1 {
 		t.Fatalf("expected 1 relation to create, got %d", len(result.RelationsToCreate))
 	}
-	rel := result.RelationsToCreate[0]
+	rel := result.RelationsToCreate[0].Relation
 	if rel.From != entity.ID || rel.Type != "belongs-to" || rel.To != "sprint-current" {
 		t.Errorf("unexpected relation: %+v", rel)
 	}
@@ -1135,5 +1135,49 @@ func TestEngine_LuaFileExtensionPassthrough(t *testing.T) {
 	}
 	if result.LuaToExecute[0].FilePath != "script.txt" {
 		t.Errorf("expected path to be passed through, got: %s", result.LuaToExecute[0].FilePath)
+	}
+}
+
+// TestProcess_TagsResultsWithAutomationName pins the engine half of TKT-JJRVX9:
+// every create_relation / create_entity entry a Result carries names the
+// automation that produced it.
+//
+// Localized on purpose. Without it, a regression here surfaces only three
+// packages away as a wrong `triggered_by` string in an audit assertion, which
+// is a much longer path from symptom to cause.
+//
+// Two automations, one Result: Process aggregates every matching automation
+// into a single Result, so this also pins that the entries do not all take
+// whichever name was processed last.
+func TestProcess_TagsResultsWithAutomationName(t *testing.T) {
+	t.Parallel()
+	engine := NewEngine([]Automation{
+		newAutomation("alpha").
+			OnCreate("ticket").
+			CreateRelation("belongs-to", "sprint-current").
+			Build(),
+		newAutomation("beta").
+			OnCreate("ticket").
+			CreateEntity("checklist", nil).
+			Build(),
+	})
+
+	result := engine.Process(context.Background(), Event{
+		Type:   EventEntityCreated,
+		Entity: buildEntity(testutil.Entity("ticket")),
+	})
+
+	if len(result.RelationsToCreate) != 1 {
+		t.Fatalf("want 1 relation to create, got %d", len(result.RelationsToCreate))
+	}
+	if got := result.RelationsToCreate[0].AutomationName; got != "alpha" {
+		t.Errorf("relation AutomationName: want %q, got %q", "alpha", got)
+	}
+
+	if len(result.EntitiesToCreate) != 1 {
+		t.Fatalf("want 1 entity to create, got %d", len(result.EntitiesToCreate))
+	}
+	if got := result.EntitiesToCreate[0].AutomationName; got != "beta" {
+		t.Errorf("entity AutomationName: want %q, got %q", "beta", got)
 	}
 }

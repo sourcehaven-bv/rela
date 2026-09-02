@@ -128,12 +128,35 @@ const (
 )
 
 // EntityToCreate specifies an entity to be created by automation.
+//
+// AutomationName carries the name of the automation that produced this action,
+// so the cascade can attribute the resulting audit record to it
+// (`automation:<name>`) instead of the generic `automation` label — same
+// rationale as [LuaToExecute.AutomationName], applied to the non-scripted path
+// (TKT-JJRVX9).
 type EntityToCreate struct {
 	Type                string         // Entity type to create
 	Template            string         // Optional: template variant name
 	Properties          map[string]any // Properties for the new entity
 	RelationFromTrigger string         // Optional: relation type from triggering entity
 	IfExists            string         // Behavior when relation exists: skip (default), error, replace
+	AutomationName      string         // Name of the originating automation
+}
+
+// RelationToCreate pairs a relation an automation wants created with the name of
+// the automation that asked for it.
+//
+// The name travels in a struct rather than a parallel []string indexed
+// alongside RelationsToCreate: a parallel slice can drift in length or order
+// with no compile-time signal, and this value crosses a package boundary into
+// autocascade, where a misattributed audit record would be silently wrong
+// (TKT-JJRVX9).
+type RelationToCreate struct {
+	Relation *entity.Relation
+	// AutomationName is the originating automation. Empty when the producer
+	// did not supply one, in which case the cascade keeps the generic
+	// `automation` audit label rather than emitting a dangling `automation:`.
+	AutomationName string
 }
 
 // LuaToExecute specifies Lua code to be executed by the workspace layer.
@@ -168,8 +191,9 @@ type Result struct {
 	// PropertiesSet contains properties that were automatically set.
 	PropertiesSet map[string]string
 
-	// RelationsToCreate contains relations that should be created.
-	RelationsToCreate []*entity.Relation
+	// RelationsToCreate contains relations that should be created, each
+	// tagged with the automation that produced it.
+	RelationsToCreate []RelationToCreate
 
 	// EntitiesToCreate contains entities that should be created.
 	EntitiesToCreate []EntityToCreate

@@ -28,6 +28,7 @@ type AnalyzeCmd struct {
 	Gaps          AnalyzeGapsCmd          `cmd:"" help:"Find gaps in ID sequences."`
 	Cardinality   AnalyzeCardinalityCmd   `cmd:"" help:"Check relation cardinality constraints."`
 	RelationOrder AnalyzeRelationOrderCmd `cmd:"" name:"relation-order" help:"Find duplicate or missing values on managed relation order properties."`
+	RelationFiles AnalyzeRelationFilesCmd `cmd:"" name:"relation-files" help:"Find relation files whose filename disagrees with their content."`
 	Properties    AnalyzePropertiesCmd    `cmd:"" help:"Validate entity property values against metamodel."`
 	Validations   AnalyzeValidationsCmd   `cmd:"" help:"Run custom validation rules from metamodel."`
 	All           AnalyzeAllCmd           `cmd:"" help:"Run all analyses."`
@@ -260,6 +261,54 @@ func (c *AnalyzeRelationOrderCmd) Run(ctx context.Context, analyzer *analysis.Se
 		out.WriteSuccess("All orderable relations have consistent order values")
 	} else {
 		out.WriteWarning("Found %d relation-order issue(s)", len(issues))
+	}
+	return nil
+}
+
+// AnalyzeRelationFilesCmd finds relation files whose NAME disagrees with their
+// CONTENT. fsstore keys relations entirely on the filename, so such a file is
+// indexed as the relation its name describes and the one its content describes
+// simply does not exist — surfacing elsewhere as a cardinality error against an
+// innocent entity, with no route back to the file (issue #1004).
+type AnalyzeRelationFilesCmd struct{}
+
+// Run dispatches `rela analyze relation-files`.
+func (c *AnalyzeRelationFilesCmd) Run(analyzer *analysis.Service) error {
+	issues := analyzer.CheckRelationFilenames()
+
+	if writeAnalysisJSON(len(issues), issues,
+		"All relation files agree with their filenames",
+		"Found %d relation file(s) with filename/content problems") {
+
+		return nil
+	}
+
+	// Switch on the typed Reason, not on which fields happen to be empty: a
+	// new reason must then be handled here rather than silently rendering as
+	// whichever case its empty fields resemble.
+	for _, iss := range issues {
+		switch iss.Reason {
+		case analysis.ReasonUnparseableName:
+			out.WriteWarning("%s: %s — the store skips it, so this relation is not in the graph",
+				iss.File, iss.Reason)
+		case analysis.ReasonLegacyTypeKey:
+			out.WriteWarning("%s: uses `type:` instead of `relation:` — loads with an EMPTY "+
+				"relation type (filename says %q)", iss.File, iss.FromFilename)
+		case analysis.ReasonMismatch:
+			// Both triples, always: the filename one is what the store
+			// indexed, the content one is what other checks report as
+			// missing. Printing one leaves the operator to guess the mapping.
+			out.WriteWarning("%s: indexed as %q but content says %q",
+				iss.File, iss.FromFilename, iss.FromContent)
+		default:
+			out.WriteWarning("%s: %s", iss.File, iss.Reason)
+		}
+	}
+
+	if len(issues) == 0 {
+		out.WriteSuccess("All relation files agree with their filenames")
+	} else {
+		out.WriteWarning("Found %d relation file(s) with filename/content problems", len(issues))
 	}
 	return nil
 }

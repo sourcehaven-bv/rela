@@ -181,7 +181,7 @@ const (
 // effectiveUnmatchedPrincipal returns the mode with the empty default resolved
 // to [UnmatchedAnonymous], so callers read one value.
 func (p *Policy) effectiveUnmatchedPrincipal() string {
-	if p.UnmatchedPrincipal == "" {
+	if p == nil || p.UnmatchedPrincipal == "" {
 		return UnmatchedAnonymous
 	}
 	return p.UnmatchedPrincipal
@@ -229,7 +229,8 @@ func (r *RoleList) UnmarshalYAML(unmarshal func(any) error) error {
 // either blank leaves behavior byte-for-byte identical to a policy that
 // never declared them (assignments/membership match on the raw string).
 func (p *Policy) principalPropertyLookupEnabled() bool {
-	return strings.TrimSpace(p.UserEntityType) != "" &&
+	return p != nil &&
+		strings.TrimSpace(p.UserEntityType) != "" &&
 		strings.TrimSpace(p.PrincipalProperty) != ""
 }
 
@@ -240,6 +241,35 @@ func (p *Policy) principalPropertyLookupEnabled() bool {
 // no-match is a genuine unmatched principal.
 func (p *Policy) PrincipalPropertyLookupEnabled() bool {
 	return p.principalPropertyLookupEnabled()
+}
+
+// RejectEffective reports whether `unmatched_principal: reject` can actually
+// deny anything, given whether a JWT gate is wired.
+//
+// Three conditions must ALL hold, and each is a separate way for the setting to
+// be silently inert (TKT-M60ZF5 / issue #1274):
+//
+//   - the mode is "reject";
+//   - a JWT gate is wired — reject keys on identity having come from the
+//     fail-closed gate, and without one every principal looks unverified;
+//   - the principal_property lookup is enabled — with it disabled the resolver
+//     never attempts a match, so "unmatched" is not a thing that can be
+//     observed rather than something that is always true.
+//
+// This exists so the enforcement site and the startup warning cannot disagree.
+// They previously computed the answer separately, and did: the warning checked
+// only gate wiring, so a reject policy with no user_entity_type /
+// principal_property was equally inert and warned about nothing. A warning that
+// is wrong about the thing it warns about is worse than none.
+//
+// Note LoadPolicy rejects "reject" without the lookup, but NewDeclarative does
+// NOT call Validate — so any construction path that skips LoadPolicy can hold a
+// policy in exactly that state. That is why this is checked rather than assumed.
+func (p *Policy) RejectEffective(jwtWired bool) bool {
+	return p != nil &&
+		p.effectiveUnmatchedPrincipal() == UnmatchedReject &&
+		jwtWired &&
+		p.principalPropertyLookupEnabled()
 }
 
 // EffectiveMembershipRelation returns the relation type the resolver
