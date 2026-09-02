@@ -113,6 +113,7 @@ type Runtime struct {
 	parentCtx     context.Context //nolint:containedctx // cached parent ctx for lua-callback child-ctx propagation
 	cancelTimeout context.CancelFunc
 	params        map[string]string // rela.params values (used by action scripts)
+	request       *Request          // rela.request; nil leaves the field absent (TKT-EFMRQM)
 	secrets       map[string]string // rela.secrets values (from .rela/secrets.yaml)
 	caps          Capabilities      // ambient capability grants; zero value denies all (TKT-YH52OM)
 	isAction      bool              // true when running as an action (changes rela.output behavior)
@@ -948,6 +949,10 @@ func (r *Runtime) registerContextBindings(rela *lua.LTable) {
 		r.L.SetField(paramsTable, k, lua.LString(v))
 	}
 	r.L.SetField(rela, "params", paramsTable)
+
+	// rela.request (TKT-EFMRQM): the inbound HTTP request for a request-scoped
+	// action. Absent unless the caller passed one.
+	r.registerRequestBinding(rela)
 
 	// Secrets table (populated from WithSecrets option, loaded from
 	// .rela/secrets.yaml), FILTERED to the keys this runtime was granted
