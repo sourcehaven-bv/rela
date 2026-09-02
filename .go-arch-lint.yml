@@ -976,6 +976,16 @@ deps:
     mayDependOn:
       - ai
       - filter
+      # mail.render builds a mailrender.Message from a script table so a Lua
+      # author gets the branded, client-hardened template instead of
+      # hand-writing HTML for mail.send (TKT-1GA2PG).
+      #
+      # This does NOT invert the "mail -> lua and NEVER back" rule documented on
+      # the mail component. That rule is about internal/mail; mailrender is a
+      # separate component and a true leaf (its own entry allows no internal
+      # deps at all, and `go list -deps` confirms it imports nothing internal),
+      # so this arrow cannot close a cycle. lua still must not depend on mail.
+      - mailrender
       - metamodel
       - principal
       - search
