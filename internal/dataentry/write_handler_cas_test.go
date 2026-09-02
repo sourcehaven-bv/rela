@@ -26,7 +26,8 @@ import (
 // the handler now depends on is what actually discriminates.
 
 // patchBody issues a PATCH through the handler and returns the recorder.
-func patchBody(app *App, id, body string, hdr http.Header) *httptest.ResponseRecorder {
+func patchBody(app *App, body string, hdr http.Header) *httptest.ResponseRecorder {
+	const id = "TKT-001"
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/"+id, strings.NewReader(body))
 	for k, vs := range hdr {
 		for _, v := range vs {
@@ -53,7 +54,7 @@ func TestV1Patch_UnnamedPropertiesSurvive(t *testing.T) {
 		},
 	})
 
-	rec := patchBody(app, "TKT-001", `{"properties":{"title":"Renamed"}}`, nil)
+	rec := patchBody(app, `{"properties":{"title":"Renamed"}}`, nil)
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body)
 
 	got, err := app.store.GetEntity(context.Background(), "TKT-001")
@@ -77,7 +78,7 @@ func TestV1Patch_PropertiesUnsetStillRemoves(t *testing.T) {
 		},
 	})
 
-	rec := patchBody(app, "TKT-001", `{"properties_unset":["status"]}`, nil)
+	rec := patchBody(app, `{"properties_unset":["status"]}`, nil)
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body)
 
 	got, err := app.store.GetEntity(context.Background(), "TKT-001")
@@ -96,7 +97,7 @@ func TestV1Patch_SetAndUnsetSameKeyEndsUnset(t *testing.T) {
 		Properties: map[string]any{"title": "Test Ticket", "status": "open"},
 	})
 
-	rec := patchBody(app, "TKT-001",
+	rec := patchBody(app,
 		`{"properties":{"status":"closed"},"properties_unset":["status"]}`, nil)
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body)
 
@@ -163,7 +164,7 @@ func TestV1Patch_IfMatchStillRejectsStaleHeader(t *testing.T) {
 		Properties: map[string]any{"title": "Test Ticket", "status": "open"},
 	})
 
-	rec := patchBody(app, "TKT-001", `{"properties":{"title":"Nope"}}`,
+	rec := patchBody(app, `{"properties":{"title":"Nope"}}`,
 		http.Header{"If-Match": []string{`"definitely-stale"`}})
 	assert.Equal(t, http.StatusPreconditionFailed, rec.Code, "body=%s", rec.Body)
 
@@ -187,7 +188,7 @@ func TestV1Patch_CurrentIfMatchSucceeds(t *testing.T) {
 	require.NoError(t, err)
 	etag := app.computeEntityETag(ctx, current)
 
-	rec := patchBody(app, "TKT-001", `{"properties":{"title":"Renamed"}}`,
+	rec := patchBody(app, `{"properties":{"title":"Renamed"}}`,
 		http.Header{"If-Match": []string{etag}})
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body)
 

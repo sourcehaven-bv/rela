@@ -213,11 +213,9 @@ func RunCASTests(t *testing.T, f Factory) {
 		var wg sync.WaitGroup
 		errs := make([]error, appenders)
 		for i := range appenders {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				line := marker(i)
-				for attempt := 0; attempt < maxAttempts; attempt++ {
+				for range maxAttempts {
 					cur, err := s.GetEntity(ctx(), e.ID)
 					if err != nil {
 						errs[i] = err
@@ -237,7 +235,7 @@ func RunCASTests(t *testing.T, f Factory) {
 					// Lost the race — loop, re-read, recompute.
 				}
 				errs[i] = fmt.Errorf("appender %d exhausted %d attempts", i, maxAttempts)
-			}()
+			})
 		}
 		wg.Wait()
 		for i, err := range errs {

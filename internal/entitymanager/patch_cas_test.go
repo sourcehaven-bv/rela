@@ -2,7 +2,6 @@ package entitymanager_test
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -79,8 +78,8 @@ func TestPatchEntity_StaleExpectedVersionSurvivesAsTypedConflict(t *testing.T) {
 		"the conflict MUST survive entitymanager's translation as a typed error — "+
 			"RR-HI9QIU is what happens when it does not")
 	assert.Equal(t, stored.ID, conflict.ID)
-	assert.Equal(t, staleVersion, conflict.Expected)
-	assert.True(t, errors.Is(err, store.ErrConflict),
+	assert.Equal(t, conflict.Expected, staleVersion)
+	require.ErrorIs(t, err, store.ErrConflict,
 		"errors.Is(err, store.ErrConflict) must also match")
 
 	got, err := st.GetEntity(context.Background(), stored.ID)

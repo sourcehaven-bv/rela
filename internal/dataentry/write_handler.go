@@ -556,6 +556,31 @@ func (h *writeHandler) handleV1DryRunCreate(w http.ResponseWriter, r *http.Reque
 	writeV1JSON(w, http.StatusOK, result)
 }
 
+// writePatchError maps a failed PatchEntity to its HTTP status.
+//
+// A lost compare-and-swap race becomes a 412 — the same status the If-Match
+// compare produces, because the client's remedy is identical: re-read,
+// re-apply, retry. The two are genuinely the same condition detected at
+// different depths (TKT-34XS2R), so giving them one status keeps the client
+// contract unchanged.
+//
+// Matching is by errors.As, never on the message: the manager wraps the store
+// error on its way up, and RR-HI9QIU is what happens when a translation
+// breaks that chain — a retry loop silently becomes unreachable and every
+// loser gets a 500.
+func writePatchError(w http.ResponseWriter, r *http.Request, err error) {
+	if writeForbiddenIfACLDenied(w, err) {
+		return
+	}
+	var conflict *store.VersionConflictError
+	if errors.As(err, &conflict) {
+		writeV1Error(w, r, http.StatusPreconditionFailed, "precondition_failed",
+			"Entity has been modified", "concurrent write detected")
+		return
+	}
+	writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Validation failed", err.Error())
+}
+
 //nolint:gocognit,funlen // update handler threads the validation-policy classes (400/422/200-with-warnings) through each field; the branches are the documented write-policy cases, not extractable shared logic.
 func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeName, plural, entityID string) {
 	// Need write lock
@@ -730,20 +755,7 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 		}
 		updateResult, err := h.manager.PatchEntity(r.Context(), entity.ID, patch)
 		if err != nil {
-			if writeForbiddenIfACLDenied(w, err) {
-				return
-			}
-			// A lost CAS race is a 412, the same status the If-Match compare
-			// produces — the client's remedy is identical (re-read, re-apply,
-			// retry). Matching with errors.As rather than on the message
-			// keeps this working through the manager's wrapping (RR-HI9QIU).
-			var conflict *store.VersionConflictError
-			if errors.As(err, &conflict) {
-				writeV1Error(w, r, http.StatusPreconditionFailed, "precondition_failed",
-					"Entity has been modified", "concurrent write detected")
-				return
-			}
-			writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Validation failed", err.Error())
+			writePatchError(w, r, err)
 			return
 		}
 		// PatchEntity merged against the raw stored entity; refresh the

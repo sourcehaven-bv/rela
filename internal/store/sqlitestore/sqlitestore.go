@@ -91,8 +91,14 @@ const timeFmt = time.RFC3339Nano
 // Interface-driven again, so the numbers move with store.Store rather than
 // with this type.
 //
-//plimsoll:max-methods=51
-//plimsoll:max-exported-methods=33
+//
+// +1 exported / +2 methods (TKT-34XS2R): UpdateEntityIf joined the mandated
+// store.Store interface, and the conditional core it shares with the
+// unconditional path is the second. Required-interface exception again — the
+// CAS precondition has to be evaluated atomically with the write, so it
+// cannot live anywhere but on the type that owns the write.
+//plimsoll:max-methods=53
+//plimsoll:max-exported-methods=34
 type Store struct {
 	db *sql.DB
 
