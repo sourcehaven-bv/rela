@@ -510,10 +510,10 @@ func (g *RelationGrant) UnmarshalYAML(node *yaml.Node) error {
 // yaml.v3 drops a key it cannot map, and for these three structs that fails
 // OPEN. Every one of them carries a `when:` conditioning the grant on a
 // predicate, and an absent When means "grant unconditionally"
-// (PolicyResolver.compile returns a nil program) — so a misspelled `wehn:`
-// silently promotes "editors may see salary IF they are HR" to "editors may
-// see salary". That is a read-side disclosure on the `visible:` block, not
-// merely a wider write gate.
+// (PolicyResolver.compile returns a nil program) — so a misspelling of that
+// key silently promotes "editors may see salary IF they are HR" to "editors
+// may see salary". That is a read-side disclosure on the `visible:` block,
+// not merely a wider write gate.
 //
 // The sibling keys are not the motivation but are covered for free: a dropped
 // `field:`/`option:`/`relation:` is already caught downstream, because ""

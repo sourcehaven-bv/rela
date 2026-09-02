@@ -480,23 +480,23 @@ func TestLoadPolicy_AffordanceGrantUnknownKey_Rejected(t *testing.T) {
 	}{
 		{
 			"fields when typo",
-			"roles:\n  e:\n    read: [t]\n    fields:\n      t:\n        - field: salary\n          wehn: \"x\"\n",
-			`unknown key "wehn"`,
+			"roles:\n  e:\n    read: [t]\n    fields:\n      t:\n        - field: salary\n          whenx: \"x\"\n",
+			`unknown key "whenx"`,
 		},
 		{
 			"visible when typo",
-			"roles:\n  e:\n    read: [t]\n    visible:\n      t:\n        - field: salary\n          wehn: \"x\"\n",
-			`unknown key "wehn"`,
+			"roles:\n  e:\n    read: [t]\n    visible:\n      t:\n        - field: salary\n          whenx: \"x\"\n",
+			`unknown key "whenx"`,
 		},
 		{
 			"options when typo",
-			"roles:\n  e:\n    read: [t]\n    options:\n      t:\n        - field: status\n          option: done\n          wehn: \"x\"\n",
-			`unknown key "wehn"`,
+			"roles:\n  e:\n    read: [t]\n    options:\n      t:\n        - field: status\n          option: done\n          whenx: \"x\"\n",
+			`unknown key "whenx"`,
 		},
 		{
 			"relations when typo",
-			"roles:\n  e:\n    read: [t]\n    relations:\n      t:\n        - relation: blocks\n          wehn: \"x\"\n",
-			`unknown key "wehn"`,
+			"roles:\n  e:\n    read: [t]\n    relations:\n      t:\n        - relation: blocks\n          whenx: \"x\"\n",
+			`unknown key "whenx"`,
 		},
 		{
 			"relations create typo",
@@ -505,8 +505,8 @@ func TestLoadPolicy_AffordanceGrantUnknownKey_Rejected(t *testing.T) {
 		},
 		{
 			"nested relation fields when typo",
-			"roles:\n  e:\n    read: [t]\n    relations:\n      t:\n        - relation: blocks\n          fields:\n            - field: note\n              wehn: \"x\"\n",
-			`unknown key "wehn"`,
+			"roles:\n  e:\n    read: [t]\n    relations:\n      t:\n        - relation: blocks\n          fields:\n            - field: note\n              whenx: \"x\"\n",
+			`unknown key "whenx"`,
 		},
 	}
 	for _, tc := range cases {

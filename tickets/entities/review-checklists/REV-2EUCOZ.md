@@ -10,11 +10,27 @@ status: done
 ## Automated Checks
 
 - [x] All tests pass (`just check`)
-- [x] Lint clean (included in `just check`)
+- [x] Lint clean (`golangci-lint run` → 0 issues)
 - [x] Comment lint gate clean (`just comment-lint`)
 - [x] Coverage maintained (`just coverage-check`)
 
-`just check` exit 0.
+**A local `just check` exit 0 was a FALSE GREEN here, and it cost a CI
+round-trip.** An orphaned `golangci-lint run` process held the tool's lock, so
+the lint step printed `Error: parallel golangci-lint is running` — and exited
+**0**. `just check` therefore reported success having never linted, and CI
+caught 11 `misspell` findings the local run should have.
+
+Worth knowing for the next person: `golangci-lint`'s parallel-run guard is not
+a lint failure, it is a *non-failure* that produces no findings, which is
+indistinguishable from a clean run if you only read the exit code. Confirm with
+`pgrep -fl golangci` and clear it (`killall golangci-lint`) before trusting a
+green lint. Re-run after clearing gave `0 issues` across the whole repo.
+
+The findings themselves were ironic but fair: the test fixture for a
+misspelled key was itself a misspelled word, so `misspell` flagged the
+deliberate typo. Fixtures renamed to a non-dictionary token; the bug entity
+keeps the realistic misspelling because it is prose illustrating the defect and
+markdown lint has no spell rule.
 
 ## Code Review
 
