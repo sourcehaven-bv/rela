@@ -183,6 +183,42 @@ func TestParseActionResponse_NonIntegerStatus(t *testing.T) {
 	}
 }
 
+// TestParseActionResponse_StatusRejectsNonNumbers covers the remaining ways a
+// status can arrive wrong, so no branch of actionStatusFrom is unreachable
+// code. A huge int64 is representable in Lua and would otherwise be truncated
+// into a valid-looking status by the int conversion.
+func TestParseActionResponse_StatusRejectsNonNumbers(t *testing.T) {
+	tests := []struct {
+		name   string
+		status any
+	}{
+		{"string", "200"},
+		{"bool", true},
+		{"table", map[string]any{"code": int64(200)}},
+		{"nil", nil},
+		{"int64 past int32", int64(1) << 40},
+		{"negative int64 past int32", -(int64(1) << 40)},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := parseActionResponse(map[string]any{"status": tc.status}); err == nil {
+				t.Fatalf("expected status %#v to be refused", tc.status)
+			}
+		})
+	}
+}
+
+// TestParseActionResponse_ContentTypeMustBeString covers the non-string
+// content_type branch.
+func TestParseActionResponse_ContentTypeMustBeString(t *testing.T) {
+	if _, err := parseActionResponse(map[string]any{
+		"body":         "x",
+		"content_type": int64(1),
+	}); err == nil {
+		t.Fatal("expected a non-string content_type to be refused")
+	}
+}
+
 // TestParseActionResponse_BodyMustBeString refuses a table body. Serializing it
 // here would silently choose an encoding the script did not ask for; a script
 // that wants JSON calls json.encode and sets content_type itself.
