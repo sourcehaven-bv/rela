@@ -35,6 +35,7 @@ var validTopLevelKeys = map[string]bool{
 	"dashboard":    true,
 	"commands":     true,
 	"actions":      true,
+	"webhooks":     true,
 	"navigation":   true,
 	"palette":      true,
 
@@ -340,6 +341,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateDashboard(cfg, meta)...)
 	errs = append(errs, validateCommands(cfg, meta)...)
 	errs = append(errs, validateActions(cfg, meta)...)
+	errs = append(errs, validateWebhooks(cfg, meta)...)
 	errs = append(errs, validateApp(cfg)...)
 	errs = append(errs, validateDocuments(cfg)...)
 	errs = append(errs, validateFeeds(cfg, meta)...)

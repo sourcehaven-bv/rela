@@ -85,9 +85,12 @@ func (d Direction) IsIncoming() bool {
 // ratchet target: each exported field IS one top-level key of
 // data-entry.yaml, so the count tracks the config format's documented
 // sections (a new view kind legitimately adds one) rather than god-object
-// accretion. Splitting it would churn the YAML shape for no design gain.
+// accretion. Splitting it would churn the YAML shape for no design gain —
+// a breaking change to every project's config file, made to satisfy a lint.
+// A genuinely new top-level key therefore raises the pin by one; `webhooks`
+// (TKT-1EM4KL) is the most recent.
 //
-//plimsoll:max-fields=21
+//plimsoll:max-fields=22
 type Config struct {
 	Version     string                       `yaml:"version"`
 	App         AppConfig                    `yaml:"app"`
@@ -107,6 +110,7 @@ type Config struct {
 	Dashboard   *DashboardConfig             `yaml:"dashboard,omitempty"`
 	Commands    map[string]CommandConfig     `yaml:"commands,omitempty"`
 	Actions     map[string]Action            `yaml:"actions,omitempty"`
+	Webhooks    map[string]Webhook           `yaml:"webhooks,omitempty" json:"webhooks,omitempty"`
 	Navigation  []NavigationEntry            `yaml:"navigation"`
 
 	// NextActionBands is the operator's ordered priority vocabulary; list

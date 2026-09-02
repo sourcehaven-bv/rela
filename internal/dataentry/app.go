@@ -693,6 +693,14 @@ func (a *App) SetPrincipalResolver(r PrincipalResolver) {
 // when wiring a [HeaderPrincipalResolver]; leave unset otherwise.
 func (a *App) SetPrincipalHeader(name string) {
 	a.principalHeader = name
+
+	// A webhook config may not expose the header THIS deployment trusts for
+	// identity. dataentryconfig's static refusal list cannot name it — the flag
+	// is an arbitrary string chosen at startup — yet it is the header most
+	// certain to carry an authenticated identity, so a hook echoing it into
+	// entity content would persist "who called the proxy" as if it were payload
+	// data, readable by anyone who can read the entity.
+	dataentryconfig.ForbidWebhookHeader(name)
 }
 
 // SetJWTGate enables fail-closed verified-JWT identity. Must be called before

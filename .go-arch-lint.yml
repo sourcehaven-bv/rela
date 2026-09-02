@@ -412,6 +412,12 @@ deps:
       - git
       - htmlutil
       - lua
+      # Declarative-webhook `append_section` splices a named section into an
+      # entity body (TKT-1EM4KL). markdown is a near-leaf (it depends only on
+      # frontmatter) and dataentry already parses markdown with goldmark
+      # directly, so this reuses the reviewed parser instead of hand-rolling a
+      # second heading scanner here.
+      - markdown
       - mermaid
       - metamodel
       - migration

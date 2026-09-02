@@ -113,6 +113,16 @@ func (a *App) NewRouter() http.Handler {
 	// needs neither the same-origin gate nor the JWT identity gate.
 	a.registerWebhookRoutes(mux)
 
+	// Declarative webhooks (POST /hooks/{id}, TKT-1EM4KL) — one route per
+	// configured `webhooks:` entry. Registered on the OUTER mux for the same
+	// reason as the IdP receiver above: /hooks/ does not carry the /api/ prefix
+	// `inner` is mounted under, so registering there would leave every hook
+	// unreachable behind the SPA catch-all (BUG-F3ADZO).
+	registerDeclarativeWebhookRoutes(mux, &webhookRouter{
+		state: a.State, write: a.write, rawStore: a.store,
+		admit: make(chan struct{}, webhookMaxInFlight),
+	})
+
 	// Operator customisation assets from the project's custom/ directory —
 	// custom.css / custom.js plus any fonts, logos or images they reference.
 	// Registered before the SPA catch-all so /_custom/* never falls through to

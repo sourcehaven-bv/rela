@@ -56,6 +56,15 @@ type entityMutator interface {
 		ctx context.Context, from, relType, to string, opts entityPkg.RelationOptions,
 	) (*entityPkg.Relation, error)
 	DeleteRelation(ctx context.Context, from, relType, to string) error
+
+	// PatchEntity is how the webhook pipeline writes: it names only the
+	// properties a hook actually sets, so a property the hook does not mention
+	// survives — including one redacted from the read that found the entity.
+	// A read-modify-write through UpdateEntity would carry the redacted copy
+	// back over the stored one. See the PatchEntity rule in CLAUDE.md.
+	PatchEntity(
+		ctx context.Context, id string, patch entityPkg.Patch,
+	) (*entityPkg.UpdateResult, error)
 }
 
 // writeHandler owns the data-entry write nucleus: the entity/relation CRUD
