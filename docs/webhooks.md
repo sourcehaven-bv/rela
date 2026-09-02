@@ -145,6 +145,27 @@ this path's dependence on the in-process write lock. Until then, the safe
 configuration for a multi-process deployment is to prefer `set:` steps over
 `append_section`, or to run a single writer.
 
+## Producer support
+
+Interpolation reaches top-level scalars and nested objects
+(`{{body.commonLabels.severity}}`), but **not array elements** —
+`{{body.alerts.0.labels.alertname}}` resolves to the empty string.
+
+| Producer | Status |
+| --- | --- |
+| **Icinga 2** | Supported. You write the body yourself in a NotificationCommand, so emit a flat JSON object (or form-encode it). |
+| **Prometheus Alertmanager** | Not yet. Every alert is inside `alerts[]`, and one POST may carry several. |
+| **Grafana 9+ (unified alerting)** | Not yet. Alertmanager-compatible payload, same reason. |
+| **Grafana <=8 (legacy)** | Not yet. `evalMatches[]`. |
+
+Array indexing and per-element iteration are tracked in TKT-ZEACWJ. Until then,
+an array-shaped producer needs a small transform in front of rela (any tool that
+flattens one alert per POST), or a Lua action.
+
+Note that an unresolved reference is the empty string, not an error — so a
+template pointing into an array creates entities with empty fields rather than
+failing loudly. Check your first delivery landed as expected.
+
 ## Load shedding
 
 At most 8 deliveries run at once, across all hooks. Beyond that a delivery is

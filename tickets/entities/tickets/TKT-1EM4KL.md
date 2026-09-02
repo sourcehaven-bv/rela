@@ -7,7 +7,7 @@ priority: medium
 effort: l
 tags:
     - needs-design
-status: ready
+status: done
 ---
 
 Let an operator declare, in config, an HTTP endpoint that maps an inbound
@@ -124,14 +124,14 @@ alert_key:
 Three reasons this beats hashing in the webhook config:
 
 - **The key belongs to the entity, not the webhook.** Every writer — webhook,
-  Lua, CLI, sync — gets the same identity. A webhook-local hash would leave the
-  invariant unenforced on every other path.
+Lua, CLI, sync — gets the same identity. A webhook-local hash would leave the
+invariant unenforced on every other path.
 - **No new template syntax.** `{{...}}` is substitution-only, so a
-  `{{sha1 ...}}` form would need call syntax. Naming a property instead reduces
-  the whole extension to ONE host function (`sha256`) in the predicate stdlib —
-  the seam built for exactly this.
+`{{sha1 ...}}` form would need call syntax. Naming a property instead reduces
+the whole extension to ONE host function (`sha256`) in the predicate stdlib —
+the seam built for exactly this.
 - **Migration is already handled**: changing a `computed:` reports schema drift
-  and `rela migrate gen` drafts `recompute_computed`.
+and `rela migrate gen` drafts `recompute_computed`.
 
 One consequence to design around: computed values are materialized on WRITE, so
 `find:` matches on stored values. The webhook therefore sets the SOURCE fields
@@ -161,9 +161,9 @@ where there is no advisory lock.
 **Append is ALSO solved by conflict detection — the mechanism already exists.**
 `internal/dataentry`'s write handler implements optimistic concurrency:
 `If-Match` against `computeEntityETag` (`api_v1.go:2030`), a sha256 over id,
-type, content, sorted properties and outgoing relations; a mismatch is 412.
-(It lives in the HTTP layer, not `entitymanager` — easy to miss when looking
-only at the manager.)
+type, content, sorted properties and outgoing relations; a mismatch is 412. (It
+lives in the HTTP layer, not `entitymanager` — easy to miss when looking only at
+the manager.)
 
 So the whole pipeline is conflict-detecting with **no lock**:
 
@@ -175,32 +175,32 @@ find -> hit   -> PATCH with If-Match  -> loser gets 412                 -> re-fi
 The ETag is a CONTENT HASH, which is what makes this safe without a
 cross-process transaction: a concurrent writer changes the content, so the
 loser's stale ETag cannot match. It is a compare-and-swap, not a timestamp
-comparison, so it cannot miss an update the way a coarse-resolution
-`updated_at` can. Within a process the read-compare-write is additionally
-atomic under `writeMu`.
+comparison, so it cannot miss an update the way a coarse-resolution `updated_at`
+can. Within a process the read-compare-write is additionally atomic under
+`writeMu`.
 
 Why this is preferable to the keyed lock here:
 
 - Works on **every tier** (fs, sqlite, postgres). The lock only spans processes
-  on postgres.
+on postgres.
 - **No held connection.** The pg lock pins a pooled connection for its whole
-  lifetime, so a lock leak is a connection leak.
+lifetime, so a lock leak is a connection leak.
 - **No acquire timeout to tune**, no lock-ordering or deadlock surface.
 - Under a burst, losers fail fast and retry rather than queueing — better when
-  contention is rare, which it is.
+contention is rare, which it is.
 
-The cost is a **bounded retry loop** in the webhook executor: catch
-412 / `UniquePropertyError`, re-find, re-apply, cap the attempts. That is local
-to this pipeline rather than a new primitive.
+The cost is a **bounded retry loop** in the webhook executor: catch 412 /
+`UniquePropertyError`, re-find, re-apply, cap the attempts. That is local to
+this pipeline rather than a new primitive.
 
 Caveat worth designing around: a retry re-runs the whole step. That is fine for
 an idempotent append (re-read the body, re-append) and wrong for a step with
 other side effects — an argument for keeping declarative steps pure.
 
-**[[TKT-1K47YD]] (the keyed lock) is therefore NOT a dependency of this ticket.**
-It stands on its own as a capability rela lacked, and remains the right tool
-when a critical section genuinely cannot be expressed as a conditional write.
-This pipeline can be.
+**[[TKT-1K47YD]] (the keyed lock) is therefore NOT a dependency of this
+ticket.** It stands on its own as a capability rela lacked, and remains the
+right tool when a critical section genuinely cannot be expressed as a
+conditional write. This pipeline can be.
 
 Still worth having: a **server-side append mode on `entity.Patch`** (the manager
 appends to `Content` instead of the caller doing read-modify-write) would remove
@@ -292,11 +292,11 @@ alert is permanently lost**.
 So the ranking is:
 
 1. **Throughput collapse under a burst — the real failure mode.** Produces
-   SILENT DATA LOSS. Note TKT-X06LA2 was "fix the writeMu DoS" on this very
-   surface; a webhook endpoint is where a third party controls the rate.
+SILENT DATA LOSS. Note TKT-X06LA2 was "fix the writeMu DoS" on this very
+surface; a webhook endpoint is where a third party controls the rate.
 2. **Create race — real but narrow, and cheap to guard.** Closed within a
-   process by `writeMu`; across processes (postgres multi-writer, several
-   rela-server processes on one database) by the `unique:` index.
+process by `writeMu`; across processes (postgres multi-writer, several
+rela-server processes on one database) by the `unique:` index.
 
 The mitigation both the research and CLAUDE.md point at is **accept-and-queue**:
 validate cheaply, return 202, process on `jobs.Queue` — external side effects
@@ -318,9 +318,9 @@ which is exactly where serialization is wanted.
 One mechanism then closes both correctness problems without a queue:
 
 - **Create race** — two HA duplicates take the same key; the loser waits and
-  then FINDS the entity the winner created.
+then FINDS the entity the winner created.
 - **`append_section` clobber** — the case `unique:` cannot help with, because
-  nothing is being created. The lock does.
+nothing is being created. The lock does.
 - **Throughput** — unaffected for distinct keys, which is the burst case.
 
 rela already has the machinery and the idiom: four distinct advisory-lock keys
@@ -332,16 +332,15 @@ is the same shape with the second slot as the payload-derived key.
 Three things to get right, all visible in the existing callers:
 
 1. **Session-scoped: the whole operation must run on ONE acquired connection.**
-   `purge.go` and `sweep.go` both do this; the sweep's doc warns that issuing
-   the work via the pool (other sessions) "silently voids the single-writer
-   guarantee."
+`purge.go` and `sweep.go` both do this; the sweep's doc warns that issuing the
+work via the pool (other sessions) "silently voids the single-writer guarantee."
 2. **Blocking, not try.** Every existing caller uses `pg_try_advisory_lock` and
-   SKIPS on failure — correct for a sweep, wrong here, where skipping means
-   losing an alert. This needs blocking `pg_advisory_lock` with a bounded wait,
-   which is a new pattern and needs its own timeout story.
+SKIPS on failure — correct for a sweep, wrong here, where skipping means losing
+an alert. This needs blocking `pg_advisory_lock` with a bounded wait, which is a
+new pattern and needs its own timeout story.
 3. **Postgres-tier only.** fs/sqlite have no equivalent, but `writeMu` already
-   serializes those globally, so this is a refinement of the strong tier rather
-   than a portable primitive.
+serializes those globally, so this is a refinement of the strong tier rather
+than a portable primitive.
 
 Tension to resolve: `Tx`'s contract forbids slow external I/O inside `fn`, and a
 lock held across a Lua script that makes an HTTP call has the same hazard. The
@@ -366,8 +365,6 @@ This matches the existing precedent that mail is "notification, never a system
 of record". Operators needing guaranteed capture should poll the Icinga API
 event stream or Icinga DB rather than rely on push.
 
-
-
 Because Icinga does not retry, a 5xx or a restart mid-delivery loses the alert.
 rela cannot fix that, but the operator can: a NotificationCommand is just a
 script Icinga executes, so one that POSTs with retry (`curl --retry`, or a
@@ -381,10 +378,9 @@ of record".
 ## Design questions
 
 - **One key or two** (delivery-dedup vs. episode-identity). The computed-key
-approach handles episode identity; whether a separate delivery-dedup key is
-also wanted — to swallow byte-identical HA duplicates rather than append twice
-— is still open. Note the lock serializes them but does not make the second a
-no-op.
+approach handles episode identity; whether a separate delivery-dedup key is also
+wanted — to swallow byte-identical HA duplicates rather than append twice — is
+still open. Note the lock serializes them but does not make the second a no-op.
 - **`append_section` semantics**: missing section — create it, or error? Where
 in the body? (The concurrency half is settled — conditional writes, see
 Concurrency above.)
