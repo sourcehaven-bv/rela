@@ -39,22 +39,35 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/ai"
 )
 
-// registerAIModule installs the top-level `ai` global with `chat` and
-// `complete` functions. The global is registered unconditionally; if no
-// provider is wired into the Runtime, the functions return a typed
-// not_configured error so scripts can feature-detect uniformly.
+// aiBindings implements the ai.* module bindings: chat, complete, and
+// embed. A type of its own rather than more methods on [Runtime] (the
+// urlHelpers rationale in urls.go): the bindings need exactly one thing
+// from the runtime — the wired provider — plus the *lua.LState each is
+// called with, so they hold the provider and nothing else. The
+// capability gate stays where it was: registerBindings on Runtime
+// registers this module only when caps.AI was granted.
+type aiBindings struct {
+	// provider is the wired AI provider. Nil: accepted — each binding
+	// returns a typed not_configured error so scripts can feature-detect
+	// uniformly.
+	provider ai.Provider
+}
+
+// registerAIModule installs the top-level `ai` global with `chat`,
+// `complete`, and `embed` functions.
 func (r *Runtime) registerAIModule() {
+	b := aiBindings{provider: r.aiProvider}
 	tbl := r.L.NewTable()
-	r.L.SetField(tbl, "chat", r.L.NewFunction(r.luaAIChat))
-	r.L.SetField(tbl, "complete", r.L.NewFunction(r.luaAIComplete))
-	r.L.SetField(tbl, "embed", r.L.NewFunction(r.luaAIEmbed))
+	r.L.SetField(tbl, "chat", r.L.NewFunction(b.luaAIChat))
+	r.L.SetField(tbl, "complete", r.L.NewFunction(b.luaAIComplete))
+	r.L.SetField(tbl, "embed", r.L.NewFunction(b.luaAIEmbed))
 	r.L.SetGlobal("ai", tbl)
 }
 
 // luaAIChat implements ai.chat({messages, model?, temperature?, max_tokens?})
 // -> (result_table, nil) on success, (nil, err_table) on failure.
-func (r *Runtime) luaAIChat(ls *lua.LState) int {
-	if r.aiProvider == nil {
+func (b aiBindings) luaAIChat(ls *lua.LState) int {
+	if b.provider == nil {
 		return pushAIError(ls, &ai.Error{
 			Kind:    ai.ErrNotConfigured,
 			Message: "AI is not configured: create .rela/ai.yaml with base_url and model",
@@ -69,7 +82,7 @@ func (r *Runtime) luaAIChat(ls *lua.LState) int {
 		return 0
 	}
 
-	resp, err := r.aiProvider.Chat(chatContext(r), req)
+	resp, err := b.provider.Chat(chatContext(ls), req)
 	if err != nil {
 		var aiErr *ai.Error
 		if !errors.As(err, &aiErr) {
@@ -89,8 +102,8 @@ func (r *Runtime) luaAIChat(ls *lua.LState) int {
 // luaAIComplete implements ai.complete(prompt) -> (string, nil) or
 // (nil, err_table). Convenience wrapper around ai.chat for the common
 // single-user-message case.
-func (r *Runtime) luaAIComplete(ls *lua.LState) int {
-	if r.aiProvider == nil {
+func (b aiBindings) luaAIComplete(ls *lua.LState) int {
+	if b.provider == nil {
 		return pushAIError(ls, &ai.Error{
 			Kind:    ai.ErrNotConfigured,
 			Message: "AI is not configured: create .rela/ai.yaml with base_url and model",
@@ -99,7 +112,7 @@ func (r *Runtime) luaAIComplete(ls *lua.LState) int {
 
 	prompt := ls.CheckString(1)
 
-	resp, err := r.aiProvider.Chat(chatContext(r), ai.ChatRequest{
+	resp, err := b.provider.Chat(chatContext(ls), ai.ChatRequest{
 		Messages: []ai.Message{{Role: "user", Content: prompt}},
 	})
 	if err != nil {
@@ -116,11 +129,11 @@ func (r *Runtime) luaAIComplete(ls *lua.LState) int {
 	return 2
 }
 
-// chatContext returns the context to use for AI calls. If the runtime
-// has a Lua-state context (set by applyTimeout), use that so timeouts
+// chatContext returns the context to use for AI calls. If the Lua
+// state has a context (set by applyTimeout), use that so timeouts
 // propagate; otherwise fall back to context.Background().
-func chatContext(r *Runtime) context.Context {
-	if ctx := r.L.Context(); ctx != nil {
+func chatContext(ls *lua.LState) context.Context {
+	if ctx := ls.Context(); ctx != nil {
 		return ctx
 	}
 	return context.Background()
@@ -220,8 +233,8 @@ func pushAIError(ls *lua.LState, e *ai.Error) int {
 // (nil, err_table). Input can be a string (single text) or a table of
 // strings (batch). Result is always an array of arrays (one vector per
 // input). Optional second arg is an options table with model override.
-func (r *Runtime) luaAIEmbed(ls *lua.LState) int {
-	if r.aiProvider == nil {
+func (b aiBindings) luaAIEmbed(ls *lua.LState) int {
+	if b.provider == nil {
 		return pushAIError(ls, &ai.Error{
 			Kind:    ai.ErrNotConfigured,
 			Message: "AI is not configured: create .rela/ai.yaml with base_url and model",
@@ -234,7 +247,7 @@ func (r *Runtime) luaAIEmbed(ls *lua.LState) int {
 		return 0
 	}
 
-	resp, err := r.aiProvider.Embed(chatContext(r), req)
+	resp, err := b.provider.Embed(chatContext(ls), req)
 	if err != nil {
 		var aiErr *ai.Error
 		if !errors.As(err, &aiErr) {

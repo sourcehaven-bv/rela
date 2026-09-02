@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, onUnmounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { RouterLink, useRouter, type RouteLocationRaw } from 'vue-router'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { useScopeNavigation } from '@/composables'
 import { useBackTarget } from '@/composables/useBackTarget'
@@ -14,6 +14,7 @@ import { toggleCheckboxInSource } from '@/utils/checkboxToggle'
 import type { Command } from '@/types'
 import { getEditFormId } from '@/types'
 import { entityDetailHref } from '@/utils/entityRoute'
+import { shouldDeferToBrowser } from '@/utils/openIntent'
 import { computeActionAllowed } from '@/utils/affordancesWarning'
 import { isInputFocused } from '@/utils/dom'
 import { isAnyModalOpen } from '@/composables/modalStack'
@@ -83,7 +84,7 @@ const { confirm } = useConfirm()
 // (return_to / from precedence). Two parallel concerns: scope-nav walks
 // a list; backTarget answers "where do I go back to". Both can be active
 // at once.
-const { scopeNav, loadScopeNav, navigateScope } = useScopeNavigation(() => props.entityId)
+const { scopeNav, loadScopeNav, scopeTarget, navigateScope } = useScopeNavigation(() => props.entityId)
 const backTarget = useBackTarget()
 
 // State
@@ -112,9 +113,15 @@ const showOverflowMenu = ref(false)
 
 const commandModalRef = ref<InstanceType<typeof CommandModal> | null>(null)
 
-function openHistory() {
-  router.push(`/history/${props.entityType}/${props.entityId}`)
-}
+// historyTarget / editTarget back the header's History and Edit affordances.
+// Both are pure navigation (no mutation), so they render as real links and
+// support cmd/ctrl/middle-click — unlike Delete, which stays a <button>.
+// Each is the single source of truth for its destination, shared with the
+// keyboard shortcut so both routes agree.
+const historyTarget = computed(
+  () => `/history/${props.entityType}/${props.entityId}`
+)
+
 const contentRef = ref<HTMLElement | null>(null)
 
 // Computed
@@ -145,6 +152,14 @@ const isInaccessible = computed(() => (entry.value?.inaccessible?.length ?? 0) >
 // Affordance gates: `_actions` map from the server. `false` → hide;
 // anything else → render. See frontend/src/utils/affordancesWarning.ts.
 const canUpdate = computeActionAllowed(entry, 'update')
+
+// Nil: undefined when editing is unavailable (no configured form, an
+// inaccessible/git-crypt entity, or no update permission). The template then
+// renders nothing rather than a link to a page that would refuse the write.
+const editTarget = computed<RouteLocationRaw | undefined>(() => {
+  if (!editFormId.value || isInaccessible.value || !canUpdate.value) return undefined
+  return { name: 'form-edit', params: { id: editFormId.value, entityId: props.entityId } }
+})
 const canDelete = computeActionAllowed(entry, 'delete')
 
 // The entry's content section gets a custom renderer (mermaid + interactive
@@ -456,10 +471,35 @@ function backTargetAfterDelete(): string {
 }
 
 // Section navigation helpers
+//
+// entityTarget is the single source of truth for a section entry's destination,
+// bound to the RouterLinks below so a cmd/middle-clicked tab lands exactly where
+// a plain click does.
+// Nil: returns undefined when the entry has no resolvable route (empty type),
+// and the template renders plain text instead of an anchor.
+function entityTarget(entity: { id: string; type: string }, cellLink?: string): string | undefined {
+  return entityDetailHref(entity, { cellLink }) || undefined
+}
+
 function navigateToEntity(entity: { id: string; type: string }, cellLink?: string) {
   const path = entityDetailHref(entity, { cellLink })
   if (!path) return
   router.push(path)
+}
+
+// Click handler for the section-table cell anchors. Those are real <a href>
+// elements, so a modifier or middle click must reach the BROWSER — it is what
+// opens the new tab. Only a plain left-click is ours to intercept, and only
+// then do we preventDefault and route in-SPA. An unconditional `.prevent` here
+// suppressed cmd/ctrl/shift/middle clicks too, which was this ticket's own bug.
+function onCellLinkClick(
+  event: MouseEvent,
+  entity: { id: string; type: string },
+  cellLink?: string,
+) {
+  if (shouldDeferToBrowser(event)) return
+  event.preventDefault()
+  navigateToEntity(entity, cellLink)
 }
 
 function navigateToEdit(formId: string, entityId: string) {
@@ -779,15 +819,23 @@ watch(
       <div v-if="backTarget || scopeNav" class="scope-nav mobile-topbar">
         <BackButton v-if="backTarget" :target="backTarget" />
         <template v-if="scopeNav">
-          <button v-if="scopeNav.prev" class="scope-nav-btn" @click="navigateScope('prev')">
+          <RouterLink
+            v-if="scopeTarget('prev')"
+            class="scope-nav-btn"
+            :to="scopeTarget('prev')!"
+          >
             ← Prev <kbd>P</kbd>
-          </button>
+          </RouterLink>
           <span v-else class="scope-nav-btn disabled">← Prev</span>
           <span class="scope-nav-progress">[{{ scopeNav.current }}/{{ scopeNav.total }}]</span>
           <span class="scope-nav-label">{{ scopeNav.label }}</span>
-          <button v-if="scopeNav.next" class="scope-nav-btn" @click="navigateScope('next')">
+          <RouterLink
+            v-if="scopeTarget('next')"
+            class="scope-nav-btn"
+            :to="scopeTarget('next')!"
+          >
             Next → <kbd>N</kbd>
-          </button>
+          </RouterLink>
           <span v-else class="scope-nav-btn disabled">Next →</span>
         </template>
       </div>
@@ -807,14 +855,14 @@ watch(
           >
             {{ cmd.label }}
           </button>
-          <button
-            v-if="editFormId && !isInaccessible && canUpdate"
+          <RouterLink
+            v-if="editTarget"
             class="btn btn-secondary"
-            @click="editEntity"
+            :to="editTarget"
           >
             Edit <kbd>E</kbd>
-          </button>
-          <button class="btn btn-secondary" @click="openHistory">History</button>
+          </RouterLink>
+          <RouterLink class="btn btn-secondary" :to="historyTarget">History</RouterLink>
           <ExportMenu :url-for="(t: string) => entityExportUrl(entityType, entityId, t)" />
           <button v-if="canDelete" class="btn btn-danger" @click="requestDelete">
             Delete <kbd>Del</kbd>
@@ -823,13 +871,9 @@ watch(
 
         <!-- Mobile actions: Edit primary, delete icon, overflow menu for commands -->
         <div v-if="!props.hideActions" class="header-actions mobile-actions">
-          <button
-            v-if="editFormId && !isInaccessible && canUpdate"
-            class="btn btn-secondary"
-            @click="editEntity"
-          >
+          <RouterLink v-if="editTarget" class="btn btn-secondary" :to="editTarget">
             Edit
-          </button>
+          </RouterLink>
           <button
             v-if="canDelete"
             class="btn btn-danger mobile-delete-btn"
@@ -998,10 +1042,16 @@ watch(
               :data-entity-id="ent.id"
               class="content-card"
             >
-              <header class="card-header" @click="navigateToEntity(ent)">
-                <span class="entity-type">{{ ent.type }}</span>
-                <span class="entity-title">{{ ent.title }}</span>
-                <span class="entity-id">{{ ent.id }}</span>
+              <header class="card-header">
+                <component
+                  :is="entityTarget(ent) ? RouterLink : 'span'"
+                  class="card-header-link"
+                  v-bind="entityTarget(ent) ? { to: entityTarget(ent) } : {}"
+                >
+                  <span class="entity-type">{{ ent.type }}</span>
+                  <span class="entity-title">{{ ent.title }}</span>
+                  <span class="entity-id">{{ ent.id }}</span>
+                </component>
               </header>
               <div
                 v-if="ent.hasContent"
@@ -1025,10 +1075,16 @@ watch(
                 because that would navigate away mid-edit. The header
                 still navigates; cells stay editable.
               -->
-              <header class="card-header" @click="navigateToEntity(ent)">
-                <span class="entity-type">{{ ent.type }}</span>
-                <span class="entity-title">{{ ent.title }}</span>
-                <span class="entity-id">{{ ent.id }}</span>
+              <header class="card-header">
+                <component
+                  :is="entityTarget(ent) ? RouterLink : 'span'"
+                  class="card-header-link"
+                  v-bind="entityTarget(ent) ? { to: entityTarget(ent) } : {}"
+                >
+                  <span class="entity-type">{{ ent.type }}</span>
+                  <span class="entity-title">{{ ent.title }}</span>
+                  <span class="entity-id">{{ ent.id }}</span>
+                </component>
                 <button
                   v-if="ent.editFormId"
                   class="edit-btn"
@@ -1089,11 +1145,15 @@ watch(
               :data-entity-id="ent.id"
               class="list-item"
             >
-              <a class="list-link" @click="navigateToEntity(ent)">
+              <component
+                :is="entityTarget(ent) ? RouterLink : 'span'"
+                class="list-link"
+                v-bind="entityTarget(ent) ? { to: entityTarget(ent) } : {}"
+              >
                 <span class="entity-type">{{ ent.type }}</span>
                 <span class="entity-title">{{ ent.title }}</span>
                 <span class="entity-id">{{ ent.id }}</span>
-              </a>
+              </component>
               <SectionEditForm
                 v-if="rowShouldRouteToInlineEdit(ent, section.entities?.length ?? 0)"
                 :key="`${ent.type}/${ent.id}`"
@@ -1153,8 +1213,9 @@ watch(
                         <a
                           v-if="cell.link"
                           :href="cell.link"
-                          @click.prevent="
-                            navigateToEntity(
+                          @click="
+                            onCellLinkClick(
+                              $event,
                               {
                                 id: cell.entityId || row.entityId,
                                 type: cell.entityType || row.entityType,
@@ -1216,8 +1277,9 @@ watch(
                     <a
                       v-if="cell.link"
                       :href="cell.link"
-                      @click.prevent="
-                        navigateToEntity(
+                      @click="
+                        onCellLinkClick(
+                          $event,
                           {
                             id: cell.entityId || row.entityId,
                             type: cell.entityType || row.entityType,
@@ -1277,9 +1339,9 @@ watch(
     <div v-else class="error-state">
       <h2>Entity not found</h2>
       <p>{{ entityType }} "{{ entityId }}" could not be found.</p>
-      <router-link :to="backTargetAfterDelete()" class="btn btn-secondary">
+      <RouterLink :to="backTargetAfterDelete()" class="btn btn-secondary">
         Back to list
-      </router-link>
+      </RouterLink>
     </div>
   </div>
 </template>
@@ -1558,7 +1620,9 @@ watch(
   align-items: center;
   gap: var(--space-sm);
   margin-bottom: 12px;
-  cursor: pointer;
+  /* No cursor: pointer — the header is no longer clickable as a whole; the
+     pointer comes from .card-header-link, so the padding beside it must not
+     advertise a click that does nothing. */
 }
 
 .content-card .card-header:hover .entity-title {
@@ -1676,6 +1740,24 @@ watch(
   gap: var(--space-sm);
   cursor: pointer;
   flex: 1;
+  /* Was an <a> with no href (so cmd-click did nothing); now a real RouterLink.
+     Keep the inherited text colour and no underline. */
+  color: inherit;
+  text-decoration: none;
+}
+
+/* The link inside a card header carries the header's own flex layout, so the
+   header still reads as one row. It takes the free space, leaving the
+   edit-button (which may NOT live inside an <a>) a sibling beside it. */
+.card-header-link {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+  color: inherit;
+  text-decoration: none;
 }
 
 .list-link:hover .entity-title {

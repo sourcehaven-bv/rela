@@ -365,6 +365,9 @@ func navEntryToSidebarItem(entry dataentryconfig.NavigationEntry) v1.SidebarItem
 	case entry.Calendar != "":
 		item.Href = "/calendar/" + entry.Calendar
 		item.Icon = derived.Calendar
+	case entry.Gantt != "":
+		item.Href = "/gantt/" + entry.Gantt
+		item.Icon = derived.Gantt
 	case entry.Dashboard:
 		item.Href = "/"
 		item.Icon = derived.Dashboard

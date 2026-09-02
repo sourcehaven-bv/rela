@@ -95,6 +95,7 @@ var ValidIconNames = map[string]bool{
 	"flask":          true,
 	"folder":         true,
 	"folder-open":    true,
+	"gantt":          true,
 	"gauge":          true,
 	"gavel":          true,
 	"globe":          true,

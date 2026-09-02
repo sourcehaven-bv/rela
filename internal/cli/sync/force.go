@@ -56,7 +56,7 @@ func (e *Engine) ForcePush(ctx context.Context, key string) (*PushRecordResult, 
 // remotely) mirrors as a local delete.
 func (e *Engine) ForcePull(ctx context.Context, key string) (*PullRecordResult, error) {
 	if e.applier == nil {
-		return nil, errRemoteApplierRequired
+		return nil, errLocalApplierRequired
 	}
 	if err := e.ensureSchema(ctx); err != nil {
 		return nil, err

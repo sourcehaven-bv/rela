@@ -20,7 +20,8 @@ vi.mock('@/api', async (orig) => ({
   listEntities: (...args: unknown[]) => listEntitiesMock(...args),
 }))
 
-vi.mock('vue-router', () => ({
+vi.mock('vue-router', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('vue-router')>()),
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
   useRoute: () => ({ query: {}, path: '/list/things', name: 'list' }),
 }))

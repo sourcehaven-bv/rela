@@ -31,7 +31,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -72,7 +71,7 @@ type Deps struct {
 	Tracer        tracer.Tracer
 	Searcher      search.Searcher
 	Validator     validator.Validator
-	EntityManager entitymanager.EntityManager
+	EntityManager EntityWriter
 	Config        config.Loader
 	LuaWriteDeps  lua.WriteDeps
 	LuaCache      *lua.Cache
@@ -111,6 +110,34 @@ type GraphReader interface {
 type GraphCounter interface {
 	CountEntities(ctx context.Context, q store.EntityQuery) (int, error)
 	CountRelations(ctx context.Context, q store.RelationQuery) (int, error)
+}
+
+// EntityWriter is the write capability MCP requires — the exact set its tool
+// handlers call, declared here at the CALL SITE for the same reason
+// [GraphReader] is: `entitymanager`'s own interface was a nine-method
+// producer-side type that MCP has no business holding in full (TKT-IVSJV6).
+// The wiring site supplies the project's *entitymanager.Manager, which
+// satisfies this structurally.
+//
+// Three of the nine are absent because no MCP tool invokes them:
+// UpdateEntity (the entity tool patches — it names the properties it touched
+// rather than holding the whole record, TKT-80EWGM), ValidateCreate (an
+// advisory dry-run the data-entry form path uses), and UpdateRelation.
+//
+// Every method here still routes through the manager, so ACL, audit and
+// automations apply exactly as they do on any other write path — narrowing
+// the interface removes methods, never gates.
+type EntityWriter interface {
+	CreateEntity(ctx context.Context, e *entity.Entity, opts entity.CreateOptions) (*entity.CreateResult, error)
+	PatchEntity(ctx context.Context, id string, p entity.Patch) (*entity.UpdateResult, error)
+	DeleteEntity(ctx context.Context, id string, cascade bool) (*entity.DeleteResult, error)
+	RenameEntity(
+		ctx context.Context, oldID, newID string, opts entity.RenameOptions,
+	) (*entity.RenameResult, error)
+	CreateRelation(
+		ctx context.Context, from, relType, to string, opts entity.RelationOptions,
+	) (*entity.Relation, error)
+	DeleteRelation(ctx context.Context, from, relType, to string) error
 }
 
 // validate rejects a Deps missing any field whose zero value would

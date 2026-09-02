@@ -1,5 +1,5 @@
 ---
 from: TKT-WAA092
-type: has-docs
+relation: has-docs
 to: DOCS-CDV004
 ---

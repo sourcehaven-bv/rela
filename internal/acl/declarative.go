@@ -171,7 +171,17 @@ func (d *Declarative) ResolvePrincipal(ctx context.Context, rawUser string) (str
 // from the next call onward, including the unstamped-principal
 // check and the delegate-X gates. Callers that need a mutated
 // policy build a fresh Declarative with [NewDeclarative].
-func (d *Declarative) Policy() *Policy { return d.policy }
+// Nil-receiver safe: a typed-nil *Declarative in an ACL interface is not nil,
+// so callers that guard with `d != nil` are easy to get wrong, and the failure
+// is a panic rather than a bad answer. Returning a nil *Policy lets the
+// predicates on Policy (each of which handles a nil receiver) give the same
+// "no policy" answer they would for an absent one.
+func (d *Declarative) Policy() *Policy {
+	if d == nil {
+		return nil
+	}
+	return d.policy
+}
 
 // AuthorizeWrite implements [ACL.AuthorizeWrite]. Opens a Request for
 // the principal carried on ctx, then delegates to

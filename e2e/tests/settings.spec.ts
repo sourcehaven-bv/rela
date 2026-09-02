@@ -165,7 +165,8 @@ test.describe('Settings', () => {
 
       await settingsPage.navigateToSettings();
 
-      await settingsPage.expectAppInfo('Entity Types', '7'); // feature, bug, task, tag, decision, module, specification
+      // feature, bug, signoff, task, tag, decision, module, specification
+      await settingsPage.expectAppInfo('Entity Types', '8');
     });
 
     test('shows relation type count', async ({ appPage }) => {
@@ -181,10 +182,10 @@ test.describe('Settings', () => {
 
       await settingsPage.navigateToSettings();
 
-      // feature, bug, task, task_wizard, task_flat_conditional,
+      // feature, bug, bug_signoff, task, task_wizard, task_flat_conditional,
       // task_clear_when_hidden, task_mixed_policies, tag, decision,
       // module, specification
-      await settingsPage.expectAppInfo('Forms', '11');
+      await settingsPage.expectAppInfo('Forms', '12');
     });
 
     test('shows lists count', async ({ appPage }) => {

@@ -28,6 +28,7 @@ var validTopLevelKeys = map[string]bool{
 	"entity_views": true,
 	"kanbans":      true,
 	"calendars":    true,
+	"gantts":       true,
 	"documents":    true,
 	"feeds":        true,
 	"caldav":       true,
@@ -48,6 +49,7 @@ var knownTypos = map[string]string{
 	"view":        "views",
 	"kanban":      "kanbans",
 	"calendar":    "calendars",
+	"gantt":       "gantts",
 	"command":     "commands",
 	"style":       "styles",
 	"nav":         "navigation",
@@ -334,6 +336,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateEntityViews(cfg, meta)...)
 	errs = append(errs, validateKanbans(cfg, meta)...)
 	errs = append(errs, validateCalendars(cfg, meta)...)
+	errs = append(errs, validateGantts(cfg, meta)...)
 	errs = append(errs, validateDashboard(cfg, meta)...)
 	errs = append(errs, validateCommands(cfg, meta)...)
 	errs = append(errs, validateActions(cfg, meta)...)
@@ -440,6 +443,12 @@ func validateNavEntry(nav NavigationEntry, cfg *Config) []string {
 		if _, ok := cfg.Calendars[nav.Calendar]; !ok {
 			errs = append(errs, fmt.Sprintf(
 				"navigation: references unknown calendar %q", nav.Calendar))
+		}
+	}
+	if nav.Gantt != "" {
+		if _, ok := cfg.Gantts[nav.Gantt]; !ok {
+			errs = append(errs, fmt.Sprintf(
+				"navigation: references unknown gantt %q", nav.Gantt))
 		}
 	}
 

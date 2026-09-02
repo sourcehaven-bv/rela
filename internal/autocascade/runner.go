@@ -127,14 +127,31 @@ func (r *Runner) processEntityCreations(
 	var newItems []queueItem
 
 	for _, toCreate := range toCreateList {
-		if skip := r.handleIfExists(ctx, host, trigger, toCreate, outcome); skip {
+		// Tag the write ctx with the originating automation so EVERY write
+		// this entry causes is attributed to it (TKT-JJRVX9): the if_exists
+		// replace-delete, the entity create, and the trigger relation.
+		//
+		// Derived per entry, not per cascade run — one run creates entities
+		// for several automations — and derived BEFORE handleIfExists, whose
+		// replace path deletes the entity being superseded. Deriving it after
+		// would leave that delete on the generic `automation` label while the
+		// matching create carried the specific one: two labels on adjacent
+		// rows of one operation, so a filter on the automation's name would
+		// return the create and miss the delete.
+		//
+		// The cascaded relation-deletes underneath that delete keep
+		// `cascade:delete-entity:<id>`, which cascadeHost.DeleteEntity stamps
+		// on a ctx it derives itself.
+		writeCtx := triggeredByCtx(ctx, toCreate.AutomationName)
+
+		if skip := r.handleIfExists(writeCtx, host, trigger, toCreate, outcome); skip {
 			continue
 		}
 
 		// Create entity. Runner takes responsibility for the
 		// follow-up cascade evaluation on the result; Host.CreateEntity
 		// must not fire automations itself (see Host doc).
-		created, createErr := host.CreateEntity(ctx, toCreate.Type, CreateEntityOptions{
+		created, createErr := host.CreateEntity(writeCtx, toCreate.Type, CreateEntityOptions{
 			TemplateVariant: toCreate.Template,
 			Properties:      toCreate.Properties,
 		})
@@ -148,7 +165,7 @@ func (r *Runner) processEntityCreations(
 
 		// Create relation from trigger if specified.
 		if toCreate.RelationFromTrigger != "" {
-			r.createTriggerRelation(ctx, host, trigger, created, toCreate.RelationFromTrigger, outcome)
+			r.createTriggerRelation(writeCtx, host, trigger, created, toCreate.RelationFromTrigger, outcome)
 		}
 
 		// Run automation on newly created entity.
@@ -206,14 +223,25 @@ func (r *Runner) runCreatedEntityAutomation(
 // validation; the To is looked up to ensure the target exists, and
 // the (from-type, type, to-type) tuple is validated against the
 // metamodel before persisting.
+//
+// The write ctx is tagged per entry with the originating automation's name
+// (TKT-JJRVX9), the same way executeScriptActions tags scripted actions. It
+// must be PER ENTRY, not hoisted out of the loop: one cascade run applies
+// relations from several automations, so a single wrap would attribute all of
+// them to whichever name happened to be last.
 func (r *Runner) applyRelationCreations(
 	ctx context.Context,
 	host Host,
 	triggerEntity *entity.Entity,
-	relations []*entity.Relation,
+	relations []automation.RelationToCreate,
 	outcome *Outcome,
 ) {
-	for _, rel := range relations {
+	for _, toCreate := range relations {
+		// Same shape as processEntityCreations: derive once at the top of the
+		// loop BODY. Per entry, never hoisted above the loop — see the doc.
+		writeCtx := triggeredByCtx(ctx, toCreate.AutomationName)
+
+		rel := toCreate.Relation
 		rel.From = triggerEntity.ID
 
 		targetEntity, err := host.GetEntity(ctx, rel.To)
@@ -228,13 +256,53 @@ func (r *Runner) applyRelationCreations(
 			continue
 		}
 
-		if err := host.WriteRelation(ctx, rel); err != nil {
+		if err := host.WriteRelation(writeCtx, rel); err != nil {
 			outcome.Errors = append(outcome.Errors,
 				fmt.Sprintf("failed to create automation relation: %v", err))
 			continue
 		}
 		outcome.RelationsCreated = append(outcome.RelationsCreated, rel)
 	}
+}
+
+// triggeredByCtx tags ctx with `automation:<name>` so the audit record for the
+// resulting write names the automation that caused it rather than the generic
+// `automation` label (TKT-JJRVX9).
+//
+// It declines to tag in two cases, and both are load-bearing.
+//
+// EMPTY NAME → ctx unchanged, rather than a dangling `automation:`. The
+// fallback in entitymanager's recordCascade then supplies the generic
+// `automation` label, which is the right answer for a producer with no name to
+// give. An automation name is an ordinary optional field on a YAML list entry
+// and no loader validation requires it, so "" is reachable, not theoretical.
+//
+// CTX ALREADY LABELED → ctx unchanged. **The outermost cause wins.**
+// `audit.WithTriggeredBy` is an unconditional `context.WithValue`, so tagging
+// here would OVERWRITE an enclosing label — and the enclosing one is the more
+// useful attribution. The case that matters: a scheduler task
+// (`schedule:<task>`) whose write trips an on:created automation. "What did
+// last night's task write?" is the single most obvious audit query for a
+// scheduler, and answering it requires the cascaded rows to keep the schedule
+// label. Naming the inner automation instead would silently shrink that query's
+// result set — a forensic regression nothing errors on.
+//
+// This mirrors recordCascade, which has always stamped its generic label only
+// when the ctx label was empty; that `if` is the same policy, and this helper
+// now enforces it one layer earlier. `triggered_by` is a single string, not a
+// stack, so "both causes" is not representable — see the Known-labels list in
+// the audit-log guide.
+//
+// ALL THREE cascade write paths route through here — relation creations, entity
+// creations, and scripted actions. The scripted path used to stamp the label
+// inline and unconditionally, which is where both the dangling `automation:`
+// and the scheduler-label clobbering came from; keep new paths on this helper
+// rather than re-deriving the string.
+func triggeredByCtx(ctx context.Context, name string) context.Context {
+	if name == "" || audit.TriggeredByFrom(ctx) != "" {
+		return ctx
+	}
+	return audit.WithTriggeredBy(ctx, "automation:"+name)
 }
 
 // executeScriptActions dispatches each automation-emitted script
@@ -267,7 +335,7 @@ func (r *Runner) executeScriptActions(
 			continue
 		}
 
-		actionCtx := audit.WithTriggeredBy(ctx, "automation:"+action.AutomationName)
+		actionCtx := triggeredByCtx(ctx, action.AutomationName)
 		err := scripts.Run(actionCtx, ScriptAction{
 			Code:      action.Code,
 			FilePath:  action.FilePath,

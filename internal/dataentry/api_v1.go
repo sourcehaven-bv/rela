@@ -113,6 +113,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_transforms", a.export.handleV1Transforms)
 	mux.HandleFunc("/api/v1/_templates/", a.handleV1Templates)
 	mux.HandleFunc("/api/v1/_views/", a.views.handleV1Views)
+	mux.HandleFunc("/api/v1/_gantts/", a.gantt.handleV1Gantt)
 	mux.HandleFunc("/api/v1/_action/", a.write.handleV1Action)
 	mux.HandleFunc("/api/v1/_apps/", a.handleV1App)
 
@@ -1507,6 +1508,7 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 		EntityViews:      s.Cfg.EntityViews,
 		Kanbans:          resolveKanbanDirections(s, s.Cfg.Kanbans),
 		Calendars:        resolveCalendarDirections(s, s.Cfg.Calendars),
+		Gantts:           s.Cfg.Gantts,
 		Dashboard:        s.Cfg.Dashboard,
 		Actions:          s.Cfg.Actions,
 		Navigation:       s.Cfg.Navigation,
