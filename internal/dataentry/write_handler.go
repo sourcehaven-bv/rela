@@ -683,14 +683,12 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 	// Phase B: entity update. Skipped when only relations changed,
 	// to avoid bumping the file mtime and broadcasting a misleading
 	// "entity updated" SSE event with no byte-level change.
-	if req.Properties != nil {
-		maps.Copy(entity.Properties, req.Properties)
-	}
-	// Apply properties_unset AFTER property upserts so a body that
-	// both sets and unsets the same key behaves like the last-write-
-	// wins of property merging followed by the explicit unset.
-	// (TKT-E6094 / autosave: maps the "user cleared this field" intent
-	// to a wire-level delete that's distinct from "field was untouched".)
+	//
+	// Warn about undeclared unset keys before dispatching. The unset itself
+	// is carried by the patch (MetaUnset), applied AFTER the property
+	// upserts, so a body that both sets and unsets the same key ends with it
+	// removed. (TKT-E6094 / autosave: maps the "user cleared this field"
+	// intent to a wire-level delete distinct from "field was untouched".)
 	if len(req.PropertiesUnset) > 0 {
 		entityTypeDef, hasType := s.Meta.Entities[entity.Type]
 		for i, k := range req.PropertiesUnset {
@@ -703,21 +701,56 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 					})
 				}
 			}
-			delete(entity.Properties, k)
 		}
-	}
-	if req.Content != nil {
-		entity.Content = *req.Content
 	}
 	entityChanged := req.Properties != nil || len(req.PropertiesUnset) > 0 || req.Content != nil
 	if entityChanged {
-		updateResult, err := h.manager.UpdateEntity(r.Context(), entity)
+		// PatchEntity + ExpectedVersion, NOT a read-modify-write into
+		// UpdateEntity (TKT-34XS2R). Two things change:
+		//
+		//  1. Properties this request does not name are preserved by the
+		//     manager's own merge against the raw stored entity, so a
+		//     redacted read can no longer erase what it could not see.
+		//  2. The If-Match check stops depending on writeMu for correctness.
+		//     Comparing the header to a freshly-read ETag and then writing is
+		//     a check-then-write, safe only while one process-local mutex
+		//     serializes it — and rela documents several rela-server
+		//     processes against one database. The store now re-verifies the
+		//     precondition ATOMICALLY with the write, so a racing writer that
+		//     lands between our read and our write is caught rather than
+		//     silently overwritten.
+		//
+		// The ETag compare above stays: it is the client-facing contract and
+		// is relation-aware, which the store token deliberately is not.
+		patch := entityPkg.Patch{
+			Properties:      req.Properties,
+			MetaUnset:       req.PropertiesUnset,
+			Content:         req.Content,
+			ExpectedVersion: string(store.VersionOf(entity)),
+		}
+		updateResult, err := h.manager.PatchEntity(r.Context(), entity.ID, patch)
 		if err != nil {
 			if writeForbiddenIfACLDenied(w, err) {
 				return
 			}
+			// A lost CAS race is a 412, the same status the If-Match compare
+			// produces — the client's remedy is identical (re-read, re-apply,
+			// retry). Matching with errors.As rather than on the message
+			// keeps this working through the manager's wrapping (RR-HI9QIU).
+			var conflict *store.VersionConflictError
+			if errors.As(err, &conflict) {
+				writeV1Error(w, r, http.StatusPreconditionFailed, "precondition_failed",
+					"Entity has been modified", "concurrent write detected")
+				return
+			}
 			writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Validation failed", err.Error())
 			return
+		}
+		// PatchEntity merged against the raw stored entity; refresh the
+		// local copy so the response body and ETag reflect what was actually
+		// persisted rather than the pre-merge read.
+		if updateResult != nil && updateResult.Entity != nil {
+			entity = updateResult.Entity
 		}
 		// DEC-HWZHA: soft validation findings ride on the result as
 		// warnings. Merge them into the response alongside any
