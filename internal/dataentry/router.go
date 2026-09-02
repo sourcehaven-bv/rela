@@ -199,6 +199,12 @@ func (a *App) NewRouter() http.Handler {
 	// `acl_unstamped_principal` when ACL is configured, because the
 	// principal is still the unstamped default at the time
 	// ForPrincipal is called.
+	// Non-Declarative ACLs (NopACL, ReadOnlyACL) are deliberately outside this
+	// block, warning included. Neither can enforce `unmatched_principal` at all
+	// — under NopACL nothing is enforced, and under ReadOnlyACL every write is
+	// already denied — so a warning about reject being inert would be true and
+	// useless. The `d != nil` guard is load-bearing: a typed-nil *Declarative in
+	// this interface is NOT nil, and reaches d.Policy() below.
 	if d, ok := a.acl.(*acl.Declarative); ok && d != nil {
 		// jwtVerified tells attachACLRequest that identity is a verified-JWT
 		// assertion (the gate is installed), so an unmatched principal can be
@@ -212,6 +218,7 @@ func (a *App) NewRouter() http.Handler {
 		// this captures nil and `unmatched_principal: reject` silently never
 		// fires. If a future refactor reorders these, that invariant breaks
 		// quietly; keep SetJWTGate ahead of NewRouter.
+		warnUnmatchedRejectWithoutJWTGate(d.Policy(), a.jwtGate != nil)
 		handler = attachACLRequest(handler, d, a.jwtGate != nil)
 	}
 	// The JWT gate wraps BETWEEN attachACLRequest and stampAuditPrincipal, so at
@@ -234,6 +241,62 @@ func (a *App) NewRouter() http.Handler {
 	}
 	handler = stampAuditPrincipal(handler, resolver)
 	return handler
+}
+
+// warnUnmatchedRejectWithoutJWTGate warns when `unmatched_principal: reject` is
+// configured but cannot fire, in which case the setting is inert
+// (TKT-M60ZF5 / issue #1274).
+//
+// Two independent ways to be inert, and the message names which one applies —
+// "reject does nothing" is not actionable without saying what to change:
+//
+//   - no JWT gate wired: reject keys on identity having come from the
+//     fail-closed gate, so without one no principal is ever "verified".
+//   - the principal_property lookup disabled: the resolver never attempts a
+//     match, so an unmatched principal is not something that can be observed.
+//     LoadPolicy refuses this combination, but NewDeclarative does NOT call
+//     Validate, so a construction path that skips LoadPolicy reaches it.
+//
+// Both read acl.Policy.RejectEffective, the same predicate the enforcement site
+// uses. Computing it separately here is how the first version of this warning
+// got it wrong: it checked only gate wiring and stayed silent on the second
+// case, which is the very failure mode the ticket exists to close.
+//
+// Policy.Validate cannot do this: it sees acl.yaml, and whether a gate is wired
+// is a property of the SERVER, decided elsewhere and later. NewRouter is the
+// first point where both facts are in scope.
+//
+// A warning rather than a hard error, deliberately. acl.yaml is shared config:
+// the CLI, `rela flow` and the scheduler all load the same enforcing policy and
+// never call NewRouter, so a hard failure would either break every CLI
+// invocation for an HTTP-only concern or need a per-process exemption — a
+// second wiring invariant to get wrong. This matches warnUngatedMembership in
+// appbuild — the closer precedent than the `provision` warning in acl, which is
+// a per-request runtime notice about a write that already arrived, where this
+// (like appbuild's) is a startup notice about inert configuration.
+//
+// Note this also gives the "SetJWTGate MUST run before NewRouter" ordering
+// invariant a runtime voice: a future refactor that reorders them makes this
+// warning fire, where previously it failed silently.
+func warnUnmatchedRejectWithoutJWTGate(p *acl.Policy, jwtWired bool) {
+	if p == nil || p.EffectiveUnmatchedPrincipal() != acl.UnmatchedReject {
+		return
+	}
+	if p.RejectEffective(jwtWired) {
+		return
+	}
+	switch {
+	case !jwtWired:
+		slog.Warn("acl: unmatched_principal: reject is configured but no JWT gate is wired; " +
+			"the setting has NO effect and unmatched principals are treated as anonymous. " +
+			"Wire a JWT gate (SetJWTGate before NewRouter), or remove the key to make the " +
+			"posture explicit.")
+	default:
+		slog.Warn("acl: unmatched_principal: reject is configured but the principal_property " +
+			"lookup is not enabled; the setting has NO effect and unmatched principals are " +
+			"treated as anonymous. Set user_entity_type and principal_property, or remove " +
+			"the key to make the posture explicit.")
+	}
 }
 
 // isAPIPath reports whether p addresses the data API — the surface that carries

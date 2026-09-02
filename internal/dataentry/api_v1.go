@@ -113,6 +113,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_transforms", a.export.handleV1Transforms)
 	mux.HandleFunc("/api/v1/_templates/", a.handleV1Templates)
 	mux.HandleFunc("/api/v1/_views/", a.views.handleV1Views)
+	mux.HandleFunc("/api/v1/_gantts/", a.gantt.handleV1Gantt)
 	mux.HandleFunc("/api/v1/_action/", a.write.handleV1Action)
 	mux.HandleFunc("/api/v1/_apps/", a.handleV1App)
 
@@ -323,7 +324,7 @@ func (a *App) scopedSortedEntities(
 	// over relevance ranking, same approach SearchView uses for filtering.
 	// Backend errors surface as HTTP 500 rather than rendering an empty list
 	// and pretending the search succeeded.
-	searchResult, err := a.freeTextIDsForType(ctx, queryGet(query, "q"), typeName)
+	searchResult, err := a.queries.freeTextIDsForType(ctx, queryGet(query, "q"), typeName)
 	if err != nil {
 		return nil, err
 	}
@@ -1507,6 +1508,7 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 		EntityViews:      s.Cfg.EntityViews,
 		Kanbans:          resolveKanbanDirections(s, s.Cfg.Kanbans),
 		Calendars:        resolveCalendarDirections(s, s.Cfg.Calendars),
+		Gantts:           s.Cfg.Gantts,
 		Dashboard:        s.Cfg.Dashboard,
 		Actions:          s.Cfg.Actions,
 		Navigation:       s.Cfg.Navigation,
@@ -1533,7 +1535,7 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 	// executeQuery is read-gated (TKT-BA8BSX): only entities the
 	// request principal may read come back, and gate/load/search
 	// failures surface instead of silently truncating.
-	entities, err := a.executeQuery(r.Context(), query)
+	entities, err := a.queries.executeQuery(r.Context(), query)
 	if err != nil {
 		writeListPipelineError(w, r, err)
 		return

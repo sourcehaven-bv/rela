@@ -110,7 +110,7 @@ func gatedServer(t *testing.T) (*Server, context.Context) {
 	}
 
 	srv := &Server{deps: deps, logger: slog.New(slog.DiscardHandler)}
-	srv.types, srv.trace, srv.export = deps.handlers()
+	srv.handlerSet = deps.handlers()
 	return srv, principal.With(ctx, principal.Principal{User: "alice", Tool: principal.ToolMCP})
 }
 
@@ -345,7 +345,7 @@ func TestACL_Resources_AreGated(t *testing.T) {
 	t.Parallel()
 	s, ctx := gatedServer(t)
 
-	_, err := s.handleReadEntity(ctx, readResourceReq("rela://entity/feature/"+hiddenID))
+	_, err := s.schemaRes.handleReadEntity(ctx, readResourceReq("rela://entity/feature/"+hiddenID))
 	if err == nil {
 		t.Error("LEAK: resource read of a hidden entity succeeded")
 	} else if strings.Contains(err.Error(), hiddenTitle) {
@@ -353,7 +353,7 @@ func TestACL_Resources_AreGated(t *testing.T) {
 	}
 
 	// A readable entity still works, so the gate is not simply refusing all.
-	if _, err := s.handleReadEntity(ctx, readResourceReq("rela://entity/ticket/"+visibleID)); err != nil {
+	if _, err := s.schemaRes.handleReadEntity(ctx, readResourceReq("rela://entity/ticket/"+visibleID)); err != nil {
 		t.Errorf("readable entity denied through resource path: %v", err)
 	}
 }

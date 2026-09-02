@@ -19,6 +19,7 @@ export interface Config {
   kanbans: Record<string, KanbanConfig>
   /** Optional: the Go side omits the key entirely when no calendar is configured. */
   calendars?: Record<string, CalendarConfig>
+  gantts?: Record<string, GanttConfig>
   dashboard?: DashboardConfig
   actions?: Record<string, ActionConfig>
   navigation: NavigationEntry[]
@@ -448,6 +449,44 @@ export interface CalendarSourceConfig {
  * no title field: the source's `summary` already names the title property. */
 export interface CalendarEventConfig {
   fields?: KanbanCardField[]
+}
+
+/**
+ * GanttConfig declares a hierarchical timeline view. Depth is navigated
+ * (drill-down) rather than displayed, because the hierarchy relations may be
+ * self-referential (a project containing sub-projects, unbounded).
+ * Server-normalized: the policy/cap fields always arrive filled.
+ */
+export interface GanttConfig {
+  title?: string
+  /** Markdown rendered above the chart. */
+  header?: string
+  /** Markdown rendered below the chart. */
+  footer?: string
+  /** Relation types traversed parent-to-child, as one set. */
+  hierarchy: string[]
+  multi_parent: 'first' | 'error'
+  on_cycle: 'error' | 'prune'
+  /** Levels expanded on first load; deeper levels reachable by drill-down. */
+  default_depth: number
+  max_depth: number
+  max_nodes: number
+  /** Date-role mapping keyed by entity TYPE (one mapping per type). */
+  sources: Record<string, GanttSourceConfig>
+  /** Extra fields on the hover card. Property fields only (server-enforced). */
+  tooltip?: { fields?: KanbanCardField[] }
+  filter_controls?: FilterControl[]
+}
+
+/** GanttSourceConfig maps one entity type's properties onto the three date
+ * roles; each is independently optional. */
+export interface GanttSourceConfig {
+  start?: string
+  end?: string
+  committed?: string
+  where?: string[]
+  label?: string
+  color?: CalendarColor
 }
 
 export interface KanbanCard {

@@ -13,6 +13,7 @@ import type {
   ListConfig,
   ViewConfig,
   CalendarConfig,
+  GanttConfig,
   KanbanConfig,
   DashboardResponse,
   NextActionBand,
@@ -33,6 +34,7 @@ export const useSchemaStore = defineStore('schema', () => {
   const views = ref<Map<string, ViewConfig>>(new Map())
   const kanbans = ref<Map<string, KanbanConfig>>(new Map())
   const calendars = ref<Map<string, CalendarConfig>>(new Map())
+  const gantts = ref<Map<string, GanttConfig>>(new Map())
   const documents = ref<Map<string, DocumentConfig>>(new Map())
   const apps = ref<Map<string, AppEntry>>(new Map())
   const actions = ref<Map<string, ActionConfig>>(new Map())
@@ -99,6 +101,7 @@ export const useSchemaStore = defineStore('schema', () => {
   const getView = computed(() => (id: string) => views.value.get(id))
   const getKanban = computed(() => (id: string) => kanbans.value.get(id))
   const getCalendar = computed(() => (id: string) => calendars.value.get(id))
+  const getGantt = computed(() => (id: string) => gantts.value.get(id))
   const getAction = computed(() => (id: string) => actions.value.get(id))
 
   const entityTypeList = computed(() => Array.from(entityTypes.value.entries()))
@@ -289,6 +292,7 @@ export const useSchemaStore = defineStore('schema', () => {
       views.value = new Map(Object.entries(configData.views || {}))
       kanbans.value = new Map(Object.entries(configData.kanbans || {}))
       calendars.value = new Map(Object.entries(configData.calendars || {}))
+      gantts.value = new Map(Object.entries(configData.gantts || {}))
       documents.value = new Map(Object.entries(configData.documents || {}))
       apps.value = new Map(Object.entries(configData.apps || {}))
       actions.value = new Map(Object.entries(configData.actions || {}))
@@ -348,6 +352,7 @@ export const useSchemaStore = defineStore('schema', () => {
     views,
     kanbans,
     calendars,
+    gantts,
     documents,
     apps,
     actions,
@@ -376,6 +381,7 @@ export const useSchemaStore = defineStore('schema', () => {
     getView,
     getKanban,
     getCalendar,
+    getGantt,
     getAction,
     getEnumLabel,
     resolveOptionLabels,

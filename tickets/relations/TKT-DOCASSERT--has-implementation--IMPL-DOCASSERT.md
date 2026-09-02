@@ -1,5 +1,5 @@
 ---
 from: TKT-DOCASSERT
-type: has-implementation
+relation: has-implementation
 to: IMPL-DOCASSERT
 ---

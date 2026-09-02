@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, type Component } from 'vue'
-import { useRouter } from 'vue-router'
+import { RouterLink, useRouter, type RouteLocationRaw } from 'vue-router'
 import { useQuery, useMutation, useQueryCache } from '@pinia/colada'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { listAllEntities, updateEntity, getErrorMessage } from '@/api'
@@ -495,12 +495,15 @@ function onDragEnd() {
   draggedCard.value = null
 }
 
-function openCard(entity: Entity) {
+// cardTarget is the single source of truth for where a card goes, bound to each
+// card's RouterLink. The edit-form branch must be reproduced exactly, or a
+// cmd-clicked tab would land on the detail page while a plain click opens the
+// form.
+function cardTarget(entity: Entity): RouteLocationRaw {
   if (kanbanConfig.value?.edit_form) {
-    router.push(`/form/${kanbanConfig.value.edit_form}/${entity.id}`)
-  } else {
-    router.push(`/entity/${entity.type}/${entity.id}`)
+    return `/form/${kanbanConfig.value.edit_form}/${entity.id}`
   }
+  return `/entity/${entity.type}/${entity.id}`
 }
 
 function createNew() {
@@ -583,14 +586,21 @@ function createNew() {
         </div>
 
         <div class="column-cards">
-          <div
+          <!-- The card is BOTH the link and the drag source. Deliberately no
+               draggable="false" here (unlike RelationCards, RR-NPDW9A): that
+               attribute is for an anchor nested INSIDE a drag source, and
+               setting it on the drag source itself would disable reordering.
+               onDragStart sets dataTransfer unconditionally, so the native
+               link-drag is overridden in both the draggable and non-draggable
+               branches. -->
+          <RouterLink
             v-for="entity in entitiesByColumn[column.value]"
             :key="entity.id"
             class="kanban-card"
+            :to="cardTarget(entity)"
             :draggable="canUpdate(entity) ? 'true' : 'false'"
             @dragstart="onDragStart($event, entity)"
             @dragend="onDragEnd"
-            @click="openCard(entity)"
           >
             <div class="card-id">{{ entity.id }}</div>
             <div class="card-title text-wrap-anywhere">{{ getCardTitle(entity) }}</div>
@@ -598,7 +608,7 @@ function createNew() {
               :fields="resolvedCardFields(entity)"
               :entity-type="kanbanConfig?.entity"
             />
-          </div>
+          </RouterLink>
 
           <div v-if="!entitiesByColumn[column.value]?.length" class="empty-column">
             No items
@@ -651,14 +661,14 @@ function createNew() {
           @dragover="onDragOver"
           @drop="onDrop($event, column.value, swimlane.value)"
         >
-          <div
+          <RouterLink
             v-for="entity in entitiesByCell[column.value]?.[swimlane.value] || []"
             :key="entity.id"
             class="kanban-card"
+            :to="cardTarget(entity)"
             :draggable="canUpdate(entity) ? 'true' : 'false'"
             @dragstart="onDragStart($event, entity)"
             @dragend="onDragEnd"
-            @click="openCard(entity)"
           >
             <div class="card-id">{{ entity.id }}</div>
             <div class="card-title text-wrap-anywhere">{{ getCardTitle(entity) }}</div>
@@ -666,7 +676,7 @@ function createNew() {
               :fields="resolvedCardFields(entity)"
               :entity-type="kanbanConfig?.entity"
             />
-          </div>
+          </RouterLink>
           <div v-if="!(entitiesByCell[column.value]?.[swimlane.value]?.length)" class="empty-cell">
             —
           </div>
@@ -857,12 +867,17 @@ function createNew() {
 }
 
 .kanban-card {
+  display: block;
   background: var(--card-bg);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   padding: 12px;
   cursor: grab;
   transition: all 0.15s;
+  /* The card is a real link so cmd/middle-click opens a tab; it must not pick
+     up link colour or underline. */
+  color: inherit;
+  text-decoration: none;
 }
 
 .kanban-card:hover {

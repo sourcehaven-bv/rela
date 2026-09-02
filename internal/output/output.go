@@ -43,11 +43,12 @@ const (
 
 // Writer handles formatted output
 //
-// TODO(TKT-N0IKN9): 23 exported methods, over the 20 exported-method line.
-// Output formatter; ratchet candidate — the per-shape Print* methods could
-// move behind a narrower interface.
-//
-//plimsoll:max-exported-methods=23
+// 23 → 14 (TKT-NS3XPE): under the 20 exported-method load line, so the
+// plimsoll directive is gone. WriteRelations was dead (no production
+// callers), WriteSeparator/WriteFooterSummary were only called from inside
+// the package, and the six schema-JSON methods never branched on Format —
+// schema serialization, not output formatting — so they moved next to their
+// one caller in internal/cli (schemaJSONWriter).
 type Writer struct {
 	Format  Format
 	Out     io.Writer
@@ -150,7 +151,7 @@ func (w *Writer) writeEntitiesTable(entities []*entity.Entity, showSummary bool)
 	// Write footer summary if requested
 	if showSummary && len(entities) > 0 {
 		summary := w.buildEntitySummary(len(entities), statusCounts)
-		w.WriteFooterSummary(summary)
+		w.writeFooterSummary(summary)
 	}
 
 	return nil
@@ -248,24 +249,6 @@ func (w *Writer) WriteEntity(entity *entity.Entity, incoming, outgoing []*entity
 	}
 
 	return nil
-}
-
-// WriteRelations outputs a list of relations
-func (w *Writer) WriteRelations(relations []*entity.Relation) error {
-	if w.Format == FormatJSON {
-		return w.writeJSON(relations)
-	}
-
-	table := newBorderlessTable(w.Out)
-	table.Header("From", "Relation", "To")
-
-	for _, r := range relations {
-		if err := table.Append([]string{r.From, r.Type, r.To}); err != nil {
-			return err
-		}
-	}
-
-	return table.Render()
 }
 
 func newBorderlessTable(w io.Writer) *tablewriter.Table {
@@ -512,8 +495,8 @@ func (w *Writer) WriteBar(value, maxValue int) string {
 	return color.CyanString(bar)
 }
 
-// WriteSeparator writes a subtle horizontal separator
-func (w *Writer) WriteSeparator() {
+// writeSeparator writes a subtle horizontal separator
+func (w *Writer) writeSeparator() {
 	sep := strings.Repeat("─", headerSeparatorLen)
 	if w.NoColor {
 		fmt.Fprintln(w.Out, sep)
@@ -522,9 +505,9 @@ func (w *Writer) WriteSeparator() {
 	fmt.Fprintln(w.Out, color.HiBlackString(sep))
 }
 
-// WriteFooterSummary writes a subtle footer summary line
-func (w *Writer) WriteFooterSummary(text string) {
-	w.WriteSeparator()
+// writeFooterSummary writes a subtle footer summary line
+func (w *Writer) writeFooterSummary(text string) {
+	w.writeSeparator()
 	if w.NoColor {
 		fmt.Fprintf(w.Out, "  %s\n", text)
 		return
@@ -574,120 +557,4 @@ func (w *Writer) WriteAnalysisResult(result AnalysisResult) error {
 		w.WriteMessage("%s", result.Message)
 	}
 	return nil
-}
-
-// Schema output methods for JSON format
-
-// WriteSchemaOverview outputs the metamodel overview as JSON
-func (w *Writer) WriteSchemaOverview(m SchemaMetamodel) error {
-	data := map[string]any{
-		"version":   m.GetVersion(),
-		"namespace": m.GetNamespace(),
-		"entities":  m.GetEntities(),
-		"relations": m.GetRelations(),
-		"types":     m.GetTypes(),
-	}
-	return w.writeJSON(data)
-}
-
-// WriteSchemaEntities outputs entity types as JSON
-func (w *Writer) WriteSchemaEntities(m SchemaMetamodel) error {
-	return w.writeJSON(m.GetEntities())
-}
-
-// WriteSchemaRelations outputs relation types as JSON
-func (w *Writer) WriteSchemaRelations(m SchemaMetamodel) error {
-	return w.writeJSON(m.GetRelations())
-}
-
-// WriteSchemaTypes outputs custom types as JSON
-func (w *Writer) WriteSchemaTypes(m SchemaMetamodel) error {
-	return w.writeJSON(m.GetTypes())
-}
-
-// WriteSchemaEntityDetail outputs a single entity type as JSON
-func (w *Writer) WriteSchemaEntityDetail(name string, def SchemaEntityDef, _ SchemaMetamodel) error {
-	data := map[string]any{
-		"name":        name,
-		"label":       def.GetLabel(),
-		"aliases":     def.GetAliases(),
-		"id_patterns": def.GetIDPatterns(),
-		"properties":  def.GetProperties(),
-	}
-	if rdfType := def.GetRDFType(); rdfType != "" {
-		data["rdf_type"] = rdfType
-	}
-	if entityColor := def.GetColor(); entityColor != "" {
-		data["color"] = entityColor
-	}
-	if borderColor := def.GetBorderColor(); borderColor != "" {
-		data["border_color"] = borderColor
-	}
-	return w.writeJSON(data)
-}
-
-// WriteSchemaRelationDetail outputs a single relation type as JSON
-func (w *Writer) WriteSchemaRelationDetail(name string, def SchemaRelationDef) error {
-	data := map[string]any{
-		"name":  name,
-		"label": def.GetLabel(),
-		"from":  def.GetFrom(),
-		"to":    def.GetTo(),
-	}
-	if desc := def.GetDescription(); desc != "" {
-		data["description"] = desc
-	}
-	if inv := def.GetInverse(); inv != nil {
-		data["inverse"] = inv
-	}
-	if def.IsSymmetric() {
-		data["symmetric"] = true
-	}
-	if minOut := def.GetMinOutgoing(); minOut != nil {
-		data["min_outgoing"] = *minOut
-	}
-	if maxOut := def.GetMaxOutgoing(); maxOut != nil {
-		data["max_outgoing"] = *maxOut
-	}
-	if minIn := def.GetMinIncoming(); minIn != nil {
-		data["min_incoming"] = *minIn
-	}
-	if maxIn := def.GetMaxIncoming(); maxIn != nil {
-		data["max_incoming"] = *maxIn
-	}
-	return w.writeJSON(data)
-}
-
-// SchemaMetamodel interface for metamodel schema output
-type SchemaMetamodel interface {
-	GetVersion() string
-	GetNamespace() string
-	GetEntities() any
-	GetRelations() any
-	GetTypes() any
-}
-
-// SchemaEntityDef interface for entity definition output
-type SchemaEntityDef interface {
-	GetLabel() string
-	GetAliases() []string
-	GetIDPatterns() []string
-	GetProperties() any
-	GetRDFType() string
-	GetColor() string
-	GetBorderColor() string
-}
-
-// SchemaRelationDef interface for relation definition output
-type SchemaRelationDef interface {
-	GetLabel() string
-	GetFrom() []string
-	GetTo() []string
-	GetDescription() string
-	GetInverse() any
-	IsSymmetric() bool
-	GetMinOutgoing() *int
-	GetMaxOutgoing() *int
-	GetMinIncoming() *int
-	GetMaxIncoming() *int
 }

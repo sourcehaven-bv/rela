@@ -1,5 +1,5 @@
 ---
 from: BUG-4KPN2M
-type: affects
+relation: affects
 to: ci-pipeline
 ---

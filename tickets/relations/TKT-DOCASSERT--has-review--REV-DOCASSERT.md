@@ -1,5 +1,5 @@
 ---
 from: TKT-DOCASSERT
-type: has-review
+relation: has-review
 to: REV-DOCASSERT
 ---

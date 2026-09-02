@@ -99,10 +99,10 @@ func (c *SyncPullCmd) Run(ctx context.Context, svc *writeServices) error {
 }
 
 // buildSyncEngine wires the sync engine from the CLI services: it loads the
-// index, constructs the HTTP client, and type-asserts the entity manager to the
-// id-preserving applier (the same consumer-side pattern as the server — these
-// methods are intentionally off the broad EntityManager interface). Returns the
-// engine, the index (so the caller can Save it), and the cache dir.
+// index and constructs the HTTP client. The id-preserving applier comes from
+// the typed [writeServices.SyncApplier] field rather than a type assertion on
+// EntityManager — see that field's doc for why the assertion was fail-open.
+// Returns the engine, the index (so the caller can Save it), and the cache dir.
 func buildSyncEngine(remote, token string, svc *writeServices) (*syncclient.Engine, *syncclient.State, string, error) {
 	client, err := syncclient.NewClient(remote, token, nil)
 	if err != nil {
@@ -113,13 +113,7 @@ func buildSyncEngine(remote, token string, svc *writeServices) (*syncclient.Engi
 	if err != nil {
 		return nil, nil, "", err
 	}
-	applier, ok := svc.EntityManager.(syncclient.LocalApplier)
-	if !ok {
-		// fs/memory builds use *entitymanager.Manager, which satisfies this; a
-		// build that doesn't would only break pull (push needs no applier).
-		applier = nil
-	}
-	eng, err := syncclient.NewEngine(client, svc.Store, applier, idx)
+	eng, err := syncclient.NewEngine(client, svc.Store, svc.SyncApplier, idx)
 	if err != nil {
 		return nil, nil, "", err
 	}

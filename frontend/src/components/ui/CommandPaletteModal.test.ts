@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { createRouter, createMemoryHistory } from 'vue-router'
 import { mount, flushPromises } from '@vue/test-utils'
 import type { VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
@@ -9,10 +10,7 @@ import { searchEntities } from '@/api'
 import type { Entity, ListResponse } from '@/types'
 
 // Router stub — palette navigates via router.push when an entity is selected.
-const routerPush = vi.fn()
-vi.mock('vue-router', () => ({
-  useRouter: () => ({ push: routerPush }),
-}))
+
 
 // Mock the search endpoint so each test can stub responses and we can assert
 // signal forwarding without hitting the real API client.
@@ -52,10 +50,33 @@ function seedSchema() {
   } as never)
 }
 
+// A real router is installed (not just the mocked useRouter) because results are
+// RouterLinks now — RouterLink resolves `to` through the injected router, so
+// without one the anchors render with no href and the link assertions are
+// meaningless. `useRouter` stays mocked so navigation intent is still spied on.
+const testRouter = createRouter({
+  history: createMemoryHistory('/'),
+  routes: [
+    { path: '/', component: { template: '<div/>' } },
+    { path: '/entity/:type/:id', component: { template: '<div/>' } },
+  ],
+})
+
+// `routerPush` spies on the REAL router rather than replacing useRouter.
+// RouterLink resolves `to` through the injected router, so mocking the module
+// would leave every result anchor with no href — the very affordance under test.
+const routerPush = vi.spyOn(testRouter, 'push')
+
+// RouterLink renders an empty href until the router has resolved its initial
+// location, so prime it once for the whole file.
+await testRouter.push('/')
+await testRouter.isReady()
+
 function factory(props: { open?: boolean } = {}): VueWrapper {
   return mount(CommandPaletteModal, {
     props: { open: true, ...props },
     attachTo: document.body,
+    global: { plugins: [testRouter] },
   })
 }
 
@@ -79,12 +100,17 @@ const dom = {
     return el
   },
   options: () => Array.from(document.querySelectorAll<HTMLLIElement>('.cmdk-option')),
+  // The option's navigation lives on an inner anchor (TKT-3CSZRG) so that
+  // cmd/middle-click opens a tab; plain clicks still route in place.
+  optionLinks: () =>
+    Array.from(document.querySelectorAll<HTMLAnchorElement>('a.cmdk-option-link')),
   hint: () => document.querySelector<HTMLElement>('.cmdk-hint')?.textContent?.trim(),
   spinner: () => document.querySelector<HTMLElement>('.cmdk-spinner'),
 }
 
 const input = dom.input
 const options = dom.options
+const optionLinks = dom.optionLinks
 
 // Type into the palette and wait for the debounced search to settle.
 // Vue's v-model needs a microtask to sync the input event into the bound ref;
@@ -526,11 +552,30 @@ describe('CommandPaletteModal', () => {
       const wrapper = factory()
       await typeQuery('xx')
 
-      options()[0].click()
+      const link = optionLinks()[0]
+      expect(link.getAttribute('href')).toBe(`/entity/${entity.type}/${entity.id}`)
+
+      link.click()
       await flushPromises()
 
       expect(routerPush).toHaveBeenCalledWith(`/entity/${entity.type}/${entity.id}`)
       expect(wrapper.emitted('close')).toHaveLength(1)
+    })
+
+    it('still renders the option text when there is no resolvable href', async () => {
+      // Guarding only the link would leave an empty, zero-height <li
+      // role="option">: invisible, still counted by the arrow-key highlight,
+      // and nameless to a screen reader — worse than the inert row it replaced.
+      const entity = makeEntity({ type: '' })
+      searchSpy.mockResolvedValueOnce(listResponse([entity]))
+      factory()
+      await typeQuery('xx')
+
+      expect(optionLinks()).toHaveLength(0)
+      const option = options()[0]
+      expect(option).toBeTruthy()
+      expect(option.textContent).toContain(entity.id)
+      expect(option.querySelector('.cmdk-option-link')).not.toBeNull()
     })
 
     it('does not navigate when entity has no type (empty href)', async () => {

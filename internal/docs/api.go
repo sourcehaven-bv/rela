@@ -73,13 +73,13 @@ type APIResponse struct {
 // responses being the SAME, and no single-response assertion can express it.
 // It is currently pinned only in Go (viewworld_absent_test.go), where the
 // security property is invisible to anyone reading the manual that promises it.
-func (dr *docRuntime) luaAPI(ls *lua.LState) int {
+func (b *tierBBindings) luaAPI(ls *lua.LState) int {
 	tbl := argTable(ls)
 	if tbl == nil {
-		return dr.luaFail(ls, `api: expects a table, e.g. api{path="/api/v1/entities/policy/POL-1", status=200}`)
+		return b.luaFail(ls, `api: expects a table, e.g. api{path="/api/v1/entities/policy/POL-1", status=200}`)
 	}
 
-	if rejectUnknownKeys(dr, ls, "api", tbl,
+	if rejectUnknownKeys(b, ls, "api", tbl,
 		"path", "method", "as", "body", "status", "error", "identical_to") {
 
 		return 0
@@ -87,7 +87,7 @@ func (dr *docRuntime) luaAPI(ls *lua.LState) int {
 
 	path := fieldString(ls, tbl, "path")
 	if path == "" {
-		return dr.luaFail(ls, "api: `path` is required")
+		return b.luaFail(ls, "api: `path` is required")
 	}
 
 	wantStatus := fieldInt(ls, tbl, "status", 0)
@@ -95,59 +95,59 @@ func (dr *docRuntime) luaAPI(ls *lua.LState) int {
 	identicalTo := fieldTable(tbl, "identical_to")
 
 	if wantStatus == 0 && wantError == "" && identicalTo == nil {
-		return dr.luaFail(ls, "api{path=%q}: asserts nothing. Give at least one of "+
+		return b.luaFail(ls, "api{path=%q}: asserts nothing. Give at least one of "+
 			"status=, error= or identical_to= — a call with no claim passes whatever "+
 			"the server does", path)
 	}
-	if dr.apiClient == nil {
-		return dr.luaFail(ls, "api{path=%q}: no API client available: %s", path, dr.apiClientErr)
+	if b.apiClient == nil {
+		return b.luaFail(ls, "api{path=%q}: no API client available: %s", path, b.apiClientErr)
 	}
 
 	req := APIRequest{
-		ProjectDir: dr.projectDir,
-		Seed:       dr.seed.ops,
+		ProjectDir: b.projectDir,
+		Seed:       b.seed(),
 		Method:     fieldString(ls, tbl, "method"),
 		Path:       path,
 		As:         fieldString(ls, tbl, "as"),
 		Body:       fieldString(ls, tbl, "body"),
 	}
-	resp, err := dr.apiClient.Do(dr.ctx, req)
+	resp, err := b.apiClient.Do(b.ctx, req)
 	if err != nil {
-		return dr.luaFail(ls, "api{path=%q}: %v", path, err)
+		return b.luaFail(ls, "api{path=%q}: %v", path, err)
 	}
 
 	if msg := checkAPI(path, resp, wantStatus, wantError); msg != "" {
-		return dr.luaFail(ls, "%s", msg)
+		return b.luaFail(ls, "%s", msg)
 	}
 
 	if identicalTo != nil {
 		other := APIRequest{
-			ProjectDir: dr.projectDir,
-			Seed:       dr.seed.ops,
+			ProjectDir: b.projectDir,
+			Seed:       b.seed(),
 			Method:     fieldStringOf(identicalTo, "method"),
 			Path:       fieldStringOf(identicalTo, "path"),
 			As:         fieldStringOf(identicalTo, "as"),
 			Body:       fieldStringOf(identicalTo, "body"),
 		}
-		if rejectUnknownKeys(dr, ls, "api identical_to", identicalTo, "path", "method", "as", "body") {
+		if rejectUnknownKeys(b, ls, "api identical_to", identicalTo, "path", "method", "as", "body") {
 			return 0
 		}
 		if other.Path == "" {
-			return dr.luaFail(ls, "api{path=%q}: identical_to needs its own `path`", path)
+			return b.luaFail(ls, "api{path=%q}: identical_to needs its own `path`", path)
 		}
 		// Comparing a request with itself is trivially true — a claimless call
 		// wearing a claim's clothes, which is the class this feature refuses.
 		if other.Path == path && other.As == req.As && other.Method == req.Method && other.Body == req.Body {
-			return dr.luaFail(ls, "api{path=%q}: identical_to names the SAME request, which is "+
+			return b.luaFail(ls, "api{path=%q}: identical_to names the SAME request, which is "+
 				"always true. The claim is that two DIFFERENT requests are indistinguishable — "+
 				"vary the path or the principal", path)
 		}
-		otherResp, oerr := dr.apiClient.Do(dr.ctx, other)
+		otherResp, oerr := b.apiClient.Do(b.ctx, other)
 		if oerr != nil {
-			return dr.luaFail(ls, "api{identical_to=%q}: %v", other.Path, oerr)
+			return b.luaFail(ls, "api{identical_to=%q}: %v", other.Path, oerr)
 		}
 		if msg := checkIdentical(path, other.Path, resp, otherResp); msg != "" {
-			return dr.luaFail(ls, "%s", msg)
+			return b.luaFail(ls, "%s", msg)
 		}
 	}
 	return 0

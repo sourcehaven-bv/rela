@@ -25,6 +25,48 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
+// entityMutator is the write surface the data-entry write handlers call. See
+// the internal/entitymanager package doc for the consumer-side rule this
+// follows (TKT-IVSJV6).
+//
+// Seven of the manager's nine write methods. PatchEntity is absent FROM THIS
+// HANDLER because a form save renders every field and therefore legitimately
+// owns the whole record — the UpdateEntity case (see the PatchEntity rule in
+// CLAUDE.md). That is a fact about form saves, not about data-entry writes
+// generally: the CalDAV writer patches, and holds its own wider surface
+// through App. RenameEntity is absent because the SPA has no rename
+// affordance; renames are a CLI and MCP operation.
+//
+// ValidateCreate is here and nowhere else in the tree: it backs the form's
+// dry-run preview, which is advisory only — the real CreateEntity below stays
+// the sole authorization and audit point.
+type entityMutator interface {
+	CreateEntity(
+		ctx context.Context, e *entityPkg.Entity, opts entityPkg.CreateOptions,
+	) (*entityPkg.CreateResult, error)
+	ValidateCreate(
+		ctx context.Context, e *entityPkg.Entity, opts entityPkg.CreateOptions,
+	) (*entityPkg.Entity, []entityPkg.Warning, error)
+	UpdateEntity(ctx context.Context, e *entityPkg.Entity) (*entityPkg.UpdateResult, error)
+	DeleteEntity(ctx context.Context, id string, cascade bool) (*entityPkg.DeleteResult, error)
+	CreateRelation(
+		ctx context.Context, from, relType, to string, opts entityPkg.RelationOptions,
+	) (*entityPkg.Relation, error)
+	UpdateRelation(
+		ctx context.Context, from, relType, to string, opts entityPkg.RelationOptions,
+	) (*entityPkg.Relation, error)
+	DeleteRelation(ctx context.Context, from, relType, to string) error
+
+	// PatchEntity is how the webhook pipeline writes: it names only the
+	// properties a hook actually sets, so a property the hook does not mention
+	// survives — including one redacted from the read that found the entity.
+	// A read-modify-write through UpdateEntity would carry the redacted copy
+	// back over the stored one. See the PatchEntity rule in CLAUDE.md.
+	PatchEntity(
+		ctx context.Context, id string, patch entityPkg.Patch,
+	) (*entityPkg.UpdateResult, error)
+}
+
 // writeHandler owns the data-entry write nucleus: the entity/relation CRUD
 // endpoints (create/dry-run-create/update/delete entity, create/update/delete
 // relation), clone, conflict-resolve, the modern relations reconciler they
@@ -51,7 +93,7 @@ import (
 type writeHandler struct {
 	schema      func() *Schema
 	store       store.Store
-	manager     entitymanager.EntityManager
+	manager     entityMutator
 	reader      entityReader
 	serializer  entitySerializer
 	affordances affordanceService

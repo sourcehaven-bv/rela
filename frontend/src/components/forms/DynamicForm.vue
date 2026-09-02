@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { ref, shallowRef, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter, useRoute, onBeforeRouteLeave } from 'vue-router'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { isCancelledFetch } from '@/composables/usePageData'
@@ -28,6 +28,7 @@ import type {
   TransitionOption,
 } from '@/types'
 import { getTemplates, createRelation, dryRunCreateEntity, ApiError, getErrorMessage } from '@/api'
+import { uploadAttachment, attachmentErrorReason } from '@/api/attachments'
 import type { RelationCardState } from './RelationCards.vue'
 import type { RelationPickerIncomingState } from './RelationPicker.vue'
 import {
@@ -117,6 +118,55 @@ const relationAffordances = ref<Record<string, RelationAffordance>>({})
 // Per-`file`-property attachment metadata from the loaded entity, passed
 // to the file widget so it can show the current file + drive upload/remove.
 const attachments = ref<Record<string, AttachmentInfo[]>>({})
+// TKT-7K3BJF: files picked in CREATE mode, not yet uploaded. An attachment
+// cannot be written before the entity row exists (every store backend returns
+// ErrNotFound), and there is no id-reservation primitive, so the only possible
+// order is create-then-attach. These are uploaded in handleSubmit once the
+// server returns an id.
+//
+// They are deliberately NOT part of `formData`: `payload.properties` is built
+// from it, so a File (or a placeholder path) sitting there would be POSTed as
+// the file property's value at create. The server stamps that property itself
+// once the bytes land.
+// shallowRef, not ref (RR-C1MI2N): a deep ref proxies its contents, and
+// whether a File escapes that depends on the environment — happy-dom's File
+// reports `[object Object]` and IS proxied (identity not preserved), while a
+// spec File reports `File` and is left alone. That divergence would mean the
+// unit tests exercise proxies while production exercises raw Files, silently
+// changing identity comparisons and the brand checks in URL.createObjectURL /
+// FormData.append. Nothing here needs deep reactivity: updateStagedFiles
+// replaces the whole object on every change.
+const stagedFiles = shallowRef<Record<string, File[]>>({})
+
+// Set once a create has SUCCEEDED, so a later submit from the same mounted
+// form cannot mint a second entity (RR-4QO887). The happy path navigates away
+// immediately, but navigation is asynchronous and the failure path stays on a
+// live form long enough for a second Create click or Cmd+Enter to land. The
+// `saving` guard only covers an in-flight submit; this covers a completed one.
+const createdEntityId = ref<string | null>(null)
+
+function updateStagedFiles(property: string, files: File[]) {
+  if (files.length) stagedFiles.value = { ...stagedFiles.value, [property]: files }
+  else {
+    const next = { ...stagedFiles.value }
+    delete next[property]
+    stagedFiles.value = next
+  }
+  // Clear a standing validation error once a file is staged, mirroring what
+  // updateField does as the user edits an ordinary field (BUG-L1DHC5) — else a
+  // "This field is required" flag would persist after the user has addressed
+  // it. A full re-check still runs on submit.
+  if (files.length && errors.value[property]) {
+    const next = { ...errors.value }
+    delete next[property]
+    errors.value = next
+  }
+  checkDirty()
+}
+
+function hasStagedFiles(): boolean {
+  return Object.values(stagedFiles.value).some((list) => list.length > 0)
+}
 // Per-state-machine-field transition verdicts from the loaded entity
 // (`_transitions`, TKT-3G93B8). Present only for machine-typed fields; drives
 // the StatusControl (only-allowed moves) instead of the plain enum select. A
@@ -461,6 +511,51 @@ async function loadEntity(force = false) {
   }
 }
 
+// uploadStagedFiles pushes every create-mode staged file to the attachment
+// endpoint against the just-created id, and returns the failures.
+//
+// Continue-on-error (RR-Z7C3CY): every file is attempted even after one is
+// rejected, so the user is told about all of them at once rather than
+// discovering the rest on a later save. Sequential rather than parallel: the
+// server serializes attachment writes on its write mutex anyway, and
+// WriteAttachment's capacity check is read-then-write, which concurrent
+// uploads to one property would race.
+async function uploadStagedFiles(
+  entityType: string,
+  entityId: string
+): Promise<{ file: string; message: string }[]> {
+  const failures: { file: string; message: string }[] = []
+  // RR-OI6P51: apply the same wizard pruning the property payload gets
+  // (pruneWizardHidden). Without it, staging a file on a step the user then
+  // hides uploads the bytes anyway and the SERVER stamps the property —
+  // persisting a revealed-then-hidden branch, which is exactly what TKT-CHLAJ
+  // prevents for ordinary properties.
+  const active = wizard.activeProperties.value
+  const managed = wizard.managedProperties.value
+  for (const [property, files] of Object.entries(stagedFiles.value)) {
+    if (managed.has(property) && !active.has(property)) continue
+    for (const file of files) {
+      try {
+        await uploadAttachment(entityType, entityId, property, file)
+      } catch (err) {
+        failures.push({ file: file.name, message: attachmentErrorReason(err) })
+      }
+    }
+  }
+  return failures
+}
+
+// One message naming every file that failed, so "which of my files made it?"
+// is answerable without comparing lists by hand.
+function stagedFailureMessage(failures: { file: string; message: string }[]): string {
+  const detail = failures.map((f) => `${f.file} (${f.message})`).join(', ')
+  const plural = failures.length > 1 ? 's' : ''
+  // Names the files AND says where to fix it: the staged copies are gone once
+  // this form unmounts (RR-4QO887), so "re-attach on the entity" is the only
+  // honest instruction.
+  return `Entity created, but ${failures.length} file${plural} failed to attach: ${detail}. Re-attach on the entity.`
+}
+
 // onAttachmentChanged fires after a file widget uploads or removes an
 // attachment (already persisted server-side via the attachment endpoint).
 // Reload the entity so the stamped property value and _attachments
@@ -742,9 +837,16 @@ function validate(scopeFields?: FormFieldOrRelation[], requiredProps?: Set<strin
 
     const value = formData.value[propName]
 
-    // Required check (metamodel `required` OR a matching `required_when`)
+    // Required check (metamodel `required` OR a matching `required_when`).
+    //
+    // A staged file counts as a value (BUG-L1DHC5). Staged files deliberately
+    // live outside `formData` — a File there would be POSTed as the property's
+    // value, and the server stamps that property itself once the bytes land —
+    // so without this term a `required` file property can never be satisfied
+    // and Create is blocked forever with no visible error.
     const isRequired = propDef.required || (requiredProps?.has(propName) ?? false)
-    if (isRequired && (value === undefined || value === null || value === '')) {
+    const hasStagedFile = (stagedFiles.value[propName]?.length ?? 0) > 0
+    if (isRequired && !hasStagedFile && (value === undefined || value === null || value === '')) {
       next[propName] = 'This field is required'
       scopeValid = false
       continue
@@ -921,6 +1023,17 @@ function focusFirstError() {
 
 async function handleSubmit() {
   if (!formConfig.value) return
+  // RR-HJLLUF: re-entrancy guard. PendingButton suppresses its own repeat
+  // clicks, but handleKeydown calls handleSubmit() directly, so Cmd+Enter
+  // twice would run the whole create path twice — two entities, and (since
+  // TKT-7K3BJF) two sets of uploads. The guard belongs on the operation, not
+  // on one of its callers, or the next caller reintroduces the hole. The
+  // window is now the create POST *plus* N sequential uploads, so this is
+  // seconds wide on a large file, not milliseconds.
+  if (saving.value) return
+  // Already created once from this form instance (RR-4QO887): a second submit
+  // would create a duplicate, not retry the failed attachment upload.
+  if (createdEntityId.value) return
   // Edit mode has no explicit submit — autosave persists per field. Guard
   // against an Enter-key form submit doing anything (there's no Save button).
   //
@@ -1017,6 +1130,7 @@ async function handleSubmit() {
     payload.properties = pruneWizardHidden(visibleWritablePropertiesForCommit())
     Object.assign(payload, idControls.buildPayloadFields())
     const entity = await entitiesStore.create(formConfig.value.entity, payload)
+    createdEntityId.value = entity.id
     // DEC-HWZHA soft conditions ride the 200 create response; surface them or
     // they are invisible. (Edit-mode warnings come through autosave's own
     // response handling — this is the create channel.)
@@ -1039,6 +1153,23 @@ async function handleSubmit() {
       }
     }
 
+    // TKT-7K3BJF phase 2: upload staged attachments against the id the server
+    // just minted. Ordering here is load-bearing (RR-6ZAOMK) — uploads must
+    // run BEFORE the dirty reset, the embedded early-return, and the success
+    // toast, so that a failure can keep the form dirty, still reach the
+    // inline-create host, and avoid claiming success it didn't achieve.
+    const uploadFailures = hasStagedFiles()
+      ? await uploadStagedFiles(formConfig.value.entity, entity.id)
+      : []
+    // RR-4QO887: clear staged files and drop the dirty flag even when an
+    // upload failed. Keeping them looks like it preserves a retry, but this
+    // path navigates away (or, when embedded, the host closes the modal —
+    // RR-7T94EF), unmounting the form and discarding the File objects
+    // regardless. Worse, a still-dirty form whose submit re-runs the WHOLE
+    // create path turns "retry" into a second entity. Recovery is on the
+    // created entity, whose file widget uploads directly; the error message
+    // names exactly which files to re-attach.
+    stagedFiles.value = {}
     dirty.value = false
 
     // Embedded: hand the entity to the host and stop. No navigation (it would
@@ -1046,11 +1177,25 @@ async function handleSubmit() {
     // — the host reports the creation itself, next to the link step the user
     // still has to complete.
     if (props.embedded) {
+      if (uploadFailures.length > 0) uiStore.error(stagedFailureMessage(uploadFailures))
       emit('inline-created', entity)
       return
     }
 
-    uiStore.success('Entity created successfully')
+    if (uploadFailures.length > 0) {
+      // The entity exists — say so, and name exactly which files did not make
+      // it. A bare success toast followed by an error would describe one user
+      // action twice, contradicting itself.
+      uiStore.error(stagedFailureMessage(uploadFailures))
+    } else {
+      uiStore.success('Entity created successfully')
+    }
+
+    // RR-QQQ2JR: the upload phase can outlive the component (the user clicks
+    // away mid-upload), so re-check before touching the router — every other
+    // async path here already guards on this flag (RR-2PZB). A push on a torn-
+    // down component is a no-op today; this keeps the discipline uniform.
+    if (stagedUnmounted) return
 
     // Navigate to return_to or entity detail
     if (returnTo.value) {
@@ -1428,7 +1573,12 @@ function checkDirty() {
     content: content.value,
   })
   const hasCardChanges = pendingCardChanges.value.size > 0
-  dirty.value = currentData !== originalData.value || hasCardChanges
+  // RR-EUX4BX: staged files live outside formData by design, so they are
+  // invisible to the serialized comparison above. Without this term, attaching
+  // a file and navigating away discards it with no prompt from either guard —
+  // silent loss of user input. `pendingCardChanges` is the same shape of
+  // out-of-band dirtiness.
+  dirty.value = currentData !== originalData.value || hasCardChanges || hasStagedFiles()
 }
 
 function getPropertyDef(property: string): PropertyDef | undefined {
@@ -1795,6 +1945,7 @@ defineExpose({
               :errors="errors"
               :relation-affordances="relationAffordances"
               :attachments="attachments"
+              :staged-files="stagedFiles"
               :save-generation="saveGeneration"
               :get-property-def="getPropertyDef"
               :is-field-readonly="isFieldReadonly"
@@ -1802,6 +1953,7 @@ defineExpose({
               :transitions-for="transitionsFor"
               @update-field="proposeChange"
               @attachment-changed="onAttachmentChanged"
+              @update-staged-files="updateStagedFiles"
               @update-relation="updateRelation"
               @update-relation-types="updateRelationTypes"
               @incoming-changed="updateIncomingPicker"

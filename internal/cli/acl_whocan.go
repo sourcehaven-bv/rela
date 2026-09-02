@@ -8,11 +8,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/aclmap"
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
 // ACLWhoCanCmd implements `rela acl who-can <verb> <entity>`. It lists
@@ -44,8 +47,8 @@ type ACLWhoCanCmd struct {
 }
 
 // Run executes `rela acl who-can`.
-func (c *ACLWhoCanCmd) Run(ctx context.Context, svc *readServices) error {
-	engine, err := buildACLEngine(svc)
+func (c *ACLWhoCanCmd) Run(ctx context.Context, svc *writeServices) error {
+	engine, err := buildACLEngine(&svc.readServices)
 	if err != nil {
 		if stderrors.Is(err, errNoACLPolicy) {
 			out.WriteSuccess("No acl.yaml found; every principal has full access (no policy).")
@@ -53,6 +56,18 @@ func (c *ACLWhoCanCmd) Run(ctx context.Context, svc *readServices) error {
 		}
 		return err
 	}
+
+	// Record the QUERY before answering it (CONTROL-8-15, TKT-M86UY8). The
+	// output is a confidentiality attestation — who may act on this entity and
+	// by which routes — so "who asked this, and when" is the forensic question
+	// that outlives the answer.
+	//
+	// Recorded even when the lookup then fails: an attempt to enumerate access
+	// for a non-existent id is as interesting as a successful one, and
+	// recording only successes would let a prober stay out of the log.
+	//
+	// The RESULT is never recorded — see audit.OpACLQuery.
+	recordACLQuery(ctx, svc.Audit, c.Verb, c.Entity)
 
 	result, err := engine.WhoCan(ctx, acl.Verb(c.Verb), c.Entity)
 	if err != nil {
@@ -212,4 +227,21 @@ func (v aclMetamodelView) PropertyInfo(entityType, property string) acl.Property
 		return acl.PropertyInfo{}
 	}
 	return acl.PropertyInfo{Exists: true, Unique: pd.Unique, List: pd.List}
+}
+
+// recordACLQuery writes the audit row for an effective-access query.
+//
+// Nil-safe on the sink: CLI test fixtures wire services without one, and a
+// missing audit sink must not turn a read command into an error.
+func recordACLQuery(ctx context.Context, sink audit.Audit, verb, entityID string) {
+	if sink == nil {
+		return
+	}
+	sink.Record(audit.Record{
+		Time:      time.Now().UTC(),
+		Op:        audit.OpACLQuery,
+		Subject:   &audit.Subject{Kind: "entity", ID: entityID},
+		Principal: principal.From(ctx),
+		Summary:   "who-can " + verb,
+	})
 }

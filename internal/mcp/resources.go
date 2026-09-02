@@ -18,7 +18,7 @@ func (s *Server) registerResources() {
 			Description: "The project's metamodel definition (entity types, relations, properties)",
 			MIMEType:    "application/json",
 		},
-		s.handleReadMetamodel,
+		s.schemaRes.handleReadMetamodel,
 	)
 
 	// Dynamic resource template: entities
@@ -29,7 +29,7 @@ func (s *Server) registerResources() {
 			Description: "Read a specific entity with its properties, content, and relations",
 			MIMEType:    "application/json",
 		},
-		s.handleReadEntity,
+		s.schemaRes.handleReadEntity,
 	)
 
 	// Dynamic resource template: relations
@@ -40,14 +40,14 @@ func (s *Server) registerResources() {
 			Description: "Read a specific relation between two entities",
 			MIMEType:    "application/json",
 		},
-		s.handleReadRelation,
+		s.schemaRes.handleReadRelation,
 	)
 }
 
-func (s *Server) handleReadMetamodel(
+func (h schemaResourceHandler) handleReadMetamodel(
 	_ context.Context, _ *mcpgo.ReadResourceRequest,
 ) (*mcpgo.ReadResourceResult, error) {
-	meta := s.deps.Meta
+	meta := h.meta
 	result := map[string]any{
 		"version":   meta.GetVersion(),
 		"namespace": meta.GetNamespace(),
@@ -73,7 +73,7 @@ func (s *Server) handleReadMetamodel(
 	}, nil
 }
 
-func (s *Server) handleReadEntity(
+func (h schemaResourceHandler) handleReadEntity(
 	ctx context.Context, request *mcpgo.ReadResourceRequest,
 ) (*mcpgo.ReadResourceResult, error) {
 	uri := request.Params.URI
@@ -86,7 +86,7 @@ func (s *Server) handleReadEntity(
 	}
 	entityType, id := segments[0], segments[1]
 
-	st := s.deps.Store
+	st := h.store
 	e, getErr := st.GetEntity(ctx, id)
 	if getErr != nil {
 		return nil, fmt.Errorf("entity not found: %s", id)
@@ -109,7 +109,7 @@ func (s *Server) handleReadEntity(
 	}, nil
 }
 
-func (s *Server) handleReadRelation(
+func (h schemaResourceHandler) handleReadRelation(
 	ctx context.Context, request *mcpgo.ReadResourceRequest,
 ) (*mcpgo.ReadResourceResult, error) {
 	uri := request.Params.URI
@@ -122,7 +122,7 @@ func (s *Server) handleReadRelation(
 	}
 	fromID, relType, toID := segments[0], segments[1], segments[2]
 
-	st := s.deps.Store
+	st := h.store
 	relation, getErr := st.GetRelation(ctx, fromID, relType, toID)
 	if getErr != nil {
 		return nil, fmt.Errorf("relation not found: %s --%s--> %s", fromID, relType, toID)

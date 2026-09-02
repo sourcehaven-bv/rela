@@ -107,7 +107,7 @@ func scopeFromParam(raw string, meta entityTypeChecker) (scope ScopeDescriptor, 
 func (a *App) resolveScope(ctx context.Context, scope ScopeDescriptor) ([]*entityPkg.Entity, error) {
 	switch scope.Source {
 	case "search":
-		entities, err := a.executeQuery(ctx, scope.Q)
+		entities, err := a.queries.executeQuery(ctx, scope.Q)
 		if err != nil {
 			return nil, err
 		}

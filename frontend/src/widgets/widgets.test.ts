@@ -31,11 +31,20 @@ const { mockUpload, mockDelete, MockAttachmentError } = vi.hoisted(() => {
     MockAttachmentError,
   }
 })
-vi.mock('@/api/attachments', () => ({
-  uploadAttachment: mockUpload,
-  deleteAttachment: mockDelete,
-  AttachmentError: MockAttachmentError,
-}))
+// Stub only the two network functions; keep the real `attachmentErrorReason`
+// so the status→message mapping under test is the shipped one. Note it is the
+// REAL AttachmentError that the helper instanceof-checks, so tests that want a
+// status branch must throw a MockAttachmentError AND the helper must still
+// resolve it — hence importActual rather than a bare object literal.
+vi.mock('@/api/attachments', async () => {
+  const actual = await vi.importActual<Record<string, unknown>>('@/api/attachments')
+  return {
+    ...actual,
+    uploadAttachment: mockUpload,
+    deleteAttachment: mockDelete,
+    AttachmentError: MockAttachmentError,
+  }
+})
 
 describe('TextWidget', () => {
   it('renders the value and emits update:modelValue on input', async () => {
@@ -557,13 +566,104 @@ describe('FileWidget', () => {
     expect(w.text()).toContain('No file attached')
   })
 
-  it('shows a note (no upload control) in edit mode without entity context', () => {
+  // TKT-7K3BJF changed what "edit mode without an entity id" means: it is now
+  // the CREATE signal (staged mode), not "cannot mutate". The genuine
+  // cannot-mutate case is a disabled (policy-read-only) field, which is what
+  // this test now covers.
+  it('shows a note (no upload control) when the field is disabled by policy', () => {
     const w = mount(FileWidget, {
-      props: { modelValue: '', mode: 'edit' as const, propertyName: 'screenshot', attachments: [att] },
+      props: {
+        modelValue: '',
+        mode: 'edit' as const,
+        propertyName: 'screenshot',
+        attachments: [att],
+        disabled: true,
+        entityType: 'ticket',
+        entityId: 'TKT-1',
+      },
     })
     expect(w.find('.file-dropzone').exists()).toBe(false)
     expect(w.find('.file-edit-note').exists()).toBe(true)
     expect(w.text()).toContain('shot.png')
+  })
+
+  // --- Staged (create-mode) attachments, TKT-7K3BJF ---
+
+  const stagedProps = (over: Record<string, unknown> = {}) => ({
+    modelValue: '',
+    mode: 'edit' as const,
+    propertyName: 'screenshot',
+    entityType: 'ticket',
+    // No entityId: this IS create mode. Not a sentinel — see RR-QTCKCW.
+    ...over,
+  })
+
+  function textFile(name: string, contents = 'x'): File {
+    return new File([contents], name, { type: 'text/plain' })
+  }
+
+  it('offers an add control in create mode (no entity id yet)', () => {
+    const w = mount(FileWidget, { props: stagedProps() })
+    expect(w.find('.file-dropzone').exists()).toBe(true)
+    expect(w.find('.file-edit-note').exists()).toBe(false)
+  })
+
+  it('renders staged files with a pending badge and no download link', () => {
+    const w = mount(FileWidget, {
+      props: stagedProps({ stagedFiles: [textFile('notes.txt', 'hello')] }),
+    })
+    expect(w.text()).toContain('notes.txt')
+    expect(w.text()).toContain('Pending save')
+    // Nothing to download yet — the bytes are still local.
+    expect(w.find('a.file-name').exists()).toBe(false)
+  })
+
+  // Simulate a real pick: set `files` on the hidden input and fire `change`,
+  // which is the path the widget actually listens on.
+  async function pickFile(w: ReturnType<typeof mount>, file: File) {
+    const input = w.find('input[type="file"]')
+    Object.defineProperty(input.element, 'files', { value: [file], configurable: true })
+    await input.trigger('change')
+  }
+
+  it('emits the staged list when a file is picked, without uploading', async () => {
+    const w = mount(FileWidget, { props: stagedProps() })
+    const file = textFile('a.txt')
+    await pickFile(w, file)
+    const emitted = w.emitted('update:staged-files')
+    expect(emitted).toBeTruthy()
+    expect(emitted![0][0]).toEqual([file])
+    // Staging must never hit the network.
+    expect(mockUpload).not.toHaveBeenCalled()
+  })
+
+  it('removing a staged file emits the shortened list', async () => {
+    const keep = textFile('keep.txt')
+    const drop = textFile('drop.txt')
+    const w = mount(FileWidget, { props: stagedProps({ stagedFiles: [keep, drop], max: 3 }) })
+    await w.findAll('.file-remove')[1].trigger('click')
+    const emitted = w.emitted('update:staged-files')
+    expect(emitted![0][0]).toEqual([keep])
+  })
+
+  it('single-cap staging replaces rather than appends', async () => {
+    const first = textFile('first.txt')
+    const w = mount(FileWidget, { props: stagedProps({ stagedFiles: [first], max: 1 }) })
+    const second = textFile('second.txt')
+    await pickFile(w, second)
+    expect(w.emitted('update:staged-files')![0][0]).toEqual([second])
+  })
+
+  it('staged files count toward capacity and hide the add control at max', () => {
+    const w = mount(FileWidget, {
+      props: stagedProps({
+        propertyName: 'docs',
+        stagedFiles: [textFile('a.txt'), textFile('b.txt')],
+        max: 2,
+      }),
+    })
+    expect(w.find('.file-dropzone').exists()).toBe(false)
+    expect(w.find('.file-edit-note').text()).toContain('Maximum of 2')
   })
 
   it('shows a Replace control for a single-cap property in edit mode', () => {

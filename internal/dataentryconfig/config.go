@@ -81,15 +81,16 @@ func (d Direction) IsIncoming() bool {
 
 // Config is the top-level configuration for a data entry application.
 //
-// The field count is a DOCUMENTED SHAPE EXCEPTION rather than a ratchet target,
-// in the same sense as a store implementation's mandated interface: each
-// exported field is one top-level `data-entry.yaml` key, so the struct's width
-// is the config format's width. Grouping fields into sub-structs to get under
-// the line would change the operator-facing YAML — a breaking change to every
-// project's config file, made purely to satisfy a lint. Adding a genuinely new
-// top-level key (webhooks, TKT-1EM4KL) therefore raises the pin by one.
+// The plimsoll directive is a documented format-mirror exception, not a
+// ratchet target: each exported field IS one top-level key of
+// data-entry.yaml, so the count tracks the config format's documented
+// sections (a new view kind legitimately adds one) rather than god-object
+// accretion. Splitting it would churn the YAML shape for no design gain —
+// a breaking change to every project's config file, made to satisfy a lint.
+// A genuinely new top-level key therefore raises the pin by one; `webhooks`
+// (TKT-1EM4KL) is the most recent.
 //
-//plimsoll:max-fields=21
+//plimsoll:max-fields=22
 type Config struct {
 	Version     string                       `yaml:"version"`
 	App         AppConfig                    `yaml:"app"`
@@ -102,6 +103,7 @@ type Config struct {
 	EntityViews map[string]EntityViewConfig  `yaml:"entity_views,omitempty" json:"entity_views,omitempty"`
 	Kanbans     map[string]Kanban            `yaml:"kanbans"`
 	Calendars   map[string]Calendar          `yaml:"calendars,omitempty" json:"calendars,omitempty"`
+	Gantts      map[string]Gantt             `yaml:"gantts,omitempty" json:"gantts,omitempty"`
 	Documents   map[string]DocumentConfig    `yaml:"documents,omitempty"`
 	Feeds       map[string]Feed              `yaml:"feeds,omitempty" json:"feeds,omitempty"`
 	CalDAV      CalDAVConfig                 `yaml:"caldav,omitempty" json:"caldav,omitzero"`
@@ -856,6 +858,116 @@ type CalendarSource struct {
 	MaxSpan int `yaml:"max_span,omitempty" json:"max_span"`
 }
 
+// Gantt defines a hierarchical timeline view: entities nested by containment
+// relations and laid out against a continuous time axis, with parent spans
+// rolled up from their descendants.
+//
+// The defining constraint is RECURSIVE containment — a project may contain
+// sub-projects to unbounded depth — so depth is navigated (drill-down
+// re-rooting in the SPA) rather than displayed as ever-deeper indentation.
+// Unlike [Calendar], whose data path is the generic list endpoint, a gantt is
+// served by a dedicated tree endpoint: the fold over descendants cannot be
+// assembled client-side without one relation request per node per level.
+type Gantt struct {
+	// Title is the heading shown above the chart. Defaults to the config key.
+	Title string `yaml:"title" json:"title"`
+	// Header and Footer are admin-authored markdown rendered above and below
+	// the chart (sanitized client-side), matching the kanban info regions.
+	Header string `yaml:"header,omitempty" json:"header,omitempty"`
+	Footer string `yaml:"footer,omitempty" json:"footer,omitempty"`
+	// Hierarchy lists the relation types traversed parent-to-child, as ONE
+	// set: the walk follows any edge whose type appears here and does not
+	// care which. A list rather than a single name so a mixed hierarchy
+	// (project contains project, project has-epic, epic has-ticket) needs no
+	// second mechanism. Required, at least one entry.
+	Hierarchy []string `yaml:"hierarchy" json:"hierarchy"`
+	// MultiParent says what to do when an entity is contained by more than
+	// one parent: "first" (default) renders it once, under the parent whose
+	// edge sorts first; "error" refuses the request, for projects that intend
+	// a strict tree. There is deliberately no "duplicate": rendering the same
+	// node under two ancestors double-counts every roll-up above it, and the
+	// prototype showed the repeated bar reads as two pieces of work.
+	MultiParent string `yaml:"multi_parent,omitempty" json:"multi_parent"`
+	// OnCycle says what to do when the containment graph loops: "error"
+	// (default) refuses the request; "prune" stops the walk at the repeated
+	// node and renders the rest. A cycle is always a data bug — the choice is
+	// only whether the operator prefers a hard stop or a degraded render.
+	OnCycle string `yaml:"on_cycle,omitempty" json:"on_cycle"`
+	// DefaultDepth is how many levels the SPA expands on first load
+	// (default 2). Deeper levels stay reachable by drill-down; this only
+	// picks the initial view.
+	DefaultDepth int `yaml:"default_depth,omitempty" json:"default_depth"`
+	// MaxDepth caps how many levels one RESPONSE carries (default 10,
+	// matching the view traversal cap), measured from the response's root —
+	// the flame-graph semantic. A drilled request (?root=) re-roots the walk,
+	// so repeated drilling reaches arbitrary depth while each response stays
+	// bounded; this is a payload cap, not a reachability limit. Levels beyond
+	// it still fold into their ancestor's rolled span.
+	MaxDepth int `yaml:"max_depth,omitempty" json:"max_depth"`
+	// MaxNodes caps how many nodes one response may carry (default 2000).
+	// Exceeding it sets the response's truncated flag rather than failing.
+	MaxNodes int `yaml:"max_nodes,omitempty" json:"max_nodes"`
+	// Sources maps an entity TYPE to its date-role properties. Keyed by type
+	// rather than a list (unlike [CalendarSource]) because the mapping is
+	// necessarily one-per-type: a node's type decides its roles, and two
+	// competing mappings for one type would have no resolution rule. A type
+	// reached by traversal but absent here still renders — title only, its
+	// span purely rolled up from descendants.
+	Sources map[string]GanttSource `yaml:"sources" json:"sources"`
+	// Tooltip configures extra fields on the hover card, the [KanbanCard]
+	// analog. Omitted, the card shows the date spans and breach lines alone.
+	Tooltip GanttTooltip `yaml:"tooltip,omitempty" json:"tooltip,omitzero"`
+	// FilterControls are interactive filters, as on lists and kanbans.
+	FilterControls []FilterControl `yaml:"filter_controls,omitempty" json:"filter_controls,omitempty"`
+}
+
+// GanttTooltip configures the hover card's extra content. [KanbanCardField]
+// is shared with kanban cards and calendar chips — the three surfaces render
+// the same thing, so they take the same config.
+//
+// PROPERTY fields only, for now: a field's value is read from the
+// already-redacted entity, so field-level `visible:` policy holds for free.
+// A RELATION field would put neighbor titles on this wire, which need the
+// row-gating the list endpoint does via its include pipeline — a separate
+// piece of work, refused at load rather than shipped ungated.
+type GanttTooltip struct {
+	Fields []KanbanCardField `yaml:"fields,omitempty" json:"fields,omitempty"`
+}
+
+// IsZero lets omitzero keep an unconfigured Tooltip off the wire.
+func (t GanttTooltip) IsZero() bool { return len(t.Fields) == 0 }
+
+// GanttSource maps one entity type onto the gantt's three date roles. All
+// three are independently optional: an entity with only start/end is a plain
+// bar; with neither, its span is the envelope of its descendants; a committed
+// date alone is a milestone target the rolled span is judged against.
+type GanttSource struct {
+	// Start and End name date- or datetime-typed properties carrying the
+	// entity's OWN declared window. They are kept distinct from the rolled-up
+	// envelope on the wire: merging them would silently absorb the case where
+	// a child escapes its parent's window, which is the main signal this view
+	// exists to surface.
+	Start string `yaml:"start,omitempty" json:"start,omitempty"`
+	End   string `yaml:"end,omitempty" json:"end,omitempty"`
+	// Committed names a date property holding an externally promised
+	// deadline. A rolled span ending after it renders as a breach distinct
+	// from overrunning the planned window — a broken promise, not merely an
+	// internal inconsistency.
+	Committed string `yaml:"committed,omitempty" json:"committed,omitempty"`
+	// Where is a list of filter clauses, all ANDed, in the internal/filter
+	// language, restricting which entities of this type join the tree. A
+	// clause that does not parse is a LOAD error — silently skipping one
+	// widens the view, which is the wrong failure direction.
+	Where []string `yaml:"where,omitempty" json:"where,omitempty"`
+	// Label names the property used as the bar label. Defaults to the entity
+	// type's display property.
+	Label string `yaml:"label,omitempty" json:"label,omitempty"`
+	// Color is a named palette token (see ValidCalendarColors) distinguishing
+	// this type's bars. A TOKEN, never a CSS literal, for the same reasons as
+	// [CalendarSource.Color].
+	Color string `yaml:"color,omitempty" json:"color,omitempty"`
+}
+
 // KanbanCardField defines a single field shown on a kanban card.
 // A field references either a Property (entity property) or a Relation
 // (relation type whose target titles are shown). For relation fields,
@@ -915,6 +1027,7 @@ type NavigationEntry struct {
 	Dashboard bool   `yaml:"dashboard,omitempty" json:"dashboard,omitempty"`
 	Kanban    string `yaml:"kanban,omitempty" json:"kanban,omitempty"`
 	Calendar  string `yaml:"calendar,omitempty" json:"calendar,omitempty"`
+	Gantt     string `yaml:"gantt,omitempty" json:"gantt,omitempty"`
 	Search    bool   `yaml:"search,omitempty" json:"search,omitempty"`
 	Settings  bool   `yaml:"settings,omitempty" json:"settings,omitempty"`
 	Action    string `yaml:"action,omitempty" json:"action,omitempty"`
