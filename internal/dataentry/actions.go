@@ -3,7 +3,6 @@ package dataentry
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -14,6 +13,7 @@ import (
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/script"
 )
 
 // actionIDRegex defines the allowed format for action IDs at request time.
@@ -24,21 +24,6 @@ var actionIDRegex = regexp.MustCompile(`^[a-z0-9_-]{1,64}$`)
 // Tighter than the default Lua timeout because the action handler holds
 // writeMu for the entire script execution, blocking other mutations.
 const actionTimeout = 5 * time.Second
-
-// v1ActionRequest is the optional JSON body for action invocation.
-// When entity_id is provided, the script context includes the entity.
-type v1ActionRequest struct {
-	EntityID string `json:"entity_id"`
-	// EntityType is ACCEPTED AND IGNORED. The SPA still sends it, so it stays
-	// on the wire for compatibility, but the server must never authorize
-	// against it: a caller-supplied type is forgeable, and gating on it is a
-	// cross-type escalation (claim a type you may read, name an id of a type
-	// you may not). The stored type is the only one that means anything —
-	// visibility.ScriptReader.GetEntity reads it from the row itself.
-	// TestAction_EntityTypeIsIgnored pins that this field cannot influence the
-	// outcome. Do not "notice it's unused" and wire it back in.
-	EntityType string `json:"entity_type"`
-}
 
 // handleV1Action executes a configured action script and returns the result.
 // Endpoint: POST /api/v1/_action/{id}
@@ -71,14 +56,22 @@ func (h *writeHandler) handleV1Action(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse optional entity context from request body.
-	var req v1ActionRequest
-	if r.Body != nil && r.ContentLength != 0 {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeV1Error(w, r, http.StatusBadRequest, "invalid_body",
-				"Invalid request body", err.Error())
+	// Read the body under the action's size cap and project whatever the
+	// action's `request:` block opted into (TKT-EFMRQM). Absent a request:
+	// block this reproduces the pre-existing behavior — entity_id out of the
+	// body, everything else dropped — with the cap the endpoint never had.
+	payload, err := readActionPayload(r, action)
+	if err != nil {
+		if errors.Is(err, errActionBodyTooLarge) {
+			// 413 rather than 400: a producer that reads it can shrink the
+			// payload, where a generic 400 leaves it retrying forever.
+			writeV1Error(w, r, http.StatusRequestEntityTooLarge, "body_too_large",
+				"Request body too large", "")
 			return
 		}
+		writeV1Error(w, r, http.StatusBadRequest, "invalid_body",
+			"Invalid request body", err.Error())
+		return
 	}
 
 	correlationID := newCorrelationID()
@@ -120,8 +113,8 @@ func (h *writeHandler) handleV1Action(w http.ResponseWriter, r *http.Request) {
 	// operator-shell surface and must not inherit a trusted default.
 	deps.Capabilities = luaCapabilities(action.Capabilities)
 	var ent *entity.Entity
-	if req.EntityID != "" {
-		if e, err := deps.VisibleReader.GetEntity(r.Context(), req.EntityID); err == nil {
+	if payload.EntityID != "" {
+		if e, err := deps.VisibleReader.GetEntity(r.Context(), payload.EntityID); err == nil {
 			ent = e
 		}
 	}
@@ -136,9 +129,21 @@ func (h *writeHandler) handleV1Action(w http.ResponseWriter, r *http.Request) {
 	// Reuse App's long-lived engine so rela.cache state persists
 	// across action invocations. Constructing a fresh engine per
 	// request would reset the cache each time and defeat memoization.
-	resp, err := h.engine().ExecuteAction(r.Context(), action.Script, deps,
-		ent, action.Params, actionTimeout, correlationID)
+	resp, err := h.engine().ExecuteActionRequest(r.Context(), action.Script, deps,
+		script.ActionInvocation{
+			TriggerEntity: ent,
+			Params:        action.Params,
+			Request:       payload.Request,
+			Timeout:       actionTimeout,
+			CorrelationID: correlationID,
+		})
 	if err != nil {
+		// ERROR MAPPING (TKT-EFMRQM): a script FAILURE always produces rela's
+		// error envelope, never a script-chosen status. A script that raised
+		// has by definition not decided on a response — the status field lives
+		// on a successful RETURN value, which a failed run never produced. A
+		// script that wants to answer 4xx/5xx deliberately returns
+		// {status = ...}, which is the success path below.
 		slog.Warn("action failed", "action", id, "correlation", correlationID, "error", err)
 		var se *lua.ScriptError
 		if errors.As(err, &se) {
@@ -156,16 +161,7 @@ func (h *writeHandler) handleV1Action(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if resp == nil || (resp.Redirect == "" && resp.Message == "") {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-
-	writeV1JSON(w, http.StatusOK, v1.ActionResponse{
-		Redirect:    resp.Redirect,
-		Message:     resp.Message,
-		MessageType: resp.MessageType,
-	})
+	writeActionResponse(w, resp)
 }
 
 // newCorrelationID returns a short random hex string for log tracing.
