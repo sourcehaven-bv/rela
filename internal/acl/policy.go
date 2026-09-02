@@ -433,6 +433,21 @@ type FieldGrant struct {
 	When  string `yaml:"when,omitempty"`
 }
 
+// UnmarshalYAML rejects unknown keys. See [rejectUnknownGrantKeys] for why
+// leniency here fails OPEN rather than closed.
+func (g *FieldGrant) UnmarshalYAML(node *yaml.Node) error {
+	if err := rejectUnknownGrantKeys(node, "fields/visible", "field", "when"); err != nil {
+		return err
+	}
+	type raw FieldGrant
+	var out raw
+	if err := node.Decode(&out); err != nil {
+		return err
+	}
+	*g = FieldGrant(out)
+	return nil
+}
+
 // OptionGrant grants a single enum option on a field. Used to filter
 // the option set the SPA renders and to gate writes that set the
 // field to that option.
@@ -440,6 +455,20 @@ type OptionGrant struct {
 	Field  string `yaml:"field"`
 	Option string `yaml:"option"`
 	When   string `yaml:"when,omitempty"`
+}
+
+// UnmarshalYAML rejects unknown keys. See [rejectUnknownGrantKeys].
+func (g *OptionGrant) UnmarshalYAML(node *yaml.Node) error {
+	if err := rejectUnknownGrantKeys(node, "options", "field", "option", "when"); err != nil {
+		return err
+	}
+	type raw OptionGrant
+	var out raw
+	if err := node.Decode(&out); err != nil {
+		return err
+	}
+	*g = OptionGrant(out)
+	return nil
 }
 
 // RelationGrant grants relation-level affordances for one relation
@@ -458,6 +487,56 @@ type RelationGrant struct {
 	Fields   []FieldGrant `yaml:"fields,omitempty"`
 	Visible  []FieldGrant `yaml:"visible,omitempty"`
 	When     string       `yaml:"when,omitempty"`
+}
+
+// UnmarshalYAML rejects unknown keys. See [rejectUnknownGrantKeys].
+func (g *RelationGrant) UnmarshalYAML(node *yaml.Node) error {
+	if err := rejectUnknownGrantKeys(node, "relations",
+		"relation", "create", "remove", "fields", "visible", "when"); err != nil {
+		return err
+	}
+	type raw RelationGrant
+	var out raw
+	if err := node.Decode(&out); err != nil {
+		return err
+	}
+	*g = RelationGrant(out)
+	return nil
+}
+
+// rejectUnknownGrantKeys fails the policy load when an affordance grant
+// mapping carries a key outside want.
+//
+// yaml.v3 drops a key it cannot map, and for these three structs that fails
+// OPEN. Every one of them carries a `when:` conditioning the grant on a
+// predicate, and an absent When means "grant unconditionally"
+// (PolicyResolver.compile returns a nil program) — so a misspelled `wehn:`
+// silently promotes "editors may see salary IF they are HR" to "editors may
+// see salary". That is a read-side disclosure on the `visible:` block, not
+// merely a wider write gate.
+//
+// The sibling keys are not the motivation but are covered for free: a dropped
+// `field:`/`option:`/`relation:` is already caught downstream, because ""
+// matches no declared property and internal/affordances rejects it by name.
+// Rejecting here simply moves that report to the line that is wrong.
+//
+// Nil: node is never nil — yaml.v3 only calls UnmarshalYAML with a live node.
+func rejectUnknownGrantKeys(node *yaml.Node, block string, want ...string) error {
+	if node.Kind != yaml.MappingNode {
+		return nil // let the normal decode produce the type error
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		key := node.Content[i].Value
+		if !slices.Contains(want, key) {
+			// Report the source line, not an index: the caller decodes each
+			// grant on its own, so any counter here would number the KEYS of
+			// one mapping and read as if it named the offending grant.
+			return fmt.Errorf(
+				"%s grant at line %d: unknown key %q (want %s)",
+				block, node.Content[i].Line, key, strings.Join(want, ", "))
+		}
+	}
+	return nil
 }
 
 // RelationWriteGrant declares, for ONE relation type, the ACL permission that

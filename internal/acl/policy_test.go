@@ -466,6 +466,101 @@ func TestLoadPolicy_RoleRelationsSupportedKeys(t *testing.T) {
 	}
 }
 
+// An unknown key inside an affordance grant is refused at load. The motivating
+// case is a misspelled `when:`: yaml.v3 drops it, an absent When compiles to a
+// nil program, and a nil program means "grant unconditionally" — so the typo
+// silently promotes a conditional grant to an unconditional one. On `visible:`
+// that is a read-side disclosure.
+func TestLoadPolicy_AffordanceGrantUnknownKey_Rejected(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		yaml    string
+		wantSub string
+	}{
+		{
+			"fields when typo",
+			"roles:\n  e:\n    read: [t]\n    fields:\n      t:\n        - field: salary\n          wehn: \"x\"\n",
+			`unknown key "wehn"`,
+		},
+		{
+			"visible when typo",
+			"roles:\n  e:\n    read: [t]\n    visible:\n      t:\n        - field: salary\n          wehn: \"x\"\n",
+			`unknown key "wehn"`,
+		},
+		{
+			"options when typo",
+			"roles:\n  e:\n    read: [t]\n    options:\n      t:\n        - field: status\n          option: done\n          wehn: \"x\"\n",
+			`unknown key "wehn"`,
+		},
+		{
+			"relations when typo",
+			"roles:\n  e:\n    read: [t]\n    relations:\n      t:\n        - relation: blocks\n          wehn: \"x\"\n",
+			`unknown key "wehn"`,
+		},
+		{
+			"relations create typo",
+			"roles:\n  e:\n    read: [t]\n    relations:\n      t:\n        - relation: blocks\n          crate: false\n",
+			`unknown key "crate"`,
+		},
+		{
+			"nested relation fields when typo",
+			"roles:\n  e:\n    read: [t]\n    relations:\n      t:\n        - relation: blocks\n          fields:\n            - field: note\n              wehn: \"x\"\n",
+			`unknown key "wehn"`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			path := writeTempPolicy(t, tc.yaml)
+			_, err := acl.LoadPolicy(path)
+			if err == nil {
+				t.Fatalf("LoadPolicy: expected error on %s; got nil", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Errorf("LoadPolicy error = %q, want it to mention %q", err, tc.wantSub)
+			}
+		})
+	}
+}
+
+// The supported keys still round-trip, so the strict unmarshallers did not
+// narrow the real surface — in particular RelationGrant's pointer fields must
+// keep distinguishing "unset" from an explicit false.
+func TestLoadPolicy_AffordanceGrantSupportedKeys(t *testing.T) {
+	t.Parallel()
+	path := writeTempPolicy(t,
+		"roles:\n  e:\n    read: [t]\n"+
+			"    fields:\n      t:\n        - field: salary\n          when: \"true\"\n"+
+			"    options:\n      t:\n        - field: status\n          option: done\n          when: \"true\"\n"+
+			"    relations:\n      t:\n        - relation: blocks\n          create: false\n"+
+			"          fields:\n            - field: note\n              when: \"true\"\n")
+	p, err := acl.LoadPolicy(path)
+	if err != nil {
+		t.Fatalf("LoadPolicy: %v", err)
+	}
+	role := p.Roles["e"]
+	if got := role.Fields["t"][0]; got.Field != "salary" || got.When != "true" {
+		t.Errorf("FieldGrant = %+v, want {salary true}", got)
+	}
+	if got := role.Options["t"][0]; got.Field != "status" || got.Option != "done" || got.When != "true" {
+		t.Errorf("OptionGrant = %+v, want {status done true}", got)
+	}
+	rg := role.Relations["t"][0]
+	if rg.Relation != "blocks" {
+		t.Errorf("RelationGrant.Relation = %q, want %q", rg.Relation, "blocks")
+	}
+	if rg.Create == nil || *rg.Create {
+		t.Errorf("RelationGrant.Create = %v, want explicit false (not nil)", rg.Create)
+	}
+	if rg.Remove != nil {
+		t.Errorf("RelationGrant.Remove = %v, want nil (unset)", rg.Remove)
+	}
+	if got := rg.Fields[0]; got.Field != "note" || got.When != "true" {
+		t.Errorf("nested FieldGrant = %+v, want {note true}", got)
+	}
+}
+
 // TKT-4LQMWP (was TKT-VMD8 AC8 / RR-W2J6): a role granting UPDATE or DELETE on
 // a type it cannot read is rejected at load with a structured error naming the
 // role and type — you must read a type to modify or remove it. CREATE is EXEMPT:
