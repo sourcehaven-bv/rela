@@ -34,16 +34,18 @@ type TemplateLoader interface {
 	RelationTemplate(ctx context.Context, relationType string) (*templating.Template, error)
 }
 
-// Manager is the production [EntityManager] implementation. It runs
-// metamodel validation, automation rules (via [automation.Engine]),
-// and dispatches automation cascades through an [autocascade.Runner].
+// Manager is the production entity-manager implementation — the whole of this
+// package's write API. It runs metamodel validation, automation rules (via
+// [automation.Engine]), and dispatches automation cascades through an
+// [autocascade.Runner].
 //
 // Manager is constructed at each per-command wiring site (cmd/rela,
-// cmd/rela-server, cmd/rela-desktop, plus subcommands that need their
-// own EntityManager). Consumers depend on a scoped consumer-side
-// interface in their own package, not on *Manager directly (see
-// CLAUDE.md). The package-level [EntityManager] interface exists for
-// transitional reasons and is intentionally narrow.
+// cmd/rela-server, cmd/rela-desktop, plus subcommands that need their own
+// write path). Consumers depend on a scoped consumer-side interface declared
+// in their OWN package, never on a wide one declared here (see CLAUDE.md and
+// the package doc): appbuild hands out *Manager, and each consumer's
+// interface is satisfied structurally. The wide package-level EntityManager
+// interface that used to sit beside this type was removed in TKT-IVSJV6.
 //
 // Pipeline shapes preserved from the pre-decomposition workspace
 // implementation (see PLAN-HQ5Y):
@@ -108,15 +110,19 @@ func (m *Manager) gated() *Manager {
 	return &Manager{deps: m.deps, bypassACL: false}
 }
 
-// Compile-time assertions: Manager must satisfy both the public
-// EntityManager contract and the autocascade.Mutator surface (the
-// per-cascade write handle scripted actions receive). A drift in
-// either interface surfaces at this type, not at the call sites that
-// pass Manager into Request.Mutator or lua.WriteDeps.EntityManager.
-var (
-	_ EntityManager       = (*Manager)(nil)
-	_ autocascade.Mutator = (*Manager)(nil)
-)
+// Compile-time assertion: Manager must satisfy the autocascade.Mutator
+// surface (the per-cascade write handle scripted actions receive), so a
+// drift surfaces at this type rather than at the call site that passes
+// Manager into Request.Mutator.
+//
+// There is deliberately no assertion against a package-local write
+// interface: the wide EntityManager one was deleted in TKT-IVSJV6, and its
+// replacements are declared at each CONSUMER (lua.Mutator,
+// attachment.EntityUpdater, mcp.EntityWriter, and the unexported ones in
+// internal/cli and internal/dataentry). Asserting against them here would
+// re-import every consumer and reinstate the coupling the split removed;
+// each is checked where it is used, at its own wiring site.
+var _ autocascade.Mutator = (*Manager)(nil)
 
 // Deps is the constructor input for [New]. Using a struct keeps the
 // constructor signature stable as new collaborators land (audit,

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { RouterLink } from 'vue-router'
 import type { AnalyzeIssue } from '@/types'
 import { useSchemaStore } from '@/stores'
 import { useScriptErrorStore } from '@/stores/scriptError'
@@ -13,7 +13,6 @@ import { useScriptErrorStore } from '@/stores/scriptError'
 // interactive when it has nothing to do.
 const props = defineProps<{ issues: AnalyzeIssue[] }>()
 
-const router = useRouter()
 const schemaStore = useSchemaStore()
 const scriptErrorStore = useScriptErrorStore()
 
@@ -55,10 +54,14 @@ function isExpanded(key: string): boolean {
 function canNavigate(issue: AnalyzeIssue): boolean {
   return Boolean(issue.entityId && issue.entityType)
 }
-function onEntityClick(issue: AnalyzeIssue) {
-  if (canNavigate(issue)) {
-    router.push(`/entity/${issue.entityType}/${issue.entityId}`)
-  }
+// entityTarget is the entity route for a navigable issue row. Bound to a
+// RouterLink so cmd/middle-click opens a tab and right-click offers "Open in
+// new tab" — the previous role="button" span offered none of that.
+// Nil: returns undefined when the issue has no entity (script-error /
+// load-error rows), and the template renders a plain span instead.
+function entityTarget(issue: AnalyzeIssue): string | undefined {
+  if (!canNavigate(issue)) return undefined
+  return `/entity/${issue.entityType}/${issue.entityId}`
 }
 
 // The message cell reveals detail: script-error rows open the dialog;
@@ -97,16 +100,13 @@ function onMessageClick(key: string, issue: AnalyzeIssue, ev: Event) {
           <tr class="issue-row">
             <td class="entity-cell">
               <template v-if="row.issue.entityId">
-                <span
-                  class="entity-title"
-                  :class="{ clickable: canNavigate(row.issue) }"
-                  :role="canNavigate(row.issue) ? 'button' : undefined"
-                  :tabindex="canNavigate(row.issue) ? 0 : undefined"
-                  @click="onEntityClick(row.issue)"
-                  @keydown.enter="onEntityClick(row.issue)"
-                  @keydown.space.prevent="onEntityClick(row.issue)"
-                  >{{ getEntityTitle(row.issue) }}</span
+                <RouterLink
+                  v-if="entityTarget(row.issue)"
+                  class="entity-title clickable"
+                  :to="entityTarget(row.issue)!"
+                  >{{ getEntityTitle(row.issue) }}</RouterLink
                 >
+                <span v-else class="entity-title">{{ getEntityTitle(row.issue) }}</span>
                 <span class="entity-id">{{ row.issue.entityId }}</span>
               </template>
               <span v-else class="entity-empty">&mdash;</span>
@@ -166,17 +166,15 @@ function onMessageClick(key: string, issue: AnalyzeIssue, ev: Event) {
     <template v-for="row in rowsFor(props.issues)" :key="`card-${row.key}`">
       <li class="issue-card">
         <div class="issue-card-row issue-card-head">
-          <span
-            v-if="row.issue.entityId"
-            class="entity-title"
-            :class="{ clickable: canNavigate(row.issue) }"
-            :role="canNavigate(row.issue) ? 'button' : undefined"
-            :tabindex="canNavigate(row.issue) ? 0 : undefined"
-            @click="onEntityClick(row.issue)"
-            @keydown.enter="onEntityClick(row.issue)"
-            @keydown.space.prevent="onEntityClick(row.issue)"
-            >{{ getEntityTitle(row.issue) }}</span
+          <RouterLink
+            v-if="entityTarget(row.issue)"
+            class="entity-title clickable"
+            :to="entityTarget(row.issue)!"
+            >{{ getEntityTitle(row.issue) }}</RouterLink
           >
+          <span v-else-if="row.issue.entityId" class="entity-title">{{
+            getEntityTitle(row.issue)
+          }}</span>
           <span v-else class="entity-empty">&mdash;</span>
           <span class="severity-badge" :class="row.issue.severity">
             {{ row.issue.severity.toUpperCase() }}
@@ -262,6 +260,9 @@ function onMessageClick(key: string, issue: AnalyzeIssue, ev: Event) {
   display: block;
   color: var(--accent-color, #6366f1);
   font-weight: 500;
+  /* Now a real RouterLink: suppress the default underline so the resting look
+     is unchanged; the :hover rule below still underlines. */
+  text-decoration: none;
 }
 
 /* Split click targets (TKT-IL499B): the entity title navigates, the

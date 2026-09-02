@@ -299,6 +299,15 @@ func (e *Engine) recordCreate(ctx context.Context, ch LocalChange, res *PushResu
 	}
 
 	if newID != ch.Key {
+		// Push DOES write locally on this path: the primary minted an id that
+		// differs from the local temp id, and adopting it is a local rename.
+		// So a nil applier is fatal here rather than merely limiting — guard it
+		// like pull and force do, instead of dereferencing into a panic
+		// (TKT-IVSJV6).
+		if e.applier == nil {
+			return PushRecordResult{}, fmt.Errorf(
+				"adopt server id %q for local %q: %w", newID, ch.Key, errLocalApplierRequired)
+		}
 		if _, err := e.applier.RenameEntity(ctx, ch.Key, newID, entity.RenameOptions{}); err != nil {
 			return PushRecordResult{}, fmt.Errorf("adopt server id %q for local %q: %w", newID, ch.Key, err)
 		}

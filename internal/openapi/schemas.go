@@ -419,6 +419,7 @@ func (g *Generator) addCommonSchemas(spec *Spec) {
 			"views":      {Type: "object"},
 			"kanbans":    {Type: "object"},
 			"calendars":  {Type: "object"},
+			"gantts":     {Type: "object"},
 			"dashboard":  {Type: "object"},
 			"navigation": {Type: "array"},
 			"documents":  {Type: "object"},
