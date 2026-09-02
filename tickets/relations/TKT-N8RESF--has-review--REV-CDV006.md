@@ -1,5 +1,5 @@
 ---
 from: TKT-N8RESF
-type: has-review
+relation: has-review
 to: REV-CDV006
 ---

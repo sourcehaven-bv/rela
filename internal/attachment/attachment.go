@@ -15,7 +15,6 @@ import (
 	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -35,6 +34,24 @@ type Result struct {
 	FileName string
 }
 
+// EntityUpdater is the write surface the attachment service needs: recording
+// an attachment is a whole-entity save of a record this package just read and
+// modified. See the internal/entitymanager package doc for the consumer-side
+// rule this follows (TKT-IVSJV6).
+//
+// One method. Attaching a file never creates, deletes, renames or relates —
+// it updates the attachment properties of an entity that already exists.
+// Taking the whole write interface would let a future edit here reach for a
+// delete or a rename without that showing up as a dependency change
+// (TKT-IVSJV6).
+//
+// UpdateEntity rather than PatchEntity is deliberate: [Service.Attach] holds
+// the entity it read and owns the full record for the duration of the save,
+// which is the case UpdateEntity is for.
+type EntityUpdater interface {
+	UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.UpdateResult, error)
+}
+
 // Deps is the dependency bundle [New] requires. Store, Meta and
 // EntityManager are mandatory; [New] returns an error if any is nil.
 // Processor is optional — when nil the service uses [NoopProcessor] and the
@@ -42,7 +59,7 @@ type Result struct {
 type Deps struct {
 	Store         store.Store
 	Meta          *metamodel.Metamodel
-	EntityManager entitymanager.EntityManager
+	EntityManager EntityUpdater
 
 	// Processor inspects/rewrites attachment bytes before they are persisted
 	// (scan, MIME validation, transform). Optional; defaults to [NoopProcessor].

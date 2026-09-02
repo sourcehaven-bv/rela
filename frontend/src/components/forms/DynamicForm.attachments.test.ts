@@ -42,6 +42,8 @@ vi.mock('@/api', async () => {
         screenshot: '',
         evidence: [],
         needs_evidence: false,
+        // `report.evidence` shares this key; harmless for the bug form.
+
         ...((body as { properties?: Record<string, unknown> })?.properties ?? {}),
       },
       _fields: {},
@@ -119,6 +121,31 @@ const CREATED: Entity = {
   warnings: [],
 }
 
+// A type whose file property is REQUIRED, for the BUG-L1DHC5 regression: the
+// required check reads formData, and staged files deliberately live outside it.
+const REPORT_TYPE = {
+  name: 'report',
+  label: 'Report',
+  id_type: 'sequential',
+  properties: {
+    title: { type: 'string' },
+    evidence: { type: 'file', required: true },
+  },
+}
+
+const REPORT_FORM = {
+  id: 'report-form',
+  entity: 'report',
+  fields: [{ property: 'title' }, { property: 'evidence' }],
+}
+
+const REPORT_CREATED: Entity = {
+  id: 'REP-1',
+  type: 'report',
+  properties: { title: 'r' },
+  warnings: [],
+}
+
 const mounted: VueWrapper[] = []
 
 afterEach(() => {
@@ -136,11 +163,15 @@ async function mountCreate(form: { id: string } = FORM) {
   const schema = useSchemaStore()
   schema.forms.set(FORM.id, FORM as never)
   schema.forms.set(WIZARD_FORM.id, WIZARD_FORM as never)
+  schema.forms.set(REPORT_FORM.id, REPORT_FORM as never)
+  schema.entityTypes.set('report', REPORT_TYPE as never)
   schema.entityTypes.set('bug', ENTITY_TYPE as never)
   schema.loaded = true
 
   const entities = useEntitiesStore()
-  const create = vi.spyOn(entities, 'create').mockResolvedValue(CREATED)
+  const create = vi
+    .spyOn(entities, 'create')
+    .mockResolvedValue(form.id === REPORT_FORM.id ? REPORT_CREATED : CREATED)
 
   const wrapper = mount(DynamicForm, {
     props: { formId: form.id },
@@ -413,6 +444,46 @@ describe('DynamicForm — attachments on create', () => {
 
     expect(create).toHaveBeenCalledTimes(1)
     expect(mockUpload).not.toHaveBeenCalled()
+  })
+
+  describe('a required file property (BUG-L1DHC5)', () => {
+    it('blocks submit until a file is staged', async () => {
+      const { wrapper, create } = await mountCreate(REPORT_FORM)
+      await wrapper.find('#field-title').setValue('A report')
+
+      await submit(wrapper)
+
+      // The gate is the point: no entity, and the field is flagged.
+      expect(create).not.toHaveBeenCalled()
+      expect(wrapper.find('#field-evidence').exists()).toBe(true)
+      expect(wrapper.text()).toContain('This field is required')
+    })
+
+    it('a staged file satisfies the requirement and the create proceeds', async () => {
+      // The regression: staged files live outside formData, so before the fix
+      // this stayed blocked forever with no way for the user to satisfy it.
+      const { wrapper, create } = await mountCreate(REPORT_FORM)
+      await wrapper.find('#field-title').setValue('A report')
+      await stage(wrapper, 'evidence', textFile('proof.txt'))
+
+      await submit(wrapper)
+
+      expect(create).toHaveBeenCalledTimes(1)
+      expect(mockUpload).toHaveBeenCalledTimes(1)
+    })
+
+    it('clears the standing error as soon as a file is staged', async () => {
+      const { wrapper } = await mountCreate(REPORT_FORM)
+      await wrapper.find('#field-title').setValue('A report')
+      await submit(wrapper)
+      expect(wrapper.text()).toContain('This field is required')
+
+      await stage(wrapper, 'evidence', textFile('proof.txt'))
+
+      // Mirrors updateField: the flag goes as the user addresses it, rather
+      // than lingering until the next submit.
+      expect(wrapper.text()).not.toContain('This field is required')
+    })
   })
 
   it('leaves the no-attachment create path untouched', async () => {

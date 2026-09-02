@@ -1,5 +1,5 @@
 ---
 from: TKT-DOCASSERT
-type: has-docs
+relation: has-docs
 to: DOCS-DOCASSERT
 ---

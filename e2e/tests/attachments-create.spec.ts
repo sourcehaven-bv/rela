@@ -131,6 +131,29 @@ test.describe('Attachments on entity create', () => {
     expect(entity.properties.screenshot ?? '').toBe('');
   });
 
+  // BUG-L1DHC5: staged files live outside `formData`, which is where the
+  // required check looks — so before the fix a required file property could
+  // never be satisfied and Create did nothing at all.
+  test.describe('a required file property', () => {
+    test('blocks Create until a file is staged, then goes through', async ({ appPage, api }) => {
+      const formPage = new FormPage(appPage);
+      await formPage.navigateToCreateForm('bug_signoff');
+      await formPage.fillField('title', 'Needs sign-off');
+
+      // No file yet: submitting must not create anything, and must say why.
+      await formPage.submitExpectingNoCreate('signoffs');
+      await expect(appPage).toHaveURL(/\/form\/bug_signoff/);
+      expect(await formPage.fieldErrorText('document')).toContain('required');
+
+      // Staging one satisfies it — the whole point of the fix.
+      await formPage.attachFile('document', 'signed.txt', 'approved');
+      const created = await formPage.submitAndExpectCreateWithUploads('signoffs', 1);
+
+      const entity = await api.getEntity('signoffs', created.id);
+      expect((entity._attachments?.document ?? []).map((f) => f.filename)).toEqual(['signed.txt']);
+    });
+  });
+
   test('creating without touching a file property is unchanged', async ({ appPage, api }) => {
     // The common case by far: it must not gain a request or change behaviour.
     const listPage = new ListPage(appPage);

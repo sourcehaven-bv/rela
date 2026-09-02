@@ -152,6 +152,15 @@ function updateStagedFiles(property: string, files: File[]) {
     delete next[property]
     stagedFiles.value = next
   }
+  // Clear a standing validation error once a file is staged, mirroring what
+  // updateField does as the user edits an ordinary field (BUG-L1DHC5) — else a
+  // "This field is required" flag would persist after the user has addressed
+  // it. A full re-check still runs on submit.
+  if (files.length && errors.value[property]) {
+    const next = { ...errors.value }
+    delete next[property]
+    errors.value = next
+  }
   checkDirty()
 }
 
@@ -828,9 +837,16 @@ function validate(scopeFields?: FormFieldOrRelation[], requiredProps?: Set<strin
 
     const value = formData.value[propName]
 
-    // Required check (metamodel `required` OR a matching `required_when`)
+    // Required check (metamodel `required` OR a matching `required_when`).
+    //
+    // A staged file counts as a value (BUG-L1DHC5). Staged files deliberately
+    // live outside `formData` — a File there would be POSTed as the property's
+    // value, and the server stamps that property itself once the bytes land —
+    // so without this term a `required` file property can never be satisfied
+    // and Create is blocked forever with no visible error.
     const isRequired = propDef.required || (requiredProps?.has(propName) ?? false)
-    if (isRequired && (value === undefined || value === null || value === '')) {
+    const hasStagedFile = (stagedFiles.value[propName]?.length ?? 0) > 0
+    if (isRequired && !hasStagedFile && (value === undefined || value === null || value === '')) {
       next[propName] = 'This field is required'
       scopeValid = false
       continue

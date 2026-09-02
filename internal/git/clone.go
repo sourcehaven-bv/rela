@@ -21,10 +21,15 @@ type CloneOptions struct {
 	Token    string // OAuth token for authentication (optional for public repos)
 	Username string // Username for authentication (defaults to "oauth2" when token is set)
 
-	// BaseDir, when non-empty, is the directory Path must stay inside. Clone
-	// refuses a Path that escapes it. Callers that derive the final segment of
-	// Path from a remote-controlled value — notably ExtractRepoName, which
-	// returns the URL's last path segment and can yield ".." — MUST set this.
+	// BaseDir is the directory Path must stay inside. It is REQUIRED: Clone
+	// refuses an empty BaseDir, and refuses a Path that escapes it.
+	//
+	// Required rather than optional because the guarantee this field provides
+	// is for the caller who forgets (TKT-S2SFTG / issue #1270). Callers derive
+	// the final segment of Path from remote-controlled values — notably
+	// ExtractRepoName, which returns the URL's last path segment and can yield
+	// ".." — and an optional BaseDir silently withheld containment from exactly
+	// the caller who most needed it.
 	//
 	// Containment lives here rather than in the caller because Clone is the
 	// point where an escaping path becomes dangerous: storeCredentials writes a
@@ -101,27 +106,44 @@ func Clone(opts CloneOptions) error {
 
 const defaultUsername = "oauth2"
 
-// containedPath cleans path and, when base is non-empty, verifies it stays
-// inside base. It returns the cleaned absolute path.
+// containedPath cleans path and verifies it stays inside base, returning the
+// cleaned absolute path.
+//
+// An empty base is an ERROR, not "skip the check" (TKT-S2SFTG / issue #1270).
+// Skipping made the containment guarantee false in exactly the case it exists
+// for: a caller who forgets to set BaseDir is the threat model, and that caller
+// would have got no containment at all, silently. There is also no safe base to
+// default to — falling back to the process CWD would contain the clone
+// somewhere the caller never named, which is a different surprise rather than a
+// smaller one.
 //
 // The check is string-level (Clean + Rel on absolute paths); it deliberately
 // does not resolve symlinks, matching storage.RootedFS's threat model: the
 // target is "the caller-supplied final segment contains traversal syntax", not
 // "an attacker already has write access to the base directory".
 func containedPath(base, path string) (string, error) {
+	if base == "" {
+		return "", errors.New("clone base directory is required")
+	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return "", fmt.Errorf("resolve clone path: %w", err)
 	}
 	abs = filepath.Clean(abs)
-	if base == "" {
-		return abs, nil
-	}
 	absBase, err := filepath.Abs(base)
 	if err != nil {
 		return "", fmt.Errorf("resolve clone base directory: %w", err)
 	}
 	absBase = filepath.Clean(absBase)
+
+	// A root base contains everything, so the check would pass for any path
+	// while appearing to have verified something — the same silent-no-op shape
+	// as the empty base above, reached by a different route (a config default
+	// that resolves to "/", or a caller passing it deliberately). Refuse it:
+	// there is no legitimate reason to scope a clone to the whole filesystem.
+	if absBase == string(filepath.Separator) {
+		return "", errors.New("clone base directory must not be the filesystem root")
+	}
 
 	rel, err := filepath.Rel(absBase, abs)
 	if err != nil {
