@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { RouterLink, useRouter, type RouteLocationRaw } from 'vue-router'
 import { api } from '@/api/client'
 import { isCancelledFetch } from '@/composables/usePageData'
 import type { SidePanelSection, SidePanelEntity, SidePanelAddTarget } from '@/types'
@@ -58,12 +58,14 @@ function isCollapsed(sectionId: string): boolean {
   return collapsedSections.value.has(sectionId)
 }
 
-function navigateToEntity(entity: SidePanelEntity) {
+// entityTarget is the single source of truth for where a side-panel entry goes,
+// bound to each entry's RouterLink. The edit-form branch must be reproduced
+// exactly so a cmd-clicked tab matches a plain click.
+function entityTarget(entity: SidePanelEntity): RouteLocationRaw {
   if (entity.editFormId) {
-    router.push(`/form/${entity.editFormId}/${entity.id}`)
-  } else {
-    router.push(`/entity/${entity.type}/${entity.id}`)
+    return `/form/${entity.editFormId}/${entity.id}`
   }
+  return `/entity/${entity.type}/${entity.id}`
 }
 
 function createNewForSection(section: SidePanelSection, target: SidePanelAddTarget) {
@@ -140,13 +142,10 @@ onMounted(() => loadSidePanel())
           <!-- List display -->
           <template v-else-if="section.display === 'list'">
             <ul class="entity-list">
-              <li
-                v-for="entity in section.entities"
-                :key="entity.id"
-                class="entity-list-item"
-                @click="navigateToEntity(entity)"
-              >
-                <Badge :value="entity.title || entity.id" :property="entity.type" />
+              <li v-for="entity in section.entities" :key="entity.id">
+                <RouterLink class="entity-list-item" :to="entityTarget(entity)">
+                  <Badge :value="entity.title || entity.id" :property="entity.type" />
+                </RouterLink>
               </li>
             </ul>
           </template>
@@ -154,11 +153,11 @@ onMounted(() => loadSidePanel())
           <!-- Cards display -->
           <template v-else-if="section.display === 'cards'">
             <div class="entity-cards">
-              <div
+              <RouterLink
                 v-for="entity in section.entities"
                 :key="entity.id"
                 class="entity-card"
-                @click="navigateToEntity(entity)"
+                :to="entityTarget(entity)"
               >
                 <div class="card-header">
                   <span class="card-id">{{ entity.id }}</span>
@@ -178,7 +177,7 @@ onMounted(() => loadSidePanel())
                     <span v-else class="field-value">{{ field.values?.join(', ') || '-' }}</span>
                   </div>
                 </div>
-              </div>
+              </RouterLink>
             </div>
           </template>
 
@@ -310,8 +309,12 @@ onMounted(() => loadSidePanel())
 }
 
 .entity-list-item {
+  display: block;
   cursor: pointer;
   transition: transform 0.1s;
+  /* Real link (cmd/middle-click opens a tab) — keep the Badge's own colours. */
+  color: inherit;
+  text-decoration: none;
 }
 
 .entity-list-item:hover {
@@ -326,12 +329,15 @@ onMounted(() => loadSidePanel())
 }
 
 .entity-card {
+  display: block;
   padding: 12px;
   background: var(--hover-bg);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   cursor: pointer;
   transition: all 0.15s;
+  color: inherit;
+  text-decoration: none;
 }
 
 .entity-card:hover {

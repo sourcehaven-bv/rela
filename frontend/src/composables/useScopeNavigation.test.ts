@@ -310,6 +310,60 @@ describe('useScopeNavigation', () => {
     })
   })
 
+  // scopeTarget backs the Prev/Next affordances, which are real links so
+  // cmd/ctrl/middle-click opens the neighbour in a new tab (TKT-3CSZRG). It is
+  // the same value navigateScope pushes, so the link and the keyboard shortcut
+  // cannot drift apart.
+  describe('scopeTarget', () => {
+    it('returns the same location navigateScope pushes', async () => {
+      mockRouteQuery.value = { from: 'tasks' }
+      mockSchemaStore.getList.mockReturnValue({ entity: 'task' })
+      mockPositionForList(['TASK-001', 'TASK-002'])
+
+      const { loadScopeNav, scopeTarget, navigateScope } = useScopeNavigation(() => 'TASK-002')
+      await loadScopeNav()
+
+      const target = scopeTarget('prev')
+      navigateScope('prev')
+
+      expect(mockPush).toHaveBeenCalledWith(target)
+    })
+
+    it('carries the scope query so a new tab is not orphaned', async () => {
+      mockRouteQuery.value = { from: 'tasks', q: 'urgent' }
+      mockSchemaStore.getList.mockReturnValue({ entity: 'task' })
+      mockPositionForList(['TASK-001', 'TASK-002'])
+
+      const { loadScopeNav, scopeTarget } = useScopeNavigation(() => 'TASK-001')
+      await loadScopeNav()
+
+      expect(scopeTarget('next')).toEqual({
+        path: '/entity/task/TASK-002',
+        query: { from: 'tasks', q: 'urgent' },
+      })
+    })
+
+    it('is undefined at the ends, so the template renders a disabled affordance', async () => {
+      mockRouteQuery.value = { from: 'tasks' }
+      mockSchemaStore.getList.mockReturnValue({ entity: 'task' })
+      mockPositionForList(['TASK-001', 'TASK-002'])
+
+      const { loadScopeNav, scopeTarget } = useScopeNavigation(() => 'TASK-001')
+      await loadScopeNav()
+
+      expect(scopeTarget('prev')).toBeUndefined()
+      expect(scopeTarget('next')).toBeDefined()
+    })
+
+    it('is undefined when there is no scope at all', () => {
+      mockRouteQuery.value = {}
+      const { scopeTarget } = useScopeNavigation(() => 'TASK-001')
+
+      expect(scopeTarget('prev')).toBeUndefined()
+      expect(scopeTarget('next')).toBeUndefined()
+    })
+  })
+
   describe('navigateScope', () => {
     it('navigates to previous entity', async () => {
       mockRouteQuery.value = { from: 'tasks' }

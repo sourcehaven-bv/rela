@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { RouterLink, useRoute } from 'vue-router'
 import { useUIStore, useSchemaStore } from '@/stores'
 import { getErrorMessage, ApiError } from '@/api/errors'
 import { listVersions, getVersion, restoreVersion, type VersionMeta } from '@/api/history'
@@ -12,7 +12,6 @@ import Badge from '@/components/common/Badge.vue'
 import type { Entity } from '@/types'
 
 const route = useRoute()
-const router = useRouter()
 const uiStore = useUIStore()
 const schemaStore = useSchemaStore()
 
@@ -215,9 +214,8 @@ function formatWhen(iso: string): string {
   return isNaN(d.getTime()) ? iso : d.toLocaleString()
 }
 
-function goBack() {
-  router.push(`/entity/${entityType.value}/${entityId.value}`)
-}
+// Pure navigation, so it renders as a real link and supports cmd/middle-click.
+const backTarget = computed(() => `/entity/${entityType.value}/${entityId.value}`)
 
 const hasContentChanges = computed(() => contentDiff.value.some((l) => l.op !== 'equal'))
 
@@ -234,7 +232,7 @@ onMounted(load)
         <h2>Version history</h2>
         <p>{{ entityType }} · {{ entityId }}</p>
       </div>
-      <button class="btn btn-secondary" @click="goBack">Back to entity</button>
+      <RouterLink class="btn btn-secondary" :to="backTarget">Back to entity</RouterLink>
     </div>
 
     <div v-if="loading" class="loading-state">Loading version history…</div>

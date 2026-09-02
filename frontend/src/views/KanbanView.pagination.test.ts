@@ -23,7 +23,8 @@ const getMock = vi.mocked(api.get)
 const KANBAN_ID = 'board'
 const ENTITY_TYPE = 'ticket'
 
-vi.mock('vue-router', () => ({
+vi.mock('vue-router', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('vue-router')>()),
   useRouter: () => ({ push: vi.fn() }),
   useRoute: () => ({ query: {}, path: '/kanban/board' }),
 }))

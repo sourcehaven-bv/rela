@@ -80,7 +80,7 @@ func TestACLWhoCan_ReadTextOutput(t *testing.T) {
 	buf := withOutput(t, output.FormatTable)
 
 	cmd := &ACLWhoCanCmd{Verb: "read", Entity: "INC-042"}
-	if err := cmd.Run(context.Background(), svc); err != nil {
+	if err := cmd.Run(context.Background(), &writeServices{readServices: *svc}); err != nil {
 		t.Fatalf("who-can read: %v", err)
 	}
 	got := buf.String()
@@ -101,7 +101,7 @@ func TestACLWhoCan_MissingEntityErrors(t *testing.T) {
 	withOutput(t, output.FormatTable)
 
 	cmd := &ACLWhoCanCmd{Verb: "read", Entity: "INC-NOPE"}
-	err := cmd.Run(context.Background(), svc)
+	err := cmd.Run(context.Background(), &writeServices{readServices: *svc})
 	if err == nil {
 		t.Fatal("expected an error for a missing entity, got nil")
 	}
@@ -116,7 +116,7 @@ func TestACLWhoCan_JSONOutput(t *testing.T) {
 	buf := withOutput(t, output.FormatJSON)
 
 	cmd := &ACLWhoCanCmd{Verb: "delete", Entity: "INC-042"}
-	if err := cmd.Run(context.Background(), svc); err != nil {
+	if err := cmd.Run(context.Background(), &writeServices{readServices: *svc}); err != nil {
 		t.Fatalf("who-can delete: %v", err)
 	}
 	var result struct {
@@ -149,7 +149,7 @@ func TestACLWhoCan_NoPolicyFile(t *testing.T) {
 	buf := withOutput(t, output.FormatTable)
 
 	cmd := &ACLWhoCanCmd{Verb: "read", Entity: "INC-042"}
-	if err := cmd.Run(context.Background(), svc); err != nil {
+	if err := cmd.Run(context.Background(), &writeServices{readServices: *svc}); err != nil {
 		t.Fatalf("missing acl.yaml must not error, got %v", err)
 	}
 	if got := buf.String(); !strings.Contains(got, "no policy") {

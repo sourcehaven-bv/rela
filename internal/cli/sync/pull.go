@@ -30,9 +30,11 @@ func isLocalNotFound(err error) bool {
 // delete.
 var errRemoteAbsent = errors.New("remote record absent")
 
-// errRemoteApplierRequired is returned when a pull (or force-pull) is attempted
-// without a local applier wired — pull writes locally and cannot run read-only.
-var errRemoteApplierRequired = errors.New("sync: pull requires a local applier")
+// errLocalApplierRequired is returned when an operation that WRITES LOCALLY is
+// attempted without a local applier wired. Pull and force-pull are the obvious
+// cases; push also qualifies on its id-adoption path, where the primary minted
+// an id differing from the local temp id and adopting it is a local rename.
+var errLocalApplierRequired = errors.New("sync: this operation requires a local applier")
 
 // PullOutcome classifies what happened to one record during a pull.
 type PullOutcome int
@@ -76,7 +78,7 @@ type PullReport struct {
 // cursor where a re-run resumes correctly.
 func (e *Engine) Pull(ctx context.Context) (*PullReport, error) {
 	if e.applier == nil {
-		return nil, errRemoteApplierRequired
+		return nil, errLocalApplierRequired
 	}
 	if err := e.ensureSchema(ctx); err != nil {
 		return nil, err

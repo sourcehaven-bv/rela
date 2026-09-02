@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { RouterLink, useRoute } from 'vue-router'
 import { useUIStore } from '@/stores'
 import { getErrorMessage, ApiError } from '@/api/errors'
 import {
@@ -13,7 +13,6 @@ import { lineDiff, propertyDiff, type DiffLine, type PropertyChange } from '@/ut
 import { useVersionSelectionSync, type Side } from '@/composables/useVersionSelectionSync'
 
 const route = useRoute()
-const router = useRouter()
 const uiStore = useUIStore()
 
 // A relation is addressed by fromType/from/relType/to (fromType lets the read
@@ -195,9 +194,8 @@ function formatWhen(iso: string): string {
   return isNaN(d.getTime()) ? iso : d.toLocaleString()
 }
 
-function goBack() {
-  router.push(`/entity/${fromType.value}/${from.value}`)
-}
+// Pure navigation, so it renders as a real link and supports cmd/middle-click.
+const backTarget = computed(() => `/entity/${fromType.value}/${from.value}`)
 
 const hasContentChanges = computed(() => contentDiff.value.some((l) => l.op !== 'equal'))
 const versionsNewestFirst = computed(() => [...versions.value].reverse())
@@ -214,7 +212,7 @@ onMounted(load)
           {{ from }} <span class="rel-arrow">—{{ relType }}→</span> {{ to }}
         </p>
       </div>
-      <button class="btn btn-secondary" @click="goBack">Back to entity</button>
+      <RouterLink class="btn btn-secondary" :to="backTarget">Back to entity</RouterLink>
     </div>
 
     <div v-if="loading" class="loading-state">Loading relation history…</div>
