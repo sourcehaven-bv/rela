@@ -376,7 +376,7 @@ func parseActionResponse(ret any) (*ActionResponse, error) {
 //     application/xhtml+xml) turns a script bug into a same-origin scripting
 //     sink. The CSP and nosniff are what make that survivable; the allowlist is
 //     what means a single header regression is not immediately exploitable.
-//     Defence in depth is the whole point — one of the two mechanisms failing
+//     Defense in depth is the whole point — one of the two mechanisms failing
 //     should not be a vulnerability.
 //   - The set an actual consumer needs is small and machine-readable. A hook
 //     answering Icinga, a CI runner, or a payment provider needs JSON, plain

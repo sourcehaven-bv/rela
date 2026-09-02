@@ -952,7 +952,7 @@ func (r *Runtime) registerContextBindings(rela *lua.LTable) {
 
 	// rela.request (TKT-EFMRQM): the inbound HTTP request for a request-scoped
 	// action. Absent unless the caller passed one.
-	r.registerRequestBinding(rela)
+	registerRequestBinding(r.L, rela, r.request)
 
 	// Secrets table (populated from WithSecrets option, loaded from
 	// .rela/secrets.yaml), FILTERED to the keys this runtime was granted

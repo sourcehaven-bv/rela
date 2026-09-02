@@ -52,19 +52,22 @@ func WithRequest(req *Request) Option {
 }
 
 // registerRequestBinding installs the frozen `rela.request` table. Absent
-// entirely when no request was supplied, so `if rela.request then` is the
-// script-side test for request-scoped execution.
+// entirely when req is nil, so `if rela.request then` is the script-side test
+// for request-scoped execution.
 //
 // Frozen with [freezeTable] like rela.principal: the table is the record of
 // what actually arrived on the wire, and a script that rewrote it would make a
 // later read of the same field — an error envelope, a log line — disagree with
 // what the producer sent.
-func (r *Runtime) registerRequestBinding(rela *lua.LTable) {
-	if r.request == nil {
+//
+// A free function rather than a *Runtime method: it needs nothing off the
+// runtime but the LState, and Runtime is at its plimsoll method load line.
+//
+// Nil: accepted — a nil req leaves rela.request absent.
+func registerRequestBinding(ls *lua.LState, rela *lua.LTable, req *Request) {
+	if req == nil {
 		return
 	}
-	req := r.request
-	ls := r.L
 
 	data := ls.NewTable()
 	ls.SetField(data, "method", lua.LString(req.Method))

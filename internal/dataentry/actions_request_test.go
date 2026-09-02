@@ -236,6 +236,79 @@ func TestAction_MalformedBodyDoesNotFailTheRequest(t *testing.T) {
 	}
 }
 
+// TestAction_LegacyBodyStillRejectsMalformedJSON pins the pre-existing 400 on
+// the NON-request-scoped path. There the body's only job is to carry
+// entity_id, so garbage means the caller got nothing they asked for and should
+// hear about it. The request-scoped path deliberately diverges (see
+// TestAction_MalformedBodyDoesNotFailTheRequest) because there the script is
+// the only thing that knows what a valid payload looks like.
+func TestAction_LegacyBodyStillRejectsMalformedJSON(t *testing.T) {
+	app := newActionTestApp(t, map[string]string{
+		"noop.lua": `return {message = "ran"}`,
+	})
+	app.Cfg().Actions = map[string]dataentryconfig.Action{
+		"noop": {Script: "noop.lua"},
+	}
+
+	rec := postRequestAction(t, app, "noop", `not json`, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "ran") {
+		t.Fatal("the script must not have run")
+	}
+}
+
+// TestAction_DefaultBodyCapAppliesWithoutRequestBlock pins that the cap covers
+// the LEGACY path too. The endpoint had no cap at all before TKT-EFMRQM, and an
+// operator who never writes a request: block should still get the bound.
+func TestAction_DefaultBodyCapAppliesWithoutRequestBlock(t *testing.T) {
+	app := newActionTestApp(t, map[string]string{
+		"noop.lua": `return {message = "ran"}`,
+	})
+	app.Cfg().Actions = map[string]dataentryconfig.Action{
+		"noop": {Script: "noop.lua"},
+	}
+
+	// One byte past the default cap, inside a syntactically valid JSON object
+	// so nothing but the cap can reject it.
+	big := `{"entity_id":"` + strings.Repeat("a", int(DefaultActionMaxBodyBytes)) + `"}`
+	rec := postRequestAction(t, app, "noop", big, nil)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestAction_CapabilitiesStillGatedWithRequestBlock pins that opting into the
+// request does NOT widen the capability grant (TKT-YH52OM). An action with a
+// request: block and no capabilities: block still gets no http, no ai, no
+// secrets — the two are orthogonal, and a request-scoped webhook receiver is
+// exactly the shape most likely to tempt someone into conflating them.
+func TestAction_CapabilitiesStillGatedWithRequestBlock(t *testing.T) {
+	app := newActionTestApp(t, map[string]string{
+		"reach.lua": `
+			local n = 0
+			for _ in pairs(rela.secrets) do n = n + 1 end
+			return {
+				status = 200,
+				body = tostring(rela.http == nil) .. "|" .. tostring(n),
+				content_type = "text/plain",
+			}
+		`,
+	})
+	app.Cfg().Actions = map[string]dataentryconfig.Action{
+		"reach": {Script: "reach.lua", Request: &dataentryconfig.ActionRequest{Body: true}},
+	}
+
+	rec := postRequestAction(t, app, "reach", `{}`, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Body.String(); got != "true|0" {
+		t.Fatalf("a request: block must not grant capabilities, got %q", got)
+	}
+}
+
 // TestAction_EntityIDStillResolvesWithRequestBlock pins that the entity_id
 // channel survives request-scoped execution. It is read from the SAME parsed
 // body, through visibility.ScriptReader (BUG-ZWTDH9) — a request: block must
