@@ -667,9 +667,55 @@ func roleHasAffordanceGrants(role RoleDef) bool {
 // `docs/server-security.md` for the full hardening pattern. The UC1 example
 // policy in features_test.go is intentionally minimal and would be
 // wide-open if copy-pasted into a deployment.
+// # The gate is all-verbs, deliberately
+//
+// [RoleRelationDef.RequiresPermission] is a single permission covering
+// every write verb on the type — there is no per-verb form, and one is
+// not an oversight. The escalation this gate exists to stop is a
+// CREATE (`alice --member-of--> admins`), so a policy that gated only
+// some verbs would read as hardened while stopping nothing; and
+// revoking a conferred edge is an availability attack, so `delete` is
+// not safely un-gated either. Per-verb create/update/delete
+// permissions exist for relation types that do NOT confer roles — see
+// [RelationWriteGrant] (`relation_grants:`), which is refused on any
+// type carrying this gate precisely so the two cannot disagree.
 type RoleRelationDef struct {
 	Confers            string `yaml:"confers"`
 	RequiresPermission string `yaml:"requires_permission"`
+}
+
+// UnmarshalYAML rejects unknown keys rather than silently dropping them.
+// This struct's fields are a closed set, and yaml.v3 ignores anything it
+// cannot map — so `create: add-member` under a `role_relations:` entry
+// would load clean and leave the relation UNGATED, which fails open on
+// the one gate whose whole job is tamper-resistance.
+//
+// The write-verb keys get their own message: an operator reaching for
+// them has a coherent intent (per-verb relation permissions), it is just
+// spelled `relation_grants:` and only applies to relation types that do
+// not confer a role. "unknown key" would read as a typo and hide that.
+func (d *RoleRelationDef) UnmarshalYAML(unmarshal func(any) error) error {
+	var raw map[string]string
+	if err := unmarshal(&raw); err != nil {
+		return err
+	}
+	for _, k := range slices.Sorted(maps.Keys(raw)) {
+		switch k {
+		case "confers", "requires_permission":
+		case "create", "update", "delete", "read":
+			return fmt.Errorf(
+				"role_relations: %q is not supported — `requires_permission:` gates ALL "+
+					"write verbs on a role-conferring relation, by design. Per-verb "+
+					"permissions are `relation_grants:`, which is refused on a type that "+
+					"confers a role", k)
+		default:
+			return fmt.Errorf(
+				"role_relations: unknown key %q (want confers, requires_permission)", k)
+		}
+	}
+	d.Confers = raw["confers"]
+	d.RequiresPermission = raw["requires_permission"]
+	return nil
 }
 
 // knownPolicyKeys is the allowlist used for unknown-key warnings.
