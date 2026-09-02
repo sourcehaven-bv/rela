@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"math"
 	"mime"
 	"net/http"
 	"os"
@@ -459,9 +460,15 @@ func parseRichActionResponse(m map[string]any, resp *ActionResponse) error {
 
 // actionStatusFrom converts a Lua number to a status code a handler may send.
 //
-// Lua has ONE number type, so a status arrives as float64 and 200.5 is
-// representable. Truncating would let a typo become a quietly different status,
-// so a fractional value is refused.
+// BOTH int64 and float64 must be handled. Lua has one float64-backed number
+// type, but lua.luaValueToGo narrows an integral value to int64 on the way out
+// (so an id or a count round-trips as an integer), while a fractional one stays
+// float64 — so `status = 200` arrives as int64 and `status = 200.5` as float64.
+// Accepting only one of the two is a bug that unit tests over hand-built maps
+// cannot see, because the narrowing happens in the layer above them.
+//
+// A fractional value is REFUSED rather than truncated: truncating would let a
+// typo become a quietly different status.
 //
 // The accepted range is 2xx, 4xx and 5xx. 1xx and 3xx are refused because they
 // are protocol-level rather than application-level: a 1xx makes net/http's
@@ -470,13 +477,20 @@ func parseRichActionResponse(m map[string]any, resp *ActionResponse) error {
 // `redirect:` is the supported way to redirect, and it is separately validated
 // against open-redirect.
 func actionStatusFrom(v any) (int, error) {
-	f, ok := v.(float64)
-	if !ok {
+	var status int
+	switch n := v.(type) {
+	case int64:
+		if n > math.MaxInt32 || n < math.MinInt32 {
+			return 0, fmt.Errorf("status %d is out of range", n)
+		}
+		status = int(n)
+	case float64:
+		status = int(n)
+		if float64(status) != n {
+			return 0, fmt.Errorf("status must be a whole number, got %v", n)
+		}
+	default:
 		return 0, fmt.Errorf("status must be a number, got %T", v)
-	}
-	status := int(f)
-	if float64(status) != f {
-		return 0, fmt.Errorf("status must be a whole number, got %v", f)
 	}
 	switch {
 	case status >= 200 && status <= 299,

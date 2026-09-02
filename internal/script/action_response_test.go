@@ -141,14 +141,36 @@ func TestParseActionResponse_StatusRange(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(strconv.Itoa(tc.status), func(t *testing.T) {
-			_, err := parseActionResponse(map[string]any{"status": float64(tc.status)})
-			if tc.wantErr && err == nil {
-				t.Fatalf("expected status %d to be refused", tc.status)
-			}
-			if !tc.wantErr && err != nil {
-				t.Fatalf("expected status %d to be accepted, got: %v", tc.status, err)
+			// Both numeric shapes: int64 is what a real script produces,
+			// float64 is what a fractional literal produces.
+			for _, status := range []any{int64(tc.status), float64(tc.status)} {
+				_, err := parseActionResponse(map[string]any{"status": status})
+				if tc.wantErr && err == nil {
+					t.Fatalf("expected status %d (%T) to be refused", tc.status, status)
+				}
+				if !tc.wantErr && err != nil {
+					t.Fatalf("expected status %d (%T) to be accepted, got: %v", tc.status, status, err)
+				}
 			}
 		})
+	}
+}
+
+// TestParseActionResponse_StatusFromInt64 pins the type a status ACTUALLY
+// arrives as. lua.luaValueToGo narrows an integral Lua number to int64, so
+// `status = 202` reaches here as int64 and not float64 — a parser that accepted
+// only float64 passed every hand-built-map unit test and failed on every real
+// script (caught end to end, not here, which is why this case now exists).
+func TestParseActionResponse_StatusFromInt64(t *testing.T) {
+	resp, err := parseActionResponse(map[string]any{
+		"status": int64(202),
+		"body":   "ok",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Status != 202 {
+		t.Fatalf("status = %d, want 202", resp.Status)
 	}
 }
 
