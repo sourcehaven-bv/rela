@@ -4599,6 +4599,42 @@ The app and its files are served from `/api/v1/_apps/<id>/`, so reference
 sibling assets with **relative** URLs (`<script src="app.js">`, `<img
 src="logo.png">`).
 
+### Scripts and styles must be separate files
+
+An app's Content-Security-Policy does **not** allow `unsafe-inline`, so these
+are blocked and will silently do nothing:
+
+```html
+<style>body { margin: 0 }</style>          <!-- blocked -->
+<script>console.log('hi')</script>         <!-- blocked -->
+<div style="margin: 1rem">…</div>          <!-- blocked -->
+<button onclick="save()">Save</button>     <!-- blocked -->
+```
+
+Put them in sibling files and use classes instead:
+
+```html
+<link rel="stylesheet" href="app.css" />
+<script src="app.js"></script>
+```
+
+```js
+// in app.js
+document.getElementById('save').addEventListener('click', save)
+```
+
+`rela apps new` scaffolds exactly this layout, so a generated app works without
+changes. A blocked resource shows as a CSP violation in the browser console —
+if a style or handler seems to be ignored, check there first.
+
+**Why.** An app already runs with `allow-scripts`, so this is not what stops an
+app doing what it wants; the data boundary is the path-scoped CSP plus
+`connect-src 'none'` plus the bridge. Barring inline code protects an app from
+*its own* bugs: if your app builds DOM from entity data with `innerHTML`, a
+`<script>` or `onerror=` smuggled in through that data is blocked rather than
+executed. Escape your own output regardless — the CSP is the second line, not
+the first.
+
 **Publish / unpublish.** A folder with an `index.html` is live. To take an app
 offline without deleting it, rename the folder (e.g. `ticket-counter` →
 `_ticket-counter`, which fails the id rule) or remove its `index.html`.
