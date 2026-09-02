@@ -81,11 +81,10 @@ func writeJSONError(w http.ResponseWriter, status int, message string) {
 // — lets the SPA surface the specific rule that fired (the AWS IAM
 // lesson: opaque denials are unsupportable).
 //
-// Every handler that calls a write entry point on
-// [entitymanager.EntityManager] must invoke this *before* falling
-// back to the generic 500 path. The check is cheap (an errors.As
-// type assertion) and centralizing the 403 body shape here keeps the
-// wire contract identical across all handlers.
+// Every handler that calls a write entry point on the entity manager must
+// invoke this *before* falling back to the generic 500 path. The check is
+// cheap (an errors.As type assertion) and centralizing the 403 body shape
+// here keeps the wire contract identical across all handlers.
 func writeForbiddenIfACLDenied(w http.ResponseWriter, err error) bool {
 	var fe *acl.ForbiddenError
 	if !errors.As(err, &fe) {

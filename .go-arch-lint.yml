@@ -640,6 +640,7 @@ deps:
   # Domain services
   analysis:
     mayDependOn:
+      - frontmatter
       - lua
       - metamodel
       - project

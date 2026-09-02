@@ -683,9 +683,23 @@ func testIdempotencyFreed(t *testing.T, newQueue NewQueue) {
 	require.Eventually(t, func() bool { return ran.get() == 1 }, settleTimeout, pollInterval)
 
 	// Same key again, after completion: must queue.
-	require.NoError(t, q.Enqueue(context.Background(), jobs.Job{
-		Kind: "cycle", IdempotencyKey: "report",
-	}))
+	//
+	// POLLED, not enqueued once. `ran.inc()` happens inside the handler, so the
+	// wait above establishes "the handler body started" — while the key is
+	// freed only once the queue records the job COMPLETE, strictly later. A
+	// single Enqueue here races that window and returns ErrDuplicateJob on a
+	// contended runner (BUG-BPHP79; reproduce with GOMAXPROCS=1).
+	//
+	// Polling does not weaken the assertion: the key BECOMING free is the
+	// property under test, so waiting for it within settleTimeout is the test.
+	// What would weaken it is a sleep — that trades a visible flake for a slow
+	// invisible one — or dropping ErrDuplicateJob, which is the failure.
+	require.Eventually(t, func() bool {
+		return q.Enqueue(context.Background(), jobs.Job{
+			Kind: "cycle", IdempotencyKey: "report",
+		}) == nil
+	}, settleTimeout, pollInterval,
+		"a completed key must become free for reuse")
 	require.Eventually(t, func() bool { return ran.get() == 2 }, settleTimeout, pollInterval,
 		"a completed key must be free for reuse; it guards pending work, not history")
 }

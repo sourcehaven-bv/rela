@@ -393,16 +393,38 @@ func addCheckboxIndices(s string) string {
 // The field filter is engaged only when the resolver can actually hide a
 // property (a policy-backed resolver); under the Nop resolver redaction is a
 // provable no-op, so the plain entity-level path runs — and a searcher that
-// isn't a FieldVisibleSearcher is fine there. When redaction IS in play but the
-// searcher can't do it, SearchVisibleFields fails closed (it does not silently
-// skip) — see search.Visible.SearchVisibleFields.
+// isn't a FieldVisibleSearcher is fine there.
+//
+// When redaction IS in play but the searcher cannot do it, this FAILS CLOSED:
+// it yields search.ErrScope rather than falling back to the un-redacted
+// SearchVisible. A searcher that reaches here without implementing
+// FieldVisibleSearcher is a wiring bug — a decorator (cache, metrics, tracing)
+// wrapped around the searcher without forwarding the method — and the failure
+// it would otherwise produce is silent: search stops redacting while the policy
+// still hides, with no error and no log.
+//
+// This mirrors search.Visible.SearchVisibleFields one layer down, whose godoc
+// settles the principle: "silently skipping redaction is exactly the oracle
+// this closes" (RR-8W40EW). The two decision points are the same shape; the
+// outer one was the one still failing open (TKT-NCLA67).
 func searchVisibleHits(
 	ctx context.Context, vs search.VisibleSearcher, aff affordanceService,
 	q search.Query, scope map[string]search.TypeScope,
 ) iter.Seq2[search.Hit, error] {
-	fvs, ok := vs.(search.FieldVisibleSearcher)
-	if !ok || !aff.hidesAnyField() {
+	// Nothing to redact: the plain entity-level path is correct, and a searcher
+	// that isn't a FieldVisibleSearcher is fine here.
+	if !aff.hidesAnyField() {
 		return vs.SearchVisible(ctx, q, scope)
+	}
+	fvs, ok := vs.(search.FieldVisibleSearcher)
+	if !ok {
+		// Redaction is in play but this searcher cannot do it. Refuse rather
+		// than serve un-redacted hits.
+		return func(yield func(search.Hit, error) bool) {
+			yield(search.Hit{}, fmt.Errorf(
+				"%w: policy hides fields but the wired searcher (%T) cannot redact them",
+				search.ErrScope, vs))
+		}
 	}
 	return fvs.SearchVisibleFields(ctx, q, scope, hiddenSearchFields(aff))
 }

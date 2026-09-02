@@ -1,5 +1,5 @@
 ---
 from: BUG-4KPN2M
-type: fixes
+relation: fixes
 to: FEAT-57oh
 ---
