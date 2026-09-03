@@ -26,10 +26,19 @@ type Config struct {
 }
 
 type Template struct {
-	Subject         string    `yaml:"subject"`
-	Intro           string    `yaml:"intro,omitempty"`
-	AddressProperty string    `yaml:"address_property"`
-	Sections        []Section `yaml:"sections,omitempty"`
+	Subject         string `yaml:"subject"`
+	Intro           string `yaml:"intro,omitempty"`
+	AddressProperty string `yaml:"address_property"`
+
+	// RequireVisibleContent suppresses the send entirely when no section
+	// received content for this recipient. Off by default: a template may
+	// legitimately carry a meaningful Intro with no matching entities.
+	//
+	// The decision uses [Build]'s contributed count, not its matched count —
+	// see that function's doc for why the two differ.
+	RequireVisibleContent bool `yaml:"require_visible_content,omitempty"`
+
+	Sections []Section `yaml:"sections,omitempty"`
 }
 
 type Section struct {
@@ -56,6 +65,16 @@ func Parse(data []byte, meta *metamodel.Metamodel) (*Config, error) {
 		if strings.TrimSpace(name) == "" || strings.TrimSpace(tmpl.Subject) == "" || strings.TrimSpace(tmpl.AddressProperty) == "" {
 			return nil, fmt.Errorf("mail template %q: subject and address_property are required", name)
 		}
+		// Sections are otherwise optional — a template may be pure intro. But
+		// require_visible_content asks "send only when a section has content",
+		// which a template with no sections can never satisfy: it would parse,
+		// validate, schedule, and then silently discard every send forever.
+		// Refuse the contradiction at load rather than run it.
+		if tmpl.RequireVisibleContent && len(tmpl.Sections) == 0 {
+			return nil, fmt.Errorf(
+				"mail template %q: require_visible_content needs at least one section, "+
+					"otherwise no mail can ever be sent", name)
+		}
 		for i, section := range tmpl.Sections {
 			def, ok := meta.GetEntityDef(section.EntityType)
 			if !ok {
@@ -77,58 +96,105 @@ func Parse(data []byte, meta *metamodel.Metamodel) (*Config, error) {
 	return &cfg, nil
 }
 
+// Build assembles a recipient-scoped message and reports how many entities
+// contributed content to it.
+//
+// The returned count is NOT the number of entities that matched. A matched
+// entity contributes nothing when its section renders it as nothing — a
+// `detail` section whose entity has empty Content is the case that matters,
+// since it produces the "Nothing to show." placeholder that
+// [Template.RequireVisibleContent] exists to suppress. Matches are still
+// counted separately because `{{count}}` interpolates them.
+//
+// Emptiness is decided here rather than by inspecting the returned Message
+// because each style stores its content in a different field (Body for
+// detail/list, Rows for table), so a predicate over the rendered message
+// would need revisiting for every style added later.
 func Build(
 	ctx context.Context, meta *metamodel.Metamodel, reader Reader, tmpl Template, now time.Time,
-) (*mailrender.Message, error) {
+) (*mailrender.Message, int, error) {
 	msg := &mailrender.Message{}
 	count := 0
+	contributed := 0
 	for _, declared := range tmpl.Sections {
-		def, _ := meta.GetEntityDef(declared.EntityType)
-		filters, _ := filter.ParseAll(declared.Where)
-		section := mailrender.Section{Title: declared.Title}
-		if declared.Style == "table" || declared.Style == "" {
-			section.Columns = append([]string(nil), declared.Columns...)
+		section, tally, err := buildSection(ctx, meta, reader, declared)
+		if err != nil {
+			return nil, 0, err
 		}
-		for ent, err := range reader.ListEntities(ctx, store.EntityQuery{Type: declared.EntityType}) {
-			if err != nil {
-				return nil, err
-			}
-			record := filter.Record{
-				ID: ent.ID, Type: ent.Type, Properties: ent.Properties, ModifiedAt: ent.UpdatedAt,
-			}
-			matched, err := filter.MatchAll(record, filters, def, meta)
-			if err != nil {
-				return nil, err
-			}
-			if !matched {
-				continue
-			}
-			count++
-			switch declared.Style {
-			case "detail":
-				if section.Body != "" {
-					section.Body += "\n\n"
-				}
-				section.Body += ent.Content
-			case "list":
-				label := entityLabel(ent)
-				section.Body += fmt.Sprintf("- [%s](/entity/%s/%s)\n", label, ent.Type, ent.ID)
-			default:
-				row := make([]string, len(declared.Columns))
-				for i, column := range declared.Columns {
-					row[i] = fmt.Sprint(ent.Properties[column])
-				}
-				section.Rows = append(section.Rows, row)
-				if declared.Link {
-					section.Links = append(section.Links, "/entity/"+ent.Type+"/"+ent.ID)
-				}
-			}
-		}
+		count += tally.matched
+		contributed += tally.contributed
 		msg.Sections = append(msg.Sections, section)
 	}
 	msg.Subject = expand(tmpl.Subject, now, count)
 	msg.Intro = expand(tmpl.Intro, now, count)
-	return msg, nil
+	return msg, contributed, nil
+}
+
+// sectionTally separates the two counts one section produces. They diverge
+// only for `detail` — see [Build].
+type sectionTally struct {
+	matched     int
+	contributed int
+}
+
+func buildSection(
+	ctx context.Context, meta *metamodel.Metamodel, reader Reader, declared Section,
+) (mailrender.Section, sectionTally, error) {
+	def, _ := meta.GetEntityDef(declared.EntityType)
+	filters, _ := filter.ParseAll(declared.Where)
+	section := mailrender.Section{Title: declared.Title}
+	if declared.Style == "table" || declared.Style == "" {
+		section.Columns = append([]string(nil), declared.Columns...)
+	}
+	var tally sectionTally
+	for ent, err := range reader.ListEntities(ctx, store.EntityQuery{Type: declared.EntityType}) {
+		if err != nil {
+			return mailrender.Section{}, sectionTally{}, err
+		}
+		record := filter.Record{
+			ID: ent.ID, Type: ent.Type, Properties: ent.Properties, ModifiedAt: ent.UpdatedAt,
+		}
+		matched, err := filter.MatchAll(record, filters, def, meta)
+		if err != nil {
+			return mailrender.Section{}, sectionTally{}, err
+		}
+		if !matched {
+			continue
+		}
+		tally.matched++
+		if appendEntity(&section, declared, ent) {
+			tally.contributed++
+		}
+	}
+	return section, tally, nil
+}
+
+// appendEntity adds one matched entity to the section in the declared style,
+// reporting whether it contributed any content. Only `detail` can decline:
+// an entity with a blank body renders as nothing.
+func appendEntity(section *mailrender.Section, declared Section, ent *entity.Entity) bool {
+	switch declared.Style {
+	case "detail":
+		if strings.TrimSpace(ent.Content) == "" {
+			return false
+		}
+		if section.Body != "" {
+			section.Body += "\n\n"
+		}
+		section.Body += ent.Content
+	case "list":
+		section.Body += fmt.Sprintf("- [%s](/entity/%s/%s)\n", entityLabel(ent), ent.Type, ent.ID)
+	default:
+		row := make([]string, len(declared.Columns))
+		for i, column := range declared.Columns {
+			row[i] = fmt.Sprint(ent.Properties[column])
+		}
+		section.Rows = append(section.Rows, row)
+		if declared.Link {
+			section.Links = append(section.Links, "/entity/"+ent.Type+"/"+ent.ID)
+		}
+	}
+	return true
 }
 
 func entityLabel(ent *entity.Entity) string {

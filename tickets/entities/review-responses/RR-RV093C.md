@@ -1,0 +1,9 @@
+---
+id: RR-RV093C
+type: review-response
+title: A sections-less template with require_visible_content is a permanently silent config that passes validation
+finding: 'sections: is optional in mailtemplate.Parse (only subject and address_property are required, mailtemplate.go:65-67). A template with an intro but no sections is therefore valid. Combined with require_visible_content: true, Build always returns contributed == 0, so RunScheduledTemplate suppresses EVERY send: the template parses, passes rela validate, schedules, runs per recipient, and silently discards the operator''s intro forever. Verified by driving the real Parse -> Build path: sections=0 contributed=0 intro="The office is closed Monday." -> SUPPRESSED. This combination has no valid use: require_visible_content asks ''only send when there is content to show'', and a template with no sections can never have any. It is a config-time contradiction detectable at load, not a runtime condition.'
+severity: minor
+resolution: 'Fixed at load time in mailtemplate.Parse: require_visible_content: true with zero sections is now a parse error ("require_visible_content needs at least one section, otherwise no mail can ever be sent"), so rela validate rejects it rather than the scheduler silently discarding every send. Chose a load error over a runtime warning because the combination is a config-time contradiction with no valid use, and CLAUDE.md''s precedent is that a constraint which cannot be satisfied should fail the load. A sections-less template WITHOUT the flag stays valid (pure-intro templates are legitimate) - pinned by the control assertion in TestParseRejectsRequireVisibleContentWithoutSections. Also fixed TestParseRequireVisibleContentYAMLForms, whose fixtures had no sections and correctly began failing once the rule landed.'
+status: addressed
+---
