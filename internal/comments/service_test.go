@@ -10,7 +10,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/comments"
 	"github.com/Sourcehaven-BV/rela/internal/comments/memcomments"
-	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
@@ -212,7 +211,7 @@ func TestEntityRenamed_ReKeysComments(t *testing.T) {
 		comments.AddRequest{Anchor: propAnchor(), Body: "still relevant"})
 	require.NoError(t, err)
 
-	require.NoError(t, svc.EntityRenamed("TKT-old", entity.New("TKT-new", "ticket")))
+	require.NoError(t, svc.EntityRenamed(ctx, "TKT-old", "TKT-new"))
 
 	moved, err := st.List(ctx, comments.Target{ID: "TKT-new"})
 	require.NoError(t, err)
@@ -226,15 +225,13 @@ func TestEntityRenamed_ReKeysComments(t *testing.T) {
 
 func TestEntityRenamed_IgnoresNoOps(t *testing.T) {
 	svc, _ := newService(t)
-
-	require.NoError(t, svc.EntityRenamed("TKT-1", nil))
-	require.NoError(t, svc.EntityRenamed("TKT-1", entity.New("TKT-1", "ticket")))
+	require.NoError(t, svc.EntityRenamed(aliceCtx(), "TKT-1", "TKT-1"))
 }
 
-// TestEntityDelete_DropsComments pins AC10's second half. ID reuse is permitted
-// in rela, so a later entity taking the same id must not inherit the previous
-// occupant's comments.
-func TestEntityDelete_DropsComments(t *testing.T) {
+// TestEntityDeleted_DropsComments pins AC9. ID reuse is permitted in rela, so a
+// later entity taking the same id must not inherit the previous occupant's
+// comments and present someone else's remarks as its own.
+func TestEntityDeleted_DropsComments(t *testing.T) {
 	svc, st := newService(t)
 	ctx := aliceCtx()
 
@@ -242,24 +239,9 @@ func TestEntityDelete_DropsComments(t *testing.T) {
 		comments.AddRequest{Anchor: propAnchor(), Body: "gone soon"})
 	require.NoError(t, err)
 
-	require.NoError(t, svc.EntityDelete("TKT-1"))
+	require.NoError(t, svc.EntityDeleted(ctx, "TKT-1"))
 
 	got, err := st.List(ctx, comments.Target{ID: "TKT-1"})
 	require.NoError(t, err)
 	require.Empty(t, got)
-}
-
-func TestEntityPut_IsNoOp(t *testing.T) {
-	svc, st := newService(t)
-	ctx := aliceCtx()
-
-	_, err := svc.Add(ctx, comments.Target{Type: "ticket", ID: "TKT-1"},
-		comments.AddRequest{Anchor: propAnchor(), Body: "unchanged"})
-	require.NoError(t, err)
-
-	require.NoError(t, svc.EntityPut(entity.New("TKT-1", "ticket")))
-
-	got, err := st.List(ctx, comments.Target{ID: "TKT-1"})
-	require.NoError(t, err)
-	require.Len(t, got, 1, "an ordinary write must not disturb comments")
 }

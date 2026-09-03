@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
@@ -154,32 +153,34 @@ func (s *Service) Delete(ctx context.Context, target Target, id string) error {
 	return s.store.Delete(ctx, target, id)
 }
 
-// EntityPut implements [store.EntityObserver]. Comments key off the entity ID
-// only, so an ordinary create or update changes nothing for them.
-func (s *Service) EntityPut(*entity.Entity) error { return nil }
-
-// EntityDelete implements [store.EntityObserver] by dropping the deleted
-// entity's comments.
+// EntityRenamed re-keys the renamed entity's comments.
 //
-// Without this a later entity reusing the ID would inherit the previous
-// occupant's comments — rela permits ID reuse, so this is reachable, not
-// theoretical.
-func (s *Service) EntityDelete(id string) error {
-	return s.store.DeleteTarget(context.Background(), Target{ID: id})
-}
-
-// EntityRenamed implements [store.EntityObserver] by re-keying the renamed
-// entity's comments.
+// This implements entitymanager's AliasRewriter hook rather than
+// [store.EntityObserver], for the reason that hook documents: every store fires
+// the observer as `_ = o.EntityRenamed(...)`, discarding the error. That is the
+// right trade for a search index, which can be rebuilt from the store. It is
+// the wrong trade here — comments exist ONLY in the comment store, so a
+// swallowed re-key failure leaves a thread filed under an id nothing resolves
+// to, still on disk and completely unreachable, with no signal anywhere.
 //
-// This callback is load-bearing: rename emits EXACTLY this one notification —
-// never EntityDelete(oldID) followed by EntityPut — so a service that did not
-// handle it would leave every comment filed under an ID nothing resolves to.
-// The comments would still be on disk and completely unreachable.
-func (s *Service) EntityRenamed(oldID string, renamed *entity.Entity) error {
-	if renamed == nil || oldID == renamed.ID {
+// Load-bearing either way: rename emits exactly one notification, never a
+// delete followed by a create, so a service that ignored it would strand every
+// comment on every renamed entity.
+func (s *Service) EntityRenamed(ctx context.Context, oldID, newID string) error {
+	if oldID == newID {
 		return nil
 	}
-	return s.store.Rename(context.Background(), oldID, renamed.ID)
+	return s.store.Rename(ctx, oldID, newID)
+}
+
+// EntityDeleted drops the deleted entity's comments.
+//
+// Unlike the CalDAV alias service — which deliberately KEEPS its references so
+// a stale client write can be refused — comments are dropped: rela permits id
+// reuse, so a later entity taking this id would otherwise inherit the previous
+// occupant's thread and present someone else's remarks as its own.
+func (s *Service) EntityDeleted(ctx context.Context, entityID string) error {
+	return s.store.DeleteTarget(ctx, Target{ID: entityID})
 }
 
 // authorFrom resolves the comment author from ctx.

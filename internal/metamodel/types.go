@@ -39,6 +39,12 @@ type Metamodel struct {
 	// scan policy) applied to every `file` property unless overridden.
 	Attachments *AttachmentsConfig `yaml:"attachments,omitempty"`
 
+	// Comments holds the commentary-layer policy: whether commenting is
+	// enabled and which entity types accept it. Policy only — comments are
+	// not graph entities, so nothing here declares a type. See
+	// internal/comments.
+	Comments *CommentsConfig `yaml:"comments,omitempty"`
+
 	// Transforms is the view-export registry: named markdown -> format
 	// conversions run via an external command (e.g. pandoc). Registering a
 	// transform here makes it available to every markdown-producing surface

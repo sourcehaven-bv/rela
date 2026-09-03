@@ -558,6 +558,11 @@ deps:
       - userstate
       - memuserstate
       - kvuserstate
+      # Likewise the commentary layer: the root picks the backend and hands the
+      # service to the App, which nil-checks it to decide whether the feature
+      # exists at all.
+      - comments
+      - filecomments
       - datamigration
       # Bridges conditionlint's next-action condition compiler to the seam
       # dataentry declares, so the app never imports the predicate engine.
