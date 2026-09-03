@@ -128,6 +128,27 @@ recorded as a decision rather than an oversight.
 
 - [x] Run `/pr` command to create PR and monitor CI
 
+PR: https://github.com/sourcehaven-bv/rela/pull/1516
+
+**`just ci` caught two failures that the earlier per-package verification did
+not**, both fixed before the PR was opened — worth recording, because they are
+exactly the class of thing a narrower check misses:
+
+1. **plimsoll (god-object lint).** `mail.render` was a method on `lua.Runtime`,
+   pushing it from 46 methods to 47 and over its pinned load line. Per CLAUDE.md
+   the fix is to take methods OFF a full type rather than raise the cap, so the
+   binding became a free function returning a closure. It needs one field, which
+   is not a reason to widen the type. The `contextcheck` false positive that
+   forces `mail.send` to register as a method value does not apply — nothing on
+   this path takes or threads a context.
+
+2. **`docs/` is GENERATED.** `docs/mail.md` and `docs/lua-scripting.md` carry a
+   "do not edit directly" header and are built from `docs-project/entities/`;
+   I had edited the generated files, and `just docs` reverted them. The content
+   now lives in `GUIDE-mail.md` and `GUIDE-lua-scripting.md`. Regenerating also
+   surfaced one addition worth keeping: a note that rows are matched to the
+   header width, documenting the ragged-row fix from review.
+
 <!--
 Deliberately NOT tracked here: the PR URL and whether CI passed.
 
