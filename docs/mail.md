@@ -323,6 +323,8 @@ Notes worth knowing:
 - **`intro`, `body` and `footer` are markdown; `rows` cells are not.** A cell is
   a value, so it is escaped rather than parsed — a title containing `*` stays a
   literal asterisk.
+- **Rows are matched to the header width.** A short row is padded and an
+  over-long one truncated, so one bad row cannot break the table's columns.
 - **Links are vetted.** Absolute `http(s)://` passes; a root-relative `/path` is
   resolved against `base_url`. Anything else (including `javascript:`) is
   dropped and the text renders unlinked.

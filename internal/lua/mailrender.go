@@ -74,36 +74,50 @@ func baseURLFor(sender MailSender) string {
 	return ""
 }
 
-// luaMailRender implements mail.render(opts) -> html, text.
+// mailRenderFunc returns the mail.render binding bound to sender.
 //
-// Registered unconditionally and usable with no mail transport configured: this
-// is pure formatting, so "mail is not configured" would be a nonsense answer to
-// a request that never needed a transport. A script may legitimately render a
-// message to log it, diff it, or hand it somewhere other than mail.send.
-func (r *Runtime) luaMailRender(ls *lua.LState) int {
-	opts := ls.CheckTable(1)
+// A FREE function returning a closure, rather than a method on Runtime like
+// mail.send. Two reasons, and the first is the load-bearing one:
+//
+//   - Runtime sits at its plimsoll load line (//plimsoll:max-methods=46), and
+//     the sanctioned fix for a full type is to take methods off it (TKT-N0IKN9),
+//     not to raise the cap. A binding that needs one field is not a reason to
+//     widen the type's surface.
+//   - The contextcheck false positive that forces mail.send to register as a
+//     method VALUE does not apply here: nothing in this path takes or threads a
+//     context, because rendering is pure formatting with no I/O.
+//
+// Registered unconditionally and usable with no mail transport configured:
+// "mail is not configured" would be a nonsense answer to a request that never
+// needed a transport. A script may legitimately render a message to log it,
+// diff it, or hand it somewhere other than mail.send. A nil sender simply
+// yields an empty base URL.
+func mailRenderFunc(sender MailSender) lua.LGFunction {
+	return func(ls *lua.LState) int {
+		opts := ls.CheckTable(1)
 
-	msg, err := parseRenderMessage(opts)
-	if err != nil {
-		ls.RaiseError("mail.render: %s", err.Error())
-		return 0
+		msg, err := parseRenderMessage(opts)
+		if err != nil {
+			ls.RaiseError("mail.render: %s", err.Error())
+			return 0
+		}
+
+		renderer, err := mailrender.New(&mailrender.Options{BaseURL: baseURLFor(sender)})
+		if err != nil {
+			ls.RaiseError("mail.render: %s", err.Error())
+			return 0
+		}
+
+		html, text, err := renderer.Render(msg)
+		if err != nil {
+			ls.RaiseError("mail.render: %s", err.Error())
+			return 0
+		}
+
+		ls.Push(lua.LString(html))
+		ls.Push(lua.LString(text))
+		return 2
 	}
-
-	renderer, err := mailrender.New(&mailrender.Options{BaseURL: baseURLFor(r.mailSender)})
-	if err != nil {
-		ls.RaiseError("mail.render: %s", err.Error())
-		return 0
-	}
-
-	html, text, err := renderer.Render(msg)
-	if err != nil {
-		ls.RaiseError("mail.render: %s", err.Error())
-		return 0
-	}
-
-	ls.Push(lua.LString(html))
-	ls.Push(lua.LString(text))
-	return 2
 }
 
 // parseRenderMessage converts the Lua opts table into a mailrender.Message.
