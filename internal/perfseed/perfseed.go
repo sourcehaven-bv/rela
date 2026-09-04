@@ -7,6 +7,7 @@ import (
 	"math/rand/v2"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
@@ -189,11 +190,18 @@ func dateStr(t time.Time) string { return t.Format("2006-01-02") }
 
 func pick[T any](r *rand.Rand, xs []T) T { return xs[r.IntN(len(xs))] }
 
+// titleCase capitalizes the first rune of a generated sentence or title.
+// This is prose generation, not label derivation: the word banks are lower
+// case so they can be joined mid-sentence, and a title needs its first
+// letter up. Nothing here derives a display label from an identifier
+// (DEC-6C1NAA); the identifiers are `PRJ-0001`-style and never shown as text.
 func titleCase(s string) string {
-	if s == "" {
+	r := []rune(s)
+	if len(r) == 0 {
 		return s
 	}
-	return strings.ToUpper(s[:1]) + s[1:]
+	r[0] = unicode.ToUpper(r[0])
+	return string(r)
 }
 
 func (g *Generator) title(r *rand.Rand) string {
