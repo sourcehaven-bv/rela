@@ -3,6 +3,7 @@ package lua
 import (
 	"bytes"
 	"encoding/json"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -116,5 +117,89 @@ func TestWithRequest_ReadOnly(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "read-only") {
 		t.Fatalf("expected a read-only error, got: %v", err)
+	}
+}
+
+// TestWithRequest_ReadOnlyIsNotSkinDeep pins that the freeze reaches the NESTED
+// tables too.
+//
+// freezeTable guards the table it is handed and does not recurse, so freezing
+// only the top level left `query._all` and its per-key lists writable while
+// `query` itself refused writes — the contract held at one level and failed
+// silently at the next. A test that only asserts the top-level table cannot
+// see that, which is why this one enumerates the nested paths.
+func TestWithRequest_ReadOnlyIsNotSkinDeep(t *testing.T) {
+	t.Parallel()
+
+	q := url.Values{}
+	q.Add("tag", "a")
+	q.Add("tag", "b")
+
+	tests := []struct {
+		name   string
+		script string
+	}{
+		{"top-level field", `rela.request.method = "GET"`},
+		{"existing query key", `rela.request.query.tag = "evil"`},
+		{"new query key", `rela.request.query.fresh = "evil"`},
+		{"header", `rela.request.headers["x-a"] = "evil"`},
+		{"the _all map", `rela.request.query._all.tag = "evil"`},
+		{"a per-key _all list", `rela.request.query._all.tag[1] = "evil"`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ws := newMockWorkspace(t)
+			var buf bytes.Buffer
+			r := NewWriter(ws.services("/tmp"), &buf, WithRequest(&Request{
+				Method:  "POST",
+				Query:   q,
+				Headers: map[string]string{"x-a": "1"},
+			}))
+			defer r.Close()
+
+			err := r.RunString(tc.script)
+			if err == nil {
+				t.Fatalf("script mutated the request table: %s", tc.script)
+			}
+			if !strings.Contains(err.Error(), "read-only") {
+				t.Fatalf("expected a read-only error, got: %v", err)
+			}
+		})
+	}
+}
+
+// TestWithRequest_AllKeyIsNotShadowable pins that a caller cannot displace the
+// repeated-value map by sending a literal `_all` parameter: `_all` is assigned
+// after the loop, so the map deterministically wins and the caller's scalar is
+// discarded rather than silently replacing it.
+func TestWithRequest_AllKeyIsNotShadowable(t *testing.T) {
+	t.Parallel()
+
+	q := url.Values{}
+	q.Add("tag", "a")
+	q.Add("tag", "b")
+	q.Add("_all", "attacker-supplied")
+
+	ws := newMockWorkspace(t)
+	var buf bytes.Buffer
+	r := NewWriter(ws.services("/tmp"), &buf,
+		WithRequest(&Request{Method: "POST", Query: q, Headers: map[string]string{}}))
+	defer r.Close()
+
+	// Assert inside Lua: the script errors if _all was displaced, so the check
+	// does not depend on how print output happens to be captured.
+	err := r.RunString(`
+		local all = rela.request.query._all
+		if type(all) ~= "table" then
+			error("query._all is a " .. type(all) .. ", not the repeated-value map")
+		end
+		if all.tag[1] ~= "a" or all.tag[2] ~= "b" then
+			error("query._all.tag lost its values")
+		end
+	`)
+	if err != nil {
+		t.Errorf("a literal _all parameter displaced the repeated-value map: %v", err)
 	}
 }

@@ -100,9 +100,14 @@ func registerRequestBinding(ls *lua.LState, rela *lua.LTable, req *Request) {
 			for i, v := range values {
 				list.RawSetInt(i+1, lua.LString(v))
 			}
-			all.RawSetString(key, list)
+			// Freeze each per-key list, and `all` below, before they go in:
+			// freezeTable guards the table it is handed and does NOT recurse,
+			// so freezing only `query` would leave these nested tables
+			// writable and the "record of what actually arrived" contract
+			// would hold at one level and quietly fail at the next.
+			all.RawSetString(key, freezeTable(ls, list))
 		}
-		query.RawSetString("_all", all)
+		query.RawSetString("_all", freezeTable(ls, all))
 		ls.SetField(data, "query", freezeTable(ls, query))
 	}
 
