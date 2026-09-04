@@ -899,6 +899,21 @@ caches from leaking one principal's view to another:
   `Vary: <that header>` — defense in depth for any cache layer that
   ignores `no-store`.
 
+### Query accounting is a Debug-only diagnostic
+
+With `-verbose`, every API response carries a `Server-Timing` header with the
+number of SQL statements the request issued and their summed database time,
+and the log gets one `request` record per request (see
+`docs/postgres-backend.md`, "Observing query cost"). Below Debug neither
+exists. The gate is a security property, not a convenience: on a path that
+still resolves neighbors one by one, the statement count varies with rows the
+principal cannot see, so a machine-readable count on every response would be
+an existence channel of exactly the kind the row-level rule above forbids.
+Wall time is already observable by any client and is accepted as coarse
+timing exposure; the statement count is not, and stays an operator tool.
+Do not enable `-verbose` on a multi-principal deployment to "get metrics" —
+put the numbers in the log, not on the wire.
+
 ### Sidebar menu structure is principal-independent
 
 The sidebar's *structure* (groups, labels, links) reveals metamodel

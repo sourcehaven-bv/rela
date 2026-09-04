@@ -1,0 +1,67 @@
+description: >
+  Three roles resolved through the graph: the request's email is looked up on person.email, and the person's `member-of` team decides the role. A handful of direct assignments exist for principals that are not in the graph (break-glass and the demo accounts).
+
+user_entity_type: person
+principal_property: email
+membership_relation: member-of
+role_relations:
+  member-of:
+    requires_permission: manage-roles
+roles:
+  reader:
+    description: >
+      Reads the published portfolio and ISMS. No editorial world, no risks, no people — and policies only through their published face.
+
+    read:
+      - project
+      - task
+      - control
+      - team
+      - document
+      - policy@published
+      - "world:published"
+      - "world:site-nl"
+  editor:
+    description: >
+      Works on the portfolio and on drafts. Sees people but not what they earn: `visible:` is closed-world, so salary is redacted by omission.
+
+    read: ["*", "world:published", "world:editorial", "world:site-nl"]
+    create: [task, project, document, policy, risk, control]
+    update: [task, project, document, policy, risk, control]
+    delete: [task, document]
+    visible:
+      person:
+        - field: title
+        - field: email
+        - field: role_title
+        - field: started
+  manager:
+    description: >
+      Everything, including publishing policies and conferring roles.
+
+    read: ["*", "world:published", "world:editorial", "world:site-nl"]
+    create: ["*"]
+    update: ["*"]
+    delete: ["*"]
+    permissions: [manage-roles, publish-policy]
+  # Added by migration: lets scheduled tasks read. Narrow or
+  # remove this once each job has a run_as identity of its own.
+  scheduler-system:
+    read:
+      - "*"
+# Team ids are stable (the seeder mints them by name), so a team is the unit
+# of assignment: everyone `member-of` the team holds the role.
+assignments:
+  TEAM-leadership: manager
+  TEAM-security: manager
+  TEAM-engineering-1: editor
+  TEAM-engineering-2: editor
+  TEAM-engineering-3: editor
+  TEAM-operations-1: editor
+  TEAM-operations-2: editor
+  TEAM-finance: reader
+  # Demo principals that exist as persons in the graph, one per role.
+  alice@perf.example: manager
+  bob@perf.example: editor
+  carol@perf.example: reader
+  system:scheduler: scheduler-system

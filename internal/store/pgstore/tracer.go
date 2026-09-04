@@ -6,55 +6,86 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// debugQueryTracer is a [pgx.QueryTracer] that logs every SQL query
-// at slog.Debug level with the SQL text, arguments, and execution
-// duration. It is attached when slog's default handler is enabled at
-// Debug level; at higher levels it is omitted, so production
-// deployments pay no per-query overhead.
+// queryTracer is the [pgx.QueryTracer] attached to every pool Open builds.
+// It does two independent things per statement, each opt-in by the caller's
+// context or logger rather than by pool configuration:
 //
-// Logging at Debug rather than Info is deliberate: query traffic is
-// chatty (one log line per query, every query, for the lifetime of
-// the process). Operators flip slog to Debug only when they need it
-// — typically to diagnose a misbehaving query plan or unexpected
-// query count from a higher layer.
-type debugQueryTracer struct{}
+//   - Accounting: when the query's context carries a [store.QueryStats]
+//     (a request middleware installs one), the statement's count and
+//     duration are recorded there. This is how "how many queries did this
+//     request issue?" is answered without touching the ~60 call sites that
+//     run SQL.
+//   - Logging: when slog's default handler is enabled at Debug, one
+//     record per statement with SQL text, arguments, duration and row count.
+//     Debug rather than Info is deliberate: query traffic is chatty, and
+//     operators flip to Debug only when diagnosing a plan or an unexpected
+//     query count.
+//
+// When neither applies — production with Debug off and no stats on the
+// context — TraceQueryStart returns the context unchanged, so the per-query
+// overhead is one context lookup and one level check, no allocation. That
+// is why the tracer can be attached unconditionally: the earlier design
+// attached it only when Debug was on at Open time, which made stats
+// impossible and froze the logging decision at startup.
+//
+// Transactions are covered too: a [Store.Tx] view runs on a pgx.Tx from the
+// same pool, and pgx traces BEGIN/COMMIT and every statement inside through
+// the same connection-level tracer.
+type queryTracer struct{}
 
 type tracerCtxKey struct{}
 
 type tracerCtxVal struct {
 	start time.Time
+	stats *store.QueryStats // nil when the context carries none
+	debug bool
 	sql   string
 	args  []any
 }
 
-// TraceQueryStart records the query parameters on the context for
-// TraceQueryEnd to read. The data is intentionally NOT logged here
-// — slog the whole event once with timing, not twice.
-func (debugQueryTracer) TraceQueryStart(
+// TraceQueryStart decides what, if anything, this statement will report and
+// parks that decision on the context for TraceQueryEnd. Nothing is logged
+// here — one record per statement, emitted once with its timing.
+func (queryTracer) TraceQueryStart(
 	ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData,
 ) context.Context {
-	return context.WithValue(ctx, tracerCtxKey{}, &tracerCtxVal{
-		start: time.Now(),
-		sql:   data.SQL,
-		args:  data.Args,
-	})
+	stats := store.QueryStatsFrom(ctx)
+	debug := slog.Default().Enabled(ctx, slog.LevelDebug)
+	if stats == nil && !debug {
+		return ctx
+	}
+	v := &tracerCtxVal{start: time.Now(), stats: stats, debug: debug}
+	if debug {
+		v.sql = data.SQL
+		v.args = data.Args
+	}
+	return context.WithValue(ctx, tracerCtxKey{}, v)
 }
 
-// TraceQueryEnd emits one slog.Debug record per query. The
-// `duration_us` field is a microseconds integer (jq-friendly,
-// avoids the floating-point printing variance of time.Duration's
-// String).
-func (debugQueryTracer) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryEndData) {
+// TraceQueryEnd records the statement against the context's stats and, at
+// Debug, emits one slog record. The `duration_us` field is a microseconds
+// integer (jq-friendly, avoids the floating-point printing variance of
+// time.Duration's String).
+func (queryTracer) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryEndData) {
 	v, ok := ctx.Value(tracerCtxKey{}).(*tracerCtxVal)
 	if !ok {
+		return
+	}
+	elapsed := time.Since(v.start)
+	if v.stats != nil {
+		v.stats.Record(elapsed)
+	}
+	if !v.debug {
 		return
 	}
 	attrs := []any{
 		"sql", v.sql,
 		"args", v.args,
-		"duration_us", time.Since(v.start).Microseconds(),
+		"duration_us", elapsed.Microseconds(),
 	}
 	if data.Err != nil {
 		attrs = append(attrs, "error", data.Err.Error())
@@ -67,13 +98,4 @@ func (debugQueryTracer) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, data pgx
 		}
 	}
 	slog.Debug("pgstore: query", attrs...)
-}
-
-// debugEnabled reports whether slog's default logger will emit Debug
-// records for ctx. Used by Open to decide whether to attach the
-// tracer at all — the tracer's overhead is the context value alloc
-// per query, trivial in isolation but multiplied by every query in
-// the system.
-func debugEnabled(ctx context.Context) bool {
-	return slog.Default().Enabled(ctx, slog.LevelDebug)
 }

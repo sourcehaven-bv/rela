@@ -390,40 +390,41 @@ func (e *Engine) eligibleFromSource(
 		cands = cands[:e.cap]
 	}
 
-	out := make([]Suggestion, 0, len(cands))
+	sugs := make([]Suggestion, 0, len(cands))
+	keys := make([]userstate.Key, 0, len(cands))
 	for _, c := range cands {
 		sug := buildSuggestion(id, bandID, src, c)
 		sug.Key.User = user
-
-		suppressed, err := e.suppressed(ctx, sug.Key, src, now)
-		if err != nil {
-			return nil, err
+		sugs = append(sugs, sug)
+		keys = append(keys, sug.Key)
+	}
+	// Two round-trips for the whole candidate set instead of two per
+	// candidate (TKT-1U8XYN); the verdict per key is suppressed's.
+	snoozed, err := e.state.SnoozedUntilMany(ctx, keys, now)
+	if err != nil {
+		return nil, fmt.Errorf("nextaction: snooze lookup for %q: %w", id, err)
+	}
+	shown, err := e.state.LastShownMany(ctx, keys)
+	if err != nil {
+		return nil, fmt.Errorf("nextaction: last-shown lookup for %q: %w", id, err)
+	}
+	out := make([]Suggestion, 0, len(sugs))
+	for _, sug := range sugs {
+		if _, ok := snoozed[sug.Key]; ok {
+			continue
 		}
-		if !suppressed {
-			out = append(out, sug)
+		lastShown, everShown := shown[sug.Key]
+		if everShown && inCooldown(src, lastShown, now) {
+			continue
 		}
+		out = append(out, sug)
 	}
 	return out, nil
 }
 
-// suppressed reports whether a snooze or a cooldown hides this suggestion.
-func (e *Engine) suppressed(
-	ctx context.Context, k userstate.Key, src dataentryconfig.NextActionSource, now time.Time,
-) (bool, error) {
-	if _, snoozed, err := e.state.SnoozedUntil(ctx, k, now); err != nil {
-		return false, fmt.Errorf("nextaction: snooze lookup for %q: %w", k.Source, err)
-	} else if snoozed {
-		return true, nil
-	}
-
-	lastShown, everShown, err := e.state.LastShown(ctx, k)
-	if err != nil {
-		return false, fmt.Errorf("nextaction: last-shown lookup for %q: %w", k.Source, err)
-	}
-	if !everShown {
-		return false, nil
-	}
-
+// inCooldown reports whether a suggestion shown at lastShown is still
+// within its source's cooldown at now.
+func inCooldown(src dataentryconfig.NextActionSource, lastShown, now time.Time) bool {
 	cooldown := DefaultCooldown
 	if src.Cooldown != "" {
 		// Already validated at config load; a parse failure here means the
@@ -433,7 +434,7 @@ func (e *Engine) suppressed(
 			cooldown = d
 		}
 	}
-	return now.Before(lastShown.Add(cooldown)), nil
+	return now.Before(lastShown.Add(cooldown))
 }
 
 // sourceIDsForBand returns the ids in a band, sorted for determinism. Sort

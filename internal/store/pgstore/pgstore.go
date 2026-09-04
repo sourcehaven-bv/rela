@@ -122,8 +122,14 @@ type DBTX interface {
 // mandated store.Store interface on the same terms. Required-interface
 // exception, not accreted API.)
 //
-//plimsoll:max-exported-methods=42
-//plimsoll:max-methods=52
+// (+2 exported, TKT-1U8XYN: GraphQueryHeaders and CountMatched are OPTIONAL
+// store capabilities — store.GraphHeaderQueryer, store.MatchedCounter — that
+// consumers type-assert off the store handle, exactly as HeaderReader is.
+// They have to live on this type to be discoverable that way; a second
+// type would not be found by the assertion.)
+//
+//plimsoll:max-exported-methods=44
+//plimsoll:max-methods=54
 type Store struct {
 	db        DBTX
 	observers []store.EntityObserver // notified synchronously after committed entity writes

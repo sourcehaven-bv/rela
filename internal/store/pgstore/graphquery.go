@@ -56,6 +56,55 @@ func (s *Store) GraphQuery(ctx context.Context, q store.GraphQuery) iter.Seq2[*e
 	}
 }
 
+// CountMatched implements store.MatchedCounter: GraphCount's first statement
+// alone. A list page needs only the scoped count, and the second statement
+// GraphCount would run — the type's world-wide total — is the expensive one.
+func (s *Store) CountMatched(ctx context.Context, q store.GraphQuery) (int, error) {
+	if err := checkGraphQueryScope(q); err != nil {
+		return 0, err
+	}
+	matchedSQL, matchedArgs := buildGraphQuerySQL(q, true)
+	var matched int
+	if err := s.db.QueryRow(ctx, matchedSQL, matchedArgs...).Scan(&matched); err != nil {
+		return 0, fmt.Errorf("pgstore: graph count (matched): %w", err)
+	}
+	return matched, nil
+}
+
+// GraphQueryHeaders implements store.GraphHeaderQueryer: GraphQuery's
+// predicate evaluation with the content column projected away, so a list
+// page's filter/sort/paginate pass over a whole type never transfers the
+// bodies it will not render (TKT-1U8XYN).
+func (s *Store) GraphQueryHeaders(ctx context.Context, q store.GraphQuery) iter.Seq2[store.EntityHeader, error] {
+	if err := checkGraphQueryScope(q); err != nil {
+		return func(yield func(store.EntityHeader, error) bool) { yield(store.EntityHeader{}, err) }
+	}
+	sqlText, args := buildGraphQuerySQLSelect(q, graphSelectHeaders)
+	return func(yield func(store.EntityHeader, error) bool) {
+		rows, err := s.db.Query(ctx, sqlText, args...)
+		if err != nil {
+			yield(store.EntityHeader{}, fmt.Errorf("pgstore: graph query headers: %w", err))
+			return
+		}
+		defer rows.Close()
+		for rows.Next() {
+			h, scanErr := scanEntityHeader(rows)
+			if scanErr != nil {
+				if !yield(store.EntityHeader{}, scanErr) {
+					return
+				}
+				continue
+			}
+			if !yield(h, nil) {
+				return
+			}
+		}
+		if err := rows.Err(); err != nil {
+			yield(store.EntityHeader{}, err)
+		}
+	}
+}
+
 // GraphCount runs the predicate query as `SELECT count(*)` and a
 // separate unconditional count of entities of the type. Two
 // round-trips beats one COUNT FILTER because both rely on the same
@@ -88,7 +137,7 @@ func buildGraphTotalSQL(q store.GraphQuery) (sqlText string, args []any) {
 	typeArg := b.arg(q.EntityType)
 	scope, _, _ := graphWorldScope(b, q)
 	agg := "count(*)"
-	if !q.World.IsDefaultWorld() {
+	if !effectiveWorld(q.World, q.EntityType).IsDefaultWorld() {
 		agg = "count(DISTINCT e.id)"
 	}
 	return "SELECT " + agg + " FROM entities e WHERE e.type = " + typeArg + " AND " + scope, b.args
@@ -315,6 +364,31 @@ func equalsCond(b *sqlBuilder, txt, jsn, value string) string {
 // when BuildGraphQuerySQLForTest is invoked from tests — the
 // builder treats all input the same way.
 func buildGraphQuerySQL(q store.GraphQuery, countOnly bool) (sqlText string, args []any) {
+	if countOnly {
+		return buildGraphQuerySQLSelect(q, graphSelectCount)
+	}
+	return buildGraphQuerySQLSelect(q, graphSelectRows)
+}
+
+// graphSelect chooses what a graph query projects: whole rows, content-free
+// header rows, or a count. The predicate evaluation is identical across the
+// three — only the SELECT list and ordering differ.
+type graphSelect int
+
+const (
+	graphSelectRows graphSelect = iota
+	graphSelectHeaders
+	graphSelectCount
+)
+
+// graphSelectLists are the column lists for the row projections; scanEntity
+// and scanEntityHeader expect exactly these columns in this order.
+var graphSelectLists = map[graphSelect]string{
+	graphSelectRows:    "e.id, e.type, e.face, e.properties, e.content, e.updated_at",
+	graphSelectHeaders: "e.id, e.type, e.face, e.properties, e.updated_at",
+}
+
+func buildGraphQuerySQLSelect(q store.GraphQuery, sel graphSelect) (sqlText string, args []any) {
 	b := &sqlBuilder{}
 	// $1 is always q.EntityType.
 	typeArg := b.arg(q.EntityType)
@@ -323,9 +397,10 @@ func buildGraphQuerySQL(q store.GraphQuery, countOnly bool) (sqlText string, arg
 
 	// Branch the SELECT list + ORDER BY: count queries skip column
 	// fetching and ordering; row queries return the standard entity
-	// columns and stable id-ascending order. The rest of the query
-	// (WITH, FROM, WHERE, EXISTS chain) is identical.
-	selectList := "e.id, e.type, e.face, e.properties, e.content, e.updated_at"
+	// columns (or the header subset) and stable id-ascending order. The
+	// rest of the query (WITH, FROM, WHERE, EXISTS chain) is identical.
+	countOnly := sel == graphSelectCount
+	selectList := graphSelectLists[sel]
 	orderBy := " ORDER BY e.id"
 	if countOnly {
 		// A world-scoped count must count PRIMES: DISTINCT ON cannot be
@@ -334,7 +409,7 @@ func buildGraphQuerySQL(q store.GraphQuery, countOnly bool) (sqlText string, arg
 		// coordinates. count(DISTINCT e.id) is exact here because the
 		// world admits at most one prime per id.
 		selectList = "count(*)"
-		if !q.World.IsDefaultWorld() {
+		if !effectiveWorld(q.World, q.EntityType).IsDefaultWorld() {
 			selectList = "count(DISTINCT e.id)"
 		}
 		orderBy = ""
@@ -367,7 +442,50 @@ func buildGraphQuerySQL(q store.GraphQuery, countOnly bool) (sqlText string, arg
 	sb.WriteString(orderBy)
 	sb.WriteString(rankOrder)
 
-	return sb.String(), b.args
+	if countOnly || (len(q.OrderBy) == 0 && q.Limit == 0 && q.Offset == 0) {
+		return sb.String(), b.args
+	}
+	// Ordering and paging (TKT-1U8XYN). A world query's DISTINCT ON owns its
+	// ORDER BY (it must lead with e.id), so the page is taken over the
+	// resolved primes in an outer query; a default-world query pages
+	// directly, its plain id ordering replaced. Either way the sort is
+	// byte-wise on the property's text form (COLLATE "C" — the Go
+	// comparator's semantics) with PostgreSQL's default null placement,
+	// which treats an absent value as the largest: last ascending, first
+	// descending. That default is deliberate — it is what lets one
+	// expression index serve both directions (a backward scan of an ASC
+	// index is exactly DESC NULLS FIRST) — and the Go comparators mirror it.
+	// graphWorldScope returns distinctOn and rankOrder as a pair: both empty
+	// (default world; the plain id ORDER BY is ours to replace) or both set
+	// (world; the DISTINCT ON owns its ORDER BY, so we wrap). A one-sided
+	// return would corrupt the SQL silently, hence the guard.
+	if (distinctOn == "") != (rankOrder == "") {
+		panic("pgstore: graphWorldScope returned DISTINCT ON without its ORDER BY, or vice versa")
+	}
+	inner := sb.String()
+	if distinctOn != "" {
+		inner = "SELECT * FROM (" + inner + ") e"
+	} else {
+		inner = strings.TrimSuffix(inner, orderBy)
+	}
+	var page strings.Builder
+	page.WriteString(inner)
+	page.WriteString(" ORDER BY ")
+	for _, spec := range q.OrderBy {
+		dir := " ASC"
+		if spec.Descending {
+			dir = " DESC"
+		}
+		page.WriteString("(e.properties ->> " + b.arg(spec.Property) + `) COLLATE "C"` + dir + ", ")
+	}
+	page.WriteString("e.id ASC")
+	if q.Limit > 0 {
+		page.WriteString(" LIMIT " + b.arg(q.Limit))
+	}
+	if q.Offset > 0 {
+		page.WriteString(" OFFSET " + b.arg(q.Offset))
+	}
+	return page.String(), b.args
 }
 
 // buildPredicateSQL emits (CTE definitions, EXISTS clause) for one
@@ -505,7 +623,7 @@ func cappedDepth(d int) int {
 // filter cannot be applied at one call site and forgotten at another — all
 // three graph paths go through here (TKT-O7R2A1).
 func graphWorldScope(b *sqlBuilder, q store.GraphQuery) (where, distinctOn, rankOrder string) {
-	w := q.World
+	w := effectiveWorld(q.World, q.EntityType)
 	faceIn := func(base string) string {
 		if len(q.FaceIn) == 0 {
 			return base

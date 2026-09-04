@@ -173,6 +173,8 @@ func RunAll(t *testing.T, f Factory, sf SearchFactory, vsf VisibleSearchFactory,
 	t.Run("Relation", func(t *testing.T) { RunRelationTests(t, f) })
 	t.Run("Query", func(t *testing.T) { RunQueryTests(t, f) })
 	t.Run("GraphQuery", func(t *testing.T) { RunGraphQueryTests(t, f) })
+	t.Run("GraphHeaders", func(t *testing.T) { RunGraphHeaderTests(t, f) })
+	t.Run("GraphPaging", func(t *testing.T) { RunGraphPagingTests(t, f) })
 	t.Run("Pagination", func(t *testing.T) { RunPaginationTests(t, f) })
 	if sf != nil {
 		t.Run("Search", func(t *testing.T) { RunSearchTests(t, sf) })

@@ -34,6 +34,11 @@ const (
 	DerivedUnique DerivedObjectKind = "unique"
 	// DerivedQueryIndex accelerates one static scalar-equality query shape.
 	DerivedQueryIndex DerivedObjectKind = "query-index"
+	// DerivedListIndex accelerates one list page shape (TKT-1U8XYN): the
+	// list's static equality filters followed by its sort keys, so a pushed
+	// page (listpushdown) is an index range scan instead of a sort over the
+	// type. Properties = filters (sorted), OrderBy = sort keys (in order).
+	DerivedListIndex DerivedObjectKind = "list-index"
 )
 
 // DerivedObjectSpec is one desired derived object, derived from validated
@@ -45,6 +50,11 @@ type DerivedObjectSpec struct {
 	Type       string
 	Property   string
 	Properties []string
+
+	// OrderBy names the sort keys, in order, of a [DerivedListIndex]: the
+	// list's `sort:` properties, each string-shaped. Properties then holds
+	// the list's static equality filters. Unused by the other kinds.
+	OrderBy []string
 }
 
 // DerivedObjectState is the outcome of reconciling one spec (or one discovered

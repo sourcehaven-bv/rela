@@ -3,6 +3,7 @@ package dataentry
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -787,45 +788,129 @@ func findListByEntityType(s *Schema, entries []NavigationEntry, entityType strin
 	return ""
 }
 
-// resolveRelationColumnValues returns display titles for all targets of the given
-// relation type from an entity. Direction controls whether to follow edges pointing
-// to the entity (incoming) or from the entity (outgoing, the default).
+// resolveRelationColumns returns, for every row and every relation column,
+// the display titles of that row's related entities: result[rowID][columnIndex].
+// Property columns have no entry.
 //
-// The targets are routed through viewReader.Filter (DEC-ZBI39P) before their
-// titles are derived: a neighbor the principal may not read is dropped
-// (row-gate), and a survivor whose display property is hidden has it redacted so
-// DisplayTitle falls back to the id (BUG-R9EHKV). Without this, a table
-// relation-column leaked a hidden neighbor's title via the raw store read —
-// the one builder path the executeView redaction did not cover, since these
-// targets are fetched fresh here rather than carried in result.Collections.
-func (h *viewsHandler) resolveRelationColumnValues(
-	ctx context.Context, entityID, relationType string, direction dataentryconfig.Direction,
-) []string {
+// It is batched per section (TKT-1U8XYN): one relation query per (column,
+// row type) — the row entity's own type anchors the direction inference, since
+// a section's rows come from a traversal and the type is only known per row —
+// then ONE content-free header read for every target of every column. The
+// former shape was one relation query plus one entity load per row per
+// column, which put a project view with a 40-row work table at over a
+// thousand statements.
+//
+// Targets are gated and redacted through the same viewReader seam as before
+// (DEC-ZBI39P), now over headers: a neighbor the principal may not read is
+// dropped, and a survivor whose display property is hidden falls back to its
+// id (BUG-R9EHKV). A viewReader without the header capability degrades to the
+// whole-entity Filter over the same batch — strictly more data, never less
+// gating.
+func (h *viewsHandler) resolveRelationColumns(
+	ctx context.Context, s *Schema, columns []dataentryconfig.ListColumn, rows []*entityPkg.Entity,
+) map[string]map[int][]string {
 	svc := h.services()
-	q := store.RelationQuery{
-		EntityID:  entityID,
-		Type:      relationType,
-		Direction: relationDirection(direction),
+	targets, targetIDs := h.relationColumnTargets(ctx, svc, s, columns, rows)
+	if len(targetIDs) == 0 {
+		return targets
 	}
 
-	var targets []*entityPkg.Entity
-	for r, err := range svc.Store.ListRelations(ctx, q) {
+	titles := h.visibleTitles(ctx, svc, targetIDs)
+	out := make(map[string]map[int][]string, len(targets))
+	for rowID, cols := range targets {
+		out[rowID] = make(map[int][]string, len(cols))
+		for ci, ids := range cols {
+			vals := make([]string, 0, len(ids))
+			for _, id := range ids {
+				if title, ok := titles[id]; ok {
+					vals = append(vals, title)
+				}
+			}
+			out[rowID][ci] = vals
+		}
+	}
+	return out
+}
+
+// relationColumnTargets runs one relation query per (relation column, row
+// type) and returns targets[rowID][columnIndex] as the ordered neighbor ids
+// of that cell, plus the distinct neighbor ids in first-seen order.
+func (h *viewsHandler) relationColumnTargets(
+	ctx context.Context, svc Services, s *Schema, columns []dataentryconfig.ListColumn, rows []*entityPkg.Entity,
+) (targets map[string]map[int][]string, targetIDs []string) {
+	byType := make(map[string][]string)
+	for _, e := range rows {
+		byType[e.Type] = append(byType[e.Type], e.ID)
+	}
+	targets = make(map[string]map[int][]string, len(rows))
+	seenTarget := make(map[string]struct{})
+	for ci, col := range columns {
+		if col.Relation == "" {
+			continue
+		}
+		for typ, ids := range byType {
+			dir := resolveConfigDirection(s, typ, col.Relation, col.Direction)
+			q := store.RelationQuery{EntityIDs: ids, Type: col.Relation, Direction: relationDirection(dir)}
+			for r, err := range svc.Store.ListRelations(ctx, q) {
+				if err != nil {
+					// A view is a presentation surface; a section renders what it
+					// could load, but never quietly — the operator sees the fault.
+					slog.Warn("dataentry: view section relation column truncated; store read failed",
+						"relation", col.Relation, "type", typ, "rows", len(ids), "err", err)
+					break
+				}
+				rowID, targetID := r.From, r.To
+				if dir.IsIncoming() {
+					rowID, targetID = r.To, r.From
+				}
+				if targets[rowID] == nil {
+					targets[rowID] = make(map[int][]string)
+				}
+				targets[rowID][ci] = append(targets[rowID][ci], targetID)
+				if _, dup := seenTarget[targetID]; !dup {
+					seenTarget[targetID] = struct{}{}
+					targetIDs = append(targetIDs, targetID)
+				}
+			}
+		}
+	}
+	return targets, targetIDs
+}
+
+// visibleTitles resolves ids to display titles for the ids the principal may
+// read, in one header batch gated through the viewReader; ids the gate drops
+// (or the store no longer has) are absent from the result.
+func (h *viewsHandler) visibleTitles(ctx context.Context, svc Services, ids []string) map[string]string {
+	var headers []store.EntityHeader
+	for hd, err := range store.ListEntityHeaders(ctx, svc.Store, store.EntityQuery{IDs: ids}) {
 		if err != nil {
-			break
+			slog.Warn("dataentry: view section relation titles dropped; header read failed",
+				"targets", len(ids), "err", err)
+			return map[string]string{}
 		}
-		targetID := r.To
-		if direction.IsIncoming() {
-			targetID = r.From
+		headers = append(headers, hd)
+	}
+	var visible []store.EntityHeader
+	if hf, ok := h.viewReader.(visibility.HeaderFilterer); ok {
+		visible = hf.FilterHeaders(ctx, headers)
+	} else {
+		// No header capability: gate the same batch as whole entities.
+		ents := make([]*entityPkg.Entity, 0, len(headers))
+		for e, err := range svc.Store.ListEntities(ctx, store.EntityQuery{IDs: ids}) {
+			if err != nil {
+				slog.Warn("dataentry: view section relation titles dropped; entity read failed",
+					"targets", len(ids), "err", err)
+				return map[string]string{}
+			}
+			ents = append(ents, e)
 		}
-		if e, gerr := svc.Store.GetEntity(ctx, targetID); gerr == nil {
-			targets = append(targets, e)
+		for _, e := range h.viewReader.Filter(ctx, ents) {
+			visible = append(visible, store.HeaderOf(e))
 		}
 	}
-
-	visible := h.viewReader.Filter(ctx, targets)
-	titles := make([]string, 0, len(visible))
-	for _, e := range visible {
-		titles = append(titles, svc.Meta.DisplayTitle(e.ID, e.Type, e.Properties))
+	titles := make(map[string]string, len(visible))
+	for _, hd := range visible {
+		titles[hd.ID] = svc.Meta.DisplayTitle(hd.ID, hd.Type, hd.Properties)
 	}
 	return titles
 }

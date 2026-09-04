@@ -2,6 +2,7 @@ package pgstore_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -54,4 +55,60 @@ func searchIDs(t *testing.T, b *pgstore.SearchBackend, text string) []string {
 		ids = append(ids, f.ID)
 	}
 	return ids
+}
+
+// Ranking looks at the identity/title prefix of search_text, not the body:
+// an entity whose TITLE carries the word outranks one that only mentions it
+// deep in a long body, and the body-only entity still matches (TKT-1U8XYN).
+func TestSearch_RanksTitleMatchAboveBodyMention(t *testing.T) {
+	pool := newScopedPool(t)
+	backend := pgstore.NewSearchBackend(pool)
+	st, err := pgstore.New(pool, pgstore.WithObserver(backend))
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	body := entity.New("N-1", "note")
+	body.SetString("title", "Quarterly review")
+	body.Content = strings.Repeat("filler words about nothing in particular. ", 60) + "telemetry appears here at the end"
+	require.NoError(t, st.CreateEntity(ctx, body))
+	title := entity.New("N-2", "note")
+	title.SetString("title", "Telemetry rollout")
+	title.Content = strings.Repeat("unrelated prose. ", 80)
+	require.NoError(t, st.CreateEntity(ctx, title))
+
+	faces, err := backend.Search("telemetry", 10, store.DefaultWorld())
+	require.NoError(t, err)
+	ids := make([]string, 0, len(faces))
+	for _, f := range faces {
+		ids = append(ids, f.ID)
+	}
+	require.Equal(t, []string{"N-2", "N-1"}, ids)
+}
+
+// Migration 0014 rebuilds search_text in SQL for rows written before the
+// column's composition changed; it must produce what the store now writes.
+func TestMigration0014_SearchTextRebuildMatchesStore(t *testing.T) {
+	pool := newScopedPool(t)
+	st, err := pgstore.New(pool)
+	require.NoError(t, err)
+	ctx := context.Background()
+	e := entity.New("Mixed-Case-9", "note")
+	e.SetString("title", "Zebra Crossing")
+	e.SetString("owner", "Alice")
+	e.Properties["count"] = 3
+	e.Content = "Body Text\nsecond line"
+	require.NoError(t, st.CreateEntity(ctx, e))
+
+	var written string
+	require.NoError(t, pool.QueryRow(ctx, `SELECT search_text FROM entities WHERE id = 'Mixed-Case-9'`).Scan(&written))
+	_, err = pool.Exec(ctx, `UPDATE entities SET search_text =
+		lower(id) || E'\n' ||
+		COALESCE((SELECT string_agg(lower(p.value), E'\n' ORDER BY p.key)
+		          FROM jsonb_each_text(properties) p
+		          WHERE jsonb_typeof(properties -> p.key) = 'string'), '') || E'\n' ||
+		lower(content)`)
+	require.NoError(t, err)
+	var rebuilt string
+	require.NoError(t, pool.QueryRow(ctx, `SELECT search_text FROM entities WHERE id = 'Mixed-Case-9'`).Scan(&rebuilt))
+	require.Equal(t, written, rebuilt)
 }
