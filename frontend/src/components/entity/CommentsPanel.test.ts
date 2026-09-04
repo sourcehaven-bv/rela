@@ -65,11 +65,22 @@ function seedType(over: Partial<EntityType> = {}) {
   ]) as never
 }
 
-async function mountPanel(sectionIds: string[] = []) {
+/**
+ * Mounts the panel and expands it.
+ *
+ * The panel is collapsed by default — property comments now render at their own
+ * field, so this surface exists for the ones with no field row. `expand: false`
+ * is for the tests that assert the collapsed header itself.
+ */
+async function mountPanel(sectionIds: string[] = [], expand = true) {
   const w = mount(CommentsPanel, {
     props: { entityType: ENTITY_TYPE, entityId: ENTITY_ID, sectionIds },
   })
   await vi.waitFor(() => expect(w.vm).toBeTruthy())
+  await w.vm.$nextTick()
+  if (expand && w.find('.panel-header').exists()) {
+    await w.find('.panel-header').trigger('click')
+  }
   await w.vm.$nextTick()
   await w.vm.$nextTick()
   return w
@@ -212,5 +223,40 @@ describe('CommentsPanel', () => {
 
     expect(w.find('.comments-error').exists()).toBe(true)
     expect(w.text()).not.toContain('No comments yet')
+  })
+})
+
+describe('CommentsPanel collapsing', () => {
+  it('is collapsed by default and summarises what is folded away', async () => {
+    seedType()
+    mockList.mockResolvedValue([
+      comment({ id: 'p1', anchor: { kind: 'property', ref: 'status' } }),
+      comment({ id: 's1', anchor: { kind: 'section', ref: 'details' } }),
+      comment({ id: 'd1', anchor: { kind: 'property', ref: 'gone' }, detached: true }),
+    ])
+
+    const w = await mountPanel([], false)
+
+    // Collapsed: the header is there, the thread is not.
+    expect(w.find('.panel-header').exists()).toBe(true)
+    expect(w.find('.comment').exists()).toBe(false)
+
+    // The summary counts comments with no field row of their own — the
+    // section-anchored one and the detached one, not the plain property one.
+    expect(w.find('.panel-summary').text()).toContain('3 total')
+    expect(w.find('.panel-summary').text()).toContain('2 not on a field')
+  })
+
+  it('expands on click', async () => {
+    seedType()
+    mockList.mockResolvedValue([comment()])
+
+    const w = await mountPanel([], false)
+    expect(w.find('.comment').exists()).toBe(false)
+
+    await w.find('.panel-header').trigger('click')
+    await w.vm.$nextTick()
+
+    expect(w.find('.comment').exists()).toBe(true)
   })
 })

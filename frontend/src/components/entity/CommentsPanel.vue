@@ -44,6 +44,11 @@ const loading = ref(false)
  */
 const loadError = ref<string | null>(null)
 
+// Collapsed by default (TKT-FIO205). Since property comments now render at
+// their own field, this panel is the CATCH-ALL: it is where section-anchored
+// and detached comments live, because neither has a field row to sit on.
+const expanded = ref(false)
+
 const newBody = ref('')
 const newAnchorKey = ref('')
 const submitting = ref(false)
@@ -91,6 +96,13 @@ const sortedComments = computed(() =>
 )
 
 const unresolvedCount = computed(() => comments.value.filter((c) => !c.resolved).length)
+
+// Comments with no field row of their own. These are the reason the panel
+// still exists: a section anchor names a view heading, and a detached one
+// points at a property that is gone — neither can render beside a field.
+const homelessCount = computed(
+  () => comments.value.filter((c) => c.anchor.kind !== 'property' || c.detached).length
+)
 
 function anchorLabel(anchor: CommentAnchor): string {
   return anchor.kind === 'section' ? `Section: ${anchor.ref}` : anchor.ref
@@ -222,18 +234,34 @@ defineExpose({ load })
 
 <template>
   <section v-if="commentable" class="comments-panel">
-    <header class="panel-header">
+    <header
+      class="panel-header"
+      role="button"
+      tabindex="0"
+      :aria-expanded="expanded"
+      @click="expanded = !expanded"
+      @keydown.enter.prevent="expanded = !expanded"
+      @keydown.space.prevent="expanded = !expanded"
+    >
+      <span class="chev" aria-hidden="true">{{ expanded ? '▾' : '▸' }}</span>
       <h2>
-        Comments
+        All comments
         <span v-if="unresolvedCount > 0" class="unresolved-count">{{ unresolvedCount }} open</span>
       </h2>
+      <span class="panel-summary">
+        {{ comments.length }} total<template v-if="homelessCount > 0">
+          · {{ homelessCount }} not on a field</template
+        >
+      </span>
     </header>
 
-    <div v-if="loading" class="comments-state">Loading comments…</div>
+    <div v-if="loading && expanded" class="comments-state">Loading comments…</div>
 
-    <div v-else-if="loadError" class="comments-state comments-error">{{ loadError }}</div>
+    <div v-else-if="loadError && expanded" class="comments-state comments-error">
+      {{ loadError }}
+    </div>
 
-    <template v-else>
+    <template v-else-if="expanded">
       <ul v-if="sortedComments.length > 0" class="comment-list">
         <li
           v-for="comment in sortedComments"
@@ -332,9 +360,31 @@ defineExpose({ load })
 .panel-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 10px;
   padding: 16px 24px;
   border-bottom: 1px solid var(--border-color);
+  cursor: pointer;
+  user-select: none;
+}
+
+.panel-header:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--focus-ring-gap),
+    0 0 0 4px var(--focus-ring);
+}
+
+.chev {
+  color: var(--muted-text);
+  font-size: var(--font-size-sm);
+}
+
+/* Pushed to the right edge so the counts read as a summary of what is folded
+ * away, rather than as part of the title. */
+.panel-summary {
+  margin-left: auto;
+  font-size: var(--font-size-sm);
+  color: var(--muted-text);
 }
 
 .panel-header h2 {

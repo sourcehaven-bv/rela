@@ -38,6 +38,9 @@ import type { PropertyDef } from '@/types'
 import type { Component } from 'vue'
 import DocumentsPanel from '@/components/entity/DocumentsPanel.vue'
 import CommentsPanel from '@/components/entity/CommentsPanel.vue'
+import CommentIndicator from '@/components/entity/CommentIndicator.vue'
+import { listComments, type Comment } from '@/api/comments'
+import { shouldFlipPopover } from '@/utils/popoverFlip'
 import CommandModal from '@/components/entity/CommandModal.vue'
 import ExportMenu from '@/components/entity/ExportMenu.vue'
 import { entityExportUrl } from '@/api/transforms'
@@ -301,6 +304,45 @@ const commentSectionIds = computed(
   () => viewData.value?.sections?.map((s) => s.sectionId).filter(Boolean) ?? []
 )
 
+// ─── Per-field comments (TKT-FIO205) ─────────────────────────────────────
+//
+// Fetched ONCE per entity and grouped by anchor ref, not once per field: a
+// per-field request would be N round-trips for N properties, and the server
+// already returns the whole thread in one call.
+const comments = ref<Comment[]>([])
+
+const commentsEnabled = computed(
+  () => schemaStore.getEntityType(props.entityType)?.commentable === true
+)
+
+const commentsByProperty = computed(() => {
+  const byRef = new Map<string, Comment[]>()
+  for (const c of comments.value) {
+    if (c.anchor.kind !== 'property') continue
+    const bucket = byRef.get(c.anchor.ref)
+    if (bucket) bucket.push(c)
+    else byRef.set(c.anchor.ref, [c])
+  }
+  return byRef
+})
+
+function commentsForProperty(name: string): Comment[] {
+  return commentsByProperty.value.get(name) ?? []
+}
+
+async function loadComments() {
+  if (!commentsEnabled.value) return
+  try {
+    comments.value = await listComments(props.entityType, props.entityId)
+  } catch {
+    // A failure here means "cannot read the target, or commenting is off" —
+    // the server makes those indistinguishable on purpose. Either way there is
+    // no thread to show, and the page's primary content must still render, so
+    // this degrades to "no comments" rather than surfacing an error.
+    comments.value = []
+  }
+}
+
 const checkboxStats = computed(() => {
   const c = entryContentSection.value?.content
   return c ? getCheckboxStats(c) : null
@@ -557,7 +599,9 @@ async function loadView() {
       // for the response of a sentinel PATCH.
       contentAutoSave.recordServerSnapshot(viewData.value.entry)
     }
-    await Promise.all([loadCommands(), loadScopeNav()])
+    // loadComments swallows its own failures (see its doc): a comment-service
+    // problem must not fail the entity view it decorates.
+    await Promise.all([loadCommands(), loadScopeNav(), loadComments()])
   } catch (err) {
     if (isCancelledFetch(err)) return
     error.value = getErrorMessage(err, 'Failed to load entity')
@@ -1540,7 +1584,21 @@ watch(
           <PropertyDisplay
             v-else-if="section.display === 'properties'"
             :properties="mapFieldsToProperties(section.fields)"
-          />
+          >
+            <!-- Comment affordance per field (TKT-FIO205). Filled only here:
+                 the same component renders list cells and kanban cards, where
+                 a comment control would be noise. -->
+            <template v-if="commentsEnabled" #label-affordance="{ property, index }">
+              <CommentIndicator
+                :entity-type="entityType"
+                :entity-id="entityId"
+                :anchor="{ kind: 'property', ref: property.name }"
+                :comments="commentsForProperty(property.name)"
+                :flip="shouldFlipPopover(section.fields, index)"
+                @changed="loadComments"
+              />
+            </template>
+          </PropertyDisplay>
 
           <!-- Entry content with mermaid + interactive checkboxes.
                Function ref instead of string ref because this template lives
