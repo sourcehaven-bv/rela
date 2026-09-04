@@ -25,7 +25,10 @@ func NewFSTemplater(fs storage.FS, paths *project.Context) *FSTemplater {
 }
 
 func (t *FSTemplater) EntityTemplate(_ context.Context, entityType, variant string) (*Template, error) {
-	path := t.paths.EntityTemplateVariantPath(entityType, variant)
+	path, err := t.paths.EntityTemplateVariantPath(entityType, variant)
+	if err != nil {
+		return nil, err
+	}
 	doc, err := loadEntityTemplateDoc(t.fs, path)
 	if err != nil {
 		return nil, err
@@ -55,7 +58,10 @@ func (t *FSTemplater) RelationTemplate(_ context.Context, relationType string) (
 func (t *FSTemplater) GenerateEntity(
 	_ context.Context, meta *metamodel.Metamodel, entityType, variant string, force bool,
 ) (bool, error) {
-	path := t.paths.EntityTemplateVariantPath(entityType, variant)
+	path, err := t.paths.EntityTemplateVariantPath(entityType, variant)
+	if err != nil {
+		return false, err
+	}
 	return generateEntityTemplate(t.fs, path, meta, entityType, force)
 }
 

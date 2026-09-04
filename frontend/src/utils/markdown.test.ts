@@ -510,6 +510,143 @@ describe('markdown', () => {
       expect(container.querySelector('.mermaid-diagram')).toBeTruthy()
       expect(container.querySelector('pre.mermaid')).toBeNull()
     })
+
+    // Mermaid runs with securityLevel: 'strict', so it escapes labels itself.
+    // These tests mock render() to return what a RELAXED or BROKEN mermaid
+    // would emit, because that is the failure this sanitizer exists to catch:
+    // the defence must be ours, not a setting inside a third-party call.
+    // Diagram source is user-authored markdown, so a future
+    // `securityLevel: 'loose'` (what you need for clickable nodes) must not be
+    // one line away from stored XSS.
+    describe('sanitizes mermaid SVG output', () => {
+      const NS = 'xmlns="http://www.w3.org/2000/svg"'
+      const XH = 'xmlns="http://www.w3.org/1999/xhtml"'
+      // Assembled rather than written literally: a literal closing script tag
+      // inside this module's source would end the enclosing <script> block in
+      // any tooling that parses the file as HTML.
+      const CLOSE_SCRIPT = '</' + 'script>'
+
+      async function render(svg: string): Promise<Element> {
+        const container = document.createElement('div')
+        container.innerHTML = '<pre><code class="language-mermaid">graph TD\nA-->B</code></pre>'
+        const mermaid = await import('mermaid')
+        vi.spyOn(mermaid.default, 'render').mockResolvedValue({
+          svg,
+          diagramType: 'flowchart',
+          bindFunctions: vi.fn(),
+        })
+        await renderMermaidDiagrams(container)
+        const diagram = container.querySelector('.mermaid-diagram')
+        expect(diagram).toBeTruthy()
+        return diagram!
+      }
+
+      function eventHandlers(el: Element): string[] {
+        return Array.from(el.querySelectorAll('*')).flatMap((e) =>
+          Array.from(e.attributes)
+            .map((a) => a.name)
+            .filter((n) => /^on/i.test(n)),
+        )
+      }
+
+      it('strips event handlers on SVG elements', async () => {
+        const d = await render(`<svg ${NS}><text onclick="alert(1)">label</text></svg>`)
+        expect(eventHandlers(d)).toEqual([])
+        expect(d.textContent).toContain('label')
+      })
+
+      it('strips script elements', async () => {
+        const d = await render(
+          `<svg ${NS}><script>alert(1)${CLOSE_SCRIPT}<text>label</text></svg>`,
+        )
+        expect(d.querySelector('script')).toBeNull()
+      })
+
+      it('strips javascript: URLs', async () => {
+        const d = await render(`<svg ${NS}><a href="javascript:alert(1)"><text>x</text></a></svg>`)
+        const hrefs = Array.from(d.querySelectorAll('*'))
+          .map((e) => e.getAttribute('href'))
+          .filter(Boolean)
+        expect(hrefs.some((h) => /javascript:/i.test(h!))).toBe(false)
+      })
+
+      // The label subtree is sanitized separately, in the HTML namespace, so
+      // it needs its own coverage — a guard on the SVG half would not cover it.
+      it('strips scripts and handlers inside a foreignObject label', async () => {
+        const d = await render(
+          `<svg ${NS}><foreignObject><div ${XH}>` +
+            `<img src="x" onerror="alert(1)"/><script>alert(2)${CLOSE_SCRIPT}` +
+            `</div></foreignObject></svg>`,
+        )
+        expect(eventHandlers(d)).toEqual([])
+        expect(d.querySelector('script')).toBeNull()
+        // Handler-stripped is not enough: strict mermaid already does that and
+        // still emits the element, which fetches an attacker-chosen URL.
+        expect(d.querySelector('img')).toBeNull()
+      })
+
+      it('produces an empty diagram rather than throwing on malformed SVG', async () => {
+        const d = await render('not xml <<<')
+        expect(d.querySelector('script')).toBeNull()
+        expect(eventHandlers(d)).toEqual([])
+      })
+
+      // The counterpart to the cases above: the sanitizer must not be so
+      // strict that it silently eats the diagram. Flowchart and state-diagram
+      // labels are XHTML inside <foreignObject>, which a single
+      // DOMPurify.sanitize() over the whole SVG string discards in every
+      // configuration — shapes and arrows still render, the labels just vanish.
+      // Sequence diagrams use SVG <text> and are unaffected, so checking one
+      // diagram type would hide this.
+      it('preserves foreignObject label text and SVG shape markup', async () => {
+        const d = await render(
+          `<svg ${NS} viewBox="0 0 100 50"><g class="node">` +
+            `<rect width="40" height="20"></rect>` +
+            `<foreignObject width="40" height="20">` +
+            `<div ${XH}><span class="nodeLabel">Start</span></div>` +
+            `</foreignObject></g>` +
+            `<path class="edge" d="M0,0 L10,10"></path></svg>`,
+        )
+        expect(d.querySelector('svg')).toBeTruthy()
+        expect(d.querySelector('rect')).toBeTruthy()
+        expect(d.querySelector('path')).toBeTruthy()
+        expect(d.querySelector('foreignObject')).toBeTruthy()
+        expect(d.textContent).toContain('Start')
+      })
+
+      // Labels are paired to their shape by an explicit marker attribute, not
+      // by document order, because the SVG pass may drop an element. With
+      // positional pairing a single dropped node shifts every later label onto
+      // the wrong shape — a silent data-integrity bug in the rendered diagram.
+      it('keeps each label with its own shape', async () => {
+        const fo = (label: string) =>
+          `<foreignObject><div ${XH}><span>${label}</span></div></foreignObject>`
+        const d = await render(
+          `<svg ${NS}><g id="one"><rect/>${fo('First')}</g>` +
+            `<g id="two"><rect/>${fo('Second')}</g></svg>`,
+        )
+        const groups = Array.from(d.querySelectorAll('g'))
+        expect(groups).toHaveLength(2)
+        expect(groups[0].textContent).toContain('First')
+        expect(groups[0].textContent).not.toContain('Second')
+        expect(groups[1].textContent).toContain('Second')
+      })
+
+      // The marker is an implementation detail of the two-pass sanitize and
+      // must not survive into the document.
+      it('removes its internal pairing attribute', async () => {
+        const d = await render(
+          `<svg ${NS}><foreignObject><div ${XH}><span>Start</span></div></foreignObject></svg>`,
+        )
+        expect(d.innerHTML).not.toContain('data-rela-label-slot')
+      })
+
+      it('preserves SVG <text> labels used by sequence diagrams', async () => {
+        const d = await render(`<svg ${NS}><text>Alice</text><line x1="0" y1="0" x2="9" y2="9"/></svg>`)
+        expect(d.textContent).toContain('Alice')
+        expect(d.querySelector('line')).toBeTruthy()
+      })
+    })
   })
 
   describe('encodePlantUMLHex', () => {

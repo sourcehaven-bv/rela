@@ -22,6 +22,12 @@ import (
 // decorators (SafeFS, MemFS) and for the wiring layer that constructs
 // RootedFS.
 //
+// Internally the same claim is carried by [ValidatedPath]: resolve
+// returns one, and RootedFS reaches the wrapped FS only through
+// validatedFS, whose methods take a ValidatedPath. So there is no
+// path — not even an accidental one inside this type — from an
+// unvalidated key to an os call.
+//
 // Getwd is intentionally omitted — it does not fit the keyed-access
 // model.
 //
@@ -40,7 +46,8 @@ import (
 // RootedFS is stateless after construction (root and fs are immutable)
 // and inherits the concurrency semantics of the underlying FS.
 type RootedFS struct {
-	fs   FS
+	vfs  validatedFS
+	fs   FS // retained only for SupportsStreaming's backend sniff
 	root string
 }
 
@@ -57,7 +64,7 @@ func NewRootedFS(fs FS, root string) (*RootedFS, error) {
 	if err != nil {
 		return nil, fmt.Errorf("storage: resolve RootedFS root: %w", err)
 	}
-	return &RootedFS{fs: fs, root: filepath.Clean(abs)}, nil
+	return &RootedFS{vfs: validatedFS{fs: fs}, fs: fs, root: filepath.Clean(abs)}, nil
 }
 
 // windowsReserved lists Windows reserved device names (case-insensitive,
@@ -82,37 +89,52 @@ var windowsReserved = map[string]bool{
 //   - reject Windows reserved device names (CON, NUL, COM1–9, etc.)
 //
 // Valid keys produce filepath.Join(root, key).
-func (r *RootedFS) resolve(key string) (string, error) {
+func (r *RootedFS) resolve(key string) (ValidatedPath, error) {
 	if key == "" {
-		return "", errors.New("storage: key must not be empty")
+		return ValidatedPath{}, errors.New("storage: key must not be empty")
 	}
 	for _, c := range key {
 		if c < 0x20 || c == 0x7f {
-			return "", errors.New("storage: control character (including NUL) not allowed in key")
+			return ValidatedPath{}, errors.New("storage: control character (including NUL) not allowed in key")
 		}
 	}
 	if strings.ContainsRune(key, '\\') {
-		return "", errors.New("storage: backslash not allowed in key (use forward slash)")
+		return ValidatedPath{}, errors.New("storage: backslash not allowed in key (use forward slash)")
 	}
 	if strings.ContainsRune(key, ':') {
-		return "", errors.New("storage: colon not allowed in key (blocks Windows drive letters and ADS)")
+		return ValidatedPath{}, errors.New("storage: colon not allowed in key (blocks Windows drive letters and ADS)")
 	}
 	if strings.HasPrefix(key, "/") {
-		return "", errors.New("storage: key must be relative")
+		return ValidatedPath{}, errors.New("storage: key must be relative")
 	}
 	for seg := range strings.SplitSeq(key, "/") {
 		if seg == "" || seg == "." || seg == ".." {
-			return "", errors.New("storage: traversal or empty segment not allowed in key")
+			return ValidatedPath{}, errors.New("storage: traversal or empty segment not allowed in key")
 		}
 		stem := strings.ToLower(seg)
 		if i := strings.Index(stem, "."); i >= 0 {
 			stem = stem[:i]
 		}
 		if windowsReserved[stem] {
-			return "", fmt.Errorf("storage: Windows reserved name %q not allowed in key", seg)
+			return ValidatedPath{}, fmt.Errorf("storage: Windows reserved name %q not allowed in key", seg)
 		}
 	}
-	return filepath.Join(r.root, key), nil
+	return ValidatedPath{p: filepath.Join(r.root, key)}, nil
+}
+
+// rootPath is the root itself as a ValidatedPath. NewRootedFS made it
+// absolute and cleaned it, so it satisfies the invariant by
+// construction — it is not derived from a caller-supplied key at all.
+func (r *RootedFS) rootPath() ValidatedPath {
+	return ValidatedPath{p: r.root}
+}
+
+// parent returns the directory containing v. A validated path's parent
+// is still under the root (resolve rejects every key that could escape
+// it), so the result stays a ValidatedPath — this is the one derivation
+// that preserves the invariant.
+func (r *RootedFS) parent(v ValidatedPath) ValidatedPath {
+	return ValidatedPath{p: filepath.Dir(v.p)}
 }
 
 // ReadFile reads the file at key.
@@ -121,7 +143,7 @@ func (r *RootedFS) ReadFile(key string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return r.fs.ReadFile(full)
+	return r.vfs.ReadFile(full)
 }
 
 // WriteFile writes data to key, creating parent directories if needed.
@@ -132,10 +154,10 @@ func (r *RootedFS) WriteFile(key string, data []byte, perm os.FileMode) error {
 	if err != nil {
 		return err
 	}
-	if err := r.fs.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+	if err := r.vfs.MkdirAll(r.parent(full), 0o755); err != nil {
 		return err
 	}
-	return r.fs.WriteFile(full, data, perm)
+	return r.vfs.WriteFile(full, data, perm)
 }
 
 // OpenForWrite opens key for streaming writes, creating parent
@@ -152,10 +174,10 @@ func (r *RootedFS) OpenForWrite(key string, perm os.FileMode) (io.WriteCloser, e
 	if err != nil {
 		return nil, err
 	}
-	if err := r.fs.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+	if err := r.vfs.MkdirAll(r.parent(full), 0o755); err != nil {
 		return nil, err
 	}
-	return os.OpenFile(full, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	return r.vfs.OpenForWrite(full, perm)
 }
 
 // AbsPath resolves key to its absolute filesystem path. Used by
@@ -168,7 +190,11 @@ func (r *RootedFS) OpenForWrite(key string, perm os.FileMode) (io.WriteCloser, e
 // raw FS methods to bypass validation. If you need that, you're
 // probably looking for OpenForWrite.
 func (r *RootedFS) AbsPath(key string) (string, error) {
-	return r.resolve(key)
+	full, err := r.resolve(key)
+	if err != nil {
+		return "", err
+	}
+	return full.String(), nil
 }
 
 // SupportsStreaming reports whether OpenForWrite can be used against
@@ -196,7 +222,7 @@ func (r *RootedFS) Remove(key string) error {
 	if err != nil {
 		return err
 	}
-	return r.fs.Remove(full)
+	return r.vfs.Remove(full)
 }
 
 // Rename renames oldKey to newKey. Both keys are validated.
@@ -209,7 +235,7 @@ func (r *RootedFS) Rename(oldKey, newKey string) error {
 	if err != nil {
 		return err
 	}
-	return r.fs.Rename(oldFull, newFull)
+	return r.vfs.Rename(oldFull, newFull)
 }
 
 // Stat returns file info for key.
@@ -218,7 +244,7 @@ func (r *RootedFS) Stat(key string) (os.FileInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	return r.fs.Stat(full)
+	return r.vfs.Stat(full)
 }
 
 // MkdirAll creates the directory at key and any missing parents.
@@ -227,7 +253,7 @@ func (r *RootedFS) MkdirAll(key string, perm os.FileMode) error {
 	if err != nil {
 		return err
 	}
-	return r.fs.MkdirAll(full, perm)
+	return r.vfs.MkdirAll(full, perm)
 }
 
 // ReadDir reads the directory entries at key.
@@ -236,7 +262,7 @@ func (r *RootedFS) ReadDir(key string) ([]os.DirEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	return r.fs.ReadDir(full)
+	return r.vfs.ReadDir(full)
 }
 
 // Open opens the file at key for reading.
@@ -245,7 +271,7 @@ func (r *RootedFS) Open(key string) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, err
 	}
-	return r.fs.Open(full)
+	return r.vfs.Open(full)
 }
 
 // Walk walks the subtree rooted at key. The callback receives keys
@@ -255,7 +281,7 @@ func (r *RootedFS) Walk(key string, fn fs.WalkDirFunc) error {
 	if err != nil {
 		return err
 	}
-	return r.fs.Walk(full, r.relativize(fn))
+	return r.vfs.Walk(full, r.relativize(fn))
 }
 
 // WalkAll walks the entire rooted tree.
@@ -266,7 +292,7 @@ func (r *RootedFS) Walk(key string, fn fs.WalkDirFunc) error {
 // entry do so via ReadDir("<first subkey>") or similar, not by feeding
 // "." back in.
 func (r *RootedFS) WalkAll(fn fs.WalkDirFunc) error {
-	return r.fs.Walk(r.root, r.relativize(fn))
+	return r.vfs.Walk(r.rootPath(), r.relativize(fn))
 }
 
 // relativize wraps a WalkDirFunc so it receives root-relative

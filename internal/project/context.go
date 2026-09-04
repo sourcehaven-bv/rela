@@ -260,13 +260,55 @@ func (c *Context) EntityTemplatePath(entityType string) string {
 	return filepath.Join(c.EntityTemplatesDir, entityType+".md")
 }
 
-// EntityTemplateVariantPath returns the file path for an entity template variant.
-// Variant templates use the naming convention: <type>--<variant>.md
-func (c *Context) EntityTemplateVariantPath(entityType, variant string) string {
-	if variant == "" {
-		return c.EntityTemplatePath(entityType)
+// EntityTemplateVariantPath returns the file path for an entity template
+// variant. Variant templates use the naming convention: <type>--<variant>.md
+//
+// Both segments are checked against an identifier allowlist first: this
+// function joins them into a path handed to a raw storage.FS, which performs
+// no validation of its own. Its callers reach it from
+// entitymanager.CreateOptions.Variant, and automation interpolates
+// {{new.kind}} — an API-settable entity property — into the template name, so
+// a segment here is not reliably operator-authored.
+//
+// internal/automation applies the same allowlist before its own use
+// (isValidTemplateName). That check remains the one that produces a good
+// error message for a bad automation; this one exists so the invariant is
+// local to the join rather than owned by a single caller in another package.
+// A future caller that forgets gets an error, not a traversal.
+func (c *Context) EntityTemplateVariantPath(entityType, variant string) (string, error) {
+	if err := validateTemplateSegment("entity type", entityType); err != nil {
+		return "", err
 	}
-	return filepath.Join(c.EntityTemplatesDir, entityType+"--"+variant+".md")
+	if variant == "" {
+		return c.EntityTemplatePath(entityType), nil
+	}
+	if err := validateTemplateSegment("template variant", variant); err != nil {
+		return "", err
+	}
+	return filepath.Join(c.EntityTemplatesDir, entityType+"--"+variant+".md"), nil
+}
+
+// validateTemplateSegment rejects anything but identifier characters.
+// Allowlist rather than blocklist, for the reason RootedFS.resolve gives:
+// enumerating the dangerous forms (separators, "..", NUL, drive letters,
+// Windows reserved names) is a list you can be wrong about, and being wrong
+// fails open.
+func validateTemplateSegment(what, seg string) error {
+	if seg == "" {
+		return fmt.Errorf("project: %s must not be empty", what)
+	}
+	for _, ch := range seg {
+		switch {
+		case ch >= 'a' && ch <= 'z',
+			ch >= 'A' && ch <= 'Z',
+			ch >= '0' && ch <= '9',
+			ch == '-', ch == '_':
+		default:
+			return fmt.Errorf("project: %s %q contains invalid characters "+
+				"(only alphanumeric, hyphen, underscore allowed)", what, seg)
+		}
+	}
+	return nil
 }
 
 // RelationTemplatePath returns the file path for a relation type template

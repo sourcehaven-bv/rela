@@ -262,6 +262,70 @@ func TestContextEntityTemplatePath(t *testing.T) {
 	}
 }
 
+func TestContextEntityTemplateVariantPath(t *testing.T) {
+	ctx := newContext("/test")
+	dir := "/test/" + TemplatesDir + "/" + EntityTemplatesDir
+
+	t.Run("empty variant falls back to the type template", func(t *testing.T) {
+		got, err := ctx.EntityTemplateVariantPath("requirement", "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if want := dir + "/requirement.md"; got != want {
+			t.Errorf("expected %s, got %s", want, got)
+		}
+	})
+
+	t.Run("variant", func(t *testing.T) {
+		got, err := ctx.EntityTemplateVariantPath("requirement", "detailed")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if want := dir + "/requirement--detailed.md"; got != want {
+			t.Errorf("expected %s, got %s", want, got)
+		}
+	})
+}
+
+// TestContextEntityTemplateVariantPath_RejectsTraversal pins the local guard.
+// The variant reaches here from automation's {{new.kind}} interpolation, which
+// carries an API-settable entity property, and the joined path goes to a raw
+// storage.FS that validates nothing. internal/automation applies the same
+// allowlist, but a caller that skipped it must not get a traversal.
+func TestContextEntityTemplateVariantPath_RejectsTraversal(t *testing.T) {
+	ctx := newContext("/test")
+	bad := []string{
+		"../../../../etc/passwd",
+		"..",
+		"a/b",
+		"a\\b",
+		"a\x00b",
+		"a b",
+		"a.b", // a dot would let a variant pick up an extension
+	}
+	for _, seg := range bad {
+		t.Run("variant="+seg, func(t *testing.T) {
+			if _, err := ctx.EntityTemplateVariantPath("requirement", seg); err == nil {
+				t.Errorf("EntityTemplateVariantPath(requirement, %q) = nil error, want rejection", seg)
+			}
+		})
+		t.Run("type="+seg, func(t *testing.T) {
+			if _, err := ctx.EntityTemplateVariantPath(seg, "detailed"); err == nil {
+				t.Errorf("EntityTemplateVariantPath(%q, detailed) = nil error, want rejection", seg)
+			}
+		})
+	}
+
+	// An empty ENTITY TYPE is a bug in the caller and is rejected; an empty
+	// VARIANT is the documented "no variant" case and must keep working.
+	if _, err := ctx.EntityTemplateVariantPath("", "detailed"); err == nil {
+		t.Error("empty entity type = nil error, want rejection")
+	}
+	if _, err := ctx.EntityTemplateVariantPath("requirement", ""); err != nil {
+		t.Errorf("empty variant should fall back to the type template, got %v", err)
+	}
+}
+
 func TestContextRelationTemplatePath(t *testing.T) {
 	ctx := newContext("/test")
 
