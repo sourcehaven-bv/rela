@@ -4847,34 +4847,40 @@ In a non-default world the web app behaves as follows:
   shareable link that survives a reload. Changing world resets pagination and
   adds a browser history entry.
 - The top of the page shows the world's `banner:` text when the schema declares
-  one, then a read-only note and a **Go to Draft** button that returns to the
-  default world. The note and the button are not configurable, because a world
-  is read-only regardless of configuration. The button takes its text from the
-  bare face's `label:` and appears only when the caller may read the default
-  world.
-- Edit, delete, and create controls are hidden, and so are copy buttons. A copy
-  invoke writes the bare face, and under a world that serves a different face
-  the user would publish content that is not on their screen.
+  one. A list or board of a type that declares faces adds a note that entities
+  with no face in this world are not listed; a type without faces has one
+  state in every world, so its lists carry no note.
+- Every write goes to the **address** of the row on screen, face included (see
+  [Addressing a face directly](#addressing-a-face-directly-idface)). The Edit
+  button opens the form on that address, inline edits and checkbox toggles
+  patch it, drag-and-drop on a board or calendar writes it, and Delete removes
+  it. Whether a write is offered is `_actions` on the response, which the
+  server computes for the face it served: an entity served at its published
+  face reports `update: false` unless a grant names that face, and an entity
+  served at its bare face reports what the bare grant says. A detail page
+  showing a non-bare face the caller may not write explains that edits are
+  made on the bare face.
 - A **View Published** button, or a menu when the entity has several other
-  faces, switches to another face by navigating to the world that leads with
-  it. It appears on every screen that has faces, including the default world,
-  because an author on the draft wants to see what readers see.
+  faces, switches to another face by navigating to its address (`_faces[].ref`)
+  in the same world. It appears on every screen that has faces, including the
+  default world, because an author on the draft wants to see what readers see.
 - A badge names the face when the world served a **stand-in**: a face reached
   through `otherwise: default`, or through a later entry in the chain than the
   first. A first-choice hit shows no badge. The badge appears on list rows,
   kanban cards, and each related entity on a detail page.
 - An entity that exists but has no face in the world renders a page saying so,
-  with a link to a face that does exist, rather than a not-found error.
+  with a button to the default world, rather than a not-found error.
 
-In the default world, a detail page shows one button per copy definition whose
-source is the face on screen and that the caller may invoke, for example
-**Publish** on a draft policy. A caller without the guard permission sees no
-button rather than a disabled one. After a successful copy, the app confirms
-which face was written and reloads the page. The new face is then reachable
-through the face switcher.
+A detail page shows one button per copy definition whose source is the face on
+screen and that the caller may invoke, for example **Publish** on a draft
+policy, in whichever world the draft is being read. A caller without the guard
+permission sees no button rather than a disabled one. After a successful copy,
+the app confirms it in the copy's own label and lands on the face it wrote.
 
 A kanban board is a projection too. Each card is one entity at the face the
-world resolved, and an entity with no face in the world has no card.
+world resolved, and an entity with no face in the world has no card. Cards
+move: a drag writes the face the card shows, and a card whose face the caller
+may not write refuses the drag.
 
 ### Next actions and worlds
 
@@ -4959,7 +4965,7 @@ A single-entity read carries the provenance of the face it served:
 | --- | --- |
 | `name` | The world the response was resolved in. `default` for the implicit default world. |
 | `face` | The declared name of the face that was served. Empty when the served face has no declared name. |
-| `via` | The rule that chose the face: `unscoped` for a type without faces or the default world, `chain` when a face the world selects exists, `fallback-default` when `otherwise: default` substituted the bare face. |
+| `via` | The rule that chose the face: `unscoped` when no resolution was applied (a type without faces, the default world, or a face the request addressed as `ID@face`), `chain` when a face the world selects exists, `fallback-default` when `otherwise: default` substituted the bare face. |
 | `chain_position` | The zero-based index of the served face in the world's chain. Present only for `via: chain`. |
 
 Position `0` means the world got its first choice. Any later position is a
@@ -4976,11 +4982,23 @@ related entity independently.
 A single-entity read also carries two lists a client needs to render the
 controls described above.
 
-`_faces` lists the entity's **other** faces, each with its stored coordinate and
-display label. It reports existence only: whether the caller may read a world
-is a role-level grant already answered by `_schema`. Which faces a given entity
-has is data, so `_faces` appears only on a response the caller was already
-cleared to read.
+`_faces` lists the entity's **other** faces, each with its stored coordinate,
+display label and address:
+
+```json
+"_faces": [
+  { "face": "published", "label": "Published", "ref": "POL-1@published" }
+]
+```
+
+`ref` is the path segment that reads that face literally under any world, so a
+client links to a face without working out which world leads with it. The bare
+face is spelled by its declared name (`POL-1@draft` with `bare_face: draft`);
+a bare face with no declared name has no explicit spelling and falls back to
+the bare id, which is literal only in the default world. `_faces` reports
+existence only: whether the caller may read a world is a role-level grant
+already answered by `_schema`. Which faces a given entity has is data, so
+`_faces` appears only on a response the caller was already cleared to read.
 
 `_copies` lists the copy definitions whose `from:` matches the face being
 served:
@@ -5039,8 +5057,36 @@ Writes never take a world. A world can answer a read with a stand-in face, so a
 write riding that indirection would save to a face the caller did not name:
 a `PATCH` in the `published` world would edit the draft of an entity with no
 published face, and a `DELETE` would delete the entity outright while the caller
-believed they were unpublishing. Writes address the bare face directly, and
-other faces are written through copies.
+believed they were unpublishing. Writes address a face directly, by id, as the
+next section describes.
+
+### Addressing a face directly (`ID@face`)
+
+Every response names the row it describes in `_self`, face included:
+`/api/v1/policys/POL-1` for the bare face, `/api/v1/policys/POL-1@published`
+for the published one. That address is accepted wherever the id is, on the
+entity route and on the entity view:
+
+| Request | Meaning |
+| --- | --- |
+| `GET /policys/POL-1@published` | The published face, under any world. An explicit address is served literally: the world made no choice, so `_world.via` is `unscoped`. |
+| `GET /policys/POL-1@draft` | The bare face by its declared name (`bare_face: draft`), even under a world that would resolve `POL-1` away from it. |
+| `GET /_views/policy/POL-1@published` | The entity view of that face. |
+| `PATCH /policys/POL-1@published` | Edits the published face. Authorized against the face: a bare `update: [policy]` grant does not cover it, `update: [policy@published]` does. |
+| `DELETE /policys/POL-1@published` | Removes the published face only, with the content-scoped edges tailed at it. Incoming edges point at the entity and survive. Authorized against the face. |
+| `DELETE /policys/POL-1@draft` | The bare face is the entity: deletes the whole entity, as `DELETE /policys/POL-1` does. |
+
+A face the entity does not have, a face name the grammar rejects, or a face
+the caller may not read all produce the same `404` as a missing entity. A
+`PATCH` to a non-bare face may not carry `scope: content` relations; it is
+refused with `422 face_relations_unsupported`, because such an edge attaches
+to one face and the relation writers address the entity's bare tail. Move
+those edges with a copy definition instead. Identity-scoped relations are
+entity-level and pass through.
+
+This is what makes a form addressable: the web app opens its edit form on the
+`_self` of the row on screen and saves to the same address, so a translator
+holding `update: [guide@nl]` edits Dutch where they see Dutch.
 
 ### Routes that serve a world
 

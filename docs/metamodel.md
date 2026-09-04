@@ -1070,7 +1070,7 @@ worlds:
 | `select` | The face to show, or an ordered list. The first face the entity has wins. A single name and a one-element list mean the same thing. |
 | `overrides` | A map from entity type to a chain that replaces `select` for that type. It replaces the chain rather than extending it. |
 | `otherwise` | **Required.** What happens to an entity whose type declares faces but that has none the chain names: `exclude` leaves it out of the world, `default` shows its bare face. |
-| `banner` | Optional text the web app shows on every page in this world. Empty shows no announcement. The read-only note and the way back to the default world are not configurable. |
+| `banner` | Optional text the web app shows on every page in this world. Empty shows no announcement. |
 | `primary_for` | Optional. The faces this world is the canonical home of. Needed only when two worlds lead with the same face for a type. See below. |
 | `edits` | Accepted and validated as a declared face name. Not used yet. |
 
