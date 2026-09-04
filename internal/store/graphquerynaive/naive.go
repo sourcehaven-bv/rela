@@ -103,8 +103,8 @@ func Order(rows []*entity.Entity, specs []store.OrderSpec) {
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
 		for _, spec := range specs {
-			vi, oki := rows[i].Properties[spec.Property]
-			vj, okj := rows[j].Properties[spec.Property]
+			vi, oki := sortValue(rows[i], spec.Property)
+			vj, okj := sortValue(rows[j], spec.Property)
 			if oki != okj {
 				// The present value is smaller than the absent one.
 				return oki != spec.Descending
@@ -123,6 +123,18 @@ func Order(rows []*entity.Entity, specs []store.OrderSpec) {
 		}
 		return rows[i].ID < rows[j].ID
 	})
+}
+
+// sortValue reads a sort key the way SQL's `->>` does: a key that is
+// missing OR holds JSON null is "no value" (SQL NULL, the largest), never
+// the text "<nil>". Without this a null-valued property sorted between
+// dates and absent rows in Go while PostgreSQL put it last.
+func sortValue(e *entity.Entity, property string) (any, bool) {
+	v, ok := e.Properties[property]
+	if !ok || v == nil {
+		return nil, false
+	}
+	return v, true
 }
 
 // Page returns the window rows[offset : offset+limit] (limit 0 = to the

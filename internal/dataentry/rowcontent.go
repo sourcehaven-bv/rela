@@ -89,11 +89,12 @@ func loadRows(ctx context.Context, st store.Store, keys []rowKey) (map[rowKey]*e
 	return out, nil
 }
 
-// loadRowContent replaces each content-free row with its whole entity, in
-// place, in one read per distinct face. A row the store no longer has keeps
-// its content-free form rather than vanishing from a page that was already
-// counted. Redaction survives: the whole entity is re-projected onto the
-// row's redacted property set, so a hidden value never rides in on the body.
+// loadRowContent fills each content-free row's body, in place, in one read
+// per distinct face. A row the store no longer has keeps its content-free
+// form rather than vanishing from a page that was already counted. Only the
+// body is copied: field redaction is property-only (visibility.Redact never
+// touches Content), so a body carries nothing the row gate did not already
+// clear, and the row's redacted property map is left exactly as gated.
 func loadRowContent(ctx context.Context, st store.Store, rows []*entityPkg.Entity) error {
 	if len(rows) == 0 {
 		return nil

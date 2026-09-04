@@ -14,13 +14,15 @@ type PrincipalLookup interface {
 	LookupEntityByProperty(ctx context.Context, entityType, property, value string) ([]string, error)
 }
 
-// PrincipalStore is the store capability the lookup needs: a graph query
-// with the property equality PUSHED DOWN. Consumer-side on purpose — the
-// lookup must never fall back to scanning a whole entity type in Go, which
-// is what it did before TKT-1U8XYN: every request began by loading every
-// user entity with its body to compare one string, a ~25 ms floor under
-// each API call on the postgres backend regardless of what the request
-// did. store.Store satisfies this.
+// PrincipalStore is the store capability the lookup needs: exactly the
+// graph-query surface store.GraphQueryHeaders takes, so the property
+// equality is PUSHED DOWN and only headers come back. Named here so the
+// dependency reads as what it is — the lookup must never fall back to
+// scanning a whole entity type in Go, which is what it did before
+// TKT-1U8XYN: every request began by loading every user entity with its
+// body to compare one string, a ~25 ms floor under each API call on the
+// postgres backend regardless of what the request did. store.Store
+// satisfies this.
 type PrincipalStore interface {
 	store.GraphQueryer
 }

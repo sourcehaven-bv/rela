@@ -562,7 +562,10 @@ func (a *App) applyRelationFilters(
 		}
 
 		direction, _ := cfg.RelationFilterDirection(typeName, relation)
-		matched := matchRelationFilterMany(ctx, a.Services(), entities, relation, direction, want)
+		matched, merr := matchRelationFilterMany(ctx, a.Services(), entities, relation, direction, want)
+		if merr != nil {
+			return nil, fmt.Errorf("%w: relation filter %q: %w", errListLoad, relation, merr)
+		}
 		filtered := entities[:0]
 		for _, e := range entities {
 			if (operator == "eq" && matched[e.ID]) || (operator == "ne" && !matched[e.ID]) {
@@ -583,13 +586,17 @@ func (a *App) applyRelationFilters(
 // wanted display title (RR-HK1XNO) — but the cost no longer grows with the
 // type's row count times its fan-out. A free function taking its read seam,
 // not an App method — App sits at its load line (see worldneighbors.go).
+//
+// A store failure is returned, never folded into an empty verdict map: an
+// empty map reads as "no row matches", which for a `ne` filter admits EVERY
+// row — a backend fault would silently widen a filter whose job is to narrow.
 func matchRelationFilterMany(
 	ctx context.Context, svc Services, rows []*entityPkg.Entity,
 	relation string, direction dataentryconfig.Direction, want string,
-) map[string]bool {
+) (map[string]bool, error) {
 	matched := make(map[string]bool, len(rows))
 	if len(rows) == 0 {
-		return matched
+		return matched, nil
 	}
 	ids := make([]string, 0, len(rows))
 	for _, e := range rows {
@@ -601,7 +608,7 @@ func matchRelationFilterMany(
 	seen := make(map[string]struct{})
 	for r, err := range svc.Store.ListRelations(ctx, q) {
 		if err != nil {
-			return matched
+			return nil, err
 		}
 		rowID, targetID := r.From, r.To
 		if direction.IsIncoming() {
@@ -614,14 +621,14 @@ func matchRelationFilterMany(
 		}
 	}
 	if len(neighborIDs) == 0 {
-		return matched
+		return matched, nil
 	}
 
 	// Which neighbors carry the wanted title, by type — then gate per type.
 	candidatesByType := map[string][]string{}
 	for h, err := range store.ListEntityHeaders(ctx, svc.Store, store.EntityQuery{IDs: neighborIDs}) {
 		if err != nil {
-			return matched
+			return nil, err
 		}
 		if svc.Meta.DisplayTitle(h.ID, h.Type, h.Properties) == want {
 			candidatesByType[h.Type] = append(candidatesByType[h.Type], h.ID)
@@ -648,7 +655,7 @@ func matchRelationFilterMany(
 			}
 		}
 	}
-	return matched
+	return matched, nil
 }
 
 // parseRelationFilterKey parses a `filter[<rel>]` or `filter[<rel>][<op>]` key
@@ -2106,8 +2113,11 @@ func applyV1Sorting(entities []*entityPkg.Entity, query map[string][]string) []*
 	// between digits and letters.
 	sort.SliceStable(sorted, func(i, j int) bool {
 		for _, spec := range sortSpecs {
+			// A JSON null is "no value" here as it is in SQL (`->>` yields
+			// NULL), so both paths place it with the absent rows.
 			vi, oki := sorted[i].Properties[spec.Property]
 			vj, okj := sorted[j].Properties[spec.Property]
+			oki, okj = oki && vi != nil, okj && vj != nil
 			if oki != okj {
 				return oki != spec.IsDescending()
 			}

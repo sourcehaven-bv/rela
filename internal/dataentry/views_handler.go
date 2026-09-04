@@ -3,6 +3,7 @@ package dataentry
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -831,23 +832,6 @@ func (h *viewsHandler) resolveRelationColumns(
 	return out
 }
 
-// resolveRelationColumnValues is the single-row form of
-// [viewsHandler.resolveRelationColumns]: the display titles of entityID's
-// related entities over relationType in the given direction (outgoing when
-// empty). It exists for callers that hold one entity rather than a section;
-// the section builder must not loop over it — that is the per-row shape the
-// batched form replaced.
-func (h *viewsHandler) resolveRelationColumnValues(
-	ctx context.Context, entityID, relationType string, direction dataentryconfig.Direction,
-) []string {
-	if direction == "" {
-		direction = dataentryconfig.DirectionOutgoing
-	}
-	cols := []dataentryconfig.ListColumn{{Relation: relationType, Direction: direction}}
-	rows := []*entityPkg.Entity{{ID: entityID}}
-	return h.resolveRelationColumns(ctx, h.schema(), cols, rows)[entityID][0]
-}
-
 // relationColumnTargets runs one relation query per (relation column, row
 // type) and returns targets[rowID][columnIndex] as the ordered neighbor ids
 // of that cell, plus the distinct neighbor ids in first-seen order.
@@ -869,6 +853,10 @@ func (h *viewsHandler) relationColumnTargets(
 			q := store.RelationQuery{EntityIDs: ids, Type: col.Relation, Direction: relationDirection(dir)}
 			for r, err := range svc.Store.ListRelations(ctx, q) {
 				if err != nil {
+					// A view is a presentation surface; a section renders what it
+					// could load, but never quietly — the operator sees the fault.
+					slog.Warn("dataentry: view section relation column truncated; store read failed",
+						"relation", col.Relation, "type", typ, "rows", len(ids), "err", err)
 					break
 				}
 				rowID, targetID := r.From, r.To
@@ -896,6 +884,8 @@ func (h *viewsHandler) visibleTitles(ctx context.Context, svc Services, ids []st
 	var headers []store.EntityHeader
 	for hd, err := range store.ListEntityHeaders(ctx, svc.Store, store.EntityQuery{IDs: ids}) {
 		if err != nil {
+			slog.Warn("dataentry: view section relation titles dropped; header read failed",
+				"targets", len(ids), "err", err)
 			return map[string]string{}
 		}
 		headers = append(headers, hd)
@@ -908,6 +898,8 @@ func (h *viewsHandler) visibleTitles(ctx context.Context, svc Services, ids []st
 		ents := make([]*entityPkg.Entity, 0, len(headers))
 		for e, err := range svc.Store.ListEntities(ctx, store.EntityQuery{IDs: ids}) {
 			if err != nil {
+				slog.Warn("dataentry: view section relation titles dropped; entity read failed",
+					"targets", len(ids), "err", err)
 				return map[string]string{}
 			}
 			ents = append(ents, e)

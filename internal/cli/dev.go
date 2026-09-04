@@ -34,7 +34,7 @@ type DevSeedCmd struct {
 	Scale   float64 `default:"1" help:"Size multiplier; 1 is roughly 20k entities and 45k relations."`
 	Seed    uint64  `default:"1" help:"PRNG seed; the same seed and scale always produce the same graph."`
 	Batch   int     `default:"500" help:"Writes per transaction."`
-	Force   bool    `help:"Seed even though the store already holds entities."`
+	Force   bool    `help:"Seed even though the store already holds entities. The generated rows then sit beside the real ones; they carry tool attribution 'perf-seed' and the run's audit record, which is how to find and remove them."`
 }
 
 // seedTool is the attribution tool name stamped on every seeded row and the

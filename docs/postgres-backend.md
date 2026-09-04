@@ -60,6 +60,12 @@ The connecting role needs privileges to create the `pg_trgm` extension on
 first run (typically a superuser, or have an administrator run
 `CREATE EXTENSION pg_trgm;` once in the target database beforehand).
 
+Migration 14 rewrites the `search_text` column of every entity once, inside
+the migration transaction, so the first start after upgrading pauses for a
+time proportional to the entity table — seconds at twenty thousand rows,
+longer on a large one. Run `rela db migrate` as a deploy step if that pause
+must not land on the first web request.
+
 ### Applying migrations explicitly
 
 If you would rather apply the schema as a separate, controlled step

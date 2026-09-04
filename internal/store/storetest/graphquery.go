@@ -615,7 +615,6 @@ func seedEntityWithProps(t *testing.T, s store.Store, typ, id string, props map[
 	require.NoError(t, s.CreateEntity(ctx(), e), "create %s/%s", typ, id)
 }
 
-// mustRel creates a relation; fails the test on error.
 // RunGraphPagingTests pins GraphQuery.OrderBy/Limit/Offset (TKT-1U8XYN):
 // byte-wise ordering on the property's string form, a row without the
 // property sorting as the largest value, id as tiebreak; a Limit/Offset window
@@ -625,13 +624,19 @@ func RunGraphPagingTests(t *testing.T, f Factory) {
 	seed := func(t *testing.T, s store.Store) {
 		t.Helper()
 		// due values chosen so byte order != insertion order, with two
-		// rows sharing a value (tiebreak) and two rows without one.
-		dues := []string{"2026-03-01", "", "2026-01-15", "2026-03-01", "", "2025-12-31"}
+		// rows sharing a value (tiebreak), two rows without the key, and one
+		// row holding a JSON null — which must sort with the absent rows, as
+		// SQL's `->>` yields NULL for it.
+		dues := []string{"2026-03-01", "", "2026-01-15", "2026-03-01", "", "2025-12-31", "null"}
 		for i, due := range dues {
 			e := entity.New(fmt.Sprintf("T-%d", i), "ticket")
 			e.SetString("title", fmt.Sprintf("Ticket %d", i))
 			e.SetString("status", []string{"open", "done"}[i%2])
-			if due != "" {
+			switch due {
+			case "":
+			case "null":
+				e.Properties["due"] = nil
+			default:
 				e.SetString("due", due)
 			}
 			require.NoError(t, s.CreateEntity(ctx(), e))
@@ -651,11 +656,11 @@ func RunGraphPagingTests(t *testing.T, f Factory) {
 		s := f(t)
 		seed(t, s)
 		asc := ids(t, s, store.GraphQuery{EntityType: "ticket", OrderBy: []store.OrderSpec{{Property: "due"}}})
-		require.Equal(t, []string{"T-5", "T-2", "T-0", "T-3", "T-1", "T-4"}, asc)
+		require.Equal(t, []string{"T-5", "T-2", "T-0", "T-3", "T-1", "T-4", "T-6"}, asc)
 		// Descending: the absent value is the largest, so the rows without
 		// `due` lead (SQL's default null placement; one index, both ways).
 		desc := ids(t, s, store.GraphQuery{EntityType: "ticket", OrderBy: []store.OrderSpec{{Property: "due", Descending: true}}})
-		require.Equal(t, []string{"T-1", "T-4", "T-0", "T-3", "T-2", "T-5"}, desc)
+		require.Equal(t, []string{"T-1", "T-4", "T-6", "T-0", "T-3", "T-2", "T-5"}, desc)
 	})
 
 	t.Run("WindowEqualsSlice", func(t *testing.T) {
@@ -687,7 +692,7 @@ func RunGraphPagingTests(t *testing.T, f Factory) {
 		}
 		matched, _, err := s.GraphCount(ctx(), q)
 		require.NoError(t, err)
-		require.Equal(t, 3, matched)
+		require.Equal(t, 4, matched)
 		require.Len(t, ids(t, s, q), 1)
 	})
 
@@ -768,6 +773,7 @@ func RunGraphHeaderTests(t *testing.T, f Factory) {
 	})
 }
 
+// mustRel creates a relation; fails the test on error.
 func mustRel(t *testing.T, s store.Store, from, relType, to string) {
 	t.Helper()
 	_, err := s.CreateRelation(ctx(), from, relType, to, nil)

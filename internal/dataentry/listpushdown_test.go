@@ -23,10 +23,14 @@ import (
 func pushdownApp(t *testing.T) (*App, *acl.Declarative) {
 	t.Helper()
 	app := newTestAppV1(t)
-	dues := []string{"2026-03-01", "", "2026-01-15", "2026-03-01", "", "2025-12-31", "2026-02-02", "", "2026-01-15", "2026-12-31", "2026-05-05", ""}
+	dues := []string{"2026-03-01", "", "2026-01-15", "2026-03-01", "null", "2025-12-31", "2026-02-02", "", "2026-01-15", "2026-12-31", "2026-05-05", "null"}
 	for i, due := range dues {
 		props := map[string]any{"title": fmt.Sprintf("Ticket %02d", 11-i), "status": []string{"open", "done", "open"}[i%3]}
-		if due != "" {
+		switch due {
+		case "":
+		case "null":
+			props["due"] = nil // a JSON null sorts with the absent rows on both paths
+		default:
 			props["due"] = due
 		}
 		seedEntity(app, &entity.Entity{ID: fmt.Sprintf("TKT-%03d", i+1), Type: "ticket", Properties: props})

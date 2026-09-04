@@ -56,11 +56,21 @@ func (s *Store) GraphQuery(ctx context.Context, q store.GraphQuery) iter.Seq2[*e
 	}
 }
 
-// GraphCount runs the predicate query as `SELECT count(*)` and a
-// separate unconditional count of entities of the type. Two
-// round-trips beats one COUNT FILTER because both rely on the same
-// recursive CTE shape — duplicating the WITH RECURSIVE inside a
-// single FILTER expression saves nothing.
+// CountMatched implements store.MatchedCounter: GraphCount's first statement
+// alone. A list page needs only the scoped count, and the second statement
+// GraphCount would run — the type's world-wide total — is the expensive one.
+func (s *Store) CountMatched(ctx context.Context, q store.GraphQuery) (int, error) {
+	if err := checkGraphQueryScope(q); err != nil {
+		return 0, err
+	}
+	matchedSQL, matchedArgs := buildGraphQuerySQL(q, true)
+	var matched int
+	if err := s.db.QueryRow(ctx, matchedSQL, matchedArgs...).Scan(&matched); err != nil {
+		return 0, fmt.Errorf("pgstore: graph count (matched): %w", err)
+	}
+	return matched, nil
+}
+
 // GraphQueryHeaders implements store.GraphHeaderQueryer: GraphQuery's
 // predicate evaluation with the content column projected away, so a list
 // page's filter/sort/paginate pass over a whole type never transfers the
@@ -95,21 +105,11 @@ func (s *Store) GraphQueryHeaders(ctx context.Context, q store.GraphQuery) iter.
 	}
 }
 
-// CountMatched implements store.MatchedCounter: GraphCount's first statement
-// alone. A list page needs only the scoped count, and the second statement
-// GraphCount would run — the type's world-wide total — is the expensive one.
-func (s *Store) CountMatched(ctx context.Context, q store.GraphQuery) (int, error) {
-	if err := checkGraphQueryScope(q); err != nil {
-		return 0, err
-	}
-	matchedSQL, matchedArgs := buildGraphQuerySQL(q, true)
-	var matched int
-	if err := s.db.QueryRow(ctx, matchedSQL, matchedArgs...).Scan(&matched); err != nil {
-		return 0, fmt.Errorf("pgstore: graph count (matched): %w", err)
-	}
-	return matched, nil
-}
-
+// GraphCount runs the predicate query as `SELECT count(*)` and a
+// separate unconditional count of entities of the type. Two
+// round-trips beats one COUNT FILTER because both rely on the same
+// recursive CTE shape — duplicating the WITH RECURSIVE inside a
+// single FILTER expression saves nothing.
 func (s *Store) GraphCount(ctx context.Context, q store.GraphQuery) (matched, total int, err error) {
 	if scopeErr := checkGraphQueryScope(q); scopeErr != nil {
 		return 0, 0, scopeErr
@@ -455,6 +455,13 @@ func buildGraphQuerySQLSelect(q store.GraphQuery, sel graphSelect) (sqlText stri
 	// descending. That default is deliberate — it is what lets one
 	// expression index serve both directions (a backward scan of an ASC
 	// index is exactly DESC NULLS FIRST) — and the Go comparators mirror it.
+	// graphWorldScope returns distinctOn and rankOrder as a pair: both empty
+	// (default world; the plain id ORDER BY is ours to replace) or both set
+	// (world; the DISTINCT ON owns its ORDER BY, so we wrap). A one-sided
+	// return would corrupt the SQL silently, hence the guard.
+	if (distinctOn == "") != (rankOrder == "") {
+		panic("pgstore: graphWorldScope returned DISTINCT ON without its ORDER BY, or vice versa")
+	}
 	inner := sb.String()
 	if distinctOn != "" {
 		inner = "SELECT * FROM (" + inner + ") e"

@@ -84,6 +84,32 @@ func TestAuthorizeWrite_IgnoresForeignContextRequest(t *testing.T) {
 		if got := d.AuthorizeWrite(ctx, writeTicket(OpCreate)); !got.Allow {
 			t.Fatalf("alice must be evaluated as alice (allowed), got %+v", got)
 		}
+		if g.outgoingCalls == 0 {
+			t.Error("bob's Request must not be reused for alice; d had to open its own scope")
+		}
+	})
+	t.Run("same user, different verified claims", func(t *testing.T) {
+		t.Parallel()
+		// Same User and Tool, but the ctx principal carries verified claims
+		// (a principal type and scopes — the inputs of a client ceiling) the
+		// bound Request was not built from. Reusing it would evaluate the
+		// wrong ceiling, so it must be ignored.
+		g := membershipGraph()
+		d := newTestDeclarative(t, membershipPolicy(), g)
+		plain := aliceDataEntry()
+		wideReq, err := d.ForPrincipal(plain)
+		if err != nil {
+			t.Fatal(err)
+		}
+		g.outgoingCalls = 0
+		attenuated := principal.VerifiedFrom(plain.User, plain.Tool, principal.Claims{
+			PrincipalType: "rela.client", Scopes: []string{"read"},
+		})
+		ctx := WithRequest(principal.With(context.Background(), attenuated), wideReq)
+		d.AuthorizeWrite(ctx, writeTicket(OpCreate))
+		if g.outgoingCalls == 0 {
+			t.Error("a Request bound to a principal with different claims must not be reused")
+		}
 	})
 	t.Run("different declarative", func(t *testing.T) {
 		t.Parallel()

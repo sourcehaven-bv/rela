@@ -277,7 +277,11 @@ func (d *Declarative) AuthorizeWrite(ctx context.Context, req WriteRequest) Deci
 // Both cases fall back to a fresh scope, which is exactly the old behavior.
 func (d *Declarative) requestFor(ctx context.Context) (*Request, error) {
 	p := principal.From(ctx)
-	if r := FromContext(ctx); r != nil && r.d == d && r.principal.User == p.User && r.principal.Tool == p.Tool {
+	// Equal compares the whole principal — identity AND the verified claims
+	// (type, scopes, roles) the Request's client ceiling was compiled from —
+	// so a scope-attenuated client can never borrow a wider scope bound to
+	// the same user by an earlier layer.
+	if r := FromContext(ctx); r != nil && r.d == d && r.principal.Equal(p) {
 		return r, nil
 	}
 	return d.ForPrincipal(p)

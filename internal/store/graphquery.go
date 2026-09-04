@@ -94,9 +94,6 @@ type OrderSpec struct {
 	Descending bool
 }
 
-// GraphBranch is one arm of [GraphQuery.Any]: a relation predicate and the
-// faces it grants. A nil FaceIn grants every face; a nil HasInbound holds for
-// every entity of the type (the branch is then only a face set).
 // GraphHeaderQueryer is the content-free projection of [GraphQueryer]:
 // the same predicate evaluation, yielding [EntityHeader] rows without the
 // markdown body. OPTIONAL — type-asserted like [HeaderReader], with
@@ -153,6 +150,9 @@ func GraphQueryHeaders(ctx context.Context, gq GraphQueryer, q GraphQuery) iter.
 	}
 }
 
+// GraphBranch is one arm of [GraphQuery.Any]: a relation predicate and the
+// faces it grants. A nil FaceIn grants every face; a nil HasInbound holds for
+// every entity of the type (the branch is then only a face set).
 type GraphBranch struct {
 	HasInbound *RelationPredicate
 	FaceIn     []entity.Face

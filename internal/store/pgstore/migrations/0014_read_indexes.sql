@@ -35,9 +35,19 @@ CREATE INDEX IF NOT EXISTS entities_id_prefix_idx ON entities (id text_pattern_o
 
 DROP INDEX IF EXISTS entities_search_tsv_idx;
 
-UPDATE entities SET search_text =
-    lower(id) || E'\n' ||
-    COALESCE((SELECT string_agg(lower(p.value), E'\n' ORDER BY p.key)
-              FROM jsonb_each_text(properties) p
-              WHERE jsonb_typeof(properties -> p.key) = 'string'), '') || E'\n' ||
-    lower(content);
+-- One-time rewrite of every entity row (and of the trigram index behind it),
+-- inside the migration transaction: expect the first start after upgrading
+-- to pause for a time proportional to the table — seconds at 20k rows. The
+-- IS DISTINCT FROM guard makes a re-run touch only rows that still differ.
+UPDATE entities SET search_text = composed.search_text
+FROM (
+    SELECT id, face,
+           lower(id) || E'\n' ||
+           COALESCE((SELECT string_agg(lower(p.value), E'\n' ORDER BY p.key)
+                     FROM jsonb_each_text(properties) p
+                     WHERE jsonb_typeof(properties -> p.key) = 'string'), '') || E'\n' ||
+           lower(content) AS search_text
+    FROM entities
+) composed
+WHERE entities.id = composed.id AND entities.face = composed.face
+  AND entities.search_text IS DISTINCT FROM composed.search_text;

@@ -198,6 +198,7 @@ func (vr visibleReader) visibleHeaderIDs(ctx context.Context, candidates []store
 	for _, c := range candidates {
 		byType[c.Type] = append(byType[c.Type], c.ID)
 	}
+	allowed := make(map[string]bool, len(candidates))
 	for typeName, ids := range byType {
 		perm, err := gate.PermitsReadMany(ctx, typeName, ids)
 		if err != nil {
@@ -207,8 +208,16 @@ func (vr visibleReader) visibleHeaderIDs(ctx context.Context, candidates []store
 		}
 		for id, ok := range perm {
 			if ok {
-				out[id] = true
+				allowed[id] = true
 			}
+		}
+	}
+	// The face grant is the other half of filterVisible's gate (TKT-O7R2A1);
+	// a header carries its Face, so applying it here keeps the two gates
+	// from drifting when a caller one day passes AllStates or a World.
+	for _, c := range candidates {
+		if allowed[c.ID] && faceReadable(ctx, c.Type, c.Face) {
+			out[c.ID] = true
 		}
 	}
 	return out

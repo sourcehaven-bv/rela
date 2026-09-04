@@ -69,7 +69,10 @@ func isSSEPath(p string) bool {
 //
 // Flush is forwarded so the SSE and command-stream handlers, which assert
 // http.Flusher on the writer they receive, keep working when wrapped.
-// Unwrap serves http.ResponseController for any other optional interface.
+// Unwrap serves http.ResponseController for any other optional interface;
+// a direct `w.(http.Hijacker)` assertion would NOT see through this wrapper,
+// which is fine only because no handler hijacks — add a forwarder here
+// before one does, or Debug mode would change its behavior.
 type statsResponseWriter struct {
 	http.ResponseWriter
 	stats   *store.QueryStats
