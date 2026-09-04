@@ -8,20 +8,49 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
+// commentsHandler owns the commentary routes.
+//
+// Extracted from App (the exportHandler pattern, TKT-JF5JI8) to keep App under
+// its plimsoll method load line. It closes over the swappable collaborators
+// rather than capturing their values, so a metamodel live-reload or an ACL swap
+// is picked up without rebuilding the handler.
+type commentsHandler struct {
+	// svc is nil when the project declares no enabled `comments:` block. Nil IS
+	// the "feature absent" signal: the routes 404 and no storage is touched.
+	svc *comments.Service
+
+	meta          func() *metamodel.Metamodel
+	acl           func() acl.ACL
+	visibleReader visibleReader
+}
+
+// newCommentsHandler builds the handler over app's collaborators.
+//
+// A handler is returned even when commenting is disabled — the nil service is
+// checked per request, so the route stays registered and answers a JSON 404
+// rather than falling through to the stdlib's unregistered-route handling.
+func newCommentsHandler(app *App) *commentsHandler {
+	return &commentsHandler{
+		meta:          app.Meta,
+		acl:           func() acl.ACL { return app.acl },
+		visibleReader: app.visibleReader,
+	}
+}
+
 // SetComments installs the commentary service.
 //
 // Nil (the default) means the project declares no `comments:` block: the
 // comment routes 404 and no storage is touched, so a project without the block
 // is indistinguishable from one built before the feature existed.
-func (a *App) SetComments(svc *comments.Service) { a.comments = svc }
+func (a *App) SetComments(svc *comments.Service) { a.comments.svc = svc }
 
 // commentPolicy returns the metamodel's comment policy.
 //
 // Read live off the current metamodel rather than captured at construction:
 // the watcher swaps the metamodel atomically on a file change, so a captured
 // policy would keep answering from the config the server booted with.
-func (a *App) commentPolicy() metamodel.CommentPolicy {
-	return metamodel.NewCommentPolicy(a.Meta())
+func (h *commentsHandler) commentPolicy() metamodel.CommentPolicy {
+	return metamodel.NewCommentPolicy(h.meta())
 }
 
 // commentPermissionGate adapts the ACL's per-entity permission resolver to the
@@ -65,8 +94,8 @@ func (commentReadGate) CanRead(ctx context.Context, entityType, entityID string)
 // Constructed per call rather than stored: it closes over nothing
 // request-scoped itself, but the gates it holds read the ACL from ctx, and a
 // cached authorizer would invite someone to give it request state later.
-func (a *App) commentAuthorizer() *comments.Authorizer {
-	active := a.aclPolicyActive()
+func (h *commentsHandler) commentAuthorizer() *comments.Authorizer {
+	active := h.aclPolicyActive()
 	return comments.NewAuthorizer(commentPermissionGate{policyActive: active}, commentReadGate{}, active)
 }
 
@@ -79,11 +108,11 @@ func (a *App) commentAuthorizer() *comments.Authorizer {
 // them would deny every request rather than authorize anything.
 //
 // ReadOnlyACL's write refusal is enforced separately by
-// [App.commentWritesPermitted], NOT by pretending it is a permission policy:
+// commentWritesPermitted, NOT by pretending it is a permission policy:
 // it is a process-wide switch, and conflating the two made read-only instances
 // refuse comment READS as well.
-func (a *App) aclPolicyActive() bool {
-	_, ok := a.acl.(*acl.Declarative)
+func (h *commentsHandler) aclPolicyActive() bool {
+	_, ok := h.acl().(*acl.Declarative)
 	return ok
 }
 
@@ -93,8 +122,8 @@ func (a *App) aclPolicyActive() bool {
 // Separate from the per-request permission checks because ReadOnlyACL is a
 // process-wide refusal, not a permission a principal could hold: no grant in
 // any acl.yaml should make a read-only instance writable.
-func (a *App) commentWritesPermitted() bool {
-	switch a.acl.(type) {
+func (h *commentsHandler) commentWritesPermitted() bool {
+	switch h.acl().(type) {
 	case acl.ReadOnlyACL, *acl.ReadOnlyACL:
 		return false
 	default:
@@ -114,12 +143,12 @@ func (a *App) commentWritesPermitted() bool {
 // section anchor: a section ref names an operator-authored view heading that
 // lives in data-entry.yaml, not on the entity, and its absence from this set
 // means "not a property", not "gone".
-func (a *App) liveAnchors(ctx context.Context, target comments.Target) map[string]bool {
-	def, ok := a.Meta().GetEntityDef(target.Type)
+func (h *commentsHandler) liveAnchors(ctx context.Context, target comments.Target) map[string]bool {
+	def, ok := h.meta().GetEntityDef(target.Type)
 	if !ok {
 		return nil
 	}
-	ent, found, err := a.visibleReader.getVisible(ctx, target.Type, target.ID)
+	ent, found, err := h.visibleReader.getVisible(ctx, target.Type, target.ID)
 	if err != nil || !found {
 		return nil
 	}

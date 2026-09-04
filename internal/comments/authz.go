@@ -74,7 +74,7 @@ func NewAuthorizer(perms PermissionGate, reads TargetReadGate, policyActive bool
 // CanRead reports whether the principal may list target's comments.
 //
 // Two conditions, both required: the target must be readable, and the principal
-// must hold [PermCommentRead] for it. The read floor is what stops a comment
+// must hold `comment:read` for it. The read floor is what stops a comment
 // thread becoming an existence oracle — without it, a principal granted
 // comment:read globally could probe which entities exist by asking for their
 // comments.
@@ -87,7 +87,7 @@ func (a *Authorizer) CanRead(ctx context.Context, target Target) bool {
 
 // CanAdd reports whether the principal may add a comment to target.
 //
-// Note this does NOT require [PermCommentRead]: write-only commenting is a
+// Note this does NOT require `comment:read`: write-only commenting is a
 // deliberate posture (leave a remark on something you cannot otherwise
 // discuss), mirroring the entity-verb rule where create is exempt from the
 // covering-read requirement. The target must still be readable — you cannot

@@ -41,9 +41,8 @@ const commentsPathPrefix = "/api/v1/_comments/"
 // With no `comments:` block the service is nil and every route 404s, so a
 // project that never enables commenting is indistinguishable from one built
 // before the feature existed.
-func (a *App) handleV1Comments(w http.ResponseWriter, r *http.Request) {
-	svc := a.comments
-	if svc == nil {
+func (h *commentsHandler) handleV1Comments(w http.ResponseWriter, r *http.Request) {
+	if h.svc == nil {
 		// Not a capability gap worth explaining (unlike version history, which
 		// is backend-dependent): commenting is off because this project did
 		// not ask for it, so the route simply does not exist.
@@ -71,7 +70,7 @@ func (a *App) handleV1Comments(w http.ResponseWriter, r *http.Request) {
 
 	// Commentability is metamodel config, not a secret: an operator debugging
 	// a missing comment box needs to be told the type is not enabled.
-	if !a.commentPolicy().Commentable(typeName) {
+	if !h.commentPolicy().Commentable(typeName) {
 		writeV1Error(w, r, http.StatusBadRequest, "comments_not_enabled",
 			"Comments are not enabled for this entity type", "")
 		return
@@ -81,9 +80,9 @@ func (a *App) handleV1Comments(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case len(parts) == 2:
-		a.commentCollection(w, r, svc, target)
+		h.commentCollection(w, r, target)
 	case len(parts) == 3 && parts[2] != "":
-		a.commentItem(w, r, svc, target, parts[2])
+		h.commentItem(w, r, target, parts[2])
 	default:
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_path",
 			"Path must be /_comments/{type}/{id}[/{commentID}]", "")
@@ -91,15 +90,15 @@ func (a *App) handleV1Comments(w http.ResponseWriter, r *http.Request) {
 }
 
 // commentCollection handles the target-level routes.
-func (a *App) commentCollection(
-	w http.ResponseWriter, r *http.Request, svc *comments.Service, target comments.Target,
+func (h *commentsHandler) commentCollection(
+	w http.ResponseWriter, r *http.Request, target comments.Target,
 ) {
 	switch r.Method {
 	case http.MethodGet:
-		a.listComments(w, r, svc, target)
+		h.listComments(w, r, target)
 	case http.MethodPost:
-		if !a.refuseIfReadOnly(w, r) {
-			a.addComment(w, r, svc, target)
+		if !h.refuseIfReadOnly(w, r) {
+			h.addComment(w, r, target)
 		}
 	case http.MethodOptions:
 		w.Header().Set("Allow", "GET, POST, OPTIONS")
@@ -111,17 +110,17 @@ func (a *App) commentCollection(
 }
 
 // commentItem handles the single-comment routes.
-func (a *App) commentItem(
-	w http.ResponseWriter, r *http.Request, svc *comments.Service, target comments.Target, commentID string,
+func (h *commentsHandler) commentItem(
+	w http.ResponseWriter, r *http.Request, target comments.Target, commentID string,
 ) {
 	switch r.Method {
 	case http.MethodPatch:
-		if !a.refuseIfReadOnly(w, r) {
-			a.updateComment(w, r, svc, target, commentID)
+		if !h.refuseIfReadOnly(w, r) {
+			h.updateComment(w, r, target, commentID)
 		}
 	case http.MethodDelete:
-		if !a.refuseIfReadOnly(w, r) {
-			a.deleteComment(w, r, svc, target, commentID)
+		if !h.refuseIfReadOnly(w, r) {
+			h.deleteComment(w, r, target, commentID)
 		}
 	case http.MethodOptions:
 		w.Header().Set("Allow", "PATCH, DELETE, OPTIONS")
@@ -166,15 +165,15 @@ type commentWire struct {
 	Deletable bool `json:"deletable"`
 }
 
-func (a *App) listComments(
-	w http.ResponseWriter, r *http.Request, svc *comments.Service, target comments.Target,
+func (h *commentsHandler) listComments(
+	w http.ResponseWriter, r *http.Request, target comments.Target,
 ) {
 	ctx := r.Context()
-	auth := a.commentAuthorizer()
+	auth := h.commentAuthorizer()
 
 	// Read floor first: a caller who cannot read the target — or a target that
 	// does not exist — gets the same 404, so comments never confirm existence.
-	if !a.gateCommentTarget(w, r, target) {
+	if !h.gateCommentTarget(w, r, target) {
 		return
 	}
 	if !auth.CanRead(ctx, target) {
@@ -183,7 +182,7 @@ func (a *App) listComments(
 		return
 	}
 
-	list, err := svc.List(ctx, target)
+	list, err := h.svc.List(ctx, target)
 	if err != nil {
 		writeV1Error(w, r, http.StatusInternalServerError, "comments_failed",
 			"Could not read comments", "")
@@ -191,7 +190,7 @@ func (a *App) listComments(
 	}
 
 	user := principal.From(ctx).User
-	anchors := a.liveAnchors(ctx, target)
+	anchors := h.liveAnchors(ctx, target)
 	out := make([]commentWire, 0, len(list))
 	for _, c := range list {
 		out = append(out, commentWire{
@@ -225,15 +224,15 @@ type addCommentRequest struct {
 	Body string `json:"body"`
 }
 
-func (a *App) addComment(
-	w http.ResponseWriter, r *http.Request, svc *comments.Service, target comments.Target,
+func (h *commentsHandler) addComment(
+	w http.ResponseWriter, r *http.Request, target comments.Target,
 ) {
 	ctx := r.Context()
 
-	if !a.gateCommentTarget(w, r, target) {
+	if !h.gateCommentTarget(w, r, target) {
 		return
 	}
-	if !a.commentAuthorizer().CanAdd(ctx, target) {
+	if !h.commentAuthorizer().CanAdd(ctx, target) {
 		writeV1Error(w, r, http.StatusForbidden, "forbidden",
 			"Adding a comment requires the comment:add permission", "")
 		return
@@ -245,7 +244,7 @@ func (a *App) addComment(
 		return
 	}
 
-	created, err := svc.Add(ctx, target, comments.AddRequest{
+	created, err := h.svc.Add(ctx, target, comments.AddRequest{
 		Anchor: comments.Anchor{
 			Kind: comments.AnchorKind(req.Anchor.Kind),
 			Ref:  req.Anchor.Ref,
@@ -281,12 +280,12 @@ type updateCommentRequest struct {
 	Resolved *bool   `json:"resolved"`
 }
 
-func (a *App) updateComment(
-	w http.ResponseWriter, r *http.Request, svc *comments.Service, target comments.Target, commentID string,
+func (h *commentsHandler) updateComment(
+	w http.ResponseWriter, r *http.Request, target comments.Target, commentID string,
 ) {
 	ctx := r.Context()
 
-	existing, ok := a.gateCommentMutation(w, r, svc, target, commentID, mutationUpdate)
+	existing, ok := h.gateCommentMutation(w, r, target, commentID, mutationUpdate)
 	if !ok {
 		return
 	}
@@ -306,27 +305,27 @@ func (a *App) updateComment(
 		resolved = *req.Resolved
 	}
 
-	if err := svc.Update(ctx, target, commentID, body, resolved); err != nil {
+	if err := h.svc.Update(ctx, target, commentID, body, resolved); err != nil {
 		writeCommentError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (a *App) deleteComment(
-	w http.ResponseWriter, r *http.Request, svc *comments.Service, target comments.Target, commentID string,
+func (h *commentsHandler) deleteComment(
+	w http.ResponseWriter, r *http.Request, target comments.Target, commentID string,
 ) {
-	if _, ok := a.gateCommentMutation(w, r, svc, target, commentID, mutationDelete); !ok {
+	if _, ok := h.gateCommentMutation(w, r, target, commentID, mutationDelete); !ok {
 		return
 	}
-	if err := svc.Delete(r.Context(), target, commentID); err != nil {
+	if err := h.svc.Delete(r.Context(), target, commentID); err != nil {
 		writeCommentError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// mutationKind distinguishes the two mutating routes for [App.gateCommentMutation].
+// mutationKind distinguishes the two mutating routes for gateCommentMutation.
 type mutationKind int
 
 const (
@@ -341,17 +340,17 @@ const (
 // property of the stored record: "may I edit this?" cannot be answered without
 // knowing who wrote it. A missing comment is a 404 rather than a 403, since by
 // this point the caller has proven it can read the target.
-func (a *App) gateCommentMutation(
-	w http.ResponseWriter, r *http.Request, svc *comments.Service,
+func (h *commentsHandler) gateCommentMutation(
+	w http.ResponseWriter, r *http.Request,
 	target comments.Target, commentID string, kind mutationKind,
 ) (comments.Comment, bool) {
 	ctx := r.Context()
 
-	if !a.gateCommentTarget(w, r, target) {
+	if !h.gateCommentTarget(w, r, target) {
 		return comments.Comment{}, false
 	}
 
-	existing, err := svc.Get(ctx, target, commentID)
+	existing, err := h.svc.Get(ctx, target, commentID)
 	if err != nil {
 		if errors.Is(err, comments.ErrNotFound) {
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Comment not found", "")
@@ -363,7 +362,7 @@ func (a *App) gateCommentMutation(
 	}
 
 	user := principal.From(ctx).User
-	auth := a.commentAuthorizer()
+	auth := h.commentAuthorizer()
 	allowed := auth.CanUpdate(ctx, target, existing, user)
 	perms := "comment:update-own or comment:update-any"
 	if kind == mutationDelete {
@@ -387,8 +386,8 @@ func (a *App) gateCommentMutation(
 // so gating on the verdict alone would let a comment route confirm that an
 // arbitrary id is absent, and (worse) accept comments filed against entities
 // that were never there.
-func (a *App) gateCommentTarget(w http.ResponseWriter, r *http.Request, target comments.Target) bool {
-	_, found, err := a.visibleReader.getVisible(r.Context(), target.Type, target.ID)
+func (h *commentsHandler) gateCommentTarget(w http.ResponseWriter, r *http.Request, target comments.Target) bool {
+	_, found, err := h.visibleReader.getVisible(r.Context(), target.Type, target.ID)
 	if err != nil {
 		writeGateError(w, r, err)
 		return false
@@ -408,8 +407,8 @@ func (a *App) gateCommentTarget(w http.ResponseWriter, r *http.Request, target c
 // satisfiable by any permission in any acl.yaml. Comments bypass the
 // entitymanager, so ReadOnlyACL's blanket write deny never sees them — this is
 // where that guarantee is kept for the commentary layer.
-func (a *App) refuseIfReadOnly(w http.ResponseWriter, r *http.Request) bool {
-	if a.commentWritesPermitted() {
+func (h *commentsHandler) refuseIfReadOnly(w http.ResponseWriter, r *http.Request) bool {
+	if h.commentWritesPermitted() {
 		return false
 	}
 	writeV1Error(w, r, http.StatusForbidden, "forbidden",

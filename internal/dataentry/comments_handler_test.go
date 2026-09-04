@@ -54,7 +54,7 @@ func doComments(t *testing.T, app *App, method, path, body, user string) *httpte
 		req = asUser(req, user)
 	}
 	rec := httptest.NewRecorder()
-	app.handleV1Comments(rec, req)
+	app.comments.handleV1Comments(rec, req)
 	return rec
 }
 

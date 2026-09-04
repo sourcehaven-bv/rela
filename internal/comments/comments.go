@@ -37,7 +37,7 @@
 //
 // Comments are keyed by target entity ID, so the service tracks the graph:
 // [Service.EntityRenamed] re-keys a target's comments and
-// [Service.EntityDelete] removes them. Rename emits exactly one store callback
+// [Service.EntityDeleted] removes them. Rename emits exactly one store callback
 // (never delete+put), so a service that ignored it would silently strand every
 // comment on a renamed entity.
 package comments
