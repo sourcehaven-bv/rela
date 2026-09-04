@@ -49,6 +49,9 @@ type entityMutator interface {
 	) (*entityPkg.Entity, []entityPkg.Warning, error)
 	UpdateEntity(ctx context.Context, e *entityPkg.Entity) (*entityPkg.UpdateResult, error)
 	DeleteEntity(ctx context.Context, id string, cascade bool) (*entityPkg.DeleteResult, error)
+	// DeleteEntityFace removes ONE non-bare content state — what a DELETE
+	// addressed to `ID@face` means. See entitymanager.Manager.DeleteEntityFace.
+	DeleteEntityFace(ctx context.Context, id string, face entityPkg.Face) (*entityPkg.DeleteResult, error)
 	CreateRelation(
 		ctx context.Context, from, relType, to string, opts entityPkg.RelationOptions,
 	) (*entityPkg.Relation, error)
@@ -390,16 +393,25 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 
 	s := h.schema()
 
+	// The path segment is an ADDRESS — `ID` or `ID@face` (see entityRef). A
+	// write names the row it edits by address and never by world, which is
+	// why attachWorld refuses `?world=` on this method: the face rides here.
+	ref, ok := parseEntityRef(s.Meta, typeName, entityID)
+	if !ok {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
+		return
+	}
+
 	// ACL gate (TKT-VQGN): runs BEFORE getEntity (RR-NGMI timing) AND
 	// before body parse / If-Match / IsLocked so the only observable
 	// for "this id exists but you can't see it" is the same 404 as
 	// "this id doesn't exist" (RR-FGUZ). A 400 / 412 / 422 here would
-	// be an existence oracle.
-	if !h.gateRead(w, r, typeName, entityID) {
+	// be an existence oracle. On the BARE id: the row gate is face-blind.
+	if !h.gateRead(w, r, typeName, ref.ID) {
 		return
 	}
 
-	entity, found := h.reader.getEntity(r.Context(), entityID)
+	entity, found := h.reader.getEntityRef(r.Context(), ref)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -456,8 +468,22 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if req.Relations.Modern != nil {
+		// A content-scoped relation type attaches to ONE face on its tail
+		// side, and the relation writers below address the entity's bare
+		// tail (entity.RelationOptions carries no face). Writing such an
+		// edge from a non-bare face would therefore silently attach it to
+		// the bare face — the wrong-face write this whole address grammar
+		// exists to prevent. Identity-scoped edges are entity-level and
+		// write the same edge from every face, so they pass through.
+		if relType, refused := contentScopedRelationOn(s.Meta, ref, req.Relations.Modern); refused {
+			writeV1Error(w, r, http.StatusUnprocessableEntity, "face_relations_unsupported",
+				"Content-scoped relations cannot be written through a face address",
+				fmt.Sprintf("relation %q is `scope: content`; edit it on the bare face, "+
+					"or move it with a copy definition", relType))
+			return
+		}
 		if denial := h.affordances.validateRelationsModernAffordances(
-			r.Context(), entityID, entity, req.Relations.Modern,
+			r.Context(), ref.ID, entity, req.Relations.Modern,
 		); denial != nil {
 			h.denyAfford(r.Context(), w, entity, *denial)
 			return
@@ -470,7 +496,7 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 	// error doesn't leave the entity half-written. (DEC-HWZHA atomicity.)
 	var warnings []Warning
 	if req.Relations.Modern != nil {
-		ws, err := h.validateRelationsModern(r.Context(), entityID, entity.Type, req.Relations.Modern)
+		ws, err := h.validateRelationsModern(r.Context(), ref.ID, entity.Type, req.Relations.Modern)
 		if err != nil {
 			h.writeRelationsValidationError(w, r, err)
 			return
@@ -528,7 +554,7 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 	// Phase C: relation writes. Produces warnings on soft conditions
 	// and structured errors on hard failures.
 	if req.Relations.Modern != nil {
-		ws, err := h.applyRelationsModern(r.Context(), entityID, req.Relations.Modern)
+		ws, err := h.applyRelationsModern(r.Context(), ref.ID, req.Relations.Modern)
 		warnings = append(warnings, ws...)
 		if err != nil {
 			h.writeRelationsApplyError(w, r, err)
@@ -558,20 +584,35 @@ func (h *writeHandler) handleV1DeleteEntity(w http.ResponseWriter, r *http.Reque
 	r = h.enterWrite(r)
 	defer h.writeMu.Unlock()
 
-	// ACL gate (TKT-VQGN): runs BEFORE getEntity (RR-NGMI timing) AND
-	// before AuthorizeWrite (RR-3532 — so a hidden target 404s, not
-	// 403-with-rule_id).
-	if !h.gateRead(w, r, typeName, entityID) {
+	// The path segment is an ADDRESS (see entityRef). `ID` and `ID@<bare>`
+	// delete the whole entity; `ID@face` for a non-bare face deletes THAT
+	// face only — the "unpublish" the address grammar makes expressible.
+	ref, ok := parseEntityRef(h.schema().Meta, typeName, entityID)
+	if !ok {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
 	}
 
-	entity, found := h.reader.getEntity(r.Context(), entityID)
+	// ACL gate (TKT-VQGN): runs BEFORE getEntity (RR-NGMI timing) AND
+	// before AuthorizeWrite (RR-3532 — so a hidden target 404s, not
+	// 403-with-rule_id). On the BARE id: the row gate is face-blind.
+	if !h.gateRead(w, r, typeName, ref.ID) {
+		return
+	}
+
+	entity, found := h.reader.getEntityRef(r.Context(), ref)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
 	}
 
-	if _, err := h.manager.DeleteEntity(r.Context(), entityID, true); err != nil {
+	var err error
+	if ref.Face.IsDefault() {
+		_, err = h.manager.DeleteEntity(r.Context(), ref.ID, true)
+	} else {
+		_, err = h.manager.DeleteEntityFace(r.Context(), ref.ID, ref.Face)
+	}
+	if err != nil {
 		if writeForbiddenIfACLDenied(w, err) {
 			return
 		}

@@ -932,6 +932,12 @@ type ViewEntity struct {
 	// entity resolves to its default state by definition, so a provenance
 	// block would be noise on every row of every existing view.
 	World *EntityWorld `json:"_world,omitempty"`
+	// Self addresses the ROW this collection entity is, face included — the
+	// same contract as [Entity.Self]. Under a world a collection entity is a
+	// neighbour's RESOLVED face, so a client that edits it in place (a row's
+	// inline edit, its Edit button) must write to this address and not to
+	// the bare id, or it edits a state the page is not showing.
+	Self string `json:"_self,omitempty"`
 }
 
 // ViewColumn represents a column definition.
@@ -949,6 +955,9 @@ type ViewRow struct {
 	EditFormID string     `json:"editFormId,omitempty"`
 	Cells      []ViewCell `json:"cells"`
 	Content    string     `json:"content,omitempty"`
+	// Self addresses the ROW this entry describes, face included — the same
+	// contract as [Entity.Self]. See [ViewEntity.Self].
+	Self string `json:"_self,omitempty"`
 }
 
 // ViewCell represents a table cell.
@@ -1060,6 +1069,17 @@ type Face struct {
 	// Display-only, like [CopyOffer.Label] — a client addresses the face by
 	// Face and never by this string.
 	Label string `json:"label,omitempty"`
+	// Ref is the face's ADDRESS: the path segment that reads this row
+	// literally under any world — `POL-1@published`, and `POL-1@draft` for
+	// the bare face when the type declares a `bare_face` name.
+	//
+	// It exists so a client can offer "view the published face" as a plain
+	// link, without deriving which declared world happens to lead with that
+	// face — a derivation that needs the chain, the per-type overrides and a
+	// tie-break rule, and that produced a dead control for any face no world
+	// headed. A bare face with no declared name has no explicit spelling and
+	// falls back to the bare id, which is literal only in the default world.
+	Ref string `json:"ref,omitempty"`
 }
 
 // CopyOffer is one declared copy definition offered for a source face

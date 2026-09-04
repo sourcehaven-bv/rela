@@ -1339,7 +1339,16 @@ func (svc affordanceService) computeFaces(
 		// The operator's `label:` when declared, else the coordinate name.
 		// Both are operator-authored config, so neither discloses anything
 		// the schema endpoint does not already serve.
-		out = append(out, v1.Face{Face: stored, Label: metamodel.FaceLabel(m, e.Type, stored)})
+		//
+		// The address is spelled with the DECLARED name so the bare face
+		// gets an explicit form too (`POL-1@draft`), which is what makes it
+		// literal under a world that would otherwise resolve `POL-1` away
+		// from it. A bare face with no declared name has no such spelling.
+		out = append(out, v1.Face{
+			Face:  stored,
+			Label: metamodel.FaceLabel(m, e.Type, stored),
+			Ref:   faceRef(m, e, stored),
+		})
 	}
 	// Sorted by the DECLARED name, not the label: the order must not shuffle
 	// when an operator edits display text, and a label is optional so sorting
@@ -1349,6 +1358,17 @@ func (svc affordanceService) computeFaces(
 			metamodel.DeclaredFace(m, e.Type, out[j].Face)
 	})
 	return out
+}
+
+// faceRef spells the explicit address of e's face at the stored coordinate:
+// `ID@<declared name>`, or the bare id when the coordinate has no declared
+// name. See [v1.Face.Ref].
+func faceRef(m *metamodel.Metamodel, e *entityPkg.Entity, stored string) string {
+	declared := metamodel.DeclaredFace(m, e.Type, stored)
+	if declared == "" {
+		return e.ID
+	}
+	return e.ID + entityPkg.StateRefSeparator + declared
 }
 
 // copyOffersFunc lists the copy affordances available from one face, as

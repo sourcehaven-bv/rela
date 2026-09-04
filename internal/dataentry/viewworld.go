@@ -133,18 +133,25 @@ func (w viewWorld) isDefault() bool { return !w.denied && w.scope.IsDefaultWorld
 // by a check that does not consult the world.
 
 func (h *viewsHandler) viewEntry(
-	ctx context.Context, entryID string, w viewWorld,
+	ctx context.Context, entry entityRef, w viewWorld,
 ) (*entityPkg.Entity, error) {
+	entryID := entry.ID
 	if w.denied {
 		// Byte-identical to a permitted world in which the entity has no
 		// face: `_world_absent` over the default face. That is the only
 		// answer that does not disclose the denial.
+		//
+		// An EXPLICIT address gets the same answer: the world grant must not
+		// be bypassable by spelling the face (see visibleReader.getVisibleRef).
 		return nil, errNoFaceInWorld
 	}
-	if w.isDefault() {
-		e, err := h.store.GetEntity(ctx, entryID)
+	if w.isDefault() || entry.Explicit {
+		// An explicit address (`ID@face`) is served literally under every
+		// world — the caller named the row, so there is nothing to resolve
+		// (see entityRef). Under the default world every address is literal.
+		e, err := h.store.GetEntityState(ctx, entry.ID, entry.Face)
 		if err != nil {
-			return nil, errViewEntryNotFound(entryID)
+			return nil, errViewEntryNotFound(entry.String())
 		}
 		// The row gate one layer up cleared the ENTITY; it says nothing about
 		// which FACE this principal may read (TKT-O7R2A1). Without this the

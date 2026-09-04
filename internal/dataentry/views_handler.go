@@ -467,12 +467,21 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The id segment is an ADDRESS (`ID` or `ID@face`), parsed once here so
+	// the row gate below sees the BARE id (it is face-blind by design and
+	// matches nothing on a suffixed string) and the engine sees the face.
+	ref, ok := parseEntityRef(s.Meta, entityType, entityID)
+	if !ok {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return
+	}
+
 	// ACL gate (TKT-BNX2PN): _views is an entity-read chokepoint just like
 	// GET /{plural}/{id} — it serves _title, properties, and content body via
 	// executeView + serializeEntityForWire. Gate BEFORE executeView so a hidden
 	// id is indistinguishable from a missing one (404, no oracle) and the view
 	// pipeline never runs for a denied principal.
-	if !h.gateRead(w, r, entityType, entityID) {
+	if !h.gateRead(w, r, entityType, ref.ID) {
 		return
 	}
 
@@ -491,14 +500,14 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	// (TKT-WRLDAPI item 4b); the other two executeView callers pass
 	// defaultViewWorld() explicitly. See the viewWorld doc for why the world
 	// is a parameter rather than something the engine reads off ctx.
-	result, err := h.executeView(r.Context(), viewCfg, entityID,
+	result, err := h.executeViewRef(r.Context(), viewCfg, ref,
 		viewWorldFromRequest(r.Context()))
 	if errors.Is(err, errNoFaceInWorld) {
 		// The entity EXISTS and this caller may read it; it simply has no face
 		// in the world they asked for — the ordinary state of an unpublished
 		// draft. Answer with the face that does exist plus a marker, so the
 		// page can offer a way through rather than a dead end (BUG-1).
-		h.writeWorldAbsentView(w, r, entityType, entityID)
+		h.writeWorldAbsentView(w, r, entityType, ref.ID)
 		return
 	}
 	if err != nil {
@@ -576,6 +585,7 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 				EntityType: row.EntityType,
 				EditFormID: row.EditFormID,
 				Content:    row.Content,
+				Self:       row.Self,
 			}
 			for _, cell := range row.Cells {
 				v1Row.Cells = append(v1Row.Cells, v1.ViewCell(cell))
