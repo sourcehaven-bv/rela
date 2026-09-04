@@ -133,3 +133,32 @@ export async function deleteComment(
 ): Promise<void> {
   await api.delete(`${targetPath(entityType, entityId)}/${encodeURIComponent(commentId)}`)
 }
+
+export interface ResolveCheck {
+  anchorable: boolean
+  reason?: string
+}
+
+/**
+ * Asks whether a selection could be anchored, without creating anything.
+ *
+ * Used to decide whether to OFFER commenting: some selections have no
+ * contiguous source range (one spanning table cells, for instance), and letting
+ * a user write a comment that then fails on save is the worse outcome.
+ *
+ * A non-anchorable selection is a successful response with `anchorable: false`,
+ * not an error — so a genuine network failure stays distinguishable.
+ */
+export async function checkAnchorable(
+  entityType: string,
+  entityId: string,
+  quote: string,
+  prefix: string,
+  suffix: string
+): Promise<ResolveCheck> {
+  return api.post<ResolveCheck>(`${targetPath(entityType, entityId)}/resolve`, {
+    quote,
+    quote_prefix: prefix,
+    quote_suffix: suffix,
+  })
+}

@@ -466,8 +466,21 @@ const contentAutoSave = useAutoSave({
 function contentClick(event: MouseEvent) {
   const target = event.target as HTMLElement | null
 
-  // A comment highlight opens its thread. Checked before the checkbox branch
-  // because both are delegated from the same handler and a mark can wrap one.
+  // The chip beside a highlighted link opens that link's thread. Checked first
+  // because it sits inside the mark it belongs to.
+  const chip = target?.closest<HTMLElement>('[data-comment-chip]')
+  if (chip) {
+    event.preventDefault()
+    openTextComment(chip.dataset.commentId, chip)
+    return
+  }
+
+  // A LINK inside a highlight keeps its own click: navigation is the primary
+  // action, and the chip above is how that thread is reached instead.
+  if (target?.closest('a[href]')) return
+
+  // Any other comment highlight opens its thread. Checked before the checkbox
+  // branch because both are delegated from the same handler.
   const mark = target?.closest<HTMLElement>('mark[data-comment-id]')
   if (mark) {
     event.preventDefault()
@@ -510,10 +523,24 @@ function closeTextComment() {
   textCommentAnchorEl.value = null
 }
 
-/** The comments sharing the clicked highlight's anchor. */
-const openTextComments = computed(() =>
-  comments.value.filter((c) => c.id === openTextCommentId.value)
-)
+/**
+ * The whole thread at the clicked highlight — every comment resolving to the
+ * same range, not just the one whose id is on the mark.
+ *
+ * Replies are separate comments sharing an anchor (stage 1 has no threading),
+ * so they resolve to the SAME range and only the first one gets a mark. Keying
+ * the popover on the mark's id alone showed a single comment and made a saved
+ * reply look lost.
+ */
+const openTextComments = computed(() => {
+  const clicked = comments.value.find((c) => c.id === openTextCommentId.value)
+  if (!clicked) return []
+  const { start, end } = clicked.anchor
+  if (start == null || end == null) return [clicked]
+  return comments.value.filter(
+    (c) => c.anchor.kind === 'text' && c.anchor.start === start && c.anchor.end === end
+  )
+})
 
 /**
  * Where to place the thread popover, in coordinates relative to the body.
@@ -2079,18 +2106,41 @@ watch(
  * :deep() because the marks are inserted into v-html output, which scoped-style
  * hashing does not reach. */
 .content-body :deep(mark[data-comment-id]) {
-  background: color-mix(in srgb, var(--accent-color) 18%, transparent);
-  border-bottom: 2px solid var(--accent-color);
+  /* Yellow, the annotation convention — and distinct from the accent blue that
+   * already marks links and interactive chrome in the body. */
+  background: color-mix(in srgb, var(--comment-highlight) 32%, transparent);
+  border-bottom: 2px solid var(--comment-highlight);
   border-radius: 2px;
   padding: 0 1px;
   color: inherit;
   cursor: pointer;
 }
 
+/* A highlighted LINK keeps its own click: navigation is the primary action and
+ * a mark must not swallow it. The chip beside it opens the thread instead. */
+.content-body :deep(mark[data-comment-id] a) {
+  cursor: pointer;
+}
+
+.content-body :deep(.comment-chip) {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: super;
+  margin-left: 2px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--comment-highlight);
+  color: var(--text-color);
+  font-size: 10px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
 /* An uncertain anchor resolved below the exact band: the text may have moved,
  * so it reads as provisional rather than as a confirmed location. */
 .content-body :deep(mark[data-comment-uncertain]) {
-  background: color-mix(in srgb, var(--warning-color) 30%, transparent);
+  background: color-mix(in srgb, var(--warning-color) 34%, transparent);
   border-bottom-style: dashed;
   border-bottom-color: var(--warning-color);
 }

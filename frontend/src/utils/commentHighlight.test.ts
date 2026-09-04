@@ -164,3 +164,32 @@ describe('applyHighlights and indented code blocks', () => {
     expect(out).toContain('<mark data-comment-id="c1">Prose worth marking</mark>')
   })
 })
+
+describe('applyHighlights and links', () => {
+  // A mark wrapping a link used to swallow the click, leaving the link dead.
+  // The chip carries the thread so the link keeps navigating.
+  it('appends a chip when the marked text contains a markdown link', () => {
+    const body = 'See the [rela docs](https://example.com/docs) for details.'
+    const out = applyHighlights(body, [byteRange(body, '[rela docs](https://example.com/docs)')])
+
+    expect(out).toContain('data-comment-chip="true"')
+    expect(out).toContain('data-comment-id="c1"')
+    // The link markup itself is untouched inside the mark.
+    expect(out).toContain('[rela docs](https://example.com/docs)')
+  })
+
+  it('appends a chip for a bare autolink', () => {
+    const body = 'Reference: https://example.com/page here.'
+    const out = applyHighlights(body, [byteRange(body, 'https://example.com/page')])
+
+    expect(out).toContain('data-comment-chip="true"')
+  })
+
+  it('adds no chip for ordinary prose', () => {
+    const body = 'Just some ordinary prose to mark up.'
+    const out = applyHighlights(body, [byteRange(body, 'ordinary prose')])
+
+    expect(out).not.toContain('data-comment-chip')
+    expect(out).toContain('<mark data-comment-id="c1">ordinary prose</mark>')
+  })
+})

@@ -79,6 +79,8 @@ func (h *commentsHandler) handleV1Comments(w http.ResponseWriter, r *http.Reques
 	target := comments.Target{Type: typeName, ID: entityID}
 
 	switch {
+	case len(parts) == 3 && parts[2] == "resolve":
+		h.commentResolveCheck(w, r, target)
 	case len(parts) == 2:
 		h.commentCollection(w, r, target)
 	case len(parts) == 3 && parts[2] != "":
@@ -129,6 +131,61 @@ func (h *commentsHandler) commentItem(
 		w.Header().Set("Allow", "PATCH, DELETE, OPTIONS")
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 	}
+}
+
+// resolveCheckRequest asks whether a selection could be anchored.
+type resolveCheckRequest struct {
+	Quote  string `json:"quote"`
+	Prefix string `json:"quote_prefix"`
+	Suffix string `json:"quote_suffix"`
+}
+
+// resolveCheckResponse answers it, with a reason when it could not.
+type resolveCheckResponse struct {
+	Anchorable bool   `json:"anchorable"`
+	Reason     string `json:"reason,omitempty"`
+}
+
+// commentResolveCheck reports whether a selection can be anchored, WITHOUT
+// creating anything.
+//
+// Exists because the alternative is worse: a user selects text, writes a
+// comment, and only then learns it cannot be saved. Some selections genuinely
+// cannot anchor — one spanning table cells has no contiguous source range —
+// and the UI needs to know before it offers the affordance.
+//
+// Gated exactly like a create: it reveals whether a string appears in the body,
+// which is a read of the body, so `comment:add` plus the target read verdict.
+func (h *commentsHandler) commentResolveCheck(
+	w http.ResponseWriter, r *http.Request, target comments.Target,
+) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
+		return
+	}
+	if !h.gateCommentTarget(w, r, target) {
+		return
+	}
+	if !h.commentAuthorizer().CanAdd(r.Context(), target) {
+		writeV1Error(w, r, http.StatusForbidden, "forbidden",
+			"Adding a comment requires the comment:add permission", "")
+		return
+	}
+
+	var req resolveCheckRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeV1Error(w, r, http.StatusBadRequest, "invalid_body", "Malformed JSON body", "")
+		return
+	}
+
+	if _, err := h.buildTextAnchor(r.Context(), target, req.Quote, req.Prefix, req.Suffix); err != nil {
+		// A failure here is the ANSWER, not an error: the caller asked whether
+		// this selection works, and "no, because…" is a successful reply.
+		writeV1JSON(w, http.StatusOK, resolveCheckResponse{Reason: err.Error()})
+		return
+	}
+	writeV1JSON(w, http.StatusOK, resolveCheckResponse{Anchorable: true})
 }
 
 // commentListResponse is the list wire shape.

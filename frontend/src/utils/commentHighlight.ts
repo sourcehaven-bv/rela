@@ -32,12 +32,26 @@ export const HIGHLIGHT_ID_ATTR = 'data-comment-id'
 /** Attribute set when the anchor resolved below the exact-match band. */
 export const HIGHLIGHT_UNCERTAIN_ATTR = 'data-comment-uncertain'
 
+/** Attribute marking the chip that opens a thread for a link highlight. */
+export const HIGHLIGHT_CHIP_ATTR = 'data-comment-chip'
+
 /** A resolved range to mark. Offsets are BYTES into the source body. */
 export interface HighlightRange {
   id: string
   start: number
   end: number
   uncertain?: boolean
+}
+
+/**
+ * True when the marked source contains a markdown link.
+ *
+ * A highlighted link must keep its own click — navigation is the primary
+ * action, and a mark that swallows it makes the link dead. Such a range gets a
+ * chip appended instead, which is what opens the thread.
+ */
+function containsLink(marked: string): boolean {
+  return /\[[^\]]*\]\([^)]*\)|<https?:\/\/|https?:\/\/\S/.test(marked)
 }
 
 /**
@@ -74,10 +88,12 @@ export function applyHighlights(body: string, ranges: HighlightRange[]): string 
   // Back-to-front: later insertions never disturb earlier offsets.
   for (let i = usable.length - 1; i >= 0; i--) {
     const r = usable[i]
+    const marked = decoder.decode(bytes.slice(r.start, r.end))
     out =
       openTag(r) +
-      decoder.decode(bytes.slice(r.start, r.end)) +
+      marked +
       `</${HIGHLIGHT_TAG}>` +
+      (containsLink(marked) ? chipFor(r) : '') +
       decoder.decode(bytes.slice(r.end, cursor)) +
       out
     cursor = r.start
@@ -90,6 +106,19 @@ function openTag(r: HighlightRange): string {
   // The id is server-minted (an opaque token), but it still lands in an HTML
   // attribute, so quote-escape it rather than trusting the generator's alphabet.
   return `<${HIGHLIGHT_TAG} ${HIGHLIGHT_ID_ATTR}="${escapeAttr(r.id)}"${uncertain}>`
+}
+
+/**
+ * The chip that opens a thread for a highlight wrapping a link.
+ *
+ * Rendered as a button so it is keyboard-reachable; the click handler keys on
+ * the same comment id the mark carries.
+ */
+function chipFor(r: HighlightRange): string {
+  return (
+    `<button type="button" class="comment-chip" ${HIGHLIGHT_CHIP_ATTR}="true" ` +
+    `${HIGHLIGHT_ID_ATTR}="${escapeAttr(r.id)}" title="Show comment">💬</button>`
+  )
 }
 
 function escapeAttr(v: string): string {
@@ -112,6 +141,11 @@ function selectNonOverlapping(ranges: HighlightRange[], size: number): Highlight
   const kept: HighlightRange[] = []
   let lastEnd = -1
   for (const r of sorted) {
+    // An IDENTICAL range is a reply sharing the anchor, not a competing
+    // highlight: one mark represents the whole thread, and clicking it opens
+    // every comment at that range.
+    const prev = kept[kept.length - 1]
+    if (prev && prev.start === r.start && prev.end === r.end) continue
     if (r.start < lastEnd) continue // overlaps the previous keeper
     kept.push(r)
     lastEnd = r.end

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, nextTick, useTemplateRef } from 'vue'
 import { useUIStore } from '@/stores'
-import { addComment } from '@/api/comments'
+import { addComment, checkAnchorable } from '@/api/comments'
 import { getErrorMessage } from '@/api/errors'
 
 /**
@@ -41,6 +41,17 @@ const quote = ref('')
 const quotePrefix = ref('')
 const quoteSuffix = ref('')
 const anchorPos = ref<{ top: number; left: number } | null>(null)
+/**
+ * Why the current selection cannot be commented on, or null when it can.
+ *
+ * Some selections have no contiguous source range — one spanning table cells is
+ * the common case — so the server is asked BEFORE the affordance is offered.
+ * Letting someone write a comment that then fails to save is the worse outcome.
+ */
+const blockedReason = ref<string | null>(null)
+const checking = ref(false)
+/** Guards against an older check resolving after a newer selection. */
+let checkToken = 0
 const composing = ref(false)
 const body = ref('')
 const submitting = ref(false)
@@ -52,6 +63,8 @@ function reset() {
   quote.value = ''
   quotePrefix.value = ''
   quoteSuffix.value = ''
+  blockedReason.value = null
+  checkToken++
   body.value = ''
 }
 
@@ -114,6 +127,35 @@ function onSelectionChange() {
     top: rect.bottom - host.top + 6,
     left: Math.max(0, rect.left - host.left),
   }
+  void verifySelection()
+}
+
+/** Asks the server whether this selection can anchor, before offering to comment. */
+async function verifySelection() {
+  const token = ++checkToken
+  blockedReason.value = null
+  checking.value = true
+  try {
+    const res = await checkAnchorable(
+      props.entityType,
+      props.entityId,
+      quote.value,
+      quotePrefix.value,
+      quoteSuffix.value
+    )
+    // Discard a stale answer: the user may have re-selected while this was in
+    // flight, and applying it would describe the wrong selection.
+    if (token !== checkToken) return
+    blockedReason.value = res.anchorable
+      ? null
+      : res.reason || 'This selection cannot be commented on'
+  } catch {
+    // A failed CHECK must not block commenting: the create path validates
+    // again, so the worst case is the old behaviour (an error on save).
+    if (token === checkToken) blockedReason.value = null
+  } finally {
+    if (token === checkToken) checking.value = false
+  }
 }
 
 async function startComposing() {
@@ -173,11 +215,25 @@ onBeforeUnmount(() => {
     :style="{ top: `${anchorPos.top}px`, left: `${anchorPos.left}px` }"
     @mousedown.prevent
   >
-    <button v-if="!composing" type="button" class="tsc-btn" @click="startComposing">
+    <!-- Blocked: say why, and do not offer a composer that cannot succeed. -->
+    <span v-if="!composing && blockedReason" class="tsc-blocked" :title="blockedReason">
+      <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+        <path d="M8 1.5 15 14H1L8 1.5Zm0 4.5v4m0 2v.5" stroke="currentColor" fill="none" />
+      </svg>
+      Can't comment here
+    </span>
+
+    <button
+      v-else-if="!composing"
+      type="button"
+      class="tsc-btn"
+      :disabled="checking"
+      @click="startComposing"
+    >
       <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
         <path d="M8 1a7 7 0 0 0-6.1 10.4L1 15l3.8-.9A7 7 0 1 0 8 1Z" />
       </svg>
-      Comment
+      {{ checking ? 'Checking…' : 'Comment' }}
     </button>
 
     <form v-else class="tsc-form" @submit.prevent="submit">
@@ -227,8 +283,33 @@ onBeforeUnmount(() => {
   height: 12px;
   color: var(--accent-color);
 }
-.tsc-btn:hover {
+.tsc-btn:hover:not(:disabled) {
   border-color: var(--accent-color);
+}
+.tsc-btn:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
+/* Shown in place of the Comment button when the selection cannot be anchored,
+ * so the reason is visible BEFORE anything is typed. */
+.tsc-blocked {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md, 6px);
+  background: var(--card-bg);
+  color: var(--muted-text);
+  box-shadow: var(--shadow-lg, 0 4px 12px rgb(0 0 0 / 12%));
+  font: 600 var(--font-size-sm) / 1 inherit;
+  cursor: help;
+}
+.tsc-blocked svg {
+  width: 12px;
+  height: 12px;
+  color: var(--warning-color);
 }
 
 .tsc-form {

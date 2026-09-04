@@ -115,7 +115,7 @@ export function renderMarkdown(
   // The comment attributes carry a server-minted id and a boolean; neither is
   // a URL or a script sink.
   return DOMPurify.sanitize(rawHtml, {
-    ADD_ATTR: ['data-cb-idx', 'data-comment-id', 'data-comment-uncertain'],
+    ADD_ATTR: ['data-cb-idx', 'data-comment-id', 'data-comment-uncertain', 'data-comment-chip'],
   })
 }
 

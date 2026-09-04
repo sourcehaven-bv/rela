@@ -505,3 +505,57 @@ func TestComments_TextAnchorDisambiguation(t *testing.T) {
 		require.Equal(t, first, *got.Comments[0].Anchor.Start)
 	})
 }
+
+// TestComments_ResolveCheck covers the preflight the SPA uses to decide whether
+// to OFFER commenting on a selection.
+//
+// Without it a user selects text that cannot anchor (one spanning table cells
+// has no contiguous source range), writes a comment, and only then learns it
+// cannot be saved.
+func TestComments_ResolveCheck(t *testing.T) {
+	const path = "/api/v1/_comments/ticket/TKT-001/resolve"
+
+	t.Run("an anchorable selection reports true", func(t *testing.T) {
+		app := commentsApp(t)
+
+		body := `{"quote":"the old id in the search index"}`
+		rec := doComments(t, app, http.MethodPost, path, body, "alice@example.com")
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+		var got struct {
+			Anchorable bool   `json:"anchorable"`
+			Reason     string `json:"reason"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+		require.True(t, got.Anchorable)
+		require.Empty(t, got.Reason)
+	})
+
+	t.Run("an unanchorable selection reports false with a reason", func(t *testing.T) {
+		app := commentsApp(t)
+
+		body := `{"quote":"text that appears nowhere in this body at all"}`
+		rec := doComments(t, app, http.MethodPost, path, body, "alice@example.com")
+		// The check SUCCEEDS; the answer is "no". A 4xx here would make the UI
+		// unable to distinguish "cannot anchor" from "request was broken".
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+		var got struct {
+			Anchorable bool   `json:"anchorable"`
+			Reason     string `json:"reason"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+		require.False(t, got.Anchorable)
+		require.NotEmpty(t, got.Reason, "the UI shows this to explain why it cannot comment")
+	})
+
+	t.Run("creates nothing", func(t *testing.T) {
+		app := commentsApp(t)
+
+		body := `{"quote":"the old id in the search index"}`
+		require.Equal(t, http.StatusOK,
+			doComments(t, app, http.MethodPost, path, body, "alice@example.com").Code)
+
+		require.Empty(t, listComments(t, app).Comments, "a preflight must not persist anything")
+	})
+}
