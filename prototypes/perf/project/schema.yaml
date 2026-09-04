@@ -1,0 +1,221 @@
+version: "1.0"
+
+description: >
+  Performance demo: an ISMS plus a delivery portfolio, sized by `rela dev
+  seed`. Every read shape the data-entry app has is exercised here at scale —
+  lists with relation columns and relation filters, views with table sections,
+  kanbans, a dashboard, a gantt, next actions — under an ACL with group
+  membership, field redaction, and two content-state axes (policy
+  draft/published, document en/nl) served through worlds.
+
+entities:
+  team:
+    label: Team
+    id_prefix: TEAM
+    id_type: manual
+    properties:
+      title:      { type: string, required: true }
+      department: { type: department, required: true }
+
+  person:
+    label: Person
+    label_plural: People
+    id_prefix: PERS
+    id_type: manual
+    properties:
+      title:      { type: string, required: true }
+      # The principal is resolved to a person by email (acl.yaml
+      # `principal_property`), which requires the property to be unique. The
+      # seeder generates emails by construction, so no two collide.
+      email:      { type: string, required: true, unique: true }
+      role_title: { type: string }
+      # Redacted for every role but manager (acl.yaml `visible:`).
+      salary:     { type: integer }
+      started:    { type: date }
+
+  project:
+    label: Project
+    id_prefix: PRJ
+    id_type: manual
+    properties:
+      title:         { type: string, required: true }
+      status:        { type: project_status, required: true }
+      planned_start: { type: date }
+      planned_end:   { type: date }
+      target_date:   { type: date }
+      budget:        { type: integer }
+
+  task:
+    label: Task
+    id_prefix: TSK
+    id_type: manual
+    default_sort:
+      - property: due
+    properties:
+      title:    { type: string, required: true }
+      status:   { type: task_status, required: true }
+      priority: { type: priority, required: true }
+      start:    { type: date }
+      due:      { type: date }
+      estimate: { type: integer }
+
+  control:
+    label: Control
+    id_prefix: CTL
+    id_type: manual
+    properties:
+      title:  { type: string, required: true }
+      family: { type: control_family, required: true }
+      status: { type: control_status, required: true }
+
+  risk:
+    label: Risk
+    id_prefix: RSK
+    id_type: manual
+    properties:
+      title:      { type: string, required: true }
+      level:      { type: risk_level, required: true }
+      likelihood: { type: integer }
+      impact:     { type: integer }
+      status:     { type: risk_status, required: true }
+
+  policy:
+    label: Policy
+    id_prefix: POL
+    id_type: manual
+    # Editorial axis: a bare id addresses the draft; publishing creates the
+    # published face (see `copies:`).
+    bare_face: draft
+    faces:
+      draft:     { label: "Draft" }
+      published: { label: "Published" }
+    properties:
+      title:   { type: string, required: true }
+      status:  { type: policy_status, required: true }
+      owner:   { type: string }
+      version: { type: string }
+
+  document:
+    label: Document
+    id_prefix: DOC
+    id_type: manual
+    # Language axis: English is what a bare id addresses; Dutch is a peer.
+    bare_face: en
+    faces:
+      en: { label: "English" }
+      nl: { label: "Nederlands" }
+    properties:
+      title:    { type: string, required: true }
+      category: { type: doc_category, required: true }
+
+types:
+  department:
+    values: [engineering, security, operations, finance, leadership]
+  project_status:
+    values: [proposed, active, on-hold, done]
+    initial: proposed
+    transitions:
+      - { from: proposed, to: active, label: "start" }
+      - { from: active, to: on-hold, label: "pause" }
+      - { from: on-hold, to: active, label: "resume" }
+      - { from: active, to: done, label: "finish" }
+  task_status:
+    values: [todo, doing, review, done]
+    initial: todo
+    transitions:
+      - { from: todo, to: doing, label: "start" }
+      - { from: doing, to: review, label: "submit" }
+      - { from: review, to: doing, label: "rework" }
+      - { from: review, to: done, label: "accept" }
+  priority:
+    values: [low, medium, high, critical]
+  control_family:
+    values: [organizational, people, physical, technological]
+  control_status:
+    values: [missing, partial, implemented]
+  risk_level:
+    values: [low, medium, high]
+  risk_status:
+    values: [open, mitigated, accepted]
+    initial: open
+    transitions:
+      - { from: open, to: mitigated, label: "mitigate" }
+      - { from: open, to: accepted, label: "accept" }
+  policy_status:
+    values: [to-do, doing, done]
+    initial: to-do
+    transitions:
+      - { from: to-do, to: doing, label: "start" }
+      - { from: doing, to: done, label: "finish" }
+  doc_category:
+    values: [guide, runbook, reference, decision]
+
+relations:
+  member-of:
+    description: A person belongs to a team. Walked by the ACL for group roles.
+    from: [person]
+    to: [team]
+  leads:
+    description: A person leads a project.
+    from: [person]
+    to: [project]
+  owns:
+    description: A team owns a project.
+    from: [team]
+    to: [project]
+  contains:
+    description: Work breakdown, traversed by the gantt. Self-referential so subprojects and subtasks nest.
+    from: [project, task]
+    to: [project, task]
+  assigned-to:
+    description: A task is assigned to a person.
+    from: [task]
+    to: [person]
+  depends-on:
+    description: A task depends on another task.
+    from: [task]
+    to: [task]
+  mitigates:
+    description: A control mitigates a risk.
+    from: [control]
+    to: [risk]
+  implements:
+    description: A policy implements a control. Content-scoped, so a draft may implement a different set than the published face.
+    from: [policy]
+    to: [control]
+    scope: content
+  owned-by:
+    description: A policy is owned by a team. Identity-scoped, shared by every face.
+    from: [policy]
+    to: [team]
+    scope: identity
+  references:
+    description: A document references a policy or control. Content-scoped, so a translation may cite differently.
+    from: [document]
+    to: [policy, control]
+    scope: content
+
+worlds:
+  published:
+    select: published
+    # Documents have no `published` face; English is their published form.
+    overrides:
+      document: [en]
+    otherwise: exclude
+    banner: "Published — what readers see"
+  editorial:
+    select: [draft, published]
+    otherwise: default
+    banner: "Editorial — drafts included"
+  site-nl:
+    select: [nl, en]
+    otherwise: default
+
+copies:
+  publish:
+    from: policy@draft
+    to: policy@published
+    label: Publish
+    fields: all
+    guard:
+      permission: publish-policy

@@ -274,6 +274,18 @@ linters:
       - linters:
           - usetesting
         path: internal/testutil/.*\.go
+      # internal/perfseed is a data generator: its body IS tuning constants
+      # (counts per type, date spans, body sizes, edge fan-out) and a seeded
+      # math/rand PRNG is the whole point — determinism, not secrecy. Naming
+      # every literal would bury the shape of the graph under fifty consts,
+      # and G404 has no security meaning for synthetic demo data.
+      - linters:
+          - mnd
+        path: internal/perfseed/
+      - linters:
+          - gosec
+        path: internal/perfseed/
+        text: G404
       # G706 (log injection) in internal/dataentry: false positives.
       #
       # gosec's taint analysis treats slog.Info/Warn/Error/Debug as a sink and

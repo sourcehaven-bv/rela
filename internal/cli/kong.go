@@ -67,7 +67,11 @@ var (
 // out of scope for a secrets-hygiene change. `secrets` is itself a sub-struct
 // holding its subcommand, so it adds one field rather than one per verb.
 //
-//plimsoll:max-fields=47
+// Raised 47 → 48 for `dev` (TKT-1U8XYN), a sub-struct grouping developer
+// tooling (`dev seed` today), so later developer commands nest under it
+// rather than adding fields here.
+//
+//plimsoll:max-fields=48
 type CLI struct {
 	// Global flags.
 	Project string `help:"Project directory (default: auto-detect from cwd)." env:"RELA_PROJECT"`
@@ -99,6 +103,7 @@ type CLI struct {
 	Completion CompletionCmd `cmd:"" help:"Generate shell completion scripts."`
 	Mcp        McpCmd        `cmd:"" name:"mcp" help:"Start the MCP server."`
 	Db         DBCmd         `cmd:"" name:"db" help:"Manage the PostgreSQL schema (postgres build)."`
+	Dev        DevCmd        `cmd:"" help:"Developer tooling (seed generated data)."`
 	Flow       FlowCmd       `cmd:"" help:"Run an interactive Lua flow."`
 	Validate   ValidateCmd   `cmd:"" help:"Validate project configuration files."`
 
@@ -260,7 +265,8 @@ func requiresProject(cmd string) bool {
 		"detach", "import", "normalize", "script", "scheduler",
 		"rename", "analyze", "acl", "attach", "attachments", "gc", "renumber",
 		"sync", "history", "restore", "secrets",
-		"relation-history", "relation-restore", "history-purge", "relation-history-purge":
+		"relation-history", "relation-restore", "history-purge", "relation-history-purge",
+		"dev":
 		return true
 	case "migrate":
 		// Bare `rela migrate` (config-file migration) deliberately gets NO

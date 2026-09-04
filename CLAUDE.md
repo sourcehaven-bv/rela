@@ -660,6 +660,14 @@ Rules when touching this:
   rows). Migration steps must stay idempotent — re-run IS the crash
   recovery. The Lua step is a pure transform (patch in, patch out, engine
   applies); never hand it a write handle.
+- **Perf seeding** (TKT-1U8XYN, `internal/perfseed`, `rela dev seed`) is the
+  fourth raw-store exception, under the same terms: operator shell, attributed
+  (`perf-seed` tool), one `perf-seed` audit record, and it refuses a non-empty
+  store. Because nothing above the store runs, the generator keeps the
+  invariants the store cannot: ids minted by construction and validated, the
+  single `unique:` property unique by construction, every edge endpoint
+  emitted by the same generator. Do not route it through entitymanager to
+  "fix" that — 20k automations per seed is the cost it exists to avoid.
 - DSN is read from the `RELA_DATABASE_URL` env var **only** — there is no
   `--database-url` flag, so the credential never lands in `ps`/shell history.
   `appbuild.Discover` reads the env into `appbuild.Config.DatabaseURL`; the
