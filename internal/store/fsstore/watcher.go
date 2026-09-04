@@ -47,9 +47,14 @@ func (s *FSStore) emit(ev store.Event) {
 	}
 }
 
-// Close shuts down the store, persists the index, and closes all subscriber channels.
+// Close shuts down the store, persists the index, closes all subscriber
+// channels, and uninstalls the self-echo recorder from the FS so a
+// store that outlives this one on the same FS is the only one fed.
 func (s *FSStore) Close() error {
 	s.StopWatching()
+	if s.unwireEchoes != nil {
+		s.unwireEchoes()
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -65,15 +70,29 @@ func (s *FSStore) Close() error {
 
 // --- external-change watcher ---
 
+// ErrWatchNeedsObservableFS is returned by StartWatching when the
+// store's FS offered no post-write observer at New (see Config.FS).
+// Without one the watcher cannot tell its own writes from external
+// edits and would re-deliver every store write as an Updated event,
+// so it refuses to start rather than run degraded (BUG-S24X52).
+var ErrWatchNeedsObservableFS = errors.New(
+	"fsstore: StartWatching requires an FS with a post-write observer (SafeFS or MemFS); " +
+		"wrap the FS with storage.NewSafeFS at the entry point")
+
 // StartWatching begins watching the entities and relations directories for
 // external file changes (edits made outside the store API). Detected
 // changes are reconciled into the in-memory index and re-emitted as
-// store.Events. Self-writes are suppressed via the echoTracker.
+// store.Events. Self-writes are suppressed via the echoTracker, which
+// New feeds from the FS's post-write observer; an FS without one makes
+// this return [ErrWatchNeedsObservableFS].
 //
 // Calling StartWatching more than once is a no-op after the first call.
 //
 // coverage-ignore-func: requires real filesystem events via fsnotify
 func (s *FSStore) StartWatching() error {
+	if s.echoWiringErr != nil {
+		return s.echoWiringErr
+	}
 	s.mu.Lock()
 	if s.extWatcher != nil {
 		s.mu.Unlock()

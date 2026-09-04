@@ -44,7 +44,16 @@ const recentHashCapacity = 4096
 // Rooted is the primary write/read surface — every data I/O flows
 // through it, so path validation sits in one auditable place.
 // FS remains for raw operations that legitimately need absolute
-// paths (watcher self-echo reads from fsnotify events).
+// paths (watcher self-echo reads from fsnotify events). It is expected
+// to be the bottom-most FS — the one whose WriteFile puts bytes on disk
+// (SafeFS in production, MemFS in tests) — because [New] installs the
+// store's self-echo recorder on it through the postWriteObservable
+// capability. Not enforced by the type system (a decorator that swallows
+// OnPostWrite would look identical); the runtime consequence of an FS
+// without the capability is that the store still opens (the CLI never
+// watches) but [FSStore.StartWatching] returns
+// [ErrWatchNeedsObservableFS] rather than deliver every self-write back
+// as an external edit (BUG-S24X52).
 //
 // EntitiesKey/RelationsKey/AttachmentsKey/CacheKey are root-relative
 // forward-slash keys (e.g. "entities", ".rela"), not absolute paths.
@@ -156,8 +165,12 @@ type attachMeta struct {
 // key-resolution and markdown-codec groups off FSStore, so the
 // content-states surface above sits on a smaller base.
 //
+// (92 → 92 / 36 → 35, BUG-S24X52: exported RecordWrite deleted — New
+// installs the unexported recordSelfWrite on the FS directly, so no
+// external caller needs an entry point.)
+//
 //plimsoll:max-methods=92
-//plimsoll:max-exported-methods=36
+//plimsoll:max-exported-methods=35
 type FSStore struct {
 	// rooted is the validated-key I/O surface. Every read, write,
 	// directory op, and remove that operates on files under the
@@ -214,21 +227,33 @@ type FSStore struct {
 	// echoes tracks the hash of bytes most recently written by
 	// this store so the external-change watcher can distinguish
 	// its own writes (self-echoes) from genuine external edits.
-	// Fed by SafeFS.OnPostWrite with the bytes that landed on disk.
+	// Fed by the FS's post-write observer (installed in New) with
+	// the bytes that landed on disk.
 	echoes *echoTracker
+	// echoWiringErr is nil when New installed the self-echo recorder
+	// on the FS, else the error StartWatching returns: a watcher
+	// without echo suppression is a bug, not a degraded mode
+	// (BUG-S24X52). Immutable after New — read without mu.
+	echoWiringErr error
+	// unwireEchoes uninstalls the recorder; Close calls it so a
+	// closed store stops feeding its LRU from a shared FS.
+	// Nil: accepted — set only when wiring succeeded.
+	unwireEchoes func()
+}
+
+// postWriteObservable is the capability fsstore needs from its FS to
+// learn the bytes that actually landed on disk: SafeFS in production,
+// MemFS in tests. Declared here, at the consumer, and discovered by
+// type assertion in [New] so the wiring lives with the type that owns
+// the echo tracker — the previous home (app.FSFactory) lost it in a
+// refactor and nothing noticed (BUG-S24X52). The returned remover is
+// what lets Close uninstall exactly this store's recorder.
+type postWriteObservable interface {
+	OnPostWrite(storage.WriteObserver) (remove func())
 }
 
 // compile-time interface check
 var _ store.Store = (*FSStore)(nil)
-
-// RecordWrite is the post-write observer entry point. Typically
-// wired via SafeFS.OnPostWrite(store.RecordWrite). The watcher
-// uses the recorded hash to suppress self-echoes.
-//
-// Signature matches storage.WriteObserver.
-func (s *FSStore) RecordWrite(path string, content []byte) {
-	s.echoes.Recorded(path, content)
-}
 
 // New creates a new filesystem-backed store. It scans the entities and
 // relations directories to build the in-memory index, and loads or rebuilds
@@ -286,7 +311,33 @@ func New(cfg Config) (*FSStore, error) {
 	}
 	s.loadAttachmentsIndex()
 
+	// Self-echo recording is installed here, not by the caller: the
+	// watcher's correctness depends on it, and a construction site
+	// that forgets is indistinguishable from one that works until the
+	// watcher runs. Installed LAST so a failed open leaves nothing on
+	// the caller's FS. An FS without the capability is tolerated at
+	// open (CLI paths never watch) and refused at StartWatching.
+	if obs, ok := cfg.FS.(postWriteObservable); ok {
+		s.unwireEchoes = obs.OnPostWrite(s.recordSelfWrite)
+	} else {
+		s.echoWiringErr = ErrWatchNeedsObservableFS
+	}
+
 	return s, nil
+}
+
+// recordSelfWrite is the post-write observer New installs. It records
+// only writes under this store's own entities/relations directories:
+// the FS may be shared by several stores (rela-desktop project
+// switches, a multi-project host), and a hash recorded for another
+// store's file would be a wasted LRU slot at best and, for two stores
+// over ONE root, would suppress the other store's genuine write as an
+// echo. Two live stores over one root is unsupported regardless —
+// their indexes diverge — but the recorder must not make it quieter.
+func (s *FSStore) recordSelfWrite(path string, data []byte) {
+	if s.isEntityPath(path) || s.isRelationPath(path) {
+		s.echoes.Recorded(path, data)
+	}
 }
 
 // loadAttachmentsIndex walks the attachments directory and populates
