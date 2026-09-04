@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -43,6 +44,12 @@ type mcpServices struct {
 	// stopSchemaWatch releases the schema.yaml subscription. Nil until
 	// [mcpServices.watchSchema] runs.
 	stopSchemaWatch func()
+	// closed is set by Close. The watcher's Stop does NOT wait for an
+	// in-flight callback, so a change event can be mid-flight when shutdown
+	// begins; without this flag that callback would assemble a whole new
+	// service generation — job queue, mail worker, GC sweep — against a store
+	// Close has already torn down, and nothing would ever stop them.
+	closed bool
 }
 
 // current returns the live services bundle.
@@ -97,10 +104,20 @@ func newMCPServices(startDir string) (*mcpServices, error) {
 // intermediate save while the operator is mid-edit must not take the session
 // down.
 func (s *mcpServices) reload() (relamcp.Deps, error) {
+	// Read the current assembly under the lock, then build the successor
+	// OUTSIDE it. Assembly re-reads the schema, compiles transitions and
+	// computed properties and starts a job queue; holding mu across all of
+	// that would make a shutdown arriving mid-reload wait for it.
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
+	if s.closed {
+		s.mu.Unlock()
+		// Shutdown won the race with a file event. Returning an error rather
+		// than assembling is the whole point: watchSchema logs and moves on.
+		return relamcp.Deps{}, errors.New("reload schema: services are closed")
+	}
 	old := s.svc
+	s.mu.Unlock()
+
 	base, err := appbuild.NewSharedBase(old.Base().Config(), appbuild.WithACL(acl.NopACL{}))
 	if err != nil {
 		return relamcp.Deps{}, fmt.Errorf("reload schema: %w", err)
@@ -109,9 +126,21 @@ func (s *mcpServices) reload() (relamcp.Deps, error) {
 	// searchCloser is nil on purpose: the closer belongs to the ORIGIN
 	// assembly, which retains it and closes it at shutdown. Handing it to the
 	// successor too would give two bundles the same closer and close it twice.
-	next, err := base.Assemble(old.Store(), old.Searcher(), old.VisibleSearcher(), nil)
+	next, err := base.ForReassembly().Assemble(old.Store(), old.Searcher(), old.VisibleSearcher(), nil)
 	if err != nil {
 		return relamcp.Deps{}, fmt.Errorf("reload schema: %w", err)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Re-check: Close may have run, or another reload may have landed, while
+	// this one was assembling. Either way the successor is already obsolete
+	// and must be retired rather than published — otherwise its job queue and
+	// mail worker outlive the process's teardown.
+	if s.closed || s.svc != old {
+		next.CloseAssembly()
+		return relamcp.Deps{}, errors.New("reload schema: superseded before publish")
 	}
 
 	// Retire the superseded assembly's background workers (job queue, mail,
@@ -131,7 +160,9 @@ func (s *mcpServices) reload() (relamcp.Deps, error) {
 // watch (or a subscribe failure) is logged and the server runs with the schema
 // it booted with — exactly the pre-TKT-NU247U behavior.
 func (s *mcpServices) watchSchema(srv *relamcp.Server) {
-	sub, ok := s.current().Config().(config.Subscriber)
+	// One snapshot for both reads (CLAUDE.md: capture state once per operation).
+	svc := s.current()
+	sub, ok := svc.Config().(config.Subscriber)
 	if !ok {
 		slog.Debug("mcp: config loader does not support watching; schema hot-reload disabled")
 		return
@@ -140,7 +171,7 @@ func (s *mcpServices) watchSchema(srv *relamcp.Server) {
 	// Subscribe to the schema file that was actually discovered — a project
 	// on the legacy metamodel.yaml name must watch that file, not the
 	// canonical one it does not have.
-	name := filepath.Base(s.current().Paths().SchemaPath)
+	name := filepath.Base(svc.Paths().SchemaPath)
 
 	stop, err := sub.Subscribe(context.Background(), name, func() {
 		deps, err := s.reload()
@@ -161,6 +192,14 @@ func (s *mcpServices) watchSchema(srv *relamcp.Server) {
 	})
 	if err != nil {
 		slog.Warn("mcp: schema watcher not started; hot-reload disabled", "error", err)
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		// Close ran while we were subscribing; nothing will read the handle.
+		stop()
 		return
 	}
 	s.stopSchemaWatch = stop
@@ -208,6 +247,9 @@ func (s *mcpServices) deps() relamcp.Deps {
 func (s *mcpServices) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Set before anything is torn down: a reload callback already blocked on
+	// mu must observe this and abort rather than rebuild on a dead store.
+	s.closed = true
 	if s.stopSchemaWatch != nil {
 		s.stopSchemaWatch()
 		s.stopSchemaWatch = nil

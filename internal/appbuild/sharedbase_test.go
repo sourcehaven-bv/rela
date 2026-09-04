@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
@@ -350,5 +351,65 @@ func TestServices_BaseRoundTrips(t *testing.T) {
 	}
 	if got, want := len(next.Meta().Entities), len(base.Meta().Entities); got != want {
 		t.Errorf("successor base has %d entity types, want %d", got, want)
+	}
+}
+
+// countingCloser records how many times it was closed.
+type countingCloser struct{ n atomic.Int32 }
+
+func (c *countingCloser) Close() error { c.n.Add(1); return nil }
+
+// TestReassembly_ClosesSearchCloserExactlyOnce converts the "successor must not
+// get the searchCloser" rule from a comment into a guarantee.
+//
+// The origin assembly owns the search closer; a successor is assembled with nil
+// so the two never share it. Passing it to both would double-close — on
+// postgres that closer is the shared pgxpool.
+func TestReassembly_ClosesSearchCloserExactlyOnce(t *testing.T) {
+	base := newSharedBase(t)
+
+	st := memstore.New()
+	searcher := search.New(st, search.NewLinearSearch())
+	closer := &countingCloser{}
+
+	origin, err := base.Assemble(st, searcher, nil, closer)
+	if err != nil {
+		t.Fatalf("Assemble origin: %v", err)
+	}
+	successor, err := base.ForReassembly().Assemble(
+		origin.Store(), origin.Searcher(), origin.VisibleSearcher(), nil)
+	if err != nil {
+		t.Fatalf("Assemble successor: %v", err)
+	}
+
+	// The shutdown sequence the reload wiring runs.
+	origin.CloseAssembly()
+	successor.CloseAssembly()
+	if err := origin.Close(); err != nil {
+		t.Fatalf("Close origin: %v", err)
+	}
+
+	if got := closer.n.Load(); got != 1 {
+		t.Errorf("search closer closed %d times, want exactly 1", got)
+	}
+}
+
+// TestReassembly_SkipsStoreOpenOnlySteps pins that a re-assembly is marked as
+// such. The postgres derived-schema reconciler issues DDL and is documented
+// boot-only on pgstore.Store.Reconcile — running it off a file watcher would
+// mean CREATE/DROP INDEX on every save, and a metamodel saved mid-edit that
+// lost a `unique:` would DROP the live index.
+func TestReassembly_SkipsStoreOpenOnlySteps(t *testing.T) {
+	base := newSharedBase(t)
+
+	reassembly := base.ForReassembly()
+	if !reassembly.IsReassembly() {
+		t.Error("ForReassembly() must mark the base as re-assembling")
+	}
+	if base.IsReassembly() {
+		t.Error("ForReassembly() must not mutate the receiver — it is shared")
+	}
+	if reassembly.Meta() != base.Meta() {
+		t.Error("a re-assembly base must carry the same metamodel")
 	}
 }

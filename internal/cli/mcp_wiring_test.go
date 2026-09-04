@@ -357,3 +357,48 @@ func TestMCPServices_WatchSchemaFiresOnRealEdit(t *testing.T) {
 		return ok
 	}, 5*time.Second, 50*time.Millisecond, "watcher never picked up the schema edit")
 }
+
+// TestMCPServices_ReloadAfterCloseIsRefused pins the shutdown race.
+//
+// storage.Watcher.Stop does not wait for an in-flight OnChange, so a schema
+// event can be mid-flight when Close begins. Without the closed check, that
+// callback assembled a whole new generation — job queue, mail worker, GC sweep
+// — against a store Close had already torn down, and nothing would ever stop
+// them. On postgres that is a leaked connection pool per occurrence.
+func TestMCPServices_ReloadAfterCloseIsRefused(t *testing.T) {
+	root := seedProject(t)
+
+	svc, err := mcpServicesForTest(t, root)
+	require.NoError(t, err)
+	require.NoError(t, svc.Close())
+
+	writeSchema(t, root, schemaWithRisk)
+
+	_, err = svc.reload()
+	require.Error(t, err, "reload after Close must be refused, not serviced")
+	assert.Same(t, svc.origin, svc.svc,
+		"a refused reload must not swap in a new assembly built on a closed store")
+}
+
+// TestMCPServices_WatchSchemaAfterCloseDoesNotResurrect is the same property
+// through the public path: the watcher callback must be harmless once Close
+// has run.
+func TestMCPServices_WatchSchemaAfterCloseDoesNotResurrect(t *testing.T) {
+	root := seedProject(t)
+
+	svc, err := mcpServicesForTest(t, root)
+	require.NoError(t, err)
+
+	srv, err := relamcp.NewServer(svc.Deps(), "test",
+		relamcp.WithPrincipal(principal.Principal{User: "t", Tool: principal.ToolMCP}))
+	require.NoError(t, err)
+	svc.watchSchema(srv)
+
+	require.NoError(t, svc.Close())
+
+	// Whatever the watcher does now, it must not leave a live successor.
+	writeSchema(t, root, schemaWithRisk)
+	_, err = svc.reload()
+	require.Error(t, err)
+	assert.Same(t, svc.origin, svc.svc)
+}

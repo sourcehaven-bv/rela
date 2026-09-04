@@ -1287,6 +1287,30 @@ type SharedBase struct {
 	aclPolicy *acl.Policy
 	meta      *metamodel.Metamodel
 	worlds    worlds.Compiled
+	// reassembly marks a base built to re-assemble against an ALREADY-OPEN
+	// store, so [assemble] skips the store-open-only steps. Set by
+	// [SharedBase.ForReassembly]; false for a base that will open its own store.
+	reassembly bool
+}
+
+// IsReassembly reports whether this base is marked to re-assemble against an
+// already-open store (see [SharedBase.ForReassembly]).
+func (b *SharedBase) IsReassembly() bool { return b.reassembly }
+
+// ForReassembly returns a copy of this base marked as re-assembling against a
+// store that is already open — the schema hot-reload case (TKT-NU247U).
+//
+// It skips the store-open-only work in [SharedBase.Assemble]: today that is
+// the postgres derived-schema reconciliation, which issues DDL and is
+// documented boot-only on `pgstore.Store.Reconcile`. Everything metamodel-
+// derived is still rebuilt, which is the point of reloading.
+//
+// Use it for EVERY assembly after the first against a given store. A base
+// used to open a store must not be marked.
+func (b *SharedBase) ForReassembly() *SharedBase {
+	next := *b
+	next.reassembly = true
+	return &next
 }
 
 // Worlds returns the compiled world scopes this base was built from.
@@ -1597,7 +1621,7 @@ func cascadeReadDeps(
 func assemble(
 	base *SharedBase, st store.Store, searcher search.Searcher,
 	visible search.VisibleSearcher, searchCloser io.Closer,
-) (*Services, error) {
+) (svc *Services, retErr error) {
 	cfg := base.cfg
 
 	visible, err := resolveVisibleSearcher(visible, searcher, st)
@@ -1643,6 +1667,16 @@ func assemble(
 	if err != nil {
 		return nil, err
 	}
+	// buildRuntimeServices STARTS the job queue (worker pool; on postgres a
+	// connection pool too), so every error path below this point must stop it.
+	// Boot could get away without this — a failed boot exits the process — but
+	// assembly is now also a RELOAD path (TKT-NU247U): a schema that loads yet
+	// fails to assemble would otherwise leak one queue per save.
+	defer func() {
+		if retErr != nil {
+			closeJobQueue(jobQueue)
+		}
+	}()
 
 	mgr, err := buildEntityManager(base, st, aliases, templater, resolvedACL,
 		autoEngine, cascadeRunner, readDeps, versions, tw, computedSet)
@@ -1662,7 +1696,19 @@ func assemble(
 	// indexes so uniqueness is enforced atomically, and publish the current
 	// unique pairs so a violation can be attributed to a property (TKT-3Q0GP1).
 	// Failures degrade to warnings — a derived-schema problem never fails boot.
-	reconcileDerivedSchemaIfSupported(context.Background(), st, base)
+	//
+	// STORE-OPEN ONLY, skipped on re-assembly. `pgstore.Store.Reconcile` is
+	// documented boot-only and says re-reconciling on a live reload "needs its
+	// own debounce/lock policy for issuing DDL off a file watcher" — that
+	// policy does not exist, so a reload must not issue DDL. Two things would
+	// go wrong if it did: CREATE/DROP INDEX on every editor autosave, and a
+	// metamodel saved mid-edit that still parses but has lost a `unique:`
+	// declaration would DROP the live index (desired-state reconciliation
+	// treats absent as delete). A `unique:` added without a restart stays
+	// enforced by the application scan; `rela db reconcile` applies it.
+	if !base.reassembly {
+		reconcileDerivedSchemaIfSupported(context.Background(), st, base)
+	}
 
 	// Evaluate the data-migration gate (adopt compatible schema-shape
 	// changes, warn on incompatible ones) and start the drift GC sweep
@@ -1804,9 +1850,13 @@ const jobQueueShutdownTimeout = 5 * time.Second
 // [Services.Close] on the LAST assembled Services does that, and running both
 // is safe because each runs its teardown exactly once.
 //
-// Safe to call repeatedly and from multiple goroutines. Calling Close after
-// CloseAssembly still closes the store and search backend; the background
-// services are not stopped twice.
+// Safe to call repeatedly, and concurrently with Close: the shared sync.Once
+// runs the teardown exactly once. Calling Close after CloseAssembly still
+// closes the store and search backend.
+//
+// It is NOT safe against a concurrent [Services.Jobs] — the teardown clears
+// the queue handle, and that field carries no lock. Retire an assembly only
+// once nothing is reaching for its background services.
 func (s *Services) CloseAssembly() {
 	s.assemblyCloseOnce.Do(s.stopBackgroundServices)
 }
@@ -1829,13 +1879,24 @@ func (s *Services) stopBackgroundServices() {
 		s.gcStop = nil
 	}
 	if s.jobQueue != nil {
-		// Bounded: a queue that will not drain must not wedge shutdown.
-		ctx, cancel := context.WithTimeout(context.Background(), jobQueueShutdownTimeout)
-		if err := s.jobQueue.Close(ctx); err != nil {
-			slog.Warn("appbuild: failed to close job queue", "error", err)
-		}
-		cancel()
+		closeJobQueue(s.jobQueue)
 		s.jobQueue = nil
+	}
+}
+
+// closeJobQueue stops q within the shutdown budget. Shared by the teardown
+// path and by assemble's error path, so a queue is never dropped un-closed.
+//
+// Nil: accepted (no-op).
+func closeJobQueue(q jobs.Queue) {
+	if q == nil {
+		return
+	}
+	// Bounded: a queue that will not drain must not wedge shutdown.
+	ctx, cancel := context.WithTimeout(context.Background(), jobQueueShutdownTimeout)
+	defer cancel()
+	if err := q.Close(ctx); err != nil {
+		slog.Warn("appbuild: failed to close job queue", "error", err)
 	}
 }
 
