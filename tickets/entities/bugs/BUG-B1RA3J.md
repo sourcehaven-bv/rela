@@ -55,8 +55,9 @@ silently under the first fix, with no error, which is the shape the store fuzz
 target generates. The fix now walks every container shape a property value can
 take; the characterization lives in the `needsQuoting` godoc and REV-W5Z1KM
 records the findings. Property KEYS go through the same emitter and had the
-same defect (a key starting with a newline read back as `""`); `KeyNode`
-covers them.
+same defect (a key starting with a newline read back as `""`), and a key
+yaml.v3 resolves to null (`~`) dropped the property outright; `KeyNode`
+covers both.
 
 ## Decision: quote the scalar (option D)
 
