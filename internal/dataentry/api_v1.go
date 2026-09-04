@@ -149,6 +149,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_openapi.json", a.handleV1OpenAPI)
 	mux.HandleFunc("/api/v1/_commands", a.handleV1Commands)
 	mux.HandleFunc("/api/v1/_transforms", a.export.handleV1Transforms)
+	mux.HandleFunc("/api/v1/_comments/", a.handleV1Comments)
 	mux.HandleFunc("/api/v1/_templates/", a.handleV1Templates)
 	mux.HandleFunc("/api/v1/_views/", a.views.handleV1Views)
 	a.registerCopyRoutes(mux)

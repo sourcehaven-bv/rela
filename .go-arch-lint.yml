@@ -411,6 +411,11 @@ deps:
       - calfeed
       - caldavalias
       - canonical
+      # The commentary layer (TKT-FIO205). dataentry owns the HTTP surface and
+      # the ACL gating; it does NOT choose a comment backend — like userstate
+      # above, that is a wiring-site decision, so only the `comments` package
+      # is granted here, never filecomments/memcomments.
+      - comments
       - cmdexec
       - config
       - conflict

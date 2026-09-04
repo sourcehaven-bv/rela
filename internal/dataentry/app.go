@@ -16,6 +16,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/caldavalias"
+	"github.com/Sourcehaven-BV/rela/internal/comments"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -208,7 +209,11 @@ type App struct {
 	// `worlds` because the two are injected from different places: the world
 	// LOOKUP is a compiled map, this is a store-backed capability.
 	worldNeighbors *worldNeighbors
-	searcher       search.Searcher
+	// comments is the commentary service, or nil when the metamodel declares
+	// no enabled `comments:` block. Nil is the "feature absent" signal: the
+	// comment routes 404 and no storage is touched.
+	comments *comments.Service
+	searcher search.Searcher
 	// visibleSearcher is the ACL-scoped search seam (TKT-BA8BSX):
 	// executeQuery routes free-text searches through it so /_search
 	// and the _position search scope only ever see hits the request
