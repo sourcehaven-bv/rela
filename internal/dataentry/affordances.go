@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -1215,7 +1216,10 @@ func (svc affordanceService) attachEntityAffordances(ctx context.Context, e *ent
 	// are omitted from `_attachments` — otherwise the hidden-field boundary
 	// the rest of the response maintains would leak the file's metadata and a
 	// working download href.
-	attachments := svc.computeAttachments(ctx, e, result.Self, verdicts)
+	// Attachments hang off the ENTITY, not the face — every store keys them
+	// by bare id — so their hrefs are built from the bare address even when
+	// `_self` names a face. A faced href would 404 on the download route.
+	attachments := svc.computeAttachments(ctx, e, bareSelfHref(result.Self), verdicts)
 	result.Attachments = &attachments
 }
 
@@ -1358,6 +1362,13 @@ func (svc affordanceService) computeFaces(
 			metamodel.DeclaredFace(m, e.Type, out[j].Face)
 	})
 	return out
+}
+
+// bareSelfHref strips the face from a `_self` href (`.../POL-1@published` →
+// `.../POL-1`). Neither a plural nor an id may contain the separator, so the
+// first one is the face's.
+func bareSelfHref(self string) string {
+	return strings.SplitN(self, entityPkg.StateRefSeparator, 2)[0]
 }
 
 // faceRef spells the explicit address of e's face at the stored coordinate:

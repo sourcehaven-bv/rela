@@ -1175,14 +1175,17 @@ func NewApp(
 		store:   st,
 		manager: em, // concrete; writeHandler narrows to entityMutator
 
-		reader:             app.reader,
-		serializer:         app.serializer,
-		affordances:        app.affordances,
-		acl:                func() acl.ACL { return app.acl },
-		audit:              func() audit.Audit { return app.auditSink },
-		gateRead:           app.gateReadOrNotFound,
-		denyAfford:         app.denyAffordance,
-		computeETag:        app.computeEntityETag,
+		reader:      app.reader,
+		serializer:  app.serializer,
+		affordances: app.affordances,
+		acl:         func() acl.ACL { return app.acl },
+		audit:       func() audit.Audit { return app.auditSink },
+		gateRead:    app.gateReadOrNotFound,
+		denyAfford:  app.denyAffordance,
+		computeETag: app.computeEntityETag,
+		faceEdges: func(ctx context.Context, e *entity.Entity) ([]*entity.Relation, map[string]bool, error) {
+			return servedFaceEdges(ctx, app.reader, app.worldNeighbors, app.visibleReader, e)
+		},
 		currentEdgesByPeer: app.currentEdgesByPeer,
 		engine:             func() *script.Engine { return app.scriptEngine },
 		luaDeps:            app.luaWriteDeps,

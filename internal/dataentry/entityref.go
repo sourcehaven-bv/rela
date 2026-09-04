@@ -76,6 +76,19 @@ func parseEntityRef(m *metamodel.Metamodel, entityType, raw string) (entityRef, 
 	return entityRef{ID: id, Face: entity.Face(stored), Explicit: true}, true
 }
 
+// bareEntityID parses an address and returns its BARE id, for the surfaces
+// that are addressed per entity rather than per row: attachments (files are
+// keyed by entity id in every store), documents, commands, scope navigation.
+// ok=false for an address the grammar rejects, rendered as the uniform
+// not-found by the caller.
+func bareEntityID(m *metamodel.Metamodel, entityType, raw string) (string, bool) {
+	ref, ok := parseEntityRef(m, entityType, raw)
+	if !ok {
+		return "", false
+	}
+	return ref.ID, true
+}
+
 // String renders the address back in its boundary serialization — the bare
 // id for the zero coordinate, `ID@face` otherwise. Used for error detail and
 // diagnostics, never as a store key.
@@ -88,9 +101,12 @@ func (ref entityRef) String() string {
 // combination the relation writers cannot honor, because they attach edges to
 // the entity's bare tail (entity.RelationOptions carries no face).
 //
-// Keys that are not a declared relation type (an inverse name, a typo) pass
-// through to the ordinary relation validation: an inverse edge's TAIL is the
-// other entity, so its face is not this address's concern.
+// Keys resolve exactly as the writer resolves them ([resolveDirection]), so
+// the guard and the executor cannot disagree about which entity is the tail:
+// an INCOMING edge's tail is the peer and passes through, but a SYMMETRIC
+// relation's inverse spelling still makes this address the tail and is
+// refused like the canonical name. An unknown key passes through to the
+// ordinary relation validation, which rejects it.
 func contentScopedRelationOn(
 	m *metamodel.Metamodel, ref entityRef, desired map[string]v1.RelationsUpdate,
 ) (relType string, refused bool) {
@@ -98,8 +114,12 @@ func contentScopedRelationOn(
 		return "", false
 	}
 	for key := range desired {
-		if def, ok := m.Relations[key]; ok && def.Scope.IsContent() {
-			return key, true
+		canonical, incoming, ok := resolveDirection(m, key)
+		if !ok || incoming {
+			continue
+		}
+		if def, found := m.Relations[canonical]; found && def.Scope.IsContent() {
+			return canonical, true
 		}
 	}
 	return "", false

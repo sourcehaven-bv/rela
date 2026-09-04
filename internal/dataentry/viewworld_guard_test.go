@@ -56,13 +56,6 @@ func TestExecuteViewCallersDeclareTheirWorld(t *testing.T) {
 		if perr != nil {
 			t.Fatalf("parse %s: %v", name, perr)
 		}
-		if name == "views.go" {
-			// The engine itself: executeView is a thin address-parsing
-			// wrapper that forwards its OWN world parameter to executeViewRef.
-			// That forward is not a surface choosing a world, so it is not a
-			// call site this guard is about.
-			continue
-		}
 		ast.Inspect(file, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
 			if !ok {
@@ -70,6 +63,13 @@ func TestExecuteViewCallersDeclareTheirWorld(t *testing.T) {
 			}
 			sel, ok := call.Fun.(*ast.SelectorExpr)
 			if !ok || sel.Sel == nil || (sel.Sel.Name != "executeView" && sel.Sel.Name != "executeViewRef") {
+				return true
+			}
+			if name == "views.go" && sel.Sel.Name == "executeViewRef" {
+				// The engine itself: executeView is a thin address-parsing
+				// wrapper that forwards its OWN world parameter to
+				// executeViewRef. That one forward is not a surface choosing
+				// a world. Any OTHER executeView call in the file is.
 				return true
 			}
 			checked++

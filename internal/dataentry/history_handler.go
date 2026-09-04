@@ -40,7 +40,16 @@ func handleV1History(a *App, w http.ResponseWriter, r *http.Request) {
 			"Path must be /_history/{type}/{id}[/{version}[/restore]]", "")
 		return
 	}
-	typeName, entityID := parts[0], parts[1]
+	typeName := parts[0]
+	// The id segment is an ADDRESS (`ID` or `ID@face`). An explicit face
+	// names the timeline directly; a bare id lets the request's world
+	// resolve it below. The row gate and the reader work on the bare id.
+	ref, ok := parseEntityRef(a.Meta(), typeName, parts[1])
+	if !ok {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return
+	}
+	entityID := ref.ID
 
 	if a.versions == nil {
 		// Non-postgres backend: no version history capability. This is a
@@ -93,6 +102,14 @@ func handleV1History(a *App, w http.ResponseWriter, r *http.Request) {
 	if ferr != nil {
 		writeGateError(w, r, ferr)
 		return
+	}
+	if ref.Explicit {
+		// An addressed face is the face, whatever the world would have
+		// resolved: the caller named the timeline they want. A denied
+		// world still answers as absent (historyFace said so above).
+		if present || !worldFromContext(r.Context()).blocksAllReads() {
+			face, present = ref.Face, true
+		}
 	}
 	if !present {
 		// The world resolves no face for this entity, so there is no history

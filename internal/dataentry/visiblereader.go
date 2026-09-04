@@ -146,7 +146,14 @@ func (vr visibleReader) getVisibleRef(
 		// A store miss is not-found, as on the default-world branch of
 		// getVisible: GetEntityState reports ErrNotFound for a missing state
 		// even when sibling states exist, which is exactly "no such row".
-		return nil, false, nil //nolint:nilerr // store miss == not-found, by design
+		// Anything else is an infrastructure fault; it still answers
+		// not-found (the inherited GetEntity contract) but is logged so an
+		// outage does not read as "no such face" with no operator signal.
+		if !errors.Is(gerr, store.ErrNotFound) {
+			slog.Warn("dataentry: reading an addressed face failed; answering not-found",
+				"type", entityType, "ref", ref.String(), "err", gerr)
+		}
+		return nil, false, nil
 	}
 	if !faceReadable(ctx, entityType, e.Face) {
 		return nil, false, nil

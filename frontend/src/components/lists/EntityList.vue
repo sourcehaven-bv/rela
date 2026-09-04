@@ -14,7 +14,7 @@ import { entityKeys } from '@/queries/entities'
 import { beginOptimisticRemove, rollbackOptimistic } from '@/queries/optimisticList'
 import { toApiOperator, filterStateToApiParams } from '@/utils/filters'
 import { entityDetailHref } from '@/utils/entityRoute'
-import { entityRef } from '@/utils/entityRef'
+import { entityRef, refFace } from '@/utils/entityRef'
 import { safeInternalHref, shouldDeferToBrowser } from '@/utils/openIntent'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { renderMarkdown } from '@/utils/markdown'
@@ -882,9 +882,17 @@ const { mutate: deleteEntityMutation } = useMutation({
 })
 
 async function requestDelete(entity: Entity) {
+  // Addressed to the row. On a bare face that is the entity; on a non-bare
+  // face it is that face only (the server's rule for `ID@face`), and the
+  // confirm says so — "delete" must not read as "unpublish" or the reverse.
+  const face = refFace(entityRef(entity))
+  const faceLabel = face ? schemaStore.faceLabel(entity.type, face) || face : ''
   const ok = await confirm({
-    title: 'Delete Entity?',
-    message: `Are you sure you want to delete '${entity.id}'? This action cannot be undone.`,
+    title: face ? 'Delete Face?' : 'Delete Entity?',
+    message: face
+      ? `Are you sure you want to delete the ${faceLabel} face of '${entity.id}'? ` +
+        'Its other faces are kept. This action cannot be undone.'
+      : `Are you sure you want to delete '${entity.id}'? This action cannot be undone.`,
     confirmLabel: 'Delete',
     danger: true,
   })

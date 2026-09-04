@@ -144,7 +144,8 @@ const bareEntityId = computed(() => refBareId(props.entityId))
 // (return_to / from precedence). Two parallel concerns: scope-nav walks
 // a list; backTarget answers "where do I go back to". Both can be active
 // at once.
-const { scopeNav, loadScopeNav, scopeTarget, navigateScope } = useScopeNavigation(() => props.entityId)
+// Scope navigation is per ENTITY (`_position` walks a list by bare id).
+const { scopeNav, loadScopeNav, scopeTarget, navigateScope } = useScopeNavigation(() => bareEntityId.value)
 const backTarget = useBackTarget()
 
 // State

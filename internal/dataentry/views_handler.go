@@ -80,6 +80,37 @@ func (h *viewsHandler) redactor() visibility.FieldRedactor {
 	return affRedactor{aff: func() affordanceService { return h.affordances }}
 }
 
+// sidePanelEntry resolves and gates the side panel's entry entity from its
+// address, writing the uniform not-found itself. Returns ok=false when a
+// response has been written.
+//
+// The id segment is an ADDRESS (`ID` or `ID@face`), the same grammar the
+// entity view accepts — the form that mounts this panel is opened on the
+// address of the row it edits. The row gate sees the bare id (ACL gate,
+// TKT-6N9O1Y: gated BEFORE any read so a denied principal gets a 404
+// indistinguishable from a missing id and the traversal never runs), and the
+// face half of a `type@face` grant is applied to the row that came back
+// (TKT-O7R2A1), with the same 404 so a denied face is indistinguishable from
+// an absent one.
+func (h *viewsHandler) sidePanelEntry(
+	w http.ResponseWriter, r *http.Request, s *Schema, entityType, entityID string,
+) (*entityPkg.Entity, bool) {
+	ref, ok := parseEntityRef(s.Meta, entityType, entityID)
+	if !ok {
+		writeV1Error(w, r, http.StatusNotFound, "entity_not_found", "Entity not found", "")
+		return nil, false
+	}
+	if !h.gateRead(w, r, entityType, ref.ID) {
+		return nil, false
+	}
+	entry, found := h.reader.getEntityRef(r.Context(), ref)
+	if !found || !faceReadable(r.Context(), entry.Type, entry.Face) {
+		writeV1Error(w, r, http.StatusNotFound, "entity_not_found", "Entity not found", "")
+		return nil, false
+	}
+	return entry, true
+}
+
 // handleV1SidePanel handles GET /api/v1/_sidepanel/{formId}/{entityId}.
 func (h *viewsHandler) handleV1SidePanel(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -110,23 +141,8 @@ func (h *viewsHandler) handleV1SidePanel(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// ACL gate (TKT-6N9O1Y): the side panel reveals the entry entity and its
-	// traversal neighbors. Gate the entry read BEFORE getEntity/executeSidePanel
-	// so a principal who cannot read it gets a 404 indistinguishable from a
-	// missing id, and the traversal never runs for a denied caller.
-	if !h.gateRead(w, r, form.EntityType, entityID) {
-		return
-	}
-
-	// Get the entry entity.
-	//
-	// The gateRead above authorized by (type, id), which a `type@face` grant is
-	// invisible to, and this reader is the RAW store — so the face half of the
-	// grant is owed here (TKT-O7R2A1). Same 404 the row gate writes, keeping a
-	// denied face indistinguishable from an absent one.
-	entry, found := h.reader.getEntity(r.Context(), entityID)
-	if !found || !faceReadable(r.Context(), entry.Type, entry.Face) {
-		writeV1Error(w, r, http.StatusNotFound, "entity_not_found", "Entity not found", "")
+	entry, ok := h.sidePanelEntry(w, r, s, form.EntityType, entityID)
+	if !ok {
 		return
 	}
 

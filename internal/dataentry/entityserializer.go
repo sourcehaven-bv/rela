@@ -202,7 +202,13 @@ func (s entitySerializer) forWireRelated(
 //
 // The bare face keeps the bare href: it IS the bare id, and appending its
 // declared name would break every existing client for no gain. A type with no
-// faces is unaffected.
+// faces is unaffected. This is deliberately NOT unified with [v1.Face.Ref],
+// which spells the bare face as `ID@<bare_face>` so a face SWITCH can name it
+// literally under a world: a WRITE never takes a world, so a PATCH or DELETE
+// to the bare id always lands on the bare face — the row a page showing the
+// bare face describes — and the bare href is therefore a correct write
+// address everywhere. Only a READ of a bare id is world-resolved, and the
+// face switcher is the one place the SPA reads by address (RR-RN3YGR).
 func selfHref(plural string, e *entityPkg.Entity, meta *metamodel.Metamodel) string {
 	if e.Face.IsDefault() {
 		return fmt.Sprintf("/api/v1/%s/%s", plural, e.ID)

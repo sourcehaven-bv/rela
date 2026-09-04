@@ -236,7 +236,14 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 		case "_actions":
 			a.handleV1EntityAction(w, r, typeName, parts[1], parts[3])
 		case "_attachments":
-			a.attachments.handleV1AttachmentRoute(w, r, typeName, plural, parts[1], parts[3])
+			// Attachments are per ENTITY (the store keys them by bare id), so
+			// a faced address names the same files as the bare one.
+			id, ok := bareEntityID(a.Meta(), typeName, parts[1])
+			if !ok {
+				writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+				return
+			}
+			a.attachments.handleV1AttachmentRoute(w, r, typeName, plural, id, parts[3])
 		default:
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
 		}
@@ -247,7 +254,12 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 		case "relations":
 			a.handleV1RelationTarget(w, r, typeName, parts[1], parts[3], parts[4])
 		case "_attachments":
-			a.attachments.handleV1AttachmentFileRoute(w, r, typeName, parts[1], parts[3], parts[4])
+			id, ok := bareEntityID(a.Meta(), typeName, parts[1])
+			if !ok {
+				writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+				return
+			}
+			a.attachments.handleV1AttachmentFileRoute(w, r, typeName, id, parts[3], parts[4])
 		default:
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
 		}

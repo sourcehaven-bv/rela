@@ -118,7 +118,12 @@ type writeHandler struct {
 	denyAfford func(
 		ctx context.Context, w http.ResponseWriter, target *entityPkg.Entity, denial AffordanceDenialError,
 	)
-	computeETag        func(ctx context.Context, e *entityPkg.Entity) string
+	computeETag func(ctx context.Context, e *entityPkg.Entity) string
+	// faceEdges is [servedFaceEdges] bound to the App's neighbor wiring: the
+	// outgoing edges of the face an entity IS, with the neighbor ids the
+	// caller may see. The write path answers with the row it wrote, so it
+	// owes the row's own edges, not the bare id's union of every face's.
+	faceEdges          func(ctx context.Context, e *entityPkg.Entity) ([]*entityPkg.Relation, map[string]bool, error)
 	currentEdgesByPeer func(
 		ctx context.Context, entityID, canonical string, incoming bool,
 	) map[string]*entityPkg.Relation
@@ -411,9 +416,14 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// The FACE gate, as on the read path: a face this principal may not read
+	// must 404 here exactly as it does on GET. Without it a denied face
+	// reaches the write ACL and answers 403 while an absent one answers 404,
+	// and the status code alone tells a probing caller which content states
+	// exist — the existence the `type@face` read grant withholds.
 	entity, found := h.reader.getEntityRef(r.Context(), ref)
-	if !found || entity.Type != typeName {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
+	if !found || entity.Type != typeName || !faceReadable(r.Context(), typeName, entity.Face) {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
 	}
 
@@ -562,8 +572,18 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	rels := h.reader.outgoingRelations(r.Context(), entity.ID)
-	result := h.serializer.forWire(r.Context(), entity, rels, h.schema().Meta, plural)
+	// The edges OF THE FACE JUST WRITTEN, through the same face-scoped seam
+	// the read surfaces use. The bare-id reader returns the UNION of every
+	// face's content-scoped edges, so a PATCH to the published face would
+	// answer with the draft's links beside it — the mixed-face response the
+	// seam exists to prevent, on a body the SPA feeds straight back into its
+	// relation editor.
+	rels, visibleNeighbors, rerr := h.faceEdges(r.Context(), entity)
+	if rerr != nil {
+		writeGateError(w, r, rerr)
+		return
+	}
+	result := h.serializer.forWireScoped(r.Context(), entity, rels, visibleNeighbors, h.schema().Meta, plural)
 	if len(warnings) > 0 {
 		result.Warnings = warnings
 	}
@@ -600,9 +620,11 @@ func (h *writeHandler) handleV1DeleteEntity(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// The FACE gate too — see handleV1UpdateEntity: a denied face must be the
+	// same 404 as an absent one, never a 403 that confirms it exists.
 	entity, found := h.reader.getEntityRef(r.Context(), ref)
-	if !found || entity.Type != typeName {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
+	if !found || entity.Type != typeName || !faceReadable(r.Context(), typeName, entity.Face) {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
 	}
 
