@@ -51,9 +51,10 @@ vi.mock('@/api/copies', () => ({
 // The confirm dialog is a host-bound singleton (App.vue); here it records
 // what it was asked and answers no, so a delete test can assert the WORDING
 // without a write leaving the client.
-const confirmMock = vi.fn(async () => false)
+type ConfirmOpts = { title: string; message: string }
+const confirmMock = vi.fn<(opts: ConfirmOpts) => Promise<boolean>>(async () => false)
 vi.mock('@/composables/useConfirm', () => ({
-  useConfirm: () => ({ confirm: (...a: unknown[]) => confirmMock(...(a as [])) }),
+  useConfirm: () => ({ confirm: (opts: ConfirmOpts) => confirmMock(opts) }),
   withConfirmError: (fn: unknown) => fn,
 }))
 
@@ -481,7 +482,7 @@ describe('EntityDetail world binding', () => {
       await del!.trigger('click')
       await flushPromises()
       expect(confirmMock).toHaveBeenCalled()
-      const opts = confirmMock.mock.calls[0][0] as { title: string; message: string }
+      const opts = confirmMock.mock.calls[0][0]
       expect(opts.title).toBe('Delete Face?')
       expect(opts.message).toContain('nl face')
     })
