@@ -287,16 +287,37 @@ func FuzzCloneNestedValues(f *testing.F, factory FuzzFactory) {
 }
 
 // FuzzPropertyValuesTypeZoo verifies PropertyValues and Search filters
-// handle all property value types without panicking.
+// handle all property value types without panicking, and that every accepted
+// property value reads back equal to what was written.
+//
+// The round-trip half applies the same directional oracle as
+// createEntityOrSkip: anything storeutil.ValidateProperties rejects, the
+// store MUST reject; anything it accepts MUST come back byte-for-byte. It
+// exists because both halves have failed silently before. BUG-B1RA3J: a
+// value fsstore wrote as a block scalar that read back as "" with no error.
+// BUG-X7ICNM: invalid UTF-8 that pgstore "stored" as U+FFFD and reported
+// success. A target that only checked for an absent error passed over both.
 func FuzzPropertyValuesTypeZoo(f *testing.F, factory FuzzFactory) {
 	f.Add("prop", 0, "hello")
 	f.Add("prop", 1, "42")
 	f.Add("prop", 2, "true")
 	f.Add("prop", 3, "")
 	f.Add("prop", 4, "a,b,c")
+	f.Add("prop", 0, "\n0")     // BUG-B1RA3J: block scalar yaml.v3 cannot read back
+	f.Add("prop", 5, "\n")      // BUG-B1RA3J: silent loss, nested
+	f.Add("prop", 0, "\n\xc80") // BUG-X7ICNM: invalid UTF-8
+	f.Add("prop", 5, "\xc8")    // BUG-X7ICNM: invalid UTF-8, nested
+	f.Add("prop", 0, "a\x00b")  // BUG-X7ICNM: NUL, which Postgres jsonb cannot hold
 
 	f.Fuzz(func(t *testing.T, propName string, valueType int, raw string) {
 		if entity.IsReservedEntityKey(propName) {
+			return
+		}
+		// Names storeutil.ValidateProperty rejects (empty, containing "/")
+		// have no agreed contract yet: only sqlitestore enforces the rule,
+		// and only on PropertyValues (BUG-CQYD5X). Skipped rather than asserted
+		// either way until that is settled.
+		if storeutil.ValidateProperty(propName) != nil {
 			return
 		}
 
@@ -305,7 +326,11 @@ func FuzzPropertyValuesTypeZoo(f *testing.F, factory FuzzFactory) {
 
 		e := entity.New("T-1", "ticket")
 
-		switch valueType % 6 {
+		// Go's % keeps the sign, so a negative valueType matched no case and
+		// the entity went in with NO property — which let an invalid-UTF-8
+		// name skip the write gate and reach PropertyValues, where only
+		// pgstore refuses it (BUG-CQYD5X). Every input now sets a property.
+		switch ((valueType % 6) + 6) % 6 {
 		case 0:
 			e.Properties[propName] = raw
 		case 1:
@@ -320,7 +345,21 @@ func FuzzPropertyValuesTypeZoo(f *testing.F, factory FuzzFactory) {
 			e.Properties[propName] = map[string]any{"v": raw}
 		}
 
-		require.NoError(t, s.CreateEntity(bg, e))
+		want := e.Clone()
+		err := s.CreateEntity(bg, e)
+		if ruleErr := storeutil.ValidateProperties(want.Properties); ruleErr != nil {
+			// Not merely "some error": the store must have refused for the
+			// rule's reason, or a conflict or I/O failure would satisfy this.
+			assert.ErrorContains(t, err, ruleErr.Error(),
+				"shared rule rejects %q; every store must, for that reason", raw)
+			return
+		}
+		require.NoError(t, err)
+
+		got, err := s.GetEntity(bg, "T-1")
+		require.NoError(t, err)
+		assert.Equal(t, normalizeProps(want.Properties), normalizeProps(got.Properties),
+			"property value did not round-trip")
 
 		vals, err := s.PropertyValues(bg, propName, 10)
 		require.NoError(t, err)
@@ -329,4 +368,47 @@ func FuzzPropertyValuesTypeZoo(f *testing.F, factory FuzzFactory) {
 		// Property filter fuzz testing is covered in search conformance tests.
 		_ = search.FilterEq
 	})
+}
+
+// normalizeProps rewrites typed containers into the generic shapes a backend
+// that serializes through JSON or YAML hands back, so a []string written and
+// a []any read are compared by content rather than by Go type.
+//
+// Deliberately folded: a nil slice and an empty slice both become []any{},
+// because no serializing backend can tell them apart (both are written as
+// "[]"). Deliberately NOT folded: a missing key, a nil value, and an empty
+// container stay distinct, so a backend that dropped an empty list or wrote
+// it as null still fails the comparison.
+func normalizeProps(props map[string]any) map[string]any {
+	out := make(map[string]any, len(props))
+	for k, v := range props {
+		out[k] = normalizeValue(v)
+	}
+	return out
+}
+
+func normalizeValue(val any) any {
+	switch v := val.(type) {
+	case []string:
+		out := make([]any, len(v))
+		for i, s := range v {
+			out[i] = s
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, e := range v {
+			out[i] = normalizeValue(e)
+		}
+		return out
+	case map[string]string:
+		out := make(map[string]any, len(v))
+		for k, s := range v {
+			out[k] = s
+		}
+		return out
+	case map[string]any:
+		return normalizeProps(v)
+	}
+	return val
 }

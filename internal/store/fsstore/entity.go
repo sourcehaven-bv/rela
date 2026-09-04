@@ -272,6 +272,9 @@ func (s *FSStore) createEntity(_ context.Context, e *entity.Entity) error {
 	if err := storeutil.ValidateID(e.ID); err != nil {
 		return err
 	}
+	if err := storeutil.ValidateProperties(e.Properties); err != nil {
+		return err
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -328,6 +331,9 @@ func (s *FSStore) createEntity(_ context.Context, e *entity.Entity) error {
 }
 
 func (s *FSStore) updateEntity(_ context.Context, e *entity.Entity) error {
+	if err := storeutil.ValidateProperties(e.Properties); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

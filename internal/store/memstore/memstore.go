@@ -517,6 +517,9 @@ func (m *MemStore) createEntity(_ context.Context, e *entity.Entity) error {
 	if err := validateID(e.ID); err != nil {
 		return err
 	}
+	if err := storeutil.ValidateProperties(e.Properties); err != nil {
+		return err
+	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -561,6 +564,9 @@ func (m *MemStore) createEntity(_ context.Context, e *entity.Entity) error {
 }
 
 func (m *MemStore) updateEntity(_ context.Context, e *entity.Entity) error {
+	if err := storeutil.ValidateProperties(e.Properties); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -980,6 +986,11 @@ func (m *MemStore) createRelation(
 	if err := storeutil.ValidateRelationType(relType); err != nil {
 		return nil, err
 	}
+	if data != nil {
+		if err := storeutil.ValidateProperties(data.Properties); err != nil {
+			return nil, err
+		}
+	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1018,6 +1029,9 @@ func (m *MemStore) createRelation(
 func (m *MemStore) updateRelation(
 	_ context.Context, from, relType, to string, data store.RelationData,
 ) (*entity.Relation, error) {
+	if err := storeutil.ValidateProperties(data.Properties); err != nil {
+		return nil, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

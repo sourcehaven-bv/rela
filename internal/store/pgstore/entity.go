@@ -1113,7 +1113,16 @@ func entityWhere(q store.EntityQuery, keysetAfter string) (where string, args []
 	return " WHERE " + strings.Join(conds, " AND "), args
 }
 
+// marshalProps encodes a property map for storage. It is the ONE place
+// properties become JSON in this backend — entity rows, relation rows and
+// both version tables — so the text gate lives here rather than at each
+// caller: encoding/json substitutes U+FFFD for invalid UTF-8 without an
+// error, and the first fix for BUG-X7ICNM gated only the four CRUD entry
+// points and left the version writers open.
 func marshalProps(p map[string]any) ([]byte, error) {
+	if err := storeutil.ValidateProperties(p); err != nil {
+		return nil, err
+	}
 	if len(p) == 0 {
 		return []byte("{}"), nil
 	}

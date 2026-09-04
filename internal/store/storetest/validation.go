@@ -1,6 +1,7 @@
 package storetest
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -126,5 +127,66 @@ func RunValidationTests(t *testing.T, f Factory) {
 		got, err := s.GetEntity(ctx(), "ABC")
 		require.NoError(t, err)
 		assert.Equal(t, "ABC", got.ID)
+	})
+
+	// Invalid UTF-8 in a property value must be REFUSED, identically, by
+	// every backend (BUG-X7ICNM). Before this rule fsstore refused it (YAML
+	// cannot represent it), pgstore and sqlitestore silently substituted
+	// U+FFFD and reported success, and memstore kept the bytes. The rule is
+	// storeutil.ValidateProperties; these cases pin that each write path
+	// actually calls it, at the nesting the store fuzz target generates.
+	t.Run("RejectsInvalidUTF8Properties", func(t *testing.T) {
+		const bad = "\n\xc80" // the fuzzer's original payload
+		s := f(t)
+
+		shapes := map[string]any{
+			"string":     bad,
+			"slice":      []string{"ok", bad},
+			"nested map": map[string]any{"v": bad},
+		}
+		for name, val := range shapes {
+			e := entity.New("E-"+strings.ReplaceAll(name, " ", "-"), "t")
+			e.Properties["p"] = val
+			err := s.CreateEntity(ctx(), e)
+			require.Errorf(t, err, "create with %s invalid UTF-8 must fail", name)
+			assert.Contains(t, err.Error(), "invalid UTF-8")
+			_, err = s.GetEntity(ctx(), e.ID)
+			assert.ErrorIs(t, err, store.ErrNotFound, "a refused create must persist nothing")
+		}
+
+		good := entity.New("E-good", "t")
+		good.SetString("p", "héllo ☃")
+		require.NoError(t, s.CreateEntity(ctx(), good))
+		got, err := s.GetEntity(ctx(), "E-good")
+		require.NoError(t, err)
+		assert.Equal(t, "héllo ☃", got.GetString("p"), "valid non-ASCII must round-trip untouched")
+
+		upd := got.Clone()
+		upd.SetString("p", bad)
+		err = s.UpdateEntity(ctx(), upd)
+		require.Error(t, err, "update with invalid UTF-8 must fail")
+		assert.Contains(t, err.Error(), "invalid UTF-8")
+		got, err = s.GetEntity(ctx(), "E-good")
+		require.NoError(t, err)
+		assert.Equal(t, "héllo ☃", got.GetString("p"), "a refused update must leave the stored value alone")
+
+		require.NoError(t, s.CreateEntity(ctx(), entity.New("E-other", "t")))
+		_, err = s.CreateRelation(ctx(), "E-good", "rel", "E-other",
+			&store.RelationData{Properties: map[string]any{"p": bad}})
+		require.Error(t, err, "relation create with invalid UTF-8 must fail")
+		assert.Contains(t, err.Error(), "invalid UTF-8")
+		_, err = s.GetRelation(ctx(), "E-good", "rel", "E-other")
+		assert.ErrorIs(t, err, store.ErrNotFound)
+
+		_, err = s.CreateRelation(ctx(), "E-good", "rel", "E-other",
+			&store.RelationData{Properties: map[string]any{"p": "ok"}})
+		require.NoError(t, err)
+		_, err = s.UpdateRelation(ctx(), "E-good", "rel", "E-other",
+			store.RelationData{Properties: map[string]any{"p": bad}})
+		require.Error(t, err, "relation update with invalid UTF-8 must fail")
+		assert.Contains(t, err.Error(), "invalid UTF-8")
+		r, err := s.GetRelation(ctx(), "E-good", "rel", "E-other")
+		require.NoError(t, err)
+		assert.Equal(t, "ok", r.Properties["p"], "a refused relation update must leave the stored value alone")
 	})
 }

@@ -4,7 +4,13 @@ type: bug
 title: pgstore silently substitutes U+FFFD for invalid UTF-8 where fsstore refuses
 description: 'For a property value containing invalid UTF-8, fsstore correctly refuses (yaml: cannot marshal invalid UTF-8 data as !!str) while pgstore silently substitutes U+FFFD and reports success -- the write succeeds and the caller reads back a value they never wrote. The mirror image of BUG-B1RA3J: there the value was legitimate and fsstore was too strict; here it is unrepresentable and pgstore is too lax, so the fix direction reverses. Found by re-fuzzing after the BUG-B1RA3J fix.'
 priority: medium
-status: backlog
+why1: pgstore and sqlitestore serialize properties with encoding/json and json.Marshal replaces each invalid UTF-8 byte with U+FFFD and returns no error so the write succeeded with a value the caller never wrote.
+why2: 'No shared rule said what property TEXT a store must refuse. ID grammar had a shared oracle (storeutil.ValidateID) but text values had none so each backend inherited whatever its serializer happened to do: YAML refuses and JSON substitutes and memory keeps the bytes.'
+why3: The store fuzz target asserted only that writes did not error. Silent substitution produces no error so the target could reach the corrupt case and still report a pass; BUG-B1RA3J had already shown the same blind spot for YAML block scalars.
+why4: Conformance was framed as "the backends behave the same on valid input" and the definition of valid input was left to each serializer instead of being owned by the store contract.
+why5: 'Validity of stored text was owned by nobody: each serializer decided for itself and no conformance test compared what came back to what went in. The systemic fix is a store-owned definition of valid property text plus a round-trip oracle every backend runs so the next divergence fails a test instead of corrupting a row.'
+prevention: One text rule (storeutil.ValidateProperties) called from every backend write path and used as the directional oracle in the fuzz target which now round-trips and COMPARES every accepted value. Any future backend inherits both through storetest.
+status: done
 ---
 
 ## Description
@@ -40,8 +46,8 @@ int(178)
 string("\n\xc80")
 ```
 
-The third value is the payload: `\xc8` starts a 2-byte UTF-8 sequence and `0`
-is not a valid continuation byte, so the string is not valid UTF-8. Write it to
+The third value is the payload: `\xc8` starts a 2-byte UTF-8 sequence and `0` is
+not a valid continuation byte, so the string is not valid UTF-8. Write it to
 `testdata/fuzz/FuzzPropertyValuesTypeZoo/` when fixing, and it becomes the
 regression seed.
 
@@ -84,6 +90,20 @@ building a string from bytes, or a sync peer.
 
 But the failure mode is the bad one: a silent, irreversible substitution the
 caller is never told about. That is worth more than its frequency suggests.
+
+## Behaviour change
+
+NUL (U+0000) joined the rule. It is not invalid UTF-8, but Postgres cannot hold
+it in a text or jsonb column, so pgstore alone refused it — loudly — while
+fsstore, sqlitestore and memstore stored it. Rather than a fuzz target that
+skips NUL, the shared gate now refuses it everywhere.
+
+That is a behaviour change for existing data on the three lax backends: a row
+that already holds a NUL in a property will fail on its next UPDATE, with
+`store: property "…": contains NUL`, even if the edit touched a different
+property. The error names the property. Release notes should say so, because it
+surfaces far from where the byte came in (`rela update -P` passes shell strings
+through untouched).
 
 ## Verification
 
