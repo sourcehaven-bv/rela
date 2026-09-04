@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/Sourcehaven-BV/rela/internal/errors"
@@ -255,21 +256,100 @@ func SchemaFileAt(dir string, fs storage.FS) (path string, isLegacy, found bool)
 }
 
 // EntityTemplatePath returns the file path for an entity type template.
-// If variant is non-empty, returns the path for that variant (e.g., type--variant.md).
-func (c *Context) EntityTemplatePath(entityType string) string {
-	return filepath.Join(c.EntityTemplatesDir, entityType+".md")
+// The type name is checked by validateTemplateName first — see there for why
+// that is a blocklist and what it rejects.
+func (c *Context) EntityTemplatePath(entityType string) (string, error) {
+	if err := validateTemplateName("entity type", entityType); err != nil {
+		return "", err
+	}
+	return filepath.Join(c.EntityTemplatesDir, entityType+".md"), nil
 }
 
-// EntityTemplateVariantPath returns the file path for an entity template variant.
-// Variant templates use the naming convention: <type>--<variant>.md
-func (c *Context) EntityTemplateVariantPath(entityType, variant string) string {
+// EntityTemplateVariantPath returns the file path for an entity template
+// variant. Variant templates use the naming convention: <type>--<variant>.md
+//
+// Both segments are validated first: this function joins them into a path
+// handed to a raw storage.FS, which performs no validation of its own, and a
+// segment here is not reliably operator-authored — callers reach it from
+// entitymanager.CreateOptions.Variant, and automation interpolates
+// {{new.kind}} (an API-settable entity property) into the template name.
+//
+// The two halves are validated differently on purpose. The TYPE gets the same
+// blocklist as EntityTemplatePath, because type names are metamodel names.
+// The VARIANT gets an identifier allowlist that matches
+// automation.isValidTemplateName character for character, so an automation
+// that passes its own check cannot fail here; that check stays where it is
+// because it produces the better error for a bad automation. This one exists
+// so the invariant is local to the join rather than owned by a single caller
+// in another package — a future caller that forgets gets an error, not a
+// traversal.
+func (c *Context) EntityTemplateVariantPath(entityType, variant string) (string, error) {
 	if variant == "" {
 		return c.EntityTemplatePath(entityType)
 	}
-	return filepath.Join(c.EntityTemplatesDir, entityType+"--"+variant+".md")
+	if err := validateTemplateName("entity type", entityType); err != nil {
+		return "", err
+	}
+	if err := validateTemplateVariant(variant); err != nil {
+		return "", err
+	}
+	return filepath.Join(c.EntityTemplatesDir, entityType+"--"+variant+".md"), nil
 }
 
-// RelationTemplatePath returns the file path for a relation type template
-func (c *Context) RelationTemplatePath(relationType string) string {
-	return filepath.Join(c.RelationTemplatesDir, relationType+".md")
+// RelationTemplatePath returns the file path for a relation type template.
+// The type name is checked by validateTemplateName first.
+func (c *Context) RelationTemplatePath(relationType string) (string, error) {
+	if err := validateTemplateName("relation type", relationType); err != nil {
+		return "", err
+	}
+	return filepath.Join(c.RelationTemplatesDir, relationType+".md"), nil
+}
+
+// validateTemplateName rejects a type name that cannot serve as a single path
+// segment under the templates directory.
+//
+// It is a BLOCKLIST, deliberately, mirroring metamodel.ValidateSchemaName
+// (which this package cannot import): shipped metamodels legitimately use
+// dashes, dots, internal spaces and non-ASCII letters in type names, and an
+// allowlist would reject existing valid schemas — and, because the default
+// template is resolved through here too, would break templates for such a
+// type entirely. What is rejected is exactly what could leave the directory
+// or produce a different file than the name says: empty, the "." and ".."
+// segments, both separator kinds, NUL and other control characters, and
+// leading/trailing whitespace (a likely typo, and the metamodel rejects it
+// too).
+func validateTemplateName(what, name string) error {
+	if name == "" {
+		return fmt.Errorf("project: %s must not be empty", what)
+	}
+	if name == "." || name == ".." {
+		return fmt.Errorf("project: %s %q is not a valid name", what, name)
+	}
+	if strings.TrimSpace(name) != name {
+		return fmt.Errorf("project: %s %q must not have leading or trailing whitespace", what, name)
+	}
+	for _, ch := range name {
+		if ch == '/' || ch == '\\' || ch < 0x20 || ch == 0x7f {
+			return fmt.Errorf("project: %s %q contains a path separator or control character", what, name)
+		}
+	}
+	return nil
+}
+
+// validateTemplateVariant is the identifier allowlist for a template variant:
+// alphanumeric, hyphen and underscore only. Kept identical to
+// automation.isValidTemplateName — widen both or neither.
+func validateTemplateVariant(variant string) error {
+	for _, ch := range variant {
+		switch {
+		case ch >= 'a' && ch <= 'z',
+			ch >= 'A' && ch <= 'Z',
+			ch >= '0' && ch <= '9',
+			ch == '-', ch == '_':
+		default:
+			return fmt.Errorf("project: template variant %q contains invalid characters "+
+				"(only alphanumeric, hyphen, underscore allowed)", variant)
+		}
+	}
+	return nil
 }
