@@ -1,0 +1,334 @@
+// Package worlds compiles the metamodel's `worlds:` declarations into
+// [store.WorldScope] values — the metamodel-free, per-type ranked
+// resolution the storage layer evaluates (TKT-WAV8XP, design doc §4).
+//
+// # Why a separate package
+//
+// The compiled form must be metamodel-free: stores must not consult a
+// metamodel, and internal/visibility may not import one (arch-lint). But
+// compiling obviously needs the metamodel. So the boundary is here — the
+// one place that reads `worlds:` / `faces:` and emits coordinates —
+// and nothing downstream of it knows a metamodel exists.
+//
+// This is also where face NAME GRAMMAR is enforced. internal/metamodel
+// cannot do it: arch-lint keeps internal/entity a leaf that metamodel may
+// not import, and [entity.ParseFace] is the single codec that turns
+// external text into a [entity.Face]. Structural validation (mandatory
+// `otherwise:`, chains naming declared faces, one default per type)
+// stays in the loader where the rest of the schema is checked; grammar
+// lands here. Both run before anything serves a request: Compile is
+// called during application assembly, so a bad face name is a startup
+// failure, never a lurking runtime one.
+//
+// # What a world compiles to
+//
+// A per-type ordered chain of coordinates plus a fallback verdict. NOT a
+// row predicate: a world picks at most one state per entity (the prime),
+// which is a per-family ranked preference — `face IN (draft,
+// published)` would return two rows for an entity holding both and break
+// the invariant everything else leans on (design doc §4.2).
+package worlds
+
+import (
+	"errors"
+	"fmt"
+	"sort"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/store"
+)
+
+// Compiled is the result of compiling a metamodel's worlds: every
+// declared world by name, plus the implicit default world.
+//
+// The ZERO VALUE is usable and means "no declared worlds": [Compiled.Lookup]
+// still answers the default world, and [Compiled.Names] is empty. That is
+// also what Compile returns for a nil metamodel or one with no `worlds:`.
+type Compiled struct {
+	byName map[string]store.WorldScope
+}
+
+// Default returns the implicit default world — total, every entity via
+// its default state. Always available, declared or not.
+func Default() store.WorldScope { return store.DefaultWorld() }
+
+// Lookup returns the compiled scope for a world name.
+//
+// [metamodel.DefaultWorldName] always resolves, even for a project with
+// no `worlds:` block, because that world is implicit. Any other unknown
+// name returns ok=false — callers fail closed rather than substituting
+// the default world, which would silently widen a world-bound surface.
+func (c Compiled) Lookup(name string) (scope store.WorldScope, ok bool) {
+	if name == metamodel.DefaultWorldName {
+		return Default(), true
+	}
+	scope, ok = c.byName[name]
+	return scope, ok
+}
+
+// Names returns the declared world names in sorted order, NOT including
+// the implicit default world.
+func (c Compiled) Names() []string {
+	out := make([]string, 0, len(c.byName))
+	for name := range c.byName {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Compile turns a metamodel's declarations into compiled world scopes.
+//
+// It reports EVERY problem it finds rather than the first, matching the
+// loader's collect-then-report discipline: an operator fixing a schema
+// should see the whole list. A nil metamodel compiles to just the
+// implicit default world.
+//
+// Errors name the entity type, the offending coordinate, and the grammar,
+// so a schema typo is as diagnosable here as it would be from the loader.
+func Compile(m *metamodel.Metamodel) (Compiled, error) {
+	if m == nil {
+		return Compiled{}, nil
+	}
+	faces, errs := declaredFaces(m)
+	// Bail BEFORE compiling anything. A type whose face names all failed
+	// the grammar has an empty entry in `faces`, which compileWorld would
+	// read as rule 1 — "declares no faces, contributes its default state
+	// in every world" — the exact opposite of what a type declaring content
+	// states means. Today that scope is discarded, so the fail-open is only
+	// latent; returning here keeps it unreachable even if a future caller
+	// wants a best-effort compile.
+	errs = append(errs, validateWorldNames(m)...)
+	if err := joinErrors(errs); err != nil {
+		return Compiled{}, err
+	}
+	if len(m.Worlds) == 0 {
+		// No worlds declared: nothing to compile, but the face
+		// grammar still had to hold — a project may declare states
+		// before it declares any world that selects them.
+		return Compiled{}, nil
+	}
+
+	byName := make(map[string]store.WorldScope, len(m.Worlds))
+	for _, name := range sortedWorldNames(m) {
+		byName[name] = compileWorld(m, m.Worlds[name], faces)
+	}
+	return Compiled{byName: byName}, nil
+}
+
+// validateWorldNames checks every declared world name against the same
+// grammar face names use.
+//
+// # Why an allowlist, and why here
+//
+// The loader already rejects the empty name and the reserved `default`
+// (metamodel.validateWorlds) via metamodel.ValidateSchemaName — but that
+// is a BLOCKLIST, deliberately lenient because entity-type and property
+// names legitimately carry dashes and internal spaces. It blocks only
+// quotes, backslashes and control characters, so `../admin`, `a b`,
+// `pub%2f` and `world?x=1` all load clean today.
+//
+// A world name is not a type name. It reaches a `?world=` query
+// parameter, a `--world` flag, and an `acl.yaml` grant token
+// (`read: [world:published]`) — three contexts where `/`, `%`, `?`, `&`,
+// `#` and spaces are hostile, and where `..` would be a traversal
+// primitive if a world name ever became a URL path segment. So worlds get
+// the strict allowlist faces already have: lowercase alphanumeric runs
+// joined by single hyphens.
+//
+// The grammar is entity.ParseFace's, reused rather than re-spelled —
+// a third copy of the pattern is a third thing to drift. Validating here
+// rather than in the loader follows the face-grammar precedent
+// (TKT-WAV8XP Q6): internal/metamodel may not import internal/entity
+// under arch-lint, and internal/worlds is the package that may see both.
+//
+// Tightening now costs nothing: worlds shipped in Step 2 and no shipped
+// or fixture metamodel declares a name outside this grammar. Waiting
+// makes it a breaking change forever.
+func validateWorldNames(m *metamodel.Metamodel) []error {
+	var errs []error
+	for _, name := range sortedWorldNames(m) {
+		if _, err := entity.ParseFace(name); err != nil {
+			// The GRAMMAR is reused; the VOCABULARY is not. ParseFace's
+			// own error says "face", a noun the operator did not write
+			// when declaring a world, so it is replaced rather than wrapped.
+			errs = append(errs, fmt.Errorf(
+				"world %q: invalid name — must be lowercase alphanumeric runs "+
+					"joined by single hyphens (e.g. \"published\", \"site-nl\"). "+
+					"World names reach URLs (?world=), CLI flags (--world) and "+
+					"acl.yaml grants (read: [world:...]), so they use the same "+
+					"strict grammar as face names", name))
+		}
+	}
+	return errs
+}
+
+// declaredFaces validates every declared face name against the codec
+// grammar and returns the STORED COORDINATE each name addresses, keyed by
+// entity type. Types declaring no faces are absent from the result — that
+// absence is what rule 1 compiles to.
+//
+// # A declared NAME is not a stored COORDINATE (BUG-DFLTCHAIN)
+//
+// The two differ for exactly one name per type: the one marked
+// `bare_face`. A default-marked state is stored under the ZERO face —
+// the bare id addresses it (design doc §2.1) — so `page@draft` where `draft`
+// is the default names a row that does not exist. There are exactly N states
+// and nothing else; marking a name default does not mint a second row.
+//
+// This function used to parse names literally and skip that step, so a world
+// naming its type's default coordinate compiled to a chain entry NO ROW COULD
+// EVER MATCH. Under `otherwise: exclude` the entity vanished from a world
+// that had explicitly selected it; under `otherwise: default` it was served
+// via the fallback and mislabelled as such. Both failed silently, with a
+// config that reads correctly.
+//
+// So the mapping goes through [metamodel.StoredFace], the one definition
+// of "declared name -> stored coordinate" — the same function the copy kernel
+// applies (internal/entitymanager/copy.go). Two functions answering that
+// question differently is the root cause; there is now one.
+//
+// Note the ORDER: grammar is checked on the DECLARED name, then the name is
+// mapped. Validating the mapped value instead would run [entity.ParseFace]
+// over the empty string for every default coordinate, which it correctly
+// rejects — turning a valid schema into a load error.
+func declaredFaces(m *metamodel.Metamodel) (map[string]map[string]entity.Face, []error) {
+	var errs []error
+	out := make(map[string]map[string]entity.Face)
+	for _, typeName := range sortedTypeNames(m) {
+		def := m.Entities[typeName]
+		if len(def.Faces) == 0 {
+			continue
+		}
+		parsed := make(map[string]entity.Face, len(def.Faces))
+		for _, name := range sortedFaceNames(def) {
+			if _, err := entity.ParseFace(name); err != nil {
+				errs = append(errs, fmt.Errorf(
+					"entity %q: invalid face name %q: %w", typeName, name, err))
+				continue
+			}
+			// The declared name passed the grammar; the COORDINATE it
+			// addresses is what a chain must carry.
+			parsed[name] = entity.Face(metamodel.StoredFace(m, typeName, name))
+		}
+		out[typeName] = parsed
+	}
+	return out, errs
+}
+
+// compileWorld builds one world's per-type resolution.
+//
+// Rule 1 (a type declaring no faces) is compiled as ABSENCE from the
+// map, not as an entry — so a mixed graph costs nothing per faceless
+// type, and the store's fast paths stay untouched for them.
+func compileWorld(
+	m *metamodel.Metamodel,
+	def metamodel.WorldDef,
+	faces map[string]map[string]entity.Face,
+) store.WorldScope {
+	// Anything that is not an explicit `otherwise: default` compiles to
+	// exclusion, deliberately: the loader rejects an unrecognized value, so
+	// this branch is unreachable for a loaded schema, and if it ever became
+	// reachable the fail-closed direction is the one to land in.
+	fallback := store.FallbackExclude
+	if def.Otherwise == metamodel.OtherwiseDefault {
+		fallback = store.FallbackDefaultState
+	}
+
+	byType := make(map[string]store.TypeResolution)
+	for _, typeName := range sortedTypeNames(m) {
+		declared := faces[typeName]
+		if len(declared) == 0 {
+			continue // rule 1: absent from the map
+		}
+		rawChain, _ := def.ChainFor(typeName)
+		byType[typeName] = store.TypeResolution{
+			Chain:    resolveChain(rawChain, declared),
+			Fallback: fallback,
+		}
+	}
+	return store.NewWorldScope(byType)
+}
+
+// resolveChain maps a world's declared chain onto one type's coordinates,
+// dropping coordinates the type does not declare and deduplicating.
+//
+// Dropping is CORRECT, not lenient: a world selecting `published` applies
+// to types that have a published state, and a type without one falls to
+// the world's `otherwise:` — that is resolution rule 3, and it is exactly
+// what the mandatory `otherwise:` exists to answer. The loader separately
+// rejects a chain no type at all could satisfy (a typo) and an override
+// naming a coordinate its own type lacks (a mistake).
+//
+// Dedup happens AFTER mapping so a chain that repeats a coordinate
+// collapses rather than ranking it twice.
+func resolveChain(raw []string, declared map[string]entity.Face) []entity.Face {
+	if len(raw) == 0 {
+		return nil
+	}
+	var chain []entity.Face
+	seen := make(map[entity.Face]bool, len(raw))
+	for _, name := range raw {
+		p, ok := declared[name]
+		if !ok {
+			// Not declared by THIS type: rule 3 territory, not an error.
+			// A name no type declares is caught by the loader; one that
+			// failed the grammar was already reported by
+			// declaredFaces, so it is absent here and must not be
+			// double-reported.
+			continue
+		}
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		chain = append(chain, p)
+	}
+	return chain
+}
+
+func sortedWorldNames(m *metamodel.Metamodel) []string {
+	out := make([]string, 0, len(m.Worlds))
+	for name := range m.Worlds {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sortedTypeNames(m *metamodel.Metamodel) []string {
+	out := make([]string, 0, len(m.Entities))
+	for name := range m.Entities {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sortedFaceNames(def metamodel.EntityDef) []string {
+	out := make([]string, 0, len(def.Faces))
+	for name := range def.Faces {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// joinErrors collapses collected errors into one, or nil when empty.
+//
+// Every problem is reported, not just the first: an operator fixing a
+// schema should see the whole list, matching the metamodel loader's
+// collect-then-report discipline.
+func joinErrors(errs []error) error {
+	switch len(errs) {
+	case 0:
+		return nil
+	case 1:
+		return fmt.Errorf("worlds: %w", errs[0])
+	}
+	// errors.Join, not a string join: flattening to text would make
+	// errors.Is/As work for one problem and stop working for two, which is
+	// the kind of asymmetry that surprises a caller much later.
+	return fmt.Errorf("worlds: %d problems: %w", len(errs), errors.Join(errs...))
+}

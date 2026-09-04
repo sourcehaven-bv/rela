@@ -101,7 +101,10 @@ func (a *App) handleV1NextAction(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleV1NextActionGet(w http.ResponseWriter, r *http.Request) {
-	eng, ok := a.nextActionEngine()
+	// The request's world is the DISPLAY world: it decides which sources may
+	// surface here (visible_worlds), never which world a source queries. See
+	// nextActionSourceWorld.
+	eng, ok := a.nextActionEngine(nextActionDisplayWorld(r.Context()))
 	if !ok {
 		// No sources configured: a valid, common state (the feature is
 		// opt-in). An empty answer, not a 404 — the SPA renders nothing.
@@ -267,8 +270,23 @@ func (a *App) applyNextActionFeedback(
 // collaborators. If this ever becomes hot, cache the engine, never the
 // suggestions (see nextaction.Engine.Resolve on why results must not be
 // cached across principals).
-func (a *App) nextActionEngine() (*nextaction.Engine, bool) {
-	// Snapshot the config once: State() reads an atomic pointer, and two
+// nextActionDisplayWorld names the world this request is browsing, for the
+// visible_worlds allow list.
+//
+// A DENIED world still yields its own name. The allow list is presentational,
+// so a source scoped to that world is correctly not shown; withholding its
+// content is the read gate's job and already happened. Reporting the default
+// world here instead would show the reader default-world suggestions under a
+// request that asked for another world.
+func nextActionDisplayWorld(ctx context.Context) string {
+	if name := worldFromContext(ctx).name; name != "" {
+		return name
+	}
+	return defaultWorldName
+}
+
+func (a *App) nextActionEngine(displayWorld string) (*nextaction.Engine, bool) {
+	// Snapshot the config once: State() reads an atomic face, and two
 	// reads could observe different snapshots if a reload lands between them.
 	st := a.State()
 	cfg := st.Cfg
@@ -276,7 +294,10 @@ func (a *App) nextActionEngine() (*nextaction.Engine, bool) {
 		return nil, false
 	}
 
-	opts := []nextaction.Option{nextaction.WithOptions(a.nextActionOptions())}
+	opts := []nextaction.Option{
+		nextaction.WithOptions(a.nextActionOptions()),
+		nextaction.WithDisplayWorld(displayWorld),
+	}
 	if a.nextActionMatchers != nil {
 		// Compile errors are already reported at load by projectsetup; a
 		// config that reached here should compile. If it somehow does not,

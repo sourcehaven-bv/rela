@@ -69,7 +69,7 @@ func TestRedact_NothingHiddenIsUnchanged(t *testing.T) {
 	got := visibility.Redact(ctx, visibility.NopRedactor{}, e)
 
 	if got != e {
-		t.Fatal("Redact allocated a copy when nothing was hidden; want the original pointer")
+		t.Fatal("Redact allocated a copy when nothing was hidden; want the original face")
 	}
 	if len(got.Redacted) != 0 {
 		t.Errorf("Redacted = %v, want empty when no policy hid anything", got.Redacted)

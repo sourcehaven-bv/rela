@@ -969,7 +969,7 @@ func (h *writeHandler) authorizeConflictResolve(
 		}
 		aclReq = translateRelationWrite(rel.Type, fromType, rel.From)
 	} else {
-		aclReq = translateVerb("update", e.Type, e.ID)
+		aclReq = translateVerb("update", e.Type, e.ID, e.Face)
 	}
 	decision := h.acl().AuthorizeWrite(ctx, aclReq)
 	if decision.Allow {

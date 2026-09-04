@@ -166,7 +166,14 @@ func (v *Visible) fieldVisible(ctx context.Context, q Query, h Hit, hidden Hidde
 	if hidden == nil || q.Text == "" {
 		return true, nil
 	}
-	e, err := v.reader.GetEntity(ctx, h.ID)
+	// The FACE that matched, not the bare id: the hidden-field verdict and the
+	// match provenance must both be computed against the text the backend
+	// actually scored. Reading the default face under a non-default world would
+	// ask "which fields matched?" of bytes that were never searched — and the
+	// answer decides whether the hit survives, so a mismatch drops hits the
+	// principal is entitled to (or keeps ones the oracle should close). Under
+	// the default world h.Face is zero and this is exactly GetEntity.
+	e, err := v.reader.GetEntityState(ctx, h.ID, h.Face)
 	if err != nil {
 		// Stale hit: entity vanished between indexing and now. Cannot prove the
 		// match came from a visible field → drop (fail closed).

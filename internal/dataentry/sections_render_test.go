@@ -59,7 +59,7 @@ func TestBuildSectionEntityData_ResolvesRender(t *testing.T) {
 			}
 
 			sed := app.views.buildSectionEntityData(
-				context.Background(), e, secFields, eDef, tc.sectionRender)
+				context.Background(), e, secFields, eDef, tc.sectionRender, defaultViewWorld())
 
 			if len(sed.Fields) != len(tc.want) {
 				t.Fatalf("got %d fields, want %d", len(sed.Fields), len(tc.want))
@@ -121,7 +121,7 @@ func TestSectionEntityToV1_CarriesRender(t *testing.T) {
 		{Property: "status"},
 	}
 
-	sed := app.views.buildSectionEntityData(context.Background(), e, secFields, eDef, "")
+	sed := app.views.buildSectionEntityData(context.Background(), e, secFields, eDef, "", defaultViewWorld())
 	v1Ent := sectionEntityToV1(sed)
 
 	if len(v1Ent.Fields) != 2 {

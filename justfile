@@ -63,6 +63,22 @@ build-docs: build-frontend
     @mkdir -p {{build_dir}}
     CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o {{build_dir}}/rela-docs ./cmd/rela-docs
 
+# Build the docs CLI against the POSTGRES backend (rela-docs-postgres).
+#
+# Same binary as build-docs, one build tag different — which is the whole
+# point: the storage backend is chosen at compile time, so a manual that wants
+# to photograph a postgres-only capability (version history, whose
+# HistoryReader only pgstore implements) has to be built here. On the default
+# build that page can only ever show "not available for this deployment".
+#
+# Its screenshot{}/api{} temp project is pinned to a PRIVATE, randomly-named
+# scratch schema that is dropped at teardown, so a docs build never writes the
+# manual's fixture into the operator's real data.
+build-docs-postgres: build-frontend
+    @echo "Building rela-docs-postgres..."
+    @mkdir -p {{build_dir}}
+    CGO_ENABLED=0 go build -tags postgres -trimpath -ldflags "-s -w" -o {{build_dir}}/rela-docs-postgres ./cmd/rela-docs
+
 # Build all binaries
 build: build-cli build-server build-docs build-desktop
 
@@ -308,6 +324,75 @@ generate-icons:
 docs: build-cli generate-icons
     @echo "Generating documentation..."
     @./scripts/generate-docs.sh
+
+# Build the worlds manual WITH screenshots and open it as HTML for visual
+# inspection. This is the "did the UI actually render what the prose claims"
+# loop: every assertion in the manual has already passed by the time you see
+# the page, so what you are inspecting is the part a machine cannot check —
+# whether the figures are legible and show what their captions say.
+#
+# Needs a built frontend (the screenshots drive the real SPA) and Chrome.
+# Output lands in .ignored/ because the PNGs are not byte-reproducible and
+# nothing here is committed.
+#
+# `just docs-visual open=1` also opens it in the default browser.
+docs-visual open="0": build-docs build-frontend
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # The worlds manual documents version history, which only pgstore
+    # implements — so this fs target cannot build it and says so up front
+    # rather than creating an output directory it will never fill. Building
+    # anyway would either fail halfway or publish a "history is not available"
+    # screenshot under prose describing a populated timeline.
+    echo "The worlds manual needs the postgres backend (version history)." >&2
+    echo "" >&2
+    echo "  RELA_DATABASE_URL='postgres:///rela_docs?host=/tmp' just docs-visual-postgres" >&2
+    exit 1
+
+# Render the worlds manual against POSTGRES, so the History section captures a
+# real, populated version timeline instead of "not available for this
+# deployment".
+#
+# Requires RELA_DATABASE_URL (env-only by design — there is deliberately no
+# DSN flag, so the credential never lands in `ps` or shell history). The
+# database only needs to be reachable and writable: the manual's fixture goes
+# into a private scratch schema that is created for the build and dropped
+# after it.
+#
+# The sweep cadence overrides are what make the History figures possible in a
+# docs build at all. On postgres, create/update versions are captured by a
+# DEBOUNCED reconciliation sweep whose defaults are 5m idle / 5m interval —
+# entirely right for production and far longer than any build. Lowering them
+# does not fake anything: the same sweep does the same capture, just sooner.
+# The capture then WAITS on the history API reporting the rows the manual
+# claims, so the figure cannot be photographed early.
+docs-visual-postgres open="0": build-docs-postgres build-frontend
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -z "${RELA_DATABASE_URL:-}" ]; then
+        echo "RELA_DATABASE_URL is not set." >&2
+        echo "" >&2
+        echo "The postgres manual build needs a database to create its scratch" >&2
+        echo "schema in. Example:" >&2
+        echo "" >&2
+        echo "  RELA_DATABASE_URL='postgres:///rela_docs?host=/tmp' just docs-visual-postgres" >&2
+        exit 1
+    fi
+    out=".ignored/worlds-manual-postgres"
+    mkdir -p "$out"
+    echo "Building the worlds manual against postgres (with screenshots)..."
+    RELA_VERSION_SWEEP_INTERVAL=500ms \
+    RELA_VERSION_SWEEP_IDLE=200ms \
+    RELA_VERSION_SWEEP_MAX_STALENESS=2s \
+    ./bin/rela-docs-postgres build prototypes/worlds/manual/worlds-manual.md \
+        --project prototypes/worlds/project \
+        --out "$out/worlds-manual.md"
+    if command -v pandoc >/dev/null 2>&1; then
+        python3 scripts/manual-html.py "$out/worlds-manual.md" "$out/worlds-manual.html"
+        if [ "{{open}}" != "0" ]; then open "$out/worlds-manual.html"; fi
+    else
+        echo "✓ $out/worlds-manual.md (install pandoc for the HTML render)"
+    fi
 
 # Regenerate the example operator handbook (docs/examples/) from the demo
 # project by building its rela-docs manual. Kept OUT of `docs`/`docs-check`:

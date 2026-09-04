@@ -91,7 +91,7 @@ states which properties it withheld, in a new `_redacted` field on per-entity
 responses, and the SPA stops guessing.
 
 - `internal/apiwire/v1/responses.go` — `Entity.Redacted`, same closed-world
-pointer semantics as `_fields` (present-possibly-empty per-entity, absent on
+present/absent semantics as `_fields` (present-possibly-empty per-entity, absent on
 list rows).
 - `internal/dataentry/affordances.go` — `redactedPropertyNames`, attached in
 `attachEntityAffordances` beside the strip, so naming and stripping are

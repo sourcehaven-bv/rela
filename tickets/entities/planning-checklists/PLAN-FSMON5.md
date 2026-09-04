@@ -218,7 +218,7 @@ reimplement the loop. `Issue`/`NamedSource` are generic too.
 
 `doc.go` splits: the bulk (numeric model, coercion, security model, budgets)
 describes the general engine and goes to `expr/doc.go`; `predicate/doc.go`
-becomes a short pointer. There is no `doc_test.go` and no testable examples —
+becomes a short face. There is no `doc_test.go` and no testable examples —
 verified.
 
 `arch_test.go` is **duplicated, not moved**: `expr` needs the identical
@@ -300,7 +300,7 @@ would reintroduce exactly the bug being fixed.
 | `internal/expr/lint.go` | moved from predicate (S3) |
 | `internal/expr/doc.go` | bulk of predicate's doc.go |
 | `internal/expr/arch_test.go` | duplicated from predicate |
-| `internal/predicate/*.go` | shrink to alias facade + `EvalBool` + pointer doc |
+| `internal/predicate/*.go` | shrink to alias facade + `EvalBool` + face doc |
 | `internal/expr/compile.go` | `ExpectType` option + argument validation |
 | `internal/predicatefns/predicatefns.go` | + 3 date/RRULE funcs |
 | `internal/predicatefns/env.go` | + `BindEntity` |

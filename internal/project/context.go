@@ -122,6 +122,50 @@ func Discover(startDir string, fs storage.FS) (*Context, error) {
 	}
 }
 
+// At resolves dir AS the project root, without walking up (TKT-SK2QQW).
+//
+// # Why a second constructor rather than a flag on Discover
+//
+// [Discover] answers "which project am I in?", which is the right question for
+// a CLI invoked from a working directory. It is the WRONG question for a caller
+// that has just built a throwaway project in a temp dir: discovery would walk
+// upward out of that directory and, if the temp path happens to sit under a
+// real project, resolve to THAT — seeding fixture entities into a live database
+// and taking its single-writer lock. The failure is silent and depends on where
+// TMPDIR points.
+//
+// A caller that constructed the directory knows the root. This lets it say so,
+// which makes the isolation structural rather than a property of where the
+// temp dir happened to land.
+//
+// Both schema names are accepted, new preferred, exactly as one level of
+// Discover's walk does — and the `.rela/` marker is honored for the same
+// reason, so a project created by `rela init` but not yet given a schema still
+// resolves.
+//
+// Nil: never returned with a nil error. Returns [errors.ErrNoProject] when dir
+// holds neither a schema file nor a `.rela/` directory — deliberately the same
+// sentinel Discover returns, so callers need no new error handling.
+func At(dir string, fs storage.FS) (*Context, error) {
+	if dir == "" {
+		return nil, errors.ErrNoProject
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, err
+	}
+	if path, isLegacy, found := SchemaFileAt(abs, fs); found {
+		ctx := newContext(abs)
+		ctx.SchemaPath = path
+		ctx.SchemaIsLegacy = isLegacy
+		return ctx, nil
+	}
+	if info, statErr := fs.Stat(filepath.Join(abs, CacheDir)); statErr == nil && info.IsDir() {
+		return newContext(abs), nil
+	}
+	return nil, errors.ErrNoProject
+}
+
 // newContext creates a Context for the given project root
 func newContext(root string) *Context {
 	templatesDir := filepath.Join(root, TemplatesDir)

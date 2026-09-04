@@ -102,18 +102,29 @@ func (m *Manager) ApplyEntity(ctx context.Context, e *entity.Entity) (*entity.Up
 	// mismatch is a cross-type write-privilege escalation, not a legal edit
 	// (BUG-ZWTDH9). On CREATE (entity does not yet exist) the body type IS the
 	// new entity's type, so subjectType is simply e.Type.
+	// The same argument applies to FACE, and for the same reason: Face
+	// carries `json:"face,omitempty"`, so a sync body can name one, and
+	// the store keys its write on stateKey(e.ID, e.Face) — authorizing
+	// against a body-supplied face would let the body choose the face it
+	// is checked against (BUG-Y0GNSB). Bind to the stored face on update.
 	subjectType := e.Type
+	subjectFace := e.Face
 	if op.aclOp == acl.OpUpdate {
 		if e.Type != stored.Type {
 			return nil, fmt.Errorf("entitymanager: ApplyEntity: %s: %w (stored %q, body %q)",
 				e.ID, ErrTypeImmutable, stored.Type, e.Type)
 		}
+		if e.Face != stored.Face {
+			return nil, fmt.Errorf("entitymanager: ApplyEntity: %s: %w (stored face %q, body face %q)",
+				e.ID, ErrFaceImmutable, stored.Face, e.Face)
+		}
 		subjectType = stored.Type
+		subjectFace = stored.Face
 	}
 
 	if err := m.authorizeAndAudit(ctx, acl.WriteRequest{
 		Op:      op.aclOp,
-		Subject: acl.EntitySubject{Type: subjectType, ID: e.ID},
+		Subject: acl.EntitySubject{Type: subjectType, ID: e.ID, Face: subjectFace},
 	}); err != nil {
 		return nil, err
 	}
@@ -148,7 +159,8 @@ func (m *Manager) ApplyEntity(ctx context.Context, e *entity.Entity) (*entity.Up
 		if err := m.deps.Transitions.EnforceUpdate(
 			ctx, stored, e, m.deps.TransitionGuard, m.deps.TransitionGraph,
 		); err != nil {
-			return nil, m.mapTransitionError(ctx, acl.EntitySubject{Type: subjectType, ID: e.ID}, err)
+			return nil, m.mapTransitionError(
+				ctx, acl.EntitySubject{Type: subjectType, ID: e.ID, Face: subjectFace}, err)
 		}
 	} else if err := m.deps.Transitions.EnforceCreate(ctx, e); err != nil {
 		return nil, err

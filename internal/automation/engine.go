@@ -171,6 +171,7 @@ func convertFromMetamodel(def metamodel.AutomationDef) (Automation, error) {
 			Created:         def.On.Created,
 			RelationCreated: def.On.RelationCreated,
 			RelationRemoved: def.On.RelationRemoved,
+			Faces:           []string(def.On.Faces),
 			When:            whenFilters,
 			Condition:       def.On.Condition,
 		},
@@ -262,6 +263,14 @@ func (e *Engine) matches(ctx context.Context, trigger Trigger, event Event, res 
 		if !matched {
 			return false
 		}
+	}
+
+	// Check the content-state constraint before any condition runs: a trigger
+	// scoped away from this row does not apply, which is a different thing from
+	// a condition that failed to match, and evaluating conditions for it would
+	// be wasted work.
+	if !e.matchesFace(trigger, event.Entity) {
+		return false
 	}
 
 	// Check when conditions (property filters on the entity)
@@ -599,4 +608,32 @@ func isValidTemplateName(name string) bool {
 		}
 	}
 	return true
+}
+
+// matchesFace reports whether a trigger's `faces:` scope covers the row the
+// event is about.
+//
+// An empty scope means every state — see Trigger.Faces for why that is the
+// default. The comparison is against the DECLARED face name, because the bare
+// face is stored as the empty coordinate and an operator writes `faces: [en]`,
+// not `faces: [""]`.
+//
+// Nil meta: falls back to the stored coordinate. An engine built via NewEngine
+// has no metamodel (the pre-metamodel construction path), and a scoped trigger
+// there can only be compared literally. Unscoped triggers — every existing one
+// — are unaffected either way.
+func (e *Engine) matchesFace(trigger Trigger, ent *entity.Entity) bool {
+	if len(trigger.Faces) == 0 {
+		return true
+	}
+	if ent == nil {
+		// A relation event with no entity in hand cannot be face-scoped; a
+		// scoped trigger simply does not apply to it.
+		return false
+	}
+	declared := ent.Face.String()
+	if e.meta != nil {
+		declared = metamodel.DeclaredFace(e.meta, ent.Type, ent.Face.String())
+	}
+	return slices.Contains(trigger.Faces, declared)
 }

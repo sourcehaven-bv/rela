@@ -318,7 +318,7 @@ func TestBuildViewInput(t *testing.T) {
 			{From: "entry", Follow: "belongs_to", CollectAs: "components"},
 		},
 	}
-	vr, err := app.views.executeView(context.Background(), view, "TKT-001")
+	vr, err := app.views.executeView(context.Background(), view, "TKT-001", defaultViewWorld())
 	if err != nil {
 		t.Fatalf("executeView: %v", err)
 	}
@@ -1290,22 +1290,22 @@ func TestAuthorizeCommandNilACLDenies(t *testing.T) {
 // The switch must be closed by construction: an acl.ACL implementation with no
 // explicit arm denies rather than granting shell execution.
 //
-// The pointer cases matter because ReadOnlyACL/NopACL declare AuthorizeWrite on
+// The face cases matter because ReadOnlyACL/NopACL declare AuthorizeWrite on
 // a VALUE receiver, so &acl.ReadOnlyACL{} satisfies acl.ACL while being a
 // distinct dynamic type. Matching only the value form put it in the default
 // arm — when that arm granted, `--read-only` was bypassable by one `&`.
 func TestAuthorizeCommandUnknownACLDenies(t *testing.T) {
 	cmd := CommandConfig{Context: "global", Permission: "command:x"}
 
-	t.Run("pointer ReadOnlyACL denies", func(t *testing.T) {
+	t.Run("face ReadOnlyACL denies", func(t *testing.T) {
 		if authorizeCommand(context.Background(), &acl.ReadOnlyACL{}, cmd) {
-			t.Error("pointer ReadOnlyACL must deny — value-only match was a --read-only bypass")
+			t.Error("face ReadOnlyACL must deny — value-only match was a --read-only bypass")
 		}
 	})
 
-	t.Run("pointer NopACL still fails open", func(t *testing.T) {
+	t.Run("face NopACL still fails open", func(t *testing.T) {
 		if !authorizeCommand(context.Background(), &acl.NopACL{}, cmd) {
-			t.Error("pointer NopACL should behave like the value form")
+			t.Error("face NopACL should behave like the value form")
 		}
 	})
 

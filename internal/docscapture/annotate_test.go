@@ -67,10 +67,25 @@ func TestFormURL(t *testing.T) {
 	}{
 		{docs.CaptureSpec{View: "form", Type: "ticket", Entity: "T-1"}, base + "/form/edit_ticket/T-1"},
 		{docs.CaptureSpec{View: "form", Type: "ticket", Entity: "T-1", Form: "custom"}, base + "/form/custom/T-1"},
+		// Every screen kind the SPA routes, so a manual can show a whole
+		// workflow rather than only edit forms.
+		{docs.CaptureSpec{View: "list", List: "policies"}, base + "/list/policies"},
+		{docs.CaptureSpec{View: "entity", Type: "policy", Entity: "POL-1"}, base + "/entity/policy/POL-1"},
+		{docs.CaptureSpec{View: "create", Type: "policy"}, base + "/form/new_policy"},
+		{docs.CaptureSpec{View: "create", Type: "policy", Form: "custom"}, base + "/form/custom"},
+		{docs.CaptureSpec{View: "search", Query: "access"}, base + "/search?q=access"},
+		// The world rides as ?world=, the same parameter a browser carries —
+		// so the figure is the page a reader would actually see.
+		{docs.CaptureSpec{View: "list", List: "policies", World: "published"},
+			base + "/list/policies?world=published"},
+		{docs.CaptureSpec{View: "entity", Type: "policy", Entity: "POL-1", World: "editorial"},
+			base + "/entity/policy/POL-1?world=editorial"},
+		{docs.CaptureSpec{View: "search", Query: "access", World: "published"},
+			base + "/search?q=access&world=published"},
 	}
 	for _, c := range cases {
-		if got := formURL(base, c.spec); got != c.want {
-			t.Errorf("formURL(%+v) = %q, want %q", c.spec, got, c.want)
+		if got := captureURL(base, c.spec); got != c.want {
+			t.Errorf("captureURL(%+v) = %q, want %q", c.spec, got, c.want)
 		}
 	}
 }

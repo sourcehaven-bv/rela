@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -169,4 +170,76 @@ func doHistoryGet(app *App, typeName, idPath string) *httptest.ResponseRecorder 
 
 func bodyMentions(rec *httptest.ResponseRecorder, substr string) bool {
 	return strings.Contains(rec.Body.String(), substr)
+}
+
+// TestConfigHistoryEnabled_AgreesWithTheHandler pins the two gates together.
+//
+// `/_config`.history_enabled exists so the SPA can render the History button
+// ABSENT on a backend that cannot serve history, rather than present and
+// certain to 501. That only works while the flag says what the handler does.
+//
+// The failure mode if they drift is quiet and one-directional in the worst
+// direction: the flag reports true, the button renders, and every click 501s
+// — an affordance that lies, which is exactly what the flag was added to
+// remove. The reverse (flag false, handler serving) merely hides a working
+// feature, which is also wrong but at least visible to whoever looks for it.
+//
+// So this asserts the PAIR on the same App, in both states, rather than
+// asserting the flag's value against a constant.
+func TestConfigHistoryEnabled_AgreesWithTheHandler(t *testing.T) {
+	tests := []struct {
+		name     string
+		versions store.VersionService
+		want     bool
+	}{
+		{
+			name: "fs-style backend without the optional capability",
+			// nil is how appbuild leaves it on fs/mem — the capability is
+			// type-asserted, not part of store.Store.
+			versions: nil,
+			want:     false,
+		},
+		{
+			name:     "backend with version history wired",
+			versions: historyStore{versions: map[string][]store.VersionSnapshot{}},
+			want:     true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newAppFromParts(nil, testMeta(), &fixture{})
+			app.versions = tc.versions
+
+			rec := httptest.NewRecorder()
+			app.handleV1Config(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_config", http.NoBody))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("config: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+			}
+			var cfg struct {
+				App struct {
+					HistoryEnabled bool `json:"history_enabled"`
+				} `json:"app"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &cfg); err != nil {
+				t.Fatalf("decode config: %v", err)
+			}
+			if cfg.App.HistoryEnabled != tc.want {
+				t.Errorf("history_enabled = %v, want %v", cfg.App.HistoryEnabled, tc.want)
+			}
+
+			// And the handler's own answer, on the SAME App. A 501 means the
+			// capability is absent; anything else means it was consulted.
+			hrec := httptest.NewRecorder()
+			handleV1History(app, hrec, httptest.NewRequest(
+				http.MethodGet, "/api/v1/_history/ticket/TKT-1", http.NoBody))
+			servedHistory := hrec.Code != http.StatusNotImplemented
+			if servedHistory != cfg.App.HistoryEnabled {
+				t.Errorf("`/_config`.history_enabled = %v but /_history answered %d "+
+					"(capability present = %v). The flag drives whether the SPA "+
+					"renders the History button at all, so a disagreement ships an "+
+					"affordance that can only fail.",
+					cfg.App.HistoryEnabled, hrec.Code, servedHistory)
+			}
+		})
+	}
 }

@@ -6,6 +6,7 @@ import { useScopeNavigation } from '@/composables'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { fetchView, getCommands, getErrorMessage } from '@/api'
+import { useWorld } from '@/composables/useWorld'
 import type { ViewEntity, ViewResponse, ViewSection, ViewSectionField } from '@/api'
 import type { Entity } from '@/types'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
@@ -39,6 +40,12 @@ import DocumentsPanel from '@/components/entity/DocumentsPanel.vue'
 import CommandModal from '@/components/entity/CommandModal.vue'
 import ExportMenu from '@/components/entity/ExportMenu.vue'
 import { entityExportUrl } from '@/api/transforms'
+import CopyMenu from '@/components/entity/CopyMenu.vue'
+import FaceMenu from '@/components/entity/FaceMenu.vue'
+import WorldBadge from '@/components/entity/WorldBadge.vue'
+import WorldBanner from '@/components/common/WorldBanner.vue'
+import { invokeCopy } from '@/api/copies'
+import type { CopyOffer, Face } from '@/types'
 import SectionEditForm, { type SectionEditField } from '@/components/forms/SectionEditForm.vue'
 import AutoSaveIndicator from '@/components/forms/AutoSaveIndicator.vue'
 import {
@@ -79,6 +86,48 @@ const router = useRouter()
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
 const { confirm } = useConfirm()
+// The world is read from the URL, the same source EntityList reads, so a
+// detail page reached from a world-bound list stays in that world and a
+// deep link round-trips.
+const { world, isWorldBound, worldParam, setWorld } = useWorld()
+
+// --- No face in the requested world -------------------------------------
+//
+// The entity exists and this caller may read it; the world they asked for
+// simply has no face of it. That is the ordinary state of every unpublished
+// draft, and it used to render as "Error — entry entity not found", which sent
+// people off to create the thing a second time.
+//
+// The server answers 200 with `_world_absent` and the DEFAULT face, so this
+// page shows real content with a banner explaining which world is missing it
+// and how to get to the face that exists. Crucially the page is NOT read-only
+// in this state — what is on screen is the default face, addressed by its
+// bare id, so the ordinary world banner (which announces read-only-ness)
+// must not render alongside it.
+const worldAbsent = computed(() => viewData.value?._world_absent === true)
+
+// The world that has no face here. Falls back to the requested world name, so
+// the banner still reads correctly against a server that omits the field.
+const worldAbsentName = computed(
+  () => viewData.value?._world_absent_name || world.value || '',
+)
+
+// --- The ONE read-only seam ----------------------------------------------
+//
+// Every write affordance on this page reads THIS and nothing else: Edit,
+// Delete, inline edit (section and row), the checkbox toggle, operator
+// commands and the copy menu. Before it existed each of them asked
+// `isWorldBound` for itself — five guards for one fact — and none of them
+// knew about the world-absent case, so a page whose banner said "you are
+// looking at the default face, which is where edits are saved" hid every way
+// to save one.
+//
+// Read-only iff a NON-default world served a resolved face. The API refuses
+// `?world=` on every write, and no SPA write path attaches it, so the server
+// is not a backstop here: a write from a read-only page would silently land
+// on the DEFAULT face while the reader looks at another. Under `_world_absent`
+// the default face IS what is on screen, so writes are exactly right.
+const readOnly = computed(() => isWorldBound.value && !worldAbsent.value)
 
 // Scope navigation (prev/next within a list) and back affordance
 // (return_to / from precedence). Two parallel concerns: scope-nav walks
@@ -90,7 +139,37 @@ const backTarget = useBackTarget()
 // State
 const loading = ref(true)
 const error = ref<string | null>(null)
+
+// pageState mirrors DynamicForm's `form-state-*` contract: a stable signal
+// that this screen has finished resolving, so a screenshot can wait for it
+// rather than hanging until its capture timeout.
+const pageState = computed<'pending' | 'loaded' | 'error'>(() => {
+  if (error.value) return 'error'
+  return loading.value ? 'pending' : 'loaded'
+})
 const viewData = ref<ViewResponse | null>(null)
+const loadedCommands = ref<Command[]>([])
+
+// Commands are SUPPRESSED under a world, and this is a stop-gap with a known
+// expiry rather than a design.
+//
+// A command pipes a rendered view to an operator shell script's stdin. The
+// server passes `defaultViewWorld()` explicitly at that call site
+// (internal/dataentry/commands.go), so under `?world=published` the script
+// receives DRAFT content while the user is reading the published face — and it
+// receives it "past any layer that could observe it", as that comment says.
+//
+// What a world-bound command should MEAN is deliberately another ticket. But
+// until it has one, rendering the buttons beside a banner that says "read-only"
+// is the affordance-that-lies shape: the page would be promising an action
+// whose input is not what is on screen. Hiding them is the honest reading of
+// today's server behaviour, not a claim about tomorrow's.
+//
+// Gated HERE rather than on the two button sites (desktop header + mobile
+// overflow) so a third render site cannot be added without inheriting it.
+const commands = computed<Command[]>(() =>
+  readOnly.value ? [] : loadedCommands.value,
+)
 
 // Prev/next within a list re-fetches this component in place. Blanking the
 // page to a centred spinner on every step was the worst layout shift in
@@ -108,7 +187,6 @@ const showBlockLoader = useDelayedPending(
     minDuration: PENDING_TIMINGS.navMinDurationMs,
   }
 )
-const commands = ref<Command[]>([])
 const showOverflowMenu = ref(false)
 
 const commandModalRef = ref<InstanceType<typeof CommandModal> | null>(null)
@@ -118,9 +196,15 @@ const commandModalRef = ref<InstanceType<typeof CommandModal> | null>(null)
 // support cmd/ctrl/middle-click — unlike Delete, which stays a <button>.
 // Each is the single source of truth for its destination, shared with the
 // keyboard shortcut so both routes agree.
-const historyTarget = computed(
-  () => `/history/${props.entityType}/${props.entityId}`
-)
+//
+// History is PER-FACE (`entity_versions` is keyed by content state), so the
+// world has to ride along: dropping it sent the reader to the DEFAULT face's
+// history from a world-bound page — a genuinely different record, presented as
+// the right one with nothing on screen naming the face (BUG-2).
+const historyTarget = computed<RouteLocationRaw>(() => ({
+  path: `/history/${props.entityType}/${props.entityId}`,
+  query: worldParam.value ? { world: worldParam.value } : {},
+}))
 
 const contentRef = ref<HTMLElement | null>(null)
 
@@ -151,16 +235,47 @@ const isInaccessible = computed(() => (entry.value?.inaccessible?.length ?? 0) >
 
 // Affordance gates: `_actions` map from the server. `false` → hide;
 // anything else → render. See frontend/src/utils/affordancesWarning.ts.
-const canUpdate = computeActionAllowed(entry, 'update')
+const mayUpdate = computeActionAllowed(entry, 'update')
+const mayDelete = computeActionAllowed(entry, 'delete')
+
+// A world-bound page is READ-ONLY, regardless of what `_actions` says.
+//
+// The API refuses every write carrying `?world=` (422 world_read_only) —
+// a write names its face by id, never a world — but `_actions` is computed
+// from the ACL alone and still reports `update: true` on a world-bound
+// response.
+// Gating on `_actions` by itself therefore renders an Edit link whose save
+// cannot succeed: an affordance map that promises a verb the surface will
+// reject (RULING 11).
+//
+// So the world is ANDed in here rather than fixed in the map. `_actions`
+// answers "may this principal write this entity", which is true and is the
+// question it is defined to answer; "can a write be addressed to THIS
+// response" is a property of the request, and belongs where the request is
+// known. EntityList already draws the same line, omitting its create button
+// under a world.
+const canUpdate = computed(() => mayUpdate.value && !readOnly.value)
+const canDelete = computed(() => mayDelete.value && !readOnly.value)
+
+// The same gate for the per-neighbour edit buttons in collection sections.
+//
+// The server sends `edit_form_id` on every section row — it is a config lookup
+// that knows nothing about the request's world — so without this the main Edit
+// affordance correctly disappears under a world while the row buttons stay,
+// offering an edit whose save the write path would reject (RULING 11). The ACL
+// half is already in the row's own `_actions`; this adds only the
+// "is this request addressable for a write" half, exactly as canUpdate does.
+const canEditRows = computed(() => !readOnly.value)
 
 // Nil: undefined when editing is unavailable (no configured form, an
-// inaccessible/git-crypt entity, or no update permission). The template then
-// renders nothing rather than a link to a page that would refuse the write.
+// inaccessible/git-crypt entity, no update permission, or a world-bound page).
+// The template then renders nothing rather than a link to a page that would
+// refuse the write.
 const editTarget = computed<RouteLocationRaw | undefined>(() => {
   if (!editFormId.value || isInaccessible.value || !canUpdate.value) return undefined
   return { name: 'form-edit', params: { id: editFormId.value, entityId: props.entityId } }
 })
-const canDelete = computeActionAllowed(entry, 'delete')
+
 
 // The entry's content section gets a custom renderer (mermaid + interactive
 // checkboxes) instead of the generic section render-path. Other content
@@ -293,6 +408,15 @@ function handleCheckboxToggle(index: number) {
   const current = entry.value
   const view = viewData.value
   if (!current || !view) return
+  // A checkbox click is a WRITE (it schedules a content PATCH), so it is
+  // refused under a world for the same reason the Edit button is hidden — the
+  // API would answer 422 world_read_only. Checkboxes render inside markdown
+  // and cannot be hidden by a `v-if` the way a button can, so the guard has to
+  // live at the handler.
+  if (readOnly.value) {
+    uiStore.warning(`Read-only: you are viewing the ${world.value} world`)
+    return
+  }
   let newContent: string
   try {
     newContent = toggleCheckboxInSource(current.content || '', index)
@@ -371,7 +495,7 @@ async function loadCommands() {
   commandsAbort = new AbortController()
   const localAbort = commandsAbort
   try {
-    commands.value = await getCommands(
+    loadedCommands.value = await getCommands(
       { pageType: 'entity', entityType: props.entityType },
       localAbort.signal
     )
@@ -379,7 +503,7 @@ async function loadCommands() {
     if (localAbort.signal.aborted) return
     if (isCancelledFetch(err)) return
     console.error('Failed to load commands:', err)
-    commands.value = []
+    loadedCommands.value = []
   }
 }
 
@@ -409,7 +533,16 @@ async function loadView() {
   // quick.
   const settleRouteLoad = beginRouteLoad()
   try {
-    viewData.value = await fetchView(props.entityType, props.entityId)
+    // The world rides the request, so the entry resolves to that world's face
+    // and every collection entity resolves through the same world, per
+    // neighbour (TKT-WRLDAPI item 4b). Without it this page rendered draft
+    // content while the selector said "published" — the API was correct and
+    // the page simply never asked.
+    viewData.value = await fetchView(
+      props.entityType,
+      props.entityId,
+      worldParam.value,
+    )
     if (viewData.value?.entry) {
       // Seed the autosave baseline so the first toggle's no-op
       // suppression can compare against server state without waiting
@@ -463,6 +596,208 @@ async function requestDelete() {
   router.push(backTargetAfterDelete())
 }
 
+// --- Copy affordances (RULING 9) ---------------------------------------
+//
+// Offers ride the entity response as `_copies`, so there is nothing to fetch:
+// they arrive with the view and refresh with it. CopyMenu renders only the
+// allowed ones, as absent rather than disabled.
+//
+// The menu is SUPPRESSED under a world (copyOffers is empty there), like every
+// other write affordance on this page — and not because the server's offers
+// are wrong there. They are computed for the RESOLVED face, so they are
+// correct. The problem is the page: a copy invoke carries no `?world=`, so it
+// would apply the DEFAULT face's content while the reader looks at whatever
+// face this world resolved. Under `otherwise: default` those are the same
+// bytes and it looks harmless; under a world serving a real alternate face the
+// user would publish content that is not on their screen. So writes happen on
+// the default face, where what you see is what you copy, and the way back to
+// it is one click away.
+//
+// Always an array. The wire keeps `_copies` absent (no capability) distinct
+// from `[]` (none declared), but this page renders nothing for both, so the
+// distinction is collapsed HERE, once, rather than carried into every reader.
+const copyOffers = computed<CopyOffer[]>(() =>
+  readOnly.value ? [] : (entry.value?._copies ?? []),
+)
+
+// Faces render on EVERY screen, world-bound or not — a reader wants the way
+// back to the draft, an author wants to see what readers see, and the
+// multilingual case has no privileged direction. Unlike copy offers, which are
+// suppressed under a world because an invoke would write a face other than the
+// one on screen, navigating between faces is safe in both directions.
+// Only faces a declared world can actually serve. A face with no world that
+// heads its face is unreachable through `?world=`, so offering it would
+// produce a dead control — the affordance-that-lies shape.
+const faceOptions = computed<Face[] | undefined>(() =>
+  entry.value?._faces?.filter(
+    (f) => schemaStore.worldForFace(props.entityType, f.face) !== undefined,
+  ),
+)
+
+
+function goToFace(f: Face) {
+  // Addressed by WORLD, not by face: `?world=` is the read-selection
+  // grammar this API has, and a world resolves the whole graph consistently
+  // (relations included, RULING 12). Jumping by a bare face would send
+  // `?world=nl` for a project whose world is `site-nl`, which the server
+  // rejects with `unknown_world` — measured, not hypothetical.
+  const w = schemaStore.worldForFace(props.entityType, f.face)
+  if (w === undefined) return
+  // Through setWorld, not a bare router.push, for two reasons this used to get
+  // wrong at once.
+  //
+  // It preserves the REST of the query. The old `{ query: { world: w } }`
+  // replaced the whole object, so switching language from a list-scoped page
+  // silently dropped `from`/`scope` and broke the back button and prev/next.
+  //
+  // And it spells the default face correctly. `worldForFace` returns '' for
+  // the default face, but on a deployment with `default_world: published` an
+  // absent param means PUBLISHED, not the default face — so dropping the
+  // param there navigates somewhere the user did not ask for. setWorld owns
+  // that rule (it writes `?world=default` only when it is actually needed to
+  // escape a configured default) and is the single place it should live.
+  setWorld(w)
+}
+
+const copyBusy = ref(false)
+
+async function runCopy(offer: CopyOffer) {
+  // Every offer is same-entity (the server filters cross-entity definitions
+  // out), so the invoke names the definition and the source and nothing else.
+  //
+  // Capture the subject. `copyBusy` only disables THIS menu's button — the
+  // scope-nav shortcuts (P/N), the back button and the sidebar stay live, so
+  // the page can be showing a different entity by the time the invoke
+  // resolves. Without this the success toast names a face on the entity the
+  // user has already left, and `loadView()` fires a second, pointless fetch
+  // for the one they are now on. Same shape as `pinEntityForFlush` below.
+  const subject = props.entityId
+  copyBusy.value = true
+  try {
+    const res = await invokeCopy(offer.name, subject)
+    const face = res.face || 'default'
+    if (props.entityId !== subject) {
+      // Still worth telling them it succeeded — they asked for it — but name
+      // the entity, since the page in front of them is no longer the subject.
+      uiStore.success(
+        res.created ? `Created the ${face} face of ${subject}` : `Updated the ${face} face of ${subject}`,
+      )
+      return
+    }
+    uiStore.success(
+      res.created ? `Created the ${face} face` : `Updated the ${face} face`,
+    )
+    // Reload so the offers recompute: a face that now exists may no longer be
+    // offered, and the entry's own content may have moved.
+    await loadView()
+  } catch (err) {
+    // The kernel re-authorizes, so a 403 here is not a contradiction of
+    // `allowed` — it is the boundary doing its job on a hint that went stale
+    // (a permission revoked between render and click). Report it plainly, and
+    // name the subject if the user has since navigated away — an unqualified
+    // "Copy failed" beside an unrelated entity reads as that entity failing.
+    const detail = getErrorMessage(err, 'Copy failed')
+    uiStore.error(props.entityId === subject ? detail : `${subject}: ${detail}`)
+  } finally {
+    copyBusy.value = false
+  }
+}
+
+// --- Leaving a world ----------------------------------------------------
+//
+// The way back returns to the DEFAULT world, which is where writes land: the
+// API refuses `?world=` on a write (422 world_read_only), so a world-bound
+// page is inherently read-only and the editing affordances belong on the
+// default face.
+//
+// Hidden when the principal cannot read the default world. That is a GLOBAL,
+// role-level grant `/_schema`.worlds already reports per world for this
+// caller, so the check costs no request and reads no entity — it is not a
+// per-entity probe and cannot act as an existence oracle. Nor is it a
+// confidentiality measure: a world NAME is schema.yaml config, served to every
+// principal by design. The gate is purely honesty — offering the way back to
+// someone whose default-world request returns an empty result would send them
+// somewhere that looks broken. `worldReadable` answers TRUE for an unknown
+// world, so an older server or an unloaded schema shows the button rather than
+// hiding a working affordance.
+//
+// It cannot fire on today's server: `/_schema` reports the default world's
+// `readable` as a hardcoded `true`, mirroring a request path that
+// short-circuits `default` before any grant check (the pre-existing gap
+// schemaworlds.go documents, pinned by
+// TestSchemaWorlds_DefaultWorldAgreesWithTheRequestPath). Wiring the honest
+// input anyway means that when the enumeration starts asking the gate, this
+// button starts hiding itself with no change here.
+const canReachDefaultWorld = computed(() => schemaStore.worldReadable(''))
+
+// The operator's announcement for the world on screen, or '' to announce
+// nothing. Config, not data — served identically to every principal.
+const worldBanner = computed<string>(
+  () => (world.value ? schemaStore.worlds.get(world.value)?.banner : '') || '',
+)
+
+
+// The button NAMES A DESTINATION, so it is labelled from the destination
+// rather than from a guess about the project's vocabulary.
+//
+// It used to read the literal string "Go to draft" on every type in every
+// project. A blog post has no draft — its faces are `en`/`nl`/`fr`, a language
+// axis with no lifecycle — so the button was ISMS vocabulary applied to
+// content that has none.
+//
+// The destination is always the type's DEFAULT face (the button returns to the
+// default world, which is where writes land), so its label is a pure schema
+// lookup: `faces.<default>.label` if the operator declared one, else the
+// face name. "Go to draft" still appears on an ISMS — because the operator
+// declared `draft` — and the blog post says "Go to English".
+//
+// "Go to default" is the fallback, not the goal: it is jargon, but it is
+// type-neutral and never wrong, which is the right thing to say when the type
+// declares no name for its default face at all.
+const defaultFaceLabel = computed<string>(
+  () => schemaStore.faceLabel(props.entityType, '') || 'default',
+)
+
+// --- The header's mobile home ------------------------------------------
+//
+// Every header affordance that is not Edit or Delete lives in the mobile
+// overflow menu, and these computeds are what make that checkable in one
+// place. Three features (FaceMenu, CopyMenu, History) each shipped to the
+// desktop row alone, so at phone width they vanished entirely — not degraded
+// layout, lost functionality: no way to publish a policy or switch language.
+
+// History is a per-DEPLOYMENT capability, not a permission. Postgres has
+// version history; fs and mem do not, and their `/_history` answers a named
+// 501. Rendering the button regardless is the affordance-that-lies shape, so
+// it is ABSENT when the capability is — never disabled, which would still
+// advertise a feature this deployment cannot provide.
+const showHistory = computed(() => schemaStore.historyEnabled)
+
+// The same filters the menu components apply to their own props, so the
+// mobile rows and the desktop menus offer an identical set. Duplicating the
+// PREDICATE would let the two drift; duplicating the call does not.
+const overflowFaces = computed<Face[]>(() =>
+  faceOptions.value ?? [],
+)
+const overflowCopies = computed<CopyOffer[]>(() =>
+  copyOffers.value.filter((o) => o.allowed),
+)
+
+// Whether the overflow button renders at all. One expression, read by both
+// the button and its contents: a fourth affordance is added here and cannot
+// then be reachable on desktop only.
+const hasOverflow = computed(
+  () =>
+    commands.value.length > 0 ||
+    overflowFaces.value.length > 0 ||
+    overflowCopies.value.length > 0 ||
+    showHistory.value,
+)
+
+function goToDefaultWorld() {
+  setWorld('')
+}
+
 function backTargetAfterDelete(): string {
   if (backTarget.value) return backTarget.value.to
   const listId = schemaStore.findListIdForEntityType(props.entityType)
@@ -475,16 +810,32 @@ function backTargetAfterDelete(): string {
 // entityTarget is the single source of truth for a section entry's destination,
 // bound to the RouterLinks below so a cmd/middle-clicked tab lands exactly where
 // a plain click does.
+//
+// The WORLD rides along, for the same reason historyTarget carries it (BUG-2):
+// a neighbour followed from a world-bound page must resolve in that world, or
+// the reader silently lands on the DEFAULT face of an entity whose row they
+// just saw badged as a fallback (TKT-6NCSSC).
+//
+// A cellLink is left alone: it is a server-resolved per-column target that may
+// point outside the entity routes entirely, so appending a world to it would
+// be inventing a parameter its destination never declared.
+//
 // Nil: returns undefined when the entry has no resolvable route (empty type),
 // and the template renders plain text instead of an anchor.
-function entityTarget(entity: { id: string; type: string }, cellLink?: string): string | undefined {
-  return entityDetailHref(entity, { cellLink }) || undefined
+function entityTarget(
+  entity: { id: string; type: string },
+  cellLink?: string,
+): RouteLocationRaw | undefined {
+  const path = entityDetailHref(entity, { cellLink })
+  if (!path) return undefined
+  if (cellLink) return path
+  return worldParam.value ? { path, query: { world: worldParam.value } } : path
 }
 
 function navigateToEntity(entity: { id: string; type: string }, cellLink?: string) {
-  const path = entityDetailHref(entity, { cellLink })
-  if (!path) return
-  router.push(path)
+  const target = entityTarget(entity, cellLink)
+  if (!target) return
+  router.push(target)
 }
 
 // Click handler for the section-table cell anchors. Those are real <a href>
@@ -603,6 +954,10 @@ function memoBuildSectionEditFields(section: ViewSection, ent: Entity): SectionE
 }
 
 function sectionShouldRouteToInlineEdit(section: ViewSection, ent: Entity): boolean {
+  // Inline edit is a write surface; a world-bound page has none. Routing to
+  // the display path here is what makes the whole page read-only rather than
+  // just its header buttons.
+  if (readOnly.value) return false
   return sectionShouldRouteToInlineEditPure(section.fields, ent, getPropertyDef)
 }
 
@@ -616,6 +971,16 @@ function sectionShouldRouteToInlineEdit(section: ViewSection, ent: Entity): bool
 // suppressed the generic <h2> for a headingless properties section we'd
 // end up with NO heading at all and a bare indicator. Gating on the same
 // truthiness keeps the two guards in agreement (RR-32ARO9).
+// True when the shared <h2> above actually renders, i.e. when this section can
+// be named by that heading element via aria-labelledby. When it does not render
+// (a properties section drawing its own heading row, or a headingless section)
+// the section falls back to aria-label from the heading text, so a section is
+// never left as an unnamed region.
+function sectionRendersGenericHeading(section: ViewSection): boolean {
+  if (sectionRendersOwnHeading(section)) return false
+  return !!section.heading || (section === entryContentSection.value && !!checkboxStats.value)
+}
+
 function sectionRendersOwnHeading(section: ViewSection): boolean {
   const ent = entry.value
   return (
@@ -667,6 +1032,11 @@ const INLINE_EDIT_ROW_CAP = 100
 // Thin SFC adapter — the cap-behaviour logic lives in the pure module
 // so it's unit-testable without mounting EntityDetail.
 function rowShouldRouteToInlineEdit(ent: ViewEntity, rowCount: number): boolean {
+  // Same as sectionShouldRouteToInlineEdit: no write surface under a world.
+  // Collection rows matter doubly here — under a world each row is a
+  // NEIGHBOUR's resolved face, and an edit would address the default state of
+  // an entity the page is not even showing you.
+  if (readOnly.value) return false
   return rowShouldRouteToInlineEditPure(ent, rowCount, INLINE_EDIT_ROW_CAP, getPropertyDef)
 }
 
@@ -773,6 +1143,24 @@ onBeforeUnmount(() => {
 
 onUnmounted(() => document.removeEventListener('click', closeOverflow))
 
+// Switching WORLD reloads the view, but is deliberately NOT folded into the
+// entity watcher below.
+//
+// That watcher flushes pending autosaves against the PREVIOUS entity's
+// identity before loading the next one. A world change is the SAME entity seen
+// through a different world, so there is no previous identity to pin and no
+// cross-entity flush to arrange — running that machinery would capture the
+// current entity as its own "previous" and commit a flush nobody asked for.
+//
+// What a world change does need is a refetch, because the face being displayed
+// changes even though the id does not.
+watch(
+  () => worldParam.value,
+  () => {
+    loadView()
+  },
+)
+
 // Watch for route changes
 watch(
   () => [props.entityType, props.entityId],
@@ -795,7 +1183,7 @@ watch(
 </script>
 
 <template>
-  <div class="entity-detail">
+  <div class="entity-detail" :data-testid="`page-state-${pageState}`">
     <!-- Deliberately empty while loading below the threshold: no spinner,
          no reserved block, no layout spring. The ActivityBar carries the
          navigation case; this only paints for a slow cold load. -->
@@ -840,6 +1228,82 @@ watch(
         </template>
       </div>
 
+      <!--
+        The world banner, mirroring EntityList's. It says which world is being
+        shown, that the page is read-only here, and offers the way back to the
+        default world — which is where every write lands, since the API refuses
+        `?world=` on a write.
+
+        "Go to draft" is a plain navigation to the same id with no `?world=`,
+        shown only when this principal may read the default world — a global
+        role-level grant already reported per world by `/_schema`.worlds, so
+        the check costs no extra request. It does NOT predict whether the
+        specific ENTITY is readable there; that is the row gate's job and it
+        answers on arrival, exactly as it would for a typed URL.
+
+        There is deliberately no WorldBadge on the ENTRY: `_views` attaches
+        `_world` to collection entities only (sections.go is the single call
+        site), so a badge here would have nothing to render. The entry's own
+        provenance is available on the entity GET, but this page reads the view
+        — wiring a second request for a badge is not worth it. Collection
+        entities, where the fallback-vs-real distinction actually bites, carry
+        the badge below.
+      -->
+      <!--
+        No face in the requested world. Distinct from the banner below because
+        the two say opposite things about the page: that one announces a
+        read-only face served BY the world, this one announces that the world
+        served nothing and what is on screen is the DEFAULT face — which is
+        writable, and is where a promote would start from. Rendering both would
+        tell the reader the page is read-only when it is not.
+      -->
+      <WorldBanner
+        v-if="worldAbsent"
+        variant="absent"
+        :label="`Not in the ${worldAbsentName} world`"
+      >
+        This entity has no {{ worldAbsentName }} face yet. You are looking at
+        the {{ defaultFaceLabel }} face, which is where edits are saved.
+        <template #actions>
+          <button
+            v-if="canReachDefaultWorld"
+            class="btn btn-secondary"
+            @click="goToDefaultWorld"
+          >
+            Go to {{ defaultFaceLabel }}
+          </button>
+        </template>
+      </WorldBanner>
+
+      <!--
+        The ANNOUNCEMENT is operator config: `banner:` on the world in
+        schema.yaml. "DRAFT — not in force" on an editorial world, nothing on a
+        language world, where announcing "you are reading Dutch" to someone who
+        chose Dutch is noise.
+
+        The read-only note and the way back are NOT configurable: a non-default
+        world is read-only on this API whatever the operator declares
+        (attachWorld refuses `?world=` on a write), so suppressing them would
+        leave a reader on a page that silently refuses writes with no
+        explanation and no exit.
+      -->
+      <WorldBanner v-if="isWorldBound && !worldAbsent" :label="worldBanner">
+        {{
+          canReachDefaultWorld
+            ? `Read-only in this world — edit from ${defaultFaceLabel}.`
+            : 'Read-only in this world.'
+        }}
+        <template #actions>
+          <button
+            v-if="canReachDefaultWorld"
+            class="btn btn-secondary"
+            @click="goToDefaultWorld"
+          >
+            Go to {{ defaultFaceLabel }}
+          </button>
+        </template>
+      </WorldBanner>
+
       <header class="detail-header">
         <div class="header-info">
           <span class="entity-type-badge">{{ typeDef?.label || entityType }}</span>
@@ -855,6 +1319,13 @@ watch(
           >
             {{ cmd.label }}
           </button>
+          <FaceMenu :faces="faceOptions" @select="goToFace" />
+          <!--
+            Copy affordances (RULING 9). Renders nothing when no offer is
+            allowed — a denied copy is ABSENT, not disabled — and nothing under
+            a world, where copyOffers is empty; see its comment for why.
+          -->
+          <CopyMenu :offers="copyOffers" :busy="copyBusy" @invoke="runCopy" />
           <RouterLink
             v-if="editTarget"
             class="btn btn-secondary"
@@ -862,7 +1333,15 @@ watch(
           >
             Edit <kbd>E</kbd>
           </RouterLink>
-          <RouterLink class="btn btn-secondary" :to="historyTarget">History</RouterLink>
+          <!--
+            Gated on a DEPLOYMENT capability, not a permission: version history
+            is postgres-only, and on fs/mem `/_history` answers a named 501. An
+            ungated link could therefore only fail. Absent, not disabled — a
+            greyed-out control still advertises a feature this deployment does
+            not have. The mobile block below gates on the SAME flag; both sites
+            must, which is the trap this header just walked into three times.
+          -->
+          <RouterLink v-if="showHistory" class="btn btn-secondary" :to="historyTarget">History</RouterLink>
           <ExportMenu :url-for="(t: string) => entityExportUrl(entityType, entityId, t)" />
           <button v-if="canDelete" class="btn btn-danger" @click="requestDelete">
             Delete <kbd>Del</kbd>
@@ -894,7 +1373,22 @@ watch(
               <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
             </svg>
           </button>
-          <div v-if="commands.length" class="overflow-menu-wrapper">
+          <!--
+            The overflow menu is the mobile home for EVERY header affordance
+            that is not Edit or Delete. It used to hold commands only, so the
+            world-era additions — FaceMenu, CopyMenu, History — were reachable
+            on desktop and simply GONE on a phone: you could not publish a
+            policy or switch language at all, with nothing on screen saying
+            those actions exist.
+
+            `hasOverflow` is one computed rather than a chain of `||` inline,
+            so adding a fourth affordance means extending one expression that
+            both the button and its contents read. The three-times-repeated
+            omission was each author adding a control where they were already
+            working; a single list is what makes "does this have a mobile
+            home?" answerable in one place.
+          -->
+          <div v-if="hasOverflow" class="overflow-menu-wrapper">
             <button
               class="btn btn-secondary mobile-overflow-btn"
               aria-label="More actions"
@@ -911,6 +1405,37 @@ watch(
               >
                 {{ cmd.label }}
               </button>
+              <!--
+                Faces and copies are rendered as flat rows here rather than as
+                the FaceMenu/CopyMenu components: those open a nested dropdown,
+                and a dropdown inside a dropdown on a phone is unusable. The
+                affordance is the same and the handlers are shared, so a copy
+                invoked from here goes through the identical guard.
+              -->
+              <button
+                v-for="f in overflowFaces"
+                :key="`face-${f.face}`"
+                class="overflow-menu-item"
+                @click="goToFace(f)"
+              >
+                View {{ f.label || f.face || 'default' }}
+              </button>
+              <button
+                v-for="o in overflowCopies"
+                :key="`copy-${o.name}`"
+                class="overflow-menu-item"
+                :disabled="copyBusy"
+                @click="runCopy(o)"
+              >
+                {{ o.label || o.name }}
+              </button>
+              <RouterLink
+                v-if="showHistory"
+                class="overflow-menu-item"
+                :to="historyTarget"
+              >
+                History
+              </RouterLink>
             </div>
           </div>
         </div>
@@ -956,12 +1481,16 @@ watch(
           :id="section.sectionId"
           :key="section.sectionId"
           class="view-section"
+          :aria-labelledby="
+            sectionRendersGenericHeading(section) ? `${section.sectionId}-heading` : undefined
+          "
+          :aria-label="
+            sectionRendersGenericHeading(section) ? undefined : section.heading || undefined
+          "
         >
           <h2
-            v-if="
-              !sectionRendersOwnHeading(section) &&
-              (section.heading || (section === entryContentSection && checkboxStats))
-            "
+            v-if="sectionRendersGenericHeading(section)"
+            :id="`${section.sectionId}-heading`"
             class="section-heading"
           >
             {{ section.heading }}
@@ -1052,6 +1581,18 @@ watch(
                   <span class="entity-title">{{ ent.title }}</span>
                   <span class="entity-id">{{ ent.id }}</span>
                 </component>
+                <!--
+                  Per-neighbour provenance (RULING 12/14). Each collection
+                  entity resolved through the world INDEPENDENTLY, so one
+                  section can mix `chain` and `fallback-default` — the badge is
+                  per row, not per section. Renders nothing under the default
+                  world.
+
+                  Outside the link wrapper: the badge is provenance ABOUT the
+                  row, not part of the link's accessible name — folding it in
+                  would make the link read "Guide GUIDE-1 nl".
+                -->
+                <WorldBadge :world="ent._world" />
               </header>
               <div
                 v-if="ent.hasContent"
@@ -1085,8 +1626,10 @@ watch(
                   <span class="entity-title">{{ ent.title }}</span>
                   <span class="entity-id">{{ ent.id }}</span>
                 </component>
+                <!-- Per-neighbour provenance; see the first WorldBadge above. -->
+                <WorldBadge :world="ent._world" />
                 <button
-                  v-if="ent.editFormId"
+                  v-if="ent.editFormId && canEditRows"
                   class="edit-btn"
                   title="Edit"
                   @click.stop="navigateToEdit(ent.editFormId, ent.id)"
@@ -1154,6 +1697,8 @@ watch(
                 <span class="entity-title">{{ ent.title }}</span>
                 <span class="entity-id">{{ ent.id }}</span>
               </component>
+              <!-- Per-neighbour provenance; see the first WorldBadge above. -->
+              <WorldBadge :world="ent._world" />
               <SectionEditForm
                 v-if="rowShouldRouteToInlineEdit(ent, section.entities?.length ?? 0)"
                 :key="`${ent.type}/${ent.id}`"
@@ -1248,7 +1793,7 @@ watch(
                       </td>
                       <td class="actions-cell">
                         <button
-                          v-if="row.editFormId"
+                          v-if="row.editFormId && canEditRows"
                           class="icon-btn"
                           title="Edit"
                           @click="navigateToEdit(row.editFormId, row.entityId)"
@@ -1312,7 +1857,7 @@ watch(
                   </td>
                   <td class="actions-cell">
                     <button
-                      v-if="row.editFormId"
+                      v-if="row.editFormId && canEditRows"
                       class="icon-btn"
                       title="Edit"
                       @click="navigateToEdit(row.editFormId, row.entityId)"
@@ -1635,6 +2180,10 @@ watch(
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: var(--space-lg);
 }
+
+/* Mirrors EntityList's world banner so the two surfaces read as one feature.
+   Horizontal here (the detail page has the width and the note is shorter),
+   with the leave-world button on the trailing edge. */
 
 .entity-card {
   padding: 16px;

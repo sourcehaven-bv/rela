@@ -26,7 +26,11 @@ func ValidateEntityProperties(ctx context.Context, st store.Store, meta *metamod
 		return nil
 	}
 	var out []PropertyError
-	for e, err := range st.ListEntities(ctx, store.EntityQuery{}) {
+	// AllStates: each content state holds its own property values, so a
+	// required property missing from one face is a real violation. The default
+	// query loads only default-state rows and would report a clean run over
+	// data it never looked at (TKT-4Y6CMV).
+	for e, err := range st.ListEntities(ctx, store.EntityQuery{AllStates: true}) {
 		if err != nil {
 			continue
 		}

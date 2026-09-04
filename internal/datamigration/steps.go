@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -60,6 +61,8 @@ func parseStep(node *yaml.Node) (Step, error) {
 		step = &renamePropertyStep{}
 	case "rename_entity_type":
 		step = &renameEntityTypeStep{}
+	case "rename_face":
+		step = &renameFaceStep{}
 	case "rename_relation_type":
 		step = &renameRelationTypeStep{}
 	case "map_values":
@@ -201,6 +204,162 @@ func (s *renameEntityTypeStep) Run(ctx context.Context, x *Exec) (StepResult, er
 		return true, nil
 	}, &res)
 	return res, err
+}
+
+// ---- rename_face ----
+
+type renameFaceStep struct {
+	Entity string `yaml:"entity"`
+	From   string `yaml:"from"`
+	To     string `yaml:"to"`
+
+	// Stored coordinates, resolved in Validate where both shapes are in hand.
+	// Exec carries no projections, and resolving here rather than widening it
+	// keeps the bare-face mapping next to the schemas that define it.
+	fromStored string
+	toStored   string
+}
+
+func (s *renameFaceStep) Kind() string { return "rename_face" }
+func (s *renameFaceStep) Target() string {
+	return s.Entity + "." + s.From + " → " + s.To
+}
+
+func (s *renameFaceStep) Validate(from, to metamodel.ShapeProjection) error {
+	if s.Entity == "" || s.From == "" || s.To == "" {
+		return errors.New("entity, from and to are required")
+	}
+	if !faceInShape(from, s.Entity, s.From) {
+		return fmt.Errorf("entity %q declares no face %q in the from-schema", s.Entity, s.From)
+	}
+	if !faceInShape(to, s.Entity, s.To) {
+		return fmt.Errorf("entity %q declares no face %q in the to-schema", s.Entity, s.To)
+	}
+	s.fromStored = storedFaceIn(from, s.Entity, s.From)
+	s.toStored = storedFaceIn(to, s.Entity, s.To)
+	if s.fromStored == "" && s.toStored != "" {
+		// The bare face is a family's identity row: every store refuses to
+		// delete it while sibling faces remain, so "move the bare rows to a
+		// named coordinate" fails on the first entity with a sibling and
+		// leaves a duplicate behind. Renaming the bare face away is a change
+		// to `bare_face:` plus a family rewrite, not a row move.
+		return fmt.Errorf("entity %q: face %q is the bare face; it cannot be renamed to a "+
+			"named coordinate by moving rows — change `bare_face:` in the schema instead",
+			s.Entity, s.From)
+	}
+	return nil
+}
+
+// Run moves every row at the old face to the new coordinate (TKT-O0A8FO).
+//
+// # Why this is not forEachEntity
+//
+// A face is a stored COORDINATE, and store.UpdateEntity addresses a row BY that
+// coordinate — handing it an entity whose Face has been changed looks up the
+// NEW coordinate, which does not exist yet, and returns not-found (verified
+// against memstore). So unlike rename_entity_type, which really is an in-place
+// field update, a face rename is a MOVE: create the row at the new coordinate,
+// then delete the old one.
+//
+// Create-then-delete rather than delete-then-create, so a failure between the
+// two leaves the data duplicated rather than destroyed. Re-running the
+// migration then converges — a destination row holding the source's content
+// counts as already moved, and only the source is deleted — which is the
+// idempotence the engine requires of every step.
+//
+// # The bare face is the asymmetric case
+//
+// The face named by `bare_face:` is stored as the ZERO coordinate, not under
+// its own name, so renaming to or from it moves rows between the zero
+// coordinate and a named one. Both sides are resolved through the schema that
+// declares them (from-side against the from-shape, to-side against the
+// to-shape) in Validate. When the two resolve to the SAME coordinate the rename
+// is a no-op in storage terms — a face that was already bare being renamed while
+// staying bare — and the step does nothing rather than deleting the row it just
+// re-created.
+func (s *renameFaceStep) Run(ctx context.Context, x *Exec) (StepResult, error) {
+	res := StepResult{Kind: s.Kind(), Target: s.Target()}
+	if s.fromStored == s.toStored {
+		return res, nil
+	}
+
+	var moving []*entity.Entity
+	q := store.EntityQuery{Type: s.Entity, AllStates: true}
+	for e, err := range x.Store.ListEntities(ctx, q) {
+		if err != nil {
+			return res, err
+		}
+		if string(e.Face) == s.fromStored {
+			moving = append(moving, e)
+		}
+	}
+	res.Affected = len(moving)
+	if !x.Apply {
+		return res, nil
+	}
+
+	for _, e := range moving {
+		// A row already at the destination is EITHER the previous run's own
+		// copy (a crash between create and delete leaves both rows — the
+		// re-run must converge, which is the idempotence the engine requires)
+		// OR a genuine COLLISION: the entity has DIFFERENT content at both
+		// coordinates and the rename would silently destroy one of them.
+		// Identical content is the former; anything else is refused with the
+		// ids named, so the operator resolves it deliberately.
+		//
+		// A collision is most often a rename ONTO the bare face while the bare
+		// row still holds the type's original content — the flat/faced
+		// boundary, which is exactly where this arc's other defects clustered.
+		existing, err := x.Store.GetEntityState(ctx, e.ID, entity.Face(s.toStored))
+		alreadyMoved := err == nil && existing != nil && sameContent(existing, e)
+		if err == nil && existing != nil && !alreadyMoved {
+			return res, fmt.Errorf(
+				"%s: cannot rename face %q to %q — a row already exists at the destination; "+
+					"drop or merge it first, or this rename would destroy one of the two",
+				e.ID, s.From, s.To)
+		}
+		if !alreadyMoved {
+			moved := *e
+			moved.Face = entity.Face(s.toStored)
+			if err := x.Store.CreateEntity(ctx, &moved); err != nil {
+				return res, fmt.Errorf("%s: create at %q: %w", e.ID, s.toStored, err)
+			}
+		}
+		if _, err := x.Store.DeleteEntityState(ctx, e.ID, entity.Face(s.fromStored)); err != nil {
+			return res, fmt.Errorf("%s: remove old face %q: %w", e.ID, s.fromStored, err)
+		}
+	}
+	return res, nil
+}
+
+// sameContent reports whether two rows carry the same properties and body —
+// the test for "this destination row is the previous run's copy".
+func sameContent(a, b *entity.Entity) bool {
+	return a.Content == b.Content && reflect.DeepEqual(a.Properties, b.Properties)
+}
+
+// faceInShape reports whether a projection declares the named face for a type.
+func faceInShape(p metamodel.ShapeProjection, typ, face string) bool {
+	es, ok := p.Entities[typ]
+	if !ok {
+		return false
+	}
+	return slices.Contains(es.Faces, face)
+}
+
+// storedFaceIn maps a DECLARED face name to the coordinate it is stored under,
+// per the given shape: the type's `bare_face` stores as the empty string, every
+// other face under its own name.
+//
+// The shape-projection twin of metamodel.StoredFace, which needs a whole
+// *Metamodel a migration step does not have. It is derivable here because
+// ShapeProjection carries BareFace precisely so this question is answerable
+// from a migration file alone.
+func storedFaceIn(p metamodel.ShapeProjection, typ, declared string) string {
+	if es, ok := p.Entities[typ]; ok && es.BareFace == declared {
+		return ""
+	}
+	return declared
 }
 
 // ---- rename_relation_type ----

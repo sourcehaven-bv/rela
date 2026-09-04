@@ -76,6 +76,8 @@ graph LR
 
 There is 1 seeded ticket in this example.
 
+> **✓ Verified** — `ticket` resolves to **ticket-1**.
+
 ## Who can do what
 
 The access model comes straight from `acl.yaml`:
@@ -87,9 +89,14 @@ The access model comes straight from `acl.yaml`:
 | `ticket` | update | ✓ |  |
 | `ticket` | delete | ✓ |  |
 
-The table above is rendered from `acl.yaml`. These claims are _checked_ against
-the real authorization path when this handbook builds, so the prose cannot
-outlive the policy it describes:
+The table above is rendered from `acl.yaml`. Every cell in it is also _checked_
+against the real authorization path when this handbook builds, so the prose
+cannot outlive the policy it describes.
+
+Those checks carry `emit = false`: the table has already shown the reader what
+the policy says, and restating each row underneath it would say the same thing
+twice. The claims still run — widen `viewer` in `acl.yaml` and this handbook
+stops building.
 
 ## The edit form
 

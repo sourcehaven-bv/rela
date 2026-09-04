@@ -4,6 +4,7 @@ import { useRouter, useRoute, onBeforeRouteLeave } from 'vue-router'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { readReturnTo } from '@/utils/returnPath'
+import { useWorld } from '@/composables/useWorld'
 import { actionAllowed } from '@/utils/affordancesWarning'
 import {
   isFieldWritable,
@@ -84,6 +85,9 @@ const emit = defineEmits<{
 
 const router = useRouter()
 const route = useRoute()
+// The world the create button opened this form in — carried onto the
+// post-create redirect so the user lands where the new face actually exists.
+const { worldParam } = useWorld()
 const schemaStore = useSchemaStore()
 const entitiesStore = useEntitiesStore()
 const uiStore = useUIStore()
@@ -1197,11 +1201,21 @@ async function handleSubmit() {
     // down component is a no-op today; this keeps the discipline uniform.
     if (stagedUnmounted) return
 
-    // Navigate to return_to or entity detail
+    // Navigate to return_to or entity detail.
+    //
+    // The world rides along. A create always writes the entity's DEFAULT face
+    // — it names no face, and no world reaches a write — so under a filtering
+    // `default_world` the new entity has no face in the ambient world and
+    // landing there showed "not in this world" for something just created.
+    // The list's `create_world` says which world to land in; useWorld picked it
+    // off the `?world=` the create button carried.
     if (returnTo.value) {
       router.push(returnTo.value)
     } else {
-      router.push(`/entity/${formConfig.value.entity}/${entity.id}`)
+      router.push({
+        path: `/entity/${formConfig.value.entity}/${entity.id}`,
+        query: worldParam.value ? { world: worldParam.value } : {},
+      })
     }
   } catch (err) {
     // Suppress cancellation errors from rapid navigation in Firefox

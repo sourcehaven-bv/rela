@@ -9,7 +9,7 @@ status: done
 ---
 
 Security gate for shipping content states — design doc §12.1
-(`.ignored/pointer-design.md`).
+(`.ignored/face-design.md`).
 
 `internal/acl/policy.go:324-351` documents a live self-promotion path: the
 membership relation carries no `requires_permission` by default, so anyone who

@@ -461,7 +461,7 @@ signal. (Reading absence as redaction is what made every unset property
 permanently unreachable in the edit form — BUG-MLT9DE. The SPA now renders a
 configured field unless `_redacted` names it.)
 
-`_redacted` carries the same closed-world pointer semantics as `_fields` /
+`_redacted` carries the same closed-world present/absent semantics as `_fields` /
 `_relations`: present (possibly empty — "evaluated, nothing hidden") on
 per-entity responses, absent on list rows, which carry no write affordances.
 Names are sorted.
@@ -609,7 +609,7 @@ with an **empty list** (`"status": []`): the key's presence is what tells the SP
 rather than a full enum select that would offer illegal targets. The map is
 **absent entirely** when the server wires no state machines (no policy /
 non-machine metamodel / older server), the same "feature not available" signal
-`_fields` uses via its pointer. Like every affordance map it is a **UI hint,
+`_fields` uses via its own absence. Like every affordance map it is a **UI hint,
 never authorization**: the write path re-enforces the transition (guard 403,
 legality / precondition 422), so a stale verdict simply surfaces the existing
 structured error (attempt-and-recover).
@@ -721,7 +721,7 @@ Per-entity responses carry an `_attachments` map keyed by property name.
 The value is **always a list** — even a single-attachment property reports
 a one-element array, matching how `list:` properties and `_relations` are
 always arrays. Only `file` properties that actually carry a file appear.
-Same closed-world / pointer semantics as `_fields` / `_relations`: present
+Same closed-world present/absent semantics as `_fields` / `_relations`: present
 (possibly empty) on every per-entity response (GET, PATCH, POST create,
 clone), absent on list rows.
 
