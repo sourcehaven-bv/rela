@@ -4,7 +4,7 @@ type: automated-measure
 title: Config structs under acl.yaml reject unknown keys at load
 description: 'Table tests asserting that a nested acl.yaml config struct fails the policy load on an unrecognized key rather than dropping it. Covers RoleRelationDef (the four write verbs get a message naming relation_grants:, anything else "unknown key") alongside the pre-existing RelationWriteGrant coverage. yaml.v3 ignores unmappable keys by default, so without a strict UnmarshalYAML a typo in a security-relevant block loads clean and enforces nothing.'
 kind: test
-location: internal/acl (TestLoadPolicy_RoleRelationsVerbKey_Rejected, TestLoadPolicy_RoleRelationsSupportedKeys)
+location: internal/acl (TestLoadPolicy_RoleRelationsVerbKey_Rejected, TestLoadPolicy_RoleRelationsSupportedKeys); extended to the affordance grants by AM-acl-affordance-grants-reject-unknown-keys
 status: proposed
 ---
 
@@ -32,3 +32,15 @@ The rule this generalizes to, for the next struct added under `acl.yaml`: a
 strict unmarshaller is the default, and the question to ask before accepting a
 lenient one is which direction a dropped key fails. Leniency is only acceptable
 where it fails closed.
+
+## Follow-up: the rule was stated but not applied
+
+This measure recorded the principle without enumerating the structs that
+already violated it. Three did — `FieldGrant`, `OptionGrant`, `RelationGrant`
+— and BUG-I0N3YR fixed them afterwards. The enumeration was two greps
+(structs with yaml tags, minus structs with an `UnmarshalYAML`), so applying
+the rule at the time would have cost minutes.
+
+Keep that as part of the measure: a rule about a class of defect is not
+discharged until the class has been listed. See
+[[AM-acl-affordance-grants-reject-unknown-keys]].
