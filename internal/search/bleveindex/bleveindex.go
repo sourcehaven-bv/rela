@@ -14,10 +14,12 @@ import (
 	"github.com/blevesearch/bleve/v2/analysis/analyzer/standard"
 	"github.com/blevesearch/bleve/v2/index/scorch"
 	"github.com/blevesearch/bleve/v2/mapping"
+	searchpkg "github.com/blevesearch/bleve/v2/search"
 	"github.com/blevesearch/bleve/v2/search/query"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/search"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // lastModifiedKey is the bleve internal-storage key under which we persist
@@ -37,8 +39,15 @@ const (
 )
 
 // bleveDoc is the internal document structure indexed by bleve.
+//
+// Documents are keyed per FACE (TKT-9KZGJO) — the bleve document id is
+// [entity.FormatStateRef](id, face), so `PAGE-1` and `PAGE-1@draft`
+// are distinct documents. ID keeps the BARE entity id so a hit can name
+// the entity without re-parsing the key, and Face carries the
+// coordinate so world resolution can rank faces after the match.
 type bleveDoc struct {
 	ID         string `json:"id"`
+	Face       string `json:"face"`
 	Type       string `json:"type"`
 	Primary    string `json:"primary"`
 	Content    string `json:"content"`
@@ -159,13 +168,20 @@ func buildMapping() *mapping.IndexMappingImpl {
 	return indexMapping
 }
 
-// Index adds or updates an entity in the search index.
+// EntityPut adds or updates ONE FACE of an entity in the search index.
+// The document key is the state ref, so writing a non-default state adds
+// a sibling document instead of overwriting the default face.
 func (idx *Index) EntityPut(e *entity.Entity) error {
-	if err := idx.index.Index(e.ID, entityToDoc(e)); err != nil {
+	if err := idx.index.Index(docKey(e.ID, e.Face), entityToDoc(e)); err != nil {
 		return err
 	}
 	return idx.bumpLastModified(e.UpdatedAt)
 }
+
+// docKey is the bleve document id for one face. It is exactly the state
+// ref serialization the stores use for filenames and index keys, so the
+// two never disagree about what addresses a face.
+func docKey(id string, p entity.Face) string { return entity.FormatStateRef(id, p) }
 
 // IndexBatch indexes every entity in a single Bleve batch and bumps
 // LastModified once at the end. Use this for initial backfill where
@@ -198,23 +214,91 @@ func (idx *Index) IndexBatch(entities []*entity.Entity) (int, error) {
 }
 
 // EntityDelete removes an entity from the search index.
+// EntityDelete removes EVERY face of id.
+//
+// Documents are keyed per face, so deleting the bare id would remove only
+// the default one and strand its siblings. A store calls this only when the
+// whole entity is gone (see [store.FaceObserver]); a single face arrives
+// through [Index.EntityFaceDelete].
 func (idx *Index) EntityDelete(id string) error {
-	if err := idx.index.Delete(id); err != nil {
+	keys, err := idx.faceKeys(id)
+	if err != nil {
 		return err
+	}
+	batch := idx.index.NewBatch()
+	for _, k := range keys {
+		batch.Delete(k)
+	}
+	// Delete the bare key too. It is normally among faceKeys, but a document
+	// written before per-face keying carries no `id` field to find it by, and
+	// leaving it behind would keep a deleted entity searchable forever.
+	batch.Delete(id)
+	if err := idx.index.Batch(batch); err != nil {
+		return fmt.Errorf("bleveindex: delete %s: %w", id, err)
 	}
 	// A delete carries no mtime from the entity; use wall clock so the
 	// timestamp still advances and consumers can observe the change.
 	return idx.bumpLastModified(time.Now())
 }
 
+// EntityFaceDelete removes exactly ONE face, leaving its siblings indexed.
+// See [store.FaceObserver] for why this is a separate, optional capability
+// rather than a widened EntityDelete.
+func (idx *Index) EntityFaceDelete(id string, p entity.Face) error {
+	if err := idx.index.Delete(docKey(id, p)); err != nil {
+		return err
+	}
+	return idx.bumpLastModified(time.Now())
+}
+
+// compile-time check: the index can evict a single face.
+var _ store.FaceObserver = (*Index)(nil)
+
+// faceKeys returns the document keys of every indexed face of id.
+//
+// A term query on the keyword-analyzed `id` field, which every face carries
+// as the BARE id — that is why the document keeps `id` separate from its
+// state-ref document key. Bounded by maxFacesPerEntity: a family is a handful
+// of coordinates, and an unbounded Size here would let one call pull the
+// whole index into memory.
+func (idx *Index) faceKeys(id string) ([]string, error) {
+	q := bleve.NewTermQuery(id)
+	q.SetField("id")
+	req := bleve.NewSearchRequest(q)
+	req.Size = maxFacesPerEntity
+	res, err := idx.index.Search(req)
+	if err != nil {
+		return nil, fmt.Errorf("bleveindex: faces of %s: %w", id, err)
+	}
+	keys := make([]string, 0, len(res.Hits))
+	for _, h := range res.Hits {
+		keys = append(keys, h.ID)
+	}
+	return keys, nil
+}
+
+// maxFacesPerEntity bounds a family lookup. Faces are operator-declared
+// coordinates (a stage axis, a language axis), so the real number is small;
+// this is a guard against an unbounded read, not a supported limit.
+const maxFacesPerEntity = 1000
+
 // EntityRenamed atomically deletes the old document and indexes the
 // renamed entity under its new ID. Uses a single Bleve batch so a
 // crash mid-rename cannot leave the index with both the old and new
 // keys present.
 func (idx *Index) EntityRenamed(oldID string, renamed *entity.Entity) error {
+	oldKeys, err := idx.faceKeys(oldID)
+	if err != nil {
+		return err
+	}
 	batch := idx.index.NewBatch()
+	for _, k := range oldKeys {
+		batch.Delete(k)
+	}
+	// The bare key too, for the pre-per-face-keying document faceKeys cannot
+	// see. Same reason as EntityDelete.
 	batch.Delete(oldID)
-	if err := batch.Index(renamed.ID, entityToDoc(renamed)); err != nil {
+	if err := batch.Index(docKey(renamed.ID, renamed.Face), entityToDoc(renamed)); err != nil {
 		return fmt.Errorf("bleveindex: rename %s→%s: index new: %w", oldID, renamed.ID, err)
 	}
 	if err := idx.index.Batch(batch); err != nil {
@@ -313,8 +397,27 @@ var boostedFields = []struct {
 	{"all", boostContent},
 }
 
-// Search returns entity IDs matching the query text, ordered by relevance.
-func (idx *Index) Search(text string, limit int) ([]string, error) {
+// Search returns the matching FACES, resolved under world w, ordered by
+// relevance.
+//
+// # Match first, then resolve — and why that is sound here
+//
+// Documents are keyed per face, so the text query scores every face
+// independently. The world then decides which face of each matched entity is
+// that entity's prime, and a match on a NON-prime face is discarded: a
+// `published`-world search must not hit on a term that exists only in the
+// draft while displaying published bytes that lack it.
+//
+// Resolution needs the WHOLE family (the fallback verdict is a decision about
+// absence), and a text query returns only matches — so the family is fetched
+// per matched id via Index.faceKeys rather than inferred from the hits.
+// Inferring it would be wrong in the direction that matters: an unmatched
+// published face is invisible to the query, so a draft-only match would look
+// like a family with no published face and resolve to the draft, which is
+// exactly the false hit this discards.
+//
+// The zero WorldScope skips all of that — see the fast path below.
+func (idx *Index) Search(text string, limit int, w store.WorldScope) ([]search.Face, error) {
 	words := strings.Fields(text)
 	if len(words) == 0 {
 		return nil, nil
@@ -367,16 +470,121 @@ func (idx *Index) Search(text string, limit int) ([]string, error) {
 	// field the caller can reason about keeps output reproducible.
 	req.SortBy([]string{"-_score", "id"})
 
+	// Over-fetch when a world is in play: hits are FACES, so several may
+	// collapse onto one entity and others are discarded as non-prime. Sizing
+	// to the caller's limit would then return short. The default world needs
+	// no headroom — one document per entity is already the prime.
+	if limit > 0 && !w.IsDefaultWorld() {
+		req.Size = limit * facesOverfetchFactor
+	}
+
 	result, err := idx.index.Search(req)
 	if err != nil {
 		return nil, fmt.Errorf("bleveindex: search: %w", err)
 	}
 
-	ids := make([]string, 0, len(result.Hits))
-	for _, hit := range result.Hits {
-		ids = append(ids, hit.ID)
+	faces, err := idx.resolveHits(result.Hits, w)
+	if err != nil {
+		return nil, err
 	}
-	return ids, nil
+	if limit > 0 && len(faces) > limit {
+		faces = faces[:limit]
+	}
+	return faces, nil
+}
+
+// facesOverfetchFactor is how much headroom a world-scoped query takes over
+// the caller's limit, to absorb faces that collapse onto one entity or are
+// dropped as non-prime. A small constant: a family is a handful of
+// coordinates, so this is slack, not a scan.
+const facesOverfetchFactor = 4
+
+// resolveHits maps scored FACE hits to at most one prime per entity,
+// preserving the relevance order bleve returned.
+//
+// Order is load-bearing. `visiblesearch.go` holds the gated and ungated
+// streams to an ORDERED-SUBSEQUENCE conformance contract, so the gated
+// stream must be a subsequence of this one — reordering here would break
+// that for every backend at once.
+func (idx *Index) resolveHits(
+	hits searchpkg.DocumentMatchCollection, w store.WorldScope,
+) ([]search.Face, error) {
+	out := make([]search.Face, 0, len(hits))
+	seen := make(map[string]struct{}, len(hits))
+	for _, hit := range hits {
+		id, ptr, err := entity.ParseStateRef(hit.ID)
+		if err != nil {
+			// A key written before per-face keying: the bare id IS the
+			// default face. Treating it as such keeps a stale index
+			// searchable rather than silently dropping its contents.
+			id, ptr = hit.ID, entity.Face("")
+		}
+		if _, dup := seen[id]; dup {
+			// A lower-scoring face of an entity already emitted. At most one
+			// hit per entity is the invariant that makes `limit` count
+			// entities.
+			continue
+		}
+
+		if w.IsDefaultWorld() {
+			// Rule 1 for everything: the default face, and nothing to
+			// resolve. Non-default faces are not primes in this world.
+			if !ptr.IsDefault() {
+				continue
+			}
+			seen[id] = struct{}{}
+			out = append(out, search.Face{ID: id, Via: search.RuleUnscoped})
+			continue
+		}
+
+		res, ok, err := idx.resolveFamily(id, w)
+		if err != nil {
+			return nil, err
+		}
+		if !ok || res.Face != ptr {
+			// Either the world excludes this entity, or the face that
+			// matched is not the one the world serves. Both are correctly
+			// absent: displaying a prime whose text lacks the search term
+			// would be the mismatch world-scoped search exists to close.
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, search.Face{
+			ID:            id,
+			Face:          res.Face,
+			Via:           res.Via,
+			ChainPosition: res.ChainPosition,
+		})
+	}
+	return out, nil
+}
+
+// resolveFamily reads every indexed face of id and asks the world which one
+// is the prime. ok=false means this world excludes the entity.
+func (idx *Index) resolveFamily(
+	id string, w store.WorldScope,
+) (res search.Resolved, ok bool, err error) {
+	q := bleve.NewTermQuery(id)
+	q.SetField("id")
+	req := bleve.NewSearchRequest(q)
+	req.Size = maxFacesPerEntity
+	req.Fields = []string{"type", "face"}
+	result, err := idx.index.Search(req)
+	if err != nil {
+		return search.Resolved{}, false, fmt.Errorf("bleveindex: family of %s: %w", id, err)
+	}
+
+	cands := make([]search.Candidate, 0, len(result.Hits))
+	for _, h := range result.Hits {
+		typ, _ := h.Fields["type"].(string)
+		ptr, _ := h.Fields["face"].(string)
+		cands = append(cands, search.Candidate{
+			ID: id, Type: typ, Face: entity.Face(ptr),
+		})
+	}
+	primes := search.ResolvePrimes(w, cands)
+	res, ok = primes[id]
+	return res, ok, nil
 }
 
 // Close flushes anything still pending and releases resources held by the
@@ -438,6 +646,7 @@ func entityToDoc(e *entity.Entity) bleveDoc {
 
 	return bleveDoc{
 		ID:         e.ID,
+		Face:       e.Face.String(),
 		Type:       e.Type,
 		Primary:    primary,
 		Content:    e.Content,

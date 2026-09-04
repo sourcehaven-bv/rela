@@ -433,7 +433,8 @@ func TestPickOne_ResolvesOptionsForTheWinner(t *testing.T) {
 	fn, _ := staticCandidates(map[string][]*entity.Entity{
 		"urgent": {ent("T-1", "task", nil)},
 	})
-	eng := newEngineWithOptions(t, cfg, fn, func(_ context.Context, _ string, limit int) ([]nextaction.PickOption, error) {
+	eng := newEngineWithOptions(t, cfg, fn, func(_ context.Context, _ dataentryconfig.NextActionSource, _ string, limit int,
+	) ([]nextaction.PickOption, error) {
 		require.Equal(t, dataentryconfig.DefaultPickOneLimit, limit,
 			"an unset limit must arrive as the default, not zero")
 		return []nextaction.PickOption{
@@ -467,7 +468,8 @@ func TestPickOne_DoesNotResolveForLosingBands(t *testing.T) {
 	})
 	calls := 0
 	eng := newEngineWithOptions(t, cfg, fn,
-		func(_ context.Context, _ string, _ int) ([]nextaction.PickOption, error) {
+		func(_ context.Context, _ dataentryconfig.NextActionSource, _ string, _ int,
+		) ([]nextaction.PickOption, error) {
 			calls++
 			return nil, nil
 		})
@@ -491,7 +493,8 @@ func TestPickOne_FailureDoesNotBreakTheSuggestion(t *testing.T) {
 
 	fn, _ := staticCandidates(map[string][]*entity.Entity{"urgent": {ent("T-1", "task", nil)}})
 	eng := newEngineWithOptions(t, cfg, fn,
-		func(_ context.Context, _ string, _ int) ([]nextaction.PickOption, error) {
+		func(_ context.Context, _ dataentryconfig.NextActionSource, _ string, _ int,
+		) ([]nextaction.PickOption, error) {
 			return nil, errors.New("query exploded")
 		})
 
@@ -596,4 +599,132 @@ func TestDeferScope_PickOneDefaultsToSource(t *testing.T) {
 	// ...but an explicit setting still wins.
 	src.DeferScope = dataentryconfig.DeferScopeEntity
 	require.Equal(t, dataentryconfig.DeferScopeEntity, src.ResolvedDeferScope())
+}
+
+// TestResolve_VisibleWorlds covers the DISPLAY axis: a source's
+// visible_worlds allow list decides whether its suggestion may surface in the
+// world the reader is browsing, and an unset list matches every world.
+//
+// Orthogonal to the source world, which decides what the source FINDS and is
+// applied by the wiring site's CandidateFunc — the engine never sees it.
+func TestResolve_VisibleWorlds(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		// visible is the allow list on the "urgent" (blocking-band) source.
+		visible []string
+		// display is the world the reader is browsing.
+		display string
+		// wantSource is the source expected to win, or "" for no suggestion.
+		wantSource string
+		why        string
+	}{
+		{
+			name:       "unset matches every world",
+			visible:    nil,
+			display:    "published",
+			wantSource: "urgent",
+			why: "an operator who never mentioned worlds must keep today's " +
+				"behavior in every world, not lose the suggestion",
+		},
+		{
+			name:       "unset matches the default world",
+			visible:    nil,
+			display:    "default",
+			wantSource: "urgent",
+		},
+		{
+			name:       "listed world shows the suggestion",
+			visible:    []string{"editorial"},
+			display:    "editorial",
+			wantSource: "urgent",
+		},
+		{
+			name:       "unlisted world hides it and a lower band takes over",
+			visible:    []string{"editorial"},
+			display:    "published",
+			wantSource: "quip",
+			why: "the excluded source must not consume the win; the band " +
+				"short-circuit would otherwise answer 'nothing' while a " +
+				"visible lower-band suggestion existed",
+		},
+		{
+			name:       "multiple entries are an OR",
+			visible:    []string{"editorial", "staging"},
+			display:    "staging",
+			wantSource: "urgent",
+		},
+		{
+			name:       "an empty display world means the default world",
+			visible:    []string{"default"},
+			display:    "",
+			wantSource: "urgent",
+			why:        "an unstamped request is the default world, not a nameless one",
+		},
+		{
+			name:       "default is not implicitly allowed by another entry",
+			visible:    []string{"editorial"},
+			display:    "default",
+			wantSource: "quip",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := twoBandConfig()
+			src := cfg.NextActions["urgent"]
+			src.VisibleWorlds = tc.visible
+			cfg.NextActions["urgent"] = src
+
+			fn, queried := staticCandidates(map[string][]*entity.Entity{
+				"urgent": {ent("T-1", "task", nil)},
+				"quip":   {ent("Q-1", "quip", nil)},
+			})
+			st := memuserstate.New()
+			t.Cleanup(func() { _ = st.Close() })
+			eng, err := nextaction.New(cfg, st, fn,
+				nextaction.WithDisplayWorld(tc.display))
+			require.NoError(t, err)
+
+			got, ok, err := eng.Resolve(context.Background(), testUser, base)
+			require.NoError(t, err)
+			require.True(t, ok, "a visible suggestion was expected")
+			require.Equal(t, tc.wantSource, got.Source, tc.why)
+
+			if tc.wantSource != "urgent" {
+				// Excluding a source must skip its READS too, not merely
+				// discard its output: a suggestion that cannot be displayed
+				// here is not worth querying for.
+				require.NotContains(t, *queried, "urgent",
+					"an invisible source must not be queried at all")
+			}
+		})
+	}
+}
+
+// A source excluded in every band leaves nothing to suggest, rather than
+// falling back to showing it anyway.
+func TestResolve_VisibleWorldsCanSilenceEverything(t *testing.T) {
+	t.Parallel()
+	cfg := twoBandConfig()
+	for id, src := range cfg.NextActions {
+		src.VisibleWorlds = []string{"editorial"}
+		cfg.NextActions[id] = src
+	}
+
+	fn, queried := staticCandidates(map[string][]*entity.Entity{
+		"urgent": {ent("T-1", "task", nil)},
+		"quip":   {ent("Q-1", "quip", nil)},
+	})
+	st := memuserstate.New()
+	t.Cleanup(func() { _ = st.Close() })
+	eng, err := nextaction.New(cfg, st, fn, nextaction.WithDisplayWorld("published"))
+	require.NoError(t, err)
+
+	_, ok, err := eng.Resolve(context.Background(), testUser, base)
+	require.NoError(t, err)
+	require.False(t, ok, "every source is hidden in this world")
+	require.Empty(t, *queried, "no source should have been queried")
 }

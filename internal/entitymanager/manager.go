@@ -235,6 +235,34 @@ type Deps struct {
 	// gate is the "forgotten wiring must not become an ACL bypass" failure
 	// (RR-X9NVHI), and it matches how ACL and Audit are already handled.
 	FieldGate FieldWriteGate
+
+	// CopyVisibility is the CALLER'S read gate, used only by CROSS-ENTITY
+	// copies (TKT-C1XUA8, design doc §9.2). Nil disables the gating, which is
+	// correct for a deployment with no ACL — every other read there is raw
+	// too — and is what the CLI passes.
+	//
+	// Deliberately NOT used by same-entity copies: those run elevated,
+	// because hidden fields travel with the entity and the same policy
+	// governs them on the target face. Routing them through this gate would
+	// be the redacted-read-feeds-a-write bug, which destroys the fields the
+	// principal could not see.
+	CopyVisibility CopyReader
+
+	// CopyGuard evaluates a copy definition's `guard:` permission against the
+	// SOURCE entity, so "the owner of THIS doc may publish it" works without
+	// a global grant. Nil makes a GUARDED copy fail closed, matching the
+	// statemachine's nil-guard rule; an unguarded copy is unaffected.
+	CopyGuard CopyGuard
+
+	// CopyReadGate answers "may this principal READ the copy's source at
+	// all", before either half of the elevation split runs (TKT-C1XUA8).
+	//
+	// Required in spirit and nil-tolerant in practice for the same reason
+	// every other gate here is: a deployment with no acl.yaml has no gate to
+	// consult, and every other read on it is ungated too. What it must never
+	// be is absent on a deployment that HAS a policy — elevation decides
+	// which fields travel, not whether the principal may touch the entity.
+	CopyReadGate CopyReadGate
 }
 
 // FieldWriteGate answers whether the ctx principal may write the named
@@ -285,6 +313,40 @@ func (AllowAllFieldGate) CheckFieldWrite(
 // compiled state machines: enforce an update (old→new) and a create's entry
 // value. Defined at the call site (CLAUDE.md consumer-side interfaces);
 // [*statemachine.Set] satisfies it.
+// CopyReader is the caller-scoped read a CROSS-ENTITY copy sees. Narrow by
+// design: the copy needs one lookup, and taking the whole visibility.Reader
+// would bind this package to methods it never calls.
+//
+// Get returns (nil, false, nil) indistinguishably for denied, missing and
+// type-mismatched — whether an entity exists is a genuine secret.
+type CopyReader interface {
+	// Get returns the entity's stored face as the ctx principal may see it:
+	// row-gated, FACE-gated (a `type@face` grant that excludes face is a
+	// miss), and field-redacted. Denied and absent are indistinguishable.
+	Get(ctx context.Context, entityType, id string, face entity.Face) (*entity.Entity, bool, error)
+}
+
+// CopyGuard answers a copy definition's `guard:` permission for one subject.
+//
+// The same shape as statemachine.Guard, and satisfied by the same wiring —
+// the point of reusing the vocabulary is that the two cannot drift into
+// asking different questions. Subject is the bare entity id, matching the
+// conferral model: identity-scoped roles confer on the entity in every
+// world, and the face-granularity already lives in the write grant.
+// CopyReadGate is the row-level read verdict for a copy's SOURCE. Narrow by
+// design; satisfied by the same acl.Request the rest of the read path uses.
+type CopyReadGate interface {
+	// PermitsReadFace is the row verdict for the id AND the face allowlist
+	// for the stored face being read. Face-blind gating here would let a
+	// principal granted `read: [page@published]` promote a draft it may not
+	// read; [acl.Request.PermitsReadFace] is the production implementation.
+	PermitsReadFace(ctx context.Context, entityType, entityID string, face entity.Face) (bool, error)
+}
+
+type CopyGuard interface {
+	HoldsPermission(ctx context.Context, entityID, permission string) bool
+}
+
 type TransitionEnforcer interface {
 	EnforceUpdate(
 		ctx context.Context, old, updated *entity.Entity,
@@ -352,15 +414,58 @@ func New(d Deps) (*Manager, error) {
 // on the bypass path — there is no denial to record.
 func (m *Manager) authorizeAndAudit(ctx context.Context, req acl.WriteRequest) error {
 	if m.bypassACL {
-		m.recordACLBypass(ctx, req)
+		if !isAffordanceProbe(ctx) {
+			m.recordACLBypass(ctx, req)
+		}
 		return nil
 	}
 	decision := m.deps.ACL.AuthorizeWrite(ctx, req)
 	if decision.Allow {
 		return nil
 	}
-	m.recordDeniedWrite(ctx, decision, req)
+	if !isAffordanceProbe(ctx) {
+		// An affordance PROBE is not an attempted write, so recording it would
+		// make the audit log say something untrue. See [withAffordanceProbe].
+		m.recordDeniedWrite(ctx, decision, req)
+	}
 	return &acl.ForbiddenError{Decision: decision}
+}
+
+// affordanceProbeKey marks a context as an AFFORDANCE QUERY: a read-only
+// "could this principal do X" question, not an attempted write.
+type affordanceProbeKey struct{}
+
+// withAffordanceProbe marks ctx as an affordance query, suppressing audit
+// records from the authorization path.
+//
+// # Why the audit log must not see these
+//
+// [CopiesForSource] answers "which copies may this principal invoke here" by
+// running the REAL authorization path — that is what stops the hint drifting
+// from the write. But that path audits its denials, and a denial recorded for
+// a question nobody asked makes `op=denied-write` mean "someone looked at a
+// page" rather than "someone tried to write and was refused".
+//
+// A SPA renders an entity view, the view lists copy affordances, and every
+// page load appends N rows to an append-only log. Anyone alerting on
+// denied-write volume gets paged by ordinary browsing, and the real signal
+// drowns. The audit log's whole value is that it does not lie (see
+// [Manager.CopyState]'s note on why audit lands after the commit); this keeps
+// that true in the other direction.
+//
+// It suppresses ONLY the record, never the decision: the verdict is computed
+// identically and returned identically, so the hint still cannot drift.
+//
+// The key is typed and unexported, so nothing outside this package can mark a
+// real write as a probe.
+func withAffordanceProbe(ctx context.Context) context.Context {
+	return context.WithValue(ctx, affordanceProbeKey{}, true)
+}
+
+// isAffordanceProbe reports whether ctx was marked by [withAffordanceProbe].
+func isAffordanceProbe(ctx context.Context) bool {
+	v, _ := ctx.Value(affordanceProbeKey{}).(bool)
+	return v
 }
 
 // mapTransitionError translates a state-machine enforcement error into the
@@ -492,7 +597,7 @@ func (m *Manager) CreateEntity(
 	}
 	if err := m.authorizeAndAudit(ctx, acl.WriteRequest{
 		Op:      acl.OpCreate,
-		Subject: acl.EntitySubject{Type: e.Type, ID: opts.ID},
+		Subject: acl.EntitySubject{Type: e.Type, ID: opts.ID, Face: e.Face},
 	}); err != nil {
 		return nil, err
 	}
@@ -650,9 +755,15 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 	if e == nil {
 		return nil, errors.New("entitymanager: UpdateEntity: entity is nil")
 	}
+	// Face comes from the entity being written, because that is what the
+	// store keys on (stateKey(e.ID, e.Face)). Omitting it would authorize
+	// every faced write against the DEFAULT face — the zero Face means
+	// "default state" — so a role holding only a bare `update: [policy]`
+	// grant could write `policy@published`, inverting the invariant
+	// GrantsVerbOnState exists to hold (BUG-Y0GNSB).
 	if err := m.authorizeAndAudit(ctx, acl.WriteRequest{
 		Op:      acl.OpUpdate,
-		Subject: acl.EntitySubject{Type: e.Type, ID: e.ID},
+		Subject: acl.EntitySubject{Type: e.Type, ID: e.ID, Face: e.Face},
 	}); err != nil {
 		return nil, err
 	}
@@ -737,9 +848,14 @@ func (m *Manager) PatchEntity(
 		return nil, fmt.Errorf("entitymanager: PatchEntity: entity %s has inaccessible fields", id)
 	}
 
+	// Face from the STORED entity, not from `id`: `id` may be the fused
+	// boundary form ("POL-1@published"), which stateKey resolves onto the
+	// faced row — so the face actually being written is stored.Face, and
+	// authorizing without it would decide against the default face
+	// (BUG-Y0GNSB).
 	if err := m.authorizeAndAudit(ctx, acl.WriteRequest{
 		Op:      acl.OpUpdate,
-		Subject: acl.EntitySubject{Type: stored.Type, ID: id},
+		Subject: acl.EntitySubject{Type: stored.Type, ID: id, Face: stored.Face},
 	}); err != nil {
 		return nil, err
 	}
@@ -782,6 +898,15 @@ func (m *Manager) PatchEntity(
 func (m *Manager) updateCore(
 	ctx context.Context, e, oldEntity *entity.Entity,
 ) (*entity.UpdateResult, error) {
+	// Type is immutable on update, on EVERY path and not only ApplyEntity's:
+	// the store checks a non-default face's type against its family but not
+	// the bare row's, so a retype here would split the family — the bare row
+	// one type, its sibling faces another, and on fsstore two files under two
+	// type directories (see ErrTypeImmutable).
+	if oldEntity != nil && e.Type != oldEntity.Type {
+		return nil, fmt.Errorf("entitymanager: %s: %w (stored %q, body %q)",
+			e.ID, ErrTypeImmutable, oldEntity.Type, e.Type)
+	}
 	if err := m.deps.Computed.Evaluate(ctx, e); err != nil {
 		return nil, err
 	}
@@ -824,7 +949,7 @@ func (m *Manager) updateCore(
 	if err := m.deps.Transitions.EnforceUpdate(
 		ctx, oldEntity, e, m.deps.TransitionGuard, m.deps.TransitionGraph,
 	); err != nil {
-		return nil, m.mapTransitionError(ctx, acl.EntitySubject{Type: e.Type, ID: e.ID}, err)
+		return nil, m.mapTransitionError(ctx, acl.EntitySubject{Type: e.Type, ID: e.ID, Face: e.Face}, err)
 	}
 
 	// Enforce `unique: true` natural-key constraints against the final
@@ -1059,7 +1184,7 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 	// confusing than the ErrEntityNotFound returned above.
 	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
 		Op:      acl.OpDelete,
-		Subject: acl.EntitySubject{Type: current.Type, ID: id},
+		Subject: acl.EntitySubject{Type: current.Type, ID: id, Face: current.Face},
 	}); aclErr != nil {
 		return nil, aclErr
 	}
@@ -1246,7 +1371,13 @@ func (m *Manager) RenameEntity(
 	switch {
 	case getErr == nil:
 		if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
-			Op:      acl.OpRename,
+			Op: acl.OpRename,
+			// facesubject:no-face — a rename re-keys the WHOLE entity family
+			// (fsstore.renameEntity walks stateFamily(oldID), and
+			// store.RenameEntity takes no Face), so there is no single face to
+			// name here. Setting one would assert a narrower scope than the
+			// operation has: authorizing the rename of one face while renaming
+			// all of them.
 			Subject: acl.EntitySubject{Type: current.Type, ID: oldID},
 		}); aclErr != nil {
 			return nil, aclErr

@@ -1,6 +1,7 @@
 package aclaudit
 
 import (
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -13,9 +14,20 @@ type fakeMetamodel struct {
 	types     map[string]bool
 	relations map[string][]string            // rel -> from types
 	fields    map[string]map[string][]string // type -> field -> enum options (nil = non-enum/declared field)
+	worlds    map[string]bool                // declared world names
+	faces     map[string][]string            // type -> declared content states
+	bareFaces map[string]string              // type -> the face stored under the bare id
 }
 
 func (m fakeMetamodel) HasEntityType(t string) bool { return m.types[t] }
+
+func (m fakeMetamodel) HasWorld(name string) bool { return m.worlds[name] }
+
+func (m fakeMetamodel) HasFace(t, face string) bool {
+	return slices.Contains(m.faces[t], face)
+}
+
+func (m fakeMetamodel) BareFace(t string) string { return m.bareFaces[t] }
 
 func (m fakeMetamodel) GetRelation(name string) (RelationView, bool) {
 	from, ok := m.relations[name]
@@ -617,5 +629,356 @@ func TestHasAtLeast(t *testing.T) {
 	}
 	if !HasAtLeast([]Finding{{Severity: Critical}}, High) {
 		t.Error("HasAtLeast(High) should be true when a critical is present")
+	}
+}
+
+// TestGrantEntityType_MatchesACLSplit pins the duplication this package
+// accepts: grantEntityType mirrors internal/acl's unexported grantTypeOf,
+// and the two must agree or the audit reports a type the runtime never
+// evaluated.
+//
+// Verified through acl's exported behavior rather than by calling the
+// unexported helper: a role granting update on `T@p` must be reported by
+// the audit against type T, which is only true if both split the same way.
+func TestGrantEntityType_MatchesACLSplit(t *testing.T) {
+	for _, tc := range []struct{ entry, wantType string }{
+		{"page", "page"},
+		{"page@draft", "page"},
+		{"*", "*"},
+		{"some property@draft", "some property"},
+		{"review-response@published", "review-response"},
+	} {
+		p := &acl.Policy{Roles: map[string]acl.RoleDef{
+			"r": {Update: []string{tc.entry}, Read: []string{"*"}},
+		}}
+		findings := Audit(p, fakeMetamodel{types: map[string]bool{tc.wantType: true}}, nil)
+		for _, f := range findings {
+			if f.Rule == "B1-undeclared-type" {
+				t.Errorf("entry %q: audit did not resolve it to type %q (finding: %s)",
+					tc.entry, tc.wantType, f.Detail)
+			}
+		}
+	}
+}
+
+// TestRefusalIsWiderThanOrEqualToA2 pins the DIRECTIONAL relationship
+// between the advisory finding and the boot refusal, which is the property
+// that actually matters — not that the two are identical.
+//
+// The invariant: whenever A2 flags a policy, the boot refusal also refuses
+// it (given the refusal's own trigger, a non-default world read grant).
+// Stated as sets: refusal ⊇ A2. An operator can therefore never see
+// `rela acl audit` report clean on a policy the server refuses for an
+// A2-shaped reason.
+//
+// The reverse gap is deliberate and is NOT a violation: the refusal may
+// fire where A2 is silent, because the refusal is scoped to policies that
+// grant a non-default world and A2 is not. That case is
+// TestRefusal_ReadOnlyRoleHoldingWorldGrantCountsAsEscalation in
+// internal/acl.
+//
+// If this ever fails, the two predicates have been allowed to drift apart
+// in the dangerous direction — the audit has become MORE permissive than
+// the gate, so a policy would pass the linter and fail to boot.
+func TestRefusalIsWiderThanOrEqualToA2(t *testing.T) {
+	roles := map[string]acl.RoleDef{
+		"writer":      {Update: []string{"page"}, Read: []string{"page"}},
+		"permholder":  {Permissions: []string{"something"}},
+		"creator":     {Create: []string{"page"}},
+		"deleter":     {Delete: []string{"page"}, Read: []string{"page"}},
+		"reader":      {Read: []string{"page"}},
+		"worldreader": {Read: []string{"page", "world:published"}},
+	}
+	for roleName := range roles {
+		t.Run(roleName, func(t *testing.T) {
+			p := &acl.Policy{
+				// A non-default world grant somewhere in the policy is the
+				// refusal's trigger; without it the refusal never evaluates
+				// the escalation arms at all.
+				Roles: mergeRoles(roles, map[string]acl.RoleDef{
+					"everyone": {Read: []string{"world:published"}},
+				}),
+				RoleRelations: map[string]acl.RoleRelationDef{
+					"owns": {Confers: roleName},
+				},
+			}
+			if err := p.Validate(); err != nil && !strings.Contains(err.Error(), "refusing to load") {
+				t.Fatalf("unexpected non-refusal load error: %v", err)
+			}
+			flaggedByA2 := len(checkUngatedRoleRelations(p)) > 0
+			refused := p.WorldGrantRefusalReason() != ""
+			if flaggedByA2 && !refused {
+				t.Errorf("A2 flags role %q but the boot refusal does not refuse it — "+
+					"the audit is now MORE permissive than the gate, so this policy "+
+					"passes the linter and fails to boot", roleName)
+			}
+		})
+	}
+}
+
+// TestA2_ReadOnlyRoleStillSilent pins that widening A2's criterion to
+// include world grants did NOT reintroduce the read-only false positive the
+// audit design fought (RR-LXI3NW / RR-UR0LJU / RR-EG5D3E).
+func TestA2_ReadOnlyRoleStillSilent(t *testing.T) {
+	p := &acl.Policy{
+		Roles:         map[string]acl.RoleDef{"viewer": {Read: []string{"page", "*"}}},
+		RoleRelations: map[string]acl.RoleRelationDef{"owns": {Confers: "viewer"}},
+	}
+	if err := p.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if got := checkUngatedRoleRelations(p); len(got) != 0 {
+		t.Errorf("a role holding only ordinary read grants — even read: [\"*\"] — "+
+			"is a visibility choice, not an escalation path; got %d finding(s): %+v",
+			len(got), got)
+	}
+}
+
+func mergeRoles(a, b map[string]acl.RoleDef) map[string]acl.RoleDef {
+	out := make(map[string]acl.RoleDef, len(a)+len(b))
+	maps.Copy(out, a)
+	maps.Copy(out, b)
+	return out
+}
+
+// findingRules returns the rule ids present in findings, for assertions
+// that care about which checks fired rather than their prose.
+func findingRules(findings []Finding) []string {
+	out := make([]string, 0, len(findings))
+	for _, f := range findings {
+		out = append(out, f.Rule)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// TestB10_UndeclaredWorld covers the cross-file half of the world grant
+// syntax: internal/acl validates the SPELLING at load but cannot see the
+// schema, so "does this world exist" lands here.
+func TestB10_UndeclaredWorld(t *testing.T) {
+	meta := fakeMetamodel{
+		types:  map[string]bool{"page": true},
+		worlds: map[string]bool{"published": true},
+	}
+	tests := []struct {
+		name    string
+		read    []string
+		wantB10 bool
+	}{
+		{"declared world is fine", []string{"world:published"}, false},
+		{"undeclared world is flagged", []string{"world:pubished"}, true},
+		{
+			name: "the implicit default world needs no declaration",
+			read: []string{"world:default"}, wantB10: false,
+		},
+		{"a bare type grant is not a world grant", []string{"page"}, false},
+		{
+			name: "one good and one bad world: only the bad one fires",
+			read: []string{"world:published", "world:nope"}, wantB10: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &acl.Policy{Roles: map[string]acl.RoleDef{"r": {Read: tc.read}}}
+			if err := p.Validate(); err != nil {
+				t.Fatalf("Validate: %v", err)
+			}
+			got := slices.Contains(findingRules(Audit(p, meta, nil)), "B10-undeclared-world")
+			if got != tc.wantB10 {
+				t.Errorf("B10 fired = %v, want %v (read: %v)", got, tc.wantB10, tc.read)
+			}
+		})
+	}
+}
+
+// TestB11_UndeclaredFace covers the write-grant equivalent.
+func TestB11_UndeclaredFace(t *testing.T) {
+	meta := fakeMetamodel{
+		types: map[string]bool{"page": true, "ticket": true},
+		faces: map[string][]string{"page": {"draft", "published"}},
+	}
+	tests := []struct {
+		name    string
+		update  []string
+		wantB11 bool
+	}{
+		{"declared face is fine", []string{"page@draft"}, false},
+		{"undeclared face is flagged", []string{"page@nosuchstate"}, true},
+		{"a bare type grant carries no face", []string{"page"}, false},
+		{
+			name:   "a type declaring NO faces cannot carry one",
+			update: []string{"ticket@draft"}, wantB11: true,
+		},
+		{
+			name: "an undeclared TYPE is B1's business, not B11's — one " +
+				"mistake must not produce two findings with different fixes",
+			update: []string{"nosuchtype@draft"}, wantB11: false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &acl.Policy{Roles: map[string]acl.RoleDef{
+				"r": {Update: tc.update, Read: []string{"*"}},
+			}}
+			if err := p.Validate(); err != nil {
+				t.Fatalf("Validate: %v", err)
+			}
+			got := slices.Contains(findingRules(Audit(p, meta, nil)), "B11-undeclared-face")
+			if got != tc.wantB11 {
+				t.Errorf("B11 fired = %v, want %v (update: %v)", got, tc.wantB11, tc.update)
+			}
+		})
+	}
+}
+
+// TestB1_DoesNotFlagWellFormedGrantSyntax is the regression guard for the
+// reason these checks had to land alongside PR-A's syntax: B1 is High, and
+// `rela acl audit --exit-code` gates CI on High. If B1 reported a correct
+// world or state grant as an undeclared entity type, every policy adopting
+// the new syntax would fail CI.
+func TestB1_DoesNotFlagWellFormedGrantSyntax(t *testing.T) {
+	meta := fakeMetamodel{
+		types:  map[string]bool{"page": true},
+		worlds: map[string]bool{"published": true},
+		faces:  map[string][]string{"page": {"draft"}},
+	}
+	p := &acl.Policy{Roles: map[string]acl.RoleDef{
+		"author": {
+			Read:   []string{"page", "world:published"},
+			Update: []string{"page@draft"},
+		},
+	}}
+	if err := p.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if got := findingRules(Audit(p, meta, nil)); len(got) != 0 {
+		t.Errorf("a fully well-formed policy must produce no findings; got %v", got)
+	}
+}
+
+// TestB12_BareFaceNamedInAGrant pins the spelling the guide warns about and
+// the audit used to wave through: with `bare_face: draft`, the draft row lives
+// at the bare id, so `update: [policy@draft]` matches NOTHING — the grant that
+// reaches it is the bare `update: [policy]`. Declared, so B11 is silent;
+// fail-closed at runtime, so the only symptom is a denial nobody can explain.
+func TestB12_BareFaceNamedInAGrant(t *testing.T) {
+	meta := fakeMetamodel{
+		types:     map[string]bool{"policy": true},
+		faces:     map[string][]string{"policy": {"draft", "published"}},
+		bareFaces: map[string]string{"policy": "draft"},
+	}
+	for _, tc := range []struct {
+		name    string
+		update  []string
+		wantB12 bool
+	}{
+		{"the bare face by its declared name is flagged", []string{"policy@draft"}, true},
+		{"a non-bare face is fine", []string{"policy@published"}, false},
+		{"the bare type grant is the correct spelling", []string{"policy"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &acl.Policy{Roles: map[string]acl.RoleDef{
+				"r": {Update: tc.update, Read: []string{"*"}},
+			}}
+			if err := p.Validate(); err != nil {
+				t.Fatalf("Validate: %v", err)
+			}
+			rules := findingRules(Audit(p, meta, nil))
+			if got := slices.Contains(rules, "B12-bare-face-named"); got != tc.wantB12 {
+				t.Errorf("B12 = %v, want %v; findings: %v", got, tc.wantB12, rules)
+			}
+			if slices.Contains(rules, "B11-undeclared-face") {
+				t.Errorf("a DECLARED face must not also trip B11; findings: %v", rules)
+			}
+		})
+	}
+}
+
+// TestB11_TypeWildcardWithState pins the grant that used to be reported by
+// NOTHING: `*@draft` grants nothing at runtime (acl.GrantsVerbOnState
+// honors "*" only for the default state), loads clean, and was skipped by
+// both B1 (wildcard) and B11 (not a declared type).
+func TestB11_TypeWildcardWithState(t *testing.T) {
+	meta := fakeMetamodel{
+		types: map[string]bool{"page": true},
+		faces: map[string][]string{"page": {"draft"}},
+	}
+	p := &acl.Policy{Roles: map[string]acl.RoleDef{
+		"r": {Update: []string{"*@draft"}, Read: []string{"*"}},
+	}}
+	if err := p.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if !slices.Contains(findingRules(Audit(p, meta, nil)), "B11-undeclared-face") {
+		t.Error("`*@draft` grants nothing at runtime and must be reported — " +
+			"the wildcard ranges over TYPES and only ever grants the default state")
+	}
+	// A bare wildcard is still the ordinary, correct grant.
+	q := &acl.Policy{Roles: map[string]acl.RoleDef{
+		"r": {Update: []string{"*"}, Read: []string{"*"}},
+	}}
+	if err := q.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	// A9-wildcard-write still fires — that is its own, pre-existing
+	// judgement about wildcard sprawl. What must NOT fire is B11: a bare
+	// wildcard addresses the default state, which is a real grant.
+	if got := findingRules(Audit(q, meta, nil)); slices.Contains(got, "B11-undeclared-face") {
+		t.Errorf("a bare `*` write grant addresses the default state and must "+
+			"not be flagged as an undeclared face; got %v", got)
+	}
+}
+
+// TestB10_DefaultWorldCaseVariant pins that a mis-cased default world gets
+// a fix the operator can actually follow. The ordinary B10 remedy — declare
+// it — is one the schema loader REFUSES, since it rejects any world whose
+// name case-folds to "default" as reserved.
+func TestB10_DefaultWorldCaseVariant(t *testing.T) {
+	meta := fakeMetamodel{types: map[string]bool{"page": true}}
+	p := &acl.Policy{Roles: map[string]acl.RoleDef{
+		"r": {Read: []string{"page", "world:Default"}},
+	}}
+	if err := p.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	var found bool
+	for _, f := range Audit(p, meta, nil) {
+		if f.Rule != "B10-undeclared-world" {
+			continue
+		}
+		found = true
+		if strings.Contains(f.Fix, `declare world "Default"`) {
+			t.Errorf("the fix tells the operator to declare a world the loader "+
+				"rejects as reserved; got: %s", f.Fix)
+		}
+		if !strings.Contains(f.Fix, "lowercase") {
+			t.Errorf("the fix must point at the lowercase spelling; got: %s", f.Fix)
+		}
+	}
+	if !found {
+		t.Error("a mis-cased default world is dead at runtime and must be reported")
+	}
+}
+
+// TestB10_DiagnosesUnvalidatedPolicy pins the fallback: on a policy that
+// skipped Validate, world tokens are still inline in Read. B10 scans for
+// them so the operator gets the right diagnosis, and B1 skips them so they
+// are not ALSO reported as undeclared entity types — advice that would send
+// someone to declare `world:published` under `entities:`.
+func TestB10_DiagnosesUnvalidatedPolicy(t *testing.T) {
+	meta := fakeMetamodel{
+		types:  map[string]bool{"page": true},
+		worlds: map[string]bool{"published": true},
+	}
+	p := &acl.Policy{Roles: map[string]acl.RoleDef{
+		"r": {Read: []string{"page", "world:typoworld"}},
+	}}
+	// Deliberately NOT validated.
+	got := findingRules(Audit(p, meta, nil))
+	if !slices.Contains(got, "B10-undeclared-world") {
+		t.Errorf("B10 must diagnose an inline world token; got %v", got)
+	}
+	if slices.Contains(got, "B1-undeclared-type") {
+		t.Errorf("B1 must not report a world token as an undeclared entity type; got %v", got)
 	}
 }

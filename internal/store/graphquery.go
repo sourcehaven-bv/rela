@@ -27,6 +27,55 @@ type GraphQuery struct {
 	Props       []PropPredicate    // entity's own properties match (AND)
 	HasInbound  *RelationPredicate // entity has matching relation FROM (expanded) endpoints
 	HasOutbound *RelationPredicate // entity has matching relation TO (expanded) endpoints
+
+	// World scopes the RESULT to each entity's prime under the compiled
+	// world, exactly as [EntityQuery.World] does. The zero value is the
+	// default world.
+	//
+	// It must live here as well as on EntityQuery, not only there: the
+	// ACL read path swaps an EntityQuery for a GraphQuery the moment a
+	// policy query exists (internal/visibility/pushdown.go), and the
+	// AllowAll principal takes the EntityQuery branch. A world carried
+	// on only one of the two would make the list path and the
+	// single-entity path disagree — and would do so precisely for the
+	// privileged principal.
+	//
+	// Scoping applies to the entities the query RETURNS. Relation
+	// predicates walk the graph's identity structure and are NOT
+	// world-resolved: who an entity is related to must not depend on the
+	// reader's world.
+	World WorldScope
+
+	// FaceIn is [EntityQuery.FaceIn], carried here for the same reason World
+	// is: the ACL read path swaps an EntityQuery for a GraphQuery the moment
+	// a policy query exists, and the AllowAll principal takes the EntityQuery
+	// branch. A face set on only one of the two would make the list path and
+	// the single-entity path disagree — and would do so precisely for the
+	// privileged principal.
+	FaceIn []entity.Face
+
+	// Any is a disjunction of per-branch predicates, ANDed with everything
+	// above: an entity matches when at least one branch holds. Nil means no
+	// branch constraint.
+	//
+	// It exists for relation-conferred roles whose face grants differ. The
+	// ACL compiles `owns → author {read: [policy@draft]}` and `reviews →
+	// reviewer {read: [policy@published]}` into two branches, so a principal
+	// who merely REVIEWS an entity is held to the reviewer's faces rather
+	// than to the union of every conferring role's — the union was a laundering
+	// of one relation's faces through another. Like FaceIn, a branch's face
+	// set is applied to the CANDIDATE rows before world ranking, so the
+	// answer is exact at the store and paging, counts and search stay honest
+	// with no post-filter.
+	Any []GraphBranch
+}
+
+// GraphBranch is one arm of [GraphQuery.Any]: a relation predicate and the
+// faces it grants. A nil FaceIn grants every face; a nil HasInbound holds for
+// every entity of the type (the branch is then only a face set).
+type GraphBranch struct {
+	HasInbound *RelationPredicate
+	FaceIn     []entity.Face
 }
 
 // PropOp is the comparison a [PropPredicate] applies. Deliberately only

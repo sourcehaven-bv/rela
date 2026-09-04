@@ -1,25 +1,25 @@
 ---
 id: RES-GFWP85
 type: research
-title: 'Pointer storage alternatives: searchable pointer-selected content without version-index bloat'
-summary: 'Search allows exactly ONE indexed document per entity id (bleve keys docs by e.ID; postgres keeps search_text as a column on the entities PK row), so "index only pointer-current values" forces a choice between P1 (one privileged indexed pointer, zero search changes) and P3 (widen the search key to (entity_id, pointer), large blast radius). Two survey findings constrain both: observers fire from INSIDE store.Store, so pointer state held on the injected VersionService would never reach the search index; and "fsstore gets versioning from git" is not implemented — internal/git is sync-only, so there is no non-postgres story to inherit.'
+title: 'Face storage alternatives: searchable face-selected content without version-index bloat'
+summary: 'Search allows exactly ONE indexed document per entity id (bleve keys docs by e.ID; postgres keeps search_text as a column on the entities PK row), so "index only face-current values" forces a choice between P1 (one privileged indexed face, zero search changes) and P3 (widen the search key to (entity_id, face), large blast radius). Two survey findings constrain both: observers fire from INSIDE store.Store, so face state held on the injected VersionService would never reach the search index; and "fsstore gets versioning from git" is not implemented — internal/git is sync-only, so there is no non-postgres story to inherit.'
 status: done
 ---
 
 ## Problem
 
-Follow-up to [[RES-NH3P12]], which recommended storing pointer state as a ref
+Follow-up to [[RES-NH3P12]], which recommended storing face state as a ref
 table `(entity_id, name) → vseq` into `entity_versions` (option S1). A new
 constraint invalidates that recommendation and needs a fresh survey:
 
-> **Full-text search must index only the pointers' current values, not every
+> **Full-text search must index only the faces' current values, not every
 > version** — otherwise the index bloats with historical content nobody
 > searches for.
 
-This reframes the problem. If pointer-selected content must be searchable, then
+This reframes the problem. If face-selected content must be searchable, then
 it is not Time-Machine data: it is *live-shaped* data with a bounded working set
-(`entities × pointers`, not `entities × versions`). The question becomes:
-**where does pointer-selected content live such that exactly the current pointer
+(`entities × faces`, not `entities × versions`). The question becomes:
+**where does face-selected content live such that exactly the current face
 targets are indexable?**
 
 ## Context
@@ -70,7 +70,7 @@ then **re-loads each from the live store** via `reader.GetEntity(ctx, id)`
 (`:78`). A load failure is silently skipped as a stale hit (`:79-81`);
 `Visible.fieldVisible` does the same (`visible.go:169-174`).
 
-**A pointer-selected historical version would be dropped by these paths even if
+**A face-selected historical version would be dropped by these paths even if
 indexed.** P3 is therefore not merely a `Backend` change — it changes the
 index→id→live-row pipeline.
 
@@ -86,10 +86,10 @@ op kind**, and its errors are discarded by every store (`fsstore.go:342-363`, `_
 
 Critically, it is fired from within the store's own write methods
 (`fsstore/entity.go:225,260` call `s.notifyPut`). **So state held OUTSIDE
-`store.Store` never reaches an observer.** [[RES-NH3P12]] concluded pointers
+`store.Store` never reaches an observer.** [[RES-NH3P12]] concluded faces
 belong on the injected `VersionService` (correct, per the no-methods-on-Store
 rule) — but a pointer move on `VersionService` **would not fire `EntityPut`, so
-the search index would never learn the `published` pointer moved.** That is an
+the search index would never learn the `published` face moved.** That is an
 unsolved wiring problem in the earlier recommendation, and it is why P1 (where a
 promotion IS a live-row write) is structurally simpler than it first appears.
 
@@ -102,7 +102,7 @@ Two further traps for any new observer:
 
 - **Backfill is manual.** Observers are NOT invoked for entities already on
 disk (`fsstore.go:69-73`); `backfillBleve` (`appbuild_fs.go:73-88`) exists for
-exactly this. A pointer observer needs its own backfill story.
+exactly this. A face observer needs its own backfill story.
 - **pgstore never calls `notifyRenamed`.** Its rename emits
 `s.notifyDelete(oldID); s.notifyPut(renamed)` (`pgstore/entity.go:484-485`)
 instead of the single callback the contract mandates (`store.go:799-802`).
@@ -128,7 +128,7 @@ blob read, no ref manipulation.**
 - Every history consumer nil-checks and reports unsupported
 (`cli/history.go:26-31`; `dataentry/history_handler.go:45-52` → HTTP 501).
 
-**Consequence: there is no non-postgres versioning story to inherit.** A pointer
+**Consequence: there is no non-postgres versioning story to inherit.** A face
 design that assumes one must build it from scratch (real git plumbing: blob
 reads, ref writes, principal-attributed commits).
 
@@ -145,7 +145,7 @@ search integration. Version tables carry full snapshots but **no `search_text`
 and no GIN index**. Tombstones (`deletions`) model "not a live row" but for the
 sync feed, not search.
 
-### Precedent for control-plane state (for the pointer-move op itself)
+### Precedent for control-plane state (for the face-move op itself)
 
 `OpPurgeVersion` (`internal/audit/audit.go:71-78`) is the closest analogue:
 control-plane state, own storage, own audit constant, emitted directly to the
@@ -154,9 +154,9 @@ Manager (`cli/cli_wiring.go:48-52`).
 
 **But copy it only for audit, not authorization.** Purge buys its bypass by
 giving up ACL, observers, and the state machine, compensating with interactive
-`--commit` confirmation. A pointer move is routine and user-facing, so
+`--commit` confirmation. A face move is routine and user-facing, so
 inheriting that shape would give it *weaker* authorization than an ordinary
-property edit — backwards, given [[RES-NH3P12]] makes the pointer the ACL
+property edit — backwards, given [[RES-NH3P12]] makes the face the ACL
 subject.
 
 The better authorization template is the **state-machine enforcer**
@@ -172,7 +172,7 @@ Slated for removal"* in favour of narrow consumer-side interfaces
 
 ### Why S1 fails this constraint
 
-S1 put pointer content in `entity_versions`. That table has no search index,
+S1 put face content in `entity_versions`. That table has no search index,
 **no observer fan-out**, no change-feed integration, and no graph among version
 rows. Making a subset searchable means adding an index, an observer, and a
 change feed *to the Time Machine* — rebuilding live-store capabilities on a
@@ -185,7 +185,7 @@ pipeline work is what makes it expensive.)
 
 ### What still holds from RES-NH3P12
 
-The ACL conclusion — the `@` qualifier syntax and the per-pointer read verdict —
+The ACL conclusion — the `@` qualifier syntax and the per-face read verdict —
 is unaffected; it concerns the read *gate*, not storage. The blocking
 MCP-ungated-reads prerequisite also stands.
 
@@ -193,10 +193,10 @@ MCP-ungated-reads prerequisite also stands.
 
 Framed by: **how many independently-searchable states per entity are needed?**
 
-### P1. Privileged pointer — exactly one pointer is "the indexed one"
+### P1. Privileged face — exactly one face is "the indexed one"
 
-The live `entities` row IS the content selected by one designated pointer
-(declared in the metamodel, e.g. `indexed: true`). Other pointers select
+The live `entities` row IS the content selected by one designated face
+(declared in the metamodel, e.g. `indexed: true`). Other faces select
 immutable snapshots that are retrievable but not searchable.
 
 - **Pros.** **Zero change to search, on any backend.** No `Backend` change, no
@@ -208,53 +208,53 @@ appears. Backend-agnostic, so it is the only option that works at all on fsstore
 given there is no git versioning to build on.
 - **Cons.** Inverts the editing model — the live row is the *published* state,
 so editing writes "sideways" and promotion swaps. Drafts are second-class (no
-search over your own drafts). Only one searchable pointer per type. **On
+search over your own drafts). Only one searchable face per type. **On
 fsstore, the un-indexed snapshot side has nowhere to live** — one file per
 entity, overwritten in place — so non-postgres builds need a new content store
 regardless.
 - **Effort.** Small-to-medium on postgres; **larger than it looks on fsstore.**
 
-### P2. Two live rows — pointer states as ordinary entities
+### P2. Two live rows — face states as ordinary entities
 
-Each (entity, pointer) pair is a real row in `entities` with distinct ids
+Each (entity, face) pair is a real row in `entities` with distinct ids
 (`PAGE-123` / `PAGE-123@draft`).
 
 - **Pros.** Everything works natively — search, traversal, `analyze_*`, ACL,
 change feed, observers — with no new machinery. Index grows by exactly the
-number of pointer states: the bounded working set the constraint asks for. **The
+number of face states: the bounded working set the constraint asks for. **The
 only option that solves fsstore and the observer-reachability problem
-simultaneously and for free**, because pointer states ARE store rows.
+simultaneously and for free**, because face states ARE store rows.
 - **Cons.** Pollutes the id space — every list read, relation, and count must
 know `PAGE-123@draft` is not a separate page. Relations become ambiguous. Rename
 and id-reuse get harder. High risk of the encoding leaking into user-facing
 surfaces.
 - **Effort.** Medium in code, large in conceptual blast radius.
 
-### P3. Widen the search key to (entity_id, pointer)
+### P3. Widen the search key to (entity_id, face)
 
-Pointer content in a dedicated table; search made pointer-aware (bleve keys
-`"<id>@<pointer>"`, postgres gets `search_text` per pointer state).
+Face content in a dedicated table; search made face-aware (bleve keys
+`"<id>@<face>"`, postgres gets `search_text` per face state).
 
 ```sql
-CREATE TABLE entity_pointer_states (
+CREATE TABLE entity_face_states (
     entity_id   TEXT COLLATE "C" NOT NULL,
-    pointer     TEXT NOT NULL,
+    face     TEXT NOT NULL,
     vseq        BIGINT NOT NULL,
     type        TEXT NOT NULL,
     content     TEXT NOT NULL DEFAULT '',
     properties  JSONB NOT NULL DEFAULT '{}'::jsonb,
     search_text TEXT NOT NULL DEFAULT '',
-    PRIMARY KEY (entity_id, pointer),
+    PRIMARY KEY (entity_id, face),
     FOREIGN KEY (entity_id, vseq) REFERENCES entity_versions(entity_id, vseq)
 );
-CREATE INDEX ON entity_pointer_states USING GIN (search_text gin_trgm_ops);
+CREATE INDEX ON entity_face_states USING GIN (search_text gin_trgm_ops);
 ```
 
-PK `(entity_id, pointer)` makes row count exactly `entities × pointers` —
+PK `(entity_id, face)` makes row count exactly `entities × faces` —
 **bloat bounded by construction**, the constraint as a schema invariant.
 
-- **Pros.** Fully general: N searchable pointers, each independently ACL-gated
-via the `@` syntax. Keeps `entity_versions` pure Time Machine data; the pointer
+- **Pros.** Fully general: N searchable faces, each independently ACL-gated
+via the `@` syntax. Keeps `entity_versions` pure Time Machine data; the face
 table is a materialized projection of it. `entitySearchText` already works on
 any snapshot, so text derivation is free.
 - **Cons.** Blast radius beyond `Backend`: `Search`'s `[]string`, `Hit`'s
@@ -264,9 +264,9 @@ outside `store.Store`, it needs a *new fan-out mechanism*, not just a new
 observer. Postgres-only.
 - **Effort.** Large.
 
-### P4. Pointer table + reindex-on-move, single indexed state
+### P4. Face table + reindex-on-move, single indexed state
 
-Pointer state in a ref table; one pointer at a time projected into the live row.
+Face state in a ref table; one face at a time projected into the live row.
 
 - **Pros.** No search change; the projection makes moves observable via the
 existing fan-out.
@@ -277,13 +277,13 @@ the change feed, and the version sweep (circular).
 
 ## Recommendation
 
-**The choice is P1 vs P3, on one question: does more than one pointer state need
+**The choice is P1 vs P3, on one question: does more than one face state need
 full-text search?** One → P1. Two or more → P3, and nothing cheaper exists,
 because one-document-per-id is structural in all three backends.
 
 **P1 is the recommendation**, now on stronger grounds than the search argument
 alone: promotion is a live-row write, so it reaches the observer fan-out for
-free, whereas any design holding pointer content outside `store.Store` must
+free, whereas any design holding face content outside `store.Store` must
 invent a new notification path to keep the index current.
 
 **P2 deserves more credit than a first pass suggests** — it is the only option
@@ -297,10 +297,10 @@ fallback to revisit rather than P3.
 ### Tradeoffs accepted under P1
 
 1. **Drafts are not full-text searchable.** Retrievable by id and listable by
-pointer, not discoverable by content search.
+face, not discoverable by content search.
 2. **The live row means "published."** Editing writes to the un-indexed side;
 promotion swaps. Needs clear documentation.
-3. **Exactly one searchable pointer per type.**
+3. **Exactly one searchable face per type.**
 4. **Migration cost if P3 is later needed** — not additive: it changes what the
 live row means AND widens the search key.
 5. **fsstore needs a content store for the un-indexed side.** One file per
@@ -321,7 +321,7 @@ harmless (content-hash dedup should match) or a duplicate-version bug, depending
 on whether the comparison lands in the same lifecycle window. Verify against
 `sweep.go`'s two-LATERAL dedup.
 
-**3. Where does the pointer-move op live?** Not `store.Store` (rule), not
+**3. Where does the face-move op live?** Not `store.Store` (rule), not
 `EntityManager` (slated for removal). Copy `OpPurgeVersion`'s *audit* shape (own
 constant, direct sink) but the state machine's *enforcement* shape (required
 injected enforcer in the fixed pipeline) — purge's Manager bypass would leave a

@@ -93,6 +93,7 @@ recovery mechanism, so a step that finds nothing left to do does nothing.
 | `rename_property: {entity, from, to}` | moves the value to the new key (only where the old key exists) |
 | `rename_entity_type: {from, to}` | rewrites `type:` on every entity of the old type (IDs are unchanged) |
 | `rename_relation_type: {from, to}` | recreates each relation under the new type, then deletes the old (relation history starts a new lifetime) |
+| `rename_face: {entity, from, to}` | moves every row stored at one content state to another (IDs are unchanged) |
 | `map_values: {entity, property, mapping}` | remaps enum values (scalar and list properties); unmapped values are left and reported |
 | `set_default: {entity, property, value, only_missing}` | backfills a value (`only_missing` defaults to true) |
 | `recompute_computed: {entity}` | recomputes all materialized computed properties for an entity type in dependency order |
@@ -108,6 +109,26 @@ the operator consent — but the generator only ever emits them commented out.
 Adding or changing a computed property emits one active
 `recompute_computed` step per affected entity type. The step refreshes the
 whole graph, so dependent computed properties cannot retain stale values.
+
+### Renaming a content state
+
+`rename_face` moves rows between coordinates. A face is not part of the entity
+id — it is a separate field — so no id is rewritten and relations keep their
+endpoints, exactly as with `rename_entity_type`.
+
+Two things behave differently from an ordinary rename, both because the face
+named by `bare_face:` is stored as the *empty* coordinate rather than under its
+own name:
+
+- **Renaming the bare face** while it stays the bare face is a no-op in storage
+  terms: both spellings address the same coordinate, and the step does nothing.
+- **Renaming a named face onto the bare face is refused.** The store requires
+  that a face row cannot exist without its bare row, so the destination is
+  always occupied — which makes this a *merge*, not a rename. Decide which
+  content wins and express it as a drop plus a rename.
+
+A rename onto any other occupied coordinate is refused for the same reason: the
+entity has content at both, and moving would destroy one of them.
 
 ### The Lua escape hatch
 

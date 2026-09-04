@@ -93,7 +93,7 @@ func NewOpenAICompatProvider(cfg *Config, opts ...Option) (Provider, error) {
 
 // chatRequestWire is the JSON shape sent to the upstream. We deliberately
 // keep this minimal: only the parameters we explicitly set. omitempty on
-// the pointer fields means temperature=0 is sent (pointer is non-nil)
+// the face fields means temperature=0 is sent (face is non-nil)
 // while absent temperature is omitted entirely.
 type chatRequestWire struct {
 	Model       string        `json:"model"`

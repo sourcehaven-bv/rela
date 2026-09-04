@@ -9,6 +9,15 @@ const schemaStore = useSchemaStore()
 
 // State
 const loading = ref(true)
+
+// pageState mirrors DynamicForm's `form-state-*` contract: a stable signal
+// that this screen has finished resolving, so a screenshot{} capture can wait
+// for it rather than hanging until its timeout.
+const loadError = ref(false)
+const pageState = computed<'pending' | 'loaded' | 'error'>(() => {
+  if (loadError.value) return 'error'
+  return loading.value ? 'pending' : 'loaded'
+})
 // Keyed by cardKey(), not by array index: the card list is per-principal
 // (TKT-53KICM), so its length and contents can differ between loads. An
 // index-keyed map survives such a change and binds one card's rows to
@@ -41,6 +50,7 @@ const cards = computed(() => dashboardConfig.value?.cards || [])
 // Methods
 async function loadData() {
   loading.value = true
+  loadError.value = false
 
   try {
     // Load card data in parallel
@@ -58,6 +68,7 @@ async function loadData() {
     await Promise.all([...cardPromises, analysisPromise.then((r) => (analysisResult.value = r))])
   } catch (err) {
     console.error('Dashboard load error:', err)
+    loadError.value = true
   } finally {
     loading.value = false
   }
@@ -180,7 +191,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="dashboard-view">
+  <div class="dashboard-view" :data-testid="`page-state-${pageState}`">
     <header class="dashboard-header mobile-topbar mobile-topbar--with-menu">
       <h1>{{ title }}</h1>
       <p v-if="description" class="description">{{ description }}</p>
@@ -207,13 +218,14 @@ onMounted(async () => {
       </p>
 
       <div v-else class="dashboard-grid">
-        <div
+        <section
           v-for="view in cardViews"
           :key="view.key"
           class="dashboard-card"
+          :aria-labelledby="`dashboard-card-${view.key}-title`"
         >
           <div class="card-header">
-            <h3>{{ view.card.title }}</h3>
+            <h3 :id="`dashboard-card-${view.key}-title`">{{ view.card.title }}</h3>
             <router-link
               :to="`/search?q=${encodeURIComponent(view.card.query)}`"
               class="card-link"
@@ -251,10 +263,10 @@ onMounted(async () => {
 
           <!-- Table display -->
           <div v-else-if="view.card.display === 'table'" class="card-table">
-            <table v-if="view.rows.length > 0">
+            <table v-if="view.rows.length > 0" :aria-labelledby="`dashboard-card-${view.key}-title`">
               <thead>
                 <tr>
-                  <th v-for="col in view.card.columns" :key="col.property">
+                  <th v-for="col in view.card.columns" :key="col.property" scope="col">
                     {{ getColumnLabel(col) }}
                   </th>
                 </tr>
@@ -276,7 +288,7 @@ onMounted(async () => {
             </table>
             <div v-else class="no-data">No results</div>
           </div>
-        </div>
+        </section>
       </div>
 
       <!-- Validation card -->

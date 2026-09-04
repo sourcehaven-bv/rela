@@ -212,11 +212,53 @@ func checkCeilingsAgainstMetamodel(p *acl.Policy, m MetamodelReader) []Finding {
 		b := p.ClientBaselines[name]
 		f = append(f, ceilingTypeFindings(
 			"client baseline", name, b.Restriction, m)...)
+		f = append(f, ceilingWorldFindings(
+			"client baseline", name, b.Restriction, m)...)
 	}
 	for _, scope := range sortedScopeGrantNames(p) {
 		g := p.ScopeGrants[scope]
 		f = append(f, ceilingTypeFindings(
 			"scope grant", scope, g.Restriction, m)...)
+		f = append(f, ceilingWorldFindings(
+			"scope grant", scope, g.Restriction, m)...)
+	}
+	return f
+}
+
+// ceilingWorldFindings reports a client-attenuation block naming a world the
+// metamodel does not declare (B10, sharing the rule id with the role-grant
+// check — same mistake, same fix, and an operator should not have to learn
+// two rule names for "that world does not exist").
+//
+// A ceiling entry naming a nonexistent world is inert in the direction that
+// matters: an allowlist naming only unknown worlds permits nothing, and a
+// denylist denies nothing. Neither leaks, but both read as protection.
+func ceilingWorldFindings(
+	kind, name string, r acl.Restriction, m MetamodelReader,
+) []Finding {
+	var f []Finding
+	seen := map[string]bool{}
+	for _, c := range []struct {
+		axis   string
+		worlds []string
+	}{{"worlds", r.Worlds}, {"deny_worlds", r.DenyWorlds}} {
+		for _, world := range c.worlds {
+			if world == acl.DefaultWorldName || m.HasWorld(world) || seen[world] {
+				continue
+			}
+			seen[world] = true
+			if cv, isCaseVariant := defaultWorldCaseVariant(name, world); isCaseVariant {
+				f = append(f, cv)
+				continue
+			}
+			f = append(f, Finding{
+				Rule: "B10-undeclared-world", Severity: High, Subject: name,
+				Detail: fmt.Sprintf("%s %q names world %q (under %s) which the metamodel does "+
+					"not declare; the restriction matches nothing", kind, name, world, c.axis),
+				Fix: fmt.Sprintf("declare world %q under `worlds:` in schema.yaml, or fix the "+
+					"%s entry (check for a typo)", world, c.axis),
+			})
+		}
 	}
 	return f
 }
@@ -235,8 +277,15 @@ func ceilingTypeFindings(
 		{"read", r.Read}, {"create", r.Create}, {"update", r.Update}, {"delete", r.Delete},
 		{"deny_read", r.DenyRead}, {"deny_create", r.DenyCreate},
 		{"deny_update", r.DenyUpdate}, {"deny_delete", r.DenyDelete},
+		// worlds/deny_worlds are deliberately ABSENT: their entries are
+		// world names, not entity types, so HasEntityType is the wrong
+		// question and would report every one of them as undeclared.
+		// Checked separately by ceilingWorldFindings (B10).
 	} {
-		for _, t := range c.types {
+		for _, entry := range c.types {
+			// TYPE half only — a ceiling axis may name a state-shaped
+			// grant for the same reason a role may (TKT-DN37J2).
+			t := grantEntityType(entry)
 			if t == "*" || m.HasEntityType(t) || seen[t] {
 				continue
 			}

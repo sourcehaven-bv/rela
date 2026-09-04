@@ -25,7 +25,7 @@ from a context-attached bundle instead of reaching for package globals.
 ## In scope
 
 - New `internal/cli/cli_wiring.go` builds `*cliServices` from the project root. Mirrors `mcp_wiring.go` (observer-wired bleve, ScriptRunner adapter, watcher adapter).
-- `internal/cli/root.go::PersistentPreRunE` constructs the bundle once and stows it on the command context (or holds it as a package-level pointer that's narrower than today's `ws`).
+- `internal/cli/root.go::PersistentPreRunE` constructs the bundle once and stows it on the command context (or holds it as a package-level face that's narrower than today's `ws`).
 - Each subcommand file (`create.go`, `delete.go`, `list.go`, `show.go`, etc.) reads its services from the bundle.
 - Drop package globals `ws`, `projectCtx`, `meta`. Keep `out` (CLI output writer — different concern).
 - `internal/cli` stops importing `internal/workspace` directly. Verified by `grep` + arch-lint.

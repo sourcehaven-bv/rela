@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"sort"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
 // Verb is a read-or-write access verb the who-can query asks about. It
@@ -151,6 +153,14 @@ func grantForRole(role RoleDef, verb Verb, entityType string) EveryoneGrant {
 		if t == "*" {
 			return EveryoneGrant{Granted: true, Wildcard: true}
 		}
+		// A state-shaped write grant is skipped for the same reason
+		// [grantsVerb] skips it: it authorizes no face today, so reporting
+		// it as a grant here would put a false all-clear into `rela acl
+		// who-can` / `rela acl map` — the operator-facing security reports
+		// this helper exists to keep honest (RR-Q1LI2Y).
+		if verb != VerbRead && isStateGrant(t) {
+			continue
+		}
 		if t == entityType {
 			return EveryoneGrant{Granted: true}
 		}
@@ -171,8 +181,21 @@ func grantForRole(role RoleDef, verb Verb, entityType string) EveryoneGrant {
 // runtime exactly — no false negatives:
 //
 //   - Write verbs (create/update/delete): an attribution's role grants
-//     the verb via the same grantsVerb the write path uses. The write
-//     path IS this attribution set, so equivalence is by construction.
+//     the verb via grantsVerb, the TYPE-granular predicate.
+//
+//     Equivalence with the runtime is no longer by construction, and the
+//     divergence is deliberate: since TKT-C1XUA8 the write path is
+//     face-granular (decideFromAttrs → GrantsVerbOnState), while this
+//     report has no face in hand — "who can update page?" is a question
+//     about a type. So a role holding ONLY a face-specific grant
+//     (`update: ["page@draft"]`) is not credited here, and this answer is
+//     a LOWER BOUND on write access rather than an exact one.
+//
+//     That is the safe direction for an attestation tool — a false
+//     negative, never a false all-clear — but it is a real limitation, not
+//     a guarantee. A report that names a face is the fix if operators need
+//     one; it needs a face threaded through AccessRoutes.
+//
 //   - Read: gated by [Request.PermitsRead] — the actual runtime read
 //     decision. If PermitsRead is false the result is empty; if true,
 //     the returned attributions are those whose role grants read
@@ -206,9 +229,10 @@ func (r *Request) AccessRoutes(
 
 // grantingAttributions filters the per-entity attribution set to those
 // whose role grants verb on entityType, excluding the everyone role.
-// The verb→predicate mapping is the same one the runtime uses
-// (roleGrantsRead / grantsVerb), so the routes it credits are the real
-// reasons access was granted.
+// The verb→predicate mapping matches the runtime for reads; for writes it is
+// the TYPE-granular grantsVerb, so a face-specific grant is not credited.
+// Every route it credits is a real reason access was granted; it may omit a
+// face-specific one. See [Request.AccessRoutes] for why.
 //
 // Create is intentionally computed with the concrete entityID, same as
 // every other write verb — NOT globals-only. This mirrors the production
@@ -258,4 +282,49 @@ func (r *Request) grantingAttributions(
 		}
 	}
 	return out
+}
+
+// GrantsRead reports whether role's read list covers entityType — exact
+// match or the "*" wildcard.
+//
+// GrantsRead and [GrantsVerb] are exported so consumers outside this
+// package (the `rela docs` role-matrix generator) match grants with the
+// SAME predicate the runtime uses, rather than hand-copying the
+// wildcard-or-exact loop. A second copy silently disagrees the moment the
+// grant grammar changes — which is exactly what happened when write grants
+// gained the `type@face` form (TKT-DN37J2): the copy reported "cannot
+// update page" for a role holding `update: ["page@draft"]`, a false
+// all-clear in an operator-facing security document (RR-Q1LI2Y).
+//
+// These take a plain RoleDef and so do NOT apply a client ceiling; they
+// answer "what does this role grant", not "what may this principal do".
+// For the latter, resolve through Request.roleFor first.
+func GrantsRead(role RoleDef, entityType string) bool {
+	return roleGrantsRead(role, entityType)
+}
+
+// GrantsVerb reports whether role may perform op on entityType, honoring
+// the "*" wildcard and the `type@face` state form. Rename routes
+// through the update grant. See [GrantsRead] for why this is exported.
+func GrantsVerb(role RoleDef, op Op, entityType string) bool {
+	return grantsVerb(role, op, entityType)
+}
+
+// ReadFaces returns the faces of entityType this role may read, and whether it
+// may read EVERY face. Exported for the same reason [GrantsRead] is: a
+// capability DISPLAY that recomputed this would drift from the runtime the
+// moment the grant grammar changed.
+//
+// [GrantsRead] alone is not enough to describe read access, and reporting only
+// it overstates the grant: it answers true for a role holding
+// `read: [policy@published]`, because a face-scoped grant does grant its type
+// for the purposes of composing a query. Which FACES is a separate question,
+// and this is it — the pair is what a role's read access actually is.
+//
+// all=true means every face (a bare `read: [policy]` grant, or "*"); faces is
+// then nil. Note the asymmetry with the write side, documented on
+// roleReadFaces: a bare READ grant covers every face, while a bare update grant
+// covers only the default one.
+func ReadFaces(role RoleDef, entityType string) (faces []entity.Face, all bool) {
+	return roleReadFaces(role, entityType)
 }

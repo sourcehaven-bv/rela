@@ -31,6 +31,20 @@ const query = ref('')
 const results = ref<Entity[]>([])
 const loading = ref(false)
 const searched = ref(false)
+const loadError = ref(false)
+
+// pageState mirrors DynamicForm's `form-state-*` contract so a screenshot can
+// wait for this screen. A search is "loaded" once a query has actually run:
+// an idle search page and a page mid-query look the same otherwise, and a
+// capture taken between them would show an empty result list that means
+// "nothing typed yet" rather than "nothing found".
+// A failed search is `error`, never `loaded`: an empty result list after a
+// failed fetch reads exactly like "nothing found", and a screenshot hook that
+// waits for `loaded` would photograph the failure as a good page.
+const pageState = computed<'pending' | 'loaded' | 'error'>(() => {
+  if (loadError.value) return 'error'
+  return loading.value || !searched.value ? 'pending' : 'loaded'
+})
 const selectedIndex = ref(-1)
 const inResults = ref(false)
 const showHelp = ref(false)
@@ -113,6 +127,7 @@ async function search() {
 
   loading.value = true
   searched.value = true
+  loadError.value = false
 
   try {
     const response = await searchEntities(searchQuery)
@@ -120,6 +135,7 @@ async function search() {
   } catch (err) {
     console.error('Search error:', err)
     results.value = []
+    loadError.value = true
   } finally {
     loading.value = false
   }
@@ -329,7 +345,7 @@ watch(
 </script>
 
 <template>
-  <div class="search-view">
+  <div class="search-view" :data-testid="`page-state-${pageState}`">
     <header class="search-header mobile-topbar mobile-topbar--with-menu">
       <div class="header-left">
         <BackButton v-if="backTarget" :target="backTarget" />
@@ -432,23 +448,19 @@ watch(
       <p>No results found for "{{ query }}"</p>
     </div>
 
-    <div v-else-if="results.length > 0" class="search-results">
-      <p class="results-count">{{ results.length }} result{{ results.length !== 1 ? 's' : '' }} found</p>
+    <section v-else-if="results.length > 0" class="search-results" aria-labelledby="search-results-heading">
+      <p id="search-results-heading" class="results-count">{{ results.length }} result{{ results.length !== 1 ? 's' : '' }} found</p>
 
-      <div class="results-list">
-        <RouterLink
-          v-for="(entity, index) in results"
-          :key="entity.id"
-          class="result-item"
-          :class="{ selected: index === selectedIndex }"
-          :to="resultTarget(entity)"
-        >
-          <span class="result-type">{{ getEntityTypeLabel(entity.type) }}</span>
-          <span class="result-id">{{ entity.id }}</span>
-          <span class="result-title">{{ getEntityLabel(entity) }}</span>
-        </RouterLink>
-      </div>
-    </div>
+      <ul class="results-list">
+        <li v-for="(entity, index) in results" :key="entity.id" class="result-row">
+          <RouterLink class="result-item" :class="{ selected: index === selectedIndex }" :to="resultTarget(entity)">
+            <span class="result-type">{{ getEntityTypeLabel(entity.type) }}</span>
+            <span class="result-id">{{ entity.id }}</span>
+            <span class="result-title">{{ getEntityLabel(entity) }}</span>
+          </RouterLink>
+        </li>
+      </ul>
+    </section>
   </div>
 </template>
 
@@ -700,10 +712,23 @@ watch(
   font-size: 14px;
 }
 
+/* Now a <ul> of <li> results. Reset UA list styling so the flex column
+   renders exactly as it did as a div. */
 .results-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* The <li> carries only the list semantics; the link inside it is the card. The
+   row is a plain block so the <ul>'s flex column still measures it (display:
+   contents would drop the list role in several screen readers), and the link is
+   made to fill it. */
+.result-row {
+  display: block;
 }
 
 .result-item {

@@ -1,0 +1,52 @@
+description: >
+  Three roles, chosen to show what a WORLD grant is for. A world grant is not
+  another entity-type grant: it says which VIEW of the graph a principal may
+  ask for. Reading `published` and reading `editorial` are different
+  permissions over the same entities.
+
+# Reading a non-default world is a privilege, so rela REFUSES to load a policy
+# where a principal could grant themselves that privilege. Group membership is
+# walked over a role-relation (`member-of` by default, even when the schema
+# declares no such relation), and an ungated one means "anyone who can write
+# this edge can self-promote". Naming the permission closes that: only a
+# principal holding `manage-roles` can confer a role.
+role_relations:
+  member-of:
+    requires_permission: manage-roles
+
+roles:
+  editor:
+    description: >
+      Maintains the handbook. May read every world — including editorial,
+      where unpublished drafts are visible — and may write.
+    read: ["*", "world:published", "world:editorial", "world:site-nl"]
+    permissions: [manage-roles, publish-policy]
+    create: ["*"]
+    update: ["*"]
+    delete: ["*"]
+
+  reader:
+    description: >
+      Reads the published handbook. Deliberately has NO editorial grant, so a
+      reader asking for `?world=editorial` is served nothing.
+
+      The `world:` grant scopes `?world=` — it does NOT make a face
+      unreadable, and neither does `app.default_world`, which only selects
+      the face the UI shows. A bare `read: [policy]` would let this role
+      reach a draft directly (`/api/v1/policys/POL-1`).
+
+      So the policy grant names the FACE: `policy@published` gates every
+      path — list, direct GET, include and search alike.
+    read: ["policy@published", "guide", "control", "procedure", "world:published", "world:site-nl"]
+
+  translator:
+    description: >
+      Works on the Dutch site. May read the published and Dutch worlds and
+      update guides, but has no editorial access to policies.
+    read: ["*", "world:published", "world:site-nl"]
+    update: [guide]
+
+assignments:
+  edith@example.com: editor
+  raj@example.com: reader
+  tine@example.com: translator

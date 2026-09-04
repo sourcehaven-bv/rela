@@ -43,6 +43,8 @@ func (g permGate) SearchScope(context.Context, []string) map[string]search.TypeS
 
 func (g permGate) HoldsPermission(_ context.Context, perm string) bool { return g.perms[perm] }
 
+func (permGate) PermitsWorld(context.Context, string) (bool, error) { return true, nil }
+
 // getHistoryVersion drives serveHistoryVersion via handleV1History for version 1
 // of id, under the given principal and read gate.
 func getHistoryVersion(app *App, user, typeName, id string, gate readGate) *httptest.ResponseRecorder {

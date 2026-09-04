@@ -23,6 +23,8 @@ package predicatefns
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"regexp"
@@ -47,6 +49,9 @@ const (
 	FuncContains = "contains" // contains(list, elem) bool
 	FuncLen      = "len"      // len(list) number
 	FuncToday    = "today"    // today() date
+	// FuncSHA256 hashes a string to lowercase hex. See sha256Hex for why
+	// the encoding is hex and why that choice is effectively permanent.
+	FuncSHA256 = "sha256" // sha256(s) string
 )
 
 // fuzzyThreshold mirrors filter.DefaultFuzzyThreshold semantics for the
@@ -72,6 +77,10 @@ func Declare(env *predicate.Env) error {
 		{FuncFuzzy, twoStr},
 		{FuncContains, predicate.FuncSig{Params: []predicate.Type{strList, str}, Return: predicate.BoolType}},
 		{FuncLen, predicate.FuncSig{Params: []predicate.Type{strList}, Return: predicate.NumberType}},
+		// Not SQLPortable: no backend-neutral SQL spelling of SHA-256 exists
+		// (postgres needs pgcrypto/encode, sqlite has none builtin), so a
+		// program using it must evaluate in Go rather than push down.
+		{FuncSHA256, predicate.FuncSig{Params: []predicate.Type{str}, Return: predicate.StringType}},
 		{FuncToday, predicate.FuncSig{Return: predicate.DateType, SQLPortable: true}},
 		{FuncDaysBetween, predicate.FuncSig{
 			Params: []predicate.Type{predicate.DateType, predicate.DateType},
@@ -116,6 +125,7 @@ func Bind(b *predicate.Bindings, now time.Time) error {
 		{FuncFuzzy, matchFuzzy},
 		{FuncContains, contains},
 		{FuncLen, listLen},
+		{FuncSHA256, sha256Hex},
 		{FuncToday, func(context.Context, []predicate.Value) (predicate.Value, error) {
 			return predicate.NewDate(day), nil
 		}},
@@ -205,6 +215,33 @@ func listLen(_ context.Context, args []predicate.Value) (predicate.Value, error)
 		return nil, errArg
 	}
 	return predicate.NewNumberFromInt(len(list.Elems())), nil
+}
+
+// sha256Hex implements sha256(s): the SHA-256 digest of s as LOWERCASE HEX.
+//
+// # Why hex, and why that is permanent
+//
+// A computed sha256 property is typically declared `unique:` and becomes a
+// STORED, INDEXED value (see TKT-1EM4KL). Changing the encoding later would
+// change every derived key in every project that uses it — a data migration,
+// not a code change — so the choice is made once, here.
+//
+// Hex over base64 for three reasons: it matches crypto.sha256_hex, the Lua
+// binding that already exists in this codebase, so the two agree; it is what
+// Icinga DB uses for the equivalent content-hash key, which is the motivating
+// integration; and it is unambiguous everywhere the value travels — no `+`,
+// `/` or `=` to escape in a URL, a filename, a log line or a SQL literal.
+// The 64-character width is the only cost, and an index does not care.
+func sha256Hex(_ context.Context, args []predicate.Value) (predicate.Value, error) {
+	if len(args) != 1 {
+		return nil, errArg
+	}
+	s, ok := args[0].(predicate.String)
+	if !ok {
+		return nil, errArg
+	}
+	sum := sha256.Sum256([]byte(s.String()))
+	return predicate.NewString(hex.EncodeToString(sum[:])), nil
 }
 
 // twoStrings extracts exactly two string args.

@@ -43,14 +43,14 @@ func TestCopyVisibleProperties_HiddenStripped(t *testing.T) {
 
 func TestCopyVisibleProperties_FreshMap(t *testing.T) {
 	// Defensive copy: the returned map must not share its backing
-	// pointer with e.Properties so future maintainers can't accidentally
+	// face with e.Properties so future maintainers can't accidentally
 	// alias the entity's property map into a long-lived response.
 	svc := affordanceServiceWithResolver(NopFieldVerdictResolver{})
 	original := map[string]any{"title": "x", "status": "open"}
 	e := &entity.Entity{Type: "ticket", Properties: original}
 	got := svc.copyVisibleProperties(context.Background(), e)
 	if reflect.ValueOf(got).Pointer() == reflect.ValueOf(original).Pointer() {
-		t.Fatal("copyVisibleProperties returned the same map pointer as e.Properties; expected a fresh map")
+		t.Fatal("copyVisibleProperties returned the same map face as e.Properties; expected a fresh map")
 	}
 	// Mutating the result must not affect the source.
 	got["title"] = "mutated"
@@ -86,7 +86,7 @@ func TestBuildSectionEntityData_PopulatesPropsAndFieldVerdicts(t *testing.T) {
 		{Property: "title"},
 		{Property: "status"},
 	}
-	sed := app.views.buildSectionEntityData(context.Background(), e, secFields, eDef, "")
+	sed := app.views.buildSectionEntityData(context.Background(), e, secFields, eDef, "", defaultViewWorld())
 
 	// Props carries the typed values.
 	if !reflect.DeepEqual(sed.Props, map[string]any{"title": "First", "status": "open"}) {
@@ -101,7 +101,7 @@ func TestBuildSectionEntityData_PopulatesPropsAndFieldVerdicts(t *testing.T) {
 		t.Fatalf("FieldVerdicts['status']: want present (read-only verdict)")
 	}
 	if status.Writable == nil || *status.Writable {
-		t.Errorf("FieldVerdicts['status'].Writable: got %v, want pointer-to-false", status.Writable)
+		t.Errorf("FieldVerdicts['status'].Writable: got %v, want face-to-false", status.Writable)
 	}
 	if _, ok := sed.FieldVerdicts["title"]; ok {
 		t.Errorf("FieldVerdicts['title']: must NOT appear (sparse, default writable=true)")
@@ -119,7 +119,7 @@ func TestBuildSectionEntityData_HiddenAbsentFromBothMaps(t *testing.T) {
 		Properties: map[string]any{"title": "First", "status": "open"},
 	}
 	eDef, _ := st.Meta.GetEntityDef(e.Type)
-	sed := app.views.buildSectionEntityData(context.Background(), e, nil, eDef, "")
+	sed := app.views.buildSectionEntityData(context.Background(), e, nil, eDef, "", defaultViewWorld())
 	if _, ok := sed.Props["status"]; ok {
 		t.Errorf("hidden 'status' must not appear in Props; got %+v", sed.Props)
 	}
@@ -144,7 +144,7 @@ func TestBuildSectionEntityData_KeySetInvariant(t *testing.T) {
 		},
 	}
 	eDef, _ := st.Meta.GetEntityDef(e.Type)
-	sed := app.views.buildSectionEntityData(context.Background(), e, nil, eDef, "")
+	sed := app.views.buildSectionEntityData(context.Background(), e, nil, eDef, "", defaultViewWorld())
 
 	hidden := app.affordances.hiddenProperties(context.Background(), e)
 	for k := range sed.Props {
@@ -211,7 +211,7 @@ func TestSectionEntityToV1_EmptyFieldVerdicts_EmitsPresentButEmpty(t *testing.T)
 	}
 	got := sectionEntityToV1(sed)
 	if got.FieldAffordances == nil {
-		t.Fatal("FieldAffordances: got nil, want pointer-to-empty-map")
+		t.Fatal("FieldAffordances: got nil, want face-to-empty-map")
 	}
 	if len(*got.FieldAffordances) != 0 {
 		t.Errorf("*FieldAffordances: got %+v, want empty map", *got.FieldAffordances)
@@ -239,7 +239,7 @@ func TestBuildSectionEntityData_LabelIsAuthoredNeverDerived(t *testing.T) {
 		{Property: "title"},                         // no label -> raw
 		{Property: "status", Label: "Eigen status"}, // authored -> preserved
 	}
-	sed := app.views.buildSectionEntityData(context.Background(), e, secFields, eDef, "")
+	sed := app.views.buildSectionEntityData(context.Background(), e, secFields, eDef, "", defaultViewWorld())
 
 	if len(sed.Fields) != 2 {
 		t.Fatalf("Fields: got %d, want 2", len(sed.Fields))

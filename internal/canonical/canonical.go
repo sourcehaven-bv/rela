@@ -64,6 +64,15 @@ func HashEntity(e entity.Entity) string {
 	w := newWriter()
 	w.tag('E')
 	w.field("id", e.ID)
+	// The face is record identity like the id, but written only when
+	// non-zero: the zero value is the default state, and hashing it for
+	// every existing record would change every stored hash (sync
+	// baselines, schema_versions dedup) for faceless projects. No
+	// ambiguity arises — the face grammar forbids the empty string,
+	// so "" never appears as a real field value (TKT-DOFYR1).
+	if !e.Face.IsDefault() {
+		w.field("face", string(e.Face))
+	}
 	w.field("type", e.Type)
 	w.properties(e.Properties)
 	w.body(e.Content)
@@ -77,6 +86,11 @@ func HashRelation(r entity.Relation) string {
 	w := newWriter()
 	w.tag('R')
 	w.field("from", r.From)
+	// Written only when non-zero, for the same reasons as HashEntity's
+	// face field.
+	if !r.FromFace.IsDefault() {
+		w.field("from_face", string(r.FromFace))
+	}
 	w.field("relation", r.Type)
 	w.field("to", r.To)
 	w.properties(r.Properties)

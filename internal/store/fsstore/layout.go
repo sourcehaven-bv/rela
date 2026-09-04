@@ -46,8 +46,16 @@ func (l fileLayout) entityFileKey(entityType, id string) string {
 	return path.Join(l.entitiesKey, plural, id+".md")
 }
 
+// relationFileKey returns the key for a relation file with a
+// default-state tail.
 func (l fileLayout) relationFileKey(from, relType, to string) string {
 	return path.Join(l.relationsKey, from+"--"+relType+"--"+to+".md")
+}
+
+// relationFileKeyMeta returns the key for the relation an index meta
+// describes; the FROM slot carries the tail face (relKey).
+func (l fileLayout) relationFileKeyMeta(m relationMeta) string {
+	return path.Join(l.relationsKey, m.key()+".md")
 }
 
 // propertyOrder returns the property order for an entity type, if configured.

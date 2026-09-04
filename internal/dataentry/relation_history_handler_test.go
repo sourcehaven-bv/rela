@@ -94,6 +94,8 @@ func (g perEndpointGate) SearchScope(context.Context, []string) map[string]searc
 
 func (g perEndpointGate) HoldsPermission(context.Context, string) bool { return g.holdsPermission }
 
+func (perEndpointGate) PermitsWorld(context.Context, string) (bool, error) { return true, nil }
+
 // newRelHistoryApp builds a test App whose store is a RelationHistoryReader with
 // two live endpoints (DEC-1: decision, REQ-1: requirement) and one canned
 // relation version.

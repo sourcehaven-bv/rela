@@ -26,6 +26,13 @@ import "encoding/json"
 // id prefixes are deliberately EXCLUDED (TKT-0C57FS amendment A5): no v1
 // migration step can rewrite entity IDs, so including prefixes would let a
 // prefix edit create a needs-migration state no migration could resolve.
+//
+// Faces are INCLUDED, and A5 does not argue against them (TKT-O0A8FO). A face
+// is not part of the id: entity.Entity.Face is its own field, addressed as a
+// separate parameter (store.GetEntityState(ctx, id, face)); the `GUIDE-1@nl`
+// spelling is a display and URL convention. So a face rename is an in-place
+// field rewrite of the kind rename_entity_type already performs, not the id
+// rewrite A5 says no step can do.
 type ShapeProjection struct {
 	// Entities maps each entity type name to its property shapes.
 	Entities map[string]EntityShape `json:"entities"`
@@ -38,6 +45,25 @@ type ShapeProjection struct {
 // EntityShape is the data-shape projection of one entity type.
 type EntityShape struct {
 	Properties map[string]PropertyShape `json:"properties"`
+
+	// Faces are the type's declared content-state names, sorted. Part of the
+	// shape because a face is a stored COORDINATE (entity.Entity.Face), so
+	// renaming or removing one moves rows exactly as a property rename moves
+	// values — and, before this, moved them with no change to the hash, so the
+	// gate adopted silently and the rows were orphaned (TKT-O0A8FO).
+	//
+	// Sorted rather than declaration-ordered: unlike an enum's values, whose
+	// order the operator can mean something by, faces are addressed by name and
+	// their declaration order is not observable in stored data.
+	Faces []string `json:"faces,omitempty"`
+
+	// BareFace names which declared face the bare id addresses. It belongs in
+	// the shape for a reason the face list alone does not cover: it decides
+	// WHICH rows are stored under the zero coordinate. Repointing it at a
+	// different face relabels every existing bare row without touching the
+	// face list, which is the flat→faces trap — the content that was your only
+	// content silently becomes a different state.
+	BareFace string `json:"bare_face,omitempty"`
 }
 
 // PropertyShape is the data-shape projection of one property definition:
@@ -83,7 +109,11 @@ func (m *Metamodel) ShapeProjection() ShapeProjection {
 		Types:     make(map[string][]string, len(m.Types)),
 	}
 	for name, def := range m.Entities {
-		es := EntityShape{Properties: make(map[string]PropertyShape, len(def.Properties))}
+		es := EntityShape{
+			Properties: make(map[string]PropertyShape, len(def.Properties)),
+			Faces:      sortedKeys(def.Faces),
+			BareFace:   def.BareFace,
+		}
 		for pname, pdef := range def.Properties {
 			es.Properties[pname] = propertyShape(pdef)
 		}
@@ -155,8 +185,11 @@ func (p ShapeProjection) Hash() string {
 	h.str("entities")
 	h.count(len(p.Entities))
 	for _, name := range sortedKeys(p.Entities) {
+		es := p.Entities[name]
 		h.str(name)
-		hashPropertyShapes(h, p.Entities[name].Properties)
+		hashPropertyShapes(h, es.Properties)
+		h.strList(es.Faces)
+		h.str(es.BareFace)
 	}
 
 	h.str("relations")

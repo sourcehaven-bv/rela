@@ -55,7 +55,7 @@ Pratique — and rela has no revocation channel**), because an operator planning
 incident response will otherwise assume IdP revocation is immediate. Plus a
 dedicated "`org_id` is recorded, not enforced" subsection.
 - [x] `docs/server-security.md` — the widened claim surface on the JWT path,
-what is optional, and pointers to the two ACL docs.
+what is optional, and faces to the two ACL docs.
 - [x] `docs/audit-log.md` — the new record fields, a worked example, the
 backward-compatibility note, and the org-is-not-isolation warning repeated where
 an operator reading the log will hit it.

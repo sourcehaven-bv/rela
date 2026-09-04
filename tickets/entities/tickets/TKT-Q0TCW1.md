@@ -25,7 +25,7 @@ matches hidden text).
 - Adds a property-redaction section + the search-oracle/MCP residuals to
 `GUIDE-acl-security`.
 - Repoints inbound links (audit-log, sync, api-reference) and user-facing
-code/godoc pointers to `server-security.md`.
+code/godoc faces to `server-security.md`.
 
 PR: #1059. Background analysis: RES-H5AB7S. The search-oracle is the recommended
 follow-up ticket.

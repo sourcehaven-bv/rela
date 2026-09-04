@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -160,7 +161,7 @@ func TestLoadPolicy_MalformedYAML_ReturnsParseError(t *testing.T) {
 
 // Affordance grants round-trip into the typed shape the resolver
 // consumes: per-field write/visibility, per-option, per-relation
-// with create/remove pointers and meta-field grants.
+// with create/remove faces and meta-field grants.
 func TestLoadPolicy_AffordanceGrants(t *testing.T) {
 	t.Parallel()
 	const yaml = `
@@ -319,7 +320,7 @@ func TestLoadPolicy_AffordanceGrants_OptInIsKeyPresence(t *testing.T) {
 
 // Create/Remove *bool must distinguish explicit true, explicit
 // false, and unset across the YAML forms operators actually write.
-func TestLoadPolicy_RelationGrant_CreateRemovePointers(t *testing.T) {
+func TestLoadPolicy_RelationGrant_CreateRemoveFaces(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name       string
@@ -405,6 +406,63 @@ func TestLoadPolicy_BlankRoleRelationsKey_Rejected(t *testing.T) {
 				t.Fatalf("LoadPolicy: expected error on blank role_relations key; got nil")
 			}
 		})
+	}
+}
+
+// A write-verb key under a `role_relations:` entry is refused at load rather
+// than silently dropped. yaml.v3 ignores unmappable keys, so before this guard
+// `create: add-member` loaded clean and left the relation UNGATED — a fail-open
+// on the one gate whose job is tamper-resistance. The verb keys get a message
+// naming `relation_grants:`, since an operator reaching for them has a coherent
+// intent that is simply spelled elsewhere.
+func TestLoadPolicy_RoleRelationsVerbKey_Rejected(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		yaml    string
+		wantSub string
+	}{
+		{"create", "role_relations:\n  member-of:\n    create: add-member\n", "relation_grants"},
+		{"update", "role_relations:\n  member-of:\n    update: edit-member\n", "relation_grants"},
+		{"delete", "role_relations:\n  member-of:\n    delete: rm-member\n", "relation_grants"},
+		{"read", "role_relations:\n  member-of:\n    read: see-member\n", "relation_grants"},
+		{
+			"unknown key",
+			"role_relations:\n  member-of:\n    confer: editor\n",
+			"unknown key",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			path := writeTempPolicy(t, tc.yaml)
+			_, err := acl.LoadPolicy(path)
+			if err == nil {
+				t.Fatalf("LoadPolicy: expected error on role_relations %s key; got nil", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Errorf("LoadPolicy error = %q, want it to mention %q", err, tc.wantSub)
+			}
+		})
+	}
+}
+
+// The supported keys still load, so the strict unmarshaller did not narrow the
+// real surface: both fields must survive a round-trip.
+func TestLoadPolicy_RoleRelationsSupportedKeys(t *testing.T) {
+	t.Parallel()
+	path := writeTempPolicy(t,
+		"role_relations:\n  member-of:\n    confers: editor\n    requires_permission: delegate-membership\n")
+	p, err := acl.LoadPolicy(path)
+	if err != nil {
+		t.Fatalf("LoadPolicy: %v", err)
+	}
+	got := p.RoleRelations["member-of"]
+	if got.Confers != "editor" {
+		t.Errorf("Confers = %q, want %q", got.Confers, "editor")
+	}
+	if got.RequiresPermission != "delegate-membership" {
+		t.Errorf("RequiresPermission = %q, want %q", got.RequiresPermission, "delegate-membership")
 	}
 }
 

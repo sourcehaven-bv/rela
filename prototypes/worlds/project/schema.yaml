@@ -1,0 +1,163 @@
+version: "1.0"
+
+description: >
+  A handbook publisher. Policies are drafted and published; guides are
+  translated. Both are the same mechanism — an entity with several FACES,
+  and a WORLD that decides which one you see.
+
+entities:
+  policy:
+    label: Policy
+    id_prefix: POL
+    id_type: sequential
+    # An editorial axis: the same policy exists as a draft and, once approved,
+    # as a published face. `bare_face:` names which face the bare id addresses:
+    # `POL-1` and `POL-1@draft` are the same row, so a new policy IS a draft.
+    bare_face: draft
+    faces:
+      draft:     { label: "Draft" }
+      published: { label: "Published" }
+    properties:
+      title:  { type: string, required: true }
+      owner:  { type: string }
+      status: { type: policy_status, required: true }
+
+  guide:
+    label: Guide
+    id_prefix: GUIDE
+    id_type: sequential
+    # A language axis. Nothing about it is "later" or "approved" — the faces
+    # are peers, and English is merely the one a bare id addresses.
+    bare_face: en
+    faces:
+      en: { label: "English" }
+      nl: { label: "Nederlands" }
+    properties:
+      title: { type: string, required: true }
+
+  procedure:
+    label: Procedure
+    id_prefix: PRC
+    id_type: sequential
+    # The same language axis the guides use, on something operational. A
+    # procedure is written centrally in English and localised per site where
+    # the local team needs it in their own words — so `en` is what a bare id
+    # addresses and `nl` is the translation, exactly as for a guide.
+    #
+    # Unlike a guide, a procedure also has an operational state of its own,
+    # which is what gives it a board.
+    bare_face: en
+    faces:
+      en: { label: "English" }
+      nl: { label: "Nederlands" }
+    properties:
+      title:    { type: string, required: true }
+      readiness: { type: procedure_readiness, required: true }
+
+  control:
+    label: Control
+    id_prefix: CTL
+    id_type: sequential
+    # NO faces. A type that declares none has exactly one state, present in
+    # every world — worlds are opt-in per type.
+    properties:
+      title: { type: string, required: true }
+
+types:
+  # Deliberately NOT named draft/published. Workflow status and face are
+  # independent axes, and reusing the word would suggest they are the same
+  # thing: a policy can be `done` as a piece of work while still having no
+  # published face, and a published face can sit at `doing` while its draft is
+  # revised. Keeping the vocabularies apart keeps that distinction visible.
+  # How far a procedure has got towards being usable on the floor. Kept clear
+  # of the face vocabulary on purpose: a procedure can be `drilled` in English
+  # and have no Dutch face at all, and a freshly translated Dutch face starts
+  # back at `untested` even though the English one was signed off long ago.
+  # Readiness travels with the FACE; the translation is a different axis.
+  procedure_readiness:
+    values: [untested, walkthrough, drilled]
+    initial: untested
+    transitions:
+      - { from: untested, to: walkthrough, label: "walk through" }
+      - { from: walkthrough, to: drilled, label: "drill" }
+
+  policy_status:
+    values: [to-do, doing, done]
+    initial: to-do
+    transitions:
+      - { from: to-do, to: doing, label: "start" }
+      - { from: doing, to: done, label: "finish" }
+
+relations:
+  implements:
+    description: A policy implements a control.
+    from: [policy]
+    to: [control]
+    # CONTENT scope: the edge belongs to the FACE, so a draft may implement a
+    # different control set than the published face does.
+    scope: content
+
+  owned-by:
+    description: A policy is owned by a team.
+    from: [policy]
+    to: [control]
+    # IDENTITY scope: the edge belongs to the ENTITY, shared by every face.
+    scope: identity
+
+  see-also:
+    description: A guide points the reader at a related guide.
+    from: [guide]
+    to: [guide]
+    # CONTENT scope: a translated guide may point somewhere different from the
+    # English one, so the edge belongs to the face that declares it.
+    scope: content
+
+worlds:
+  # The reader's view. `otherwise: exclude` is the publication bit: a policy
+  # with no published face is not merely unstyled here, it is ABSENT.
+  published:
+    select: published
+    # Neither a guide nor a procedure has a `published` face, so without this
+    # they would fall to `otherwise: exclude` and vanish from the reader's
+    # world. The override says: for these, English IS the published form.
+    overrides:
+      guide: [en]
+      procedure: [en]
+    otherwise: exclude
+    banner: "Published — this is what readers see"
+
+  # The editor's view. `otherwise: default` substitutes instead of excluding,
+  # so an unpublished draft is still reachable here.
+  editorial:
+    select: [draft, published]
+    otherwise: default
+    banner: "Editorial — drafts included"
+
+  # A language world. Note it declares `otherwise: default`, so a guide with
+  # no Dutch face falls back to English rather than disappearing — which is
+  # right for languages and WRONG for publication. That asymmetry is the
+  # reason `otherwise:` is mandatory rather than defaulted.
+  site-nl:
+    select: [nl, en]
+    otherwise: default
+    # No `banner:`. A banner announces something the reader would not otherwise
+    # know; someone who asked for the Dutch site does not need to be told they
+    # are reading Dutch. The read-only note and the way back are not config and
+    # still appear.
+
+copies:
+  # Publishing, as an OPERATION. The manual's "Writing" section claims a write
+  # names its target directly — the bare id, or a copy that declares a face —
+  # and this is the copy that claim refers to. Declaring it here is what lets
+  # the History section show two genuinely separate per-face histories: an
+  # edit to the draft versions `POL-1@draft`, and invoking this copy versions
+  # `POL-1@published`, which is a different lineage.
+  publish:
+    from: policy@draft
+    to: policy@published
+    label: Publish
+    # `all` is the full-replace promote case: publishing a policy means the
+    # published face becomes what the draft says, not a hand-picked subset.
+    fields: all
+    guard:
+      permission: publish-policy

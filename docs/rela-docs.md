@@ -55,11 +55,29 @@ available without the `doc.` prefix.
 | `entity{id, fields}` | one **seeded** entity's fields |
 | `count{type}` | the number of seeded entities of a type (echo-friendly) |
 | `roles_matrix{type}` | a role × verb capability table from `acl.yaml` (omit `type` for every type) |
+| `worlds_matrix{}` | a role × world table: which worlds each role may ask for |
 | `description()` | the metamodel's top-level `description:` (echo-friendly) |
 | `shows{type, contains\|absent\|exactly}` | **asserts** which entities of a type exist (emits nothing) |
 | `refuses{who, op, type, because, unassigned}` / `permits{...}` | **asserts** an authorization outcome (emits nothing) |
-| `api{path, status, error, as, identical_to}` | **asserts** an API contract against a real server (emits nothing) |
+| `api{path, status, error, as, has, absent, identical_to}` | **asserts** an API contract against a real server |
 | `h1/h2/h3(text)`, `md(text)` | structural Markdown emitted from Lua |
+
+### Role matrices
+
+`roles_matrix{}` answers "what may this role DO to this type" — one row per
+type and verb, one column per role. A read cell may carry a face suffix
+(`✓ @published`): the role reads only that face of the entity, not every one.
+A plain ✓ means every face. The distinction matters because a face-scoped
+grant is what conceals a draft from a reader, and rendering it as a bare ✓
+states the opposite of the truth.
+
+`worlds_matrix{}` is a separate table because a world is a **navigation**
+fact, not an authorization one. Two worlds hold the same entities; a world
+says which view of them a client may ask for, so it is not a fifth verb
+alongside create/read/update/delete, and it is per role rather than per type.
+Every role may ask for the default world — it is the view served when a
+request names none — so that column is always ticked. The verb refuses a
+project that declares no worlds, where the table would state nothing.
 
 ### Relation graphs
 
@@ -175,9 +193,43 @@ that fails on a copy edit and passes on a real behaviour change.
 response a real caller gets.
 
 Unlike `screenshot{}`, `api{}` needs no browser and no built frontend — it only
-reaches the `/api/v1` handlers, so it can gate CI unconditionally. Like
-`screenshot{}` it is unavailable on the `postgres` build, where seeding a
-"throwaway" project would write into the live database.
+reaches the `/api/v1` handlers, so it can gate CI unconditionally.
+
+Both verbs work on the `postgres` build too. They used to refuse there, because
+the temp project is stood up through `appbuild.Discover` and would have bound
+`pgstore` to the shared `RELA_DATABASE_URL` — writing the manual's fixture into
+the operator's real database. The temp project is now pinned to a **private,
+randomly-named scratch schema** created for the build and dropped `CASCADE`
+afterwards, so nothing outside it is read or written.
+
+#### `has` and `absent` — what the body may and may not name
+
+`status` alone cannot state a disclosure property. A response can be a perfectly
+correct 200 and still name something the caller was not meant to learn about —
+the `_faces` menu listing a draft to a reader who may not read it, say. `has`
+and `absent` claim substrings of the response body:
+
+```rela
+api{
+  path = "/api/v1/policys/POL-1?world=published", as = "reader", status = 200,
+  has = { "Access Control" }, absent = { "Draft" },
+}
+```
+
+Assert these in **pairs**. `absent = {"Draft"}` passes for a boring reason if
+the string never appears for anyone — a renamed face, a typo — so pair it with
+the principal who *should* see it:
+
+```rela
+api{
+  path = "/api/v1/policys/POL-1?world=published", as = "editor", status = 200,
+  has = { "Draft" },
+}
+```
+
+`absent` requires a `status` or `error` claim beside it, because an error body
+contains none of the strings either: on its own it would pass against a 500 and
+prove nothing about what a successful response withholds.
 
 #### `identical_to` — the existence-oracle property
 
@@ -307,3 +359,58 @@ than the height cap each stop the build with the offending manual line.
 
 Everything else in the build stays browser-free: a manual with **no**
 `screenshot{}` never launches a browser or touches the data-entry app.
+
+### Capturing a postgres-only screen
+
+Some screens exist only on the PostgreSQL backend. **Version history** is the
+one that matters today: `store.HistoryReader` is an optional store capability
+implemented by `pgstore` and by nothing else, so on the default (filesystem)
+build `/history/...` can only ever render "Version history is not available for
+this deployment."
+
+Photographing it therefore needs a `rela-docs` built with the `postgres` tag —
+the backend is chosen at **compile** time:
+
+```bash
+just build-docs-postgres
+RELA_DATABASE_URL='postgres:///rela_docs?host=/tmp' just docs-visual-postgres
+```
+
+Two things make that safe and deterministic:
+
+- **A scratch schema.** The stood-up temp project is pinned to a private,
+  randomly-named schema, dropped when the build ends. The DSN only says which
+  database to create it in.
+- **`await_versions`.** On postgres, create/update versions are captured by a
+  **debounced reconciliation sweep**, not synchronously with the write — so a
+  history page opened right after an edit legitimately shows an empty timeline.
+  A capture taken then would publish a figure contradicting its own caption, and
+  only on some machines. `screenshot{view="history", await_versions=N}` waits
+  until the history API reports N versions and **fails** if it never does:
+
+  ```rela
+  screenshot{
+    view = "history", type = "policy", entity = "POL-4", world = "editorial",
+    as = "editor", await_versions = 3, out = "history.png",
+  }
+  ```
+
+  `just docs-visual-postgres` lowers the sweep cadence
+  (`RELA_VERSION_SWEEP_INTERVAL` / `_IDLE`) so the wait is short. That changes
+  only *when* the same sweep runs, never what it records.
+
+### `edit()` — a real write, so there is a history to show
+
+The seed verbs `create()`, `face()` and `link()` write **raw**, bypassing the
+entitymanager, so an automation cannot mutate a fixture into something the
+manual does not describe.
+
+`edit(id, {props}, body?)` is the deliberate exception. It replays through the
+entitymanager, which makes it a genuine write: authorized, attributed to a
+principal, and — the reason it exists — **captured as a version**. A raw write
+produces no version row at all, so a History section built on re-created
+fixtures would photograph an empty timeline while claiming to show a history.
+
+Like the assertion verbs, an `edit()` that changes nothing is an error: it would
+still write on some backends and not others, so the figure would differ by
+backend for a call that says nothing.
