@@ -225,3 +225,27 @@ func normalize(val any) any {
 	}
 	return val
 }
+
+// Keys pass through the same emitter as values, so a key that starts with a
+// newline hit the same defect: written as a block scalar, read back as "",
+// which silently RENAMES the property. Ordinary keys, including ones that
+// look like other scalar types, must keep being written plain.
+func TestMarshalOrdered_KeysRoundTrip(t *testing.T) {
+	data := map[string]any{"\n": "0", "\tx\ny": "1", "plain": "2", "123": "3", "y": "4"}
+	raw, err := marshalOrdered(data, nil)
+	if err != nil {
+		t.Fatalf("marshalOrdered: %v", err)
+	}
+	var got map[string]any
+	if err := yaml.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("emitted %q, cannot read back: %v", raw, err)
+	}
+	if !reflect.DeepEqual(got, data) {
+		t.Errorf("keys changed in round trip: emitted %q, got %#v", raw, got)
+	}
+	for _, plain := range []string{"\nplain: ", "\n123: ", "\ny: "} {
+		if !strings.Contains(string(raw), plain) {
+			t.Errorf("ordinary key was not written plain: want %q in %q", plain, raw)
+		}
+	}
+}

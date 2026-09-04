@@ -65,6 +65,15 @@ not reached in its 90s.
 The reviewer agreed with the quote-rather-than-reject direction, which was the
 judgement flagged as most wanting a second opinion.
 
+**Found after review, by the next ticket.** BUG-X7ICNM added a round-trip
+assertion to the store fuzz target that compares the whole property map. Its
+first run showed a property KEY beginning with a newline hits the same
+defect: written as a block scalar, read back as `""`, silently renaming the
+property. `marshalOrdered` (both copies) now builds keys through
+`markdown.KeyNode`, which quotes only breaking keys so ordinary keys — including
+ones that look like other scalars, `y`, `on`, `123` — stay plain and no file
+reflows. `TestMarshalOrdered_KeysRoundTrip` pins both halves.
+
 Self-review found no unrelated changes. The diff is: the shared encoder, fsstore
 delegating to it, one test file with a fuzz target, the fuzz seed, and ticket
 entities.

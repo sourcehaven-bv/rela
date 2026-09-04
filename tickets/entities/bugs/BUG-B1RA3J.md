@@ -54,7 +54,9 @@ string need not be top-level: `map[string]any{"v": "\n0"}` lost the newline
 silently under the first fix, with no error, which is the shape the store fuzz
 target generates. The fix now walks every container shape a property value can
 take; the characterization lives in the `needsQuoting` godoc and REV-W5Z1KM
-records the findings.
+records the findings. Property KEYS go through the same emitter and had the
+same defect (a key starting with a newline read back as `""`); `KeyNode`
+covers them.
 
 ## Decision: quote the scalar (option D)
 
