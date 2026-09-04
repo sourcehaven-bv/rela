@@ -158,7 +158,7 @@ func (r *RootedFS) contain(joined string) (ValidatedPath, error) {
 	// is then the one that passed the prefix check above. The shape matters:
 	// a combined `clean != root && !HasPrefix` condition lets the success path
 	// be reached without the prefix check ever running, which is both a
-	// weaker argument and one a static analyser correctly refuses to accept.
+	// weaker argument and one a static analyzer correctly refuses to accept.
 	if clean == r.root {
 		return r.rootPath(), nil
 	}
