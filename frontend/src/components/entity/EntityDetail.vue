@@ -37,6 +37,7 @@ import type { WidgetRoutingHint } from '@/widgets/types'
 import type { PropertyDef } from '@/types'
 import type { Component } from 'vue'
 import DocumentsPanel from '@/components/entity/DocumentsPanel.vue'
+import CommentsPanel from '@/components/entity/CommentsPanel.vue'
 import CommandModal from '@/components/entity/CommandModal.vue'
 import ExportMenu from '@/components/entity/ExportMenu.vue'
 import { entityExportUrl } from '@/api/transforms'
@@ -292,6 +293,13 @@ const entryContentSection = computed(() => {
   if (!sections) return null
   return sections.find(isEntryContentSection) || null
 })
+
+// Section ids offered as comment anchor targets (TKT-FIO205). `sectionId` is
+// the operator-authored name from data-entry.yaml, which is why it is anchorable
+// at all: it is a NAME, not an offset, so it survives edits to the entity body.
+const commentSectionIds = computed(
+  () => viewData.value?.sections?.map((s) => s.sectionId).filter(Boolean) ?? []
+)
 
 const checkboxStats = computed(() => {
   const c = entryContentSection.value?.content
@@ -1876,6 +1884,15 @@ watch(
              container's flex `gap` for free instead of duplicating that
              spacing via its own margin. -->
         <DocumentsPanel :entity-type="entityType" :entity-id="entityId" />
+
+        <!-- Comment thread. Self-gating: renders nothing unless the schema
+             marks this type commentable, so a project with no `comments:`
+             block sees the page it always saw. -->
+        <CommentsPanel
+          :entity-type="entityType"
+          :entity-id="entityId"
+          :section-ids="commentSectionIds"
+        />
       </div>
 
       <CommandModal ref="commandModalRef" :entity-id="entityId" />

@@ -332,3 +332,43 @@ func TestComments_ReadOnlyInstanceRefusesWrites(t *testing.T) {
 		require.Equal(t, http.StatusOK, rec.Code)
 	})
 }
+
+// TestComments_SchemaExposesCommentable pins the SPA's discovery signal: the
+// UI must be able to tell which types accept a comment affordance without
+// probing the comment routes for a 400.
+//
+// The flag is policy, not permission — it says commenting is possible here,
+// never that the caller may do it — and it is omitted entirely when false, so
+// a project with no `comments:` block serves the schema it always did.
+func TestComments_SchemaExposesCommentable(t *testing.T) {
+	t.Run("enabled type is flagged", func(t *testing.T) {
+		app := commentsApp(t)
+
+		rec := httptest.NewRecorder()
+		app.handleV1Schema(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody))
+		require.Equal(t, http.StatusOK, rec.Code)
+
+		var got struct {
+			Entities map[string]struct {
+				Commentable bool `json:"commentable"`
+			} `json:"entities"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+		require.True(t, got.Entities["ticket"].Commentable)
+	})
+
+	t.Run("absent block omits the field", func(t *testing.T) {
+		app := newTestAppV1(t) // no comments config
+
+		rec := httptest.NewRecorder()
+		app.handleV1Schema(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody))
+		require.Equal(t, http.StatusOK, rec.Code)
+
+		var raw map[string]map[string]map[string]any
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &raw))
+		for name, et := range raw["entities"] {
+			_, present := et["commentable"]
+			require.False(t, present, "type %q leaked a commentable key with no comments block", name)
+		}
+	})
+}
