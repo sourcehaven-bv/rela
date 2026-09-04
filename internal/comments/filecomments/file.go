@@ -25,12 +25,14 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/comments"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
@@ -83,7 +85,7 @@ var _ comments.Store = (*Store)(nil)
 func (s *Store) List(_ context.Context, target comments.Target) ([]comments.Comment, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.readThread(target.ID)
+	return s.readThread(target.Key())
 }
 
 // Add appends a comment to the target's thread.
@@ -91,11 +93,11 @@ func (s *Store) Add(_ context.Context, target comments.Target, c comments.Commen
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	list, err := s.readThread(target.ID)
+	list, err := s.readThread(target.Key())
 	if err != nil {
 		return err
 	}
-	return s.writeThread(target.ID, append(list, c))
+	return s.writeThread(target.Key(), append(list, c))
 }
 
 // Update replaces the mutable fields of one comment.
@@ -103,7 +105,7 @@ func (s *Store) Update(_ context.Context, target comments.Target, id, body strin
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	list, err := s.readThread(target.ID)
+	list, err := s.readThread(target.Key())
 	if err != nil {
 		return err
 	}
@@ -113,7 +115,7 @@ func (s *Store) Update(_ context.Context, target comments.Target, id, body strin
 		}
 		list[i].Body = body
 		list[i].Resolved = resolved
-		return s.writeThread(target.ID, list)
+		return s.writeThread(target.Key(), list)
 	}
 	return comments.ErrNotFound
 }
@@ -124,7 +126,7 @@ func (s *Store) Delete(_ context.Context, target comments.Target, id string) err
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	list, err := s.readThread(target.ID)
+	list, err := s.readThread(target.Key())
 	if err != nil {
 		return err
 	}
@@ -136,9 +138,9 @@ func (s *Store) Delete(_ context.Context, target comments.Target, id string) err
 		remaining = append(remaining, list[:i]...)
 		remaining = append(remaining, list[i+1:]...)
 		if len(remaining) == 0 {
-			return s.removeThread(target.ID)
+			return s.removeThread(target.Key())
 		}
-		return s.writeThread(target.ID, remaining)
+		return s.writeThread(target.Key(), remaining)
 	}
 	return comments.ErrNotFound
 }
@@ -147,7 +149,63 @@ func (s *Store) Delete(_ context.Context, target comments.Target, id string) err
 func (s *Store) DeleteTarget(_ context.Context, target comments.Target) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.removeThread(target.ID)
+	return s.removeThread(target.Key())
+}
+
+// DeleteAllFaces removes every face's thread for an entity id.
+func (s *Store) DeleteAllFaces(_ context.Context, entityID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	keys, err := s.threadKeysFor(entityID)
+	if err != nil {
+		return err
+	}
+	for _, key := range keys {
+		if err := s.removeThread(key); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// threadKeysFor lists the stored thread keys belonging to an entity id — the
+// bare id plus any "id@face".
+//
+// Reads the directory rather than guessing at declared faces: the store must
+// not know the metamodel, and a thread written under a face the schema has
+// since dropped still has to be reachable for cleanup.
+//
+// Callers must hold s.mu.
+func (s *Store) threadKeysFor(entityID string) ([]string, error) {
+	// WalkAll rather than ReadDir("."): the rooted FS refuses "." as a key
+	// (it reads as an empty/traversal segment), and WalkAll is the method that
+	// exists for walking the root itself.
+	var out []string
+	err := s.root.WalkAll(func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		key, ok := strings.CutSuffix(path, ".yaml")
+		if !ok {
+			return nil
+		}
+		if key == entityID || strings.HasPrefix(key, entityID+entity.StateRefSeparator) {
+			out = append(out, key)
+		}
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("filecomments: listing threads: %w", err)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 // Rename re-keys a thread, merging into any thread already at newID.
@@ -162,21 +220,34 @@ func (s *Store) Rename(_ context.Context, oldID, newID string) error {
 	if oldID == newID {
 		return nil
 	}
-	moving, err := s.readThread(oldID)
+	// Move EVERY face's thread: an entity with a draft and a published face has
+	// a thread per face, and re-keying only the default one would strand the
+	// rest at an id that no longer exists.
+	keys, err := s.threadKeysFor(oldID)
 	if err != nil {
 		return err
 	}
-	if len(moving) == 0 {
-		return nil
+	for _, key := range keys {
+		moving, err := s.readThread(key)
+		if err != nil {
+			return err
+		}
+		if len(moving) == 0 {
+			continue
+		}
+		dest := newID + strings.TrimPrefix(key, oldID)
+		existing, err := s.readThread(dest)
+		if err != nil {
+			return err
+		}
+		if err := s.writeThread(dest, append(existing, moving...)); err != nil {
+			return err
+		}
+		if err := s.removeThread(key); err != nil {
+			return err
+		}
 	}
-	existing, err := s.readThread(newID)
-	if err != nil {
-		return err
-	}
-	if err := s.writeThread(newID, append(existing, moving...)); err != nil {
-		return err
-	}
-	return s.removeThread(oldID)
+	return nil
 }
 
 // readThread loads and orders one target's comments. A missing file is an
@@ -256,7 +327,10 @@ func threadFile(targetID string) (string, error) {
 	return targetID + ".yaml", nil
 }
 
-// safeID reports whether an entity ID is usable as a single path segment.
+// safeID reports whether a thread KEY is usable as a single path segment.
+//
+// The key is `entity.FormatStateRef` output: a bare id for the default face,
+// "id@face" otherwise.
 //
 // Allowlist: entity IDs are generated from a base36 alphabet with an operator
 // prefix, or are manual IDs the metamodel already constrains, so the permitted
@@ -272,6 +346,11 @@ func safeID(id string) bool {
 		case r >= 'A' && r <= 'Z':
 		case r >= '0' && r <= '9':
 		case r == '-' || r == '_' || r == '.':
+		// '@' joins an id to its face in the boundary serialization
+		// ("PAGE-1@draft", entity.StateRefSeparator). Filename-legal, excluded
+		// from the entity-ID grammar, and the reason a per-face thread needs no
+		// separate directory level.
+		case r == '@':
 		default:
 			return false
 		}

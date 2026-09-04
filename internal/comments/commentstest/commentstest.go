@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/comments"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
 // Factory builds a fresh, empty store for one subtest.
@@ -53,6 +54,104 @@ func RunAll(t *testing.T, f Factory) {
 	t.Run("Rename", func(t *testing.T) { RunRenameTests(t, f) })
 	t.Run("Concurrency", func(t *testing.T) { RunConcurrencyTests(t, f) })
 	t.Run("RoundTrip", func(t *testing.T) { RunRoundTripTests(t, f) })
+	t.Run("Faces", func(t *testing.T) { RunFaceTests(t, f) })
+}
+
+// RunFaceTests pins the per-face contract (FEAT-9CD2MX).
+//
+// Comments are scoped to a content state: a remark on the draft is not a remark
+// on the published version, and the read gate is per face too. The key is
+// entity.FormatStateRef, so the DEFAULT face keeps the bare id — which is what
+// lets faces arrive without migrating a single stored comment.
+func RunFaceTests(t *testing.T, f Factory) {
+	t.Helper()
+	ctx := context.Background()
+
+	faced := func(id string, face entity.Face) comments.Target {
+		return comments.Target{Type: "ticket", ID: id, Face: face}
+	}
+
+	t.Run("faces of one entity are independent threads", func(t *testing.T) {
+		s := f(t)
+		require.NoError(t, s.Add(ctx, faced("TKT-1", ""), comment("def", 0, "alice", "on default")))
+		require.NoError(t, s.Add(ctx, faced("TKT-1", "draft"), comment("dft", 0, "bob", "on draft")))
+
+		got, err := s.List(ctx, faced("TKT-1", ""))
+		require.NoError(t, err)
+		require.Equal(t, []string{"def"}, ids(got), "the default face must not see the draft's thread")
+
+		got, err = s.List(ctx, faced("TKT-1", "draft"))
+		require.NoError(t, err)
+		require.Equal(t, []string{"dft"}, ids(got))
+	})
+
+	t.Run("the default face keeps the bare id, so stored threads need no migration", func(t *testing.T) {
+		s := f(t)
+		// Written WITHOUT a face, as every pre-faces comment was.
+		require.NoError(t, s.Add(ctx, target("TKT-1"), comment("old", 0, "alice", "before faces")))
+
+		// Read back through an explicit default face: same thread.
+		got, err := s.List(ctx, faced("TKT-1", ""))
+		require.NoError(t, err)
+		require.Equal(t, []string{"old"}, ids(got))
+	})
+
+	t.Run("DeleteTarget removes one face, not the others", func(t *testing.T) {
+		s := f(t)
+		require.NoError(t, s.Add(ctx, faced("TKT-1", ""), comment("def", 0, "alice", "one")))
+		require.NoError(t, s.Add(ctx, faced("TKT-1", "draft"), comment("dft", 0, "bob", "two")))
+
+		require.NoError(t, s.DeleteTarget(ctx, faced("TKT-1", "draft")))
+
+		got, err := s.List(ctx, faced("TKT-1", ""))
+		require.NoError(t, err)
+		require.Equal(t, []string{"def"}, ids(got), "deleting one face must leave the others")
+
+		got, err = s.List(ctx, faced("TKT-1", "draft"))
+		require.NoError(t, err)
+		require.Empty(t, got)
+	})
+
+	t.Run("DeleteAllFaces removes every face's thread", func(t *testing.T) {
+		s := f(t)
+		require.NoError(t, s.Add(ctx, faced("TKT-1", ""), comment("def", 0, "alice", "one")))
+		require.NoError(t, s.Add(ctx, faced("TKT-1", "draft"), comment("dft", 0, "bob", "two")))
+		require.NoError(t, s.Add(ctx, faced("TKT-2", "draft"), comment("other", 0, "eve", "other")))
+
+		require.NoError(t, s.DeleteAllFaces(ctx, "TKT-1"))
+
+		for _, face := range []entity.Face{"", "draft"} {
+			got, err := s.List(ctx, faced("TKT-1", face))
+			require.NoError(t, err)
+			require.Empty(t, got, "face %q should be gone", face)
+		}
+		// A different entity is untouched, including one sharing a face name.
+		got, err := s.List(ctx, faced("TKT-2", "draft"))
+		require.NoError(t, err)
+		require.Equal(t, []string{"other"}, ids(got))
+	})
+
+	t.Run("Rename moves every face", func(t *testing.T) {
+		s := f(t)
+		require.NoError(t, s.Add(ctx, faced("TKT-1", ""), comment("def", 0, "alice", "one")))
+		require.NoError(t, s.Add(ctx, faced("TKT-1", "draft"), comment("dft", 0, "bob", "two")))
+
+		require.NoError(t, s.Rename(ctx, "TKT-1", "TKT-9"))
+
+		// Renaming only the bare id would strand the draft thread at an id
+		// that no longer resolves.
+		got, err := s.List(ctx, faced("TKT-9", ""))
+		require.NoError(t, err)
+		require.Equal(t, []string{"def"}, ids(got))
+
+		got, err = s.List(ctx, faced("TKT-9", "draft"))
+		require.NoError(t, err)
+		require.Equal(t, []string{"dft"}, ids(got), "the draft face must move with the rename")
+
+		got, err = s.List(ctx, faced("TKT-1", "draft"))
+		require.NoError(t, err)
+		require.Empty(t, got, "nothing may remain at the old id")
+	})
 }
 
 // RunEmptyTests pins the empty-target contract.

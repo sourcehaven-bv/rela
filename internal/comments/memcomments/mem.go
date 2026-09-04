@@ -4,9 +4,12 @@ package memcomments
 
 import (
 	"context"
+	"sort"
+	"strings"
 	"sync"
 
 	"github.com/Sourcehaven-BV/rela/internal/comments"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
 // Store keeps every target's thread in a map.
@@ -35,7 +38,7 @@ func (s *Store) List(_ context.Context, target comments.Target) ([]comments.Comm
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	stored := s.byward[target.ID]
+	stored := s.byward[target.Key()]
 	out := make([]comments.Comment, len(stored))
 	copy(out, stored)
 	comments.SortComments(out)
@@ -47,7 +50,7 @@ func (s *Store) Add(_ context.Context, target comments.Target, c comments.Commen
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.byward[target.ID] = append(s.byward[target.ID], c)
+	s.byward[target.Key()] = append(s.byward[target.Key()], c)
 	return nil
 }
 
@@ -56,7 +59,7 @@ func (s *Store) Update(_ context.Context, target comments.Target, id, body strin
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	stored := s.byward[target.ID]
+	stored := s.byward[target.Key()]
 	for i := range stored {
 		if stored[i].ID != id {
 			continue
@@ -73,14 +76,14 @@ func (s *Store) Delete(_ context.Context, target comments.Target, id string) err
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	stored := s.byward[target.ID]
+	stored := s.byward[target.Key()]
 	for i := range stored {
 		if stored[i].ID != id {
 			continue
 		}
-		s.byward[target.ID] = append(stored[:i:i], stored[i+1:]...)
-		if len(s.byward[target.ID]) == 0 {
-			delete(s.byward, target.ID)
+		s.byward[target.Key()] = append(stored[:i:i], stored[i+1:]...)
+		if len(s.byward[target.Key()]) == 0 {
+			delete(s.byward, target.Key())
 		}
 		return nil
 	}
@@ -92,7 +95,18 @@ func (s *Store) DeleteTarget(_ context.Context, target comments.Target) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	delete(s.byward, target.ID)
+	delete(s.byward, target.Key())
+	return nil
+}
+
+// DeleteAllFaces removes every face's thread for an entity id.
+func (s *Store) DeleteAllFaces(_ context.Context, entityID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, key := range faceKeysFor(s.byward, entityID) {
+		delete(s.byward, key)
+	}
 	return nil
 }
 
@@ -104,11 +118,39 @@ func (s *Store) Rename(_ context.Context, oldID, newID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	stored, ok := s.byward[oldID]
-	if !ok {
+	if oldID == newID {
 		return nil
 	}
-	delete(s.byward, oldID)
-	s.byward[newID] = append(s.byward[newID], stored...)
+	// Move EVERY face's thread, not just the bare id: an entity with a draft
+	// and a published face keeps a thread per face, and re-keying only the
+	// default one would strand the rest at an id that no longer exists.
+	for _, key := range faceKeysFor(s.byward, oldID) {
+		stored := s.byward[key]
+		delete(s.byward, key)
+		dest := reKey(key, oldID, newID)
+		s.byward[dest] = append(s.byward[dest], stored...)
+		comments.SortComments(s.byward[dest])
+	}
 	return nil
+}
+
+// faceKeysFor returns every thread key belonging to id — the bare id plus any
+// "id@face" — so a rename or delete covers all of an entity's faces.
+func faceKeysFor[V any](m map[string]V, id string) []string {
+	var out []string
+	for k := range m {
+		if k == id || strings.HasPrefix(k, id+entity.StateRefSeparator) {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// reKey swaps the id half of a thread key, preserving the face.
+func reKey(key, oldID, newID string) string {
+	if key == oldID {
+		return newID
+	}
+	return newID + strings.TrimPrefix(key, oldID)
 }

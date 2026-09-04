@@ -180,7 +180,9 @@ func (s *Service) EntityRenamed(ctx context.Context, oldID, newID string) error 
 // reuse, so a later entity taking this id would otherwise inherit the previous
 // occupant's thread and present someone else's remarks as its own.
 func (s *Service) EntityDeleted(ctx context.Context, entityID string) error {
-	return s.store.DeleteTarget(ctx, Target{ID: entityID})
+	// All faces: the entity is gone, so a thread left on any face would be
+	// stranded at an id nothing can reach.
+	return s.store.DeleteAllFaces(ctx, entityID)
 }
 
 // authorFrom resolves the comment author from ctx.

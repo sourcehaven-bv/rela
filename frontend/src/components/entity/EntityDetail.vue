@@ -116,9 +116,7 @@ const worldAbsent = computed(() => viewData.value?._world_absent === true)
 
 // The world that has no face here. Falls back to the requested world name, so
 // the banner still reads correctly against a server that omits the field.
-const worldAbsentName = computed(
-  () => viewData.value?._world_absent_name || world.value || '',
-)
+const worldAbsentName = computed(() => viewData.value?._world_absent_name || world.value || '')
 
 // --- The ONE read-only seam ----------------------------------------------
 //
@@ -141,7 +139,9 @@ const readOnly = computed(() => isWorldBound.value && !worldAbsent.value)
 // (return_to / from precedence). Two parallel concerns: scope-nav walks
 // a list; backTarget answers "where do I go back to". Both can be active
 // at once.
-const { scopeNav, loadScopeNav, scopeTarget, navigateScope } = useScopeNavigation(() => props.entityId)
+const { scopeNav, loadScopeNav, scopeTarget, navigateScope } = useScopeNavigation(
+  () => props.entityId
+)
 const backTarget = useBackTarget()
 
 // State
@@ -175,9 +175,7 @@ const loadedCommands = ref<Command[]>([])
 //
 // Gated HERE rather than on the two button sites (desktop header + mobile
 // overflow) so a third render site cannot be added without inheriting it.
-const commands = computed<Command[]>(() =>
-  readOnly.value ? [] : loadedCommands.value,
-)
+const commands = computed<Command[]>(() => (readOnly.value ? [] : loadedCommands.value))
 
 // Prev/next within a list re-fetches this component in place. Blanking the
 // page to a centred spinner on every step was the worst layout shift in
@@ -188,13 +186,10 @@ const commands = computed<Command[]>(() =>
 // already on screen, stepping to a neighbour holds it until the next
 // resolves, so nothing is shown at all. (2) On a genuine cold load, the
 // gate still suppresses anything quicker than the navigation delay.
-const showBlockLoader = useDelayedPending(
-  () => loading.value && !viewData.value,
-  {
-    delay: PENDING_TIMINGS.navDelayMs,
-    minDuration: PENDING_TIMINGS.navMinDurationMs,
-  }
-)
+const showBlockLoader = useDelayedPending(() => loading.value && !viewData.value, {
+  delay: PENDING_TIMINGS.navDelayMs,
+  minDuration: PENDING_TIMINGS.navMinDurationMs,
+})
 const showOverflowMenu = ref(false)
 
 const commandModalRef = ref<InstanceType<typeof CommandModal> | null>(null)
@@ -284,7 +279,6 @@ const editTarget = computed<RouteLocationRaw | undefined>(() => {
   return { name: 'form-edit', params: { id: editFormId.value, entityId: props.entityId } }
 })
 
-
 // The entry's content section gets a custom renderer (mermaid + interactive
 // checkboxes) instead of the generic section render-path. Other content
 // sections — content cards from configured views — use the generic path.
@@ -334,10 +328,23 @@ function commentsForProperty(name: string): Comment[] {
   return commentsByProperty.value.get(name) ?? []
 }
 
+/**
+ * The entity id addressed for comments, carrying the resolved face.
+ *
+ * Comments are per content state (FEAT-9CD2MX): a remark on the draft is not a
+ * remark on the published version. The view response reports which face the
+ * world actually served, so the thread follows the content on screen rather
+ * than always addressing the default face.
+ */
+const commentEntityId = computed(() => {
+  const face = viewData.value?.entry?._world?.face
+  return face ? `${props.entityId}@${face}` : props.entityId
+})
+
 async function loadComments() {
   if (!commentsEnabled.value) return
   try {
-    comments.value = await listComments(props.entityType, props.entityId)
+    comments.value = await listComments(props.entityType, commentEntityId.value)
   } catch {
     // A failure here means "cannot read the target, or commenting is off" —
     // the server makes those indistinguishable on purpose. Either way there is
@@ -692,11 +699,7 @@ async function loadView() {
     // neighbour (TKT-WRLDAPI item 4b). Without it this page rendered draft
     // content while the selector said "published" — the API was correct and
     // the page simply never asked.
-    viewData.value = await fetchView(
-      props.entityType,
-      props.entityId,
-      worldParam.value,
-    )
+    viewData.value = await fetchView(props.entityType, props.entityId, worldParam.value)
     if (viewData.value?.entry) {
       // Seed the autosave baseline so the first toggle's no-op
       // suppression can compare against server state without waiting
@@ -772,9 +775,7 @@ async function requestDelete() {
 // Always an array. The wire keeps `_copies` absent (no capability) distinct
 // from `[]` (none declared), but this page renders nothing for both, so the
 // distinction is collapsed HERE, once, rather than carried into every reader.
-const copyOffers = computed<CopyOffer[]>(() =>
-  readOnly.value ? [] : (entry.value?._copies ?? []),
-)
+const copyOffers = computed<CopyOffer[]>(() => (readOnly.value ? [] : (entry.value?._copies ?? [])))
 
 // Faces render on EVERY screen, world-bound or not — a reader wants the way
 // back to the draft, an author wants to see what readers see, and the
@@ -786,10 +787,9 @@ const copyOffers = computed<CopyOffer[]>(() =>
 // produce a dead control — the affordance-that-lies shape.
 const faceOptions = computed<Face[] | undefined>(() =>
   entry.value?._faces?.filter(
-    (f) => schemaStore.worldForFace(props.entityType, f.face) !== undefined,
-  ),
+    (f) => schemaStore.worldForFace(props.entityType, f.face) !== undefined
+  )
 )
-
 
 function goToFace(f: Face) {
   // Addressed by WORLD, not by face: `?world=` is the read-selection
@@ -836,13 +836,13 @@ async function runCopy(offer: CopyOffer) {
       // Still worth telling them it succeeded — they asked for it — but name
       // the entity, since the page in front of them is no longer the subject.
       uiStore.success(
-        res.created ? `Created the ${face} face of ${subject}` : `Updated the ${face} face of ${subject}`,
+        res.created
+          ? `Created the ${face} face of ${subject}`
+          : `Updated the ${face} face of ${subject}`
       )
       return
     }
-    uiStore.success(
-      res.created ? `Created the ${face} face` : `Updated the ${face} face`,
-    )
+    uiStore.success(res.created ? `Created the ${face} face` : `Updated the ${face} face`)
     // Reload so the offers recompute: a face that now exists may no longer be
     // offered, and the entry's own content may have moved.
     await loadView()
@@ -889,9 +889,8 @@ const canReachDefaultWorld = computed(() => schemaStore.worldReadable(''))
 // The operator's announcement for the world on screen, or '' to announce
 // nothing. Config, not data — served identically to every principal.
 const worldBanner = computed<string>(
-  () => (world.value ? schemaStore.worlds.get(world.value)?.banner : '') || '',
+  () => (world.value ? schemaStore.worlds.get(world.value)?.banner : '') || ''
 )
-
 
 // The button NAMES A DESTINATION, so it is labelled from the destination
 // rather than from a guess about the project's vocabulary.
@@ -911,7 +910,7 @@ const worldBanner = computed<string>(
 // type-neutral and never wrong, which is the right thing to say when the type
 // declares no name for its default face at all.
 const defaultFaceLabel = computed<string>(
-  () => schemaStore.faceLabel(props.entityType, '') || 'default',
+  () => schemaStore.faceLabel(props.entityType, '') || 'default'
 )
 
 // --- The header's mobile home ------------------------------------------
@@ -932,12 +931,8 @@ const showHistory = computed(() => schemaStore.historyEnabled)
 // The same filters the menu components apply to their own props, so the
 // mobile rows and the desktop menus offer an identical set. Duplicating the
 // PREDICATE would let the two drift; duplicating the call does not.
-const overflowFaces = computed<Face[]>(() =>
-  faceOptions.value ?? [],
-)
-const overflowCopies = computed<CopyOffer[]>(() =>
-  copyOffers.value.filter((o) => o.allowed),
-)
+const overflowFaces = computed<Face[]>(() => faceOptions.value ?? [])
+const overflowCopies = computed<CopyOffer[]>(() => copyOffers.value.filter((o) => o.allowed))
 
 // Whether the overflow button renders at all. One expression, read by both
 // the button and its contents: a fourth affordance is added here and cannot
@@ -947,7 +942,7 @@ const hasOverflow = computed(
     commands.value.length > 0 ||
     overflowFaces.value.length > 0 ||
     overflowCopies.value.length > 0 ||
-    showHistory.value,
+    showHistory.value
 )
 
 function goToDefaultWorld() {
@@ -980,7 +975,7 @@ function backTargetAfterDelete(): string {
 // and the template renders plain text instead of an anchor.
 function entityTarget(
   entity: { id: string; type: string },
-  cellLink?: string,
+  cellLink?: string
 ): RouteLocationRaw | undefined {
   const path = entityDetailHref(entity, { cellLink })
   if (!path) return undefined
@@ -1002,7 +997,7 @@ function navigateToEntity(entity: { id: string; type: string }, cellLink?: strin
 function onCellLinkClick(
   event: MouseEvent,
   entity: { id: string; type: string },
-  cellLink?: string,
+  cellLink?: string
 ) {
   if (shouldDeferToBrowser(event)) return
   event.preventDefault()
@@ -1314,7 +1309,7 @@ watch(
   () => worldParam.value,
   () => {
     loadView()
-  },
+  }
 )
 
 // Watch for route changes
@@ -1363,21 +1358,13 @@ watch(
       <div v-if="backTarget || scopeNav" class="scope-nav mobile-topbar">
         <BackButton v-if="backTarget" :target="backTarget" />
         <template v-if="scopeNav">
-          <RouterLink
-            v-if="scopeTarget('prev')"
-            class="scope-nav-btn"
-            :to="scopeTarget('prev')!"
-          >
+          <RouterLink v-if="scopeTarget('prev')" class="scope-nav-btn" :to="scopeTarget('prev')!">
             ← Prev <kbd>P</kbd>
           </RouterLink>
           <span v-else class="scope-nav-btn disabled">← Prev</span>
           <span class="scope-nav-progress">[{{ scopeNav.current }}/{{ scopeNav.total }}]</span>
           <span class="scope-nav-label">{{ scopeNav.label }}</span>
-          <RouterLink
-            v-if="scopeTarget('next')"
-            class="scope-nav-btn"
-            :to="scopeTarget('next')!"
-          >
+          <RouterLink v-if="scopeTarget('next')" class="scope-nav-btn" :to="scopeTarget('next')!">
             Next → <kbd>N</kbd>
           </RouterLink>
           <span v-else class="scope-nav-btn disabled">Next →</span>
@@ -1418,14 +1405,10 @@ watch(
         variant="absent"
         :label="`Not in the ${worldAbsentName} world`"
       >
-        This entity has no {{ worldAbsentName }} face yet. You are looking at
-        the {{ defaultFaceLabel }} face, which is where edits are saved.
+        This entity has no {{ worldAbsentName }} face yet. You are looking at the
+        {{ defaultFaceLabel }} face, which is where edits are saved.
         <template #actions>
-          <button
-            v-if="canReachDefaultWorld"
-            class="btn btn-secondary"
-            @click="goToDefaultWorld"
-          >
+          <button v-if="canReachDefaultWorld" class="btn btn-secondary" @click="goToDefaultWorld">
             Go to {{ defaultFaceLabel }}
           </button>
         </template>
@@ -1450,11 +1433,7 @@ watch(
             : 'Read-only in this world.'
         }}
         <template #actions>
-          <button
-            v-if="canReachDefaultWorld"
-            class="btn btn-secondary"
-            @click="goToDefaultWorld"
-          >
+          <button v-if="canReachDefaultWorld" class="btn btn-secondary" @click="goToDefaultWorld">
             Go to {{ defaultFaceLabel }}
           </button>
         </template>
@@ -1482,11 +1461,7 @@ watch(
             a world, where copyOffers is empty; see its comment for why.
           -->
           <CopyMenu :offers="copyOffers" :busy="copyBusy" @invoke="runCopy" />
-          <RouterLink
-            v-if="editTarget"
-            class="btn btn-secondary"
-            :to="editTarget"
-          >
+          <RouterLink v-if="editTarget" class="btn btn-secondary" :to="editTarget">
             Edit <kbd>E</kbd>
           </RouterLink>
           <!--
@@ -1497,7 +1472,9 @@ watch(
             not have. The mobile block below gates on the SAME flag; both sites
             must, which is the trap this header just walked into three times.
           -->
-          <RouterLink v-if="showHistory" class="btn btn-secondary" :to="historyTarget">History</RouterLink>
+          <RouterLink v-if="showHistory" class="btn btn-secondary" :to="historyTarget"
+            >History</RouterLink
+          >
           <ExportMenu :url-for="(t: string) => entityExportUrl(entityType, entityId, t)" />
           <button v-if="canDelete" class="btn btn-danger" @click="requestDelete">
             Delete <kbd>Del</kbd>
@@ -1585,11 +1562,7 @@ watch(
               >
                 {{ o.label || o.name }}
               </button>
-              <RouterLink
-                v-if="showHistory"
-                class="overflow-menu-item"
-                :to="historyTarget"
-              >
+              <RouterLink v-if="showHistory" class="overflow-menu-item" :to="historyTarget">
                 History
               </RouterLink>
             </div>
@@ -1695,7 +1668,7 @@ watch(
             <template v-if="commentsEnabled" #label-affordance="{ property, index }">
               <CommentIndicator
                 :entity-type="entityType"
-                :entity-id="entityId"
+                :entity-id="commentEntityId"
                 :anchor="{ kind: 'property', ref: property.name }"
                 :comments="commentsForProperty(property.name)"
                 :flip="shouldFlipPopover(section.fields, index)"
@@ -1726,7 +1699,7 @@ watch(
             <TextSelectionComment
               v-if="commentsEnabled"
               :entity-type="entityType"
-              :entity-id="entityId"
+              :entity-id="commentEntityId"
               :container="contentRef"
               @added="loadComments"
             />
@@ -1737,7 +1710,7 @@ watch(
             <BlockCommentOverlay
               v-if="commentsEnabled"
               :entity-type="entityType"
-              :entity-id="entityId"
+              :entity-id="commentEntityId"
               :container="contentRef"
               :render-key="renderedEntryContent"
               :comments="comments"
@@ -1749,7 +1722,7 @@ watch(
             <TextCommentPopover
               v-if="commentsEnabled && textCommentPos && openTextComments.length > 0"
               :entity-type="entityType"
-              :entity-id="entityId"
+              :entity-id="commentEntityId"
               :comments="openTextComments"
               :position="textCommentPos"
               @changed="loadComments"
@@ -2089,7 +2062,7 @@ watch(
              block sees the page it always saw. -->
         <CommentsPanel
           :entity-type="entityType"
-          :entity-id="entityId"
+          :entity-id="commentEntityId"
           :comments="comments"
           :section-ids="commentSectionIds"
           @changed="loadComments"
@@ -2725,5 +2698,4 @@ watch(
     padding-bottom: 16px;
   }
 }
-
 </style>

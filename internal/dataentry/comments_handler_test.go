@@ -559,3 +559,53 @@ func TestComments_ResolveCheck(t *testing.T) {
 		require.Empty(t, listComments(t, app).Comments, "a preflight must not persist anything")
 	})
 }
+
+// TestComments_PerFaceThreads pins that a comment belongs to ONE content state
+// (FEAT-9CD2MX).
+//
+// A remark on the draft ("this needs a source") is not a remark on the
+// published version, and the read gate is per face too — so a shared thread
+// would both misattribute feedback and leak across a boundary the entity
+// itself maintains.
+func TestComments_PerFaceThreads(t *testing.T) {
+	const draft = entity.Face("draft")
+
+	app := commentsApp(t)
+	// A second face of the SAME entity id.
+	require.NoError(t, app.store.CreateEntity(t.Context(), &entity.Entity{
+		ID:         "TKT-001",
+		Type:       "ticket",
+		Face:       draft,
+		Properties: map[string]any{"title": "Test Ticket", "status": "open"},
+		Content:    "Draft body text that differs from the default face.\n",
+	}))
+
+	post := func(t *testing.T, path, body string) {
+		t.Helper()
+		rec := doComments(t, app, http.MethodPost, path, body, "alice@example.com")
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	}
+	list := func(t *testing.T, path string) commentListResponse {
+		t.Helper()
+		rec := doComments(t, app, http.MethodGet, path, "", "alice@example.com")
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var got commentListResponse
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+		return got
+	}
+
+	const defaultPath = "/api/v1/_comments/ticket/TKT-001"
+	const draftPath = "/api/v1/_comments/ticket/TKT-001@draft"
+
+	post(t, defaultPath, `{"anchor":{"kind":"property","ref":"status"},"body":"on the default face"}`)
+	post(t, draftPath, `{"anchor":{"kind":"property","ref":"status"},"body":"on the draft face"}`)
+
+	onDefault := list(t, defaultPath)
+	require.Len(t, onDefault.Comments, 1)
+	require.Equal(t, "on the default face", onDefault.Comments[0].Body,
+		"the default face must not show the draft's thread")
+
+	onDraft := list(t, draftPath)
+	require.Len(t, onDraft.Comments, 1)
+	require.Equal(t, "on the draft face", onDraft.Comments[0].Body)
+}

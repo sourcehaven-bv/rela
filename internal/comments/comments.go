@@ -49,6 +49,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
 // Sentinel errors. Callers map these to transport-level responses; the HTTP
@@ -235,6 +237,26 @@ type Comment struct {
 type Target struct {
 	Type string
 	ID   string
+	// Face scopes the thread to one content state of the entity (FEAT-9CD2MX).
+	// The zero value addresses the default face, which is also what a faceless
+	// project always uses.
+	//
+	// Comments are PER FACE because a face is a distinct piece of content: a
+	// remark on the draft ("this paragraph needs a source") is not a remark on
+	// the published version, and surfacing it there would attach feedback to
+	// text that may not even contain the quote. The read gate is per face too,
+	// so a shared thread would also leak across a boundary the entity itself
+	// maintains.
+	Face entity.Face
+}
+
+// Key is the storage key for a target's thread.
+//
+// It is [entity.FormatStateRef], so the DEFAULT face serializes to the bare id
+// — which is what lets faces arrive without migrating a single stored comment:
+// every thread written before faces existed is already at its correct key.
+func (t Target) Key() string {
+	return entity.FormatStateRef(t.ID, t.Face)
 }
 
 // Store persists comments per target entity.
@@ -265,9 +287,17 @@ type Store interface {
 	// Delete removes one comment. Returns [ErrNotFound] if absent.
 	Delete(ctx context.Context, target Target, id string) error
 
-	// DeleteTarget removes every comment on a target. Deleting a target with
-	// no comments is not an error.
+	// DeleteTarget removes every comment on ONE target (one face). Deleting a
+	// target with no comments is not an error.
 	DeleteTarget(ctx context.Context, target Target) error
+
+	// DeleteAllFaces removes every thread belonging to an entity id, across
+	// all of its faces.
+	//
+	// Distinct from DeleteTarget: an entity delete takes the whole entity with
+	// it, so leaving a faced thread behind would strand comments at an id
+	// nothing can reach.
+	DeleteAllFaces(ctx context.Context, entityID string) error
 
 	// Rename re-keys a target's comments from oldID to newID, preserving
 	// order. Renaming a target with no comments is not an error.

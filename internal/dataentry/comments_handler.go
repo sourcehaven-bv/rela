@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/comments"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
@@ -62,7 +63,7 @@ func (h *commentsHandler) handleV1Comments(w http.ResponseWriter, r *http.Reques
 	// Validate the path segments before they reach storage. The file backend
 	// guards itself too, but refusing here keeps an unsafe id from reaching any
 	// backend at all, and gives a 400 rather than an opaque store error.
-	if !isSafePathSegment(typeName) || !isSafePathSegment(entityID) {
+	if !isSafePathSegment(typeName) || !isSafeStateRefSegment(entityID) {
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_path",
 			"Invalid entity type or id", "")
 		return
@@ -164,7 +165,8 @@ func (h *commentsHandler) commentResolveCheck(
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 		return
 	}
-	if !h.gateCommentTarget(w, r, target) {
+	target, ok := h.gateCommentTarget(w, r, target)
+	if !ok {
 		return
 	}
 	if !h.commentAuthorizer().CanAdd(r.Context(), target) {
@@ -252,7 +254,8 @@ func (h *commentsHandler) listComments(
 
 	// Read floor first: a caller who cannot read the target — or a target that
 	// does not exist — gets the same 404, so comments never confirm existence.
-	if !h.gateCommentTarget(w, r, target) {
+	target, ok := h.gateCommentTarget(w, r, target)
+	if !ok {
 		return
 	}
 	if !auth.CanRead(ctx, target) {
@@ -321,7 +324,8 @@ func (h *commentsHandler) addComment(
 ) {
 	ctx := r.Context()
 
-	if !h.gateCommentTarget(w, r, target) {
+	target, ok := h.gateCommentTarget(w, r, target)
+	if !ok {
 		return
 	}
 	if !h.commentAuthorizer().CanAdd(ctx, target) {
@@ -384,7 +388,7 @@ func (h *commentsHandler) updateComment(
 ) {
 	ctx := r.Context()
 
-	existing, ok := h.gateCommentMutation(w, r, target, commentID, mutationUpdate)
+	target, existing, ok := h.gateCommentMutation(w, r, target, commentID, mutationUpdate)
 	if !ok {
 		return
 	}
@@ -414,7 +418,8 @@ func (h *commentsHandler) updateComment(
 func (h *commentsHandler) deleteComment(
 	w http.ResponseWriter, r *http.Request, target comments.Target, commentID string,
 ) {
-	if _, ok := h.gateCommentMutation(w, r, target, commentID, mutationDelete); !ok {
+	target, _, ok := h.gateCommentMutation(w, r, target, commentID, mutationDelete)
+	if !ok {
 		return
 	}
 	if err := h.svc.Delete(r.Context(), target, commentID); err != nil {
@@ -442,22 +447,23 @@ const (
 func (h *commentsHandler) gateCommentMutation(
 	w http.ResponseWriter, r *http.Request,
 	target comments.Target, commentID string, kind mutationKind,
-) (comments.Comment, bool) {
+) (comments.Target, comments.Comment, bool) {
 	ctx := r.Context()
 
-	if !h.gateCommentTarget(w, r, target) {
-		return comments.Comment{}, false
+	target, ok := h.gateCommentTarget(w, r, target)
+	if !ok {
+		return target, comments.Comment{}, false
 	}
 
 	existing, err := h.svc.Get(ctx, target, commentID)
 	if err != nil {
 		if errors.Is(err, comments.ErrNotFound) {
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Comment not found", "")
-			return comments.Comment{}, false
+			return target, comments.Comment{}, false
 		}
 		writeV1Error(w, r, http.StatusInternalServerError, "comments_failed",
 			"Could not read comments", "")
-		return comments.Comment{}, false
+		return target, comments.Comment{}, false
 	}
 
 	user := principal.From(ctx).User
@@ -471,9 +477,9 @@ func (h *commentsHandler) gateCommentMutation(
 	if !allowed {
 		writeV1Error(w, r, http.StatusForbidden, "forbidden",
 			"This action requires "+perms, "")
-		return comments.Comment{}, false
+		return target, comments.Comment{}, false
 	}
-	return existing, true
+	return target, existing, true
 }
 
 // gateCommentTarget resolves the target entity, reporting whether the request
@@ -485,17 +491,26 @@ func (h *commentsHandler) gateCommentMutation(
 // so gating on the verdict alone would let a comment route confirm that an
 // arbitrary id is absent, and (worse) accept comments filed against entities
 // that were never there.
-func (h *commentsHandler) gateCommentTarget(w http.ResponseWriter, r *http.Request, target comments.Target) bool {
-	_, found, err := h.visibleReader.getVisible(r.Context(), target.Type, target.ID)
+func (h *commentsHandler) gateCommentTarget(
+	w http.ResponseWriter, r *http.Request, target comments.Target,
+) (comments.Target, bool) {
+	ent, found, err := h.visibleReader.getVisible(r.Context(), target.Type, target.ID)
 	if err != nil {
 		writeGateError(w, r, err)
-		return false
+		return target, false
 	}
 	if !found {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
-		return false
+		return target, false
 	}
-	return true
+	// Scope the thread to the face this request actually resolved to
+	// (FEAT-9CD2MX). Taken from the RESOLVED entity rather than parsed from the
+	// URL: a bare id under a world resolves to whichever face that world
+	// selects, and the thread must match the content on screen. Returning it
+	// from the gate means no call site can forget to apply it.
+	target.ID = ent.ID
+	target.Face = ent.Face
+	return target, true
 }
 
 // refuseIfReadOnly denies a comment write on a read-only instance, reporting
@@ -513,6 +528,28 @@ func (h *commentsHandler) refuseIfReadOnly(w http.ResponseWriter, r *http.Reques
 	writeV1Error(w, r, http.StatusForbidden, "forbidden",
 		"this rela instance is configured read-only", "")
 	return true
+}
+
+// isSafeStateRefSegment reports whether a path segment is a usable entity
+// reference, with or without a face ("TKT-1", "TKT-1@draft").
+//
+// A separate check rather than widening [isSafePathSegment]: that helper guards
+// every other route, and '@' is only meaningful where a face may legitimately
+// appear. Both halves are validated on their own terms, so nothing unsafe
+// reaches storage — the face half by the entity package's own grammar, which
+// is narrower than the id's.
+func isSafeStateRefSegment(s string) bool {
+	base, face, found := strings.Cut(s, entity.StateRefSeparator)
+	if !isSafePathSegment(base) {
+		return false
+	}
+	if !found {
+		return true
+	}
+	// entity.ParseFace is the only sanctioned constructor from external input,
+	// and rejects anything outside the declared face grammar.
+	_, err := entity.ParseFace(face)
+	return err == nil
 }
 
 // newAnchorWire projects a stored anchor onto the wire WITHOUT resolving it.
