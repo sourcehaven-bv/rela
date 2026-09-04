@@ -234,16 +234,29 @@ func ValueToNode(val any) (*yaml.Node, error) {
 // by the store fuzz target once it compared the whole property map rather
 // than checking for an absent error (BUG-X7ICNM's round-trip assertion).
 //
-// Only breaking keys are touched: routing every key through Encode would
-// quote keys that merely look like other scalars ("y", "on", "123") and
-// reflow every file that has one.
+// Two more shapes are quoted because written plain they are not read back
+// as a string key at all: the null literals ("~", "null" in any casing, "")
+// decode to a nil key and the property vanishes, and "<<" is the YAML merge
+// key. Keys that merely look like other scalars ("y", "on", "123") are left
+// plain — yaml.v3 still decodes them into a string key — so no file that
+// has one reflows.
 func KeyNode(key string) *yaml.Node {
 	node := &yaml.Node{Kind: yaml.ScalarNode, Value: key}
-	if needsQuoting(key, false) {
+	if needsQuoting(key, false) || keyReadsAsNonString(key) {
 		node.Tag = "!!str"
 		node.Style = yaml.DoubleQuotedStyle
 	}
 	return node
+}
+
+// keyReadsAsNonString reports whether a plain scalar with this text would be
+// resolved by yaml.v3 to something that cannot become a string map key.
+func keyReadsAsNonString(key string) bool {
+	switch key {
+	case "", "~", "null", "Null", "NULL", "<<":
+		return true
+	}
+	return false
 }
 
 // encodeNode is the plain yaml.v3 path, used for every value that does not

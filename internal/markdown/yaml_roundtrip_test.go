@@ -228,10 +228,14 @@ func normalize(val any) any {
 
 // Keys pass through the same emitter as values, so a key that starts with a
 // newline hit the same defect: written as a block scalar, read back as "",
-// which silently RENAMES the property. Ordinary keys, including ones that
+// which silently RENAMES the property. A key yaml.v3 resolves to null ("~")
+// was worse: the property was DROPPED. Ordinary keys, including ones that
 // look like other scalar types, must keep being written plain.
 func TestMarshalOrdered_KeysRoundTrip(t *testing.T) {
-	data := map[string]any{"\n": "0", "\tx\ny": "1", "plain": "2", "123": "3", "y": "4"}
+	data := map[string]any{
+		"\n": "0", "\tx\ny": "1", "plain": "2", "123": "3", "y": "4",
+		"~": "5", "null": "6", "NULL": "7", "<<": "8", "": "9",
+	}
 	raw, err := marshalOrdered(data, nil)
 	if err != nil {
 		t.Fatalf("marshalOrdered: %v", err)
