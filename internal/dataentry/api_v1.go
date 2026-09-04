@@ -562,7 +562,7 @@ func (a *App) applyRelationFilters(
 		}
 
 		direction, _ := cfg.RelationFilterDirection(typeName, relation)
-		matched := a.matchRelationFilterMany(ctx, entities, relation, direction, want)
+		matched := matchRelationFilterMany(ctx, a.Services(), entities, relation, direction, want)
 		filtered := entities[:0]
 		for _, e := range entities {
 			if (operator == "eq" && matched[e.ID]) || (operator == "ne" && !matched[e.ID]) {
@@ -574,20 +574,23 @@ func (a *App) applyRelationFilters(
 	return entities, nil
 }
 
-// matchRelationFilterMany is [App.matchRelationFilter] for every row at once
+// matchRelationFilterMany evaluates a relation filter for every row at once
 // (TKT-1U8XYN): one relation query for all rows, one content-free header
-// read for every distinct neighbor, one gate probe per neighbor type. The
-// verdict per row is the same — the row matches when at least one READABLE
-// neighbor over the relation carries the wanted display title (RR-HK1XNO) —
-// but the cost no longer grows with the type's row count times its fan-out.
-func (a *App) matchRelationFilterMany(
-	ctx context.Context, rows []*entityPkg.Entity, relation string, direction dataentryconfig.Direction, want string,
+// read for every distinct neighbor, one gate probe per neighbor type. It
+// replaced a per-row helper that ran one relation query plus one entity load
+// per neighbor for each row. The verdict per row is unchanged — the row
+// matches when at least one READABLE neighbor over the relation carries the
+// wanted display title (RR-HK1XNO) — but the cost no longer grows with the
+// type's row count times its fan-out. A free function taking its read seam,
+// not an App method — App sits at its load line (see worldneighbors.go).
+func matchRelationFilterMany(
+	ctx context.Context, svc Services, rows []*entityPkg.Entity,
+	relation string, direction dataentryconfig.Direction, want string,
 ) map[string]bool {
 	matched := make(map[string]bool, len(rows))
 	if len(rows) == 0 {
 		return matched
 	}
-	svc := a.Services()
 	ids := make([]string, 0, len(rows))
 	for _, e := range rows {
 		ids = append(ids, e.ID)

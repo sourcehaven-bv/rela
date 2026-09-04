@@ -82,7 +82,7 @@ type worldNeighbors struct {
 //
 // A package-level FUNCTION rather than a method on App, for the reason the
 // world code has taken this shape throughout: App carries a
-// `//plimsoll:max-methods=104` directive pinning it at its current count, and
+// `//plimsoll:max-methods=87` directive pinning it at its current count, and
 // the project rule is to split the type rather than raise the number. The
 // world feature has added ONE method to App so far ([App.SetWorlds]) and four
 // package functions (resolveWorld, attachWorld, worldCapablePath, and this),
