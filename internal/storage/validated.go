@@ -39,7 +39,7 @@ func (v ValidatedPath) String() string { return v.p }
 // with an unvalidated path.
 //
 // The adapter is deliberately thin — it exists for the type barrier,
-// not for behaviour. Path values are unwrapped exactly here and nowhere
+// not for behavior. Path values are unwrapped exactly here and nowhere
 // else, which keeps the number of places that turn a validated path
 // back into a bare string down to one reviewable file.
 type validatedFS struct {

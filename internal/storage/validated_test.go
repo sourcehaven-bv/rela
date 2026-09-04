@@ -1,9 +1,11 @@
 package storage
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 )
@@ -25,11 +27,11 @@ func TestValidatedFS_UnwrapsToUnderlyingFS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	if err := rfs.vfs.MkdirAll(rfs.parent(full), 0o755); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
+	if mkErr := rfs.vfs.MkdirAll(rfs.parent(full), 0o755); mkErr != nil {
+		t.Fatalf("MkdirAll: %v", mkErr)
 	}
-	if err := rfs.vfs.WriteFile(full, []byte("hi"), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
+	if wErr := rfs.vfs.WriteFile(full, []byte("hi"), 0o644); wErr != nil {
+		t.Fatalf("WriteFile: %v", wErr)
 	}
 	got, err := os.ReadFile(filepath.Join(dir, "a", "b.txt"))
 	if err != nil {
@@ -64,42 +66,113 @@ func TestParent_StaysInsideRoot(t *testing.T) {
 	}
 }
 
-// rawFSCall matches a call on RootedFS's retained raw FS handle — the one
-// field that still holds an unvalidated-path interface.
-var rawFSCall = regexp.MustCompile(`r\.fs\.[A-Z]`)
-
-// directOSCall matches a direct os/filepath filesystem call. These belong in
-// validated.go (which unwraps ValidatedPath deliberately) and nowhere else in
-// the rooted path.
-var directOSCall = regexp.MustCompile(`\bos\.(ReadFile|WriteFile|OpenFile|Open|Remove|RemoveAll|Rename|Mkdir|MkdirAll|ReadDir|Stat|Lstat)\(`)
-
-// TestRootedFS_ReachesFSOnlyThroughValidatedFS is a guard test in the style of
-// internal/acl's ceilingguard_test: it scans rooted.go's source for the two
-// shapes that would bypass the ValidatedPath barrier.
-//
-// The barrier is a type, but Go cannot express "this struct field may only be
-// read by that method". RootedFS keeps a raw `fs FS` for SupportsStreaming's
-// backend sniff, and a future edit could reach an I/O method on it with a bare
-// string — reintroducing exactly the taint path this change closed. Likewise a
-// direct os.* call would skip validatedFS entirely, which is what
-// OpenForWrite used to do.
-//
-// Both are cheap to write by accident and invisible in review, so they are
-// checked mechanically rather than left to prose.
-func TestRootedFS_ReachesFSOnlyThroughValidatedFS(t *testing.T) {
-	src, err := os.ReadFile("rooted.go")
-	if err != nil {
-		t.Fatalf("read rooted.go: %v", err)
+// TestContain_RootIsFilesystemRoot pins the "/" case. Building the prefix as
+// root+separator yields "//", which no path has, so every key under a root of
+// "/" reads as an escape — a container or a tmpdir at the filesystem root hits
+// this, and the failure is a blanket refusal rather than anything subtle.
+func TestContain_RootIsFilesystemRoot(t *testing.T) {
+	rfs := &RootedFS{root: string(filepath.Separator)}
+	for _, key := range []string{"entities", "entities/tickets/a.md"} {
+		t.Run(key, func(t *testing.T) {
+			got, err := rfs.contain(filepath.Join(rfs.root, key))
+			if err != nil {
+				t.Fatalf("contain(%q) under root %q: %v", key, rfs.root, err)
+			}
+			if want := filepath.Join(rfs.root, key); got.String() != want {
+				t.Fatalf("contain = %q, want %q", got.String(), want)
+			}
+		})
 	}
-	for i, line := range strings.Split(string(src), "\n") {
-		code, _, _ := strings.Cut(line, "//")
-		if m := rawFSCall.FindString(code); m != "" {
-			t.Errorf("rooted.go:%d calls the raw FS directly (%q); go through r.vfs so the path carries ValidatedPath: %s",
-				i+1, m, strings.TrimSpace(line))
+}
+
+// TestContain_RejectsEscape pins the postcondition itself: contain is the last
+// barrier, so it must refuse a path outside the root even though resolve's
+// segment rules should already have made that impossible.
+func TestContain_RejectsEscape(t *testing.T) {
+	dir := t.TempDir()
+	rfs, err := NewRootedFS(NewOsFS(), dir)
+	if err != nil {
+		t.Fatalf("NewRootedFS: %v", err)
+	}
+	for _, p := range []string{
+		filepath.Join(dir, "..", "outside.md"),
+		filepath.Dir(dir),
+		dir + "-sibling/x.md", // prefix-of-root without a separator boundary
+	} {
+		t.Run(p, func(t *testing.T) {
+			if _, err := rfs.contain(p); err == nil {
+				t.Errorf("contain(%q) = nil error, want rejection (root %q)", p, dir)
+			}
+		})
+	}
+}
+
+// TestParent_FallsBackToRootOnEscape drives parent's defensive branch. It is
+// unreachable through resolve (a contained path's parent is contained), so the
+// only way to make contain fail is a hand-built RootedFS whose root does not
+// contain the path. The fallback must be the root itself, never the escaping
+// directory.
+func TestParent_FallsBackToRootOnEscape(t *testing.T) {
+	sep := string(filepath.Separator)
+	rfs := &RootedFS{root: filepath.Join(sep, "a")}
+	got := rfs.parent(ValidatedPath{p: filepath.Join(sep, "b", "c")})
+	if got.String() != rfs.root {
+		t.Fatalf("parent of out-of-root path = %q, want the root %q", got.String(), rfs.root)
+	}
+}
+
+// rootedGoExemptFuncs are the rooted.go functions allowed to read the raw
+// `fs` field. Exemption list, not inclusion list, so a new method fails closed.
+var rootedGoExemptFuncs = map[string]string{
+	"SupportsStreaming": "type-sniffs the backend chain; performs no I/O",
+}
+
+// TestRootedGo_NoRawFSOrDirectOSAccess is a guard test in the style of
+// internal/acl's ceilingguard_test. It parses rooted.go and fails on either
+// shape that bypasses the ValidatedPath barrier:
+//
+//   - any read of the raw `fs` field outside the exempt functions — Go cannot
+//     say "this field may only be read by that method", and a local alias
+//     (`raw := r.fs; raw.ReadFile(bareString)`) is zero validation;
+//   - any direct os.* call — validated.go is the one place a ValidatedPath is
+//     unwrapped, and it exists so that this file never has to.
+//
+// It walks the AST rather than matching source text: a regex over `r.fs.X`
+// is defeated by exactly that alias, which SupportsStreaming already uses,
+// and a guard that passes against the regression it names is worse than none.
+//
+// Scope is rooted.go only, by design. safefs.go and osfs.go ARE the raw layer
+// beneath the barrier and are expected to call os.* directly.
+func TestRootedGo_NoRawFSOrDirectOSAccess(t *testing.T) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "rooted.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parse rooted.go: %v", err)
+	}
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
 		}
-		if m := directOSCall.FindString(code); m != "" {
-			t.Errorf("rooted.go:%d calls %s directly, bypassing validatedFS; put the unwrap in validated.go: %s",
-				i+1, m, strings.TrimSpace(line))
+		if _, exempt := rootedGoExemptFuncs[fn.Name.Name]; exempt {
+			continue
 		}
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.SelectorExpr:
+				if x.Sel.Name == "fs" {
+					t.Errorf("%s: %s reads the raw FS field; go through r.vfs so the path carries ValidatedPath",
+						fset.Position(x.Pos()), fn.Name.Name)
+				}
+			case *ast.CallExpr:
+				if sel, ok := x.Fun.(*ast.SelectorExpr); ok {
+					if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "os" {
+						t.Errorf("%s: %s calls os.%s directly, bypassing validatedFS; put the unwrap in validated.go",
+							fset.Position(x.Pos()), fn.Name.Name, sel.Sel.Name)
+					}
+				}
+			}
+			return true
+		})
 	}
 }

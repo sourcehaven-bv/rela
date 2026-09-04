@@ -44,7 +44,10 @@ func (t *FSTemplater) EntityTemplates(_ context.Context, entityType string) ([]*
 }
 
 func (t *FSTemplater) RelationTemplate(_ context.Context, relationType string) (*Template, error) {
-	path := t.paths.RelationTemplatePath(relationType)
+	path, err := t.paths.RelationTemplatePath(relationType)
+	if err != nil {
+		return nil, err
+	}
 	doc, err := loadRelationTemplateDoc(t.fs, path)
 	if err != nil {
 		return nil, err
@@ -68,7 +71,10 @@ func (t *FSTemplater) GenerateEntity(
 func (t *FSTemplater) GenerateRelation(
 	_ context.Context, meta *metamodel.Metamodel, relationType string, force bool,
 ) (bool, error) {
-	path := t.paths.RelationTemplatePath(relationType)
+	path, err := t.paths.RelationTemplatePath(relationType)
+	if err != nil {
+		return false, err
+	}
 	return generateRelationTemplate(t.fs, path, meta, relationType, force)
 }
 

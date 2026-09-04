@@ -119,7 +119,30 @@ func (r *RootedFS) resolve(key string) (ValidatedPath, error) {
 			return ValidatedPath{}, fmt.Errorf("storage: Windows reserved name %q not allowed in key", seg)
 		}
 	}
-	return ValidatedPath{p: filepath.Join(r.root, key)}, nil
+	return r.contain(filepath.Join(r.root, key))
+}
+
+// contain is the final barrier: it cleans the joined path and verifies the
+// result is still the root or strictly beneath it, and it is the ONLY place
+// (besides rootPath, which uses the root itself) that mints a ValidatedPath.
+//
+// The segment checks above already reject every traversal form, so this
+// should be unreachable — that is the point. It converts "the rules above are
+// exhaustive" from a claim into a checked postcondition, so a future edit that
+// loosens one of them fails closed here instead of escaping the root. It is
+// also what makes the containment legible to static analysis, which cannot
+// infer it from the string-level rules.
+func (r *RootedFS) contain(joined string) (ValidatedPath, error) {
+	clean := filepath.Clean(joined)
+	// Compare against the root with exactly one trailing separator. Building
+	// the prefix as root+sep breaks when the root IS the separator ("/"), the
+	// case a container or a test tmpdir at the filesystem root actually hits:
+	// "//entities" matches nothing and every path looks like an escape.
+	prefix := strings.TrimSuffix(r.root, string(filepath.Separator)) + string(filepath.Separator)
+	if clean != r.root && !strings.HasPrefix(clean, prefix) {
+		return ValidatedPath{}, fmt.Errorf("storage: resolved path %q escapes root %q", clean, r.root)
+	}
+	return ValidatedPath{p: clean}, nil
 }
 
 // rootPath is the root itself as a ValidatedPath. NewRootedFS made it
@@ -129,12 +152,21 @@ func (r *RootedFS) rootPath() ValidatedPath {
 	return ValidatedPath{p: r.root}
 }
 
-// parent returns the directory containing v. A validated path's parent
-// is still under the root (resolve rejects every key that could escape
-// it), so the result stays a ValidatedPath — this is the one derivation
-// that preserves the invariant.
+// parent returns the directory containing v, which is still inside the root
+// (v is contained, and a contained path's parent is the root or below it).
+// It goes through contain anyway rather than minting a ValidatedPath
+// directly: keeping construction to a single checked chokepoint is what makes
+// the invariant hold by inspection.
+//
+// A parent that somehow escaped would be a bug in contain, so this returns
+// the root rather than a path outside it — MkdirAll on the root is a harmless
+// no-op, whereas propagating an out-of-root directory is not.
 func (r *RootedFS) parent(v ValidatedPath) ValidatedPath {
-	return ValidatedPath{p: filepath.Dir(v.p)}
+	p, err := r.contain(filepath.Dir(v.p))
+	if err != nil {
+		return r.rootPath()
+	}
+	return p
 }
 
 // ReadFile reads the file at key.
