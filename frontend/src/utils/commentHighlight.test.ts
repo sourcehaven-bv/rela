@@ -136,3 +136,31 @@ describe('applyHighlights leaves code untouched', () => {
     expect(out).toContain('<mark data-comment-id="c1">More prose here</mark>')
   })
 })
+
+describe('applyHighlights and indented code blocks', () => {
+  // Regression: only fenced and inline code were skipped, so a 4-space
+  // indented block still received a mark and rendered
+  // `<mark data-comment-id="…">` as literal text inside <pre><code>.
+  it('skips a range inside a 4-space indented block', () => {
+    const body =
+      'Intro.\n\n    Ingesprongen codeblok (vier spaties).\n    Praesent commodo.\n\nAfter.'
+    const out = applyHighlights(body, [byteRange(body, 'Ingesprongen codeblok')])
+
+    expect(out).toBe(body)
+    expect(out).not.toContain('<mark')
+  })
+
+  it('skips a tab-indented block', () => {
+    const body = 'Intro.\n\n\tcode line here\n\nAfter.'
+    const out = applyHighlights(body, [byteRange(body, 'code line here')])
+
+    expect(out).toBe(body)
+  })
+
+  it('still marks prose that merely follows an indented block', () => {
+    const body = 'Intro.\n\n    indented code here\n\nProse worth marking follows.'
+    const out = applyHighlights(body, [byteRange(body, 'Prose worth marking')])
+
+    expect(out).toContain('<mark data-comment-id="c1">Prose worth marking</mark>')
+  })
+})

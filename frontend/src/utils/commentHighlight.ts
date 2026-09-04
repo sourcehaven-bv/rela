@@ -126,30 +126,48 @@ interface ByteSpan {
 }
 
 /**
- * Finds the byte ranges of fenced blocks and inline code spans.
+ * Finds the byte ranges of every construct markdown renders verbatim: fenced
+ * blocks, INDENTED (4-space) blocks, and inline code spans.
  *
- * Deliberately conservative: a run of backticks opens a span that closes at the
- * next run of the same length, and ``` opens a fence to the next ```. Anything
- * it over-claims merely loses a highlight, which is the safe direction — while
- * anything it MISSES renders raw `<mark…>` markup at the user.
+ * Deliberately conservative — anything it over-claims merely loses a highlight,
+ * which is the safe direction, while anything it MISSES renders raw `<mark…>`
+ * markup at the user. Indented blocks were missed at first and did exactly
+ * that.
  */
 function findCodeSpans(body: string): ByteSpan[] {
   const enc = new TextEncoder()
   const spans: ByteSpan[] = []
+  const covered = (from: number, to: number) =>
+    spans.some((f) => {
+      const s = byteSpanOf(enc, body, from, to)
+      return s.start >= f.start && s.end <= f.end
+    })
 
-  // Fenced blocks first, so their inner backticks are not read as inline code.
+  // Fenced blocks first, so their contents are not re-read as anything else.
   const fence = /^[ \t]*(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^[ \t]*\1[ \t]*$|$)/gm
   let m: RegExpExecArray | null
   while ((m = fence.exec(body)) !== null) {
     spans.push(byteSpanOf(enc, body, m.index, m.index + m[0].length))
   }
 
-  // Inline spans, skipping anything already inside a fence.
+  // Indented code blocks: runs of lines starting with 4 spaces or a tab.
+  //
+  // This over-claims a deeply nested list item, which markdown may render as a
+  // list rather than code. That costs a highlight on a nested bullet and is the
+  // trade this function is explicitly biased toward — the alternative is
+  // guessing list context here, and guessing WRONG shows raw markup.
+  const indented = /^(?:(?: {4}|\t)[^\n]*\n?)+/gm
+  while ((m = indented.exec(body)) !== null) {
+    if (!covered(m.index, m.index + m[0].length)) {
+      spans.push(byteSpanOf(enc, body, m.index, m.index + m[0].length))
+    }
+  }
+
+  // Inline spans, skipping anything already inside a block.
   const inline = /(`+)(?:[\s\S]*?)\1/g
   while ((m = inline.exec(body)) !== null) {
-    const span = byteSpanOf(enc, body, m.index, m.index + m[0].length)
-    if (!spans.some((f) => span.start >= f.start && span.end <= f.end)) {
-      spans.push(span)
+    if (!covered(m.index, m.index + m[0].length)) {
+      spans.push(byteSpanOf(enc, body, m.index, m.index + m[0].length))
     }
   }
   return spans

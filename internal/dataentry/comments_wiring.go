@@ -199,14 +199,17 @@ func (h *commentsHandler) liveAnchors(ctx context.Context, target comments.Targe
 // request could describe context that does not exist in the entity, so a later
 // resolve would land on text the commenter never selected.
 //
-// Which OCCURRENCE was meant is resolved by quotefind rather than by a
-// client-supplied index: it disambiguates through the surrounding source, which
-// a rendered-text offset from the browser cannot address anyway.
+// WHICH occurrence was meant is decided by the surrounding rendered text the
+// client sends alongside the quote. That context is untrusted in the sense that
+// it only selects among real occurrences — it can never introduce a location,
+// because the quote must still be found in the body. Without it a repeated
+// quote resolves to the first occurrence, which is how a comment on "Geordend"
+// ended up highlighting "Ongeordend".
 //
 // The body read goes through the visibility wrapper, so a principal can only
 // anchor to text it may already read.
 func (h *commentsHandler) buildTextAnchor(
-	ctx context.Context, target comments.Target, quote string,
+	ctx context.Context, target comments.Target, quote, prefix, suffix string,
 ) (*comments.TextAnchor, error) {
 	quote = strings.TrimSpace(quote)
 	if len([]rune(quote)) < comments.MinQuoteRunes {
@@ -225,7 +228,7 @@ func (h *commentsHandler) buildTextAnchor(
 	// markers, no backticks, blocks joined by newlines. Matching it against the
 	// source with a plain substring search fails for any selection crossing a
 	// bullet or a code span — FindRenderedQuote maps through the AST instead.
-	start, end, ok := comments.FindRenderedQuote(ent.Content, quote)
+	start, end, ok := comments.FindRenderedQuote(ent.Content, quote, prefix, suffix)
 	if !ok {
 		// Either a stale tab (the body changed between render and submit) or a
 		// selection that genuinely spans nothing locatable.

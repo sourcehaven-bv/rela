@@ -67,11 +67,19 @@ export interface AddCommentRequest {
   anchor: {
     kind: CommentAnchorKind
     ref: string
-    /** For a `text` anchor: the selected body text. The server derives the
-     *  surrounding context from its own copy of the body, so only the quote
-     *  and which occurrence it was cross the wire. */
+    /** For a `text` anchor: the selected body text, as RENDERED. */
     quote?: string
-    quote_index?: number
+    /**
+     * Rendered text immediately before/after the selection.
+     *
+     * These pick WHICH occurrence of a repeated quote was meant. They can only
+     * select among real occurrences — the quote must still be found in the body
+     * — so they narrow, never introduce, a location. Omitting them makes a
+     * repeated quote resolve to the first match, which once put a comment on
+     * "Geordend" onto "Ongeordend".
+     */
+    quote_prefix?: string
+    quote_suffix?: string
   }
   body: string
 }

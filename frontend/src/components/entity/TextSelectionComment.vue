@@ -18,9 +18,9 @@ import { getErrorMessage } from '@/api/errors'
  * and the server locates it in its own copy of the body. That also means a
  * client cannot describe context the entity does not contain.
  *
- * `quote_index` disambiguates a selection whose text occurs more than once: we
- * count occurrences of the quote in the rendered body up to the selection, which
- * matches source order because the renderer preserves it.
+ * The rendered text either side of the selection goes with it, so the server can
+ * tell WHICH occurrence of a repeated quote was meant — without it, "eordend"
+ * selected inside "Geordend" resolves to the earlier "Ongeordend".
  */
 const props = defineProps<{
   entityType: string
@@ -37,7 +37,9 @@ const uiStore = useUIStore()
 const MIN_QUOTE_RUNES = 5
 
 const quote = ref('')
-const quoteIndex = ref(0)
+/** Rendered text either side of the selection, for occurrence disambiguation. */
+const quotePrefix = ref('')
+const quoteSuffix = ref('')
 const anchorPos = ref<{ top: number; left: number } | null>(null)
 const composing = ref(false)
 const body = ref('')
@@ -48,27 +50,34 @@ function reset() {
   anchorPos.value = null
   composing.value = false
   quote.value = ''
-  quoteIndex.value = 0
+  quotePrefix.value = ''
+  quoteSuffix.value = ''
   body.value = ''
 }
 
+/** How much rendered text to send either side of the selection. */
+const CONTEXT_CHARS = 60
+
 /**
- * Counts how many times `text` appears in the container before `range`, so the
- * server can anchor to the occurrence the user actually selected.
+ * Rendered text immediately before and after the selection.
+ *
+ * This is what lets the server pick the right occurrence of a repeated quote.
+ * Taken from the container's rendered text — the same coordinate space as the
+ * quote itself — so the two agree.
  */
-function occurrenceOf(container: HTMLElement, range: Range, text: string): number {
+function contextAround(container: HTMLElement, range: Range): { prefix: string; suffix: string } {
   const before = range.cloneRange()
   before.selectNodeContents(container)
   before.setEnd(range.startContainer, range.startOffset)
-  const prefix = before.toString()
 
-  let count = 0
-  let idx = prefix.indexOf(text)
-  while (idx !== -1) {
-    count++
-    idx = prefix.indexOf(text, idx + text.length)
+  const after = range.cloneRange()
+  after.selectNodeContents(container)
+  after.setStart(range.endContainer, range.endOffset)
+
+  return {
+    prefix: before.toString().slice(-CONTEXT_CHARS),
+    suffix: after.toString().slice(0, CONTEXT_CHARS),
   }
-  return count
 }
 
 function onSelectionChange() {
@@ -98,7 +107,9 @@ function onSelectionChange() {
   const rect = range.getBoundingClientRect()
   const host = container.getBoundingClientRect()
   quote.value = text
-  quoteIndex.value = occurrenceOf(container, range, text)
+  const ctx = contextAround(container, range)
+  quotePrefix.value = ctx.prefix
+  quoteSuffix.value = ctx.suffix
   anchorPos.value = {
     top: rect.bottom - host.top + 6,
     left: Math.max(0, rect.left - host.left),
@@ -117,7 +128,13 @@ async function submit() {
   submitting.value = true
   try {
     await addComment(props.entityType, props.entityId, {
-      anchor: { kind: 'text', ref: '', quote: quote.value, quote_index: quoteIndex.value },
+      anchor: {
+        kind: 'text',
+        ref: '',
+        quote: quote.value,
+        quote_prefix: quotePrefix.value,
+        quote_suffix: quoteSuffix.value,
+      },
       body: text,
     })
     reset()

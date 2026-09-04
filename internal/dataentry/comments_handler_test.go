@@ -447,3 +447,61 @@ func TestComments_TextAnchor(t *testing.T) {
 		require.Nil(t, got.Comments[0].Anchor.Start, "a detached anchor exposes no range")
 	})
 }
+
+// TestComments_TextAnchorDisambiguation pins the fix for a comment landing on
+// the WRONG occurrence of a repeated quote.
+//
+// Reported from the demo: selecting part of "Geordend" stored an anchor whose
+// prefix read "### Ong", so the highlight snapped to "Ongeordend" earlier in
+// the document. The quote alone cannot decide between them — the surrounding
+// rendered text is what selects the occurrence the user actually meant.
+func TestComments_TextAnchorDisambiguation(t *testing.T) {
+	const repeated = "## Lijsten\n\n### Ongeordend\n\n- first list item\n\n### Geordend\n\n1. second list item\n"
+
+	newApp := func(t *testing.T) *App {
+		t.Helper()
+		app := commentsApp(t)
+		require.NoError(t, app.store.UpdateEntity(t.Context(), &entity.Entity{
+			ID:         "TKT-001",
+			Type:       "ticket",
+			Properties: map[string]any{"title": "Test Ticket", "status": "open"},
+			Content:    repeated,
+		}))
+		return app
+	}
+
+	// Byte offsets of each "eordend" in the fixture, so the assertions name a
+	// position derived from the fixture rather than a hardcoded number.
+	first := strings.Index(repeated, "eordend")
+	second := strings.Index(repeated[first+1:], "eordend") + first + 1
+	require.NotEqual(t, first, second, "fixture must contain the quote twice")
+
+	t.Run("suffix context selects the second occurrence", func(t *testing.T) {
+		app := newApp(t)
+
+		body := `{"anchor":{"kind":"text","quote":"eordend",` +
+			`"quote_prefix":"G","quote_suffix":"\n\n1. second list item"},"body":"the ordered one"}`
+		rec := doComments(t, app, http.MethodPost, "/api/v1/_comments/ticket/TKT-001", body, "alice@example.com")
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+		got := listComments(t, app)
+		require.Len(t, got.Comments, 1)
+		require.NotNil(t, got.Comments[0].Anchor.Start)
+		require.Equal(t, second, *got.Comments[0].Anchor.Start,
+			"context pointed at Geordend, so the anchor must not land on Ongeordend")
+	})
+
+	t.Run("suffix context selects the first occurrence", func(t *testing.T) {
+		app := newApp(t)
+
+		body := `{"anchor":{"kind":"text","quote":"eordend",` +
+			`"quote_prefix":"Ong","quote_suffix":"\n\n- first list item"},"body":"the unordered one"}`
+		rec := doComments(t, app, http.MethodPost, "/api/v1/_comments/ticket/TKT-001", body, "alice@example.com")
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+		got := listComments(t, app)
+		require.Len(t, got.Comments, 1)
+		require.NotNil(t, got.Comments[0].Anchor.Start)
+		require.Equal(t, first, *got.Comments[0].Anchor.Start)
+	})
+}

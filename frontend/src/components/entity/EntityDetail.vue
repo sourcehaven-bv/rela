@@ -40,6 +40,7 @@ import DocumentsPanel from '@/components/entity/DocumentsPanel.vue'
 import CommentsPanel from '@/components/entity/CommentsPanel.vue'
 import CommentIndicator from '@/components/entity/CommentIndicator.vue'
 import TextSelectionComment from '@/components/entity/TextSelectionComment.vue'
+import TextCommentPopover from '@/components/entity/TextCommentPopover.vue'
 import { listComments, type Comment } from '@/api/comments'
 import { shouldFlipPopover } from '@/utils/popoverFlip'
 import { applyHighlights, type HighlightRange } from '@/utils/commentHighlight'
@@ -464,6 +465,16 @@ const contentAutoSave = useAutoSave({
 
 function contentClick(event: MouseEvent) {
   const target = event.target as HTMLElement | null
+
+  // A comment highlight opens its thread. Checked before the checkbox branch
+  // because both are delegated from the same handler and a mark can wrap one.
+  const mark = target?.closest<HTMLElement>('mark[data-comment-id]')
+  if (mark) {
+    event.preventDefault()
+    openTextComment(mark.dataset.commentId, mark)
+    return
+  }
+
   const checkbox = target?.closest<HTMLInputElement>('input[type="checkbox"][data-cb-idx]')
   if (!checkbox) return
   event.preventDefault()
@@ -473,6 +484,51 @@ function contentClick(event: MouseEvent) {
   if (Number.isNaN(idx)) return
   handleCheckboxToggle(idx)
 }
+
+/**
+ * The text comment whose thread is open, plus where to anchor its popover.
+ *
+ * Held here rather than in the highlight itself: the marks live inside v-html
+ * output, so there is no component per highlight to own the state.
+ */
+const openTextCommentId = ref<string | null>(null)
+const textCommentAnchorEl = ref<HTMLElement | null>(null)
+
+function openTextComment(id: string | undefined, el: HTMLElement) {
+  if (!id) return
+  // Clicking the open highlight again closes it, matching the field indicators.
+  if (openTextCommentId.value === id) {
+    closeTextComment()
+    return
+  }
+  openTextCommentId.value = id
+  textCommentAnchorEl.value = el
+}
+
+function closeTextComment() {
+  openTextCommentId.value = null
+  textCommentAnchorEl.value = null
+}
+
+/** The comments sharing the clicked highlight's anchor. */
+const openTextComments = computed(() =>
+  comments.value.filter((c) => c.id === openTextCommentId.value)
+)
+
+/**
+ * Where to place the thread popover, in coordinates relative to the body.
+ *
+ * Read from the clicked element rather than tracked reactively: the mark is
+ * re-created on every render of the body, so a stored reference would go stale.
+ */
+const textCommentPos = computed(() => {
+  const el = textCommentAnchorEl.value
+  const host = contentRef.value
+  if (!el || !host) return null
+  const r = el.getBoundingClientRect()
+  const h = host.getBoundingClientRect()
+  return { top: r.bottom - h.top + 6, left: Math.max(0, r.left - h.left) }
+})
 
 function handleCheckboxToggle(index: number) {
   const current = entry.value
@@ -1644,6 +1700,18 @@ watch(
               :entity-id="entityId"
               :container="contentRef"
               @added="loadComments"
+            />
+
+            <!-- The thread for a clicked highlight. Anchored to the mark, which
+                 lives in v-html output and so has no component of its own. -->
+            <TextCommentPopover
+              v-if="commentsEnabled && textCommentPos && openTextComments.length > 0"
+              :entity-type="entityType"
+              :entity-id="entityId"
+              :comments="openTextComments"
+              :position="textCommentPos"
+              @changed="loadComments"
+              @close="closeTextComment"
             />
           </div>
 

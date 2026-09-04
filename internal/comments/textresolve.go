@@ -100,10 +100,19 @@ func ResolveText(body string, a *TextAnchor) TextMatch {
 // quotefind walks the goldmark AST to build a rendered→source position map, so
 // it matches what the user actually saw against what is actually stored.
 //
+// # prefix and suffix are what pick the RIGHT occurrence
+//
+// A short quote frequently occurs more than once ("eordend" appears inside both
+// "Ongeordend" and "Geordend"). Without context this resolves to the FIRST
+// occurrence, so a comment on the second silently anchors — and highlights —
+// somewhere the user never selected. The caller must therefore pass the text
+// surrounding the selection; empty context is only safe for a quote known to be
+// unique.
+//
 // Returns ok=false when the quote cannot be located, which the caller reports
 // as a 400 rather than storing an anchor that could never resolve.
-func FindRenderedQuote(body, quote string) (start, end int, ok bool) {
-	return quotefind.Find(body, quote)
+func FindRenderedQuote(body, quote, prefix, suffix string) (start, end int, ok bool) {
+	return quotefind.FindWithContext(body, quote, prefix, suffix)
 }
 
 // NewTextAnchor builds a text anchor for the selection body[start:end].

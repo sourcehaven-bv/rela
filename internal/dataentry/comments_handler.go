@@ -242,16 +242,19 @@ type addCommentRequest struct {
 		Ref  string `json:"ref"`
 		// Quote is the selected body text, for a `text` anchor.
 		//
-		// The client sends the QUOTE, not offsets or context descriptors: the
-		// server derives Prefix/Suffix/HeadingContext from its own copy of the
-		// body, so a caller cannot store context that disagrees with the
-		// entity — which would make the anchor resolve somewhere nobody
-		// selected. Offsets would be worse still, since the client renders
-		// markdown and its coordinates are not the source's.
+		// The client sends RENDERED text, not offsets: it renders markdown, so
+		// its coordinates are not the source's. The server maps the quote back
+		// to source through the AST and derives the stored descriptors itself,
+		// so a caller cannot persist context that disagrees with the entity.
 		Quote string `json:"quote"`
-		// QuoteIndex disambiguates a quote occurring more than once, as the
-		// 0-based occurrence the user selected. Absent means the first.
-		QuoteIndex int `json:"quote_index"`
+		// QuotePrefix and QuoteSuffix are the rendered text immediately around
+		// the selection. They select among REAL occurrences of the quote and
+		// can never introduce a location, since the quote must still be found.
+		//
+		// Without them a repeated quote resolves to the first occurrence — how
+		// a comment on "Geordend" came to highlight "Ongeordend".
+		QuotePrefix string `json:"quote_prefix"`
+		QuoteSuffix string `json:"quote_suffix"`
 	} `json:"anchor"`
 	Body string `json:"body"`
 }
@@ -281,7 +284,7 @@ func (h *commentsHandler) addComment(
 		Ref:  req.Anchor.Ref,
 	}
 	if anchor.Kind == comments.AnchorText {
-		text, aerr := h.buildTextAnchor(ctx, target, req.Anchor.Quote)
+		text, aerr := h.buildTextAnchor(ctx, target, req.Anchor.Quote, req.Anchor.QuotePrefix, req.Anchor.QuoteSuffix)
 		if aerr != nil {
 			writeV1Error(w, r, http.StatusBadRequest, "invalid_comment", aerr.Error(), "")
 			return
