@@ -146,10 +146,52 @@ planner, what the dry-run predicts is what startup does.
 
 ## Search
 
-In the PostgreSQL build, search runs **in the database** (a `tsvector`
-GIN index for ranked full-text plus `pg_trgm` for substring and fuzzy
-matching) — there is no bleve index. Text search matches the same fields
+In the PostgreSQL build, search runs **in the database** — there is no bleve
+index. Matching is a case-insensitive substring match over a maintained
+`search_text` column, accelerated by a `pg_trgm` GIN index, and results are
+ranked by trigram similarity to the query. Text search matches the same fields
 as the default backend: entity ID, content, and string-valued properties.
+
+## Observing query cost
+
+A page in the web app is one HTTP request that may turn into many SQL
+statements. To see how many, and how long the database spent on them, run the
+server with Debug logging:
+
+```bash
+rela-server-postgres --project . -verbose
+```
+
+With `-verbose` every API response carries a `Server-Timing` header — shown
+under *Timing* in the browser's network inspector — and the server log gets one
+`request` line per request:
+
+```text
+Server-Timing: db;dur=12.4;desc="7 queries"
+level=DEBUG msg=request method=GET path=/api/v1/tickets status=200 wall_ms=18.2 queries=7 db_ms=12.4
+```
+
+`queries` is the number of statements the request issued (a transaction's
+`BEGIN`/`COMMIT` count too); `db_ms` is their summed database time, which is
+less than wall time because Go work between statements is excluded. A count
+that grows with the number of rows on the page is the signature of a per-row
+lookup and the first thing to fix; `db_ms` that stays high with a small count
+points at a statement missing an index. Each individual statement is also
+logged at Debug (`msg="pgstore: query"`) with its SQL, arguments and duration.
+
+Below Debug nothing is emitted and no header is set. That is deliberate: a
+per-response query count can vary with rows the principal is not allowed to
+see, so it is an operator diagnostic, not part of the API — see
+`docs/acl-security.md`.
+
+For the database's own view, turn on PostgreSQL's slow-statement log for the
+rela database (no restart needed; new sessions pick it up):
+
+```sql
+ALTER DATABASE rela SET log_min_duration_statement = '20ms';
+ALTER DATABASE rela SET session_preload_libraries = 'auto_explain';
+ALTER DATABASE rela SET auto_explain.log_min_duration = '20ms';
+```
 
 ## Multiple writers
 

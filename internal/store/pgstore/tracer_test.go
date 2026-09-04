@@ -7,24 +7,27 @@ import (
 	"context"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// TestDebugQueryTracer_LogsAtDebugLevel exercises the tracer
-// directly (without a real pgx connection) to confirm:
+// TestQueryTracer_LogsAtDebugLevel exercises the tracer directly (without
+// a real pgx connection) to confirm:
 //
 //   - At slog.Debug it emits one record per (Start, End) pair.
-//   - At slog.Info it emits nothing — the per-query overhead is
-//     limited to the (cheap) context value alloc.
+//   - At slog.Info it emits nothing and, with no stats on the context,
+//     returns the context UNCHANGED — the production no-alloc guarantee.
 //   - The emitted record carries the SQL text and a non-negative
 //     duration_us.
 //
 // The full integration (pool → query → tracer) is covered by
-// TestDebugQueryTracer_FromPoolEmits in tracer_pool_test.go.
-func TestDebugQueryTracer_LogsAtDebugLevel(t *testing.T) {
+// TestQueryTracer_FromPoolEmits in tracer_pool_test.go.
+func TestQueryTracer_LogsAtDebugLevel(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		level    slog.Level
@@ -38,8 +41,9 @@ func TestDebugQueryTracer_LogsAtDebugLevel(t *testing.T) {
 			h := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: tc.level})
 			t.Cleanup(swapDefaultLogger(slog.New(h)))
 
-			tr := debugQueryTracer{}
-			ctx := tr.TraceQueryStart(context.Background(), nil, pgx.TraceQueryStartData{
+			tr := queryTracer{}
+			base := context.Background()
+			ctx := tr.TraceQueryStart(base, nil, pgx.TraceQueryStartData{
 				SQL:  "SELECT 1",
 				Args: []any{42},
 			})
@@ -54,9 +58,32 @@ func TestDebugQueryTracer_LogsAtDebugLevel(t *testing.T) {
 				require.Contains(t, out, "duration_us=")
 			} else {
 				require.Empty(t, out, "Info level should not emit Debug traces")
+				require.Equal(t, base, ctx,
+					"with Debug off and no stats the tracer must not allocate a derived context")
 			}
 		})
 	}
+}
+
+// TestQueryTracer_RecordsIntoContextStats: a context carrying
+// store.QueryStats is accounted regardless of log level, and an errored
+// statement still counts — a failed round-trip is still a round-trip.
+func TestQueryTracer_RecordsIntoContextStats(t *testing.T) {
+	var buf bytes.Buffer
+	h := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})
+	t.Cleanup(swapDefaultLogger(slog.New(h)))
+
+	tr := queryTracer{}
+	ctx, stats := store.WithQueryStats(context.Background())
+
+	for i, err := range []error{nil, context.DeadlineExceeded} {
+		qctx := tr.TraceQueryStart(ctx, nil, pgx.TraceQueryStartData{SQL: "SELECT 1"})
+		time.Sleep(time.Millisecond)
+		tr.TraceQueryEnd(qctx, nil, pgx.TraceQueryEndData{Err: err})
+		require.EqualValues(t, i+1, stats.Queries())
+	}
+	require.Greater(t, stats.Duration(), time.Duration(0))
+	require.Empty(t, buf.String(), "accounting must not log at Info")
 }
 
 // swapDefaultLogger replaces slog.Default and returns a closer that

@@ -257,6 +257,10 @@ func (a *App) NewRouter() http.Handler {
 		handler = requireVerifiedJWT(handler, *a.jwtGate)
 	}
 	handler = stampAuditPrincipal(handler, resolver)
+	// Outermost of all: per-request query accounting must wrap the whole
+	// chain so the principal resolution and ACL compilation above (which
+	// read the store) are counted with the handler, not missed.
+	handler = requestStats(handler)
 	return handler
 }
 
