@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1205,15 +1206,31 @@ func stringifyJSONValue(raw []byte) string {
 // against. It mirrors search.MatchText's field selection exactly: entity ID,
 // content, and STRING-valued properties only (non-string props are excluded).
 func entitySearchText(e *entity.Entity) string {
+	// Order matters (TKT-1U8XYN): id, then string properties in key order,
+	// then the body. Ranking compares the query against the first
+	// searchRankPrefix bytes, so the identity and title-like properties
+	// decide relevance and the body only decides whether the row matches.
+	// Key order keeps the column deterministic; migration 0014 composes
+	// existing rows the same way.
 	var b strings.Builder
 	b.WriteString(strings.ToLower(e.ID))
 	b.WriteByte('\n')
-	b.WriteString(strings.ToLower(e.Content))
-	for _, v := range e.Properties {
+	keys := make([]string, 0, len(e.Properties))
+	strs := make(map[string]string, len(e.Properties))
+	for k, v := range e.Properties {
 		if str, ok := v.(string); ok {
-			b.WriteByte('\n')
-			b.WriteString(strings.ToLower(str))
+			keys = append(keys, k)
+			strs[k] = str
 		}
 	}
+	sort.Strings(keys)
+	for i, k := range keys {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(strings.ToLower(strs[k]))
+	}
+	b.WriteByte('\n')
+	b.WriteString(strings.ToLower(e.Content))
 	return b.String()
 }

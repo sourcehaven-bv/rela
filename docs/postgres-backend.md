@@ -103,10 +103,20 @@ next start — and in the steady state (nothing changed) it does no work.
 PostgreSQL also derives ordinary B-tree indexes from eligible static queries in
 `data-entry.yaml`. Dashboard cards, global next-action queries, and `pick_one`
 option queries qualify when they target exactly one entity type and all pushed
-filters are non-empty equality checks on declared, scalar string properties.
-rela creates one composite `rela_derived_query__…` index for the complete set
-of properties in each query shape. Equivalent queries share an index even when
+filters are non-empty equality checks on declared, scalar string-shaped
+properties (`string`, `enum`, `date`, `datetime`, or a custom type). rela
+creates one composite `rela_derived_query__…` index for the complete set of
+properties in each query shape. Equivalent queries share an index even when
 their literal values or filter order differ.
+
+Lists get the same treatment. A list with a `sort:` whose keys (and whose
+static `=` filters, if any) are string-shaped properties gets one
+`rela_derived_list__…` index over its type, its filters, its sort keys and the
+id — the exact scan a list page performs when the server pushes paging into the
+database. With it, page 40 of an 11,000-row list is an index range scan; without
+it the database sorts the whole type for every page. A list sorted on an
+integer, a list-valued property, or with a `!=` or range filter gets no index,
+because such a page is not pushed down (see "Observing query cost").
 
 Runtime and URL queries are not observed. Free text, relations, sorting, glob,
 not-equal, empty-value, list-valued, and non-string filters do not produce an
@@ -148,9 +158,13 @@ planner, what the dry-run predicts is what startup does.
 
 In the PostgreSQL build, search runs **in the database** — there is no bleve
 index. Matching is a case-insensitive substring match over a maintained
-`search_text` column, accelerated by a `pg_trgm` GIN index, and results are
-ranked by trigram similarity to the query. Text search matches the same fields
-as the default backend: entity ID, content, and string-valued properties.
+`search_text` column (the id, then string properties, then the body),
+accelerated by a `pg_trgm` GIN index. Results are ranked by trigram similarity
+between the query and the first kilobyte of that column — the identity and the
+title-like properties — so an entity *about* the term outranks one that merely
+mentions it in a long body, and ranking stays cheap on a common word. Text
+search matches the same fields as the default backend: entity ID, content, and
+string-valued properties.
 
 ## Observing query cost
 
@@ -178,6 +192,22 @@ that grows with the number of rows on the page is the signature of a per-row
 lookup and the first thing to fix; `db_ms` that stays high with a small count
 points at a statement missing an index. Each individual statement is also
 logged at Debug (`msg="pgstore: query"`) with its SQL, arguments and duration.
+
+What a well-behaved page costs today: a list page is one scoped count and one
+bounded read for the rows, one query for every edge touching the page, one
+content-free read of the neighbours those edges name, and the membership walk
+for the principal — a handful of statements whatever the page size. Collection
+rows are read as headers (no markdown body) throughout; see the API reference
+for `include_content`. The list page is pushed into the database — paging,
+ordering and equality filters in SQL — when the request carries no free-text
+search, no relation filter, and only `=`/`!=` filters and sort keys on
+string-shaped properties; anything else takes the whole-type path in Go, which
+still reads headers only.
+
+Ordering, on either path, compares property values byte-wise as text and puts
+a row without the property after every row that has one when ascending and
+before them when descending (SQL's default null placement). That asymmetry is
+what lets one index serve both directions.
 
 Below Debug nothing is emitted and no header is set. That is deliberate: a
 per-response query count can vary with rows the principal is not allowed to

@@ -127,6 +127,14 @@ func StaticIndexSpecs(cfg *dataentryconfig.Config, meta *metamodel.Metamodel) []
 		spec := store.DerivedObjectSpec{Kind: store.DerivedQueryIndex, Type: sq.EntityTypes[0], Properties: props}
 		byKey[spec.Type+"\x00"+strings.Join(props, "\x00")] = spec
 	}
+	for _, list := range cfg.Lists {
+		spec, ok := listIndexSpec(list, meta)
+		if !ok {
+			continue
+		}
+		byKey[string(spec.Kind)+"\x00"+spec.Type+"\x00"+strings.Join(spec.Properties, "\x00")+
+			"\x01"+strings.Join(spec.OrderBy, "\x00")] = spec
+	}
 	keys := make([]string, 0, len(byKey))
 	for key := range byKey {
 		keys = append(keys, key)
@@ -137,4 +145,46 @@ func StaticIndexSpecs(cfg *dataentryconfig.Config, meta *metamodel.Metamodel) []
 		out = append(out, byKey[key])
 	}
 	return out
+}
+
+// listIndexSpec derives the index a list's default page uses: its static
+// equality filters (any order) then its sort keys (in order), all
+// string-shaped on the list's type. A list with no sort has no spec — the
+// id-ordered page is served by the fixed (type, id) index — and a list whose
+// filters or sort keys the store cannot evaluate byte-for-byte (see
+// StringShaped) has none either, because such a page never pushes down.
+func listIndexSpec(list dataentryconfig.List, meta *metamodel.Metamodel) (store.DerivedObjectSpec, bool) {
+	if len(list.Sort) == 0 {
+		return store.DerivedObjectSpec{}, false
+	}
+	def, ok := meta.GetEntityDef(list.EntityType)
+	if !ok {
+		return store.DerivedObjectSpec{}, false
+	}
+	shaped := func(prop string) bool {
+		pd, ok := def.Properties[prop]
+		return ok && StringShaped(meta, pd)
+	}
+	var props []string
+	for _, f := range list.Filters {
+		if f.Operator != "=" && f.Operator != "==" {
+			continue // only equality is pushed; the page is not indexable on it
+		}
+		if !shaped(f.Property) {
+			return store.DerivedObjectSpec{}, false
+		}
+		props = append(props, f.Property)
+	}
+	slices.Sort(props)
+	props = slices.Compact(props)
+	order := make([]string, 0, len(list.Sort))
+	for _, s := range list.Sort {
+		if !shaped(s.Property) {
+			return store.DerivedObjectSpec{}, false
+		}
+		order = append(order, s.Property)
+	}
+	return store.DerivedObjectSpec{
+		Kind: store.DerivedListIndex, Type: list.EntityType, Properties: props, OrderBy: order,
+	}, true
 }

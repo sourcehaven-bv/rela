@@ -52,9 +52,65 @@ func RunAll(t *testing.T, f Factory) {
 	t.Run("Snooze", func(t *testing.T) { RunSnoozeTests(t, f) })
 	t.Run("Mute", func(t *testing.T) { RunMuteTests(t, f) })
 	t.Run("Shown", func(t *testing.T) { RunShownTests(t, f) })
+	t.Run("Batch", func(t *testing.T) { RunBatchTests(t, f) })
 	t.Run("Prune", func(t *testing.T) { RunPruneTests(t, f) })
 	t.Run("Isolation", func(t *testing.T) { RunIsolationTests(t, f) })
 	t.Run("Closed", func(t *testing.T) { RunClosedTests(t, f) })
+}
+
+// RunBatchTests pins SnoozedUntilMany / LastShownMany (TKT-1U8XYN): each
+// equals the per-key call for every key, absent keys are absent, an empty
+// batch is an empty map, and expiry is judged the same way.
+func RunBatchTests(t *testing.T, f Factory) {
+	t.Helper()
+	ctx := context.Background()
+
+	t.Run("empty batch", func(t *testing.T) {
+		s := f(t)
+		got, err := s.SnoozedUntilMany(ctx, nil, base)
+		require.NoError(t, err)
+		require.Empty(t, got)
+		shown, err := s.LastShownMany(ctx, nil)
+		require.NoError(t, err)
+		require.Empty(t, shown)
+	})
+
+	t.Run("matches the per-key calls", func(t *testing.T) {
+		s := f(t)
+		live, expired, shownK, never := key("alice", "stale", "T-1"), key("alice", "stale", "T-2"),
+			key("alice", "stale", "T-3"), key("bob", "stale", "T-1")
+		require.NoError(t, s.SetSnooze(ctx, live, base.Add(oneDay)))
+		require.NoError(t, s.SetSnooze(ctx, expired, base.Add(-oneHourSpan)))
+		require.NoError(t, s.MarkShown(ctx, shownK, base))
+		require.NoError(t, s.MarkShown(ctx, live, base.Add(-oneDay)))
+		keys := []userstate.Key{live, expired, shownK, never}
+
+		snoozes, err := s.SnoozedUntilMany(ctx, keys, base)
+		require.NoError(t, err)
+		for _, k := range keys {
+			until, ok, kerr := s.SnoozedUntil(ctx, k, base)
+			require.NoError(t, kerr)
+			got, present := snoozes[k]
+			require.Equal(t, ok, present, "snooze presence for %+v", k)
+			if ok {
+				require.True(t, until.Equal(got))
+			}
+		}
+		require.Len(t, snoozes, 1)
+
+		shown, err := s.LastShownMany(ctx, keys)
+		require.NoError(t, err)
+		for _, k := range keys {
+			at, ok, kerr := s.LastShown(ctx, k)
+			require.NoError(t, kerr)
+			got, present := shown[k]
+			require.Equal(t, ok, present, "shown presence for %+v", k)
+			if ok {
+				require.True(t, at.Equal(got))
+			}
+		}
+		require.Len(t, shown, 2)
+	})
 }
 
 // RunSnoozeTests pins snooze semantics, including the boundary condition and

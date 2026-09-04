@@ -139,3 +139,41 @@ func explainGraphQuery(t *testing.T, pool *pgxpool.Pool, q store.GraphQuery) str
 	require.NoError(t, rows.Err())
 	return strings.Join(lines, "\n")
 }
+
+// A pushed list page — filter on one property, order by another, LIMIT —
+// scans the derived list index instead of sorting the type (TKT-1U8XYN).
+func TestGraphQueryExplainPagedListUsesDerivedListIndex(t *testing.T) {
+	const n = 5000
+	pool := newScopedPool(t)
+	s, err := pgstore.New(pool)
+	require.NoError(t, err)
+	ctx := context.Background()
+	spec := []store.DerivedObjectSpec{{
+		Kind: store.DerivedListIndex, Type: "task", Properties: []string{"status"}, OrderBy: []string{"due"},
+	}}
+	_, err = s.Reconcile(ctx, spec, store.ReconcileOptions{})
+	require.NoError(t, err)
+
+	for i := range n {
+		e := entity.New(fmt.Sprintf("TASK-%06d", i), "task")
+		e.Properties["status"] = []string{"open", "done"}[i%2]
+		e.Properties["due"] = fmt.Sprintf("2026-%02d-%02d", 1+i%12, 1+i%28)
+		require.NoError(t, s.CreateEntity(ctx, e))
+	}
+	_, err = pool.Exec(ctx, "ANALYZE entities")
+	require.NoError(t, err)
+
+	plan := explainGraphQuery(t, pool, store.GraphQuery{
+		EntityType: "task",
+		Props:      []store.PropPredicate{{Property: "status", Op: store.PropEqual, Value: "open", Scalar: true}},
+		OrderBy:    []store.OrderSpec{{Property: "due"}},
+		Limit:      25,
+	})
+	t.Logf("plan:\n%s", plan)
+	if !strings.Contains(plan, "rela_derived_list__") {
+		t.Fatalf("derived list index is not used:\n%s", plan)
+	}
+	if strings.Contains(plan, "Sort") {
+		t.Fatalf("page still sorts instead of walking the index:\n%s", plan)
+	}
+}

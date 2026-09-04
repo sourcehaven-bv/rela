@@ -123,3 +123,33 @@ func TestMapUniqueViolation(t *testing.T) {
 		}
 	})
 }
+
+// A list index names the whole shape — filters, then sort keys in order — and
+// its DDL is the pushed page's scan: type, filters, sort keys under COLLATE
+// "C", id, partial on the default face (TKT-1U8XYN).
+func TestListIndexNameAndDDL(t *testing.T) {
+	a := store.DerivedObjectSpec{Kind: store.DerivedListIndex, Type: "task", Properties: []string{"status"}, OrderBy: []string{"due"}}
+	b := store.DerivedObjectSpec{Kind: store.DerivedListIndex, Type: "task", Properties: []string{"due"}, OrderBy: []string{"status"}}
+	c := store.DerivedObjectSpec{Kind: store.DerivedListIndex, Type: "task", OrderBy: []string{"due", "status"}}
+	d := store.DerivedObjectSpec{Kind: store.DerivedListIndex, Type: "task", OrderBy: []string{"status", "due"}}
+	names := map[string]bool{}
+	for _, spec := range []store.DerivedObjectSpec{a, b, c, d} {
+		n := listIndexName(spec)
+		if !strings.HasPrefix(n, derivedListPrefix) || len(n) > 63 {
+			t.Errorf("name %q: bad prefix or length", n)
+		}
+		if names[n] {
+			t.Errorf("name %q collides across shapes", n)
+		}
+		names[n] = true
+	}
+	again := store.DerivedObjectSpec{Kind: store.DerivedListIndex, Type: "task", Properties: []string{"status"}, OrderBy: []string{"due"}}
+	if listIndexName(a) != listIndexName(again) {
+		t.Error("name is not deterministic across equal specs")
+	}
+	ddl := createListIndexDDL("ix", a)
+	want := `CREATE INDEX IF NOT EXISTS "ix" ON entities (type, (properties->>'status'), ((properties->>'due') COLLATE "C"), id) WHERE face = ''`
+	if ddl != want {
+		t.Errorf("DDL = %s\nwant %s", ddl, want)
+	}
+}

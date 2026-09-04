@@ -155,6 +155,87 @@ func (s *UserStateStore) MutedSources(ctx context.Context, user string) ([]strin
 	return out, nil
 }
 
+// SnoozedUntilMany reads every live snooze for the keys in one statement:
+// the keys are shipped as parallel arrays and joined by ordinal, which keeps
+// (user, source, entity, variant) tuples intact without a VALUES list of
+// variable width.
+func (s *UserStateStore) SnoozedUntilMany(
+	ctx context.Context, keys []userstate.Key, now time.Time,
+) (map[userstate.Key]time.Time, error) {
+	if s.closed {
+		return nil, userstate.ErrClosed
+	}
+	out := make(map[userstate.Key]time.Time, len(keys))
+	if len(keys) == 0 {
+		return out, nil
+	}
+	users, sources, entities, variants := splitKeys(keys)
+	const q = `
+		SELECT s.user_id, s.source, s.entity_id, s.variant, s.until
+		FROM next_action_snoozes s
+		JOIN unnest($1::text[], $2::text[], $3::text[], $4::text[]) AS k(user_id, source, entity_id, variant)
+		  ON s.user_id = k.user_id AND s.source = k.source AND s.entity_id = k.entity_id AND s.variant = k.variant
+		WHERE s.until > $5`
+	rows, err := s.db.Query(ctx, q, users, sources, entities, variants, now)
+	if err != nil {
+		return nil, fmt.Errorf("pgstore: snooze batch lookup: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var k userstate.Key
+		var until time.Time
+		if err := rows.Scan(&k.User, &k.Source, &k.EntityID, &k.Variant, &until); err != nil {
+			return nil, err
+		}
+		out[k] = until
+	}
+	return out, rows.Err()
+}
+
+// LastShownMany is LastShown for a batch, in one statement (see
+// SnoozedUntilMany for the key transport).
+func (s *UserStateStore) LastShownMany(
+	ctx context.Context, keys []userstate.Key,
+) (map[userstate.Key]time.Time, error) {
+	if s.closed {
+		return nil, userstate.ErrClosed
+	}
+	out := make(map[userstate.Key]time.Time, len(keys))
+	if len(keys) == 0 {
+		return out, nil
+	}
+	users, sources, entities, variants := splitKeys(keys)
+	const q = `
+		SELECT s.user_id, s.source, s.entity_id, s.variant, s.shown_at
+		FROM next_action_shown s
+		JOIN unnest($1::text[], $2::text[], $3::text[], $4::text[]) AS k(user_id, source, entity_id, variant)
+		  ON s.user_id = k.user_id AND s.source = k.source AND s.entity_id = k.entity_id AND s.variant = k.variant`
+	rows, err := s.db.Query(ctx, q, users, sources, entities, variants)
+	if err != nil {
+		return nil, fmt.Errorf("pgstore: last-shown batch lookup: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var k userstate.Key
+		var at time.Time
+		if err := rows.Scan(&k.User, &k.Source, &k.EntityID, &k.Variant, &at); err != nil {
+			return nil, err
+		}
+		out[k] = at
+	}
+	return out, rows.Err()
+}
+
+func splitKeys(keys []userstate.Key) (users, sources, entities, variants []string) {
+	for _, k := range keys {
+		users = append(users, k.User)
+		sources = append(sources, k.Source)
+		entities = append(entities, k.EntityID)
+		variants = append(variants, k.Variant)
+	}
+	return users, sources, entities, variants
+}
+
 func (s *UserStateStore) LastShown(ctx context.Context, key userstate.Key) (time.Time, bool, error) {
 	if s.closed {
 		return time.Time{}, false, userstate.ErrClosed

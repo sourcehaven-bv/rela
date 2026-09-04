@@ -63,6 +63,8 @@ const derivedUniquePrefix = "rela_derived_uniq__"
 // derivedQueryPrefix is owned exclusively by the static-query index rule.
 const derivedQueryPrefix = "rela_derived_query__"
 
+const derivedListPrefix = "rela_derived_list__"
+
 // uniqueIndexName is the deterministic index name for a (type, property) unique
 // rule. Deterministic across processes and versions (no per-run entropy) so the
 // drop side of reconcile is safe: an index whose name is not recomputed from the
@@ -73,6 +75,43 @@ const derivedQueryPrefix = "rela_derived_query__"
 func uniqueIndexName(entityType, property string) string {
 	sum := sha256.Sum256([]byte(entityType + "\x00" + property))
 	return derivedUniquePrefix + hex.EncodeToString(sum[:16])
+}
+
+// listIndexName hashes the whole list shape: filters, a separator that no
+// property name can contain, then the ordered sort keys — so the same keys
+// in a different role or order name a different index.
+func listIndexName(spec store.DerivedObjectSpec) string {
+	h := sha256.New()
+	_, _ = h.Write([]byte(spec.Type))
+	for _, property := range spec.Properties {
+		_, _ = h.Write([]byte{'\x00'})
+		_, _ = h.Write([]byte(property))
+	}
+	_, _ = h.Write([]byte{'\x01'})
+	for _, property := range spec.OrderBy {
+		_, _ = h.Write([]byte{'\x00'})
+		_, _ = h.Write([]byte(property))
+	}
+	return derivedListPrefix + hex.EncodeToString(h.Sum(nil)[:16])
+}
+
+// createListIndexDDL is the shape a pushed list page (listpushdown.go)
+// scans: type first (a parameter in the query, so it must be a column, not
+// a partial-index guard), the equality-filtered properties, the sort keys
+// under the collation the page orders by, and id as the tiebreak; partial on
+// the default face, which every list page filters on literally.
+func createListIndexDDL(name string, spec store.DerivedObjectSpec) string {
+	columns := make([]string, 0, 2+len(spec.Properties)+len(spec.OrderBy))
+	columns = append(columns, "type")
+	for _, property := range spec.Properties {
+		columns = append(columns, "(properties->>"+quoteLiteral(property)+")")
+	}
+	for _, property := range spec.OrderBy {
+		columns = append(columns, "((properties->>"+quoteLiteral(property)+`) COLLATE "C")`)
+	}
+	columns = append(columns, "id")
+	return "CREATE INDEX IF NOT EXISTS " + quoteIdent(name) + " ON entities (" +
+		strings.Join(columns, ", ") + ") WHERE face = ''"
 }
 
 func queryIndexName(entityType string, properties []string) string {
@@ -211,7 +250,82 @@ func (s *Store) Reconcile(
 	if err != nil {
 		return nil, err
 	}
-	return append(outcomes, queryOutcomes...), nil
+	outcomes = append(outcomes, queryOutcomes...)
+	listOutcomes, err := reconcileListIndexes(ctx, conn, desired, opts)
+	if err != nil {
+		return nil, err
+	}
+	return append(outcomes, listOutcomes...), nil
+}
+
+// reconcileListIndexes is reconcileQueryIndexes for [store.DerivedListIndex]
+// specs, under its own name prefix so the two families never drop each
+// other's indexes.
+func reconcileListIndexes(
+	ctx context.Context, conn *pgxpool.Conn, desired []store.DerivedObjectSpec, opts store.ReconcileOptions,
+) ([]store.DerivedObjectOutcome, error) {
+	desiredByName := make(map[string]store.DerivedObjectSpec)
+	var outcomes []store.DerivedObjectOutcome
+	for _, spec := range desired {
+		if spec.Kind != store.DerivedListIndex {
+			continue
+		}
+		if !safeDDLName(spec.Type) || len(spec.OrderBy) == 0 {
+			outcomes = append(outcomes, unenforced(spec, "invalid list index shape"))
+			continue
+		}
+		valid := true
+		for _, property := range append(append([]string(nil), spec.Properties...), spec.OrderBy...) {
+			if !safeDDLName(property) {
+				valid = false
+				break
+			}
+		}
+		if !valid {
+			outcomes = append(outcomes, unenforced(spec, "unsafe property name for DDL"))
+			continue
+		}
+		desiredByName[listIndexName(spec)] = spec
+	}
+
+	actual, err := listOwnedIndexes(ctx, conn, derivedListPrefix)
+	if err != nil {
+		return nil, fmt.Errorf("pgstore: reconcile: list list-indexes: %w", err)
+	}
+	for name := range actual {
+		if _, ok := desiredByName[name]; ok {
+			continue
+		}
+		out := store.DerivedObjectOutcome{
+			Spec: store.DerivedObjectSpec{Kind: store.DerivedListIndex}, State: store.DerivedDropped,
+			Reason: "index " + name + " no longer declared", WouldChange: opts.DryRun,
+		}
+		if !opts.DryRun {
+			if _, dropErr := conn.Exec(ctx, `DROP INDEX IF EXISTS `+quoteIdent(name)); dropErr != nil {
+				return nil, fmt.Errorf("pgstore: reconcile: drop %s: %w", name, dropErr)
+			}
+		}
+		outcomes = append(outcomes, out)
+	}
+	for _, name := range sortedNames(desiredByName) {
+		spec := desiredByName[name]
+		if _, ok := actual[name]; ok {
+			outcomes = append(outcomes, store.DerivedObjectOutcome{Spec: spec, State: store.DerivedEnforced})
+			continue
+		}
+		if opts.DryRun {
+			outcomes = append(outcomes, store.DerivedObjectOutcome{
+				Spec: spec, State: store.DerivedCreated, WouldChange: true,
+			})
+			continue
+		}
+		if _, createErr := conn.Exec(ctx, createListIndexDDL(name, spec)); createErr != nil {
+			outcomes = append(outcomes, unenforced(spec, "index could not be created: "+createErr.Error()))
+			continue
+		}
+		outcomes = append(outcomes, store.DerivedObjectOutcome{Spec: spec, State: store.DerivedCreated})
+	}
+	return outcomes, nil
 }
 
 func reconcileQueryIndexes(
