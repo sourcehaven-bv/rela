@@ -124,7 +124,7 @@ func (r *RootedFS) resolve(key string) (ValidatedPath, error) {
 	// not a Windows reserved name — so for every key they accept it is true by
 	// construction. It is kept as an independent second opinion that does not
 	// share a bug with the hand-written rules, and it is the check a static
-	// analyser recognises as a barrier on the key itself.
+	// analyzer recognizes as a barrier on the key itself.
 	if !filepath.IsLocal(key) {
 		return ValidatedPath{}, errors.New("storage: key must be a local relative path")
 	}
