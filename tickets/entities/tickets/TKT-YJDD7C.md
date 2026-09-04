@@ -7,7 +7,7 @@ priority: low
 effort: m
 tags:
     - tech-debt
-status: ready
+status: backlog
 ---
 
 Sub-ticket of [[TKT-N0IKN9]] — `cli.CLI` (47 exported fields, directive at

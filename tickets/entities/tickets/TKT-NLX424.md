@@ -7,7 +7,7 @@ priority: medium
 effort: m
 tags:
     - tech-debt
-status: ready
+status: backlog
 ---
 
 Sub-ticket of [[TKT-R68TV8]] (the `dataentry.App` arc under [[TKT-N0IKN9]]).

@@ -8,7 +8,7 @@ effort: xs
 tags:
     - tech-debt
     - good-first
-status: ready
+status: backlog
 ---
 
 Sub-ticket of [[TKT-N0IKN9]]. One small PR; everything below is verified on

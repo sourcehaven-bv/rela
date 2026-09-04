@@ -7,7 +7,7 @@ priority: medium
 effort: l
 tags:
     - tech-debt
-status: ready
+status: backlog
 ---
 
 Sub-ticket of [[TKT-N0IKN9]], `fsstore.FSStore` arc. The highest-value
