@@ -353,7 +353,7 @@ SPA-not-built, Capturer-not-wired — each a BuildError.
 - [x] `docs/rela-docs.md` (source `GUIDE-rela-docs.md`) — add the `screenshot{}`
   section: args, anchoring, `as=` roles, the Chrome + built-SPA prerequisites,
   fail-loud behavior. Regenerate via `just docs`.
-- [x] CLAUDE.md — a short pointer to `internal/docscapture` (new browser-dep
+- [x] CLAUDE.md — a short face to `internal/docscapture` (new browser-dep
   subsystem, kept off core `internal/docs`).
 - [x] The example manual section doubles as living docs.
 - [x] ~~docs/data-entry.md~~ (the `data-field` hook is an internal SPA test-hook;

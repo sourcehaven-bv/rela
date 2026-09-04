@@ -20,7 +20,7 @@ import (
 // The assertion goes through lua.WriteDeps — the actual field the value
 // lands in — rather than checking the return value directly. That detail IS
 // the test: `NewElevationAuditor(nil) != nil` is false even for a
-// concrete-pointer signature (a nil *T compares equal to nil), so a direct
+// concrete-face signature (a nil *T compares equal to nil), so a direct
 // check silently passes against the very mutation it should catch. Boxing
 // into the interface first is what makes the typed nil observable, and it is
 // what production does.

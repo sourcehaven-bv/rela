@@ -89,7 +89,10 @@ func resolveRenameEntity(svc *writeServices, oldType, newType, renamePlural stri
 		newPlural = newType + "s"
 	}
 	paths := svc.Paths
-	oldTemplatePath := paths.EntityTemplatePath(resolvedOld)
+	oldTemplatePath, err := paths.EntityTemplatePath(resolvedOld)
+	if err != nil {
+		return nil, err
+	}
 	_, statErr := svc.FS.Stat(oldTemplatePath)
 	entityCount, _ := svc.Store.CountEntities(context.Background(), store.EntityQuery{Type: resolvedOld})
 

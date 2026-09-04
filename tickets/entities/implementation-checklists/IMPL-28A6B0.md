@@ -35,7 +35,7 @@ status: done
 - AC3: `TestRouterWalk_AllAPIRoutesReachHandlers` covers 33 probes over every registered route. **Caught two more fixture gaps:** newHandlerTestApp bypassed NewApp and left fieldResolver nil (panic via _search serialization) and OpenAPIGen nil (panic via _openapi.json). Both fixed in the fixture with comments.
 - AC3 negative: manually removed the `_sidebar` registration → test failed with "answered by the mux's stdlib 404 — route is not registered"; restored.
 - AC4: 18 `TestAppRouter_*` functions renamed to `TestV1Affordance_*` (defs + doc comments); zero references remain.
-- AC5: `doRequest` helper added to test_helpers_test.go with the convention comment; registration sites in router.go / api_v1.go carry pointer comments.
+- AC5: `doRequest` helper added to test_helpers_test.go with the convention comment; registration sites in router.go / api_v1.go carry face comments.
 - `go test -race ./internal/dataentry/ ./internal/mcp/` green; `golangci-lint run` on both packages: 0 issues. One collateral fix: my fixture change initially set `UserPalette: &PaletteConfig{}`, which broke `TestThemeImport_RoundTrip`'s nil-as-not-saved assertion — reverted that field with a comment explaining why it stays nil.
 
 ## Quality

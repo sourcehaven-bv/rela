@@ -7,6 +7,8 @@ import { entityDisplayTitleWithId } from '@/utils/entityDisplay'
 import type { FormFieldOrRelation, Entity, RelationEntry, RelationAffordance } from '@/types'
 import InlineCreateFormModal from './InlineCreateFormModal.vue'
 import { useInlineCreate } from '@/composables/useInlineCreate'
+import WorldBadge from '@/components/entity/WorldBadge.vue'
+import { useWorld } from '@/composables/useWorld'
 
 // Per-edge state emitted on the incoming-changed channel after
 // TKT-GFQK unified the save path. DynamicForm wraps this into a
@@ -49,6 +51,12 @@ const emit = defineEmits<{
 
 const schemaStore = useSchemaStore()
 const entitiesStore = useEntitiesStore()
+
+// The picker offers entities to LINK TO, so under a world it must offer that
+// world's faces (BUG-3). This is the prerequisite for the face badge below:
+// labelling rows that the query chose without regard to worlds would put a
+// truthful-looking badge on a row picked by the wrong rule.
+const { worldParam } = useWorld()
 
 // State
 const loading = ref(false)
@@ -149,7 +157,10 @@ async function loadCandidates() {
   try {
     const allCandidates: Entity[] = []
     for (const targetType of targetTypes.value) {
-      const result = await entitiesStore.fetchList(targetType, { per_page: 100 })
+      const result = await entitiesStore.fetchList(targetType, {
+        per_page: 100,
+        ...(worldParam.value ? { world: worldParam.value } : {}),
+      })
       allCandidates.push(...result.data)
     }
     candidates.value = allCandidates
@@ -275,6 +286,28 @@ function removeEntity(entityId: string) {
   }
 }
 
+/**
+ * Whether a row's face is worth naming.
+ *
+ * The badge exists to flag a SURPRISE, so it renders only when the row is not
+ * the world's prime — `via: 'chain'` with `chain_position > 0` (a stand-in from
+ * later in the chain) or a `fallback-default`. In the default world every row
+ * is the default face, so a badge on every row is noise that trains the reader
+ * to ignore it.
+ *
+ * WorldBadge now enforces this rule itself, so it is the single source of both
+ * the vocabulary and the decision. The check is repeated here only to skip
+ * MOUNTING the component for an ordinary row — a pure saving in a list that
+ * can render hundreds of candidates, not a second opinion. If the two ever
+ * disagree, WorldBadge wins: it renders nothing.
+ */
+function showsFaceBadge(entity: Entity): boolean {
+  const w = entity._world
+  if (!w) return false
+  if (w.via === 'fallback-default') return true
+  return w.via === 'chain' && (w.chain_position ?? 0) > 0
+}
+
 function formatEntityLabel(entity: Entity): string {
   // _title is the metamodel-aware display title from the API, falling back
   // to id when the entity type has no display property set.
@@ -355,6 +388,11 @@ onBeforeUnmount(() => {
       <div v-for="entity in selectedEntities" :key="entity.id" class="selected-entity">
         <span class="entity-type">{{ entity.type }}</span>
         <span class="entity-label">{{ formatEntityLabel(entity) }}</span>
+        <!--
+          TRAILING, after the title: the type chip leads and the face badge
+          follows, matching how the rest of the app orders the two.
+        -->
+        <WorldBadge v-if="showsFaceBadge(entity)" :world="entity._world" />
         <button v-if="canRemove" type="button" class="remove-btn" @click="removeEntity(entity.id)">
           &times;
         </button>
@@ -390,6 +428,7 @@ onBeforeUnmount(() => {
         >
           <span class="entity-type">{{ entity.type }}</span>
           <span class="entity-label">{{ formatEntityLabel(entity) }}</span>
+          <WorldBadge v-if="showsFaceBadge(entity)" :world="entity._world" />
         </div>
         <div v-if="filteredCandidates.length > 10" class="dropdown-more">
           +{{ filteredCandidates.length - 10 }} more...

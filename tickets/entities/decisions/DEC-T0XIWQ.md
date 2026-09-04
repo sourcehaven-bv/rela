@@ -3,7 +3,7 @@ id: DEC-T0XIWQ
 type: decision
 title: Redacted properties carry an explicit wire signal; the SPA never infers hiding from absence
 context: 'The v1 entity wire made an ACL-redacted property byte-identical to a never-set one: stripHiddenProperties deletes the key (affordances.go:913) and hidden fields are also absent from the sparse _fields map (affordances.go:741,752) — the documented ''doubly-invisible'' contract. The SPA''s edit-mode form filter therefore had to INFER hiding from absence (''render only if the field appears in _fields OR properties'', api-reference.md:439-443). That inference is unsound because absence has two causes, and it resolved them toward hiding — making any unset property permanently unreachable in the edit form (BUG-MLT9DE). The doubly-invisible contract is right for read-out surfaces, where hidden and unset SHOULD look alike; a write form has the opposite need — it must know which fields it may offer.'
-consequences: 'Adds `_redacted: []string` to the per-entity wire shape (present alongside _fields, same closed-world pointer semantics), naming properties withheld by field-level ACL. The SPA''s gate sites — unified into ONE predicate, isPropertyRedacted, instead of two hand-synced copies — stop inferring and render a configured field unless it is positively named redacted. It narrows the read-side contract: field NAMES (already public via the metamodel endpoint) become explicit, while VALUES stay withheld; per the project''s field-level ACL rule this is not a new disclosure, since visible: redaction never claimed to conceal which properties exist. Row-level hiding is untouched — a hidden ENTITY remains a genuine secret. api-reference.md''s hidden-fields section was rewritten: it previously documented the unsound inference as the contract.'
+consequences: 'Adds `_redacted: []string` to the per-entity wire shape (present alongside _fields, same closed-world present/absent semantics), naming properties withheld by field-level ACL. The SPA''s gate sites — unified into ONE predicate, isPropertyRedacted, instead of two hand-synced copies — stop inferring and render a configured field unless it is positively named redacted. It narrows the read-side contract: field NAMES (already public via the metamodel endpoint) become explicit, while VALUES stay withheld; per the project''s field-level ACL rule this is not a new disclosure, since visible: redaction never claimed to conceal which properties exist. Row-level hiding is untouched — a hidden ENTITY remains a genuine secret. api-reference.md''s hidden-fields section was rewritten: it previously documented the unsound inference as the contract.'
 date: "2026-08-06"
 status: accepted
 ---
@@ -19,7 +19,7 @@ guessing, and guessed wrong in the common case.
 Make the server say what it means.
 
 1. **Add `_redacted: []string`** to `v1.Entity` — the property names withheld
-by field-level ACL on this response. Same closed-world pointer semantics as
+by field-level ACL on this response. Same closed-world present/absent semantics as
 `_fields` / `_relations`: present (possibly empty) on per-entity responses,
 absent on list rows. It is the field-level sibling of the existing
 `Inaccessible` field, which already expresses exactly this idea ("exists but

@@ -24,7 +24,7 @@ import (
 // Projecting to render-relevant fields — rather than hashing the whole
 // metamodel — is a dedup-correctness win: hashing the full schema would churn
 // the hash on every automation/validation edit, forcing a new schema_versions
-// row (and a new pointer on every subsequent version) even though nothing
+// row (and a new face on every subsequent version) even though nothing
 // render-relevant changed.
 type RenderProjection struct {
 	// Entities maps each entity type name to its render projection. All types

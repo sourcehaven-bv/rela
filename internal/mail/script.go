@@ -357,6 +357,12 @@ type LuaSender struct {
 	// config as `from` and for the same reason: a script must not choose who
 	// may receive mail any more than it chooses who it comes from.
 	policy lua.RecipientPolicy
+
+	// baseURL is the deployment's public app URL, used by mail.render to turn
+	// root-relative links into absolute ones. Operator-configured for the same
+	// reason as `from`: a script choosing it could point every link in a
+	// notification at a host of its choosing.
+	baseURL string
 }
 
 // RecipientPolicy satisfies lua.RecipientPolicyCarrier, so the binding can
@@ -367,6 +373,14 @@ type LuaSender struct {
 // wiring step would be a second thing to forget, and forgetting it would fail
 // OPEN if the default were anything but deny.
 func (l *LuaSender) RecipientPolicy() lua.RecipientPolicy { return l.policy }
+
+// MailBaseURL satisfies lua.BaseURLCarrier, so mail.render can resolve
+// root-relative links without internal/lua importing this package.
+//
+// Carried by the sender for the same reason RecipientPolicy is: the sender is
+// already the thing built from mail.yaml. An empty value is a valid answer —
+// mailrender drops relative links rather than emitting a broken href.
+func (l *LuaSender) MailBaseURL() string { return l.baseURL }
 
 // NewLuaSender adapts sender for use by the mail.send Lua binding.
 //
@@ -389,6 +403,7 @@ func NewLuaSender(sender Sender, cfg *Config) (*LuaSender, error) {
 	}
 	return &LuaSender{
 		sender: sender, from: cfg.From, fromName: cfg.FromName, policy: policy,
+		baseURL: cfg.BaseURL,
 	}, nil
 }
 

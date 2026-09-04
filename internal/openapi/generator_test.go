@@ -164,7 +164,7 @@ func TestGenerator_Caching(t *testing.T) {
 	// Second call should return cached
 	spec2 := gen.Generate()
 
-	// Should be same pointer (cached)
+	// Should be same face (cached)
 	if spec1 != spec2 {
 		t.Error("Expected cached spec to be returned")
 	}

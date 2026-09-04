@@ -1,0 +1,48 @@
+/* App-specific layout, using the rela tokens for colors so it matches the
+   host theme in both light and dark. */
+html,
+body {
+  height: 100%;
+}
+body {
+  font-family: inherit;
+  margin: 0;
+  padding: 1.5rem;
+  color: var(--text-color);
+  background: var(--bg-color);
+  box-sizing: border-box;
+}
+h1 {
+  font-size: 1.25rem;
+  margin: 0 0 1rem;
+}
+table {
+  border-collapse: collapse;
+  min-width: 16rem;
+}
+th,
+td {
+  text-align: left;
+  padding: 0.35rem 0.75rem;
+  border-bottom: 1px solid var(--border-color);
+}
+td.count {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.muted {
+  color: var(--muted-text);
+}
+.err {
+  color: var(--error-color);
+}
+/* Layout for the table and the refresh button. These were style="" attributes;
+   the app CSP has no 'unsafe-inline', which covers style attributes too
+   (they would need 'unsafe-hashes'), so they live here as classes instead. */
+.counts-table {
+  padding: 0.5rem 1rem;
+}
+
+.refresh-button {
+  margin-top: 1rem;
+}

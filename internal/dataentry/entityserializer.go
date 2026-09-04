@@ -52,7 +52,7 @@ func (s entitySerializer) toV1(
 		Title:      meta.DisplayTitle(e.ID, e.Type, e.Properties),
 		Properties: make(map[string]any),
 		Content:    e.Content,
-		Self:       fmt.Sprintf("/api/v1/%s/%s", plural, e.ID),
+		Self:       selfHref(plural, e, meta),
 		Actions:    s.affordances.computeActions(ctx, e),
 	}
 
@@ -106,14 +106,39 @@ func (s entitySerializer) toV1(
 // v1.Entity should use: toV1 + strip hidden properties + attach the affordance
 // maps. Use forWireRelated for entities that appear as list rows or under
 // `included` (no affordance maps, but still strip).
+//
+// The edges passed here are assumed ALREADY GATED — it forwards a nil
+// neighbor filter. A caller holding edges whose heads have not been through
+// the row gate must use [entitySerializer.forWireScoped] instead.
 func (s entitySerializer) forWire(
 	ctx context.Context, e *entityPkg.Entity, outgoing []*entityPkg.Relation,
 	meta *metamodel.Metamodel, plural string,
 ) v1.Entity {
+	return s.forWireScoped(ctx, e, outgoing, nil, meta, plural)
+}
+
+// forWireScoped is forWire with an explicit neighbor-visibility filter.
+//
+// It exists for the world path (TKT-WRLDAPI item 4), where the edges reaching
+// the serializer were resolved by the world-scoped seam and their heads gated
+// as a batch. Passing that set through means the `relations` map can only
+// name a neighbor that this world resolves AND the principal may read —
+// the same guarantee forWireRelated already gives list rows via
+// visibleNeighbors, which the per-entity path previously had no way to
+// express.
+//
+// visibleNeighbors nil disables the filter, which is what forWire passes: the
+// default-world path's edges come from a reader whose heads the caller has
+// already accounted for, and threading an empty (non-nil) map there would
+// silently blank every relation.
+func (s entitySerializer) forWireScoped(
+	ctx context.Context, e *entityPkg.Entity, outgoing []*entityPkg.Relation,
+	visibleNeighbors map[string]bool, meta *metamodel.Metamodel, plural string,
+) v1.Entity {
 	// Per-entity responses carry outgoing edges only; incoming edges reach the
 	// SPA via the dedicated /relations endpoint, not the top-level relations
 	// map. Incoming list columns are served by forWireRelated (list rows).
-	result := s.toV1(ctx, e, outgoing, nil, nil, meta, plural)
+	result := s.toV1(ctx, e, outgoing, nil, visibleNeighbors, meta, plural)
 	s.affordances.stripHiddenProperties(ctx, e, &result)
 	s.affordances.attachEntityAffordances(ctx, e, &result)
 	return result
@@ -161,4 +186,33 @@ func (s entitySerializer) forWireRelated(
 	result := s.toV1(ctx, e, outgoing, incoming, visibleNeighbors, meta, plural)
 	s.affordances.stripHiddenProperties(ctx, e, &result)
 	return result
+}
+
+// selfHref addresses the ROW this response describes, face included.
+//
+// `_self` used to be built from e.ID alone, which made it the bare id even
+// when the response was a non-bare face — read `GUIDE-1@nl`, get back a
+// pointer to `GUIDE-1`. A client doing the ordinary GET-`_self` / PATCH-`_self`
+// loop then edited a DIFFERENT content state than the one it was displaying,
+// silently.
+//
+// That is the same wrong-face write the `?world=` write refusal
+// (422 world_read_only) exists to prevent, so handing it back in the response
+// body defeated the guard rather than complementing it.
+//
+// The bare face keeps the bare href: it IS the bare id, and appending its
+// declared name would break every existing client for no gain. A type with no
+// faces is unaffected.
+func selfHref(plural string, e *entityPkg.Entity, meta *metamodel.Metamodel) string {
+	if e.Face.IsDefault() {
+		return fmt.Sprintf("/api/v1/%s/%s", plural, e.ID)
+	}
+	declared := metamodel.DeclaredFace(meta, e.Type, e.Face.String())
+	if declared == "" {
+		// An undeclared stored face: address it by its stored coordinate
+		// rather than dropping it, so the pointer still round-trips to the row
+		// the reader is looking at.
+		declared = e.Face.String()
+	}
+	return fmt.Sprintf("/api/v1/%s/%s@%s", plural, e.ID, declared)
 }

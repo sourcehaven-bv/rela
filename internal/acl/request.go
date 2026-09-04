@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
@@ -150,6 +152,22 @@ func (r *Request) PermitsRead(ctx context.Context, entityType, entityID string) 
 	return m[entityID], nil
 }
 
+// PermitsReadFace is [Request.PermitsRead] for ONE stored face of the entity:
+// the row verdict AND the face allowlist a `type@face` grant compiles to
+// ([ReadQueryResult.Faces]). PermitsRead alone is face-blind — it answers for
+// the id, and a caller holding a specific face in hand must not treat that as
+// permission to show it. A nil Faces set permits every face.
+func (r *Request) PermitsReadFace(
+	ctx context.Context, entityType, entityID string, face entity.Face,
+) (bool, error) {
+	ok, err := r.PermitsRead(ctx, entityType, entityID)
+	if err != nil || !ok {
+		return false, err
+	}
+	faces := r.readQuery(ctx, entityType).Faces
+	return len(faces) == 0 || slices.Contains(faces, face), nil
+}
+
 // PermitsReadMany returns a permissions map keyed by every input id
 // (true = principal may read, false = denied) for the given type. Used
 // by the dataentry include filter and any future batched gate. All
@@ -278,4 +296,97 @@ func isUnstamped(p principal.Principal) bool {
 func isBlankOrUnknown(s string) bool {
 	t := strings.TrimSpace(s)
 	return t == "" || t == "unknown"
+}
+
+// PermitsWorld reports whether this Request's principal may read the named
+// world (design doc §8.1, §4.4). It is the gate a caller must pass BEFORE
+// constructing a world-resolved reader — the per-entity visibility gate
+// still runs after, on whatever the resolved world contains.
+//
+// Semantics:
+//
+//   - The DEFAULT world (name "" or "default") is permitted by any ordinary
+//     read grant, so an existing acl.yaml keeps meaning what it meant.
+//   - Every other world must be named by a `read: [world:X]` grant.
+//   - The client ceiling is applied twice, deliberately: through roleFor
+//     (which clamps the role's world list) and then through permitsWorld
+//     (which is the only place a denial of the DEFAULT world can be
+//     expressed). See [compiledCeiling.permitsWorld].
+//
+// # Why this returns an error
+//
+// A world grant is a READ capability, and the read paths in this package
+// carry errors on purpose ([Request.PermitsRead], [Request.PermitsReadMany],
+// visibility's listPushdown). Resolving the principal's roles walks the
+// graph, and a store failure there yields a PARTIAL role set — which would
+// silently answer "no" for a principal who genuinely holds the grant.
+//
+// That matters because a denial must render as an EMPTY result rather than
+// a 403 (a 403 would be an existence oracle for the world's contents). So
+// without an error channel a store outage becomes a silently empty page
+// with no operator signal. Callers map: false+nil → empty, err → 500
+// (RR-4TFZNL).
+//
+// LIMITATION, stated because the signature promises more than it currently
+// delivers: the error is reserved, and today always nil. The role walk it
+// depends on (Request.walkMembers) discards its own backing error and
+// returns a PARTIAL member list — its "abort the walk loud" comment
+// describes an intent the code does not implement. Threading that error out
+// touches computeGlobals and every Globals caller, which is a separate
+// change. The signature is here now so the ~dozen call sites PR-C adds do
+// not all have to change when it lands, and so a caller cannot form the
+// habit of treating a false as necessarily meaning "denied".
+func (r *Request) PermitsWorld(ctx context.Context, world string) (bool, error) {
+	if !r.ceiling.permitsWorld(world) {
+		return false, nil
+	}
+	globals := r.Globals(ctx)
+	for _, a := range globals.Attributions {
+		// roleFor, never policy.Roles[...] — it is THE clamp point, and a
+		// direct lookup here would bypass the client ceiling entirely
+		// (pinned by TestNoDirectRoleLookupInEvaluationPaths).
+		role, ok := r.roleFor(a.Role)
+		if !ok {
+			continue
+		}
+		if roleGrantsWorldRead(role, world) {
+			return true, nil
+		}
+	}
+	// A world is a GLOBAL lens, so a world grant on a relation-conferred role
+	// is honored globally: holding the role through any relation to any
+	// entity opens the world, and the per-entity and per-face gates then
+	// decide what it shows. That is the honest reading of "may this reader
+	// see drafts at all" — the world is a convenience filter, not a
+	// per-entity right — and it is what the load-time refusal for an ungated
+	// conferring relation defends against (membershiprefusal.go).
+	return r.permitsWorldThroughRelations(ctx, globals.Members, world)
+}
+
+// permitsWorldThroughRelations reports whether any role conferred by a
+// relation the principal (or a group it belongs to) holds ANYWHERE grants
+// world. The graph lookup errors propagate: a partial answer here would
+// silently deny a principal who holds the grant.
+func (r *Request) permitsWorldThroughRelations(ctx context.Context, members []string, world string) (bool, error) {
+	rels := make([]string, 0, len(r.d.policy.RoleRelations))
+	for rel := range r.d.policy.RoleRelations {
+		rels = append(rels, rel)
+	}
+	slices.Sort(rels)
+	for _, rel := range rels {
+		role, ok := r.roleFor(r.d.policy.RoleRelations[rel].Confers)
+		if !ok || !roleGrantsWorldRead(role, world) {
+			continue
+		}
+		for _, m := range members {
+			targets, err := r.d.graph.OutgoingRelations(ctx, m, rel)
+			if err != nil {
+				return false, err
+			}
+			if len(targets) > 0 {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }

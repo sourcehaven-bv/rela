@@ -60,6 +60,14 @@ func visibleSearchFactory(t *testing.T) (store.Store, search.Searcher, search.Vi
 // post-commit-only event delivery — which the spike measured SQLite provides.
 func TestConformance(t *testing.T) {
 	storetest.RunAll(t, factory, searchFactory, visibleSearchFactory, storetest.Capabilities{
+		Observers: func(t *testing.T, obs ...store.EntityObserver) store.Store {
+			t.Helper()
+			opts := make([]sqlitestore.Option, 0, len(obs))
+			for _, o := range obs {
+				opts = append(opts, sqlitestore.WithObserver(o))
+			}
+			return open(t, opts...)
+		},
 		Attachments: true,
 		TxRollback:  true,
 	})

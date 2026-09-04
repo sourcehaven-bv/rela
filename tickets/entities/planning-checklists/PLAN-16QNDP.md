@@ -43,7 +43,7 @@ reports redacted and the absent one does not.
 in the serialized table.
 3. Nothing-hidden reads are unchanged, allocation and shape identical.
 *Test:* `NopRedactor` path — no redaction marker present, and `Redact` still
-returns the ORIGINAL pointer.
+returns the ORIGINAL face.
 4. The validator does not skip entities that merely have an
 ACL-redacted property. *Test:* validator over a gated reader with a hidden
 property still evaluates rules for that entity.
@@ -199,7 +199,7 @@ compute different content hashes for the same entity.
 |----|------|
 | 1 | `internal/lua` script test: entity with hidden + absent property; assert redacted set contains only the hidden name |
 | 2 | Assert hidden VALUE absent from the Lua table and from any serialization of it |
-| 3 | `NopRedactor` path: assert `Redact` returns the original pointer and no marker appears |
+| 3 | `NopRedactor` path: assert `Redact` returns the original face and no marker appears |
 | 4 | `internal/validator`: gated reader, entity with hidden property, assert rules still evaluate (regression guard for the rejected alternative) |
 | 5 | `internal/dataentry`: PUT with a hidden property, assert not 422 `encrypted_inaccessible` |
 
@@ -209,7 +209,7 @@ the choke point is exercised as wired.
 
 **Edge Cases:**
 
-- Nothing hidden → empty/absent marker, original pointer returned.
+- Nothing hidden → empty/absent marker, original face returned.
 - ALL properties hidden → fail-closed redactor returns every name;
 script sees an empty `properties` and a full redacted set.
 - Entity that is BOTH git-crypt inaccessible AND ACL-redacted — the two

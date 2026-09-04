@@ -39,6 +39,12 @@ type Template struct {
 	RequireVisibleContent bool `yaml:"require_visible_content,omitempty"`
 
 	Sections []Section `yaml:"sections,omitempty"`
+
+	// Lang is the BCP-47 language tag of this template's content. Per-template
+	// rather than per-deployment, because one instance legitimately sends a
+	// Dutch digest and an English one. Empty falls back to the renderer's
+	// default.
+	Lang string `yaml:"lang,omitempty"`
 }
 
 type Section struct {
@@ -74,6 +80,12 @@ func Parse(data []byte, meta *metamodel.Metamodel) (*Config, error) {
 			return nil, fmt.Errorf(
 				"mail template %q: require_visible_content needs at least one section, "+
 					"otherwise no mail can ever be sent", name)
+		}
+		// Validated at LOAD rather than at send: a malformed tag is an
+		// operator typo, and finding it via `rela validate` beats finding it
+		// when the digest fails to go out.
+		if err := mailrender.ValidateLang(tmpl.Lang); err != nil {
+			return nil, fmt.Errorf("mail template %q: %w", name, err)
 		}
 		for i, section := range tmpl.Sections {
 			def, ok := meta.GetEntityDef(section.EntityType)
@@ -113,7 +125,7 @@ func Parse(data []byte, meta *metamodel.Metamodel) (*Config, error) {
 func Build(
 	ctx context.Context, meta *metamodel.Metamodel, reader Reader, tmpl Template, now time.Time,
 ) (*mailrender.Message, int, error) {
-	msg := &mailrender.Message{}
+	msg := &mailrender.Message{Lang: tmpl.Lang}
 	count := 0
 	contributed := 0
 	for _, declared := range tmpl.Sections {

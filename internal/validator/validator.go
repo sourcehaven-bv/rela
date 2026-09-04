@@ -27,6 +27,9 @@ type Violation struct {
 	EntityID    string
 	EntityType  string
 	EntityTitle string
+	// Face names the content state that violated, as declared. Empty for a
+	// type with no faces. See validation.Violation.Face.
+	Face string
 }
 
 // RuleViolation is one entity's violation of a rule, with optional
@@ -35,7 +38,10 @@ type Violation struct {
 // specifics (Lua, then-filter, property rules).
 type RuleViolation struct {
 	EntityID string
-	Detail   []string
+	// Face names the content state that violated, as declared. Empty for a
+	// type with no faces. See validation.Violation.Face.
+	Face   string
+	Detail []string
 }
 
 // RuleResult is the full per-rule outcome surfaced to consumers that
@@ -143,6 +149,7 @@ func (v *GenericValidator) CheckRuleFull(
 	for _, vi := range result.Violations {
 		out.Violations = append(out.Violations, RuleViolation{
 			EntityID: vi.EntityID,
+			Face:     vi.Face,
 			Detail:   vi.Detail,
 		})
 	}
@@ -170,6 +177,7 @@ func (v *GenericValidator) CheckAll(ctx context.Context) ([]Violation, error) {
 			Description: r.Description,
 			Severity:    r.Severity,
 			EntityID:    r.EntityID,
+			Face:        r.Face,
 			EntityTitle: r.EntityTitle,
 		})
 	}
@@ -184,8 +192,21 @@ func (v *GenericValidator) CheckAll(ctx context.Context) ([]Violation, error) {
 // false-positive "required field missing" violations. They remain
 // visible to other consumers (search, data-entry); only the validator
 // cannot meaningfully evaluate rules against them.
+// # Every content state, not just the bare row
+//
+// The query sets AllStates, so each FACE of an entity is validated as its own
+// row. Without it (the zero value means default-state rows only) a rule
+// evaluated the bare row and silently never ran against any other state — so a
+// published face could be missing a required property while `rela validate`
+// reported a clean run, which is worse than no check because it is a claim
+// (TKT-4Y6CMV).
+//
+// Every row of a state family conforms to the same schema, so validating each
+// one is the same question asked of each. Choosing ONE state to validate would
+// be world resolution, a read-path concern that has no business here — and the
+// store forbids combining AllStates with a World for exactly that reason.
 func (v *GenericValidator) loadCandidates(ctx context.Context, entityType string) ([]*entity.Entity, error) {
-	q := store.EntityQuery{}
+	q := store.EntityQuery{AllStates: true}
 	if entityType != "" {
 		q.Type = entityType
 	}

@@ -5,7 +5,7 @@ title: 'Worlds: metamodel declaration, resolver, pushdown, selection (Step 2)'
 kind: enhancement
 priority: high
 effort: xl
-status: backlog
+status: done
 ---
 
 Design doc §4. Worlds as metamodel objects: `select` (with fallback chains),

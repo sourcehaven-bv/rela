@@ -139,6 +139,10 @@ type appEntityWriter interface {
 // positional NewApp parameter. The compiling and matching themselves stay OFF
 // App entirely — conditionlint owns them and appbuild bridges — so the feature
 // cost one method, not a subsystem.
+// TKT-DN37J2 adds [App.SetWorlds] on the same terms, and the same discipline
+// held for the rest: `resolveWorld`, `attachWorld` and `worldCapablePath` are
+// all package functions taking what they need, so request-level world
+// selection cost ONE method rather than four.
 //
 // The theme/settings/palette cluster (12 methods — /_theme/logo CRUD, the
 // /_theme export/import pair, and the /_settings + /_palette CRUD) moved to
@@ -149,7 +153,23 @@ type appEntityWriter interface {
 // they share) moved to queryService, and the dead isRelationLinked was deleted
 // (TKT-SJ0LRS, 92 → 86).
 //
-//plimsoll:max-methods=86
+// TKT-WRLDAPI item 4 (world-scoped relations) cost ZERO methods, and that was
+// not free discipline — it was written as five methods first and plimsoll
+// failed the build. They became package functions taking their seams
+// explicitly (`worldOutgoingForEntity`, `worldNeighborsForPage`,
+// `includeCandidates`, `defaultWorldCandidates`, `worldCandidates`, plus
+// `SetWorldNeighbors`), which reads better anyway: the seams a world-scoped
+// link read depends on are named in the signature rather than reached through
+// this struct. The load line doing its job is worth recording, because the
+// habit it interrupts is the one that produced the pre-extraction 104.
+//
+// The merge of FEAT-9CD2MX with develop adds SetWorlds on top of develop's
+// extractions (86 → 87). Neither side grew it carelessly — the worlds side
+// cost exactly one method and said why above — but the integration is where
+// the count actually moves, so it is recorded here rather than in either
+// branch.
+//
+//plimsoll:max-methods=87
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS
@@ -171,7 +191,24 @@ type App struct {
 	// (a collection with no way to remember client-created resources would
 	// duplicate every to-do on the next sync).
 	caldavAliases *caldavalias.Service
-	searcher      search.Searcher
+
+	// worlds resolves a `?world=` name to its compiled scope. Nil until
+	// [App.SetWorlds] is called, in which case the App serves the default
+	// world only and refuses any other `?world=` — see world.go.
+	worlds WorldLookup
+	// copies serves the copy surface (list-by-source, invoke-by-name).
+	// Constructed in NewApp from the entity manager, which is required, so
+	// this is never nil — see copiesHandler's doc for why a nil-and-skip
+	// design would render a wiring bug as a valid domain answer.
+	copies *copiesHandler
+	// worldNeighbors resolves an entity's LINKS under the request's world
+	// (TKT-WRLDAPI item 4). Nil until [SetWorldNeighbors] is called, in
+	// which case a world-bound response carries no relations — the pre-item-4
+	// behavior, which is safe but is the gap RULING 12 closed. Separate from
+	// `worlds` because the two are injected from different places: the world
+	// LOOKUP is a compiled map, this is a store-backed capability.
+	worldNeighbors *worldNeighbors
+	searcher       search.Searcher
 	// visibleSearcher is the ACL-scoped search seam (TKT-BA8BSX):
 	// executeQuery routes free-text searches through it so /_search
 	// and the _position search scope only ever see hits the request
@@ -264,7 +301,7 @@ type App struct {
 	export *exportHandler
 
 	// write owns the entity/relation CRUD + clone + conflict-resolve write
-	// nucleus (TKT-R68TV8 M5.4); shares writeMu by pointer.
+	// nucleus (TKT-R68TV8 M5.4); shares writeMu by face.
 	write *writeHandler
 	// views owns the read-only view-assembly surface: view traversal,
 	// section building, and the /_views, /_sidepanel, /_sidebar endpoints
@@ -693,6 +730,14 @@ func (a *App) SetPrincipalResolver(r PrincipalResolver) {
 // when wiring a [HeaderPrincipalResolver]; leave unset otherwise.
 func (a *App) SetPrincipalHeader(name string) {
 	a.principalHeader = name
+
+	// A webhook config may not expose the header THIS deployment trusts for
+	// identity. dataentryconfig's static refusal list cannot name it — the flag
+	// is an arbitrary string chosen at startup — yet it is the header most
+	// certain to carry an authenticated identity, so a hook echoing it into
+	// entity content would persist "who called the proxy" as if it were payload
+	// data, readable by anyone who can read the entity.
+	dataentryconfig.ForbidWebhookHeader(name)
 }
 
 // SetJWTGate enables fail-closed verified-JWT identity. Must be called before
@@ -909,6 +954,14 @@ func NewApp(
 			}
 		})
 
+	// The copy surface (RULING 9) is built ONCE, here, for both of its
+	// consumers: the `_copies` affordance below and the invoke handler.
+	copyOffers, copiesHandler, cerr := wireCopies(em)
+	if cerr != nil {
+		return nil, fmt.Errorf("dataentry.NewApp: %w", cerr)
+	}
+	app.copies = copiesHandler
+
 	// affordanceService shares the App's acl/fieldResolver/store and takes the
 	// metamodel per-request via app.State(). The two relation-graph reads are
 	// App methods, so it's wired after the struct literal. It MUST share the
@@ -920,6 +973,7 @@ func NewApp(
 		meta:               func() *metamodel.Metamodel { return app.State().Meta },
 		getEntity:          app.reader.getEntity,
 		currentEdgesByPeer: app.currentEdgesByPeer,
+		copies:             copyOffers,
 	}
 
 	app.serializer = entitySerializer{affordances: app.affordances}
@@ -997,19 +1051,7 @@ func NewApp(
 	// handles by value — none of these are swapped by tests — plus the schema
 	// snapshot / Services bundle as closures and App's shared read gate so
 	// the uniform-404 behavior can't drift from the entity read path.
-	app.views = &viewsHandler{
-		schema:      app.State,
-		store:       st,
-		reader:      app.reader,
-		serializer:  app.serializer,
-		affordances: app.affordances,
-		viewReader:  app.viewReader,
-		services:    app.Services,
-		logo:        logo,
-		gateRead:    app.gateReadOrNotFound,
-		// Late-bound: tests reassign app.acl after construction.
-		aclImpl: func() acl.ACL { return app.acl },
-	}
+	app.views = newViewsHandler(app, st, logo)
 
 	// appearanceHandler owns the theme/settings/palette routes; wired after
 	// the logo/palette/settings services and viewReader it captures.
@@ -1103,7 +1145,7 @@ func NewApp(
 	// audit/field-resolver deps are closures because tests swap those fields
 	// on App after construction (same rationale as affordanceService); the
 	// store/manager handles are fixed for App's lifetime. writeMu is shared by
-	// pointer so attachment writes serialize with every other mutation handler.
+	// face so attachment writes serialize with every other mutation handler.
 	app.attachments = &attachmentHandler{
 		schema: app.State,
 		store:  st,
@@ -1126,7 +1168,7 @@ func NewApp(
 	// nucleus. Same collaborator rationale as attachmentHandler above: fixed
 	// services by value, test-swappable deps as closures over App, and the
 	// shared read/write helpers (gateRead/denyAfford/computeETag) as closures
-	// so both paths stay behaviorally identical. writeMu is shared by pointer
+	// so both paths stay behaviorally identical. writeMu is shared by face
 	// so these writes serialize with every other mutation handler.
 	app.write = &writeHandler{
 		schema:  app.State,
@@ -1271,4 +1313,41 @@ func buildStyleMap(
 	}
 
 	return sm, st
+}
+
+// newViewsHandler builds the view surface's collaborator set.
+//
+// A CONSTRUCTOR rather than a struct literal at the call site because there
+// were two call sites — NewApp and the handler-test helper — and the helper's
+// literal, which called itself a mirror of production wiring, drifted: a
+// field added to production was simply absent from the copy, leaving a nil
+// closure that panicked on the first request through it. One constructor
+// makes the mirror unnecessary rather than merely correct today.
+//
+// The late-bound closures are the reason this cannot be a plain value copy.
+// aclImpl exists because tests reassign app.acl after construction;
+// faceEdges for the sharper case that [SetWorldNeighbors] runs after this
+// point in NewApp, so capturing app.worldNeighbors eagerly would freeze the
+// nil it holds now and send every view down the bare-id arm — the
+// face-merging read this seam exists to close.
+func newViewsHandler(app *App, st store.Store, logo *logoStore) *viewsHandler {
+	return &viewsHandler{
+		schema:      app.State,
+		store:       st,
+		reader:      app.reader,
+		serializer:  app.serializer,
+		affordances: app.affordances,
+		viewReader:  app.viewReader,
+		services:    app.Services,
+		logo:        logo,
+		gateRead:    app.gateReadOrNotFound,
+		aclImpl:     func() acl.ACL { return app.acl },
+		faceEdges: func(
+			ctx context.Context, e *entity.Entity,
+		) ([]*entity.Relation, error) {
+			edges, _, err := servedFaceEdges(
+				ctx, app.reader, app.worldNeighbors, app.visibleReader, e)
+			return edges, err
+		},
+	}
 }

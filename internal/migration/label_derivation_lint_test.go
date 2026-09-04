@@ -84,7 +84,9 @@ func TestNoLabelDerivation(t *testing.T) {
 
 	skipDirs := map[string]bool{
 		".git": true, "node_modules": true, "dist": true, "testdata": true,
-		"static": true, "app_editor_dist": true, ".ignored": true,
+		// Nested agent worktrees hold OTHER branches' copies of the tree.
+		".claude": true,
+		"static":  true, "app_editor_dist": true, ".ignored": true,
 		"coverage": true, "e2e-results": true,
 	}
 

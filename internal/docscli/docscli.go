@@ -21,6 +21,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/docs"
+	"github.com/Sourcehaven-BV/rela/internal/docscapture"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 )
@@ -52,16 +53,16 @@ type BuildCmd struct {
 	// a per-command field, not a package var, so tests inject a stub or force
 	// the "no browser" path deterministically without a shared global (and stay
 	// t.Parallel()-safe).
-	newCapturer func() (docs.Capturer, error)
+	newCapturer func(*docscapture.SharedProject) (docs.Capturer, error)
 
 	// newAPIClient resolves the api{} client; nil means the build-tagged
 	// package NewAPIClient. Injected in tests.
-	newAPIClient func(string) (docs.APIClient, error)
+	newAPIClient func(*docscapture.SharedProject) (docs.APIClient, error)
 }
 
 // capturer returns the resolved capturer factory: the injected test seam if set,
 // otherwise the build-tagged package default.
-func (c *BuildCmd) capturer() func() (docs.Capturer, error) {
+func (c *BuildCmd) capturer() func(*docscapture.SharedProject) (docs.Capturer, error) {
 	if c.newCapturer != nil {
 		return c.newCapturer
 	}
@@ -70,7 +71,7 @@ func (c *BuildCmd) capturer() func() (docs.Capturer, error) {
 
 // apiClient resolves the api{} client, defaulting to the build-tagged
 // NewAPIClient. Overridable in tests, like newCapturer.
-func (c *BuildCmd) apiClient() func(string) (docs.APIClient, error) {
+func (c *BuildCmd) apiClient() func(*docscapture.SharedProject) (docs.APIClient, error) {
 	if c.newAPIClient != nil {
 		return c.newAPIClient
 	}
@@ -120,19 +121,32 @@ func (c *BuildCmd) Run(ctx context.Context, proj Project) error {
 		ProjectDir: proj.Paths().Root,
 		OutDir:     outputDir(c.Output),
 	}
+	// ONE temp project for THIS document, shared by the api{} client and the
+	// screenshot{}/page{} capturer. That sharing is what lets a figure
+	// photograph what an earlier api{} island wrote — with a project each, a
+	// write on one side was invisible to the other.
+	//
+	// It is created per Run (per document), not per process, so two manuals
+	// built in the same run cannot see each other's writes. Closed here on
+	// EVERY path including the error path: on the postgres build the project
+	// owns a scratch schema, and a failed build must not leave one behind.
+	shared := docscapture.NewSharedProject(proj.Paths().Root)
+	//nolint:contextcheck // teardown is not request-scoped; Close takes no ctx, matching project.close
+	defer func() { _ = shared.Close() }()
+
 	// Wire a browser capturer for screenshot{} islands. If no browser is
 	// available (or this build can't host the capture server — see the build-
 	// tagged NewCapturer), leave it nil but keep the specific reason: a manual
 	// WITHOUT screenshot{} still builds; one WITH it fails loud with the
 	// actionable message. No graceful degradation.
-	if capturer, capErr := c.capturer()(); capErr == nil {
+	if capturer, capErr := c.capturer()(shared); capErr == nil {
 		opts.Capturer = capturer
 	} else {
 		opts.CapturerErr = capErr.Error()
 	}
 	// Same contract for api{} assertions: available or loudly absent, never
 	// silently skipped. A skipped assertion looks exactly like a passing one.
-	if client, apiErr := c.apiClient()(proj.Paths().Root); apiErr == nil {
+	if client, apiErr := c.apiClient()(shared); apiErr == nil {
 		opts.APIClient = client
 	} else {
 		opts.APIClientErr = apiErr.Error()

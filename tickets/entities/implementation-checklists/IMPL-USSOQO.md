@@ -23,7 +23,7 @@ Changes (branch `feat/tkt-zirmgm-version-attribution`):
 - `internal/store/pgstore/entity.go` / `relation.go`: `attributionValues(ctx)` helper (empty component → NULL); Create/Update for entities and relations stamp the columns. Rename bulk re-key untouched (RR-U1RGSE) — verified it only SETs id/from_id/to_id/updated_at/seq/search_text.
 - `internal/store/pgstore/sweep.go`: candidate queries select the columns; `sweepAttribution` stamps real editor onto swept versions, `{tool: "version-sweep"}` fallback when both NULL.
 - `internal/store/pgstore/status_test.go`: migration target 5 → 6.
-- Docs: CLAUDE.md content-versioning bullet (two sanctioned attribution routes, fallback, TKT-0IGI4V pointer); `docs/postgres-backend.md` attribution paragraph.
+- Docs: CLAUDE.md content-versioning bullet (two sanctioned attribution routes, fallback, TKT-0IGI4V face); `docs/postgres-backend.md` attribution paragraph.
 
 ## Test Quality
 

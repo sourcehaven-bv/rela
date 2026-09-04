@@ -1,0 +1,226 @@
+version: "1.0"
+
+app:
+  name: "Handbook"
+  description: "Policies and guides, published through worlds"
+  # Browsing lands on what is IN FORCE. A draft is reached deliberately, by
+  # naming the editorial world, not by default.
+  default_world: published
+
+lists:
+  policies:
+    entity_type: policy
+    title: "Policies"
+    description: "Draft and published faces of each policy"
+    create_form: new_policy
+    # The list shows the PUBLISHED world, but a new policy is a DRAFT — so its
+    # create button opens the form in the editorial world, where the new face
+    # exists. Without this the author lands on "not in this world" for
+    # something they just made.
+    create_world: editorial
+    edit_form: edit_policy
+    columns:
+      - { property: title, sortable: true, link: detail }
+      - { property: status, sortable: true }
+      - { property: owner }
+
+  guides:
+    entity_type: guide
+    title: "Guides"
+    description: "Translated handbook pages"
+    create_form: new_guide
+    edit_form: edit_guide
+    columns:
+      - { property: title, sortable: true, link: detail }
+
+  procedures:
+    entity_type: procedure
+    title: "Procedures"
+    description: "Operational runbooks, localised per site"
+    create_form: new_procedure
+    edit_form: edit_procedure
+    columns:
+      - { property: title, sortable: true, link: detail }
+      - { property: readiness, sortable: true }
+
+  controls:
+    entity_type: control
+    title: "Controls"
+    description: "A type with no faces — one state, present in every world"
+    create_form: new_control
+    columns:
+      - { property: title, sortable: true, link: detail }
+
+forms:
+  new_policy:
+    entity_type: policy
+    title: "New policy"
+    description: "A new policy starts as a draft; publishing is a separate act."
+    body: true
+    fields:
+      - { property: title }
+      - { property: owner }
+      - { property: status }
+    relations:
+      - { relation: implements, direction: outgoing, widget: multi-select, label: "Implements controls" }
+      - { relation: owned-by, direction: outgoing, widget: multi-select, label: "Owned by" }
+
+  edit_policy:
+    entity_type: policy
+    title: "Edit policy"
+    description: "Edits address the entity's default face."
+    body: true
+    fields:
+      - { property: title }
+      - { property: owner }
+      - { property: status }
+    relations:
+      - { relation: implements, direction: outgoing, widget: multi-select, label: "Implements controls" }
+      - { relation: owned-by, direction: outgoing, widget: multi-select, label: "Owned by" }
+
+  new_guide:
+    entity_type: guide
+    title: "New guide"
+    body: true
+    fields:
+      - { property: title }
+
+  edit_guide:
+    entity_type: guide
+    title: "Edit guide"
+    body: true
+    fields:
+      - { property: title }
+
+  new_procedure:
+    entity_type: procedure
+    title: "New procedure"
+    body: true
+    fields:
+      - { property: title }
+      - { property: readiness }
+
+  edit_procedure:
+    entity_type: procedure
+    title: "Edit procedure"
+    body: true
+    fields:
+      - { property: title }
+      - { property: readiness }
+
+  new_control:
+    entity_type: control
+    title: "New control"
+    fields:
+      - { property: title }
+
+kanbans:
+  pipeline:
+    entity_type: policy
+    title: "Editorial pipeline"
+    # The kanban is a projection too: each card is one policy, shown at
+    # whichever face the world resolved. Under `published` the board holds only
+    # what is in force; under `editorial` the drafts appear beside them.
+    column_property: status
+    # Declared explicitly so the board shows the WORKFLOW, not just the values
+    # that happen to be in the data. Without this the columns are derived from
+    # the entities present, so a status nobody is currently in has no column at
+    # all and the order follows insertion rather than the enum.
+    columns:
+      - { value: to-do, label: "To do" }
+      - { value: doing, label: "Doing" }
+      - { value: done, label: "Done" }
+    card:
+      title: title
+      fields:
+        - property: owner
+
+  readiness:
+    entity_type: procedure
+    title: "Procedure readiness"
+    # The board a fallback is visible on. Under `site-nl` the chain is
+    # [nl, en] and a procedure with no Dutch face resolves at the second
+    # choice — a genuine substitute, which the policy pipeline structurally
+    # cannot produce (see the manual).
+    column_property: readiness
+    # Explicit for the same reason the pipeline's are: derived columns drop a
+    # state nobody is currently in, and follow insertion order rather than the
+    # enum's (TKT-R7H6G1).
+    columns:
+      - { value: untested,    label: "Untested" }
+      - { value: walkthrough, label: "Walked through" }
+      - { value: drilled,     label: "Drilled" }
+    card:
+      title: title
+
+dashboard:
+  title: "Handbook"
+  description: "What is published, and what is still being written"
+  cards:
+    - title: "Policies"
+      query: "type:policy"
+      display: count
+    - title: "By status"
+      query: "type:policy"
+      display: breakdown
+      group_by: status
+    - title: "Guides"
+      query: "type:guide"
+      display: count
+
+next_action_bands:
+  # List order IS priority order. Evaluation stops at the first band that
+  # yields a candidate, so `blocking` is asked before `housekeeping`.
+  - id: blocking
+    label: "Ready to publish"
+    prominence: banner
+  - id: housekeeping
+    label: "Handbook upkeep"
+    prominence: notice
+
+next_actions:
+  # A draft that has reached `done`. The candidates are found in the EDITORIAL
+  # world — a draft is what that world selects — while `visible_worlds` is
+  # unset, so the suggestion follows the reader into every world, including one
+  # where the draft itself is not visible. That combination is the point: what
+  # is found and where it is shown are separate decisions.
+  #
+  # The message says only what is true of ANY candidate the query can return.
+  # `status` and the published face are independent axes (see schema.yaml), so
+  # a `done` draft may or may not already be published, and the search syntax
+  # has no face predicate to narrow it further. Claiming "not published yet"
+  # here would be a guess the picked candidate can contradict.
+  finished-draft:
+    band: blocking
+    source_world: editorial
+    query: "type:policy prop:status=done"
+    suggest: "The draft of {title} is marked done. Ready to publish it?"
+    cooldown: 1h
+    key_props: [status]
+    actions:
+      - navigate: "/entity/policy/{id}?world=editorial"
+        label: "Open the draft"
+      - snooze: ["1d"]
+
+  # An untranslated procedure. The query runs in `site-nl`, where a procedure
+  # with no Dutch face falls back to English — and the suggestion is DISPLAYED
+  # only there, because "this runbook is not in Dutch yet" is upkeep for
+  # someone working on the Dutch site and noise to everyone else.
+  translate-procedure:
+    band: housekeeping
+    source_world: site-nl
+    visible_worlds: [site-nl]
+    query: "type:procedure prop:readiness=drilled"
+    suggest: "{title} is drilled. Is the Dutch site's copy up to date?"
+    cooldown: 1h
+    actions:
+      - snooze: ["1d"]
+      - dismiss: true
+
+navigation:
+  - { label: "Policies", list: policies }
+  - { label: "Guides", list: guides }
+  - { label: "Procedures", list: procedures }
+  - { label: "Controls", list: controls }
+  - { label: "Pipeline", kanban: pipeline }
+  - { label: "Readiness", kanban: readiness }

@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/pgstore"
 )
 
@@ -30,14 +31,27 @@ func TestSearchAfterMixedCaseRename(t *testing.T) {
 
 	// The backend matches case-insensitively, so a lowercased query for the new
 	// ID must find the renamed entity.
-	ids, err := backend.Search("new-mixedcase", 0)
-	require.NoError(t, err)
+	ids := searchIDs(t, backend, "new-mixedcase")
 	require.Contains(t, ids, "New-MixedCase",
 		"renamed entity must be findable by its new ID (search_text stayed lowercase)")
 
 	// The old ID must no longer match.
-	old, err := backend.Search("old-id", 0)
-	require.NoError(t, err)
+	old := searchIDs(t, backend, "old-id")
 	require.NotContains(t, old, "New-MixedCase")
 	require.NotContains(t, old, "Old-ID")
+}
+
+// searchIDs runs a DEFAULT-WORLD search and returns just the ids, which is
+// what this file's pre-worlds assertions are written against. World-scoped
+// behavior is covered by the store conformance suite, which holds every
+// backend to one contract.
+func searchIDs(t *testing.T, b *pgstore.SearchBackend, text string) []string {
+	t.Helper()
+	faces, err := b.Search(text, 0, store.DefaultWorld())
+	require.NoError(t, err)
+	ids := make([]string, 0, len(faces))
+	for _, f := range faces {
+		ids = append(ids, f.ID)
+	}
+	return ids
 }

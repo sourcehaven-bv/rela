@@ -9,11 +9,114 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
+// Rule is [store.ResolutionRule]: the world-resolution rule that selected the
+// face a hit matched on. One vocabulary, shared with worldreader and the
+// data-entry wire by aliasing rather than mirroring.
+type Rule = store.ResolutionRule
+
+const (
+	// RuleUnscoped is rule 1: the world declares no resolution for this
+	// entity's type, so its default state was searched.
+	RuleUnscoped = store.ResolutionUnscoped
+	// RuleChain is rule 2: the first chain coordinate that EXISTS.
+	RuleChain = store.ResolutionChain
+	// RuleFallbackDefault is rule 3 under `otherwise: default`: no chain
+	// coordinate exists, so the default state stood in. This is the case
+	// [Hit.IsFallback] reports and callers must label.
+	RuleFallbackDefault = store.ResolutionFallbackDefault
+)
+
 // Hit is a minimal result from a search operation.
+//
+// Face and Via carry WORLD PROVENANCE (TKT-9KZGJO): which face of the
+// entity actually matched, and by which resolution rule the world chose
+// it. See [Hit.IsFallback] for the case a caller must surface.
 type Hit struct {
 	ID    string
 	Type  string
 	Title string
+
+	// Face is the coordinate of the face whose text matched. The zero
+	// face is the default state. In a world search this is the
+	// entity's PRIME — a world resolves at most one face per entity, so
+	// there is never more than one hit per entity to disambiguate.
+	Face entity.Face
+
+	// Via records which resolution rule selected the matched face,
+	// mirroring worldreader.Rule.
+	//
+	// It is NOT sufficient on its own to answer "is this a substitute" —
+	// see [Hit.ChainPosition] and [Hit.IsFallback].
+	Via Rule
+
+	// ChainPosition is the 0-based rank of the matched coordinate within
+	// the world's chain for this entity's type. Meaningful only when Via
+	// is [RuleChain].
+	//
+	// # Why the rule alone is not enough
+	//
+	// [RuleChain] means SOME coordinate the world selects exists — never
+	// WHICH. Under `select: [published, draft]` a genuine published match
+	// and a draft standing in for a missing published face both report
+	// RuleChain identically, so a `published`-world searcher shown a hit
+	// whose displayed text lacks the term had no way to know why.
+	//
+	// That gap was found on the HTTP surface first (a draft rendered under
+	// ?world=published, labeled read-only published) and fixed there with
+	// the same field, `_world.chain_position`. Search reuses the shape
+	// rather than re-deriving it: position 0 is the world's first choice,
+	// anything greater is a within-chain substitute.
+	ChainPosition int
+}
+
+// IsFallback reports whether this hit reached the reader only because the
+// world fell past the coordinate it actually asked for.
+//
+// Callers that render results MUST surface this. A `published`-world search
+// that matched a draft face shows the reader a title whose displayed
+// (published) text need not contain the term they searched for; unlabeled,
+// that reads as a broken search rather than as the accurate statement "no
+// published face exists, here is the concept".
+//
+// BOTH substitute shapes count, which is the correction that makes this
+// usable. [RuleFallbackDefault] is the `otherwise:` arm — the chain matched
+// NOTHING and the default state stood in. A chain with several candidates
+// can also substitute WITHIN itself, and that reports [RuleChain]: under
+// `select: [published, draft]` a missing published face resolves to the
+// draft. Reporting only the first would leave the second — the exact case
+// TKT-9KZGJO's design calls out — silently unlabeled.
+// Face is one matched content state: the entity, which of its faces the
+// text matched, and by which world-resolution rule that face was chosen.
+// It is the backend-level result [Hit] is built from — the seam that lets
+// provenance survive from the index to the caller, which a bare ID could
+// not carry.
+type Face struct {
+	ID   string
+	Face entity.Face
+	Via  Rule
+
+	// ChainPosition is the 0-based rank, within the world's chain for this
+	// entity type, of the matched coordinate. Meaningful only when Via is
+	// [RuleChain]; zero otherwise. See [Hit.ChainPosition] for why the rule
+	// alone cannot answer "was this the world's first choice".
+	ChainPosition int
+}
+
+func (h Hit) IsFallback() bool { return isFallback(h.Via, h.ChainPosition) }
+
+// IsFallback reports whether this face is a SUBSTITUTE — the same question
+// [Hit.IsFallback] answers, asked one layer earlier.
+//
+// Backends work in Faces and callers in Hits, and both need the verdict.
+// Sharing one predicate is what keeps them from drifting: the rule has two
+// arms (see [Hit.IsFallback]) and a copy that remembered only the
+// `fallback-default` one would be exactly the gap this ticket closed.
+func (f Face) IsFallback() bool { return isFallback(f.Via, f.ChainPosition) }
+
+// isFallback is the single definition of "the reader is looking at a
+// stand-in". See [Hit.IsFallback] for why both arms are required.
+func isFallback(via Rule, position int) bool {
+	return via == RuleFallbackDefault || (via == RuleChain && position > 0)
 }
 
 // Searcher provides search and filtering over entities. It is a top-level
@@ -33,9 +136,25 @@ type Searcher interface {
 type Backend interface {
 	store.EntityObserver
 
-	// Search returns entity IDs matching the query text, ordered by relevance.
-	// limit ≤ 0 means no limit.
-	Search(text string, limit int) ([]string, error)
+	// Search returns the matching FACES for the query text, ordered by
+	// relevance, resolved under the given world. limit ≤ 0 means no
+	// limit.
+	//
+	// A world IS the search scope (TKT-9KZGJO): searching a world means
+	// searching each entity's resolved prime in it, so the world's own
+	// chain answers "which face do I look at" and no per-world
+	// `searchable:` config is needed. `select: [published, draft]` finds
+	// a draft-only policy via its draft face; `select: [nl, en]` finds
+	// Dutch falling back to English and never French.
+	//
+	// Because a world resolves at most ONE prime per entity, the result
+	// holds at most one Face per entity STRUCTURALLY. That is what makes
+	// a limit counting entities fall out for free — no PARTITION BY, no
+	// over-fetch-and-group. Implementations must preserve it.
+	//
+	// The zero WorldScope is the default world and must reduce to
+	// exactly the pre-worlds query, allocating nothing.
+	Search(text string, limit int, world store.WorldScope) ([]Face, error)
 }
 
 // FieldMatcher is the optional match-provenance capability a Backend may
@@ -179,6 +298,16 @@ type Query struct {
 	Filters []PropertyFilter // property-level filters
 	Sort    []SortClause     // ordering (ignored when Text is set)
 	Limit   int              // max results (0 = no limit)
+
+	// World is the resolution scope: which face of each entity this
+	// search looks at. The zero value is the default world, which is
+	// byte-identical to the pre-worlds behavior — every existing
+	// construction site keeps working untouched.
+	//
+	// Limit counts ENTITIES, and that is structural rather than
+	// enforced: a world resolves at most one prime per entity, so the
+	// result set holds at most one row per entity to begin with.
+	World store.WorldScope
 }
 
 // PropertyFilter matches entities by property value.

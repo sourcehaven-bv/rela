@@ -17,19 +17,11 @@
 // what lets the editor be swapped later without touching plugins.
 
 import EasyMDE from 'easymde'
-// CSS is imported with ?inline so Vite returns it as a STRING (not an emitted
-// sibling file), letting the build stay a single self-contained IIFE. The
-// strings are injected into <head> once, on first element mount.
-import easymdeCSS from 'easymde/dist/easymde.min.css?inline'
-import fontAwesomeCSS from 'font-awesome/css/font-awesome.min.css?inline'
-// Font-face override: points FA's glyph webfont at the app-relative reserved
-// path (_rela-editor.woff2), permitted by the app CSP's `font-src <base>`.
-// Injected AFTER fontAwesomeCSS so it wins.
-import fontOverrideCSS from './relaEditorFont.css?inline'
-// Theme override: re-skins EasyMDE's hardcoded light chrome with rela tokens so
-// the editor follows the host light/dark theme. Injected LAST so it wins over
-// EasyMDE's own CSS.
-import themeCSS from './relaEditorTheme.css?inline'
+// The editor's CSS is NOT imported here. It is concatenated at build time by
+// the emitEditorCSS plugin (vite.editor.config.ts) into a sibling
+// rela-editor.css, which rela serves at the app-relative reserved path
+// _rela-editor.css. This module only links it — see ensureStylesInjected for
+// why an inline <style> is not an option.
 import { attachBacktickAutocomplete, type BacktickController } from './relaBacktick'
 
 // The bridge SDK (_rela.js) exposes window.rela. The backtick autocomplete only
@@ -42,16 +34,31 @@ interface RelaBridge {
 
 const TAG = 'rela-editor'
 const STYLE_ID = 'rela-editor-styles'
+// The app CSP has no 'unsafe-inline', so an injected <style> element would be
+// blocked and the editor would render unstyled. rela serves the same CSS as a
+// file at the app's own path; a <link> is a resource load, which the
+// path-scoped style-src permits. Relative on purpose: it resolves against the
+// app base (/api/v1/_apps/<id>/), like _rela.js and the FA font.
+const STYLE_HREF = '_rela-editor.css'
 
-// Inject the editor's stylesheets into the document head exactly once,
-// regardless of how many <rela-editor> elements mount. Order matters: FA base,
-// then the font-face override, then EasyMDE's own CSS.
+// Link the editor's stylesheet into the document head exactly once, regardless
+// of how many <rela-editor> elements mount.
+//
+// A <link> rather than a <style> with inlined text: the app CSP carries no
+// 'unsafe-inline', so an injected <style> element is blocked outright — the
+// element lands in the DOM, its .sheet stays null, and the editor renders with
+// no styling at all. That failure is silent apart from a console violation,
+// which is why the served stylesheet is the only supported path.
+//
+// Order is preserved inside the served file: FA base, font-face override,
+// EasyMDE, then the theme (which must win).
 function ensureStylesInjected(): void {
   if (document.getElementById(STYLE_ID)) return
-  const style = document.createElement('style')
-  style.id = STYLE_ID
-  style.textContent = [fontAwesomeCSS, fontOverrideCSS, easymdeCSS, themeCSS].join('\n')
-  document.head.appendChild(style)
+  const link = document.createElement('link')
+  link.id = STYLE_ID
+  link.rel = 'stylesheet'
+  link.href = STYLE_HREF
+  document.head.appendChild(link)
 }
 
 class RelaEditorElement extends HTMLElement {

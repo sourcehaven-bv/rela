@@ -69,7 +69,7 @@ func gateDocumentPermission(
 // Policy, mirroring authorizeCommand except where noted:
 //
 //   - nil ACL → deny. An authorization guard must fail closed on a wiring bug.
-//   - [acl.ReadOnlyACL] → deny, value and pointer forms both (matching only
+//   - [acl.ReadOnlyACL] → deny, value and face forms both (matching only
 //     the value form was the one-'&' bypass authorizeCommand's doc describes).
 //   - [acl.NopACL] → DENY. This DIVERGES from authorizeCommand, whose NopACL
 //     arm grants in order to preserve pre-ACL behavior. An elevated document

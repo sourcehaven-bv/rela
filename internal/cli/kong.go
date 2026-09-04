@@ -75,6 +75,22 @@ type CLI struct {
 	Verbose bool   `help:"Verbose output." short:"v"`
 	Quiet   bool   `help:"Quiet output."   short:"q"`
 
+	// NO --world flag, deliberately (TKT-DN37J2 PR-C).
+	//
+	// The CLI's read paths reach the store through ~29 unscoped call sites
+	// and `readServices` hands commands a raw store.Store. A `--world` flag
+	// added before those are scoped would parse, print nothing unusual, and
+	// serve the DEFAULT world — an operator asking for `--world published`
+	// would get drafts, silently. That is the "plumbed-but-ungated" shape
+	// this arc has refused twice (Q10, and the search refusal in Ruling 3):
+	// a flag that appears to work is worse than an absent one.
+	//
+	// The HTTP API is world-capable because its reads funnel through two
+	// seams that PR-C scoped end to end. The CLI has no equivalent
+	// chokepoint yet. When it does, `--world` belongs here, wiring-bound
+	// with no grant check — the operator's shell is the trust boundary, as
+	// for `db migrate` and `history-purge`.
+
 	// Subcommands.
 	Version    VersionCmd    `cmd:"" help:"Print version information."`
 	Init       InitCmd       `cmd:"" help:"Initialize a new rela project."`

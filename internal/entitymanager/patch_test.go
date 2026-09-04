@@ -202,7 +202,7 @@ func TestPatchEntity_SetUnsetAbsent(t *testing.T) {
 	}
 }
 
-// TestPatchEntity_BodyTriState pins the pointer semantics: nil leaves the
+// TestPatchEntity_BodyTriState pins the *string tri-state: nil leaves the
 // body alone, empty-string clears it, non-empty replaces it. Without the
 // pointer there is no way to say "don't touch the body".
 func TestPatchEntity_BodyTriState(t *testing.T) {

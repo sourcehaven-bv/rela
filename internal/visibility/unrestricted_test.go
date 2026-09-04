@@ -54,9 +54,9 @@ func TestUnrestricted_IsPassThrough(t *testing.T) {
 		if err != nil {
 			t.Fatalf("store.GetEntity: %v", err)
 		}
-		// Value equality, not pointer identity: memstore hands out a
+		// Value equality, not face identity: memstore hands out a
 		// defensive copy per call, so even the store does not return the
-		// same pointer twice. What must hold is that NOTHING is dropped —
+		// same face twice. What must hold is that NOTHING is dropped —
 		// no redaction, no filtering.
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("Unrestricted altered the entity (redaction or filtering "+
@@ -186,7 +186,7 @@ func TestUnrestricted_SatisfiesReadSurfaceNonNil(t *testing.T) {
 	// if Unrestricted ever returned a typed nil again.
 	var r entityReader = visibility.Unrestricted(seedStore(t))
 	if reflect.ValueOf(r).IsNil() {
-		t.Fatal("the interface holds a NIL pointer — a caller's `== nil` deny " +
+		t.Fatal("the interface holds a NIL face — a caller's `== nil` deny " +
 			"check would report 'wired' and the first read would nil-deref")
 	}
 	if _, err := r.GetEntity(context.Background(), "TKT-1"); err != nil {

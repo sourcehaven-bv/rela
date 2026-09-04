@@ -249,3 +249,124 @@ func TestContainedPath_RejectsRootBase(t *testing.T) {
 		t.Errorf("containedPath error = %v, want it to name the filesystem root", err)
 	}
 }
+
+// The root-base guard must recognize a WINDOWS root too (TKT-T7G7LT / issue
+// #1498). rela-desktop ships as a Windows MSI, and until this test existed the
+// guard compared only against "/" — so on Windows a base of `C:\` sailed
+// through, filepath.Rel succeeded for every path on the drive, and the
+// containment check returned "contained" for anything at all. That is exactly
+// the fail-open PR #1496 was written to close, still open on a shipped
+// platform.
+//
+// This test runs on Linux CI, which is the whole difficulty: Linux filepath has
+// no concept of a volume, so it Cleans `C:\` to the relative filename `C:\` and
+// Abs would prefix it with the working directory. Driving the Windows case
+// through containedPath here would therefore assert on a path that never
+// entered the branch under test — a green result proving nothing.
+//
+// So the table addresses isFilesystemRoot directly, feeding it the
+// (VolumeName, Clean, Separator) triples a Windows filepath WOULD produce — all
+// three vary per platform, which is why all three are parameters. The values
+// come from the stdlib's own rules: volumeNameLen returns 2 for a drive-letter
+// path and the full `\\host\share` prefix for UNC; Clean copies the volume
+// verbatim; Separator is '\\' on Windows.
+//
+// The limit of this technique is worth stating, because it bit once already.
+// Every input here is a hand transcription of what Clean is believed to return,
+// and nothing in this file verifies that belief — so a wrong transcription
+// yields a green test over a string Windows never emits. That is exactly what
+// happened with `\\server\share` (RR-Q73HKS): the table asserted the
+// trailing-separator form, Clean actually returns the bare volume, and the real
+// spelling went unguarded. TestIsFilesystemRoot_RealWindowsPaths in
+// clone_windows_test.go is the counterweight — it derives the triples from the
+// host filepath instead of from memory. It does not run on Linux CI, which is
+// precisely why this table exists too; neither is sufficient alone.
+func TestIsFilesystemRoot(t *testing.T) {
+	const (
+		unixSep    = '/'
+		windowsSep = '\\'
+	)
+
+	tests := []struct {
+		name    string
+		volume  string
+		cleaned string
+		sep     rune
+		want    bool
+	}{
+		// Unix: the case #1496 already handled, kept as a row so a future
+		// rewrite of the predicate cannot drop it silently.
+		{"unix root", "", "/", unixSep, true},
+		{"unix directory", "", "/home/dev", unixSep, false},
+		{"unix nested directory", "", "/home/dev/clones", unixSep, false},
+
+		// Windows drive roots: the defect this ticket fixes.
+		{"windows drive root", "C:", `C:\`, windowsSep, true},
+		{"windows drive root lowercase", "c:", `c:\`, windowsSep, true},
+		{"windows directory on drive", "C:", `C:\Users\dev`, windowsSep, false},
+		{"windows nested directory on drive", "C:", `C:\Users\dev\clones`, windowsSep, false},
+
+		// UNC share roots are roots in the same sense: everything on the share
+		// is below them, so a base of `\\server\share` constrains nothing.
+		//
+		// BOTH spellings must be caught, and the second is the one that
+		// actually occurs. Clean(`\\server\share`) returns it UNCHANGED — the
+		// whole string is the volume name, so there is no remainder to root and
+		// no trailing separator is appended. An earlier version of this table
+		// listed only the `\` form, asserting on a string Windows never
+		// produces for that input; it passed green while the real form went
+		// unguarded and filepath.Rel reported every path on the share as
+		// contained. Found in code review (RR-Q73HKS).
+		{"unc share root trailing separator", `\\server\share`, `\\server\share\`, windowsSep, true},
+		{"unc share root bare volume", `\\server\share`, `\\server\share`, windowsSep, true},
+		{"unc directory on share", `\\server\share`, `\\server\share\repos`, windowsSep, false},
+
+		// Extended-length drive spelling. VolumeName(`\\?\C:`) is the whole
+		// string (the stdlib's own volumenametests pins `\\?\x` → `\\?\x`), so
+		// both the bare and trailing-separator forms are volume roots.
+		//
+		// NOT asserted here: `\\?\UNC\host\share`. The `\\.\UNC` special case
+		// in volumeNameLen keys on the `.` form, so the `?` form falls to the
+		// generic `\\?` branch and the volume is `\\?\UNC` rather than the
+		// share — which would make `\\?\UNC\host\share` a path UNDER a volume,
+		// not a root. That is a claim about stdlib behavior this file cannot
+		// verify (it is not in the stdlib's own test table either), and the
+		// whole point of RR-S2X70O is that unverified transcriptions pass green
+		// while being wrong. Left out rather than guessed.
+		{"extended drive volume", `\\?\C:`, `\\?\C:`, windowsSep, true},
+		{"extended drive root", `\\?\C:`, `\\?\C:\`, windowsSep, true},
+
+		// Drive-relative `C:foo` has a volume but is NOT a root: it names a
+		// path relative to the drive's working directory. The bare-volume
+		// clause must not swallow it.
+		{"windows drive relative", "C:", "C:foo", windowsSep, false},
+
+		// A relative base is not a root. The predicate must not over-claim:
+		// containedPath rejects this later via Abs/Rel, and a predicate that
+		// swallowed it would report the wrong reason.
+		{"relative base", "", ".", unixSep, false},
+
+		// The bare-volume clause is guarded on a non-empty volume, so an empty
+		// cleaned path is not a root on Unix. Clean never produces one, but the
+		// predicate should not lie about an input it can be handed.
+		{"empty path no volume", "", "", unixSep, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isFilesystemRoot(tt.volume, tt.cleaned, tt.sep); got != tt.want {
+				t.Errorf("isFilesystemRoot(%q, %q, %q) = %v, want %v",
+					tt.volume, tt.cleaned, string(tt.sep), got, tt.want)
+			}
+		})
+	}
+}
+
+// Deliberately absent: a Linux test asserting that containedPath consults
+// isFilesystemRoot. Any such test can only reach the predicate through "/",
+// where the old `absBase == string(filepath.Separator)` check and the new one
+// agree — so it would pass identically before and after this change, which
+// makes it evidence of nothing while looking like a wiring guarantee.
+// TestContainedPath_RejectsRootBase above already covers the "/" wiring, and
+// TestContainedPath_RejectsWindowsRootBases (clone_windows_test.go) covers the
+// wiring for the roots that actually distinguish the two implementations.

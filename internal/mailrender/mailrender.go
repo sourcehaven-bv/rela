@@ -62,6 +62,7 @@ import (
 	"fmt"
 	"maps"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/aymerick/douceur/inliner"
@@ -107,6 +108,18 @@ type Message struct {
 
 	// Footer is optional markdown shown below the sections. UNTRUSTED.
 	Footer string
+
+	// Lang is the BCP-47 language tag of this message's content, emitted as
+	// the <html lang="..."> attribute.
+	//
+	// It lives on Message rather than Options because language is CONTENT, not
+	// branding: one deployment sends a Dutch digest and an English one from the
+	// same Renderer, so a renderer-scoped value would mislabel every message
+	// but one. Options.DefaultLang supplies the fallback when this is empty.
+	//
+	// UNTRUSTED — it reaches an HTML attribute and is validated as a language
+	// tag (see [ValidateLang]), never escaped into place.
+	Lang string
 }
 
 // Options configures a Renderer. The zero value is usable: it renders with
@@ -131,6 +144,19 @@ type Options struct {
 	// the app, so a relative href is dead; callers that emit links should set
 	// this.
 	BaseURL string
+
+	// LogoWidth and LogoHeight are the logo's intrinsic pixel dimensions,
+	// emitted as width/height attributes on the <img>.
+	//
+	// Attributes rather than CSS because Outlook Windows ignores max-height,
+	// so a large logo renders at full size there with no other constraint.
+	// Zero omits the attribute rather than emitting width="0".
+	LogoWidth, LogoHeight int
+
+	// DefaultLang is the language tag used when a Message does not carry its
+	// own. Defaults to "en". This is the only language value that is
+	// deployment-scoped, and it is a FALLBACK — see [Message.Lang].
+	DefaultLang string
 }
 
 // Renderer formats messages. It is immutable after construction and safe for
@@ -167,12 +193,62 @@ var namedColours = map[string]bool{
 // color has a bug worth surfacing.
 func ValidatePalette(p map[string]string) error {
 	for k, v := range p {
+		// An unknown key is refused rather than ignored. Every token here is
+		// consumed by name in colors(), so a misspelled one — "--dark-card-color"
+		// for "--dark-card-bg" — is silently dropped and the operator sees a
+		// default they explicitly tried to override, with nothing to explain it.
+		// The set is closed and small, so naming the valid keys costs nothing.
+		if _, known := defaultPalette[k]; !known {
+			return fmt.Errorf("mailrender: palette %q is not a known token (valid: %s)",
+				k, strings.Join(paletteKeys(), ", "))
+		}
 		val := strings.TrimSpace(strings.ToLower(v))
 		if colorRe.MatchString(val) || namedColours[val] {
 			continue
 		}
 		return fmt.Errorf("mailrender: palette %q: %q is not a color "+
 			"(want #rgb/#rrggbb or one of transparent/black/white/inherit)", k, v)
+	}
+	return nil
+}
+
+// paletteKeys lists the recognized token names, sorted so the error message is
+// stable rather than reflecting Go's map iteration order.
+func paletteKeys() []string {
+	out := slices.Collect(maps.Keys(defaultPalette))
+	slices.Sort(out)
+	return out
+}
+
+// langRe matches the SHAPE of a BCP-47 language tag: subtags of ASCII letters
+// or digits joined by hyphens, first subtag letters only ("nl", "nl-NL",
+// "zh-Hant-TW").
+//
+// Deliberately a shape check and not a registry lookup. The security
+// requirement is that nothing can terminate the attribute or inject markup;
+// refusing a valid-but-unusual subtag would be rela inventing a policy about
+// languages it has no business holding.
+var langRe = regexp.MustCompile(`^[A-Za-z]{1,8}(-[A-Za-z0-9]{1,8})*$`)
+
+// maxLangLen bounds a language tag. Well above any real tag, low enough that a
+// pathological value cannot bloat the document.
+const maxLangLen = 35
+
+// ValidateLang checks that v is shaped like a BCP-47 language tag.
+//
+// The empty string is accepted and means "fall back to the default"; callers
+// resolve that before rendering, so an empty tag never reaches the attribute.
+//
+// Like [ValidatePalette] this REJECTS rather than sanitizes. A language tag
+// lands in an HTML attribute, and escaping a malformed one would yield a
+// well-formed document that lies about its language — the failure is worth
+// surfacing to whoever wrote the config or the script.
+func ValidateLang(v string) error {
+	if v == "" {
+		return nil
+	}
+	if len(v) > maxLangLen || !langRe.MatchString(v) {
+		return fmt.Errorf("mailrender: %q is not a language tag (want e.g. \"en\", \"nl-NL\")", v)
 	}
 	return nil
 }
@@ -221,18 +297,31 @@ func New(opts *Options) (*Renderer, error) {
 	if err := validateHeaderish("logo CID", opts.LogoCID); err != nil {
 		return nil, err
 	}
+	if err := ValidateLang(opts.DefaultLang); err != nil {
+		return nil, err
+	}
 
 	pal := make(map[string]string, len(defaultPalette))
 	maps.Copy(pal, defaultPalette)
 	maps.Copy(pal, opts.Palette)
 
+	resolved := *opts
+	if resolved.DefaultLang == "" {
+		resolved.DefaultLang = fallbackLang
+	}
+
 	return &Renderer{
-		opts:    *opts,
+		opts:    resolved,
 		policy:  newMailPolicy(),
 		md:      newMarkdown(),
 		palette: pal,
 	}, nil
 }
+
+// fallbackLang is used when neither the message nor the operator names one.
+// Something must be emitted — an absent lang attribute is the defect this
+// closes — and rela's own strings are English.
+const fallbackLang = "en"
 
 // newMarkdown builds the goldmark instance used for UNTRUSTED content.
 //

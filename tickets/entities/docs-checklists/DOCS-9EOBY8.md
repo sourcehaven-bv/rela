@@ -12,7 +12,7 @@ status: done
 - [x] Godoc on the new wire field — `v1.Entity.Redacted`
 (`internal/apiwire/v1/responses.go`) explains what it is, *why* it exists
 (absence is ambiguous; a write surface must tell redacted from unset), the
-names-not-values disclosure boundary, and the closed-world pointer semantics.
+names-not-values disclosure boundary, and the closed-world present/absent semantics.
 - [x] Godoc on `redactedPropertyNames` — documents the empty-not-nil contract
 and why it takes resolved verdicts rather than re-resolving.
 - [x] TSDoc on `isPropertyRedacted` — states plainly that inferring redaction

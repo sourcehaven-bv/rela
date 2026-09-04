@@ -113,6 +113,16 @@ func (a *App) NewRouter() http.Handler {
 	// needs neither the same-origin gate nor the JWT identity gate.
 	a.registerWebhookRoutes(mux)
 
+	// Declarative webhooks (POST /hooks/{id}, TKT-1EM4KL) — one route per
+	// configured `webhooks:` entry. Registered on the OUTER mux for the same
+	// reason as the IdP receiver above: /hooks/ does not carry the /api/ prefix
+	// `inner` is mounted under, so registering there would leave every hook
+	// unreachable behind the SPA catch-all (BUG-F3ADZO).
+	registerDeclarativeWebhookRoutes(mux, &webhookRouter{
+		state: a.State, write: a.write, rawStore: a.store,
+		admit: make(chan struct{}, webhookMaxInFlight),
+	})
+
 	// Operator customisation assets from the project's custom/ directory —
 	// custom.css / custom.js plus any fonts, logos or images they reference.
 	// Registered before the SPA catch-all so /_custom/* never falls through to
@@ -189,6 +199,23 @@ func (a *App) NewRouter() http.Handler {
 	// `acl_unstamped_principal` when ACL is configured, because the
 	// principal is still the unstamped default at the time
 	// ForPrincipal is called.
+	//
+	// World selection must run AFTER the read gate is on the context, because
+	// its grant check consults readGateFromContext. Per the wrap-order note
+	// above, LAST wrap is OUTERMOST — so attachWorld is wrapped FIRST, making
+	// it the INNERMOST of the two and therefore the LATER to run.
+	//
+	// Getting this backwards is not a loud failure: the world gate would see
+	// nopReadGate, whose PermitsWorld returns true, and every world would be
+	// permitted regardless of policy. Pinned by
+	// TestAttachWorld_GrantCheckRunsAfterACLGate.
+	//
+	// Placing it in middleware rather than in each handler is what makes "the
+	// grant check happens before a resolver is constructed" STRUCTURAL: a
+	// handler cannot observe a non-default world on its context without the
+	// check having already passed, and cannot opt out of it.
+	handler = attachWorld(handler, a)
+
 	// Non-Declarative ACLs (NopACL, ReadOnlyACL) are deliberately outside this
 	// block, warning included. Neither can enforce `unmatched_principal` at all
 	// — under NopACL nothing is enforced, and under ReadOnlyACL every write is

@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/mailrender"
 	"github.com/Sourcehaven-BV/rela/internal/mailtemplate"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -243,4 +244,70 @@ func TestParseRejectsRequireVisibleContentWithoutSections(t *testing.T) {
 
 	_, err = mailtemplate.Parse([]byte(body+"    require_visible_content: true\n"), model())
 	require.ErrorContains(t, err, "at least one section")
+}
+
+// TestTemplateLangReachesMessage covers the third of the three call sites that
+// can set a language (config, Lua, Go), and pins that it is PER TEMPLATE.
+//
+// One deployment sends a Dutch digest and an English one from the same
+// renderer, so a language that lived on the renderer would mislabel one of
+// them. Building two templates and comparing is what makes that regression
+// visible here.
+func TestTemplateLangReachesMessage(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := mailtemplate.Parse([]byte(`mail_templates:
+  dutch:
+    subject: Agenda
+    address_property: email
+    lang: nl
+  english:
+    subject: Digest
+    address_property: email
+  unset:
+    subject: Plain
+    address_property: email
+`), model())
+	require.NoError(t, err)
+
+	build := func(name string) *mailrender.Message {
+		msg, _, buildErr := mailtemplate.Build(
+			context.Background(), model(), reader{}, cfg.Templates[name], time.Now())
+		require.NoError(t, buildErr)
+		return msg
+	}
+
+	require.Equal(t, "nl", build("dutch").Lang)
+	require.Empty(t, build("unset").Lang, "an unset lang stays empty so the renderer default applies")
+
+	// And it survives all the way into the rendered document.
+	r, err := mailrender.New(&mailrender.Options{DefaultLang: "en"})
+	require.NoError(t, err)
+	html, _, err := r.Render(build("dutch"))
+	require.NoError(t, err)
+	require.Contains(t, string(html), `lang="nl"`)
+
+	html, _, err = r.Render(build("unset"))
+	require.NoError(t, err)
+	require.Contains(t, string(html), `lang="en"`, "unset must fall back to the operator default")
+}
+
+// TestParseRejectsMalformedLang pins that an operator typo fails at LOAD.
+//
+// A language tag is interpolated into an HTML attribute, so it is validated and
+// refused rather than escaped — and refusing it during `rela validate` beats
+// discovering it when a scheduled digest fails to send.
+func TestParseRejectsMalformedLang(t *testing.T) {
+	t.Parallel()
+
+	for _, bad := range []string{`en" onload="x`, `<script>`, `en_US`} {
+		_, err := mailtemplate.Parse([]byte(`mail_templates:
+  digest:
+    subject: Hello
+    address_property: email
+    lang: '`+bad+`'
+`), model())
+		require.Error(t, err, "malformed lang %q must be refused at load", bad)
+		require.ErrorContains(t, err, "language tag")
+	}
 }

@@ -15,7 +15,7 @@ plan states `Redacted` is "never persisted" and lists a negative test ("must NOT
 survive a round-trip to markdown storage"), but that test as written targets
 **markdown** only.
 
-`memstore` does not serialize through markdown. If it stores entity pointers or
+`memstore` does not serialize through markdown. If it stores entity faces or
 struct copies, a redacted entity written back would retain the marker in a way
 `fsstore` would not — a backend-dependent behavior difference in a field that is
 supposed to be a per-reader artifact.

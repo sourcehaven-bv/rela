@@ -161,6 +161,48 @@ exist — or one your data doesn't populate — the walk finds no edges and grou
 roles silently never resolve. There's no separate "is this a real relation"
 check; the relation simply has to be there.
 
+## Scoping a grant to a content state
+
+If a type declares `faces:` (see the
+[Metamodel Reference](metamodel.md#content-states-and-worlds)), a grant may
+name one face, and a role may be granted the right to select a world:
+
+```yaml
+roles:
+  reader:
+    read: [policy@published, "world:published"]   # the published face, via the published world
+  publisher:
+    update: [policy@published]                    # may write the published face
+```
+
+A `type@face` entry scopes an ordinary grant to one face. A `world:<name>` entry
+in `read:` grants the right to select that world with `?world=`. The two do
+different jobs. The world grant selects a lens and does not by itself keep a
+role away from content, because a caller who omits `?world=` is not asking for
+a world. The face grant is what gates the draft on every read path.
+
+**A grant names the face as stored.** If the type sets `bare_face: draft`, the
+draft row lives at the bare id, so the grant for it is the bare
+`update: [policy]`. Writing `update: [policy@draft]` matches nothing and denies
+the face it was meant to allow. The
+[ACL: Security Hardening guide](acl-security.md#scoping-a-grant-to-a-content-state)
+has the full table.
+
+**Reads and writes default differently, deliberately.** A bare `read: [policy]`
+covers *every* face. A bare `update: [policy]` covers only the bare face. A
+world never serves the bare face when its chain names another, so a read grant
+narrowed to the bare face would read nothing under any world. Writes address a
+face by id and never pass through a world, so they can safely stay narrow.
+
+The practical consequence is that adding `faces:` to a live type does **not**
+tighten existing read grants. If you need a role kept away from drafts, name the
+face it may read.
+
+A `world:` grant must name a declared world. The empty name and the `world:*`
+glob are rejected when the policy loads, because a glob would silently absorb
+worlds declared later. The default world needs no grant beyond an ordinary read
+grant.
+
 ## Granting relation writes without entity-create
 
 A relation write is gated on the verb grant for the **source entity's type**.
@@ -650,5 +692,9 @@ that has it).
 
 - [GUIDE-acl-security] — hardening notes for operators: member-of
   trust boundary, why nil Subject panics, why malformed `acl.yaml`
-  fails boot.
+  fails boot, and the full read/write table for face-scoped grants.
+- [GUIDE-metamodel] — declaring `faces:` and `worlds:`, which is what
+  makes a `type@face` grant meaningful in the first place.
+- [How To Publish Content with Faces and Worlds](content-states.md) — a
+  complete setup, from the schema through the grants to the web app.
 - [CON-authorization] — the underlying concept and vocabulary.

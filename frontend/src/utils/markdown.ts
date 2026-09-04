@@ -185,6 +185,114 @@ function inaccessibleTooltipFor(reason: string | undefined): string {
 // would silently mis-align the (n/m) widget with which line a click toggles.
 export { checkboxStats as getCheckboxStats } from './checkboxToggle'
 
+// Sanitizer instance dedicated to mermaid output. It carries the label-lifting
+// hook below, which must not run for renderMarkdown's ordinary HTML, so it
+// cannot share the default DOMPurify instance.
+const mermaidPurifier = DOMPurify(window)
+
+// Marker pairing a lifted label with its foreignObject across the SVG pass.
+// The hook strips it from EVERY element on entry, so input cannot spoof a
+// slot and have someone else's label written into an element of its choosing;
+// it is removed again before the element reaches the document.
+const LABEL_SLOT_ATTR = 'data-rela-label-slot'
+
+// Labels lifted out during the current sanitizeMermaidSVG call. Module-level
+// because a DOMPurify hook has no other channel back to its caller; sanitize()
+// is synchronous, so a call only ever observes its own entries.
+let liftedLabels: string[] = []
+
+mermaidPurifier.addHook('uponSanitizeElement', (node, data) => {
+  if (node.nodeType !== Node.ELEMENT_NODE) return
+  const el = node as Element
+  el.removeAttribute(LABEL_SLOT_ATTR)
+  if (data.tagName !== 'foreignobject') return
+  el.setAttribute(LABEL_SLOT_ATTR, String(liftedLabels.length))
+  liftedLabels.push(el.innerHTML)
+  el.textContent = ''
+})
+
+// Element types that never belong in a diagram label. A label is formatted
+// text, so dropping embedded media costs nothing legitimate and closes the one
+// thing strict mermaid still lets through from a hostile label: the event
+// handler is stripped but the element survives, which is enough for a request
+// to an attacker-chosen URL when the diagram is viewed.
+const LABEL_FORBID_TAGS = ['img', 'picture', 'source', 'video', 'audio', 'iframe', 'object', 'embed']
+
+/**
+ * Sanitize a mermaid-produced SVG and return it as a detached element.
+ *
+ * Mermaid runs with `securityLevel: 'strict'`, so it already escapes diagram
+ * labels. This is defence in depth, and it is not theoretical: with a hostile
+ * label, strict mermaid emits no event-handler attributes but DOES emit a live
+ * `<img>` element built from the label text. It also means a future
+ * `securityLevel: 'loose'` — a one-line change, and the setting you need for
+ * clickable nodes — cannot silently turn user-authored diagram source into
+ * stored XSS.
+ *
+ * ## Why this is two passes and not one `DOMPurify.sanitize(svg)`
+ *
+ * Mermaid renders flowchart and state-diagram labels as XHTML
+ * (`<div><span class="nodeLabel"><p>…<br>…</p></span></div>`) inside an SVG
+ * `<foreignObject>`. DOMPurify 3.4 cannot retain that subtree in a single
+ * call, in any configuration — measured, not assumed:
+ *
+ *  - With the SVG profile alone the HTML elements are not allowed, so they are
+ *    unwrapped: only their text survives. `Line1<br>Line2` becomes
+ *    `Line1Line2`, the `.nodeLabel` styling hook is gone, and bare text is not
+ *    valid `foreignObject` content, so it may not paint at all.
+ *  - Allowing them (the `html` profile, or `ADD_TAGS`) is WORSE: DOMPurify's
+ *    namespace check runs after the allowed-tags check and force-removes an
+ *    allowed HTML element under an SVG parent, children and all. The label
+ *    vanishes entirely.
+ *
+ * Either way shapes and arrows still render, so the diagram looks fine and
+ * reads as empty or run-together boxes. Sequence diagrams use SVG `<text>` and
+ * are NOT affected, so checking one diagram type hides it.
+ *
+ * So the label subtrees are lifted out by a hook DURING the SVG pass (the raw
+ * string is only ever handed to DOMPurify — there is no pre-parse, which is
+ * what a previous version did and what turned the untrusted text into DOM
+ * before any sanitizer saw it), then each label is sanitized on its own under
+ * the HTML profile and written back into its emptied `foreignObject`. Setting
+ * `innerHTML` on a foreignObject parses in the XHTML namespace, exactly as
+ * mermaid itself does. Both halves are sanitized; the split is about parsing
+ * context, not exemption.
+ *
+ * Input whose sanitized root is not an `<svg>` (a parse failure, or text that
+ * was never a diagram) yields an empty host rather than rendering the literal
+ * string on the page.
+ */
+function sanitizeMermaidSVG(svg: string): HTMLElement {
+  const host = document.createElement('div')
+  host.className = 'mermaid-diagram'
+
+  liftedLabels = []
+  const fragment = mermaidPurifier.sanitize(svg, {
+    USE_PROFILES: { svg: true, svgFilters: true },
+    ADD_TAGS: ['foreignObject'],
+    ADD_ATTR: [LABEL_SLOT_ATTR],
+    RETURN_DOM_FRAGMENT: true,
+  })
+  const labels = liftedLabels
+  liftedLabels = []
+
+  const root = fragment.firstElementChild
+  if (!root || root.nodeName.toLowerCase() !== 'svg') return host
+  host.appendChild(fragment)
+
+  for (const slot of Array.from(host.querySelectorAll(`[${LABEL_SLOT_ATTR}]`))) {
+    const i = Number(slot.getAttribute(LABEL_SLOT_ATTR))
+    slot.removeAttribute(LABEL_SLOT_ATTR)
+    if (slot.nodeName.toLowerCase() !== 'foreignobject') continue
+    if (!Number.isInteger(i) || i < 0 || i >= labels.length) continue
+    slot.innerHTML = DOMPurify.sanitize(labels[i], {
+      USE_PROFILES: { html: true },
+      FORBID_TAGS: LABEL_FORBID_TAGS,
+    })
+  }
+  return host
+}
+
 /**
  * Render markdown and then process mermaid diagrams.
  * Call this when the content is mounted in the DOM.
@@ -221,10 +329,7 @@ export async function renderMermaidDiagrams(container: HTMLElement): Promise<voi
     const id = `mermaid-${++mermaidCounter}`
     try {
       const { svg } = await mermaid.render(id, source)
-      const div = document.createElement('div')
-      div.className = 'mermaid-diagram'
-      div.innerHTML = svg
-      pre.replaceWith(div)
+      pre.replaceWith(sanitizeMermaidSVG(svg))
     } catch (err) {
       console.error('Mermaid render error:', err)
       // Leave the block as-is on error.

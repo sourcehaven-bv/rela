@@ -101,6 +101,11 @@ components:
   scheduler:        { in: internal/scheduler }
   script:           { in: internal/script }
   metamodel:        { in: internal/metamodel }
+  # Compiles the metamodel's `worlds:` into metamodel-FREE store.WorldScope
+  # values. The one place that knows both vocabularies, so that stores and
+  # visibility (neither of which may import metamodel) can hold the result.
+  worlds:           { in: internal/worlds }
+  worldreader:      { in: internal/worldreader }
   migration:        { in: internal/migration }
   markdown:         { in: internal/markdown }
   canonical:        { in: internal/canonical }
@@ -412,6 +417,12 @@ deps:
       - git
       - htmlutil
       - lua
+      # Declarative-webhook `append_section` splices a named section into an
+      # entity body (TKT-1EM4KL). markdown is a near-leaf (it depends only on
+      # frontmatter) and dataentry already parses markdown with goldmark
+      # directly, so this reuses the reviewed parser instead of hand-rolling a
+      # second heading scanner here.
+      - markdown
       - mermaid
       - metamodel
       - migration
@@ -431,6 +442,19 @@ deps:
       - transform
       - validator
       - visibility
+      # The world-scoped RELATION dispatch only (TKT-WRLDAPI item 4).
+      # worldreader.RelationReader.Neighbors is the sole implementation of
+      # the identity-vs-content scope split, and its godoc exists to make
+      # reimplementation UNREPRESENTABLE — a caller handed that capability
+      # cannot issue a raw nil-tail query through it. Reimplementing the
+      # dispatch here to avoid this edge would be the exact mistake that
+      # doc is written against, so the edge is the cheaper of the two.
+      #
+      # ENTITY resolution deliberately does NOT come through here: it stays
+      # on the store path (store.EntityQuery.World), which is the second of
+      # the two mechanisms worldreader's own package doc names. Two sites,
+      # neither duplicated.
+      - worldreader
     canUse:
       - goldmark
       - gogit
@@ -575,6 +599,14 @@ deps:
       - tracer
       - validator
       - visibility
+      # The composition root compiles the metamodel's `worlds:` at startup so
+      # an invalid pointer name fails the boot (TKT-WAV8XP).
+      - worlds
+      # ...and binds a compiled world to a read surface. The metamodel
+      # adapters (alias canonicalization, relation-scope classification)
+      # live HERE rather than in worldreader, which arch-lint pins to
+      # entity + store so guard rule 1 stays structural (TKT-WAV8XP PR-D).
+      - worldreader
   # backendtest supplies each build's test backend. The pgx dependency is
   # confined to its postgres-tagged file, which the default build does not
   # compile — the same arrangement pgstore uses.
@@ -636,6 +668,10 @@ deps:
       - project
       - scheduler
       - storage
+      # `rela validate` must check the pointer grammar too. The loader
+      # checks world structure; grammar lives in the compiler because
+      # metamodel may not import entity (TKT-WAV8XP).
+      - worlds
 
   # Domain services
   analysis:
@@ -789,6 +825,12 @@ deps:
       - acl
       - entity
       - lua
+      # worlds: shows{world=...} compiles a declared world NAME to the
+      # store.WorldScope a query takes. worlds depends only on entity,
+      # metamodel and store — all of which docs already has — so this adds
+      # nothing transitively, and it is the runtime-free half (no store, no
+      # reads), which is exactly what a doc build needs.
+      - worlds
       # principal: the refuses{}/permits{} assertion verbs authorize through
       # acl.Declarative, whose API takes a principal.Principal — so this is
       # implied by the acl dependency above rather than a new reach. The
@@ -817,6 +859,11 @@ deps:
       - store
     canUse:
       - chromedp
+      # pgx is used ONLY by the postgres-tagged scratch_postgres.go, to CREATE
+      # and DROP the private schema a postgres docs build seeds its fixture
+      # into. It never reaches the default build (scratch_fs.go is a no-op),
+      # so the "default build must not link pgx" rule is unaffected.
+      - pgx
   # docscli is the command layer for the rela-docs binary. It owns the
   # docscapture edge (and thus chromedp) so internal/cli — and the rela /
   # rela-server binaries — never link the browser. See internal/docscli.
@@ -919,6 +966,29 @@ deps:
       - storage
     canUse:
       - rrulego
+  worlds:
+    mayDependOn:
+      - entity
+      - metamodel
+      - store
+  # worldreader is the RUNTIME half of worlds: it holds a store and reads.
+  #
+  # It deliberately may NOT depend on acl, visibility, principal or
+  # affordances. That is GUARD RULE 1 (TKT-WAV8XP): world resolution is
+  # principal-independent, and it must complete BEFORE the ACL gate is
+  # consulted — if the gate ran first, a prime the principal may not read
+  # would fall through to the chain's next candidate, and the face a
+  # reader receives would reveal what the ACL denied them. Enforced here
+  # AND by a package-scan test (worldreader/guard_test.go), because
+  # arch-lint alone would not catch a principal read off ctx.
+  #
+  # It also may not depend on metamodel: the compiled WorldScope is
+  # metamodel-free by construction, and a TypeCanonicalizer interface is
+  # supplied at the wiring site.
+  worldreader:
+    mayDependOn:
+      - entity
+      - store
   migration:
     mayDependOn:
       - storage
@@ -976,6 +1046,16 @@ deps:
     mayDependOn:
       - ai
       - filter
+      # mail.render builds a mailrender.Message from a script table so a Lua
+      # author gets the branded, client-hardened template instead of
+      # hand-writing HTML for mail.send (TKT-1GA2PG).
+      #
+      # This does NOT invert the "mail -> lua and NEVER back" rule documented on
+      # the mail component. That rule is about internal/mail; mailrender is a
+      # separate component and a true leaf (its own entry allows no internal
+      # deps at all, and `go list -deps` confirms it imports nothing internal),
+      # so this arrow cannot close a cycle. lua still must not depend on mail.
+      - mailrender
       - metamodel
       - principal
       - search

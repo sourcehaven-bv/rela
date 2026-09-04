@@ -393,6 +393,10 @@ function createTestProject(): string {
     path.join(tmpDir, "apps", "e2e-demo", "index.html"),
     E2E_DEMO_APP_HTML,
   );
+  fs.writeFileSync(
+    path.join(tmpDir, "apps", "e2e-demo", "app.js"),
+    E2E_DEMO_APP_JS,
+  );
   for (const [rel, content] of Object.entries(SEED_ENTITIES)) {
     fs.writeFileSync(path.join(tmpDir, rel), content);
   }
@@ -1470,55 +1474,61 @@ const E2E_DEMO_APP_HTML = `<!doctype html>
          the path-scoped CSP (connect-src 'none' + scoped img-src) must block it.
          Result lands in [data-testid=csp-probe]: 'blocked' if the boundary holds. -->
     <div data-testid="csp-probe">pending</div>
-    <script>
-      var cspEl = document.querySelector('[data-testid=csp-probe]');
-      (function probeCSP() {
-        // 1) connect-src 'none' must reject a direct fetch to the API.
-        fetch('/api/v1/features/FEAT-001')
-          .then(function () { cspEl.textContent = 'LEAK: fetch reached /api/'; })
-          .catch(function () {
-            // 2) img-src is path-scoped to the app, so an /api/ image must fail.
-            var img = new Image();
-            img.onload = function () { cspEl.textContent = 'LEAK: img loaded /api/'; };
-            img.onerror = function () { cspEl.textContent = 'blocked'; };
-            img.src = '/api/v1/features/FEAT-001';
-          });
-      })();
-      function ready(fn) {
-        var done = false;
-        function go() { if (!done) { done = true; fn(); } }
-        window.addEventListener('rela:ready', go, { once: true });
-        setTimeout(go, 1000);
-      }
-      var statusEl = document.querySelector('[data-testid=status]');
-      var countEl = document.querySelector('[data-testid=feature-count]');
-      var linkResultEl = document.querySelector('[data-testid=link-result]');
-
-      ready(async function () {
-        try {
-          var res = await window.rela.list({ type: 'feature', params: { per_page: 200 } });
-          var n = (res && res.data ? res.data.length : 0);
-          countEl.textContent = String(n);
-          statusEl.textContent = 'loaded';
-        } catch (e) {
-          statusEl.textContent = 'error: ' + (e && e.message ? e.message : e);
-        }
-      });
-
-      document.querySelector('[data-testid=link-btn]').addEventListener('click', async function () {
-        linkResultEl.textContent = 'linking';
-        try {
-          await window.rela.relationCreate({
-            type: 'feature', id: 'FEAT-001', relation: 'blocks', targetId: 'FEAT-002',
-          });
-          linkResultEl.textContent = 'linked';
-        } catch (e) {
-          linkResultEl.textContent = 'error: ' + (e && e.message ? e.message : e);
-        }
-      });
-    </script>
+    <script src="app.js"></script>
   </body>
 </html>`;
+
+/** The e2e demo app's script, served as a sibling file.
+ *
+ *  A separate file, not an inline <script>: the app CSP carries no
+ *  'unsafe-inline' (TKT-JO125X), so an inline block would be blocked and this
+ *  app would do nothing — every apps.spec.ts assertion would fail on a blank
+ *  page rather than on the behaviour under test. */
+const E2E_DEMO_APP_JS = `var cspEl = document.querySelector('[data-testid=csp-probe]');
+(function probeCSP() {
+  // 1) connect-src 'none' must reject a direct fetch to the API.
+  fetch('/api/v1/features/FEAT-001')
+    .then(function () { cspEl.textContent = 'LEAK: fetch reached /api/'; })
+    .catch(function () {
+      // 2) img-src is path-scoped to the app, so an /api/ image must fail.
+      var img = new Image();
+      img.onload = function () { cspEl.textContent = 'LEAK: img loaded /api/'; };
+      img.onerror = function () { cspEl.textContent = 'blocked'; };
+      img.src = '/api/v1/features/FEAT-001';
+    });
+})();
+function ready(fn) {
+  var done = false;
+  function go() { if (!done) { done = true; fn(); } }
+  window.addEventListener('rela:ready', go, { once: true });
+  setTimeout(go, 1000);
+}
+var statusEl = document.querySelector('[data-testid=status]');
+var countEl = document.querySelector('[data-testid=feature-count]');
+var linkResultEl = document.querySelector('[data-testid=link-result]');
+
+ready(async function () {
+  try {
+    var res = await window.rela.list({ type: 'feature', params: { per_page: 200 } });
+    var n = (res && res.data ? res.data.length : 0);
+    countEl.textContent = String(n);
+    statusEl.textContent = 'loaded';
+  } catch (e) {
+    statusEl.textContent = 'error: ' + (e && e.message ? e.message : e);
+  }
+});
+
+document.querySelector('[data-testid=link-btn]').addEventListener('click', async function () {
+  linkResultEl.textContent = 'linking';
+  try {
+    await window.rela.relationCreate({
+      type: 'feature', id: 'FEAT-001', relation: 'blocks', targetId: 'FEAT-002',
+    });
+    linkResultEl.textContent = 'linked';
+  } catch (e) {
+    linkResultEl.textContent = 'error: ' + (e && e.message ? e.message : e);
+  }
+});`;
 
 /** Document script rendered by rela-server when visiting
  *  /entity/feature/FEAT-001?doc=feature-overview. Emits a single link to

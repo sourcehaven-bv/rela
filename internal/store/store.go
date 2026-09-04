@@ -232,7 +232,16 @@ type Freshness interface {
 type EntityReader interface {
 	// GetEntity returns a single entity by ID.
 	// Returns ErrNotFound if the entity does not exist.
+	//
+	// With content states (TKT-DOFYR1) the bare id addresses the DEFAULT
+	// state; GetEntity(id) ≡ GetEntityState(id, zero Face).
 	GetEntity(ctx context.Context, id string) (*entity.Entity, error)
+
+	// GetEntityState returns the entity's content state addressed by
+	// (id, p); the zero Face addresses the default state, making this
+	// a strict generalization of GetEntity. Returns ErrNotFound if that
+	// state does not exist — including when other states of the id do.
+	GetEntityState(ctx context.Context, id string, p entity.Face) (*entity.Entity, error)
 
 	// ListEntities returns an iterator over entities matching the query.
 	// If an error is yielded, the iterator terminates. Cursor and Limit
@@ -270,6 +279,51 @@ type EntityQuery struct {
 	IDs    []string // filter to specific IDs (empty = all)
 	Cursor string   // pagination cursor from a previous page (empty = start); ignored by ListEntities
 	Limit  int      // max entities per page (0 = no limit); ignored by ListEntities
+
+	// AllStates widens the query to every content state row, as RAW
+	// storage truth (TKT-DOFYR1). The zero value (false) returns only
+	// default-state rows — exactly today's semantics, so every existing
+	// construction site keeps its behavior unchanged.
+	//
+	// This is NOT world resolution and never will be. Worlds arrive in
+	// Step 2 (TKT-WAV8XP) as a separate compiled predicate; AllStates is
+	// the storage-inspection escape hatch for infrastructure that must
+	// see rows exactly as they are stored — undeclared-face
+	// detection, observer backfill (TKT-9OJ3S0) — not for read paths
+	// choosing which face of an entity to show.
+	AllStates bool
+
+	// FaceIn narrows the result to these content states — a SET filter,
+	// semantically distinct from World's ranked chain (TKT-O7R2A1).
+	//
+	// Nil means every face, which is what every pre-faces caller passes, so
+	// the historical query shape is untouched.
+	//
+	// Composes WITH World rather than replacing it: the world picks each
+	// entity's prime by rank, and this narrows the CANDIDATES that ranking
+	// runs over. Applied before the rank, so an entity whose top-choice face
+	// is excluded falls through to the next candidate the caller may see
+	// rather than vanishing — the same "select, and fall back" the chain
+	// already means.
+	//
+	// The ACL read path is the first consumer: a role's face grants compile
+	// to this set. A backend that ignores it FAILS OPEN, so the conformance
+	// suite pins it.
+	FaceIn []entity.Face
+
+	// World resolves each entity to at most one of its content states —
+	// the "prime" — per the compiled per-type ranked chain and fallback
+	// verdict (TKT-WAV8XP). The ZERO VALUE is the default world: every
+	// entity contributes its default state, byte-identical to the
+	// pre-worlds behavior, which is what keeps every existing
+	// construction site unchanged and costs a faceless project
+	// nothing.
+	//
+	// World and AllStates are MUTUALLY EXCLUSIVE: AllStates is raw
+	// storage truth and world resolution is its opposite, so a query
+	// setting both is rejected with [ErrInvalidQuery] rather than
+	// silently resolved by a precedence rule nobody would remember.
+	World WorldScope
 }
 
 // Page holds a single page of results from a paginated list call.
@@ -292,6 +346,33 @@ type EntityWriter interface {
 	// DeleteEntity removes an entity and optionally its relations.
 	// Returns ErrNotFound if the entity does not exist.
 	DeleteEntity(ctx context.Context, id string, cascade bool) (*DeleteResult, error)
+
+	// DeleteEntityState removes ONE content state (face) of an entity,
+	// leaving the rest of the family standing (TKT-C1XUA8).
+	//
+	// This is NOT a narrower DeleteEntity, and the difference is the whole
+	// point: DeleteEntity addresses the bare id and sweeps the entire state
+	// family plus every incident relation on BOTH sides. Deleting a face
+	// removes one row and only the edges that belong to that face.
+	//
+	// Which edges belong to a face:
+	//
+	//   - OUTGOING edges whose tail is this face go WITH it. They
+	//     were written against this face and nothing else can own them.
+	//   - INCOMING edges SURVIVE. Heads are entity-level (design doc §2.3),
+	//     so an inbound edge points at the ENTITY, not at one of its faces —
+	//     deleting them would let removing a draft silently cut links that
+	//     unrelated entities hold on the published face.
+	//
+	// Refuses (ErrInvalidQuery) to delete the DEFAULT face while non-default
+	// faces remain: a family with no default row has no defined meaning, and
+	// world fallback (`otherwise: default`) resolves against it. Delete the
+	// whole entity, or discard the non-default faces first.
+	//
+	// Returns ErrNotFound if that face does not exist. Deleting the only
+	// remaining face is allowed and leaves no entity behind — it is
+	// equivalent to DeleteEntity for a single-face entity.
+	DeleteEntityState(ctx context.Context, id string, p entity.Face) (*DeleteResult, error)
 
 	// RenameEntity changes an entity's ID. All relations referencing the
 	// old ID are updated atomically.
@@ -342,6 +423,15 @@ type RelationQuery struct {
 	Direction Direction // outgoing, incoming, or both
 	Cursor    string    // pagination cursor from a previous page (empty = start); ignored by ListRelations
 	Limit     int       // max relations per page (0 = no limit); ignored by ListRelations
+
+	// FromFace filters on the state-specific tail of an edge
+	// (TKT-DOFYR1). nil — the zero value — leaves the tail UNFILTERED:
+	// edges from every state plus identity edges all match, which is
+	// exactly today's behavior for faceless projects and the compat
+	// story for every existing query site. Non-nil matches the tail
+	// face by equality (the zero Face matches default-tail edges
+	// only). Stores compare, never inspect — see entity.Face.
+	FromFace *entity.Face
 }
 
 // Direction constrains relation queries to a specific direction.
@@ -365,13 +455,42 @@ type RelationWriter interface {
 
 	// DeleteRelation removes a relation.
 	// Returns ErrNotFound if the relation does not exist.
+	//
+	// Addresses the DEFAULT-tail edge of the triple. A triple can carry one
+	// edge per state tail (see RelationData.FromFace), so this is an
+	// address, not a wildcard — use DeleteRelationState for a state-tailed
+	// edge.
 	DeleteRelation(ctx context.Context, from, relType, to string) error
+
+	// DeleteRelationState removes the edge of this triple whose tail is p
+	// (TKT-C1XUA8). The zero face addresses the default-tail edge, making
+	// this the general form of DeleteRelation.
+	//
+	// Separate from DeleteRelation because the tail is part of a relation's
+	// IDENTITY, not a filter: two edges on the same triple with different
+	// tails are two relations. A caller that holds a state-tailed edge and
+	// drops the tail does not delete "the edge, approximately" — it deletes a
+	// DIFFERENT edge, the default face's, and reports success. That is the
+	// bug this method exists to make unavailable.
+	//
+	// Returns ErrNotFound if no edge with that exact tail exists.
+	DeleteRelationState(ctx context.Context, from string, p entity.Face, relType, to string) error
 }
 
 // RelationData holds optional properties and content for a relation.
 type RelationData struct {
 	Properties map[string]any
 	Content    string
+
+	// FromFace sets the state-specific TAIL of the created edge
+	// (TKT-DOFYR1; zero = default state / identity edge). Consumed by
+	// CreateRelation only. UpdateRelation and DeleteRelation address the
+	// DEFAULT-tail edge of their triple in Step 1 — individual update/
+	// delete of a state-tailed edge has no consumer before the Step-3
+	// copy kernel and is added then, mirroring the no-per-state-entity-
+	// delete decision; state-tailed edges are removed today via the
+	// entity delete/rename cascades.
+	FromFace entity.Face
 }
 
 // AttachmentInfo describes a file attached to an entity.
@@ -416,8 +535,14 @@ type AttachmentManager interface {
 // [EntityReader.GetEntity] or [EntityReader.ListEntities], and the fact that
 // it must say so explicitly is the guardrail working.
 type EntityHeader struct {
-	ID         string
-	Type       string
+	ID   string
+	Type string
+
+	// Face identifies the content state this header describes; zero =
+	// default state (TKT-DOFYR1). Populated so AllStates header scans can
+	// tell a family's rows apart.
+	Face entity.Face
+
 	Properties map[string]any
 	UpdatedAt  time.Time
 
@@ -454,6 +579,7 @@ func HeaderOf(e *entity.Entity) EntityHeader {
 	return EntityHeader{
 		ID:         e.ID,
 		Type:       e.Type,
+		Face:       e.Face,
 		Properties: e.Properties,
 		UpdatedAt:  e.UpdatedAt,
 		Redacted:   e.Redacted,
@@ -536,7 +662,16 @@ type VersionMeta struct {
 	PrincipalUser string
 	PrincipalTool string
 	TriggeredBy   string
-	CreatedAt     time.Time
+
+	// Origin is the provenance of the write this version captured: zero for a
+	// direct edit, [OriginCopy] (with its source) for a copy. Deliberately NOT
+	// folded into Op — a copy is still a create or an update OF THE TARGET
+	// ROW, and both facts are wanted at once ("v3, an update, copied from
+	// POL-1@draft"). A sixth VersionOp value would also silently reclassify
+	// the write for every existing client that switches on the five.
+	Origin Origin
+
+	CreatedAt time.Time
 }
 
 // VersionSnapshot is a full captured version: its metadata plus the entity
@@ -557,7 +692,13 @@ type VersionSnapshot struct {
 // deduped into the backend's schema store), and attribution. PrevID is set only
 // for VersionOpRename.
 type VersionInput struct {
-	EntityID      string
+	EntityID string
+
+	// Face names the CONTENT STATE this snapshot captures; zero is the
+	// default face (TKT-C1XUA8). It participates in the content hash, so two
+	// faces holding identical bytes do not dedup against one another.
+	Face entity.Face
+
 	Op            VersionOp
 	PrevID        string
 	Type          string
@@ -568,6 +709,12 @@ type VersionInput struct {
 	PrincipalUser string
 	PrincipalTool string
 	TriggeredBy   string
+
+	// Origin is the provenance of the captured write (zero = direct edit).
+	// Like the principal fields it is boundary-populated and travels INSIDE
+	// this input for a synchronous capture; the sweep reads its own copy off
+	// the live row's columns.
+	Origin Origin
 }
 
 // VersionWriter persists a captured entity version. Like HistoryReader it is an
@@ -647,6 +794,34 @@ type HistoryReader interface {
 	// ordinal in the entity's lineage. Returns ErrNotFound if the id has no
 	// such version.
 	GetVersion(ctx context.Context, id string, version int) (*VersionSnapshot, error)
+}
+
+// StateHistoryReader reads the history of ONE CONTENT STATE (face) of an
+// entity, rather than the default face [HistoryReader] serves (TKT-C1XUA8).
+//
+// A separate optional capability rather than a face parameter on
+// HistoryReader, deliberately. Every existing consumer — the data-entry
+// history route, restore, the CLI — asks about the default face, and
+// widening the two HistoryReader signatures would touch all of them plus
+// three hand-written test stubs to say something they already say. The
+// zero-face call IS HistoryReader, so the two are the same query with a
+// different face.
+//
+// Type-asserted like [Formatter] and the other optional store capabilities:
+// fs/mem return nothing, pgstore implements it.
+//
+// NOTE for read-path callers: a face's history is as sensitive as the face,
+// and the face is caller-supplied. A surface that lets a principal name a
+// face must authorize that face — the world read grant (TKT-DN37J2), not
+// merely the entity's read verdict. The store does not and cannot check it.
+type StateHistoryReader interface {
+	// ListStateVersions is [HistoryReader.ListVersions] for one face.
+	ListStateVersions(ctx context.Context, id string, p entity.Face) ([]VersionMeta, error)
+
+	// GetStateVersion is [HistoryReader.GetVersion] for one face.
+	GetStateVersion(
+		ctx context.Context, id string, p entity.Face, version int,
+	) (*VersionSnapshot, error)
 }
 
 // --- Relation versioning (TKT-92JL8P) ---
@@ -730,7 +905,14 @@ type RelationHistoryQuery struct {
 // arrives here, populated from ctx at the boundary — the store learns the
 // Principal by no other route.
 type RelationVersionInput struct {
-	RecordID      int64
+	RecordID int64
+
+	// FromFace is the state-specific TAIL of the versioned edge; zero is
+	// the default tail (TKT-C1XUA8). Lineages were already fenced by
+	// RecordID; this is what lets the rename stitch tell a state-tailed
+	// predecessor from a default-tail one holding the same triple.
+	FromFace entity.Face
+
 	Op            VersionOp
 	From          string
 	Type          string
@@ -817,7 +999,14 @@ type PurgeSelector struct {
 // returns the target rows WITHOUT deleting. Attribution arrives here from ctx at
 // the boundary — the store never learns the principal by another route.
 type VersionPurgeRequest struct {
-	EntityID      string
+	EntityID string
+
+	// Face names the FACE whose history is purged; zero is the default
+	// face (TKT-C1XUA8). Purge is scoped to one face: each face has its own
+	// fenced lineage, and erasing a sibling's history because it shares
+	// bytes would destroy records the operator did not ask about.
+	Face entity.Face
+
 	Selector      PurgeSelector
 	Reason        string
 	ForceLive     bool
@@ -908,6 +1097,11 @@ type RelationVersionPurger interface {
 // not a cross-subsystem service locator.
 type VersionService interface {
 	HistoryReader
+	// StateHistoryReader is part of the umbrella for the same reason the others
+	// are: per-face history is version I/O over the same connection. A backend
+	// that versions entities at all versions their faces — the face is a
+	// coordinate on the row, not a separate capability to negotiate.
+	StateHistoryReader
 	VersionWriter
 	RelationHistoryReader
 	RelationVersionWriter
@@ -1000,6 +1194,47 @@ type EntityObserver interface {
 	EntityRenamed(oldID string, renamed *entity.Entity) error
 }
 
+// FaceObserver is the OPTIONAL face-aware extension of [EntityObserver],
+// type-asserted by stores the way [Formatter] and [HistoryReader] are.
+// An observer that implements it is told which CONTENT STATE a delete
+// concerned; one that does not keeps the bare-id contract unchanged.
+//
+// # Why this could not stay on EntityObserver
+//
+// [EntityObserver.EntityDelete] takes a bare id, and a bare id is not an
+// address once an entity has several faces. Before per-world indexing
+// that was harmless because indexes held one document per entity, so the
+// stores SUPPRESSED per-face deletes entirely: fsstore and memstore only
+// called EntityDelete when the LAST face went away, since notifying on
+// any earlier one would de-index an entity that still existed.
+//
+// A face-keyed index inverts that. It now holds one document per face, so
+// it needs the opposite notification — delete exactly the face that went,
+// leave the siblings. The bare-id callback cannot express that, and
+// widening EntityDelete's signature would break every observer for the
+// benefit of the two that index faces.
+//
+// So the split is by CAPABILITY, and the two callbacks are mutually
+// exclusive per delete: a store emits EntityFaceDelete to observers that
+// implement this interface, and the legacy last-face-only EntityDelete to
+// those that do not. Neither observer sees a notification it cannot act
+// on, and no observer sees a delete twice.
+//
+// Nil: never returned — this is an interface, and a store MUST fall back
+// to the plain [EntityObserver] path when the assertion fails.
+type FaceObserver interface {
+	EntityObserver
+
+	// EntityFaceDelete is called when ONE content state of an entity is
+	// removed, whether or not other faces survive. The face addresses
+	// the face that went; the zero face is the default state.
+	//
+	// Deleting a whole entity emits one call PER face, so an observer
+	// that removes exactly the named face converges on an empty family
+	// without needing to know the family size.
+	EntityFaceDelete(id string, p entity.Face) error
+}
+
 // Event represents a change that occurred in the store.
 type Event struct {
 	Op           EventOp
@@ -1008,6 +1243,13 @@ type Event struct {
 	RelationType string
 	From         string
 	To           string
+
+	// Face identifies which content state the event is about; zero =
+	// the default state (TKT-DOFYR1). Events fire per state like any
+	// write, and observers now receive them: the search indexers key
+	// documents per FACE (TKT-9KZGJO), so a state event indexes its own
+	// document rather than overwriting the default face.
+	Face entity.Face
 }
 
 // EventOp identifies the kind of change.

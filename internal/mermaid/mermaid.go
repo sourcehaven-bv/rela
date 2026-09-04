@@ -17,6 +17,7 @@ package mermaid
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -91,6 +92,12 @@ func StateDiagram(initial string, transitions []Transition) string {
 type Node struct {
 	Key  string
 	Text string
+	// Class is an optional style class name, applied via mermaid's `class`
+	// statement and defined by the caller's [ClassDefs]. Restricted to
+	// [a-zA-Z0-9_-] and dropped otherwise: it reaches the diagram source
+	// UNQUOTED (a class statement takes a bare identifier), so unlike Text it
+	// cannot be made safe by escaping.
+	Class string
 }
 
 // Edge is one directed edge of a flow graph between two node keys, optionally
@@ -99,6 +106,9 @@ type Edge struct {
 	FromKey string
 	ToKey   string
 	Label   string
+	// Dashed draws the edge as `-.->` rather than `-->`. Enough to say "this
+	// one is different in kind" without a second color to decode.
+	Dashed bool
 }
 
 // Graph renders a mermaid `graph LR` (left-to-right flow). Nodes are declared
@@ -132,13 +142,86 @@ func Graph(nodes []Node, edges []Edge) string {
 			continue
 		}
 		emitted[dedupe] = true
+		arrow := "-->"
+		if e.Dashed {
+			arrow = "-.->"
+		}
 		if lbl := Label(e.Label); lbl != "" {
-			fmt.Fprintf(&b, "    %s -->|%s| %s\n", from, quoted(e.Label), to)
+			fmt.Fprintf(&b, "    %s %s|%s| %s\n", from, arrow, quoted(e.Label), to)
 		} else {
-			fmt.Fprintf(&b, "    %s --> %s\n", from, to)
+			fmt.Fprintf(&b, "    %s %s %s\n", from, arrow, to)
 		}
 	}
+
+	// Class assignments last, so the graph reads as structure-then-styling and
+	// a reader scanning the source sees the shape before the decoration.
+	for _, n := range nodes {
+		id, ok := ids[n.Key]
+		if !ok || !safeClassName(n.Class) {
+			continue
+		}
+		fmt.Fprintf(&b, "    class %s %s\n", id, n.Class)
+	}
 	return b.String()
+}
+
+// ClassDefs renders `classDef` statements for a set of named styles, sorted so
+// the output is stable. A definition whose NAME is unsafe is dropped entirely
+// rather than emitted with a sanitized name, which would silently style the
+// wrong nodes.
+//
+// The style body is caller-supplied CSS-ish text (`fill:#eee,stroke:#333`) and
+// is checked the same way: it lands unquoted in the diagram source, so anything
+// outside a conservative character set is refused.
+func ClassDefs(styles map[string]string) string {
+	names := make([]string, 0, len(styles))
+	for name := range styles {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var b strings.Builder
+	for _, name := range names {
+		if !safeClassName(name) || !safeStyleBody(styles[name]) {
+			continue
+		}
+		fmt.Fprintf(&b, "    classDef %s %s\n", name, styles[name])
+	}
+	return b.String()
+}
+
+// safeClassName reports whether s may be emitted as a bare mermaid identifier.
+// Empty is not safe: an empty class statement is a syntax error.
+func safeClassName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// safeStyleBody reports whether s may be emitted as a bare classDef body: the
+// characters a CSS-ish declaration list needs and nothing that could start a
+// new statement (no newlines, quotes, or brackets).
+func safeStyleBody(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '#', r == ':', r == ',', r == '-', r == '.', r == ' ', r == '%':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // Label makes a string safe as the text of a mermaid quoted label. It flattens
