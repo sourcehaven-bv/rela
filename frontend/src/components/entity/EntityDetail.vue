@@ -41,6 +41,7 @@ import CommentsPanel from '@/components/entity/CommentsPanel.vue'
 import CommentIndicator from '@/components/entity/CommentIndicator.vue'
 import TextSelectionComment from '@/components/entity/TextSelectionComment.vue'
 import TextCommentPopover from '@/components/entity/TextCommentPopover.vue'
+import BlockCommentOverlay from '@/components/entity/BlockCommentOverlay.vue'
 import { listComments, type Comment } from '@/api/comments'
 import { shouldFlipPopover } from '@/utils/popoverFlip'
 import { applyHighlights, type HighlightRange } from '@/utils/commentHighlight'
@@ -1715,6 +1716,7 @@ watch(
                 }
               "
               class="content-body md-body"
+              :data-comment-source="entryContentSection.content || ''"
               @click="contentClick"
               v-html="renderedEntryContent"
             />
@@ -1726,6 +1728,19 @@ watch(
               :entity-type="entityType"
               :entity-id="entityId"
               :container="contentRef"
+              @added="loadComments"
+            />
+
+            <!-- Comment affordances for blocks that cannot be text-selected:
+                 images and mermaid/PlantUML diagrams. They anchor to the
+                 block's SOURCE markdown, so they ride the same `text` kind. -->
+            <BlockCommentOverlay
+              v-if="commentsEnabled"
+              :entity-type="entityType"
+              :entity-id="entityId"
+              :container="contentRef"
+              :render-key="renderedEntryContent"
+              :comments="comments"
               @added="loadComments"
             />
 
