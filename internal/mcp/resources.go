@@ -18,7 +18,7 @@ func (s *Server) registerResources() {
 			Description: "The project's metamodel definition (entity types, relations, properties)",
 			MIMEType:    "application/json",
 		},
-		s.schemaRes.handleReadMetamodel,
+		bind(s, selSchemaRes, schemaResourceHandler.handleReadMetamodel),
 	)
 
 	// Dynamic resource template: entities
@@ -29,7 +29,7 @@ func (s *Server) registerResources() {
 			Description: "Read a specific entity with its properties, content, and relations",
 			MIMEType:    "application/json",
 		},
-		s.schemaRes.handleReadEntity,
+		bind(s, selSchemaRes, schemaResourceHandler.handleReadEntity),
 	)
 
 	// Dynamic resource template: relations
@@ -40,7 +40,7 @@ func (s *Server) registerResources() {
 			Description: "Read a specific relation between two entities",
 			MIMEType:    "application/json",
 		},
-		s.schemaRes.handleReadRelation,
+		bind(s, selSchemaRes, schemaResourceHandler.handleReadRelation),
 	)
 }
 

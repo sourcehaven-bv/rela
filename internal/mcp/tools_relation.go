@@ -22,7 +22,7 @@ func (s *Server) handleListRelations(
 	limit := args.GetInt("limit", 0)
 	offset := args.GetInt("offset", 0)
 
-	st := s.deps.Store
+	st := s.deps().Store
 	q := store.RelationQuery{Type: relType, From: from, To: to}
 
 	all := make([]*entity.Relation, 0)
@@ -83,7 +83,7 @@ func (s *Server) handleCreateRelation(
 		Content:    nilIfEmpty(args.GetString("content", "")),
 	}
 
-	if _, createErr := s.deps.EntityManager.CreateRelation(ctx, fromID, relType, toID, opts); createErr != nil {
+	if _, createErr := s.deps().EntityManager.CreateRelation(ctx, fromID, relType, toID, opts); createErr != nil {
 		return errorResult(createErr.Error()), nil
 	}
 
@@ -111,13 +111,13 @@ func (s *Server) handleDeleteRelation(
 	}
 	toID = trimID(toID)
 
-	st := s.deps.Store
+	st := s.deps().Store
 	if _, getErr := st.GetRelation(ctx, fromID, relType, toID); getErr != nil {
 		return errorResult(
 			fmt.Sprintf("relation not found: %s --%s--> %s", fromID, relType, toID)), nil
 	}
 
-	if delErr := s.deps.EntityManager.DeleteRelation(ctx, fromID, relType, toID); delErr != nil {
+	if delErr := s.deps().EntityManager.DeleteRelation(ctx, fromID, relType, toID); delErr != nil {
 		return errorResult(delErr.Error()), nil
 	}
 

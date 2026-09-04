@@ -97,7 +97,12 @@ import (
 // take it to 29. They are exported because scheduler consumes them through
 // narrow capability interfaces; they do not add general Services getters.
 //
-//plimsoll:max-exported-methods=30
+// 30 → 32 (TKT-NU247U): [Services.CloseAssembly] and [Services.Base], the two
+// halves of re-assembling a base against an already-open store. Both are
+// lifecycle operations on THIS bundle rather than new getters onto its
+// contents, so they belong here and not on a narrower type.
+//
+//plimsoll:max-exported-methods=32
 type Services struct {
 	fs    storage.FS
 	paths *project.Context
@@ -158,8 +163,17 @@ type Services struct {
 	// during single-threaded wiring. Constructing here, once, preserves that.
 	fieldRedactor visibility.FieldRedactor
 
+	// base is the SharedBase this Services was assembled from. Retained so a
+	// host can build a successor base from the same Config (see
+	// [Services.Base]). Nil for a NewFromCollaborators-built Services.
+	base *SharedBase
+
 	closeOnce sync.Once
 	closeErr  error
+	// assemblyCloseOnce guards the per-assembly teardown so that a
+	// CloseAssembly followed by a Close (the reload path's final shutdown)
+	// stops the background services exactly once.
+	assemblyCloseOnce sync.Once
 }
 
 // FS returns the project filesystem.
@@ -167,6 +181,15 @@ func (s *Services) FS() storage.FS { return s.fs }
 
 // Paths returns the project context (root, metamodel path, etc.).
 func (s *Services) Paths() *project.Context { return s.paths }
+
+// Base returns the [SharedBase] this Services was assembled from, or nil when
+// it was built by [NewFromCollaborators] (which takes pre-built collaborators
+// and so has no base).
+//
+// Exposed for hosts that re-assemble: a schema hot-reload needs the base's
+// [SharedBase.Config] to build a successor base against the same project
+// inputs (TKT-NU247U).
+func (s *Services) Base() *SharedBase { return s.base }
 
 // Meta returns the loaded metamodel.
 func (s *Services) Meta() *metamodel.Metamodel { return s.meta }
@@ -1282,6 +1305,15 @@ func (b *SharedBase) Worlds() worlds.Compiled { return b.worlds }
 // Services first.
 func (b *SharedBase) Meta() *metamodel.Metamodel { return b.meta }
 
+// Config returns the validated [Config] this base was built from.
+//
+// Exposed so a host can build a SUCCESSOR base from the same inputs — which is
+// how a schema hot-reload re-reads `schema.yaml` without re-discovering the
+// project (TKT-NU247U). The returned value is a copy of a struct of handles;
+// mutating it does not affect this base, but the FS, ScriptEngine and Audit it
+// names are shared, which is exactly what makes the successor equivalent.
+func (b *SharedBase) Config() Config { return b.cfg }
+
 // Paths returns the project context this base was built from.
 func (b *SharedBase) Paths() *project.Context { return b.cfg.Paths }
 
@@ -1639,6 +1671,7 @@ func assemble(
 	background := startBackgroundServices(base, st, stateKV, versions)
 
 	return &Services{
+		base:            base,
 		gcStop:          background.gcStop,
 		mailStop:        background.mailStop,
 		mail:            background.mail,
@@ -1755,8 +1788,66 @@ func relationVersionRecorderFor(vs store.VersionService) entitymanager.RelationV
 // lives here rather than once per build-tagged jobqueue_*.go file.
 const jobQueueShutdownTimeout = 5 * time.Second
 
-// Close releases resources held by Services: store first (so any
-// in-flight observer callbacks complete), then the search backend.
+// CloseAssembly stops the resources this Services started during its own
+// [SharedBase.Assemble] — the mail worker, the data-migration GC sweep and the
+// background-job queue — and leaves the store and search backend running.
+//
+// It exists for ONE caller shape: a host that re-assembles a base against a
+// store it already owns, and must retire the superseded Services without
+// tearing down the store underneath the new one. The MCP schema hot-reload
+// (TKT-NU247U) is that caller — every Assemble starts a fresh job queue with
+// its own worker pool (on postgres, a second connection pool and a LISTEN
+// connection too), so reloading without this would leak one per schema edit.
+//
+// It is NOT a lighter Close. The store and searcher outlive this call by
+// design, so a caller that owns them must still close them separately —
+// [Services.Close] on the LAST assembled Services does that, and running both
+// is safe because each runs its teardown exactly once.
+//
+// Safe to call repeatedly and from multiple goroutines. Calling Close after
+// CloseAssembly still closes the store and search backend; the background
+// services are not stopped twice.
+func (s *Services) CloseAssembly() {
+	s.assemblyCloseOnce.Do(s.stopBackgroundServices)
+}
+
+// stopBackgroundServices stops the per-assembly background workers. Shared by
+// [Services.Close] and [Services.CloseAssembly] so the two teardown paths
+// cannot drift on WHICH services count as per-assembly — the distinction the
+// whole seam rests on.
+//
+// Mail goes first: the worker may still be delivering and its drain is
+// bounded, so stopping it before anything else gives in-flight sends their
+// best chance without risking a hung shutdown.
+func (s *Services) stopBackgroundServices() {
+	if s.mailStop != nil {
+		s.mailStop()
+		s.mailStop = nil
+	}
+	if s.gcStop != nil {
+		s.gcStop()
+		s.gcStop = nil
+	}
+	if s.jobQueue != nil {
+		// Bounded: a queue that will not drain must not wedge shutdown.
+		ctx, cancel := context.WithTimeout(context.Background(), jobQueueShutdownTimeout)
+		if err := s.jobQueue.Close(ctx); err != nil {
+			slog.Warn("appbuild: failed to close job queue", "error", err)
+		}
+		cancel()
+		s.jobQueue = nil
+	}
+}
+
+// Close releases resources held by Services: the per-assembly background
+// services first, then the store (so any in-flight observer callbacks
+// complete), then the search backend.
+//
+// The job queue is now drained BEFORE the store closes, where it used to be
+// closed after. That ordering is the safer one on its own merits — a job
+// handler may read or write the store, and draining first means a worker
+// cannot be left running against a closed one — and it is what lets
+// [Services.CloseAssembly] share this teardown.
 //
 // Safe to call repeatedly and from multiple goroutines; the close
 // sequence runs exactly once. Subsequent calls return the same nil
@@ -1764,17 +1855,10 @@ const jobQueueShutdownTimeout = 5 * time.Second
 // failures are slog.Warn'd).
 func (s *Services) Close() error {
 	s.closeOnce.Do(func() {
-		// Mail first: the worker may still be delivering, and its drain is
-		// bounded, so stopping it before the store closes gives in-flight
-		// sends their best chance without risking a hung shutdown.
-		if s.mailStop != nil {
-			s.mailStop()
-			s.mailStop = nil
-		}
-		if s.gcStop != nil {
-			s.gcStop()
-			s.gcStop = nil
-		}
+		// Shared with CloseAssembly, and guarded by its own sync.Once, so a
+		// Close following a CloseAssembly does not stop these twice.
+		s.assemblyCloseOnce.Do(s.stopBackgroundServices)
+
 		if s.store != nil {
 			if lc, ok := s.store.(store.Lifecycle); ok {
 				if err := lc.Close(); err != nil {
@@ -1785,15 +1869,6 @@ func (s *Services) Close() error {
 		if s.searchCloser != nil {
 			_ = s.searchCloser.Close()
 			s.searchCloser = nil
-		}
-		if s.jobQueue != nil {
-			// Bounded: a queue that will not drain must not wedge shutdown.
-			ctx, cancel := context.WithTimeout(context.Background(), jobQueueShutdownTimeout)
-			if err := s.jobQueue.Close(ctx); err != nil {
-				slog.Warn("appbuild: failed to close job queue", "error", err)
-			}
-			cancel()
-			s.jobQueue = nil
 		}
 	})
 	return s.closeErr

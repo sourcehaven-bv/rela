@@ -274,3 +274,81 @@ worlds:
 		}
 	})
 }
+
+// TestCloseAssembly_LeavesStoreAndSearcherUsable is the property the MCP
+// schema hot-reload rests on (TKT-NU247U).
+//
+// A reload assembles a successor against the store and searcher the previous
+// assembly opened, then retires the previous one. If that retirement closed the
+// store, the successor — and every in-flight request — would be reading a
+// closed store. CloseAssembly must stop only what its own Assemble started.
+func TestCloseAssembly_LeavesStoreAndSearcherUsable(t *testing.T) {
+	base := newSharedBase(t)
+
+	st := memstore.New()
+	searcher := search.New(st, search.NewLinearSearch())
+
+	first, err := base.Assemble(st, searcher, nil, nil)
+	if err != nil {
+		t.Fatalf("Assemble first: %v", err)
+	}
+
+	// A successor over the SAME store and searcher, exactly as a reload does.
+	second, err := base.Assemble(first.Store(), first.Searcher(), first.VisibleSearcher(), nil)
+	if err != nil {
+		t.Fatalf("Assemble successor: %v", err)
+	}
+	t.Cleanup(func() { _ = first.Close() })
+
+	first.CloseAssembly()
+
+	ctx := context.Background()
+	if err := second.Store().CreateEntity(ctx, entity.New("DOC-3", "doc")); err != nil {
+		t.Fatalf("store unusable after retiring the previous assembly: %v", err)
+	}
+	if _, err := second.Store().GetEntity(ctx, "DOC-3"); err != nil {
+		t.Fatalf("read-back failed after CloseAssembly: %v", err)
+	}
+}
+
+// TestCloseAssembly_ThenCloseIsSafe covers the shutdown sequence the reload
+// path actually runs: retire the superseded assembly, then Close the one that
+// owns the store. Both teardowns must be safe together and repeatable — a
+// double-stopped job queue or a double-closed store would surface as a panic
+// on exit, long after the reload that caused it.
+func TestCloseAssembly_ThenCloseIsSafe(t *testing.T) {
+	base := newSharedBase(t)
+	svc := assembleOver(t, base)
+
+	svc.CloseAssembly()
+	svc.CloseAssembly() // idempotent
+
+	if err := svc.Close(); err != nil {
+		t.Fatalf("Close after CloseAssembly: %v", err)
+	}
+	if err := svc.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+}
+
+// TestServices_BaseRoundTrips pins that an assembled Services can hand back the
+// base it came from, which is how a reload builds a successor base from the
+// same project inputs without re-discovering the project.
+func TestServices_BaseRoundTrips(t *testing.T) {
+	base := newSharedBase(t)
+	svc := assembleOver(t, base)
+	t.Cleanup(func() { _ = svc.Close() })
+
+	if svc.Base() != base {
+		t.Fatal("Services.Base() did not return the base it was assembled from")
+	}
+
+	// The Config it carries must be enough to build an equivalent successor.
+	next, err := appbuild.NewSharedBase(svc.Base().Config())
+	if err != nil {
+		t.Fatalf("NewSharedBase from Services.Base().Config(): %v", err)
+	}
+	if got, want := len(next.Meta().Entities), len(base.Meta().Entities); got != want {
+		t.Errorf("successor base has %d entity types, want %d", got, want)
+	}
+}
