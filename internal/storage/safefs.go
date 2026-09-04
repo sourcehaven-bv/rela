@@ -3,13 +3,7 @@ package storage
 import (
 	"os"
 	"path/filepath"
-	"sync"
 )
-
-// WriteObserver is invoked after a successful durable WriteFile,
-// with the exact bytes that landed on disk after the atomic rename.
-// See SafeFS.OnPostWrite.
-type WriteObserver func(path string, data []byte)
 
 // SafeFS wraps an FS and overrides WriteFile with atomic write semantics.
 // It writes to a temporary file, fsyncs it, then renames over the target path.
@@ -21,17 +15,16 @@ type WriteObserver func(path string, data []byte)
 //
 // # Post-write observation
 //
-// SafeFS exposes a single observer hook via OnPostWrite. The hook
-// fires exactly once per successful durable write, with the bytes
-// that sit on disk after the atomic rename. Failed writes (the temp
-// file was created but the rename failed) do NOT fire the hook.
+// SafeFS exposes an observer hook via OnPostWrite. Each installed
+// observer fires exactly once per successful durable write, with the
+// bytes that sit on disk after the atomic rename. Failed writes (the
+// temp file was created but the rename failed) do NOT fire the hook.
 // The fsstore watcher uses this hook to hash self-writes so it can
 // skip its own fsnotify echoes.
 type SafeFS struct {
 	FS
 
-	mu       sync.RWMutex
-	observer WriteObserver
+	hook postWriteHook
 }
 
 // NewSafeFS creates a SafeFS that wraps the given filesystem.
@@ -39,13 +32,12 @@ func NewSafeFS(fs FS) *SafeFS {
 	return &SafeFS{FS: fs}
 }
 
-// OnPostWrite installs obs as the post-write observer. Only one
-// observer is supported; a second call replaces the first. Passing
-// nil clears the observer.
-func (s *SafeFS) OnPostWrite(obs WriteObserver) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.observer = obs
+// OnPostWrite installs obs as a post-write observer and returns the
+// function that uninstalls exactly that observer. Any number of
+// observers may be installed; they fire in installation order. A nil
+// obs installs nothing and returns a no-op remover.
+func (s *SafeFS) OnPostWrite(obs WriteObserver) (remove func()) {
+	return s.hook.add(obs)
 }
 
 // WriteFile writes data to path atomically:
@@ -53,7 +45,7 @@ func (s *SafeFS) OnPostWrite(obs WriteObserver) {
 //  2. Fsyncs the temp file
 //  3. Renames temp file to final path (atomic on POSIX)
 //  4. Fsyncs the parent directory
-//  5. Fires the post-write observer with (path, data)
+//  5. Fires the post-write observers with (path, data)
 //
 // Steps 1-4 are performed even when no observer is installed. Step 5
 // is skipped if the rename fails — a failed write leaves no durable
@@ -101,13 +93,8 @@ func (s *SafeFS) WriteFile(path string, data []byte, perm os.FileMode) error {
 	// Fsync parent directory to persist the rename
 	syncDir(dir)
 
-	// Notify observer. Only fires on successful durable write.
-	s.mu.RLock()
-	obs := s.observer
-	s.mu.RUnlock()
-	if obs != nil {
-		obs(path, data)
-	}
+	// Notify observers. Only fires on successful durable write.
+	s.hook.fire(path, data)
 
 	return nil
 }
