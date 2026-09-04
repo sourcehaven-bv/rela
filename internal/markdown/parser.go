@@ -154,9 +154,7 @@ func marshalOrdered(data map[string]any, keyOrder []string) ([]byte, error) {
 		if !ok {
 			continue
 		}
-		node.Content = append(node.Content,
-			&yaml.Node{Kind: yaml.ScalarNode, Value: key},
-		)
+		node.Content = append(node.Content, KeyNode(key))
 		valNode, err := ValueToNode(val)
 		if err != nil {
 			return nil, err
@@ -176,9 +174,7 @@ func marshalOrdered(data map[string]any, keyOrder []string) ([]byte, error) {
 
 	// Add remaining keys alphabetically
 	for _, key := range remaining {
-		node.Content = append(node.Content,
-			&yaml.Node{Kind: yaml.ScalarNode, Value: key},
-		)
+		node.Content = append(node.Content, KeyNode(key))
 		valNode, err := ValueToNode(data[key])
 		if err != nil {
 			return nil, err
@@ -228,6 +224,26 @@ func ValueToNode(val any) (*yaml.Node, error) {
 		return encodeNode(val)
 	}
 	return buildNode(val, false)
+}
+
+// KeyNode builds the scalar node for a frontmatter key. Keys are written
+// plain, exactly as before, unless the key itself is a string yaml.v3 cannot
+// round-trip through a block scalar — the same defect [ValueToNode] guards
+// values against (BUG-B1RA3J). A key beginning with a newline was written as
+// a block scalar and read back as "", silently RENAMING the property. Found
+// by the store fuzz target once it compared the whole property map rather
+// than checking for an absent error (BUG-X7ICNM's round-trip assertion).
+//
+// Only breaking keys are touched: routing every key through Encode would
+// quote keys that merely look like other scalars ("y", "on", "123") and
+// reflow every file that has one.
+func KeyNode(key string) *yaml.Node {
+	node := &yaml.Node{Kind: yaml.ScalarNode, Value: key}
+	if needsQuoting(key, false) {
+		node.Tag = "!!str"
+		node.Style = yaml.DoubleQuotedStyle
+	}
+	return node
 }
 
 // encodeNode is the plain yaml.v3 path, used for every value that does not
