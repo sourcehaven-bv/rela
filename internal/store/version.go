@@ -126,8 +126,19 @@ func VersionOf(e *entity.Entity) EntityVersion {
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
+		v := e.Properties[k]
 		writeVersionField(h, k)
-		writeVersionField(h, fmt.Sprintf("%v", e.Properties[k]))
+		// Fold the TYPE in alongside the rendering. %v alone is type-blind:
+		// int64(1), float64(1) and the string "1" all render as "1", as do
+		// true and "true", and []string{"a","b"} and "[a b]". Two entities
+		// differing only in a property's type would then share a token, so a
+		// CAS that ought to conflict would silently succeed and the other
+		// writer's change would be lost — the exact failure this token exists
+		// to prevent. There is no coercion layer normalising property types on
+		// the write path, so a script writing 1 where a form wrote "1" is an
+		// ordinary occurrence rather than a contrived one.
+		writeVersionField(h, fmt.Sprintf("%T", v))
+		writeVersionField(h, fmt.Sprintf("%v", v))
 	}
 	return EntityVersion(base64.RawURLEncoding.EncodeToString(h.Sum(nil)))
 }
