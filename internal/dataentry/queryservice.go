@@ -12,6 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/search/searchparser"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // queryService owns the search-query pipeline: the `/_search` and
@@ -189,7 +190,7 @@ func (q *queryService) runVisibleFreeTextSearch(
 		Types: sq.EntityTypes,
 		Limit: limit,
 	}
-	out := make([]*entity.Entity, 0)
+	var hits []search.Hit
 	for hit, err := range searchVisibleHits(ctx, q.visibleSearcher(), q.affordances(), sQuery, scope) {
 		if err != nil {
 			if errors.Is(err, search.ErrScope) {
@@ -197,21 +198,26 @@ func (q *queryService) runVisibleFreeTextSearch(
 			}
 			return nil, fmt.Errorf("free-text search: %w", err)
 		}
-		// Load the FACE the hit matched, not the bare id. Under the default
-		// world hit.Face is the zero face and this IS GetEntity, so nothing
-		// changes today — but /_search is world-refused only by the route
-		// allowlist, and a bare-id re-read here would render default-face
-		// bytes for a hit scored against another face the moment that
-		// allowlist widens. The searcher already resolved which face matched;
-		// discarding it and re-reading is the wrong-face serve.
-		e, getErr := svc.Store.GetEntityState(ctx, hit.ID, hit.Face)
-		if getErr != nil {
-			// Stale index hit (entity deleted between index query and
-			// store read). Skip silently — the result stays a coherent
-			// set of currently-existing entities.
-			continue
+		hits = append(hits, hit)
+	}
+	// Load the FACE each hit matched, not the bare id, in ONE read per
+	// distinct face rather than one per hit (TKT-1U8XYN). Under the default
+	// world every hit carries the zero face and this is one query. The
+	// searcher already resolved which face matched; a bare-id re-read would
+	// render default-face bytes for a hit scored against another face the
+	// moment /_search stops being world-refused by the route allowlist.
+	loaded, err := loadHitFaces(ctx, svc.Store, hits)
+	if err != nil {
+		return nil, fmt.Errorf("free-text search: %w", err)
+	}
+	// Emit in ranked hit order; a hit the store no longer has (deleted
+	// between index query and read) is skipped so the result stays a
+	// coherent set of currently-existing entities.
+	out := make([]*entity.Entity, 0, len(hits))
+	for _, hit := range hits {
+		if e, ok := loaded[hitKey{hit.ID, hit.Face}]; ok {
+			out = append(out, e)
 		}
-		out = append(out, e)
 	}
 	return out, nil
 }
@@ -295,4 +301,40 @@ func (q *queryService) matchesPropertyFilters(e *entity.Entity, filters []*filte
 	}
 	matched, err := filter.MatchAll(entityRecord(e), filters, entDef, s.Meta)
 	return err == nil && matched
+}
+
+// hitKey addresses one (id, face) row a search hit named.
+type hitKey struct {
+	id   string
+	face entity.Face
+}
+
+// loadHitFaces reads the rows the hits name, grouped by face: default-face
+// hits in one IDs query, each other face in one AllStates query narrowed to
+// that face on the way out. Returns only rows that exist.
+func loadHitFaces(ctx context.Context, st store.Store, hits []search.Hit) (map[hitKey]*entity.Entity, error) {
+	byFace := make(map[entity.Face][]string)
+	seen := make(map[hitKey]struct{}, len(hits))
+	for _, h := range hits {
+		k := hitKey{h.ID, h.Face}
+		if _, dup := seen[k]; dup {
+			continue
+		}
+		seen[k] = struct{}{}
+		byFace[h.Face] = append(byFace[h.Face], h.ID)
+	}
+	out := make(map[hitKey]*entity.Entity, len(seen))
+	for face, ids := range byFace {
+		q := store.EntityQuery{IDs: ids, AllStates: !face.IsDefault()}
+		for e, err := range st.ListEntities(ctx, q) {
+			if err != nil {
+				return nil, err
+			}
+			if e.Face != face {
+				continue // AllStates over-returns the family's other faces
+			}
+			out[hitKey{e.ID, e.Face}] = e
+		}
+	}
+	return out, nil
 }

@@ -416,21 +416,13 @@ func worldOutgoingForEntity(
 // and the world path has no reason to be worse. So: edges per row, then ONE
 // head resolution and ONE gate pass over the union.
 //
-// # What is NOT batched, stated plainly
+// # The edge queries are batched too
 //
-// The EDGE queries are still per row, and [worldreader.RelationReader.Neighbors]
-// issues two apiece (identity-tail and content-tail), so a 50-row page costs
-// 100 relation queries. That is not a regression — the default-world path also
-// queries per row (outgoingRelations + incomingRelations) — but it is not an
-// improvement either, and the doc should not imply the whole thing is one
-// round-trip.
-//
-// It is not batchable through Neighbors as it stands: the content-tail query
-// filters on the row's OWN resolved face, so fifty rows can carry fifty
-// different tails, and store.RelationQuery has no multi-endpoint selector to
-// express that in one shot. Widening it is a store-layer change (and DOFYR1's
-// FromFace contract is deliberately frozen), so it belongs in its own
-// ticket rather than being smuggled in here.
+// [worldreader.RelationReader.NeighborsForPage] issues one identity-tail
+// query for the page plus one content-tail query per DISTINCT face on the
+// page (store.RelationQuery.EntityIDs, TKT-1U8XYN). A 50-row page at two faces
+// is therefore three relation queries, not a hundred, while each row still
+// receives exactly the edges its own resolved face carries.
 //
 // Rows are matched to their edges positionally, so the returned slices are
 // index-aligned with entities — a row with no links keeps a nil entry rather
@@ -449,17 +441,21 @@ func worldNeighborsForPage(
 		return outgoing, incoming, nil, nil
 	}
 
-	// Pass 1: each row's edges, under that row's own resolved face.
-	edgesByRow := make([][]*entityPkg.Relation, len(entities))
+	// Pass 1: each row's edges, under that row's own resolved face — batched
+	// into one identity query plus one content query per distinct face on the
+	// page (TKT-1U8XYN), with the same per-row result the per-row calls gave.
+	rows := make([]worldreader.Resolved, len(entities))
+	for i, e := range entities {
+		rows[i] = resolvedFromStoreFace(ctx, e)
+	}
+	edgesByRow, nerr := wn.relations.NeighborsForPage(ctx, rows, store.DirectionBoth)
+	if nerr != nil {
+		return nil, nil, nil, fmt.Errorf("world neighbors for page: %w", nerr)
+	}
 	var headIDs []string
 	seen := make(map[string]struct{})
 	for i, e := range entities {
-		edges, nerr := wn.relations.Neighbors(
-			ctx, resolvedFromStoreFace(ctx, e), store.DirectionBoth)
-		if nerr != nil {
-			return nil, nil, nil, fmt.Errorf("world neighbors for %s: %w", e.ID, nerr)
-		}
-		edgesByRow[i] = edges
+		edges := edgesByRow[i]
 		for _, id := range headIDsOf(edges, e.ID) {
 			if _, dup := seen[id]; dup {
 				continue
@@ -843,12 +839,13 @@ func servedFacePageEdges(
 	if wn != nil {
 		return worldNeighborsForPage(ctx, wn, visReader, entities)
 	}
-	outgoing = make([][]*entityPkg.Relation, len(entities))
-	incoming = make([][]*entityPkg.Relation, len(entities))
+	// ONE relation query for the whole page (TKT-1U8XYN): every edge touching
+	// any row, split per row by which endpoint is the row. An edge between two
+	// page rows is outgoing for one and incoming for the other, exactly as the
+	// former two-queries-per-row loop produced.
+	outgoing, incoming = reader.pageRelations(ctx, entities)
 	var neighborIDs []string
-	for i, e := range entities {
-		outgoing[i] = reader.outgoingRelations(ctx, e.ID)
-		incoming[i] = reader.incomingRelations(ctx, e.ID)
+	for i := range entities {
 		neighborIDs = append(neighborIDs, neighborIDsOf(outgoing[i], incoming[i])...)
 	}
 	return outgoing, incoming, visibleRelationIDs(ctx, reader, visReader, neighborIDs), nil

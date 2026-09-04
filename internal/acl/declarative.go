@@ -250,7 +250,7 @@ func (d *Declarative) AuthorizeWrite(ctx context.Context, req WriteRequest) Deci
 		}
 	}
 
-	r, err := d.ForPrincipal(principal.From(ctx))
+	r, err := d.requestFor(ctx)
 	if err != nil {
 		return Decision{
 			Allow:    false,
@@ -260,6 +260,27 @@ func (d *Declarative) AuthorizeWrite(ctx context.Context, req WriteRequest) Deci
 		}
 	}
 	return r.AuthorizeWrite(ctx, req)
+}
+
+// requestFor returns the per-operation [Request] for ctx: the one the
+// operation's entry point attached via [WithRequest] when it is bound to
+// THIS policy and to ctx's principal, else a fresh one for ctx's principal.
+//
+// Reusing the attached scope is what keeps write authorization O(1) in graph
+// traffic per operation. A Request memoizes the principal's membership walk;
+// opening a new one per AuthorizeWrite re-ran that walk for every verb of
+// every row on a list page — six membership queries per row, more SQL than
+// the page itself (TKT-1U8XYN baseline). The two guards are what make reuse
+// safe: a Request from another Declarative would evaluate another tenant's
+// policy, and one bound to a different principal (the provisioning seam
+// re-stamps ctx, see dataentry.enterWrite) would evaluate the wrong identity.
+// Both cases fall back to a fresh scope, which is exactly the old behavior.
+func (d *Declarative) requestFor(ctx context.Context) (*Request, error) {
+	p := principal.From(ctx)
+	if r := FromContext(ctx); r != nil && r.d == d && r.principal.User == p.User && r.principal.Tool == p.Tool {
+		return r, nil
+	}
+	return d.ForPrincipal(p)
 }
 
 // (roleGrantsWrite removed in TKT-4LQMWP — write grants are now per-verb;

@@ -254,40 +254,31 @@ func (h *viewsHandler) loadViewEntities(
 	}
 	byID := make(map[string]*entityPkg.Entity, len(ids))
 
-	if w.isDefault() {
-		// Point reads, as before. The default world has no chain to resolve, so
-		// a batch query would buy nothing and would change the error handling
-		// of a path this ticket must leave byte-identical.
-		for _, id := range ids {
-			if _, seen := byID[id]; seen {
-				continue
-			}
-			if e, err := h.store.GetEntity(ctx, id); err == nil {
-				byID[id] = e
-			}
+	// ONE batched read for every world, the default one included
+	// (TKT-1U8XYN): the default world's query carries a zero WorldScope, so
+	// the store serves default rows exactly as the former per-id GetEntity
+	// loop did, without a round-trip per collected id. An id the store no
+	// longer has is simply absent, as the per-id not-found was.
+	unique := make([]string, 0, len(ids))
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if _, dup := seen[id]; dup {
+			continue
 		}
-	} else {
-		unique := make([]string, 0, len(ids))
-		seen := make(map[string]struct{}, len(ids))
-		for _, id := range ids {
-			if _, dup := seen[id]; dup {
-				continue
-			}
-			seen[id] = struct{}{}
-			unique = append(unique, id)
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	for e, err := range h.store.ListEntities(ctx, store.EntityQuery{
+		IDs:   unique,
+		World: w.scope,
+	}) {
+		if err != nil {
+			slog.Warn("dataentry: view traversal: loading collected entities failed; "+
+				"collection truncated",
+				"world", w.name, "ids", len(unique), "err", err)
+			break
 		}
-		for e, err := range h.store.ListEntities(ctx, store.EntityQuery{
-			IDs:   unique,
-			World: w.scope,
-		}) {
-			if err != nil {
-				slog.Warn("dataentry: view traversal: world resolution failed; "+
-					"collection truncated",
-					"world", w.name, "ids", len(unique), "err", err)
-				break
-			}
-			byID[e.ID] = e
-		}
+		byID[e.ID] = e
 	}
 
 	out := make([]*entityPkg.Entity, 0, len(byID))

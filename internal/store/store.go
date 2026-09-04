@@ -421,8 +421,17 @@ type RelationQuery struct {
 	Type      string    // filter by relation type
 	EntityID  string    // filter by either endpoint (From OR To)
 	Direction Direction // outgoing, incoming, or both
-	Cursor    string    // pagination cursor from a previous page (empty = start); ignored by ListRelations
-	Limit     int       // max relations per page (0 = no limit); ignored by ListRelations
+
+	// EntityIDs is the plural of EntityID: the edge's endpoint (per
+	// Direction, exactly as for EntityID) must be one of these ids. It
+	// exists so a page of rows loads its edges in ONE query instead of one
+	// per row (TKT-1U8XYN); it composes with Type and FromFace like EntityID
+	// does. Nil means unfiltered; an empty, non-nil slice matches nothing —
+	// a caller that computed "no ids" must get no edges, not all of them.
+	// When both EntityID and EntityIDs are set an edge must satisfy both.
+	EntityIDs []string
+	Cursor    string // pagination cursor from a previous page (empty = start); ignored by ListRelations
+	Limit     int    // max relations per page (0 = no limit); ignored by ListRelations
 
 	// FromFace filters on the state-specific tail of an edge
 	// (TKT-DOFYR1). nil — the zero value — leaves the tail UNFILTERED:

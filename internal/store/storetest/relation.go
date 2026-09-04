@@ -239,6 +239,81 @@ func RunRelationTests(t *testing.T, f Factory) {
 		assert.Empty(t, keys)
 	})
 
+	// EntityIDs is the plural of EntityID under the same Direction/FromFace
+	// semantics (TKT-1U8XYN): the batch must equal the union of the scalar
+	// calls, nil must mean unfiltered and empty must mean nothing.
+	t.Run("ListEntityIDsBatchEqualsUnionOfScalarCalls", func(t *testing.T) {
+		s := f(t)
+		for _, id := range []string{"A", "B", "C", "D"} {
+			require.NoError(t, s.CreateEntity(ctx(), entity.New(id, "node")))
+		}
+		for _, r := range [][3]string{{"A", "links", "B"}, {"B", "links", "C"}, {"C", "links", "D"}, {"D", "other", "A"}} {
+			_, err := s.CreateRelation(ctx(), r[0], r[1], r[2], nil)
+			require.NoError(t, err)
+		}
+		keys := func(q store.RelationQuery) map[string]bool {
+			out := map[string]bool{}
+			for r, err := range s.ListRelations(ctx(), q) {
+				require.NoError(t, err)
+				out[r.Key()] = true
+			}
+			return out
+		}
+		for _, dir := range []store.Direction{store.DirectionOutgoing, store.DirectionIncoming, store.DirectionBoth} {
+			for _, relType := range []string{"", "links"} {
+				want := map[string]bool{}
+				for _, id := range []string{"A", "C"} {
+					for k := range keys(store.RelationQuery{EntityID: id, Direction: dir, Type: relType}) {
+						want[k] = true
+					}
+				}
+				got := keys(store.RelationQuery{EntityIDs: []string{"A", "C"}, Direction: dir, Type: relType})
+				require.Equal(t, want, got, "direction %v type %q", dir, relType)
+			}
+		}
+		// Duplicated and unknown ids are harmless.
+		require.Len(t, keys(store.RelationQuery{EntityIDs: []string{"A", "A", "nope"}, Direction: store.DirectionOutgoing}), 1)
+	})
+
+	t.Run("ListEntityIDsNilIsUnfilteredEmptyIsNothing", func(t *testing.T) {
+		s := f(t)
+		require.NoError(t, s.CreateEntity(ctx(), entity.New("A", "node")))
+		require.NoError(t, s.CreateEntity(ctx(), entity.New("B", "node")))
+		_, err := s.CreateRelation(ctx(), "A", "links", "B", nil)
+		require.NoError(t, err)
+		count := func(q store.RelationQuery) int {
+			n := 0
+			for _, err := range s.ListRelations(ctx(), q) {
+				require.NoError(t, err)
+				n++
+			}
+			return n
+		}
+		require.Equal(t, 1, count(store.RelationQuery{EntityIDs: nil}), "nil EntityIDs must not filter")
+		require.Equal(t, 0, count(store.RelationQuery{EntityIDs: []string{}}), "empty EntityIDs must match nothing")
+		for _, dir := range []store.Direction{store.DirectionOutgoing, store.DirectionIncoming, store.DirectionBoth} {
+			c, err := s.CountRelations(ctx(), store.RelationQuery{EntityIDs: []string{}, Direction: dir})
+			require.NoError(t, err)
+			require.Equal(t, 0, c)
+		}
+	})
+
+	t.Run("ListEntityIDsComposesWithEntityID", func(t *testing.T) {
+		s := f(t)
+		require.NoError(t, s.CreateEntity(ctx(), entity.New("A", "node")))
+		require.NoError(t, s.CreateEntity(ctx(), entity.New("B", "node")))
+		_, err := s.CreateRelation(ctx(), "A", "links", "B", nil)
+		require.NoError(t, err)
+		n := 0
+		for _, err := range s.ListRelations(ctx(), store.RelationQuery{
+			EntityID: "B", EntityIDs: []string{"A"}, Direction: store.DirectionOutgoing,
+		}) {
+			require.NoError(t, err)
+			n++
+		}
+		require.Equal(t, 0, n, "both filters apply: B is not a source in the batch")
+	})
+
 	t.Run("CreateRejectsEmptyFrom", func(t *testing.T) {
 		s := f(t)
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("B", "req")))

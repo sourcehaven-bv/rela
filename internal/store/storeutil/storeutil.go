@@ -320,23 +320,33 @@ func MatchRelation(r *entity.Relation, q store.RelationQuery) bool {
 	if q.To != "" && r.To != q.To {
 		return false
 	}
-	if q.EntityID != "" {
-		switch q.Direction {
-		case store.DirectionOutgoing:
-			if r.From != q.EntityID {
-				return false
-			}
-		case store.DirectionIncoming:
-			if r.To != q.EntityID {
-				return false
-			}
-		default: // DirectionBoth
-			if r.From != q.EntityID && r.To != q.EntityID {
-				return false
-			}
+	if q.EntityID != "" && !endpointMatches(r, q.Direction, func(id string) bool { return id == q.EntityID }) {
+		return false
+	}
+	if q.EntityIDs != nil {
+		set := make(map[string]struct{}, len(q.EntityIDs))
+		for _, id := range q.EntityIDs {
+			set[id] = struct{}{}
+		}
+		if !endpointMatches(r, q.Direction, func(id string) bool { _, ok := set[id]; return ok }) {
+			return false
 		}
 	}
 	return true
+}
+
+// endpointMatches reports whether the endpoint(s) Direction selects on r
+// satisfy want: the source for outgoing, the target for incoming, either
+// for both.
+func endpointMatches(r *entity.Relation, dir store.Direction, want func(id string) bool) bool {
+	switch dir {
+	case store.DirectionOutgoing:
+		return want(r.From)
+	case store.DirectionIncoming:
+		return want(r.To)
+	default: // DirectionBoth
+		return want(r.From) || want(r.To)
+	}
 }
 
 // ValidateEntityQuery rejects a query whose fields contradict each

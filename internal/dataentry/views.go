@@ -112,18 +112,22 @@ func (h *viewsHandler) applyViewTraverse(
 	// decide where to step next, while LOADING an entity under a world costs a
 	// resolution. Collect the whole rule's ids first, then resolve once.
 	maxRecursionDepth := 10
-	var foundIDs []string
+	sourceIDs := make([]string, 0, len(sources))
 	for _, src := range sources {
-		if rule.Recursive {
-			maxD := rule.MaxDepth
-			if maxD <= 0 {
-				maxD = maxRecursionDepth
-			}
-			foundIDs = append(foundIDs,
-				h.traverseViewRecursive(ctx, src.ID, rule, 0, maxD, map[string]bool{})...)
-		} else {
-			foundIDs = append(foundIDs, h.traverseViewOnce(ctx, src.ID, rule)...)
+		sourceIDs = append(sourceIDs, src.ID)
+	}
+	var foundIDs []string
+	if rule.Recursive {
+		maxD := rule.MaxDepth
+		if maxD <= 0 {
+			maxD = maxRecursionDepth
 		}
+		foundIDs = h.traverseViewBreadthFirst(ctx, sourceIDs, rule, maxD)
+	} else {
+		// One relation query for every source at once (TKT-1U8XYN), in the
+		// same order the per-source loop produced: sources in collection
+		// order, each source's edges in store order.
+		foundIDs = h.traverseViewMany(ctx, sourceIDs, rule)
 	}
 
 	// ONE resolution for the whole rule application, not one per hop.
@@ -225,21 +229,78 @@ func (h *viewsHandler) traverseViewOnce(ctx context.Context, sourceID string, ru
 	return out
 }
 
-// traverseViewRecursive walks the relation graph depth-first, returning the
-// neighbor IDS found. Like traverseViewOnce it loads no entities — the walk
-// steps by id, so it never needed them.
-func (h *viewsHandler) traverseViewRecursive(
-	ctx context.Context, sourceID string, rule ViewTraverse, depth, maxDepth int, visited map[string]bool,
-) []string {
-	if depth >= maxDepth || visited[sourceID] {
+// traverseViewMany is [viewsHandler.traverseViewOnce] for many sources in ONE
+// relation query. The result is ordered as the per-source calls would have
+// been concatenated: by source in the given order, then by the store's edge
+// order within a source. A source with no edges contributes nothing.
+func (h *viewsHandler) traverseViewMany(ctx context.Context, sourceIDs []string, rule ViewTraverse) []string {
+	if len(sourceIDs) == 0 {
 		return nil
 	}
-	visited[sourceID] = true
-	immediate := h.traverseViewOnce(ctx, sourceID, rule)
+	var relType string
+	var direction store.Direction
+	var useTarget bool
+	switch {
+	case rule.Follow != "":
+		relType, direction, useTarget = rule.Follow, store.DirectionOutgoing, true
+	case rule.FollowIncoming != "":
+		relType, direction, useTarget = rule.FollowIncoming, store.DirectionIncoming, false
+	default:
+		return nil
+	}
+	bySource := make(map[string][]string, len(sourceIDs))
+	q := store.RelationQuery{EntityIDs: sourceIDs, Type: relType, Direction: direction}
+	for r, err := range h.store.ListRelations(ctx, q) {
+		if err != nil {
+			break
+		}
+		sourceID, targetID := r.From, r.To
+		if !useTarget {
+			sourceID, targetID = r.To, r.From
+		}
+		if targetID != "" {
+			bySource[sourceID] = append(bySource[sourceID], targetID)
+		}
+	}
+	var out []string
+	for _, id := range sourceIDs {
+		out = append(out, bySource[id]...)
+	}
+	return out
+}
+
+// traverseViewBreadthFirst walks the relation graph from every source at
+// once, one relation query per level (TKT-1U8XYN) instead of one per visited
+// node, up to maxDepth levels. It returns the neighbor IDS found, level by
+// level; like traverseViewMany it loads no entities. A node is expanded at
+// most once, but an id reached again is still reported — the caller dedupes
+// when it loads the collection, exactly as it did for the former depth-first
+// walk, and the recursive tests pin the SET of ids, not their order.
+func (h *viewsHandler) traverseViewBreadthFirst(
+	ctx context.Context, sourceIDs []string, rule ViewTraverse, maxDepth int,
+) []string {
+	visited := make(map[string]bool, len(sourceIDs))
+	frontier := make([]string, 0, len(sourceIDs))
+	for _, id := range sourceIDs {
+		if visited[id] {
+			continue
+		}
+		visited[id] = true
+		frontier = append(frontier, id)
+	}
 	var all []string
-	all = append(all, immediate...)
-	for _, id := range immediate {
-		all = append(all, h.traverseViewRecursive(ctx, id, rule, depth+1, maxDepth, visited)...)
+	for depth := 0; depth < maxDepth && len(frontier) > 0; depth++ {
+		found := h.traverseViewMany(ctx, frontier, rule)
+		all = append(all, found...)
+		next := make([]string, 0, len(found))
+		for _, id := range found {
+			if visited[id] {
+				continue
+			}
+			visited[id] = true
+			next = append(next, id)
+		}
+		frontier = next
 	}
 	return all
 }
