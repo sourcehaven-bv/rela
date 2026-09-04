@@ -45,6 +45,22 @@ import (
 // rewriting generated SQL with ReplaceAll would corrupt any column whose
 // name merely CONTAINS "face" — from_face is one — and would break
 // silently the moment this function emits a new column.
+// effectiveWorld collapses a world to the default world for a query bound
+// to ONE entity type the world does not scope (TKT-1U8XYN). For such a type
+// the world's candidate predicate reduces to `face = ”` and its rank to a
+// constant, so the DISTINCT ON + CASE machinery would only cost — every
+// row of a faceless type is its own prime. The result is byte-identical;
+// the plan is an index scan instead of a sort over the whole type.
+func effectiveWorld(w store.WorldScope, entityType string) store.WorldScope {
+	if entityType == "" || w.IsDefaultWorld() {
+		return w
+	}
+	if _, scoped := w.For(entityType); scoped {
+		return w
+	}
+	return store.DefaultWorld()
+}
+
 func worldSQL(w store.WorldScope, alias string, args *[]any) (rank, candidate string) {
 	col := func(name string) string {
 		if alias == "" {

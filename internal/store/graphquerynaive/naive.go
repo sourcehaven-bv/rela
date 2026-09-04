@@ -93,9 +93,10 @@ func Run(ctx context.Context, r Reader, q store.GraphQuery) iter.Seq2[*entity.En
 }
 
 // Order sorts rows in place by specs with GraphQuery.OrderBy's semantics:
-// byte-wise on each property's string form, rows missing the property last
-// in either direction, id ascending as the final tiebreak. A stable sort,
-// so equal keys keep store order.
+// byte-wise on each property's string form, a row missing the property
+// sorting as the largest value (last ascending, first descending — SQL's
+// default null placement), id ascending as the final tiebreak. A stable
+// sort, so equal keys keep store order.
 func Order(rows []*entity.Entity, specs []store.OrderSpec) {
 	if len(specs) == 0 {
 		return
@@ -105,7 +106,8 @@ func Order(rows []*entity.Entity, specs []store.OrderSpec) {
 			vi, oki := rows[i].Properties[spec.Property]
 			vj, okj := rows[j].Properties[spec.Property]
 			if oki != okj {
-				return oki // the row that HAS the property sorts first
+				// The present value is smaller than the absent one.
+				return oki != spec.Descending
 			}
 			if !oki {
 				continue

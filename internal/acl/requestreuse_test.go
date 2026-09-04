@@ -73,6 +73,7 @@ func TestAuthorizeWrite_NoContextRequestOpensFresh(t *testing.T) {
 func TestAuthorizeWrite_IgnoresForeignContextRequest(t *testing.T) {
 	t.Parallel()
 	t.Run("different principal", func(t *testing.T) {
+		t.Parallel()
 		g := membershipGraph()
 		d := newTestDeclarative(t, membershipPolicy(), g)
 		bobReq, err := d.ForPrincipal(principal.Principal{User: "bob", Tool: principal.ToolDataEntry})
@@ -85,6 +86,7 @@ func TestAuthorizeWrite_IgnoresForeignContextRequest(t *testing.T) {
 		}
 	})
 	t.Run("different declarative", func(t *testing.T) {
+		t.Parallel()
 		g := membershipGraph()
 		d := newTestDeclarative(t, membershipPolicy(), g)
 		other := newTestDeclarative(t, &Policy{Roles: map[string]RoleDef{"nobody": {}}}, newFakeGraph())

@@ -205,8 +205,9 @@ func TestQueryBudget_SearchIsSizeIndependent(t *testing.T) {
 // Pinned budgets: the measured store-call count per request shape after
 // TKT-1U8XYN. Raise one only with a reason in the commit.
 const (
-	// list page: whole-type read, page edges, neighbor headers, membership walk.
-	listPageBudget = 5
+	// list page: scoped count + one bounded page read (listpushdown.go),
+	// page edges, neighbor headers, membership walk.
+	listPageBudget = 6
 	// view: entry, two traverse passes, collection load, section columns +
 	// target headers, entry edges, membership walk.
 	viewSectionBudget = 11

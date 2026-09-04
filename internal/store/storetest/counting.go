@@ -3,6 +3,7 @@ package storetest
 import (
 	"context"
 	"iter"
+	"maps"
 	"sort"
 	"strings"
 	"sync"
@@ -62,9 +63,7 @@ func (c *Counting) Calls() map[string]int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	out := make(map[string]int, len(c.calls))
-	for k, v := range c.calls {
-		out[k] = v
-	}
+	maps.Copy(out, c.calls)
 	return out
 }
 

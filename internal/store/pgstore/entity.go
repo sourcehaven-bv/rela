@@ -197,6 +197,7 @@ func (s *Store) CountEntities(ctx context.Context, q store.EntityQuery) (int, er
 // the publication bit, so an unscoped tally would tell a published-world
 // surface how many unpublished drafts exist.
 func buildEntityCountSQL(q store.EntityQuery) (sql string, args []any) {
+	q.World = effectiveWorld(q.World, q.Type)
 	if q.World.IsDefaultWorld() {
 		where, wargs := entityWhere(q, "")
 		return "SELECT count(*) FROM entities" + where, wargs
@@ -998,6 +999,7 @@ func buildEntityHeaderListSQL(q store.EntityQuery, keysetAfter string) (sql stri
 // land mid-family and resolve a prime from a partial view, which is the
 // wrong-prime hazard storeutil.PaginateWorldPrimes exists to avoid.
 func buildEntitySelectSQL(q store.EntityQuery, keysetAfter, columns string) (sql string, args []any) {
+	q.World = effectiveWorld(q.World, q.Type)
 	if q.World.IsDefaultWorld() {
 		where, wargs := entityWhere(q, keysetAfter)
 		return `SELECT ` + columns + ` FROM entities` + where + ` ORDER BY id ASC, face ASC`, wargs

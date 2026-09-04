@@ -324,6 +324,31 @@ var errListLoad = errors.New("list load failed")
 // search_failed at the call site); ACL query failures are wrapped in
 // errACLListQuery so call sites map them via writeGateError. Everything
 // else degrades to an empty/whole set as the list endpoint always did.
+// listPage returns one page of the list plus the scoped total. A request the
+// store can page by itself (listpushdown.go) costs one count and one bounded
+// read; everything else takes the whole-type Go pipeline and slices it.
+func (a *App) listPage(
+	ctx context.Context, typeName string, query map[string][]string, page, perPage int,
+) (rows []*entityPkg.Entity, total int, err error) {
+	if !worldFromContext(ctx).blocksAllReads() {
+		rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
+		isRelationKey := relationFilterClassifier(a.Meta(), a.Cfg(), typeName)
+		if plan, ok := planListPushdown(
+			a.Meta(), typeName, query, rqr, worldScopeFrom(ctx), page, perPage, isRelationKey,
+		); ok {
+			return plan.run(ctx, a.Services().Store)
+		}
+	}
+	all, err := a.scopedSortedEntities(ctx, typeName, query)
+	if err != nil {
+		return nil, 0, err
+	}
+	total = len(all)
+	start := min((page-1)*perPage, total)
+	end := min(start+perPage, total)
+	return all[start:end], total, nil
+}
+
 func (a *App) scopedSortedEntities(
 	ctx context.Context,
 	typeName string,
@@ -658,25 +683,14 @@ func queryGet(query map[string][]string, key string) string {
 
 func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeName, plural string) {
 	query := r.URL.Query()
+	page, perPage := parseV1Pagination(query)
 
-	entities, err := a.scopedSortedEntities(r.Context(), typeName, query)
+	entities, total, err := a.listPage(r.Context(), typeName, query, page, perPage)
 	if err != nil {
 		writeListPipelineError(w, r, err)
 		return
 	}
-
-	// Pagination
-	total := len(entities)
-	page, perPage := parseV1Pagination(query)
-	start := (page - 1) * perPage
-	end := start + perPage
-	if start > total {
-		start = total
-	}
-	if end > total {
-		end = total
-	}
-	entities = entities[start:end]
+	end := (page-1)*perPage + len(entities)
 
 	// Bodies are opt-in for a collection (rowcontent.go): one read per
 	// distinct face on the page, never for the rows that were paged out.
@@ -2081,24 +2095,33 @@ func applyV1Sorting(entities []*entityPkg.Entity, query map[string][]string) []*
 	sorted := make([]*entityPkg.Entity, len(entities))
 	copy(sorted, entities)
 
-	sort.Slice(sorted, func(i, j int) bool {
+	// Byte-wise on the string form, a row WITHOUT the property sorting as
+	// the largest value (last ascending, first descending), id as the final
+	// tiebreak — the same order a store pages by (store.GraphQuery.OrderBy),
+	// so a request served either way reads the same. That replaced the
+	// accident of comparing "<nil>" as text, which put missing values
+	// between digits and letters.
+	sort.SliceStable(sorted, func(i, j int) bool {
 		for _, spec := range sortSpecs {
-			vi := sorted[i].Properties[spec.Property]
-			vj := sorted[j].Properties[spec.Property]
-
+			vi, oki := sorted[i].Properties[spec.Property]
+			vj, okj := sorted[j].Properties[spec.Property]
+			if oki != okj {
+				return oki != spec.IsDescending()
+			}
+			if !oki {
+				continue
+			}
 			si := fmt.Sprintf("%v", vi)
 			sj := fmt.Sprintf("%v", vj)
-
 			if si == sj {
 				continue
 			}
-
 			if spec.IsDescending() {
 				return si > sj
 			}
 			return si < sj
 		}
-		return false
+		return sorted[i].ID < sorted[j].ID
 	})
 
 	return sorted

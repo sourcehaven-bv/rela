@@ -617,8 +617,8 @@ func seedEntityWithProps(t *testing.T, s store.Store, typ, id string, props map[
 
 // mustRel creates a relation; fails the test on error.
 // RunGraphPagingTests pins GraphQuery.OrderBy/Limit/Offset (TKT-1U8XYN):
-// byte-wise ordering on the property's string form, rows without the
-// property last in either direction, id as tiebreak; a Limit/Offset window
+// byte-wise ordering on the property's string form, a row without the
+// property sorting as the largest value, id as tiebreak; a Limit/Offset window
 // equal to slicing the full ordered result; GraphCount unaffected by paging;
 // headers paging identically.
 func RunGraphPagingTests(t *testing.T, f Factory) {
@@ -652,8 +652,10 @@ func RunGraphPagingTests(t *testing.T, f Factory) {
 		seed(t, s)
 		asc := ids(t, s, store.GraphQuery{EntityType: "ticket", OrderBy: []store.OrderSpec{{Property: "due"}}})
 		require.Equal(t, []string{"T-5", "T-2", "T-0", "T-3", "T-1", "T-4"}, asc)
+		// Descending: the absent value is the largest, so the rows without
+		// `due` lead (SQL's default null placement; one index, both ways).
 		desc := ids(t, s, store.GraphQuery{EntityType: "ticket", OrderBy: []store.OrderSpec{{Property: "due", Descending: true}}})
-		require.Equal(t, []string{"T-0", "T-3", "T-2", "T-5", "T-1", "T-4"}, desc)
+		require.Equal(t, []string{"T-1", "T-4", "T-0", "T-3", "T-2", "T-5"}, desc)
 	})
 
 	t.Run("WindowEqualsSlice", func(t *testing.T) {
@@ -687,6 +689,22 @@ func RunGraphPagingTests(t *testing.T, f Factory) {
 		require.NoError(t, err)
 		require.Equal(t, 3, matched)
 		require.Len(t, ids(t, s, q), 1)
+	})
+
+	t.Run("CountMatchedEqualsGraphCountMatched", func(t *testing.T) {
+		s := f(t)
+		seed(t, s)
+		q := store.GraphQuery{
+			EntityType: "ticket",
+			Props:      []store.PropPredicate{{Property: "status", Op: store.PropEqual, Value: "done"}},
+			OrderBy:    []store.OrderSpec{{Property: "due"}}, Limit: 1,
+		}
+		matched, _, err := s.GraphCount(ctx(), q)
+		require.NoError(t, err)
+		got, err := store.CountMatched(ctx(), s, q)
+		require.NoError(t, err)
+		require.Equal(t, matched, got)
+		require.Equal(t, 3, got, "T-1, T-3, T-5 are done")
 	})
 
 	t.Run("HeadersPageTheSame", func(t *testing.T) {

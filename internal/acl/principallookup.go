@@ -2,9 +2,7 @@ package acl
 
 import (
 	"context"
-	"iter"
 
-	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -24,7 +22,7 @@ type PrincipalLookup interface {
 // each API call on the postgres backend regardless of what the request
 // did. store.Store satisfies this.
 type PrincipalStore interface {
-	GraphQuery(ctx context.Context, q store.GraphQuery) iter.Seq2[*entity.Entity, error]
+	store.GraphQueryer
 }
 
 type storePrincipalLookup struct {
@@ -48,14 +46,16 @@ func (l *storePrincipalLookup) LookupEntityByProperty(
 		return nil, nil
 	}
 	var ids []string
-	for e, err := range l.s.GraphQuery(ctx, store.GraphQuery{
+	// Headers, not rows: the lookup wants ids and nothing else, and the user
+	// entity may carry a body the resolver has no business reading.
+	for h, err := range store.GraphQueryHeaders(ctx, l.s, store.GraphQuery{
 		EntityType: entityType,
 		Props:      []store.PropPredicate{{Property: property, Op: store.PropEqual, Value: value, Scalar: true}},
 	}) {
 		if err != nil {
 			return nil, err
 		}
-		ids = append(ids, e.ID)
+		ids = append(ids, h.ID)
 	}
 	return ids, nil
 }

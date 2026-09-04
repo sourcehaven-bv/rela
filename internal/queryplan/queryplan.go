@@ -47,6 +47,11 @@ func PushdownPrefilters(filters []*filter.Filter, meta *metamodel.Metamodel, typ
 	return pushed
 }
 
+// stringComparableOnEveryType reports whether prop is, on every listed type,
+// a scalar whose stored form is a string compared byte-for-byte: string,
+// enum, date, datetime, or a custom type (an enum declared under `types:`).
+// Integers and booleans are excluded — their string form is not their order —
+// as are lists.
 func stringComparableOnEveryType(meta *metamodel.Metamodel, types []string, prop string) bool {
 	for _, typ := range types {
 		def, ok := meta.GetEntityDef(typ)
@@ -54,11 +59,28 @@ func stringComparableOnEveryType(meta *metamodel.Metamodel, types []string, prop
 			return false
 		}
 		pd, ok := def.Properties[prop]
-		if !ok || pd.List || pd.Type != metamodel.PropertyTypeString {
+		if !ok || pd.List || !StringShaped(meta, pd) {
 			return false
 		}
 	}
 	return true
+}
+
+// StringShaped reports whether a scalar property's stored value is a string
+// whose byte order IS its order (string, enum, date, datetime, custom
+// type). The one definition the pushdown planners share, so the list page
+// pushdown and the derived indexes agree on what may be compared in SQL.
+func StringShaped(meta *metamodel.Metamodel, pd metamodel.PropertyDef) bool {
+	if pd.List {
+		return false
+	}
+	switch pd.Type {
+	case metamodel.PropertyTypeString, metamodel.PropertyTypeEnum,
+		metamodel.PropertyTypeDate, metamodel.PropertyTypeDatetime:
+		return true
+	}
+	_, custom := meta.Types[pd.Type]
+	return custom
 }
 
 // StaticIndexSpecs derives one composite index per canonical static query

@@ -193,15 +193,18 @@ func (wn *worldNeighbors) worldScopedNeighbors(
 func (wn *worldNeighbors) resolveHeads(
 	ctx context.Context, ids []string,
 ) (map[string]*entityPkg.Entity, error) {
+	// Heads are gated and linked, never rendered, so they are read as
+	// content-free headers (rowcontent.go) — a page's neighbor set can be
+	// hundreds of rows whose bodies nothing here would look at.
 	out := make(map[string]*entityPkg.Entity, len(ids))
-	for e, err := range wn.store.ListEntities(ctx, store.EntityQuery{
+	for h, err := range store.ListEntityHeaders(ctx, wn.store, store.EntityQuery{
 		IDs:   ids,
 		World: worldScopeFrom(ctx),
 	}) {
 		if err != nil {
 			return nil, fmt.Errorf("resolving neighbor heads: %w", err)
 		}
-		out[e.ID] = e
+		out[h.ID] = headerEntity(h)
 	}
 	return out, nil
 }

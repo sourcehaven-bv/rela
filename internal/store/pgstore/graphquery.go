@@ -95,6 +95,21 @@ func (s *Store) GraphQueryHeaders(ctx context.Context, q store.GraphQuery) iter.
 	}
 }
 
+// CountMatched implements store.MatchedCounter: GraphCount's first statement
+// alone. A list page needs only the scoped count, and the second statement
+// GraphCount would run — the type's world-wide total — is the expensive one.
+func (s *Store) CountMatched(ctx context.Context, q store.GraphQuery) (int, error) {
+	if err := checkGraphQueryScope(q); err != nil {
+		return 0, err
+	}
+	matchedSQL, matchedArgs := buildGraphQuerySQL(q, true)
+	var matched int
+	if err := s.db.QueryRow(ctx, matchedSQL, matchedArgs...).Scan(&matched); err != nil {
+		return 0, fmt.Errorf("pgstore: graph count (matched): %w", err)
+	}
+	return matched, nil
+}
+
 func (s *Store) GraphCount(ctx context.Context, q store.GraphQuery) (matched, total int, err error) {
 	if scopeErr := checkGraphQueryScope(q); scopeErr != nil {
 		return 0, 0, scopeErr
@@ -122,7 +137,7 @@ func buildGraphTotalSQL(q store.GraphQuery) (sqlText string, args []any) {
 	typeArg := b.arg(q.EntityType)
 	scope, _, _ := graphWorldScope(b, q)
 	agg := "count(*)"
-	if !q.World.IsDefaultWorld() {
+	if !effectiveWorld(q.World, q.EntityType).IsDefaultWorld() {
 		agg = "count(DISTINCT e.id)"
 	}
 	return "SELECT " + agg + " FROM entities e WHERE e.type = " + typeArg + " AND " + scope, b.args
@@ -394,7 +409,7 @@ func buildGraphQuerySQLSelect(q store.GraphQuery, sel graphSelect) (sqlText stri
 		// coordinates. count(DISTINCT e.id) is exact here because the
 		// world admits at most one prime per id.
 		selectList = "count(*)"
-		if !q.World.IsDefaultWorld() {
+		if !effectiveWorld(q.World, q.EntityType).IsDefaultWorld() {
 			selectList = "count(DISTINCT e.id)"
 		}
 		orderBy = ""
@@ -435,8 +450,11 @@ func buildGraphQuerySQLSelect(q store.GraphQuery, sel graphSelect) (sqlText stri
 	// resolved primes in an outer query; a default-world query pages
 	// directly, its plain id ordering replaced. Either way the sort is
 	// byte-wise on the property's text form (COLLATE "C" — the Go
-	// comparator's semantics), NULLS LAST in both directions, id ascending
-	// as the tiebreak.
+	// comparator's semantics) with PostgreSQL's default null placement,
+	// which treats an absent value as the largest: last ascending, first
+	// descending. That default is deliberate — it is what lets one
+	// expression index serve both directions (a backward scan of an ASC
+	// index is exactly DESC NULLS FIRST) — and the Go comparators mirror it.
 	inner := sb.String()
 	if distinctOn != "" {
 		inner = "SELECT * FROM (" + inner + ") e"
@@ -451,7 +469,7 @@ func buildGraphQuerySQLSelect(q store.GraphQuery, sel graphSelect) (sqlText stri
 		if spec.Descending {
 			dir = " DESC"
 		}
-		page.WriteString("(e.properties ->> " + b.arg(spec.Property) + `) COLLATE "C"` + dir + " NULLS LAST, ")
+		page.WriteString("(e.properties ->> " + b.arg(spec.Property) + `) COLLATE "C"` + dir + ", ")
 	}
 	page.WriteString("e.id ASC")
 	if q.Limit > 0 {
@@ -598,7 +616,7 @@ func cappedDepth(d int) int {
 // filter cannot be applied at one call site and forgotten at another — all
 // three graph paths go through here (TKT-O7R2A1).
 func graphWorldScope(b *sqlBuilder, q store.GraphQuery) (where, distinctOn, rankOrder string) {
-	w := q.World
+	w := effectiveWorld(q.World, q.EntityType)
 	faceIn := func(base string) string {
 		if len(q.FaceIn) == 0 {
 			return base

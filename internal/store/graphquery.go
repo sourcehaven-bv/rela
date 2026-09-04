@@ -76,8 +76,10 @@ type GraphQuery struct {
 	// for the matched set, and a page must never change it.
 	//
 	// OrderBy sorts by the STRING form of each property, byte-wise (the
-	// data-entry list comparator's semantics), rows without the property
-	// last in either direction, then by id ascending as the tiebreak. It is
+	// data-entry list comparator's semantics), then by id ascending as the
+	// tiebreak. A row WITHOUT the property sorts as if it held the largest
+	// value: last ascending, first descending — SQL's default null
+	// placement, kept on purpose so one index serves both directions. It is
 	// meant for scalar string-shaped properties (string, enum, date); a
 	// caller sorting anything else stays on its own comparator. Limit 0
 	// means unbounded; Offset counts rows in the ordered result.
@@ -104,6 +106,28 @@ type OrderSpec struct {
 // sort and paginate, never its bodies.
 type GraphHeaderQueryer interface {
 	GraphQueryHeaders(ctx context.Context, q GraphQuery) iter.Seq2[EntityHeader, error]
+}
+
+// MatchedCounter is the half of [GraphQueryer.GraphCount] a paged list needs:
+// the number of rows q matches, and nothing about the type's total.
+// OPTIONAL, type-asserted with [CountMatched] as the generic fallback. It
+// exists because GraphCount answers two questions with two statements, and
+// the second — the unscoped total — is both the one a gated handler must not
+// expose (RR-SSPCCI) and, under a world, a count(DISTINCT) over every row of
+// the table (TKT-1U8XYN: 35 ms of a list page's 80).
+type MatchedCounter interface {
+	CountMatched(ctx context.Context, q GraphQuery) (int, error)
+}
+
+// CountMatched returns how many rows q matches on any GraphQueryer, using
+// the backend's [MatchedCounter] when it has one and GraphCount's matched
+// half otherwise. OrderBy/Limit/Offset on q are ignored, as GraphCount does.
+func CountMatched(ctx context.Context, gq GraphQueryer, q GraphQuery) (int, error) {
+	if mc, ok := gq.(MatchedCounter); ok {
+		return mc.CountMatched(ctx, q)
+	}
+	matched, _, err := gq.GraphCount(ctx, q)
+	return matched, err
 }
 
 // GraphQueryHeaders runs q as a content-free query on any GraphQueryer.
