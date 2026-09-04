@@ -86,7 +86,7 @@ stacking on PR 1 minimizes rebase pain on the shared files (`api_v1.go`,
 9. **Search-after-ACL ordering pinned (mock-asserted).** Mock searcher records call order; test asserts searcher invoked AFTER `GraphQuery`, on the filtered slice only.
 10. **Per-principal caching headers.** List responses carry `Cache-Control: private, no-store` (or equivalent via existing middleware) and `Vary: <principal-header>`. Two-principal test: alice's cached response is not served to bob.
 11. **NopACL regression.** Without `acl.yaml`, list / sidebar responses are structurally identical to today (JSON-canonical compare via the PR-1-shared helper).
-12. **`GUIDE-acl-security` updated** to describe both gates, menu-visibility decision, search-ordering contract, config-filter perf caveat, and the `_position` deferral pointer.
+12. **`GUIDE-acl-security` updated** to describe both gates, menu-visibility decision, search-ordering contract, config-filter perf caveat, and the `_position` deferral face.
 
 ## Files to modify
 

@@ -7,6 +7,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/search"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // SearchBackend is a PostgreSQL-backed search.Backend. It shares the store's
@@ -53,26 +54,9 @@ func (b *SearchBackend) EntityRenamed(string, *entity.Entity) error { return nil
 // An empty query matches every entity — but in practice the Service never
 // calls Search with empty text (it uses listAll), so this just stays
 // consistent with substring semantics ("" is a substring of everything).
-func (b *SearchBackend) Search(text string, limit int) ([]string, error) {
+func (b *SearchBackend) Search(text string, limit int, w store.WorldScope) ([]search.Face, error) {
 	needle := strings.ToLower(text)
-
-	// search_text is already lowercased by the store, so a plain LIKE with the
-	// lowercased needle is case-insensitive without per-row lower() calls.
-	// '%' and '_' in the needle are escaped so they match literally.
-	sql := `SELECT id FROM entities WHERE search_text LIKE '%' || $1 || '%' ESCAPE '\'`
-	args := []any{escapeLike(needle)}
-
-	if needle == "" {
-		// Avoid similarity() on an empty string; just order by id.
-		sql += ` ORDER BY id ASC`
-	} else {
-		sql += ` ORDER BY similarity(search_text, $2) DESC, id ASC`
-		args = append(args, needle)
-	}
-	if limit > 0 {
-		sql += ` LIMIT $` + strconv.Itoa(len(args)+1)
-		args = append(args, limit)
-	}
+	sql, args := buildSearchSQL(needle, limit, w)
 
 	// context.Background(): the search.Backend.Search interface carries no
 	// context (see internal/search/types.go), so a search query can't inherit a
@@ -84,15 +68,122 @@ func (b *SearchBackend) Search(text string, limit int) ([]string, error) {
 	}
 	defer rows.Close()
 
-	var ids []string
+	var out []search.Face
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var (
+			id   string
+			ptr  string
+			typ  string
+			rank int
+		)
+		if err := rows.Scan(&id, &ptr, &typ, &rank); err != nil {
 			return nil, err
 		}
-		ids = append(ids, id)
+		out = append(out, faceFor(id, typ, entity.Face(ptr), rank, w))
 	}
-	return ids, rows.Err()
+	return out, rows.Err()
+}
+
+// faceFor labels a resolved row with the rule that produced it, from the
+// same rank [worldSQL] computed — no second chain walk, and no second
+// implementation of the semantics to drift from the SQL.
+//
+// The mapping is total over what the query can return, because worldSQL
+// emits exactly three shapes:
+//
+//   - the world is default, or the type is unscoped: rank 0 on the default
+//     face, which is rule 1;
+//   - a chain coordinate at position i: rank i, which is rule 2 — and i IS
+//     the chain position a caller needs to tell the world's first choice
+//     from a later candidate standing in for it;
+//   - the `otherwise: default` last resort: rank len(chain) on the default
+//     face, which is rule 3.
+//
+// Rules 1 and 3 both carry the DEFAULT face and are separated by whether
+// the type is scoped at all — the same distinction [store.WorldScope.For]
+// makes with its ok result.
+func faceFor(id, entityType string, p entity.Face, rank int, w store.WorldScope) search.Face {
+	f := search.Face{ID: id, Face: p}
+	if w.IsDefaultWorld() {
+		f.Via = search.RuleUnscoped
+		return f
+	}
+	res, scoped := w.For(entityType)
+	if !scoped {
+		f.Via = search.RuleUnscoped
+		return f
+	}
+	if p.IsDefault() && rank >= len(res.Chain) {
+		f.Via = search.RuleFallbackDefault
+		return f
+	}
+	f.Via = search.RuleChain
+	f.ChainPosition = rank
+	return f
+}
+
+// buildSearchSQL renders the text search, scoped to world w.
+//
+// # Two shapes, chosen by world
+//
+// The DEFAULT world keeps the historical query verbatim — `face = ”`, no
+// join, no window — so a project that never declares a face pays nothing
+// for this feature. That is the [store.WorldScope.IsDefaultWorld] fast-path
+// contract.
+//
+// A non-default world resolves per FAMILY, not per row. `face IN (a, b)`
+// would return two rows for an entity holding both coordinates and break the
+// at-most-one-hit-per-entity invariant that makes `limit` count entities, so
+// the shape is `DISTINCT ON (id) ... ORDER BY id, rank` — the same shape the
+// entity listings use, via the same [worldSQL] builder. Sharing that builder
+// is what keeps search and listing from disagreeing about which face a world
+// serves.
+//
+// # Resolve first, filter second
+//
+// The text predicate is applied AFTER the prime is chosen, in the outer
+// query. Filtering first would let a non-prime face's text decide whether its
+// entity appears: a `published`-world search would hit on a term present only
+// in the draft while displaying published bytes that lack it. Selecting the
+// prime and then testing ITS text is the whole point of world-scoped search.
+//
+// # Lockstep
+//
+// visiblesearch.go's buildVisibleSearchSQL holds the gated and ungated
+// streams to an ordered-subsequence contract, so the ORDER BY here and there
+// must agree.
+func buildSearchSQL(needle string, limit int, w store.WorldScope) (sqlText string, args []any) {
+	// search_text is already lowercased by the store, so a plain LIKE with
+	// the lowercased needle is case-insensitive without per-row lower()
+	// calls. '%' and '_' in the needle are escaped so they match literally.
+	textPred := func(col string) string {
+		args = append(args, escapeLike(needle))
+		return col + ` LIKE '%' || $` + strconv.Itoa(len(args)) + ` || '%' ESCAPE '\'`
+	}
+
+	if w.IsDefaultWorld() {
+		sqlText = `SELECT id, face, type, 0 FROM entities WHERE ` +
+			textPred("search_text") + ` AND face = ''`
+	} else {
+		rank, candidate := worldSQL(w, "", &args)
+		inner := `SELECT DISTINCT ON (id) id, face, type, search_text, (` + rank + `) AS wrank` +
+			` FROM entities WHERE ` + candidate +
+			` ORDER BY id ASC, (` + rank + `) ASC, face ASC`
+		sqlText = `SELECT id, face, type, wrank FROM (` + inner + `) p WHERE ` + textPred("p.search_text")
+	}
+
+	if needle == "" {
+		// Avoid similarity() on an empty string; just order by id.
+		sqlText += ` ORDER BY id ASC`
+	} else {
+		args = append(args, needle)
+		sqlText += ` ORDER BY similarity(search_text, $` + strconv.Itoa(len(args)) + `) DESC, id ASC`
+	}
+	if limit > 0 {
+		args = append(args, limit)
+		sqlText += ` LIMIT $` + strconv.Itoa(len(args))
+	}
+	return sqlText, args
 }
 
 // Close releases backend resources. The handle is owned by the wiring layer,

@@ -3,6 +3,8 @@ package acl
 import (
 	"context"
 	"fmt"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
 // authorizeWrite implements per-Request write authz. v1 only:
@@ -40,7 +42,7 @@ func (r *Request) authorizeEntityWrite(ctx context.Context, op Op, s EntitySubje
 	} else {
 		attrs = r.Globals(ctx).Attributions
 	}
-	return r.decideFromAttrs(attrs, op, s.Type, "no role grants %s on type %q")
+	return r.decideFromAttrs(attrs, op, s.Type, s.Face, "no role grants %s on type %q")
 }
 
 func (r *Request) authorizeRelationWrite(ctx context.Context, op Op, s RelationSubject) Decision {
@@ -99,7 +101,12 @@ func (r *Request) authorizeRelationWrite(ctx context.Context, op Op, s RelationS
 		}
 	}
 
-	d := r.decideFromAttrs(attrs, op, s.FromType,
+	// Relation writes address the DEFAULT tail today: RelationSubject carries
+	// no face, and store.RelationData.FromFace is consumed by
+	// CreateRelation only. State-tailed relation writes arrive with the copy
+	// kernel; until then the zero face here is the accurate statement, not
+	// a placeholder.
+	d := r.decideFromAttrs(attrs, op, s.FromType, entity.Face(""),
 		"no role grants %s on relations from type %q")
 	if !d.Allow {
 		d.Reason = r.explainRelationDenial(d.Reason, s, op)
@@ -135,7 +142,9 @@ func (r *Request) explainRelationDenial(reason string, s RelationSubject, op Op)
 // both branches so audit consumers can record every (role, source)
 // the resolver considered (AC7). The wire 403 path
 // ([ForbiddenError.Error]) ignores Attributions — only audit reads it.
-func (r *Request) decideFromAttrs(attrs []RoleAttribution, op Op, target, denyFmt string) Decision {
+func (r *Request) decideFromAttrs(
+	attrs []RoleAttribution, op Op, target string, ptr entity.Face, denyFmt string,
+) Decision {
 	// The client ceiling is checked before any role, because it can only
 	// remove: if it denies this verb on this type, no role can grant it. The
 	// deny names the ceiling rather than a role, so an operator reading the
@@ -154,7 +163,7 @@ func (r *Request) decideFromAttrs(attrs []RoleAttribution, op Op, target, denyFm
 		if !ok {
 			continue
 		}
-		if grantsVerb(role, op, target) {
+		if GrantsVerbOnState(role, op, target, ptr) {
 			return Decision{
 				Allow:        true,
 				RuleKind:     "role-grant",

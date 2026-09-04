@@ -8,6 +8,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
@@ -75,7 +76,7 @@ commands:
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			perms, err := loadDataEntryPermissions(loaderWith(t, tc.yaml))
+			perms, err := loadDataEntryPermissions(loaderWith(t, tc.yaml), nil)
 			if err != nil {
 				t.Fatalf("loadDataEntryPermissions: %v", err)
 			}
@@ -102,7 +103,7 @@ navigation:
 documents:
   public-report:
     title: Public
-`))
+`), nil)
 	if err != nil {
 		t.Fatalf("loadDataEntryPermissions: %v", err)
 	}
@@ -117,7 +118,7 @@ documents:
 // suppress A7 for every project that has no data-entry.yaml.
 func TestPermissionConsumerFor_MissingFileIsNotNil(t *testing.T) {
 	t.Parallel()
-	perms, err := permissionConsumerFor(emptyLoader(t))
+	perms, err := permissionConsumerFor(emptyLoader(t), nil)
 	if err != nil {
 		t.Fatalf("missing data-entry.yaml must not error: %v", err)
 	}
@@ -136,7 +137,7 @@ func TestPermissionConsumerFor_MissingFileIsNotNil(t *testing.T) {
 // at this call site rather than inside aclaudit.
 func TestPermissionConsumerFor_UnreadableConfigYieldsUntypedNil(t *testing.T) {
 	t.Parallel()
-	perms, err := permissionConsumerFor(loaderWith(t, "navigation: [unclosed\n"))
+	perms, err := permissionConsumerFor(loaderWith(t, "navigation: [unclosed\n"), nil)
 	if err == nil {
 		t.Fatal("malformed data-entry.yaml must error so the caller can suppress A7")
 	}
@@ -162,7 +163,7 @@ navigation:
   - label: Sales
     list: no-such-list-in-any-metamodel
     permission: report:sales
-`))
+`), nil)
 	if err != nil {
 		t.Fatalf("adapter must not validate against the metamodel: %v", err)
 	}
@@ -197,4 +198,34 @@ func emptyLoader(t *testing.T) config.Loader {
 		t.Fatalf("mkdir %s: %v", root, err)
 	}
 	return config.NewFSLoader(fs, root)
+}
+
+// A copy's `guard.permission` lives in schema.yaml, not data-entry.yaml, so
+// collecting only the data-entry surfaces reported every copy guard as dead
+// config — advising the operator to delete the permission that gates
+// publishing (observed on the shipped worlds prototype, QA F-D).
+func TestDataEntryPermissions_CollectsCopyGuardPermissions(t *testing.T) {
+	t.Parallel()
+	meta := &metamodel.Metamodel{Copies: map[string]metamodel.CopyDef{
+		"publish": {Guard: metamodel.CopyGuard{Permission: "publish-policy"}},
+		"ungated": {},
+	}}
+	perms := (&dataEntryPermissions{cfg: &dataentryconfig.Config{}, meta: meta}).UsedPermissions()
+	if !slices.Contains(perms, "publish-policy") {
+		t.Errorf("a copy guard permission must count as used, else A7 reports it dead; got %q", perms)
+	}
+}
+
+// A nil metamodel must not panic and must not lose the data-entry half: a
+// project whose schema could not be read still deserves the surfaces that were
+// readable.
+func TestDataEntryPermissions_NilMetamodelKeepsDataEntryPermissions(t *testing.T) {
+	t.Parallel()
+	cfg := &dataentryconfig.Config{Commands: map[string]dataentryconfig.CommandConfig{
+		"report": {Permission: "run-report"},
+	}}
+	perms := (&dataEntryPermissions{cfg: cfg, meta: nil}).UsedPermissions()
+	if !slices.Contains(perms, "run-report") {
+		t.Errorf("a nil metamodel must not suppress the data-entry surfaces; got %q", perms)
+	}
 }

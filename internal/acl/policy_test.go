@@ -161,7 +161,7 @@ func TestLoadPolicy_MalformedYAML_ReturnsParseError(t *testing.T) {
 
 // Affordance grants round-trip into the typed shape the resolver
 // consumes: per-field write/visibility, per-option, per-relation
-// with create/remove pointers and meta-field grants.
+// with create/remove faces and meta-field grants.
 func TestLoadPolicy_AffordanceGrants(t *testing.T) {
 	t.Parallel()
 	const yaml = `
@@ -320,7 +320,7 @@ func TestLoadPolicy_AffordanceGrants_OptInIsKeyPresence(t *testing.T) {
 
 // Create/Remove *bool must distinguish explicit true, explicit
 // false, and unset across the YAML forms operators actually write.
-func TestLoadPolicy_RelationGrant_CreateRemovePointers(t *testing.T) {
+func TestLoadPolicy_RelationGrant_CreateRemoveFaces(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name       string

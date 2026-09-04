@@ -67,7 +67,7 @@ Each AC from PLAN-1DETM0 with the named test that pins it. All passing.
 | 4 | Elevated doc renders for the permission holder | `TestElevatedDocument_PermittedPrincipalRenders`, `TestElevatedRender_ReadsHiddenEntityAndAudits` |
 | 5 | Unelevated doc has no `bypass_acl` at all | `TestUnelevatedRender_CannotReachHiddenEntity`, `TestElevatedDeps_GrantsBypassBinding/unelevated_render_has_no_bypass_acl` |
 | 6 | Elevated + no permission is a config error | `TestValidateConfig_Documents/elevated_without_permission_is_an_error` (+5 sibling cases) |
-| 7 | Closed switch over every ACL impl, incl. pointer forms | `TestElevatedDocument_ClosedSwitch` (7 cases) |
+| 7 | Closed switch over every ACL impl, incl. face forms | `TestElevatedDocument_ClosedSwitch` (7 cases) |
 | 8 | NopACL does not serve an elevated doc | `TestElevatedDocument_NopACLDeniesDespitePermittingGate`, `TestElevatedDocument_NopACLRefusesEndToEnd` |
 | 9 | Denied principal never reaches the renderer | `TestElevatedDocument_DeniedPrincipalNeverReachesRenderer` (asserts `callCount() == 0`) |
 | 10 | One `acl-bypass-read` row per elevated render | `TestElevatedRender_ReadsHiddenEntityAndAudits` |

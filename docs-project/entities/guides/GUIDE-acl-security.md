@@ -113,26 +113,125 @@ going to be shown anyway is a visibility decision, not an escalation
 path. Both the warning and the linter evaluate the same predicate, so
 they never disagree.
 
-### This becomes a hard requirement with content states
+### This is a hard requirement with content states
 
-The tolerance above holds only while the worst case is over-granting
-inside a trusted group. It stops holding the moment the same policy
-also grants read on a **non-default world** — the content-states
-feature, where an entity has separate draft/review/published faces.
-There, an un-gated membership relation is no longer just a
-role-management weakness: it is a working mechanism for reading
-unpublished content, because self-assigning a role that can read the
-draft world is one relation write away.
+The tolerance above holds only while the worst case is over-granting inside a
+trusted group. It stops holding when the same policy also grants read on a
+**non-default world**, which is the content-states feature described in the
+[Metamodel Reference](metamodel.md#content-states-and-worlds). There, an
+ungated membership relation is no longer a role-management weakness. It is a
+working mechanism for reading unpublished content, because a principal who can
+write one membership edge can assign themselves a role that reads the draft
+world.
 
-When world-shaped read grants ship, a policy that combines them with an
-un-gated membership relation will be **refused at load** with an error
-naming the fix, rather than booting with a warning. Deployments that do
-not use worlds are unaffected and keep today's behaviour. Gating the
-membership relation now costs one `requires_permission` line and means
-that change is a no-op for you.
+A policy that grants read on a non-default world while leaving a
+self-promotion path open is therefore **refused at load**, with an error that
+names the fix. It does not boot with a warning. Two shapes trigger the refusal:
 
-The companion section in `docs/server-security.md` carries the same
-guidance with more context on the broader threat model.
+1. The membership relation is ungated, and an assignment confers a role that
+   can escalate.
+2. **Any** role relation is ungated while conferring a role that can escalate,
+   even when the membership relation itself is gated. Without this second arm,
+   an attacker writes one ungated edge to gain a role holding the gating
+   permission, then writes the membership edge.
+
+"Can escalate" means the role grants a write verb, holds a permission, **or
+holds a non-default world read grant**. The last term is why a read-only role
+counts here but not in the warning above. Normally, granting yourself read
+access is a visibility choice rather than an escalation, but a role that can
+read `world:editorial` is exactly the thing worth stealing once worlds exist.
+
+The second arm is deliberately broader than strictly necessary. It refuses some
+policies whose ungated relation could not actually reach the membership gate.
+Those policies already carry a high-severity `rela acl audit` finding, and the
+fix is the same single `requires_permission` line. For a check whose failure
+mode is leaked unpublished content, refusing too much is the right direction.
+
+Deployments that do not use worlds are unaffected and keep the warn-and-boot
+behaviour. Gating the membership relation now costs one `requires_permission`
+line and makes the change a no-op for you when you adopt worlds later.
+
+The companion section in the [Security model for rela-server](server-security.md)
+guide carries the same guidance with more context on the broader threat model.
+
+### Scoping a grant to a content state
+
+Both reads and writes may name a face:
+
+```yaml
+roles:
+  reader:
+    read: [policy@published]     # the published face, and no other
+  publisher:
+    update: [policy@published]   # may write the published face
+```
+
+A face-scoped read grant gates **every** read path: the entity list, the
+single-entity read, `?include=` neighbours, views, and search alike. A denied
+face produces the same not-found response as a face that does not exist, so a
+grant cannot be used to discover which faces an entity has.
+
+**The default differs between reads and writes, deliberately.**
+
+| Grant | Covers |
+| --- | --- |
+| `read: [policy]` | **every** face |
+| `read: [policy@published]` | that face only |
+| `read: ["*"]` | every type, every face |
+| `update: [policy]` | the **bare** face only |
+| `update: [policy@published]` | that face only |
+| `update: ["*"]` | every type, bare face only |
+
+A bare read grant covering every face is not laxness. A world never serves the
+bare face when its chain names another, so a bare read grant narrowed to the
+bare face would read **nothing** under any world. That is a total outage rather
+than a narrowing. Writes have no such interaction: they address a face by id
+and never pass through a world.
+
+The practical consequence is that adding `faces:` to a live type does not
+silently tighten existing read grants. If you need a role kept away from
+drafts, name the face it may read.
+
+#### `bare_face` names the bare face — do not repeat it in a grant
+
+A write grant matches the face **as stored**, and the face named by
+`bare_face:` is stored under the bare id rather than under `@<name>`. Given
+this type:
+
+```yaml
+policy:
+  bare_face: draft
+  faces: {draft: {}, published: {}}
+```
+
+the draft row lives at `POL-1`, and no row exists at the `draft` coordinate.
+The grants therefore behave as follows:
+
+| Grant | Reaches the draft face? |
+| --- | --- |
+| `update: [policy]` | **yes**, this is the correct grant |
+| `update: [policy@draft]` | **no**, it matches nothing and denies everything |
+
+Write `update: [policy]` for the `bare_face` face, and `update: [policy@x]`
+only for the faces that are *not* the bare one. A grant naming the bare face is
+inert. It fails closed, denying rather than over-permitting, but it denies the
+very face it was written to allow, and `rela acl audit` does not currently flag
+it: the audit checks the *declared* name, while the grant matcher compares the
+*stored* coordinate.
+
+#### World grants select a lens
+
+A `world:` grant does **not** keep a role away from a face. It scopes which
+worlds a caller may select with `?world=`, not which faces they may read. A
+caller who omits `?world=` reads the default world, where every entity shows
+its bare face, and only a face grant stands between that caller and a draft.
+
+A caller who omits `?world=` may still be in a world. `app.default_world` in
+`data-entry.yaml` sets the world a bare request lands in, and the server
+applies it to the API and the web app alike. It is still not a gate. It selects
+a face, and the `world:` grant is re-checked for it exactly as for an explicit
+`?world=`, so pointing the default at a world a role may not read yields that
+world's ordinary empty result, never an escalation.
 
 ## Auditing your policy with `rela acl audit`
 
@@ -155,6 +254,11 @@ The audit reports severity-ranked findings across two tiers:
 - **Metamodel cross-check** — grants, `membership_relation`,
   `role_relations`, `inherit_roles_through`, `user_entity_type`, field,
   and option references that the schema doesn't declare (silent drift).
+  This includes the content-state grant forms: a `read: [world:X]` grant
+  naming a world no `worlds:` block declares, and a `type@face` write
+  grant naming a content state the type doesn't declare. Both fail
+  *closed* at runtime — the grant simply matches nothing — so without
+  the audit the only symptom is a denial nobody can explain.
 
 ```console
 $ rela acl audit
@@ -488,6 +592,43 @@ fails to restrict, and nobody files a bug about access they still have.
 
 Run `rela acl map --principal <user> --as <type>` to see what a client
 actually gets, rather than inferring it from the policy file.
+
+### `deny_worlds` selects a lens; it does not guard content
+
+A ceiling may restrict which worlds a client may select:
+
+```yaml
+client_baselines:
+  apps:
+    applies_to: [app]
+    deny_worlds: [editorial]     # this client may not select ?world=editorial
+```
+
+**Read this as hiding a menu option, not as protecting data.** A world is a
+lens. It decides which *face* of each entity a caller is served, and the
+confidentiality decision is made one level down, on the face itself.
+`read: [policy@published]` compiles to a face predicate pushed into the query,
+and that predicate is what keeps a reader away from the draft. The ACL package
+cannot resolve a world at all: it emits a world-free query, and the layer above
+stamps the world onto it.
+
+`deny_worlds` therefore stops a client from picking a lens that makes no sense
+for it. It is not the thing standing between that client and the data, and
+nothing should be built as if it were. If you need a client kept away from
+content, say so with the grants: name the faces in `read:`, or use
+`deny_read`. Those run on every request path.
+
+**`deny_worlds: [default]` does nothing at all.** The request path resolves the
+default world before the ceiling is consulted, so the entry loads cleanly and
+is silently inert. Treat it as unimplemented rather than as a control you have
+configured. `rela acl audit` will not warn you, because `B10-undeclared-world`
+skips the default world and the entry produces no finding.
+
+The default world is not a special case here. It is the lens you get when you
+name none, and it resolves every entity to its bare face. Denying it would not
+mean "deny the data" but "refuse to serve a request that picked no lens", which
+is why nothing relies on it, and why the answer is to gate the faces rather
+than the lens.
 
 ### Not a substitute for gating the client itself
 

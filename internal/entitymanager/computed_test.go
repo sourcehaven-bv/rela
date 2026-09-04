@@ -12,6 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/statemachine"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
@@ -125,11 +126,13 @@ func TestComputed_MaterializedValueReachesSearchIndex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateEntity: %v", err)
 	}
-	ids, err := idx.Search("computed-marker", 0)
+	// The default world: computed properties are indexed on the entity's own
+	// face, so an unscoped search resolves it.
+	faces, err := idx.Search("computed-marker", 0, store.WorldScope{})
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
-	if len(ids) != 1 || ids[0] != created.Entity.ID {
-		t.Fatalf("search IDs = %v, want [%s]", ids, created.Entity.ID)
+	if len(faces) != 1 || faces[0].ID != created.Entity.ID {
+		t.Fatalf("search hits = %v, want one for %s", faces, created.Entity.ID)
 	}
 }

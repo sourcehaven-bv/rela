@@ -52,6 +52,30 @@ func TestAPIIsland(t *testing.T) {
 			wantErr:   "claimed status: 200\n  actual status:  403",
 		},
 		{
+			name:      "a has= claim passes when the body names it",
+			body:      `api{path="/a", status=200, has={"POL-1"}}`,
+			responses: map[string]APIResponse{"/a": ok},
+		},
+		{
+			name:      "a has= claim fails when the body does not name it",
+			body:      `api{path="/a", status=200, has={"POL-2"}}`,
+			responses: map[string]APIResponse{"/a": ok},
+			wantErr:   `body must contain: "POL-2"`,
+		},
+		{
+			// The disclosure direction: a face the caller may not read must not
+			// be named in a response they ARE allowed to fetch.
+			name:      "an absent= claim fails when the body discloses it",
+			body:      `api{path="/a", status=200, absent={"POL-1"}}`,
+			responses: map[string]APIResponse{"/a": ok},
+			wantErr:   "this is a disclosure",
+		},
+		{
+			name:      "an absent= claim passes when the body withholds it",
+			body:      `api{path="/a", status=200, absent={"Draft"}}`,
+			responses: map[string]APIResponse{"/a": ok},
+		},
+		{
 			name:      "an error code claim passes on the code",
 			body:      `api{path="/a", error="world_forbidden"}`,
 			responses: map[string]APIResponse{"/a": forbidden},

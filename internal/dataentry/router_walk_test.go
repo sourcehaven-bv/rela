@@ -32,7 +32,7 @@ import (
 // oracle is "not the SPA shell" instead.
 //
 // When registering a new route, add a probe here — the registration
-// sites in router.go and api_v1.go carry pointer comments.
+// sites in router.go and api_v1.go carry face comments.
 //
 // CONSTRAINT: every probe must hit a path its handler actually serves
 // for the fixture (or answers with a JSON error). Do NOT add probes

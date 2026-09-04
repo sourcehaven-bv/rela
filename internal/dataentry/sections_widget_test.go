@@ -51,7 +51,7 @@ func TestBuildSectionEntityData_CarriesWidget(t *testing.T) {
 			}
 
 			sed := app.views.buildSectionEntityData(
-				context.Background(), e, secFields, eDef, "input")
+				context.Background(), e, secFields, eDef, "input", defaultViewWorld())
 
 			if len(sed.Fields) != len(tc.want) {
 				t.Fatalf("got %d fields, want %d", len(sed.Fields), len(tc.want))

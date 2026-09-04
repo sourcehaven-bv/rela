@@ -270,9 +270,25 @@ func hasCreateTarget(roleDef *yaml.Node, userType string) bool {
 		return false
 	}
 	for _, t := range create.Content {
-		if t.Value == "*" || t.Value == userType {
+		// Compare on the TYPE half: a state-shaped grant (`person@draft`,
+		// TKT-DN37J2) already grants create on `person`, so treating it as
+		// a miss would make this migration REPLACE the operator's whole
+		// create list with a bare one-element list — destroying the state
+		// grant and any unrelated entries beside it (RR-H98VX0).
+		if t.Value == "*" || grantTypeOf(t.Value) == userType {
 			return true
 		}
 	}
 	return false
+}
+
+// grantTypeOf returns the entity type an ACL write-grant entry addresses:
+// the whole entry for a plain type grant, the part before "@" for a
+// state-shaped one. Mirrors the helper of the same name in internal/acl;
+// duplicated rather than imported because this package edits acl.yaml as
+// YAML NODES and must not depend on internal/acl (arch-lint), and because
+// the split is one strings.Cut.
+func grantTypeOf(entry string) string {
+	typeName, _, _ := strings.Cut(entry, "@")
+	return typeName
 }

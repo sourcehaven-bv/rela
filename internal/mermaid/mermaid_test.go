@@ -225,3 +225,56 @@ func TestStateDiagram_QuoteInValueDoesNotBreakOut(t *testing.T) {
 		}
 	}
 }
+
+// A class name reaches the diagram source UNQUOTED, so unlike a label it
+// cannot be made safe by escaping — it is validated and dropped instead.
+func TestGraph_ClassNameIsValidated(t *testing.T) {
+	tests := []struct {
+		name    string
+		class   string
+		wantOut bool
+	}{
+		{name: "plain", class: "excluded", wantOut: true},
+		{name: "with digits, dash and underscore", class: "face-1_a", wantOut: true},
+		{name: "empty is dropped", class: ""},
+		{name: "a newline could start a statement", class: "a\nclick n0 href \"http://x\""},
+		{name: "a space could start a statement", class: "a b"},
+		{name: "quotes", class: `a"b`},
+		{name: "semicolon", class: "a;b"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			out := mermaid.Graph([]mermaid.Node{{Key: "k", Text: "T", Class: tc.class}}, nil)
+			got := strings.Contains(out, "class n0")
+			if got != tc.wantOut {
+				t.Errorf("class %q: emitted=%v, want %v\n%s", tc.class, got, tc.wantOut, out)
+			}
+			// Whatever happens, the source must stay one node line plus at most
+			// one class line — never an injected extra statement.
+			if strings.Contains(out, "click") || strings.Contains(out, "href") {
+				t.Errorf("class %q injected a statement:\n%s", tc.class, out)
+			}
+		})
+	}
+}
+
+func TestClassDefs_BodyIsValidated(t *testing.T) {
+	out := mermaid.ClassDefs(map[string]string{
+		"ok":      "fill:#eef,stroke:#333",
+		"bad":     "fill:#eef\nclick n0 href \"http://x\"",
+		"quoted":  `fill:"x"`,
+		"bracket": "fill:#eee{}",
+	})
+	if !strings.Contains(out, "classDef ok fill:#eef,stroke:#333") {
+		t.Errorf("a safe definition should render:\n%s", out)
+	}
+	for _, bad := range []string{"bad", "quoted", "bracket"} {
+		if strings.Contains(out, "classDef "+bad) {
+			t.Errorf("%s should have been dropped:\n%s", bad, out)
+		}
+	}
+	// Stable order, so a generated diagram is diffable.
+	if a, b := strings.Index(out, "classDef ok"), strings.Index(out, "classDef zz"); b >= 0 && a > b {
+		t.Error("definitions must be sorted by name")
+	}
+}

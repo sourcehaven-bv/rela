@@ -232,7 +232,7 @@ func TestAudit_AC1_EntityRenameRecordsBeforeAfter(t *testing.T) {
 	// Pin the JSON wire contract too: encoding/json must omit subject
 	// (Subject is *Subject specifically so omitempty fires) and emit
 	// before / after. A regression that changed Subject back to
-	// non-pointer would still pass the nil-check above (Subject would
+	// non-face would still pass the nil-check above (Subject would
 	// be a zero struct, not nil) but fail this JSON assertion.
 	data, err := json.Marshal(*renameRec)
 	if err != nil {

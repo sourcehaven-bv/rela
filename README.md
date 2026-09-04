@@ -79,6 +79,7 @@ go build -o rela ./cmd/rela
 | [Concepts](docs/concepts.md) | Architecture traceability fundamentals |
 | [CLI Reference](docs/cli-reference.md) | Complete command reference |
 | [Metamodel Reference](docs/metamodel.md) | Configure entity types and relations |
+| [How To Publish Content with Faces and Worlds](docs/content-states.md) | Give an entity type several content states (draft, published, translations), declare worlds that pick one face per reader, and publish through a guarded copy |
 | [Export Guide](docs/export.md) | Export, import, and data integration |
 | [Best Practices](docs/best-practices.md) | Maintenance tips and team workflows |
 | [MCP Server](docs/mcp-server.md) | AI assistant integration via MCP |

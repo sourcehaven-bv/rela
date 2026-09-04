@@ -18,10 +18,14 @@ import (
 
 // --- RelationReader -------------------------------------------------------
 
+// GetRelation returns the DEFAULT-tail edge of the triple (TKT-DOFYR1) — see
+// store.RelationData.FromFace. A triple can carry one edge per tail face, so
+// this is an address, not a wildcard.
 func (s *Store) GetRelation(ctx context.Context, from, relType, to string) (*entity.Relation, error) {
 	row := s.q().QueryRowContext(ctx,
-		`SELECT from_id, rel_type, to_id, properties, content, updated_at
-		 FROM relations WHERE from_id = ? AND rel_type = ? AND to_id = ?`, from, relType, to)
+		`SELECT `+relationColumns+`
+		 FROM relations WHERE from_id = ? AND rel_type = ? AND to_id = ? AND from_face = ''`,
+		from, relType, to)
 	r, err := scanRelation(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("sqlitestore: get relation %s--%s->%s: %w", from, relType, to, store.ErrNotFound)
@@ -74,12 +78,12 @@ func buildRelationQuery(q store.RelationQuery) (sqlText string, args []any) {
 func buildRelationQueryFrom(q store.RelationQuery, cursorKey string) (sqlText string, args []any) {
 	var conds []string
 	if cursorKey != "" {
-		from, relType, to, ok := splitRelationKey(cursorKey)
+		from, face, relType, to, ok := splitRelationKey(cursorKey)
 		if ok {
 			// Row-value comparison matches the multi-column ORDER BY exactly,
-			// without hand-expanding it into a three-way OR.
-			conds = append(conds, "(from_id, rel_type, to_id) > (?, ?, ?)")
-			args = append(args, from, relType, to)
+			// without hand-expanding it into a four-way OR.
+			conds = append(conds, "(from_id, from_face, rel_type, to_id) > (?, ?, ?, ?)")
+			args = append(args, from, face, relType, to)
 		}
 	}
 	if q.From != "" {
@@ -93,6 +97,15 @@ func buildRelationQueryFrom(q store.RelationQuery, cursorKey string) (sqlText st
 	if q.Type != "" {
 		conds = append(conds, "rel_type = ?")
 		args = append(args, q.Type)
+	}
+	// The tail-face filter is nil-PERMISSIVE (TKT-DOFYR1): a nil FromFace
+	// matches every tail — default-tail edges and all state-tailed ones —
+	// which is today's behavior for faceless projects and the compat story for
+	// every existing query site. Non-nil matches by equality only; the store
+	// compares, never inspects (see entity.Face).
+	if q.FromFace != nil {
+		conds = append(conds, "from_face = ?")
+		args = append(args, string(*q.FromFace))
 	}
 	if q.EntityID != "" {
 		switch q.Direction {
@@ -108,13 +121,17 @@ func buildRelationQueryFrom(q store.RelationQuery, cursorKey string) (sqlText st
 		}
 	}
 
-	sqlText = `SELECT from_id, rel_type, to_id, properties, content, updated_at FROM relations`
+	sqlText = `SELECT ` + relationColumns + ` FROM relations`
 	if len(conds) > 0 {
 		sqlText += ` WHERE ` + strings.Join(conds, " AND ")
 	}
-	sqlText += ` ORDER BY from_id, rel_type, to_id`
+	sqlText += ` ORDER BY from_id, from_face, rel_type, to_id`
 	return sqlText, args
 }
+
+// relationColumns is the column list every relation read selects, in the order
+// scanRelation expects.
+const relationColumns = "from_id, from_face, rel_type, to_id, properties, content, updated_at"
 
 // --- RelationWriter -------------------------------------------------------
 
@@ -137,6 +154,7 @@ func (s *Store) CreateRelation(
 	var (
 		props   = "{}"
 		content string
+		face    entity.Face
 		err     error
 	)
 	if data != nil {
@@ -144,12 +162,16 @@ func (s *Store) CreateRelation(
 			return nil, err
 		}
 		content = data.Content
+		// The tail is part of the edge's IDENTITY, not a property of it: two
+		// edges on one triple with different tails are two relations.
+		face = data.FromFace
 	}
 	now := time.Now().UTC()
 
 	_, err = s.write(ctx, `INSERT INTO relations
-		(from_id, rel_type, to_id, properties, content, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
-		from, relType, to, props, content, now.Format(timeFmt))
+		(from_id, from_face, rel_type, to_id, properties, content, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		from, string(face), relType, to, props, content, now.Format(timeFmt))
 	if err != nil {
 		if isUniqueViolation(err) {
 			return nil, fmt.Errorf("sqlitestore: create relation: %w", store.ErrConflict)
@@ -157,8 +179,29 @@ func (s *Store) CreateRelation(
 		return nil, fmt.Errorf("sqlitestore: create relation: %w", err)
 	}
 
-	s.emit(store.Event{Op: store.EventRelationCreated, RelationType: relType, From: from, To: to})
-	return s.GetRelation(ctx, from, relType, to)
+	s.emit(store.Event{
+		Op: store.EventRelationCreated, RelationType: relType, From: from, To: to, Face: face,
+	})
+	return s.getRelationState(ctx, from, face, relType, to)
+}
+
+// getRelationState reads the edge of a triple carrying EXACTLY tail p. Unlike
+// GetRelation (default-tail only, per the store.RelationReader contract) this
+// is internal, so CreateRelation can echo back the state-tailed edge it just
+// wrote rather than a different edge that happens to share the triple.
+func (s *Store) getRelationState(
+	ctx context.Context, from string, p entity.Face, relType, to string,
+) (*entity.Relation, error) {
+	row := s.q().QueryRowContext(ctx,
+		`SELECT `+relationColumns+`
+		 FROM relations WHERE from_id = ? AND from_face = ? AND rel_type = ? AND to_id = ?`,
+		from, string(p), relType, to)
+	r, err := scanRelation(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("sqlitestore: get relation %s--%s->%s: %w",
+			entity.FormatStateRef(from, p), relType, to, store.ErrNotFound)
+	}
+	return r, err
 }
 
 func (s *Store) UpdateRelation(
@@ -168,8 +211,10 @@ func (s *Store) UpdateRelation(
 	if err != nil {
 		return nil, err
 	}
+	// Addresses the DEFAULT-tail edge, matching GetRelation and the
+	// store.RelationWriter contract (TKT-DOFYR1).
 	res, err := s.write(ctx, `UPDATE relations SET properties = ?, content = ?, updated_at = ?
-		WHERE from_id = ? AND rel_type = ? AND to_id = ?`,
+		WHERE from_id = ? AND rel_type = ? AND to_id = ? AND from_face = ''`,
 		props, data.Content, time.Now().UTC().Format(timeFmt), from, relType, to)
 	if err != nil {
 		return nil, fmt.Errorf("sqlitestore: update relation: %w", err)
@@ -186,9 +231,23 @@ func (s *Store) UpdateRelation(
 	return s.GetRelation(ctx, from, relType, to)
 }
 
+// DeleteRelation removes the DEFAULT-tail edge of the triple.
+// DeleteRelationState is the general form.
 func (s *Store) DeleteRelation(ctx context.Context, from, relType, to string) error {
+	return s.DeleteRelationState(ctx, from, "", relType, to)
+}
+
+// DeleteRelationState removes the edge with EXACTLY this tail (TKT-C1XUA8).
+//
+// The tail is part of a relation's identity, so addressing the wrong one
+// deletes a DIFFERENT edge rather than failing — which is precisely the bug
+// this separate method exists to make unavailable.
+func (s *Store) DeleteRelationState(
+	ctx context.Context, from string, p entity.Face, relType, to string,
+) error {
 	res, err := s.write(ctx,
-		`DELETE FROM relations WHERE from_id = ? AND rel_type = ? AND to_id = ?`, from, relType, to)
+		`DELETE FROM relations WHERE from_id = ? AND from_face = ? AND rel_type = ? AND to_id = ?`,
+		from, string(p), relType, to)
 	if err != nil {
 		return fmt.Errorf("sqlitestore: delete relation: %w", err)
 	}
@@ -200,7 +259,9 @@ func (s *Store) DeleteRelation(ctx context.Context, from, relType, to string) er
 		return fmt.Errorf("sqlitestore: delete relation: %w", store.ErrNotFound)
 	}
 
-	s.emit(store.Event{Op: store.EventRelationDeleted, RelationType: relType, From: from, To: to})
+	s.emit(store.Event{
+		Op: store.EventRelationDeleted, RelationType: relType, From: from, To: to, Face: p,
+	})
 	return nil
 }
 
@@ -209,15 +270,17 @@ func (s *Store) DeleteRelation(ctx context.Context, from, relType, to string) er
 func scanRelation(sc scanner) (*entity.Relation, error) {
 	var (
 		r       entity.Relation
+		face    string
 		props   string
 		updated string
 	)
-	if err := sc.Scan(&r.From, &r.Type, &r.To, &props, &r.Content, &updated); err != nil {
+	if err := sc.Scan(&r.From, &face, &r.Type, &r.To, &props, &r.Content, &updated); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, err
 		}
 		return nil, fmt.Errorf("sqlitestore: scan relation: %w", err)
 	}
+	r.FromFace = entity.Face(face)
 	var err error
 	if r.Properties, err = unmarshalProps(props); err != nil {
 		return nil, fmt.Errorf("sqlitestore: relation %s--%s->%s: %w", r.From, r.Type, r.To, err)

@@ -92,7 +92,7 @@ func TestRecord_OmitemptyOnOptionalFields(t *testing.T) {
 	}
 	// Before/After must be omitted entirely (not "before":null nor
 	// "before":{}). encoding/json does not honor omitempty on
-	// non-pointer struct fields, hence Record uses *Subject — pin that.
+	// non-face struct fields, hence Record uses *Subject — pin that.
 	if strings.Contains(string(data), `"before"`) {
 		t.Errorf("expected before to be omitted, got: %s", data)
 	}

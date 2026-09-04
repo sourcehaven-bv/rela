@@ -70,6 +70,15 @@
   scopes)`), so a bug fails toward less access — except in the compilation
   step, which is why that has direct unit tests rather than only
   end-to-end ones.
+
+  **What this rule does NOT forbid**: adding a new allowlist DIMENSION to
+  the compiled result. The prohibition is on subtractive evaluation — a
+  `deny` the evaluator applies per row — not on the query carrying more
+  allowlists. `ReadQueryResult` already carries a type verdict and a
+  composed `GraphQuery`; a per-face allowlist (TKT-FACEREAD) is the same
+  shape: computed from grants at compile time, pushed down as an
+  additional predicate, still additive. It costs one predicate per
+  backend, not a re-derivation of the evaluator.
 - **Read-out paths go through visibility wrappers, base readers stay
   ungated.** Read-side ACL (entity row-gating + field-level `visible:`
   redaction) is enforced by `internal/visibility` decorators

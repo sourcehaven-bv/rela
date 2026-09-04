@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
 )
@@ -21,8 +23,11 @@ import (
 // indistinguishable from "FEAT-0".
 func (s *Store) HighestID(ctx context.Context, prefix string) (int, error) {
 	pfx := prefix + "-"
+	// face = '': states share their family's number (TKT-DOFYR1), so counting
+	// them would not change the answer but scanning them is wasted work — and
+	// a headless family tolerated from disk must not mint an id.
 	rows, err := s.q().QueryContext(ctx,
-		`SELECT id FROM entities WHERE id LIKE ? ESCAPE '\'`, likePrefix(pfx))
+		`SELECT id FROM entities WHERE id LIKE ? ESCAPE '\' AND face = ''`, likePrefix(pfx))
 	if err != nil {
 		return 0, fmt.Errorf("sqlitestore: highest id for %q: %w", prefix, err)
 	}
@@ -81,10 +86,13 @@ func (s *Store) PropertyValues(ctx context.Context, property string, limit int) 
 	// the SQL string, which is the shape that goes wrong quietly later.
 	// json_each yields the keys as VALUES instead, so the name is compared as a
 	// bound parameter and needs no escaping at all.
+	// face = '': a DEFAULT-WORLD aggregate, deliberately un-worlded (TKT-DOFYR1).
+	// This feeds value suggestions, and counting every state would let a draft's
+	// property value surface as a suggestion in a published world.
 	rows, err := s.q().QueryContext(ctx,
 		`SELECT j.value, j.type, count(*)
 		 FROM entities, json_each(entities.properties) AS j
-		 WHERE j.key = ?
+		 WHERE j.key = ? AND entities.face = ''
 		 GROUP BY j.value, j.type`, property)
 	if err != nil {
 		return nil, fmt.Errorf("sqlitestore: property values for %q: %w", property, err)
@@ -148,9 +156,15 @@ func (s *Store) RenameEntity(ctx context.Context, oldID, newID string) (*store.R
 func (s *Store) renameLocked(
 	ctx context.Context, oldID, newID string, result *store.RenameResult,
 ) error {
-	existing, err := s.GetEntity(ctx, oldID)
+	// Rename addresses the whole state FAMILY of the bare id (TKT-DOFYR1); the
+	// defensive scan means a headless family (tolerated from disk, never
+	// written) still renames rather than reporting ErrNotFound.
+	family, err := s.stateFamily(ctx, oldID)
 	if err != nil {
 		return err
+	}
+	if len(family) == 0 {
+		return fmt.Errorf("sqlitestore: rename %s: %w", oldID, store.ErrNotFound)
 	}
 
 	// Check the target explicitly rather than relying on the PRIMARY KEY
@@ -191,11 +205,24 @@ func (s *Store) renameLocked(
 	toN, _ := toRes.RowsAffected()
 	result.RelationsUpdated = int(fromN + toN)
 
-	renamed := existing.Clone()
-	renamed.ID = newID
-	s.notifyRenamed(oldID, renamed)
+	// EVERY face is announced (TKT-9KZGJO). Indexes key documents per face, so
+	// each needs its own re-key; announcing only the default face would strand
+	// every sibling under an id that no longer exists. The default face leads
+	// when present, matching fs/mem.
+	renamedStates := make([]*entity.Entity, 0, len(family))
+	for _, st := range family {
+		r := st.Clone()
+		r.ID = newID
+		renamedStates = append(renamedStates, r)
+	}
+	sort.SliceStable(renamedStates, func(i, j int) bool {
+		return renamedStates[i].Face.IsDefault() && !renamedStates[j].Face.IsDefault()
+	})
+	for _, r := range renamedStates {
+		s.notifyRenamed(oldID, r)
+	}
 
-	// One EventEntityUpdated under the NEW id, matching memstore.
+	// One EventEntityUpdated per face under the NEW id, matching memstore.
 	//
 	// There is deliberately no rename op in store.EventOp: the Event stream is
 	// a coarse staleness signal, and a consumer re-snapshots by id either way.
@@ -204,10 +231,13 @@ func (s *Store) renameLocked(
 	// is wired to it here — search runs off bleve via the generic wrapper).
 	// Emitting delete+put instead would make a consumer drop and rebuild state
 	// it could have re-keyed.
-	s.emit(store.Event{
-		Op:         store.EventEntityUpdated,
-		EntityID:   newID,
-		EntityType: existing.Type,
-	})
+	for _, r := range renamedStates {
+		s.emit(store.Event{
+			Op:         store.EventEntityUpdated,
+			EntityID:   newID,
+			EntityType: r.Type,
+			Face:       r.Face,
+		})
+	}
 	return nil
 }

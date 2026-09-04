@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { RouterLink, useRoute } from 'vue-router'
+import { RouterLink, useRoute, type RouteLocationRaw } from 'vue-router'
 import { useUIStore, useSchemaStore } from '@/stores'
+import { useWorld } from '@/composables/useWorld'
 import { getErrorMessage, ApiError } from '@/api/errors'
 import { listVersions, getVersion, restoreVersion, type VersionMeta } from '@/api/history'
 import { getEntity as fetchEntity } from '@/api/entities'
@@ -18,9 +19,31 @@ const schemaStore = useSchemaStore()
 const entityType = computed(() => String(route.params.type))
 const entityId = computed(() => String(route.params.id))
 
+// The world rides the history request, so the timeline is the history OF THE
+// FACE ON SCREEN (BUG-2). Versioning is per-face — `entity_versions` is keyed
+// by content state — so a draft and its published face have genuinely
+// different histories, and serving the default face's under a world-bound page
+// is the wrong record presented as the right one.
+const { world, worldParam, isWorldBound } = useWorld()
+
+// The face this timeline describes, as the SERVER resolved it — read back
+// rather than re-derived from the world, for the same reason every other
+// surface in this epic reads it back: the store did the resolution.
+const face = ref('')
+// The world resolves no face for this entity, so there is no history in it.
+const worldFaceAbsent = ref(false)
+
 const loading = ref(true)
 const unsupported = ref(false)
 const error = ref('')
+
+// pageState mirrors DynamicForm's `form-state-*` contract: a stable signal
+// that this screen has finished resolving, so a screenshot{} capture can wait
+// for it rather than hanging until its timeout.
+const pageState = computed<'pending' | 'loaded' | 'error'>(() => {
+  if (error.value) return 'error'
+  return loading.value ? 'pending' : 'loaded'
+})
 const versions = ref<VersionMeta[]>([])
 const current = ref<Entity | null>(null)
 
@@ -65,8 +88,13 @@ function sideLabel(s: Side): string {
   return s === 'current' ? 'current' : `v${s}`
 }
 
-// Whether the current entity is writable (server-computed update affordance).
-const canRestore = computed(() => current.value?._actions?.update !== false)
+// Whether the current entity is writable (server-computed update affordance),
+// ANDed with the world: a restore is a write, and under a world the timeline
+// is the RESOLVED face's while the restore would land on the default face —
+// the same mismatch every other write affordance refuses on a world-bound page.
+const canRestore = computed(
+  () => current.value?._actions?.update !== false && !isWorldBound.value,
+)
 
 // The entity type definition, for resolving property labels + badge styling.
 const typeDef = computed(() => schemaStore.getEntityType(entityType.value))
@@ -99,11 +127,19 @@ async function load(fromUrl = true) {
   loading.value = true
   error.value = ''
   try {
-    const [vs, ent] = await Promise.all([
-      listVersions(entityType.value, entityId.value),
-      fetchEntity(entityType.value, entityId.value).catch(() => null),
+    const [timeline, ent] = await Promise.all([
+      listVersions(entityType.value, entityId.value, worldParam.value),
+      // The live entity is the diff's 'current' side, so it must be the SAME
+      // face the timeline describes — otherwise every diff against 'current'
+      // compares two different faces and reports changes nobody made.
+      fetchEntity(entityType.value, entityId.value, {
+        ...(worldParam.value ? { world: worldParam.value } : {}),
+      }).catch(() => null),
     ])
+    const vs = timeline.versions
     versions.value = vs
+    face.value = timeline.face
+    worldFaceAbsent.value = timeline.worldFaceAbsent
     current.value = ent
     if (fromUrl) {
       seedFromUrl()
@@ -139,7 +175,7 @@ async function sideState(
       properties: (current.value?.properties ?? {}) as Record<string, unknown>,
     }
   }
-  const snap = await getVersion(entityType.value, entityId.value, s)
+  const snap = await getVersion(entityType.value, entityId.value, s, worldParam.value)
   return {
     content: snap.entity.content ?? '',
     properties: (snap.entity.properties ?? {}) as Record<string, unknown>,
@@ -209,13 +245,51 @@ function principalLabel(m: VersionMeta): string {
   return m.principal.tool ? `${user} · ${m.principal.tool}` : user
 }
 
+// The provenance note for a mechanism-produced version, or '' for a direct
+// edit (TKT-VQHPFK). Same spelling as `rela history`:
+//
+//   copy from POL-1@draft (publish)
+//
+// Three things this deliberately does NOT do:
+//
+//   - It does not replace the op badge beside it. A copy genuinely IS a create
+//     or an update; the provenance is an additional annotation on that op.
+//   - It returns '' when there is no origin, so a hand edit renders nothing
+//     extra. There is no `kind: 'manual'` to fall back to, and inventing one
+//     here would mark every row and make the copy marker meaningless — the
+//     absence is the signal, and `timeline-who` already names who typed it.
+//   - It omits the source when the server withheld it, with no placeholder and
+//     no error styling. A withheld source is a normal answer for a reader
+//     whose verdict does not cover the source entity; the copy fact and the
+//     definition name are still worth stating.
+function originLabel(o: VersionMeta['origin']): string {
+  if (!o?.kind) return ''
+  let s = o.kind
+  if (o.source) s += ` from ${o.source}`
+  if (o.definition) s += ` (${o.definition})`
+  return s
+}
+
 function formatWhen(iso: string): string {
   const d = new Date(iso)
   return isNaN(d.getTime()) ? iso : d.toLocaleString()
 }
 
 // Pure navigation, so it renders as a real link and supports cmd/middle-click.
-const backTarget = computed(() => `/entity/${entityType.value}/${entityId.value}`)
+// The target keeps the world, so the round trip lands on the face the reader
+// came from rather than silently switching them to the default one.
+const backTarget = computed<RouteLocationRaw>(() => ({
+  path: `/entity/${entityType.value}/${entityId.value}`,
+  query: worldParam.value ? { world: worldParam.value } : {},
+}))
+
+// The face label shown in the header. A timeline that does not name its subject
+// invites the reader to assume the obvious one — which is how the default
+// face's history passed for a published page's.
+const faceLabel = computed(() => {
+  if (!world.value) return ''
+  return face.value || 'default'
+})
 
 const hasContentChanges = computed(() => contentDiff.value.some((l) => l.op !== 'equal'))
 
@@ -226,11 +300,19 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="history-view">
+  <div class="history-view" :data-testid="`page-state-${pageState}`">
     <div class="page-header">
       <div>
         <h2>Version history</h2>
-        <p>{{ entityType }} · {{ entityId }}</p>
+        <p>
+          {{ entityType }} · {{ entityId }}
+          <!--
+            Named only under a world. In the default world there is one face and
+            labelling it would be noise; under a world the label is the whole
+            point, because the record on screen is face-specific.
+          -->
+          <span v-if="faceLabel" class="history-face"> · {{ faceLabel }} face </span>
+        </p>
       </div>
       <RouterLink class="btn btn-secondary" :to="backTarget">Back to entity</RouterLink>
     </div>
@@ -240,6 +322,9 @@ onMounted(load)
       Version history is not available for this deployment.
     </div>
     <div v-else-if="error" class="error-state">{{ error }}</div>
+    <div v-else-if="worldFaceAbsent" class="loading-state">
+      This entity has no {{ world }} face, so it has no history in that world.
+    </div>
     <div v-else-if="versions.length === 0" class="loading-state">No versions recorded yet.</div>
 
     <div v-else class="history-layout">
@@ -260,6 +345,17 @@ onMounted(load)
               <span class="timeline-when">{{ formatWhen(m.created_at) }}</span>
               <span v-if="m.prev_id" class="timeline-note">renamed from {{ m.prev_id }}</span>
               <span v-if="m.triggered_by" class="timeline-note">{{ m.triggered_by }}</span>
+              <!--
+                Provenance sits BESIDE the op badge, never in place of it: a
+                copy is still a create or an update. Rendered only when the
+                server sent an origin — a direct edit gets nothing here.
+              -->
+              <span
+                v-if="originLabel(m.origin)"
+                class="timeline-origin"
+                :data-origin-kind="m.origin?.kind"
+                >{{ originLabel(m.origin) }}</span
+              >
             </button>
             <button
               v-if="canRestore && m.op !== 'delete'"
@@ -355,6 +451,12 @@ onMounted(load)
 </template>
 
 <style scoped>
+/* The face label is a quiet qualifier on the subtitle, not a badge: it names
+   which record is on screen without competing with the entity id. */
+.history-face {
+  color: var(--muted-text);
+}
+
 .history-view {
   padding: 24px;
 }
@@ -466,6 +568,18 @@ onMounted(load)
 .timeline-note {
   color: var(--muted-text);
   font-size: 0.82em;
+}
+/* Provenance reads as a quiet chip rather than plain prose, so the eye can
+   find the copied rows down a long timeline without the row shouting. It is
+   an annotation on the op badge, not a second op, so it is deliberately not
+   coloured like one. */
+.timeline-origin {
+  color: var(--muted-text);
+  font-size: 0.75em;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm, 4px);
+  padding: 1px 6px;
+  white-space: nowrap;
 }
 
 /* Diff */

@@ -12,7 +12,9 @@ import (
 // browser and no built frontend — the property that lets api{} gate CI.
 func TestAPIClient_ServesSeededEntity(t *testing.T) {
 	dir := protoDir(t)
-	c := NewAPIClient(dir)
+	shared := NewSharedProject(dir)
+	defer func() { _ = shared.Close() }()
+	c := NewAPIClient(shared)
 	defer func() { _ = c.Close() }()
 
 	seed := []docs.SeedOp{{
@@ -39,7 +41,9 @@ func TestAPIClient_ServesSeededEntity(t *testing.T) {
 // is the point of the verb, so it must not surface as err.
 func TestAPIClient_ErrorStatusIsNotAnError(t *testing.T) {
 	dir := protoDir(t)
-	c := NewAPIClient(dir)
+	shared := NewSharedProject(dir)
+	defer func() { _ = shared.Close() }()
+	c := NewAPIClient(shared)
 	defer func() { _ = c.Close() }()
 
 	resp, err := c.Do(context.Background(), docs.APIRequest{
@@ -57,7 +61,9 @@ func TestAPIClient_ErrorStatusIsNotAnError(t *testing.T) {
 // after the server stood up (the syncSeed path screenshot{} also relies on).
 func TestAPIClient_SeedGrowsAcrossRequests(t *testing.T) {
 	dir := protoDir(t)
-	c := NewAPIClient(dir)
+	shared := NewSharedProject(dir)
+	defer func() { _ = shared.Close() }()
+	c := NewAPIClient(shared)
 	defer func() { _ = c.Close() }()
 
 	first := []docs.SeedOp{{

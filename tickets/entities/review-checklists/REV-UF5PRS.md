@@ -61,7 +61,7 @@ all now resolve to real entities.
 |----|--------|----------|
 | 1 — redacted distinguishable from unset | PASS | `TestScriptReads_RedactedIsDistinguishableFromUnset` — both read `nil`, only the hidden one reports redacted |
 | 2 — value still unreachable | PASS | `TestScriptReads_RedactedNeverCarriesValues` — value absent via `redacted`, `properties`, and `prop()` |
-| 3 — nothing-hidden unchanged | PASS | `TestRedact_NothingHiddenIsUnchanged` — original pointer, no marker |
+| 3 — nothing-hidden unchanged | PASS | `TestRedact_NothingHiddenIsUnchanged` — original face, no marker |
 | 4 — validator does not skip | PASS | `TestRedactedDoesNotLock`, `TestRedact_DoesNotLock` — `IsLocked()` false, so `validator.go:198` cannot skip |
 | 5 — no bogus git-crypt 422 | PASS | same `IsLocked()` invariant (`write_handler.go:335` keys on it) |
 

@@ -110,8 +110,20 @@ type DBTX interface {
 // hoisted into a service would still need exactly this pool, gaining a type
 // but no separation.
 //
-//plimsoll:max-exported-methods=39
-//plimsoll:max-methods=49
+// +1 (38→39, TKT-DOFYR1): GetEntityState joined the mandated store.Store
+// interface — the required-interface exception, not internal sprawl.
+//
+// (+2 methods / +2 exported with per-face delete, TKT-C1XUA8:
+// DeleteEntityState and DeleteRelationState joined the mandated
+// store.Store interface. Required-interface exception, not accreted
+// API — the counts ratchet only if store.Store itself narrows.)
+//
+// (+1 exported, TKT-WRLDAPI: the world-scoped read surface joined the
+// mandated store.Store interface on the same terms. Required-interface
+// exception, not accreted API.)
+//
+//plimsoll:max-exported-methods=42
+//plimsoll:max-methods=52
 type Store struct {
 	db        DBTX
 	observers []store.EntityObserver // notified synchronously after committed entity writes
