@@ -47,6 +47,15 @@ body and is untouched. This is strictly about short frontmatter scalars.
 So the blast radius is: a string property, containing a leading newline plus
 content, on the fsstore backend.
 
+**Widened in code review.** The shape set turned out larger than "leading
+newline": a multi-line string starting with a tab breaks everywhere, and one
+starting with a space breaks when a sequence sits anywhere above it. And the
+string need not be top-level: `map[string]any{"v": "\n0"}` lost the newline
+silently under the first fix, with no error, which is the shape the store fuzz
+target generates. The fix now walks every container shape a property value can
+take; the characterization lives in the `needsQuoting` godoc and REV-W5Z1KM
+records the findings.
+
 ## Decision: quote the scalar (option D)
 
 Decided by the project owner.

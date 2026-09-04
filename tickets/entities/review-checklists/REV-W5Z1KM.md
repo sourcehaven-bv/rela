@@ -44,24 +44,30 @@ unexplained suppression is a finding nobody can re-evaluate later.
 - [x] All significant review-responses addressed
 - [x] Self-reviewed the diff for unrelated changes
 
-**Review Responses:** none — and this box is checked more weakly than usual.
+**Review Responses.** The first version of this checklist ticked the
+`/code-review` box while the text beneath admitted no review agent had run
+(transient API errors). The IB review of PR #1505 flagged that as a Low finding:
+a checked box that the prose contradicts is not evidence. The review was run on
+2026-09-04 (cranky-code-reviewer against the branch diff) and the box now means
+what it says. It was worth running: the reviewer found a hole the fuzzer had
+not reached in its 90s.
 
-No review agent was run; several agent invocations in this session died from
-transient API errors. Rather than claim a review that did not happen, the
-verification a reviewer would have demanded was done directly, and the fuzzer
-did the adversarial part better than a reviewer could: 90s of re-fuzzing after
-the fix found no recurrence, and instead surfaced a genuinely different defect
-(BUG-X7ICNM).
+| # | severity | finding | response |
+| --- | --- | --- | --- |
+| 1 | critical | `map[string]any{"v": "\n0"}` still wrote `"0"` to disk with no error; the fix handled only top-level strings and flat lists, while the store fuzz target already generates this shape (`case 5`). | Fixed. `ValueToNode` now walks every container shape a property value can take (`[]string`, `[]any`, `map[string]string`, `map[string]any`, nested) and quotes breaking strings wherever they sit. `TestValueToNode_RoundTrips` covers the nested cases. |
+| 2 | critical | The `[]any` branch swallowed `Encode` errors (`return nil, false`) and fell back to the buggy path, so a breaking string inside a nested container hard-failed. | Fixed. The walk returns `(*yaml.Node, error)` throughout; nothing is swallowed. |
+| 3 | critical | `needsQuoting` was under-inclusive: `"\tx\ny"` errored on read (tab in the indentation column), and the comment claiming only a leading newline breaks was wrong. | Fixed, and the claim is now backed by fuzzing yaml.v3 directly in nine nesting contexts. That found a THIRD shape the reviewer had not: a multi-line string starting with a space breaks only under a sequence (`- ` above it anywhere), so `needsQuoting` takes the context in rather than quoting it in map context too, which would reflow existing files. |
+| 4 | significant | `ValueToNode` was a pure alias for `valueToNode`. | Fixed. One exported function; the alias is gone. |
+| 5 | significant | Tests mirrored the implementation's blind spot: nothing nested. | Fixed. Nested map, map-in-list, list-in-list, string-map and mixed-type list cases; plus `FuzzValueToNode`, which round-trips any string at every nesting position. |
+| 6 | nitpick | `LeavesOrdinaryMultilineAlone` asserted a style flag, not the on-disk bytes. | Fixed. Asserts the emitted YAML is a block scalar. `TestValueToNode_MatchesEncodeWhenNothingBreaks` further pins byte-equality with plain `Encode` for every non-breaking value, including yaml.v3's numeric-aware map key order. |
+| 7 | nitpick | `[]string` and `[]any` branches duplicated loop logic. | Fixed by the recursive walk. |
 
-The one judgement worth a second opinion is the fix DIRECTION — quote rather
-than reject. The reasoning is that pgstore already stores these values via
-`json.Marshal`, so refusing them in fsstore would make the two backends disagree
-about what a valid entity is, and a storage-layer serialization limit must not
-become a data-validity rule. That reasoning is in the godoc, so a reviewer who
-disagrees has something concrete to argue with.
+The reviewer agreed with the quote-rather-than-reject direction, which was the
+judgement flagged as most wanting a second opinion.
 
-Self-review found no unrelated changes. The diff is: the shared helper, fsstore
-delegating to it, one regression test file, the fuzz seed, and ticket entities.
+Self-review found no unrelated changes. The diff is: the shared encoder, fsstore
+delegating to it, one test file with a fuzz target, the fuzz seed, and ticket
+entities.
 
 ## Acceptance Verification
 

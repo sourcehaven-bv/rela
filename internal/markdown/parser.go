@@ -157,7 +157,7 @@ func marshalOrdered(data map[string]any, keyOrder []string) ([]byte, error) {
 		node.Content = append(node.Content,
 			&yaml.Node{Kind: yaml.ScalarNode, Value: key},
 		)
-		valNode, err := valueToNode(val)
+		valNode, err := ValueToNode(val)
 		if err != nil {
 			return nil, err
 		}
@@ -179,7 +179,7 @@ func marshalOrdered(data map[string]any, keyOrder []string) ([]byte, error) {
 		node.Content = append(node.Content,
 			&yaml.Node{Kind: yaml.ScalarNode, Value: key},
 		)
-		valNode, err := valueToNode(data[key])
+		valNode, err := ValueToNode(data[key])
 		if err != nil {
 			return nil, err
 		}
@@ -189,7 +189,6 @@ func marshalOrdered(data map[string]any, keyOrder []string) ([]byte, error) {
 	return yaml.Marshal(node)
 }
 
-// valueToNode converts a Go value to a yaml.Node.
 // ValueToNode encodes a property value as a YAML node, working around a
 // yaml.v3 emitter defect for strings that would otherwise become an
 // unreadable block scalar (BUG-B1RA3J / issue #993).
@@ -198,24 +197,6 @@ func marshalOrdered(data map[string]any, keyOrder []string) ([]byte, error) {
 // until BUG-B1RA3J, where fixing one copy and re-running the fuzz target still
 // failed — entity writes and relation writes must not disagree about how a
 // value is encoded.
-func ValueToNode(val any) (*yaml.Node, error) {
-	return valueToNode(val)
-}
-
-func valueToNode(val any) (*yaml.Node, error) {
-	if node, ok := quotedScalarNode(val); ok {
-		return node, nil
-	}
-	var node yaml.Node
-	if err := node.Encode(val); err != nil {
-		return nil, err
-	}
-	return &node, nil
-}
-
-// quotedScalarNode builds a double-quoted scalar node directly for values
-// yaml.v3 cannot round-trip through a block scalar, and reports whether it did
-// (BUG-B1RA3J / issue #993).
 //
 // The upstream defect: for a string starting with a newline, the emitter writes
 // an indent indicator that disagrees with the body it then writes.
@@ -224,11 +205,12 @@ func valueToNode(val any) (*yaml.Node, error) {
 //
 // The indicator says 4, the body is indented 2, and Unmarshal rejects yaml.v3's
 // own output. A lone "\n" is worse than an error: it emits "|4+" and reads back
-// as "", losing the value silently.
+// as "", losing the value silently. See [needsQuoting] for the full list of
+// shapes that break.
 //
-// Built BEFORE Encode rather than fixing up its result, because Node.Encode
-// round-trips internally and returns the error itself — there is no node to
-// post-process.
+// Values are built BEFORE Encode rather than fixing up its result, because
+// Node.Encode round-trips internally and returns the error itself — there is
+// no node to post-process.
 //
 // Quoting rather than REJECTING is deliberate. pgstore serializes properties
 // with json.Marshal, where these strings round-trip fine, so refusing them here
@@ -238,62 +220,159 @@ func valueToNode(val any) (*yaml.Node, error) {
 // what it is given or fails loudly; it does not hold an opinion about which
 // strings are worth keeping.
 //
-// Scoped to values that ACTUALLY break, so ordinary multi-line strings keep
-// block style and no reflow churn lands on unrelated files.
-func quotedScalarNode(val any) (*yaml.Node, bool) {
-	switch v := val.(type) {
-	case string:
-		if !needsQuoting(v) {
-			return nil, false
-		}
-		return &yaml.Node{
-			Kind:  yaml.ScalarNode,
-			Tag:   "!!str",
-			Value: v,
-			Style: yaml.DoubleQuotedStyle,
-		}, true
-	case []string:
-		if !slices.ContainsFunc(v, needsQuoting) {
-			return nil, false
-		}
-		seq := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
-		for _, item := range v {
-			node := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: item}
-			if needsQuoting(item) {
-				node.Style = yaml.DoubleQuotedStyle
-			}
-			seq.Content = append(seq.Content, node)
-		}
-		return seq, true
-	case []any:
-		anyBreaks := slices.ContainsFunc(v, func(e any) bool {
-			s, ok := e.(string)
-			return ok && needsQuoting(s)
-		})
-		if !anyBreaks {
-			return nil, false
-		}
-		seq := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
-		for _, item := range v {
-			child, handled := quotedScalarNode(item)
-			if !handled {
-				child = &yaml.Node{}
-				if err := child.Encode(item); err != nil {
-					return nil, false
-				}
-			}
-			seq.Content = append(seq.Content, child)
-		}
-		return seq, true
+// Scoped to values that ACTUALLY break: a value whose subtree contains no
+// breaking string goes through Encode untouched, so ordinary multi-line strings
+// keep block style and no reflow churn lands on unrelated files.
+func ValueToNode(val any) (*yaml.Node, error) {
+	if !containsBreakingString(val, false) {
+		return encodeNode(val)
 	}
-	return nil, false
+	return buildNode(val, false)
 }
 
-// needsQuoting reports whether s would emit a block scalar that yaml.v3 cannot
-// read back. Only a LEADING newline trips the emitter; interior and trailing
-// newlines are handled correctly, so "a\nb" and "0\n" keep block style.
-func needsQuoting(s string) bool {
-	return strings.HasPrefix(s, "\n")
+// encodeNode is the plain yaml.v3 path, used for every value that does not
+// contain a string [needsQuoting] would flag.
+func encodeNode(val any) (*yaml.Node, error) {
+	var node yaml.Node
+	if err := node.Encode(val); err != nil {
+		return nil, err
+	}
+	return &node, nil
+}
+
+// containsBreakingString reports whether val, or any string nested in it
+// through the container shapes a property value can take, would trip the
+// emitter. Anything else (numbers, bools, nil, times) cannot. underSeq is
+// whether a sequence sits anywhere above val; see [needsQuoting].
+func containsBreakingString(val any, underSeq bool) bool {
+	switch v := val.(type) {
+	case string:
+		return needsQuoting(v, underSeq)
+	case []string:
+		return slices.ContainsFunc(v, func(s string) bool { return needsQuoting(s, true) })
+	case []any:
+		return slices.ContainsFunc(v, func(e any) bool { return containsBreakingString(e, true) })
+	case map[string]string:
+		for _, s := range v {
+			if needsQuoting(s, underSeq) {
+				return true
+			}
+		}
+	case map[string]any:
+		for _, e := range v {
+			if containsBreakingString(e, underSeq) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// buildNode assembles the node tree by hand for a value that contains a
+// breaking string, quoting exactly those strings. Leaves that do not break
+// still go through Encode so their tags and styles match what yaml.v3 would
+// have chosen (a string that looks like a number stays quoted, for instance).
+// Container shapes not listed here fall through to Encode, which either
+// succeeds or reports its own error; nothing is swallowed.
+func buildNode(val any, underSeq bool) (*yaml.Node, error) {
+	switch v := val.(type) {
+	case string:
+		if needsQuoting(v, underSeq) {
+			return &yaml.Node{
+				Kind:  yaml.ScalarNode,
+				Tag:   "!!str",
+				Value: v,
+				Style: yaml.DoubleQuotedStyle,
+			}, nil
+		}
+	case []string:
+		items := make([]any, len(v))
+		for i, s := range v {
+			items[i] = s
+		}
+		return buildSequence(items)
+	case []any:
+		return buildSequence(v)
+	case map[string]string:
+		entries := make(map[string]any, len(v))
+		for k, s := range v {
+			entries[k] = s
+		}
+		return buildMapping(entries, underSeq)
+	case map[string]any:
+		return buildMapping(v, underSeq)
+	}
+	return encodeNode(val)
+}
+
+func buildSequence(items []any) (*yaml.Node, error) {
+	seq := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+	for _, item := range items {
+		child, err := buildNode(item, true)
+		if err != nil {
+			return nil, err
+		}
+		seq.Content = append(seq.Content, child)
+	}
+	return seq, nil
+}
+
+// buildMapping emits keys in the order Encode would have used. yaml.v3 sorts
+// map keys with a numeric-aware comparison ("a2" before "a10"), not
+// bytewise, and that ordering is what every existing file on disk has; the
+// keys are learned by encoding a value-free copy of the map rather than by
+// reimplementing the comparator.
+func buildMapping(entries map[string]any, underSeq bool) (*yaml.Node, error) {
+	probe := make(map[string]any, len(entries))
+	for k := range entries {
+		probe[k] = nil
+	}
+	ordered, err := encodeNode(probe)
+	if err != nil {
+		return nil, err
+	}
+	mapping := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	for i := 0; i < len(ordered.Content); i += 2 {
+		keyNode := ordered.Content[i]
+		child, err := buildNode(entries[keyNode.Value], underSeq)
+		if err != nil {
+			return nil, err
+		}
+		mapping.Content = append(mapping.Content, keyNode, child)
+	}
+	return mapping, nil
+}
+
+// needsQuoting reports whether s would emit a block scalar yaml.v3 cannot read
+// back. Three shapes trip the emitter, characterized by fuzzing yaml.v3
+// directly in every nesting a property value can have (top level, map value,
+// sequence item, and their combinations); 45s of fuzzing with these excluded
+// found no fourth:
+//
+//   - a LEADING newline. The indent indicator disagrees with the body, so
+//     "\n0" reads back as "0" and "\n" as "" — silently.
+//   - a multi-line string whose FIRST line starts with a tab. The tab lands in
+//     the indentation column of the block scalar and the parser rejects it.
+//   - a multi-line string whose first line starts with a SPACE, but only when a
+//     sequence sits anywhere above it (underSeq). As a plain map value
+//     " x\ny" emits a correct "|4-" indicator; one level under a "- " the
+//     indicator and body disagree again. Quoting it in map context too would
+//     reflow every existing file carrying such a value for no gain, which is
+//     why the caller passes the context in rather than this being a pure
+//     function of s.
+//
+// Interior and trailing newlines, and tabs or spaces on later lines, are all
+// emitted correctly, so "a\nb", "0\n" and "a\n\tb" keep block style. A string
+// whose first line is only whitespace, or a tab-led string with no newline, is
+// already double-quoted by the emitter itself, so flagging it changes nothing.
+func needsQuoting(s string, underSeq bool) bool {
+	if strings.HasPrefix(s, "\n") {
+		return true
+	}
+	if !strings.Contains(s, "\n") {
+		return false
+	}
+	return strings.HasPrefix(s, "\t") || (underSeq && strings.HasPrefix(s, " "))
 }
 
 // GetString extracts a string value from frontmatter

@@ -26,8 +26,8 @@ Through rela: ~50s of `go test -fuzz` on `FuzzPropertyValuesTypeZoo`. The
 crashing input is `string("0") / int(52) / string("\n0")` — an ordinary entity
 property value.
 
-Characterized before fixing. Only a leading newline FOLLOWED BY CONTENT trips
-the emitter:
+Characterized before fixing. At this stage the finding was that only a leading
+newline trips the emitter (amended below after review):
 
 | value | emitted | reads back |
 | --- | --- | --- |
@@ -37,6 +37,16 @@ the emitter:
 | `"a\nb"` | `- \|-\n  a\n  b\n` | ok |
 | `"0\n"` | `- \|\n  0\n` | ok |
 | `" x"` | `- ' x'\n` | ok |
+
+**Amended after code review (REV-W5Z1KM).** The table above was true for what
+it tested but incomplete: code review of the fix found that the same defect
+also fires for a multi-line string whose first line starts with a tab, and
+fuzzing yaml.v3 directly in every nesting position then found a third shape,
+a multi-line string whose first line starts with a space, which breaks only
+when a sequence sits anywhere above it. The nested-map case
+(`map[string]any{"v": "\n0"}`), which the store fuzz target already generates,
+was also unhandled by the first fix and lost the leading newline silently. The
+full characterization lives in the `needsQuoting` godoc.
 
 The `"\n"` row was NOT in the original report and is worse than what was
 reported: it never errors. It emits `|4+` and reads back as `""`, losing the
