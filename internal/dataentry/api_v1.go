@@ -879,7 +879,7 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	// provenance block.
 	//
 	// An EXPLICIT address was not resolved by the world at all, so it is
-	// labelled by [addressedProvenance] rather than by the chain position it
+	// labeled by [addressedProvenance] rather than by the chain position it
 	// happens to hold — see that function for why.
 	if ref.Explicit {
 		result.World = addressedProvenance(ctx, a.Meta(), entity)

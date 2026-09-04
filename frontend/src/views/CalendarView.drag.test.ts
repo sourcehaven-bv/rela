@@ -423,6 +423,9 @@ describe('multi-day drag', () => {
 // carries no `?world=`, the server has no parameter to refuse — it returns 200
 // having written the DEFAULT face of an entity the reader was viewing through
 // a world. No error surfaces anywhere.
+// Under a world the drag writes to the event's ADDRESS (`_self`, face
+// included), so the affordance is `_actions` alone — the server computes it
+// for the face on screen. The world itself no longer withdraws the drag.
 describe('drag under a world', () => {
   const allowed: Entity = {
     id: 'T-1',
@@ -430,10 +433,9 @@ describe('drag under a world', () => {
     properties: { title: 'A', due: '2026-08-22' },
     relations: {},
     _actions: { update: true },
+    _self: '/api/v1/tasks/T-1@published',
   }
 
-  // The control. `_actions.update` is true here, so if this ever stops being
-  // draggable the assertions below would pass for a reason unrelated to worlds.
   it('is draggable under the DEFAULT world', async () => {
     const wrapper = setup({ entities: [allowed] })
     await flushPromises()
@@ -441,22 +443,31 @@ describe('drag under a world', () => {
     expect(wrapper.find('.calendar-chip').attributes('draggable')).toBe('true')
   })
 
-  it('marks every event non-draggable under a world', async () => {
+  it('stays draggable under a world when _actions permits it', async () => {
     const wrapper = setup({ entities: [allowed], world: 'published' })
     await flushPromises()
 
-    expect(wrapper.find('.calendar-chip').attributes('draggable')).toBe('false')
+    expect(wrapper.find('.calendar-chip').attributes('draggable')).toBe('true')
   })
 
-  // Same defence-in-depth argument as the denied-entity case above: the
-  // attribute stops a drag STARTING here, but an external drag source can
-  // still fire the drop handler.
-  it('refuses the write even if a drop is forced under a world', async () => {
+  it('writes to the ADDRESS the server reported, face included', async () => {
+    // The row the reader dragged is the published face; the bare id would
+    // reschedule a state the calendar is not showing.
     const wrapper = setup({ entities: [allowed], world: 'published' })
     await flushPromises()
 
     await dragFirstChipTo(wrapper, '25')
 
-    expect(updateEntityMock).not.toHaveBeenCalled()
+    expect(updateEntityMock).toHaveBeenCalledWith('task', 'T-1@published', expect.anything())
+  })
+
+  it('refuses the drag when the served face is not writable', async () => {
+    const wrapper = setup({
+      entities: [{ ...allowed, _actions: { update: false } }],
+      world: 'published',
+    })
+    await flushPromises()
+
+    expect(wrapper.find('.calendar-chip').attributes('draggable')).toBe('false')
   })
 })

@@ -22,9 +22,16 @@ import type { Entity, ListResponse } from '@/types'
 // if the list did not actually mount and fetch, the absence proves nothing.
 
 const listEntitiesMock = vi.fn()
+const deleteEntityMock = vi.fn()
 vi.mock('@/api', async (orig) => ({
   ...(await orig<typeof import('@/api')>()),
   listEntities: (...args: unknown[]) => listEntitiesMock(...args),
+  deleteEntity: (...args: unknown[]) => deleteEntityMock(...args),
+}))
+// The confirm dialog is a host-bound singleton (App.vue); here it answers
+// yes, so the delete test reaches the write it is about.
+vi.mock('@/composables/useConfirm', () => ({
+  useConfirm: () => ({ confirm: async () => true }),
 }))
 
 const routerPush = vi.fn()
@@ -64,7 +71,7 @@ describe('EntityList world binding', () => {
   const listId = 'policies'
   const entityType = 'policy'
 
-  function seedSchema(opts: { relationColumn?: boolean } = {}) {
+  function seedSchema(opts: { relationColumn?: boolean; faces?: boolean } = {}) {
     const schemaStore = useSchemaStore()
     schemaStore.lists.set(listId, {
       id: listId,
@@ -82,6 +89,9 @@ describe('EntityList world binding', () => {
       name: entityType,
       label: 'Policy',
       properties: { title: { type: 'string', values: null } },
+      // The world NOTE is a fact about a faced type only; tests that assert
+      // on it seed faces, and one asserts its absence without them.
+      ...(opts.faces ? { faces: { draft: {}, published: {} }, bare_face: 'draft' } : {}),
     } as never)
   }
 
@@ -120,7 +130,7 @@ describe('EntityList world binding', () => {
     document.body.innerHTML = ''
   })
 
-  async function mountList(opts: { relationColumn?: boolean } = {}) {
+  async function mountList(opts: { relationColumn?: boolean; faces?: boolean } = {}) {
     seedSchema(opts)
     seedEntities([policy])
     const wrapper = mount(EntityList, {
@@ -183,10 +193,21 @@ describe('EntityList world binding', () => {
       expect(routerPush).toHaveBeenCalledWith('/form/policy-edit/POL-1')
     })
 
-    it('does nothing under a world', async () => {
+    it('opens the edit form at the row\'s ADDRESS under a world', async () => {
+      // The row is a resolved face; the form must edit that face and not the
+      // bare id, which the world resolves away from it.
       mockRoute.query = { world: 'published' }
-      await pressJThenE(await mountList())
-      expect(routerPush).not.toHaveBeenCalledWith(expect.stringContaining('/form/'))
+      seedSchema()
+      seedEntities([{ ...policy, _self: '/api/v1/policys/POL-1@published' }])
+      const wrapper = mount(EntityList, {
+        props: { listId },
+        attachTo: document.body,
+        global: { plugins: [pinia, PiniaColada] },
+      })
+      mounted.push(wrapper)
+      await flushPromises()
+      await pressJThenE(wrapper)
+      expect(routerPush).toHaveBeenCalledWith('/form/policy-edit/POL-1@published')
     })
   })
 
@@ -221,7 +242,7 @@ describe('EntityList world binding', () => {
     // offered. Paired with the default-world control above, which proves the
     // box's presence is not simply unconditional.
     it('offers the search box and says what it searches', async () => {
-      const wrapper = await mountList()
+      const wrapper = await mountList({ faces: true })
       rendersProof(wrapper)
 
       expect(wrapper.findComponent({ name: 'SearchBox' }).exists()).toBe(true)
@@ -242,13 +263,26 @@ describe('EntityList world binding', () => {
     // announcing it says nothing. The announcement is now the operator's
     // `banner:` and renders nothing when unset.
     //
-    // The NOTE stays unconditional because both its sentences are facts about
-    // the REQUEST — the world really does filter rows out, and the search box
-    // beside it searches those same faces. An operator who could suppress those
-    // would leave a reader with a short list, and a search that looks broken
-    // because it silently declines to find what the world excludes.
+    // The NOTE is not the operator's to suppress, but it is only TRUE for a
+    // type that declares faces: the world really does filter such rows out,
+    // and the search box beside it searches those same faces. A type without
+    // faces has one state in every world, so the note would assert two
+    // falsehoods on its list (atlas worlds issue 1).
     describe('the banner announcement is operator config; the note is not', () => {
       it('renders the operator announcement when the world declares one', async () => {
+        useSchemaStore().worlds.set('published', {
+          readable: true,
+          banner: 'These policies are in force',
+        } as never)
+        const wrapper = await mountList({ faces: true })
+        rendersProof(wrapper)
+
+        const banner = wrapper.find('.world-banner')
+        expect(banner.text()).toContain('These policies are in force')
+        expect(banner.text()).toContain('including from search')
+      })
+
+      it('renders the announcement alone on a list of a type WITHOUT faces', async () => {
         useSchemaStore().worlds.set('published', {
           readable: true,
           banner: 'These policies are in force',
@@ -258,12 +292,19 @@ describe('EntityList world binding', () => {
 
         const banner = wrapper.find('.world-banner')
         expect(banner.text()).toContain('These policies are in force')
-        expect(banner.text()).toContain('including from search')
+        expect(banner.text()).not.toContain('including from search')
+      })
+
+      it('renders no banner at all on a list of a type WITHOUT faces and no announcement', async () => {
+        useSchemaStore().worlds.set('published', { readable: true } as never)
+        const wrapper = await mountList()
+        rendersProof(wrapper)
+        expect(wrapper.find('.world-banner').exists()).toBe(false)
       })
 
       it('announces NOTHING when the world declares no banner', async () => {
         useSchemaStore().worlds.set('published', { readable: true } as never)
-        const wrapper = await mountList()
+        const wrapper = await mountList({ faces: true })
         rendersProof(wrapper)
 
         // The announcement element is absent — not an empty span, which would
@@ -280,7 +321,7 @@ describe('EntityList world binding', () => {
         // `published` list announced "published" to a reader for whom that is
         // simply the normal state.
         useSchemaStore().worlds.set('published', { readable: true } as never)
-        const wrapper = await mountList()
+        const wrapper = await mountList({ faces: true })
         rendersProof(wrapper)
         expect(wrapper.find('.world-banner').text()).not.toContain('published')
       })
@@ -538,12 +579,16 @@ describe('EntityList world binding', () => {
   // returns 200 and the write lands on the DEFAULT face while the reader is
   // looking at a resolved one. There is no error to show, which is precisely
   // what makes the silent case worth preventing at the affordance.
-  describe('write affordances are withdrawn under a world', () => {
+  // Under a world every write goes to the row's ADDRESS (`_self`, face
+  // included), so the affordances are `_actions` alone — the server computes
+  // them for the face each row shows. The world itself withdraws nothing.
+  describe('write affordances follow _actions and the address under a world', () => {
     const deletable: Entity = {
       id: 'POL-1',
       type: entityType,
       properties: { title: 'Access Control Policy' },
       _actions: { update: true, delete: true },
+      _self: '/api/v1/policys/POL-1@published',
     }
 
     function seedActions() {
@@ -568,15 +613,16 @@ describe('EntityList world binding', () => {
       } as never)
     }
 
-    async function mountWith(query: Record<string, string>) {
+    async function mountWith(query: Record<string, string>, rows: Entity[] = [deletable]) {
       mockRoute.query = query
       seedActions()
-      seedEntities([deletable])
+      seedEntities(rows)
       const wrapper = mount(EntityList, {
         props: { listId },
         attachTo: document.body,
         global: { plugins: [pinia, PiniaColada] },
       })
+      mounted.push(wrapper)
       await flushPromises()
       return wrapper
     }
@@ -584,21 +630,36 @@ describe('EntityList world binding', () => {
     it('offers delete and the action bar under the DEFAULT world', async () => {
       const wrapper = await mountWith({})
       rendersProof(wrapper)
-      // The control. Without it, the world-bound assertions below would pass
-      // against a component that renders no buttons for an unrelated reason.
       expect(wrapper.find('.delete-btn').exists()).toBe(true)
     })
 
-    it('withdraws the row delete button under a world', async () => {
+    it('keeps the row delete button under a world when _actions permits it', async () => {
       const wrapper = await mountWith({ world: 'published' })
+      rendersProof(wrapper)
+      expect(wrapper.find('.delete-btn').exists()).toBe(true)
+    })
+
+    it('withdraws the row delete button when the served face is not deletable', async () => {
+      // Same fixture, the server's verdict flipped: the difference is the
+      // verdict and nothing else.
+      const wrapper = await mountWith({ world: 'published' }, [
+        { ...deletable, _actions: { update: true, delete: false } },
+      ])
       rendersProof(wrapper)
       expect(wrapper.find('.delete-btn').exists()).toBe(false)
     })
 
+    it('deletes by the row\'s ADDRESS, face included', async () => {
+      deleteEntityMock.mockReset().mockResolvedValue(undefined)
+      const wrapper = await mountWith({ world: 'published' })
+      rendersProof(wrapper)
+      await wrapper.find('.delete-btn').trigger('click')
+      await flushPromises()
+      expect(deleteEntityMock).toHaveBeenCalledWith(entityType, 'POL-1@published')
+    })
+
     // The action bar only renders once a row is SELECTED (`v-if=hasSelection`),
-    // so the assertion has to select first. Without that, findAll returns an
-    // empty list and a for-loop over it asserts nothing — the first version of
-    // this test passed against the unfixed component for exactly that reason.
+    // so the assertion has to select first.
     async function selectFirstRow(wrapper: VueWrapper) {
       const box = wrapper.find('.select-cell input[type="checkbox"]')
       expect(box.exists()).toBe(true)
@@ -611,17 +672,23 @@ describe('EntityList world binding', () => {
       await selectFirstRow(wrapper)
       const buttons = wrapper.findAll('.action-header-btn')
       expect(buttons.length).toBeGreaterThan(0)
-      // v-show renders the element and toggles display, so "offered" means
-      // present AND not display:none.
       expect((buttons[0].element as HTMLElement).style.display).not.toBe('none')
     })
 
-    it('withdraws the bulk-action bar under a world', async () => {
+    it('keeps the bulk-action bar under a world when _actions permits it', async () => {
       const wrapper = await mountWith({ world: 'published' })
       await selectFirstRow(wrapper)
       const buttons = wrapper.findAll('.action-header-btn')
-      // Anti-vacuity: the buttons must EXIST (so we know the bar rendered and
-      // we are really testing v-show), and every one must be hidden.
+      expect(buttons.length).toBeGreaterThan(0)
+      expect((buttons[0].element as HTMLElement).style.display).not.toBe('none')
+    })
+
+    it('withdraws the bulk-action bar when no selected row is updatable', async () => {
+      const wrapper = await mountWith({ world: 'published' }, [
+        { ...deletable, _actions: { update: false, delete: true } },
+      ])
+      await selectFirstRow(wrapper)
+      const buttons = wrapper.findAll('.action-header-btn')
       expect(buttons.length).toBeGreaterThan(0)
       for (const b of buttons) {
         expect((b.element as HTMLElement).style.display).toBe('none')

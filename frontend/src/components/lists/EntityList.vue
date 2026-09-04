@@ -14,6 +14,7 @@ import { entityKeys } from '@/queries/entities'
 import { beginOptimisticRemove, rollbackOptimistic } from '@/queries/optimisticList'
 import { toApiOperator, filterStateToApiParams } from '@/utils/filters'
 import { entityDetailHref } from '@/utils/entityRoute'
+import { entityRef } from '@/utils/entityRef'
 import { safeInternalHref, shouldDeferToBrowser } from '@/utils/openIntent'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { renderMarkdown } from '@/utils/markdown'
@@ -125,26 +126,23 @@ const collectionActions = computed<Record<string, boolean> | undefined>(
 // anything else → render. Helper keeps the contract DRY across
 // components; see frontend/src/utils/affordancesWarning.ts.
 function canCreate(): boolean {
-  if (!worldReadableForCreate.value) return false
   return actionAllowed({ _actions: collectionActions.value }, 'create')
 }
-// Both AND in `!isWorldBound`, for the reason KanbanView's canUpdate
-// documents: `_actions` answers "may this principal write this entity",
-// which is a true answer to the question it is defined to answer and knows
-// nothing about the request's world. A non-default world is READ-ONLY on
-// this API, so on a world-bound list the map alone would promise a verb the
-// surface will reject.
+// From `_actions` alone, under every world. The server computes the map for
+// the FACE it served (a stand-in published face reports `update: false`
+// unless a grant names that face), and every write this list makes goes to
+// that row's address (`entityRef`), so the verdict and the write agree by
+// construction. An earlier revision ANDed in `!isWorldBound` here, which made
+// every list read-only under a configured `default_world` — including lists
+// of types that declare no faces at all (atlas worlds issue 2).
 //
 // canUpdate gates the bulk-action bar (via anySelectedAllowsUpdate); canDelete
-// gates the row delete button AND the Delete/Backspace shortcut. Both were
-// world-blind, so a world-bound list still offered them — and because a bare
-// write carries no `?world=`, the server had no parameter to refuse: the write
-// landed on the DEFAULT face while the reader was looking at a resolved one.
+// gates the row delete button AND the Delete/Backspace shortcut.
 function canDelete(entity: Entity): boolean {
-  return actionAllowed(entity, 'delete') && !isWorldBound.value
+  return actionAllowed(entity, 'delete')
 }
 function canUpdate(entity: Entity): boolean {
-  return actionAllowed(entity, 'update') && !isWorldBound.value
+  return actionAllowed(entity, 'update')
 }
 // Bulk-action visibility: an action shows iff at least one selected
 // entity permits the underlying `update` write. (All bulk actions
@@ -170,6 +168,12 @@ const { resolvedActions, processing: actionProcessing, executeAction, triggerAct
   listId: listIdRef,
   selectedIds,
   entities,
+  // A bulk `set` writes the ROW on screen. Selection is keyed by entity id,
+  // so the address is looked up per row at execution time.
+  addressOf: (entityId) => {
+    const row = entities.value.find((e) => e.id === entityId)
+    return row ? entityRef(row) : entityId
+  },
   onClearSelection: () => clearActionSelection(),
   onRequestConfirm: (action, actionId, triggerEl) => {
     void requestActionConfirm(action, actionId, triggerEl)
@@ -220,13 +224,18 @@ const { filters, q: searchQuery, writeToQuery } = useUrlFilterSync({ staticFilte
 // internal/dataentry/world.go.
 const { world, isWorldBound, worldParam } = useWorld()
 
-// The create button's destination and gate — see useCreateTarget for why a
-// create button carries a world of its own, and why readability is checked
-// against the world it LANDS in rather than the one on screen.
-const {
-  targetReadable: worldReadableForCreate,
-  target: createFormTarget,
-} = useCreateTarget(
+// The world note below the banner is a fact about a FACED type only: a type
+// without faces has exactly one state, present in every world, so nothing on
+// its list is filtered by the world and search drops nothing either. Config
+// from `/_schema`, not a verdict — which faces a type declares is public.
+const listTypeHasFaces = computed(() => {
+  const def = schemaStore.getEntityType(listConfig.value?.entity ?? '')
+  return Object.keys(def?.faces ?? {}).length > 0
+})
+
+// The create button's destination — see useCreateTarget for why a create
+// button carries a world of its own. Whether it SHOWS is `_actions.create`.
+const { target: createFormTarget } = useCreateTarget(
   computed(() => listConfig.value?.create_form),
   computed(() => listConfig.value?.create_world),
   worldParam,
@@ -265,13 +274,11 @@ const { selectedIndex, clearSelection } = useListKeyboard({
     if (entity) navigateToEntity(entity)
   },
   onEdit: (index) => {
-    // The shortcut is a write affordance like the row's Edit button: under a
-    // world it must not open a form on the DEFAULT face of a row the reader
-    // sees at another. Same rule as canUpdate.
-    if (isWorldBound.value) return
+    // The form opens on the row's ADDRESS, face included, so an edit from a
+    // world-bound list edits the face the row showed and not its bare id.
     const entity = entities.value[index]
     if (entity && listConfig.value?.edit_form) {
-      router.push(`/form/${listConfig.value.edit_form}/${entity.id}`)
+      router.push(`/form/${listConfig.value.edit_form}/${entityRef(entity)}`)
     }
   },
   onCreate: () => {
@@ -850,7 +857,9 @@ function handleDelete(entity: Entity, event: Event) {
 // param variant (other pages/filters where the entity might appear)
 // refetches and reconciles with the server.
 const { mutate: deleteEntityMutation } = useMutation({
-  mutation: ({ entity }: { entity: Entity }) => deleteEntity(entity.type, entity.id),
+  // Addressed to the ROW: on a bare face this deletes the entity, on a
+  // non-bare face it removes that face only (the server's rule for `ID@face`).
+  mutation: ({ entity }: { entity: Entity }) => deleteEntity(entity.type, entityRef(entity)),
   onMutate({ entity }: { entity: Entity }) {
     return beginOptimisticRemove(
       queryCache,
@@ -971,16 +980,18 @@ watch(searchQuery, () => {
       world", which on an ISMS `published` list was pure noise: published IS
       the reader's normal state, so announcing it says nothing.
 
-      The NOTE is NOT configurable, deliberately. Both sentences are facts
-      about the REQUEST, true whatever the operator declares: the world filters
-      rows out, and the search box beside this banner is genuinely absent.
-      Letting an operator suppress them would leave a reader with a silently
-      short list and a missing search box and no account of either.
+      The NOTE is not configurable, but it is only TRUE for a type that
+      declares faces: the world filters rows out and search looks at resolved
+      faces. A type without faces has one state, present in every world, so
+      nothing on its list can be filtered and the note would assert two
+      falsehoods (atlas worlds issue 1). Hence the second gate.
     -->
-    <WorldBanner v-if="isWorldBound && !loadError" :label="worldBanner">
-      Each entity is shown as it appears in this world, and entities with no
-      face here are not listed at all — including from search, which looks at
-      the same faces this list does.
+    <WorldBanner v-if="isWorldBound && !loadError && (worldBanner || listTypeHasFaces)" :label="worldBanner">
+      <template v-if="listTypeHasFaces">
+        Each entity is shown as it appears in this world, and entities with no
+        face here are not listed at all — including from search, which looks at
+        the same faces this list does.
+      </template>
     </WorldBanner>
 
     <div class="search-row">

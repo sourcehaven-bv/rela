@@ -70,6 +70,11 @@ export interface ViewEntity {
   // `via: 'fallback-default'` is the case worth surfacing: the reader is
   // seeing a SUBSTITUTE face, not the one the world asked for.
   _world?: EntityWorld
+  // The address of THIS row, face included — the same contract as
+  // `Entity._self`. A row's Edit button and inline edit write to it, never to
+  // the bare id: under a world the row is a neighbour's RESOLVED face, and the
+  // bare id would edit a state the page is not showing. See utils/entityRef.
+  _self?: string
 }
 
 // Table cell data
@@ -89,6 +94,8 @@ export interface ViewRow {
   editFormId?: string
   cells: ViewCell[]
   content?: string
+  // The row's address, face included. See ViewEntity._self.
+  _self?: string
 }
 
 // Column definition

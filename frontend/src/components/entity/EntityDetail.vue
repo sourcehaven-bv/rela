@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, onUnmounted } from 'vue'
-import { RouterLink, useRouter, type RouteLocationRaw } from 'vue-router'
+import { RouterLink, useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { useScopeNavigation } from '@/composables'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { fetchView, getCommands, getErrorMessage } from '@/api'
-import { useWorld } from '@/composables/useWorld'
+import { useWorld, DEFAULT_WORLD } from '@/composables/useWorld'
+import { entityRef, refBareId, refFace } from '@/utils/entityRef'
 import type { ViewEntity, ViewResponse, ViewSection, ViewSectionField } from '@/api'
 import type { Entity } from '@/types'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
@@ -83,6 +84,7 @@ const props = withDefaults(
 )
 
 const router = useRouter()
+const route = useRoute()
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
 const { confirm } = useConfirm()
@@ -112,22 +114,31 @@ const worldAbsentName = computed(
   () => viewData.value?._world_absent_name || world.value || '',
 )
 
-// --- The ONE read-only seam ----------------------------------------------
+// --- The address of the row on screen -------------------------------------
 //
-// Every write affordance on this page reads THIS and nothing else: Edit,
-// Delete, inline edit (section and row), the checkbox toggle, operator
-// commands and the copy menu. Before it existed each of them asked
-// `isWorldBound` for itself — five guards for one fact — and none of them
-// knew about the world-absent case, so a page whose banner said "you are
-// looking at the default face, which is where edits are saved" hid every way
-// to save one.
+//     view[entity@face]  --Edit-->  form[entity@face]  --Save-->  PATCH entity@face
 //
-// Read-only iff a NON-default world served a resolved face. The API refuses
-// `?world=` on every write, and no SPA write path attaches it, so the server
-// is not a backstop here: a write from a read-only page would silently land
-// on the DEFAULT face while the reader looks at another. Under `_world_absent`
-// the default face IS what is on screen, so writes are exactly right.
-const readOnly = computed(() => isWorldBound.value && !worldAbsent.value)
+// Every write this page makes goes to `servedRef`: the coordinate the server
+// reports in the entry's `_self`, face included. Under a world the bare id
+// resolves to whichever face the world picks, so the bare id is not a stable
+// address for what is on screen — `_self` is, and the server accepts it on
+// GET, PATCH and DELETE alike (TKT-SLFURL). Whether a write is ALLOWED is
+// `_actions`, which the server computes for that same face. Together those
+// two replace the page-level "read-only under a world" lock this component
+// used to apply: that lock re-derived a decision the server had already made,
+// got it wrong for every type without faces and for every chain hit on the
+// bare face, and contradicted the very `_actions` it was overriding (atlas
+// worlds issues 2, 3, 4, 10).
+//
+// Before the entry has loaded, the route's own id is the best address there
+// is; it may itself carry a face (`/entity/policy/POL-1@published`).
+const servedRef = computed(() => (entry.value ? entityRef(entry.value) : props.entityId))
+// The face on screen, '' for the bare face. A fact read off the response,
+// never derived from the world.
+const servedFace = computed(() => refFace(servedRef.value))
+// The bare id, for surfaces addressed per ENTITY rather than per row:
+// documents, commands, history, scope navigation.
+const bareEntityId = computed(() => refBareId(props.entityId))
 
 // Scope navigation (prev/next within a list) and back affordance
 // (return_to / from precedence). Two parallel concerns: scope-nav walks
@@ -150,25 +161,25 @@ const pageState = computed<'pending' | 'loaded' | 'error'>(() => {
 const viewData = ref<ViewResponse | null>(null)
 const loadedCommands = ref<Command[]>([])
 
-// Commands are SUPPRESSED under a world, and this is a stop-gap with a known
-// expiry rather than a design.
+// Commands are SUPPRESSED while a NON-BARE face is on screen, and this is a
+// stop-gap with a known expiry rather than a design.
 //
 // A command pipes a rendered view to an operator shell script's stdin. The
 // server passes `defaultViewWorld()` explicitly at that call site
-// (internal/dataentry/commands.go), so under `?world=published` the script
-// receives DRAFT content while the user is reading the published face — and it
-// receives it "past any layer that could observe it", as that comment says.
+// (internal/dataentry/commands.go), so while the reader looks at the published
+// face the script receives the BARE face's content — and it receives it "past
+// any layer that could observe it", as that comment says.
 //
-// What a world-bound command should MEAN is deliberately another ticket. But
-// until it has one, rendering the buttons beside a banner that says "read-only"
-// is the affordance-that-lies shape: the page would be promising an action
-// whose input is not what is on screen. Hiding them is the honest reading of
-// today's server behaviour, not a claim about tomorrow's.
+// What a face-bound command should MEAN is deliberately another ticket. But
+// until it has one, rendering the buttons is the affordance-that-lies shape:
+// the page would be promising an action whose input is not what is on screen.
+// A page showing the bare face — under any world — is exactly what the script
+// gets, so the buttons render there.
 //
 // Gated HERE rather than on the two button sites (desktop header + mobile
 // overflow) so a third render site cannot be added without inheriting it.
 const commands = computed<Command[]>(() =>
-  readOnly.value ? [] : loadedCommands.value,
+  servedFace.value ? [] : loadedCommands.value,
 )
 
 // Prev/next within a list re-fetches this component in place. Blanking the
@@ -202,7 +213,7 @@ const commandModalRef = ref<InstanceType<typeof CommandModal> | null>(null)
 // history from a world-bound page — a genuinely different record, presented as
 // the right one with nothing on screen naming the face (BUG-2).
 const historyTarget = computed<RouteLocationRaw>(() => ({
-  path: `/history/${props.entityType}/${props.entityId}`,
+  path: `/history/${props.entityType}/${bareEntityId.value}`,
   query: worldParam.value ? { world: worldParam.value } : {},
 }))
 
@@ -238,42 +249,25 @@ const isInaccessible = computed(() => (entry.value?.inaccessible?.length ?? 0) >
 const mayUpdate = computeActionAllowed(entry, 'update')
 const mayDelete = computeActionAllowed(entry, 'delete')
 
-// A world-bound page is READ-ONLY, regardless of what `_actions` says.
-//
-// The API refuses every write carrying `?world=` (422 world_read_only) —
-// a write names its face by id, never a world — but `_actions` is computed
-// from the ACL alone and still reports `update: true` on a world-bound
-// response.
-// Gating on `_actions` by itself therefore renders an Edit link whose save
-// cannot succeed: an affordance map that promises a verb the surface will
-// reject (RULING 11).
-//
-// So the world is ANDed in here rather than fixed in the map. `_actions`
-// answers "may this principal write this entity", which is true and is the
-// question it is defined to answer; "can a write be addressed to THIS
-// response" is a property of the request, and belongs where the request is
-// known. EntityList already draws the same line, omitting its create button
-// under a world.
-const canUpdate = computed(() => mayUpdate.value && !readOnly.value)
-const canDelete = computed(() => mayDelete.value && !readOnly.value)
-
-// The same gate for the per-neighbour edit buttons in collection sections.
-//
-// The server sends `edit_form_id` on every section row — it is a config lookup
-// that knows nothing about the request's world — so without this the main Edit
-// affordance correctly disappears under a world while the row buttons stay,
-// offering an edit whose save the write path would reject (RULING 11). The ACL
-// half is already in the row's own `_actions`; this adds only the
-// "is this request addressable for a write" half, exactly as canUpdate does.
-const canEditRows = computed(() => !readOnly.value)
+// `_actions` alone. The server computes the map for the FACE it served, and
+// every write from this page is addressed to that face (`servedRef`), so the
+// verdict and the write agree by construction — under a world as in the
+// default one. A stand-in face no grant covers reports `update: false`, and
+// that is what hides Edit; a chain hit on the bare face reports `true`, and
+// Edit shows. There is nothing left for the page to AND in.
+const canUpdate = computed(() => mayUpdate.value)
+const canDelete = computed(() => mayDelete.value)
 
 // Nil: undefined when editing is unavailable (no configured form, an
-// inaccessible/git-crypt entity, no update permission, or a world-bound page).
-// The template then renders nothing rather than a link to a page that would
-// refuse the write.
+// inaccessible/git-crypt entity, or no update permission on the face on
+// screen). The template then renders nothing rather than a link to a page
+// that would refuse the write.
+//
+// The form opens on the ADDRESS of the row on screen, face included, so
+// what you look at is what you edit is what you save.
 const editTarget = computed<RouteLocationRaw | undefined>(() => {
   if (!editFormId.value || isInaccessible.value || !canUpdate.value) return undefined
-  return { name: 'form-edit', params: { id: editFormId.value, entityId: props.entityId } }
+  return { name: 'form-edit', params: { id: editFormId.value, entityId: servedRef.value } }
 })
 
 
@@ -366,7 +360,9 @@ const entryProperties = computed<Record<string, unknown>>(() => entry.value?.pro
 const pinEntityForFlush = ref<{ type: string; id: string } | null>(null)
 const contentAutoSave = useAutoSave({
   getEntityType: () => pinEntityForFlush.value?.type ?? props.entityType,
-  getEntityId: () => pinEntityForFlush.value?.id ?? props.entityId,
+  // The row's ADDRESS, face included: a checkbox toggled on the published
+  // face must land on the published face. The pin holds an address too.
+  getEntityId: () => pinEntityForFlush.value?.id ?? servedRef.value,
   contentDebounceMs: 100,
   formData: entryProperties as unknown as import('vue').Ref<Record<string, unknown>>,
   contentRef: entryContent as unknown as import('vue').Ref<string>,
@@ -408,13 +404,11 @@ function handleCheckboxToggle(index: number) {
   const current = entry.value
   const view = viewData.value
   if (!current || !view) return
-  // A checkbox click is a WRITE (it schedules a content PATCH), so it is
-  // refused under a world for the same reason the Edit button is hidden — the
-  // API would answer 422 world_read_only. Checkboxes render inside markdown
-  // and cannot be hidden by a `v-if` the way a button can, so the guard has to
-  // live at the handler.
-  if (readOnly.value) {
-    uiStore.warning(`Read-only: you are viewing the ${world.value} world`)
+  // A checkbox click is a WRITE (it schedules a content PATCH to the row's
+  // address). Checkboxes render inside markdown and cannot be hidden by a
+  // `v-if` the way a button can, so the affordance gate lives at the handler.
+  if (!canUpdate.value) {
+    uiStore.warning('Update not permitted for this entity')
     return
   }
   let newContent: string
@@ -569,14 +563,22 @@ function editEntity() {
     uiStore.error('No edit form configured for this entity type')
     return
   }
-  router.push({ name: 'form-edit', params: { id: editFormId.value, entityId: props.entityId } })
+  router.push({ name: 'form-edit', params: { id: editFormId.value, entityId: servedRef.value } })
 }
 
 async function requestDelete() {
   if (!entry.value) return
+  // Addressed to the row on screen. On the bare face that is the entity; on
+  // a non-bare face it is that face only (the server's rule for `ID@face`),
+  // and the confirm says so — "delete" must not read as "unpublish" or the
+  // reverse.
+  const face = servedFace.value
   const ok = await confirm({
-    title: 'Delete Entity?',
-    message: `Are you sure you want to delete '${props.entityId}'? This action cannot be undone.`,
+    title: face ? 'Delete Face?' : 'Delete Entity?',
+    message: face
+      ? `Are you sure you want to delete the ${faceLabel(face)} face of '${bareEntityId.value}'? ` +
+        'Its other faces are kept. This action cannot be undone.'
+      : `Are you sure you want to delete '${bareEntityId.value}'? This action cannot be undone.`,
     confirmLabel: 'Delete',
     danger: true,
     onConfirm: withConfirmError(
@@ -585,7 +587,7 @@ async function requestDelete() {
         // canonical CRUD path; keep using it.
         const { useEntitiesStore } = await import('@/stores')
         const entitiesStore = useEntitiesStore()
-        await entitiesStore.remove(props.entityType, props.entityId)
+        await entitiesStore.remove(props.entityType, servedRef.value)
       },
       'Failed to delete entity',
       uiStore
@@ -602,61 +604,50 @@ async function requestDelete() {
 // they arrive with the view and refresh with it. CopyMenu renders only the
 // allowed ones, as absent rather than disabled.
 //
-// The menu is SUPPRESSED under a world (copyOffers is empty there), like every
-// other write affordance on this page — and not because the server's offers
-// are wrong there. They are computed for the RESOLVED face, so they are
-// correct. The problem is the page: a copy invoke carries no `?world=`, so it
-// would apply the DEFAULT face's content while the reader looks at whatever
-// face this world resolved. Under `otherwise: default` those are the same
-// bytes and it looks harmless; under a world serving a real alternate face the
-// user would publish content that is not on their screen. So writes happen on
-// the default face, where what you see is what you copy, and the way back to
-// it is one click away.
+// The server's verdict, as-is. Offers are computed for the face it SERVED
+// and the invoke names the source by id, so a promote offered on the bare
+// face copies the bytes on screen. An earlier revision blanked the list on
+// every world-bound page, which hid a correctly-offered promote on a chain
+// hit on the bare face (atlas worlds issue 4).
 //
 // Always an array. The wire keeps `_copies` absent (no capability) distinct
 // from `[]` (none declared), but this page renders nothing for both, so the
 // distinction is collapsed HERE, once, rather than carried into every reader.
-const copyOffers = computed<CopyOffer[]>(() =>
-  readOnly.value ? [] : (entry.value?._copies ?? []),
-)
+const copyOffers = computed<CopyOffer[]>(() => entry.value?._copies ?? [])
 
 // Faces render on EVERY screen, world-bound or not — a reader wants the way
 // back to the draft, an author wants to see what readers see, and the
-// multilingual case has no privileged direction. Unlike copy offers, which are
-// suppressed under a world because an invoke would write a face other than the
-// one on screen, navigating between faces is safe in both directions.
-// Only faces a declared world can actually serve. A face with no world that
-// heads its face is unreachable through `?world=`, so offering it would
-// produce a dead control — the affordance-that-lies shape.
-const faceOptions = computed<Face[] | undefined>(() =>
-  entry.value?._faces?.filter(
-    (f) => schemaStore.worldForFace(props.entityType, f.face) !== undefined,
-  ),
-)
+// multilingual case has no privileged direction. Each entry is a plain link
+// to the face's ADDRESS (`_faces[].ref`, e.g. `POL-1@published`), which the
+// server serves literally under any world — so the menu never has to work
+// out which declared world happens to lead with a face, and never offers a
+// dead control for a face no world heads.
+const faceOptions = computed<Face[] | undefined>(() => entry.value?._faces)
 
+// The face's address, for an older server that sends no `ref`: the stored
+// coordinate appended to the bare id is that face's spelling for every
+// non-bare face; the bare face has only the bare id.
+function faceAddress(f: Face): string {
+  if (f.ref) return f.ref
+  return f.face ? `${bareEntityId.value}@${f.face}` : bareEntityId.value
+}
 
 function goToFace(f: Face) {
-  // Addressed by WORLD, not by face: `?world=` is the read-selection
-  // grammar this API has, and a world resolves the whole graph consistently
-  // (relations included, RULING 12). Jumping by a bare face would send
-  // `?world=nl` for a project whose world is `site-nl`, which the server
-  // rejects with `unknown_world` — measured, not hypothetical.
-  const w = schemaStore.worldForFace(props.entityType, f.face)
-  if (w === undefined) return
-  // Through setWorld, not a bare router.push, for two reasons this used to get
-  // wrong at once.
-  //
-  // It preserves the REST of the query. The old `{ query: { world: w } }`
-  // replaced the whole object, so switching language from a list-scoped page
-  // silently dropped `from`/`scope` and broke the back button and prev/next.
-  //
-  // And it spells the default face correctly. `worldForFace` returns '' for
-  // the default face, but on a deployment with `default_world: published` an
-  // absent param means PUBLISHED, not the default face — so dropping the
-  // param there navigates somewhere the user did not ask for. setWorld owns
-  // that rule (it writes `?world=default` only when it is actually needed to
-  // escape a configured default) and is the single place it should live.
-  setWorld(w)
+  const ref = faceAddress(f)
+  // The REST of the query is preserved — `from`/`scope` keep the back button
+  // and prev/next working, and the world stays what it was: an explicit
+  // address is literal under any world, so switching face never has to switch
+  // world.
+  const query = { ...route.query }
+  if (!ref.includes('@')) {
+    // A bare address is literal only in the default world (under any other,
+    // the world resolves it). That is the ONE case where the face switch has
+    // to name the world — spelled `default` when a configured default would
+    // otherwise apply, dropped when it would not, exactly as setWorld does.
+    if (schemaStore.defaultWorld) query.world = DEFAULT_WORLD
+    else delete query.world
+  }
+  router.push({ path: `/entity/${props.entityType}/${ref}`, query })
 }
 
 const copyBusy = ref(false)
@@ -671,24 +662,33 @@ async function runCopy(offer: CopyOffer) {
   // resolves. Without this the success toast names a face on the entity the
   // user has already left, and `loadView()` fires a second, pointless fetch
   // for the one they are now on. Same shape as `pinEntityForFlush` below.
-  const subject = props.entityId
+  const subject = bareEntityId.value
+  const label = offer.label || offer.name
   copyBusy.value = true
   try {
     const res = await invokeCopy(offer.name, subject)
-    const face = res.face || 'default'
-    if (props.entityId !== subject) {
+    // The toast speaks the operator's vocabulary: the copy's own label and
+    // the face's declared label, never rela's word "face" (atlas worlds
+    // issue 8). `res.face` is the STORED coordinate the copy wrote; the bare
+    // face is '' and labelled from the type.
+    const written = faceLabel(res.face) || 'default'
+    const outcome = res.created ? 'created' : 'updated'
+    if (bareEntityId.value !== subject) {
       // Still worth telling them it succeeded — they asked for it — but name
       // the entity, since the page in front of them is no longer the subject.
-      uiStore.success(
-        res.created ? `Created the ${face} face of ${subject}` : `Updated the ${face} face of ${subject}`,
-      )
+      uiStore.success(`${label}: ${written} ${outcome} for ${subject}`)
       return
     }
-    uiStore.success(
-      res.created ? `Created the ${face} face` : `Updated the ${face} face`,
-    )
-    // Reload so the offers recompute: a face that now exists may no longer be
-    // offered, and the entry's own content may have moved.
+    uiStore.success(`${label}: ${written} ${outcome}`)
+    // Land on what was just written. The copy's target is a face of THIS
+    // entity, and `ID@face` is its address under any world; a copy into the
+    // bare face reloads in place, since the bare address would re-resolve
+    // under a world. Either way the offers recompute: a face that now exists
+    // may no longer be offered.
+    if (res.face) {
+      router.push({ path: `/entity/${props.entityType}/${subject}@${res.face}`, query: { ...route.query } })
+      return
+    }
     await loadView()
   } catch (err) {
     // The kernel re-authorizes, so a 403 here is not a contradiction of
@@ -697,7 +697,7 @@ async function runCopy(offer: CopyOffer) {
     // name the subject if the user has since navigated away — an unqualified
     // "Copy failed" beside an unrelated entity reads as that entity failing.
     const detail = getErrorMessage(err, 'Copy failed')
-    uiStore.error(props.entityId === subject ? detail : `${subject}: ${detail}`)
+    uiStore.error(bareEntityId.value === subject ? detail : `${subject}: ${detail}`)
   } finally {
     copyBusy.value = false
   }
@@ -757,6 +757,26 @@ const worldBanner = computed<string>(
 const defaultFaceLabel = computed<string>(
   () => schemaStore.faceLabel(props.entityType, '') || 'default',
 )
+
+// A face's display label in the operator's vocabulary, by stored coordinate.
+function faceLabel(face: string): string {
+  return schemaStore.faceLabel(props.entityType, face) || face
+}
+
+// The note for a NON-BARE face the principal may not write: the one case a
+// reader needs telling why there is no Edit, because the bare face — where
+// edits are made — really is elsewhere. A bare face without `update` is an
+// ordinary permission denial and gets no note, as in the default world.
+// A non-bare face WITH `update` (a translator on `nl`) is simply editable.
+//
+// No button: the face menu already offers "View <bare face>", and two
+// controls to one destination with different verbs was its own confusion
+// (atlas worlds issue 5).
+const readOnlyNote = computed<string>(() => {
+  if (worldAbsent.value || !servedFace.value || mayUpdate.value) return ''
+  return `You are viewing the ${faceLabel(servedFace.value)} face, which is read-only for you. ` +
+    `Edits are made on the ${defaultFaceLabel.value} face.`
+})
 
 // --- The header's mobile home ------------------------------------------
 //
@@ -853,8 +873,11 @@ function onCellLinkClick(
   navigateToEntity(entity, cellLink)
 }
 
-function navigateToEdit(formId: string, entityId: string) {
-  router.push({ name: 'form-edit', params: { id: formId, entityId } })
+// A row's form opens on the row's ADDRESS: under a world a collection row is a
+// neighbour's RESOLVED face, and its bare id would edit a state the page is
+// not showing.
+function navigateToEdit(formId: string, row: { id: string; _self?: string }) {
+  router.push({ name: 'form-edit', params: { id: formId, entityId: entityRef(row) } })
 }
 
 // Look up a schema PropertyDef for an entity type's property. Returns
@@ -954,10 +977,8 @@ function memoBuildSectionEditFields(section: ViewSection, ent: Entity): SectionE
 }
 
 function sectionShouldRouteToInlineEdit(section: ViewSection, ent: Entity): boolean {
-  // Inline edit is a write surface; a world-bound page has none. Routing to
-  // the display path here is what makes the whole page read-only rather than
-  // just its header buttons.
-  if (readOnly.value) return false
+  // Writability is per field (`_fields`), computed by the server for the
+  // face on screen; the inline form writes to that face's address.
   return sectionShouldRouteToInlineEditPure(section.fields, ent, getPropertyDef)
 }
 
@@ -1032,11 +1053,9 @@ const INLINE_EDIT_ROW_CAP = 100
 // Thin SFC adapter — the cap-behaviour logic lives in the pure module
 // so it's unit-testable without mounting EntityDetail.
 function rowShouldRouteToInlineEdit(ent: ViewEntity, rowCount: number): boolean {
-  // Same as sectionShouldRouteToInlineEdit: no write surface under a world.
-  // Collection rows matter doubly here — under a world each row is a
-  // NEIGHBOUR's resolved face, and an edit would address the default state of
-  // an entity the page is not even showing you.
-  if (readOnly.value) return false
+  // Per-field verdicts from the server, as for the entry. Under a world each
+  // row is a NEIGHBOUR's resolved face, and its inline form writes to the
+  // row's own address (`_self`), so the edit lands on the face on screen.
   return rowShouldRouteToInlineEditPure(ent, rowCount, INLINE_EDIT_ROW_CAP, getPropertyDef)
 }
 
@@ -1281,27 +1300,17 @@ watch(
         language world, where announcing "you are reading Dutch" to someone who
         chose Dutch is noise.
 
-        The read-only note and the way back are NOT configurable: a non-default
-        world is read-only on this API whatever the operator declares
-        (attachWorld refuses `?world=` on a write), so suppressing them would
-        leave a reader on a page that silently refuses writes with no
-        explanation and no exit.
+        The NOTE is the one fact the server's affordances leave unexplained: a
+        non-bare face on screen that this principal may not write (see
+        readOnlyNote). A world-bound page that shows the bare face, or a face
+        the principal may write, is simply editable and gets no note — the
+        world no longer makes a page read-only; only a grant does.
       -->
-      <WorldBanner v-if="isWorldBound && !worldAbsent" :label="worldBanner">
-        {{
-          canReachDefaultWorld
-            ? `Read-only in this world — edit from ${defaultFaceLabel}.`
-            : 'Read-only in this world.'
-        }}
-        <template #actions>
-          <button
-            v-if="canReachDefaultWorld"
-            class="btn btn-secondary"
-            @click="goToDefaultWorld"
-          >
-            Go to {{ defaultFaceLabel }}
-          </button>
-        </template>
+      <WorldBanner
+        v-if="!worldAbsent && ((isWorldBound && worldBanner) || readOnlyNote)"
+        :label="isWorldBound ? worldBanner : ''"
+      >
+        {{ readOnlyNote }}
       </WorldBanner>
 
       <header class="detail-header">
@@ -1517,10 +1526,10 @@ watch(
               entry &&
               sectionShouldRouteToInlineEdit(section, entry)
             "
-            :key="`${entry.type}/${entry.id}`"
+            :key="`${entry.type}/${servedRef}`"
             :heading="section.heading"
             :entity-type="entry.type"
-            :entity-id="entry.id"
+            :entity-id="servedRef"
             :initial-values="entry.properties"
             :attachments="entry._attachments"
             :fields="memoBuildSectionEditFields(section, entry)"
@@ -1629,19 +1638,19 @@ watch(
                 <!-- Per-neighbour provenance; see the first WorldBadge above. -->
                 <WorldBadge :world="ent._world" />
                 <button
-                  v-if="ent.editFormId && canEditRows"
+                  v-if="ent.editFormId"
                   class="edit-btn"
                   title="Edit"
-                  @click.stop="navigateToEdit(ent.editFormId, ent.id)"
+                  @click.stop="navigateToEdit(ent.editFormId, ent)"
                 >
                   &times;
                 </button>
               </header>
               <SectionEditForm
                 v-if="rowShouldRouteToInlineEdit(ent, section.entities?.length ?? 0)"
-                :key="`${ent.type}/${ent.id}`"
+                :key="`${ent.type}/${entityRef(ent)}`"
                 :entity-type="ent.type"
-                :entity-id="ent.id"
+                :entity-id="entityRef(ent)"
                 :initial-values="ent._props ?? {}"
                 :fields="memoBuildRowEditFields(ent)"
                 :on-property-applied="handleRowPropertyApplied"
@@ -1701,9 +1710,9 @@ watch(
               <WorldBadge :world="ent._world" />
               <SectionEditForm
                 v-if="rowShouldRouteToInlineEdit(ent, section.entities?.length ?? 0)"
-                :key="`${ent.type}/${ent.id}`"
+                :key="`${ent.type}/${entityRef(ent)}`"
                 :entity-type="ent.type"
-                :entity-id="ent.id"
+                :entity-id="entityRef(ent)"
                 :initial-values="ent._props ?? {}"
                 :fields="memoBuildRowEditFields(ent)"
                 :on-property-applied="handleRowPropertyApplied"
@@ -1793,10 +1802,10 @@ watch(
                       </td>
                       <td class="actions-cell">
                         <button
-                          v-if="row.editFormId && canEditRows"
+                          v-if="row.editFormId"
                           class="icon-btn"
                           title="Edit"
-                          @click="navigateToEdit(row.editFormId, row.entityId)"
+                          @click="navigateToEdit(row.editFormId, { id: row.entityId, _self: row._self })"
                         >
                           &#9998;
                         </button>
@@ -1857,10 +1866,10 @@ watch(
                   </td>
                   <td class="actions-cell">
                     <button
-                      v-if="row.editFormId && canEditRows"
+                      v-if="row.editFormId"
                       class="icon-btn"
                       title="Edit"
-                      @click="navigateToEdit(row.editFormId, row.entityId)"
+                      @click="navigateToEdit(row.editFormId, { id: row.entityId, _self: row._self })"
                     >
                       &#9998;
                     </button>
@@ -1875,10 +1884,10 @@ watch(
              Nested here (not a sibling of .sections) so it picks up the
              container's flex `gap` for free instead of duplicating that
              spacing via its own margin. -->
-        <DocumentsPanel :entity-type="entityType" :entity-id="entityId" />
+        <DocumentsPanel :entity-type="entityType" :entity-id="bareEntityId" />
       </div>
 
-      <CommandModal ref="commandModalRef" :entity-id="entityId" />
+      <CommandModal ref="commandModalRef" :entity-id="bareEntityId" />
     </template>
 
     <div v-else class="error-state">

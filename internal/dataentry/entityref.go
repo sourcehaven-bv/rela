@@ -115,7 +115,7 @@ func contentScopedRelationOn(
 // picked it, and a client keying a stand-in badge on `chain_position` would
 // then badge a page the reader navigated to on purpose.
 //
-// The world NAME is still the request's: neighbours and included peers on
+// The world NAME is still the request's: neighbors and included peers on
 // this response resolve through it, so naming it keeps the block truthful
 // about everything on the page that a world did touch.
 func addressedProvenance(ctx context.Context, m *metamodel.Metamodel, e *entity.Entity) *v1.EntityWorld {

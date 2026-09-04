@@ -127,11 +127,10 @@ func seedPolicyFaces(t *testing.T, st store.Store) {
 
 // getRouted performs a GET through the real router, so attachWorld applies
 // the configured default world exactly as it does for a browser or curl.
-func getRouted(t *testing.T, app *App, path string) (int, v1.Entity, string) {
+func getRouted(t *testing.T, app *App, path string) (status int, got v1.Entity, body string) {
 	t.Helper()
 	rec := httptest.NewRecorder()
 	app.NewRouter().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, http.NoBody))
-	var got v1.Entity
 	if rec.Code == http.StatusOK {
 		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 			t.Fatalf("GET %s: decode: %v (body %s)", path, err, rec.Body)
@@ -207,7 +206,7 @@ func TestFacedAddress_GetServesTheNamedFaceUnderAnyWorld(t *testing.T) {
 		}
 		if got.World == nil || got.World.Via != ruleUnscoped || got.World.Face != tc.face {
 			t.Errorf("GET %s: _world = %+v, want via=unscoped face=%s — an addressed "+
-				"face was not resolved by the world, and labelling it by the chain "+
+				"face was not resolved by the world, and labeling it by the chain "+
 				"position it happens to hold would badge a page the reader navigated "+
 				"to on purpose", tc.path, got.World, tc.face)
 		}

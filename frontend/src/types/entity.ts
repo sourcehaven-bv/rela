@@ -134,9 +134,11 @@ export interface TransitionOption {
 // BYTE-IDENTICALLY — same id, same body, same everything. Only `via`
 // separates them:
 //
-//   - 'unscoped'         — this world applies no resolution to this type, so
-//                          the entity contributes its default state. The
-//                          default world resolves everything this way.
+//   - 'unscoped'         — no resolution was applied: the type declares no
+//                          faces, the default world is in force, or the
+//                          request ADDRESSED the face (`POL-1@published`),
+//                          in which case the world made no choice and the
+//                          address did. Never a stand-in.
 //   - 'chain'            — SOME coordinate the world selects exists. Note
 //                          this does NOT say which: see `chain_position`.
 //   - 'fallback-default' — no selected coordinate exists and the world's
@@ -185,6 +187,14 @@ export interface Face {
   face: string
   // The declared face name, for display.
   label?: string
+  // The face's ADDRESS: the path segment that reads this row literally under
+  // any world (`POL-1@published`; `POL-1@draft` for the bare face when the
+  // type names one). A client offers "view the published face" as a plain
+  // link to it, without working out which world leads with that face. A bare
+  // face with no declared name has no explicit spelling and falls back to the
+  // bare id, which is literal only in the default world. Absent on an older
+  // server.
+  ref?: string
 }
 
 // CopyOffer is one declared `copies:` definition offered for the face being

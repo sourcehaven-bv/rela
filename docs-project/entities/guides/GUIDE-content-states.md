@@ -478,28 +478,34 @@ With these two keys set, the web app behaves as follows in a non-default world:
 
 - The world is part of the URL as `?world=<name>`, so a world-bound page is a
   shareable link. Switching worlds resets pagination and adds a history entry.
-- A page shows the world's `banner:` text when one is declared, followed by a
-  read-only note and a **Go to Draft** button that returns to the default
-  world. The note and the button are not configurable, because a world is
-  read-only regardless of configuration. The button uses the bare face's
-  `label:` and appears only if the caller may read the default world.
-- Edit, delete, and create controls are hidden, and copy buttons are hidden
-  too. An invoke would write the bare face, and under a world serving a
-  different face the user would publish bytes that are not on their screen.
+- A page shows the world's `banner:` text when one is declared. On a list or
+  board of a type that declares faces, a note explains that entities with no
+  face in this world are not listed; a type without faces has one state in
+  every world, so its lists carry no such note.
+- Every write goes to the **address** of the row on screen, face included:
+  what you look at is what you edit is what you save. A detail page whose
+  entity resolved to its published face opens its edit form on
+  `POL-1@published`, and a page showing the draft opens it on `POL-1`. Whether
+  a write is offered is the server's `_actions` verdict for that face, so an
+  editor looking at an adopted text sees no Edit button (no grant names the
+  published face), and the same editor looking at the draft, in whichever
+  world, edits the draft. A note explains a read-only non-bare face; the bare
+  face is one click away through the face switcher.
 - A **View Published** button, or a menu when there are several faces, lets
-  the reader switch to the entity's other faces. It renders on every screen
-  that has faces, including the default world.
+  the reader switch to the entity's other faces by address, staying in the
+  world they are browsing. It renders on every screen that has faces,
+  including the default world.
 - A small badge names the face when a world served a **stand-in**: an entity
   resolved through `otherwise: default`, or through a later entry in the chain
   than the first. A first-choice hit shows no badge, so the badge marks only
   what is surprising. The same badge appears on list rows, kanban cards, and
   each related entity on a detail page.
 
-In the default world, a policy's detail page shows the **Publish** button when
-the caller holds `publish-policy`. A caller without the permission sees no
-button rather than a disabled one. After a successful publish, the app confirms
-which face was written and reloads the page. The published text is then one
-click away through the **View Published** button.
+A policy's detail page shows the **Publish** button when the caller holds
+`publish-policy` and the draft is on screen, in whichever world. A caller
+without the permission sees no button rather than a disabled one. After a
+successful publish, the app confirms it in the copy's own label and lands on
+the face it wrote; the draft is then one click away through the face switcher.
 
 Two more `data-entry.yaml` surfaces take a world. A next-action source can set
 `source_world` to decide which world its candidate query runs in and

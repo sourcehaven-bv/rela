@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { RouterLink, useRoute, type RouteLocationRaw } from 'vue-router'
 import { useUIStore, useSchemaStore } from '@/stores'
 import { useWorld } from '@/composables/useWorld'
+import { entityRef, refFace } from '@/utils/entityRef'
 import { getErrorMessage, ApiError } from '@/api/errors'
 import { listVersions, getVersion, restoreVersion, type VersionMeta } from '@/api/history'
 import { getEntity as fetchEntity } from '@/api/entities'
@@ -24,7 +25,7 @@ const entityId = computed(() => String(route.params.id))
 // by content state — so a draft and its published face have genuinely
 // different histories, and serving the default face's under a world-bound page
 // is the wrong record presented as the right one.
-const { world, worldParam, isWorldBound } = useWorld()
+const { world, worldParam } = useWorld()
 
 // The face this timeline describes, as the SERVER resolved it — read back
 // rather than re-derived from the world, for the same reason every other
@@ -89,11 +90,14 @@ function sideLabel(s: Side): string {
 }
 
 // Whether the current entity is writable (server-computed update affordance),
-// ANDed with the world: a restore is a write, and under a world the timeline
-// is the RESOLVED face's while the restore would land on the default face —
-// the same mismatch every other write affordance refuses on a world-bound page.
+// ANDed with "the timeline is the BARE face's": a restore is a write to the
+// bare id (the restore route takes no face), so while the timeline shows a
+// non-bare face's history — which is what a world resolves to — restoring
+// would land a different face's version on the bare one. Read off the
+// served row's address, never off the world: a world that resolved to the
+// bare face restores exactly what it shows.
 const canRestore = computed(
-  () => current.value?._actions?.update !== false && !isWorldBound.value,
+  () => current.value?._actions?.update !== false && !refFace(entityRef(current.value ?? { id: '' })),
 )
 
 // The entity type definition, for resolving property labels + badge styling.

@@ -4,8 +4,9 @@ import { useRouter, useRoute, onBeforeRouteLeave } from 'vue-router'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { readReturnTo } from '@/utils/returnPath'
-import { useWorld } from '@/composables/useWorld'
+import { useWorld, DEFAULT_WORLD } from '@/composables/useWorld'
 import { actionAllowed } from '@/utils/affordancesWarning'
+import { entityRef, refBareId, refFace } from '@/utils/entityRef'
 import {
   isFieldWritable,
   isPropertyRedacted,
@@ -224,6 +225,18 @@ const loadState = ref<'pending' | 'loaded' | 'error'>('pending')
 // navigation (bookmark, paste) or when the policy tightened after the
 // detail view loaded.
 const notEditable = ref(false)
+// The NON-BARE face the loaded row is, or '' — so the not-editable message
+// can say the true reason when there is one: the address names a face no
+// grant covers, and edits are made on the bare face. A bare row that is not
+// updatable is an ordinary permission denial and keeps the permissions text.
+const notEditableFace = ref('')
+const notEditableFaceLabel = computed(() => {
+  const type = formConfig.value?.entity ?? ''
+  return schemaStore.faceLabel(type, notEditableFace.value) || notEditableFace.value
+})
+const bareFaceLabel = computed(() => schemaStore.faceLabel(formConfig.value?.entity ?? '', '') || 'default')
+// The bare id, for the way back and every per-ENTITY surface.
+const bareEntityId = computed(() => (props.entityId ? refBareId(props.entityId) : ''))
 const saveGeneration = ref(0) // Incremented after save to reset RelationCards
 const saving = ref(false)
 const dirty = ref(false)
@@ -468,12 +481,22 @@ async function loadEntity(force = false) {
   if (!props.entityId || !formConfig.value) return
 
   try {
-    const entity = await entitiesStore.fetchEntity(formConfig.value.entity, props.entityId, force)
-    // Route-guard: if the server says this entity is not updatable,
-    // render an inline "not editable" message instead of the form.
-    // The EntityDetail Edit button already hides for the same
-    // verdict, so this branch fires only for direct-URL navigation.
+    // The entity id is an ADDRESS — `POL-1` or `POL-1@published` — and the
+    // form edits exactly the row it names: what you look at is what you edit
+    // is what you save. So the fetch is pinned to the DEFAULT world, where
+    // every address is literal. Fetching in the ambient world instead let a
+    // configured `default_world` resolve a bare id AWAY from the row the
+    // Edit button was pressed on, and the form then refused the served face
+    // "for permissions" (atlas worlds issue 7).
+    const entity = await entitiesStore.fetchEntity(
+      formConfig.value.entity, props.entityId, force, DEFAULT_WORLD,
+    )
+    // Route-guard: if the server says this row is not updatable, render an
+    // inline "not editable" message instead of the form. The EntityDetail
+    // Edit button already hides for the same verdict, so this branch fires
+    // only for direct-URL navigation.
     notEditable.value = !actionAllowed(entity, 'update')
+    notEditableFace.value = refFace(entityRef(entity))
     // Retained hidden values belong to the form state we are about to replace.
     // Carrying them across a reload — or across an entity switch, since this
     // component is not re-keyed per entity — would restore one entity's value
@@ -1883,12 +1906,24 @@ defineExpose({
       <div v-else-if="loading" class="form-loading-placeholder" />
 
       <div v-else-if="notEditable" class="not-editable-state">
-        <h2>This entity is not editable</h2>
-        <p>
+        <h2>{{ notEditableFace ? 'This face is not editable' : 'This entity is not editable' }}</h2>
+        <p v-if="notEditableFace">
+          You are looking at the {{ notEditableFaceLabel }} face of
+          <code>{{ bareEntityId }}</code
+          >, which is read-only for you. Edits are made on the {{ bareFaceLabel }} face.
+        </p>
+        <p v-else>
           Your current permissions don't allow updating
           <code>{{ entityId }}</code
           >. Return to the entity view to see available actions.
         </p>
+        <router-link
+          v-if="formConfig && entityId && notEditableFace"
+          :to="{ path: `/entity/${formConfig.entity}/${bareEntityId}`, query: { world: 'default' } }"
+          class="btn btn-secondary"
+        >
+          Go to {{ bareFaceLabel }}
+        </router-link>
         <router-link
           v-if="formConfig && entityId"
           :to="`/entity/${formConfig.entity}/${entityId}`"
