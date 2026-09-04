@@ -205,6 +205,23 @@ archives:
       - README*
       - CHANGELOG*
 
+# Snapshot builds (`goreleaser release --snapshot`) publish nothing. They are
+# used by .github/workflows/staging-build.yml to produce a tarball for the atlas
+# STAGING environment from an arbitrary branch or PR, without cutting a tag or
+# a release.
+#
+# The version must be supplied here rather than via GORELEASER_CURRENT_TAG: in
+# snapshot mode GoReleaser ignores that env var and derives the version from
+# this template instead. STAGING_VERSION is exported by the workflow as
+# <calver>-alpha-<short-sha>; the fallback keeps a hand-run
+# `goreleaser release --snapshot` working locally.
+#
+# This feeds archives' {{ .Version }}, so the asset lands as
+# rela-postgres_<version>_linux_amd64.tar.gz — the exact name the devops
+# roles/atlas reconstructs when it downloads and sha256-verifies a pin.
+snapshot:
+  version_template: '{{ envOrDefault "STAGING_VERSION" (printf "%s-snapshot-%s" .Version .ShortCommit) }}'
+
 checksum:
   name_template: "checksums.txt"
   algorithm: sha256
