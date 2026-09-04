@@ -117,3 +117,27 @@ func TestListRows_ContentFreePipelineKeepsOrderAndTotal(t *testing.T) {
 		t.Errorf("page 2 of sort=title: total=%d rows=%d data=%+v", resp.Meta.Total, len(resp.Data), resp.Data)
 	}
 }
+
+// A header row keeps the storage-level lock (git-crypt) its entity carried:
+// a content-free list must show the same lock indicators as the whole-row
+// list did. Pinned after the e2e suite caught the projection dropping it.
+func TestListRows_KeepInaccessibleMarker(t *testing.T) {
+	app, d := rowContentApp(t)
+	seedEntity(app, &entity.Entity{ID: "TKT-003", Type: "ticket",
+		Properties:   map[string]any{"title": "Encrypted"},
+		Inaccessible: []entity.InaccessibleField{{Name: "status", Reason: entity.InaccessibleReasonGitCrypt}}})
+	resp, rec := listEntitiesAs(aliceCtx(), t, app, d, "ticket", "tickets", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	for _, row := range resp.Data {
+		if row.ID != "TKT-003" {
+			continue
+		}
+		if len(row.Inaccessible) != 1 || row.Inaccessible[0].Name != "status" {
+			t.Fatalf("lock marker lost on a header row: %+v", row.Inaccessible)
+		}
+		return
+	}
+	t.Fatal("TKT-003 missing")
+}

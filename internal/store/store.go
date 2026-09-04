@@ -560,6 +560,13 @@ type EntityHeader struct {
 	// header read reports redaction exactly like a gated entity read —
 	// a header must never look MORE complete than the entity it projects.
 	Redacted []string
+
+	// Inaccessible mirrors [entity.Entity.Inaccessible]: the fields a
+	// storage-level failure (an undecryptable git-crypt file) withheld. A
+	// list rendered from headers must show the same lock a list rendered
+	// from entities did (TKT-1U8XYN); dropping it here silently un-locked
+	// every cell of an encrypted row.
+	Inaccessible []entity.InaccessibleField
 }
 
 // HeaderReader lists entities without their body content.
@@ -586,12 +593,13 @@ type HeaderReader interface {
 // avoid one. Do not mutate a header's Properties.
 func HeaderOf(e *entity.Entity) EntityHeader {
 	return EntityHeader{
-		ID:         e.ID,
-		Type:       e.Type,
-		Face:       e.Face,
-		Properties: e.Properties,
-		UpdatedAt:  e.UpdatedAt,
-		Redacted:   e.Redacted,
+		ID:           e.ID,
+		Type:         e.Type,
+		Face:         e.Face,
+		Properties:   e.Properties,
+		UpdatedAt:    e.UpdatedAt,
+		Redacted:     e.Redacted,
+		Inaccessible: e.Inaccessible,
 	}
 }
 

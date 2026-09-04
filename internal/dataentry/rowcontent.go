@@ -44,12 +44,13 @@ func wantContent(query map[string][]string) bool {
 // file comment for where these may and may not travel.
 func headerEntity(h store.EntityHeader) *entityPkg.Entity {
 	return &entityPkg.Entity{
-		ID:         h.ID,
-		Type:       h.Type,
-		Face:       h.Face,
-		Properties: h.Properties,
-		UpdatedAt:  h.UpdatedAt,
-		Redacted:   h.Redacted,
+		ID:           h.ID,
+		Type:         h.Type,
+		Face:         h.Face,
+		Properties:   h.Properties,
+		UpdatedAt:    h.UpdatedAt,
+		Redacted:     h.Redacted,
+		Inaccessible: h.Inaccessible,
 	}
 }
 
