@@ -119,6 +119,15 @@ func (r *RootedFS) resolve(key string) (ValidatedPath, error) {
 			return ValidatedPath{}, fmt.Errorf("storage: Windows reserved name %q not allowed in key", seg)
 		}
 	}
+	// filepath.IsLocal is the standard library's own answer to the question
+	// the rules above ask — not empty, not absolute, cannot escape via "..",
+	// not a Windows reserved name — so for every key they accept it is true by
+	// construction. It is kept as an independent second opinion that does not
+	// share a bug with the hand-written rules, and it is the check a static
+	// analyser recognises as a barrier on the key itself.
+	if !filepath.IsLocal(key) {
+		return ValidatedPath{}, errors.New("storage: key must be a local relative path")
+	}
 	return r.contain(filepath.Join(r.root, key))
 }
 
@@ -139,10 +148,21 @@ func (r *RootedFS) contain(joined string) (ValidatedPath, error) {
 	// case a container or a test tmpdir at the filesystem root actually hits:
 	// "//entities" matches nothing and every path looks like an escape.
 	prefix := strings.TrimSuffix(r.root, string(filepath.Separator)) + string(filepath.Separator)
-	if clean != r.root && !strings.HasPrefix(clean, prefix) {
-		return ValidatedPath{}, fmt.Errorf("storage: resolved path %q escapes root %q", clean, r.root)
+	if strings.HasPrefix(clean, prefix) {
+		return ValidatedPath{p: clean}, nil
 	}
-	return ValidatedPath{p: clean}, nil
+	// The root itself. resolve can never produce it (a non-empty key always
+	// joins to something below the root); only parent() can, for a top-level
+	// file. Hand back the root we already hold rather than the derived string
+	// — same value, but the only path-derived value this function ever returns
+	// is then the one that passed the prefix check above. The shape matters:
+	// a combined `clean != root && !HasPrefix` condition lets the success path
+	// be reached without the prefix check ever running, which is both a
+	// weaker argument and one a static analyser correctly refuses to accept.
+	if clean == r.root {
+		return r.rootPath(), nil
+	}
+	return ValidatedPath{}, fmt.Errorf("storage: resolved path %q escapes root %q", clean, r.root)
 }
 
 // rootPath is the root itself as a ValidatedPath. NewRootedFS made it
