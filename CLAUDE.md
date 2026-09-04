@@ -774,10 +774,23 @@ matters.
 
 ## Security
 
-`govulncheck` runs on every PR touching `go.mod` / `go.sum` (the `vulncheck`
-job in `ci.yml`) and weekly from `security.yml`. Known-unfixable vulns are
-filtered via `scripts/govulncheck-filtered.sh` — keep `IGNORED_OSVS` in sync
-with `scripts/govulncheck-fixable.sh`. Run locally: `just govulncheck`.
+`govulncheck` runs **daily** from `security.yml`, which auto-opens an
+auto-merging `go get` PR when a fix exists and files a tracking issue when one
+does not. It also gates releases (the `security` job in `release.yml`) — a
+release must not ship a known vulnerability.
+
+It deliberately does **not** run on the PR path. A vulnerability in an
+already-merged dependency is not a defect in whatever PR happens to be in
+flight, and gating there blocks unrelated work: the old `ci.yml` job scanned
+only on a `go.mod`/`go.sum` diff, but the merge queue runs on `merge_group`
+(not `pull_request`) and took the unconditional-scan branch — so an advisory
+would pass on the PR and then dequeue it from the merge queue. Don't
+reintroduce a blocking vulnerability check on PRs; raise the scan cadence
+instead.
+
+Known-unfixable vulns are filtered via `scripts/govulncheck-filtered.sh` —
+keep `IGNORED_OSVS` in sync with `scripts/govulncheck-fixable.sh`. Run
+locally: `just govulncheck`.
 
 ## Commands
 
