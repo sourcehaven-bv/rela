@@ -131,7 +131,6 @@ func (c *BuildCmd) Run(ctx context.Context, proj Project) error {
 	// EVERY path including the error path: on the postgres build the project
 	// owns a scratch schema, and a failed build must not leave one behind.
 	shared := docscapture.NewSharedProject(proj.Paths().Root)
-	//nolint:contextcheck // teardown is not request-scoped; Close takes no ctx, matching project.close
 	defer func() { _ = shared.Close() }()
 
 	// Wire a browser capturer for screenshot{} islands. If no browser is
