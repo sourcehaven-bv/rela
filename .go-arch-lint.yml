@@ -174,6 +174,11 @@ vendors:
   # the grant this narrow is what stops a consumer importing neoq types
   # directly and re-coupling every producer to the queue implementation.
   neoq:        { in: [github.com/acaloiaro/neoq, github.com/acaloiaro/neoq/**] }
+  # Text-range anchoring for comments (TKT-FIO205 stage 2). Granted ONLY to
+  # internal/comments, which contains it in textresolve.go: the library's
+  # Anchor/ResolveResult types must not escape into handlers or the wire, so
+  # comments.TextAnchor mirrors its fields and converts at that one seam.
+  textanchor:  { in: github.com/vloothuis/textanchor }
   # uuid: the per-job fingerprint when a caller supplies no IdempotencyKey.
   # A random fingerprint is what DISABLES neoq's payload-equality dedup, so
   # two identical-payload jobs both run unless dedup was asked for by name.
@@ -1039,6 +1044,8 @@ deps:
     mayDependOn:
       - entity
       - principal
+    canUse:
+      - textanchor
   memcomments:
     mayDependOn:
       - comments

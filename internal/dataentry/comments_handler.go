@@ -144,16 +144,38 @@ type commentListResponse struct {
 // Deliberately NOT the storage type: `detached` is computed per request from
 // the live entity, and re-using the stored struct would eventually tempt
 // someone to persist it.
+// anchorWire is a comment's anchor on the wire.
+//
+// Named rather than inlined because it is built at three sites and carries the
+// stage-2 text descriptors; an anonymous struct repeated four times drifts.
+type anchorWire struct {
+	Kind string `json:"kind"`
+	Ref  string `json:"ref"`
+	// Quote is the anchored text, echoed for a text anchor so a client can
+	// show WHAT was commented on even when the range no longer resolves.
+	Quote string `json:"quote,omitempty"`
+	// Start and End are byte offsets into the entity body, resolved fresh on
+	// every read. Present only for a text anchor that located successfully.
+	//
+	// They are NOT stored: an offset is invalidated by any edit earlier in the
+	// body, which is the entire reason the descriptors exist. A client must
+	// slice with these, never with the quote's length.
+	Start *int `json:"start,omitempty"`
+	End   *int `json:"end,omitempty"`
+	// Confidence is the resolver's score for a text anchor (0-1).
+	Confidence float64 `json:"confidence,omitempty"`
+	// Uncertain marks the middle band: located, but far enough from an exact
+	// match that the UI should say the text may have moved.
+	Uncertain bool `json:"uncertain,omitempty"`
+}
+
 type commentWire struct {
-	ID        string `json:"id"`
-	Author    string `json:"author"`
-	CreatedAt string `json:"created_at"`
-	Anchor    struct {
-		Kind string `json:"kind"`
-		Ref  string `json:"ref"`
-	} `json:"anchor"`
-	Body     string `json:"body"`
-	Resolved bool   `json:"resolved"`
+	ID        string     `json:"id"`
+	Author    string     `json:"author"`
+	CreatedAt string     `json:"created_at"`
+	Anchor    anchorWire `json:"anchor"`
+	Body      string     `json:"body"`
+	Resolved  bool       `json:"resolved"`
 	// Detached reports that the anchor no longer names anything on the target.
 	// A soft condition per DEC-HWZHA: the comment is still returned and still
 	// readable, flagged so the UI can show it as orphaned rather than pretend
@@ -193,17 +215,15 @@ func (h *commentsHandler) listComments(
 	anchors := h.liveAnchors(ctx, target)
 	out := make([]commentWire, 0, len(list))
 	for _, c := range list {
+		anchor, detached := resolveAnchor(anchors, c.Anchor)
 		out = append(out, commentWire{
 			ID:        c.ID,
 			Author:    c.Author,
 			CreatedAt: c.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
-			Anchor: struct {
-				Kind string `json:"kind"`
-				Ref  string `json:"ref"`
-			}{Kind: string(c.Anchor.Kind), Ref: c.Anchor.Ref},
+			Anchor:    anchor,
 			Body:      c.Body,
 			Resolved:  c.Resolved,
-			Detached:  isDetached(anchors, c.Anchor),
+			Detached:  detached,
 			Editable:  auth.CanUpdate(ctx, target, c, user),
 			Deletable: auth.CanDelete(ctx, target, c, user),
 		})
@@ -220,6 +240,18 @@ type addCommentRequest struct {
 	Anchor struct {
 		Kind string `json:"kind"`
 		Ref  string `json:"ref"`
+		// Quote is the selected body text, for a `text` anchor.
+		//
+		// The client sends the QUOTE, not offsets or context descriptors: the
+		// server derives Prefix/Suffix/HeadingContext from its own copy of the
+		// body, so a caller cannot store context that disagrees with the
+		// entity — which would make the anchor resolve somewhere nobody
+		// selected. Offsets would be worse still, since the client renders
+		// markdown and its coordinates are not the source's.
+		Quote string `json:"quote"`
+		// QuoteIndex disambiguates a quote occurring more than once, as the
+		// 0-based occurrence the user selected. Absent means the first.
+		QuoteIndex int `json:"quote_index"`
 	} `json:"anchor"`
 	Body string `json:"body"`
 }
@@ -244,12 +276,22 @@ func (h *commentsHandler) addComment(
 		return
 	}
 
+	anchor := comments.Anchor{
+		Kind: comments.AnchorKind(req.Anchor.Kind),
+		Ref:  req.Anchor.Ref,
+	}
+	if anchor.Kind == comments.AnchorText {
+		text, aerr := h.buildTextAnchor(ctx, target, req.Anchor.Quote, req.Anchor.QuoteIndex)
+		if aerr != nil {
+			writeV1Error(w, r, http.StatusBadRequest, "invalid_comment", aerr.Error(), "")
+			return
+		}
+		anchor.Text = text
+	}
+
 	created, err := h.svc.Add(ctx, target, comments.AddRequest{
-		Anchor: comments.Anchor{
-			Kind: comments.AnchorKind(req.Anchor.Kind),
-			Ref:  req.Anchor.Ref,
-		},
-		Body: req.Body,
+		Anchor: anchor,
+		Body:   req.Body,
 	})
 	if err != nil {
 		writeCommentError(w, r, err)
@@ -260,10 +302,7 @@ func (h *commentsHandler) addComment(
 		ID:        created.ID,
 		Author:    created.Author,
 		CreatedAt: created.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
-		Anchor: struct {
-			Kind string `json:"kind"`
-			Ref  string `json:"ref"`
-		}{Kind: string(created.Anchor.Kind), Ref: created.Anchor.Ref},
+		Anchor:    newAnchorWire(created.Anchor),
 		Body:      created.Body,
 		Resolved:  created.Resolved,
 		Editable:  true,
@@ -416,18 +455,56 @@ func (h *commentsHandler) refuseIfReadOnly(w http.ResponseWriter, r *http.Reques
 	return true
 }
 
-// isDetached reports whether a comment's anchor no longer names anything.
+// newAnchorWire projects a stored anchor onto the wire WITHOUT resolving it.
 //
-// Only property anchors are checked. A section ref resolves against the view
-// config rather than the entity, so this per-entity view cannot tell a missing
-// section from a present one — and guessing would put a "detached" badge on
-// every section comment. A nil set means the entity could not be loaded, which
-// likewise proves nothing.
-func isDetached(liveProperties map[string]bool, anchor comments.Anchor) bool {
-	if liveProperties == nil || anchor.Kind != comments.AnchorProperty {
-		return false
+// Used on create, where the client already knows where it selected: a text
+// anchor's range is resolved per read, so echoing one here would be a second
+// code path producing the same number.
+func newAnchorWire(a comments.Anchor) anchorWire {
+	out := anchorWire{Kind: string(a.Kind), Ref: a.Ref}
+	if a.Text != nil {
+		out.Quote = a.Text.Quote
 	}
-	return !liveProperties[anchor.Ref]
+	return out
+}
+
+// resolveAnchor projects a stored anchor onto the wire and reports whether it
+// is currently detached.
+//
+// Per kind:
+//   - property: detached when the name is gone from the entity.
+//   - section: never flagged. A section ref resolves against the view config,
+//     not the entity, so this per-entity view cannot tell a missing section
+//     from a present one, and guessing would badge every section comment.
+//   - text: resolved against the body, yielding a fresh range plus a
+//     confidence band. Detached when the quote can no longer be located.
+//
+// An entity that could not be loaded flags nothing: failing to read must not
+// make every comment look orphaned.
+func resolveAnchor(ctx anchorContext, a comments.Anchor) (anchorWire, bool) {
+	out := newAnchorWire(a)
+	if !ctx.loaded {
+		return out, false
+	}
+
+	switch a.Kind {
+	case comments.AnchorProperty:
+		return out, !ctx.properties[a.Ref]
+
+	case comments.AnchorText:
+		m := comments.ResolveText(ctx.body, a.Text)
+		if m.Detached {
+			return out, true
+		}
+		start, end := m.Start, m.End
+		out.Start, out.End = &start, &end
+		out.Confidence = m.Confidence
+		out.Uncertain = m.Uncertain
+		return out, false
+
+	default:
+		return out, false
+	}
 }
 
 // writeCommentError maps a service error to a response.

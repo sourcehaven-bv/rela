@@ -32,6 +32,8 @@ func commentsApp(t *testing.T) *App {
 		ID:         "TKT-001",
 		Type:       "ticket",
 		Properties: map[string]any{"title": "Test Ticket", "status": "open"},
+		// A body, so stage-2 text anchors have something to resolve against.
+		Content: fixtureBody,
 	})
 	return app
 }
@@ -68,6 +70,11 @@ func listComments(t *testing.T, app *App) commentListResponse {
 }
 
 const addBody = `{"anchor":{"kind":"property","ref":"status"},"body":"looks wrong"}`
+
+// fixtureBody is the seeded entity's markdown. Long enough that
+// markdown.FormatMarkdown would reflow it, which is what the drift test needs.
+const fixtureBody = "Renaming an entity leaves the old id in the search index until a restart, " +
+	"which is confusing because the store itself is already correct at that point.\n"
 
 // TestComments_DisabledRoutes404 pins AC1: with no `comments:` block the routes
 // do not exist, so a project without the block is indistinguishable from one
@@ -370,5 +377,73 @@ func TestComments_SchemaExposesCommentable(t *testing.T) {
 			_, present := et["commentable"]
 			require.False(t, present, "type %q leaked a commentable key with no comments block", name)
 		}
+	})
+}
+
+// TestComments_TextAnchor covers the stage-2 text-range path end to end: the
+// client sends only a quote, the server derives the descriptors from its own
+// copy of the body, and a read resolves a fresh range.
+func TestComments_TextAnchor(t *testing.T) {
+	quote := "the old id in the search index"
+
+	t.Run("create derives descriptors and read resolves a range", func(t *testing.T) {
+		app := commentsApp(t)
+
+		body := `{"anchor":{"kind":"text","quote":"` + quote + `"},"body":"is this the bleve index?"}`
+		rec := doComments(t, app, http.MethodPost, "/api/v1/_comments/ticket/TKT-001", body, "alice@example.com")
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+		got := listComments(t, app)
+		require.Len(t, got.Comments, 1)
+		anchor := got.Comments[0].Anchor
+
+		require.Equal(t, "text", anchor.Kind)
+		require.Equal(t, quote, anchor.Quote, "the quote is echoed so a client can show what was commented on")
+		require.False(t, got.Comments[0].Detached)
+		require.NotNil(t, anchor.Start)
+		require.NotNil(t, anchor.End)
+		// The resolved range must actually locate the quote in the body.
+		require.Equal(t, quote, fixtureBody[*anchor.Start:*anchor.End])
+		require.GreaterOrEqual(t, anchor.Confidence, 0.8)
+		require.False(t, anchor.Uncertain)
+	})
+
+	t.Run("a quote absent from the body is refused", func(t *testing.T) {
+		app := commentsApp(t)
+
+		body := `{"anchor":{"kind":"text","quote":"text that is nowhere in the body"},"body":"x"}`
+		rec := doComments(t, app, http.MethodPost, "/api/v1/_comments/ticket/TKT-001", body, "alice@example.com")
+
+		require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	})
+
+	t.Run("a too-short selection is refused", func(t *testing.T) {
+		app := commentsApp(t)
+
+		body := `{"anchor":{"kind":"text","quote":"the"},"body":"x"}`
+		rec := doComments(t, app, http.MethodPost, "/api/v1/_comments/ticket/TKT-001", body, "alice@example.com")
+
+		require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	})
+
+	t.Run("detaches when the quoted text is edited away", func(t *testing.T) {
+		app := commentsApp(t)
+
+		body := `{"anchor":{"kind":"text","quote":"` + quote + `"},"body":"still relevant?"}`
+		rec := doComments(t, app, http.MethodPost, "/api/v1/_comments/ticket/TKT-001", body, "alice@example.com")
+		require.Equal(t, http.StatusCreated, rec.Code)
+
+		// Rewrite the body so the quote no longer occurs.
+		require.NoError(t, app.store.UpdateEntity(t.Context(), &entity.Entity{
+			ID:         "TKT-001",
+			Type:       "ticket",
+			Properties: map[string]any{"title": "Test Ticket", "status": "open"},
+			Content:    "This paragraph shares no wording whatsoever with the original text.\n",
+		}))
+
+		got := listComments(t, app)
+		require.Len(t, got.Comments, 1)
+		require.True(t, got.Comments[0].Detached, "an edited-away quote must detach, not match loosely")
+		require.Nil(t, got.Comments[0].Anchor.Start, "a detached anchor exposes no range")
 	})
 }

@@ -107,9 +107,15 @@ export function renderMarkdown(
 
   const rawHtml = instance.parse(content) as string
 
-  // Allow data-cb-idx attribute through DOMPurify
+  // Allowlist the attributes rela adds to rendered markdown. DOMPurify strips
+  // anything not listed, silently — so a new marker attribute that is not added
+  // here simply vanishes, with no error to debug.
+  //
+  // `mark` itself needs no ADD_TAGS: it is in DOMPurify's default allowlist.
+  // The comment attributes carry a server-minted id and a boolean; neither is
+  // a URL or a script sink.
   return DOMPurify.sanitize(rawHtml, {
-    ADD_ATTR: ['data-cb-idx'],
+    ADD_ATTR: ['data-cb-idx', 'data-comment-id', 'data-comment-uncertain'],
   })
 }
 

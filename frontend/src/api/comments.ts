@@ -3,16 +3,36 @@ import { api } from './client'
 /**
  * How a comment is pinned to part of an entity.
  *
- * Both kinds are drift-free by construction: a property name and an
- * operator-authored section id are NAMES, not offsets, so they survive any
- * edit to the entity body. Text-range anchoring (stage 2) will add a kind
- * here; nothing in this shape forecloses it.
+ * `property` and `section` are drift-free by construction — a property name and
+ * an operator-authored section id are NAMES, not offsets, so they survive any
+ * edit to the body. `text` (stage 2) anchors to body content the user CAN edit
+ * away, so it stores a quote plus surrounding context and is re-located
+ * server-side on every read; when that fails it reports as detached rather than
+ * silently pointing somewhere wrong.
  */
-export type CommentAnchorKind = 'property' | 'section'
+export type CommentAnchorKind = 'property' | 'section' | 'text'
 
 export interface CommentAnchor {
   kind: CommentAnchorKind
   ref: string
+  /** The anchored body text, for a `text` anchor. Echoed so the UI can show
+   *  WHAT was commented on even when the range no longer resolves. */
+  quote?: string
+  /**
+   * Byte offsets into the entity body, resolved server-side on every read.
+   * Present only for a text anchor that located successfully.
+   *
+   * Never stored — an offset is invalidated by any edit earlier in the body.
+   * Slice with these, never with `quote.length`: the located range can differ
+   * from the quote (it absorbs whitespace the formatter moved).
+   */
+  start?: number
+  end?: number
+  /** Resolver score, 0-1. */
+  confidence?: number
+  /** Located, but far enough from an exact match that the UI should say the
+   *  text may have moved. */
+  uncertain?: boolean
 }
 
 /** One comment as served by `/api/v1/_comments/...`. */
@@ -44,7 +64,15 @@ interface CommentListResponse {
 }
 
 export interface AddCommentRequest {
-  anchor: CommentAnchor
+  anchor: {
+    kind: CommentAnchorKind
+    ref: string
+    /** For a `text` anchor: the selected body text. The server derives the
+     *  surrounding context from its own copy of the body, so only the quote
+     *  and which occurrence it was cross the wire. */
+    quote?: string
+    quote_index?: number
+  }
   body: string
 }
 

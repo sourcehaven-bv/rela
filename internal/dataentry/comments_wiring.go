@@ -2,6 +2,9 @@ package dataentry
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/comments"
@@ -131,6 +134,24 @@ func (h *commentsHandler) commentWritesPermitted() bool {
 	}
 }
 
+// anchorContext is what a read needs to decide how each anchor currently
+// resolves: the property names that exist, and the body that text anchors are
+// located within.
+//
+// Loaded ONCE per list request. Resolving text anchors needs the entity body,
+// and re-reading it per comment would be N redacted reads for N comments.
+type anchorContext struct {
+	// properties is nil when the entity could not be loaded, which means "do
+	// not flag anything as detached" rather than "nothing exists".
+	properties map[string]bool
+	// body is the entity content text anchors resolve against. Empty when the
+	// entity could not be read.
+	body string
+	// loaded distinguishes "read the entity, it has an empty body" from "could
+	// not read the entity at all" — only the latter suppresses detach flags.
+	loaded bool
+}
+
 // liveAnchors returns the set of anchor refs that currently resolve on the
 // target, or nil when the set could not be determined.
 //
@@ -143,14 +164,14 @@ func (h *commentsHandler) commentWritesPermitted() bool {
 // section anchor: a section ref names an operator-authored view heading that
 // lives in data-entry.yaml, not on the entity, and its absence from this set
 // means "not a property", not "gone".
-func (h *commentsHandler) liveAnchors(ctx context.Context, target comments.Target) map[string]bool {
+func (h *commentsHandler) liveAnchors(ctx context.Context, target comments.Target) anchorContext {
 	def, ok := h.meta().GetEntityDef(target.Type)
 	if !ok {
-		return nil
+		return anchorContext{}
 	}
 	ent, found, err := h.visibleReader.getVisible(ctx, target.Type, target.ID)
 	if err != nil || !found {
-		return nil
+		return anchorContext{}
 	}
 
 	refs := make(map[string]bool, len(def.Properties)+len(ent.Properties))
@@ -164,5 +185,71 @@ func (h *commentsHandler) liveAnchors(ctx context.Context, target comments.Targe
 	for name := range ent.Properties {
 		refs[name] = true
 	}
-	return refs
+	// The body is the REDACTED entity's content, so a text anchor can only ever
+	// resolve against text this principal may already read.
+	return anchorContext{properties: refs, body: ent.Content, loaded: true}
+}
+
+// buildTextAnchor derives a text anchor's descriptors from the entity's own
+// body, given the quote the client selected.
+//
+// The client supplies the quote and which occurrence it meant; everything else
+// (prefix, suffix, sentence, heading, paragraph index) is computed here. That
+// asymmetry is deliberate and is the security-relevant part: descriptors
+// sourced from the request could describe context that does not exist in the
+// entity, so a later resolve would land on text the commenter never selected.
+//
+// The body read goes through the visibility wrapper, so a principal can only
+// anchor to text it may already read.
+func (h *commentsHandler) buildTextAnchor(
+	ctx context.Context, target comments.Target, quote string, occurrence int,
+) (*comments.TextAnchor, error) {
+	quote = strings.TrimSpace(quote)
+	if len([]rune(quote)) < comments.MinQuoteRunes {
+		return nil, fmt.Errorf("selected text must be at least %d characters", comments.MinQuoteRunes)
+	}
+	if len(quote) > comments.MaxQuoteBytes {
+		return nil, fmt.Errorf("selected text exceeds %d bytes", comments.MaxQuoteBytes)
+	}
+
+	ent, found, err := h.visibleReader.getVisible(ctx, target.Type, target.ID)
+	if err != nil || !found {
+		return nil, errors.New("could not read the entity body")
+	}
+
+	start := nthIndex(ent.Content, quote, occurrence)
+	if start < 0 {
+		// The selection does not exist in the stored body. Usually a stale tab:
+		// the entity changed under the user between render and submit.
+		return nil, errors.New("the selected text was not found in the current body")
+	}
+
+	return comments.NewTextAnchor(ent.Content, start, start+len(quote))
+}
+
+// nthIndex returns the byte offset of the nth (0-based) occurrence of sub in s,
+// or -1. A negative or out-of-range n falls back to the first occurrence rather
+// than failing: which occurrence was meant is a UI nicety, and refusing the
+// whole comment over it would be a worse trade than anchoring to the first.
+func nthIndex(s, sub string, n int) int {
+	if n <= 0 {
+		return strings.Index(s, sub)
+	}
+	offset := 0
+	for i := 0; i <= n; i++ {
+		idx := strings.Index(s[offset:], sub)
+		if idx < 0 {
+			if i == 0 {
+				return -1
+			}
+			// Fewer occurrences than asked for: use the last one found.
+			return strings.LastIndex(s, sub)
+		}
+		offset += idx
+		if i == n {
+			return offset
+		}
+		offset += len(sub)
+	}
+	return -1
 }

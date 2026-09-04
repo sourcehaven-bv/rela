@@ -39,8 +39,10 @@ import type { Component } from 'vue'
 import DocumentsPanel from '@/components/entity/DocumentsPanel.vue'
 import CommentsPanel from '@/components/entity/CommentsPanel.vue'
 import CommentIndicator from '@/components/entity/CommentIndicator.vue'
+import TextSelectionComment from '@/components/entity/TextSelectionComment.vue'
 import { listComments, type Comment } from '@/api/comments'
 import { shouldFlipPopover } from '@/utils/popoverFlip'
+import { applyHighlights, type HighlightRange } from '@/utils/commentHighlight'
 import CommandModal from '@/components/entity/CommandModal.vue'
 import ExportMenu from '@/components/entity/ExportMenu.vue'
 import { entityExportUrl } from '@/api/transforms'
@@ -367,14 +369,32 @@ const refResolver = computed<EntityRefResolver | undefined>(() => {
   }
 })
 
-const renderedEntryContent = computed(() =>
-  entryContentSection.value
-    ? renderMarkdown(entryContentSection.value.content || '', {
-        refResolver: refResolver.value,
-        interactive: true,
-      })
-    : ''
+// Text-anchored comments as source ranges (TKT-FIO205 stage 2). Offsets are
+// resolved server-side per read; a detached anchor has none and is simply not
+// highlighted (it still shows in the panel).
+const textHighlights = computed<HighlightRange[]>(() =>
+  comments.value
+    .filter((c) => c.anchor.kind === 'text' && c.anchor.start != null && c.anchor.end != null)
+    .map((c) => ({
+      id: c.id,
+      start: c.anchor.start as number,
+      end: c.anchor.end as number,
+      uncertain: c.anchor.uncertain,
+    }))
 )
+
+const renderedEntryContent = computed(() => {
+  if (!entryContentSection.value) return ''
+  // Marks are inserted into the SOURCE before rendering: the server's offsets
+  // are source coordinates, and re-finding the text in the rendered DOM would
+  // mean re-implementing the matcher against a document the renderer (and then
+  // mermaid) has already transformed.
+  const source = applyHighlights(entryContentSection.value.content || '', textHighlights.value)
+  return renderMarkdown(source, {
+    refResolver: refResolver.value,
+    interactive: true,
+  })
+})
 
 // Re-renders re-process mermaid diagrams inside the content body. Checkbox
 // clicks are handled via delegation on contentRef (see contentClick), which
@@ -1604,17 +1624,28 @@ watch(
                Function ref instead of string ref because this template lives
                inside a v-for: Vue would otherwise collect template-refs of
                the same name into an array per iteration. -->
-          <div
-            v-else-if="section === entryContentSection"
-            :ref="
-              (el) => {
-                contentRef = el as HTMLElement | null
-              }
-            "
-            class="content-body md-body"
-            @click="contentClick"
-            v-html="renderedEntryContent"
-          />
+          <div v-else-if="section === entryContentSection" class="entry-content-host">
+            <div
+              :ref="
+                (el) => {
+                  contentRef = el as HTMLElement | null
+                }
+              "
+              class="content-body md-body"
+              @click="contentClick"
+              v-html="renderedEntryContent"
+            />
+            <!-- Select-to-comment over the body (TKT-FIO205 stage 2). Absolute
+                 within .entry-content-host, so its offsets are relative to the
+                 body rather than the viewport. -->
+            <TextSelectionComment
+              v-if="commentsEnabled"
+              :entity-type="entityType"
+              :entity-id="entityId"
+              :container="contentRef"
+              @added="loadComments"
+            />
+          </div>
 
           <!-- Other content sections (e.g. content cards from a configured view). -->
           <div
@@ -1967,6 +1998,33 @@ watch(
 </template>
 
 <style scoped>
+/* Positioning context for the select-to-comment popup, so its coordinates are
+ * relative to the body rather than the viewport (which would drift on scroll). */
+.entry-content-host {
+  position: relative;
+}
+
+/* Text-anchored comment highlights (TKT-FIO205 stage 2).
+ *
+ * :deep() because the marks are inserted into v-html output, which scoped-style
+ * hashing does not reach. */
+.content-body :deep(mark[data-comment-id]) {
+  background: color-mix(in srgb, var(--accent-color) 18%, transparent);
+  border-bottom: 2px solid var(--accent-color);
+  border-radius: 2px;
+  padding: 0 1px;
+  color: inherit;
+  cursor: pointer;
+}
+
+/* An uncertain anchor resolved below the exact band: the text may have moved,
+ * so it reads as provisional rather than as a confirmed location. */
+.content-body :deep(mark[data-comment-uncertain]) {
+  background: color-mix(in srgb, var(--warning-color) 30%, transparent);
+  border-bottom-style: dashed;
+  border-bottom-color: var(--warning-color);
+}
+
 .entity-detail {
   max-width: 1200px;
   padding: 0 0 24px;

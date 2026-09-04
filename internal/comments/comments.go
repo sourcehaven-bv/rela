@@ -94,6 +94,18 @@ const (
 
 	// MaxPerTarget caps how many comments one entity may carry.
 	MaxPerTarget = 500
+
+	// MinQuoteRunes is the shortest text selection that may be anchored.
+	//
+	// Matched to the matcher's own floor (it refuses queries under 5 bytes):
+	// below this a quote is too generic to re-locate, so accepting one would
+	// mint a comment that detaches on the next edit.
+	MinQuoteRunes = 5
+
+	// MaxQuoteBytes caps a stored quote. Generous for a sentence or two, and
+	// bounded so a caller cannot store an entire body as an "anchor" — the
+	// resolver's cost scales with quote length.
+	MaxQuoteBytes = 2000
 )
 
 // AnchorKind identifies what part of an entity a comment is attached to.
@@ -114,7 +126,41 @@ const (
 	// heading rather than from user content — so it survives edits to the
 	// entity body.
 	AnchorSection AnchorKind = "section"
+
+	// AnchorText attaches a comment to a RANGE of the entity body (stage 2).
+	//
+	// Unlike the two name-based kinds, this one anchors to content that the
+	// user can edit out from under it. Ref is unused; [Anchor.Text] carries
+	// the quote plus the surrounding context that lets it be re-located after
+	// an edit, and a resolution that fails is reported as detached rather than
+	// dropped (DEC-HWZHA).
+	AnchorText AnchorKind = "text"
 )
+
+// TextAnchor is the stage-2 descriptor set for a body text range.
+//
+// The fields mirror github.com/vloothuis/textanchor's Anchor exactly, because
+// they are handed to it verbatim on resolve. They are stored rather than a byte
+// offset for the reason the whole feature exists: an offset is invalidated by
+// any edit earlier in the body, and on the fs backend by a plain re-save, since
+// fsstore reflows every body to 80 columns on write.
+//
+// Quote alone is not enough — the same words can occur twice — so Prefix and
+// Suffix disambiguate, ContainingSentence rescues short generic quotes, and the
+// structural pair (HeadingContext, ParagraphIndex) survives a rewrite of the
+// quoted sentence itself.
+type TextAnchor struct {
+	Quote              string `json:"quote"                          yaml:"quote"`
+	Prefix             string `json:"prefix,omitempty"               yaml:"prefix,omitempty"`
+	Suffix             string `json:"suffix,omitempty"               yaml:"suffix,omitempty"`
+	ContainingSentence string `json:"containing_sentence,omitempty"  yaml:"containing_sentence,omitempty"`
+	HeadingContext     string `json:"heading_context,omitempty"      yaml:"heading_context,omitempty"`
+	// ParagraphIndex is 0-based within the section named by HeadingContext,
+	// or -1 when not applicable. Zero is a MEANINGFUL value (the first
+	// paragraph), so this is never omitempty — dropping it would silently
+	// retarget a comment to whatever paragraph the zero value implies.
+	ParagraphIndex int `json:"paragraph_index" yaml:"paragraph_index"`
+}
 
 // Anchor locates a comment within its target entity.
 //
@@ -124,6 +170,12 @@ const (
 type Anchor struct {
 	Kind AnchorKind `json:"kind" yaml:"kind"`
 	Ref  string     `json:"ref"  yaml:"ref"`
+
+	// Text carries the descriptors for an [AnchorText] anchor, and is nil for
+	// every other kind. A pointer so a property or section comment serializes
+	// exactly as it did before this field existed — which is what lets stage 2
+	// ship without migrating a single stored comment.
+	Text *TextAnchor `json:"text,omitempty" yaml:"text,omitempty"`
 }
 
 // Validate reports whether the anchor is structurally usable.
@@ -135,11 +187,27 @@ type Anchor struct {
 func (a Anchor) Validate() error {
 	switch a.Kind {
 	case AnchorProperty, AnchorSection:
+		if strings.TrimSpace(a.Ref) == "" {
+			return fmt.Errorf("%w: ref must not be empty", ErrInvalidAnchor)
+		}
+	case AnchorText:
+		// Ref is unused for a text anchor; the descriptors carry the location.
+		if a.Text == nil {
+			return fmt.Errorf("%w: text anchor requires a text descriptor", ErrInvalidAnchor)
+		}
+		// A quote shorter than this cannot be located reliably — the matcher
+		// itself refuses queries under 5 bytes, and a 2-character quote would
+		// match almost anywhere. Refusing at the boundary gives the caller a
+		// 400 instead of a comment that is born detached.
+		if len([]rune(strings.TrimSpace(a.Text.Quote))) < MinQuoteRunes {
+			return fmt.Errorf("%w: quote must be at least %d characters",
+				ErrInvalidAnchor, MinQuoteRunes)
+		}
+		if len(a.Text.Quote) > MaxQuoteBytes {
+			return fmt.Errorf("%w: quote exceeds %d bytes", ErrInvalidAnchor, MaxQuoteBytes)
+		}
 	default:
 		return fmt.Errorf("%w: unknown kind %q", ErrInvalidAnchor, a.Kind)
-	}
-	if strings.TrimSpace(a.Ref) == "" {
-		return fmt.Errorf("%w: ref must not be empty", ErrInvalidAnchor)
 	}
 	return nil
 }
