@@ -550,14 +550,16 @@ func visibleEntitiesOfType(
 ) ([]*entity.Entity, error) {
 	if ts.AllowAll && len(props) == 0 {
 		var out []*entity.Entity
-		for e, err := range svc.Store.ListEntities(ctx, store.EntityQuery{
+		// Content-free rows (rowcontent.go): search results render titles
+		// and properties, and a body is loaded only on request.
+		for h, err := range store.ListEntityHeaders(ctx, svc.Store, store.EntityQuery{
 			Type:  typ,
 			World: worldScopeFrom(ctx),
 		}) {
 			if err != nil {
 				return nil, fmt.Errorf("%w: %w", errListLoad, err)
 			}
-			out = append(out, e)
+			out = append(out, headerEntity(h))
 		}
 		return out, nil
 	}
@@ -579,10 +581,11 @@ func visibleEntitiesOfType(
 	q.World = worldScopeFrom(ctx)
 
 	var out []*entity.Entity
-	for e, err := range svc.Store.GraphQuery(ctx, q) {
+	for h, err := range store.GraphQueryHeaders(ctx, svc.Store, q) {
 		if err != nil {
 			return nil, fmt.Errorf("%w: %w", errClass, err)
 		}
+		e := headerEntity(h)
 		out = append(out, e)
 	}
 	return out, nil

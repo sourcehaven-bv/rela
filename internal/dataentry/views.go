@@ -173,62 +173,6 @@ func (h *viewsHandler) applyViewTraverse(
 	}
 }
 
-// traverseViewOnce returns the neighbor IDS one hop from sourceID.
-//
-// It returns IDS, not entities, so the caller can resolve the whole rule's
-// neighbors in one batch — see applyViewTraverse. It also means this function
-// does no entity read at all, which is what removes the per-hop
-// default-world `GetEntity` that made the traversal world-blind.
-//
-// The relation query keeps a NIL tail deliberately. A view traverses the
-// entity GRAPH: it follows an edge to reach a neighbor, and per design §2.3
-// heads are entity-level, so which face the SOURCE is standing on does not
-// change which ids it can reach. Filtering by the source's face here would
-// hide identity edges from any entity whose prime is not the default state —
-// the "fallback trap" documented on worldreader.RelationReader.Neighbors,
-// where the zero face as a FromFace VALUE means default-tail-only rather
-// than unfiltered.
-//
-// (Content-scoped edges are therefore over-returned here relative to what item
-// 4's entity GET shows. That is a known divergence, not an oversight: making
-// view traversal honor edge scope needs the per-type dispatch, which is its
-// own change with its own tests. Recorded in the PR body.)
-func (h *viewsHandler) traverseViewOnce(ctx context.Context, sourceID string, rule ViewTraverse) []string {
-	st := h.store
-	var out []string
-
-	var relType string
-	var direction store.Direction
-	var useTarget bool // true: collect edge.To; false: collect edge.From
-	switch {
-	case rule.Follow != "":
-		relType = rule.Follow
-		direction = store.DirectionOutgoing
-		useTarget = true
-	case rule.FollowIncoming != "":
-		relType = rule.FollowIncoming
-		direction = store.DirectionIncoming
-		useTarget = false
-	default:
-		return nil
-	}
-
-	q := store.RelationQuery{EntityID: sourceID, Type: relType, Direction: direction}
-	for r, err := range st.ListRelations(ctx, q) {
-		if err != nil {
-			break
-		}
-		targetID := r.To
-		if !useTarget {
-			targetID = r.From
-		}
-		if targetID != "" {
-			out = append(out, targetID)
-		}
-	}
-	return out
-}
-
 // traverseViewMany is [viewsHandler.traverseViewOnce] for many sources in ONE
 // relation query. The result is ordered as the per-source calls would have
 // been concatenated: by source in the given order, then by the store's edge
@@ -288,7 +232,7 @@ func (h *viewsHandler) traverseViewBreadthFirst(
 		visited[id] = true
 		frontier = append(frontier, id)
 	}
-	var all []string
+	all := make([]string, 0, len(frontier))
 	for depth := 0; depth < maxDepth && len(frontier) > 0; depth++ {
 		found := h.traverseViewMany(ctx, frontier, rule)
 		all = append(all, found...)

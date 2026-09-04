@@ -68,11 +68,67 @@ type GraphQuery struct {
 	// answer is exact at the store and paging, counts and search stay honest
 	// with no post-filter.
 	Any []GraphBranch
+
+	// OrderBy, Limit and Offset page a ROW query (GraphQuery,
+	// GraphQueryHeaders) inside the backend (TKT-1U8XYN), so a list page
+	// costs one bounded read instead of a whole-type scan sorted and sliced
+	// in Go. GraphCount and MatchingIDs IGNORE all three — a count answers
+	// for the matched set, and a page must never change it.
+	//
+	// OrderBy sorts by the STRING form of each property, byte-wise (the
+	// data-entry list comparator's semantics), rows without the property
+	// last in either direction, then by id ascending as the tiebreak. It is
+	// meant for scalar string-shaped properties (string, enum, date); a
+	// caller sorting anything else stays on its own comparator. Limit 0
+	// means unbounded; Offset counts rows in the ordered result.
+	OrderBy []OrderSpec
+	Limit   int
+	Offset  int
+}
+
+// OrderSpec is one GraphQuery sort key.
+type OrderSpec struct {
+	Property   string
+	Descending bool
 }
 
 // GraphBranch is one arm of [GraphQuery.Any]: a relation predicate and the
 // faces it grants. A nil FaceIn grants every face; a nil HasInbound holds for
 // every entity of the type (the branch is then only a face set).
+// GraphHeaderQueryer is the content-free projection of [GraphQueryer]:
+// the same predicate evaluation, yielding [EntityHeader] rows without the
+// markdown body. OPTIONAL — type-asserted like [HeaderReader], with
+// [GraphQueryHeaders] as the generic fallback — because it exists purely to
+// keep bodies from crossing the wire on backends where that is a real cost
+// (TKT-1U8XYN): a list page needs a type's ids and properties to filter,
+// sort and paginate, never its bodies.
+type GraphHeaderQueryer interface {
+	GraphQueryHeaders(ctx context.Context, q GraphQuery) iter.Seq2[EntityHeader, error]
+}
+
+// GraphQueryHeaders runs q as a content-free query on any GraphQueryer.
+//
+// Uses the backend's native [GraphHeaderQueryer] when it has one, so the
+// body never leaves the backend; otherwise falls back to
+// [GraphQueryer.GraphQuery] and projects each row as it is yielded. As with
+// [ListEntityHeaders], the fallback bounds retention, not transfer.
+func GraphQueryHeaders(ctx context.Context, gq GraphQueryer, q GraphQuery) iter.Seq2[EntityHeader, error] {
+	if hq, ok := gq.(GraphHeaderQueryer); ok {
+		return hq.GraphQueryHeaders(ctx, q)
+	}
+	return func(yield func(EntityHeader, error) bool) {
+		for e, err := range gq.GraphQuery(ctx, q) {
+			if err != nil {
+				yield(EntityHeader{}, err)
+				return
+			}
+			if !yield(HeaderOf(e), nil) {
+				return
+			}
+		}
+	}
+}
+
 type GraphBranch struct {
 	HasInbound *RelationPredicate
 	FaceIn     []entity.Face

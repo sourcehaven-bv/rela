@@ -46,6 +46,31 @@ All top-level fields are optional. Field absence means "leave alone".
 | `content` | Markdown body. **Upsert**: present (including empty string) replaces; absent leaves alone. |
 | `relations` | Map of relation type → desired-state wrapper. See below. |
 
+## Collection rows are content-free
+
+`GET /api/v1/{plural}` and `GET /api/v1/_search` return each row's `id`,
+`type`, `_title`, `properties`, relations and affordances, but **not** its
+markdown body: `content` is absent from collection rows. A list, kanban or
+dashboard renders titles and properties, and shipping every row's body made a
+100-row page half a megabyte and the dashboard's count cards tens of megabytes
+at 20k entities (TKT-1U8XYN). On the PostgreSQL backend the bodies never leave
+the database — the server reads content-free headers for the whole pipeline
+(filter, sort, paginate) and loads bodies only for the rows it serves, only
+when asked.
+
+Ask with `include_content=true` (any value `strconv.ParseBool` accepts; anything
+else is `false`):
+
+```text
+GET /api/v1/tickets?page=1&per_page=25&include_content=true
+GET /api/v1/_search?q=type:ticket&include_content=true
+```
+
+The per-entity `GET /api/v1/{plural}/{id}`, `_views` and `?include=` peers are
+unchanged: they always carry `content`, as do ETags computed over it. A row
+whose entity has an empty body looks the same with or without the flag, which
+is the reason the field is omitted rather than sent empty.
+
 ## Relations field
 
 Each value of the `relations` map is one of TWO shapes:

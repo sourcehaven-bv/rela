@@ -809,40 +809,7 @@ func (h *viewsHandler) resolveRelationColumns(
 	ctx context.Context, s *Schema, columns []dataentryconfig.ListColumn, rows []*entityPkg.Entity,
 ) map[string]map[int][]string {
 	svc := h.services()
-	byType := make(map[string][]string)
-	for _, e := range rows {
-		byType[e.Type] = append(byType[e.Type], e.ID)
-	}
-	// targets[rowID][ci] is the ordered list of neighbor ids for that cell.
-	targets := make(map[string]map[int][]string, len(rows))
-	var targetIDs []string
-	seenTarget := make(map[string]struct{})
-	for ci, col := range columns {
-		if col.Relation == "" {
-			continue
-		}
-		for typ, ids := range byType {
-			dir := resolveConfigDirection(s, typ, col.Relation, col.Direction)
-			q := store.RelationQuery{EntityIDs: ids, Type: col.Relation, Direction: relationDirection(dir)}
-			for r, err := range svc.Store.ListRelations(ctx, q) {
-				if err != nil {
-					break
-				}
-				rowID, targetID := r.From, r.To
-				if dir.IsIncoming() {
-					rowID, targetID = r.To, r.From
-				}
-				if targets[rowID] == nil {
-					targets[rowID] = make(map[int][]string)
-				}
-				targets[rowID][ci] = append(targets[rowID][ci], targetID)
-				if _, dup := seenTarget[targetID]; !dup {
-					seenTarget[targetID] = struct{}{}
-					targetIDs = append(targetIDs, targetID)
-				}
-			}
-		}
-	}
+	targets, targetIDs := h.relationColumnTargets(ctx, svc, s, columns, rows)
 	if len(targetIDs) == 0 {
 		return targets
 	}
@@ -879,6 +846,47 @@ func (h *viewsHandler) resolveRelationColumnValues(
 	cols := []dataentryconfig.ListColumn{{Relation: relationType, Direction: direction}}
 	rows := []*entityPkg.Entity{{ID: entityID}}
 	return h.resolveRelationColumns(ctx, h.schema(), cols, rows)[entityID][0]
+}
+
+// relationColumnTargets runs one relation query per (relation column, row
+// type) and returns targets[rowID][columnIndex] as the ordered neighbor ids
+// of that cell, plus the distinct neighbor ids in first-seen order.
+func (h *viewsHandler) relationColumnTargets(
+	ctx context.Context, svc Services, s *Schema, columns []dataentryconfig.ListColumn, rows []*entityPkg.Entity,
+) (targets map[string]map[int][]string, targetIDs []string) {
+	byType := make(map[string][]string)
+	for _, e := range rows {
+		byType[e.Type] = append(byType[e.Type], e.ID)
+	}
+	targets = make(map[string]map[int][]string, len(rows))
+	seenTarget := make(map[string]struct{})
+	for ci, col := range columns {
+		if col.Relation == "" {
+			continue
+		}
+		for typ, ids := range byType {
+			dir := resolveConfigDirection(s, typ, col.Relation, col.Direction)
+			q := store.RelationQuery{EntityIDs: ids, Type: col.Relation, Direction: relationDirection(dir)}
+			for r, err := range svc.Store.ListRelations(ctx, q) {
+				if err != nil {
+					break
+				}
+				rowID, targetID := r.From, r.To
+				if dir.IsIncoming() {
+					rowID, targetID = r.To, r.From
+				}
+				if targets[rowID] == nil {
+					targets[rowID] = make(map[int][]string)
+				}
+				targets[rowID][ci] = append(targets[rowID][ci], targetID)
+				if _, dup := seenTarget[targetID]; !dup {
+					seenTarget[targetID] = struct{}{}
+					targetIDs = append(targetIDs, targetID)
+				}
+			}
+		}
+	}
+	return targets, targetIDs
 }
 
 // visibleTitles resolves ids to display titles for the ids the principal may

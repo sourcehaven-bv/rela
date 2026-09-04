@@ -206,7 +206,7 @@ func (q *queryService) runVisibleFreeTextSearch(
 	// searcher already resolved which face matched; a bare-id re-read would
 	// render default-face bytes for a hit scored against another face the
 	// moment /_search stops being world-refused by the route allowlist.
-	loaded, err := loadHitFaces(ctx, svc.Store, hits)
+	loaded, err := loadHitHeaders(ctx, svc.Store, hits)
 	if err != nil {
 		return nil, fmt.Errorf("free-text search: %w", err)
 	}
@@ -215,7 +215,7 @@ func (q *queryService) runVisibleFreeTextSearch(
 	// coherent set of currently-existing entities.
 	out := make([]*entity.Entity, 0, len(hits))
 	for _, hit := range hits {
-		if e, ok := loaded[hitKey{hit.ID, hit.Face}]; ok {
+		if e, ok := loaded[rowKey{hit.ID, hit.Face}]; ok {
 			out = append(out, e)
 		}
 	}
@@ -303,37 +303,32 @@ func (q *queryService) matchesPropertyFilters(e *entity.Entity, filters []*filte
 	return err == nil && matched
 }
 
-// hitKey addresses one (id, face) row a search hit named.
-type hitKey struct {
-	id   string
-	face entity.Face
-}
-
-// loadHitFaces reads the rows the hits name, grouped by face: default-face
-// hits in one IDs query, each other face in one AllStates query narrowed to
-// that face on the way out. Returns only rows that exist.
-func loadHitFaces(ctx context.Context, st store.Store, hits []search.Hit) (map[hitKey]*entity.Entity, error) {
+// loadHitHeaders reads the content-free rows the hits name, grouped by
+// face: default-face hits in one IDs query, each other face in one
+// AllStates query narrowed to that face on the way out. Returns only rows
+// that exist, as content-free entities (see rowcontent.go).
+func loadHitHeaders(ctx context.Context, st store.Store, hits []search.Hit) (map[rowKey]*entity.Entity, error) {
 	byFace := make(map[entity.Face][]string)
-	seen := make(map[hitKey]struct{}, len(hits))
+	seen := make(map[rowKey]struct{}, len(hits))
 	for _, h := range hits {
-		k := hitKey{h.ID, h.Face}
+		k := rowKey{h.ID, h.Face}
 		if _, dup := seen[k]; dup {
 			continue
 		}
 		seen[k] = struct{}{}
 		byFace[h.Face] = append(byFace[h.Face], h.ID)
 	}
-	out := make(map[hitKey]*entity.Entity, len(seen))
+	out := make(map[rowKey]*entity.Entity, len(seen))
 	for face, ids := range byFace {
 		q := store.EntityQuery{IDs: ids, AllStates: !face.IsDefault()}
-		for e, err := range st.ListEntities(ctx, q) {
+		for h, err := range store.ListEntityHeaders(ctx, st, q) {
 			if err != nil {
 				return nil, err
 			}
-			if e.Face != face {
+			if h.Face != face {
 				continue // AllStates over-returns the family's other faces
 			}
-			out[hitKey{e.ID, e.Face}] = e
+			out[rowKey{h.ID, h.Face}] = headerEntity(h)
 		}
 	}
 	return out, nil

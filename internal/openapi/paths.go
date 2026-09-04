@@ -423,6 +423,7 @@ func (g *Generator) listParameters() []Parameter {
 		{Name: "sort", In: "query", Description: "Sort fields (comma-separated, prefix with - for descending)", Schema: StringSchema()},
 		{Name: "filter[property]", In: "query", Description: "Filter by property value (e.g., filter[status]=active)", Schema: StringSchema()},
 		{Name: "filter[property][operator]", In: "query", Description: "Filter with operator: eq, ne, contains, in", Schema: StringSchema()},
+		{Name: "include_content", In: "query", Description: "Include each row's markdown body (default: false; collection rows are content-free)", Schema: BooleanSchema()},
 	}
 }
 

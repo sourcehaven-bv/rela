@@ -2,7 +2,9 @@ package storetest
 
 import (
 	"context"
+	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -614,6 +616,140 @@ func seedEntityWithProps(t *testing.T, s store.Store, typ, id string, props map[
 }
 
 // mustRel creates a relation; fails the test on error.
+// RunGraphPagingTests pins GraphQuery.OrderBy/Limit/Offset (TKT-1U8XYN):
+// byte-wise ordering on the property's string form, rows without the
+// property last in either direction, id as tiebreak; a Limit/Offset window
+// equal to slicing the full ordered result; GraphCount unaffected by paging;
+// headers paging identically.
+func RunGraphPagingTests(t *testing.T, f Factory) {
+	seed := func(t *testing.T, s store.Store) {
+		t.Helper()
+		// due values chosen so byte order != insertion order, with two
+		// rows sharing a value (tiebreak) and two rows without one.
+		dues := []string{"2026-03-01", "", "2026-01-15", "2026-03-01", "", "2025-12-31"}
+		for i, due := range dues {
+			e := entity.New(fmt.Sprintf("T-%d", i), "ticket")
+			e.SetString("title", fmt.Sprintf("Ticket %d", i))
+			e.SetString("status", []string{"open", "done"}[i%2])
+			if due != "" {
+				e.SetString("due", due)
+			}
+			require.NoError(t, s.CreateEntity(ctx(), e))
+		}
+	}
+	ids := func(t *testing.T, s store.Store, q store.GraphQuery) []string {
+		t.Helper()
+		var out []string
+		for e, err := range s.GraphQuery(ctx(), q) {
+			require.NoError(t, err)
+			out = append(out, e.ID)
+		}
+		return out
+	}
+
+	t.Run("OrderMissingLastTiebreakID", func(t *testing.T) {
+		s := f(t)
+		seed(t, s)
+		asc := ids(t, s, store.GraphQuery{EntityType: "ticket", OrderBy: []store.OrderSpec{{Property: "due"}}})
+		require.Equal(t, []string{"T-5", "T-2", "T-0", "T-3", "T-1", "T-4"}, asc)
+		desc := ids(t, s, store.GraphQuery{EntityType: "ticket", OrderBy: []store.OrderSpec{{Property: "due", Descending: true}}})
+		require.Equal(t, []string{"T-0", "T-3", "T-2", "T-5", "T-1", "T-4"}, desc)
+	})
+
+	t.Run("WindowEqualsSlice", func(t *testing.T) {
+		s := f(t)
+		seed(t, s)
+		order := []store.OrderSpec{{Property: "due"}}
+		full := ids(t, s, store.GraphQuery{EntityType: "ticket", OrderBy: order})
+		for _, w := range []struct{ off, lim int }{{0, 2}, {2, 2}, {4, 10}, {6, 2}, {1, 0}} {
+			got := ids(t, s, store.GraphQuery{EntityType: "ticket", OrderBy: order, Offset: w.off, Limit: w.lim})
+			end := len(full)
+			if w.lim > 0 && w.off+w.lim < end {
+				end = w.off + w.lim
+			}
+			var want []string
+			if w.off < len(full) {
+				want = full[w.off:end]
+			}
+			require.Equal(t, want, got, "offset %d limit %d", w.off, w.lim)
+		}
+	})
+
+	t.Run("CountIgnoresPaging", func(t *testing.T) {
+		s := f(t)
+		seed(t, s)
+		q := store.GraphQuery{
+			EntityType: "ticket",
+			Props:      []store.PropPredicate{{Property: "status", Op: store.PropEqual, Value: "open"}},
+			OrderBy:    []store.OrderSpec{{Property: "due"}}, Limit: 1, Offset: 1,
+		}
+		matched, _, err := s.GraphCount(ctx(), q)
+		require.NoError(t, err)
+		require.Equal(t, 3, matched)
+		require.Len(t, ids(t, s, q), 1)
+	})
+
+	t.Run("HeadersPageTheSame", func(t *testing.T) {
+		s := f(t)
+		seed(t, s)
+		q := store.GraphQuery{EntityType: "ticket", OrderBy: []store.OrderSpec{{Property: "due", Descending: true}}, Limit: 3}
+		want := ids(t, s, q)
+		var got []string
+		for h, err := range store.GraphQueryHeaders(ctx(), s, q) {
+			require.NoError(t, err)
+			got = append(got, h.ID)
+		}
+		require.Equal(t, want, got)
+	})
+}
+
+// RunGraphHeaderTests pins the content-free projection of GraphQuery
+// (TKT-1U8XYN): for a type-plus-property query and a relation-predicate
+// query, store.GraphQueryHeaders yields exactly HeaderOf(row) for every row
+// GraphQuery yields, in the same order — whether the backend implements
+// store.GraphHeaderQueryer natively or through the generic fallback.
+func RunGraphHeaderTests(t *testing.T, f Factory) {
+	t.Run("HeadersMatchRows", func(t *testing.T) {
+		s := f(t)
+		for i := range 6 {
+			e := entity.New(fmt.Sprintf("T-%d", i), "ticket")
+			e.SetString("title", fmt.Sprintf("Ticket %d", i))
+			e.SetString("status", []string{"open", "done"}[i%2])
+			e.Content = strings.Repeat("body ", 50)
+			require.NoError(t, s.CreateEntity(ctx(), e))
+		}
+		require.NoError(t, s.CreateEntity(ctx(), entity.New("F-1", "feature")))
+		mustRel(t, s, "T-1", "implements", "F-1")
+		mustRel(t, s, "T-3", "implements", "F-1")
+
+		queries := []store.GraphQuery{
+			{EntityType: "ticket"},
+			{EntityType: "ticket", Props: []store.PropPredicate{{Property: "status", Op: store.PropEqual, Value: "open"}}},
+			{EntityType: "ticket", HasOutbound: &store.RelationPredicate{OfTypes: []string{"implements"}}},
+		}
+		for i, q := range queries {
+			var want []store.EntityHeader
+			for e, err := range s.GraphQuery(ctx(), q) {
+				require.NoError(t, err)
+				want = append(want, store.HeaderOf(e))
+			}
+			var got []store.EntityHeader
+			for h, err := range store.GraphQueryHeaders(ctx(), s, q) {
+				require.NoError(t, err)
+				got = append(got, h)
+			}
+			require.NotEmpty(t, want, "query %d matched nothing; fixture is wrong", i)
+			require.Len(t, got, len(want), "query %d", i)
+			for j := range want {
+				require.Equal(t, want[j].ID, got[j].ID, "query %d row %d", i, j)
+				require.Equal(t, want[j].Type, got[j].Type)
+				require.Equal(t, want[j].Face, got[j].Face)
+				require.Equal(t, want[j].Properties, got[j].Properties)
+			}
+		}
+	})
+}
+
 func mustRel(t *testing.T, s store.Store, from, relType, to string) {
 	t.Helper()
 	_, err := s.CreateRelation(ctx(), from, relType, to, nil)
