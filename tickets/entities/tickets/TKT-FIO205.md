@@ -5,7 +5,7 @@ title: 'Entity commenting stage 1: property and section anchors'
 kind: enhancement
 priority: medium
 effort: l
-status: review
+status: done
 ---
 
 ## Description
