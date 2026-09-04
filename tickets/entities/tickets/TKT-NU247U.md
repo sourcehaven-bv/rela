@@ -5,7 +5,7 @@ title: MCP server hot-reloads schema.yaml on change
 kind: enhancement
 priority: medium
 effort: m
-status: in-progress
+status: done
 ---
 
 ## Problem
