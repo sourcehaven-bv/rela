@@ -2,6 +2,36 @@
 // satisfied by a [Backend] (today: [bleveindex.Index]). The [Service]
 // type combines a [store.EntityReader] with a [Backend] to produce a
 // [Searcher] implementation that callers consume.
+//
+// # A world IS the search scope
+//
+// Worlds (TKT-WAV8XP) reach this package by exactly one route: [Query.World]
+// carries a [store.WorldScope], and [Backend.Search] takes it. Nothing else
+// here knows what a world is — no world NAME, no metamodel, no policy. The
+// scope arrives compiled, from the consumer that resolved it.
+//
+// The scope RESOLVES rather than filters, and that is the load-bearing
+// choice ([ResolvePrimes] carries the argument in full). A world picks at
+// most one face per entity — its prime — and only that face is matched. So:
+//
+//   - A hit's text is the text the reader will be shown. Matching a
+//     non-prime face would let a published-world search hit on a term that
+//     exists only in the draft while displaying published bytes that lack
+//     it.
+//   - An entity the world resolves to nothing contributes nothing. Under
+//     `otherwise: exclude` that absence IS the publication bit.
+//   - At most one row per entity comes out STRUCTURALLY, so [Query.Limit]
+//     counts entities with no grouping pass.
+//
+// The zero [store.WorldScope] is the default world and must reduce to
+// exactly the pre-worlds query — every construction site that never heard
+// of worlds keeps working, allocating nothing.
+//
+// Consequently the ACL row gate is NOT what keeps a draft out of a
+// published-world result: guard rule 1 makes that gate world-independent.
+// The resolution above is. A backend that matched first and resolved after
+// (or skipped resolution entirely) would leak drafts with nothing
+// downstream to catch it — see the doc on [Backend.Search].
 package search
 
 import (
@@ -59,7 +89,12 @@ func (s *Service) Search(ctx context.Context, q Query) iter.Seq2[Hit, error] {
 		return s.listAll(ctx, q)
 	}
 
-	ids, err := s.backend.Search(q.Text, 0)
+	// The backend resolves the world and returns FACES, so each result
+	// already names which face matched. The limit is applied here rather
+	// than pushed down because the type and property filters below can still
+	// reject a face, and a backend-side limit would silently shorten the
+	// page.
+	faces, err := s.backend.Search(q.Text, 0, q.World)
 	if err != nil {
 		return func(yield func(Hit, error) bool) {
 			yield(Hit{}, err)
@@ -70,14 +105,19 @@ func (s *Service) Search(ctx context.Context, q Query) iter.Seq2[Hit, error] {
 
 	return func(yield func(Hit, error) bool) {
 		emitted := 0
-		for _, id := range ids {
+		for _, f := range faces {
 			if q.Limit > 0 && emitted >= q.Limit {
 				return
 			}
 
-			e, err := s.reader.GetEntity(ctx, id)
+			// Load the FACE that matched, not the entity's default state.
+			// Reading the bare id here would display default-face bytes for a
+			// hit scored against a different face — the mismatch between what
+			// was searched and what is shown that world-scoped search exists
+			// to close.
+			e, err := s.reader.GetEntityState(ctx, f.ID, f.Face)
 			if err != nil {
-				continue // entity may have been deleted since indexing
+				continue // face may have been deleted since indexing
 			}
 
 			if len(typeSet) > 0 && !typeSet[e.Type] {
@@ -88,7 +128,15 @@ func (s *Service) Search(ctx context.Context, q Query) iter.Seq2[Hit, error] {
 				continue
 			}
 
-			if !yield(Hit{ID: e.ID, Type: e.Type, Title: e.Title()}, nil) {
+			hit := Hit{
+				ID:            e.ID,
+				Type:          e.Type,
+				Title:         e.Title(),
+				Face:          f.Face,
+				Via:           f.Via,
+				ChainPosition: f.ChainPosition,
+			}
+			if !yield(hit, nil) {
 				return
 			}
 			emitted++

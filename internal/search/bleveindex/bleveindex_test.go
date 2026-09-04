@@ -10,6 +10,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/search/bleveindex"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 func newTestIndex(t *testing.T) *bleveindex.Index {
@@ -34,14 +35,12 @@ func TestIndex_BasicSearch(t *testing.T) {
 	require.NoError(t, idx.EntityPut(e2))
 
 	// Search for "authentication" — should find REQ-1.
-	ids, err := idx.Search("authentication", 10)
-	require.NoError(t, err)
+	ids := searchIDs(t, idx, "authentication", 10)
 	assert.Contains(t, ids, "REQ-1")
 	assert.NotContains(t, ids, "REQ-2")
 
 	// Search for "export" — should find REQ-2.
-	ids, err = idx.Search("export", 10)
-	require.NoError(t, err)
+	ids = searchIDs(t, idx, "export", 10)
 	assert.Contains(t, ids, "REQ-2")
 }
 
@@ -53,8 +52,7 @@ func TestIndex_FuzzyMatch(t *testing.T) {
 	require.NoError(t, idx.EntityPut(e))
 
 	// Typo: "authentcation" should still match via fuzziness.
-	ids, err := idx.Search("authentcation", 10)
-	require.NoError(t, err)
+	ids := searchIDs(t, idx, "authentcation", 10)
 	assert.Contains(t, ids, "REQ-1")
 }
 
@@ -65,8 +63,7 @@ func TestIndex_SearchByID(t *testing.T) {
 	e.SetString("title", "Something")
 	require.NoError(t, idx.EntityPut(e))
 
-	ids, err := idx.Search("FEAT-42", 10)
-	require.NoError(t, err)
+	ids := searchIDs(t, idx, "FEAT-42", 10)
 	assert.Contains(t, ids, "FEAT-42")
 }
 
@@ -91,8 +88,7 @@ func TestIndex_SearchByIDPrefix(t *testing.T) {
 		require.NoError(t, idx.EntityPut(e))
 	}
 
-	ids, err := idx.Search("VAD-ACT-", 20)
-	require.NoError(t, err)
+	ids := searchIDs(t, idx, "VAD-ACT-", 20)
 
 	// All three VAD-ACT-* entities are found...
 	assert.Subset(t, ids, []string{"VAD-ACT-6P4X", "VAD-ACT-CV83", "VAD-ACT-F7A4"})
@@ -115,8 +111,7 @@ func TestIndex_SearchByIDPrefix_CaseSensitiveToken(t *testing.T) {
 	e.SetString("title", "Example")
 	require.NoError(t, idx.EntityPut(e))
 
-	ids, err := idx.Search("TKT-", 10)
-	require.NoError(t, err)
+	ids := searchIDs(t, idx, "TKT-", 10)
 	assert.Contains(t, ids, "TKT-ABCD")
 }
 
@@ -127,8 +122,7 @@ func TestIndex_SearchByProperty(t *testing.T) {
 	e.SetString("status", "critical")
 	require.NoError(t, idx.EntityPut(e))
 
-	ids, err := idx.Search("critical", 10)
-	require.NoError(t, err)
+	ids := searchIDs(t, idx, "critical", 10)
 	assert.Contains(t, ids, "T-1")
 }
 
@@ -141,8 +135,7 @@ func TestIndex_Remove(t *testing.T) {
 
 	require.NoError(t, idx.EntityDelete("REQ-1"))
 
-	ids, err := idx.Search("Removable", 10)
-	require.NoError(t, err)
+	ids := searchIDs(t, idx, "Removable", 10)
 	assert.Empty(t, ids)
 }
 
@@ -161,8 +154,7 @@ func TestIndex_EntityRenamed(t *testing.T) {
 	renamed.SetString("title", "Atomic rename")
 	require.NoError(t, idx.EntityRenamed("REQ-1", renamed))
 
-	ids, err := idx.Search("Atomic rename", 10)
-	require.NoError(t, err)
+	ids := searchIDs(t, idx, "Atomic rename", 10)
 	assert.Contains(t, ids, "REQ-99",
 		"renamed entity should be findable under the new ID")
 	assert.NotContains(t, ids, "REQ-1",
@@ -180,13 +172,11 @@ func TestIndex_UpdateOverwrites(t *testing.T) {
 	require.NoError(t, idx.EntityPut(e))
 
 	// Old content should not match.
-	ids, err := idx.Search("Old", 10)
-	require.NoError(t, err)
+	ids := searchIDs(t, idx, "Old", 10)
 	assert.Empty(t, ids)
 
 	// New content should match.
-	ids, err = idx.Search("New", 10)
-	require.NoError(t, err)
+	ids = searchIDs(t, idx, "New", 10)
 	assert.Contains(t, ids, "REQ-1")
 }
 
@@ -207,8 +197,7 @@ func TestIndex_IndexBatch(t *testing.T) {
 	assert.Equal(t, 3, count)
 
 	for _, e := range entities {
-		ids, err := idx.Search(e.Properties["title"].(string), 10)
-		require.NoError(t, err)
+		ids := searchIDs(t, idx, e.Properties["title"].(string), 10)
 		assert.Contains(t, ids, e.ID)
 	}
 }
@@ -234,20 +223,17 @@ func TestIndex_Limit(t *testing.T) {
 		require.NoError(t, idx.EntityPut(e))
 	}
 
-	ids, err := idx.Search("common", 3)
-	require.NoError(t, err)
+	ids := searchIDs(t, idx, "common", 3)
 	assert.Len(t, ids, 3)
 }
 
 func TestIndex_EmptySearch(t *testing.T) {
 	idx := newTestIndex(t)
 
-	ids, err := idx.Search("", 10)
-	require.NoError(t, err)
+	ids := searchIDs(t, idx, "", 10)
 	assert.Nil(t, ids)
 
-	ids, err = idx.Search("   ", 10)
-	require.NoError(t, err)
+	ids = searchIDs(t, idx, "   ", 10)
 	assert.Nil(t, ids)
 }
 
@@ -262,8 +248,7 @@ func TestIndex_WildcardSearch(t *testing.T) {
 	e2.SetString("title", "Authorization rules")
 	require.NoError(t, idx.EntityPut(e2))
 
-	ids, err := idx.Search("auth*", 10)
-	require.NoError(t, err)
+	ids := searchIDs(t, idx, "auth*", 10)
 	assert.Contains(t, ids, "REQ-1")
 	assert.Contains(t, ids, "REQ-2")
 }
@@ -286,8 +271,7 @@ func TestNew_PersistentIndex(t *testing.T) {
 	require.NoError(t, err)
 	defer idx2.Close()
 
-	ids, err := idx2.Search("persistent", 10)
-	require.NoError(t, err)
+	ids := searchIDs(t, idx2, "persistent", 10)
 	assert.Contains(t, ids, "REQ-1")
 }
 
@@ -319,8 +303,7 @@ func TestNew_CorruptedIndexRecovery(t *testing.T) {
 	defer idx2.Close()
 
 	// Old data is gone (index was recreated), but the index works.
-	ids, err := idx2.Search("lost", 10)
-	require.NoError(t, err)
+	ids := searchIDs(t, idx2, "lost", 10)
 	assert.Empty(t, ids, "old data should not survive corruption recovery")
 
 	// Can index new data.
@@ -328,7 +311,29 @@ func TestNew_CorruptedIndexRecovery(t *testing.T) {
 	e2.SetString("title", "Fresh start")
 	require.NoError(t, idx2.EntityPut(e2))
 
-	ids, err = idx2.Search("fresh", 10)
-	require.NoError(t, err)
+	ids = searchIDs(t, idx2, "fresh", 10)
 	assert.Contains(t, ids, "REQ-2")
+}
+
+// searchIDs runs a DEFAULT-WORLD search and returns just the ids, which is
+// what the pre-worlds assertions in this file are written against. World
+// behavior has its own tests; these keep asserting the properties that hold
+// regardless of worlds (ranking, limits, rename/delete eviction).
+func searchIDs(t *testing.T, idx *bleveindex.Index, text string, limit int) []string {
+	t.Helper()
+	faces, err := idx.Search(text, limit, store.DefaultWorld())
+	if err != nil {
+		t.Fatalf("Search(%q, %d): %v", text, limit, err)
+	}
+	if faces == nil {
+		// Preserve the nil-vs-empty distinction the callers assert on: an
+		// empty query returns NO result set, which is not the same shape as
+		// a query that ran and matched nothing.
+		return nil
+	}
+	ids := make([]string, 0, len(faces))
+	for _, f := range faces {
+		ids = append(ids, f.ID)
+	}
+	return ids
 }

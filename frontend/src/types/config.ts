@@ -63,6 +63,25 @@ export interface AppConfig {
    * client-side casing transform.
    */
   plantuml_server_url?: string
+  // The world a request lands in when the URL names none. '' / absent means
+  // the raw default faces. Presentation only — the read grant is re-checked
+  // per request, so this changes which face a bare URL resolves to, not who
+  // may see it.
+  default_world?: string
+  // Whether THIS DEPLOYMENT can serve version history. Content versioning is
+  // a postgres-only optional store capability; on fs/mem the `/_history`
+  // endpoint answers a named 501.
+  //
+  // Consumers render the History affordance ABSENT when false — not disabled.
+  // A greyed-out button still advertises a feature the deployment does not
+  // have, and an ungated one can only fail.
+  //
+  // Absent (a server too old to send it) is treated as FALSE by the store,
+  // unlike `worldReadable`'s unknown-is-permitted default. The directions
+  // differ because the mistakes differ: hiding a working History button is a
+  // missing feature someone reports, while showing a broken one on every fs
+  // deployment is the affordance-that-lies shape this flag exists to remove.
+  history_enabled?: boolean
 }
 
 export interface FormConfig {
@@ -200,6 +219,13 @@ export interface ListConfig {
   filter_controls?: FilterControl[]
   default_sort?: SortSpec[]
   create_form?: string
+  /**
+   * World the create button opens its form in, when a new entity belongs in a
+   * different face than this list shows (a published ISMS list creates a
+   * draft). Empty means the list's own world. The button is gated on the
+   * principal being able to read THIS world, not the ambient one.
+   */
+  create_world?: string
   edit_form?: string
   page_size?: number
   actions?: string[]

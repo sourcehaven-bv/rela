@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"iter"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -15,43 +16,45 @@ import (
 
 // --- EntityReader ---
 
-func (s *FSStore) GetEntity(_ context.Context, id string) (*entity.Entity, error) {
+func (s *FSStore) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
+	// The bare id IS the default state's index key (stateKey(id, zero)).
+	return s.GetEntityState(ctx, id, "")
+}
+
+func (s *FSStore) GetEntityState(_ context.Context, id string, p entity.Face) (*entity.Entity, error) {
+	key := stateKey(id, p)
 	s.mu.RLock()
-	meta, ok := s.entities[id]
+	meta, ok := s.entities[key]
 	s.mu.RUnlock()
 
 	if !ok {
 		return nil, store.ErrNotFound
 	}
-
-	e, err := s.loadEntity(meta.ID, meta.Type)
-	if err != nil {
-		return nil, err
-	}
-	return e, nil
+	return s.loadEntityMeta(meta)
 }
 
 func (s *FSStore) ListEntities(_ context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error] {
+	if err := storeutil.ValidateEntityQuery(q); err != nil {
+		return func(yield func(*entity.Entity, error) bool) { yield(nil, err) }
+	}
 	s.mu.RLock()
 	idSet := entityIDSet(q.IDs)
 
-	// Collect matching IDs + types from index.
-	type idType struct {
-		id, typ string
-	}
-	matches := make([]idType, 0)
-	for _, id := range s.entityOrder {
-		if !matchEntityQuery(s.entities[id], q, idSet) {
+	// Collect matching metas from index.
+	matches := make([]entityMeta, 0)
+	for _, key := range s.entityOrder {
+		if !matchEntityQuery(s.entities[key], q, idSet) {
 			continue
 		}
-		meta := s.entities[id]
-		matches = append(matches, idType{meta.ID, meta.Type})
+		matches = append(matches, s.entities[key])
 	}
 	s.mu.RUnlock()
 
+	matches = keepPrimes(q.World, matches)
+
 	return func(yield func(*entity.Entity, error) bool) {
 		for _, m := range matches {
-			e, err := s.loadEntity(m.id, m.typ)
+			e, err := s.loadEntityMeta(m)
 			if err != nil {
 				if !yield(nil, err) {
 					return
@@ -66,6 +69,9 @@ func (s *FSStore) ListEntities(_ context.Context, q store.EntityQuery) iter.Seq2
 }
 
 func (s *FSStore) ListEntitiesPage(_ context.Context, q store.EntityQuery) (store.Page[*entity.Entity], error) {
+	if err := storeutil.ValidateEntityQuery(q); err != nil {
+		return store.Page[*entity.Entity]{}, err
+	}
 	cursorKey, err := storeutil.DecodeCursor(q.Cursor)
 	if err != nil {
 		return store.Page[*entity.Entity]{}, err
@@ -73,24 +79,39 @@ func (s *FSStore) ListEntitiesPage(_ context.Context, q store.EntityQuery) (stor
 
 	s.mu.RLock()
 	idSet := entityIDSet(q.IDs)
-	keys := storeutil.PaginateSortedKeys(s.entityOrder, cursorKey, q.Limit, func(id string) bool {
-		return matchEntityQuery(s.entities[id], q, idSet)
-	})
+	matches := func(id string) bool { return matchEntityQuery(s.entities[id], q, idSet) }
 
-	// Capture (id, type) pairs while still holding the lock — loadEntity
-	// needs the type and we must not call it under the lock.
-	type idType struct{ id, typ string }
-	pairs := make([]idType, 0, len(keys.Keys))
-	for _, id := range keys.Keys {
-		if meta, ok := s.entities[id]; ok {
-			pairs = append(pairs, idType{meta.ID, meta.Type})
+	var keys storeutil.PageKeys
+	if q.World.IsDefaultWorld() {
+		keys = storeutil.PaginateSortedKeysFunc(
+			s.entityOrder, cursorKey, q.Limit, matches, storeutil.CompareStateKeys)
+	} else {
+		// The world path buffers ONE family at a time and counts PRIMES
+		// against the limit — see storeutil.PaginateWorldPrimes.
+		keys = storeutil.PaginateWorldPrimes(
+			s.entityOrder, cursorKey, q.Limit, q.World, matches,
+			func(key string) (storeutil.WorldCandidate, bool) {
+				m, ok := s.entities[key]
+				if !ok {
+					return storeutil.WorldCandidate{}, false
+				}
+				return storeutil.WorldCandidate{ID: m.ID, Type: m.Type, Face: m.Face}, true
+			})
+	}
+
+	// Capture metas while still holding the lock — loading needs the
+	// type and face and we must not do I/O under the lock.
+	pairs := make([]entityMeta, 0, len(keys.Keys))
+	for _, key := range keys.Keys {
+		if meta, ok := s.entities[key]; ok {
+			pairs = append(pairs, meta)
 		}
 	}
 	s.mu.RUnlock()
 
 	items := make([]*entity.Entity, 0, len(pairs))
 	for _, p := range pairs {
-		e, err := s.loadEntity(p.id, p.typ)
+		e, err := s.loadEntityMeta(p)
 		if err != nil {
 			return store.Page[*entity.Entity]{}, err
 		}
@@ -112,38 +133,65 @@ func entityIDSet(ids []string) map[string]bool {
 	return set
 }
 
-// matchEntityQuery reports whether an indexed entity satisfies q's Type
-// and IDs filters. idSet must be pre-computed from q.IDs.
+// matchEntityQuery adapts this backend's index metadata to the shared
+// rule in storeutil. The rule itself must not live here: memstore
+// applies the identical filter, and the two byte-similar copies this
+// replaced are exactly the drift storetest exists to catch.
 func matchEntityQuery(m entityMeta, q store.EntityQuery, idSet map[string]bool) bool {
-	if q.Type != "" && m.Type != q.Type {
-		return false
-	}
-	if len(idSet) > 0 && !idSet[m.ID] {
-		return false
-	}
-	return true
+	return storeutil.MatchEntityQuery(m.Type, m.ID, m.Face, q, idSet)
 }
 
 func (s *FSStore) CountEntities(_ context.Context, q store.EntityQuery) (int, error) {
+	if err := storeutil.ValidateEntityQuery(q); err != nil {
+		return 0, err
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	idSet := make(map[string]bool, len(q.IDs))
-	for _, id := range q.IDs {
-		idSet[id] = true
+	idSet := entityIDSet(q.IDs)
+
+	// The default world resolves every row to itself, so counting needs
+	// no buffer — and this is the common path for a project that never
+	// declares a face, which must stay allocation-free.
+	if q.World.IsDefaultWorld() {
+		n := 0
+		for _, meta := range s.entities {
+			if matchEntityQuery(meta, q, idSet) {
+				n++
+			}
+		}
+		return n, nil
 	}
 
-	count := 0
+	matches := make([]entityMeta, 0)
 	for _, meta := range s.entities {
-		if q.Type != "" && meta.Type != q.Type {
-			continue
+		if matchEntityQuery(meta, q, idSet) {
+			matches = append(matches, meta)
 		}
-		if len(idSet) > 0 && !idSet[meta.ID] {
-			continue
-		}
-		count++
 	}
-	return count, nil
+	// Counts must be world-scoped, not raw: an unscoped tally tells a
+	// published-world surface how many unpublished drafts exist.
+	return len(keepPrimes(q.World, matches)), nil
+}
+
+// keepPrimes resolves a world over matched index metadata, returning
+// only each entity's prime. A no-op for the default world.
+func keepPrimes(w store.WorldScope, metas []entityMeta) []entityMeta {
+	if w.IsDefaultWorld() || len(metas) == 0 {
+		return metas
+	}
+	cands := make([]storeutil.WorldCandidate, len(metas))
+	for i, m := range metas {
+		cands[i] = storeutil.WorldCandidate{ID: m.ID, Type: m.Type, Face: m.Face}
+	}
+	primes := storeutil.WorldPrimes(w, cands)
+	kept := make([]entityMeta, 0, len(primes))
+	for _, m := range metas {
+		if p, ok := primes[m.ID]; ok && p == m.Face {
+			kept = append(kept, m)
+		}
+	}
+	return kept
 }
 
 func (s *FSStore) HighestID(_ context.Context, prefix string) (int, error) {
@@ -152,7 +200,11 @@ func (s *FSStore) HighestID(_ context.Context, prefix string) (int, error) {
 
 	highest := 0
 	pfx := prefix + "-"
-	for id := range s.entities {
+	for _, meta := range s.entities {
+		if !meta.Face.IsDefault() {
+			continue // states share the base id's number
+		}
+		id := meta.ID
 		if !strings.HasPrefix(id, pfx) {
 			continue
 		}
@@ -191,13 +243,25 @@ func (s *FSStore) PropertyValues(_ context.Context, property string, limit int) 
 // A free function rather than a method — FSStore is at its plimsoll
 // max-methods line, and this needs no receiver state beyond the index.
 // Callers must hold s.mu.
+// idTaken folds on the BARE entity id (meta.ID): any state of an
+// entity claims the whole identity, so a new id collides with an
+// existing family regardless of which states it has.
+//
+// except is a BARE id matched case-folded — it skips that entire
+// family, not one exact key (a rename may change its own casing, and
+// its states must not self-collide either). Wider than the historical
+// exact-key skip on purpose.
 func idTaken(index map[string]entityMeta, id, except string) bool {
 	folded := storeutil.FoldID(id)
-	for existing := range index {
-		if existing == except {
+	exceptFolded := ""
+	if except != "" {
+		exceptFolded = storeutil.FoldID(except)
+	}
+	for _, meta := range index {
+		if exceptFolded != "" && storeutil.FoldID(meta.ID) == exceptFolded {
 			continue
 		}
-		if storeutil.FoldID(existing) == folded {
+		if storeutil.FoldID(meta.ID) == folded {
 			return true
 		}
 	}
@@ -212,11 +276,31 @@ func (s *FSStore) createEntity(_ context.Context, e *entity.Entity) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Case-folded: on a case-insensitive filesystem (macOS, Windows) "ABC"
-	// and "abc" are the same file, so a byte-exact check here would let the
-	// write silently overwrite the existing entity (BUG-3RCWNS).
-	if idTaken(s.entities, e.ID, "") {
-		return store.ErrConflict
+	key := stateKey(e.ID, e.Face)
+	if e.Face.IsDefault() {
+		// Case-folded: on a case-insensitive filesystem (macOS, Windows)
+		// "ABC" and "abc" are the same file, so a byte-exact check here
+		// would let the write silently overwrite the existing entity
+		// (BUG-3RCWNS).
+		if idTaken(s.entities, e.ID, "") {
+			return store.ErrConflict
+		}
+	} else {
+		// Row-family invariants (TKT-DOFYR1, design doc §6): a
+		// non-default state requires its default row (no headless
+		// states) and must share the family's type. Enforced at the
+		// store so every direct writer hits one choke point; the LOAD
+		// path deliberately tolerates violations found on disk.
+		def, ok := s.entities[e.ID]
+		if !ok {
+			return storeutil.HeadlessStateError(e.ID)
+		}
+		if def.Type != e.Type {
+			return storeutil.StateTypeMismatchError(e.ID, e.Face, e.Type, def.Type)
+		}
+		if _, exists := s.entities[key]; exists {
+			return store.ErrConflict
+		}
 	}
 
 	// Write to disk
@@ -227,15 +311,18 @@ func (s *FSStore) createEntity(_ context.Context, e *entity.Entity) error {
 	}
 
 	// Update index
-	s.entities[e.ID] = entityMeta{ID: e.ID, Type: e.Type}
-	s.entityOrder = storeutil.SortedInsert(s.entityOrder, e.ID)
-	addEntityToCache(s.propCache, stored)
+	s.entities[key] = entityMeta{ID: e.ID, Type: e.Type, Face: e.Face}
+	s.entityOrder = storeutil.SortedInsertFunc(s.entityOrder, key, storeutil.CompareStateKeys)
+	if stored.Face.IsDefault() {
+		addEntityToCache(s.propCache, stored)
+	}
 	s.notifyPut(stored)
 
 	s.emit(store.Event{
 		Op:         store.EventEntityCreated,
 		EntityType: e.Type,
 		EntityID:   e.ID,
+		Face:       e.Face,
 	})
 	return nil
 }
@@ -244,13 +331,19 @@ func (s *FSStore) updateEntity(_ context.Context, e *entity.Entity) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	meta, exists := s.entities[e.ID]
+	key := stateKey(e.ID, e.Face)
+	meta, exists := s.entities[key]
 	if !exists {
 		return store.ErrNotFound
 	}
+	// Row-family invariant: a non-default state cannot be re-typed away
+	// from its family (TKT-DOFYR1, design doc §6).
+	if !e.Face.IsDefault() && e.Type != meta.Type {
+		return storeutil.StateTypeMismatchError(e.ID, e.Face, e.Type, meta.Type)
+	}
 
 	// Load old entity for prop cache diff.
-	old, err := s.loadEntity(meta.ID, meta.Type)
+	old, err := s.loadEntityMeta(meta)
 	if err != nil {
 		return err
 	}
@@ -274,75 +367,99 @@ func (s *FSStore) updateEntity(_ context.Context, e *entity.Entity) error {
 	}
 
 	// Update index
-	s.entities[e.ID] = entityMeta{ID: e.ID, Type: e.Type}
-	removeEntityFromCache(s.propCache, old)
-	addEntityToCache(s.propCache, stored)
+	s.entities[key] = entityMeta{ID: e.ID, Type: e.Type, Face: e.Face}
+	if e.Face.IsDefault() {
+		removeEntityFromCache(s.propCache, old)
+		addEntityToCache(s.propCache, stored)
+	}
 	s.notifyPut(stored)
 
 	s.emit(store.Event{
 		Op:         store.EventEntityUpdated,
 		EntityType: e.Type,
 		EntityID:   e.ID,
+		Face:       e.Face,
 	})
 	return nil
+}
+
+// stateFamily returns every indexed state of the bare id, sorted by
+// face (default first), plus every relation touching the id on
+// either endpoint. Defensive family scan (works for a headless family
+// tolerated from disk, design doc §6); the bare From/To match sweeps
+// every tail face. Callers must hold s.mu.
+func (s *FSStore) stateFamily(id string) (family []entityMeta, related []relationMeta) {
+	for _, meta := range s.entities {
+		if meta.ID == id {
+			family = append(family, meta)
+		}
+	}
+	sort.Slice(family, func(i, j int) bool { return family[i].Face < family[j].Face })
+	for _, rm := range s.relations {
+		if rm.From == id || rm.To == id {
+			related = append(related, rm)
+		}
+	}
+	return family, related
 }
 
 func (s *FSStore) deleteEntity(_ context.Context, id string, cascade bool) (*store.DeleteResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	meta, ok := s.entities[id]
-	if !ok {
+	// Delete addresses the whole state FAMILY of the bare id
+	// (TKT-DOFYR1): every state row plus all their relations.
+	family, related := s.stateFamily(id)
+	if len(family) == 0 {
 		return nil, store.ErrNotFound
-	}
-
-	// Find related relations from index.
-	var related []relationMeta
-	for _, rm := range s.relations {
-		if rm.From == id || rm.To == id {
-			related = append(related, rm)
-		}
 	}
 
 	if !cascade && len(related) > 0 {
 		return nil, fmt.Errorf("%w: entity %s has %d relation(s)", store.ErrHasRelations, id, len(related))
 	}
 
-	// Load entity for result and prop cache.
-	e, err := s.loadEntity(meta.ID, meta.Type)
-	if err != nil {
-		return nil, err
+	// Load every state for the result and prop cache.
+	states := make([]*entity.Entity, 0, len(family))
+	for _, meta := range family {
+		e, err := s.loadEntityMeta(meta)
+		if err != nil {
+			return nil, err
+		}
+		states = append(states, e)
 	}
 
 	// Load relations for result.
 	deletedRelations := make([]*entity.Relation, 0)
 	for _, rm := range related {
-		r, loadErr := s.loadRelation(rm.From, rm.Type, rm.To)
+		r, loadErr := s.loadRelationMeta(rm)
 		if loadErr != nil {
 			r = entity.NewRelation(rm.From, rm.Type, rm.To)
+			r.FromFace = rm.FromFace
 		}
 		deletedRelations = append(deletedRelations, r)
 	}
 
-	// Delete relation files first, then the entity file. A real removal
-	// error (not "already gone") aborts before the entity file is touched
+	// Delete relation files first, then the entity files. A real removal
+	// error (not "already gone") aborts before the entity files are touched
 	// and before the in-memory index is mutated, so the entity is never
 	// removed while one of its relations could not be — fail-secure, no
 	// orphaned-from entity (BUG-C20T / issue #888). Not transactional: a
 	// relation file removed before a later failure stays removed, but the
 	// whole op runs under s.mu and the index is updated only on success.
 	for _, rm := range related {
-		key := s.layout.relationFileKey(rm.From, rm.Type, rm.To)
+		key := s.layout.relationFileKeyMeta(rm)
 		if err := s.rooted.Remove(key); err != nil && !os.IsNotExist(err) {
-			return nil, fmt.Errorf("delete relation file %s--%s--%s: %w", rm.From, rm.Type, rm.To, err)
+			return nil, fmt.Errorf("delete relation file %s: %w", rm.key(), err)
 		}
 		s.echoes.Forget(s.layout.absPath(key))
 	}
-	key := s.layout.entityFileKey(meta.Type, id)
-	if err := s.rooted.Remove(key); err != nil && !os.IsNotExist(err) {
-		return nil, err
+	for _, meta := range family {
+		key := s.layout.entityFileKey(meta.Type, stateKey(meta.ID, meta.Face))
+		if err := s.rooted.Remove(key); err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
+		s.echoes.Forget(s.layout.absPath(key))
 	}
-	s.echoes.Forget(s.layout.absPath(key))
 
 	// Cascade attachments — under the per-entity layout the
 	// attachment directory is owned 1:1 by the entity.
@@ -351,37 +468,205 @@ func (s *FSStore) deleteEntity(_ context.Context, id string, cascade bool) (*sto
 	}
 
 	// Update index
-	delete(s.entities, id)
-	s.entityOrder = storeutil.SortedRemove(s.entityOrder, id)
-	removeEntityFromCache(s.propCache, e)
-	s.notifyDelete(id)
+	for i, meta := range family {
+		key := stateKey(meta.ID, meta.Face)
+		delete(s.entities, key)
+		s.entityOrder = storeutil.SortedRemoveFunc(s.entityOrder, key, storeutil.CompareStateKeys)
+		if meta.Face.IsDefault() {
+			removeEntityFromCache(s.propCache, states[i])
+		}
+		s.notifyFaceDelete(meta.ID, meta.Face)
+	}
+	// The whole family went, so the bare-id observers hear one delete.
+	s.notifyLastFaceDelete(id)
 
 	for _, rm := range related {
-		key := rm.From + "--" + rm.Type + "--" + rm.To
+		key := rm.key()
 		delete(s.relations, key)
 		s.relationOrder = storeutil.SortedRemove(s.relationOrder, key)
 	}
 
 	result := &store.DeleteResult{
-		DeletedEntities:  []*entity.Entity{e},
+		DeletedEntities:  states,
 		DeletedRelations: deletedRelations,
 	}
+	s.emitFamilyDeleted(family, related)
+	return result, nil
+}
 
-	s.emit(store.Event{
-		Op:         store.EventEntityDeleted,
-		EntityType: meta.Type,
-		EntityID:   id,
-	})
+// deleteEntityState removes ONE face and only the edges belonging to it
+// (TKT-C1XUA8). Contrast deleteEntity above, which sweeps the whole family
+// and every incident edge on both sides.
+//
+// Keeps that function's fail-secure file ordering: relation files first,
+// then the entity file, with a real removal error aborting before the
+// in-memory index is touched.
+func (s *FSStore) deleteEntityState(
+	_ context.Context, id string, p entity.Face,
+) (*store.DeleteResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key := stateKey(id, p)
+	meta, ok := s.entities[key]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+
+	// Refuse to orphan the family: a family with no default row has no
+	// defined meaning and world fallback resolves against it. Deleting the
+	// LAST face is fine — nothing is left to orphan.
+	if p.IsDefault() {
+		if n := s.familySize(id); n > 1 {
+			return nil, fmt.Errorf(
+				"%w: cannot delete the default face of %s while %d other state(s) remain",
+				store.ErrInvalidQuery, id, n-1)
+		}
+	}
+
+	e, err := s.loadEntityMeta(meta)
+	if err != nil {
+		return nil, err
+	}
+
+	// OUTGOING edges on this tail go with the face. INCOMING edges do NOT:
+	// heads are entity-level (§2.3), so an inbound edge points at the entity
+	// and survives its faces.
+	var owned []relationMeta
+	for _, rm := range s.relations {
+		if rm.From == id && rm.FromFace == p {
+			owned = append(owned, rm)
+		}
+	}
+	sort.Slice(owned, func(i, j int) bool { return owned[i].key() < owned[j].key() })
+
+	deletedRelations := make([]*entity.Relation, 0, len(owned))
+	for _, rm := range owned {
+		r, loadErr := s.loadRelationMeta(rm)
+		if loadErr != nil {
+			r = entity.NewRelation(rm.From, rm.Type, rm.To)
+			r.FromFace = rm.FromFace
+		}
+		deletedRelations = append(deletedRelations, r)
+	}
+
+	for _, rm := range owned {
+		fileKey := s.layout.relationFileKeyMeta(rm)
+		if rerr := s.rooted.Remove(fileKey); rerr != nil && !os.IsNotExist(rerr) {
+			return nil, fmt.Errorf("delete relation file %s: %w", rm.key(), rerr)
+		}
+		s.echoes.Forget(s.layout.absPath(fileKey))
+	}
+	entKey := s.layout.entityFileKey(meta.Type, key)
+	if rerr := s.rooted.Remove(entKey); rerr != nil && !os.IsNotExist(rerr) {
+		return nil, rerr
+	}
+	s.echoes.Forget(s.layout.absPath(entKey))
+
+	// The attachment directory is owned 1:1 by the ENTITY, not by a face, so
+	// it only goes when the last face does — a discarded draft must not
+	// destroy attachments the surviving faces serve.
+	//
+	// This runs BEFORE the index mutations below, matching deleteEntity's
+	// fail-secure ordering: every fallible filesystem operation completes
+	// first, so an error returns with the in-memory index still matching what
+	// is on disk. Removing it afterwards would leave a caller who saw an
+	// error with the entity already gutted from the index — a divergence
+	// nothing reconciles until restart.
+	lastFace := s.familySize(id) == 1
+	if lastFace {
+		if aerr := s.removeAttachmentDir(id); aerr != nil {
+			return nil, aerr
+		}
+	}
+
+	delete(s.entities, key)
+	s.entityOrder = storeutil.SortedRemoveFunc(s.entityOrder, key, storeutil.CompareStateKeys)
+	if p.IsDefault() {
+		removeEntityFromCache(s.propCache, e)
+	}
+	for _, rm := range owned {
+		rk := rm.key()
+		delete(s.relations, rk)
+		s.relationOrder = storeutil.SortedRemove(s.relationOrder, rk)
+	}
+
+	// Face-aware observers are told exactly which face went. Bare-id
+	// observers can only express "the entity is gone", so they are
+	// notified solely when the last face goes — otherwise they would
+	// de-index an entity that still exists.
+	s.notifyFaceDelete(id, p)
+	if lastFace {
+		s.notifyLastFaceDelete(id)
+	}
+
+	s.emitFamilyDeleted([]entityMeta{meta}, owned)
+	return &store.DeleteResult{
+		DeletedEntities:  []*entity.Entity{e},
+		DeletedRelations: deletedRelations,
+	}, nil
+}
+
+// familySize counts the indexed state rows of a bare id. Callers must hold
+// s.mu.
+func (s *FSStore) familySize(id string) int {
+	n := 0
+	for _, meta := range s.entities {
+		if meta.ID == id {
+			n++
+		}
+	}
+	return n
+}
+
+// emitFamilyDeleted emits per-state entity-deleted events and per-edge
+// relation-deleted events for a cascaded family delete. Each event
+// carries its own state's type — the load path tolerates a mistyped
+// state on disk, so famType-for-all would misreport it.
+func (s *FSStore) emitFamilyDeleted(family []entityMeta, related []relationMeta) {
+	for _, meta := range family {
+		s.emit(store.Event{
+			Op:         store.EventEntityDeleted,
+			EntityType: meta.Type,
+			EntityID:   meta.ID,
+			Face:       meta.Face,
+		})
+	}
 	for _, rm := range related {
 		s.emit(store.Event{
 			Op:           store.EventRelationDeleted,
 			RelationType: rm.Type,
 			From:         rm.From,
 			To:           rm.To,
+			Face:         rm.FromFace,
 		})
 	}
+}
 
-	return result, nil
+// rewriteRelationFiles rewrites every relation file in metas, moving
+// endpoints from oldID to newID; the tail face rides along
+// unchanged. Old files are removed after the new ones are written.
+func (s *FSStore) rewriteRelationFiles(metas []relationMeta, oldID, newID string) error {
+	for _, rm := range metas {
+		r, loadErr := s.loadRelationMeta(rm)
+		if loadErr != nil {
+			r = entity.NewRelation(rm.From, rm.Type, rm.To)
+			r.FromFace = rm.FromFace
+		}
+		if r.From == oldID {
+			r.From = newID
+		}
+		if r.To == oldID {
+			r.To = newID
+		}
+		if writeErr := s.writeRelation(r); writeErr != nil {
+			return writeErr
+		}
+		oldKey := s.layout.relationFileKeyMeta(rm)
+		_ = s.rooted.Remove(oldKey)
+		s.echoes.Forget(s.layout.absPath(oldKey))
+	}
+	return nil
 }
 
 func (s *FSStore) renameEntity(_ context.Context, oldID, newID string) (*store.RenameResult, error) {
@@ -392,69 +677,52 @@ func (s *FSStore) renameEntity(_ context.Context, oldID, newID string) (*store.R
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	meta, ok := s.entities[oldID]
-	if !ok {
+	// Rename addresses the whole state FAMILY of the bare id
+	// (TKT-DOFYR1): every state file is re-keyed onto the new id, and
+	// every relation of every state follows.
+	family, toUpdate := s.stateFamily(oldID)
+	if len(family) == 0 {
 		return nil, store.ErrNotFound
 	}
+
 	// except=oldID: an entity may change its own casing (abc -> ABC).
+	// idTaken folds on the bare id, so ANY state of another entity under
+	// the new id is a conflict.
 	if idTaken(s.entities, newID, oldID) {
 		return nil, store.ErrConflict
 	}
 
-	// Load entity from disk.
-	e, err := s.loadEntity(meta.ID, meta.Type)
-	if err != nil {
+	// Load, re-id, and write every state; remember the default state
+	// for the observers.
+	var renamedDefault *entity.Entity
+	renamedStates := make([]*entity.Entity, 0, len(family))
+	for _, meta := range family {
+		e, err := s.loadEntityMeta(meta)
+		if err != nil {
+			return nil, err
+		}
+		renamed := e.Clone()
+		renamed.ID = newID
+		renamed.UpdatedAt = time.Now()
+		if err := s.writeEntity(renamed); err != nil {
+			return nil, err
+		}
+		renamedStates = append(renamedStates, renamed)
+		if renamed.Face.IsDefault() {
+			renamedDefault = renamed
+		}
+	}
+
+	if err := s.rewriteRelationFiles(toUpdate, oldID, newID); err != nil {
 		return nil, err
 	}
 
-	// Prepare renamed entity.
-	renamed := e.Clone()
-	renamed.ID = newID
-	renamed.UpdatedAt = time.Now()
-
-	// Write new entity file.
-	if err := s.writeEntity(renamed); err != nil {
-		return nil, err
-	}
-
-	// Find and update affected relations.
-	var toUpdate []relationMeta
-	for _, rm := range s.relations {
-		if rm.From == oldID || rm.To == oldID {
-			toUpdate = append(toUpdate, rm)
-		}
-	}
-
-	for _, rm := range toUpdate {
-		// Load relation.
-		r, loadErr := s.loadRelation(rm.From, rm.Type, rm.To)
-		if loadErr != nil {
-			r = entity.NewRelation(rm.From, rm.Type, rm.To)
-		}
-
-		// Update endpoints.
-		if r.From == oldID {
-			r.From = newID
-		}
-		if r.To == oldID {
-			r.To = newID
-		}
-
-		// Write new relation file.
-		if writeErr := s.writeRelation(r); writeErr != nil {
-			return nil, writeErr
-		}
-
-		// Delete old relation file.
-		oldKey := s.layout.relationFileKey(rm.From, rm.Type, rm.To)
+	// Delete old entity files.
+	for _, meta := range family {
+		oldKey := s.layout.entityFileKey(meta.Type, stateKey(meta.ID, meta.Face))
 		_ = s.rooted.Remove(oldKey)
 		s.echoes.Forget(s.layout.absPath(oldKey))
 	}
-
-	// Delete old entity file.
-	oldKey := s.layout.entityFileKey(meta.Type, oldID)
-	_ = s.rooted.Remove(oldKey)
-	s.echoes.Forget(s.layout.absPath(oldKey))
 
 	// Move the attachment directory (if any) onto the new ID.
 	if err := s.renameAttachmentDir(oldID, newID); err != nil {
@@ -462,15 +730,43 @@ func (s *FSStore) renameEntity(_ context.Context, oldID, newID string) (*store.R
 	}
 
 	// Update entity index.
-	delete(s.entities, oldID)
-	s.entityOrder = storeutil.SortedRemove(s.entityOrder, oldID)
-	s.entities[newID] = entityMeta{ID: newID, Type: meta.Type}
-	s.entityOrder = storeutil.SortedInsert(s.entityOrder, newID)
-	s.notifyRenamed(oldID, renamed)
+	for _, meta := range family {
+		oldKey := stateKey(meta.ID, meta.Face)
+		delete(s.entities, oldKey)
+		s.entityOrder = storeutil.SortedRemoveFunc(s.entityOrder, oldKey, storeutil.CompareStateKeys)
+		newKey := stateKey(newID, meta.Face)
+		s.entities[newKey] = entityMeta{ID: newID, Type: meta.Type, Face: meta.Face}
+		s.entityOrder = storeutil.SortedInsertFunc(s.entityOrder, newKey, storeutil.CompareStateKeys)
+	}
+	// EVERY face is renamed (TKT-9KZGJO). Indexes key documents per face, so
+	// each one needs its own re-key; announcing only the default face would
+	// strand every sibling under an id that no longer exists.
+	//
+	// The default face goes FIRST when it exists. An index implements
+	// EntityRenamed as "drop the old family, insert this face", so the first
+	// call does the removal and later ones add siblings back — starting with
+	// a non-default face would work identically, but leading with the
+	// family's identity row keeps the notification order matching every
+	// other path.
+	//
+	// A headless family (tolerated from disk, design doc §6) has no default
+	// face and is announced through the faces it does have. Under the Step-1
+	// bare-id keying that had to notify NOTHING, since handing an observer a
+	// non-default state would overwrite the bare-id document; per-face
+	// keying removes that hazard.
+	if renamedDefault != nil {
+		s.notifyRenamed(oldID, renamedDefault)
+	}
+	for _, renamed := range renamedStates {
+		if renamed.Face.IsDefault() {
+			continue // already announced above
+		}
+		s.notifyRenamed(oldID, renamed)
+	}
 
 	// Update relation index.
 	for _, rm := range toUpdate {
-		oldKey := rm.From + "--" + rm.Type + "--" + rm.To
+		oldKey := rm.key()
 		delete(s.relations, oldKey)
 		s.relationOrder = storeutil.SortedRemove(s.relationOrder, oldKey)
 
@@ -481,16 +777,20 @@ func (s *FSStore) renameEntity(_ context.Context, oldID, newID string) (*store.R
 		if newTo == oldID {
 			newTo = newID
 		}
-		newKey := newFrom + "--" + rm.Type + "--" + newTo
-		s.relations[newKey] = relationMeta{From: newFrom, Type: rm.Type, To: newTo}
+		newMeta := relationMeta{From: newFrom, Type: rm.Type, To: newTo, FromFace: rm.FromFace}
+		newKey := newMeta.key()
+		s.relations[newKey] = newMeta
 		s.relationOrder = storeutil.SortedInsert(s.relationOrder, newKey)
 	}
 
-	s.emit(store.Event{
-		Op:         store.EventEntityUpdated,
-		EntityType: meta.Type,
-		EntityID:   newID,
-	})
+	for _, renamed := range renamedStates {
+		s.emit(store.Event{
+			Op:         store.EventEntityUpdated,
+			EntityType: renamed.Type,
+			EntityID:   newID,
+			Face:       renamed.Face,
+		})
+	}
 
 	return &store.RenameResult{RelationsUpdated: len(toUpdate)}, nil
 }

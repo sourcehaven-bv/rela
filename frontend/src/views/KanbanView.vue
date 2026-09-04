@@ -6,10 +6,18 @@ import { useSchemaStore, useUIStore } from '@/stores'
 import { listAllEntities, updateEntity, getErrorMessage } from '@/api'
 import { entityKeys } from '@/queries/entities'
 import { beginOptimistic, rollbackOptimistic, settleOptimistic } from '@/queries/optimisticList'
-import type { Entity, KanbanConfig, KanbanCardField, KanbanColumn, KanbanSwimlane } from '@/types'
+import type {
+  Entity,
+  KanbanConfig,
+  KanbanCardField,
+  KanbanColumn,
+  KanbanSwimlane,
+  ListParams,
+} from '@/types'
 import { viewHeaderMarkdown, viewFooterMarkdown } from '@/types'
 import BackButton from '@/components/common/BackButton.vue'
 import { useBackTarget } from '@/composables/useBackTarget'
+import { useWorld } from '@/composables/useWorld'
 import { actionAllowed } from '@/utils/affordancesWarning'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { renderMarkdown } from '@/utils/markdown'
@@ -17,6 +25,7 @@ import { hasIcon, resolveIcon } from '@/utils/icons'
 import { formatCellValue } from '@/utils/format'
 import { densePropertyRoutingHint } from '@/widgets/viewRouting'
 import CardFieldList, { type ResolvedCardField } from '@/components/common/CardFieldList.vue'
+import WorldBadge from '@/components/entity/WorldBadge.vue'
 import { defaultRegistry } from '@/widgets/registry'
 import type { DenseRoutingHint } from '@/widgets/viewRouting'
 
@@ -36,14 +45,62 @@ const backTarget = useBackTarget()
 const filterValues = ref<Record<string, string>>({})
 const draggedCard = ref<Entity | null>(null)
 
+// The selected world (`?world=`). A board is a projection through a world
+// exactly as a list is: it decides which face each card shows AND which
+// entities are on the board at all, since an entity with no face in the world
+// is omitted entirely.
+//
+// `worldParam` is undefined under the default world, so it spreads into the
+// params object without emitting an empty `?world=` — and it is part of the
+// CACHE KEY below for the same reason EntityList keys on its params: two
+// worlds are two different boards, and serving one from the other's cache
+// would show faces the reader did not ask for.
+const { world, isWorldBound, worldParam, setWorld } = useWorld()
+
+// The operator's announcement for the world on screen, or '' to announce
+// nothing — the same split the list and detail pages make. Config, not data.
+const worldBanner = computed<string>(
+  () => (world.value ? schemaStore.worlds.get(world.value)?.banner : '') || '',
+)
+
+// Whether the reader may read the default world at all. The way back is only
+// offered when it leads somewhere they can go; a button onto a denial is a
+// worse exit than none.
+const canReachDefaultWorld = computed(() => schemaStore.worldReadable(''))
+
+// The default face's name in the operator's own vocabulary ("Go to draft",
+// "Go to English"), falling back to the type-neutral "default" when the type
+// declares no label for it. Same lookup EntityDetail makes.
+const defaultFaceLabel = computed<string>(
+  () => schemaStore.faceLabel(kanbanConfig.value?.entity ?? '', '') || 'default',
+)
+
+function goToDefaultWorld() {
+  setWorld('')
+}
+
 // Affordance gates: `_actions` map from the server. `false` → hide;
 // anything else → render. Helper keeps the contract DRY across
 // components; see frontend/src/utils/affordancesWarning.ts.
+//
+// Both AND in `!isWorldBound`, for the reason EntityDetail's canUpdate
+// documents (RULING 11): `_actions` answers "may this principal write this
+// entity", which is a true answer to the question it is defined to answer and
+// knows nothing about the request's world. But a non-default world is
+// READ-ONLY on this API — `attachWorld` refuses `?world=` on a non-GET — so
+// on a world-bound board the map alone would promise a verb the surface will
+// reject.
+//
+// On a board that promise is worse than a dud button: the write is triggered
+// by a DRAG. A card that accepts the gesture, animates into another column and
+// only then fails has already told the reader their change landed. Refusing
+// the affordance up front is the honest ordering, and the banner below is what
+// keeps it from reading as a bug.
 function canCreate(): boolean {
-  return actionAllowed({ _actions: collectionActions.value }, 'create')
+  return actionAllowed({ _actions: collectionActions.value }, 'create') && !isWorldBound.value
 }
 function canUpdate(entity: Entity): boolean {
-  return actionAllowed(entity, 'update')
+  return actionAllowed(entity, 'update') && !isWorldBound.value
 }
 
 // Computed
@@ -68,19 +125,25 @@ const hasRelationFields = computed(
 // set by column property, and a single list call is one page (default
 // 25) — treating it as the full set silently dropped page 2+ from the
 // board (BUG-5OAQUG).
+const boardParams = computed<ListParams | undefined>(() => {
+  const params: ListParams = {}
+  if (hasRelationFields.value) params.include = '*'
+  if (worldParam.value) params.world = worldParam.value
+  return Object.keys(params).length ? params : undefined
+})
+
 const boardQuery = useQuery({
-  key: () => entityKeys.list(kanbanConfig.value?.entity ?? ''),
+  // listParams, not the param-free `list`: the world has to separate cache
+  // entries. It still shares the `list(type)` prefix, so SSE invalidation
+  // reaches every world's board in one go.
+  key: () => entityKeys.listParams(kanbanConfig.value?.entity ?? '', boardParams.value),
   // The signal matters more here than on single-fetch queries: when a
   // refetch supersedes this call (drag-drop settle, SSE echo), it also
   // cancels the remaining page fetches of the superseded loop.
   query: ({ signal }) => {
     const config = kanbanConfig.value
     if (!config) throw new Error(`unknown kanban view: ${props.id}`)
-    return listAllEntities(
-      config.entity,
-      hasRelationFields.value ? { include: '*' } : undefined,
-      signal
-    )
+    return listAllEntities(config.entity, boardParams.value, signal)
   },
   enabled: () => !!kanbanConfig.value,
 })
@@ -104,6 +167,14 @@ const loadError = computed(() => {
   return getErrorMessage(err, 'Failed to load board')
 })
 
+// pageState mirrors DynamicForm's `form-state-*` contract: a stable signal
+// that this screen has finished resolving, so a screenshot{} capture can wait
+// for it rather than hanging until its timeout.
+const pageState = computed<'pending' | 'loaded' | 'error'>(() => {
+  if (loadError.value) return 'error'
+  return loading.value ? 'pending' : 'loaded'
+})
+
 // Admin-authored info regions from data-entry.yaml, rendered as sanitized
 // markdown (renderMarkdown) above and below the board. Shares its resolvers and
 // its .view-info styles with EntityList so both views behave identically.
@@ -123,8 +194,28 @@ const columns = computed(() => {
     return kanbanConfig.value.columns
   }
 
-  // Fallback: extract unique values from entities
+  // Default to the property's DECLARED enum values, in declaration order.
+  //
+  // `column_property` is required to be an enum (validate.go rejects anything
+  // else), so the correct, ordered list is known at config-load time. Deriving
+  // it from the data instead produced a board that was a picture of the current
+  // rows rather than of the workflow: a state nobody is currently in had no
+  // column at all — so a card could not be dragged BACK to it — and the order
+  // followed entity insertion, which put `done` left of `doing` (TKT-R7H6G1).
   const property = kanbanConfig.value.column_property
+  const declared = schemaStore.enumValuesForProperty(property, kanbanConfig.value.entity)
+  if (declared?.length) {
+    return declared.map(
+      (v): KanbanColumn => ({
+        value: v,
+        label: schemaStore.getEnumLabel(v, property, kanbanConfig.value?.entity) ?? v,
+      }),
+    )
+  }
+
+  // Last resort for a non-enum property. The server rejects that today, so
+  // this is unreachable in a valid config — kept so a schema that somehow
+  // slips through renders a board instead of nothing.
   const values = new Set<string>()
   for (const entity of entities.value) {
     const val = String(entity.properties[property] || '')
@@ -173,8 +264,23 @@ const swimlanes = computed(() => {
     return kanbanConfig.value.swimlanes
   }
 
-  // Fallback: extract unique values from entities
+  // Same rule as the columns above: prefer the declared enum order. The old
+  // path sorted alphabetically, which is just as arbitrary for a workflow as
+  // insertion order — and equally hid a swimlane nobody currently occupies.
   const property = kanbanConfig.value.swimlane_property
+  const declared = schemaStore.enumValuesForProperty(property, kanbanConfig.value.entity)
+  if (declared?.length) {
+    return declared.map(
+      (v): KanbanSwimlane => ({
+        value: v,
+        label: schemaStore.getEnumLabel(v, property, kanbanConfig.value?.entity) ?? v,
+      }),
+    )
+  }
+
+  // Unreachable for the same reason as the column fallback — swimlane_property
+  // is enum-required too (validate.go) — but kept, and sorted, so a config that
+  // slips through renders deterministically rather than not at all.
   const values = new Set<string>()
   for (const entity of entities.value) {
     const val = String(entity.properties[property] || '')
@@ -184,6 +290,10 @@ const swimlanes = computed(() => {
 })
 
 const hasSwimmlanes = computed(() => swimlanes.value.length > 0)
+
+// Accessible name for the board region. The columns are sections inside it, so
+// the group needs its own name to be distinguishable from the rest of the page.
+const boardLabel = computed(() => `${kanbanConfig.value?.title || 'Kanban'} board`)
 
 // Column header text. An explicit kanban-config column label wins; otherwise
 // fall back to the enum's display label for the grouping value, then the raw
@@ -499,11 +609,20 @@ function onDragEnd() {
 // card's RouterLink. The edit-form branch must be reproduced exactly, or a
 // cmd-clicked tab would land on the detail page while a plain click opens the
 // form.
+//
+// The card is now a real <a> (TKT-3CSZRG), which supersedes the earlier
+// role="button" + @keydown shim: an anchor is natively focusable and
+// Enter-activatable, so the keyboard half of the contract comes for free and
+// cmd/middle-click open a tab, which the shim could never do.
 function cardTarget(entity: Entity): RouteLocationRaw {
-  if (kanbanConfig.value?.edit_form) {
+  // The edit form writes the DEFAULT face, so under a world a card opens the
+  // detail page instead — the same rule canUpdate applies to the drag. The
+  // world rides along so the detail resolves the face the card showed.
+  if (kanbanConfig.value?.edit_form && !isWorldBound.value) {
     return `/form/${kanbanConfig.value.edit_form}/${entity.id}`
   }
-  return `/entity/${entity.type}/${entity.id}`
+  const path = `/entity/${entity.type}/${entity.id}`
+  return worldParam.value ? { path, query: { world: worldParam.value } } : path
 }
 
 function createNew() {
@@ -518,7 +637,7 @@ function createNew() {
 </script>
 
 <template>
-  <div class="kanban-view">
+  <div class="kanban-view" :data-testid="`page-state-${pageState}`">
     <header class="page-header">
       <div class="header-left">
         <BackButton v-if="backTarget" :target="backTarget" />
@@ -530,6 +649,47 @@ function createNew() {
         </button>
       </div>
     </header>
+
+    <!--
+      A board under a world is READ-ONLY, and unlike a list it has a write
+      affordance to withdraw: drag-drop. `canUpdate` already refuses the drag,
+      so without this the cards would simply stop moving with no account of
+      why — which from the reader's side is indistinguishable from a broken
+      board.
+    -->
+    <div v-if="isWorldBound && !loadError" class="world-banner">
+      <!--
+        The ANNOUNCEMENT is operator config (`banner:` on the world). Absent on
+        a language world, where telling someone who asked for Dutch that they
+        are reading Dutch is noise.
+      -->
+      <span v-if="worldBanner" class="world-banner__label">
+        {{ worldBanner }}
+      </span>
+      <!--
+        The NOTE and the way back are NOT configurable, for the reason
+        EntityDetail's banner records: both are facts about the REQUEST, true
+        whatever the operator declares. Letting an operator suppress them would
+        leave a reader on a board whose cards refuse to move, with no
+        explanation and no exit.
+
+        Two sentences because the board withdraws two different things: cards
+        do not move (the write half), and cards may be missing entirely (the
+        projection half — an entity with no face here is not on the board).
+      -->
+      <span class="world-banner__note">
+        This board is read-only in this world — cards cannot be dragged. Each
+        card shows the face this world resolved, and entities with no face here
+        are not on the board at all.
+      </span>
+      <button
+        v-if="canReachDefaultWorld"
+        class="btn btn-secondary"
+        @click="goToDefaultWorld"
+      >
+        Go to {{ defaultFaceLabel }}
+      </button>
+    </div>
 
     <!-- Filter controls -->
     <div v-if="kanbanConfig?.filter_controls?.length" class="filter-bar">
@@ -565,15 +725,16 @@ function createNew() {
     </div>
 
     <!-- Simple board (columns only) -->
-    <div v-else-if="!hasSwimmlanes" class="kanban-board">
-      <div
+    <div v-else-if="!hasSwimmlanes" class="kanban-board" role="group" :aria-label="boardLabel">
+      <section
         v-for="column in columns"
         :key="column.value"
         class="kanban-column"
+        :aria-labelledby="`kanban-col-${column.value}`"
         @dragover="onDragOver"
         @drop="onDrop($event, column.value)"
       >
-        <div class="column-header">
+        <h2 :id="`kanban-col-${column.value}`" class="column-header">
           <component
             :is="resolveIcon(column.icon)"
             v-if="hasIcon(column.icon)"
@@ -583,42 +744,67 @@ function createNew() {
           />
           <span class="column-title">{{ columnTitle(column) }}</span>
           <span class="column-count">{{ entitiesByColumn[column.value]?.length || 0 }}</span>
-        </div>
+        </h2>
 
-        <div class="column-cards">
+        <ul class="column-cards">
           <!-- The card is BOTH the link and the drag source. Deliberately no
                draggable="false" here (unlike RelationCards, RR-NPDW9A): that
                attribute is for an anchor nested INSIDE a drag source, and
                setting it on the drag source itself would disable reordering.
                onDragStart sets dataTransfer unconditionally, so the native
                link-drag is overridden in both the draggable and non-draggable
-               branches. -->
-          <RouterLink
-            v-for="entity in entitiesByColumn[column.value]"
-            :key="entity.id"
-            class="kanban-card"
-            :to="cardTarget(entity)"
-            :draggable="canUpdate(entity) ? 'true' : 'false'"
-            @dragstart="onDragStart($event, entity)"
-            @dragend="onDragEnd"
-          >
-            <div class="card-id">{{ entity.id }}</div>
-            <div class="card-title text-wrap-anywhere">{{ getCardTitle(entity) }}</div>
-            <CardFieldList
-              :fields="resolvedCardFields(entity)"
-              :entity-type="kanbanConfig?.entity"
-            />
-          </RouterLink>
+               branches.
 
-          <div v-if="!entitiesByColumn[column.value]?.length" class="empty-column">
+               The <li> wrapper is `display: contents`, so the column is a real
+               list for assistive tech while the anchor stays the flex item the
+               layout and drag handlers were written against. RouterLink cannot
+               itself render an <li>. -->
+          <li v-for="entity in entitiesByColumn[column.value]" :key="entity.id" class="kanban-card-item">
+            <RouterLink
+              class="kanban-card"
+              :to="cardTarget(entity)"
+              :aria-label="getCardTitle(entity)"
+              :draggable="canUpdate(entity) ? 'true' : 'false'"
+              @dragstart="onDragStart($event, entity)"
+              @dragend="onDragEnd"
+            >
+              <div class="card-id">{{ entity.id }}</div>
+              <!--
+                Per-CARD face provenance (TKT-ILT1WD), beside the title, the same
+                place and the same component the list uses. A board is a
+                projection through a world exactly as a table is, and a card that
+                resolved to a stand-in is otherwise byte-identical to one that
+                got the face the world asked for.
+
+                WorldBadge renders only for a substitute, so an ordinary board
+                — and every board under the default world, where `_world` is
+                absent entirely — shows nothing at all.
+              -->
+              <div class="card-title text-wrap-anywhere">
+                {{ getCardTitle(entity) }}<WorldBadge :world="entity._world" />
+              </div>
+              <CardFieldList
+                :fields="resolvedCardFields(entity)"
+                :entity-type="kanbanConfig?.entity"
+              />
+            </RouterLink>
+          </li>
+
+          <li v-if="!entitiesByColumn[column.value]?.length" class="empty-column">
             No items
-          </div>
-        </div>
-      </div>
+          </li>
+        </ul>
+      </section>
     </div>
 
     <!-- Swimlane board (2D grid layout) -->
-    <div v-else class="kanban-swimlane-board" :style="swimlaneGridStyle">
+    <div
+      v-else
+      class="kanban-swimlane-board"
+      role="group"
+      :aria-label="boardLabel"
+      :style="swimlaneGridStyle"
+    >
       <!-- Column headers -->
       <div class="swimlane-header-row">
         <div class="swimlane-label-cell" />
@@ -654,33 +840,43 @@ function createNew() {
           />
           <span class="swimlane-label">{{ swimlane.label || swimlane.value }}</span>
         </div>
-        <div
+        <ul
           v-for="column in columns"
           :key="column.value"
           class="swimlane-cell"
+          :aria-label="`${columnTitle(column)} — ${swimlane.label || swimlane.value}`"
           @dragover="onDragOver"
           @drop="onDrop($event, column.value, swimlane.value)"
         >
-          <RouterLink
+          <!-- Same list-item wrapper as the simple board; see there. -->
+          <li
             v-for="entity in entitiesByCell[column.value]?.[swimlane.value] || []"
             :key="entity.id"
-            class="kanban-card"
-            :to="cardTarget(entity)"
-            :draggable="canUpdate(entity) ? 'true' : 'false'"
-            @dragstart="onDragStart($event, entity)"
-            @dragend="onDragEnd"
+            class="kanban-card-item"
           >
-            <div class="card-id">{{ entity.id }}</div>
-            <div class="card-title text-wrap-anywhere">{{ getCardTitle(entity) }}</div>
-            <CardFieldList
-              :fields="resolvedCardFields(entity)"
-              :entity-type="kanbanConfig?.entity"
-            />
-          </RouterLink>
-          <div v-if="!(entitiesByCell[column.value]?.[swimlane.value]?.length)" class="empty-cell">
+            <RouterLink
+              class="kanban-card"
+              :to="cardTarget(entity)"
+              :aria-label="getCardTitle(entity)"
+              :draggable="canUpdate(entity) ? 'true' : 'false'"
+              @dragstart="onDragStart($event, entity)"
+              @dragend="onDragEnd"
+            >
+              <div class="card-id">{{ entity.id }}</div>
+              <!-- Face provenance; see the simple board above. -->
+              <div class="card-title text-wrap-anywhere">
+                {{ getCardTitle(entity) }}<WorldBadge :world="entity._world" />
+              </div>
+              <CardFieldList
+                :fields="resolvedCardFields(entity)"
+                :entity-type="kanbanConfig?.entity"
+              />
+            </RouterLink>
+          </li>
+          <li v-if="!(entitiesByCell[column.value]?.[swimlane.value]?.length)" class="empty-cell">
             —
-          </div>
-        </div>
+          </li>
+        </ul>
       </div>
     </div>
 
@@ -804,8 +1000,15 @@ function createNew() {
 .kanban-board {
   display: flex;
   gap: var(--space-lg);
-  min-height: 500px;
   padding-bottom: 20px;
+  /* Columns size to their own content instead of stretching to the tallest
+     one (the flex default, `align-self: stretch`). Combined with dropping the
+     board's old `min-height: 500px`, a board of short cards is now as tall as
+     its cards rather than a fixed slab of empty panel — the defect that made
+     a 3-card board ~85% whitespace in a documentation figure. Each column
+     keeps its own `min-height` (see .kanban-column) so it stays a credible
+     drop target when empty. */
+  align-items: flex-start;
   /* Per CSS spec a non-visible overflow on one axis coerces the other from
      `visible` to `auto`, so this box now ALSO clips vertically — `overflow-y:
      visible` cannot opt out. Safe today: the card hover box-shadow (8px blur)
@@ -820,18 +1023,34 @@ function createNew() {
   flex: 1;
   min-width: 280px;
   max-width: 350px;
+  /* Fits content, with a floor that keeps a short or empty column an obvious
+     panel and a comfortable drop target rather than a bare header strip.
+     `min-height` (not `height`) is the point: a column with many cards grows
+     past this, a column with none still reads as a panel. Deliberately well
+     below the old 500px, which was a de-facto fixed height.
+
+     The floor is proportional to the viewport with an absolute lower bound, so
+     the board neither leaves a short window mostly empty nor squeezes the
+     columns to a strip on a small one. min() takes whichever is smaller, and
+     max() keeps 180px as the hard floor. */
+  min-height: max(180px, min(340px, 38vh));
   background: var(--hover-bg);
   border-radius: var(--radius-lg);
   display: flex;
   flex-direction: column;
 }
 
+/* Now an <h2> (it names the column section via aria-labelledby), so the UA
+   heading margin and font-size are reset back to the original div rendering. */
 .column-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 12px 16px;
   border-bottom: 1px solid var(--border-color);
+  margin: 0;
+  font-size: var(--font-size-base);
+  font-weight: 600;
 }
 
 /* Config-authored icon beside a column or swimlane label. Inherits
@@ -857,6 +1076,8 @@ function createNew() {
   font-weight: 500;
 }
 
+/* Now a <ul> of <li> cards — the cards genuinely are a list. Reset the UA
+   list styling so the flex column renders exactly as it did as a div. */
 .column-cards {
   flex: 1;
   padding: 12px;
@@ -864,6 +1085,41 @@ function createNew() {
   flex-direction: column;
   gap: var(--space-sm);
   overflow-y: auto;
+  margin: 0;
+  list-style: none;
+}
+
+/* Mirrors the list and detail pages' banner so the three surfaces read as one
+   affordance rather than three inventions. */
+.world-banner {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-color) 30%, transparent);
+  border-radius: var(--radius-md);
+}
+
+.world-banner__label {
+  font-size: var(--font-size-base);
+  color: var(--text-color);
+  font-weight: 500;
+}
+
+.world-banner__note {
+  font-size: var(--font-size-sm);
+  color: var(--muted-text);
+}
+
+/* The list item exists purely for <ul>/<li> semantics; `display: contents`
+   removes its box so the .kanban-card anchor inside remains the flex item of
+   .column-cards / .swimlane-cell, exactly as it was before the card became a
+   link. RouterLink cannot render an <li> itself. */
+.kanban-card-item {
+  display: contents;
 }
 
 .kanban-card {
@@ -887,6 +1143,15 @@ function createNew() {
 
 .kanban-card:active {
   cursor: grabbing;
+}
+
+/* The card is keyboard-reachable (tabindex="0"), so it needs a visible focus
+   indicator. Two-shadow token pattern per the project focus-ring convention. */
+.kanban-card:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--focus-ring-gap),
+    0 0 0 4px var(--focus-ring);
 }
 
 .card-id {
@@ -923,11 +1188,28 @@ function createNew() {
   color: var(--text-color);
 }
 
+/* An empty workflow state must stay visible and droppable (TKT-R7H6G1) — it is
+   never removed. What is adjusted here is only its visual WEIGHT: an empty
+   column previously rendered as a full-height filled panel, so on a board where
+   most states are unoccupied the empty columns out-weighed the ones carrying
+   cards. The placeholder is centred in whatever height the column has, and the
+   column itself is de-emphasised below. */
 .empty-column {
   color: var(--muted-text);
   font-size: var(--font-size-dense);
   text-align: center;
-  padding: 24px;
+  padding: var(--space-xl) var(--space-md);
+  margin: auto 0;
+}
+
+/* :has() lets the COLUMN respond to being empty without a JS-computed class,
+   keeping the emptiness a fact about the rendered cards rather than a second
+   source of truth. Where :has() is unsupported the column simply keeps the
+   normal filled treatment — a graceful degradation to the previous look, not a
+   broken one. The dashed outline is what keeps it legible as a drop target. */
+.kanban-column:has(.empty-column) {
+  background: transparent;
+  border: 1px dashed var(--border-color);
 }
 
 /* Swimlane board styles (2D grid layout) */
@@ -942,7 +1224,11 @@ function createNew() {
      viewport, while keeping the vertical `hidden` that clips cells to the
      rounded border. A bare `overflow-x: auto` would drop that clipping. */
   overflow: auto hidden;
-  min-height: 400px;
+  /* Was 400px. The grid's rows already size to their cards and each cell keeps
+     its own floor, so a fixed board minimum only padded a short board with
+     empty grid — the same defect the simple board had. Kept low enough to hold
+     the header row plus one lane. */
+  min-height: 160px;
 }
 
 .swimlane-header-row {
@@ -977,6 +1263,7 @@ function createNew() {
   writing-mode: horizontal-tb;
 }
 
+/* Now a <ul> of <li> cards, like .column-cards. Same UA reset. */
 .swimlane-cell {
   background: var(--card-bg);
   padding: 8px;
@@ -985,6 +1272,8 @@ function createNew() {
   gap: var(--space-sm);
   min-height: 100px;
   overflow-y: auto;
+  margin: 0;
+  list-style: none;
 }
 
 .swimlane-cell:hover {
@@ -1002,12 +1291,12 @@ function createNew() {
 @media (max-width: 768px) {
   .kanban-board {
     gap: var(--space-md);
-    min-height: 300px;
   }
 
   .kanban-column {
     min-width: 220px;
     max-width: 300px;
+    min-height: 140px;
   }
 
   .column-header {

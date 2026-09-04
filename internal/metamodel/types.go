@@ -1,8 +1,12 @@
 package metamodel
 
 import (
+	"errors"
+	"fmt"
 	"regexp"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Metamodel represents the full metamodel configuration
@@ -43,6 +47,21 @@ type Metamodel struct {
 	// internal/transform.
 	Transforms map[string]TransformDef `yaml:"transforms,omitempty"`
 
+	// Worlds declares named resolution functions over content states
+	// (TKT-WAV8XP, design doc §4). Keyed by world name.
+	//
+	// ABSENT means the project has exactly the implicit DEFAULT world —
+	// every entity contributes its default state — which is today's
+	// graph, byte-identically. The name "default" is reserved
+	// ([DefaultWorldName]) because that world is implicit and total, so
+	// a declaration under that name could only shadow or contradict it.
+	Worlds map[string]WorldDef `yaml:"worlds,omitempty"`
+
+	// Copies declares named copy definitions — mapped writes of one content
+	// state into another (TKT-C1XUA8). See [CopyDef]; a request invokes one
+	// BY NAME and can never submit its own mapping.
+	Copies map[string]CopyDef `yaml:"copies,omitempty"`
+
 	// Computed lookups (not from YAML)
 	aliasMap      map[string]string // alias -> canonical name
 	inverseOwners map[string]string // inverse name -> owning canonical relation name
@@ -74,6 +93,32 @@ type ValidationRule struct {
 	// EntityType limits the validation to a specific entity type (optional)
 	// If empty, the validation applies to all entity types
 	EntityType string `yaml:"entity_type,omitempty"`
+
+	// Faces limits the rule to specific content states, named as declared in
+	// `faces:`. Empty means EVERY state, including the bare one.
+	//
+	// # Why the default is every state
+	//
+	// A validation rule is a correctness claim, and the safe direction for a
+	// correctness claim is to check more rather than less: a rule that silently
+	// skipped a state would let `rela validate` report a clean run over data it
+	// never looked at, which is worse than no check because it is a claim
+	// (TKT-4Y6CMV).
+	//
+	// The cost of that default is noise rather than danger — a rule may fire on
+	// a state the operator did not have in mind — and this key is the remedy.
+	//
+	// # When to set it
+	//
+	// When the rule is genuinely about one state. "A published policy needs an
+	// owner" is a claim about the published face; running it against a draft
+	// reports every work-in-progress as a violation, and a validator that cries
+	// wolf trains people to ignore it.
+	//
+	// Naming a face the type does not declare is a load error, not a silent
+	// no-match: a rule scoped to nothing checks nothing, and would pass forever
+	// while appearing to guard something.
+	Faces []string `yaml:"faces,omitempty"`
 
 	// When specifies filter conditions that select which entities this rule applies to
 	// Uses the same syntax as --where filters (e.g., "status=approved")
@@ -254,6 +299,271 @@ type EntityDef struct {
 	// Validated at metamodel-load time: must reference a defined
 	// property and must not have leading/trailing whitespace.
 	DisplayProperty string `yaml:"display_property,omitempty"`
+
+	// Faces declares this type's content states (TKT-WAV8XP, design
+	// doc §4.1). The map key is the face coordinate ("draft",
+	// "published"); exactly one entry may set `bare_face`, naming
+	// the state stored under the zero face.
+	//
+	// ABSENT (the common case) means the type has no content states: it
+	// contributes its single default state to EVERY world, needing no
+	// per-type resolution. That is resolution rule 1, and it is why a
+	// mixed graph (tickets without faces beside pages with them)
+	// needs no special handling — and why a project that never writes
+	// this key behaves byte-identically to the pre-worlds system.
+	Faces map[string]FaceDef `yaml:"faces,omitempty"`
+
+	// BareFace names which declared face the BARE ID addresses: with
+	// `bare_face: draft`, `POL-1` and `POL-1@draft` are the same row.
+	//
+	// # It names a row, it does not create one
+	//
+	// Every entity already has a row stored under the ZERO coordinate —
+	// that is what a bare id resolves to, and it exists whether or not
+	// this key is set (§2.1: there are exactly N states and nothing
+	// else). All this says is which declared NAME refers to it. Leave it
+	// unset and the declared faces are all suffixed rows, while the
+	// entity's own row has no name at all — legal, and almost never what
+	// an operator means.
+	//
+	// # Why it lives on the TYPE rather than on a face
+	//
+	// It was `bare_face` on each FaceDef, which needed a load-time
+	// check that at most one face claimed it, and read as a statement
+	// about precedence — "the default face" sounds like the important
+	// one, when in an ISMS it is the DRAFT while the published face is
+	// the one in force. On the type the constraint is structural (a
+	// single key cannot be set twice) and the name says what it does.
+	//
+	// Empty on a type declaring faces is legal but unusual; empty on a
+	// type declaring none is the ordinary case and means nothing.
+	BareFace string `yaml:"bare_face,omitempty"`
+}
+
+// FaceDef declares one content state of an entity type.
+//
+// Near-empty by design: a state is IDENTIFIED by its coordinate and nothing
+// else. The only knob beyond identity is display text, and the §4.5 "no
+// template language" discipline holds — no interpolation, no per-state ACL
+// hints, no retention policy added speculatively.
+type FaceDef struct {
+
+	// Label is operator-authored display text for this face — "Nederlands"
+	// for `nl`, "Published" for `published`. Empty falls back to the
+	// coordinate name, which is itself operator-authored and therefore an
+	// honest (if terse) display string.
+	//
+	// Display-only, exactly as [CopyDef.Label] and [TransitionDef.Label]
+	// are: a plain string with NO interpolation, never consulted for
+	// resolution, equality or addressing. The coordinate stays the identity
+	// — renaming a label cannot move an entity's stored face.
+	//
+	// It exists because three surfaces were showing raw coordinates while
+	// the copy menu beside them showed operator prose: the face switcher
+	// ("View fr"), the per-neighbor world badge, and the return-to-default
+	// button, which hardcoded the ISMS word "draft" on types that have no
+	// draft. All three wanted the same missing thing — a name for a face.
+	//
+	// Deliberately PER-FACE rather than per-axis. Axes are not an object
+	// in this code yet (a type declares one flat `faces:` map), and a
+	// per-face label is forward-compatible with an axis that later groups
+	// them, where a `return_action_label:` on a face would not be.
+	Label string `yaml:"label,omitempty"`
+}
+
+// Otherwise is a world's policy for an entity whose type declares
+// faces but none that the world selects (resolution rule 3).
+//
+// MANDATORY on every declared world, validated at load. A silent
+// fallback here is precisely the leak content states exist to prevent —
+// a `published` world quietly showing a draft face — so there is
+// deliberately NO zero value that means "pick something sensible": the
+// empty string is invalid and rejected.
+type Otherwise string
+
+const (
+	// OtherwiseUnset is the invalid zero value; see [Otherwise].
+	OtherwiseUnset Otherwise = ""
+	// OtherwiseExclude contributes nothing. Public worlds say this.
+	OtherwiseExclude Otherwise = "exclude"
+	// OtherwiseDefault falls back to the type's default state. Internal
+	// worlds may say this.
+	OtherwiseDefault Otherwise = "default"
+)
+
+// IsValid reports whether the value is one of the two declared policies.
+// The zero value is NOT valid — that is the point (see [Otherwise]).
+func (o Otherwise) IsValid() bool {
+	return o == OtherwiseExclude || o == OtherwiseDefault
+}
+
+// WorldDef declares one world: a resolution function mapping each entity
+// to AT MOST ONE of its content states, the "prime" (design doc §4.1).
+//
+// The DEFAULT world is distinguished and needs no declaration — every
+// entity contributes its default state, it is total by construction, and
+// a metamodel with no `worlds:` block has exactly this world. All
+// backward compatibility hangs on that.
+type WorldDef struct {
+	// Select is the ordered candidate chain; the first coordinate that
+	// EXISTS for an entity is its prime. A bare string is accepted as a
+	// one-element chain (see UnmarshalYAML).
+	//
+	// Order is the whole point: `[review, published]` means "the site as
+	// it will look once pending reviews land". Chains keep resolution a
+	// FUNCTION — they are how the single answer is computed, never a way
+	// for one world to contain two faces of an entity.
+	Select []string `yaml:"select,omitempty"`
+
+	// Overrides replaces Select for named entity types. Keyed by entity
+	// type; the value is that type's chain, same one-or-many spelling.
+	Overrides map[string][]string `yaml:"overrides,omitempty"`
+
+	// Otherwise is the mandatory rule-3 policy; see [Otherwise].
+	Otherwise Otherwise `yaml:"otherwise,omitempty"`
+
+	// Edits names the state that edits made from this world land in
+	// (design doc §9.3, copy-on-write). PARSED BUT UNUSED in Step 2 —
+	// the copy kernel is Step 4. Declared here so a project's schema
+	// does not need rewriting when Step 4 lands, and validated as a
+	// declared face so a typo surfaces now rather than then.
+	Edits string `yaml:"edits,omitempty"`
+
+	// PrimaryFor declares the faces this world is the canonical home of,
+	// breaking a tie when SEVERAL worlds head the same face for a type
+	// (TKT-MFVH03).
+	//
+	// # Why this is needed at all
+	//
+	// "Which world serves this face?" is the question a face-switcher asks:
+	// the read grammar is `?world=`, and a bare face is not a world, so an
+	// affordance offering "go to the Dutch version" must name a world. The
+	// answer is INFERRED from the compiled chains — the world whose chain
+	// HEADS that face — and for every schema written so far the inference is
+	// unambiguous, so this key stays unset.
+	//
+	// It is needed only when two worlds head the same face for one type. That
+	// is a genuine tie: both serve it as their first choice, and nothing in
+	// the chains distinguishes them. Before this key the answer was whichever
+	// world the metamodel map yielded first — insertion order, a property of
+	// how the config happened to serialize rather than of what the operator
+	// meant, and it could change when an UNRELATED world was added or renamed.
+	//
+	// # Why on the world, not on the face
+	//
+	// `overrides:` makes the answer per (type, face): one world can head `en`
+	// for `guide` while another heads it for `policy`. A key on the face in
+	// EntityDef.Faces is type-level and cannot express that. Worlds already
+	// own the resolution vocabulary (select/overrides/otherwise/edits), so the
+	// tie-break belongs beside them.
+	//
+	// # It may only CONFIRM, never contradict
+	//
+	// Naming a face this world does not head is a load error, not a silent
+	// override (see validateWorlds). A declaration that disagreed with the
+	// compiled chain would produce a control navigating to a world where the
+	// face is not primary — an affordance that lies, which is the shape this
+	// codebase refuses everywhere else.
+	PrimaryFor []string `yaml:"primary_for,omitempty"`
+
+	// Banner is operator-authored text announcing this world to a reader —
+	// "DRAFT — not in force" on an editorial world, nothing on a language
+	// world. Empty (the zero value) means announce nothing.
+	//
+	// Display-only, like [Transition.Label] and [CopyDef.Label]: no
+	// interpolation, no conditionals. The world is already resolved by the
+	// time this renders, so there is nothing to compute.
+	//
+	// It gates ONLY the announcement. A non-default world is read-only on
+	// this API regardless (a write names its face by id and never a world —
+	// see dataentry.attachWorld), so the read-only note and the way back to
+	// the default face are properties of the request, not of the operator's
+	// configuration, and are not suppressible here. Hiding them would leave
+	// a reader on a page that silently refuses writes with no explanation
+	// and no exit.
+	//
+	// Why per-world rather than per-face: a banner describes the VIEW a
+	// reader is in, and a world is that view (one consistent resolution
+	// across the whole graph). The same face can be reached from worlds
+	// that warrant different text, or none.
+	Banner string `yaml:"banner,omitempty"`
+}
+
+// DefaultWorldName is reserved: the default world is implicit and total,
+// so a declaration under this name could only shadow or contradict it.
+const DefaultWorldName = "default"
+
+// UnmarshalYAML accepts `select: published` as well as
+// `select: [review, published]`.
+//
+// The one-element spelling is the overwhelmingly common case, and
+// requiring a list for it is the kind of friction that gets worked
+// around with copy-paste. This is sugar over the SAME type — not a
+// second representation — so everything downstream sees a chain.
+func (w *WorldDef) UnmarshalYAML(node *yaml.Node) error {
+	// A shadow type without the method, so decoding does not recurse.
+	type worldDefYAML struct {
+		Select    oneOrMany            `yaml:"select,omitempty"`
+		Overrides map[string]oneOrMany `yaml:"overrides,omitempty"`
+		Otherwise Otherwise            `yaml:"otherwise,omitempty"`
+		Edits     string               `yaml:"edits,omitempty"`
+		Banner    string               `yaml:"banner,omitempty"`
+		// oneOrMany like Select: the common case is a single face, and
+		// `primary_for: nl` should not have to be written as a list.
+		PrimaryFor oneOrMany `yaml:"primary_for,omitempty"`
+	}
+	var raw worldDefYAML
+	if err := node.Decode(&raw); err != nil {
+		return err
+	}
+	w.Select = raw.Select
+	w.Otherwise = raw.Otherwise
+	w.Edits = raw.Edits
+	w.Banner = raw.Banner
+	w.PrimaryFor = raw.PrimaryFor
+	if len(raw.Overrides) > 0 {
+		w.Overrides = make(map[string][]string, len(raw.Overrides))
+		for typ, chain := range raw.Overrides {
+			w.Overrides[typ] = chain
+		}
+	}
+	return nil
+}
+
+// oneOrMany decodes either a scalar or a sequence into a string slice.
+type oneOrMany []string
+
+func (o *oneOrMany) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		var one string
+		if err := node.Decode(&one); err != nil {
+			return err
+		}
+		*o = []string{one}
+		return nil
+	}
+	var many []string
+	if err := node.Decode(&many); err != nil {
+		return err
+	}
+	*o = many
+	return nil
+}
+
+// ChainFor returns the candidate chain this world applies to entityType:
+// the per-type override when one is declared, else the world's Select.
+//
+// The second result reports whether a non-empty chain applies. The two
+// branches coincide today — an empty chain and no chain both mean rule 3,
+// take Otherwise — so the compiler discards it, and the loader separately
+// rejects an explicitly empty `select:` or override chain. It is returned
+// because a caller that must tell "declared but empty" from "not
+// declared" cannot recover the difference from the chain alone.
+func (w WorldDef) ChainFor(entityType string) (chain []string, ok bool) {
+	if override, found := w.Overrides[entityType]; found {
+		return override, len(override) > 0
+	}
+	return w.Select, len(w.Select) > 0
 }
 
 // PropertyDefs implements PropertySchema for EntityDef.
@@ -405,6 +715,134 @@ func (t TransformStep) Kind() string {
 //
 // The mirror of this in internal/transform is transform.Def; the metamodel keeps
 // its own YAML-tagged type so internal/transform need not be imported here.
+// CopyDef declares one named COPY DEFINITION: a mapped write of one entity
+// content state (face) into another (design doc §9.1, TKT-C1XUA8).
+//
+// A request may only invoke a definition BY NAME — never submit an ad-hoc
+// mapping. That is the transforms-registry precedent and it is what keeps
+// the guard system meaningful: if a caller could describe an arbitrary copy,
+// every guard would be advisory.
+//
+// Two shapes, and the difference is a security boundary (§9.2):
+//
+//   - SAME-ENTITY (`from: page@draft`, `to: page@published`) — promote and
+//     revise. Runs ELEVATED: hidden fields travel with the entity, the
+//     principal never sees them, and the same policy governs them on the
+//     target face. Identity preserved, so policy follows.
+//   - CROSS-ENTITY (`from: ticket`, `to: new ticket`) — spawn-a-follow-up.
+//     Reads through the CALLER'S visibility gate, so only fields they may
+//     read carry. An elevated cross-entity copy would launder unreadable
+//     fields into an entity with a different audience.
+type CopyDef struct {
+	// From and To address a face as `type` or `type@face`. A bare type on
+	// both sides with `to` prefixed `new ` is the cross-entity form.
+	From string `yaml:"from"`
+	To   string `yaml:"to"`
+
+	// Fields maps target property -> source expression. The literal string
+	// "all" in AllFields copies every declared property; the two are
+	// mutually exclusive.
+	//
+	// Deliberately dumb (§9.1): field selection, rename, and the existing
+	// {{...}} interpolation grammar. No expressions, no conditionals — the
+	// same slippery slope world templates refused, with the same answer.
+	Fields map[string]string `yaml:"fields,omitempty"`
+
+	// AllFields is `fields: all` — the full-replace promote case. Rejected
+	// at load on a CROSS-ENTITY copy: that copy reads through the caller's
+	// gate, so a whole-entity replace would write a REDACTED entity, which
+	// is the read-modify-write failure the codebase forbids everywhere.
+	AllFields bool `yaml:"-"`
+
+	// Relations maps a relation type to `merge` (add missing) or `replace`
+	// (swap the target face's edges of that type). An omitted type is not
+	// copied — the safe default, since copying a role-conferring edge grants
+	// roles on the target.
+	Relations map[string]string `yaml:"relations,omitempty"`
+
+	// Label is optional display text for the ACTION a copy performs — e.g.
+	// "Publish" for promote-policy, or "Translate to Dutch" for
+	// translate-to-nl. It is what RULING 9 calls the operator-configurable
+	// text: a UI renders one affordance per definition whose `from:` matches
+	// the face being viewed, and this names the button.
+	//
+	// Purely presentational, exactly like [Transition.Label], which this
+	// follows: a copy button and a state-machine move are the same shape —
+	// text for an action, not for a destination. Empty falls back to the
+	// definition's own name, which is a legible last resort because copy
+	// names are operator-authored (`promote-policy`, `translate-to-nl`).
+	// Display-only; the kernel ignores it entirely.
+	//
+	// A PLAIN STRING, deliberately: no `{{...}}` interpolation, even though
+	// Fields has it. This type is "deliberately dumb (§9.1) — no expressions,
+	// no conditionals", and per-entity label rendering would reopen exactly
+	// that refusal. An operator wanting per-entity wording wants a different
+	// feature, not a widened one.
+	Label string `yaml:"label,omitempty"`
+
+	// Guard gates the copy. Reuses the STATEMACHINE's vocabulary — the
+	// `guard:` permission (subject-aware, via HoldsPermissionForEntity) and
+	// a `when:` predicate — rather than acl.yaml's `requires_permission`,
+	// which is the delegate-X gate on role-relation writes and is checked
+	// globally. "The owner of THIS doc may publish it" needs the former.
+	Guard CopyGuard `yaml:"guard,omitempty"`
+}
+
+// CopyGuard is a copy definition's authorization, sharing the statemachine's
+// declaration vocabulary (§9.1: shared guard machinery, separate declaration
+// — a copy is not a property change).
+type CopyGuard struct {
+	// Permission is an ACL permission name checked against the SOURCE entity
+	// via HoldsPermissionForEntity, so a role conferred by an ownership
+	// relation satisfies it without a global grant.
+	Permission string `yaml:"permission,omitempty"`
+
+	// When is an internal/predicate expression evaluated against the source
+	// face. False refuses the copy (422), matching a transition precondition.
+	When string `yaml:"when,omitempty"`
+}
+
+// UnmarshalYAML accepts `fields: all` as a scalar alongside the mapping form.
+func (c *CopyDef) UnmarshalYAML(unmarshal func(any) error) error {
+	// Alias avoids infinite recursion into this method.
+	//
+	// NOTE: this shadow struct must list EVERY yaml-bearing field of CopyDef.
+	// A field present on CopyDef but missing here is silently dropped at load
+	// — no error, no warning, just a zero value — which is how `label:` was
+	// ignored when it was first added. TestCopyDef_UnmarshalCoversEveryField
+	// compares the two by reflection so the next added field fails loudly
+	// instead.
+	type raw struct {
+		From      string            `yaml:"from"`
+		To        string            `yaml:"to"`
+		Label     string            `yaml:"label,omitempty"`
+		Fields    any               `yaml:"fields,omitempty"`
+		Relations map[string]string `yaml:"relations,omitempty"`
+		Guard     CopyGuard         `yaml:"guard,omitempty"`
+	}
+	var r raw
+	if err := unmarshal(&r); err != nil {
+		return err
+	}
+	c.From, c.To, c.Label, c.Relations, c.Guard = r.From, r.To, r.Label, r.Relations, r.Guard
+	switch f := r.Fields.(type) {
+	case nil:
+	case string:
+		if f != "all" {
+			return fmt.Errorf("copy: fields: %q is not valid — use a mapping, or the literal \"all\"", f)
+		}
+		c.AllFields = true
+	case map[string]any:
+		c.Fields = make(map[string]string, len(f))
+		for k, v := range f {
+			c.Fields[k] = fmt.Sprint(v)
+		}
+	default:
+		return errors.New("copy: fields: want a mapping or the literal \"all\"")
+	}
+	return nil
+}
+
 type TransformDef struct {
 	From     string   `yaml:"from"`
 	Command  []string `yaml:"command"`
@@ -455,6 +893,56 @@ var ReservedPropertyNames = map[string]bool{
 	"id":   true, // Entity.ID
 	"type": true, // Entity.Type
 }
+
+// RelationScope declares what a relation type attaches to under content
+// states (TKT-DOFYR1, design doc §2.2).
+//
+//   - identity: the edge attaches to the entity's bare id and is shared
+//     by all its states. Ownership, containment, membership — a draft
+//     does not get a different owner than its published face by
+//     accident. The DEFAULT, so a project without faces behaves
+//     identically either way.
+//   - content: the edge attaches to a specific state on its TAIL side
+//     (Relation.FromFace); a draft may cite different targets than
+//     the published face. Heads stay entity-level (§2.3).
+//
+// DECLARATIVE-ONLY in Step 1: entity delete cascades every edge and
+// rename re-keys bare ids regardless of scope, so no store behavior
+// branches on it yet. Its consumers land with later steps — role
+// conferral (worlds/ACL), cardinality subjects, and the copy kernel's
+// per-relation-type merge semantics all read this one declaration.
+type RelationScope string
+
+const (
+	// ScopeIdentity is the zero/default scope; see RelationScope.
+	ScopeIdentity RelationScope = ""
+	// ScopeIdentityExplicit is the spelled-out identity scope.
+	ScopeIdentityExplicit RelationScope = "identity"
+	// ScopeContent marks state-tailed edges; see RelationScope.
+	ScopeContent RelationScope = "content"
+)
+
+// IsValid reports whether the scope is a declared value.
+func (s RelationScope) IsValid() bool {
+	switch s {
+	case ScopeIdentity, ScopeIdentityExplicit, ScopeContent:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsContent reports whether edges of this type attach to a specific
+// state on their tail side.
+func (s RelationScope) IsContent() bool { return s == ScopeContent }
+
+// IsIdentity reports whether edges of this type attach to the entity's
+// bare id. ALWAYS branch through IsIdentity/IsContent, never by
+// comparing against [ScopeIdentity]: the identity scope has two
+// spellings ("" and "identity"), so `scope == ScopeIdentity` is wrong
+// for any metamodel that writes it out — and passes every test written
+// against one that doesn't.
+func (s RelationScope) IsIdentity() bool { return !s.IsContent() }
 
 // OrderableMode controls which side(s) of a relation type are user-orderable.
 type OrderableMode string
@@ -528,12 +1016,21 @@ type RelationDef struct {
 	MinIncoming *int        `yaml:"min_incoming,omitempty"`
 	MaxIncoming *int        `yaml:"max_incoming,omitempty"`
 
+	// Scope declares whether edges of this type attach to the entity
+	// (identity, the default) or to a specific content state on the
+	// tail side (content). See RelationScope. Unrelated to the Content
+	// field below, which is about markdown bodies — the shared word is
+	// an unfortunate collision, not a connection.
+	Scope RelationScope `yaml:"scope,omitempty"`
+
 	// Properties defines typed properties that can be attached to relations of this type.
 	// Uses the same PropertyDef structure as entity properties.
 	Properties map[string]PropertyDef `yaml:"properties,omitempty"`
 
 	// Content indicates whether relations of this type support markdown body content.
 	// When true, the data-entry UI will show a content editor for the relation.
+	// Unrelated to Scope's "content" value above (state-tailed edges) —
+	// same word, different concern.
 	Content bool `yaml:"content,omitempty"`
 
 	// Orderable declares which side(s) of this relation type are user-orderable.
@@ -652,7 +1149,13 @@ type AutomationTrigger struct {
 	Created         bool          `yaml:"created,omitempty"`
 	RelationCreated string        `yaml:"relation_created,omitempty"`
 	RelationRemoved string        `yaml:"relation_removed,omitempty"`
-	When            []string      `yaml:"when,omitempty"` // Property conditions that must match (AND logic)
+
+	// Faces limits the trigger to specific content states, named as declared
+	// in `faces:`. Empty means every state — see automation.Trigger.Faces for
+	// why that is the default and when to narrow it.
+	Faces StringOrSlice `yaml:"faces,omitempty"`
+
+	When []string `yaml:"when,omitempty"` // Property conditions that must match (AND logic)
 
 	// Condition is a predicate EXPRESSION that must hold for the
 	// automation to fire, ANDed with every When clause.

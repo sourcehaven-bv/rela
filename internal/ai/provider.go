@@ -68,7 +68,7 @@ type Message struct {
 // Temperature and MaxTokens are pointers so callers can distinguish
 // "explicitly set to zero" from "unset" — temperature=0 is the most
 // common deterministic-sampling setting and must round-trip correctly.
-// Nil pointers are omitted from the wire JSON; non-nil pointers are
+// Nil faces are omitted from the wire JSON; non-nil pointers are
 // always sent.
 type ChatRequest struct {
 	Messages    []Message

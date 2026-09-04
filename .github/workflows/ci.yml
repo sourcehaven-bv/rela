@@ -388,6 +388,32 @@ jobs:
           RELA_VERSION_SWEEP_MAX_STALENESS: 2s
         run: npx playwright test --reporter=line
 
+      # The worlds manual is EXECUTABLE — its shows{}/page{}/api{} islands assert
+      # the prose against a running rela — but it was built only by the opt-in
+      # `just docs-visual-postgres`, never in CI. So the document that says "every
+      # claim below is checked" could rot silently, and did: a section described
+      # neighbour resolution the software does not do (QA F-6a).
+      #
+      # It runs HERE rather than in the docs job because this is the only job
+      # with all four things a build needs: Chrome (installed above for
+      # Playwright), a built frontend, postgres (screenshot{} of the history
+      # view needs a backend that versions), and bubblewrap for confined
+      # `command:` renderers.
+      #
+      # The sweep overrides match the E2E ones and for the same reason: version
+      # capture is debounced 5 minutes in production, far longer than a build.
+      - name: Build the worlds manual (executable doc assertions)
+        env:
+          RELA_DATABASE_URL: postgres://rela@127.0.0.1:5432/rela_e2e?sslmode=disable
+          RELA_VERSION_SWEEP_INTERVAL: 500ms
+          RELA_VERSION_SWEEP_IDLE: 150ms
+          RELA_VERSION_SWEEP_MAX_STALENESS: 2s
+        run: |
+          go build -tags postgres -o bin/rela-docs-postgres ./cmd/rela-docs
+          ./bin/rela-docs-postgres build prototypes/worlds/manual/worlds-manual.md \
+            --project prototypes/worlds/project \
+            --out "$RUNNER_TEMP/worlds-manual.md"
+
       - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@v7
@@ -529,12 +555,15 @@ jobs:
           echo "postgres build must not link bleve:"
           ! go list -deps -tags postgres ./cmd/rela-server | grep -q 'blevesearch/bleve'
           ! go list -deps -tags postgres ./cmd/rela        | grep -q 'blevesearch/bleve'
-          echo "only the default rela-docs links chromedp (screenshot{} browser capture):"
+          echo "only rela-docs links chromedp (screenshot{} browser capture):"
           ! go list -deps ./cmd/rela        | grep -q 'chromedp/chromedp'
           ! go list -deps ./cmd/rela-server | grep -q 'chromedp/chromedp'
-          go list -deps ./cmd/rela-docs     | grep -q 'chromedp/chromedp'
-          echo "the postgres rela-docs must NOT link chromedp (screenshot{} is disabled there):"
-          ! go list -deps -tags postgres ./cmd/rela-docs | grep -q 'chromedp/chromedp'
+          ! go list -deps -tags postgres ./cmd/rela        | grep -q 'chromedp/chromedp'
+          ! go list -deps -tags postgres ./cmd/rela-server | grep -q 'chromedp/chromedp'
+          echo "both rela-docs builds link it: screenshot{} is supported on either backend,"
+          echo "and history figures REQUIRE postgres (versioning is a pg-only capability)."
+          go list -deps ./cmd/rela-docs                    | grep -q 'chromedp/chromedp'
+          go list -deps -tags postgres ./cmd/rela-docs     | grep -q 'chromedp/chromedp'
           echo "no build but the sqlite one links the sqlite driver:"
           ! go list -deps ./cmd/rela-server                | grep -q 'modernc.org/sqlite'
           ! go list -deps ./cmd/rela                       | grep -q 'modernc.org/sqlite'
@@ -546,8 +575,9 @@ jobs:
           echo "the sqlite build DOES link bleve and the sqlite driver (it uses both):"
           go list -deps -tags sqlite ./cmd/rela-server | grep -q 'blevesearch/bleve'
           go list -deps -tags sqlite ./cmd/rela-server | grep -q 'modernc.org/sqlite'
-          echo "the sqlite rela-docs must NOT link chromedp (screenshot{} would seed a real database):"
-          ! go list -deps -tags sqlite ./cmd/rela-docs | grep -q 'chromedp/chromedp'
+          echo "the sqlite rela-docs links it too: appbuild.At pins the temp project's"
+          echo "root, so a seed can no longer escape into a real database (TKT-SK2QQW)."
+          go list -deps -tags sqlite ./cmd/rela-docs | grep -q 'chromedp/chromedp'
           echo "rela-desktop links the default backend only:"
           ! go list -deps ./cmd/rela-desktop | grep -q 'jackc/pgx'
           ! go list -deps ./cmd/rela-desktop | grep -q 'modernc.org/sqlite'

@@ -45,6 +45,7 @@ package visibility
 
 import (
 	"context"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -59,6 +60,57 @@ import (
 type RowGate interface {
 	PermitsRead(ctx context.Context, entityType, id string) (bool, error)
 	PermitsReadMany(ctx context.Context, entityType string, ids []string) (map[string]bool, error)
+}
+
+// FaceGate is the OPTIONAL content-state half of a [RowGate] (TKT-O7R2A1).
+//
+// A row gate answers "may this principal read this id"; it cannot answer
+// "…and which of its FACES", because an entity's face is not known until the
+// row has been loaded. A `read: [policy@published]` grant therefore passes the
+// row gate for every policy and needs this second question asked afterwards.
+//
+// Optional, and type-asserted rather than added to [RowGate], because
+// [acl.Request] and every test double already satisfy RowGate — widening it
+// would break them all to express something only face-declaring schemas use.
+// A gate that does not implement FaceGate grants every face, which is exactly
+// the behavior of a project that declares no faces.
+//
+// PermittedFaces returns the faces this principal may read of entityType. An
+// EMPTY slice means EVERY face — a bare `read: [policy]` grant widens rather
+// than narrows, because a world never serves the default face and a bare grant
+// clamped to it would read nothing at all under any world. See
+// [acl.ReadQueryResult.Faces].
+type FaceGate interface {
+	PermittedFaces(ctx context.Context, entityType string) ([]entity.Face, error)
+}
+
+// FaceAllowed reports whether gate permits reading face of entityType.
+//
+// The single place a face verdict is decided, so [PolicyReader]'s three
+// read-out methods cannot drift from each other — or from the handful of
+// handlers that legitimately read the raw store and still owe the entity a
+// face check (the view ENTRY, which is deliberately not routed through a
+// redacting Reader). Those call it directly rather than keeping a second copy
+// of the rule.
+//
+// Fails CLOSED: a gate error hides the row, matching the package's
+// fail-closed contract.
+//
+// A gate that is not a [FaceGate], or one reporting no restriction, permits
+// every face.
+func FaceAllowed(ctx context.Context, gate RowGate, entityType string, face entity.Face) bool {
+	fg, ok := gate.(FaceGate)
+	if !ok {
+		return true
+	}
+	faces, err := fg.PermittedFaces(ctx, entityType)
+	if err != nil {
+		return false
+	}
+	if len(faces) == 0 {
+		return true
+	}
+	return slices.Contains(faces, face)
 }
 
 // FieldRedactor reports the property names hidden from the ctx principal

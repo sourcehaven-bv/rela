@@ -2,6 +2,9 @@ package appbuild_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
@@ -53,7 +56,7 @@ func assembleOver(t *testing.T, base *appbuild.SharedBase) *appbuild.Services {
 //
 // It asserts the stores are genuinely separate (a write through one is not
 // visible through the other) AND that both bundles share the exact metamodel
-// and ACL policy pointers from the base — i.e. the config was parsed once, not
+// and ACL policy faces from the base — i.e. the config was parsed once, not
 // re-read per store. Without both halves the test would pass against a
 // build that quietly re-prepared per assembly.
 func TestSharedBase_AssembleTwiceOverDistinctStores(t *testing.T) {
@@ -64,7 +67,7 @@ func TestSharedBase_AssembleTwiceOverDistinctStores(t *testing.T) {
 	b := assembleOver(t, base)
 	t.Cleanup(func() { _ = b.Close() })
 
-	// Shared, parsed once: identical pointers, not merely equal values.
+	// Shared, parsed once: identical faces, not merely equal values.
 	if a.Meta() != base.Meta() || b.Meta() != base.Meta() {
 		t.Error("assembled Services must reuse the base's metamodel, not reload it")
 	}
@@ -97,7 +100,7 @@ func TestSharedBase_CloseIsPerAssembly(t *testing.T) {
 	b := assembleOver(t, base)
 	t.Cleanup(func() { _ = b.Close() })
 
-	// Capture the shared pointer before the close so we can prove the close did
+	// Capture the shared face before the close so we can prove the close did
 	// not reach through it. Checking only the sibling is not enough: a Close that
 	// nils its OWN reference to shared state still signals that teardown is
 	// touching things it does not own.
@@ -144,7 +147,7 @@ func TestSharedBase_CloseIsPerAssembly(t *testing.T) {
 // cross-tenant defect with no compile-time signal, so it is pinned here rather
 // than left to review.
 //
-// Comparing entity-type counts and the policy pointer catches the realistic
+// Comparing entity-type counts and the policy face catches the realistic
 // shapes (a mutating consumer appending to a slice/map on the shared value)
 // without asserting deep equality on a large struct.
 func TestSharedBase_AssemblyDoesNotMutateSharedValues(t *testing.T) {
@@ -191,4 +194,83 @@ func TestNewSharedBase_ValidatesUpFront(t *testing.T) {
 	}); err == nil {
 		t.Fatal("NewSharedBase must reject a Config missing required collaborators")
 	}
+}
+
+// TestNewSharedBase_CompilesWorlds pins that world compilation runs at
+// assembly (TKT-WAV8XP). The face GRAMMAR is checked in internal/worlds
+// rather than the loader — metamodel may not import entity under arch-lint —
+// so the boot is the only place left that can turn a bad face name into a
+// startup failure instead of a lurking runtime one. Without this call site
+// the grammar half of the feature would be enforced nowhere.
+func TestNewSharedBase_CompilesWorlds(t *testing.T) {
+	newBaseOver := func(t *testing.T, schema string) (*appbuild.SharedBase, error) {
+		t.Helper()
+		root := t.TempDir()
+		if err := os.WriteFile(
+			filepath.Join(root, "metamodel.yaml"), []byte(schema), 0o644,
+		); err != nil {
+			t.Fatal(err)
+		}
+		for _, dir := range []string{".rela", "entities", "relations"} {
+			if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		fs := storage.NewSafeFS(storage.NewOsFS())
+		paths, err := project.Discover(root, fs)
+		if err != nil {
+			t.Fatalf("Discover: %v", err)
+		}
+		return appbuild.NewSharedBase(appbuild.Config{
+			FS:           fs,
+			Paths:        paths,
+			ScriptEngine: script.NewEngine(),
+			Audit:        audit.Nop{},
+		})
+	}
+
+	const good = `version: "1.0"
+entities:
+  doc:
+    label: Doc
+    plural: docs
+    id_prefix: "DOC-"
+    id_type: sequential
+    properties:
+      title: {type: string}
+    bare_face: draft
+    faces:
+      draft: {}
+      published: {}
+worlds:
+  published:
+    select: published
+    otherwise: exclude
+`
+
+	t.Run("a declared world is compiled and reachable", func(t *testing.T) {
+		base, err := newBaseOver(t, good)
+		if err != nil {
+			t.Fatalf("NewSharedBase: %v", err)
+		}
+		if _, ok := base.Worlds().Lookup("published"); !ok {
+			t.Error("the declared world must be compiled onto the base")
+		}
+	})
+
+	t.Run("an invalid face name fails the boot", func(t *testing.T) {
+		// `Draft` is not a legal face name (no uppercase). The loader's
+		// structural checks pass it; only the compiler catches it.
+		bad := strings.Replace(good, "draft: {}", "Draft: {}", 1)
+		bad = strings.Replace(bad, "bare_face: draft", "bare_face: Draft", 1)
+		_, err := newBaseOver(t, bad)
+		if err == nil {
+			t.Fatal("NewSharedBase must reject an invalid face name at startup")
+		}
+		for _, want := range []string{"doc", "Draft"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error must name %q, got: %v", want, err)
+			}
+		}
+	})
 }

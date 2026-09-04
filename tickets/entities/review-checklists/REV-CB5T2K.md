@@ -78,7 +78,7 @@ checklist. The demo-data write produced by live verification
 - **AC3 (display arm stays legible as read-only) — PASS, and materially
   stronger than at first submission.** Verified in a real browser against the
   compiled stylesheet: display arm `cursor: default` / `opacity: 0.6`;
-  ACL-denied edit arm `not-allowed` / `0.6`; live edit arm `pointer` / `1`.
+  ACL-denied edit arm `not-allowed` / `0.6`; live edit arm `face` / `1`.
   The first draft failed this criterion silently — see [[RR-CBC1XZ]].
 - **AC4 (no behaviour regression) — PASS.** Full suite green; a live toggle
   persisted to disk through the autosave PATCH.

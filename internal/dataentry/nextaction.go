@@ -40,6 +40,19 @@ import (
 //     resolved against the entity being viewed, which is a later surface.
 func (a *App) nextActionCandidates() nextaction.CandidateFunc {
 	return func(ctx context.Context, src dataentryconfig.NextActionSource) ([]nextaction.Candidate, error) {
+		// The SOURCE world is resolved per source, before any read, and
+		// REPLACES whatever world the request carried. See
+		// nextActionSourceWorld for why the caller's `?world=` must not reach
+		// a candidate query.
+		ctx, ok, err := nextActionSourceWorld(ctx, a.worlds, src)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			// This principal holds no read grant for the source's world.
+			// Contribute nothing — deliberately a skip, not an error.
+			return nil, nil
+		}
 		switch {
 		case src.Count != "":
 			return a.countCandidates(ctx, src.Count, src.CountUngated)
@@ -54,6 +67,90 @@ func (a *App) nextActionCandidates() nextaction.CandidateFunc {
 	}
 }
 
+// nextActionSourceWorld rebinds ctx to the world a source's QUERY runs in,
+// reporting ok=false when this principal may not read that world.
+//
+// # The source world REPLACES the request's world, never inherits it
+//
+// A next-action source answers "what should I do now?", and the answer is
+// almost always unfinished work — exactly what a publication world like
+// `published` excludes. A source that inherited the reader's world would
+// therefore be reliably empty in the world most people browse, which is why
+// the query world is operator-declared per source (`source_world:`) and an
+// absent one means the DEFAULT world rather than "whatever the caller asked
+// for".
+//
+// That is also the security-relevant half. The request's `?world=` is
+// caller-supplied; a source world is operator-supplied. Letting the URL
+// parameter widen or redirect a source's query would let a caller aim an
+// operator's rule at a world the operator never named. The caller's world
+// governs DISPLAY only (dataentryconfig.NextActionSource.VisibleWorlds,
+// applied in the handler); it is dropped here, so the two axes cannot be
+// conflated by a request.
+//
+// # The ACL check is not optional, and it is a SKIP
+//
+// A declared source world is config, so it is not itself an authorization: the
+// grant is re-checked per principal, exactly as resolveWorld does for `?world=`.
+// A principal with no read grant contributes no candidates from this source.
+//
+// SKIP rather than error, deliberately. This is an advisory surface that sits
+// on other pages, so failing the whole resolve would let one misconfigured
+// source blank the suggestion box for everyone it does not apply to — and the
+// principal who cannot read `editorial` is a perfectly ordinary user, not an
+// error condition. Skipping degrades to "no suggestion from this source",
+// which is a state the engine already handles on every quiet day.
+//
+// Note this is belt-and-braces rather than the boundary: candidates flow
+// through the caller's read gate regardless, so a missing grant here could at
+// most have produced rows the gate would then have withheld. Checking anyway
+// keeps the world grant meaningful as a grant and matches the request path.
+//
+// An infrastructure failure from the gate is NOT a denial and propagates —
+// rendering an outage as a quiet suggestion box hides it with no operator
+// signal (the RR-4TFZNL shape).
+//
+// Returns ctx unchanged for the default world, so a project that declares no
+// worlds takes exactly the path it did before this key existed.
+//
+// A free function taking the lookup rather than an App method, for the same
+// reason resolveWorld is one: it needs exactly one collaborator, and App is at
+// its plimsoll method cap because it has accreted for years — adding to it is
+// the habit that got it there.
+func nextActionSourceWorld(
+	ctx context.Context, lookup WorldLookup, src dataentryconfig.NextActionSource,
+) (context.Context, bool, error) {
+	name := src.SourceWorld
+	if name == "" || name == defaultWorldName {
+		// The default world is today's graph and needs no grant beyond the
+		// per-entity gates that already run. Bind the zero handle explicitly
+		// so a request that arrived with `?world=published` cannot leak its
+		// scope into a source that never named one.
+		return withWorld(ctx, worldHandle{}), true, nil
+	}
+	if lookup == nil {
+		// Worlds were never wired, so no name can resolve. Skip rather than
+		// silently querying the default world under a source that asked for
+		// something else.
+		return ctx, false, nil
+	}
+	scope, known := lookup.Lookup(name)
+	if !known {
+		// Rejected at config load (validateNextActionWorlds). Reaching here
+		// means config and metamodel disagree at runtime; skip rather than
+		// widening to the default world.
+		return ctx, false, nil
+	}
+	permitted, err := readGateFromContext(ctx).PermitsWorld(ctx, name)
+	if err != nil {
+		return ctx, false, fmt.Errorf("next-action source world %q: %w", name, err)
+	}
+	if !permitted {
+		return ctx, false, nil
+	}
+	return withWorld(ctx, worldHandle{name: name, scope: scope}), true, nil
+}
+
 // nextActionOptions resolves a pick_one option list through the SAME
 // ACL-gated path as candidates, so an option can never name an entity the
 // caller may not read.
@@ -62,7 +159,20 @@ func (a *App) nextActionCandidates() nextaction.CandidateFunc {
 // already approved — this is why the resolution belongs here and not in the
 // SPA: a client-side fetch would be a second read surface to gate.
 func (a *App) nextActionOptions() nextaction.OptionFunc {
-	return func(ctx context.Context, query string, limit int) ([]nextaction.PickOption, error) {
+	return func(
+		ctx context.Context, src dataentryconfig.NextActionSource, query string, limit int,
+	) ([]nextaction.PickOption, error) {
+		// Options are scoped to the SOURCE's world, exactly like its
+		// candidates. An option list resolved in a different world than the
+		// suggestion it belongs to would offer the user entities that do not
+		// exist from where the suggestion was computed.
+		ctx, ok, err := nextActionSourceWorld(ctx, a.worlds, src)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, nil
+		}
 		entities, err := a.queries.executeQuery(ctx, query)
 		if err != nil {
 			return nil, fmt.Errorf("next-action pick_one query %q: %w", query, err)

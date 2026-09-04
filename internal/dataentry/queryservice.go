@@ -197,7 +197,14 @@ func (q *queryService) runVisibleFreeTextSearch(
 			}
 			return nil, fmt.Errorf("free-text search: %w", err)
 		}
-		e, getErr := svc.Store.GetEntity(ctx, hit.ID)
+		// Load the FACE the hit matched, not the bare id. Under the default
+		// world hit.Face is the zero face and this IS GetEntity, so nothing
+		// changes today — but /_search is world-refused only by the route
+		// allowlist, and a bare-id re-read here would render default-face
+		// bytes for a hit scored against another face the moment that
+		// allowlist widens. The searcher already resolved which face matched;
+		// discarding it and re-reading is the wrong-face serve.
+		e, getErr := svc.Store.GetEntityState(ctx, hit.ID, hit.Face)
 		if getErr != nil {
 			// Stale index hit (entity deleted between index query and
 			// store read). Skip silently — the result stays a coherent
@@ -220,6 +227,13 @@ func (q *queryService) runVisibleFreeTextSearch(
 // executeQuery path: a list is already type-scoped, so any `type:` token from
 // the query string is intentionally ignored — we always pin the type to the
 // list's type to keep the surface predictable.
+//
+// The search is WORLD-SCOPED off ctx, and that is what makes `?q=` safe to
+// combine with `?world=` at all (TKT-9KZGJO step 5). The scope decides which
+// FACE of each entity the text is matched against, so a `published`-world
+// search never matches on draft-only text; an entity the world excludes
+// resolves to no face and cannot appear. A denied world yields nothing here
+// for the same reason the list itself does — see the blocksAllReads guard.
 func (q *queryService) freeTextIDsForType(
 	ctx context.Context, query, typeName string,
 ) (freeTextIDsForTypeResult, error) {
@@ -233,13 +247,20 @@ func (q *queryService) freeTextIDsForType(
 	}
 	sq.EntityTypes = []string{typeName}
 
-	hits, err := runFreeTextSearchE(ctx, q.services(), sq, maxFreeTextSearchResults)
+	// A denied world must find NOTHING, and saying so here rather than relying
+	// on the caller is deliberate. scopedSortedEntities returns early on a
+	// denied handle today, so this is unreachable through it — but a denied
+	// handle carries the ZERO scope (resolveWorld never built one), and a zero
+	// scope IS the default world. Any future caller reaching this without the
+	// early return would therefore get a full default-world search under a
+	// world the principal may not read. Fail closed at the seam that would leak.
+	if worldFromContext(ctx).blocksAllReads() {
+		return freeTextIDsForTypeResult{IDs: nil, HasFilter: true}, nil
+	}
+
+	ids, err := freeTextIDs(ctx, q.services(), sq, worldScopeFrom(ctx), maxFreeTextSearchResults)
 	if err != nil {
 		return freeTextIDsForTypeResult{}, err
-	}
-	ids := make(map[string]struct{}, len(hits))
-	for _, e := range hits {
-		ids[e.ID] = struct{}{}
 	}
 	return freeTextIDsForTypeResult{IDs: ids, HasFilter: true}, nil
 }

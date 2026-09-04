@@ -236,7 +236,39 @@ func buildVisibleSearchSQL(
 		sb.WriteString(strings.Join(withParts, ",\n"))
 		sb.WriteByte('\n')
 	}
-	sb.WriteString("SELECT e.id, e.type, e.properties, e.content, e.updated_at FROM entities e WHERE TRUE")
+	// The world scope rides q.World (TKT-9KZGJO). Two shapes, exactly as in
+	// SearchBackend.Search:
+	//
+	//   - DEFAULT world: `e.face = ''`, the historical query verbatim, so
+	//     a project with no faces pays nothing.
+	//   - non-default: resolve per FAMILY with DISTINCT ON, because a world
+	//     is a ranked preference and `face IN (...)` would return two rows
+	//     for an entity holding two coordinates.
+	//
+	// LOCKSTEP with pgstore/search.go's SearchBackend.Search: the gated and
+	// ungated streams are held to an ordered-subsequence conformance
+	// contract, so these two scopes must change together. Both now build
+	// their candidate/rank expressions from the SAME worldSQL helper, which
+	// is what makes "together" structural rather than a promise.
+	//
+	// Note the ACL row gate cannot cover for a mistake here: guard rule 1
+	// makes the row gate world-INDEPENDENT, so a draft leaking through this
+	// scope would not be caught downstream.
+	//
+	// The ACL visibility clause is applied to the RESOLVED row, after the
+	// prime is chosen — world first, gate second, the same order
+	// internal/worldreader fixes for the read path. Gating first would let
+	// what the ACL denied change WHICH face the world resolves to, which is
+	// the existence oracle that ordering exists to close.
+	if q.World.IsDefaultWorld() {
+		sb.WriteString("SELECT e.id, e.type, e.face, e.properties, e.content, e.updated_at " +
+			"FROM entities e WHERE e.face = ''")
+	} else {
+		rank, candidate := worldSQL(q.World, "e", &b.args)
+		sb.WriteString("SELECT e.id, e.type, e.face, e.properties, e.content, e.updated_at FROM (" +
+			"SELECT DISTINCT ON (id) * FROM entities e WHERE " + candidate +
+			" ORDER BY id ASC, (" + rank + ") ASC, face ASC) e WHERE true")
+	}
 
 	// Text match + ordering mirror SearchBackend.Search exactly:
 	// escaped needle for LIKE, raw lowercased needle for similarity,
@@ -298,6 +330,11 @@ func buildVisibilityDisjunction(b *sqlBuilder, scope map[string]search.TypeScope
 				w, ex := buildPredicateSQL(b, fmt.Sprintf("v%d_out", i), *ts.Query.HasOutbound, typeArg, store.DirectionOutgoing)
 				withParts = append(withParts, w...)
 				part.WriteString(" AND EXISTS (" + ex + ")")
+			}
+			if len(ts.Query.Any) > 0 {
+				w, cond := buildAnySQL(b, fmt.Sprintf("v%d_any", i), ts.Query.Any, typeArg)
+				withParts = append(withParts, w...)
+				part.WriteString(" AND " + cond)
 			}
 			part.WriteByte(')')
 			visParts = append(visParts, part.String())

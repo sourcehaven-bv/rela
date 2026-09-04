@@ -58,7 +58,7 @@ func (c *ACLAuditCmd) Run(svc *readServices) error {
 		return fmt.Errorf("load acl.yaml: %w", err)
 	}
 
-	perms, permsErr := permissionConsumerFor(svc.Config)
+	perms, permsErr := permissionConsumerFor(svc.Config, svc.Meta)
 	if permsErr != nil {
 		out.WriteWarning(
 			"could not read %s (%v); skipping the dead-permission check, which cannot "+
@@ -168,6 +168,54 @@ func (r *metamodelReader) GetRelation(name string) (aclaudit.RelationView, bool)
 	return aclaudit.RelationView{From: def.From}, true
 }
 
+// HasWorld reports whether the metamodel declares a world by this name.
+//
+// The implicit DEFAULT world is NOT declared and therefore reports false —
+// the audit special-cases that name itself, which keeps "did the operator
+// write this world in schema.yaml" a different question from "is this world
+// usable". Case-sensitive, like every other name lookup; the loader rejects
+// a declared world named "default" case-INSENSITIVELY, so no declared world
+// can shadow the implicit one under any spelling.
+//
+// Reads the exported map rather than going through a Metamodel method: this
+// adapter is the only consumer, and *Metamodel is already at its plimsoll
+// exported-method cap.
+func (r *metamodelReader) HasWorld(name string) bool {
+	if r.m == nil {
+		return false
+	}
+	_, ok := r.m.Worlds[name]
+	return ok
+}
+
+// HasFace reports whether entity type t declares the content state named
+// face. Resolves aliases via GetEntityDef, so a grant written against a
+// type alias answers about the canonical type. A type with no `faces:`
+// block declares none, including the empty one.
+func (r *metamodelReader) HasFace(t, face string) bool {
+	if r.m == nil {
+		return false
+	}
+	def, ok := r.m.GetEntityDef(t)
+	if !ok {
+		return false
+	}
+	_, declared := def.Faces[face]
+	return declared
+}
+
+// BareFace returns the type's `bare_face:` declared name, or "".
+func (r *metamodelReader) BareFace(t string) string {
+	if r.m == nil {
+		return ""
+	}
+	def, ok := r.m.GetEntityDef(t)
+	if !ok {
+		return ""
+	}
+	return def.BareFace
+}
+
 func (r *metamodelReader) HasField(t, field string) bool {
 	if r.m == nil {
 		return false
@@ -224,6 +272,14 @@ func sortedClone(xs []string) []string {
 // here — see the per-surface tests.
 type dataEntryPermissions struct {
 	cfg *dataentryconfig.Config
+	// meta supplies the SCHEMA-side consumers. A copy's `guard.permission`
+	// gates publishing and lives in schema.yaml, not data-entry.yaml, so
+	// collecting only the latter reported every copy guard as dead config and
+	// advised deleting the permission that gates the copy.
+	//
+	// Nil is accepted: a project with no readable metamodel still gets the
+	// data-entry half rather than losing the check entirely.
+	meta *metamodel.Metamodel
 }
 
 // UsedPermissions returns every permission referenced by a data-entry UI gate:
@@ -251,6 +307,25 @@ func (d *dataEntryPermissions) UsedPermissions() []string {
 		}
 	}
 	perms = append(perms, navigationPermissions(d.cfg.Navigation)...)
+	perms = append(perms, copyGuardPermissions(d.meta)...)
+	return perms
+}
+
+// copyGuardPermissions returns the permission each declared copy is gated on.
+//
+// These are consumed by the copy kernel rather than by a UI gate, but they are
+// referenced outside acl.yaml just the same, which is the only distinction the
+// dead-permission check draws.
+func copyGuardPermissions(m *metamodel.Metamodel) []string {
+	if m == nil {
+		return nil
+	}
+	perms := make([]string, 0, len(m.Copies))
+	for _, def := range m.Copies {
+		if def.Guard.Permission != "" {
+			perms = append(perms, def.Guard.Permission)
+		}
+	}
 	return perms
 }
 
@@ -283,8 +358,8 @@ func navigationPermissions(entries []dataentryconfig.NavigationEntry) []string {
 // so aclaudit.Audit's `perms == nil` check would not fire and A7 would run
 // blind, which is the exact false positive BUG-919PM6 fixed. Returning the
 // interface makes the nil case unrepresentable any other way.
-func permissionConsumerFor(cfg config.Loader) (aclaudit.PermissionConsumer, error) {
-	loaded, err := loadDataEntryPermissions(cfg)
+func permissionConsumerFor(cfg config.Loader, meta *metamodel.Metamodel) (aclaudit.PermissionConsumer, error) {
+	loaded, err := loadDataEntryPermissions(cfg, meta)
 	if err != nil {
 		return nil, err
 	}
@@ -304,11 +379,11 @@ func permissionConsumerFor(cfg config.Loader) (aclaudit.PermissionConsumer, erro
 // that is the swap boundary for remote/embedded config backends, and reading
 // around it would make the audit silently skip A7 on any deployment whose
 // config does not live on local disk.
-func loadDataEntryPermissions(cfg config.Loader) (*dataEntryPermissions, error) {
+func loadDataEntryPermissions(cfg config.Loader, meta *metamodel.Metamodel) (*dataEntryPermissions, error) {
 	data, err := cfg.Load(context.Background(), dataentryconfig.ConfigFile)
 	if err != nil {
 		if stderrors.Is(err, os.ErrNotExist) {
-			return &dataEntryPermissions{cfg: &dataentryconfig.Config{}}, nil
+			return &dataEntryPermissions{cfg: &dataentryconfig.Config{}, meta: meta}, nil
 		}
 		return nil, err
 	}
@@ -316,5 +391,5 @@ func loadDataEntryPermissions(cfg config.Loader) (*dataEntryPermissions, error) 
 	if err := yaml.Unmarshal(data, &parsed); err != nil {
 		return nil, err
 	}
-	return &dataEntryPermissions{cfg: &parsed}, nil
+	return &dataEntryPermissions{cfg: &parsed, meta: meta}, nil
 }

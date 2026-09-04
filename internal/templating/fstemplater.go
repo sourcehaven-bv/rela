@@ -25,7 +25,10 @@ func NewFSTemplater(fs storage.FS, paths *project.Context) *FSTemplater {
 }
 
 func (t *FSTemplater) EntityTemplate(_ context.Context, entityType, variant string) (*Template, error) {
-	path := t.paths.EntityTemplateVariantPath(entityType, variant)
+	path, err := t.paths.EntityTemplateVariantPath(entityType, variant)
+	if err != nil {
+		return nil, err
+	}
 	doc, err := loadEntityTemplateDoc(t.fs, path)
 	if err != nil {
 		return nil, err
@@ -41,7 +44,10 @@ func (t *FSTemplater) EntityTemplates(_ context.Context, entityType string) ([]*
 }
 
 func (t *FSTemplater) RelationTemplate(_ context.Context, relationType string) (*Template, error) {
-	path := t.paths.RelationTemplatePath(relationType)
+	path, err := t.paths.RelationTemplatePath(relationType)
+	if err != nil {
+		return nil, err
+	}
 	doc, err := loadRelationTemplateDoc(t.fs, path)
 	if err != nil {
 		return nil, err
@@ -55,14 +61,20 @@ func (t *FSTemplater) RelationTemplate(_ context.Context, relationType string) (
 func (t *FSTemplater) GenerateEntity(
 	_ context.Context, meta *metamodel.Metamodel, entityType, variant string, force bool,
 ) (bool, error) {
-	path := t.paths.EntityTemplateVariantPath(entityType, variant)
+	path, err := t.paths.EntityTemplateVariantPath(entityType, variant)
+	if err != nil {
+		return false, err
+	}
 	return generateEntityTemplate(t.fs, path, meta, entityType, force)
 }
 
 func (t *FSTemplater) GenerateRelation(
 	_ context.Context, meta *metamodel.Metamodel, relationType string, force bool,
 ) (bool, error) {
-	path := t.paths.RelationTemplatePath(relationType)
+	path, err := t.paths.RelationTemplatePath(relationType)
+	if err != nil {
+		return false, err
+	}
 	return generateRelationTemplate(t.fs, path, meta, relationType, force)
 }
 

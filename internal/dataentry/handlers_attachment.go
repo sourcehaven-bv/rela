@@ -95,8 +95,12 @@ func (h *attachmentHandler) handleV1GetAttachment(
 		return
 	}
 
+	// The gate above authorized by (type, id), which a `type@face` grant is
+	// invisible to, and this reader is the raw store — so the face half is
+	// owed here, as on the relations route (TKT-O7R2A1). A file lives on ONE
+	// face's property, so serving it discloses that face's content.
 	entity, found := h.reader.getEntity(ctx, entityID)
-	if !found || entity.Type != typeName {
+	if !found || entity.Type != typeName || !faceReadable(ctx, entity.Type, entity.Face) {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
 	}
@@ -427,7 +431,7 @@ func (h *attachmentHandler) attachmentWritePreflight(
 
 	// Authorize the `update` write up front (mirrors authorizeConflictResolve)
 	// so an ACL deny happens before any bytes are written to the store.
-	decision := h.acl().AuthorizeWrite(ctx, translateVerb("update", entity.Type, entity.ID))
+	decision := h.acl().AuthorizeWrite(ctx, translateVerb("update", entity.Type, entity.ID, entity.Face))
 	if !decision.Allow {
 		h.audit().Record(audit.Record{
 			Time:        time.Now().UTC(),

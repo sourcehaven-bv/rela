@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 
@@ -57,6 +58,28 @@ type APIResponse struct {
 	Header map[string][]string
 }
 
+// # Islands share ONE project, and run in order
+//
+// Every island of a document — api{}, screenshot{}, page{} — reads and writes
+// the SAME temp project, and they execute top-to-bottom in source order. So a
+// write made here IS visible to everything below it: an api{} POST that
+// publishes a copy can be photographed by a later screenshot{}, which is the
+// figure this sharing was built for.
+//
+// What is NOT guaranteed:
+//
+//   - Nothing is visible to an island ABOVE the write. Order is source order,
+//     with no lookahead.
+//   - Writes are not isolated or rolled back between islands. There is one
+//     store for the document and every write persists into the next island, so
+//     an api{} that mutates state changes what later assertions see. That is
+//     the point, but it means an island is not a fixture boundary.
+//   - Nothing is shared BETWEEN documents. Two manuals built in one run get
+//     separate projects, so a write in one is invisible to the other.
+//   - Asynchronous work is not awaited. A version row written by the postgres
+//     sweep arrives on a debounce, so a figure depending on one must say so
+//     (screenshot{await_versions=N}) rather than assume the next island sees it.
+//
 // api{} asserts an API contract: status, machine-readable error code, or that
 // two requests answer IDENTICALLY.
 //
@@ -80,10 +103,11 @@ func (b *tierBBindings) luaAPI(ls *lua.LState) int {
 	}
 
 	if rejectUnknownKeys(b, ls, "api", tbl,
-		"path", "method", "as", "body", "status", "error", "identical_to") {
+		"path", "method", "as", "body", "status", "error", "identical_to", "has", "absent", "emit") {
 
 		return 0
 	}
+	show := fieldBoolDefault(ls, tbl, "emit", true)
 
 	path := fieldString(ls, tbl, "path")
 	if path == "" {
@@ -94,10 +118,29 @@ func (b *tierBBindings) luaAPI(ls *lua.LState) int {
 	wantError := fieldString(ls, tbl, "error")
 	identicalTo := fieldTable(tbl, "identical_to")
 
-	if wantStatus == 0 && wantError == "" && identicalTo == nil {
+	has, herr := claimList(tbl, "has")
+	if herr != nil {
+		return b.luaFail(ls, "api{path=%q}: %v", path, herr)
+	}
+	absent, aerr := claimList(tbl, "absent")
+	if aerr != nil {
+		return b.luaFail(ls, "api{path=%q}: %v", path, aerr)
+	}
+
+	if wantStatus == 0 && wantError == "" && identicalTo == nil && len(has) == 0 && len(absent) == 0 {
 		return b.luaFail(ls, "api{path=%q}: asserts nothing. Give at least one of "+
-			"status=, error= or identical_to= — a call with no claim passes whatever "+
-			"the server does", path)
+			"status=, error=, has=, absent= or identical_to= — a call with no claim passes "+
+			"whatever the server does", path)
+	}
+	// An `absent=` claim against a response that FAILED is vacuous: an error
+	// body contains none of the strings, so every absent= would pass while
+	// proving nothing about what the endpoint discloses. Requiring the status
+	// claim alongside it means the body claim is only ever read on a response
+	// the manual has already pinned.
+	if len(absent) > 0 && wantStatus == 0 && wantError == "" {
+		return b.luaFail(ls, "api{path=%q}: absent= needs a status= claim beside it. An error "+
+			"response contains none of the strings either, so absent= alone would pass on a "+
+			"500 and prove nothing about what a successful response withholds", path)
 	}
 	if b.apiClient == nil {
 		return b.luaFail(ls, "api{path=%q}: no API client available: %s", path, b.apiClientErr)
@@ -116,45 +159,138 @@ func (b *tierBBindings) luaAPI(ls *lua.LState) int {
 		return b.luaFail(ls, "api{path=%q}: %v", path, err)
 	}
 
-	if msg := checkAPI(path, resp, wantStatus, wantError); msg != "" {
+	if msg := checkAPI(path, resp, wantStatus, wantError, has, absent); msg != "" {
 		return b.luaFail(ls, "%s", msg)
 	}
 
 	if identicalTo != nil {
-		other := APIRequest{
-			ProjectDir: b.projectDir,
-			Seed:       b.seed(),
-			Method:     fieldStringOf(identicalTo, "method"),
-			Path:       fieldStringOf(identicalTo, "path"),
-			As:         fieldStringOf(identicalTo, "as"),
-			Body:       fieldStringOf(identicalTo, "body"),
-		}
-		if rejectUnknownKeys(b, ls, "api identical_to", identicalTo, "path", "method", "as", "body") {
-			return 0
-		}
-		if other.Path == "" {
-			return b.luaFail(ls, "api{path=%q}: identical_to needs its own `path`", path)
-		}
-		// Comparing a request with itself is trivially true — a claimless call
-		// wearing a claim's clothes, which is the class this feature refuses.
-		if other.Path == path && other.As == req.As && other.Method == req.Method && other.Body == req.Body {
-			return b.luaFail(ls, "api{path=%q}: identical_to names the SAME request, which is "+
-				"always true. The claim is that two DIFFERENT requests are indistinguishable — "+
-				"vary the path or the principal", path)
-		}
-		otherResp, oerr := b.apiClient.Do(b.ctx, other)
-		if oerr != nil {
-			return b.luaFail(ls, "api{identical_to=%q}: %v", other.Path, oerr)
-		}
-		if msg := checkIdentical(path, other.Path, resp, otherResp); msg != "" {
-			return b.luaFail(ls, "%s", msg)
-		}
+		return b.assertIdentical(ls, req, resp, identicalTo, show)
+	}
+
+	if show {
+		b.emit(apiEvidence(req, resp, wantError, has, absent).render())
+	}
+	return 0
+}
+
+// apiEvidence states one request and what the server answered.
+//
+// The principal is named in the sentence because an API status is meaningless
+// without it: 404 for a reader and 200 for an editor is the FEATURE, and a
+// figure showing only "404" invites the reader to conclude the entity is gone.
+func apiEvidence(req APIRequest, resp APIResponse, wantError string, has, absent []string) evidence {
+	as := req.As
+	if as == "" {
+		as = "a reader who may read"
+	} else {
+		as = fmt.Sprintf("`%s`", as)
+	}
+	method := req.Method
+	if method == "" {
+		method = "GET"
+	}
+	ev := evidence{
+		claim: fmt.Sprintf("%s `%s` as %s answers **%d %s**.",
+			method, req.Path, as, resp.Status, statusPhrase(resp.Status)),
+	}
+	var notes []string
+	if wantError != "" {
+		notes = append(notes, fmt.Sprintf("Error code `%s`.", wantError))
+	}
+	// The body claims are the interesting half when they are present: "404"
+	// says the row was withheld, while absent= says the response did not name
+	// a thing the caller may not see. Spell both out rather than leaving the
+	// reader to infer them from a status.
+	if len(has) > 0 {
+		notes = append(notes, fmt.Sprintf("The response names %s.", quotedList(has)))
+	}
+	if len(absent) > 0 {
+		notes = append(notes, fmt.Sprintf("It does not name %s.", quotedList(absent)))
+	}
+	ev.note = strings.Join(notes, " ")
+	return ev
+}
+
+// quotedList renders a claim list for prose, so evidence reads as a sentence
+// rather than as a Go slice dump.
+func quotedList(items []string) string {
+	quoted := make([]string, 0, len(items))
+	for _, s := range items {
+		quoted = append(quoted, fmt.Sprintf("`%s`", s))
+	}
+	return strings.Join(quoted, ", ")
+}
+
+// identicalEvidence states the indistinguishability claim.
+//
+// This one carries the security property a reader most needs spelled out: two
+// requests answering the same way is what makes a denied read unable to confirm
+// that an entity exists. Rendering only the two statuses would let a reader
+// conclude "both 404" without seeing that the SAMENESS is the point.
+func identicalEvidence(req, other APIRequest, resp APIResponse) evidence {
+	return evidence{
+		claim: fmt.Sprintf("`%s` and `%s` answer **identically** (%d %s).",
+			req.Path, other.Path, resp.Status, statusPhrase(resp.Status)),
+		note: "Byte-for-byte the same, headers included — so the answer cannot be used to " +
+			"tell whether the entity exists.",
+	}
+}
+
+// statusPhrase names an HTTP status for a reader who does not know the codes.
+//
+// http.StatusText covers every registered code, so there is no local table to
+// drift from the standard library's.
+func statusPhrase(code int) string {
+	if text := http.StatusText(code); text != "" {
+		return text
+	}
+	return "Unknown"
+}
+
+// assertIdentical runs the two-request indistinguishability claim.
+//
+// Split out of luaAPI because the claim is a self-contained second request with
+// its own validation, and inlining it made the caller's nesting hard to follow.
+func (b *tierBBindings) assertIdentical(
+	ls *lua.LState, req APIRequest, resp APIResponse,
+	identicalTo *lua.LTable, show bool,
+) int {
+	other := APIRequest{
+		ProjectDir: b.projectDir,
+		Seed:       b.seed(),
+		Method:     fieldStringOf(identicalTo, "method"),
+		Path:       fieldStringOf(identicalTo, "path"),
+		As:         fieldStringOf(identicalTo, "as"),
+		Body:       fieldStringOf(identicalTo, "body"),
+	}
+	if rejectUnknownKeys(b, ls, "api identical_to", identicalTo, "path", "method", "as", "body") {
+		return 0
+	}
+	if other.Path == "" {
+		return b.luaFail(ls, "api{path=%q}: identical_to needs its own `path`", req.Path)
+	}
+	// Comparing a request with itself is trivially true — a claimless call
+	// wearing a claim's clothes, which is the class this feature refuses.
+	if other.Path == req.Path && other.As == req.As && other.Method == req.Method && other.Body == req.Body {
+		return b.luaFail(ls, "api{path=%q}: identical_to names the SAME request, which is "+
+			"always true. The claim is that two DIFFERENT requests are indistinguishable — "+
+			"vary the path or the principal", req.Path)
+	}
+	otherResp, oerr := b.apiClient.Do(b.ctx, other)
+	if oerr != nil {
+		return b.luaFail(ls, "api{identical_to=%q}: %v", other.Path, oerr)
+	}
+	if msg := checkIdentical(req.Path, other.Path, resp, otherResp); msg != "" {
+		return b.luaFail(ls, "%s", msg)
+	}
+	if show {
+		b.emit(identicalEvidence(req, other, resp).render())
 	}
 	return 0
 }
 
 // checkAPI compares one response against the status/error claims.
-func checkAPI(path string, resp APIResponse, wantStatus int, wantError string) string {
+func checkAPI(path string, resp APIResponse, wantStatus int, wantError string, has, absent []string) string {
 	// Both claims are reported when both fail: a wrong status used to mask a
 	// wrong error code, costing an extra fix-and-rerun cycle on a red build.
 	var problems []string
@@ -166,6 +302,17 @@ func checkAPI(path string, resp APIResponse, wantStatus int, wantError string) s
 		if got := problemCode(resp.Body); got != wantError {
 			problems = append(problems, fmt.Sprintf("  claimed error: %s\n  actual error:  %s",
 				wantError, orNone(got)))
+		}
+	}
+	for _, want := range has {
+		if !strings.Contains(resp.Body, want) {
+			problems = append(problems, fmt.Sprintf("  body must contain: %q\n  but it does not", want))
+		}
+	}
+	for _, unwanted := range absent {
+		if strings.Contains(resp.Body, unwanted) {
+			problems = append(problems, fmt.Sprintf("  body must NOT contain: %q\n  but it does — this is a "+
+				"disclosure, not a mismatch", unwanted))
 		}
 	}
 	if len(problems) == 0 {

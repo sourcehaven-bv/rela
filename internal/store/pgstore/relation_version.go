@@ -65,12 +65,14 @@ func insertRelationVersion(ctx context.Context, q DBTX, in store.RelationVersion
 	}
 	const ins = `
 		INSERT INTO relation_versions
-		    (rel_record_id, op, from_id, rel_type, to_id, prev_from, prev_to,
+		    (rel_record_id, op, from_id, from_face, rel_type, to_id,
+		     prev_from, prev_to,
 		     content, properties, content_hash, schema_hash,
 		     principal_user, principal_tool, triggered_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`
 	_, err = q.Exec(ctx, ins,
-		in.RecordID, string(in.Op), in.From, in.Type, in.To, prevFrom, prevTo,
+		in.RecordID, string(in.Op), in.From, string(in.FromFace), in.Type, in.To,
+		prevFrom, prevTo,
 		in.Content, props, contentHash, in.SchemaHash,
 		in.PrincipalUser, in.PrincipalTool, in.TriggeredBy)
 	return err
@@ -133,6 +135,7 @@ func (v *VersionStore) relationLineageIDs(ctx context.Context, headID int64) ([]
 			    SELECT rv.rel_record_id
 			    FROM relation_versions rv
 			    WHERE rv.from_id = ren.prev_from
+			      AND rv.from_face = ren.from_face
 			      AND rv.rel_type = ren.rel_type
 			      AND rv.to_id   = ren.prev_to
 			      AND rv.vseq < ren.vseq
@@ -179,9 +182,17 @@ func (v *VersionStore) relationLineageIDs(ctx context.Context, headID int64) ([]
 // rel_record_id whose latest row still carries this (from,type,to). Returns
 // (0, ErrNotFound) when the key has no live row and no history.
 func (v *VersionStore) recordIDForKey(ctx context.Context, from, relType, to string) (int64, error) {
-	// Live row first.
+	// Live row first, DEFAULT TAIL ONLY — and that is still right after
+	// TKT-C1XUA8 gave state-tailed edges their own history.
+	//
+	// This resolves a (from, type, to) KEY to a lineage, and the key is what
+	// a caller who did not name a face is asking about. A state-tailed
+	// sibling of the same triple is a DIFFERENT edge with its own
+	// rel_record_id; answering with it would silently redirect a
+	// default-tail question to another face. A face-aware caller resolves
+	// its own record id and passes it directly.
 	const live = `SELECT rel_record_id FROM relations
-	              WHERE from_id = $1 AND rel_type = $2 AND to_id = $3`
+	              WHERE from_id = $1 AND rel_type = $2 AND to_id = $3 AND from_face = ''`
 	var id int64
 	err := v.db.QueryRow(ctx, live, from, relType, to).Scan(&id)
 	if err == nil {
@@ -202,6 +213,7 @@ func (v *VersionStore) recordIDForKey(ctx context.Context, from, relType, to str
 		    FROM relation_versions GROUP BY rel_record_id
 		) latest ON latest.rel_record_id = rv.rel_record_id AND latest.vseq = rv.vseq
 		WHERE rv.from_id = $1 AND rv.rel_type = $2 AND rv.to_id = $3
+		  AND rv.from_face = ''
 		ORDER BY rv.vseq DESC
 		LIMIT 1`
 	err = v.db.QueryRow(ctx, dead, from, relType, to).Scan(&id)
@@ -456,7 +468,7 @@ func (v *VersionStore) ListRelationLifetimes(
 // or 0 if the relation is not currently live.
 func (v *VersionStore) liveRecordID(ctx context.Context, from, relType, to string) (int64, error) {
 	const q = `SELECT rel_record_id FROM relations
-	           WHERE from_id = $1 AND rel_type = $2 AND to_id = $3`
+	           WHERE from_id = $1 AND rel_type = $2 AND to_id = $3 AND from_face = ''`
 	var id int64
 	err := v.db.QueryRow(ctx, q, from, relType, to).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {

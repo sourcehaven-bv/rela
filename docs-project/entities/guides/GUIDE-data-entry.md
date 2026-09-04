@@ -214,6 +214,7 @@ app:
 | ------------- | -------------------------------- |
 | `name`        | Application title in the header  |
 | `description` | Subtitle shown below the title   |
+| `default_world` | World a request lands in when the URL carries no `?world=`. See [Worlds in the web app and API](#worlds-in-the-web-app-and-api) |
 
 ### PlantUML diagrams
 
@@ -979,6 +980,7 @@ lists:
 | `filters`         | list   | Static filters (always applied)                             |
 | `filter_controls` | list   | Interactive filter controls shown to the user               |
 | `create_form`     | string | Form name for the "New" button                              |
+| `create_world`    | string | World the "New" button opens its form in, when a new entity belongs in another world than the list shows |
 | `edit_form`       | string | Form name for the row edit action                           |
 | `page_size`       | int    | Rows per page (default: 25)                                 |
 | `actions`         | list   | Action IDs available as keyboard shortcuts on selected rows |
@@ -1358,8 +1360,23 @@ where: "status = active"     # Match status property
 where: "priority != low"     # Exclude low priority
 ```
 
+#### `where:` under a world
+
+When a view is requested with `?world=<name>`, a `where:` clause is evaluated
+against the face that world resolved, not against the entity's bare face. Under
+a world that selects `published`, `where: "status = active"` reads the
+published face's `status`. A page that rendered published content while
+filtering on draft values would contradict itself, so the filter follows the
+page. Filters on the `type` pseudo-property are unaffected, because an entity's
+type is the same on every face.
+
 If a where clause is invalid or a property doesn't exist, the filter is silently
 skipped and all entities are returned (fail-open for robustness).
+
+> **Note:** that fail-open behaviour is a known defect, not a design goal — a
+> mistyped `where:` silently *widens* a clause whose purpose is to narrow. It is
+> tracked as BUG-WHEREWIDE and will become a load-time error, so a bad `where:`
+> is refused when the config parses rather than ignored at render time.
 
 ### Sections
 
@@ -1796,6 +1813,8 @@ next_actions:
 | `actions` | The affordances offered. See below. |
 | `cooldown` | How long after being *shown* to stay quiet. Defaults to 24h. |
 | `key_props` | Properties that make a re-triggered condition count as **new** — see below. |
+| `source_world` | The world the candidate query runs in. Declared per source, never taken from the request. |
+| `visible_worlds` | Worlds in which the suggestion may be displayed. Unset matches every world. Presentational only. |
 | `defer_scope` | What "not now" covers: `entity` (default) or `source` — see below. |
 
 Exactly one of `query`, `context` or `count` must be set.
@@ -4763,6 +4782,297 @@ any registered Lua action via `rela.action`. Treat an app folder with the
 **same review rigor as a `scripts/` Lua action**: it is code, not content. Apps
 live as files in `apps/`, versioned in git, and should go through the same
 review as any other code.
+
+## Worlds in the web app and API
+
+If your schema declares faces and worlds, every read in the web app and the
+HTTP API happens in a **world**: a declared rule that picks one face of each
+entity, or leaves the entity out. The
+[Metamodel Reference](metamodel.md#content-states-and-worlds) lists the schema
+keys, and the guide
+[How To Publish Content with Faces and Worlds](content-states.md) walks through
+a complete setup. This section covers what the web app and the API do with a
+world once it is declared.
+
+A project that declares no worlds is unaffected by everything below.
+
+### Browsing default (`app.default_world`)
+
+`default_world` in the `app:` block names the world a request lands in when the
+URL carries no `?world=`:
+
+```yaml
+app:
+  name: "Handbook"
+  default_world: published
+```
+
+Without it, browsing shows the bare faces. For a handbook whose bare face is the
+draft, that means readers land on drafts and need a URL parameter to reach the
+published text, so the example inverts it.
+
+`default_world` is presentation, not policy. It grants nothing: the world's
+read grant is re-checked on every request exactly as for an explicit `?world=`,
+so pointing it at a world a role may not read yields that world's ordinary
+empty result. The server applies it to `curl` and to the browser alike, but
+only on read requests and only on the routes listed under
+[Routes that serve a world](#routes-that-serve-a-world). Passing
+`?world=default` explicitly still reaches the bare faces. Naming an undeclared
+world here is a startup error.
+
+### Creating into another world (`create_world`)
+
+A create always writes the bare face. When a list is shown in a world that does
+not select the bare face, a newly created entity has no face in the world on
+screen, and the author would be redirected to a page saying so. `create_world`
+on the list names the world the create button opens its form in:
+
+```yaml
+lists:
+  policies:
+    entity_type: policy
+    create_form: new_policy
+    create_world: editorial
+```
+
+The form carries that world onto the post-create redirect, so the author lands
+on the draft they just made. It is on the list rather than on the form because
+the same form can be reached from several places, and which face a new entity
+starts in belongs to the workflow that opened it. Leaving it empty opens the
+form in the list's own world. It must name a declared world, and the button is
+shown only if the caller may read the target world.
+
+### What a world-bound page shows
+
+In a non-default world the web app behaves as follows:
+
+- The world is part of the URL as `?world=<name>`, so a world-bound page is a
+  shareable link that survives a reload. Changing world resets pagination and
+  adds a browser history entry.
+- The top of the page shows the world's `banner:` text when the schema declares
+  one, then a read-only note and a **Go to Draft** button that returns to the
+  default world. The note and the button are not configurable, because a world
+  is read-only regardless of configuration. The button takes its text from the
+  bare face's `label:` and appears only when the caller may read the default
+  world.
+- Edit, delete, and create controls are hidden, and so are copy buttons. A copy
+  invoke writes the bare face, and under a world that serves a different face
+  the user would publish content that is not on their screen.
+- A **View Published** button, or a menu when the entity has several other
+  faces, switches to another face by navigating to the world that leads with
+  it. It appears on every screen that has faces, including the default world,
+  because an author on the draft wants to see what readers see.
+- A badge names the face when the world served a **stand-in**: a face reached
+  through `otherwise: default`, or through a later entry in the chain than the
+  first. A first-choice hit shows no badge. The badge appears on list rows,
+  kanban cards, and each related entity on a detail page.
+- An entity that exists but has no face in the world renders a page saying so,
+  with a link to a face that does exist, rather than a not-found error.
+
+In the default world, a detail page shows one button per copy definition whose
+source is the face on screen and that the caller may invoke, for example
+**Publish** on a draft policy. A caller without the guard permission sees no
+button rather than a disabled one. After a successful copy, the app confirms
+which face was written and reloads the page. The new face is then reachable
+through the face switcher.
+
+A kanban board is a projection too. Each card is one entity at the face the
+world resolved, and an entity with no face in the world has no card.
+
+### Next actions and worlds
+
+A next-action source takes two world keys, and they answer different
+questions:
+
+```yaml
+next_actions:
+  finished-draft:
+    band: blocking
+    source_world: editorial
+    query: "type:policy prop:status=done"
+    suggest: "The draft of {title} is marked done. Ready to publish it?"
+
+  translate-procedure:
+    band: housekeeping
+    source_world: site-nl
+    visible_worlds: [site-nl]
+    query: "type:procedure prop:readiness=drilled"
+    suggest: "{title} is drilled. Is the Dutch site's copy up to date?"
+```
+
+`source_world` is the world the candidate query runs in. It is declared per
+source and never taken from the request, because a suggestion is almost always
+about unfinished work, which is exactly what a `published` world leaves out.
+`visible_worlds` is an allow list of worlds the suggestion may be displayed in.
+Unset, it matches every world. It is presentational only: candidates pass the
+caller's read gate regardless, and nothing should rely on this list to hide
+content.
+
+### Selecting a world over the API
+
+The API takes `?world=<name>` on the entity list and the single-entity read:
+
+```http
+GET /api/v1/pages?world=published
+GET /api/v1/pages/PAGE-1?world=published
+```
+
+Omitting the parameter serves the configured `default_world`, or the default
+world when none is configured. `?world=default` always serves the default
+world.
+
+Reading a non-default world requires a role holding `read: [world:published]`
+in `acl.yaml`. An ordinary `read: [page]` grant covers the default world only.
+A principal without the grant receives an **empty result**, deliberately
+indistinguishable from a world that holds nothing they may read. Whether an
+entity exists in a world is exactly what publication controls, so the API does
+not confirm it. An undeclared world name is a `400` that names the world,
+because world names are configuration in your repository rather than secrets.
+
+### Discovering worlds and faces
+
+`GET /api/v1/_schema` lists the declared worlds:
+
+```json
+"worlds": {
+  "default":   { "readable": true, "default": true },
+  "published": { "select": ["published"], "otherwise": "exclude",
+                 "banner": "Published — this is what readers see", "readable": true },
+  "site-nl":   { "select": ["nl", "en"], "otherwise": "default", "readable": false }
+}
+```
+
+Every declared world is listed for every caller. `readable` says whether *this*
+caller may select it. A world you may not read is marked rather than hidden, and
+selecting it anyway returns an empty result rather than an error. The same
+response reports each type's declared faces under `entities.<type>.faces`
+together with its `bare_face`, plus the configured `default_world`. Like the
+world list, this is schema: it says `policy` declares `draft` and `published`,
+never which faces a particular policy has.
+
+### Knowing which face you got (`_world`)
+
+A single-entity read carries the provenance of the face it served:
+
+```json
+"_world": { "name": "site-nl", "face": "en", "via": "chain", "chain_position": 1 }
+```
+
+| Field | Meaning |
+| --- | --- |
+| `name` | The world the response was resolved in. `default` for the implicit default world. |
+| `face` | The declared name of the face that was served. Empty when the served face has no declared name. |
+| `via` | The rule that chose the face: `unscoped` for a type without faces or the default world, `chain` when a face the world selects exists, `fallback-default` when `otherwise: default` substituted the bare face. |
+| `chain_position` | The zero-based index of the served face in the world's chain. Present only for `via: chain`. |
+
+Position `0` means the world got its first choice. Any later position is a
+stand-in, as in the example, where `site-nl` asked for Dutch and served English.
+`fallback-default` is a stand-in too. The bytes alone do not tell you which one
+you got, which is why the field exists. There is no `excluded` value: an entity
+the world excludes produces no response to carry it.
+
+Entities inside a view response carry the same block, so a view can badge each
+related entity independently.
+
+### Other faces and copy offers (`_faces`, `_copies`)
+
+A single-entity read also carries two lists a client needs to render the
+controls described above.
+
+`_faces` lists the entity's **other** faces, each with its stored coordinate and
+display label. It reports existence only: whether the caller may read a world
+is a role-level grant already answered by `_schema`. Which faces a given entity
+has is data, so `_faces` appears only on a response the caller was already
+cleared to read.
+
+`_copies` lists the copy definitions whose `from:` matches the face being
+served:
+
+```json
+"_copies": [
+  { "name": "publish", "label": "Publish", "targetFace": "policy@published",
+    "sameEntity": true, "allowed": true }
+]
+```
+
+`allowed` reports whether this caller may invoke the copy on this entity right
+now, and `reason` names why not when it is `false`. The verdict is computed by
+the same authorization path the invoke uses, so it cannot drift from what the
+write does, but it is a hint for rendering and never a boundary. Only copies
+between faces of the same entity are offered. Copies that create a different
+entity are supported by the invoke endpoint but not listed here.
+
+### Invoking a copy
+
+A copy is invoked by name:
+
+```bash
+curl -s -X POST http://localhost:8080/api/v1/_copies/publish \
+  -H 'Content-Type: application/json' \
+  -d '{"source_id": "POL-1"}'
+```
+
+The body names the source entity, and `target_id` when the definition creates a
+different entity. A request can never describe a mapping; it chooses a
+registered name, which is what keeps the guard meaningful. A successful invoke
+returns what was written:
+
+```json
+{ "definition": "publish", "entityId": "POL-1", "face": "published", "created": true }
+```
+
+`created` is `true` when the copy brought the target face into existence and
+`false` when it overwrote one. A caller who lacks the guard permission receives
+a `403` naming it. A source the caller may not read produces the same `404` as
+a source that does not exist. Any other refusal, such as an unknown definition
+or a cross-entity copy without a `target_id`, is a `422`.
+
+### Responses and errors
+
+| Situation | Response |
+| --- | --- |
+| `?world=` names a world the schema does not declare | `400 unknown_world`, naming the world |
+| `?world=` appears more than once | `400 duplicate_world` |
+| `?world=` on a `POST`, `PATCH`, `PUT`, or `DELETE` | `422 world_read_only` |
+| `?world=` on a route that cannot serve a world | `422 world_unsupported` |
+| A declared world the caller may not read | An empty list, or `404` for one entity, identical to a world holding nothing readable |
+| An entity that has no face in the world | Omitted from lists; `404` from the single-entity read; `200` with `_world_absent: true` and `_world_absent_name` from the entity view; `200` with an empty timeline and `world_face_absent: true` from history |
+
+Writes never take a world. A world can answer a read with a stand-in face, so a
+write riding that indirection would save to a face the caller did not name:
+a `PATCH` in the `published` world would edit the draft of an entity with no
+published face, and a `DELETE` would delete the entity outright while the caller
+believed they were unpublishing. Writes address the bare face directly, and
+other faces are written through copies.
+
+### Routes that serve a world
+
+A route joins this table only when its whole read path is world-scoped and
+tested. Every other route refuses an explicit `?world=` rather than serving
+default-world data under it.
+
+| Route | World-scoped |
+| --- | --- |
+| `/api/v1/{plural}` and `/api/v1/{plural}/{id}` | Yes, including `?q=` search and `?include=` neighbours |
+| `/api/v1/_views/{type}/{id}` | Yes. A view's `where:` clauses evaluate against the resolved face |
+| `/api/v1/_history/{type}/{id}` | Yes. Versioning is per face on PostgreSQL, so the history is the served face's own |
+| `/api/v1/_next_action` | Yes, as the display world for `visible_worlds` |
+| Documents, feeds, analysis, sync, attachments, export, relation sub-resources, standalone views by name | No. An explicit `?world=` is refused with `422 world_unsupported` |
+
+Search under a world matches the text of the face the world resolves, and an
+entity the world excludes has nothing to match. Neighbours reached through
+`?include=` and the `relations` map are resolved through the same world as the
+entity, so a published entity is never returned wrapped in draft neighbours.
+
+Analysis is deliberately unscoped. It reports on the health of the whole graph
+a caller may read, and a world that hides a broken draft would make the graph
+look clean precisely where it is not.
+
+History under a world is the history of the face the world resolves. A backend
+that has history but cannot scope it per face answers `501
+history_face_unsupported` rather than serving the default face's record.
+Restoring a version is a write, so a world on a restore is refused like any
+other write.
 
 ## Best Practices
 

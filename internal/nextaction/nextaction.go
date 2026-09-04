@@ -69,10 +69,19 @@ type PickOption struct {
 // the same reason as [CandidateFunc]: the query must go through the caller's
 // read gate, and the engine must not learn how to reach a store.
 //
+// It receives the SOURCE it is resolving for, not merely the query string, so
+// the wiring site can scope the option query exactly as it scopes that
+// source's candidates. Without it an options query would silently run in a
+// different world than the candidates it offers actions on — the wiring site
+// is the only layer that knows what "a world" is, and it cannot apply one it
+// is not told about.
+//
 // A nil OptionFunc is not an error — the engine then renders the pick_one
 // affordance with no options, which the UI omits. That keeps a deployment
 // that has not wired it from failing every page.
-type OptionFunc func(ctx context.Context, query string, limit int) ([]PickOption, error)
+type OptionFunc func(
+	ctx context.Context, src dataentryconfig.NextActionSource, query string, limit int,
+) ([]PickOption, error)
 
 // MatcherFunc reports whether a candidate satisfies one source's `condition:`.
 // Supplied by the wiring site for the same reason as [CandidateFunc]: the
@@ -136,6 +145,16 @@ type Engine struct {
 	options    OptionFunc
 	matchers   MatcherFunc
 	cap        int
+	// displayWorld is the world the READER is currently browsing, used only
+	// to evaluate each source's visible_worlds allow list. Empty means the
+	// default world. Supplied per request via [WithDisplayWorld].
+	//
+	// This is the PRESENTATION axis and nothing else. It never reaches a
+	// query — which world a source READS is decided entirely by the
+	// CandidateFunc from the source's own config — and it is not a
+	// confidentiality control: it decides whether an already-authorized
+	// suggestion is worth showing here, not whether its content may be seen.
+	displayWorld string
 }
 
 // Option configures an [Engine] at construction.
@@ -150,6 +169,17 @@ type Option func(*Engine)
 // affordance simply offers nothing rather than failing the page.
 func WithOptions(fn OptionFunc) Option {
 	return func(e *Engine) { e.options = fn }
+}
+
+// WithDisplayWorld sets the world the reader is currently browsing, against
+// which each source's `visible_worlds` allow list is evaluated. Empty (the
+// default) means the default world.
+//
+// A per-request option because the display world comes from the request while
+// every other Engine collaborator comes from wiring. Sources with no
+// `visible_worlds` are unaffected in either case.
+func WithDisplayWorld(world string) Option {
+	return func(e *Engine) { e.displayWorld = world }
 }
 
 // WithMatchers supplies the per-source condition matchers. Without it a
@@ -243,11 +273,16 @@ func (e *Engine) resolvePickOptions(ctx context.Context, s *Suggestion) {
 	if e.options == nil {
 		return
 	}
+	// The source config, so the wiring site can scope the option query the
+	// same way it scoped this source's candidates. A suggestion always names
+	// a configured source; a missing entry yields the zero source, which the
+	// wiring site treats as the default scoping.
+	src := e.cfg.NextActions[s.Source]
 	for i, offer := range s.Actions {
 		if offer.PickOne == nil {
 			continue
 		}
-		opts, err := e.options(ctx, offer.PickOne.Query, offer.PickOne.ResolvedLimit())
+		opts, err := e.options(ctx, src, offer.PickOne.Query, offer.PickOne.ResolvedLimit())
 		if err != nil {
 			slog.Warn("nextaction: pick_one options unavailable",
 				"source", s.Source, "error", err)
@@ -407,9 +442,23 @@ func (e *Engine) suppressed(
 func (e *Engine) sourceIDsForBand(bandID string) []string {
 	var ids []string
 	for id, src := range e.cfg.NextActions {
-		if src.Band == bandID {
-			ids = append(ids, id)
+		if src.Band != bandID {
+			continue
 		}
+		// The visible_worlds allow list is applied HERE, before the source is
+		// queried at all, rather than by filtering the winner afterwards.
+		//
+		// Filtering after the pick would break the band short-circuit: Resolve
+		// stops at the first band that yields anything, so discarding the
+		// winner at the end would return "nothing to suggest" while a lower
+		// band held a perfectly visible suggestion. Excluding the source up
+		// front keeps every band's result honest — and skips the source's
+		// query entirely, since a suggestion that cannot be displayed here is
+		// not worth the reads.
+		if !src.VisibleInWorld(e.displayWorld) {
+			continue
+		}
+		ids = append(ids, id)
 	}
 	sort.Strings(ids)
 	return ids
