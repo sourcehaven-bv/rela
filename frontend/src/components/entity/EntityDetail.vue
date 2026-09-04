@@ -1980,7 +1980,9 @@ watch(
         <CommentsPanel
           :entity-type="entityType"
           :entity-id="entityId"
+          :comments="comments"
           :section-ids="commentSectionIds"
+          @changed="loadComments"
         />
       </div>
 

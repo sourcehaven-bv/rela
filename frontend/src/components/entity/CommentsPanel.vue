@@ -2,7 +2,6 @@
 import { ref, computed, watch } from 'vue'
 import { useSchemaStore, useUIStore } from '@/stores'
 import {
-  listComments,
   addComment,
   updateComment,
   deleteComment,
@@ -25,24 +24,28 @@ const props = defineProps<{
   entityType: string
   entityId: string
   /**
+   * The target's comments. Owned by the parent, which fetches ONCE per entity
+   * and shares the same array with the per-field indicators.
+   *
+   * This used to be fetched here independently, which meant two copies of the
+   * same thread: deleting a comment from a field popover refreshed the
+   * indicators but left this panel showing the deleted row until a reload.
+   */
+  comments: Comment[]
+  /**
    * Section ids from the entity's configured view, offered as anchor targets
    * alongside the type's properties.
    */
   sectionIds?: string[]
 }>()
 
+// Every mutation reports up rather than editing a local copy — one source of
+// truth is what keeps this panel and the field indicators in agreement.
+const emit = defineEmits<{ changed: [] }>()
+
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
 const { confirm } = useConfirm()
-
-const comments = ref<Comment[]>([])
-const loading = ref(false)
-/**
- * Set when the thread could not be loaded. Distinct from "no comments": a
- * failed load must not render as an empty thread, or a permissions problem
- * looks like a clean slate.
- */
-const loadError = ref<string | null>(null)
 
 // Collapsed by default (TKT-FIO205). Since property comments now render at
 // their own field, this panel is the CATCH-ALL: it is where section-anchored
@@ -92,16 +95,16 @@ const anchorOptions = computed<AnchorOption[]>(() => {
 
 /** Unresolved first, so an active thread is not buried under settled remarks. */
 const sortedComments = computed(() =>
-  [...comments.value].sort((a, b) => Number(a.resolved) - Number(b.resolved))
+  [...props.comments].sort((a, b) => Number(a.resolved) - Number(b.resolved))
 )
 
-const unresolvedCount = computed(() => comments.value.filter((c) => !c.resolved).length)
+const unresolvedCount = computed(() => props.comments.filter((c) => !c.resolved).length)
 
 // Comments with no field row of their own. These are the reason the panel
 // still exists: a section anchor names a view heading, and a detached one
 // points at a property that is gone — neither can render beside a field.
 const homelessCount = computed(
-  () => comments.value.filter((c) => c.anchor.kind !== 'property' || c.detached).length
+  () => props.comments.filter((c) => c.anchor.kind !== 'property' || c.detached).length
 )
 
 function anchorLabel(anchor: CommentAnchor): string {
@@ -113,35 +116,18 @@ function formatDate(iso: string): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString()
 }
 
-async function load() {
-  if (!commentable.value) return
-  loading.value = true
-  loadError.value = null
-  try {
-    comments.value = await listComments(props.entityType, props.entityId)
-  } catch (err) {
-    // A 404 here means "cannot read the target, or commenting is off" — the
-    // server makes those indistinguishable on purpose. Either way there is no
-    // thread to show, so report it rather than rendering an empty one.
-    comments.value = []
-    loadError.value = getErrorMessage(err)
-  } finally {
-    loading.value = false
-  }
-}
-
 async function submit() {
   const option = anchorOptions.value.find((o) => o.key === newAnchorKey.value)
   if (!option || !newBody.value.trim() || submitting.value) return
 
   submitting.value = true
   try {
-    const created = await addComment(props.entityType, props.entityId, {
+    await addComment(props.entityType, props.entityId, {
       anchor: option.anchor,
       body: newBody.value.trim(),
     })
-    comments.value = [...comments.value, created]
     newBody.value = ''
+    emit('changed')
   } catch (err) {
     uiStore.error(getErrorMessage(err))
   } finally {
@@ -169,7 +155,7 @@ function cancelEdit() {
 async function applyUpdate(comment: Comment, patch: { body?: string; resolved?: boolean }) {
   try {
     await updateComment(props.entityType, props.entityId, comment.id, patch)
-    comments.value = comments.value.map((c) => (c.id === comment.id ? { ...c, ...patch } : c))
+    emit('changed')
   } catch (err) {
     uiStore.error(getErrorMessage(err))
   }
@@ -199,22 +185,21 @@ async function remove(comment: Comment) {
 
   try {
     await deleteComment(props.entityType, props.entityId, comment.id)
-    comments.value = comments.value.filter((c) => c.id !== comment.id)
+    emit('changed')
   } catch (err) {
     uiStore.error(getErrorMessage(err))
   }
 }
 
-// Reload when the panel points at a different entity. `immediate` covers the
-// initial mount, so there is no separate onMounted doing the same call.
+// Drop half-finished local edits when the panel points at a different entity.
+// The comment list itself is the parent's to reload — this only clears state
+// that would otherwise leak from one entity's thread into another's.
 watch(
-  () => [props.entityType, props.entityId, commentable.value] as const,
+  () => [props.entityType, props.entityId] as const,
   () => {
-    comments.value = []
     cancelEdit()
-    void load()
-  },
-  { immediate: true }
+    newBody.value = ''
+  }
 )
 
 // Default the anchor picker to the first available target once the schema has
@@ -228,8 +213,6 @@ watch(
   },
   { immediate: true }
 )
-
-defineExpose({ load })
 </script>
 
 <template>
@@ -255,13 +238,7 @@ defineExpose({ load })
       </span>
     </header>
 
-    <div v-if="loading && expanded" class="comments-state">Loading comments…</div>
-
-    <div v-else-if="loadError && expanded" class="comments-state comments-error">
-      {{ loadError }}
-    </div>
-
-    <template v-else-if="expanded">
+    <template v-if="expanded">
       <ul v-if="sortedComments.length > 0" class="comment-list">
         <li
           v-for="comment in sortedComments"
