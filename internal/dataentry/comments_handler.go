@@ -281,7 +281,7 @@ func (h *commentsHandler) addComment(
 		Ref:  req.Anchor.Ref,
 	}
 	if anchor.Kind == comments.AnchorText {
-		text, aerr := h.buildTextAnchor(ctx, target, req.Anchor.Quote, req.Anchor.QuoteIndex)
+		text, aerr := h.buildTextAnchor(ctx, target, req.Anchor.Quote)
 		if aerr != nil {
 			writeV1Error(w, r, http.StatusBadRequest, "invalid_comment", aerr.Error(), "")
 			return

@@ -92,3 +92,47 @@ describe('applyHighlights', () => {
     expect(applyHighlights('', [{ id: 'x', start: 0, end: 1 }])).toBe('')
   })
 })
+
+describe('applyHighlights leaves code untouched', () => {
+  // Regression: a mark inserted into a code span rendered as literal
+  // `<mark data-comment-id="…">` text, because markdown does not parse HTML
+  // inside code. Skipping the highlight is strictly better than showing markup.
+  it('skips a range inside an inline code span', () => {
+    const body = 'Rename it with `rela rename id` today.'
+    const out = applyHighlights(body, [byteRange(body, 'rela rename id')])
+
+    expect(out).toBe(body)
+    expect(out).not.toContain('<mark')
+  })
+
+  it('skips a range that only partially overlaps code', () => {
+    const body = 'Rename it with `rela rename id` today.'
+    // Starts in plain text, ends inside the code span.
+    const out = applyHighlights(body, [byteRange(body, 'with `rela rename')])
+
+    expect(out).toBe(body)
+  })
+
+  it('skips a range inside a fenced block', () => {
+    const body = 'Before.\n\n```sh\nrela rename id TKT-1 TKT-2\n```\n\nAfter.'
+    const out = applyHighlights(body, [byteRange(body, 'rela rename id TKT-1')])
+
+    expect(out).toBe(body)
+  })
+
+  it('still marks prose alongside code in the same document', () => {
+    const body = 'Rename it with `rela rename id` today, then verify the result.'
+    const out = applyHighlights(body, [byteRange(body, 'verify the result')])
+
+    expect(out).toContain('<mark data-comment-id="c1">verify the result</mark>')
+    // The code span is untouched.
+    expect(out).toContain('`rela rename id`')
+  })
+
+  it('does not treat backticks inside a fence as inline spans', () => {
+    const body = 'Text.\n\n```\na ` stray backtick\n```\n\nMore prose here to mark.'
+    const out = applyHighlights(body, [byteRange(body, 'More prose here')])
+
+    expect(out).toContain('<mark data-comment-id="c1">More prose here</mark>')
+  })
+})

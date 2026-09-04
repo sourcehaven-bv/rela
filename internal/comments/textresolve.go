@@ -2,6 +2,7 @@ package comments
 
 import (
 	"github.com/vloothuis/textanchor"
+	"github.com/vloothuis/textanchor/quotefind"
 )
 
 // Confidence bands for a resolved text anchor.
@@ -87,12 +88,28 @@ func ResolveText(body string, a *TextAnchor) TextMatch {
 	}
 }
 
+// FindRenderedQuote locates a quote taken from RENDERED markdown within the
+// markdown SOURCE.
+//
+// A browser selection yields display text: list markers, backticks and heading
+// hashes are gone, and blocks are separated by plain newlines. A selection that
+// crosses a bullet or a code span therefore never occurs verbatim in the
+// source, so a plain strings.Index finds nothing — which is exactly what made
+// "the selected text was not found" fire on those selections.
+//
+// quotefind walks the goldmark AST to build a rendered→source position map, so
+// it matches what the user actually saw against what is actually stored.
+//
+// Returns ok=false when the quote cannot be located, which the caller reports
+// as a 400 rather than storing an anchor that could never resolve.
+func FindRenderedQuote(body, quote string) (start, end int, ok bool) {
+	return quotefind.Find(body, quote)
+}
+
 // NewTextAnchor builds a text anchor for the selection body[start:end].
 //
 // Offsets are into the body AS STORED, so a caller working from rendered text
-// must map back to source coordinates first (the SPA sends the quote and its
-// surrounding context rather than offsets, precisely to avoid that mapping
-// crossing the wire).
+// must map back to source coordinates first — see [FindRenderedQuote].
 func NewTextAnchor(body string, start, end int) (*TextAnchor, error) {
 	a, err := textanchor.New(body, start, end, nil)
 	if err != nil {

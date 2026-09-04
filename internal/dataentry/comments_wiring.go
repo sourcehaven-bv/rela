@@ -193,16 +193,20 @@ func (h *commentsHandler) liveAnchors(ctx context.Context, target comments.Targe
 // buildTextAnchor derives a text anchor's descriptors from the entity's own
 // body, given the quote the client selected.
 //
-// The client supplies the quote and which occurrence it meant; everything else
-// (prefix, suffix, sentence, heading, paragraph index) is computed here. That
-// asymmetry is deliberate and is the security-relevant part: descriptors
-// sourced from the request could describe context that does not exist in the
-// entity, so a later resolve would land on text the commenter never selected.
+// The client supplies only the quote; everything else (prefix, suffix,
+// sentence, heading, paragraph index) is computed here. That asymmetry is
+// deliberate and is the security-relevant part: descriptors sourced from the
+// request could describe context that does not exist in the entity, so a later
+// resolve would land on text the commenter never selected.
+//
+// Which OCCURRENCE was meant is resolved by quotefind rather than by a
+// client-supplied index: it disambiguates through the surrounding source, which
+// a rendered-text offset from the browser cannot address anyway.
 //
 // The body read goes through the visibility wrapper, so a principal can only
 // anchor to text it may already read.
 func (h *commentsHandler) buildTextAnchor(
-	ctx context.Context, target comments.Target, quote string, occurrence int,
+	ctx context.Context, target comments.Target, quote string,
 ) (*comments.TextAnchor, error) {
 	quote = strings.TrimSpace(quote)
 	if len([]rune(quote)) < comments.MinQuoteRunes {
@@ -217,39 +221,16 @@ func (h *commentsHandler) buildTextAnchor(
 		return nil, errors.New("could not read the entity body")
 	}
 
-	start := nthIndex(ent.Content, quote, occurrence)
-	if start < 0 {
-		// The selection does not exist in the stored body. Usually a stale tab:
-		// the entity changed under the user between render and submit.
+	// The quote came from RENDERED markdown, so it is display text: no list
+	// markers, no backticks, blocks joined by newlines. Matching it against the
+	// source with a plain substring search fails for any selection crossing a
+	// bullet or a code span — FindRenderedQuote maps through the AST instead.
+	start, end, ok := comments.FindRenderedQuote(ent.Content, quote)
+	if !ok {
+		// Either a stale tab (the body changed between render and submit) or a
+		// selection that genuinely spans nothing locatable.
 		return nil, errors.New("the selected text was not found in the current body")
 	}
 
-	return comments.NewTextAnchor(ent.Content, start, start+len(quote))
-}
-
-// nthIndex returns the byte offset of the nth (0-based) occurrence of sub in s,
-// or -1. A negative or out-of-range n falls back to the first occurrence rather
-// than failing: which occurrence was meant is a UI nicety, and refusing the
-// whole comment over it would be a worse trade than anchoring to the first.
-func nthIndex(s, sub string, n int) int {
-	if n <= 0 {
-		return strings.Index(s, sub)
-	}
-	offset := 0
-	for i := 0; i <= n; i++ {
-		idx := strings.Index(s[offset:], sub)
-		if idx < 0 {
-			if i == 0 {
-				return -1
-			}
-			// Fewer occurrences than asked for: use the last one found.
-			return strings.LastIndex(s, sub)
-		}
-		offset += idx
-		if i == n {
-			return offset
-		}
-		offset += len(sub)
-	}
-	return -1
+	return comments.NewTextAnchor(ent.Content, start, end)
 }

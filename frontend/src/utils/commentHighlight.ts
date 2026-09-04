@@ -13,6 +13,14 @@
  * Marks are emitted as inline HTML because markdown renderers pass raw HTML
  * through. They are stripped by DOMPurify unless the tag and its attributes are
  * allowlisted — see `markdown.ts`.
+ *
+ * # Code is skipped, not marked
+ *
+ * Inside a code span or fence, markdown renders HTML LITERALLY — so a mark
+ * inserted there shows the user `<mark data-comment-id="...">` as text instead
+ * of a highlight. Any range touching code is therefore left unmarked; the
+ * comment still lists in the panel, it just gets no highlight. Rendering the
+ * markup raw would be strictly worse than rendering nothing.
  */
 
 /** The tag used for a highlight. Must be allowlisted in the sanitiser config. */
@@ -53,7 +61,10 @@ export function applyHighlights(body: string, ranges: HighlightRange[]): string 
   if (!body || ranges.length === 0) return body
 
   const bytes = new TextEncoder().encode(body)
-  const usable = selectNonOverlapping(ranges, bytes.length)
+  const codeSpans = findCodeSpans(body)
+  const usable = selectNonOverlapping(ranges, bytes.length).filter(
+    (r) => !overlapsCode(r, codeSpans)
+  )
   if (usable.length === 0) return body
 
   const decoder = new TextDecoder()
@@ -106,4 +117,53 @@ function selectNonOverlapping(ranges: HighlightRange[], size: number): Highlight
     lastEnd = r.end
   }
   return kept
+}
+
+/** A byte range of the source that markdown renders verbatim. */
+interface ByteSpan {
+  start: number
+  end: number
+}
+
+/**
+ * Finds the byte ranges of fenced blocks and inline code spans.
+ *
+ * Deliberately conservative: a run of backticks opens a span that closes at the
+ * next run of the same length, and ``` opens a fence to the next ```. Anything
+ * it over-claims merely loses a highlight, which is the safe direction — while
+ * anything it MISSES renders raw `<mark…>` markup at the user.
+ */
+function findCodeSpans(body: string): ByteSpan[] {
+  const enc = new TextEncoder()
+  const spans: ByteSpan[] = []
+
+  // Fenced blocks first, so their inner backticks are not read as inline code.
+  const fence = /^[ \t]*(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^[ \t]*\1[ \t]*$|$)/gm
+  let m: RegExpExecArray | null
+  while ((m = fence.exec(body)) !== null) {
+    spans.push(byteSpanOf(enc, body, m.index, m.index + m[0].length))
+  }
+
+  // Inline spans, skipping anything already inside a fence.
+  const inline = /(`+)(?:[\s\S]*?)\1/g
+  while ((m = inline.exec(body)) !== null) {
+    const span = byteSpanOf(enc, body, m.index, m.index + m[0].length)
+    if (!spans.some((f) => span.start >= f.start && span.end <= f.end)) {
+      spans.push(span)
+    }
+  }
+  return spans
+}
+
+/** Converts UTF-16 string indexes to the byte offsets the server speaks. */
+function byteSpanOf(enc: TextEncoder, body: string, from: number, to: number): ByteSpan {
+  return {
+    start: enc.encode(body.slice(0, from)).length,
+    end: enc.encode(body.slice(0, to)).length,
+  }
+}
+
+/** True when the range touches any code span at all — even partially. */
+function overlapsCode(r: HighlightRange, spans: ByteSpan[]): boolean {
+  return spans.some((s) => r.start < s.end && s.start < r.end)
 }

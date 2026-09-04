@@ -178,7 +178,7 @@ vendors:
   # internal/comments, which contains it in textresolve.go: the library's
   # Anchor/ResolveResult types must not escape into handlers or the wire, so
   # comments.TextAnchor mirrors its fields and converts at that one seam.
-  textanchor:  { in: github.com/vloothuis/textanchor }
+  textanchor:  { in: [github.com/vloothuis/textanchor, github.com/vloothuis/textanchor/**] }
   # uuid: the per-job fingerprint when a caller supplies no IdempotencyKey.
   # A random fingerprint is what DISABLES neoq's payload-equality dedup, so
   # two identical-payload jobs both run unless dedup was asked for by name.
