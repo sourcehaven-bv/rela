@@ -1,6 +1,7 @@
 package sqlitestore_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io/fs"
@@ -18,8 +19,11 @@ import (
 // is therefore structural, and nothing but this assertion proves it holds —
 // renaming a method or changing a signature would otherwise fail far away, at
 // the wiring site, with a confusing message.
-func TestProjectFilesSatisfiesConfigLoader(t *testing.T) {
+func TestProjectFilesSatisfiesConfigLoader(_ *testing.T) {
 	var _ config.Loader = (*sqlitestore.ProjectFiles)(nil)
+	// And the store's own read interface must stay identical to it, or the
+	// wiring site's type assertion silently stops matching.
+	var _ config.Loader = sqlitestore.ConfigReader(nil)
 }
 
 func newProjectFiles(t *testing.T) (*sqlitestore.ProjectFiles, context.Context) {
@@ -32,7 +36,7 @@ func newProjectFiles(t *testing.T) (*sqlitestore.ProjectFiles, context.Context) 
 		t.Fatalf("Connect: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
-	return conn.ProjectFiles(), ctx
+	return conn.ProjectFilesStore(), ctx
 }
 
 func TestProjectFiles_RoundTrip(t *testing.T) {
@@ -46,13 +50,13 @@ func TestProjectFiles_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if string(got) != string(want) {
+	if !bytes.Equal(got, want) {
 		t.Errorf("Load = %q, want %q", got, want)
 	}
 
 	// Put replaces rather than duplicating: config is loaded as a set.
-	if err := pf.Put(ctx, "schema.yaml", []byte("replaced")); err != nil {
-		t.Fatalf("Put again: %v", err)
+	if putErr := pf.Put(ctx, "schema.yaml", []byte("replaced")); putErr != nil {
+		t.Fatalf("Put again: %v", putErr)
 	}
 	got, err = pf.Load(ctx, "schema.yaml")
 	if err != nil {

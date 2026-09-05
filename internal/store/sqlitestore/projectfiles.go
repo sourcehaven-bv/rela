@@ -11,9 +11,14 @@ import (
 	"time"
 )
 
-// ConfigReader is the read surface [ProjectFiles] offers: the two methods a
+// ConfigReader is the READ surface [ProjectFiles] offers: the two methods a
 // config consumer needs, named here so the accessors can return an interface
 // without this package importing the application one that also declares it.
+//
+// Read-only on purpose. `rela db load` writes config, and it does so through
+// the concrete [ProjectFiles] returned by [Conn.ProjectFilesStore] — a caller
+// that only reads config cannot reach Put by accident, which is the same
+// reason the read and write halves of every other seam here are separated.
 //
 // It is deliberately identical to config.Loader. Go matches method sets
 // exactly, so the wiring site's type assertion is written against a return
@@ -48,6 +53,13 @@ type ProjectFiles struct {
 // the metamodel has to be loaded before anything that consumes one, the store
 // included.
 func (c *Conn) ProjectFiles() ConfigReader {
+	return c.ProjectFilesStore()
+}
+
+// ProjectFilesStore returns the read/write handle, for `rela db load` and
+// `rela db dump`. Separate from [Conn.ProjectFiles] so a config consumer gets
+// a read-only view and cannot reach Put by accident.
+func (c *Conn) ProjectFilesStore() *ProjectFiles {
 	return &ProjectFiles{db: c.db}
 }
 
@@ -182,7 +194,7 @@ func (p *ProjectFiles) Paths(ctx context.Context) ([]string, error) {
 // validateProjectPath applies the same rules the filesystem loader applies to
 // a name, so the two backends accept and reject exactly the same set.
 //
-// A database key needs no traversal defence of its own — there is no ".." to
+// A database key needs no traversal defense of its own — there is no ".." to
 // resolve in a column — but the backends must AGREE, or a path that works on
 // disk would fail once baked in: at load time, on a project that was fine the
 // day before.
