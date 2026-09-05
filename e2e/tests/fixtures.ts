@@ -1174,6 +1174,26 @@ forms:
       - relation: fixes
         label: Fixes Bug
 
+  # TKT-7YHKD1: "Create & add another" resets the create form CLEAN, except
+  # for fields/relations the operator marked keep_on_add_another. The assignee
+  # carries over (the batch context — you are entering ten tasks for one
+  # person); title and status do not.
+  task_add_another:
+    entity_type: task
+    title: "Task (add another)"
+    fields:
+      - property: title
+      - property: status
+      - property: assignee
+        keep_on_add_another: true
+    relations:
+      # A kept RELATION is the case the docs promote hardest, and it exercises
+      # a path a kept property does not: the payload reshape needs the picker's
+      # id -> type map, which the reset also has to carry.
+      - relation: implements
+        label: Implements Feature
+        keep_on_add_another: true
+
   # Wizard (multi-step) task form — exercises steps, visible_when,
   # required_when, next/back, and hidden-branch pruning (wizard.spec.ts).
   task_wizard:

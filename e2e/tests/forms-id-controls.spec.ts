@@ -21,8 +21,15 @@ async function submitAndWaitForCreate(
   plural: string,
 ): Promise<import('@playwright/test').Response> {
   const [resp] = await Promise.all([
+    // Exclude `?dry_run=true`: the create form's staged-affordance check POSTs
+    // to the SAME path (on mount and debounced as the user types), so a
+    // predicate matching only path+method resolves on whichever lands first
+    // and returns the dry-run's 200 instead of the create's 201.
     appPage.waitForResponse(
-      (r) => r.url().includes(`/api/v1/${plural}`) && r.request().method() === 'POST',
+      (r) =>
+        r.url().includes(`/api/v1/${plural}`) &&
+        !r.url().includes('dry_run') &&
+        r.request().method() === 'POST',
     ),
     formPage.submitButton.first().click(),
   ]);

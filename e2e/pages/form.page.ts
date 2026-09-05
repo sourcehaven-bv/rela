@@ -10,8 +10,14 @@ export class FormPage extends BasePage {
   constructor(page: Page) {
     super(page);
     this.form = page.locator("form");
+    // The PRIMARY submit only. `has-text` is a substring match, so a bare
+    // "Create" clause also matches "Create & add another" (TKT-7YHKD1) and
+    // every submit in the suite becomes a strict-mode violation. The
+    // secondary action is deliberately type="button" (two submit buttons in
+    // one form make Enter ambiguous), so the type selector already excludes
+    // it; the text clauses are narrowed to exact matches for the same reason.
     this.submitButton = page.locator(
-      'button[type="submit"], button:has-text("Save"), button:has-text("Create")',
+      'button[type="submit"], button:text-is("Save"), button:text-is("Create")',
     );
     this.cancelButton = page.locator('button:has-text("Cancel")');
     this.titleInput = page.locator("#field-title");
@@ -143,6 +149,45 @@ export class FormPage extends BasePage {
       this.submitButton.click(),
     ]);
     expect(response.ok()).toBeTruthy();
+    return response.json() as Promise<{ id: string }>;
+  }
+
+  /**
+   * Click "Create & add another" (TKT-7YHKD1) and wait for the create POST.
+   * Unlike submitAndExpectCreate this does NOT navigate — the form stays put
+   * and blanks itself for the next record.
+   */
+  async addAnotherAndExpectCreate(plural: string): Promise<{ id: string }> {
+    // Arm the wait BEFORE the click and keep the predicate loose on status:
+    // the create form POSTs to the SAME path with ?dry_run=true for its
+    // staged-affordance check (on mount, and debounced on every edit), so the
+    // predicate must exclude those or it resolves on a dry-run instead.
+    const responsePromise = this.page.waitForResponse(
+      (r) =>
+        r.url().includes(`/api/v1/${plural}`) &&
+        !r.url().includes("dry_run") &&
+        r.request().method() === "POST",
+      // Above the 5s default: unlike a plain submit, a repeat call has to wait
+      // out the PREVIOUS record's in-place reset (which awaits an affordance
+      // dry-run) before its own create is even issued. Under a loaded parallel
+      // run that stacks up, and the default budget flakes.
+      { timeout: 15000 },
+    );
+    const button = this.page.locator(
+      '.form-actions button:has-text("Create & add another")',
+    );
+    // The 24px fixed .status-bar footer sits over the bottom of the viewport,
+    // and this button is the LAST in the action row — so at some scroll
+    // positions it lands under the footer and Playwright's actionability check
+    // reports "footer intercepts pointer events". Scroll it clear first rather
+    // than forcing the click, which would mask a genuine overlay.
+    await button.scrollIntoViewIfNeeded();
+    const [response] = await Promise.all([responsePromise, button.click()]);
+    expect(response.ok()).toBeTruthy();
+    // The action does not navigate; it resets the form IN PLACE. Wait for the
+    // blank title so the caller types record N+1 into a settled form rather
+    // than racing the reset that is about to clear it.
+    await expect(this.titleInput).toHaveValue("", { timeout: 15000 });
     return response.json() as Promise<{ id: string }>;
   }
 
