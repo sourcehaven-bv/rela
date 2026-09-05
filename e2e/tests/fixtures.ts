@@ -190,6 +190,13 @@ export interface ApiHelpers {
   ): Promise<EntityResponse>;
   deleteEntity(plural: string, id: string): Promise<void>;
   listEntities(plural: string, query?: string): Promise<PaginatedResponse>;
+  /** Replace an entity's markdown BODY. Separate from updateEntity, which
+   *  carries only properties. */
+  setEntityContent(plural: string, id: string, content: string): Promise<EntityResponse>;
+  /** A target's comment thread (TKT-FIO205). Comments live outside the entity
+   *  store, so seeding and cleanup do not ride entity CRUD. */
+  listComments(type: string, id: string): Promise<{ comments: { id: string }[] }>;
+  deleteComment(type: string, id: string, commentId: string): Promise<void>;
   createRelation(
     fromPlural: string,
     fromId: string,
@@ -514,7 +521,13 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   },
 
   serverUrl: async ({ testProject, serverBinary }, use, testInfo) => {
-    const { proc, url, logs } = await spawnServer(serverBinary, testProject);
+    // A resolvable identity. Most specs do not care, but comments REFUSE an
+    // unstamped principal rather than recording "unknown" (TKT-FIO205): a
+    // comment nobody is recorded as writing can never satisfy an *-own
+    // permission check, so it could be neither edited nor deleted.
+    const { proc, url, logs } = await spawnServer(serverBinary, testProject, {
+      RELA_DATAENTRY_USER: "e2e@example.com",
+    });
     try {
       await use(url);
     } finally {
@@ -676,6 +689,19 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       async listEntities(plural, query) {
         const p = query ? `${plural}?${query}` : plural;
         return (await call("GET", p)).json();
+      },
+      async setEntityContent(plural, id, content) {
+        // Separate from updateEntity, which sends only `properties`: a comment
+        // spec needs to rewrite the BODY to exercise anchor drift.
+        return (await call("PATCH", `${plural}/${id}`, { content })).json();
+      },
+      // Comments (TKT-FIO205) live outside the entity store, so seeding and
+      // cleanup need their own helpers rather than riding entity CRUD.
+      async listComments(type, id) {
+        return (await call("GET", `_comments/${type}/${id}`)).json();
+      },
+      async deleteComment(type, id, commentId) {
+        await call("DELETE", `_comments/${type}/${id}/${commentId}`);
       },
       async setRelationMeta(fromPlural, fromId, relation, toType, toId, meta) {
         // Modern JSON:API relations body: upsert the edge with its meta. A PATCH
@@ -993,6 +1019,13 @@ relations:
     from: [task]
     to: [bug]
     inverse: fixedBy
+
+# Commenting (TKT-FIO205). Enabled for every type so the comment specs can use
+# whichever seed entity is convenient; the ACL is untouched, so the default
+# no-policy deployment applies and every principal may comment.
+comments:
+  enabled: true
+  on: ["*"]
 `;
 
 const DATA_ENTRY_YAML = `
@@ -1331,6 +1364,10 @@ views:
             widget: checkbox
           - property: title
             widget: textarea
+      # The entry's markdown body. Needed by the comment specs: a text-range
+      # anchor has nothing to attach to unless the body actually renders.
+      - source: entry
+        display: content
       - heading: "Implements"
         source: implemented
         display: list

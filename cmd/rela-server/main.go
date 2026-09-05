@@ -475,6 +475,7 @@ func main() {
 	// CalDAV needs the alias service to remember client-created resources;
 	// without it the routes are not registered at all.
 	app.SetCalDAVAliases(svc.CalDAVAliases())
+	app.SetComments(svc.Comments())
 
 	wireWorlds(app, svc)
 

@@ -43,6 +43,10 @@ interface PropertyRow {
   widget: Component
   propertyName: string
   propertyDef?: PropertyDef
+  // Position in the rendered list, exposed via the label-affordance slot so a
+  // consumer can reason about a field's place in the grid row (the comment
+  // popover flips its alignment near the right edge).
+  index: number
 }
 
 // Precompute rows once per properties array change instead of recomputing
@@ -50,7 +54,7 @@ interface PropertyRow {
 // present, use the form-side resolve(); otherwise fall back to a
 // WidgetRoutingHint derived from the wire-level shape (RR-UD2B).
 const rows = computed<PropertyRow[]>(() =>
-  props.properties.map((prop) => {
+  props.properties.map((prop, index) => {
     const propertyName = prop.propType ?? prop.name
     if (prop.propertyDef) {
       return {
@@ -58,6 +62,7 @@ const rows = computed<PropertyRow[]>(() =>
         widget: defaultRegistry.resolve(undefined, prop.propertyDef),
         propertyName,
         propertyDef: prop.propertyDef,
+        index,
       }
     }
     // No schema def -- use a routing hint. Mirrors EntityDetail's
@@ -69,6 +74,7 @@ const rows = computed<PropertyRow[]>(() =>
       prop,
       widget: defaultRegistry.resolveFromHint({ kind, propertyName }),
       propertyName,
+      index,
     }
   })
 )
@@ -89,7 +95,14 @@ function isLong(prop: PropertyItem): boolean {
       :class="{ 'property-long': isLong(row.prop) }"
       :style="isLong(row.prop) ? undefined : fieldSpanStyle(row.prop.span)"
     >
-      <dt>{{ row.prop.label }}</dt>
+      <dt>
+        {{ row.prop.label }}
+        <!-- Per-field affordances (the comment indicator, TKT-FIO205). A slot
+             rather than a prop because PropertyDisplay is shared with dense
+             surfaces — list cells, kanban cards — where a comment control
+             would be noise. Only the detail view fills it. -->
+        <slot name="label-affordance" :property="row.prop" :index="row.index" />
+      </dt>
       <dd>
         <InaccessibleField
           v-if="row.prop.inaccessible"

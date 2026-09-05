@@ -27,6 +27,7 @@ var validTopLevelKeys = map[string]bool{
 	"transforms":  true,
 	"worlds":      true,
 	"copies":      true,
+	"comments":    true,
 }
 
 // knownTypos maps common misspellings to the correct key name.
@@ -249,6 +250,7 @@ func validate(m *Metamodel) error {
 	validationErrors = append(validationErrors, validateWorlds(m)...)
 	validationErrors = append(validationErrors, validateValidationFaces(m)...)
 	validationErrors = append(validationErrors, validateAutomationFaces(m)...)
+	validationErrors = append(validationErrors, validateComments(m)...)
 
 	if len(validationErrors) > 0 {
 		return &SchemaValidationError{Errors: validationErrors}

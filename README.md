@@ -100,6 +100,7 @@ go build -o rela ./cmd/rela
 | [CalDAV: syncing to-dos with Apple Reminders and other clients](docs/caldav.md) | Sync to-do collections two-way with Apple Reminders and other CalDAV clients |
 | [CalDAV to-do (VTODO) client compatibility](docs/caldav-clients.md) | Which task apps speak VTODO, and what each does with formatted descriptions |
 | [Data Migration](docs/data-migration.md) | Detect schema shape changes and migrate stored content with generated, reviewable migrations |
+| [Comments: Annotating Entities, Fields and Text](docs/comments.md) | Enable commenting, control who may comment, and understand how anchors survive edits |
 
 ### Tutorials
 

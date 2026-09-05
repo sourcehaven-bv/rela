@@ -13,6 +13,7 @@ exclude:
   - internal/jobs/jobstest
   - internal/mail/mailtest
   - internal/userstate/userstatetest
+  - internal/comments/commentstest
   - internal/schedulerstate/schedulerstatetest
   - frontend
   - e2e
@@ -118,6 +119,9 @@ components:
   nextaction:       { in: internal/nextaction }
   memuserstate:     { in: internal/userstate/memuserstate }
   kvuserstate:      { in: internal/userstate/kvuserstate }
+  comments:         { in: internal/comments }
+  memcomments:      { in: internal/comments/memcomments }
+  filecomments:     { in: internal/comments/filecomments }
   schedulerstate:   { in: internal/schedulerstate }
   kvschedstate:     { in: internal/schedulerstate/kvstate }
   pattern:          { in: internal/pattern }
@@ -170,6 +174,11 @@ vendors:
   # the grant this narrow is what stops a consumer importing neoq types
   # directly and re-coupling every producer to the queue implementation.
   neoq:        { in: [github.com/acaloiaro/neoq, github.com/acaloiaro/neoq/**] }
+  # Text-range anchoring for comments (TKT-FIO205 stage 2). Granted ONLY to
+  # internal/comments, which contains it in textresolve.go: the library's
+  # Anchor/ResolveResult types must not escape into handlers or the wire, so
+  # comments.TextAnchor mirrors its fields and converts at that one seam.
+  textanchor:  { in: [github.com/vloothuis/textanchor, github.com/vloothuis/textanchor/**] }
   # uuid: the per-job fingerprint when a caller supplies no IdempotencyKey.
   # A random fingerprint is what DISABLES neoq's payload-equality dedup, so
   # two identical-payload jobs both run unless dedup was asked for by name.
@@ -407,6 +416,11 @@ deps:
       - calfeed
       - caldavalias
       - canonical
+      # The commentary layer (TKT-FIO205). dataentry owns the HTTP surface and
+      # the ACL gating; it does NOT choose a comment backend — like userstate
+      # above, that is a wiring-site decision, so only the `comments` package
+      # is granted here, never filecomments/memcomments.
+      - comments
       - cmdexec
       - config
       - conflict
@@ -554,6 +568,11 @@ deps:
       - userstate
       - memuserstate
       - kvuserstate
+      # Likewise the commentary layer: the root picks the backend and hands the
+      # service to the App, which nil-checks it to decide whether the feature
+      # exists at all.
+      - comments
+      - filecomments
       - datamigration
       # Bridges conditionlint's next-action condition compiler to the seam
       # dataentry declares, so the app never imports the predicate engine.
@@ -1014,6 +1033,30 @@ deps:
     mayDependOn:
       - state
       - userstate
+  # comments is user commentary ABOUT entities, not graph content — a remark on
+  # a property is not a fact the operator declared in schema.yaml. It therefore
+  # depends on entity (for the EntityObserver signature it implements) and
+  # principal (to stamp an unforgeable author), but deliberately NOT on store or
+  # entitymanager: routing commentary through the graph write path would drag it
+  # into the audit log, version capture, search and /_schema, none of which are
+  # wanted for a note someone left on a field.
+  comments:
+    mayDependOn:
+      - entity
+      - principal
+    canUse:
+      - textanchor
+  memcomments:
+    mayDependOn:
+      - comments
+  # The default backend writes one YAML document per target through the shared
+  # storage seam, so a thread is diffable like the entities it annotates.
+  filecomments:
+    mayDependOn:
+      - comments
+      - storage
+    canUse:
+      - yaml
   # schedulerstate is the per-task scheduler bookkeeping seam (last successful
   # run, failure count, next retry). Deliberately NOT dependent on store: a
   # last-run stamp is a fact about a deployment's operation, not graph content,

@@ -57,14 +57,14 @@ export interface RenderMarkdownOptions {
 
 export function renderMarkdown(
   content: string,
-  refResolverOrOptions?: EntityRefResolver | RenderMarkdownOptions,
+  refResolverOrOptions?: EntityRefResolver | RenderMarkdownOptions
 ): string {
   if (!content) return ''
 
   const options: RenderMarkdownOptions =
     typeof refResolverOrOptions === 'function'
       ? { refResolver: refResolverOrOptions }
-      : refResolverOrOptions ?? {}
+      : (refResolverOrOptions ?? {})
 
   // Per-render Marked instance + counter so each call numbers its own
   // checkboxes from 0. EntityDetail.vue maps data-cb-idx back to the
@@ -100,16 +100,20 @@ export function renderMarkdown(
         return `<input data-cb-idx="${idx}" type="checkbox"${checkedAttr}> `
       },
     },
-    walkTokens: refResolver
-      ? (token) => rewriteEntityRefToken(token, refResolver)
-      : undefined,
+    walkTokens: refResolver ? (token) => rewriteEntityRefToken(token, refResolver) : undefined,
   })
 
   const rawHtml = instance.parse(content) as string
 
-  // Allow data-cb-idx attribute through DOMPurify
+  // Allowlist the attributes rela adds to rendered markdown. DOMPurify strips
+  // anything not listed, silently — so a new marker attribute that is not added
+  // here simply vanishes, with no error to debug.
+  //
+  // `mark` itself needs no ADD_TAGS: it is in DOMPurify's default allowlist.
+  // The comment attributes carry a server-minted id and a boolean; neither is
+  // a URL or a script sink.
   return DOMPurify.sanitize(rawHtml, {
-    ADD_ATTR: ['data-cb-idx'],
+    ADD_ATTR: ['data-cb-idx', 'data-comment-id', 'data-comment-uncertain', 'data-comment-chip'],
   })
 }
 
@@ -216,7 +220,16 @@ mermaidPurifier.addHook('uponSanitizeElement', (node, data) => {
 // thing strict mermaid still lets through from a hostile label: the event
 // handler is stripped but the element survives, which is enough for a request
 // to an attacker-chosen URL when the diagram is viewed.
-const LABEL_FORBID_TAGS = ['img', 'picture', 'source', 'video', 'audio', 'iframe', 'object', 'embed']
+const LABEL_FORBID_TAGS = [
+  'img',
+  'picture',
+  'source',
+  'video',
+  'audio',
+  'iframe',
+  'object',
+  'embed',
+]
 
 /**
  * Sanitize a mermaid-produced SVG and return it as a detached element.
@@ -329,7 +342,13 @@ export async function renderMermaidDiagrams(container: HTMLElement): Promise<voi
     const id = `mermaid-${++mermaidCounter}`
     try {
       const { svg } = await mermaid.render(id, source)
-      pre.replaceWith(sanitizeMermaidSVG(svg))
+      const rendered = sanitizeMermaidSVG(svg)
+      // Carry the fence body onto the SVG. Replacing the <pre> otherwise
+      // discards the only trace of the source, and the comment layer needs it
+      // to anchor a remark to the diagram (TKT-FIO205) — there is no text to
+      // select in an SVG.
+      if (rendered instanceof Element) rendered.setAttribute('data-source', source)
+      pre.replaceWith(rendered)
     } catch (err) {
       console.error('Mermaid render error:', err)
       // Leave the block as-is on error.
@@ -341,9 +360,7 @@ export async function renderMermaidDiagrams(container: HTMLElement): Promise<voi
   // router's scroll-to-anchor) re-check their targets on this event rather
   // than polling on an arbitrary interval.
   if (targets.length > 0) {
-    container.dispatchEvent(
-      new CustomEvent('rela:mermaid-rendered', { bubbles: true }),
-    )
+    container.dispatchEvent(new CustomEvent('rela:mermaid-rendered', { bubbles: true }))
   }
 }
 
@@ -407,7 +424,7 @@ function plantUMLImageURL(serverURL: string, source: string): string | null {
  */
 export function renderPlantUMLDiagrams(
   container: HTMLElement,
-  serverURL: string | undefined | null,
+  serverURL: string | undefined | null
 ): number {
   if (!serverURL) return 0
 
