@@ -234,6 +234,34 @@ func (d *Desktop) saveWindowState() {
 	}
 }
 
+// onOpenedWithFile handles a .rela project bundle opened from Finder (double
+// click, drop on the Dock icon, or "Open With"). macOS delivers this as an
+// Apple Event rather than argv, so it arrives here and not through -project.
+//
+// A .rela bundle is a DIRECTORY declared as a package in Info.plist, so the
+// path is already the project root and needs no adjustment.
+// coverage-ignore-func: requires Finder
+func (d *Desktop) onOpenedWithFile(path string) {
+	if path == "" {
+		return
+	}
+	if !isRelaProject(path) {
+		d.errorDialog("Not a rela project",
+			filepath.Base(path)+" does not contain a schema.yaml or .rela directory.")
+		return
+	}
+	if errMsg := d.LoadProject(path); errMsg != "" {
+		d.errorDialog("Failed to open project", errMsg)
+		return
+	}
+	d.reloadWindow()
+	if d.win != nil {
+		d.win.Show()
+		d.win.UnMinimise()
+		d.win.Focus()
+	}
+}
+
 // pickDirectory shows a native directory chooser and returns the chosen path
 // ("" if cancelled). Replaces v2's runtime.OpenDirectoryDialog.
 // coverage-ignore-func: requires Wails runtime
@@ -981,6 +1009,8 @@ func main() {
 		// v2 had no shutdown hook, so the scheduler and services leaked on
 		// quit. ServiceShutdown now releases them.
 		OnShutdown: func() { slog.Info("shutting down") },
+		// Lets Finder hand .rela bundles to this app; see onOpenedWithFile.
+		FileAssociations: []string{".rela"},
 		// One instance only: see onSecondInstanceLaunch.
 		SingleInstance: &application.SingleInstanceOptions{
 			UniqueID:               singleInstanceID,
@@ -1003,6 +1033,13 @@ func main() {
 		winOpts.InitialPosition = application.WindowXY
 	}
 	d.win = app.Window.NewWithOptions(winOpts)
+
+	// Finder handing us a .rela bundle. Registered before Run so a cold launch
+	// (where the event arrives during startup) is not missed.
+	app.Event.OnApplicationEvent(events.Common.ApplicationOpenedWithFile,
+		func(e *application.ApplicationEvent) {
+			d.onOpenedWithFile(e.Context().Filename())
+		})
 
 	// Persist geometry on close. Reading it after the window is gone returns
 	// zeroes, so this must run while the window still exists.

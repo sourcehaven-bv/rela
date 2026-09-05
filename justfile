@@ -471,20 +471,41 @@ _icon-pngs:
         rsvg-convert -w $size -h $size -b '#031b75' {{logo_svg}} -o {{icon_tmp}}/icon_${size}.png; \
     done
 
+# Generate the macOS icon art: a rounded-rect ("squircle") on transparent
+# margin. macOS draws app icons inside its own grid, so full-bleed art gets
+# inset again and reads as a small square inside a larger one. Apple's grid
+# puts a rounded-rect at 824/1024 of the canvas, so the art is scaled to ~80%
+# and centred, with the remaining ~10% each side left transparent.
+#
+# Windows and Linux want full-bleed art and keep using the _icon-pngs output.
+_icon-macos-pngs: _icon-pngs
+    @echo "Generating macOS squircle PNGs..."
+    @for size in 16 32 64 128 256 512 1024; do \
+        inner=$(( size * 824 / 1024 )); \
+        radius=$(( inner * 2237 / 10000 )); \
+        magick -size ${inner}x${inner} xc:none \
+            -draw "roundrectangle 0,0,$((inner-1)),$((inner-1)),${radius},${radius}" \
+            -alpha extract {{icon_tmp}}/mask_${size}.png; \
+        magick {{icon_tmp}}/icon_${size}.png -resize ${inner}x${inner}! \
+            {{icon_tmp}}/mask_${size}.png -alpha off -compose CopyOpacity -composite \
+            -background none -gravity center -extent ${size}x${size} \
+            {{icon_tmp}}/mac_${size}.png; \
+    done
+
 # Generate macOS .icns (requires macOS iconutil)
-_icon-icns: _icon-pngs
+_icon-icns: _icon-macos-pngs
     @echo "Generating macOS .icns..."
     @mkdir -p {{icon_tmp}}/rela-desktop.iconset
-    @cp {{icon_tmp}}/icon_16.png   {{icon_tmp}}/rela-desktop.iconset/icon_16x16.png
-    @cp {{icon_tmp}}/icon_32.png   {{icon_tmp}}/rela-desktop.iconset/icon_16x16@2x.png
-    @cp {{icon_tmp}}/icon_32.png   {{icon_tmp}}/rela-desktop.iconset/icon_32x32.png
-    @cp {{icon_tmp}}/icon_64.png   {{icon_tmp}}/rela-desktop.iconset/icon_32x32@2x.png
-    @cp {{icon_tmp}}/icon_128.png  {{icon_tmp}}/rela-desktop.iconset/icon_128x128.png
-    @cp {{icon_tmp}}/icon_256.png  {{icon_tmp}}/rela-desktop.iconset/icon_128x128@2x.png
-    @cp {{icon_tmp}}/icon_256.png  {{icon_tmp}}/rela-desktop.iconset/icon_256x256.png
-    @cp {{icon_tmp}}/icon_512.png  {{icon_tmp}}/rela-desktop.iconset/icon_256x256@2x.png
-    @cp {{icon_tmp}}/icon_512.png  {{icon_tmp}}/rela-desktop.iconset/icon_512x512.png
-    @cp {{icon_tmp}}/icon_1024.png {{icon_tmp}}/rela-desktop.iconset/icon_512x512@2x.png
+    @cp {{icon_tmp}}/mac_16.png   {{icon_tmp}}/rela-desktop.iconset/icon_16x16.png
+    @cp {{icon_tmp}}/mac_32.png   {{icon_tmp}}/rela-desktop.iconset/icon_16x16@2x.png
+    @cp {{icon_tmp}}/mac_32.png   {{icon_tmp}}/rela-desktop.iconset/icon_32x32.png
+    @cp {{icon_tmp}}/mac_64.png   {{icon_tmp}}/rela-desktop.iconset/icon_32x32@2x.png
+    @cp {{icon_tmp}}/mac_128.png  {{icon_tmp}}/rela-desktop.iconset/icon_128x128.png
+    @cp {{icon_tmp}}/mac_256.png  {{icon_tmp}}/rela-desktop.iconset/icon_128x128@2x.png
+    @cp {{icon_tmp}}/mac_256.png  {{icon_tmp}}/rela-desktop.iconset/icon_256x256.png
+    @cp {{icon_tmp}}/mac_512.png  {{icon_tmp}}/rela-desktop.iconset/icon_256x256@2x.png
+    @cp {{icon_tmp}}/mac_512.png  {{icon_tmp}}/rela-desktop.iconset/icon_512x512.png
+    @cp {{icon_tmp}}/mac_1024.png {{icon_tmp}}/rela-desktop.iconset/icon_512x512@2x.png
     @iconutil -c icns {{icon_tmp}}/rela-desktop.iconset -o build/package/macos/rela-desktop.icns
 
 # Generate Windows .ico (requires imagemagick)
