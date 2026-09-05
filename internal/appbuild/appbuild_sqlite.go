@@ -18,9 +18,13 @@ import (
 //
 // It lives under .rela/ because that is already where node-local runtime state
 // belongs, and because a project directory should still look like a rela
-// project — `schema.yaml`, `templates/` and the rest stay on disk exactly as
-// they do on the postgres build. SQLite backs entities, relations and
-// attachments; it does not swallow operator-authored config.
+// project: `schema.yaml`, `templates/` and the rest stay on disk, and disk
+// stays FIRST in the resolution order.
+//
+// The database can also CARRY that config (the project_files table), which is
+// what makes a single shippable file possible — but as a fallback, not a
+// replacement. A project with both is a project being edited, and the file the
+// operator just wrote must win over the copy baked in (FEAT-UP14BT).
 const dbFileName = "rela.db"
 
 // New builds the services bundle for the sqlite build: a single-process
@@ -69,14 +73,26 @@ func openBackend(ctx context.Context, base *SharedBase) (store.Store, search.Sea
 		opts = append(opts, sqlitestore.WithObserver(idx))
 	}
 
-	st, err := sqlitestore.OpenContext(ctx, sqlitestore.Options{
+	// Connect first, build the store second. Splitting the two is what will
+	// let config living IN this database be read before the store exists (the
+	// metamodel has to be loaded before anything that consumes one); today the
+	// two steps are adjacent, and the seam is the point.
+	conn, err := sqlitestore.Connect(ctx, sqlitestore.Options{
 		Path: filepath.Join(base.cfg.Paths.CacheDir, dbFileName),
-	}, opts...)
+	})
 	if err != nil {
-		// Surfaced unchanged: Open's errors are the actionable ones — another
-		// process holds the single-writer lock, or WAL could not be enabled
-		// because the project sits on a network/sync filesystem. Wrapping them
-		// in "open store" would bury the part the operator needs.
+		// Surfaced unchanged: Connect's errors are the actionable ones —
+		// another process holds the single-writer lock, or WAL could not be
+		// enabled because the project sits on a network/sync filesystem.
+		// Wrapping them in "open store" would bury the part the operator needs.
+		return nil, nil, nil, err
+	}
+
+	// New takes ownership of conn, so from here the store's Close is what
+	// releases the database and the single-writer lock.
+	st, err := sqlitestore.New(conn, opts...)
+	if err != nil {
+		_ = conn.Close()
 		return nil, nil, nil, err
 	}
 

@@ -5,7 +5,7 @@ title: Split the SQLite connection from the store, add project_files and a migra
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+status: done
 ---
 
 ## Description
