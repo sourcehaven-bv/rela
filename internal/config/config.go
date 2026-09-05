@@ -9,7 +9,10 @@ package config
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -21,6 +24,27 @@ type Loader interface {
 	// Load returns the raw bytes for the named file. Implementations
 	// return an os.IsNotExist-compatible error when the file is absent.
 	Load(ctx context.Context, name string) ([]byte, error)
+
+	// List returns the file names directly under dir, sorted, without the
+	// dir prefix and without subdirectory entries. It is how the
+	// directory-shaped parts of a project — scripts/, actions/,
+	// validations/, migrations/, templates/, custom/, apps/ — are read
+	// through this seam rather than through the filesystem directly.
+	//
+	// An ABSENT directory lists empty with a nil error; every other
+	// failure surfaces, a path that exists but is not a directory
+	// included. That asymmetry is deliberate and matches
+	// datamigration.LoadDir: a project legitimately has no scripts/, but
+	// an unreadable one reported as "nothing here" would silently drop
+	// operator-authored config.
+	//
+	// Only regular files are listed.
+	//
+	// Non-recursive by design. Every consumer wants one directory's worth
+	// of files, and a recursive walk would make the two backends differ:
+	// a filesystem has real subdirectories, while a database has flat
+	// keys that merely contain slashes.
+	List(ctx context.Context, dir string) ([]string, error)
 }
 
 // Subscriber is the optional change-notification interface on a Loader.
@@ -59,6 +83,58 @@ func (l *FSLoader) Load(_ context.Context, name string) ([]byte, error) {
 		return nil, err
 	}
 	return l.fs.ReadFile(filepath.Join(l.root, name))
+}
+
+// List returns the sorted names of the regular files directly under dir.
+//
+// A missing directory is an empty list, not an error — see the interface
+// doc for why only that case is forgiven. The absent check is an explicit
+// Stat rather than an errors.Is on ReadDir's error, because the two
+// storage.FS implementations disagree there: OsFS reports ENOTDIR for a
+// path that exists but is a file, while MemFS reports os.ErrNotExist for
+// anything absent from its directory map. Reading the distinction off
+// ReadDir would therefore forgive a not-a-directory on MemFS and surface it
+// on OsFS — the exact "silently drop operator-authored config" case the
+// asymmetry exists to prevent, made dependent on which FS happens to be
+// installed.
+//
+// Entries that are not regular files are skipped, symlinks included. A
+// symlink is not a directory, so it would otherwise be listed as an
+// ordinary config file while pointing anywhere the process can read —
+// .rela/secrets.yaml among them. Containment for the dir argument is
+// validateName's job; this is the containment the ENTRIES need, and it is
+// the duty this seam inherits from the os.OpenRoot call sites it replaces.
+func (l *FSLoader) List(_ context.Context, dir string) ([]string, error) {
+	if err := validateName(dir); err != nil {
+		return nil, err
+	}
+	full := filepath.Join(l.root, dir)
+	switch info, err := l.fs.Stat(full); {
+	case errors.Is(err, os.ErrNotExist):
+		return nil, nil
+	case err != nil:
+		return nil, err
+	case !info.IsDir():
+		return nil, fmt.Errorf("config: %s is not a directory", dir)
+	}
+
+	entries, err := l.fs.ReadDir(full)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if !e.Type().IsRegular() {
+			continue
+		}
+		names = append(names, e.Name())
+	}
+	// storage.FS.ReadDir is documented as sorted, but sort here anyway: the
+	// order is part of this method's contract (a script chain's execution
+	// order depends on it), so it must not rest on a promise made by
+	// whichever FS implementation happens to be installed.
+	slices.Sort(names)
+	return names, nil
 }
 
 // Subscribe watches the named file for changes and invokes onChange for
