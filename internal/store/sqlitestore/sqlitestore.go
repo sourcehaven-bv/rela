@@ -110,6 +110,13 @@ type Options struct {
 // store's. Ratcheting the directive down with it is the point — see
 // TKT-N0IKN9.
 //
+// Then back up by one for ProjectFiles, which is the exception the numbers
+// exist to make you argue for rather than take silently. It is a one-line
+// accessor over the pool the store already holds, and it has to be ON the
+// store: the wiring site discovers the store-backed config layer by type
+// assertion, so an accessor reachable only from Conn would make that assertion
+// fail with no error anywhere. Still a net -2 against the pre-split count.
+//
 // The content-states surface (TKT-DOFYR1 / TKT-C1XUA8 / TKT-WAV8XP) is the
 // latest interface growth: GetEntityState, DeleteEntityState and
 // DeleteRelationState are store.Store methods, and each brought its own locked
@@ -117,8 +124,8 @@ type Options struct {
 // Interface-driven again, so the numbers move with store.Store rather than
 // with this type.
 //
-//plimsoll:max-methods=50
-//plimsoll:max-exported-methods=32
+//plimsoll:max-methods=51
+//plimsoll:max-exported-methods=33
 type Store struct {
 	db   *sql.DB
 	opts Options

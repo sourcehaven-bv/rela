@@ -696,6 +696,65 @@ jobs:
   # release time, where it leaves an empty GitHub release. The default-runner
   # builds in `postgres` only exercise linux; this job adds darwin + windows.
   # Keep the goos/tag matrix in sync with .goreleaser.yaml's builds.
+  # Compiling a build tag is not testing it. Until BUG-LL3C07 the Backends job
+  # built the sqlite tag and nothing ever ran a sqlite-tagged test, so
+  # sqlitestore's conformance suite (storetest.RunAll plus its fuzz functions),
+  # its migration ladder and every `-tags sqlite` variant of a shared package
+  # were ungated on every PR. A test whose fixture only works on fsstore had
+  # been failing on develop, and nothing looked.
+  #
+  # Its OWN job, deliberately, rather than a step in the postgres one. That job
+  # sets RELA_TEST_DATABASE_REQUIRED=1 so a missing DSN hard-fails instead of
+  # skipping — exactly right for proving backend parity, and exactly wrong
+  # here: the sqlite build has no DSN, so every DB-gated pgstore test that
+  # would otherwise skip fails instead. Running here also keeps this off the
+  # critical path of a job that waits on a postgres service container.
+  sqlite:
+    name: SQLite Backend
+    # 26.04, not ubuntu-latest — the same reason the Test job pins it: the
+    # command sandbox needs unprivileged user namespaces, which 24.04 restricts
+    # via AppArmor (apparmor_restrict_unprivileged_userns=1, surfacing as
+    # bwrap "Failed RTM_NEWADDR: Operation not permitted"). internal/cli is in
+    # scope and its render tests run confined, so they fail on 24.04 even with
+    # bubblewrap installed.
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.6'
+
+      # internal/cli is in scope and its render/export tests shell out through
+      # internal/cmdexec, which FAILS CLOSED when no sandbox is available — so
+      # without bwrap they do not skip, they fail ("cmdexec: start bwrap:
+      # executable file not found"). The Test job installs it for the same
+      # reason; a job running the same packages needs the same runner.
+      - name: Install bubblewrap (command sandbox)
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+
+      - name: Verify the sandbox actually works on this runner
+        # A hard failure here beats a confusing test failure downstream: it
+        # says "the confinement is absent" rather than "render produced the
+        # wrong bytes".
+        run: bwrap --unshare-all --ro-bind / / /bin/true
+
+      # Scoped to the packages the tag actually changes rather than ./... — the
+      # rest is byte-identical to what the Test job already ran, and paying for
+      # a second full suite to re-verify it is not worth the minutes.
+      #
+      # No -race: the Test job races these same shared packages on the default
+      # backend, and sqlitestore's own concurrency is covered by the
+      # conformance suite. Add it if this job ever grows a genuinely
+      # sqlite-specific concurrency test.
+      - name: Run sqlite-tagged tests
+        run: |
+          go test -tags sqlite -shuffle=on \
+            ./internal/store/... \
+            ./internal/appbuild/... \
+            ./internal/cli/...
+
   cross-compile:
     name: Cross-Compile (${{ matrix.goos }}/${{ matrix.tags || 'default' }})
     runs-on: ubuntu-latest
