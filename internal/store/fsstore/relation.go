@@ -129,6 +129,11 @@ func (s *FSStore) createRelation(
 	if err := storeutil.ValidateRelationType(relType); err != nil {
 		return nil, err
 	}
+	if data != nil {
+		if err := storeutil.ValidateProperties(data.Properties); err != nil {
+			return nil, err
+		}
+	}
 
 	var fp entity.Face
 	if data != nil {
@@ -178,6 +183,9 @@ func (s *FSStore) createRelation(
 func (s *FSStore) updateRelation(
 	_ context.Context, from, relType, to string, data store.RelationData,
 ) (*entity.Relation, error) {
+	if err := storeutil.ValidateProperties(data.Properties); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
