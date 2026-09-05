@@ -292,7 +292,11 @@ const backTarget = computed<RouteLocationRaw>(() => ({
 // face's history passed for a published page's.
 const faceLabel = computed(() => {
   if (!world.value) return ''
-  return face.value || 'default'
+  // The operator's label for the face on screen, else its declared NAME —
+  // both are the operator's words, and under a world the coordinate is what
+  // says which record this timeline is. Only the bare face with no label
+  // renders nothing: naming it would take a rela word.
+  return schemaStore.faceLabel(entityType.value, face.value) || face.value
 })
 
 const hasContentChanges = computed(() => contentDiff.value.some((l) => l.op !== 'equal'))
@@ -315,7 +319,7 @@ onMounted(load)
             labelling it would be noise; under a world the label is the whole
             point, because the record on screen is face-specific.
           -->
-          <span v-if="faceLabel" class="history-face"> · {{ faceLabel }} face </span>
+          <span v-if="faceLabel" class="history-face"> · {{ faceLabel }}</span>
         </p>
       </div>
       <RouterLink class="btn btn-secondary" :to="backTarget">Back to entity</RouterLink>

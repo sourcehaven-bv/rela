@@ -20,6 +20,7 @@ import { useBackTarget } from '@/composables/useBackTarget'
 import { useWorld } from '@/composables/useWorld'
 import { actionAllowed } from '@/utils/affordancesWarning'
 import { entityRef } from '@/utils/entityRef'
+import { worldText } from '@/utils/worldText'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { renderMarkdown } from '@/utils/markdown'
 import { hasIcon, resolveIcon } from '@/utils/icons'
@@ -89,6 +90,12 @@ function canUpdate(entity: Entity): boolean {
 const boardTypeHasFaces = computed(() => {
   const def = schemaStore.getEntityType(kanbanConfig.value?.entity ?? '')
   return Object.keys(def?.faces ?? {}).length > 0
+})
+// The operator's `messages.projection` for the world, or nothing.
+const projectionNote = computed<string>(() => {
+  if (!boardTypeHasFaces.value) return ''
+  const info = world.value ? schemaStore.worlds.get(world.value) : undefined
+  return worldText(info?.messages?.projection, { world: world.value })
 })
 
 // Computed
@@ -646,23 +653,17 @@ function createNew() {
       longer claims the board is read-only; a card the principal may not write
       simply refuses the drag through `_actions`, as in the default world.
     -->
-    <div v-if="isWorldBound && !loadError && (worldBanner || boardTypeHasFaces)" class="world-banner">
+    <div v-if="isWorldBound && !loadError && (worldBanner || projectionNote)" class="world-banner">
       <!--
-        The ANNOUNCEMENT is operator config (`banner:` on the world). Absent on
-        a language world, where telling someone who asked for Dutch that they
-        are reading Dutch is noise.
+        Both halves are operator config: the ANNOUNCEMENT (`banner:`) and the
+        NOTE (`messages.projection`, only on a board of a faced type). Neither
+        declared: no banner (TKT-5SZG2L).
       -->
       <span v-if="worldBanner" class="world-banner__label">
         {{ worldBanner }}
       </span>
-      <!--
-        The projection note, only for a type that declares faces: a type
-        without faces has one state in every world, so no card can be missing
-        on the world's account.
-      -->
-      <span v-if="boardTypeHasFaces" class="world-banner__note">
-        Each card shows the face this world resolved, and entities with no
-        face here are not on the board at all.
+      <span v-if="projectionNote" class="world-banner__note">
+        {{ projectionNote }}
       </span>
     </div>
 
@@ -756,7 +757,7 @@ function createNew() {
                 absent entirely — shows nothing at all.
               -->
               <div class="card-title text-wrap-anywhere">
-                {{ getCardTitle(entity) }}<WorldBadge :world="entity._world" />
+                {{ getCardTitle(entity) }}<WorldBadge :world="entity._world" :entity-type="entity.type" />
               </div>
               <CardFieldList
                 :fields="resolvedCardFields(entity)"
@@ -840,7 +841,7 @@ function createNew() {
               <div class="card-id">{{ entity.id }}</div>
               <!-- Face provenance; see the simple board above. -->
               <div class="card-title text-wrap-anywhere">
-                {{ getCardTitle(entity) }}<WorldBadge :world="entity._world" />
+                {{ getCardTitle(entity) }}<WorldBadge :world="entity._world" :entity-type="entity.type" />
               </div>
               <CardFieldList
                 :fields="resolvedCardFields(entity)"

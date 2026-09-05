@@ -355,3 +355,51 @@ func TestOtherwise_IsValid(t *testing.T) {
 		}
 	}
 }
+
+// TestWorlds_OnAbsentRedirectValidated: a redirect target is a declared world
+// or the implicit default, never a name that would 400 on arrival, and never
+// a chain that returns to a world it has visited — the self-loop and the
+// two-world round trip alike (TKT-5SZG2L, RR-5TDYWW).
+func TestWorlds_OnAbsentRedirectValidated(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, target string
+		wantErr      string
+	}{
+		{"default is always a valid target", "default", ""},
+		{"a declared world is a valid target", "editorial", ""},
+		{"self loops", "published", "published → published), which would redirect forever"},
+		{"a two-world cycle loops", "roundtrip", "published → roundtrip → published), which would redirect forever"},
+		{"a chain that ends in a declared world is fine", "editorial", ""},
+		{"undeclared world", "nope", `names world "nope", which is not declared`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := Parse([]byte(worldsSchema(`worlds:
+  editorial:
+    select: draft
+    otherwise: default
+  roundtrip:
+    select: published
+    otherwise: exclude
+    on_absent:
+      redirect: published
+  published:
+    select: published
+    otherwise: exclude
+    primary_for: published
+    on_absent:
+      redirect: ` + tc.target + `
+`)))
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected load error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("want load error containing %q, got %v", tc.wantErr, err)
+			}
+		})
+	}
+}

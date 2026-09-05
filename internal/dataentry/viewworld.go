@@ -434,10 +434,9 @@ func (h *viewsHandler) writeWorldAbsentView(
 	m := h.schema().Meta
 	def := m.Entities[e.Type]
 	resp := v1.ViewResponse{
-		Entry:           h.serializer.forWire(ctx, e, rels, m, def.GetPlural(e.Type)),
-		Sections:        []v1.ViewSection{},
-		WorldAbsent:     true,
-		WorldAbsentName: worldFromContext(ctx).name,
+		Entry:       h.serializer.forWire(ctx, e, rels, m, def.GetPlural(e.Type)),
+		Sections:    []v1.ViewSection{},
+		WorldAbsent: true,
 	}
 	writeV1JSON(w, http.StatusOK, resp)
 }

@@ -785,9 +785,44 @@ func validateWorlds(m *Metamodel) []string {
 		errs = append(errs, validateWorldChains(m, worldName, world)...)
 		errs = append(errs, validateWorldEdits(m, worldName, world)...)
 		errs = append(errs, validateWorldPrimaryFor(m, worldName, world)...)
+		errs = append(errs, validateWorldOnAbsent(m, worldName, world)...)
 	}
 	errs = append(errs, validateFacePrimacy(m)...)
 	return errs
+}
+
+// validateWorldOnAbsent checks that `on_absent.redirect` names a world a
+// reader can be sent to: a declared one, or the implicit default. A redirect
+// to an undeclared name would be a 400 on arrival, and a redirect chain that
+// returns to a world it has already visited would bounce the browser between
+// them for an entity absent from all of them — both are load errors, not
+// runtime surprises. The chain is walked from this world, so `a → b → a`
+// is reported on both `a` and `b`, naming the loop; `default` never
+// redirects, so it ends every chain.
+func validateWorldOnAbsent(m *Metamodel, worldName string, world WorldDef) []string {
+	target := world.OnAbsent.Redirect
+	if target == "" {
+		return nil
+	}
+	if target != DefaultWorldName {
+		if _, ok := m.Worlds[target]; !ok {
+			return []string{fmt.Sprintf(
+				"world %q: `on_absent.redirect` names world %q, which is not declared (declare it, or use %q)",
+				worldName, target, DefaultWorldName)}
+		}
+	}
+	chain := []string{worldName}
+	seen := map[string]bool{worldName: true}
+	for next := target; next != "" && next != DefaultWorldName; next = m.Worlds[next].OnAbsent.Redirect {
+		chain = append(chain, next)
+		if seen[next] {
+			return []string{fmt.Sprintf(
+				"world %q: `on_absent.redirect` loops (%s), which would redirect forever",
+				worldName, strings.Join(chain, " → "))}
+		}
+		seen[next] = true
+	}
+	return nil
 }
 
 // validateWorldPrimaryFor checks that every face a world claims in

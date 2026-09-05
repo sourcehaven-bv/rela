@@ -169,8 +169,6 @@ export interface ViewResponse {
    * world, and that world resolves nothing for this entity.
    */
   _world_absent?: boolean
-  /** The world that has no face for this entity, for naming it in the UI. */
-  _world_absent_name?: string
 }
 
 // Fetch executed view data for an entity. The backend looks up the

@@ -243,3 +243,50 @@ func TestCopyDef_IsSameEntity(t *testing.T) {
 		}
 	}
 }
+
+// TestValidateCopies_Landing pins `on_success.landing` (TKT-5SZG2L): the two
+// scalars, a declared world, a face the TARGET type declares — and the
+// refusals for anything else, at load rather than as a dead navigation.
+func TestValidateCopies_Landing(t *testing.T) {
+	t.Parallel()
+	base := func(landing CopyLanding) map[string]CopyDef {
+		return map[string]CopyDef{"publish": {
+			From: "page@draft", To: "page@published", AllFields: true,
+			Guard:     CopyGuard{Permission: "publish"},
+			OnSuccess: CopyOnSuccess{Landing: landing},
+		}}
+	}
+	for _, tc := range []struct {
+		name    string
+		landing CopyLanding
+		wantErr string
+	}{
+		{"undeclared means written", CopyLanding{}, ""},
+		{"written", CopyLanding{Mode: LandingWritten}, ""},
+		{"stay", CopyLanding{Mode: LandingStay}, ""},
+		{"a declared world", CopyLanding{World: "site"}, ""},
+		{"the default world", CopyLanding{World: "default"}, ""},
+		{"a face the target type declares", CopyLanding{Face: "draft"}, ""},
+		{"an unknown scalar", CopyLanding{Mode: "elsewhere"}, `must be "written", "stay"`},
+		{"an undeclared world", CopyLanding{World: "nope"}, `names world "nope"`},
+		{"a face the target type lacks", CopyLanding{Face: "nl"}, `names face "nl"`},
+		{"both a world and a face", CopyLanding{World: "site", Face: "draft"}, "pick one"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			m := copyFixture(base(tc.landing))
+			m.Worlds = map[string]WorldDef{"site": {Select: []string{"published"}, Otherwise: OtherwiseDefault}}
+			errs := validateCopies(m)
+			joined := strings.Join(errs, "\n")
+			if tc.wantErr == "" {
+				if len(errs) != 0 {
+					t.Fatalf("unexpected errors: %s", joined)
+				}
+				return
+			}
+			if !strings.Contains(joined, tc.wantErr) {
+				t.Fatalf("want an error containing %q, got %q", tc.wantErr, joined)
+			}
+		})
+	}
+}

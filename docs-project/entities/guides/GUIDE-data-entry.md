@@ -4847,15 +4847,19 @@ shown only if the caller may read the target world.
 
 ### What a world-bound page shows
 
-In a non-default world the web app behaves as follows:
+In a non-default world the web app behaves as follows. One rule governs every
+sentence it shows about worlds and faces: **the words are the operator's, or
+there are none.** The app has no text of its own for any of this — "face",
+"world" and "default" are storage vocabulary a reader never chose — so each
+note below appears only when `schema.yaml` declares it.
 
 - The world is part of the URL as `?world=<name>`, so a world-bound page is a
   shareable link that survives a reload. Changing world resets pagination and
   adds a browser history entry.
-- The top of the page shows the world's `banner:` text when the schema declares
-  one. A list or board of a type that declares faces adds a note that entities
-  with no face in this world are not listed; a type without faces has one
-  state in every world, so its lists carry no note.
+- The top of the page shows the world's `banner:` when declared. A list or
+  board of a type that declares faces adds the world's `messages.projection`
+  when declared; a type without faces has one state in every world, so its
+  lists carry no note.
 - Every write goes to the **address** of the row on screen, face included (see
   [Addressing a face directly](#addressing-a-face-directly-idface)). The Edit
   button opens the form on that address, inline edits and checkbox toggles
@@ -4863,25 +4867,30 @@ In a non-default world the web app behaves as follows:
   it. Whether a write is offered is `_actions` on the response, which the
   server computes for the face it served: an entity served at its published
   face reports `update: false` unless a grant names that face, and an entity
-  served at its bare face reports what the bare grant says. A detail page
-  showing a non-bare face the caller may not write explains that edits are
-  made on the bare face.
+  served at its bare face reports what the bare grant says. A detail page or
+  edit form showing a face the caller may not write shows that face's
+  `messages.read_only` when declared, and otherwise looks like any other
+  permission denial.
 - A **View Published** button, or a menu when the entity has several other
   faces, switches to another face by navigating to its address (`_faces[].ref`)
   in the same world. It appears on every screen that has faces, including the
   default world, because an author on the draft wants to see what readers see.
-- A badge names the face when the world served a **stand-in**: a face reached
-  through `otherwise: default`, or through a later entry in the chain than the
-  first. A first-choice hit shows no badge. The badge appears on list rows,
+- A row or card served a **stand-in** (a face reached through
+  `otherwise: default`, or through a later entry in the chain than the first)
+  carries a badge with the world's `messages.stand_in` when declared, typically
+  `{face}`. A first-choice hit shows no badge. The badge appears on list rows,
   kanban cards, and each related entity on a detail page.
-- An entity that exists but has no face in the world renders a page saying so,
-  with a button to the default world, rather than a not-found error.
+- An entity that exists but has no face in the world renders its bare face,
+  with the world's `messages.absent` when declared. With
+  `on_absent: {redirect: <world>}` the app navigates to that world instead.
 
 A detail page shows one button per copy definition whose source is the face on
 screen and that the caller may invoke, for example **Publish** on a draft
 policy, in whichever world the draft is being read. A caller without the guard
 permission sees no button rather than a disabled one. After a successful copy,
-the app confirms it in the copy's own label and lands on the face it wrote.
+the app shows the copy's `on_success.message` (or its label) and lands per
+`on_success.landing`: the face it wrote by default, `stay` to reload in place,
+or a declared world or face.
 
 A kanban board is a projection too. Each card is one entity at the face the
 world resolved, and an entity with no face in the world has no card. Cards
@@ -4951,7 +4960,8 @@ because world names are configuration in your repository rather than secrets.
 }
 ```
 
-Every declared world is listed for every caller. `readable` says whether *this*
+Every declared world is listed for every caller, with its `banner`, `messages`
+and `on_absent` verbatim from the schema. `readable` says whether *this*
 caller may select it. A world you may not read is marked rather than hidden, and
 selecting it anyway returns an empty result rather than an error. The same
 response reports each type's declared faces under `entities.<type>.faces`
@@ -5057,7 +5067,7 @@ or a cross-entity copy without a `target_id`, is a `422`.
 | `?world=` on a `POST`, `PATCH`, `PUT`, or `DELETE` | `422 world_read_only` |
 | `?world=` on a route that cannot serve a world | `422 world_unsupported` |
 | A declared world the caller may not read | An empty list, or `404` for one entity, identical to a world holding nothing readable |
-| An entity that has no face in the world | Omitted from lists; `404` from the single-entity read; `200` with `_world_absent: true` and `_world_absent_name` from the entity view; `200` with an empty timeline and `world_face_absent: true` from history |
+| An entity that has no face in the world | Omitted from lists; `404` from the single-entity read; `200` with `_world_absent: true` from the entity view; `200` with an empty timeline and `world_face_absent: true` from history |
 
 Writes never take a world. A world can answer a read with a stand-in face, so a
 write riding that indirection would save to a face the caller did not name:
