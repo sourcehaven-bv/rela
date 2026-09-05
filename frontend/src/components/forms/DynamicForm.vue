@@ -6,8 +6,9 @@ import { isCancelledFetch } from '@/composables/usePageData'
 import { readReturnTo } from '@/utils/returnPath'
 import { useWorld, DEFAULT_WORLD } from '@/composables/useWorld'
 import { actionAllowed } from '@/utils/affordancesWarning'
-import { entityRef, refBareId, refFace } from '@/utils/entityRef'
+import { entityRef, refFace } from '@/utils/entityRef'
 import { worldText } from '@/utils/worldText'
+import { entityDisplayTitle } from '@/utils/entityDisplay'
 import {
   isFieldWritable,
   isPropertyRedacted,
@@ -231,6 +232,10 @@ const notEditable = ref(false)
 // declared: the ordinary permissions text, which is true either way and
 // speaks no rela vocabulary (TKT-5SZG2L).
 const notEditableFace = ref('')
+// The loaded row's display title, so `{title}` reads the same here as on
+// the detail page — the same declared sentence must not name the entity
+// one way there and by its id here.
+const notEditableTitle = ref('')
 const notEditableNote = computed(() => {
   const type = formConfig.value?.entity ?? ''
   const faces = schemaStore.getEntityType(type)?.faces
@@ -240,11 +245,9 @@ const notEditableNote = computed(() => {
     face: faces?.[face]?.label || face,
     bare_face: schemaStore.faceLabel(type, ''),
     world: worldParam.value ?? '',
-    title: bareEntityId.value,
+    title: notEditableTitle.value,
   })
 })
-// The bare id, for the way back and every per-ENTITY surface.
-const bareEntityId = computed(() => (props.entityId ? refBareId(props.entityId) : ''))
 const saveGeneration = ref(0) // Incremented after save to reset RelationCards
 const saving = ref(false)
 const dirty = ref(false)
@@ -505,6 +508,7 @@ async function loadEntity(force = false) {
     // only for direct-URL navigation.
     notEditable.value = !actionAllowed(entity, 'update')
     notEditableFace.value = refFace(entityRef(entity))
+    notEditableTitle.value = entityDisplayTitle(entity)
     // Retained hidden values belong to the form state we are about to replace.
     // Carrying them across a reload — or across an entity switch, since this
     // component is not re-keyed per entity — would restore one entity's value

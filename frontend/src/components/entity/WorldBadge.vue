@@ -31,8 +31,12 @@ import type { EntityWorld } from '@/types'
 
 const props = defineProps<{
   world?: EntityWorld
-  /** The row's entity type, for the served face's declared label. */
-  entityType?: string
+  /**
+   * The row's entity type, for the served face's declared label. Required:
+   * a call site that forgot it would render `{face}` as the stored
+   * coordinate name — a rela word — with no error anywhere.
+   */
+  entityType: string
 }>()
 
 const schemaStore = useSchemaStore()
@@ -48,13 +52,13 @@ const text = computed(() => {
   const w = props.world
   if (!w || !isSubstitute.value) return ''
   const info = schemaStore.worlds.get(w.name)
-  const faces = props.entityType ? schemaStore.getEntityType(props.entityType)?.faces : undefined
+  const faces = schemaStore.getEntityType(props.entityType)?.faces
   // `_world.face` is the served face's DECLARED name; '' when the type names
   // none, in which case the placeholder renders empty.
   const face = w.face ? faces?.[w.face]?.label || w.face : ''
   return worldText(info?.messages?.stand_in, {
     face,
-    bare_face: props.entityType ? schemaStore.faceLabel(props.entityType, '') : '',
+    bare_face: schemaStore.faceLabel(props.entityType, ''),
     world: w.name,
   })
 })

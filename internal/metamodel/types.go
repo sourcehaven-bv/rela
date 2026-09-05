@@ -385,7 +385,8 @@ type FaceMessages struct {
 	// while the reader may not write it — "Dit is de vastgestelde versie.
 	// Bewerken doe je in het concept." Empty shows nothing: a face the
 	// reader may not write then looks like any other permission denial, a
-	// page without an Edit button.
+	// page without an Edit button. Substitutes every placeholder: `{face}`
+	// is this face's label, `{title}` the entity's display title.
 	ReadOnly string `yaml:"read_only,omitempty"`
 }
 
@@ -522,25 +523,40 @@ type WorldDef struct {
 // WorldMessages is operator-authored chrome text about one world.
 //
 // Each string is plain text with an allowlisted set of placeholders the web
-// app substitutes: `{face}` (the served face's label), `{bare_face}` (the
-// type's bare face label), `{world}` (this world's name), `{title}` (the
-// entity's display title). Anything else in braces is left as written. No
-// markup, no conditionals — the text is the operator's sentence, and
-// rendering it is the whole feature.
+// app substitutes — [ChromePlaceholders]: `{face}` (the served face's
+// label), `{bare_face}` (the type's bare face label), `{world}` (this
+// world's name), `{title}` (the entity's display title). Anything else in
+// braces is left as written. No markup, no conditionals — the text is the
+// operator's sentence, and rendering it is the whole feature.
+//
+// Not every surface has every value. A list or board has no single entity,
+// so `{face}` and `{title}` are left as written in Projection; a row's badge
+// has no title, so `{title}` is left as written in StandIn. Each field says
+// which it substitutes.
 type WorldMessages struct {
 	// Absent is shown on a detail page for an entity that has no face in
 	// this world (the page shows the bare face). Empty shows nothing.
+	// Substitutes `{face}` (the bare face, which is what is on screen),
+	// `{bare_face}`, `{world}` and `{title}`.
 	Absent string `yaml:"absent,omitempty"`
 	// Projection is the note on a list or board of a type that declares
 	// faces — that entities with no face here are not listed. Empty shows
-	// nothing.
+	// nothing. Substitutes `{world}` only.
 	Projection string `yaml:"projection,omitempty"`
 	// StandIn is the badge text on a row or card whose face is a stand-in
 	// for the world's first choice (a within-chain fallback or an
 	// `otherwise: default` substitution) — typically `{face}`. Empty renders
-	// no badge at all.
+	// no badge at all. Substitutes `{face}`, `{bare_face}` and `{world}`.
 	StandIn string `yaml:"stand_in,omitempty"`
 }
+
+// ChromePlaceholders is the allowlist of `{placeholder}` names the web app
+// substitutes in [WorldMessages] and [FaceMessages] text, and in a copy's
+// `on_success.message`. The SPA holds the same list in
+// frontend/src/utils/worldText.ts; a test in internal/dataentry pins the two
+// to each other, because a name added on one side only renders literally on
+// screen with no failure anywhere.
+var ChromePlaceholders = []string{"face", "bare_face", "world", "title"}
 
 // WorldOnAbsent is the behavior for an entity with no face in a world.
 type WorldOnAbsent struct {
@@ -901,20 +917,40 @@ func (l CopyLanding) IsZero() bool { return l.Mode == "" && l.World == "" && l.F
 
 // UnmarshalYAML accepts `landing: stay`, `landing: written`,
 // `landing: {world: name}` and `landing: {face: name}`.
+//
+// The mapping form is decoded by walking its keys rather than into a struct,
+// because a struct decode drops what it does not recognize: `{wrold: x}` or
+// `{}` would come out as the zero value, which MEANS `written`, and the
+// operator's declaration would be discarded without a word — the failure
+// class BUG-I0N3YR closed for affordance grants. An unknown key, an empty
+// mapping and an empty value are all refused here, at load.
 func (l *CopyLanding) UnmarshalYAML(node *yaml.Node) error {
-	if node.Kind == yaml.ScalarNode {
+	const want = "want `written`, `stay`, `{world: <name>}` or `{face: <name>}`"
+	switch node.Kind {
+	case yaml.ScalarNode:
 		l.Mode = node.Value
 		return nil
+	case yaml.MappingNode:
+	default:
+		return fmt.Errorf("landing: %s", want)
 	}
-	type landingYAML struct {
-		World string `yaml:"world,omitempty"`
-		Face  string `yaml:"face,omitempty"`
+	if len(node.Content) == 0 {
+		return fmt.Errorf("landing: empty mapping; %s", want)
 	}
-	var raw landingYAML
-	if err := node.Decode(&raw); err != nil {
-		return err
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		key, val := node.Content[i], node.Content[i+1]
+		if val.Kind != yaml.ScalarNode || val.Value == "" {
+			return fmt.Errorf("landing: `%s` needs a name", key.Value)
+		}
+		switch key.Value {
+		case "world":
+			l.World = val.Value
+		case "face":
+			l.Face = val.Value
+		default:
+			return fmt.Errorf("landing: unknown key %q; %s", key.Value, want)
+		}
 	}
-	l.World, l.Face = raw.World, raw.Face
 	return nil
 }
 

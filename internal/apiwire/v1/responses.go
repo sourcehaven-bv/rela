@@ -898,10 +898,6 @@ type ViewResponse struct {
 	// Omitted when false, so an ordinary view response is byte-identical to
 	// what it was before this field existed.
 	WorldAbsent bool `json:"_world_absent,omitempty"`
-	// WorldAbsentName is the world that has no face for this entity, so the
-	// page can name it ("no published face") rather than saying "this world".
-	// Set only alongside WorldAbsent.
-	WorldAbsentName string `json:"_world_absent_name,omitempty"`
 }
 
 // ViewSection represents a section with resolved data.

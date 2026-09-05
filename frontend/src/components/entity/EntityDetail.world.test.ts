@@ -611,6 +611,56 @@ describe('EntityDetail world binding', () => {
       })
     })
 
+    it('drops the world param when the landing world IS the configured default', async () => {
+      // The branch worldQuery exists for: on a deployment with a configured
+      // default, a bare URL already means that world, and writing the name
+      // would be a second spelling of the same page. The page reset rides
+      // along, since a page of one world is not a page of another.
+      useSchemaStore().defaultWorld = 'published'
+      invokeCopyMock.mockResolvedValue(copyResult())
+      mockRoute.query = { world: 'editorial', page: '3' }
+      const w = await mountDetail(viewResponse({
+        _copies: [promoteOffer({ onSuccess: { landing: { mode: 'world', world: 'published' } } })],
+      }))
+      await clickPromote(w)
+      expect(routerPush).toHaveBeenCalledWith({ path: '/entity/policy/POL-1', query: {} })
+    })
+
+    it('spells the default world explicitly when landing there under a configured default', async () => {
+      useSchemaStore().defaultWorld = 'published'
+      invokeCopyMock.mockResolvedValue(copyResult())
+      mockRoute.query = {}
+      const w = await mountDetail(viewResponse({
+        _copies: [promoteOffer({ onSuccess: { landing: { mode: 'world', world: 'default' } } })],
+      }))
+      await clickPromote(w)
+      expect(routerPush).toHaveBeenCalledWith({ path: '/entity/policy/POL-1', query: { world: 'default' } })
+    })
+
+    it('reloads in place rather than navigating to `@undefined` for a face landing with no face', async () => {
+      // The server validates a landing at load; this is the guard for a
+      // response the client did not validate.
+      invokeCopyMock.mockResolvedValue(copyResult())
+      const w = await mountDetail(viewResponse({
+        _copies: [promoteOffer({ onSuccess: { landing: { mode: 'face' } as never } })],
+      }))
+      const before = fetchViewMock.mock.calls.length
+      await clickPromote(w)
+      expect(routerPush).not.toHaveBeenCalled()
+      expect(fetchViewMock.mock.calls.length).toBeGreaterThan(before)
+    })
+
+    it('reloads in place for a landing mode this build does not know', async () => {
+      invokeCopyMock.mockResolvedValue(copyResult())
+      const w = await mountDetail(viewResponse({
+        _copies: [promoteOffer({ onSuccess: { landing: { mode: 'elsewhere' } as never } })],
+      }))
+      const before = fetchViewMock.mock.calls.length
+      await clickPromote(w)
+      expect(routerPush).not.toHaveBeenCalled()
+      expect(fetchViewMock.mock.calls.length).toBeGreaterThan(before)
+    })
+
     it('reloads in place after a copy INTO the bare face', async () => {
       // A bare address would re-resolve under a world, so a revert stays put
       // and the offers recompute from the reload.
@@ -749,7 +799,6 @@ describe('EntityDetail world binding', () => {
         entry: entry(),
         sections: [],
         _world_absent: true,
-        _world_absent_name: 'published',
       }
     }
 
@@ -822,6 +871,46 @@ describe('EntityDetail world binding', () => {
       const w = await mountDetail(viewResponse())
       rendersProof(w)
       expect(routerPush).not.toHaveBeenCalled()
+    })
+
+    it('redirects when the schema arrives AFTER the view', async () => {
+      // Two fetches race on a cold load. A redirect that only fired when the
+      // schema won would be a redirect that sometimes does not happen.
+      mockRoute.query = { world: 'published' }
+      const w = await mountDetail(absentResponse())
+      rendersProof(w)
+      expect(routerPush).not.toHaveBeenCalled()
+      useSchemaStore().worlds.set('published', {
+        readable: true, on_absent: { redirect: 'editorial' },
+      } as never)
+      await flushPromises()
+      expect(routerPush).toHaveBeenCalledWith({ query: { world: 'editorial' } })
+    })
+
+    it('never pushes the same hop twice for one entity', async () => {
+      // The loader refuses a redirect loop, so this is the guard for a
+      // schema the client did not validate. The mocked route never moves,
+      // so the second firing here stands in for the hop that would come
+      // back: a target this page has already been sent to is not pushed
+      // again, which is what bounds a loop to one hop.
+      useSchemaStore().worlds.set('published', {
+        readable: true, on_absent: { redirect: 'editorial' },
+      } as never)
+      mockRoute.query = { world: 'published' }
+      const w = await mountDetail(absentResponse())
+      rendersProof(w)
+      expect(routerPush).toHaveBeenCalledTimes(1)
+      expect(routerPush).toHaveBeenCalledWith({ query: { world: 'editorial' } })
+      useSchemaStore().worlds.set('published', {
+        readable: true, on_absent: { redirect: 'editorial' },
+      } as never)
+      await flushPromises()
+      expect(routerPush).toHaveBeenCalledTimes(1)
+      // A different entity starts over.
+      fetchViewMock.mockResolvedValue(absentResponse())
+      await w.setProps({ entityId: 'POL-2' })
+      await flushPromises()
+      expect(routerPush).toHaveBeenCalledTimes(2)
     })
   })
 

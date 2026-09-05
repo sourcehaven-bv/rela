@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // TestCopyDef_UnmarshalCoversEveryField is the guard [CopyDef.UnmarshalYAML]'s
@@ -360,5 +362,50 @@ entities:
 	}
 	if got := FaceLabel(nil, "page", ""); got != "" {
 		t.Errorf("FaceLabel(nil, page, \"\") = %q, want empty", got)
+	}
+}
+
+// TestCopyLanding_UnmarshalRefusesWhatItCannotMean pins the mapping form of
+// `landing:` (TKT-5SZG2L, RR-51XOG3): a key it does not know, an empty
+// mapping and an empty name are load errors. Decoded into a struct they
+// would all come out as the zero value, which MEANS `written` — the
+// operator's declaration discarded without a word, which is the failure
+// BUG-I0N3YR closed for affordance grants.
+func TestCopyLanding_UnmarshalRefusesWhatItCannotMean(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, yaml string
+		want       CopyLanding
+		wantErr    string
+	}{
+		{"scalar written", "written", CopyLanding{Mode: LandingWritten}, ""},
+		{"scalar stay", "stay", CopyLanding{Mode: LandingStay}, ""},
+		{"a world", "{world: site}", CopyLanding{World: "site"}, ""},
+		{"a face", "{face: draft}", CopyLanding{Face: "draft"}, ""},
+		{"a typo'd key", "{wrold: site}", CopyLanding{}, `unknown key "wrold"`},
+		{"an empty mapping", "{}", CopyLanding{}, "empty mapping"},
+		{"an empty world", `{world: ""}`, CopyLanding{}, "`world` needs a name"},
+		{"a nested value", "{face: [a, b]}", CopyLanding{}, "`face` needs a name"},
+		{"a sequence", "[written]", CopyLanding{}, "want `written`, `stay`"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var got struct {
+				Landing CopyLanding `yaml:"landing"`
+			}
+			err := yaml.Unmarshal([]byte("landing: "+tc.yaml), &got)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("want an error containing %q, got %v", tc.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got.Landing != tc.want {
+				t.Fatalf("got %+v, want %+v", got.Landing, tc.want)
+			}
+		})
 	}
 }

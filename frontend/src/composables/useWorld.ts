@@ -33,7 +33,7 @@
  * unchanged rather than being silently rewritten.
  */
 import { computed, type Ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter, type LocationQuery, type LocationQueryRaw } from 'vue-router'
 import { useSchemaStore } from '@/stores/schema'
 
 // DEFAULT_WORLD is the reserved name the API accepts as an explicit way to
@@ -133,31 +133,43 @@ export function useWorld(): UseWorld {
   function setWorld(next: string) {
     if (next === world.value) return
     if (!route || !router) return
-    const query = { ...route.query }
-    // Dropping the param lands on the operator's default world, so it is only
-    // the way to reach `next` when `next` IS that default. Otherwise the param
-    // has to be written explicitly — including `?world=default`, which is how
-    // a reader reaches the raw faces on a deployment that configures one.
-    // '' and DEFAULT_WORLD name the SAME world, so normalise before comparing
-    // — otherwise setWorld(DEFAULT_WORLD) on a deployment with no configured
-    // default writes ?world=default instead of dropping the param.
-    const norm = (w: string) => (w === DEFAULT_WORLD ? '' : w)
-    if (norm(next) === norm(schemaStore.defaultWorld)) {
-      delete query.world
-    } else if (norm(next) === '') {
-      query.world = DEFAULT_WORLD
-    } else {
-      query.world = next
-    }
-    // Changing world resets pagination: page 3 of the draft world is not
-    // page 3 of the published world — the published world may hold fewer
-    // entities than that page's offset, landing the user on a silently empty
-    // page that reads as "nothing is published".
-    delete query.page
     // push, not replace: switching world is a deliberate act the back button
     // should undo. See the composable doc.
-    router.push({ query })
+    router.push({ query: worldQuery(next, route.query, schemaStore.defaultWorld) })
   }
 
   return { world, isWorldBound, worldParam, setWorld }
+}
+
+/**
+ * Spells a world into a query, the ONE place that rule lives. `setWorld`
+ * uses it for a same-page switch; a caller that also changes the path (a
+ * copy landing in another world) uses it directly, so the two cannot
+ * drift — the first copy of this logic had already lost the page reset.
+ *
+ * Dropping the param lands on the operator's default world, so it is only
+ * the way to reach `next` when `next` IS that default. Otherwise the param
+ * has to be written explicitly — including `?world=default`, which is how a
+ * reader reaches the raw faces on a deployment that configures one. '' and
+ * DEFAULT_WORLD name the SAME world, so both are normalised before
+ * comparing; otherwise DEFAULT_WORLD on a deployment with no configured
+ * default writes ?world=default instead of dropping the param.
+ *
+ * Changing world resets pagination: page 3 of the draft world is not page 3
+ * of the published world — the published world may hold fewer entities than
+ * that page's offset, landing the user on a silently empty page that reads
+ * as "nothing is published".
+ */
+export function worldQuery(next: string, base: LocationQuery, defaultWorld: string): LocationQueryRaw {
+  const query: LocationQueryRaw = { ...base }
+  const norm = (w: string) => (w === DEFAULT_WORLD ? '' : w)
+  if (norm(next) === norm(defaultWorld)) {
+    delete query.world
+  } else if (norm(next) === '') {
+    query.world = DEFAULT_WORLD
+  } else {
+    query.world = next
+  }
+  delete query.page
+  return query
 }

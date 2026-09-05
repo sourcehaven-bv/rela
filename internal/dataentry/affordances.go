@@ -1443,16 +1443,22 @@ func copyOnSuccessWire(s metamodel.CopyOnSuccess) *v1.CopyOnSuccess {
 	if s.Message == "" && s.Landing.IsZero() {
 		return nil
 	}
+	// The arms are mutually exclusive by construction — the loader refuses a
+	// landing naming both a world and a face (validateCopyLanding) rather
+	// than resolving it by precedence, and this projection must not quietly
+	// introduce the precedence the loader declined to. So the arms test the
+	// full shape, and an impossible combination falls to `written`.
+	l := s.Landing
 	landing := v1.CopyLanding{Mode: metamodel.LandingWritten}
 	switch {
-	case s.Landing.Mode != "":
-		landing.Mode = s.Landing.Mode
-	case s.Landing.World != "":
+	case l.Mode != "":
+		landing.Mode = l.Mode
+	case l.World != "" && l.Face == "":
 		landing.Mode = "world"
-		landing.World = s.Landing.World
-	case s.Landing.Face != "":
+		landing.World = l.World
+	case l.Face != "" && l.World == "":
 		landing.Mode = "face"
-		landing.Face = s.Landing.Face
+		landing.Face = l.Face
 	}
 	return &v1.CopyOnSuccess{Message: s.Message, Landing: landing}
 }

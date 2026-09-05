@@ -292,9 +292,11 @@ const backTarget = computed<RouteLocationRaw>(() => ({
 // face's history passed for a published page's.
 const faceLabel = computed(() => {
   if (!world.value) return ''
-  // The operator's label for the face on screen, by declared name; a face
-  // the type does not name renders nothing rather than a rela word.
-  return schemaStore.faceLabel(entityType.value, face.value)
+  // The operator's label for the face on screen, else its declared NAME —
+  // both are the operator's words, and under a world the coordinate is what
+  // says which record this timeline is. Only the bare face with no label
+  // renders nothing: naming it would take a rela word.
+  return schemaStore.faceLabel(entityType.value, face.value) || face.value
 })
 
 const hasContentChanges = computed(() => contentDiff.value.some((l) => l.op !== 'equal'))

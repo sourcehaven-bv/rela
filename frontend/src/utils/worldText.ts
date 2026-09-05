@@ -24,19 +24,24 @@ export interface WorldTextVars {
   title?: string
 }
 
+// The allowlist. internal/metamodel.ChromePlaceholders is the same list on
+// the Go side, and TestChromePlaceholdersInSyncWithFrontend reads this line
+// to pin the two together.
 const KEYS: (keyof WorldTextVars)[] = ['face', 'bare_face', 'world', 'title']
+
+const PLACEHOLDER = new RegExp(`\\{(${KEYS.join('|')})\\}`, 'g')
 
 /**
  * Renders an operator template. Returns '' for an undeclared template, which
  * every caller treats as "render nothing".
+ *
+ * One pass, so a substituted VALUE is never re-scanned for placeholders. A
+ * var the caller did not supply (`undefined`) leaves its placeholder as
+ * written, like an unknown name — the surface has no such fact. A var
+ * supplied as '' substitutes to nothing: the fact exists and is empty (a
+ * face with no label), and printing `{face}` there would be a rela word.
  */
 export function worldText(template: string | undefined, vars: WorldTextVars): string {
   if (!template) return ''
-  let out = template
-  for (const key of KEYS) {
-    const value = vars[key]
-    if (value === undefined) continue
-    out = out.split(`{${key}}`).join(value)
-  }
-  return out
+  return template.replace(PLACEHOLDER, (match, key: keyof WorldTextVars) => vars[key] ?? match)
 }

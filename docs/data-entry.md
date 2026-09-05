@@ -5061,7 +5061,7 @@ or a cross-entity copy without a `target_id`, is a `422`.
 | `?world=` on a `POST`, `PATCH`, `PUT`, or `DELETE` | `422 world_read_only` |
 | `?world=` on a route that cannot serve a world | `422 world_unsupported` |
 | A declared world the caller may not read | An empty list, or `404` for one entity, identical to a world holding nothing readable |
-| An entity that has no face in the world | Omitted from lists; `404` from the single-entity read; `200` with `_world_absent: true` and `_world_absent_name` from the entity view; `200` with an empty timeline and `world_face_absent: true` from history |
+| An entity that has no face in the world | Omitted from lists; `404` from the single-entity read; `200` with `_world_absent: true` from the entity view; `200` with an empty timeline and `world_face_absent: true` from history |
 
 Writes never take a world. A world can answer a read with a stand-in face, so a
 write riding that indirection would save to a face the caller did not name:

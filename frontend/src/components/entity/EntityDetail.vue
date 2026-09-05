@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, onUnmounted } from 'vue'
-import { RouterLink, useRoute, useRouter, type RouteLocationRaw, type LocationQueryRaw } from 'vue-router'
+import { RouterLink, useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { useScopeNavigation } from '@/composables'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { fetchView, getCommands, getErrorMessage } from '@/api'
-import { useWorld, DEFAULT_WORLD } from '@/composables/useWorld'
+import { useWorld, worldQuery, DEFAULT_WORLD } from '@/composables/useWorld'
 import { entityRef, refBareId, refFace } from '@/utils/entityRef'
 import { worldText, type WorldTextVars } from '@/utils/worldText'
 import type { ViewEntity, ViewResponse, ViewSection, ViewSectionField } from '@/api'
@@ -698,42 +698,39 @@ async function runCopy(offer: CopyOffer) {
 // re-resolve. `stay` reloads in place; a world lands the bare id in that
 // world; a face lands on that face's address. Either way the offers
 // recompute, since a face that now exists may no longer be offered.
+//
+// The server validates a landing at load, so a `world`/`face` arm with no
+// name is not a state this deployment produces — but a response is data,
+// and the guard is what keeps a hand-crafted or older one from navigating
+// to a literal `ID@undefined`. A mode this build does not know reloads in
+// place rather than passing for `written`: the landing was a declaration,
+// and "written" would be this code inventing one.
 async function landAfterCopy(offer: CopyOffer, subject: string, writtenFace: string) {
   const landing = offer.onSuccess?.landing
-  const mode = landing?.mode ?? 'written'
   const path = `/entity/${props.entityType}/${subject}`
-  switch (mode) {
+  const toFace = (face: string) => router.push({ path: `${path}@${face}`, query: { ...route.query } })
+  switch (landing?.mode ?? 'written') {
+    case 'written':
+      if (writtenFace) toFace(writtenFace)
+      else await loadView()
+      return
     case 'stay':
       await loadView()
       return
-    case 'world': {
-      const target = landing?.world ?? ''
-      router.push({ path, query: worldQueryFor(target === DEFAULT_WORLD ? '' : target) })
+    case 'world':
+      if (landing?.world) {
+        router.push({ path, query: worldQuery(landing.world, route.query, schemaStore.defaultWorld) })
+      } else {
+        await loadView()
+      }
       return
-    }
     case 'face':
-      router.push({ path: `${path}@${landing?.face}`, query: { ...route.query } })
+      if (landing?.face) toFace(landing.face)
+      else await loadView()
       return
     default:
-      if (writtenFace) {
-        router.push({ path: `${path}@${writtenFace}`, query: { ...route.query } })
-        return
-      }
       await loadView()
   }
-}
-
-// worldQueryFor spells a world into this page's query the way setWorld
-// does: dropped when it is the deployment's configured default, `default`
-// when the bare faces are wanted under a configured default, the name
-// otherwise. The rest of the query is preserved.
-function worldQueryFor(target: string): LocationQueryRaw {
-  const query = { ...route.query }
-  const norm = (w: string) => (w === DEFAULT_WORLD ? '' : w)
-  if (norm(target) === norm(schemaStore.defaultWorld)) delete query.world
-  else if (norm(target) === '') query.world = DEFAULT_WORLD
-  else query.world = target
-  return query
 }
 
 // The operator's announcement for the world on screen, or '' to announce
@@ -795,14 +792,31 @@ const absentNote = computed<string>(() => {
 })
 
 // `on_absent.redirect`: the operator would rather send the reader somewhere
-// than explain an absence. Fires when the view reports the absence; the
-// target is a declared world (validated at load), spelled through setWorld so
-// `default` becomes the right query for this deployment.
-watch(worldAbsent, (absent) => {
-  if (!absent) return
-  const target = worldInfo.value?.on_absent?.redirect
+// than explain an absence. Fires on every VIEW the page loads, not on the
+// absent flag: scope-nav from one absent entity to the next keeps the flag
+// true throughout, and a watcher on it would fire for the first entity
+// only. Fires on the schema too, since `worldInfo` is empty until the store
+// has loaded and a redirect must not depend on which fetch won. The target
+// is a declared world, spelled through setWorld so `default` becomes the
+// right query for this deployment.
+//
+// The loader refuses a redirect chain that returns to a visited world, so a
+// loop is not a state this deployment produces. The set below is the
+// client's own guard for a schema it did not validate: every world this
+// page has redirected from or to, for this entity, is never a target again.
+// A loop therefore stops after one hop, a chain `a → b → c` still runs, and
+// a schema reload cannot push the same hop twice.
+const redirectVisited = new Set<string>()
+watch(() => props.entityId, () => redirectVisited.clear())
+watch([viewData, worldInfo], ([, info]) => {
+  if (!worldAbsent.value) return
+  const target = info?.on_absent?.redirect
   if (!target) return
-  setWorld(target === DEFAULT_WORLD ? '' : target)
+  const norm = (w: string) => (w === DEFAULT_WORLD ? '' : w)
+  if (redirectVisited.has(norm(target))) return
+  redirectVisited.add(norm(world.value))
+  redirectVisited.add(norm(target))
+  setWorld(norm(target))
 })
 
 // --- The header's mobile home ------------------------------------------

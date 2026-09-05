@@ -181,7 +181,7 @@ The following table summarizes the keys a world accepts:
 | `overrides` | A map from entity type to a chain that replaces `select` for that type. It replaces the chain rather than extending it. |
 | `otherwise` | **Required.** `exclude` or `default`. What happens to an entity whose type declares faces but that has none the chain names. |
 | `banner` | Optional text the web app shows at the top of every page in this world. Empty shows no announcement. |
-| `messages` | Optional. The web app's wording for what this world changes on a screen: `absent` (a detail page for an entity with no face here), `projection` (a list or board note), `stand_in` (the badge on a row served a stand-in). Placeholders `{face}`, `{bare_face}`, `{world}`, `{title}`. An undeclared entry shows nothing. |
+| `messages` | Optional. The web app's wording for what this world changes on a screen: `absent` (a detail page for an entity with no face here; placeholders `{face}`, `{bare_face}`, `{world}`, `{title}`), `projection` (a list or board note; `{world}` only), `stand_in` (the badge on a row served a stand-in; `{face}`, `{bare_face}`, `{world}`). An undeclared entry shows nothing. |
 | `on_absent` | Optional. `redirect: <world>` sends a reader who opens an entity with no face here to that world instead of showing the page. |
 | `primary_for` | Optional. Breaks a tie when two worlds lead with the same face for a type. See the Metamodel Reference. |
 | `edits` | Accepted and validated as a declared face name, but not used yet. |
