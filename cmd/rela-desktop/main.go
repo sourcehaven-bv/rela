@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"flag"
 	"fmt"
@@ -43,6 +44,36 @@ const (
 	defaultWindowWidth  = 1280
 	defaultWindowHeight = 800
 )
+
+// singleInstanceID identifies this app's instance lock. It matches the bundle
+// identifier in build/package/macos/Info.plist.
+const singleInstanceID = "com.sourcehaven.rela-desktop"
+
+// SingleInstanceSecret keys the IPC between a second launch and the running
+// instance. Override at build time with
+// -ldflags "-X main.SingleInstanceSecret=<value>".
+//
+// The transport is not private: on macOS it is an NSDistributedNotification,
+// readable by any process in the user's session. Unencrypted, the payload
+// would disclose the project path, and any local process could forge a launch
+// to make rela-desktop open a directory of its choosing. Encrypting removes
+// both, and costs nothing.
+//
+// This is deliberately a constant rather than a random per-run value: the two
+// processes derive the key independently and never negotiate, so a random key
+// would simply never match. It is therefore obfuscation of a local channel,
+// not a secret — which is the whole threat model here.
+//
+// independently and never negotiate, so it cannot be random or fetched. It
+// obfuscates a local IPC channel; it is not an authentication secret.
+//
+//nolint:gosec // G101: hardcoded by necessity — the two processes derive this
+var SingleInstanceSecret = "rela-desktop/single-instance/v1"
+
+// singleInstanceKey derives the 32-byte key Wails expects.
+func singleInstanceKey() [32]byte {
+	return sha256.Sum256([]byte(SingleInstanceSecret))
+}
 
 // Version is set at build time via -ldflags.
 var Version = "dev"
@@ -952,7 +983,8 @@ func main() {
 		OnShutdown: func() { slog.Info("shutting down") },
 		// One instance only: see onSecondInstanceLaunch.
 		SingleInstance: &application.SingleInstanceOptions{
-			UniqueID:               "com.sourcehaven.rela-desktop",
+			UniqueID:               singleInstanceID,
+			EncryptionKey:          singleInstanceKey(),
 			OnSecondInstanceLaunch: d.onSecondInstanceLaunch,
 		},
 	})
