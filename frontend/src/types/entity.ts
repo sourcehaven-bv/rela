@@ -221,6 +221,14 @@ export interface CopyOffer {
   targetFace: string
   allowed: boolean
   reason?: string
+  // The operator's follow-through (TKT-5SZG2L): the toast (absent means the
+  // copy's label) and where to land. Absent means land on the face written.
+  onSuccess?: CopyOnSuccess
+}
+
+export interface CopyOnSuccess {
+  message?: string
+  landing: { mode: 'written' | 'stay' | 'world' | 'face'; world?: string; face?: string }
 }
 
 // AttachmentInfo describes one file attached to a `file`-type property,

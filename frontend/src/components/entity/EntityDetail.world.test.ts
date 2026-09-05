@@ -306,29 +306,49 @@ describe('EntityDetail world binding', () => {
       expect(w.find('.world-banner').exists()).toBe(false)
     })
 
-    it('hides Edit and Delete for a stand-in face _actions denies, and says why', async () => {
+    // The words for a read-only non-bare face are the OPERATOR's
+    // (`faces.<name>.messages.read_only`); the app has none of its own. A
+    // page with nothing declared shows a denial the way every denial looks:
+    // no Edit, no explanation (TKT-5SZG2L).
+    function seedReadOnlyText(text: string) {
+      useSchemaStore().entityTypes.set(entityType, {
+        name: entityType,
+        label: 'Policy',
+        properties: { title: { type: 'string', values: null } },
+        faces: { draft: { label: 'Concept' }, published: { label: 'Vastgesteld', messages: { read_only: text } } },
+        bare_face: 'draft',
+      } as never)
+    }
+
+    it('hides Edit and Delete for a stand-in face _actions denies, and says nothing by default', async () => {
       mockRoute.query = { world: 'published' }
       const w = await mountDetail(viewResponse(standIn()))
       rendersProof(w)
       expect(button(w, 'Edit')).toBeUndefined()
       expect(w.find('.btn-danger').exists()).toBe(false)
-      // The one fact the affordances leave unexplained: the bare face — where
-      // edits are made — really is elsewhere. No button: the face menu is the
-      // way there (atlas worlds issue 5).
+      expect(w.find('.world-banner').exists()).toBe(false)
+    })
+
+    it("explains a read-only face in the operator's words, placeholders substituted", async () => {
+      seedReadOnlyText('Dit is {face} van {title}. Bewerken doe je in {bare_face}.')
+      mockRoute.query = { world: 'published' }
+      const w = await mountDetail(viewResponse(standIn()))
+      rendersProof(w)
       const banner = w.find('.world-banner')
       expect(banner.exists()).toBe(true)
-      expect(banner.text()).toContain('read-only for you')
-      expect(banner.text()).toContain('Edits are made on the default face')
-      expect(banner.text()).not.toContain('Go to')
+      expect(banner.text()).toBe('Dit is Vastgesteld van Access Control Policy. Bewerken doe je in Concept.')
+      // No button: the face menu is the way to the bare face (issue 5).
+      expect(banner.find('button').exists()).toBe(false)
     })
 
     it('explains the stand-in even without a world in the URL', async () => {
       // `/entity/policy/POL-1@published?world=default` reaches the same row
       // by address; the note is about the face, not the world.
+      seedReadOnlyText('Alleen lezen')
       mockRoute.query = { world: 'default' }
       const w = await mountDetail(viewResponse(standIn()))
       rendersProof(w)
-      expect(w.find('.world-banner').text()).toContain('read-only for you')
+      expect(w.find('.world-banner').text()).toBe('Alleen lezen')
     })
 
     it('gives a bare face without update no note — an ordinary denial', async () => {
@@ -525,11 +545,21 @@ describe('EntityDetail world binding', () => {
       expect(invokeCopyMock).toHaveBeenCalledWith('promote-policy', entityId)
     })
 
-    it('lands on the face it wrote, in the operator vocabulary', async () => {
-      // The written face is one click away otherwise; landing on it is what
-      // an editor who just adopted a policy expects. The toast speaks the
-      // copy's label and the face's label, never rela's word "face" (atlas
-      // worlds issue 8).
+    it('lands on the face it wrote, and the toast is the copy\'s own label', async () => {
+      // With no `on_success` declared: the written face is where an editor
+      // who just adopted a policy expects to be, and the toast says only what
+      // the button said — never rela's "Created the X face" (TKT-5SZG2L).
+      invokeCopyMock.mockResolvedValue(copyResult())
+      mockRoute.query = { world: 'published' }
+      const w = await mountDetail(viewResponse({ _copies: [promoteOffer()] }))
+      await clickPromote(w)
+      expect(routerPush).toHaveBeenCalledWith({
+        path: '/entity/policy/POL-1@published', query: { world: 'published' },
+      })
+      expect(successMock).toHaveBeenCalledWith('Publish this policy')
+    })
+
+    it("toasts the operator's on_success.message with {face} as the face written", async () => {
       useSchemaStore().entityTypes.set(entityType, {
         name: entityType,
         label: 'Policy',
@@ -538,14 +568,47 @@ describe('EntityDetail world binding', () => {
         bare_face: 'draft',
       } as never)
       invokeCopyMock.mockResolvedValue(copyResult())
-      mockRoute.query = { world: 'published' }
-      const w = await mountDetail(viewResponse({ _copies: [promoteOffer()] }))
+      const w = await mountDetail(viewResponse({
+        _copies: [promoteOffer({ onSuccess: { message: '{title} is nu {face}.', landing: { mode: 'written' } } })],
+      }))
+      await clickPromote(w)
+      expect(successMock).toHaveBeenCalledWith('Access Control Policy is nu Vastgesteld.')
+    })
+
+    it('stays in place when landing is `stay`', async () => {
+      invokeCopyMock.mockResolvedValue(copyResult())
+      const w = await mountDetail(viewResponse({
+        _copies: [promoteOffer({ onSuccess: { landing: { mode: 'stay' } } })],
+      }))
+      const before = fetchViewMock.mock.calls.length
+      await clickPromote(w)
+      expect(routerPush).not.toHaveBeenCalled()
+      expect(fetchViewMock.mock.calls.length).toBeGreaterThan(before)
+    })
+
+    it('lands in a declared world when landing names one', async () => {
+      invokeCopyMock.mockResolvedValue(copyResult())
+      mockRoute.query = { from: 'posts' }
+      const w = await mountDetail(viewResponse({
+        _copies: [promoteOffer({ onSuccess: { landing: { mode: 'world', world: 'published' } } })],
+      }))
+      await clickPromote(w)
+      // The bare id in that world, with the rest of the query kept.
+      expect(routerPush).toHaveBeenCalledWith({
+        path: '/entity/policy/POL-1', query: { from: 'posts', world: 'published' },
+      })
+    })
+
+    it('lands on a declared face when landing names one', async () => {
+      invokeCopyMock.mockResolvedValue(copyResult())
+      mockRoute.query = { world: 'editorial' }
+      const w = await mountDetail(viewResponse({
+        _copies: [promoteOffer({ onSuccess: { landing: { mode: 'face', face: 'draft' } } })],
+      }))
       await clickPromote(w)
       expect(routerPush).toHaveBeenCalledWith({
-        path: '/entity/policy/POL-1@published', query: { world: 'published' },
+        path: '/entity/policy/POL-1@draft', query: { world: 'editorial' },
       })
-      expect(successMock).toHaveBeenCalledWith('Publish this policy: Vastgesteld created')
-      expect(successMock.mock.calls[0][0]).not.toMatch(/\bface\b/)
     })
 
     it('reloads in place after a copy INTO the bare face', async () => {
@@ -640,6 +703,7 @@ describe('EntityDetail world binding', () => {
     })
 
     it('distinguishes a real face from a fallback in the SAME section', async () => {
+      useSchemaStore().worlds.set('site-nl', { readable: true, messages: { stand_in: 'vervangend' } } as never)
       mockRoute.query = { world: 'site-nl' }
       const w = await mountDetail(
         withCollection([
@@ -656,7 +720,7 @@ describe('EntityDetail world binding', () => {
       const badges = w.findAll('.world-badge')
       expect(badges).toHaveLength(1)
       expect(badges[0].classes()).toContain('is-fallback')
-      expect(badges[0].text()).toBe('default')
+      expect(badges[0].text()).toBe('vervangend')
       // Anti-vacuity: both neighbours really rendered, so the single badge is
       // a statement about provenance and not about a section that came up
       // empty.
@@ -696,21 +760,27 @@ describe('EntityDetail world binding', () => {
       expect(w.find('.error-state').exists()).toBe(false)
     })
 
-    it('names the world that has no face for it', async () => {
-      mockRoute.query = { world: 'published' }
-      const w = await mountDetail(absentResponse())
-      const banner = w.find('.world-banner--absent')
-      expect(banner.exists()).toBe(true)
-      expect(banner.text()).toContain('published')
-    })
-
-    it('does NOT claim the page is read-only', async () => {
-      // What is on screen is the DEFAULT face, which is exactly where writes
-      // land.
+    it('says nothing about the absence unless the operator declared text', async () => {
+      // The app has no sentence of its own for "no face in this world"; a
+      // page with nothing declared is simply the bare face (TKT-5SZG2L).
       mockRoute.query = { world: 'published' }
       const w = await mountDetail(absentResponse())
       rendersProof(w)
-      expect(w.text()).not.toContain('read-only for you')
+      expect(w.find('.world-banner').exists()).toBe(false)
+      expect(w.text()).not.toContain('Go to')
+    })
+
+    it("renders the world's messages.absent in the operator's words", async () => {
+      useSchemaStore().worlds.set('published', {
+        readable: true, messages: { absent: 'Nog niet vastgesteld: {title}.' },
+      } as never)
+      mockRoute.query = { world: 'published' }
+      const w = await mountDetail(absentResponse())
+      rendersProof(w)
+      const banner = w.find('.world-banner--absent')
+      expect(banner.exists()).toBe(true)
+      expect(banner.text()).toBe('Nog niet vastgesteld: Access Control Policy.')
+      expect(banner.find('button').exists()).toBe(false)
     })
 
     it('offers Edit and Delete, because the default face IS what is on screen', async () => {
@@ -721,77 +791,37 @@ describe('EntityDetail world binding', () => {
       expect(button(w, 'Delete')).toBeDefined()
     })
 
-    it('offers the way back to the default world', async () => {
+    it('redirects to the declared world when on_absent.redirect names one', async () => {
+      // The operator would rather send the reader to the concept than
+      // explain an absence. `default` is spelled through setWorld, so the
+      // param is dropped here (no configured default world).
+      useSchemaStore().worlds.set('published', {
+        readable: true, on_absent: { redirect: 'default' },
+      } as never)
       mockRoute.query = { world: 'published' }
       const w = await mountDetail(absentResponse())
       rendersProof(w)
-      const back = w.findAll('button').find((b) => b.text().includes('Go to default'))
-      expect(back).toBeDefined()
-      await back!.trigger('click')
-      // Returns to the same id with the world dropped.
       expect(routerPush).toHaveBeenCalledWith({ query: {} })
     })
 
-    it('hides the way back when the principal cannot read the default world', async () => {
-      // A GLOBAL role-level grant, reported per world by `/_schema`.worlds —
-      // no per-entity probe. Offering the button to someone whose
-      // default-world request returns an empty result would send them
-      // somewhere that looks broken.
-      useSchemaStore().worlds.set('default', { readable: false, default: true })
+    it('redirects to a non-default world by name', async () => {
+      useSchemaStore().worlds.set('published', {
+        readable: true, on_absent: { redirect: 'editorial' },
+      } as never)
       mockRoute.query = { world: 'published' }
       const w = await mountDetail(absentResponse())
       rendersProof(w)
-      expect(w.text()).not.toContain('Go to default')
-      expect(w.find('.world-banner--absent').exists()).toBe(true)
+      expect(routerPush).toHaveBeenCalledWith({ query: { world: 'editorial' } })
     })
 
-    // The button NAMES A DESTINATION, so it is labelled from the destination
-    // rather than from a guess about the project's vocabulary: "Go to draft"
-    // on an ISMS because the operator declared `draft`, "Go to English" on a
-    // blog post whose faces are a language axis.
-    describe('the way back is labelled from the destination face', () => {
-      function seedFaces(bareFace: string, faces: Record<string, { label?: string }>) {
-        useSchemaStore().entityTypes.set(entityType, {
-          name: entityType,
-          label: 'Policy',
-          properties: { title: { type: 'string', values: null } },
-          faces,
-          bare_face: bareFace,
-        } as never)
-      }
-
-      it("uses the operator's label for the default face", async () => {
-        seedFaces('draft', { draft: { label: 'the draft' }, published: {} })
-        mockRoute.query = { world: 'published' }
-        const w = await mountDetail(absentResponse())
-        rendersProof(w)
-        expect(w.text()).toContain('Go to the draft')
-      })
-
-      it('reads the language vocabulary on a type with no lifecycle', async () => {
-        seedFaces('en', { en: { label: 'English' }, nl: {} })
-        mockRoute.query = { world: 'published' }
-        const w = await mountDetail(absentResponse())
-        rendersProof(w)
-        expect(w.text()).toContain('Go to English')
-        expect(w.text()).not.toContain('Go to draft')
-      })
-
-      it('falls back to the FACE NAME when the operator declared no label', async () => {
-        seedFaces('draft', { draft: {}, published: {} })
-        mockRoute.query = { world: 'published' }
-        const w = await mountDetail(absentResponse())
-        rendersProof(w)
-        expect(w.text()).toContain('Go to draft')
-      })
-
-      it('falls back to "default" when the type names no bare_face', async () => {
-        seedFaces('', { published: {} })
-        mockRoute.query = { world: 'published' }
-        const w = await mountDetail(absentResponse())
-        rendersProof(w)
-        expect(w.text()).toContain('Go to default')
-      })
+    it('does not redirect when the page is not absent', async () => {
+      useSchemaStore().worlds.set('published', {
+        readable: true, on_absent: { redirect: 'default' },
+      } as never)
+      mockRoute.query = { world: 'published' }
+      const w = await mountDetail(viewResponse())
+      rendersProof(w)
+      expect(routerPush).not.toHaveBeenCalled()
     })
   })
 

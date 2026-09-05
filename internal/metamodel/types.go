@@ -369,6 +369,24 @@ type FaceDef struct {
 	// per-face label is forward-compatible with an axis that later groups
 	// them, where a `return_action_label:` on a face would not be.
 	Label string `yaml:"label,omitempty"`
+
+	// Messages is the operator's wording for the web app's chrome about THIS
+	// face. Every entry is optional and an absent one renders NOTHING: rela
+	// has no fallback sentence, because any it wrote would be its storage
+	// vocabulary ("face", "bare", "default") shown to a reader who never
+	// chose those words (TKT-5SZG2L).
+	Messages FaceMessages `yaml:"messages,omitempty"`
+}
+
+// FaceMessages is operator-authored chrome text about one face. See
+// [WorldMessages] for the placeholder grammar; every entry is plain text.
+type FaceMessages struct {
+	// ReadOnly is shown on a detail page or edit form that reached this face
+	// while the reader may not write it — "Dit is de vastgestelde versie.
+	// Bewerken doe je in het concept." Empty shows nothing: a face the
+	// reader may not write then looks like any other permission denial, a
+	// page without an Edit button.
+	ReadOnly string `yaml:"read_only,omitempty"`
 }
 
 // Otherwise is a world's policy for an entity whose type declares
@@ -487,6 +505,51 @@ type WorldDef struct {
 	// across the whole graph). The same face can be reached from worlds
 	// that warrant different text, or none.
 	Banner string `yaml:"banner,omitempty"`
+
+	// Messages is the operator's wording for what this world changes on a
+	// screen. Every entry is optional and an absent one renders NOTHING — the
+	// web app has no sentence of its own for any of these, because every one
+	// it used to have was rela's storage vocabulary shown to a reader
+	// (TKT-5SZG2L).
+	Messages WorldMessages `yaml:"messages,omitempty"`
+
+	// OnAbsent decides what happens when a reader opens an entity that has
+	// no face in this world. Absent: the page shows the bare face, with
+	// [WorldMessages.Absent] if declared. See [WorldOnAbsent].
+	OnAbsent WorldOnAbsent `yaml:"on_absent,omitempty"`
+}
+
+// WorldMessages is operator-authored chrome text about one world.
+//
+// Each string is plain text with an allowlisted set of placeholders the web
+// app substitutes: `{face}` (the served face's label), `{bare_face}` (the
+// type's bare face label), `{world}` (this world's name), `{title}` (the
+// entity's display title). Anything else in braces is left as written. No
+// markup, no conditionals — the text is the operator's sentence, and
+// rendering it is the whole feature.
+type WorldMessages struct {
+	// Absent is shown on a detail page for an entity that has no face in
+	// this world (the page shows the bare face). Empty shows nothing.
+	Absent string `yaml:"absent,omitempty"`
+	// Projection is the note on a list or board of a type that declares
+	// faces — that entities with no face here are not listed. Empty shows
+	// nothing.
+	Projection string `yaml:"projection,omitempty"`
+	// StandIn is the badge text on a row or card whose face is a stand-in
+	// for the world's first choice (a within-chain fallback or an
+	// `otherwise: default` substitution) — typically `{face}`. Empty renders
+	// no badge at all.
+	StandIn string `yaml:"stand_in,omitempty"`
+}
+
+// WorldOnAbsent is the behavior for an entity with no face in a world.
+type WorldOnAbsent struct {
+	// Redirect names a declared world (or `default`) the web app navigates
+	// to instead of rendering the absent page: an ISMS whose adopted world
+	// has no adopted version of a policy yet sends the reader to the
+	// concept rather than to a page explaining that there is nothing here.
+	// Validated at load; empty means no redirect.
+	Redirect string `yaml:"redirect,omitempty"`
 }
 
 // DefaultWorldName is reserved: the default world is implicit and total,
@@ -510,7 +573,9 @@ func (w *WorldDef) UnmarshalYAML(node *yaml.Node) error {
 		Banner    string               `yaml:"banner,omitempty"`
 		// oneOrMany like Select: the common case is a single face, and
 		// `primary_for: nl` should not have to be written as a list.
-		PrimaryFor oneOrMany `yaml:"primary_for,omitempty"`
+		PrimaryFor oneOrMany     `yaml:"primary_for,omitempty"`
+		Messages   WorldMessages `yaml:"messages,omitempty"`
+		OnAbsent   WorldOnAbsent `yaml:"on_absent,omitempty"`
 	}
 	var raw worldDefYAML
 	if err := node.Decode(&raw); err != nil {
@@ -521,6 +586,8 @@ func (w *WorldDef) UnmarshalYAML(node *yaml.Node) error {
 	w.Edits = raw.Edits
 	w.Banner = raw.Banner
 	w.PrimaryFor = raw.PrimaryFor
+	w.Messages = raw.Messages
+	w.OnAbsent = raw.OnAbsent
 	if len(raw.Overrides) > 0 {
 		w.Overrides = make(map[string][]string, len(raw.Overrides))
 		for typ, chain := range raw.Overrides {
@@ -786,6 +853,69 @@ type CopyDef struct {
 	// which is the delegate-X gate on role-relation writes and is checked
 	// globally. "The owner of THIS doc may publish it" needs the former.
 	Guard CopyGuard `yaml:"guard,omitempty"`
+
+	// OnSuccess is what the web app says and where it goes after this copy
+	// runs. Both optional; see [CopyOnSuccess].
+	OnSuccess CopyOnSuccess `yaml:"on_success,omitempty"`
+}
+
+// CopyOnSuccess is the operator's follow-through for a successful copy
+// (TKT-5SZG2L).
+type CopyOnSuccess struct {
+	// Message is the confirmation toast. Empty means the copy's own label
+	// (the button the reader just pressed) — never rela's "Created the X
+	// face". Placeholders as in [WorldMessages], plus `{face}` naming the
+	// face written.
+	Message string `yaml:"message,omitempty"`
+	// Landing is where the web app navigates afterwards. See [CopyLanding];
+	// the zero value is [LandingWritten].
+	Landing CopyLanding `yaml:"landing,omitempty"`
+}
+
+// CopyLanding is where the web app lands after a copy: `written` (the face
+// the copy wrote — the default, since an editor who adopts a policy usually
+// wants to see the adopted text), `stay` (reload in place — a translator
+// wants to stay on the source), or a declared world or face:
+//
+//	landing: stay
+//	landing: { world: actueel }
+//	landing: { face: vastgesteld }
+//
+// Exactly one of the fields is set; [CopyLanding.UnmarshalYAML] accepts the
+// scalar and the mapping forms. The zero value means `written`.
+type CopyLanding struct {
+	// Mode is LandingWritten or LandingStay when a scalar was given.
+	Mode  string `yaml:"-"`
+	World string `yaml:"world,omitempty"`
+	Face  string `yaml:"face,omitempty"`
+}
+
+// The scalar landing modes.
+const (
+	LandingWritten = "written"
+	LandingStay    = "stay"
+)
+
+// IsZero reports whether no landing was declared (which means `written`).
+func (l CopyLanding) IsZero() bool { return l.Mode == "" && l.World == "" && l.Face == "" }
+
+// UnmarshalYAML accepts `landing: stay`, `landing: written`,
+// `landing: {world: name}` and `landing: {face: name}`.
+func (l *CopyLanding) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		l.Mode = node.Value
+		return nil
+	}
+	type landingYAML struct {
+		World string `yaml:"world,omitempty"`
+		Face  string `yaml:"face,omitempty"`
+	}
+	var raw landingYAML
+	if err := node.Decode(&raw); err != nil {
+		return err
+	}
+	l.World, l.Face = raw.World, raw.Face
+	return nil
 }
 
 // CopyGuard is a copy definition's authorization, sharing the statemachine's
@@ -819,12 +949,14 @@ func (c *CopyDef) UnmarshalYAML(unmarshal func(any) error) error {
 		Fields    any               `yaml:"fields,omitempty"`
 		Relations map[string]string `yaml:"relations,omitempty"`
 		Guard     CopyGuard         `yaml:"guard,omitempty"`
+		OnSuccess CopyOnSuccess     `yaml:"on_success,omitempty"`
 	}
 	var r raw
 	if err := unmarshal(&r); err != nil {
 		return err
 	}
 	c.From, c.To, c.Label, c.Relations, c.Guard = r.From, r.To, r.Label, r.Relations, r.Guard
+	c.OnSuccess = r.OnSuccess
 	switch f := r.Fields.(type) {
 	case nil:
 	case string:

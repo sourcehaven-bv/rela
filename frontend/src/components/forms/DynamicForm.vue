@@ -7,6 +7,7 @@ import { readReturnTo } from '@/utils/returnPath'
 import { useWorld, DEFAULT_WORLD } from '@/composables/useWorld'
 import { actionAllowed } from '@/utils/affordancesWarning'
 import { entityRef, refBareId, refFace } from '@/utils/entityRef'
+import { worldText } from '@/utils/worldText'
 import {
   isFieldWritable,
   isPropertyRedacted,
@@ -225,16 +226,23 @@ const loadState = ref<'pending' | 'loaded' | 'error'>('pending')
 // navigation (bookmark, paste) or when the policy tightened after the
 // detail view loaded.
 const notEditable = ref(false)
-// The NON-BARE face the loaded row is, or '' — so the not-editable message
-// can say the true reason when there is one: the address names a face no
-// grant covers, and edits are made on the bare face. A bare row that is not
-// updatable is an ordinary permission denial and keeps the permissions text.
+// The NON-BARE face the loaded row is, or '' — so the refusal can carry the
+// operator's `faces.<name>.messages.read_only` when one is declared. Nothing
+// declared: the ordinary permissions text, which is true either way and
+// speaks no rela vocabulary (TKT-5SZG2L).
 const notEditableFace = ref('')
-const notEditableFaceLabel = computed(() => {
+const notEditableNote = computed(() => {
   const type = formConfig.value?.entity ?? ''
-  return schemaStore.faceLabel(type, notEditableFace.value) || notEditableFace.value
+  const faces = schemaStore.getEntityType(type)?.faces
+  const face = notEditableFace.value
+  if (!face) return ''
+  return worldText(faces?.[face]?.messages?.read_only, {
+    face: faces?.[face]?.label || face,
+    bare_face: schemaStore.faceLabel(type, ''),
+    world: worldParam.value ?? '',
+    title: bareEntityId.value,
+  })
 })
-const bareFaceLabel = computed(() => schemaStore.faceLabel(formConfig.value?.entity ?? '', '') || 'default')
 // The bare id, for the way back and every per-ENTITY surface.
 const bareEntityId = computed(() => (props.entityId ? refBareId(props.entityId) : ''))
 const saveGeneration = ref(0) // Incremented after save to reset RelationCards
@@ -1906,24 +1914,13 @@ defineExpose({
       <div v-else-if="loading" class="form-loading-placeholder" />
 
       <div v-else-if="notEditable" class="not-editable-state">
-        <h2>{{ notEditableFace ? 'This face is not editable' : 'This entity is not editable' }}</h2>
-        <p v-if="notEditableFace">
-          You are looking at the {{ notEditableFaceLabel }} face of
-          <code>{{ bareEntityId }}</code
-          >, which is read-only for you. Edits are made on the {{ bareFaceLabel }} face.
-        </p>
+        <h2>This entity is not editable</h2>
+        <p v-if="notEditableNote">{{ notEditableNote }}</p>
         <p v-else>
           Your current permissions don't allow updating
           <code>{{ entityId }}</code
           >. Return to the entity view to see available actions.
         </p>
-        <router-link
-          v-if="formConfig && entityId && notEditableFace"
-          :to="{ path: `/entity/${formConfig.entity}/${bareEntityId}`, query: { world: 'default' } }"
-          class="btn btn-secondary"
-        >
-          Go to {{ bareFaceLabel }}
-        </router-link>
         <router-link
           v-if="formConfig && entityId"
           :to="`/entity/${formConfig.entity}/${entityId}`"

@@ -1429,7 +1429,30 @@ func (svc affordanceService) computeCopyOffers(
 			TargetFace: o.TargetFace,
 			Allowed:    o.Allowed,
 			Reason:     o.Reason,
+			OnSuccess:  copyOnSuccessWire(o.OnSuccess),
 		})
 	}
 	return out
+}
+
+// copyOnSuccessWire projects a copy's declared follow-through onto the wire,
+// nil when nothing was declared so an undeclared block is omitted rather than
+// sent as an empty object. The landing's default is spelled out as
+// `written`, so a client never infers it from an absent field.
+func copyOnSuccessWire(s metamodel.CopyOnSuccess) *v1.CopyOnSuccess {
+	if s.Message == "" && s.Landing.IsZero() {
+		return nil
+	}
+	landing := v1.CopyLanding{Mode: metamodel.LandingWritten}
+	switch {
+	case s.Landing.Mode != "":
+		landing.Mode = s.Landing.Mode
+	case s.Landing.World != "":
+		landing.Mode = "world"
+		landing.World = s.Landing.World
+	case s.Landing.Face != "":
+		landing.Mode = "face"
+		landing.Face = s.Landing.Face
+	}
+	return &v1.CopyOnSuccess{Message: s.Message, Landing: landing}
 }

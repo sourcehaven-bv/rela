@@ -241,18 +241,14 @@ describe('EntityList world binding', () => {
     // The UI half of the same property: the affordance is real, so it is
     // offered. Paired with the default-world control above, which proves the
     // box's presence is not simply unconditional.
-    it('offers the search box and says what it searches', async () => {
+    it('offers the search box, and says nothing about it unless the operator does', async () => {
       const wrapper = await mountList({ faces: true })
       rendersProof(wrapper)
 
       expect(wrapper.findComponent({ name: 'SearchBox' }).exists()).toBe(true)
-      const banner = wrapper.find('.world-banner')
-      expect(banner.exists()).toBe(true)
-      // The banner must still account for the world's effect on results —
-      // rows missing from the list are missing from its search too. Dropping
-      // that sentence would leave a reader with a short result set and no
-      // explanation, which is what the note exists to prevent.
-      expect(banner.text()).toContain('including from search')
+      // No banner: nothing declared for this world. The app has no sentence
+      // of its own about what a world filters (TKT-5SZG2L).
+      expect(wrapper.find('.world-banner').exists()).toBe(false)
     })
 
     // The banner is TWO things with different owners, the same split the
@@ -263,64 +259,63 @@ describe('EntityList world binding', () => {
     // announcing it says nothing. The announcement is now the operator's
     // `banner:` and renders nothing when unset.
     //
-    // The NOTE is not the operator's to suppress, but it is only TRUE for a
-    // type that declares faces: the world really does filter such rows out,
-    // and the search box beside it searches those same faces. A type without
-    // faces has one state in every world, so the note would assert two
-    // falsehoods on its list (atlas worlds issue 1).
-    describe('the banner announcement is operator config; the note is not', () => {
-      it('renders the operator announcement when the world declares one', async () => {
+    // Both halves of the banner are operator config: the ANNOUNCEMENT
+    // (`banner:`) and the NOTE (`messages.projection`). The note is rendered
+    // only on a list of a type that declares faces — a type without faces has
+    // one state in every world, so nothing on its list is filtered by the
+    // world and the note would be false (atlas worlds issue 1).
+    describe('the banner is the operator\'s words or nothing', () => {
+      it('renders the announcement and the projection note when both are declared', async () => {
         useSchemaStore().worlds.set('published', {
           readable: true,
           banner: 'These policies are in force',
+          messages: { projection: 'Only what is in force is listed.' },
         } as never)
         const wrapper = await mountList({ faces: true })
         rendersProof(wrapper)
 
         const banner = wrapper.find('.world-banner')
-        expect(banner.text()).toContain('These policies are in force')
-        expect(banner.text()).toContain('including from search')
+        expect(banner.find('.world-banner__label').text()).toBe('These policies are in force')
+        expect(banner.find('.world-banner__note').text()).toBe('Only what is in force is listed.')
       })
 
       it('renders the announcement alone on a list of a type WITHOUT faces', async () => {
         useSchemaStore().worlds.set('published', {
           readable: true,
           banner: 'These policies are in force',
+          messages: { projection: 'Only what is in force is listed.' },
         } as never)
         const wrapper = await mountList()
         rendersProof(wrapper)
 
         const banner = wrapper.find('.world-banner')
         expect(banner.text()).toContain('These policies are in force')
-        expect(banner.text()).not.toContain('including from search')
+        expect(banner.text()).not.toContain('Only what is in force')
       })
 
-      it('renders no banner at all on a list of a type WITHOUT faces and no announcement', async () => {
+      it('renders the projection note alone when no banner is declared', async () => {
+        useSchemaStore().worlds.set('published', {
+          readable: true,
+          messages: { projection: 'Only what is in force is listed.' },
+        } as never)
+        const wrapper = await mountList({ faces: true })
+        rendersProof(wrapper)
+        expect(wrapper.find('.world-banner__label').exists()).toBe(false)
+        expect(wrapper.find('.world-banner__note').text()).toBe('Only what is in force is listed.')
+      })
+
+      it('renders no banner at all when nothing is declared', async () => {
         useSchemaStore().worlds.set('published', { readable: true } as never)
-        const wrapper = await mountList()
+        const wrapper = await mountList({ faces: true })
         rendersProof(wrapper)
         expect(wrapper.find('.world-banner').exists()).toBe(false)
       })
 
-      it('announces NOTHING when the world declares no banner', async () => {
-        useSchemaStore().worlds.set('published', { readable: true } as never)
-        const wrapper = await mountList({ faces: true })
-        rendersProof(wrapper)
-
-        // The announcement element is absent — not an empty span, which would
-        // still occupy the layout.
-        expect(wrapper.find('.world-banner__label').exists()).toBe(false)
-        // ...and the note survives, which is the half an operator must not be
-        // able to turn off. Without this assertion, deleting the banner block
-        // outright would pass.
-        expect(wrapper.find('.world-banner__note').text()).toContain('including from search')
-      })
-
       it('never announces the world NAME on its own', async () => {
-        // The specific regression: the hardcoded string named the world, so a
+        // The specific regression: a hardcoded string named the world, so a
         // `published` list announced "published" to a reader for whom that is
         // simply the normal state.
-        useSchemaStore().worlds.set('published', { readable: true } as never)
+        useSchemaStore().worlds.set('published', { readable: true, banner: 'In force' } as never)
         const wrapper = await mountList({ faces: true })
         rendersProof(wrapper)
         expect(wrapper.find('.world-banner').text()).not.toContain('published')
@@ -399,14 +394,9 @@ describe('EntityList world binding', () => {
   //
   // A list row that fell back to a later chain candidate is BYTE-IDENTICAL to
   // a first-choice hit — same id, same title, same cells. `_world` is the only
-  // thing separating them, and until now the list rendered none of it, so an
-  // editorial list showing a stand-in looked exactly like one showing the face
-  // the reader asked for.
-  //
-  // The badge is an EXCEPTION marker: it renders ONLY for a stand-in. A
-  // first-choice row is left unmarked, because a badge on every row is noise
-  // that trains the reader to ignore it — so here the badge's PRESENCE is
-  // itself the claim, and the no-badge cases below are what give it meaning.
+  // thing separating them. The badge is an EXCEPTION marker: it renders ONLY
+  // for a stand-in, and only in the operator's words (`messages.stand_in`);
+  // with nothing declared it renders nothing (TKT-5SZG2L).
   describe('per-row world badge', () => {
     const fallbackRow: Entity = {
       id: 'POL-3',
@@ -421,53 +411,52 @@ describe('EntityList world binding', () => {
       _world: { name: 'editorial', face: 'draft', via: 'chain', chain_position: 0 },
     }
 
-    async function mountWith(rows: Entity[]) {
-      seedSchema()
+    async function mountWith(rows: Entity[], standIn?: string) {
+      seedSchema({ faces: true })
+      useSchemaStore().worlds.set('editorial', {
+        readable: true, ...(standIn ? { messages: { stand_in: standIn } } : {}),
+      } as never)
       seedEntities(rows)
       const wrapper = mount(EntityList, {
         props: { listId },
         attachTo: document.body,
         global: { plugins: [pinia, PiniaColada] },
       })
+      mounted.push(wrapper)
       await flushPromises()
       expect(listEntitiesMock).toHaveBeenCalled()
       return wrapper
     }
 
-    it('badges a within-chain fallback row as a substitute, naming the face served', async () => {
+    it('badges a within-chain fallback row in the operator\'s words', async () => {
       mockRoute.query = { world: 'editorial' }
-      const wrapper = await mountWith([fallbackRow])
+      const wrapper = await mountWith([fallbackRow], 'Stand-in: {face}')
       expect(wrapper.text()).toContain('Remote Working Policy')
 
       const badge = wrapper.find('.world-badge')
       expect(badge.exists()).toBe(true)
-      // The face, not the world name: "published" is what the reader is
-      // actually looking at, and the reason the row may not say what they
-      // expect.
-      expect(badge.text()).toBe('published')
-      // Mutation: drop chain_position from isSubstitute and this row stops
-      // rendering a badge at all, i.e. the stand-in becomes indistinguishable
-      // from the world's first choice — the exact bug the badge exists for.
+      expect(badge.text()).toBe('Stand-in: published')
       expect(badge.classes()).toContain('is-fallback')
-      expect(badge.attributes('title')).toContain('No editorial face exists')
+      expect(badge.attributes('title')).toBeUndefined()
+    })
+
+    it('renders NO badge for a stand-in when the world declares no stand_in text', async () => {
+      mockRoute.query = { world: 'editorial' }
+      const wrapper = await mountWith([fallbackRow])
+      expect(wrapper.text()).toContain('Remote Working Policy')
+      expect(wrapper.find('.world-badge').exists()).toBe(false)
     })
 
     it('leaves a chain-position-0 row UNBADGED even inside a world', async () => {
       mockRoute.query = { world: 'editorial' }
-      const wrapper = await mountWith([firstChoiceRow])
-      // Anti-vacuity: the row rendered, and it rendered inside a world — so
-      // the absent badge is the rule and not a list that failed to resolve.
+      const wrapper = await mountWith([firstChoiceRow], '{face}')
       expect(wrapper.text()).toContain('Access Control Policy')
-
-      // The positive control for the test above: without this, badging every
-      // row would pass it.
       expect(wrapper.find('.world-badge').exists()).toBe(false)
     })
 
     it('badges only the stand-in when both kinds share one table', async () => {
-      // The clearest statement of the rule: same list, same world, one badge.
       mockRoute.query = { world: 'editorial' }
-      const wrapper = await mountWith([firstChoiceRow, fallbackRow])
+      const wrapper = await mountWith([firstChoiceRow, fallbackRow], '{face}')
       expect(wrapper.text()).toContain('Access Control Policy')
       expect(wrapper.text()).toContain('Remote Working Policy')
 
@@ -485,48 +474,38 @@ describe('EntityList world binding', () => {
           properties: { title: 'Joiners Policy' },
           _world: { name: 'editorial', face: '', via: 'fallback-default' },
         },
-      ])
+      ], '{bare_face}')
       expect(wrapper.text()).toContain('Joiners Policy')
 
       const badge = wrapper.find('.world-badge')
-      expect(badge.text()).toBe('default')
+      expect(badge.text()).toBe('draft')
       expect(badge.classes()).toContain('is-fallback')
     })
 
     it('renders NO badge under the default world', async () => {
       mockRoute.query = {}
-      const wrapper = await mountWith([policy])
-      // Anti-vacuity: the rows really rendered, so the absence is about the
-      // badge and not about a component that failed to mount.
+      const wrapper = await mountWith([policy], '{face}')
       expect(wrapper.text()).toContain('Access Control Policy')
       expect(wrapper.find('.world-badge').exists()).toBe(false)
     })
 
-    // One badge per ROW, not one per cell. A world verdict is a statement
-    // about the entity, so repeating it in every column would be noise that
-    // also grows with the list's width.
     it('renders exactly one badge per row regardless of column count', async () => {
       mockRoute.query = { world: 'editorial' }
-      seedSchema({ relationColumn: true })
+      seedSchema({ faces: true, relationColumn: true })
+      useSchemaStore().worlds.set('editorial', { readable: true, messages: { stand_in: '{face}' } } as never)
       seedEntities([fallbackRow])
       const wrapper = mount(EntityList, {
         props: { listId },
         attachTo: document.body,
         global: { plugins: [pinia, PiniaColada] },
       })
+      mounted.push(wrapper)
       await flushPromises()
       expect(wrapper.text()).toContain('Remote Working Policy')
-
-      // Two columns are configured; still one badge.
-      expect(wrapper.findAll('th').length).toBeGreaterThan(2)
       expect(wrapper.findAll('.world-badge')).toHaveLength(1)
     })
   })
 
-
-  // TKT-6NCSSC: the row link used to drop the world, so following a row from a
-  // world-bound list landed on the DEFAULT face — of the very entity whose row
-  // the reader had just seen carrying a fallback badge.
   describe('row links carry the world', () => {
     const linkRow: Entity = {
       id: 'POL-3',

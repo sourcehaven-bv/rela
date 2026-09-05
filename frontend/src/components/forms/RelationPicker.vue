@@ -392,7 +392,7 @@ onBeforeUnmount(() => {
           TRAILING, after the title: the type chip leads and the face badge
           follows, matching how the rest of the app orders the two.
         -->
-        <WorldBadge v-if="showsFaceBadge(entity)" :world="entity._world" />
+        <WorldBadge v-if="showsFaceBadge(entity)" :world="entity._world" :entity-type="entity.type" />
         <button v-if="canRemove" type="button" class="remove-btn" @click="removeEntity(entity.id)">
           &times;
         </button>
@@ -428,7 +428,7 @@ onBeforeUnmount(() => {
         >
           <span class="entity-type">{{ entity.type }}</span>
           <span class="entity-label">{{ formatEntityLabel(entity) }}</span>
-          <WorldBadge v-if="showsFaceBadge(entity)" :world="entity._world" />
+          <WorldBadge v-if="showsFaceBadge(entity)" :world="entity._world" :entity-type="entity.type" />
         </div>
         <div v-if="filteredCandidates.length > 10" class="dropdown-more">
           +{{ filteredCandidates.length - 10 }} more...

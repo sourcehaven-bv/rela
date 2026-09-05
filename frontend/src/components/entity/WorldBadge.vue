@@ -1,66 +1,42 @@
 <script setup lang="ts">
 /**
- * Flags that a world served a SUBSTITUTE face for one entity — and names it.
+ * The stand-in badge: marks a row or card whose face is a SUBSTITUTE for the
+ * world's first choice — a within-chain fallback (`chain` at a position past
+ * 0) or an `otherwise: default` substitution.
  *
- * ## Why this exists at all
+ * ## Existence is the server's answer; the wording is the operator's
  *
- * Under a world with `otherwise: default`, "the Dutch page" and "the English
- * page, because no Dutch page exists" come back BYTE-IDENTICALLY — same id,
- * same title, same body. The only thing separating them is `_world.via`. A
- * reader looking at a `site-nl` listing cannot otherwise tell which entries
- * are actually translated, and neither can the editor deciding what to
- * translate next.
+ * Whether a row is a stand-in comes from `_world` on the row (the store
+ * resolved it; this reads the answer back). What the badge SAYS comes from
+ * the world's `messages.stand_in` in schema.yaml — typically `{face}`, the
+ * served face's label — and nothing is rendered when the operator declared
+ * nothing. The badge used to print the coordinate and a tooltip in rela's
+ * own words ("No published face exists for this entity — showing the default
+ * state instead"), which is storage vocabulary shown to a reader who never
+ * chose it (TKT-5SZG2L).
  *
- * ## The badge is an EXCEPTION marker, and renders ONLY for a substitute
+ * ## Only a substitute renders
  *
- * A first-choice hit renders NOTHING. The badge earns attention precisely
- * because its presence is the exception: it means "what you are reading is
- * NOT the face this world would normally give you." A badge on every row is
- * noise, and noise trains people to ignore it — at which point the one row
- * that genuinely needed to be read differently is the one that gets skipped.
- *
- * This component owns that rule so every surface (list table, list mobile
- * card, EntityDetail entry + section rows, RelationPicker) gets it
- * consistently and no future consumer has to remember it. Mounting the
- * component for a non-substitute is harmless; it emits no markup.
- *
- * `unscoped` renders nothing for the same reason from the other end: it means
- * no resolution was applied, which is the default world's answer for
- * everything and carries no information.
- *
- * ## A substitute is not only the `fallback-default` arm
- *
- * `via` has two ways of saying "you are looking at a stand-in", and for a
- * while this component only handled one. `fallback-default` fires when the
- * chain matched NOTHING and the world's `otherwise:` arm supplied the
- * default state. But a chain with several candidates can also substitute
- * WITHIN itself: under `select: [published, draft]` a missing published face
- * resolves to the draft, and that reports `via: 'chain'` — identical to a
- * genuine published hit.
- *
- * That was reported live: a draft-only policy rendered under `?world=published`
- * with a "read-only" framing implying it was the published face. The badge
- * said nothing, because `via` said `chain`.
- *
- * `chain_position` is the missing fact. Position 0 is the world's first
- * choice; anything greater is a stand-in and reads exactly like
- * `fallback-default`, because to a reader they are the same statement.
+ * A first-choice hit shows nothing, so the badge marks only what is
+ * surprising. `_world.via` alone cannot say which: `chain` covers both the
+ * world's first choice and a later candidate standing in for it, so
+ * `chain_position` is the deciding fact. An older server that omits it is
+ * treated as a first-choice hit — the badge does not invent a warning it has
+ * no evidence for.
  */
 import { computed } from 'vue'
+import { useSchemaStore } from '@/stores/schema'
+import { worldText } from '@/utils/worldText'
 import type { EntityWorld } from '@/types'
 
-const props = defineProps<{ world?: EntityWorld }>()
+const props = defineProps<{
+  world?: EntityWorld
+  /** The row's entity type, for the served face's declared label. */
+  entityType?: string
+}>()
 
-/**
- * Whether the reader is looking at a STAND-IN rather than the face the world
- * asked for — true for both substitute shapes (see the component doc).
- *
- * The `> 0` test is deliberately not `!== 0`: an older server omits
- * `chain_position` entirely, and `undefined > 0` is false, so a response that
- * cannot answer the question is treated as a first-choice hit. That is the
- * pre-existing behaviour, unchanged — the badge does not invent a warning it
- * has no evidence for.
- */
+const schemaStore = useSchemaStore()
+
 const isSubstitute = computed(() => {
   const w = props.world
   if (!w) return false
@@ -70,47 +46,26 @@ const isSubstitute = computed(() => {
 
 const text = computed(() => {
   const w = props.world
-  if (!w) return ''
-  switch (w.via) {
-    case 'chain':
-      // The coordinate the world served. Name it, because "published" (or
-      // "draft", when a draft stood in) is more useful to a reader than the
-      // world's own name.
-      //
-      // The `|| w.name` arm should be unreachable: `chain` means a SELECTED
-      // coordinate matched, and the default state is reported as `unscoped`,
-      // never as `chain` with an empty face. It is a display fallback so a
-      // server that broke that invariant renders a world name rather than an
-      // empty badge — not a case to design around.
-      return w.face || w.name
-    case 'fallback-default':
-      return 'default'
-    default:
-      return ''
-  }
-})
-
-const title = computed(() => {
-  const w = props.world
-  if (!w) return ''
-  if (w.via === 'fallback-default') {
-    return `No ${w.name} face exists for this entity — showing the default state instead`
-  }
-  // The within-chain substitute. Naming the served coordinate matters more
-  // than naming the world: "showing the draft" is the fact the reader acts
-  // on, and the reason the page's content may not contain what they expect.
-  return `No ${w.name} face exists for this entity — showing ${w.face} instead`
+  if (!w || !isSubstitute.value) return ''
+  const info = schemaStore.worlds.get(w.name)
+  const faces = props.entityType ? schemaStore.getEntityType(props.entityType)?.faces : undefined
+  // `_world.face` is the served face's DECLARED name; '' when the type names
+  // none, in which case the placeholder renders empty.
+  const face = w.face ? faces?.[w.face]?.label || w.face : ''
+  return worldText(info?.messages?.stand_in, {
+    face,
+    bare_face: props.entityType ? schemaStore.faceLabel(props.entityType, '') : '',
+    world: w.name,
+  })
 })
 </script>
 
 <template>
   <!--
-    ONLY a substitute renders. There is deliberately no non-substitute visual
-    state: an `is-chain` class used to style a quiet first-choice badge, and
-    was removed with the badge itself (see the component doc). Reintroducing
-    one would put a badge back on every row.
+    ONLY a substitute with operator text renders. `.is-fallback` is the hook
+    consumers and tests use to assert "this is the warning state".
   -->
-  <span v-if="isSubstitute" class="world-badge is-fallback" :title="title">
+  <span v-if="text" class="world-badge is-fallback">
     {{ text }}
   </span>
 </template>
@@ -129,11 +84,6 @@ const title = computed(() => {
   color: var(--muted-text);
 }
 
-/* The substitute is the only case that renders, so it is the only case that
-   carries colour. `.is-fallback` is kept as a separate class rather than
-   folded into `.world-badge` because it is the hook consumers and tests use
-   to assert "this is the warning state" — and because a second, quieter
-   state would go here if one ever earns its place again. */
 .is-fallback {
   border-color: color-mix(in srgb, var(--warning-color) 60%, transparent);
   background: color-mix(in srgb, var(--warning-color) 18%, transparent);

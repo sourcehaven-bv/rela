@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, onUnmounted } from 'vue'
-import { RouterLink, useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
+import { RouterLink, useRoute, useRouter, type RouteLocationRaw, type LocationQueryRaw } from 'vue-router'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { useScopeNavigation } from '@/composables'
 import { useBackTarget } from '@/composables/useBackTarget'
@@ -8,6 +8,7 @@ import { isCancelledFetch } from '@/composables/usePageData'
 import { fetchView, getCommands, getErrorMessage } from '@/api'
 import { useWorld, DEFAULT_WORLD } from '@/composables/useWorld'
 import { entityRef, refBareId, refFace } from '@/utils/entityRef'
+import { worldText, type WorldTextVars } from '@/utils/worldText'
 import type { ViewEntity, ViewResponse, ViewSection, ViewSectionField } from '@/api'
 import type { Entity } from '@/types'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
@@ -107,12 +108,6 @@ const { world, isWorldBound, worldParam, setWorld } = useWorld()
 // bare id, so the ordinary world banner (which announces read-only-ness)
 // must not render alongside it.
 const worldAbsent = computed(() => viewData.value?._world_absent === true)
-
-// The world that has no face here. Falls back to the requested world name, so
-// the banner still reads correctly against a server that omits the field.
-const worldAbsentName = computed(
-  () => viewData.value?._world_absent_name || world.value || '',
-)
 
 // --- The address of the row on screen -------------------------------------
 //
@@ -668,29 +663,21 @@ async function runCopy(offer: CopyOffer) {
   copyBusy.value = true
   try {
     const res = await invokeCopy(offer.name, subject)
-    // The toast speaks the operator's vocabulary: the copy's own label and
-    // the face's declared label, never rela's word "face" (atlas worlds
-    // issue 8). `res.face` is the STORED coordinate the copy wrote; the bare
-    // face is '' and labelled from the type.
-    const written = faceLabel(res.face) || 'default'
-    const outcome = res.created ? 'created' : 'updated'
+    // The toast is the operator's `on_success.message`, or the copy's own
+    // label — the button the reader just pressed — never rela's "Created the
+    // X face" (TKT-5SZG2L). `{face}` here is the face WRITTEN, which
+    // `res.face` reports as a stored coordinate.
+    const message = worldText(offer.onSuccess?.message, {
+      ...textVars.value, face: faceLabel(res.face),
+    }) || label
     if (bareEntityId.value !== subject) {
       // Still worth telling them it succeeded — they asked for it — but name
       // the entity, since the page in front of them is no longer the subject.
-      uiStore.success(`${label}: ${written} ${outcome} for ${subject}`)
+      uiStore.success(`${message} (${subject})`)
       return
     }
-    uiStore.success(`${label}: ${written} ${outcome}`)
-    // Land on what was just written. The copy's target is a face of THIS
-    // entity, and `ID@face` is its address under any world; a copy into the
-    // bare face reloads in place, since the bare address would re-resolve
-    // under a world. Either way the offers recompute: a face that now exists
-    // may no longer be offered.
-    if (res.face) {
-      router.push({ path: `/entity/${props.entityType}/${subject}@${res.face}`, query: { ...route.query } })
-      return
-    }
-    await loadView()
+    uiStore.success(message)
+    await landAfterCopy(offer, subject, res.face)
   } catch (err) {
     // The kernel re-authorizes, so a 403 here is not a contradiction of
     // `allowed` — it is the boundary doing its job on a hint that went stale
@@ -704,32 +691,50 @@ async function runCopy(offer: CopyOffer) {
   }
 }
 
-// --- Leaving a world ----------------------------------------------------
-//
-// The way back returns to the DEFAULT world, which is where writes land: the
-// API refuses `?world=` on a write (422 world_read_only), so a world-bound
-// page is inherently read-only and the editing affordances belong on the
-// default face.
-//
-// Hidden when the principal cannot read the default world. That is a GLOBAL,
-// role-level grant `/_schema`.worlds already reports per world for this
-// caller, so the check costs no request and reads no entity — it is not a
-// per-entity probe and cannot act as an existence oracle. Nor is it a
-// confidentiality measure: a world NAME is schema.yaml config, served to every
-// principal by design. The gate is purely honesty — offering the way back to
-// someone whose default-world request returns an empty result would send them
-// somewhere that looks broken. `worldReadable` answers TRUE for an unknown
-// world, so an older server or an unloaded schema shows the button rather than
-// hiding a working affordance.
-//
-// It cannot fire on today's server: `/_schema` reports the default world's
-// `readable` as a hardcoded `true`, mirroring a request path that
-// short-circuits `default` before any grant check (the pre-existing gap
-// schemaworlds.go documents, pinned by
-// TestSchemaWorlds_DefaultWorldAgreesWithTheRequestPath). Wiring the honest
-// input anyway means that when the enumeration starts asking the gate, this
-// button starts hiding itself with no change here.
-const canReachDefaultWorld = computed(() => schemaStore.worldReadable(''))
+// landAfterCopy navigates per the copy's `on_success.landing`. The default is
+// the face WRITTEN (an editor who adopts a policy usually wants to see the
+// adopted text), addressed as `ID@face` so it is literal under any world; a
+// copy into the bare face reloads in place, since the bare address would
+// re-resolve. `stay` reloads in place; a world lands the bare id in that
+// world; a face lands on that face's address. Either way the offers
+// recompute, since a face that now exists may no longer be offered.
+async function landAfterCopy(offer: CopyOffer, subject: string, writtenFace: string) {
+  const landing = offer.onSuccess?.landing
+  const mode = landing?.mode ?? 'written'
+  const path = `/entity/${props.entityType}/${subject}`
+  switch (mode) {
+    case 'stay':
+      await loadView()
+      return
+    case 'world': {
+      const target = landing?.world ?? ''
+      router.push({ path, query: worldQueryFor(target === DEFAULT_WORLD ? '' : target) })
+      return
+    }
+    case 'face':
+      router.push({ path: `${path}@${landing?.face}`, query: { ...route.query } })
+      return
+    default:
+      if (writtenFace) {
+        router.push({ path: `${path}@${writtenFace}`, query: { ...route.query } })
+        return
+      }
+      await loadView()
+  }
+}
+
+// worldQueryFor spells a world into this page's query the way setWorld
+// does: dropped when it is the deployment's configured default, `default`
+// when the bare faces are wanted under a configured default, the name
+// otherwise. The rest of the query is preserved.
+function worldQueryFor(target: string): LocationQueryRaw {
+  const query = { ...route.query }
+  const norm = (w: string) => (w === DEFAULT_WORLD ? '' : w)
+  if (norm(target) === norm(schemaStore.defaultWorld)) delete query.world
+  else if (norm(target) === '') query.world = DEFAULT_WORLD
+  else query.world = target
+  return query
+}
 
 // The operator's announcement for the world on screen, or '' to announce
 // nothing. Config, not data — served identically to every principal.
@@ -738,45 +743,66 @@ const worldBanner = computed<string>(
 )
 
 
-// The button NAMES A DESTINATION, so it is labelled from the destination
-// rather than from a guess about the project's vocabulary.
+// --- Operator chrome text ------------------------------------------------
 //
-// It used to read the literal string "Go to draft" on every type in every
-// project. A blog post has no draft — its faces are `en`/`nl`/`fr`, a language
-// axis with no lifecycle — so the button was ISMS vocabulary applied to
-// content that has none.
-//
-// The destination is always the type's DEFAULT face (the button returns to the
-// default world, which is where writes land), so its label is a pure schema
-// lookup: `faces.<default>.label` if the operator declared one, else the
-// face name. "Go to draft" still appears on an ISMS — because the operator
-// declared `draft` — and the blog post says "Go to English".
-//
-// "Go to default" is the fallback, not the goal: it is jargon, but it is
-// type-neutral and never wrong, which is the right thing to say when the type
-// declares no name for its default face at all.
-const defaultFaceLabel = computed<string>(
-  () => schemaStore.faceLabel(props.entityType, '') || 'default',
-)
+// The page has NO sentence of its own about worlds or faces. Every one it
+// used to have ("Read-only in this world — edit from Concept", "This entity
+// has no published face yet", "Created the published face") was rela's
+// storage vocabulary shown to a reader who never chose those words. What an
+// operator declares in schema.yaml renders verbatim (placeholders
+// substituted); what they do not declare renders nothing (TKT-5SZG2L).
 
-// A face's display label in the operator's vocabulary, by stored coordinate.
-function faceLabel(face: string): string {
-  return schemaStore.faceLabel(props.entityType, face) || face
+// The declared label of a face, by its DECLARED name (the vocabulary the
+// address and `_world.face` use). '' when the type names none.
+function faceLabelOf(declared: string): string {
+  const faces = typeDef.value?.faces
+  if (!faces) return declared
+  return faces[declared]?.label || declared
 }
 
-// The note for a NON-BARE face the principal may not write: the one case a
-// reader needs telling why there is no Edit, because the bare face — where
-// edits are made — really is elsewhere. A bare face without `update` is an
-// ordinary permission denial and gets no note, as in the default world.
-// A non-bare face WITH `update` (a translator on `nl`) is simply editable.
-//
-// No button: the face menu already offers "View <bare face>", and two
-// controls to one destination with different verbs was its own confusion
-// (atlas worlds issue 5).
+// A face's display label by STORED coordinate ('' is the bare face), for the
+// copy result, which reports what it wrote as stored.
+function faceLabel(stored: string): string {
+  return schemaStore.faceLabel(props.entityType, stored) || stored
+}
+
+const bareFaceLabel = computed<string>(() => schemaStore.faceLabel(props.entityType, ''))
+
+const textVars = computed<WorldTextVars>(() => ({
+  face: faceLabelOf(servedFace.value || (typeDef.value?.bare_face ?? '')),
+  bare_face: bareFaceLabel.value,
+  world: world.value,
+  title: entryTitle.value,
+}))
+
+const worldInfo = computed(() => (world.value ? schemaStore.worlds.get(world.value) : undefined))
+
+// The note for a NON-BARE face the principal may not write, in the
+// operator's words for THAT face (`faces.<name>.messages.read_only`). A bare
+// face without `update` is an ordinary permission denial; a non-bare face
+// WITH `update` (a translator on `nl`) is simply editable; neither gets a
+// note. No button either: the face menu already reaches the bare face.
 const readOnlyNote = computed<string>(() => {
   if (worldAbsent.value || !servedFace.value || mayUpdate.value) return ''
-  return `You are viewing the ${faceLabel(servedFace.value)} face, which is read-only for you. ` +
-    `Edits are made on the ${defaultFaceLabel.value} face.`
+  const declared = typeDef.value?.faces?.[servedFace.value]
+  return worldText(declared?.messages?.read_only, textVars.value)
+})
+
+// The note for an entity with no face in this world, in the world's words.
+const absentNote = computed<string>(() => {
+  if (!worldAbsent.value) return ''
+  return worldText(worldInfo.value?.messages?.absent, textVars.value)
+})
+
+// `on_absent.redirect`: the operator would rather send the reader somewhere
+// than explain an absence. Fires when the view reports the absence; the
+// target is a declared world (validated at load), spelled through setWorld so
+// `default` becomes the right query for this deployment.
+watch(worldAbsent, (absent) => {
+  if (!absent) return
+  const target = worldInfo.value?.on_absent?.redirect
+  if (!target) return
+  setWorld(target === DEFAULT_WORLD ? '' : target)
 })
 
 // --- The header's mobile home ------------------------------------------
@@ -814,10 +840,6 @@ const hasOverflow = computed(
     overflowCopies.value.length > 0 ||
     showHistory.value,
 )
-
-function goToDefaultWorld() {
-  setWorld('')
-}
 
 function backTargetAfterDelete(): string {
   if (backTarget.value) return backTarget.value.to
@@ -1270,42 +1292,28 @@ watch(
         the badge below.
       -->
       <!--
-        No face in the requested world. Distinct from the banner below because
-        the two say opposite things about the page: that one announces a
-        read-only face served BY the world, this one announces that the world
-        served nothing and what is on screen is the DEFAULT face — which is
-        writable, and is where a promote would start from. Rendering both would
-        tell the reader the page is read-only when it is not.
+        No face in the requested world: the page shows the BARE face, which is
+        writable and where a promote starts from, so this banner must not read
+        as read-only. It carries the world's announcement and the operator's
+        `messages.absent` and nothing else — no rela sentence, no button (the
+        face menu reaches every other face by address). With neither declared
+        it does not render at all.
       -->
       <WorldBanner
-        v-if="worldAbsent"
+        v-if="worldAbsent && (worldBanner || absentNote)"
         variant="absent"
-        :label="`Not in the ${worldAbsentName} world`"
+        :label="worldBanner"
       >
-        This entity has no {{ worldAbsentName }} face yet. You are looking at
-        the {{ defaultFaceLabel }} face, which is where edits are saved.
-        <template #actions>
-          <button
-            v-if="canReachDefaultWorld"
-            class="btn btn-secondary"
-            @click="goToDefaultWorld"
-          >
-            Go to {{ defaultFaceLabel }}
-          </button>
-        </template>
+        {{ absentNote }}
       </WorldBanner>
 
       <!--
         The ANNOUNCEMENT is operator config: `banner:` on the world in
-        schema.yaml. "DRAFT — not in force" on an editorial world, nothing on a
-        language world, where announcing "you are reading Dutch" to someone who
-        chose Dutch is noise.
-
-        The NOTE is the one fact the server's affordances leave unexplained: a
-        non-bare face on screen that this principal may not write (see
-        readOnlyNote). A world-bound page that shows the bare face, or a face
-        the principal may write, is simply editable and gets no note — the
-        world no longer makes a page read-only; only a grant does.
+        schema.yaml. The NOTE is the operator's `faces.<name>.messages.read_only`
+        for a non-bare face on screen that this principal may not write (see
+        readOnlyNote). Neither declared: nothing renders — the world does not
+        make a page read-only, only a grant does, and a denial looks like any
+        other denial.
       -->
       <WorldBanner
         v-if="!worldAbsent && ((isWorldBound && worldBanner) || readOnlyNote)"
@@ -1602,7 +1610,7 @@ watch(
                   row, not part of the link's accessible name — folding it in
                   would make the link read "Guide GUIDE-1 nl".
                 -->
-                <WorldBadge :world="ent._world" />
+                <WorldBadge :world="ent._world" :entity-type="ent.type" />
               </header>
               <div
                 v-if="ent.hasContent"
@@ -1637,7 +1645,7 @@ watch(
                   <span class="entity-id">{{ ent.id }}</span>
                 </component>
                 <!-- Per-neighbour provenance; see the first WorldBadge above. -->
-                <WorldBadge :world="ent._world" />
+                <WorldBadge :world="ent._world" :entity-type="ent.type" />
                 <button
                   v-if="ent.editFormId"
                   class="edit-btn"
@@ -1708,7 +1716,7 @@ watch(
                 <span class="entity-id">{{ ent.id }}</span>
               </component>
               <!-- Per-neighbour provenance; see the first WorldBadge above. -->
-              <WorldBadge :world="ent._world" />
+              <WorldBadge :world="ent._world" :entity-type="ent.type" />
               <SectionEditForm
                 v-if="rowShouldRouteToInlineEdit(ent, section.entities?.length ?? 0)"
                 :key="`${ent.type}/${entityRef(ent)}`"

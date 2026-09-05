@@ -15,6 +15,7 @@ import { beginOptimisticRemove, rollbackOptimistic } from '@/queries/optimisticL
 import { toApiOperator, filterStateToApiParams } from '@/utils/filters'
 import { entityDetailHref } from '@/utils/entityRoute'
 import { entityRef, refFace } from '@/utils/entityRef'
+import { worldText } from '@/utils/worldText'
 import { safeInternalHref, shouldDeferToBrowser } from '@/utils/openIntent'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { renderMarkdown } from '@/utils/markdown'
@@ -224,13 +225,19 @@ const { filters, q: searchQuery, writeToQuery } = useUrlFilterSync({ staticFilte
 // internal/dataentry/world.go.
 const { world, isWorldBound, worldParam } = useWorld()
 
-// The world note below the banner is a fact about a FACED type only: a type
-// without faces has exactly one state, present in every world, so nothing on
-// its list is filtered by the world and search drops nothing either. Config
-// from `/_schema`, not a verdict — which faces a type declares is public.
+// The world's projection note, in the operator's words (`messages.projection`)
+// and only on a list of a type that declares faces: a type without faces has
+// one state in every world, so nothing on its list is filtered by the world
+// and the note would be false. Nothing declared, nothing rendered — the app
+// has no sentence of its own for this (TKT-5SZG2L).
 const listTypeHasFaces = computed(() => {
   const def = schemaStore.getEntityType(listConfig.value?.entity ?? '')
   return Object.keys(def?.faces ?? {}).length > 0
+})
+const projectionNote = computed<string>(() => {
+  if (!listTypeHasFaces.value) return ''
+  const info = world.value ? schemaStore.worlds.get(world.value) : undefined
+  return worldText(info?.messages?.projection, { world: world.value })
 })
 
 // The create button's destination — see useCreateTarget for why a create
@@ -983,23 +990,12 @@ watch(searchQuery, () => {
       reads as a designed property rather than a mistake.
     -->
     <!--
-      The ANNOUNCEMENT is operator config (`banner:` on the world), the same
-      split the detail page makes. It replaces a hardcoded "Showing the X
-      world", which on an ISMS `published` list was pure noise: published IS
-      the reader's normal state, so announcing it says nothing.
-
-      The NOTE is not configurable, but it is only TRUE for a type that
-      declares faces: the world filters rows out and search looks at resolved
-      faces. A type without faces has one state, present in every world, so
-      nothing on its list can be filtered and the note would assert two
-      falsehoods (atlas worlds issue 1). Hence the second gate.
+      Both halves are operator config: the ANNOUNCEMENT (`banner:` on the
+      world) and the NOTE (`messages.projection`, rendered only on a list of a
+      faced type). Neither declared: no banner at all.
     -->
-    <WorldBanner v-if="isWorldBound && !loadError && (worldBanner || listTypeHasFaces)" :label="worldBanner">
-      <template v-if="listTypeHasFaces">
-        Each entity is shown as it appears in this world, and entities with no
-        face here are not listed at all — including from search, which looks at
-        the same faces this list does.
-      </template>
+    <WorldBanner v-if="isWorldBound && !loadError && (worldBanner || projectionNote)" :label="worldBanner">
+      {{ projectionNote }}
     </WorldBanner>
 
     <div class="search-row">
@@ -1110,7 +1106,7 @@ watch(searchQuery, () => {
               <!-- Same per-row provenance as the table below, on the card's
                    title. A narrow screen is not a reason to drop the one
                    signal separating a real face from a stand-in. -->
-              <WorldBadge :world="entity._world" />
+              <WorldBadge :world="entity._world" :entity-type="entity.type" />
             </span>
             <button
               v-if="canDelete(entity)"
@@ -1275,7 +1271,7 @@ watch(searchQuery, () => {
                 `_world` is absent entirely), so a typical list shows no badges
                 at all and the ones it does show are the exceptions.
               -->
-              <WorldBadge v-if="isBadgeColumn(column)" :world="entity._world" />
+              <WorldBadge v-if="isBadgeColumn(column)" :world="entity._world" :entity-type="entity.type" />
             </td>
             <td class="actions-cell">
               <button

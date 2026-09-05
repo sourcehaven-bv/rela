@@ -69,7 +69,10 @@ entities:
 `faces:` declares two content states. `bare_face: draft` says that `POL-1` and
 `POL-1@draft` are the same row, so a newly created policy *is* its own draft.
 The `label:` on each face is display text for the web app and has no effect on
-resolution. When you omit it, the face name is shown instead.
+resolution. When you omit it, the face name is shown instead. A face may also
+carry `messages: {read_only: "..."}`, the sentence the web app shows on a page
+or form that reached this face while the reader may not write it; without it
+the page shows no explanation, as for any other permission denial.
 
 `bare_face:` names a row that already exists. Every entity has one row stored
 under its bare id, whether or not the type declares faces, so adding `faces:`
@@ -178,6 +181,8 @@ The following table summarizes the keys a world accepts:
 | `overrides` | A map from entity type to a chain that replaces `select` for that type. It replaces the chain rather than extending it. |
 | `otherwise` | **Required.** `exclude` or `default`. What happens to an entity whose type declares faces but that has none the chain names. |
 | `banner` | Optional text the web app shows at the top of every page in this world. Empty shows no announcement. |
+| `messages` | Optional. The web app's wording for what this world changes on a screen: `absent` (a detail page for an entity with no face here), `projection` (a list or board note), `stand_in` (the badge on a row served a stand-in). Placeholders `{face}`, `{bare_face}`, `{world}`, `{title}`. An undeclared entry shows nothing. |
+| `on_absent` | Optional. `redirect: <world>` sends a reader who opens an entity with no face here to that world instead of showing the page. |
 | `primary_for` | Optional. Breaks a tie when two worlds lead with the same face for a type. See the Metamodel Reference. |
 | `edits` | Accepted and validated as a declared face name, but not used yet. |
 
@@ -391,6 +396,7 @@ The following table lists the keys a copy accepts:
 | `from` | Source face, as `type` or `type@face`. |
 | `to` | Target face. When it names a non-bare face, `guard:` becomes mandatory. |
 | `label` | Display text for the action. Plain text, no interpolation. |
+| `on_success` | Optional. `message:` is the confirmation the web app shows (default: the copy's label; `{face}` names the face written); `landing:` is where it goes afterwards: `written` (default), `stay`, `{world: name}` or `{face: name}`. |
 | `fields` | `all` to copy every property, or a map of target property to source expression. A copy between different types requires an explicit map. |
 | `relations` | A map of relation type to `merge` (add missing edges) or `replace` (swap the target face's edges). Only `scope: content` relation types can be listed. An omitted type is not copied. |
 | `guard.permission` | The permission required on the source entity. **Required** when `to` names a non-bare face. |
@@ -468,14 +474,17 @@ be redirected to a page that says their new policy has no face here.
 that world onto the post-create redirect, so the author lands on the draft they
 made. It must name a declared world.
 
-With these two keys set, the web app behaves as follows in a non-default world:
+With these two keys set, the web app behaves as follows in a non-default world.
+One rule governs every sentence it shows about worlds and faces: **the words are
+the operator's, or there are none.** The app has no text of its own for any of
+this, because "face", "world" and "default" are storage vocabulary a reader
+never chose.
 
 - The world is part of the URL as `?world=<name>`, so a world-bound page is a
   shareable link. Switching worlds resets pagination and adds a history entry.
 - A page shows the world's `banner:` text when one is declared. On a list or
-  board of a type that declares faces, a note explains that entities with no
-  face in this world are not listed; a type without faces has one state in
-  every world, so its lists carry no such note.
+  board of a type that declares faces it also shows the world's
+  `messages.projection`, if declared.
 - Every write goes to the **address** of the row on screen, face included:
   what you look at is what you edit is what you save. A detail page whose
   entity resolved to its published face opens its edit form on
@@ -483,23 +492,28 @@ With these two keys set, the web app behaves as follows in a non-default world:
   a write is offered is the server's `_actions` verdict for that face, so an
   editor looking at an adopted text sees no Edit button (no grant names the
   published face), and the same editor looking at the draft, in whichever
-  world, edits the draft. A note explains a read-only non-bare face; the bare
-  face is one click away through the face switcher.
+  world, edits the draft. A page showing a face the reader may not write
+  carries that face's `messages.read_only` if one is declared, and otherwise
+  nothing; the bare face is one click away through the face switcher.
 - A **View Published** button, or a menu when there are several faces, lets
   the reader switch to the entity's other faces by address, staying in the
   world they are browsing. It renders on every screen that has faces,
   including the default world.
-- A small badge names the face when a world served a **stand-in**: an entity
-  resolved through `otherwise: default`, or through a later entry in the chain
-  than the first. A first-choice hit shows no badge, so the badge marks only
-  what is surprising. The same badge appears on list rows, kanban cards, and
-  each related entity on a detail page.
+- A row or card served a **stand-in** (an entity resolved through
+  `otherwise: default`, or through a later entry in the chain than the first)
+  carries a badge with the world's `messages.stand_in` text, typically
+  `{face}`. A first-choice hit shows no badge, and a world that declares no
+  text shows none at all.
+- An entity that exists but has no face in the world renders its bare face,
+  with the world's `messages.absent` if declared. With `on_absent: {redirect:
+  <world>}` the app navigates to that world instead.
 
 A policy's detail page shows the **Publish** button when the caller holds
 `publish-policy` and the draft is on screen, in whichever world. A caller
 without the permission sees no button rather than a disabled one. After a
-successful publish, the app confirms it in the copy's own label and lands on
-the face it wrote; the draft is then one click away through the face switcher.
+successful publish, the app shows the copy's `on_success.message` (or just its
+label) and lands per `on_success.landing`: on the face it wrote by default,
+so the draft is then one click away through the face switcher.
 
 Two more `data-entry.yaml` surfaces take a world. A next-action source can set
 `source_world` to decide which world its candidate query runs in and

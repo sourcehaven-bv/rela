@@ -65,6 +65,13 @@ copies:
       mentions: merge
     guard:
       permission: promote-page
+    on_success:
+      message: "Published {title}"
+      landing: { world: everything }
+worlds:
+  everything:
+    select: published
+    otherwise: default
 `
 	m, err := Parse([]byte(doc))
 	if err != nil {
@@ -88,6 +95,8 @@ copies:
 		// without evaluating the condition you wrote"), so a document setting
 		// it cannot parse. Permission alone proves the Guard struct arrives.
 		"Guard": def.Guard.Permission == "promote-page",
+		"OnSuccess": def.OnSuccess.Message == "Published {title}" &&
+			def.OnSuccess.Landing.World == "everything",
 	}
 	for name, ok := range checks {
 		if !ok {
@@ -179,6 +188,12 @@ worlds:
     edits: draft
     banner: "DRAFT — not in force"
     primary_for: published
+    messages:
+      absent: "Not here yet"
+      projection: "Only what is in force"
+      stand_in: "{face}"
+    on_absent:
+      redirect: default
 `
 	m, err := Parse([]byte(doc))
 	if err != nil {
@@ -199,6 +214,10 @@ worlds:
 		// spelling: `primary_for: published` must decode to a one-element
 		// slice, not be dropped for not being a list.
 		"PrimaryFor": len(def.PrimaryFor) == 1 && def.PrimaryFor[0] == "published",
+		"Messages": def.Messages.Absent == "Not here yet" &&
+			def.Messages.Projection == "Only what is in force" &&
+			def.Messages.StandIn == "{face}",
+		"OnAbsent": def.OnAbsent.Redirect == "default",
 	}
 	for name, ok := range checks {
 		if !ok {
@@ -245,7 +264,7 @@ entities:
     bare_face: en
     faces:
       en: {label: English}
-      nl: {label: Nederlands}
+      nl: {label: Nederlands, messages: {read_only: "Alleen lezen"}}
     properties:
       title: {type: string}
 `
@@ -265,6 +284,7 @@ entities:
 	checks := map[string]bool{
 		"EntityDef.BareFace": def.BareFace == "en",
 		"Label":              def.Faces["en"].Label == "English" && def.Faces["nl"].Label == "Nederlands",
+		"Messages":           def.Faces["nl"].Messages.ReadOnly == "Alleen lezen" && def.Faces["en"].Messages.ReadOnly == "",
 	}
 	for name, ok := range checks {
 		if !ok {

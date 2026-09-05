@@ -785,9 +785,34 @@ func validateWorlds(m *Metamodel) []string {
 		errs = append(errs, validateWorldChains(m, worldName, world)...)
 		errs = append(errs, validateWorldEdits(m, worldName, world)...)
 		errs = append(errs, validateWorldPrimaryFor(m, worldName, world)...)
+		errs = append(errs, validateWorldOnAbsent(m, worldName, world)...)
 	}
 	errs = append(errs, validateFacePrimacy(m)...)
 	return errs
+}
+
+// validateWorldOnAbsent checks that `on_absent.redirect` names a world a
+// reader can be sent to: a declared one, or the implicit default. A redirect
+// to this same world would loop; a redirect to an undeclared name would be a
+// 400 on arrival — both are load errors, not runtime surprises.
+func validateWorldOnAbsent(m *Metamodel, worldName string, world WorldDef) []string {
+	target := world.OnAbsent.Redirect
+	if target == "" {
+		return nil
+	}
+	if target == worldName {
+		return []string{fmt.Sprintf(
+			"world %q: `on_absent.redirect` names this world itself, which would redirect forever",
+			worldName)}
+	}
+	if target != DefaultWorldName {
+		if _, ok := m.Worlds[target]; !ok {
+			return []string{fmt.Sprintf(
+				"world %q: `on_absent.redirect` names world %q, which is not declared (declare it, or use %q)",
+				worldName, target, DefaultWorldName)}
+		}
+	}
+	return nil
 }
 
 // validateWorldPrimaryFor checks that every face a world claims in
