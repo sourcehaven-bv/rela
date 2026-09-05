@@ -35,13 +35,13 @@ build-server-e2e: build-frontend-e2e
 build-desktop: build-frontend
     @echo "Building rela-desktop..."
     @mkdir -p {{build_dir}}
-    CGO_ENABLED=1 CGO_LDFLAGS="-framework UniformTypeIdentifiers" go build -tags desktop,production -trimpath -ldflags "-s -w" -o {{build_dir}}/rela-desktop ./cmd/rela-desktop
+    CGO_ENABLED=1 CGO_LDFLAGS="-framework UniformTypeIdentifiers" go build -tags production -trimpath -ldflags "-s -w" -o {{build_dir}}/rela-desktop ./cmd/rela-desktop
 
 # Build the desktop app with debug/devtools support for E2E testing
 build-desktop-debug: build-frontend
     @echo "Building rela-desktop (debug)..."
     @mkdir -p {{build_dir}}
-    CGO_ENABLED=1 CGO_LDFLAGS="-framework UniformTypeIdentifiers" go build -tags desktop -o {{build_dir}}/rela-desktop ./cmd/rela-desktop
+    CGO_ENABLED=1 CGO_LDFLAGS="-framework UniformTypeIdentifiers" go build -o {{build_dir}}/rela-desktop ./cmd/rela-desktop
 
 # Build the PostgreSQL-backed CLI binary (rela-postgres)
 build-cli-postgres:

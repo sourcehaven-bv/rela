@@ -233,6 +233,55 @@ body { font-family: var(--font); background: var(--bg); color: var(--text);
   %s
 </div>
 <script>
+// --- Wails v3 compatibility shim -------------------------------------------
+// v2 injected window.go.main.Desktop.<Method> and window.runtime.EventsOn.
+// v3 replaces both with the @wailsio/runtime module. Rather than introduce a
+// bundler for this hand-written page, we rebuild the two surfaces this page
+// uses on top of v3's codegen-free dynamic call, so the 12 call sites below
+// stay exactly as they were.
+//
+// Call.ByName takes a fully-qualified "package.Type.Method" name. Our service
+// is main.Desktop, matching the v2 namespace.
+(function () {
+  if (window.go && window.go.main && window.go.main.Desktop) return; // v2
+
+  var METHODS = [
+    "OpenProject", "OpenRecentProject", "LoadProject", "NeedsSetup",
+    "GetSetupInfo", "GenerateDataEntryConfig", "GetDefaultCloneDir",
+    "PickCloneDirectory", "CloneProject", "OpenClonedProject",
+    "InitRelaProject", "StartGitHubAuth", "CompleteGitHubAuth",
+    "HasGitHubToken", "ClearGitHubToken"
+  ];
+
+  // The compiled v3 runtime assigns the whole @wailsio/runtime namespace to
+  // window.wails, so Call.ByName is reachable as window.wails.Call.ByName.
+  // (window._wails is a different, lower-level object: flags + invoke only.)
+  function rt() { return window.wails && window.wails.Call ? window.wails.Call : null; }
+
+  var Desktop = {};
+  METHODS.forEach(function (name) {
+    Desktop[name] = function () {
+      var call = rt();
+      if (!call) return Promise.reject(new Error("Wails runtime unavailable"));
+      var args = Array.prototype.slice.call(arguments);
+      return call.ByName.apply(call, ["main.Desktop." + name].concat(args));
+    };
+  });
+
+  window.go = window.go || {};
+  window.go.main = window.go.main || {};
+  window.go.main.Desktop = Desktop;
+})();
+
+// wailsEventsOn subscribes to an application event under either runtime.
+function wailsEventsOn(name, handler) {
+  if (window.runtime && window.runtime.EventsOn) {   // v2
+    window.runtime.EventsOn(name, handler);
+  } else if (window.wails && window.wails.Events) {  // v3
+    window.wails.Events.On(name, handler);
+  }
+}
+
 function toggleTheme() {
   var current = document.documentElement.getAttribute('data-theme');
   var next = current === 'dark' ? 'light' : 'dark';
@@ -515,11 +564,7 @@ async function startAuth() {
 }
 
 // Listen for menu event to show clone dialog
-if (window.runtime) {
-  window.runtime.EventsOn("show-clone-dialog", function() {
-    showCloneDialog();
-  });
-}
+wailsEventsOn("show-clone-dialog", showCloneDialog);
 </script>
 </body>
 </html>`

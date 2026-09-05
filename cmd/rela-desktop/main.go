@@ -20,12 +20,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/menu"
-	"github.com/wailsapp/wails/v2/pkg/menu/keys"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
@@ -53,7 +48,12 @@ const GitHubClientID = "" // Set via build flags or environment
 // It manages project lifecycle: opening a directory picker, loading a project,
 // and persisting recent projects in user preferences.
 type Desktop struct {
-	ctx               context.Context //nolint:containedctx // Wails runtime ctx must live for the struct lifetime
+	// ctx carries the desktop Principal for the life of the process. Under
+	// Wails v2 this doubled as the runtime handle; v3 separates the two, so
+	// this is now only an attribution context.
+	ctx               context.Context            //nolint:containedctx // lives for the struct lifetime
+	wails             *application.App           // Wails v3 runtime handle
+	win               *application.WebviewWindow // main window
 	mu                sync.RWMutex
 	app               *dataentry.App
 	svc               *appbuild.Services // per-project services; closed on next LoadProject
@@ -77,20 +77,69 @@ type cloneAuthState struct {
 	interval   int
 }
 
+// ServiceName identifies this service to the Wails v3 runtime.
+func (d *Desktop) ServiceName() string { return "rela-desktop" }
+
+// ServiceStartup is the Wails v3 replacement for v2's OnStartup. It receives
+// the application-lifetime context, which is cancelled just before shutdown.
 // coverage-ignore-func: Wails lifecycle callback
-func (d *Desktop) startup(ctx context.Context) {
+//
+//nolint:unparam // signature is fixed by Wails' ServiceStartup interface
+func (d *Desktop) ServiceStartup(ctx context.Context, _ application.ServiceOptions) error {
 	d.ctx = principal.With(ctx, principal.Principal{
 		User: principal.SystemUser(),
 		Tool: principal.ToolDesktop,
 	})
+	return nil
+}
+
+// ServiceShutdown releases the loaded project on quit. Wails v2 had no
+// shutdown hook wired, so the scheduler and services leaked on exit.
+// Note: the interface takes no context — adding one silently opts out.
+// coverage-ignore-func: Wails lifecycle callback
+//
+//nolint:unparam // signature is fixed by Wails' ServiceShutdown interface
+func (d *Desktop) ServiceShutdown() error {
+	d.releaseLoadedProject()
+	return nil
+}
+
+// pickDirectory shows a native directory chooser and returns the chosen path
+// ("" if cancelled). Replaces v2's runtime.OpenDirectoryDialog.
+// coverage-ignore-func: requires Wails runtime
+func (d *Desktop) pickDirectory(title, defaultDir string) (string, error) {
+	if d.wails == nil {
+		return "", errors.New("application not ready")
+	}
+	return d.wails.Dialog.OpenFileWithOptions(&application.OpenFileDialogOptions{
+		Title:                title,
+		Directory:            defaultDir, // v3's name for v2 DefaultDirectory
+		CanChooseDirectories: true,
+		CanChooseFiles:       false,
+	}).PromptForSingleSelection()
+}
+
+// errorDialog shows a native error dialog. Replaces v2's runtime.MessageDialog.
+// coverage-ignore-func: requires Wails runtime
+func (d *Desktop) errorDialog(title, message string) {
+	if d.wails == nil {
+		return
+	}
+	d.wails.Dialog.Error().SetTitle(title).SetMessage(message).Show()
+}
+
+// reloadWindow reloads the webview. Replaces v2's runtime.WindowReloadApp.
+// coverage-ignore-func: requires Wails runtime
+func (d *Desktop) reloadWindow() {
+	if d.win != nil {
+		d.win.Reload()
+	}
 }
 
 // OpenProject opens a native directory picker and loads the selected project.
 // It returns an error string (empty on success) so the JS frontend can react.
 func (d *Desktop) OpenProject() string {
-	dir, err := runtime.OpenDirectoryDialog(d.ctx, runtime.OpenDialogOptions{
-		Title: "Open Rela Project",
-	})
+	dir, err := d.pickDirectory("Open Rela Project", "")
 	if err != nil {
 		return fmt.Sprintf("dialog error: %v", err)
 	}
@@ -229,8 +278,8 @@ func (d *Desktop) LoadProject(dir string) string {
 
 	scheduler.StartBackground(schedCtx, svc, slog.Default())
 
-	if d.ctx != nil {
-		runtime.WindowSetTitle(d.ctx, app.ProjectName())
+	if d.win != nil {
+		d.win.SetTitle(app.ProjectName())
 	}
 
 	// Update preferences with successfully opened project.
@@ -335,10 +384,7 @@ func (d *Desktop) GetDefaultCloneDir() string {
 
 // PickCloneDirectory opens a directory picker and returns the selected path.
 func (d *Desktop) PickCloneDirectory() string {
-	dir, err := runtime.OpenDirectoryDialog(d.ctx, runtime.OpenDialogOptions{
-		Title:            "Select Clone Destination",
-		DefaultDirectory: d.GetDefaultCloneDir(),
-	})
+	dir, err := d.pickDirectory("Select Clone Destination", d.GetDefaultCloneDir())
 	if err != nil || dir == "" {
 		return ""
 	}
@@ -630,28 +676,22 @@ func (d *Desktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // openProjectFromMenu handles File > Open Project from the native menu bar.
 // coverage-ignore-func: menu callback - requires Wails runtime
-func (d *Desktop) openProjectFromMenu(_ *menu.CallbackData) {
-	dir, err := runtime.OpenDirectoryDialog(d.ctx, runtime.OpenDialogOptions{
-		Title: "Open Rela Project",
-	})
+func (d *Desktop) openProjectFromMenu(_ *application.Context) {
+	dir, err := d.pickDirectory("Open Rela Project", "")
 	if err != nil || dir == "" {
 		return
 	}
 	if errMsg := d.LoadProject(dir); errMsg != "" {
-		runtime.MessageDialog(d.ctx, runtime.MessageDialogOptions{ //nolint:errcheck // best-effort
-			Type:    runtime.ErrorDialog,
-			Title:   "Failed to open project",
-			Message: errMsg,
-		})
+		d.errorDialog("Failed to open project", errMsg)
 		return
 	}
-	runtime.WindowReloadApp(d.ctx)
+	d.reloadWindow()
 }
 
 // cloneFromGitMenu handles File > Clone from Git from the native menu bar.
 // It navigates to the welcome page and triggers the clone dialog.
 // coverage-ignore-func: menu callback - requires Wails runtime
-func (d *Desktop) cloneFromGitMenu(_ *menu.CallbackData) {
+func (d *Desktop) cloneFromGitMenu(_ *application.Context) {
 	// Unload current project to show welcome page
 	d.mu.Lock()
 	d.handler = nil
@@ -659,39 +699,46 @@ func (d *Desktop) cloneFromGitMenu(_ *menu.CallbackData) {
 	d.mu.Unlock()
 
 	// Reload app to show welcome page, then emit event to show clone dialog
-	runtime.WindowReloadApp(d.ctx)
+	d.reloadWindow()
 
-	// Give the page time to load before emitting the event
+	// Give the page time to load before emitting the event.
+	// TODO(wails3): replace this sleep with a page-ready handshake.
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-		runtime.EventsEmit(d.ctx, "show-clone-dialog")
+		if d.wails != nil {
+			d.wails.Event.Emit("show-clone-dialog")
+		}
 	}()
 }
 
 // showAbout displays a dialog with version and build information.
 // coverage-ignore-func: menu callback - requires Wails runtime
-func (d *Desktop) showAbout(_ *menu.CallbackData) {
-	runtime.MessageDialog(d.ctx, runtime.MessageDialogOptions{ //nolint:errcheck // best-effort
-		Type:    runtime.InfoDialog,
-		Title:   "About Rela Desktop",
-		Message: fmt.Sprintf("Rela Desktop\nVersion %s\n\n%s/%s", Version, goruntime.GOOS, goruntime.GOARCH),
-	})
+func (d *Desktop) showAbout(_ *application.Context) {
+	if d.wails == nil {
+		return
+	}
+	d.wails.Dialog.Info().
+		SetTitle("About Rela Desktop").
+		SetMessage(fmt.Sprintf("Rela Desktop\nVersion %s\n\n%s/%s", Version, goruntime.GOOS, goruntime.GOARCH)).
+		Show()
 }
 
 // buildAppMenu constructs the application menu bar including recent projects.
-func (d *Desktop) buildAppMenu() *menu.Menu {
-	appMenu := menu.NewMenu()
+//
+// Wails v3 supplies cross-platform roles (AppMenu/EditMenu carry the
+// platform-correct items), so the v2 GOOS branching is no longer needed:
+// on non-macOS the role expands to nothing. Accelerator "CmdOrCtrl+o"
+// maps to Command on macOS and Control elsewhere.
+func (d *Desktop) buildAppMenu() *application.Menu {
+	appMenu := application.NewMenu()
 
 	if goruntime.GOOS == "darwin" {
-		macAppMenu := appMenu.AddSubmenu("Rela Desktop")
-		macAppMenu.AddText("About Rela Desktop", nil, d.showAbout)
-		macAppMenu.AddSeparator()
-		macAppMenu.Append(menu.AppMenu())
+		appMenu.AddRole(application.AppMenu)
 	}
 
 	fileMenu := appMenu.AddSubmenu("File")
-	fileMenu.AddText("Open Project...", keys.CmdOrCtrl("o"), d.openProjectFromMenu)
-	fileMenu.AddText("Clone from Git...", keys.CmdOrCtrl("shift+o"), d.cloneFromGitMenu)
+	fileMenu.Add("Open Project...").SetAccelerator("CmdOrCtrl+o").OnClick(d.openProjectFromMenu)
+	fileMenu.Add("Clone from Git...").SetAccelerator("CmdOrCtrl+shift+o").OnClick(d.cloneFromGitMenu)
 	fileMenu.AddSeparator()
 
 	// Recent Projects submenu
@@ -703,20 +750,16 @@ func (d *Desktop) buildAppMenu() *menu.Menu {
 			if label == "" {
 				label = filepath.Base(proj.Path)
 			}
-			recentMenu.AddText(label, nil, func(_ *menu.CallbackData) {
+			recentMenu.Add(label).OnClick(func(_ *application.Context) {
 				if errMsg := d.LoadProject(proj.Path); errMsg != "" {
-					runtime.MessageDialog(d.ctx, runtime.MessageDialogOptions{ //nolint:errcheck // best-effort
-						Type:    runtime.ErrorDialog,
-						Title:   "Failed to open project",
-						Message: errMsg,
-					})
+					d.errorDialog("Failed to open project", errMsg)
 					return
 				}
-				runtime.WindowReloadApp(d.ctx)
+				d.reloadWindow()
 			})
 		}
 		recentMenu.AddSeparator()
-		recentMenu.AddText("Clear Recent Projects", nil, func(_ *menu.CallbackData) {
+		recentMenu.Add("Clear Recent Projects").OnClick(func(_ *application.Context) {
 			d.prefs.ClearRecentProjects()
 			if err := d.prefs.Save(); err != nil {
 				slog.Warn("could not save preferences", "error", err)
@@ -726,23 +769,22 @@ func (d *Desktop) buildAppMenu() *menu.Menu {
 		fileMenu.AddSeparator()
 	}
 
-	if goruntime.GOOS != "darwin" {
-		fileMenu.AddText("Quit", keys.CmdOrCtrl("q"), func(_ *menu.CallbackData) {
-			runtime.Quit(d.ctx)
-		})
-	} else {
-		fileMenu.AddText("Close Window", keys.CmdOrCtrl("w"), func(_ *menu.CallbackData) {
-			runtime.Quit(d.ctx)
-		})
-	}
-
 	if goruntime.GOOS == "darwin" {
-		appMenu.Append(menu.EditMenu())
-	}
-
-	if goruntime.GOOS != "darwin" {
+		// Close the window rather than quitting, matching v2's Cmd+W.
+		fileMenu.Add("Close Window").SetAccelerator("CmdOrCtrl+w").OnClick(func(_ *application.Context) {
+			if d.win != nil {
+				d.win.Close()
+			}
+		})
+		appMenu.AddRole(application.EditMenu)
+	} else {
+		fileMenu.Add("Quit").SetAccelerator("CmdOrCtrl+q").OnClick(func(_ *application.Context) {
+			if d.wails != nil {
+				d.wails.Quit()
+			}
+		})
 		helpMenu := appMenu.AddSubmenu("Help")
-		helpMenu.AddText("About Rela Desktop", nil, d.showAbout)
+		helpMenu.Add("About Rela Desktop").OnClick(d.showAbout)
 	}
 
 	return appMenu
@@ -750,12 +792,14 @@ func (d *Desktop) buildAppMenu() *menu.Menu {
 
 // refreshMenu rebuilds and applies the application menu.
 func (d *Desktop) refreshMenu() {
-	if d.ctx == nil {
+	// Menu.Update() is a silent no-op before app.Run(), so this is skipped
+	// entirely until the application exists.
+	if d.wails == nil {
 		return
 	}
 	m := d.buildAppMenu()
-	runtime.MenuSetApplicationMenu(d.ctx, m)
-	runtime.MenuUpdateApplicationMenu(d.ctx)
+	d.wails.Menu.Set(m)
+	m.Update()
 }
 
 // coverage-ignore-func: main function - entry point
@@ -795,19 +839,32 @@ func main() {
 		title = d.app.ProjectName()
 	}
 
-	wailsErr := wails.Run(&options.App{
+	app := application.New(application.Options{
+		Name: "Rela Desktop",
+		// The whole Go API + SPA is served through this one handler, exactly
+		// as under v2. Verified streaming (SSE) works through it.
+		Assets: application.AssetOptions{Handler: d},
+		Services: []application.Service{
+			application.NewService(d),
+		},
+		// v2 had no shutdown hook, so the scheduler and services leaked on
+		// quit. ServiceShutdown now releases them.
+		OnShutdown: func() { slog.Info("shutting down") },
+	})
+	d.wails = app
+
+	d.win = app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:  title,
 		Width:  1280,
 		Height: 800,
-		Menu:   d.buildAppMenu(),
-		AssetServer: &assetserver.Options{
-			Handler: d,
-		},
-		OnStartup: d.startup,
-		Bind:      []any{d},
 	})
-	if wailsErr != nil {
-		slog.Error("wails error", "error", wailsErr)
+
+	// Menus must be set after the application exists; Menu.Update() is a
+	// silent no-op before Run().
+	app.Menu.Set(d.buildAppMenu())
+
+	if err := app.Run(); err != nil {
+		slog.Error("wails error", "error", err)
 		os.Exit(1)
 	}
 }
