@@ -2775,6 +2775,19 @@ func newTestAppV1(t *testing.T) *App {
 				From:  []string{"ticket"},
 				To:    []string{"ticket"},
 			},
+			// CONTENT-scoped: the edge attaches to one face's tail, so a
+			// draft may cite different targets than the published face
+			// (design §2.2). Declared in the SHARED fixture so the
+			// world-neighbor tests exercise the identity-vs-content dispatch
+			// against the same metamodel every other test uses — a dispatch
+			// tested only against a bespoke fixture proves the fixture works,
+			// not the app.
+			"cites": {
+				Label: "cites",
+				From:  []string{"ticket"},
+				To:    []string{"feature"},
+				Scope: metamodel.ScopeContent,
+			},
 		},
 	}
 
@@ -4241,13 +4254,13 @@ func TestV1Affordance_PerEntityGet_NoneProfile(t *testing.T) {
 	}
 
 	if got.FieldAffordances == nil {
-		t.Fatal("FieldAffordances pointer should be non-nil (closed-world signal)")
+		t.Fatal("FieldAffordances face should be non-nil (closed-world signal)")
 	}
 	if len(*got.FieldAffordances) != 0 {
 		t.Errorf("FieldAffordances: got %v, want empty (sparse, no deviations)", *got.FieldAffordances)
 	}
 	if got.RelationAffordances == nil {
-		t.Fatal("RelationAffordances pointer should be non-nil")
+		t.Fatal("RelationAffordances face should be non-nil")
 	}
 	if len(*got.RelationAffordances) != 0 {
 		t.Errorf("RelationAffordances: got %v, want empty", *got.RelationAffordances)
@@ -4263,7 +4276,7 @@ func TestV1Affordance_PerEntityGet_NoneProfile(t *testing.T) {
 	// Wire format: both keys must appear in the raw JSON as `{}` so
 	// the SPA distinguishes "anonymous fallback" (absent) from
 	// "evaluated with no deviations" (present-empty). Round-tripping
-	// v1.Entity through omitempty proves this for pointer fields.
+	// v1.Entity through omitempty proves this for face fields.
 	if !strings.Contains(raw, `"_fields":{}`) {
 		t.Errorf("raw body should contain \"_fields\":{}; got: %s", raw)
 	}
@@ -4367,7 +4380,7 @@ func TestV1Affordance_PerEntityGet_RedactedEmptyWhenNothingHidden(t *testing.T) 
 		t.Fatalf("decode: %v", err)
 	}
 	if got.Redacted == nil {
-		t.Fatal("_redacted pointer should be non-nil (closed-world signal)")
+		t.Fatal("_redacted face should be non-nil (closed-world signal)")
 	}
 	if len(*got.Redacted) != 0 {
 		t.Errorf("_redacted: got %v, want empty under the permissive default", *got.Redacted)
@@ -4443,7 +4456,7 @@ func TestV1Affordance_PerEntityGet_DemoFixture(t *testing.T) {
 		t.Fatalf("status missing from _fields: %v", fa)
 	}
 	if status.Writable == nil || *status.Writable != falseVal {
-		t.Errorf("status.writable: got %v, want false-pointer", status.Writable)
+		t.Errorf("status.writable: got %v, want false-face", status.Writable)
 	}
 	if allowed, present := status.Options["done"]; !present || allowed {
 		t.Errorf("status.options.done: got %v present=%v, want false", allowed, present)
@@ -4463,14 +4476,14 @@ func TestV1Affordance_PerEntityGet_DemoFixture(t *testing.T) {
 		t.Errorf("implements.creatable: got %v, want nil (default)", impl.Creatable)
 	}
 	if impl.Removable == nil || *impl.Removable {
-		t.Errorf("implements.removable: got %v, want false-pointer", impl.Removable)
+		t.Errorf("implements.removable: got %v, want false-face", impl.Removable)
 	}
 	blocks, ok := ra["blocks"]
 	if !ok {
 		t.Fatalf("blocks missing from _relations: %v", ra)
 	}
 	if blocks.Creatable == nil || *blocks.Creatable {
-		t.Errorf("blocks.creatable: got %v, want false-pointer", blocks.Creatable)
+		t.Errorf("blocks.creatable: got %v, want false-face", blocks.Creatable)
 	}
 }
 

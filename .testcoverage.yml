@@ -26,6 +26,11 @@ override:
   - path: ^internal/visibility$
     threshold: 85
 
+  # Security-adjacent for the same reason: the sole compiler for the world
+  # resolution that decides which face of an entity is published, and the only
+  # place the pointer grammar is enforced (TKT-WAV8XP).
+  - path: ^internal/worlds$
+    threshold: 85
   # Outbound mail (TKT-332QZY). Both are security-relevant — mailrender is
   # the sanitize/inline pipeline whose ORDER is a security property, and mail
   # owns header-injection validation — so they are pinned above the default

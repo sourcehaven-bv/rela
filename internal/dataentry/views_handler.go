@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -51,6 +52,15 @@ type viewsHandler struct {
 	// holds one: tests reassign app.acl AFTER construction, so a captured
 	// value would go stale and the filter would consult the wrong policy.
 	aclImpl func() acl.ACL
+	// faceEdges reads the entry's edges from the FACE being served, via
+	// [servedFaceEdges]. A closure for the same staleness reason aclImpl is
+	// one, and more sharply: [SetWorldNeighbors] runs AFTER this handler is
+	// constructed, so a captured worldNeighbors would be the nil it held at
+	// construction time and every view would silently take the bare-id arm —
+	// the exact face-merging bug this seam exists to close.
+	faceEdges func(
+		ctx context.Context, e *entityPkg.Entity,
+	) ([]*entityPkg.Relation, error)
 }
 
 // currentACL resolves the active ACL, or nil when the handler was constructed
@@ -108,9 +118,14 @@ func (h *viewsHandler) handleV1SidePanel(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Get the entry entity
+	// Get the entry entity.
+	//
+	// The gateRead above authorized by (type, id), which a `type@face` grant is
+	// invisible to, and this reader is the RAW store — so the face half of the
+	// grant is owed here (TKT-O7R2A1). Same 404 the row gate writes, keeping a
+	// denied face indistinguishable from an absent one.
 	entry, found := h.reader.getEntity(r.Context(), entityID)
-	if !found {
+	if !found || !faceReadable(r.Context(), entry.Type, entry.Face) {
 		writeV1Error(w, r, http.StatusNotFound, "entity_not_found", "Entity not found", "")
 		return
 	}
@@ -312,7 +327,7 @@ func permitsNavEntry(ctx context.Context, aclImpl acl.ACL, entry dataentryconfig
 //
 // The switch is closed by construction: an ACL implementation nobody taught
 // this function about hides gated entries rather than showing them. Both value
-// and pointer forms of the nop/read-only types are matched, because their
+// and face forms of the nop/read-only types are matched, because their
 // AuthorizeWrite has a value receiver — matching only the value form would
 // drop a `&acl.ReadOnlyACL{}` into the default arm.
 func permitsGatedUIElement(ctx context.Context, aclImpl acl.ACL, permission string) bool {
@@ -472,8 +487,20 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Execute view
-	result, err := h.executeView(r.Context(), viewCfg, entityID)
+	// Execute view. This is the ONE surface that opts into worlds
+	// (TKT-WRLDAPI item 4b); the other two executeView callers pass
+	// defaultViewWorld() explicitly. See the viewWorld doc for why the world
+	// is a parameter rather than something the engine reads off ctx.
+	result, err := h.executeView(r.Context(), viewCfg, entityID,
+		viewWorldFromRequest(r.Context()))
+	if errors.Is(err, errNoFaceInWorld) {
+		// The entity EXISTS and this caller may read it; it simply has no face
+		// in the world they asked for — the ordinary state of an unpublished
+		// draft. Answer with the face that does exist plus a marker, so the
+		// page can offer a way through rather than a dead end (BUG-1).
+		h.writeWorldAbsentView(w, r, entityType, entityID)
+		return
+	}
 	if err != nil {
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "view_execution_failed", "View execution failed", err.Error())
 		return
@@ -486,7 +513,25 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	entityDef := s.Meta.Entities[result.Entry.Type]
 	plural := entityDef.GetPlural(result.Entry.Type)
 
-	entryRels := h.reader.outgoingRelations(r.Context(), result.Entry.ID)
+	// The entry's relations: the edges OF THE FACE BEING SERVED, via the
+	// shared seam every other surface uses (see [servedFaceEdges]).
+	//
+	// This replaces two behaviors that were both wrong in the same
+	// direction. Under the DEFAULT world it used the bare-id reader, which
+	// returns the UNION of every face's content-scoped edges — so a draft
+	// entry carried the published face's links, duplicated where they
+	// overlapped. Under a world it emitted NOTHING, as a deliberate
+	// placeholder, which showed a resolved entry with no links at all.
+	//
+	// One face-scoped read answers both: the entry knows its own face, so
+	// its edges are well-defined whether or not a world was named.
+	entryRels, werr := h.faceEdges(r.Context(), result.Entry)
+	if werr != nil {
+		// A neighbor-resolution fault is an infrastructure failure, not an
+		// empty link set — the same posture the entity GET takes (RR-4TFZNL).
+		writeGateError(w, r, werr)
+		return
+	}
 	resp := v1.ViewResponse{
 		Entry:    h.serializer.forWire(r.Context(), result.Entry, entryRels, h.schema().Meta, plural),
 		Sections: make([]v1.ViewSection, 0, len(sections)),
@@ -656,7 +701,7 @@ func (h *viewsHandler) inlineCreateForms(ctx context.Context) map[string]string 
 	// correct-but-slower rather than a different answer.
 	scope := acl.FromContext(ctx)
 	mayCreate := func(entityType string) bool {
-		req := translateVerb("create", entityType, "")
+		req := translateVerb("create", entityType, "", "")
 		if scope != nil {
 			return scope.AuthorizeWrite(ctx, req).Allow
 		}

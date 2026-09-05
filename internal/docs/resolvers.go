@@ -252,3 +252,41 @@ func mdCell(s string) string {
 	s = oneLine(s)
 	return strings.ReplaceAll(s, "|", "\\|")
 }
+
+// luaFaces renders a type's declared faces: the coordinate, its label, and
+// which one is the default.
+//
+// A manual explaining worlds needs to show the faces a type HAS before it can
+// explain which one a world selects, and no other resolver answers that —
+// `typeref` lists properties, `values` lists an enum's members. Rendering it
+// from the schema rather than from prose is the point: the table cannot
+// describe faces the type stopped declaring.
+func (dr *docRuntime) luaFaces(ls *lua.LState) int {
+	tbl := argTable(ls)
+	typ := fieldString(ls, tbl, "type")
+	def, ok := dr.entityDef(ls, "faces", typ)
+	if !ok {
+		return 0
+	}
+	if len(def.Faces) == 0 {
+		return dr.luaFail(ls, "faces: %q declares no faces — it has exactly one "+
+			"state, present in every world. Say that in prose rather than "+
+			"rendering an empty table", typ)
+	}
+
+	var b strings.Builder
+	b.WriteString("| Face | Label | Bare id |\n|---|---|---|\n")
+	for _, name := range sortedFaceNames(def) {
+		label := def.Faces[name].Label
+		if label == "" {
+			label = "—"
+		}
+		mark := ""
+		if name == def.BareFace {
+			mark = "✓"
+		}
+		fmt.Fprintf(&b, "| `%s` | %s | %s |\n", name, label, mark)
+	}
+	dr.emit(b.String())
+	return 0
+}

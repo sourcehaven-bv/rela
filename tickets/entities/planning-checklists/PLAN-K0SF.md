@@ -173,7 +173,7 @@ type RelationMetaGrant struct {
 }
 ```
 
-Pointer-to-bool for `Create`/`Remove` distinguishes "unset" (use
+Face-to-bool for `Create`/`Remove` distinguishes "unset" (use
 default — allow if there's a grant at all) from "explicit
 false". Default when only `When` is set: both `create` and
 `remove` are true (grant exists → operations allowed if the

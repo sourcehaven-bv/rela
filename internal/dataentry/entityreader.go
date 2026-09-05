@@ -15,6 +15,28 @@ import (
 // (visibleReader for the gated single-GET / include-filter path; the analyze
 // gate at the issue boundary). These helpers are the raw store reads those
 // gated paths and the internal machinery build on.
+//
+// # It is DEFAULT-WORLD-ONLY, deliberately (TKT-DN37J2)
+//
+// Every read here goes to the store unresolved, so it returns each entity's
+// DEFAULT state — the draft face, under the design doc's example layout.
+// That is a decision, not an oversight, and it is safe because of two things
+// together:
+//
+//   - The routes this reader serves (relations, attachments, export,
+//     sub-resources, views) are REFUSED a non-default world by
+//     worldCapablePath, so no `?world=` request reaches those calls.
+//   - The two world-CAPABLE handlers (the collection list and the
+//     single-entity GET) call this reader only on their DEFAULT-world branch.
+//     Since TKT-WRLDAPI item 4 they have a world branch that goes through
+//     worldNeighbors instead, which resolves each link through the request's
+//     world (RULING 12).
+//
+// If a route is ever added to that allowlist, its use of this reader must be
+// converted first — a world-bound response assembled partly from
+// world-resolved rows and partly from these is the mixed-face bug that would
+// be hardest to see, because the entity would look right and its neighbors
+// would not. TestWorldCapableRoutesDoNotUseUngatedReader is the guard.
 type entityReader struct {
 	store store.Store
 }

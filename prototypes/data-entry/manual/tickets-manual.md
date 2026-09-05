@@ -63,26 +63,29 @@ The access model comes straight from `acl.yaml`:
 roles_matrix{ type = "ticket" }
 ```
 
-The table above is rendered from `acl.yaml`. These claims are _checked_ against
-the real authorization path when this handbook builds, so the prose cannot
-outlive the policy it describes:
+The table above is rendered from `acl.yaml`. Every cell in it is also _checked_
+against the real authorization path when this handbook builds, so the prose
+cannot outlive the policy it describes.
+
+Those checks carry `emit = false`: the table has already shown the reader what
+the policy says, and restating each row underneath it would say the same thing
+twice. The claims still run — widen `viewer` in `acl.yaml` and this handbook
+stops building.
 
 ```rela
 -- An editor maintains the backlog.
-permits{ who = "alice@example.com", op = "update", type = "ticket" }
-permits{ who = "alice@example.com", op = "delete", type = "ticket" }
+permits{ who = "alice@example.com", op = "update", type = "ticket", emit = false }
+permits{ who = "alice@example.com", op = "delete", type = "ticket", emit = false }
 
--- A viewer browses and nothing more. If someone widens `viewer` in acl.yaml,
--- this handbook stops building rather than quietly describing a policy that
--- is no longer in force.
-refuses{ who = "bob@example.com", op = "update", type = "ticket" }
-refuses{ who = "bob@example.com", op = "create", type = "ticket" }
-refuses{ who = "bob@example.com", op = "delete", type = "ticket" }
+-- A viewer browses and nothing more.
+refuses{ who = "bob@example.com", op = "update", type = "ticket", emit = false }
+refuses{ who = "bob@example.com", op = "create", type = "ticket", emit = false }
+refuses{ who = "bob@example.com", op = "delete", type = "ticket", emit = false }
 
 -- There is no self-service sign-up: an unassigned principal gets nothing.
 -- `unassigned = true` states that the missing assignment IS the claim, so this
 -- cannot be confused with a typo in the principal name.
-refuses{ who = "carol@example.com", op = "update", type = "ticket", unassigned = true }
+refuses{ who = "carol@example.com", op = "update", type = "ticket", unassigned = true, emit = false }
 ```
 
 ## The edit form

@@ -118,7 +118,7 @@ type RelationOptions struct {
 // property changes and leave everything else alone. It is the entity-side
 // analog of [RelationOptions] on the update path, and deliberately shares
 // its vocabulary (Properties merges, MetaUnset removes, Content is a
-// pointer tri-state).
+// face tri-state).
 //
 // The contract that makes it worth having: **properties not named are
 // preserved as-is, regardless of whether the caller could read them.** A

@@ -354,9 +354,24 @@ func createUniqueIndex(
 	// a dry-run's prediction drifts from what a create actually does. They can't
 	// share one string (this interpolates quoted literals; that binds $1/$2), so
 	// keep them identical by hand.
+	// face = '': FAMILY-SCOPED. `unique: true` is a natural-key rule
+	// over the DEFAULT world (TKT-DOFYR1) — a copied state sharing its
+	// family's value must not violate it. Migration 0011 dropped the
+	// face-unaware predecessors so this predicate always applies.
+	//
+	// TRAP (TKT-WAV8XP PR-C, RULING 4): this one STRUCTURALLY CANNOT be
+	// worlded, which is a stronger statement than "we chose not to".
+	// It is a PARTIAL INDEX predicate baked into the index definition at
+	// CREATE time; a partial index cannot reference a runtime parameter,
+	// so there is no expression here that could take a per-query
+	// WorldScope even in principle. A world-aware uniqueness rule would
+	// need a different mechanism entirely (one index per world, or a
+	// deferred constraint trigger) — not an edit to this predicate.
+	// Stated explicitly because it is the question a reader re-opens
+	// every time they sweep this file.
 	ddl := fmt.Sprintf(
 		`CREATE UNIQUE INDEX IF NOT EXISTS %s ON entities (type, (properties->>%s)) `+
-			`WHERE type = %s AND properties->>%s <> '' AND properties->>%s IS NOT NULL`,
+			`WHERE type = %s AND properties->>%s <> '' AND properties->>%s IS NOT NULL AND face = ''`,
 		quoteIdent(name),
 		quoteLiteral(spec.Property),
 		quoteLiteral(spec.Type),
@@ -416,7 +431,7 @@ func uniqueViolators(
 	const countQ = `
 		SELECT count(*) FROM (
 			SELECT 1 FROM entities
-			WHERE type = $1 AND properties->>$2 <> '' AND properties->>$2 IS NOT NULL
+			WHERE type = $1 AND properties->>$2 <> '' AND properties->>$2 IS NOT NULL AND face = ''
 			GROUP BY properties->>$2
 			HAVING count(*) > 1
 		) g`
@@ -432,7 +447,7 @@ func uniqueViolators(
 	const sampleQ = `
 		SELECT properties->>$2 AS val
 		FROM entities
-		WHERE type = $1 AND properties->>$2 <> '' AND properties->>$2 IS NOT NULL
+		WHERE type = $1 AND properties->>$2 <> '' AND properties->>$2 IS NOT NULL AND face = ''
 		GROUP BY properties->>$2
 		HAVING count(*) > 1
 		ORDER BY count(*) DESC
@@ -456,7 +471,7 @@ func uniqueViolators(
 // SetUniqueSpecProvider records the current metamodel's unique (type, property)
 // pairs so the write path can attribute a derived-unique-index violation to a
 // property (see mapUniqueViolation). The wiring layer calls it once at
-// store-open. It is published via an atomic pointer and is safe to call
+// store-open. It is published via an atomic face and is safe to call
 // concurrently with writes (a metamodel reload could re-publish here), but the
 // current wiring does NOT re-invoke it on a live schema reload — see
 // [Store.Reconcile]'s note on boot-only reconciliation. Passing nil clears it

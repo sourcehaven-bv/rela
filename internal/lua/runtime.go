@@ -10,7 +10,6 @@ package lua
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,9 +17,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"slices"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -68,8 +64,8 @@ func stripShebang(code string) string {
 // of entities and relations) registered at all; calling those from Lua raises
 // a "attempt to call a nil value" error from the VM itself.
 //
-// TODO(TKT-N0IKN9): Runtime is a god-object (45 methods). Decompose toward the
-// 40-method load line; ratchet this number down as bindings move out.
+// TODO(TKT-N0IKN9): Runtime is a god-object (37 methods). Under the 40-method
+// load line now; keep ratcheting this number down as bindings move out.
 //
 // 119 → 120 (TKT-ZF2DTV): reader(), the single choke point every read binding
 // resolves its ACL-bound handle through. One method that makes six call sites
@@ -99,7 +95,15 @@ func stripShebang(code string) string {
 // provider). The register* wiring seams stay here, as do the caps.AI /
 // caps.HTTP gates in registerBindings.
 //
-//plimsoll:max-methods=46
+// 46 → 38 (TKT-YVREQN): the elevation cluster moved to elevationBindings
+// (the three elevated deps + the callerCtx closure — semantics verbatim),
+// output/write_file/print to outputBindings (stdout, dirs, mode flags —
+// all fixed once options apply), and schema introspection to
+// schemaBindings (just the metamodel); sort_entities became a free
+// function. This puts Runtime UNDER the 40-method load line; the
+// directive stays as the pin that keeps it there.
+//
+//plimsoll:max-methods=38
 type Runtime struct {
 	L             *lua.LState
 	deps          WriteDeps // EntityManager is nil on a reader runtime.
@@ -133,6 +137,11 @@ type Runtime struct {
 	// rather than by being absent — see mail.go for why this one differs
 	// from the ai/http capability gate.
 	mailSender MailSender
+
+	// out backs the output/filesystem bindings (rela.output, rela.write_file,
+	// the print override). Built in newRuntime AFTER options apply, so it
+	// snapshots stdout/outputDir/mode flags once they are final.
+	out *outputBindings
 
 	// principal is the identity this runtime runs as, exposed read-only as
 	// rela.principal (TKT-5U6NRR). Set by [WithPrincipal] from the caller's
@@ -429,6 +438,15 @@ func newRuntime(deps WriteDeps, stdout io.Writer, allowWrites bool, opts ...Opti
 		opt(r)
 	}
 
+	// Snapshot the output-binding inputs now that options have fixed them.
+	r.out = &outputBindings{
+		stdout:      r.stdout,
+		outputDir:   r.outputDir,
+		projectRoot: deps.ProjectRoot,
+		isAction:    r.isAction,
+		isDocument:  r.isDocument,
+	}
+
 	// In captured-stdout contexts (document mode, action mode), redirect
 	// Lua's base `print` through r.stdout. gopher-lua's default writes to
 	// os.Stdout, which silently drops output from runtimes whose stdout
@@ -436,27 +454,11 @@ func newRuntime(deps WriteDeps, stdout io.Writer, allowWrites bool, opts ...Opti
 	// MCP / validation / automation scripts keep the default behavior —
 	// users rely on print() reaching their terminal there.
 	if r.isDocument || r.isAction {
-		L.SetGlobal("print", L.NewFunction(r.luaPrint))
+		L.SetGlobal("print", L.NewFunction(r.out.luaPrint))
 	}
 
 	r.registerBindings(allowWrites)
 	return r
-}
-
-// luaPrint replaces gopher-lua's base print so its output lands in
-// r.stdout rather than os.Stdout. Matches Lua's stock print: each
-// argument is stringified via __tostring, joined with tabs, terminated
-// by a newline.
-func (r *Runtime) luaPrint(ls *lua.LState) int {
-	top := ls.GetTop()
-	for i := 1; i <= top; i++ {
-		if i > 1 {
-			fmt.Fprint(r.stdout, "\t")
-		}
-		fmt.Fprint(r.stdout, ls.ToStringMeta(ls.Get(i)).String())
-	}
-	fmt.Fprintln(r.stdout)
-	return 0
 }
 
 // openSafeLibraries loads only safe Lua standard libraries.
@@ -801,7 +803,13 @@ func (r *Runtime) registerBindings(allowWrites bool) {
 		// "attempt to call a nil value" rather than a guarded call. Reads-only is
 		// structural, not a promise.
 		if r.deps.ElevatedManager != nil || r.deps.ElevatedReader != nil {
-			r.L.SetField(rela, "bypass_acl", r.L.NewFunction(r.luaBypassACL))
+			eb := &elevationBindings{
+				em:       r.deps.ElevatedManager,
+				er:       r.deps.ElevatedReader,
+				recorder: r.deps.ElevationRecorder,
+				ctxFn:    r.callerCtx,
+			}
+			r.L.SetField(rela, "bypass_acl", r.L.NewFunction(eb.luaBypassACL))
 		}
 	}
 	r.registerContextBindings(rela)
@@ -862,14 +870,15 @@ func (r *Runtime) registerReadBindings(rela *lua.LTable) {
 	r.L.SetField(rela, "find_path", r.L.NewFunction(r.luaFindPath))
 
 	// Output functions
-	r.L.SetField(rela, "output", r.L.NewFunction(r.luaOutput))
+	r.L.SetField(rela, "output", r.L.NewFunction(r.out.luaOutput))
 
 	// Schema introspection
-	r.L.SetField(rela, "get_entity_types", r.L.NewFunction(r.luaGetEntityTypes))
-	r.L.SetField(rela, "get_relation_types", r.L.NewFunction(r.luaGetRelationTypes))
+	sb := schemaBindings{meta: r.deps.Meta}
+	r.L.SetField(rela, "get_entity_types", r.L.NewFunction(sb.luaGetEntityTypes))
+	r.L.SetField(rela, "get_relation_types", r.L.NewFunction(sb.luaGetRelationTypes))
 
 	// Utility functions
-	r.L.SetField(rela, "sort_entities", r.L.NewFunction(r.luaSortEntities))
+	r.L.SetField(rela, "sort_entities", r.L.NewFunction(luaSortEntities))
 	r.L.SetField(rela, "days_since", r.L.NewFunction(luaDaysSince))
 	r.L.SetField(rela, "today", lua.LString(time.Now().Format("2006-01-02")))
 	// rela.now_unix: the current time as unix seconds, stamped once at runtime
@@ -903,7 +912,7 @@ func (r *Runtime) registerWriteBindings(rela *lua.LTable) {
 	// write_file is additionally capability-gated (TKT-YH52OM): a writer
 	// runtime may mutate the graph without being entitled to touch the disk.
 	if r.caps.WriteFile {
-		r.L.SetField(rela, "write_file", r.L.NewFunction(r.luaWriteFile))
+		r.L.SetField(rela, "write_file", r.L.NewFunction(r.out.luaWriteFile))
 	}
 }
 
@@ -1306,109 +1315,6 @@ func (r *Runtime) luaTraceTo(ls *lua.LState) int {
 	}
 	ls.Push(traceResultToTable(ls, trace))
 	return 1
-}
-
-// luaOutput implements rela.output(data) - JSON encode to stdout
-func (r *Runtime) luaOutput(ls *lua.LState) int {
-	// Type-check the arg up front; the Lua → Go conversion is deferred
-	// past the mode guards so muted modes (action/document) don't pay
-	// for converting a potentially-large nested table.
-	data := ls.CheckAny(1)
-
-	if r.isAction {
-		// In action mode, rela.output is a no-op. Log a warning so script
-		// authors notice that output should use the return statement instead.
-		fmt.Fprintln(r.stdout, "warning: rela.output() called in action mode; use 'return' to produce the response")
-		return 0
-	}
-
-	if r.isDocument {
-		// In document mode, captured stdout is the rendered document.
-		// Raw JSON in the middle of rendered markdown is almost always a
-		// mistake — emit a warning line (visible in the panel) so the
-		// script author notices, rather than silently producing garbage.
-		fmt.Fprintln(r.stdout, "warning: rela.output() called in document mode; use print() to emit markdown")
-		return 0
-	}
-
-	goData := luaValueToGo(data)
-	encoder := json.NewEncoder(r.stdout)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(goData); err != nil {
-		ls.RaiseError("JSON encoding error: %s", err.Error())
-		return 0
-	}
-	return 0
-}
-
-// defaultOutputDir is the default directory where Lua scripts can write files.
-const defaultOutputDir = "output"
-
-// luaWriteFile implements rela.write_file(path, content, opts?)
-// Files can ONLY be written to the configured output directory for security.
-// Path is relative to output dir (e.g., "report.txt" -> "{output}/report.txt").
-// Options:
-//   - ensure_newline: boolean - ensure content ends with a newline (default: false)
-func (r *Runtime) luaWriteFile(ls *lua.LState) int {
-	path := ls.CheckString(1)
-	content := ls.CheckString(2)
-
-	if path == "" {
-		ls.RaiseError("write_file: path cannot be empty")
-		return 0
-	}
-
-	// Parse options if provided
-	ensureNewline := false
-	if ls.GetTop() >= 3 && ls.Get(3).Type() == lua.LTTable {
-		opts := ls.CheckTable(3)
-		if v := opts.RawGetString("ensure_newline"); v != lua.LNil {
-			if b, ok := v.(lua.LBool); ok {
-				ensureNewline = bool(b)
-			}
-		}
-	}
-
-	// Ensure content ends with newline if requested
-	if ensureNewline && content != "" && content[len(content)-1] != '\n' {
-		content += "\n"
-	}
-
-	// Validate the path is local (no "..", no absolute paths)
-	if !filepath.IsLocal(path) {
-		ls.RaiseError("write_file: path must be a local path (no '..' or absolute paths)")
-		return 0
-	}
-
-	// Build the full path within output directory
-	var outputPath string
-	if filepath.IsAbs(r.outputDir) {
-		outputPath = r.outputDir
-	} else {
-		outputPath = filepath.Join(r.deps.ProjectRoot, r.outputDir)
-	}
-
-	// Ensure output directory exists
-	if err := os.MkdirAll(outputPath, 0755); err != nil {
-		ls.RaiseError("write_file: cannot create output directory: %s", err.Error())
-		return 0
-	}
-
-	// Ensure parent directories within output/ exist
-	fullPath := filepath.Join(outputPath, path)
-	dir := filepath.Dir(fullPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		ls.RaiseError("write_file: cannot create directory: %s", err.Error())
-		return 0
-	}
-
-	// Write the file
-	if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
-		ls.RaiseError("write_file: cannot write file: %s", err.Error())
-		return 0
-	}
-
-	return 0
 }
 
 // EntityToTable converts an entity.Entity to a Lua table.
@@ -1908,361 +1814,6 @@ func WarningsToTable(ls *lua.LState, warnings []entity.Warning) lua.LValue {
 	return tbl
 }
 
-// luaBypassACL implements rela.bypass_acl(fn) (TKT-D8T148). It invokes fn with
-// a single argument `admin`: a handle whose reads and writes skip the ACL,
-// backed by the elevated Mutator and/or EntityReader wired into WriteDeps.
-// Elevation is therefore an OBJECT CAPABILITY scoped to the closure — the gated
-// rela.* bindings are never elevated; only access through `admin` bypasses ACL.
-//
-// The handle carries only the capabilities that were wired (TKT-Y3JVFK): a
-// document render gets an elevated reader and no Mutator, so `admin` has the
-// three read methods and no write methods at all. See newElevatedHandle.
-//
-// After fn returns (or raises), `admin` is INVALIDATED: its methods raise. A
-// script that squirrels `admin` into a global and calls it later gets a dead
-// handle, so the lexical scope is enforced, not merely conventional (mirrors
-// the frozen rela.principal). fn's return value(s) propagate to the caller; a
-// raise inside fn propagates too (a failed elevated write must surface).
-func (r *Runtime) luaBypassACL(ls *lua.LState) int {
-	fn := ls.CheckFunction(1)
-	if r.deps.ElevatedManager == nil && r.deps.ElevatedReader == nil {
-		// Defensive: the binding is only registered when at least one elevated
-		// handle is set, but fail loud rather than silently no-op if that ever
-		// drifts. Note this raises only when BOTH are absent — a reader-only
-		// elevation is legitimate (TKT-Y3JVFK), and a manager-only one keeps
-		// its existing behavior of raising per-method inside readGuard.
-		ls.RaiseError("rela.bypass_acl: no elevated handle is available")
-		return 0
-	}
-
-	// live gates every admin.* call; set false after fn returns so a captured
-	// handle is dead outside the closure's dynamic extent.
-	live := true
-	// reads accumulates the distinct elevated read bindings this closure
-	// used, for the single post-closure audit record (TKT-ACSBSA).
-	reads := &readUsage{}
-	admin := r.newElevatedHandle(ls, r.deps.ElevatedManager, r.deps.ElevatedReader, &live, reads)
-
-	// Invalidate on every exit path (normal return or Lua error). pcall keeps
-	// the runtime alive so we can flip `live` before re-raising.
-	//
-	// The audit record rides the SAME defer, so a closure that reads raw data
-	// and then raises still leaves a trace. Recording only on the success
-	// path would let a script read everything and erase the evidence by
-	// failing — the exact shape an attacker would choose.
-	defer func() {
-		live = false
-		recordElevatedReads(r.callerCtx(), r.deps.ElevationRecorder, reads)
-	}()
-
-	ls.Push(fn)
-	ls.Push(admin)
-	// Protected call so we can guarantee invalidation even when fn raises,
-	// then re-surface the error to the caller.
-	if err := ls.PCall(1, lua.MultRet, nil); err != nil {
-		live = false
-		ls.RaiseError("rela.bypass_acl: %s", err.Error())
-		return 0
-	}
-	// Return whatever fn returned (already on the stack after PCall).
-	return ls.GetTop() - 1
-}
-
-// newElevatedHandle builds the `admin` table passed to a rela.bypass_acl
-// closure. Its methods route to the elevated Mutator `em` (writes) and the
-// elevated EntityReader `er` (reads), and check `*live` first, so they raise
-// once the closure has returned. No principal, no nested bypass.
-//
-// Write surface: create_relation, delete_relation, delete_entity — the
-// link/unlink + remove operations the system-invariant use cases (e.g.
-// authorship stamping via created-by) need. create_entity / update_entity are a
-// deliberate follow-up: they marshal a full entity table and aren't required by
-// the motivating case; gating elevated *entity* creation is a larger surface
-// best added with its own tests.
-//
-// Read surface (TKT-ACSBSA): get_entity, list_entities, get_relations —
-// mirroring the gated rela.* bindings one-for-one so a script can lift a read
-// into the closure without rewriting it. Reads are RAW: full properties, no
-// row gate, no redaction. A half-elevated read is a confusing contract and the
-// closure is already the boundary.
-//
-// A nil `er` leaves the three read methods present but RAISING, not absent.
-// Absence would make `if admin.get_entity then` silently take the
-// no-elevation branch on a misconfigured deployment; raising names the
-// missing capability.
-//
-// That reasoning fits the cascade path, where reader and mutator are wired
-// together under one check so a missing reader really is a wiring bug. The
-// document path has a THIRD state the dichotomy does not cover: a wiring site
-// may grant no elevation bundle at all, in which case neither handle is set
-// and `rela.bypass_acl` is absent outright rather than present-and-raising
-// (see documentService.elevatedDeps). All three states fail closed; they just
-// fail in different shapes, so don't read this comment as "nil reader always
-// means misconfiguration".
-// readUsage accumulates which elevated read bindings a bypass_acl closure
-// actually used, so the post-closure audit record can name them. Order is
-// first-use, and each binding appears once — the record answers "what kind
-// of raw access happened", not "how many times".
-//
-// Not safe for concurrent use, and does not need to be: a Lua state is
-// single-goroutine, and one readUsage is scoped to one closure.
-type readUsage struct{ names []string }
-
-// mark records a use of binding `name`, ignoring repeats.
-func (u *readUsage) mark(name string) {
-	if slices.Contains(u.names, name) {
-		return
-	}
-	u.names = append(u.names, name)
-}
-
-// recordElevatedReads emits the single post-closure audit notification when
-// the closure used its read elevation. Silent when no recorder is wired or
-// when the closure performed no elevated reads — a bypass_acl block that
-// only writes is already covered by entitymanager's OpACLBypass rows, and
-// an empty record would just add noise to the log.
-func recordElevatedReads(ctx context.Context, rec ElevationRecorder, u *readUsage) {
-	if rec == nil || len(u.names) == 0 {
-		return
-	}
-	rec.RecordElevatedRead(ctx, u.names)
-}
-
-func (r *Runtime) newElevatedHandle(
-	ls *lua.LState, em Mutator, er EntityReader, live *bool, reads *readUsage,
-) *lua.LTable {
-	t := ls.NewTable()
-	guard := func(name string) bool {
-		if !*live {
-			ls.RaiseError("rela.bypass_acl: handle %q used outside its closure (invalidated)", name)
-			return false
-		}
-		return true
-	}
-	// readGuard adds the wired-reader check to the liveness check. Both are
-	// required before any elevated read touches the store.
-	//
-	// It deliberately does NOT mark the binding as used. Marking here would
-	// audit a read that never reached the store — the argument-validation
-	// raises (empty id, empty type) fire AFTER this guard, so a closure doing
-	// only `pcall(admin.get_entity, "")` would produce an `acl-bypass-read`
-	// row claiming a disclosure that never happened. Each method calls
-	// reads.mark immediately before its er.* call instead, so the audit row
-	// means what it says.
-	readGuard := func(name string) bool {
-		if !guard(name) {
-			return false
-		}
-		if er == nil {
-			ls.RaiseError("rela.bypass_acl: %s: no elevated reader is configured for this runtime", name)
-			return false
-		}
-		return true
-	}
-	// Write methods are ABSENT (not present-and-raising) when no elevated
-	// Mutator was wired — the asymmetry with `er` above is deliberate
-	// (TKT-Y3JVFK). A nil `er` means "elevation was intended but the reader is
-	// missing", i.e. a misconfiguration, so raising names the missing
-	// capability. A nil `em` means the caller deliberately withheld elevated
-	// writes, so `admin.delete_entity == nil` is the honest contract and a
-	// script probing `if admin.delete_entity then` correctly learns it cannot
-	// write past the ACL.
-	//
-	// Note the scope of that guarantee: it removes the ELEVATED write path,
-	// not writing as such. A document render still holds the ordinary gated
-	// rela.* write bindings (TKT-PX5YL7), so "this handle cannot bypass the
-	// ACL to write" is the claim — not "this surface cannot mutate".
-	if em != nil {
-		registerElevatedWrites(ls, t, em, guard, r.callerCtx)
-	}
-	registerElevatedReads(ls, t, er, readGuard, r.callerCtx, reads)
-	return t
-}
-
-// registerElevatedWrites adds the raw write methods to the `admin` table
-// (TKT-D8T148). Split out for the same reason as registerElevatedReads — the
-// function-length limit — and called only when an elevated Mutator was wired,
-// so a read-only elevation has no write methods at all (TKT-Y3JVFK).
-//
-// create_entity / update_entity remain absent by design: they marshal a full
-// entity table and were deferred with their own tests as the follow-up noted
-// in newElevatedHandle's doc.
-func registerElevatedWrites(
-	ls *lua.LState, t *lua.LTable, em Mutator, guard func(string) bool,
-	ctxFn func() context.Context,
-) {
-	ls.SetField(t, "create_relation", ls.NewFunction(func(s *lua.LState) int {
-		if !guard("create_relation") {
-			return 0
-		}
-		from, relType, to := s.CheckString(1), s.CheckString(2), s.CheckString(3)
-		if _, err := em.CreateRelation(ctxFn(), from, relType, to, entity.RelationOptions{}); err != nil {
-			s.RaiseError("bypass_acl create_relation error: %s", err.Error())
-			return 0
-		}
-		s.Push(lua.LTrue)
-		return 1
-	}))
-	ls.SetField(t, "delete_relation", ls.NewFunction(func(s *lua.LState) int {
-		if !guard("delete_relation") {
-			return 0
-		}
-		from, relType, to := s.CheckString(1), s.CheckString(2), s.CheckString(3)
-		if err := em.DeleteRelation(ctxFn(), from, relType, to); err != nil {
-			s.RaiseError("bypass_acl delete_relation error: %s", err.Error())
-			return 0
-		}
-		s.Push(lua.LTrue)
-		return 1
-	}))
-	ls.SetField(t, "delete_entity", ls.NewFunction(func(s *lua.LState) int {
-		if !guard("delete_entity") {
-			return 0
-		}
-		id := s.CheckString(1)
-		cascade := s.OptBool(2, false)
-		if _, err := em.DeleteEntity(ctxFn(), id, cascade); err != nil {
-			s.RaiseError("bypass_acl delete_entity error: %s", err.Error())
-			return 0
-		}
-		s.Push(lua.LTrue)
-		return 1
-	}))
-}
-
-// registerElevatedReads adds the three raw read methods to the `admin` table
-// (TKT-ACSBSA). Split out of newElevatedHandle to keep each function within
-// the length limit; `readGuard` carries both the liveness and wired-reader
-// checks so neither can be forgotten at an individual method.
-//
-// Deliberately NOT sharing code with the gated luaGetEntity / luaListEntities
-// / luaGetRelations bindings: those funnel through r.reader() (which resolves
-// VisibleReader), and a shared helper parameterized by reader would be one
-// edit away from letting a gated binding read raw. The duplication here is
-// small and it keeps the two read paths physically separate.
-func registerElevatedReads(
-	ls *lua.LState, t *lua.LTable, er EntityReader, readGuard func(string) bool,
-	ctxFn func() context.Context, reads *readUsage,
-) {
-	ls.SetField(t, "get_entity", ls.NewFunction(elevatedGetEntity(er, readGuard, ctxFn, reads)))
-	ls.SetField(t, "list_entities", ls.NewFunction(elevatedListEntities(er, readGuard, ctxFn, reads)))
-	ls.SetField(t, "get_relations", ls.NewFunction(elevatedGetRelations(er, readGuard, ctxFn, reads)))
-}
-
-// elevatedGetEntity builds admin.get_entity(id) -> table|nil.
-//
-// Returns nil on a miss, matching rela.get_entity. The two nils mean
-// different things, though: under elevation a nil means the entity
-// genuinely does not exist, where the gated binding's nil is the
-// deliberately ambiguous "missing or hidden" that keeps it oracle-free.
-func elevatedGetEntity(
-	er EntityReader, readGuard func(string) bool, ctxFn func() context.Context,
-	reads *readUsage,
-) func(*lua.LState) int {
-	return func(s *lua.LState) int {
-		if !readGuard("get_entity") {
-			return 0
-		}
-		id := s.CheckString(1)
-		if id == "" {
-			s.RaiseError("bypass_acl get_entity: entity ID cannot be empty")
-			return 0
-		}
-		reads.mark("get_entity")
-		e, err := er.GetEntity(ctxFn(), id)
-		if err != nil {
-			// Only a genuine MISS is nil. Any other error (store down, driver
-			// failure) RAISES — masking it as nil would make the documented
-			// contract ("nil means it does not exist") false, and would break
-			// the motivating use case: a uniqueness check that reads nil on a
-			// transient outage concludes "no duplicate" and lets the invariant
-			// the elevated read exists to enforce be violated. The two list
-			// bindings already raise on iteration errors; this keeps the three
-			// consistent.
-			if errors.Is(err, store.ErrNotFound) {
-				s.Push(lua.LNil)
-				return 1
-			}
-			s.RaiseError("bypass_acl get_entity error: %s", err.Error())
-			return 0
-		}
-		s.Push(EntityToTable(s, e))
-		return 1
-	}
-}
-
-// elevatedListEntities builds admin.list_entities(type) -> table.
-//
-// No filter-expression argument: rela.list_entities' filter is a
-// convenience over an already-gated set, and adding an expression parser to
-// the elevated path widens it for no gain — a script can filter the
-// returned table in Lua. Unbounded, like its gated counterpart
-// (TKT-YWDGZD tracks paging for both).
-func elevatedListEntities(
-	er EntityReader, readGuard func(string) bool, ctxFn func() context.Context,
-	reads *readUsage,
-) func(*lua.LState) int {
-	return func(s *lua.LState) int {
-		if !readGuard("list_entities") {
-			return 0
-		}
-		entityType := s.CheckString(1)
-		if entityType == "" {
-			s.RaiseError("bypass_acl list_entities: entity type cannot be empty")
-			return 0
-		}
-		reads.mark("list_entities")
-		result := s.NewTable()
-		idx := 1
-		for e, err := range er.ListEntities(ctxFn(), store.EntityQuery{Type: entityType}) {
-			if err != nil {
-				s.RaiseError("bypass_acl list_entities error: %s", err.Error())
-				return 0
-			}
-			result.RawSetInt(idx, EntityToTable(s, e))
-			idx++
-		}
-		s.Push(result)
-		return 1
-	}
-}
-
-// elevatedGetRelations builds admin.get_relations(opts?) -> table, with
-// opts.{from,type,to}.
-//
-// NOT peer-gated (unlike rela.get_relations): an edge is returned even when
-// neither endpoint would be visible to the caller. Re-adding the peer drop
-// here would look like a safety improvement and would silently make the
-// elevated view incomplete.
-func elevatedGetRelations(
-	er EntityReader, readGuard func(string) bool, ctxFn func() context.Context,
-	reads *readUsage,
-) func(*lua.LState) int {
-	return func(s *lua.LState) int {
-		if !readGuard("get_relations") {
-			return 0
-		}
-		q, err := relationQuery(s)
-		if err != nil {
-			s.RaiseError("bypass_acl get_relations: %s", err.Error())
-			return 0
-		}
-		reads.mark("get_relations")
-		result := s.NewTable()
-		idx := 1
-		for rel, err := range er.ListRelations(ctxFn(), q) {
-			if err != nil {
-				s.RaiseError("bypass_acl get_relations error: %s", err.Error())
-				return 0
-			}
-			result.RawSetInt(idx, relationToTable(s, rel))
-			idx++
-		}
-		s.Push(result)
-		return 1
-	}
-}
-
 // relationQuery reads the optional {from,type,to} options table off the Lua
 // stack. An absent or non-table argument yields the zero query, which matches
 // every relation.
@@ -2410,173 +1961,6 @@ func luaTableToGoMap(t *lua.LTable) map[string]any {
 		m[key] = luaValueToGo(v)
 	})
 	return m
-}
-
-// luaGetEntityTypes implements rela.get_entity_types() -> table
-// Returns a table of entity type definitions with their properties.
-func (r *Runtime) luaGetEntityTypes(ls *lua.LState) int {
-	result := ls.NewTable()
-
-	for name, et := range r.deps.Meta.Entities {
-		typeTable := ls.NewTable()
-		typeTable.RawSetString("name", lua.LString(name))
-		typeTable.RawSetString("label", lua.LString(et.Label))
-		typeTable.RawSetString("plural", lua.LString(et.Plural))
-
-		// Properties
-		propsTable := ls.NewTable()
-		for propName, prop := range et.Properties {
-			propTable := ls.NewTable()
-			propTable.RawSetString("name", lua.LString(propName))
-			propTable.RawSetString("type", lua.LString(prop.Type))
-			propTable.RawSetString("required", lua.LBool(prop.Required))
-			if prop.Default != "" {
-				propTable.RawSetString("default", lua.LString(prop.Default))
-			}
-			if len(prop.Values) > 0 {
-				valuesTable := ls.NewTable()
-				for i, val := range prop.Values {
-					valuesTable.RawSetInt(i+1, lua.LString(val))
-				}
-				propTable.RawSetString("values", valuesTable)
-			}
-			propsTable.RawSetString(propName, propTable)
-		}
-		typeTable.RawSetString("properties", propsTable)
-
-		result.RawSetString(name, typeTable)
-	}
-
-	ls.Push(result)
-	return 1
-}
-
-// luaGetRelationTypes implements rela.get_relation_types() -> table
-// Returns a table of relation type definitions with their constraints.
-func (r *Runtime) luaGetRelationTypes(ls *lua.LState) int {
-	result := ls.NewTable()
-
-	for name, rt := range r.deps.Meta.Relations {
-		typeTable := ls.NewTable()
-		typeTable.RawSetString("name", lua.LString(name))
-		typeTable.RawSetString("label", lua.LString(rt.Label))
-
-		// From constraints
-		fromTable := ls.NewTable()
-		for i, f := range rt.From {
-			fromTable.RawSetInt(i+1, lua.LString(f))
-		}
-		typeTable.RawSetString("from", fromTable)
-
-		// To constraints
-		toTable := ls.NewTable()
-		for i, t := range rt.To {
-			toTable.RawSetInt(i+1, lua.LString(t))
-		}
-		typeTable.RawSetString("to", toTable)
-
-		result.RawSetString(name, typeTable)
-	}
-
-	ls.Push(result)
-	return 1
-}
-
-// sortableEntry holds an entity table and its sort key for sorting.
-type sortableEntry struct {
-	value lua.LValue
-	prop  lua.LValue
-}
-
-// luaSortEntities implements rela.sort_entities(entities, property, direction?) -> table
-// Sorts a list of entity tables by a property value.
-// Direction is optional: "asc" (default) or "desc".
-// Handles numeric comparison for property values that look like numbers.
-func (r *Runtime) luaSortEntities(ls *lua.LState) int {
-	entitiesTable := ls.CheckTable(1)
-	property := ls.CheckString(2)
-	direction := ls.OptString(3, "asc")
-
-	if property == "" {
-		ls.RaiseError("sort_entities: property cannot be empty")
-		return 0
-	}
-
-	descending := direction == "desc"
-
-	// Collect entities into a slice for sorting
-	entries := make([]sortableEntry, 0, entitiesTable.Len())
-
-	for i := 1; i <= entitiesTable.Len(); i++ {
-		v := entitiesTable.RawGetInt(i)
-		tbl, ok := v.(*lua.LTable)
-		if !ok {
-			continue
-		}
-		props := tbl.RawGetString("properties")
-		propVal := lua.LNil
-		if propsTbl, ok := props.(*lua.LTable); ok {
-			propVal = propsTbl.RawGetString(property)
-		}
-		entries = append(entries, sortableEntry{value: v, prop: propVal})
-	}
-
-	// Sort entries using bubble sort (sufficient for typical entity counts)
-	sortEntries(entries, descending)
-
-	// Build result table
-	result := ls.NewTable()
-	for i, entry := range entries {
-		result.RawSetInt(i+1, entry.value)
-	}
-
-	ls.Push(result)
-	return 1
-}
-
-// sortEntries sorts entity entries by their property value. Stable so
-// entries with equal sort keys keep their input order.
-func sortEntries(entries []sortableEntry, descending bool) {
-	sort.SliceStable(entries, func(i, j int) bool {
-		if descending {
-			return entryLess(entries[j].prop, entries[i].prop)
-		}
-		return entryLess(entries[i].prop, entries[j].prop)
-	})
-}
-
-// entryLess reports whether a sorts before b. Two numeric values compare
-// numerically; otherwise both compare as strings.
-func entryLess(a, b lua.LValue) bool {
-	aStr, aNum, aIsNum := luaValueToSortable(a)
-	bStr, bNum, bIsNum := luaValueToSortable(b)
-	if aIsNum && bIsNum {
-		return aNum < bNum
-	}
-	return aStr < bStr
-}
-
-// luaValueToSortable converts a Lua value to sortable string and number
-// representations. A string is treated as numeric only when it parses
-// *entirely* as a number — strconv.ParseFloat over the trimmed value —
-// so "1.2.0" or "3 blind mice" sort lexicographically rather than being
-// silently reduced to their numeric prefix (1 and 3), which the old
-// fmt.Sscanf("%f") accepted.
-func luaValueToSortable(v lua.LValue) (str string, num float64, isNum bool) {
-	switch val := v.(type) {
-	case lua.LNumber:
-		return "", float64(val), true
-	case lua.LString:
-		s := string(val)
-		if n, err := strconv.ParseFloat(strings.TrimSpace(s), 64); err == nil {
-			return s, n, true
-		}
-		return s, 0, false
-	case *lua.LNilType:
-		return "", math.MaxFloat64, false // nil sorts last
-	default:
-		return v.String(), 0, false
-	}
 }
 
 // hoursPerDay converts the elapsed-hours difference luaDaysSince measures into

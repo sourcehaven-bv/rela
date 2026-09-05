@@ -71,9 +71,13 @@ func Interpolate(template string, vars TemplateVars, entity, oldEntity *entity.E
 		return template
 	}
 
-	now := vars.Now()
-	if vars.Now == nil {
-		now = time.Now()
+	// The nil check comes FIRST. It used to follow the call, which panicked
+	// on a zero TemplateVars — latent because the automation engine always
+	// populates Now, so no caller reached it until the copy kernel passed a
+	// bare TemplateVars (TKT-C1XUA8).
+	now := time.Now()
+	if vars.Now != nil {
+		now = vars.Now()
 	}
 
 	replacements := map[string]string{
@@ -121,9 +125,13 @@ func InterpolateSafeOnly(template string, vars TemplateVars) string {
 		return template
 	}
 
-	now := vars.Now()
-	if vars.Now == nil {
-		now = time.Now()
+	// The nil check comes FIRST. It used to follow the call, which panicked
+	// on a zero TemplateVars — latent because the automation engine always
+	// populates Now, so no caller reached it until the copy kernel passed a
+	// bare TemplateVars (TKT-C1XUA8).
+	now := time.Now()
+	if vars.Now != nil {
+		now = vars.Now()
 	}
 
 	replacements := map[string]string{

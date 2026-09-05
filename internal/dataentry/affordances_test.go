@@ -30,7 +30,7 @@ func TestTranslateVerb_Roundtrip(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.verb, func(t *testing.T) {
-			req := translateVerb(c.verb, "ticket", "TKT-001")
+			req := translateVerb(c.verb, "ticket", "TKT-001", "")
 			if req.Op != c.op {
 				t.Errorf("Op = %q, want %q", req.Op, c.op)
 			}
@@ -57,7 +57,7 @@ func TestTranslateVerb_UnknownPanics(t *testing.T) {
 			t.Error("expected panic on unknown verb; got none")
 		}
 	}()
-	translateVerb("transition:done", "ticket", "")
+	translateVerb("transition:done", "ticket", "", "")
 }
 
 // AC1: read-only principal sees all per-item verbs as false.
@@ -514,7 +514,7 @@ func TestComputeFieldAffordances_SparseWritable(t *testing.T) {
 		t.Fatalf("kind should be present")
 	}
 	if kind.Writable == nil || *kind.Writable {
-		t.Errorf("kind.Writable: got %v, want pointer-to-false", kind.Writable)
+		t.Errorf("kind.Writable: got %v, want face-to-false", kind.Writable)
 	}
 }
 
@@ -727,7 +727,7 @@ func TestComputeRelationAffordances_SparseCreatableRemovable(t *testing.T) {
 		t.Fatalf("affects should be present")
 	}
 	if affects.Creatable == nil || *affects.Creatable {
-		t.Errorf("affects.Creatable: got %v, want false-pointer", affects.Creatable)
+		t.Errorf("affects.Creatable: got %v, want false-face", affects.Creatable)
 	}
 	if affects.Removable != nil {
 		t.Errorf("affects.Removable: got %v, want nil (sparse: removable=true default)", affects.Removable)
@@ -741,7 +741,7 @@ func TestComputeRelationAffordances_SparseCreatableRemovable(t *testing.T) {
 		t.Errorf("implements.Creatable: got %v, want nil", implements.Creatable)
 	}
 	if implements.Removable == nil || *implements.Removable {
-		t.Errorf("implements.Removable: got %v, want false-pointer", implements.Removable)
+		t.Errorf("implements.Removable: got %v, want false-face", implements.Removable)
 	}
 }
 
@@ -776,7 +776,7 @@ func TestComputeRelationAffordances_MetaFieldOverrides(t *testing.T) {
 		t.Fatalf("note should be present")
 	}
 	if note.Writable == nil || *note.Writable {
-		t.Errorf("note.Writable: got %v, want false-pointer", note.Writable)
+		t.Errorf("note.Writable: got %v, want false-face", note.Writable)
 	}
 }
 

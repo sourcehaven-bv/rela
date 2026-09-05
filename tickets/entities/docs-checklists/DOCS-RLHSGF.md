@@ -33,7 +33,7 @@ from "rotation during outage is an outage", discloses the 5s stall, and gives
 rotation-staging guidance
 - [x] Corrected the `--jwt-jwks-url` bullet ("rotation needs no restart" was
 materially incomplete)
-- [x] Added a forward pointer from the `--principal-header` trust-boundary block
+- [x] Added a forward face from the `--principal-header` trust-boundary block
 - [x] Corrected the rate-sampling overclaim found in review ([[RR-LHFXGZ]]) and
 disclosed that classification is heuristic
 

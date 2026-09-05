@@ -25,6 +25,8 @@ var validTopLevelKeys = map[string]bool{
 	"includes":    true,
 	"attachments": true,
 	"transforms":  true,
+	"worlds":      true,
+	"copies":      true,
 }
 
 // knownTypos maps common misspellings to the correct key name.
@@ -240,7 +242,13 @@ func validate(m *Metamodel) error {
 	validationErrors = append(validationErrors, validateRelationProperties(m)...)
 	validationErrors = append(validationErrors, validateRelationInverses(m)...)
 	validationErrors = append(validationErrors, validateRelationOrderable(m)...)
+	validationErrors = append(validationErrors, validateRelationScope(m)...)
 	validationErrors = append(validationErrors, validateTransforms(m)...)
+	validationErrors = append(validationErrors, validateCopies(m)...)
+	validationErrors = append(validationErrors, validateFaces(m)...)
+	validationErrors = append(validationErrors, validateWorlds(m)...)
+	validationErrors = append(validationErrors, validateValidationFaces(m)...)
+	validationErrors = append(validationErrors, validateAutomationFaces(m)...)
 
 	if len(validationErrors) > 0 {
 		return &SchemaValidationError{Errors: validationErrors}
@@ -306,6 +314,22 @@ func validateEntitySemantics(m *Metamodel) []string {
 		// property names (TKT-3Q0GP1).
 		if err := ValidateSchemaName(name); err != nil {
 			errs = append(errs, fmt.Sprintf("entity %v", err))
+		}
+
+		// "@" additionally separates a type from a content state in an ACL
+		// write grant (`page@draft`, TKT-DN37J2). A type name carrying one
+		// makes that grant ambiguous in BOTH directions: a grant on a type
+		// named `a@b` stops matching it, and starts matching a different
+		// type named `a`. The second is a cross-type privilege escalation.
+		//
+		// Rejected here rather than in ValidateSchemaName because that is
+		// shared with property names, which are not grant subjects and have
+		// no reason to lose a legal character.
+		if strings.Contains(name, "@") {
+			errs = append(errs, fmt.Sprintf(
+				"entity %q: entity type names must not contain '@' — it separates "+
+					"a type from a content state in ACL write grants (page@draft), "+
+					"so a type name carrying one makes those grants ambiguous", name))
 		}
 
 		if def.Label == "" {
@@ -643,6 +667,365 @@ func validateRelationOrderable(m *Metamodel) []string {
 	}
 
 	return errs
+}
+
+// validateRelationScope rejects unknown `scope:` values on relation
+// types (TKT-DOFYR1). Absent means identity — the safe default that
+// keeps a faceless project byte-identical.
+func validateRelationScope(m *Metamodel) []string {
+	var errs []string
+	for _, name := range sortedKeys(m.Relations) {
+		rel := m.Relations[name]
+		if !rel.Scope.IsValid() {
+			errs = append(errs, fmt.Sprintf(
+				"relation %q: invalid scope value %q (allowed: identity, content)",
+				name, string(rel.Scope)))
+		}
+	}
+	return errs
+}
+
+// validateFaces checks the per-type `faces:` declarations
+// (TKT-WAV8XP, design doc §4.1): at most one `bare_face` per type.
+//
+// The face NAME grammar is deliberately NOT checked here. It belongs
+// to [github.com/Sourcehaven-BV/rela/internal/entity].ParseFace, and
+// this package must not import entity (arch-lint keeps entity a leaf);
+// internal/worlds applies it when compiling. See that package's Compile.
+func validateFaces(m *Metamodel) []string {
+	var errs []string
+	for _, typeName := range sortedKeys(m.Entities) {
+		def := m.Entities[typeName]
+		// `bare_face` must name a face this type declares. A typo would
+		// otherwise leave the bare-id row unnamed while the face the operator
+		// meant became a separate suffixed row — two rows where they intended
+		// one, and no error to say so.
+		//
+		// The old spelling was `bare_face` on each face, which needed a
+		// second check that at most one claimed it. A single key on the type
+		// cannot be set twice, so that check is gone rather than moved.
+		if def.BareFace == "" {
+			continue
+		}
+		if len(def.Faces) == 0 {
+			errs = append(errs, fmt.Sprintf(
+				"entity %q: `bare_face: %s` but the type declares no `faces:` — "+
+					"a type without faces has exactly one state and needs no name for it",
+				typeName, def.BareFace))
+			continue
+		}
+		if _, ok := def.Faces[def.BareFace]; !ok {
+			errs = append(errs, fmt.Sprintf(
+				"entity %q: `bare_face: %s` names no declared face (declares: %s)",
+				typeName, def.BareFace, strings.Join(sortedKeys(def.Faces), ", ")))
+		}
+	}
+	return errs
+}
+
+// validateWorlds checks the `worlds:` declarations (TKT-WAV8XP, design
+// doc §4.1). Every check here is a LOAD-TIME refusal, not a warning:
+// a world that resolves wrongly shows the wrong face of a document, and
+// the whole feature exists to make that impossible.
+//
+// The load-bearing one is the mandatory `otherwise:` — a silent fallback
+// is exactly the leak this feature prevents (a `published` world quietly
+// showing a draft face), so the absent value is rejected rather than
+// defaulted in either direction.
+func validateWorlds(m *Metamodel) []string {
+	var errs []string
+	for _, worldName := range sortedKeys(m.Worlds) {
+		world := m.Worlds[worldName]
+		if strings.EqualFold(worldName, DefaultWorldName) {
+			// Case-folded: YAML keys are case-sensitive but humans are not,
+			// and a `Default:` world that silently coexists with the implicit
+			// one is a confusion with no upside.
+			errs = append(errs, fmt.Sprintf(
+				"world %q: the name is reserved — the default world is implicit and total "+
+					"(every entity contributes its default state) and cannot be redeclared",
+				worldName))
+		}
+		if err := ValidateSchemaName(worldName); err != nil {
+			// The empty name is the one THIS check catches that matters: it
+			// would make a lookup with an unpopulated name succeed and
+			// return a real, non-default world — the inverse of the
+			// fail-closed rule.
+			//
+			// It is NOT the whole story, and this comment used to imply it
+			// was. ValidateSchemaName is a blocklist tuned for type and
+			// property names, so it still admits `/`, `%`, `?`, `&`, `#`,
+			// `..` and internal spaces — all hostile in the `?world=` /
+			// `--world` / `acl.yaml` contexts a world name reaches. The
+			// strict allowlist lives in internal/worlds.validateWorldNames,
+			// because that grammar is entity.ParseFace's and
+			// internal/metamodel may not import internal/entity (arch-lint).
+			// Both run at load; this one first, for the better message on a
+			// blank name.
+			errs = append(errs, fmt.Sprintf("world %q: invalid name: %v", worldName, err))
+		}
+		if len(world.Select) == 0 && len(world.Overrides) == 0 {
+			// Forgetting `select:` (or slipping its indentation) is a likelier
+			// typo than a bad face name, and it resolves EVERY faced
+			// entity through `otherwise:` alone — a world that shows nothing.
+			// It fails safe but silently, so it is rejected rather than left
+			// to be diagnosed as "the published site is empty".
+			errs = append(errs, fmt.Sprintf(
+				"world %q: declares neither `select:` nor `overrides:` — every entity whose type "+
+					"declares faces would resolve through `otherwise:` alone, which is a world "+
+					"that shows nothing. Name the state(s) this world selects",
+				worldName))
+		}
+		if !world.Otherwise.IsValid() {
+			errs = append(errs, fmt.Sprintf(
+				"world %q: `otherwise:` is required and must be %q or %q (got %q) — it decides what "+
+					"happens to an entity whose type declares faces the world does not select, and "+
+					"defaulting it silently is how a published world ends up showing a draft",
+				worldName, OtherwiseExclude, OtherwiseDefault, string(world.Otherwise)))
+		}
+		errs = append(errs, validateWorldChains(m, worldName, world)...)
+		errs = append(errs, validateWorldEdits(m, worldName, world)...)
+		errs = append(errs, validateWorldPrimaryFor(m, worldName, world)...)
+	}
+	errs = append(errs, validateFacePrimacy(m)...)
+	return errs
+}
+
+// validateWorldPrimaryFor checks that every face a world claims in
+// `primary_for:` is one this world actually HEADS (TKT-MFVH03).
+//
+// The key may only CONFIRM the compiled chains, never contradict them. A world
+// declaring itself primary for a face it does not lead would make the
+// face-switcher navigate somewhere the face is not primary — the affordance
+// that lies. Refusing at load is the same discipline `edits:` and the chain
+// names already get: a resolution mistake is not something to discover from a
+// wrong-looking page.
+func validateWorldPrimaryFor(m *Metamodel, worldName string, world WorldDef) []string {
+	var errs []string
+	for _, face := range world.PrimaryFor {
+		if headsFaceForSomeType(m, world, face) {
+			continue
+		}
+		errs = append(errs, fmt.Sprintf(
+			"world %q: `primary_for: %s` names a face this world does not head — "+
+				"`primary_for:` breaks a tie between worlds that ALREADY lead a face, "+
+				"it cannot make a world primary for one it only falls back to. "+
+				"Put %q at the front of `select:` (or of the type's `overrides:` chain) "+
+				"if this world should serve it",
+			worldName, face, face))
+	}
+	return errs
+}
+
+// headsFaceForSomeType reports whether world leads with face for at least one
+// entity type — its own `select:` chain, or any per-type `overrides:` chain.
+//
+// "For SOME type" rather than "for every type" because `overrides:` makes
+// headship per (type, face): a world may head `en` for `guide` via an override
+// while its `select:` leads with something else entirely. Claiming primacy is
+// legitimate as long as there is a type the claim is true for.
+func headsFaceForSomeType(_ *Metamodel, world WorldDef, face string) bool {
+	if len(world.Select) > 0 && world.Select[0] == face {
+		return true
+	}
+	for _, chain := range world.Overrides {
+		if len(chain) > 0 && chain[0] == face {
+			return true
+		}
+	}
+	return false
+}
+
+// sortedPrimacyKeys orders the (entityType, face) pairs so a schema with more
+// than one ambiguity reports them in a stable order — a load error that
+// reshuffles between runs is one an operator cannot diff.
+func sortedPrimacyKeys[V any](m map[primacyKey]V) []primacyKey {
+	out := make([]primacyKey, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].entityType != out[j].entityType {
+			return out[i].entityType < out[j].entityType
+		}
+		if out[i].face != out[j].face {
+			return out[i].face < out[j].face
+		}
+		return out[i].otherwise < out[j].otherwise
+	})
+	return out
+}
+
+// primacyKey identifies one (entity type, face, otherwise) triple — the
+// granularity at which headship is decided. Per type because `overrides:` makes
+// the answer per type; per `otherwise:` because two worlds leading the same
+// face but resolving its absence differently are distinguishable, and only
+// indistinguishable worlds are ambiguous.
+type primacyKey struct{ entityType, face, otherwise string }
+
+// validateFacePrimacy rejects an UNDECLARED tie between worlds that are
+// INDISTINGUISHABLE for a face (TKT-MFVH03).
+//
+// Without this the face-switcher answered "which world serves this face" by map
+// iteration order — insertion order, a property of how the config serialized
+// rather than of what the operator meant, and liable to change when an
+// unrelated world was added or renamed. That is the same silent key-order
+// failure `bare_face:` was introduced to remove on the face side.
+//
+// # What counts as a tie, and what deliberately does not
+//
+// Sharing a chain HEAD is not enough. Two worlds routinely lead the same face
+// and differ in `otherwise:`, and that pair is meaningful rather than
+// ambiguous: the prototype's `published` (otherwise: exclude — absence is the
+// publication bit) and a lenient sibling (otherwise: default — substitute
+// instead of vanishing) select the same face and answer a DIFFERENT question
+// about the entities that lack it. Rejecting those would fail working schemas
+// for a question the operator has already answered.
+//
+// A tie is therefore two worlds that lead the same face for a type AND resolve
+// it identically — same head, same `otherwise:`. Those two genuinely serve the
+// reader the same thing, so "which one does the face-switch mean" has no
+// answer in the chains, and the operator has to say.
+//
+// Failing the LOAD rather than picking is deliberate and matches the rest of
+// this file: a schema whose resolution is ambiguous is a schema whose author
+// has not yet decided, and the decision is cheap to write down.
+func validateFacePrimacy(m *Metamodel) []string {
+	// (entityType, face) -> worlds heading it, in sorted order for a stable
+	// message.
+	heads := map[primacyKey][]string{}
+	claimed := map[primacyKey][]string{}
+
+	for _, worldName := range sortedKeys(m.Worlds) {
+		world := m.Worlds[worldName]
+		for _, typeName := range sortedKeys(m.Entities) {
+			chain := world.Select
+			if o, ok := world.Overrides[typeName]; ok {
+				chain = o
+			}
+			if len(chain) == 0 {
+				continue
+			}
+			// Only a type that DECLARES the face can be served it, so a
+			// world's chain head is irrelevant to types that never have it.
+			def := m.Entities[typeName]
+			if _, declared := def.Faces[chain[0]]; !declared {
+				continue
+			}
+			// Keyed by the RESOLUTION, not just the head: two worlds leading
+			// the same face with different `otherwise:` answer different
+			// questions and are not interchangeable.
+			k := primacyKey{typeName, chain[0], string(world.Otherwise)}
+			heads[k] = append(heads[k], worldName)
+			for _, claim := range world.PrimaryFor {
+				if claim == chain[0] {
+					claimed[k] = append(claimed[k], worldName)
+				}
+			}
+		}
+	}
+
+	var errs []string
+	for _, k := range sortedPrimacyKeys(heads) {
+		worlds := heads[k]
+		if len(worlds) < 2 {
+			continue
+		}
+		switch len(claimed[k]) {
+		case 1:
+			// Exactly one world claimed it: the tie is resolved.
+		case 0:
+			errs = append(errs, fmt.Sprintf(
+				"entity %q: worlds %s all lead with face %q, so which one serves it is ambiguous. "+
+					"Add `primary_for: [%s]` to the world that should own the face-switch to it",
+				k.entityType, strings.Join(worlds, ", "), k.face, k.face))
+		default:
+			errs = append(errs, fmt.Sprintf(
+				"entity %q: worlds %s each claim `primary_for: %s`, but a face has one canonical "+
+					"home — remove the claim from all but one",
+				k.entityType, strings.Join(claimed[k], ", "), k.face))
+		}
+	}
+	return errs
+}
+
+// validateWorldChains checks that every coordinate a world selects — in
+// its global chain or a per-type override — is declared by the types it
+// can apply to, and that override keys name real entity types.
+//
+// A world's global `select` naming a coordinate some types do not declare
+// is NORMAL, not an error: that is resolution rule 3, which `otherwise:`
+// exists to answer. The error is a chain no type at all could satisfy
+// (certainly a typo), and an OVERRIDE naming a coordinate its own type
+// does not declare (unambiguously a mistake — the override names one type).
+func validateWorldChains(m *Metamodel, worldName string, world WorldDef) []string {
+	var errs []string
+	for _, ptr := range world.Select {
+		if !anyTypeDeclaresFace(m, ptr) {
+			errs = append(errs, fmt.Sprintf(
+				"world %q: `select:` names face %q, which no entity type declares",
+				worldName, ptr))
+		}
+	}
+	for _, typeName := range sortedKeys(world.Overrides) {
+		def, ok := m.Entities[typeName]
+		if !ok {
+			errs = append(errs, fmt.Sprintf(
+				"world %q: `overrides:` names unknown entity type %q", worldName, typeName))
+			continue
+		}
+		if len(def.Faces) == 0 {
+			errs = append(errs, fmt.Sprintf(
+				"world %q: `overrides:` names entity type %q, which declares no faces — "+
+					"a type without content states contributes its only state to every world, "+
+					"so there is nothing to override",
+				worldName, typeName))
+			continue
+		}
+		if len(world.Overrides[typeName]) == 0 {
+			errs = append(errs, fmt.Sprintf(
+				"world %q: `overrides:` gives entity type %q an empty chain — that resolves every "+
+					"%s through `otherwise:` alone. Name the state(s), or drop the override to let "+
+					"the world's `select:` apply",
+				worldName, typeName, typeName))
+			continue
+		}
+		for _, ptr := range world.Overrides[typeName] {
+			if _, declared := def.Faces[ptr]; !declared {
+				errs = append(errs, fmt.Sprintf(
+					"world %q: `overrides:` selects face %q for entity type %q, which declares "+
+						"only: %s",
+					worldName, ptr, typeName, strings.Join(sortedKeys(def.Faces), ", ")))
+			}
+		}
+	}
+	return errs
+}
+
+// validateWorldEdits checks the `edits:` target names a declared face.
+//
+// Step 2 does not USE this field — the copy kernel is Step 4 — but it is
+// validated now so a typo surfaces against the schema that introduced it
+// rather than a release later.
+func validateWorldEdits(m *Metamodel, worldName string, world WorldDef) []string {
+	if world.Edits == "" {
+		return nil
+	}
+	if anyTypeDeclaresFace(m, world.Edits) {
+		return nil
+	}
+	return []string{fmt.Sprintf(
+		"world %q: `edits:` names face %q, which no entity type declares",
+		worldName, world.Edits)}
+}
+
+// anyTypeDeclaresFace reports whether any entity type declares ptr.
+func anyTypeDeclaresFace(m *Metamodel, ptr string) bool {
+	for _, def := range m.Entities {
+		if _, ok := def.Faces[ptr]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // sortedKeys returns the keys of a map sorted alphabetically.
@@ -1074,4 +1457,131 @@ relations:
 #       - "rationale!="
 #     severity: warning
 `
+}
+
+// validateValidationFaces checks that every face named in a rule's `faces:`
+// scope is one the target type declares (TKT-4Y6CMV).
+//
+// A load error rather than a silent no-match, for the same reason an
+// unparseable `when:` is: a rule scoped to a face that does not exist matches
+// nothing, so it passes forever while appearing to guard something. That is
+// the worst failure mode a validator has — a check that reports success over
+// data it never looked at.
+//
+// A rule with no `entity_type:` applies to every type, and types legitimately
+// declare different faces, so the scope is satisfied if ANY type declares the
+// name. Only a name no type declares is rejected.
+func validateValidationFaces(m *Metamodel) []string {
+	var errs []string
+	for _, rule := range m.Validations {
+		if len(rule.Faces) == 0 {
+			continue
+		}
+		for _, face := range rule.Faces {
+			if rule.EntityType != "" {
+				def, ok := m.Entities[rule.EntityType]
+				if !ok {
+					continue // the unknown-type error is reported elsewhere
+				}
+				if _, declared := def.Faces[face]; !declared {
+					// A type with NO faces gets its own message. The general
+					// one would end in "(declares: )", which reads like a bug
+					// in the error rather than the actual situation: the key
+					// does not apply to this type at all.
+					if len(def.Faces) == 0 {
+						errs = append(errs, fmt.Sprintf(
+							"validation %q: `faces: [%s]` but entity %q declares no `faces:` — "+
+								"a type with one content state needs no scope; drop the key, "+
+								"or declare the states on the type",
+							rule.Name, face, rule.EntityType))
+						continue
+					}
+					errs = append(errs, fmt.Sprintf(
+						"validation %q: `faces: [%s]` names no declared face of entity %q "+
+							"(declares: %s) — the rule would match nothing and pass forever",
+						rule.Name, face, rule.EntityType,
+						strings.Join(sortedKeys(def.Faces), ", ")))
+				}
+				continue
+			}
+			if !anyTypeDeclaresFace(m, face) {
+				errs = append(errs, fmt.Sprintf(
+					"validation %q: `faces: [%s]` names a face no entity type declares — "+
+						"the rule would match nothing and pass forever", rule.Name, face))
+			}
+		}
+	}
+	return errs
+}
+
+// validateAutomationFaces checks that every face named in an automation's
+// `on.faces:` scope is one the triggering type declares (TKT-4Y6CMV).
+//
+// A load error rather than a silent no-match, matching the rest of the
+// automation loader: an unparseable `when:` and an uncompilable `condition:`
+// are both load errors, because dropping a constraint widens the automation and
+// a scope that matches nothing narrows it to nothing. Either way the operator
+// wrote something that does not mean what it says.
+func validateAutomationFaces(m *Metamodel) []string {
+	var errs []string
+	for _, auto := range m.Automations {
+		if len(auto.On.Faces) == 0 {
+			continue
+		}
+		for _, face := range auto.On.Faces {
+			// `entity:` may name several types; the scope is satisfied if any
+			// of them declares the face, for the same reason a validation
+			// rule's is.
+			if len(auto.On.Entity) > 0 {
+				if !anyNamedTypeDeclaresFace(m, []string(auto.On.Entity), face) {
+					// Distinguish "wrong name" from "this type has no states",
+					// which need different fixes: correct the spelling versus
+					// drop the key.
+					if !anyNamedTypeHasFaces(m, []string(auto.On.Entity)) {
+						errs = append(errs, fmt.Sprintf(
+							"automation %q: `on.faces: [%s]` but %s declares no `faces:` — "+
+								"a type with one content state needs no scope; drop the key, "+
+								"or declare the states on the type",
+							auto.Name, face, strings.Join([]string(auto.On.Entity), ", ")))
+						continue
+					}
+					errs = append(errs, fmt.Sprintf(
+						"automation %q: `on.faces: [%s]` names no declared face of %s — "+
+							"the trigger would never fire",
+						auto.Name, face, strings.Join([]string(auto.On.Entity), ", ")))
+				}
+				continue
+			}
+			if !anyTypeDeclaresFace(m, face) {
+				errs = append(errs, fmt.Sprintf(
+					"automation %q: `on.faces: [%s]` names a face no entity type declares — "+
+						"the trigger would never fire", auto.Name, face))
+			}
+		}
+	}
+	return errs
+}
+
+// anyNamedTypeDeclaresFace reports whether any of the named types declares face.
+func anyNamedTypeDeclaresFace(m *Metamodel, types []string, face string) bool {
+	for _, t := range types {
+		if def, ok := m.Entities[t]; ok {
+			if _, declared := def.Faces[face]; declared {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// anyNamedTypeHasFaces reports whether any of the named types declares content
+// states at all — the difference between a misspelled face and a scope on a
+// type that has none.
+func anyNamedTypeHasFaces(m *Metamodel, types []string) bool {
+	for _, t := range types {
+		if def, ok := m.Entities[t]; ok && len(def.Faces) > 0 {
+			return true
+		}
+	}
+	return false
 }

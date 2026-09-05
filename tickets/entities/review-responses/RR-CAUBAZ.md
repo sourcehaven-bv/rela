@@ -62,7 +62,7 @@ func TestAuthorizeCommandUnknownACLDenies(t *testing.T) {
 	// a distinct dynamic type — it must not fall through to fail-open.
 	if authorizeCommand(context.Background(), &acl.ReadOnlyACL{},
 		CommandConfig{Context: "global"}) {
-		t.Error("pointer ReadOnlyACL must deny")
+		t.Error("face ReadOnlyACL must deny")
 	}
 }
 ```

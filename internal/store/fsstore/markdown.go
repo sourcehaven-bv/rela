@@ -211,9 +211,23 @@ type mdCodec struct {
 
 // readEntityFile reads and parses an entity from a markdown file key.
 //
-// id and entityType are caller-supplied (the caller already knows them
-// from the index); they are used to populate the resulting entity if the
-// file is git-crypt encrypted and its frontmatter cannot be read.
+// # The FILENAME is the identity, not the frontmatter
+//
+// id and entityType are caller-supplied, derived from the index — which parsed
+// them from the filename stem via [entity.ParseStateRef]. They win over any
+// `id:`/`type:` in the frontmatter.
+//
+// This used to be the other way round, and the frontmatter's values became the
+// entity's. A hand-edited or stale `id:` then produced a row whose identity
+// disagreed with the index that found it: listed under the frontmatter id,
+// unreachable by it (every lookup goes through the index), and rejected by
+// every write with an opaque "not found". Nothing detected it — not even
+// `rela analyze states`, whose job it is.
+//
+// The frontmatter keys stay WRITTEN, because a file that names itself is worth
+// having when you are reading one in isolation or in a diff, and the git-crypt
+// fallback below needs an identity when the body cannot be parsed at all. They
+// are documentation of the filename, not a second source of truth.
 func (c mdCodec) readEntityFile(key, id, entityType string) (*entity.Entity, error) {
 	data, err := c.readDataFile(key)
 	if err != nil {
@@ -229,10 +243,8 @@ func (c mdCodec) readEntityFile(key, id, entityType string) (*entity.Entity, err
 		return nil, err
 	}
 
-	docID := doc.getString("id")
-	docType := doc.getString("type")
-
-	e := entity.New(docID, docType)
+	// Deliberately NOT doc.getString("id")/("type") — see the doc comment.
+	e := entity.New(id, entityType)
 	e.Content = doc.content
 
 	if info, err := c.rooted.Stat(key); err == nil {
@@ -297,9 +309,12 @@ func formatEntity(e *entity.Entity, propertyOrder []string) (string, error) {
 	return formatDocumentOrdered(fm, content, keyOrder)
 }
 
-// writeEntityFile writes an entity to a markdown file using temp-file + rename.
+// writeEntityFile writes an entity to a markdown file using temp-file +
+// rename. The filename stem is the state key ("id" or "id@face");
+// the face lives ONLY in the filename — entity frontmatter carries
+// no face key, so there is a single source of truth (TKT-DOFYR1).
 func (c mdCodec) writeEntityFile(e *entity.Entity) error {
-	key := c.layout.entityFileKey(e.Type, e.ID)
+	key := c.layout.entityFileKey(e.Type, stateKey(e.ID, e.Face))
 	order := c.layout.propertyOrder(e.Type)
 	content, err := formatEntity(e, order)
 	if err != nil {
@@ -335,6 +350,12 @@ func (c mdCodec) readRelationFile(key, from, relType, to string) (*entity.Relati
 		doc.getString("relation"),
 		doc.getString("to"),
 	)
+	// from_face frontmatter is WRITE-ONLY human documentation: the
+	// filename (and hence the index meta, stamped by loadRelationMeta)
+	// is the single authority for the tail face, mirroring entities
+	// where the face lives only in the filename. Parsing it here
+	// would create a second source of truth that a hand-edit could
+	// desynchronize (TKT-DOFYR1 review).
 	r.Content = doc.content
 
 	if info, err := c.rooted.Stat(key); err == nil {
@@ -372,15 +393,21 @@ func (c mdCodec) buildInaccessibleRelation(
 }
 
 // formatRelation formats a relation as markdown with YAML frontmatter.
+// from_face is written only for a non-default tail (TKT-DOFYR1): the
+// key never appears for faceless projects, and the codec never emits
+// an empty face.
 func formatRelation(r *entity.Relation) (string, error) {
 	fm := map[string]any{
 		"from":     r.From,
 		"relation": r.Type,
 		"to":       r.To,
 	}
+	if !r.FromFace.IsDefault() {
+		fm["from_face"] = string(r.FromFace)
+	}
 	maps.Copy(fm, r.Properties)
 
-	keyOrder := []string{"from", "relation", "to"}
+	keyOrder := []string{"from", "from_face", "relation", "to"}
 
 	content := r.Content
 	if content != "" {
@@ -390,9 +417,12 @@ func formatRelation(r *entity.Relation) (string, error) {
 	return formatDocumentOrdered(fm, content, keyOrder)
 }
 
-// writeRelationFile writes a relation to a markdown file using temp-file + rename.
+// writeRelationFile writes a relation to a markdown file using temp-file +
+// rename. The FROM slot of the filename carries the tail face.
 func (c mdCodec) writeRelationFile(r *entity.Relation) error {
-	key := c.layout.relationFileKey(r.From, r.Type, r.To)
+	key := c.layout.relationFileKeyMeta(relationMeta{
+		From: r.From, Type: r.Type, To: r.To, FromFace: r.FromFace,
+	})
 	content, err := formatRelation(r)
 	if err != nil {
 		return err

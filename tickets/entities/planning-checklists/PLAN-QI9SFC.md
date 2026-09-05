@@ -56,7 +56,7 @@ external doc and the docs-project guide.
 
 ## Research
 
-- [x] ~~For larger features: run `/research` to create a structured research doc~~ (N/A: approach fixed by `.ignored/pointer-design.md` §12.1 and its review pass; alternatives — refusal vs warning, predicate placement — were evaluated there and in the ticket text)
+- [x] ~~For larger features: run `/research` to create a structured research doc~~ (N/A: approach fixed by `.ignored/face-design.md` §12.1 and its review pass; alternatives — refusal vs warning, predicate placement — were evaluated there and in the ticket text)
 - [x] ~~Searched for existing libraries that solve this problem~~ (N/A: internal refactor + logging, no library surface)
 - [x] Checked codebase for similar patterns or reusable code
 - [x] ~~Looked for reference implementations in other projects~~ (N/A: project-internal predicate extraction)

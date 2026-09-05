@@ -78,8 +78,59 @@ function emitEditorFont(): Plugin {
   }
 }
 
+// emitEditorCSS concatenates the editor's stylesheets into a single
+// rela-editor.css asset, which rela serves at the app-relative reserved path
+// _rela-editor.css.
+//
+// The CSS is a separate file rather than a string inlined into the IIFE because
+// the app CSP has no 'unsafe-inline': a <style> element injected at runtime is
+// blocked outright (element in the DOM, .sheet null, editor completely
+// unstyled), whereas a <link> is an ordinary resource load the path-scoped
+// style-src permits.
+//
+// Order is load-bearing and must match the old concatenation: FA base, then the
+// font-face override (points FA's glyph font at _rela-editor.woff2), then
+// EasyMDE's own CSS, then the rela theme LAST so it wins.
+function emitEditorCSS(): Plugin {
+  return {
+    name: 'emit-editor-css',
+    async generateBundle() {
+      const { createRequire } = await import('node:module')
+      const require = createRequire(import.meta.url)
+      const { readFile } = await import('node:fs/promises')
+
+      const resolvePkg = (spec: string, what: string): string => {
+        try {
+          return require.resolve(spec)
+        } catch {
+          throw new Error(`emit-editor-css: could not resolve ${what} (${spec}) — is the dependency installed?`)
+        }
+      }
+
+      const parts = await Promise.all([
+        readFile(resolvePkg('font-awesome/css/font-awesome.min.css', 'Font Awesome CSS'), 'utf8'),
+        readFile(fileURLToPath(new URL('./src/app-editor/relaEditorFont.css', import.meta.url)), 'utf8'),
+        readFile(resolvePkg('easymde/dist/easymde.min.css', 'EasyMDE CSS'), 'utf8'),
+        readFile(fileURLToPath(new URL('./src/app-editor/relaEditorTheme.css', import.meta.url)), 'utf8'),
+      ])
+
+      // The bundled FA CSS ships @font-face rules pointing at paths that do not
+      // exist under the app base; stripFontAwesomeFontFace drops them from the
+      // JS build, and relaEditorFont.css re-adds the one we serve. Apply the
+      // same strip here so the emitted file agrees with the bundle.
+      const fa = parts[0].replace(/@font-face\s*\{[^}]*\}/g, '')
+
+      this.emitFile({
+        type: 'asset',
+        fileName: 'rela-editor.css',
+        source: [fa, parts[1], parts[2], parts[3]].join('\n'),
+      })
+    },
+  }
+}
+
 export default defineConfig({
-  plugins: [stripFontAwesomeFontFace(), emitEditorFont()],
+  plugins: [stripFontAwesomeFontFace(), emitEditorFont(), emitEditorCSS()],
   // No public/ asset copying — this is a standalone lib build, not the SPA.
   publicDir: false,
   define: {

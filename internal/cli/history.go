@@ -61,6 +61,18 @@ func (c *HistoryCmd) printTimeline(ctx context.Context, reader store.HistoryRead
 		if m.TriggeredBy != "" {
 			line += "  [" + m.TriggeredBy + "]"
 		}
+		// A version with NO origin is a direct edit, and prints nothing extra:
+		// the principal already on the line says who typed it. Only a
+		// mechanism-produced write earns a marker.
+		if m.Origin.Kind != "" {
+			line += "  " + string(m.Origin.Kind)
+			if src := m.Origin.SourceLabel(); src != "" {
+				line += " from " + src
+			}
+			if m.Origin.Definition != "" {
+				line += " (" + m.Origin.Definition + ")"
+			}
+		}
 		out.WriteInfo("%s", line)
 	}
 	return nil
@@ -86,7 +98,27 @@ func (c *HistoryCmd) printSnapshot(ctx context.Context, reader store.HistoryRead
 		"content":    snap.Content,
 		"properties": snap.Properties,
 	}
+	if o := originPayload(snap.Origin); o != nil {
+		payload["origin"] = o
+	}
 	enc := json.NewEncoder(out.Out)
 	enc.SetIndent("", "  ")
 	return enc.Encode(payload)
+}
+
+// originPayload renders a version's provenance for the JSON snapshot, or nil
+// for a direct edit — an OMITTED key, not a null or an "origin": "manual"
+// placeholder, so the absence carries the meaning (see store.Origin).
+func originPayload(o store.Origin) map[string]string {
+	if o.IsZero() {
+		return nil
+	}
+	m := map[string]string{"kind": string(o.Kind)}
+	if src := o.SourceLabel(); src != "" {
+		m["source"] = src
+	}
+	if o.Definition != "" {
+		m["definition"] = o.Definition
+	}
+	return m
 }

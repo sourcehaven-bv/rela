@@ -31,10 +31,10 @@ import (
 // unsupportable. A manual that says "refused because the role lacks the grant"
 // can assert `because=` and will fail if the deny starts coming from somewhere
 // else — a deny for an unintended reason is a passing test hiding a broken one.
-func (dr *docRuntime) luaRefuses(ls *lua.LState) int { return dr.luaAuthz(ls, false) }
-func (dr *docRuntime) luaPermits(ls *lua.LState) int { return dr.luaAuthz(ls, true) }
+func (a *aclBindings) luaRefuses(ls *lua.LState) int { return a.luaAuthz(ls, false) }
+func (a *aclBindings) luaPermits(ls *lua.LState) int { return a.luaAuthz(ls, true) }
 
-func (dr *docRuntime) luaAuthz(ls *lua.LState, wantAllow bool) int {
+func (a *aclBindings) luaAuthz(ls *lua.LState, wantAllow bool) int {
 	verb := "refuses"
 	if wantAllow {
 		verb = "permits"
@@ -42,12 +42,13 @@ func (dr *docRuntime) luaAuthz(ls *lua.LState, wantAllow bool) int {
 
 	tbl := argTable(ls)
 	if tbl == nil {
-		return dr.luaFail(ls, `%s: expects a table, e.g. %s{who="auditor", op="update", type="policy"}`, verb, verb)
+		return a.luaFail(ls, `%s: expects a table, e.g. %s{who="auditor", op="update", type="policy"}`, verb, verb)
 	}
 
-	if rejectUnknownKeys(dr, ls, verb, tbl, "who", "op", "type", "id", "because", "unassigned") {
+	if rejectUnknownKeys(a, ls, verb, tbl, "who", "op", "type", "id", "because", "unassigned", "emit") {
 		return 0
 	}
+	show := fieldBoolDefault(ls, tbl, "emit", true)
 
 	who := fieldString(ls, tbl, "who")
 	op := fieldString(ls, tbl, "op")
@@ -57,18 +58,18 @@ func (dr *docRuntime) luaAuthz(ls *lua.LState, wantAllow bool) int {
 	unassigned := fieldBool(ls, tbl, "unassigned")
 
 	if who == "" || op == "" || typ == "" {
-		return dr.luaFail(ls, "%s: `who`, `op` and `type` are all required "+
+		return a.luaFail(ls, "%s: `who`, `op` and `type` are all required "+
 			"(got who=%q op=%q type=%q) — an authorization claim is meaningless "+
 			"without all three", verb, who, op, typ)
 	}
 	// Same reasoning as shows{}: an authorization claim about a type that does
 	// not exist tells you nothing about the policy.
-	if _, ok := dr.meta.Entities[typ]; !ok {
-		return dr.luaFail(ls, "%s{type=%q}: no such entity type in the schema. Declared types: %s",
-			verb, typ, strings.Join(declaredTypes(dr), ", "))
+	if _, ok := a.meta.Entities[typ]; !ok {
+		return a.luaFail(ls, "%s{type=%q}: no such entity type in the schema. Declared types: %s",
+			verb, typ, strings.Join(declaredTypes(a.meta), ", "))
 	}
 	if !validOp(op) {
-		return dr.luaFail(ls, "%s{op=%q}: unknown op — one of create, update, delete, rename", verb, op)
+		return a.luaFail(ls, "%s{op=%q}: unknown op — one of create, update, delete, rename", verb, op)
 	}
 	// A principal with no assignment has no grants, so it is refused BY
 	// CONSTRUCTION — which makes every refuses{} with a misspelled `who` green
@@ -79,45 +80,81 @@ func (dr *docRuntime) luaAuthz(ls *lua.LState, wantAllow bool) int {
 	// (there is no self-service sign-up), so it stays available — but it must
 	// be stated, because an intended unassigned principal and a typo are
 	// otherwise byte-identical to a reviewer.
-	if dr.policy != nil && !unassigned {
-		if _, ok := dr.policy.Assignments[who]; !ok {
-			return dr.luaFail(ls, "%s{who=%q}: no such principal in acl.yaml's assignments. "+
+	if a.policy != nil && !unassigned {
+		if _, ok := a.policy.Assignments[who]; !ok {
+			return a.luaFail(ls, "%s{who=%q}: no such principal in acl.yaml's assignments. "+
 				"An unassigned principal has no grants, so this claim would pass no matter "+
 				"what the policy said. Fix the spelling, or write unassigned=true if the "+
 				"point IS that this principal has no role. Assigned: %s",
-				verb, who, strings.Join(sortedAssignments(dr.policy.Assignments), ", "))
+				verb, who, strings.Join(sortedAssignments(a.policy.Assignments), ", "))
 		}
 	}
-	if unassigned && dr.policy != nil {
-		if role, ok := dr.policy.Assignments[who]; ok {
-			return dr.luaFail(ls, "%s{who=%q, unassigned=true}: that principal IS assigned "+
+	if unassigned && a.policy != nil {
+		if role, ok := a.policy.Assignments[who]; ok {
+			return a.luaFail(ls, "%s{who=%q, unassigned=true}: that principal IS assigned "+
 				"(role %q), so the claim describes the wrong thing", verb, who, role)
 		}
 	}
 
-	if dr.policy == nil {
-		return dr.luaFail(ls, "%s: the project has no acl.yaml, so there is no policy to assert "+
+	if a.policy == nil {
+		return a.luaFail(ls, "%s: the project has no acl.yaml, so there is no policy to assert "+
 			"against. Remove the claim, or document a project that has one", verb)
 	}
 
 	// The seeded memstore is both the graph (for role-relation membership) and
 	// the query backend, so a manual can seed the very edge that confers a role
 	// and then assert what it grants.
-	d, err := acl.NewDeclarative(dr.policy, acl.NewStoreGraph(dr.store), dr.store)
+	d, err := acl.NewDeclarative(a.policy, acl.NewStoreGraph(a.store), a.store)
 	if err != nil {
-		return dr.luaFail(ls, "%s: building the evaluator failed: %v", verb, err)
+		return a.luaFail(ls, "%s: building the evaluator failed: %v", verb, err)
 	}
 
-	ctx := principal.With(dr.ctx, principal.Principal{User: who, Tool: principal.ToolCLI})
+	ctx := principal.With(a.ctx, principal.Principal{User: who, Tool: principal.ToolCLI})
 	dec := d.AuthorizeWrite(ctx, acl.WriteRequest{
 		Op:      acl.Op(op),
 		Subject: acl.EntitySubject{Type: typ, ID: id},
 	})
 
 	if msg := checkAuthz(verb, who, op, typ, wantAllow, because, dec); msg != "" {
-		return dr.luaFail(ls, "%s", msg)
+		return a.luaFail(ls, "%s", msg)
 	}
+
+	emitEvidence(a.emit, show, authzEvidence(a, who, op, typ, wantAllow, dec))
 	return 0
+}
+
+// authzEvidence states an authorization outcome in the reader's terms.
+//
+// It names the ROLE, not only the principal. "raj@example.com is refused" tells
+// an auditor nothing they can generalize; "raj@example.com (reader) is refused"
+// says the rule is about the role, which is what the policy actually encodes
+// and what the reader must check against their own org.
+//
+// The rule id is rendered when the decision carries one, because "refused" and
+// "refused for the reason the manual intended" are different facts, and an
+// auditor signing off a control needs the second.
+func authzEvidence(a *aclBindings, who, op, typ string, wantAllow bool, dec acl.Decision) evidence {
+	outcome := "is **refused**"
+	if wantAllow {
+		outcome = "**may**"
+	}
+	role := "no role"
+	if a.policy != nil {
+		if r, ok := a.policy.Assignments[who]; ok {
+			role = fmt.Sprintf("role `%s`", r)
+		}
+	}
+	ev := evidence{
+		claim: fmt.Sprintf("`%s` (%s) %s `%s` a `%s`.", who, role, outcome, op, typ),
+	}
+	// The rule is named only when it identifies something. A Decision may carry
+	// a kind with no id (a role-grant deny is "the role simply lacks it", with
+	// no specific rule to point at), and "role-grant/-" is noise rather than
+	// provenance — it invites a reader to go looking for a rule named "-".
+	if !wantAllow && dec.RuleKind != "" && dec.RuleID != "" {
+		ev.note = fmt.Sprintf("Decided by `%s/%s`.", dec.RuleKind, dec.RuleID)
+	}
+	return ev
 }
 
 // checkAuthz is the pure claim-vs-decision comparison, split out so the failure

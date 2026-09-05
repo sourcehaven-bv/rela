@@ -262,7 +262,7 @@ func relationSubject(r *entity.Relation) *audit.Subject {
 // a scheduler's `schedule:<task>` on rows an automation cascaded underneath it.
 //
 // One emitter for both entity and relation subjects — the Subject
-// pointer carries the shape; the rest of the Record envelope is
+// face carries the shape; the rest of the Record envelope is
 // identical.
 func (h *cascadeHost) recordCascade(
 	ctx context.Context, op string, subject *audit.Subject, summary string,

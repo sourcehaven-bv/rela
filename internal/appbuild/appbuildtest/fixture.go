@@ -182,6 +182,13 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 		ACL:         aclImpl,
 		Automations: autoEngine,
 		Cascade:     cascadeRunner,
+		// NOTE: this Deps literal is a HAND-COPY of buildEntityManager's, not a
+		// call to it, so the two drift silently — a dep added there and not
+		// here leaves every test using this fixture running against a
+		// capability real deployments have. That is how the Copy* deps came to
+		// be unwired in BOTH places at once (TKT-WRLDAPI item 5). If you add a
+		// dep to buildEntityManager, add it here too.
+		//
 		// Mirrors the production wiring in appbuild.assemble: elevated reads
 		// are granted here so an integration test exercises the same
 		// capability set a real deployment has (TKT-ACSBSA). Still inert
@@ -196,6 +203,15 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 		FieldGate:       entitymanager.AllowAllFieldGate{},
 		TransitionGuard: tw.Guard,
 		TransitionGraph: tw.Graph,
+		// The copy deps (TKT-WRLDAPI item 5). CopyGuard reuses tw.Guard for
+		// the same reason production does: entitymanager.CopyGuard and
+		// statemachine.Guard are deliberately the same shape, so the two
+		// cannot drift into asking different questions.
+		//
+		// CopyReadGate / CopyVisibility are left nil here, which is the
+		// no-policy posture — this fixture's default ACL is NopACL and every
+		// other read it performs is raw too.
+		CopyGuard: tw.Guard,
 	})
 	if err != nil {
 		panic(fmt.Sprintf("appbuildtest.New: build entitymanager: %v", err))

@@ -135,7 +135,7 @@ func TestScriptReadSeam_PolicylessProjectStaysUnrestricted(t *testing.T) {
 	}
 	// The ungated path is spelled visibility.Unrestricted (TKT-1WV50C), not a
 	// bare a.store, so pin the CONTRACT — no gate, no redaction — rather than
-	// pointer identity with the store. Reads must pass straight through.
+	// face identity with the store. Reads must pass straight through.
 	if _, isUngated := reader.(*visibility.UnrestrictedReader); !isUngated {
 		t.Errorf("policy-less scriptReader should be the ungated reader, got %T", reader)
 	}

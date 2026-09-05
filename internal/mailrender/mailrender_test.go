@@ -204,7 +204,14 @@ func TestRender_KeepsInlineStyles(t *testing.T) {
 	})
 
 	require.Contains(t, html, `style="`, "no inline styles: CSS inlining did not run, or a sanitizer ran after it")
-	require.NotContains(t, html, "<style", "the <style> block should have been inlined away")
+
+	// Every INLINABLE rule must have been consumed. What legitimately remains
+	// in <style> is the @media block, which cannot be expressed as a style
+	// attribute (TKT-1GA2PG) — so assert that nothing survives OUTSIDE that
+	// block, rather than asserting the tag is gone, or this stops catching an
+	// inlining failure.
+	require.Empty(t, styleRulesOutsideMedia(t, html),
+		"an inlinable rule was left in <style>: CSS inlining did not run to completion")
 
 	// The accent color reaches the output, so the palette is genuinely wired
 	// through rather than the template merely carrying static markup.
@@ -218,28 +225,44 @@ func TestRender_KeepsInlineStyles(t *testing.T) {
 //
 // Byte-level assertions all passed; the table was present and correct in
 // structure. Only the visual check caught it.
+// It runs over ALL THREE places sanitized markdown lands, not just the section
+// body. The table styling is keyed on a `.prose` class that has to be applied
+// at each site by hand (TKT-1GA2PG), so a missing class on any one of them
+// unstyles every table there — and only the golden file would notice, which is
+// the artifact most likely to be regenerated on autopilot when it goes red.
 func TestRender_StylesMarkdownTables(t *testing.T) {
 	t.Parallel()
 
-	r := newRenderer(t, &mailrender.Options{})
-	html, _ := render(t, r, &mailrender.Message{
-		Subject:  "S",
-		Sections: []mailrender.Section{{Body: "| col a | col b |\n|---|---|\n| 1 | 2 |"}},
-	})
+	const table = "| col a | col b |\n|---|---|\n| 1 | 2 |"
 
-	// Every cell in a prose table carries padding, so headers cannot run
-	// together.
-	for _, frag := range []string{"<th style=", "<td style="} {
-		require.Contains(t, html, frag, "markdown table cells must be styled")
+	sites := map[string]mailrender.Message{
+		"section body": {Subject: "S", Sections: []mailrender.Section{{Body: table}}},
+		"intro":        {Subject: "S", Intro: table},
+		"footer":       {Subject: "S", Footer: table},
 	}
-	// Assert on the table itself. A bare "<td>" also appears inside the mso
-	// conditional comment, which is a literal string rather than a rendered
-	// cell, so a document-wide check would fail for the wrong reason.
-	idx := strings.Index(html, "<thead>")
-	require.GreaterOrEqual(t, idx, 0, "no table rendered at all")
-	body := html[idx:]
-	require.NotContains(t, body, "<th>", "an unstyled header cell means the rules did not match")
-	require.NotContains(t, body, "<td>", "an unstyled data cell means the rules did not match")
+
+	r := newRenderer(t, &mailrender.Options{})
+	for name, msg := range sites {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			html, _ := render(t, r, &msg)
+
+			// Every cell in a prose table carries padding, so headers cannot
+			// run together.
+			for _, frag := range []string{"<th style=", "<td style="} {
+				require.Contains(t, html, frag, "markdown table cells must be styled")
+			}
+			// Assert on the table itself. A bare "<td>" also appears inside the
+			// mso conditional comment, which is a literal string rather than a
+			// rendered cell, so a document-wide check would fail for the wrong
+			// reason.
+			idx := strings.Index(html, "<thead>")
+			require.GreaterOrEqual(t, idx, 0, "no table rendered at all")
+			body := html[idx:]
+			require.NotContains(t, body, "<th>", "an unstyled header cell means the rules did not match")
+			require.NotContains(t, body, "<td>", "an unstyled data cell means the rules did not match")
+		})
+	}
 }
 
 // TestRender_PreservesMSOConditionals covers AC 6b. Outlook's fallbacks live in
@@ -587,4 +610,244 @@ func checkGolden(t *testing.T, name string, got []byte) {
 			"regenerating — never regenerate just to make it green.\n"+
 			"To accept: UPDATE_GOLDEN=1 go test ./internal/mailrender -run TestRender_Golden", name)
 	}
+}
+
+// styleRulesOutsideMedia returns whatever CSS survives in the <style> block
+// after the @media at-rules are removed.
+//
+// douceur cannot inline an at-rule, so the dark-mode block legitimately remains
+// in <head>. Anything ELSE left behind means inlining did not run to completion,
+// which is the failure TestRender_KeepsInlineStyles exists to catch.
+func styleRulesOutsideMedia(t *testing.T, html string) string {
+	t.Helper()
+
+	start := strings.Index(html, "<style")
+	if start < 0 {
+		return ""
+	}
+	open := strings.Index(html[start:], ">")
+	end := strings.Index(html, "</style>")
+	if open < 0 || end < 0 {
+		t.Fatalf("malformed <style> block")
+	}
+	css := html[start+open+1 : end]
+
+	// Drop each @media block by walking its braces; the rules inside are
+	// nested, so a regexp would stop at the first closing brace.
+	var out strings.Builder
+	for {
+		at := strings.Index(css, "@media")
+		if at < 0 {
+			out.WriteString(css)
+			break
+		}
+		out.WriteString(css[:at])
+		rest := css[at:]
+		depth, i := 0, 0
+		for ; i < len(rest); i++ {
+			switch rest[i] {
+			case '{':
+				depth++
+			case '}':
+				depth--
+				if depth == 0 {
+					i++
+					goto done
+				}
+			}
+		}
+	done:
+		if i >= len(rest) {
+			break
+		}
+		css = rest[i:]
+	}
+	return strings.TrimSpace(out.String())
+}
+
+// TestRender_LangIsPerMessage is the regression guard for the design decision
+// in TKT-1GA2PG: language is CONTENT, so it lives on Message.
+//
+// The load-bearing case is the first one. A single Renderer is built once per
+// deployment from mail config, so if the language ever migrates onto Options,
+// every message an instance sends gets one language — and a Dutch digest and an
+// English one cannot both be right. Rendering twice from ONE renderer is what
+// makes that regression fail here instead of in someone's inbox.
+func TestRender_LangIsPerMessage(t *testing.T) {
+	t.Parallel()
+
+	r := newRenderer(t, &mailrender.Options{DefaultLang: "en"})
+
+	nl, _ := render(t, r, &mailrender.Message{Subject: "Agenda", Lang: "nl"})
+	en, _ := render(t, r, &mailrender.Message{Subject: "Digest", Lang: "en-GB"})
+
+	require.Contains(t, nl, `lang="nl"`)
+	require.Contains(t, en, `lang="en-GB"`)
+	require.NotContains(t, nl, `lang="en-GB"`, "one renderer must not force one language on every message")
+}
+
+// TestRender_LangFallsBackToDefault covers the resolution order and, in the
+// last case, that an absent language never becomes an EMPTY attribute — an
+// empty lang is a worse claim than a wrong one.
+func TestRender_LangFallsBackToDefault(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		defaultLang string
+		msgLang     string
+		want        string
+	}{
+		{"message wins", "en", "nl", `lang="nl"`},
+		{"falls back to operator default", "nl", "", `lang="nl"`},
+		{"falls back to en when nothing is set", "", "", `lang="en"`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newRenderer(t, &mailrender.Options{DefaultLang: tc.defaultLang})
+			html, _ := render(t, r, &mailrender.Message{Subject: "S", Lang: tc.msgLang})
+
+			require.Contains(t, html, tc.want)
+			require.NotContains(t, html, `lang=""`, "an empty lang attribute is never correct")
+		})
+	}
+}
+
+// TestRender_RejectsHostileLang covers the attribute-breakout case.
+//
+// A language tag is interpolated into markup, so it is validated and REJECTED
+// rather than escaped: escaping a malformed tag yields a well-formed document
+// that lies about its language, which is not an improvement.
+func TestRender_RejectsHostileLang(t *testing.T) {
+	t.Parallel()
+
+	bad := []string{
+		`en" onload="alert(1)`,
+		`<script>`,
+		"../../etc/passwd",
+		"en_US", // underscore is not a BCP-47 separator
+		strings.Repeat("a", 64),
+		"nl\nen",
+	}
+
+	r := newRenderer(t, &mailrender.Options{})
+	for _, tc := range bad {
+		t.Run(tc, func(t *testing.T) {
+			t.Parallel()
+			_, _, err := r.Render(&mailrender.Message{Subject: "S", Lang: tc})
+			require.Error(t, err, "hostile lang %q must be refused", tc)
+		})
+	}
+
+	// A bad operator default is refused at construction rather than at send,
+	// so a misconfigured deployment fails fast.
+	_, err := mailrender.New(&mailrender.Options{DefaultLang: `en" x="`})
+	require.Error(t, err)
+
+	for _, good := range []string{"en", "nl-NL", "zh-Hant-TW", "de"} {
+		_, _, err := r.Render(&mailrender.Message{Subject: "S", Lang: good})
+		require.NoError(t, err, "valid tag %q must be accepted", good)
+	}
+}
+
+// TestRender_FooterParagraphsAreSpaced covers a defect found in code review and
+// pre-dating this ticket: `.pad p` never reached the footer, because `.foot` is
+// a sibling cell rather than a descendant of `.pad`. A multi-paragraph footer
+// therefore rendered with its paragraphs jammed together.
+//
+// The `.prose` class introduced for table scoping is the natural fix — it marks
+// exactly the three places author markdown lands, so one `.prose p` rule spaces
+// all of them uniformly instead of `.pad` covering two and missing the third.
+func TestRender_FooterParagraphsAreSpaced(t *testing.T) {
+	t.Parallel()
+
+	r := newRenderer(t, &mailrender.Options{})
+	html, _ := render(t, r, &mailrender.Message{
+		Subject: "S",
+		Intro:   "intro one\n\nintro two",
+		Footer:  "footer one\n\nfooter two",
+	})
+
+	// A bare <p> means no rule matched. Every rendered paragraph must carry a
+	// margin, wherever in the document it landed.
+	require.NotContains(t, html, "<p>",
+		"an unstyled paragraph means .prose p did not reach every markdown site")
+	require.Equal(t, 4, strings.Count(html, `<p style="margin: 0 0 12px 0;">`),
+		"all four paragraphs (two intro, two footer) must be spaced")
+}
+
+// TestValidatePalette_RejectsUnknownKeys covers a diagnostic gap found in code
+// review: an unrecognized token passed validation and was then silently dropped
+// by colors().
+//
+// The failure mode is quiet and confusing rather than dangerous — the value is
+// still color-checked, so nothing unsafe reaches CSS. But an operator who typos
+// "--dark-card-color" for "--dark-card-bg" sees the default they explicitly
+// tried to override, with nothing anywhere to explain why. The token set is
+// closed and small, so naming the valid keys is free.
+func TestValidatePalette_RejectsUnknownKeys(t *testing.T) {
+	t.Parallel()
+
+	err := mailrender.ValidatePalette(map[string]string{"--dark-card-color": "#222222"})
+	require.Error(t, err, "an unknown token must not be silently ignored")
+	require.Contains(t, err.Error(), "not a known token")
+	require.Contains(t, err.Error(), "--dark-card-bg", "the error should name the valid keys")
+
+	// Every key the template actually reads must be accepted, or this check
+	// would reject a legitimate override.
+	for _, k := range []string{
+		"--accent-color", "--text-color", "--muted-color", "--bg-color",
+		"--card-bg", "--border-color", "--heading-color",
+		"--dark-accent-color", "--dark-text-color", "--dark-muted-color",
+		"--dark-bg-color", "--dark-card-bg", "--dark-border-color",
+		"--dark-heading-color",
+	} {
+		require.NoError(t, mailrender.ValidatePalette(map[string]string{k: "#123456"}),
+			"token %q is read by the template and must validate", k)
+	}
+}
+
+// TestRender_RaggedRowsMatchHeaderWidth covers a finding from code review: a
+// row with the wrong cell count was rendered as-is.
+//
+// The two directions are not symmetric, which is why they get different
+// treatment. A SHORT row leaves a blank in a grid that still lines up; a LONG
+// row widens itself past every other row and breaks the column alignment of the
+// whole table. So short rows are padded and long rows truncated — a caller that
+// hands over a mismatched row has a bug either way, but a misshapen table is a
+// worse way to find out than an empty cell.
+func TestRender_RaggedRowsMatchHeaderWidth(t *testing.T) {
+	t.Parallel()
+
+	r := newRenderer(t, &mailrender.Options{})
+	html, _ := render(t, r, &mailrender.Message{
+		Subject: "S",
+		Sections: []mailrender.Section{{
+			Columns: []string{"a", "b"},
+			Rows: [][]string{
+				{"short"},
+				{"just", "right"},
+				{"too", "many", "OVERFLOW"},
+				{},
+			},
+		}},
+	})
+
+	// Every body row carries exactly as many cells as there are columns.
+	// Matched on class="td", which is the data-cell class — the bar and gap
+	// spacer rows are also <tr><td>, and counting those would test the
+	// scaffolding rather than the rows.
+	rowRe := regexp.MustCompile(`<tr>((?:<td class="td"[^>]*>.*?</td>)+)</tr>`)
+	cellRe := regexp.MustCompile(`<td class="td"`)
+	rows := rowRe.FindAllStringSubmatch(html, -1)
+	require.Len(t, rows, 4, "every row must render, including the empty one")
+	for i, row := range rows {
+		require.Len(t, cellRe.FindAllString(row[1], -1), 2,
+			"row %d does not match the 2-column header", i)
+	}
+
+	require.NotContains(t, html, "OVERFLOW", "a cell past the header width is dropped")
+	require.Contains(t, html, "short", "a short row still renders its real cells")
 }

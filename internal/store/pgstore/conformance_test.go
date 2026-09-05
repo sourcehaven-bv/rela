@@ -3,6 +3,10 @@ package pgstore_test
 import (
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
+	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/pgstore"
 	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 )
 
@@ -11,6 +15,17 @@ import (
 // per call). The whole suite is skipped when RELA_TEST_DATABASE_URL is unset.
 func TestConformance(t *testing.T) {
 	storetest.RunAll(t, factory, searchFactory, visibleSearchFactory, storetest.Capabilities{
+		Observers: func(t *testing.T, obs ...store.EntityObserver) store.Store {
+			t.Helper()
+			opts := make([]pgstore.Option, 0, len(obs))
+			for _, o := range obs {
+				opts = append(opts, pgstore.WithObserver(o))
+			}
+			s, err := pgstore.New(newScopedPool(t), opts...)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = s.Close() })
+			return s
+		},
 		Attachments: true,
 		// pgstore is the one backend meeting the strong Tx contract: rollback
 		// on error, events withheld until commit (DEC-8UIL0).

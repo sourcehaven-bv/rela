@@ -411,6 +411,32 @@ func searchVisibleHits(
 	ctx context.Context, vs search.VisibleSearcher, aff affordanceService,
 	q search.Query, scope map[string]search.TypeScope,
 ) iter.Seq2[search.Hit, error] {
+	return faceGatedHits(ctx, searchScopedHits(ctx, vs, aff, q, scope))
+}
+
+// faceGatedHits drops hits whose matched face a `type@face` grant withholds.
+// The search scope carries the row verdict only (search.TypeScope has no face
+// set), so a `ticket@published` principal otherwise gets draft-face hits with
+// draft titles from a search the entity GET would 404. Applied at the edge
+// rather than pushed into every searcher: it is one predicate over a field the
+// hit already carries.
+func faceGatedHits(ctx context.Context, hits iter.Seq2[search.Hit, error]) iter.Seq2[search.Hit, error] {
+	return func(yield func(search.Hit, error) bool) {
+		for h, err := range hits {
+			if err == nil && !faceReadable(ctx, h.Type, h.Face) {
+				continue
+			}
+			if !yield(h, err) {
+				return
+			}
+		}
+	}
+}
+
+func searchScopedHits(
+	ctx context.Context, vs search.VisibleSearcher, aff affordanceService,
+	q search.Query, scope map[string]search.TypeScope,
+) iter.Seq2[search.Hit, error] {
 	// Nothing to redact: the plain entity-level path is correct, and a searcher
 	// that isn't a FieldVisibleSearcher is fine here.
 	if !aff.hidesAnyField() {
@@ -524,7 +550,10 @@ func visibleEntitiesOfType(
 ) ([]*entity.Entity, error) {
 	if ts.AllowAll && len(props) == 0 {
 		var out []*entity.Entity
-		for e, err := range svc.Store.ListEntities(ctx, store.EntityQuery{Type: typ}) {
+		for e, err := range svc.Store.ListEntities(ctx, store.EntityQuery{
+			Type:  typ,
+			World: worldScopeFrom(ctx),
+		}) {
 			if err != nil {
 				return nil, fmt.Errorf("%w: %w", errListLoad, err)
 			}
@@ -542,6 +571,12 @@ func visibleEntitiesOfType(
 		q.Props = append(append([]store.PropPredicate(nil), q.Props...), props...)
 		errClass = errACLListQuery
 	}
+	// World scope on BOTH verdict branches, for the RR-GQWRLD reason
+	// scopedSortedEntities spells out: AllowAll takes the EntityQuery branch
+	// above and every ACL-gated principal takes this one, so a world stamped
+	// on only one silently degrades to the default world for exactly one of
+	// the two populations.
+	q.World = worldScopeFrom(ctx)
 
 	var out []*entity.Entity
 	for e, err := range svc.Store.GraphQuery(ctx, q) {
@@ -566,14 +601,29 @@ type freeTextIDsForTypeResult struct {
 // path stay in lockstep on the bound.
 const maxFreeTextSearchResults = 1000
 
-// runFreeTextSearchE issues a Searcher query from a parsed SearchQuery and
-// loads the full entity bodies from the store. Phrases are re-quoted so the
+// freeTextIDs issues a Searcher query from a parsed SearchQuery under world
+// scope w, and returns the matching entity IDs. Phrases are re-quoted so the
 // searcher's text layer can rebuild the same fuzzy-words + exact-phrases
 // compound query the dataentry UI used to build upstream. Backend failures
 // surface to the caller.
-func runFreeTextSearchE(
-	ctx context.Context, svc Services, sq *searchparser.SearchQuery, limit int,
-) ([]*entity.Entity, error) {
+//
+// # IDs, not entities
+//
+// The one caller intersects these ids with a list it has ALREADY loaded
+// (world-scoped and ACL-gated). Loading the entities here would be both wasted
+// I/O and a live correctness hazard: the obvious load is `GetEntity(hit.ID)`,
+// which addresses the entity's DEFAULT face and so hands back default-face
+// bytes for a hit scored against the world's prime — the wrong-face serve this
+// whole arc exists to prevent. Returning ids removes the opportunity rather
+// than documenting it. (search.Service already loads the right face internally
+// via GetEntityState; a consumer re-read here would only undo that.)
+//
+// Free function taking svc rather than an App method: it needs one
+// collaborator, and App sits at its plimsoll method cap.
+func freeTextIDs(
+	ctx context.Context, svc Services, sq *searchparser.SearchQuery,
+	w store.WorldScope, limit int,
+) (map[string]struct{}, error) {
 	parts := make([]string, 0, len(sq.FreeTextWords)+len(sq.FreeTextPhrases))
 	parts = append(parts, sq.FreeTextWords...)
 	for _, p := range sq.FreeTextPhrases {
@@ -583,22 +633,16 @@ func runFreeTextSearchE(
 		Text:  strings.Join(parts, " "),
 		Types: sq.EntityTypes,
 		Limit: limit,
+		World: w,
 	}
-	out := make([]*entity.Entity, 0)
+	ids := make(map[string]struct{})
 	for hit, err := range svc.Searcher.Search(ctx, q) {
 		if err != nil {
 			return nil, fmt.Errorf("free-text search: %w", err)
 		}
-		e, getErr := svc.Store.GetEntity(ctx, hit.ID)
-		if getErr != nil {
-			// Stale index hit (entity deleted between Bleve query and store
-			// read). Skip silently — the list still returns a coherent set
-			// of currently-existing entities.
-			continue
-		}
-		out = append(out, e)
+		ids[hit.ID] = struct{}{}
 	}
-	return out, nil
+	return ids, nil
 }
 
 // listFromStoreByTypes loads all entities matching the given types (or every

@@ -1,6 +1,36 @@
 import { api } from './client'
 import type { Entity } from '@/types'
 
+/**
+ * Where a version came from, when a MECHANISM produced it rather than a person
+ * typing (TKT-VQHPFK). Present only for a mechanism-produced write.
+ *
+ * The three fields are independently optional for reasons that are not
+ * symmetric, so none of them may be defaulted:
+ *
+ * - The whole object is ABSENT for a direct edit. There is no `kind: 'manual'`
+ *   on the wire and there must not be one here: the absence IS the signal, and
+ *   the version's `principal` already names who typed it. Rendering a
+ *   "manual" marker for every hand edit would make the copy marker meaningless
+ *   by marking everything.
+ * - `source` may be absent while `kind` and `definition` are present. The
+ *   source entity id is gated server-side against this reader's own verdict,
+ *   so a source the reader may not know exists is simply not sent. That is a
+ *   normal answer, not missing data and not an error — render the rest and
+ *   omit the source.
+ * - `definition` is operator-authored configuration (the key in the
+ *   metamodel's `copies:` map), which is not confidential, so it arrives
+ *   ungated.
+ */
+export interface VersionOrigin {
+  /** The mechanism, e.g. 'copy'. Always present when the object is. */
+  kind: string
+  /** The source coordinate as `ID@face` (`ID` for the default face), when the reader may see it. */
+  source?: string
+  /** The operator-declared name that produced the write. */
+  definition?: string
+}
+
 /** One row of an entity's version timeline (metadata only). */
 export interface VersionMeta {
   version: number
@@ -10,6 +40,12 @@ export interface VersionMeta {
   principal: { user: string; tool: string }
   prev_id?: string
   triggered_by?: string
+  /**
+   * Provenance for a mechanism-produced write. Absent for a direct edit — see
+   * [VersionOrigin]. The `op` above stays what it is: a copy genuinely IS a
+   * create or an update, and this annotates that rather than replacing it.
+   */
+  origin?: VersionOrigin
 }
 
 /** A full version snapshot: metadata plus the entity as it was, redacted. */
@@ -20,11 +56,34 @@ export interface VersionSnapshot {
   created_at: string
   principal: { user: string; tool: string }
   entity: Entity
+  /** Provenance, on the same terms as the timeline row's — see [VersionOrigin]. */
+  origin?: VersionOrigin
 }
 
 interface TimelineResponse {
   id: string
   versions: VersionMeta[]
+  /**
+   * The FACE this timeline belongs to; '' is the default face.
+   *
+   * Versioning is per-face, so a timeline that does not name its subject
+   * invites the reader to assume the obvious one — which is exactly how a
+   * published page came to show the draft's history.
+   */
+  face?: string
+  /**
+   * The world resolves NO face for this entity, so there is no history in it.
+   * An empty timeline rather than an error: the entity exists and the caller
+   * may read it, matching how the entity view answers with `_world_absent`.
+   */
+  world_face_absent?: boolean
+}
+
+/** A timeline plus the face it describes. */
+export interface Timeline {
+  versions: VersionMeta[]
+  face: string
+  worldFaceAbsent: boolean
 }
 
 interface RestoreResponse {
@@ -38,21 +97,32 @@ interface RestoreResponse {
  * responds 501 and this rejects — callers should treat that as "history
  * unavailable" rather than an error to surface loudly.
  */
-export async function listVersions(entityType: string, entityId: string): Promise<VersionMeta[]> {
+export async function listVersions(
+  entityType: string,
+  entityId: string,
+  world?: string
+): Promise<Timeline> {
   const resp = await api.get<TimelineResponse>(
-    `/_history/${entityType}/${encodeURIComponent(entityId)}`
+    `/_history/${entityType}/${encodeURIComponent(entityId)}`,
+    world ? { world } : undefined
   )
-  return resp.versions
+  return {
+    versions: resp.versions,
+    face: resp.face ?? '',
+    worldFaceAbsent: resp.world_face_absent === true,
+  }
 }
 
 /** getVersion returns one version's full (redacted) snapshot. */
 export async function getVersion(
   entityType: string,
   entityId: string,
-  version: number
+  version: number,
+  world?: string
 ): Promise<VersionSnapshot> {
   return api.get<VersionSnapshot>(
-    `/_history/${entityType}/${encodeURIComponent(entityId)}/${version}`
+    `/_history/${entityType}/${encodeURIComponent(entityId)}/${version}`,
+    world ? { world } : undefined
   )
 }
 

@@ -407,6 +407,26 @@ func (a webhookVerifierAdapter) VerifyWebhook(ctx context.Context, raw string) (
 	return dataentry.WebhookClaims{Event: c.Event, UserID: c.UserID, OrgID: c.OrgID, ID: c.ID}, nil
 }
 
+// coverage-ignore-func: startup wiring — exercised at startup, not in tests
+// wireWorlds gives the app request-level world selection and the link
+// resolution that must accompany it.
+//
+// The two are wired TOGETHER and never separately: a surface that can SELECT a
+// world but cannot resolve that world's links renders every page with no
+// relations, which reads as a data problem rather than a wiring gap. Keeping
+// them in one function makes the pairing structural instead of a convention
+// someone has to notice.
+//
+// Without either, the app serves the default world only and refuses any other
+// `?world=` — the right posture for a surface whose wiring never opted in.
+func wireWorlds(app *dataentry.App, svc *appbuild.Services) {
+	app.SetWorlds(appbuild.CompiledWorlds(svc))
+	if err := dataentry.SetWorldNeighbors(app, svc.Store(), appbuild.RelationScopes(svc)); err != nil {
+		slog.Error("failed to wire world-scoped relations", "error", err)
+		os.Exit(1)
+	}
+}
+
 // coverage-ignore-func: main function - entry point
 func main() {
 	f := parseFlags()
@@ -455,6 +475,8 @@ func main() {
 	// CalDAV needs the alias service to remember client-created resources;
 	// without it the routes are not registered at all.
 	app.SetCalDAVAliases(svc.CalDAVAliases())
+
+	wireWorlds(app, svc)
 
 	// Next-action per-user state. The composition root picks the backend
 	// (durable over state.KV, or the store-native one on postgres); this only

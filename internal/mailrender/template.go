@@ -15,8 +15,19 @@ var defaultPalette = map[string]string{
 	"--muted-color":   "#6b7280",
 	"--bg-color":      "#f4f5f7",
 	"--card-bg":       "#ffffff",
-	"--border-color":  "#e5e7eb",
+	"--border-color":  "#d7dae0",
 	"--heading-color": "#111827",
+
+	// Dark-mode overrides, used only inside the prefers-color-scheme block.
+	// Not pure black: a #ffffff-on-#000000 pairing causes halation, and some
+	// clients re-invert an extreme pair on the assumption it is already dark.
+	"--dark-bg-color":      "#1a1d23",
+	"--dark-card-bg":       "#22262e",
+	"--dark-text-color":    "#e4e6eb",
+	"--dark-muted-color":   "#a6adba",
+	"--dark-border-color":  "#3a3f4a",
+	"--dark-heading-color": "#f2f4f7",
+	"--dark-accent-color":  "#8fa9ff",
 }
 
 // msoOpen/msoClose wrap the card in a fixed-width table for Outlook's Word
@@ -45,6 +56,52 @@ const contentWidth = "600"
 //   - Values interpolated into the <style> block come from the palette and are
 //     color-validated first. Do not interpolate anything else into CSS.
 //
+// # Padding and margin live on table cells
+//
+// Section headings and the empty-section note are single-cell TABLES, not
+// styled divs, and vertical gaps are spacer ROWS rather than margins. Both are
+// deliberate: Outlook Windows supports padding only on table cells, and margin
+// is unsupported or partial across Gmail, Outlook, Yahoo and AOL. A div with
+// padding renders fine everywhere the author is likely to be testing and
+// collapses in the clients they are not. Do not "simplify" these back to divs.
+//
+// The spacer row follows a TABLE only. A prose or empty-note section gets its
+// separation from the next .sect-title's own top padding instead, so adding a
+// gap there would double it. That asymmetry is deliberate, not an oversight.
+//
+// Lists are the one exception, and they invert the rule: a bullet indent is
+// expressed as margin-left rather than padding-left, because a <ul> is not a
+// cell and cannot be made into one without mangling author markup. Outlook
+// honors margin on a list while dropping padding, so margin is the side of the
+// trade that survives.
+//
+// # Dark mode is defensive, and the color-scheme meta tag is deliberately absent
+//
+// Clients fall into three tiers: those that leave mail alone (Apple Mail, Gmail
+// desktop, Yahoo, AOL), those that partially invert and DO honor
+// prefers-color-scheme (the Outlook family), and those that fully invert and do
+// NOT honor it (Gmail iOS/Android, Outlook Windows) — that last group rewrites
+// the query to @media none, so it cannot be targeted at all.
+//
+// The @media block below therefore serves only the middle tier. The first tier
+// is served by NOT adding <meta name="color-scheme">: adding that tag opts Apple
+// Mail into inverting, so without a complete dark stylesheet it makes matters
+// worse in a client that currently renders this template exactly as designed.
+// The third tier is served by the palette instead — mid-tone borders and no
+// pure white on pure black, so an inversion rela cannot intercept still lands
+// somewhere legible.
+//
+// Adding the meta tag is not a free win; it is the trap. See TKT-1GA2PG.
+//
+// # .prose scopes the markdown table styling
+//
+// Table rules for markdown content are keyed on .prose, not on .pad, because
+// the section scaffolding is itself made of tables living inside .pad. A
+// ".pad table" rule therefore hits the layout tables too and paints borders and
+// cell padding onto the scaffolding. .prose marks the three places sanitized
+// markdown lands (intro, section body, footer) so the styling reaches author
+// content and nothing else. Do not rewrite these selectors in terms of .pad.
+//
 // The <style> block is what douceur inlines; presentation attributes and the mso
 // conditionals survive inlining untouched (verified).
 //
@@ -59,7 +116,7 @@ const contentWidth = "600"
 //
 //nolint:lll // the <style> block holds CSS declarations; wrapping them at 120
 var docTemplate = template.Must(template.New("mail").Parse(`<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
-<html xmlns="http://www.w3.org/1999/xhtml">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="{{.Lang}}" xml:lang="{{.Lang}}">
 <head>
 <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -76,45 +133,62 @@ table { border-collapse:collapse; }
 .pad h3 { font-size:15px; margin:16px 0 6px 0; color:{{.C.heading}}; font-weight:600; }
 .pad p { margin:0 0 12px 0; }
 .pad a { color:{{.C.accent}}; text-decoration:underline; }
-.pad ul, .pad ol { margin:0 0 12px 0; padding-left:20px; }
-.sect { margin:0; }
+.pad ul, .pad ol { margin:0 0 12px 20px; padding-left:0; }
+.sect { width:100%; }
 .sect-title { font-size:17px; font-weight:600; color:{{.C.heading}}; padding:20px 0 8px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif; }
 .tbl { width:100%; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif; font-size:14px; color:{{.C.text}}; }
+.gap { font-size:0; line-height:0; height:12px; }
 .th { text-align:left; padding:8px 10px; border-bottom:2px solid {{.C.border}}; font-weight:600; color:{{.C.muted}}; font-size:12px; text-transform:uppercase; letter-spacing:0.03em; }
 .td { padding:8px 10px; border-bottom:1px solid {{.C.border}}; vertical-align:top; }
-.pad table { width:100%; font-size:14px; margin:0 0 12px 0; }
-.pad th { text-align:left; padding:8px 10px; border-bottom:2px solid {{.C.border}}; font-weight:600; color:{{.C.muted}}; font-size:12px; text-transform:uppercase; letter-spacing:0.03em; }
-.pad td { padding:8px 10px; border-bottom:1px solid {{.C.border}}; vertical-align:top; }
+.prose p { margin:0 0 12px 0; }
+.prose table { width:100%; font-size:14px; margin:0 0 12px 0; }
+.prose th { text-align:left; padding:8px 10px; border-bottom:2px solid {{.C.border}}; font-weight:600; color:{{.C.muted}}; font-size:12px; text-transform:uppercase; letter-spacing:0.03em; }
+.prose td { padding:8px 10px; border-bottom:1px solid {{.C.border}}; vertical-align:top; }
 .foot { padding:16px 24px 24px 24px; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif; font-size:12px; line-height:1.5; color:{{.C.muted}}; }
 .foot a { color:{{.C.muted}}; }
 .logo { display:block; border:0; outline:none; text-decoration:none; max-height:32px; }
 .empty { color:{{.C.muted}}; font-style:italic; padding:8px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif; font-size:14px; }
+@media (prefers-color-scheme: dark) {
+.wrap { background-color:{{.C.darkBg}} !important; }
+.outer { background-color:{{.C.darkBg}} !important; }
+.card { background-color:{{.C.darkCard}} !important; border-color:{{.C.darkBorder}} !important; }
+.bar { background-color:{{.C.darkAccent}} !important; }
+.pad, .pad p, .pad li, .pad td, .tbl, .td { color:{{.C.darkText}} !important; }
+.pad h1, .pad h2, .pad h3, .sect-title { color:{{.C.darkHeading}} !important; }
+.pad a { color:{{.C.darkAccent}} !important; }
+.th, .foot, .foot a, .empty { color:{{.C.darkMuted}} !important; }
+.th, .td { border-color:{{.C.darkBorder}} !important; }
+.card, .pad, .foot, .sect-title, .empty { background-color:{{.C.darkCard}} !important; }
+}
 </style>
 </head>
 <body>
 <table class="wrap" role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
-<tr><td align="center" style="padding:24px 12px;">
+<tr><td class="outer" align="center" style="padding:24px 12px;">
 {{.MSOOpen}}
 <table class="card" role="presentation" cellpadding="0" cellspacing="0" border="0" width="{{.Width}}" style="width:{{.Width}}px; max-width:100%;">
 <tr><td class="bar" height="4">&nbsp;</td></tr>
-{{if .LogoCID}}<tr><td style="padding:20px 24px 0 24px;"><img class="logo" src="cid:{{.LogoCID}}" alt="{{.LogoAlt}}" /></td></tr>{{end}}
+{{if .LogoCID}}<tr><td style="padding:20px 24px 0 24px;"><img class="logo" src="cid:{{.LogoCID}}" alt="{{.LogoAlt}}"{{if .LogoWidth}} width="{{.LogoWidth}}"{{end}}{{if .LogoHeight}} height="{{.LogoHeight}}"{{end}} /></td></tr>{{end}}
 <tr><td class="pad">
 <h1>{{.Subject}}</h1>
-{{if .Intro}}{{.Intro}}{{end}}
+{{if .Intro}}<div class="prose">{{.Intro}}</div>{{end}}
 {{range .Sections}}
-<div class="sect">
-{{if .Title}}<div class="sect-title">{{.Title}}</div>{{end}}
-{{if .Body}}{{.Body}}{{end}}
+<table class="sect" role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+{{if .Title}}<tr><td class="sect-title">{{.Title}}</td></tr>{{end}}
+{{if .Body}}<tr><td class="prose">{{.Body}}</td></tr>{{end}}
 {{if .HasTable}}
-<table class="tbl" role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
-<tr>{{range .Columns}}<th class="th">{{.}}</th>{{end}}</tr>
+<tr><td>
+<table class="tbl" cellpadding="0" cellspacing="0" border="0" width="100%">
+<tr>{{range .Columns}}<th class="th" scope="col">{{.}}</th>{{end}}</tr>
 {{range .Rows}}<tr>{{range .Cells}}<td class="td">{{.}}</td>{{end}}</tr>{{end}}
 </table>
-{{else if .Empty}}<div class="empty">{{.Empty}}</div>{{end}}
-</div>
+</td></tr>
+<tr><td class="gap" height="12">&nbsp;</td></tr>
+{{else if .Empty}}<tr><td class="empty">{{.Empty}}</td></tr>{{end}}
+</table>
 {{end}}
 </td></tr>
-{{if .Footer}}<tr><td class="foot">{{.Footer}}</td></tr>{{end}}
+{{if .Footer}}<tr><td class="foot prose">{{.Footer}}</td></tr>{{end}}
 </table>
 {{.MSOClose}}
 </td></tr>
@@ -136,16 +210,19 @@ type tmplSection struct {
 }
 
 type tmplDoc struct {
-	Subject  string
-	MSOOpen  template.HTML
-	MSOClose template.HTML
-	Intro    template.HTML
-	Footer   template.HTML
-	Sections []tmplSection
-	LogoCID  string
-	LogoAlt  string
-	Width    string
-	C        map[string]string
+	Subject    string
+	Lang       string
+	MSOOpen    template.HTML
+	MSOClose   template.HTML
+	Intro      template.HTML
+	Footer     template.HTML
+	Sections   []tmplSection
+	LogoCID    string
+	LogoAlt    string
+	LogoWidth  int
+	LogoHeight int
+	Width      string
+	C          map[string]string
 }
 
 // buildDocument assembles the trusted shell around sanitized content.
@@ -173,17 +250,25 @@ func (r *Renderer) buildDocument(m *Message) (string, error) {
 		alt = "logo"
 	}
 
+	lang, err := r.resolveLang(m.Lang)
+	if err != nil {
+		return "", err
+	}
+
 	doc := tmplDoc{
-		Subject:  m.Subject,
-		Intro:    template.HTML(intro),  //nolint:gosec // G203: sanitized by bluemonday in markdownToSafeHTML
-		Footer:   template.HTML(footer), //nolint:gosec // G203: sanitized by bluemonday in markdownToSafeHTML
-		Sections: sections,
-		LogoCID:  r.opts.LogoCID,
-		LogoAlt:  alt,
-		Width:    contentWidth,
-		MSOOpen:  msoOpen,
-		MSOClose: msoClose,
-		C:        r.colors(),
+		Subject:    m.Subject,
+		Lang:       lang,
+		Intro:      template.HTML(intro),  //nolint:gosec // G203: sanitized by bluemonday in markdownToSafeHTML
+		Footer:     template.HTML(footer), //nolint:gosec // G203: sanitized by bluemonday in markdownToSafeHTML
+		Sections:   sections,
+		LogoCID:    r.opts.LogoCID,
+		LogoAlt:    alt,
+		LogoWidth:  r.opts.LogoWidth,
+		LogoHeight: r.opts.LogoHeight,
+		Width:      contentWidth,
+		MSOOpen:    msoOpen,
+		MSOClose:   msoClose,
+		C:          r.colors(),
 	}
 
 	var buf strings.Builder
@@ -191,6 +276,22 @@ func (r *Renderer) buildDocument(m *Message) (string, error) {
 		return "", fmt.Errorf("mailrender: execute template: %w", err)
 	}
 	return buf.String(), nil
+}
+
+// resolveLang picks the language tag for one message: the message's own, else
+// the operator default (which New has already defaulted and validated).
+//
+// The message value is validated HERE rather than at the call sites because it
+// arrives from two of them — operator config and untrusted Lua — and validating
+// in either one would leave the other open.
+func (r *Renderer) resolveLang(msgLang string) (string, error) {
+	if msgLang == "" {
+		return r.opts.DefaultLang, nil
+	}
+	if err := ValidateLang(msgLang); err != nil {
+		return "", err
+	}
+	return msgLang, nil
 }
 
 // colors maps palette keys to the short names the template uses, so the
@@ -204,6 +305,14 @@ func (r *Renderer) colors() map[string]string {
 		"card":    r.palette["--card-bg"],
 		"border":  r.palette["--border-color"],
 		"heading": r.palette["--heading-color"],
+
+		"darkAccent":  r.palette["--dark-accent-color"],
+		"darkText":    r.palette["--dark-text-color"],
+		"darkMuted":   r.palette["--dark-muted-color"],
+		"darkBg":      r.palette["--dark-bg-color"],
+		"darkCard":    r.palette["--dark-card-bg"],
+		"darkBorder":  r.palette["--dark-border-color"],
+		"darkHeading": r.palette["--dark-heading-color"],
 	}
 }
 
@@ -244,7 +353,17 @@ func (r *Renderer) buildSection(s *Section) (tmplSection, error) {
 			}
 			cells = append(cells, template.HTML(esc)) //nolint:gosec // G203: escaped above; href vetted by safeHref
 		}
-		out.Rows = append(out.Rows, tmplRow{Cells: cells})
+		// Normalize to the header width. A row is padded when short and
+		// TRUNCATED when long, because the two failures are not symmetric: a
+		// missing cell leaves a blank in a grid that still lines up, while an
+		// extra one widens that row past every other and breaks the table's
+		// columns for the whole message. Callers assemble rows from data, so a
+		// mismatch is a caller bug — but a misshapen table is a worse way to
+		// learn about it than a blank cell.
+		for len(cells) < len(s.Columns) {
+			cells = append(cells, "")
+		}
+		out.Rows = append(out.Rows, tmplRow{Cells: cells[:len(s.Columns)]})
 	}
 	return out, nil
 }

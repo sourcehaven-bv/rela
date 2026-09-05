@@ -2,7 +2,7 @@
 id: DEC-PEYCJZ
 type: decision
 title: Public-read scenario re-scoped to authenticated-everyone; anonymous access deferred
-context: 'Design doc §12.3 (.ignored/pointer-design.md): the headline worlds scenario "everyone reads world:published" seemed to require an anonymous-passthrough or public-surface mode. rela-server has no auth layer; multi-user deployments sit behind an identity proxy that verifies every principal (docs/server-security.md). Supporting anonymous readers would require changing the JWT/identity-proxy contract — a new auth-layer feature for a deployment shape that is not rela''s current target.'
+context: 'Design doc §12.3 (.ignored/face-design.md): the headline worlds scenario "everyone reads world:published" seemed to require an anonymous-passthrough or public-surface mode. rela-server has no auth layer; multi-user deployments sit behind an identity proxy that verifies every principal (docs/server-security.md). Supporting anonymous readers would require changing the JWT/identity-proxy contract — a new auth-layer feature for a deployment shape that is not rela''s current target.'
 consequences: The built-in everyone role means every AUTHENTICATED principal; "everyone reads world:published" is an intranet/portal scenario behind the existing proxy, needing no auth-layer change. TKT-SP3A87 shrinks from a design note to recording this decision in the server-security docs. Anonymous/public-internet read becomes a possible future feature with its own design (principal mapping, surface allowlist, rate limiting) — nothing in Steps 1-5 depends on it, and the worlds ACL model (world-shaped read grants, wiring-bound public surface) is unchanged and already accommodates it later.
 date: "2026-08-19"
 status: accepted

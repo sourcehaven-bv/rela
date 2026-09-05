@@ -11,8 +11,8 @@ import (
 // The <rela-editor> Custom Element bundle and its glyph webfont, built by the
 // standalone editor build (frontend/vite.editor.config.ts) into
 // frontend → ../internal/dataentry/app_editor_dist and embedded here. Served at
-// the reserved per-app paths _rela-editor.js / _rela-editor.woff2 (see apps.go
-// and apps_handler.go). TKT-5F9V56.
+// the reserved per-app paths _rela-editor.js / _rela-editor.css /
+// _rela-editor.woff2 (see apps.go and apps_handler.go). TKT-5F9V56.
 //
 // Like the SPA bundle (static/v2), these are BUILD ARTIFACTS — gitignored and
 // produced by `npm run build` (frontend/package.json runs the editor build too).
@@ -50,6 +50,11 @@ var (
 	// appEditorFontSource returns the toolbar glyph webfont served at
 	// /api/v1/_apps/<id>/_rela-editor.woff2.
 	appEditorFontSource = func() []byte { return appEditorAsset("rela-editor.woff2") }
+	// appEditorCSSSource returns the editor stylesheet served at
+	// /api/v1/_apps/<id>/_rela-editor.css. Served as a FILE rather than inlined
+	// into the bundle: the app CSP has no 'unsafe-inline', so a <style> element
+	// injected at runtime is blocked and the editor renders unstyled.
+	appEditorCSSSource = func() []byte { return appEditorAsset("rela-editor.css") }
 )
 
 // ETags for the editor assets, computed lazily from the current bytes so a
@@ -60,6 +65,7 @@ var (
 // unversioned URL). Empty when the asset isn't built.
 func appEditorJSETag() string   { return weakETagFor(appEditorSource()) }
 func appEditorFontETag() string { return weakETagFor(appEditorFontSource()) }
+func appEditorCSSETag() string  { return weakETagFor(appEditorCSSSource()) }
 
 func weakETagFor(b []byte) string {
 	if len(b) == 0 {

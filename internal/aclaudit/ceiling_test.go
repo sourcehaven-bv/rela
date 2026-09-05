@@ -279,3 +279,48 @@ assignments:
 		}
 	}
 }
+
+// TestB10_CeilingUndeclaredWorld covers the client-attenuation half of the
+// world existence check. Shares the B10 rule id with the role-grant check
+// deliberately: same mistake, same fix.
+func TestB10_CeilingUndeclaredWorld(t *testing.T) {
+	meta := fakeMetamodel{
+		types:  map[string]bool{"page": true},
+		worlds: map[string]bool{"published": true},
+	}
+	tests := []struct {
+		name    string
+		r       acl.Restriction
+		wantB10 bool
+	}{
+		{"declared world", acl.Restriction{Worlds: []string{"published"}}, false},
+		{"undeclared world in allowlist", acl.Restriction{Worlds: []string{"nope"}}, true},
+		{"undeclared world in denylist", acl.Restriction{DenyWorlds: []string{"nope"}}, true},
+		{
+			name: "the implicit default world needs no declaration",
+			r:    acl.Restriction{DenyWorlds: []string{"default"}}, wantB10: false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &acl.Policy{
+				Roles: map[string]acl.RoleDef{"r": {Read: []string{"page"}}},
+				ClientBaselines: map[string]acl.ClientBaseline{
+					"app": {AppliesTo: []string{"app"}, Restriction: tc.r},
+				},
+			}
+			if err := p.Validate(); err != nil {
+				t.Fatalf("Validate: %v", err)
+			}
+			var got bool
+			for _, f := range Audit(p, meta, nil) {
+				if f.Rule == "B10-undeclared-world" {
+					got = true
+				}
+			}
+			if got != tc.wantB10 {
+				t.Errorf("B10 fired = %v, want %v", got, tc.wantB10)
+			}
+		})
+	}
+}
