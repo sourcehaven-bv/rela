@@ -527,19 +527,26 @@ is a stand-in. Same list, one world, two different kinds of row:
 screenshot{
   view = "list", list = "guides", world = "site-nl", as = "reader",
   out = "list-guides-nl.png",
-  alt = "The guides list in site-nl: GUIDE-2 badged en as a fallback, GUIDE-1 unbadged",
+  alt = "The guides list in site-nl: GUIDE-2 badged English as a fallback, GUIDE-1 unbadged",
 }
 ```
 
 That figure is the clearest picture of the rule the badge follows. One row is
 marked and one is not, and the marked one is the stand-in: "Incident response"
-carries an `en` badge because `site-nl` asked for Dutch and could not get it.
+carries an "English" badge because `site-nl` asked for Dutch and could not get it.
 "Aan de slag" *is* the Dutch face, so it is left alone.
 
 The badge is an EXCEPTION marker, not a provenance label on every row. Under
 `site-nl` every row has a face and the world could label all of them — but a
 badge on every row is noise, and noise trains a reader to stop looking. Marking
 only the surprise is what keeps the mark worth reading.
+
+What the badge *says* is the operator's. The web app has no words of its own
+for a stand-in — "fallback", "face", "default" are its storage vocabulary, not
+a reader's — so `site-nl` declares `messages: { stand_in: '{face}' }` in
+`schema.yaml`, and `{face}` is substituted with the served face's label. A
+world that declares nothing marks nothing; whether a row is a stand-in is
+still the server's answer, but the mark waits for words.
 
 Two claims, and the second is the one a screenshot cannot make. First, both
 rows are present — the fallback substitutes rather than excluding, which is what
@@ -553,22 +560,24 @@ page{
 ```
 
 Second, the badge names the substituted face and *only* that one. The `absent`
-half is the stronger claim: not merely that `en` appears somewhere, but that
-`nl` appears nowhere in the badge region — the translated row is unmarked:
+half is the stronger claim: not merely that "English" appears somewhere, but
+that "Nederlands" appears nowhere in the badge region — the translated row is
+unmarked:
 
 ```rela
 page{
   view = "list", list = "guides", world = "site-nl", as = "reader",
-  region = "badge", has = { "en" }, absent = { "nl" },
+  region = "badge", has = { "English" }, absent = { "Nederlands" },
 }
 ```
 
-The `en` half is load-bearing beyond the badge. `en` is this type's `bare_face`,
-so it is stored at the *bare* row and comes back from the API as the empty
-coordinate; a badge handed that empty string has nothing to print, and used to
-name the world instead. Reading `en` here asserts that the label resolves back
-through the same `bare_face:` declaration the world chain was compiled with —
-the operator's own name for the face, not a guess.
+The "English" half is load-bearing beyond the badge. `en` is this type's
+`bare_face`, so it is stored at the *bare* row and comes back from the API as
+the empty coordinate; a `{face}` handed that empty string would print nothing.
+Reading "English" here asserts that the coordinate resolves back through the
+same `bare_face:` declaration the world chain was compiled with, to the label
+the operator gave that face — never the coordinate itself, which is storage
+vocabulary.
 
 ### The detail view
 
@@ -599,18 +608,20 @@ screenshot{
 
 The badge names the **face**, not the world. Those are easy to confuse and the
 difference is the whole point: "site-nl" says which world you asked for, which
-you already know; `en` says the link leads somewhere English, which you did not.
+you already know; "English" says the link leads somewhere English, which you
+did not.
 
 Note that `en` is the guide type's `bare_face`, so it is stored at the bare row
-with no coordinate of its own. The badge still prints `en`, because the API
-resolves the stored row back through the same `bare_face:` declaration the world
-chain was compiled with — the label is the operator's own name for that face:
+with no coordinate of its own. The badge still prints "English", because the
+API resolves the stored row back through the same `bare_face:` declaration the
+world chain was compiled with, and the label is the operator's own name for
+that face:
 
 ```rela
 page{
   view = "entity", type = "guide", entity = "GUIDE-1", world = "site-nl",
   as = "reader",
-  region = "badge", has = { "en" }, absent = { "nl" },
+  region = "badge", has = { "English" }, absent = { "Nederlands" },
 }
 ```
 
@@ -633,14 +644,15 @@ because "this is what readers see" and "drafts included" are genuinely not
 obvious from the page in front of you: two policies can look identical and
 differ only in whether the world admitted the unpublished one.
 
-What the operator cannot switch off is the rest of that strip: the read-only
-note, and the way back. A non-default world is read-only on this API whatever
-the schema says — a write names its target directly and never a world — so a
-suppressible note would leave a reader on a page that refuses their edits with
-no explanation, and a suppressible exit would leave them with no way out of a
-world they may have arrived in from a link. The announcement is a matter of
-taste; those two are the honesty of the projection, and configuration does not
-reach them.
+What the operator cannot switch off is the way back. A reader may have
+arrived in a world from a link, and a suppressible exit would leave them with
+no way out of it; the face switcher is the honesty of the projection, and
+configuration does not reach it. The words around it are a different matter.
+A page that reached a face the reader may not write says so only in the
+operator's sentence for that face (`faces.<name>.messages.read_only`), and a
+reader who can act on the page needs no explanation, any more than one
+without update permission does. "Face", "world" and "bare" are rela's storage
+vocabulary; a reader never chose those words, so the web app never says them.
 
 ### The create form
 
@@ -749,7 +761,7 @@ resolution{ type = "procedure", world = "site-nl" }
 screenshot{
   view = "kanban", list = "readiness", world = "site-nl", as = "reader",
   out = "kanban-readiness-nl.png",
-  alt = "The procedure readiness board in site-nl: the leaver-access card badged en, the Dutch backup card unbadged",
+  alt = "The procedure readiness board in site-nl: the leaver-access card badged English, the Dutch backup card unbadged",
 }
 ```
 
@@ -761,7 +773,7 @@ matters rather more on a runbook than on a handbook page:
 ```rela
 page{
   view = "kanban", list = "readiness", world = "site-nl", as = "reader",
-  region = "badge", has = { "en" }, absent = { "nl" },
+  region = "badge", has = { "English" }, absent = { "Nederlands" },
 }
 ```
 
