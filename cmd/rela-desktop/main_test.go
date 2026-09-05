@@ -465,3 +465,38 @@ func TestWelcomePageBindingsExist(t *testing.T) {
 		})
 	}
 }
+
+// The open panel accepts files as well as directories, because a .rela bundle
+// is a package and so classifies as a file. A selection may therefore be a
+// file inside a project rather than the project itself.
+func TestProjectRootOf(t *testing.T) {
+	tmp := t.TempDir()
+
+	proj := filepath.Join(tmp, "myproject")
+	require.NoError(t, os.MkdirAll(proj, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(proj, "schema.yaml"), []byte("entities: {}"), 0o644))
+
+	bundle := filepath.Join(tmp, "bundle.rela")
+	require.NoError(t, os.MkdirAll(bundle, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(bundle, "schema.yaml"), []byte("entities: {}"), 0o644))
+
+	loose := filepath.Join(tmp, "loose.txt")
+	require.NoError(t, os.WriteFile(loose, []byte("x"), 0o644))
+
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"a project directory is unchanged", proj, proj},
+		{"a .rela bundle is unchanged", bundle, bundle},
+		{"a file inside a project resolves to the project", filepath.Join(proj, "schema.yaml"), proj},
+		{"a file outside any project is unchanged", loose, loose},
+		{"a non-project directory is unchanged", tmp, tmp},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, projectRootOf(tc.in))
+		})
+	}
+}

@@ -483,11 +483,14 @@ _icon-macos-pngs: _icon-pngs
     @for size in 16 32 64 128 256 512 1024; do \
         inner=$(( size * 824 / 1024 )); \
         radius=$(( inner * 2237 / 10000 )); \
-        magick -size ${inner}x${inner} xc:none \
+        magick {{icon_tmp}}/icon_${size}.png -alpha set -resize ${inner}x${inner}! \
+            {{icon_tmp}}/art_${size}.png; \
+        magick -size ${inner}x${inner} xc:none -fill white \
             -draw "roundrectangle 0,0,$((inner-1)),$((inner-1)),${radius},${radius}" \
-            -alpha extract {{icon_tmp}}/mask_${size}.png; \
-        magick {{icon_tmp}}/icon_${size}.png -resize ${inner}x${inner}! \
-            {{icon_tmp}}/mask_${size}.png -alpha off -compose CopyOpacity -composite \
+            {{icon_tmp}}/mask_${size}.png; \
+        magick {{icon_tmp}}/art_${size}.png {{icon_tmp}}/mask_${size}.png \
+            -alpha set -compose DstIn -composite \
+            -compose Over \
             -background none -gravity center -extent ${size}x${size} \
             {{icon_tmp}}/mac_${size}.png; \
     done

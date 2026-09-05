@@ -270,10 +270,18 @@ func (d *Desktop) pickDirectory(title, defaultDir string) (string, error) {
 		return "", errors.New("application not ready")
 	}
 	return d.wails.Dialog.OpenFileWithOptions(&application.OpenFileDialogOptions{
-		Title:                title,
-		Directory:            defaultDir, // v3's name for v2 DefaultDirectory
+		Title:     title,
+		Directory: defaultDir, // v3's name for v2 DefaultDirectory
+		// A .rela bundle is declared as a package in Info.plist, so the panel
+		// classifies it as a FILE, not a directory. With CanChooseFiles false
+		// it would be greyed out and unselectable — the very projects this
+		// picker exists to open. Allowing both keeps plain project folders
+		// selectable too.
+		//
+		// TreatsFilePackagesAsDirectories is deliberately NOT set: it makes the
+		// panel descend INTO the bundle instead of selecting it.
 		CanChooseDirectories: true,
-		CanChooseFiles:       false,
+		CanChooseFiles:       true,
 	}).PromptForSingleSelection()
 }
 
@@ -304,7 +312,7 @@ func (d *Desktop) OpenProject() string {
 	if dir == "" {
 		return "" // user cancelled
 	}
-	return d.LoadProject(dir)
+	return d.LoadProject(projectRootOf(dir))
 }
 
 // OpenRecentProject loads a project from the recent projects list.
@@ -839,7 +847,7 @@ func (d *Desktop) openProjectFromMenu(_ *application.Context) {
 	if err != nil || dir == "" {
 		return
 	}
-	if errMsg := d.LoadProject(dir); errMsg != "" {
+	if errMsg := d.LoadProject(projectRootOf(dir)); errMsg != "" {
 		d.errorDialog("Failed to open project", errMsg)
 		return
 	}
@@ -1091,6 +1099,24 @@ func resolveProjectDir(flagValue string, prefs *desktop.Preferences) string {
 		return prefs.LastProject
 	}
 	return ""
+}
+
+// projectRootOf normalises a picked path to a project root. The open panel
+// accepts files as well as directories (a .rela bundle is a package, so it is
+// classified as a file), which means the selection can be an ordinary file
+// inside a project — pointing at its parent is what the user meant.
+// A path that is already a project, or is nothing recognizable, is returned
+// unchanged so LoadProject reports the real error.
+func projectRootOf(path string) string {
+	if isRelaProject(path) {
+		return path
+	}
+	if info, err := os.Stat(path); err == nil && !info.IsDir() {
+		if parent := filepath.Dir(path); isRelaProject(parent) {
+			return parent
+		}
+	}
+	return path
 }
 
 // isRelaProject checks if the directory looks like a rela project, accepting
