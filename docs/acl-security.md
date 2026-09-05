@@ -856,8 +856,34 @@ Key properties:
   batched `MatchingIDs` probes — in-process, cheap). The postgres
   build composes visibility into the search SQL itself
   (`pgstore.SearchVisible`): hidden rows never leave the database,
-  the `LIMIT` is post-visibility, and there is no hidden-row work to
+  the `LIMIT` is post-visibility, and there is no hidden-ROW work to
   measure through timing.
+- **That last point is about rows, not fields.** Entity-level
+  filtering is pushed into the query, so a hidden row costs nothing
+  observable. Property-level `visible:` redaction is different: it
+  runs in Go over rows that were already fetched, so a response
+  carrying redacted fields does marginally more work than one that
+  does not. Redaction is **not constant-time**, and that is a
+  deliberate trade rather than an oversight.
+
+  Pushing it into the store would mean expressing per-principal
+  `visible:` grants — including ones conditional on graph predicates
+  like `has_relation` — as a query, reimplemented for every backend.
+  That is a permanent, backend-multiplied correctness burden on the
+  most security-sensitive code in the tree, bought against a signal
+  measured in the microseconds a redaction loop takes over an
+  already-loaded row, by an attacker who must already hold a valid
+  principal and already know which field to probe.
+
+  Worth stating plainly: this residual signal exists *because* rela
+  does field-level redaction at all. Most applications have no
+  central point where entity access is decided, and no field-level
+  visibility to speak of — a "hidden" field is one the template
+  happens not to render. Here the enforcement is structural
+  (`internal/dataentry/visiblereader.go` holds the store privately
+  and exposes only gated reads, precisely so gating cannot be
+  forgotten), and the timing edge is what remains after the hard
+  part is solved.
 - **Candidate-window caveat (bleve only).** The bleve backend caps
   candidate retrieval at 10000 hits; on the default build, "true
   top-1000 of the visible corpus" holds within that window. The
