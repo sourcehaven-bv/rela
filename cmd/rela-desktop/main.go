@@ -38,6 +38,12 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
+// Default window geometry, used when there is no saved state.
+const (
+	defaultWindowWidth  = 1280
+	defaultWindowHeight = 800
+)
+
 // Version is set at build time via -ldflags.
 var Version = "dev"
 
@@ -176,6 +182,25 @@ func projectDirFromArgs(args []string, workingDir string) string {
 		return ""
 	}
 	return val
+}
+
+// saveWindowState records the window geometry for the next launch. Failures
+// are logged and swallowed: losing window position must never block a quit.
+// coverage-ignore-func: requires Wails runtime
+func (d *Desktop) saveWindowState() {
+	if d.win == nil {
+		return
+	}
+	w, h := d.win.Size()
+	x, y := d.win.Position()
+	st := desktop.WindowState{Width: w, Height: h, X: x, Y: y, Maximized: d.win.IsMaximised()}
+	if !st.Valid() {
+		return // don't overwrite good state with a minimized/degenerate size
+	}
+	d.prefs.Window = st
+	if err := d.prefs.Save(); err != nil {
+		slog.Warn("could not save window state", "error", err)
+	}
 }
 
 // pickDirectory shows a native directory chooser and returns the chosen path
@@ -933,10 +958,26 @@ func main() {
 	})
 	d.wails = app
 
-	d.win = app.Window.NewWithOptions(application.WebviewWindowOptions{
+	winOpts := application.WebviewWindowOptions{
 		Title:  title,
-		Width:  1280,
-		Height: 800,
+		Width:  defaultWindowWidth,
+		Height: defaultWindowHeight,
+	}
+	// Restore the previous geometry when we have usable saved state. X/Y are
+	// only honored with InitialPosition set; the default centers the window.
+	if ws := prefs.Window; ws.Valid() {
+		winOpts.Width, winOpts.Height = ws.Width, ws.Height
+		winOpts.X, winOpts.Y = ws.X, ws.Y
+		winOpts.InitialPosition = application.WindowXY
+	}
+	d.win = app.Window.NewWithOptions(winOpts)
+
+	// Persist geometry on close. Reading it after the window is gone returns
+	// zeroes, so this must run while the window still exists.
+	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
+		d.win.OnWindowEvent(events.Common.WindowClosing, func(*application.WindowEvent) {
+			d.saveWindowState()
+		})
 	})
 
 	// Wails calls this on the main thread while initializing, which is the
