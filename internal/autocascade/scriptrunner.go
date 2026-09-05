@@ -87,8 +87,11 @@ type ScriptAction struct {
 // field-for-field; see [ScriptAction.Capabilities] for why it is duplicated
 // rather than imported.
 type ScriptCapabilities struct {
-	HTTP      bool
-	AI        bool
+	HTTP bool
+	AI   bool
+	// Mail authorizes mail.send. Unlike the others, absence does not remove
+	// the binding — it makes it refuse; see lua.Capabilities.Mail.
+	Mail      bool
 	WriteFile bool
 	// Secrets names the .rela/secrets.yaml keys the script may read. Empty
 	// means none — NOT all.
@@ -97,8 +100,8 @@ type ScriptCapabilities struct {
 
 // Fields returns the grant as plain values, mirroring
 // metamodel.Capabilities.Fields so both ends of the hop read through one shape.
-func (c ScriptCapabilities) Fields() (http, ai, writeFile bool, secrets []string) {
-	return c.HTTP, c.AI, c.WriteFile, c.Secrets
+func (c ScriptCapabilities) Fields() (http, ai, mail, writeFile bool, secrets []string) {
+	return c.HTTP, c.AI, c.Mail, c.WriteFile, c.Secrets
 }
 
 // NopScriptRunner is a no-op [ScriptRunner] for tests that should not

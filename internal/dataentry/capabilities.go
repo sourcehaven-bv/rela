@@ -14,6 +14,6 @@ import (
 // and must not be reachable from a config file, or an operator could hand a
 // network-invoked script the whole of .rela/secrets.yaml with one key.
 func luaCapabilities(c metamodel.Capabilities) lua.Capabilities {
-	http, ai, writeFile, secrets := c.Fields()
-	return lua.Capabilities{HTTP: http, AI: ai, WriteFile: writeFile, Secrets: secrets}
+	http, ai, mail, writeFile, secrets := c.Fields()
+	return lua.Capabilities{HTTP: http, AI: ai, Mail: mail, WriteFile: writeFile, Secrets: secrets}
 }

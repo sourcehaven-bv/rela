@@ -445,6 +445,6 @@ func (r *Runner) createTriggerRelation(
 // dropping the grant on the automation surface only — the failure mode that
 // produced the scheduler defect (TKT-YH52OM).
 func scriptCapsFrom(a automation.LuaToExecute) ScriptCapabilities {
-	http, ai, writeFile, secrets := a.CapabilityFields()
-	return ScriptCapabilities{HTTP: http, AI: ai, WriteFile: writeFile, Secrets: secrets}
+	http, ai, mail, writeFile, secrets := a.CapabilityFields()
+	return ScriptCapabilities{HTTP: http, AI: ai, Mail: mail, WriteFile: writeFile, Secrets: secrets}
 }

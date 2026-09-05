@@ -59,6 +59,7 @@ const (
 	payloadRunToken  = "run_token"
 	payloadHTTP      = "capability_http"
 	payloadAI        = "capability_ai"
+	payloadMail      = "capability_mail"
 	payloadWriteFile = "capability_write_file"
 	payloadSecrets   = "capability_secrets"
 )
@@ -143,6 +144,7 @@ func (s *Scheduler) runTaskJob(ctx context.Context, job jobs.Job) (err error) {
 func capabilitiesFromPayload(payload map[string]any) metamodel.Capabilities {
 	http, _ := payload[payloadHTTP].(bool)
 	ai, _ := payload[payloadAI].(bool)
+	mail, _ := payload[payloadMail].(bool)
 	writeFile, _ := payload[payloadWriteFile].(bool)
 
 	var secrets []string
@@ -158,7 +160,7 @@ func capabilitiesFromPayload(payload map[string]any) metamodel.Capabilities {
 	}
 
 	return metamodel.Capabilities{
-		HTTP: http, AI: ai, WriteFile: writeFile, Secrets: secrets,
+		HTTP: http, AI: ai, Mail: mail, WriteFile: writeFile, Secrets: secrets,
 	}
 }
 
@@ -259,7 +261,7 @@ func (s *Scheduler) enqueueTask(ctx context.Context, task TaskConfig) error {
 		}
 	}
 
-	http, ai, writeFile, secrets := task.Capabilities.Fields()
+	http, ai, mail, writeFile, secrets := task.Capabilities.Fields()
 
 	job := jobs.Job{
 		Kind: TaskKind,
@@ -269,6 +271,7 @@ func (s *Scheduler) enqueueTask(ctx context.Context, task TaskConfig) error {
 			payloadRunAs:     task.RunAs,
 			payloadHTTP:      http,
 			payloadAI:        ai,
+			payloadMail:      mail,
 			payloadWriteFile: writeFile,
 			payloadSecrets:   append([]string(nil), secrets...),
 

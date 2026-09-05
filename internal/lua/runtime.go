@@ -838,10 +838,18 @@ func (r *Runtime) registerBindings(allowWrites bool) {
 	registerCryptoModule(r)
 
 	// Top-level mail.* module. Registered UNCONDITIONALLY — including when no
-	// sender is wired — so a script can feature-detect and so an unconfigured
-	// project produces "mail is not configured" rather than "attempt to call a
-	// nil value". mail.go states at length why this is not the same decision
-	// as the ai/http capability gate above.
+	// sender is wired and when the runtime holds no `mail` capability — so a
+	// script can feature-detect and so an unconfigured or unauthorized call
+	// produces a message naming the actual problem rather than "attempt to
+	// call a nil value".
+	//
+	// That is a registration decision, NOT an authorization one, and the
+	// difference is why this line is not `if r.caps.Mail`. mail.send IS gated
+	// (TKT-JVHSOZ): the binding checks r.caps.Mail itself and returns a
+	// `denied` error table. ai/http above achieve the same denial by structural
+	// absence, which suits them because "no http global" is a complete thought;
+	// "no mail global" would leave an operator guessing between a missing
+	// mail.yaml and a missing grant. mail.go argues both halves in full.
 	registerMailModule(r)
 }
 

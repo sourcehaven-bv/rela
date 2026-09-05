@@ -266,6 +266,46 @@ func TestScriptSender_NoHTTPCapabilityIsLoud(t *testing.T) {
 	require.ErrorContains(t, sendErr, "mail/s.lua")
 }
 
+// TestScriptCapabilities_ToLua pins the config→runtime translation for a send
+// script, including the one capability an operator does not control.
+//
+// `mail` is hard-wired TRUE and there is deliberately no YAML key for it: this
+// runtime IS the implementation of mail.send, so gating it on the capability
+// system it implements would be circular (TKT-JVHSOZ). Everything else stays
+// as narrow as the operator wrote it — `ai` and `write_file` are hard-wired
+// off, and `http` is carried across only when asked for.
+//
+// Table-driven over both grant shapes because the interesting property is that
+// three of the five fields do NOT vary with the input; a test on one row could
+// not tell "hard-wired" from "happened to match".
+func TestScriptCapabilities_ToLua(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   mail.ScriptCapabilities
+		want lua.Capabilities
+	}{
+		{
+			name: "empty grant still authorizes mail",
+			in:   mail.ScriptCapabilities{},
+			want: lua.Capabilities{Mail: true},
+		},
+		{
+			name: "operator grant carries http and secrets, nothing more",
+			in:   mail.ScriptCapabilities{HTTP: true, Secrets: []string{"mailgun_key"}},
+			want: lua.Capabilities{HTTP: true, Mail: true, Secrets: []string{"mailgun_key"}},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, mail.ExportScriptCapsToLua(tc.in))
+		})
+	}
+}
+
 // TestScriptSender_FailureIsRetryableAndDoesNotDuplicate covers AC9: a script
 // failure surfaces as an error the outbox retries, and each attempt sends the
 // same message once.
@@ -876,6 +916,14 @@ func TestLuaSender_ValidationStillApplies(t *testing.T) {
 // recurse: the runtime a ScriptSender builds has no mail sender wired, so a
 // script calling mail.send gets not_configured rather than an unbounded chain
 // of runtimes.
+//
+// The expected kind is `not_configured` and NOT `denied`, which makes this an
+// incidental but load-bearing check on ScriptCapabilities.toLua hard-wiring
+// Mail: true (TKT-JVHSOZ). Reaching not_configured means the call got PAST the
+// capability gate and failed on the absent sender — i.e. the send script is
+// authorized to mail and simply has nothing to mail through. If this ever
+// reports `denied`, the hard-wire has been removed and the mail subsystem is
+// refusing itself permission to send.
 func TestScriptSender_InnerRuntimeHasNoMailSender(t *testing.T) {
 	t.Parallel()
 
