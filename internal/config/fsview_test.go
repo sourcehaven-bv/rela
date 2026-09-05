@@ -318,3 +318,85 @@ func TestFSView_WithContext(t *testing.T) {
 		t.Errorf("ReadFile on a ctx-bound view: %v", err)
 	}
 }
+
+// TestFSView_FileInfoAndDirEntryAccessors covers the small fs.FileInfo and
+// fs.DirEntry surface. They are one-liners, but they are the part of the
+// adapter a consumer reads metadata through, and two of them (Mode, IsDir)
+// carry decisions worth pinning rather than trusting.
+func TestFSView_FileInfoAndDirEntryAccessors(t *testing.T) {
+	t.Parallel()
+	v := newFSView(t, mapLoader{"migrations/001.yaml": []byte("a: 1\n")})
+
+	f, err := v.Open("migrations/001.yaml")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+
+	if got := info.Name(); got != "001.yaml" {
+		t.Errorf("Name = %q, want %q (base name, not the full path)", got, "001.yaml")
+	}
+	// The mode describes the HANDLE — fs.FS has no write surface — not the
+	// underlying file, which an operator edits freely.
+	if got := info.Mode(); got != 0o444 {
+		t.Errorf("Mode = %v, want 0444", got)
+	}
+	if info.IsDir() {
+		t.Error("a file reported IsDir")
+	}
+	if info.Sys() != nil {
+		t.Error("Sys should be nil: there is no underlying platform object")
+	}
+
+	// The root is the one directory, and reports itself as one.
+	root, err := v.Open(".")
+	if err != nil {
+		t.Fatalf(`Open("."): %v`, err)
+	}
+	defer func() { _ = root.Close() }()
+	rootInfo, err := root.Stat()
+	if err != nil {
+		t.Fatalf("Stat root: %v", err)
+	}
+	if !rootInfo.IsDir() || !rootInfo.Mode().IsDir() {
+		t.Errorf("root reported IsDir=%v Mode=%v; want a directory", rootInfo.IsDir(), rootInfo.Mode())
+	}
+	// Reading a directory as bytes is an error, matching os.File.
+	if _, readErr := root.Read(make([]byte, 1)); readErr == nil {
+		t.Error("Read on a directory handle should fail")
+	}
+	// And it enumerates as an fs.ReadDirFile, empty.
+	rd, ok := root.(fs.ReadDirFile)
+	if !ok {
+		t.Fatal("a directory handle must implement fs.ReadDirFile")
+	}
+	entries, err := rd.ReadDir(-1)
+	if err != nil {
+		t.Fatalf("ReadDir(-1): %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("root ReadDir = %v, want empty", entries)
+	}
+
+	// Directory entries report a name and a regular-file type.
+	listed, err := fs.ReadDir(v, "migrations")
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(listed) != 1 {
+		t.Fatalf("ReadDir = %v, want one entry", listed)
+	}
+	if got := listed[0].Name(); got != "001.yaml" {
+		t.Errorf("entry Name = %q, want %q", got, "001.yaml")
+	}
+	if listed[0].IsDir() {
+		t.Error("entry reported IsDir; the Loader lists files only")
+	}
+	if got := listed[0].Type(); got != 0 {
+		t.Errorf("entry Type = %v, want 0 (regular file)", got)
+	}
+}
