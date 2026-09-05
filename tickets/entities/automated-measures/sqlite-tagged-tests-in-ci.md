@@ -4,7 +4,7 @@ type: automated-measure
 title: 'CI: sqlite-tagged tests must actually run'
 description: 'ci.yml exercises the sqlite build tag only through go build and go list -deps, so no sqlite-tagged test has ever run on a PR — including internal/store/sqlitestore''s storetest.RunAll conformance suite, its fuzz functions, and the migration ladder. That is how BUG-LL3C07 survived on develop. The measure is a CI job running `go test -tags sqlite` over the packages the tag actually changes (internal/store/..., internal/appbuild/..., internal/cli/...), scoped rather than the whole tree twice.'
 kind: ci
-location: .github/workflows/ci.yml (Backends job, "Run sqlite-tagged tests" step)
+location: .github/workflows/ci.yml (SQLite Backend job)
 status: active
 ---
 
@@ -19,9 +19,16 @@ has been failing under the sqlite tag on `develop`, and nothing looked.
 
 ## The measure
 
-A `Run sqlite-tagged tests` step in the Backends job, running
-`go test -tags sqlite -shuffle=on` over `internal/store/...`,
-`internal/appbuild/...` and `internal/cli/...`.
+A dedicated `SQLite Backend` job running `go test -tags sqlite -shuffle=on`
+over `internal/store/...`, `internal/appbuild/...` and `internal/cli/...`.
+
+Its own job rather than a step in the postgres one, which is where it was
+first written and where CI caught the mistake. That job sets
+`RELA_TEST_DATABASE_REQUIRED=1` so a missing DSN hard-fails instead of
+skipping — correct for proving backend parity, and exactly wrong here: the
+sqlite build has no DSN, so ~30 DB-gated pgstore tests that would otherwise
+skip failed instead. A separate job also keeps this off the critical path of
+one that waits on a service container.
 
 Deliberately scoped rather than the whole tree twice: the value is in the
 packages the tag actually changes, and a full second run would spend minutes

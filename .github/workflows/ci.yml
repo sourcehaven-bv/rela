@@ -603,29 +603,6 @@ jobs:
           go build -tags memorybackend ./...
           go build -tags postgres ./...
 
-      # Compiling a build tag is not testing it. Until BUG-LL3C07 this job
-      # built the sqlite tag four lines above and never ran a single
-      # sqlite-tagged test, so sqlitestore's conformance suite
-      # (storetest.RunAll plus its fuzz functions), its migration ladder and
-      # every `-tags sqlite` variant of a shared package were ungated on every
-      # PR. A test whose fixture only works on fsstore had been failing here on
-      # develop, and nothing looked.
-      #
-      # Scoped to the packages the tag actually changes rather than ./... — the
-      # rest is byte-identical to what the Test job already ran, and paying for
-      # a second full suite to re-verify it is not worth the minutes.
-      #
-      # No -race here: the Test job races the same shared packages on the
-      # default backend, and sqlitestore's own concurrency is covered by the
-      # conformance suite. Add it if this job ever grows a genuinely
-      # sqlite-specific concurrency test.
-      - name: Run sqlite-tagged tests
-        run: |
-          go test -tags sqlite -shuffle=on \
-            ./internal/store/... \
-            ./internal/appbuild/... \
-            ./internal/cli/...
-
       # RELA_TEST_DATABASE_REQUIRED (job env) makes the suite hard-fail rather
       # than skip if the DSN is missing. The grep below is the second, blunter
       # half of the same guard: it catches a suite that skipped for any OTHER
@@ -719,6 +696,45 @@ jobs:
   # release time, where it leaves an empty GitHub release. The default-runner
   # builds in `postgres` only exercise linux; this job adds darwin + windows.
   # Keep the goos/tag matrix in sync with .goreleaser.yaml's builds.
+  # Compiling a build tag is not testing it. Until BUG-LL3C07 the Backends job
+  # built the sqlite tag and nothing ever ran a sqlite-tagged test, so
+  # sqlitestore's conformance suite (storetest.RunAll plus its fuzz functions),
+  # its migration ladder and every `-tags sqlite` variant of a shared package
+  # were ungated on every PR. A test whose fixture only works on fsstore had
+  # been failing on develop, and nothing looked.
+  #
+  # Its OWN job, deliberately, rather than a step in the postgres one. That job
+  # sets RELA_TEST_DATABASE_REQUIRED=1 so a missing DSN hard-fails instead of
+  # skipping — exactly right for proving backend parity, and exactly wrong
+  # here: the sqlite build has no DSN, so every DB-gated pgstore test that
+  # would otherwise skip fails instead. Running here also keeps this off the
+  # critical path of a job that waits on a postgres service container.
+  sqlite:
+    name: SQLite Backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.6'
+
+      # Scoped to the packages the tag actually changes rather than ./... — the
+      # rest is byte-identical to what the Test job already ran, and paying for
+      # a second full suite to re-verify it is not worth the minutes.
+      #
+      # No -race: the Test job races these same shared packages on the default
+      # backend, and sqlitestore's own concurrency is covered by the
+      # conformance suite. Add it if this job ever grows a genuinely
+      # sqlite-specific concurrency test.
+      - name: Run sqlite-tagged tests
+        run: |
+          go test -tags sqlite -shuffle=on \
+            ./internal/store/... \
+            ./internal/appbuild/... \
+            ./internal/cli/...
+
   cross-compile:
     name: Cross-Compile (${{ matrix.goos }}/${{ matrix.tags || 'default' }})
     runs-on: ubuntu-latest
