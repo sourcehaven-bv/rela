@@ -465,6 +465,46 @@ than at send. Omit it to fall back to the deployment default (`en`). Note this
 *labels* content, it does not translate it: the text still has to be written in
 the language you name.
 
+### Skipping recipients with nothing to read
+
+Because each message is rendered under its own recipient's visibility, a
+recipient whose sections are all empty after filtering still receives a message
+— one that reads only "Nothing to show.". Recurring empty mail is how a digest
+gets ignored, so a template can opt out of sending one:
+
+```yaml
+mail_templates:
+  overdue_digest:
+    subject: "Tasks due {{today}}"
+    address_property: email
+    require_visible_content: true
+    sections:
+      - entity_type: task
+        where: ["status != done", "due < today"]
+        columns: [title, due]
+```
+
+The send is suppressed when **no section received content** for that recipient
+— whether the entities did not match, or matched but are not visible to them.
+
+This counts entities that actually *contribute* content, which is not the same
+as entities that matched. A `detail` section whose entity has an empty body
+renders nothing, so it does not keep the mail alive; `{{count}}`, which
+interpolates the number of *matched* entities, is unaffected either way.
+
+The default is off, so existing templates are unchanged: a template with no
+matches still sends, which is right when its `intro` carries the message. For
+the same reason `rela validate` rejects `require_visible_content` on a template
+with no `sections:` at all — that combination could never send anything, so it
+fails at load rather than going quiet in production.
+
+Note this is a routing convenience, not an access control. It only narrows the
+audience where visibility is already scoped — if every recipient can read the
+entities a section selects, every recipient still gets mail. And a suppressed
+send is logged at `INFO` (naming the template and recipient, never the filtered
+content), so "why did this person get no mail?" is answerable by raising the log
+level rather than by reading the ACL.
+
 Pending task + occurrence + recipient identities suppress concurrent duplicate
 work. A retry after a completed child can send again, and SMTP has its own
 acknowledgement crash window, so delivery is at-least-once rather than exactly-once.

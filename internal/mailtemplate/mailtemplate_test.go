@@ -78,7 +78,7 @@ func TestBuildTableListAndDetail(t *testing.T) {
 `), model())
 	require.NoError(t, err)
 
-	msg, err := mailtemplate.Build(t.Context(), model(), reader{entities: []*entity.Entity{
+	msg, _, err := mailtemplate.Build(t.Context(), model(), reader{entities: []*entity.Entity{
 		{ID: "T-1", Type: "task", Properties: map[string]any{"title": "Visible", "status": "open"}, Content: "Agenda"},
 	}}, cfg.Templates["digest"], time.Date(2026, 8, 26, 0, 0, 0, 0, time.UTC))
 	require.NoError(t, err)
@@ -92,9 +92,158 @@ func TestBuildTableListAndDetail(t *testing.T) {
 func TestBuildCannotExposeRowsMissingFromReader(t *testing.T) {
 	t.Parallel()
 	tmpl := mailtemplate.Template{Subject: "Digest", AddressProperty: "email", Sections: []mailtemplate.Section{{EntityType: "task", Columns: []string{"title"}}}}
-	msg, err := mailtemplate.Build(t.Context(), model(), reader{}, tmpl, time.Now())
+	msg, _, err := mailtemplate.Build(t.Context(), model(), reader{}, tmpl, time.Now())
 	require.NoError(t, err)
 	require.Empty(t, msg.Sections[0].Rows)
+}
+
+// TestBuildCountsContributionsNotMatches pins the distinction RR-K7RMIC turned
+// on: a `detail` entity with blank Content matches the section but renders as
+// nothing, so it must not keep RequireVisibleContent from suppressing the send.
+func TestBuildCountsContributionsNotMatches(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name        string
+		style       string
+		content     string
+		contributed int
+	}{
+		{name: "detail with body contributes", style: "detail", content: "Agenda", contributed: 1},
+		{name: "detail with blank body does not", style: "detail", content: "", contributed: 0},
+		{name: "detail with whitespace body does not", style: "detail", content: "  \n\t ", contributed: 0},
+		{name: "list contributes regardless of body", style: "list", content: "", contributed: 1},
+		{name: "table contributes regardless of body", style: "table", content: "", contributed: 1},
+		{name: "default style contributes", style: "", content: "", contributed: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tmpl := mailtemplate.Template{
+				Subject: "Digest {{count}}", AddressProperty: "email",
+				Sections: []mailtemplate.Section{
+					{EntityType: "task", Style: tc.style, Columns: []string{"title"}},
+				},
+			}
+			msg, contributed, err := mailtemplate.Build(t.Context(), model(), reader{entities: []*entity.Entity{
+				{ID: "T-1", Type: "task", Properties: map[string]any{"title": "Visible"}, Content: tc.content},
+			}}, tmpl, time.Now())
+			require.NoError(t, err)
+			require.Equal(t, tc.contributed, contributed)
+
+			// The match count is a SEPARATE number and must stay at 1 in every
+			// case above: {{count}} means "entities matched", and redefining it
+			// would silently change every template already using it.
+			require.Equal(t, "Digest 1", msg.Subject)
+		})
+	}
+}
+
+func TestBuildReportsZeroContributionsWhenNothingMatches(t *testing.T) {
+	t.Parallel()
+	tmpl := mailtemplate.Template{
+		Subject: "Digest", AddressProperty: "email",
+		Sections: []mailtemplate.Section{{EntityType: "task", Columns: []string{"title"}}},
+	}
+	_, contributed, err := mailtemplate.Build(t.Context(), model(), reader{}, tmpl, time.Now())
+	require.NoError(t, err)
+	require.Zero(t, contributed)
+}
+
+// TestBuildCountsContributionsAcrossSections guards the "at least one section
+// has content" reading: one non-empty section is enough to send.
+func TestBuildCountsContributionsAcrossSections(t *testing.T) {
+	t.Parallel()
+	tmpl := mailtemplate.Template{
+		Subject: "Digest", AddressProperty: "email",
+		Sections: []mailtemplate.Section{
+			{EntityType: "task", Where: []string{"status = done"}, Columns: []string{"title"}},
+			{EntityType: "task", Where: []string{"status = open"}, Columns: []string{"title"}},
+		},
+	}
+	_, contributed, err := mailtemplate.Build(t.Context(), model(), reader{entities: []*entity.Entity{
+		{ID: "T-1", Type: "task", Properties: map[string]any{"title": "Open one", "status": "open"}},
+	}}, tmpl, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, 1, contributed, "one empty section must not mask the other's content")
+}
+
+// TestParseRequireVisibleContentYAMLForms pins yaml.v3's actual boolean
+// handling (RR-NV7O2V). The asymmetry is genuinely surprising: quoted "true"
+// is an error while quoted "yes" is accepted, so both directions are pinned
+// against a future yaml bump.
+func TestParseRequireVisibleContentYAMLForms(t *testing.T) {
+	t.Parallel()
+	// A section is required only because require_visible_content now demands
+	// one (RR-RV093C); it is otherwise irrelevant to what this test pins.
+	const tail = `    sections:
+      - entity_type: task
+        columns: [title]
+`
+	const head = `mail_templates:
+  digest:
+    subject: Digest
+    address_property: email
+`
+	for _, tc := range []struct {
+		name    string
+		line    string
+		wantErr bool
+		want    bool
+	}{
+		{name: "bare true", line: "    require_visible_content: true\n", want: true},
+		{name: "bare false", line: "    require_visible_content: false\n", want: false},
+		{name: "absent defaults off", line: "", want: false},
+		{name: "bare yes is YAML 1.1 true", line: "    require_visible_content: yes\n", want: true},
+		{name: "quoted yes is also true", line: "    require_visible_content: \"yes\"\n", want: true},
+		{name: "quoted true is rejected", line: "    require_visible_content: \"true\"\n", wantErr: true},
+		{name: "non-boolean is rejected", line: "    require_visible_content: sometimes\n", wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg, err := mailtemplate.Parse([]byte(head+tc.line+tail), model())
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.want, cfg.Templates["digest"].RequireVisibleContent)
+		})
+	}
+}
+
+// TestParseRejectsUnknownKeyBesideRequireVisibleContent guards that adding the
+// field did not loosen the strict decoder.
+func TestParseRejectsUnknownKeyBesideRequireVisibleContent(t *testing.T) {
+	t.Parallel()
+	_, err := mailtemplate.Parse([]byte(`mail_templates:
+  digest:
+    subject: Digest
+    address_property: email
+    require_visible_content: true
+    bogus_key: 1
+`), model())
+	require.Error(t, err)
+}
+
+// A sections-less template is valid on its own (it may be pure intro), but
+// combined with require_visible_content it can never send — the flag asks for
+// content that has nowhere to come from. Caught at load, not at send time
+// (RR-RV093C).
+func TestParseRejectsRequireVisibleContentWithoutSections(t *testing.T) {
+	t.Parallel()
+	const body = `mail_templates:
+  announce:
+    subject: Weekly notice
+    intro: The office is closed Monday.
+    address_property: email
+`
+	// The same template WITHOUT the flag stays valid: this is the control that
+	// proves the error is about the combination, not about sections alone.
+	cfg, err := mailtemplate.Parse([]byte(body), model())
+	require.NoError(t, err)
+	require.Empty(t, cfg.Templates["announce"].Sections)
+
+	_, err = mailtemplate.Parse([]byte(body+"    require_visible_content: true\n"), model())
+	require.ErrorContains(t, err, "at least one section")
 }
 
 // TestTemplateLangReachesMessage covers the third of the three call sites that
@@ -122,7 +271,7 @@ func TestTemplateLangReachesMessage(t *testing.T) {
 	require.NoError(t, err)
 
 	build := func(name string) *mailrender.Message {
-		msg, buildErr := mailtemplate.Build(
+		msg, _, buildErr := mailtemplate.Build(
 			context.Background(), model(), reader{}, cfg.Templates[name], time.Now())
 		require.NoError(t, buildErr)
 		return msg
