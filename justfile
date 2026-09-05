@@ -55,6 +55,18 @@ build-server-postgres: build-frontend
     @mkdir -p {{build_dir}}
     CGO_ENABLED=0 go build -tags postgres -trimpath -ldflags "-s -w" -o {{build_dir}}/rela-server-postgres ./cmd/rela-server
 
+# Build the SQLite-backed CLI binary (rela-sqlite)
+build-cli-sqlite:
+    @echo "Building rela-sqlite CLI..."
+    @mkdir -p {{build_dir}}
+    CGO_ENABLED=0 go build -tags sqlite -trimpath -ldflags "-s -w" -o {{build_dir}}/rela-sqlite ./cmd/rela
+
+# Build the SQLite-backed data entry server (rela-server-sqlite)
+build-server-sqlite: build-frontend
+    @echo "Building rela-server-sqlite..."
+    @mkdir -p {{build_dir}}
+    CGO_ENABLED=0 go build -tags sqlite -trimpath -ldflags "-s -w" -o {{build_dir}}/rela-server-sqlite ./cmd/rela-server
+
 # Build the docs CLI (rela-docs). Embeds the Vue frontend: screenshot{}
 # islands drive the data-entry SPA in a headless browser. This is the only
 # binary that links chromedp — kept out of rela / rela-server on purpose.
@@ -84,6 +96,9 @@ build: build-cli build-server build-docs build-desktop
 
 # Build the postgres-tagged binaries (FS binaries unaffected)
 build-postgres: build-cli-postgres build-server-postgres
+
+# Build the sqlite-tagged binaries (FS binaries unaffected)
+build-sqlite: build-cli-sqlite build-server-sqlite
 
 # Install CLI to ~/bin
 install: build-cli build-server
