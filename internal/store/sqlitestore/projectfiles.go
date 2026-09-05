@@ -11,6 +11,22 @@ import (
 	"time"
 )
 
+// ConfigReader is the read surface [ProjectFiles] offers: the two methods a
+// config consumer needs, named here so the accessors can return an interface
+// without this package importing the application one that also declares it.
+//
+// It is deliberately identical to config.Loader. Go matches method sets
+// exactly, so the wiring site's type assertion is written against a return
+// type, and a store returning its own concrete type could never satisfy it —
+// while arch-lint (rightly) forbids a store depending on internal/config. One
+// duplicated two-method interface is the cost of both rules holding at once;
+// a compile-time assertion in the config package's direction pins that the two
+// stay identical.
+type ConfigReader interface {
+	Load(ctx context.Context, name string) ([]byte, error)
+	List(ctx context.Context, dir string) ([]string, error)
+}
+
 // ProjectFiles is the operator-authored config carried IN the database:
 // schema.yaml, data-entry.yaml, acl.yaml, scripts/, templates/, custom/. It is
 // what lets a single file be a complete, shippable rela project rather than
@@ -31,8 +47,21 @@ type ProjectFiles struct {
 // Available before a store exists, which is the point of the connection split:
 // the metamodel has to be loaded before anything that consumes one, the store
 // included.
-func (c *Conn) ProjectFiles() *ProjectFiles {
+func (c *Conn) ProjectFiles() ConfigReader {
 	return &ProjectFiles{db: c.db}
+}
+
+// ProjectFiles returns a reader over the config stored in this database.
+//
+// The same accessor as [Conn.ProjectFiles], over the pool the store took
+// ownership of. It exists on BOTH types because they serve different moments:
+// Conn's is used before a store exists (loading the metamodel), while this one
+// is what the wiring site discovers by type assertion once the store is built.
+// Without it that assertion silently fails and the store-backed config layer
+// is never installed — a no-op with no error anywhere, which is why a test
+// pins the assertion rather than trusting it.
+func (s *Store) ProjectFiles() ConfigReader {
+	return &ProjectFiles{db: s.db}
 }
 
 // Load returns the bytes stored at name.

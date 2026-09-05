@@ -1586,7 +1586,10 @@ func assemble(
 
 	tr := tracer.New(st)
 	templater := templating.NewFSTemplater(cfg.FS, cfg.Paths)
-	cfgLoader := config.NewFSLoader(cfg.FS, cfg.Paths.Root)
+	// Files first, then whatever config the store itself carries. On every
+	// build but sqlite the second layer does not exist and this is the
+	// filesystem loader unchanged.
+	cfgLoader := layerStoreConfig(config.NewFSLoader(cfg.FS, cfg.Paths.Root), st)
 
 	// Build the static lua read deps once — the ScriptRunner (automation
 	// cascades) is constructed with these.
