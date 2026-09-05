@@ -1,17 +1,80 @@
 package dataentry
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
+
+// revealIsPrivileged reports whether taking the reveal arm actually constitutes
+// a privileged disclosure worth auditing, which is only true under a configured
+// policy.
+//
+// Without this the audit row is worse than useless. Under NopACL and
+// ReadOnlyACL no middleware attaches a read gate, so readGateFromContext hands
+// back nopReadGate, whose HoldsPermission returns true for EVERY permission
+// (readgate.go:135, the RR-CWWJGW shape). Every history read would therefore
+// take the reveal arm — but with no policy configured nothing is redacted, so
+// those reads reveal nothing. Recording them would bury the real reveals under
+// noise in every unconfigured deployment, and would train an operator who later
+// configures a policy to ignore exactly the row this exists to surface.
+//
+// A closed switch on the ACL IMPLEMENTATION, matching permitsGatedUIElement:
+// asking the read gate here is precisely the fail-open mistake being avoided,
+// since the gate is the thing that cannot answer. Value and pointer forms are
+// both matched because these types' methods have value receivers. An
+// implementation nobody taught this about audits (the default arm) — the
+// conservative direction for a log, where a spurious row is recoverable and a
+// missing one is not.
+func revealIsPrivileged(aclImpl acl.ACL) bool {
+	switch aclImpl.(type) {
+	case nil:
+		// Wired without an ACL: same "no policy" case as NopACL.
+		return false
+	case acl.NopACL, *acl.NopACL, acl.ReadOnlyACL, *acl.ReadOnlyACL:
+		return false
+	default:
+		return true
+	}
+}
+
+// recordHistoryReveal emits the audit row for a history read that overrode
+// redaction via acl.PermHistoryReadRedacted (TKT-LVSPSB / issue #1238).
+//
+// entityType MUST come from the stored snapshot rather than the caller-supplied
+// URL segment: the recorded type is forensic evidence, and taking it from the
+// request would let a caller write a type of their choosing into the audit log.
+//
+// No revealed values and no revealed field names are recorded -- see
+// audit.OpHistoryReveal for why the field list is itself sensitive.
+//
+// The reveal is not blocked on the audit write succeeding; sink errors are the
+// sink's concern, exactly as for every other op.
+//
+// A free function taking the sink, not a method on App: App is at its
+// plimsoll method cap, and this needs exactly one field of it. Passing the
+// dependency also makes the function directly testable without an App.
+func recordHistoryReveal(ctx context.Context, sink audit.Audit, entityType, entityID string, version int) {
+	sink.Record(audit.Record{
+		Time:        time.Now().UTC(),
+		Op:          audit.OpHistoryReveal,
+		Subject:     &audit.Subject{Kind: "entity", Type: entityType, ID: entityID},
+		Principal:   principal.From(ctx),
+		TriggeredBy: audit.TriggeredByFrom(ctx),
+		Summary:     "history_reveal=true version=" + strconv.Itoa(version),
+	})
+}
 
 // handleV1History serves an entity's version history (postgres-backed only).
 //
@@ -281,6 +344,15 @@ func serveHistoryVersion(a *App,
 	var wire v1.Entity
 	if readGateFromContext(ctx).HoldsPermission(ctx, acl.PermHistoryReadRedacted) {
 		wire = a.serializer.forWireHistoricalReveal(ctx, snapEntity, meta, plural)
+		// Record the privileged disclosure, not the read (TKT-LVSPSB / issue
+		// #1238). Only this arm, and only under a configured policy: an
+		// ordinary redacted read discloses nothing the permission governs, and
+		// under no policy this arm is reached by every reader with nothing
+		// redacted to reveal. Both would bury the real reveals this record
+		// exists to surface. See audit.OpHistoryReveal and revealIsPrivileged.
+		if revealIsPrivileged(a.acl) {
+			recordHistoryReveal(ctx, a.auditSink, snap.Type, entityID, snap.Version)
+		}
 	} else {
 		wire = a.serializer.forWire(affordances.WithHistoricalSubject(ctx), snapEntity, nil, meta, plural)
 	}
