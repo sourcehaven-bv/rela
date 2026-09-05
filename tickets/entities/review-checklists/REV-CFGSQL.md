@@ -30,16 +30,19 @@ status: done
 
 **Acceptance Status:**
 
-- PASS — structural `config.Loader` conformance:
-  `TestProjectFilesSatisfiesConfigLoader` asserts both `*ProjectFiles` and
-  `ConfigReader` against it at compile time. It cannot be declared, because
-  arch-lint forbids the store importing `internal/config`.
-- PASS — **the wiring assertion is pinned**, and this is the finding worth
-  recording. `ProjectFiles()` was on `Conn` only at first: that compiles,
-  passes every loader test, and silently never installs the layer, because the
-  type assertion in `layerStoreConfig` just fails and the disk-only loader is
-  used. Caught by writing the assertion as a test
-  (`TestSQLiteStoreSatisfiesConfigProvider`) rather than trusting it.
+- PASS — `config.Loader` conformance is DECLARED (`var _ config.Loader =
+  (*Loader)(nil)`), so the compiler checks it. It could be declared only after
+  the package moved out of `sqlitestore`; while it lived there, arch-lint
+  forbade the import and conformance had to be structural.
+- PASS — **the architecture was corrected mid-review**, and this is the
+  finding worth recording. Config first went into `sqlitestore`, where it
+  needed a duplicated `ConfigReader` interface, a test to keep the two in
+  sync, and a build-tagged `layerStoreConfig` indirection — all of it
+  scaffolding to work around arch-lint saying the code was in the wrong
+  package. Extracting `internal/sqlitedb` (owns the file) and
+  `internal/config/configsql` (reads config) deleted all three. A related bug
+  went with it: `ProjectFiles()` had been on `Conn` but not `Store`, so the
+  type assertion silently failed and the layer was never installed.
 - PASS — absent row is `fs.ErrNotExist`-compatible
   (`TestProjectFiles_MissingIsNotExist`); a layered loader falls through on
   exactly that error and nothing else.

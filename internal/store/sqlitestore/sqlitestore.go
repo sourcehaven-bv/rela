@@ -13,7 +13,7 @@
 //
 // # Single writer, enforced
 //
-// Single-process is not an assumption this package hopes holds; [Open] takes an
+// Single-process is not an assumption this package hopes holds; sqlitedb.Open takes an
 // exclusive lock on a sidecar file and refuses to start when another process
 // holds it. That matters because rela's `unique:` enforcement is an
 // untransacted scan in entitymanager: with two processes writing the same
@@ -55,7 +55,7 @@ const timeFmt = time.RFC3339Nano
 
 // Store is a SQLite-backed [store.Store].
 //
-// Nil: never returned nil by [Open]; a nil *Store is a programming error, not a
+// Nil: never returned nil by sqlitedb.Open; a nil *Store is a programming error, not a
 // supported "no store" value.
 //
 // The method count is the MANDATED store.Store interface, not accreted sprawl:

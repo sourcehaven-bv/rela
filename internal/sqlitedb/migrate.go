@@ -144,14 +144,15 @@ func (c *DB) isFresh(ctx context.Context) (bool, error) {
 
 // applyMigration runs one step and its version bump in a single transaction.
 //
-// BEGIN IMMEDIATE on a pinned connection, matching [Store.Tx] and for the same
+// BEGIN IMMEDIATE on a pinned connection, matching sqlitestore's transactions
+// and for the same
 // measured reason: a DEFERRED transaction that reads before it writes has to
 // upgrade its lock mid-flight, and that upgrade returns SQLITE_BUSY regardless
 // of busy_timeout. The current step is write-only, but a backfill is the shape
 // a future step is most likely to take, and mid-migration on user data is the
 // worst possible moment to discover the rule.
 //
-// The deferred ROLLBACK is load-bearing for the same reason it is in Tx: a
+// The deferred ROLLBACK is load-bearing for the same reason it is there: a
 // connection returned to the pool with a transaction still open poisons every
 // later use of it. It runs on WithoutCancel so a cancelled context still
 // releases the transaction rather than abandoning it open.

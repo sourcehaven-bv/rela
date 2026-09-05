@@ -14,37 +14,48 @@ The third foundation piece: a `config.Loader` reading the `project_files`
 table, wired in BEHIND the filesystem loader so a project that has both keeps
 behaving exactly as it did.
 
-`sqlitestore.ProjectFiles` implements `Load`/`List` over the table added in
-TKT-S1EVV7, plus `Put`/`Paths` for the `db load` and `db dump` commands that
-follow. `appbuild.layerStoreConfig` composes it behind
-`config.NewFSLoader` via `config.NewLayered`, in a build-tagged file so no
-other build links it.
+## Three packages, one file
 
-## Two constraints that shaped the design
+A rela database file holds two unrelated things — the entity graph and the
+operator's config — and neither should own the other, or the file they share.
+So opening moved out of the store entirely:
 
-**arch-lint forbids a store importing `internal/config`**, and Go matches
-method sets exactly — so the wiring site's type assertion is on a *return
-type*, and the store cannot name `config.Loader` to satisfy it. `sqlitestore`
-therefore declares its own identical two-method `ConfigReader`, and a
-compile-time assertion in `appbuild` pins the two equal. One duplicated
-interface is the cost of both rules holding at once.
+```go
+db, err := sqlitedb.Open(ctx, sqlitedb.Options{Path: p})  // owns the FILE
+cfg, err := configsql.New(db.DB())                        // reads config
+st,  err := sqlitestore.New(db)                           // reads the graph
+```
 
-**The accessor has to be on `Store`, not just `Conn`.** It was on `Conn` alone
-at first, which compiles, passes every loader test, and silently never
-installs the layer — the assertion just fails and the disk-only loader is
-used. `TestSQLiteStoreSatisfiesConfigProvider` exists because that failure is
-otherwise invisible.
+- **`internal/sqlitedb`** owns the file: opening, PRAGMA verification, the
+  single-writer lock, the schema and its migration ladder. It is not under
+  `internal/store`, because owning a file is not a storage-backend concern.
+- **`internal/config/configsql`** reads config from `project_files`. It
+  touches no entity, relation or graph — just rows keyed by path — and imports
+  `internal/config` directly, so it *declares* `config.Loader` conformance
+  rather than matching it structurally.
+- **`internal/store/sqlitestore`** keeps only the graph. It borrows the
+  handle; `Store.Close` no longer closes the database, and the recipe that
+  opened the file is what closes it.
 
-## Read/write split
+The first draft put config inside `sqlitestore`, which was wrong: arch-lint
+forbids a store importing `internal/config`, and working around that meant a
+duplicated `ConfigReader` interface plus a test to keep the two in sync. That
+was the design telling me the code was in the wrong package — the store's own
+arch-lint comment calls it "the conformance-passing minimal store", and config
+had no business widening it. Moving the package deleted the duplicate
+interface, the structural-conformance test, and the build-tagged
+`layerStoreConfig` indirection.
 
-`ProjectFiles()` returns the read-only `ConfigReader`; `ProjectFilesStore()`
-returns the concrete type with `Put`. A config consumer cannot reach `Put` by
-accident, matching how every other seam here separates its halves.
+## Wiring
+
+`appbuild`'s sqlite recipe opens the database, hands the handle to both, and
+layers the config: `config.NewLayered(files, baked)`. `assemble` takes an
+optional `projectConfig` override — nil on every other build, so they are
+byte-identical to before.
 
 ## Acceptance
 
-- `ProjectFiles` satisfies `config.Loader` structurally (compile-time
-  assertion, since the match cannot be declared).
+- `configsql.Loader` implements `config.Loader` (declared, compiler-checked).
 - An absent row is `fs.ErrNotExist`-compatible — a layered loader falls
   through on exactly that error and nothing else.
 - `List` is sorted, scoped, non-recursive, and treats the directory as a

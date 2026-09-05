@@ -66,12 +66,12 @@ type DB struct {
 	lock        *processLock
 }
 
-// Connect opens (creating if absent) the database at opts.Path and returns a
+// Open opens (creating if absent) the database at opts.Path and returns a
 // handle that is ready to query.
 //
-// The caller OWNS the result and must [DB.Close] it — unless it is handed
-// to [New], which takes ownership so that closing the store closes the
-// database exactly once.
+// The caller OWNS the result and must [DB.Close] it. Handing it to a store or
+// a config loader does NOT transfer ownership — both borrow it, so whoever
+// opened the file is who closes it.
 //
 // Errors are surfaced unchanged rather than wrapped: the actionable ones are
 // "another process holds the single-writer lock" and "WAL could not be
@@ -182,16 +182,18 @@ func (c *DB) verifyBusyTimeout(ctx context.Context) error {
 // JournalMode reports the journal mode actually in effect.
 func (c *DB) JournalMode() string { return c.journalMode }
 
-// DB exposes the pool so config stored in this database can be read before a
-// store exists. Returns a live handle, not a copy — do not close it; close
-// the [DB] (or the [Store] that took ownership of it) instead.
+// DB exposes the pool, so config stored in this database can be read before a
+// store exists and the two can share one connection.
+//
+// Returns a live handle, not a copy. Do not close it: close the [DB] that owns
+// it, which is what tears down the pool and releases the single-writer lock.
 func (c *DB) DB() *sql.DB { return c.db }
 
 // Close tears down the pool and releases the single-writer lock.
 //
-// Closing a Conn that was handed to [New] is a double close: New takes
-// ownership, so [Store.Close] already does this. Call this only for a Conn
-// that never became a store.
+// This is the ONLY thing that closes the database. A store or config loader
+// built over this handle borrows it, so closing either of those leaves the
+// file open — which is the point: they share it, and neither owns it.
 func (c *DB) Close() error {
 	err := c.db.Close()
 	if lockErr := c.lock.release(); lockErr != nil && err == nil {
@@ -199,12 +201,6 @@ func (c *DB) Close() error {
 	}
 	return err
 }
-
-// timeFmt is the on-disk timestamp format. RFC3339Nano keeps the timezone,
-// which is load-bearing: a naive timestamp parses back to a time that compares
-// wrong against every consumer's clock, and store.Freshness is consumed by
-// index-rebuild logic that does exactly that comparison.
-const timeFmt = time.RFC3339Nano
 
 // defaultBusyTimeout is how long a writer waits for the write lock before
 // giving up. Generous on purpose — with the in-process write mutex below, a
