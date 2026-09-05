@@ -3,49 +3,97 @@
 package cli
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 
+	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store/sqlitestore"
 )
 
-// The sqlite build has a real schema, so it must not inherit the "this binary
-// has no database" stub — but the schema is applied by sqlitestore.Open itself
-// rather than by a migration ladder like pgstore's.
-//
-// It IS versioned: Open stamps PRAGMA user_version and refuses a database from
-// a newer binary. What does not exist yet is the ladder that carries an OLDER
-// database forward, which is why these commands report state rather than
-// perform work. When schemaVersion is first bumped, that ladder becomes
-// necessary and these become real implementations mirroring db_postgres.go.
-//
-// All three return nil for a no-op. `rela db migrate && start` is an ordinary
-// deploy idiom and `rela db reconcile --dry-run` is a documented CI drift gate
-// on the postgres build; a sqlite build in either pipeline must not fail just
-// because it has nothing to do.
+// dbFileName duplicates appbuild's constant rather than importing it: the
+// appbuild one is unexported, and exporting it to serve two CLI commands
+// would widen a wiring package's API for a filename.
+const dbFileName = "rela.db"
 
-// runDBMigrate reports success, because on this build there is genuinely
-// nothing to do — the schema is applied when the project is opened.
-//
-// Returning nil rather than an error is deliberate: `rela db migrate && start`
-// is an ordinary deploy idiom, and failing a no-op would break it. The postgres
-// equivalent does the same when the database is already current.
+// databasePath locates the project's SQLite file the same way appbuild does.
+func databasePath() (string, error) {
+	paths, err := project.Discover("", storage.NewSafeFS(storage.NewOsFS()))
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(paths.CacheDir, dbFileName), nil
+}
+
+// runDBMigrate carries the database forward to the shape this binary expects.
 func runDBMigrate() error {
-	fmt.Printf("Schema is up to date (version %d); the sqlite build applies it "+
-		"when the project is opened.\n", sqlitestore.SchemaVersion())
+	path, err := databasePath()
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+
+	before, target, err := sqlitestore.Status(ctx, path)
+	if err != nil {
+		return err
+	}
+	if before >= target {
+		fmt.Printf("Database is up to date (schema version %d).\n", before)
+		return nil
+	}
+
+	// Connecting IS migrating: sqlitestore.Connect runs the ladder. Going
+	// through it rather than exposing a separate migrate entry point keeps one
+	// migration path, so an operator running this command and a server
+	// starting up execute exactly the same code and cannot drift apart.
+	conn, err := sqlitestore.Connect(ctx, sqlitestore.Options{Path: path})
+	if err != nil {
+		return err
+	}
+	if err := conn.Close(); err != nil {
+		return err
+	}
+
+	// Report the target constant rather than re-reading. Connect succeeded, so
+	// the database IS at that version; a third open would only add a TOCTOU
+	// window and one more way for a command that already worked to return an
+	// error.
+	fmt.Printf("Applied migrations: schema version %d → %d.\n", before, target)
 	return nil
 }
 
+// runDBStatus reports current vs expected schema version. Exits non-zero when
+// the database is behind, so CI can gate on it — matching the postgres build.
+//
+// Status reads the stamp without migrating (it opens read-only and takes no
+// single-writer lock), so "behind" is a state this can genuinely report — and
+// reporting it does not require the server to be stopped.
 func runDBStatus() error {
-	fmt.Printf("Schema version %d (sqlite build).\n", sqlitestore.SchemaVersion())
-	fmt.Println("The schema is applied when the project is opened; a database")
-	fmt.Println("written by a newer rela is refused rather than mis-read.")
+	path, err := databasePath()
+	if err != nil {
+		return err
+	}
+	current, target, err := sqlitestore.Status(context.Background(), path)
+	if err != nil {
+		return err
+	}
+	if current < target {
+		fmt.Printf("Database is BEHIND: schema version %d, binary expects %d.\n", current, target)
+		fmt.Println("Run 'rela db migrate' to apply pending migrations.")
+		os.Exit(1)
+	}
+	fmt.Printf("Database is up to date (schema version %d).\n", current)
 	return nil
 }
 
-// runDBReconcile is a successful no-op for the same reason as runDBMigrate:
-// `rela db reconcile --dry-run` is documented as a CI drift gate on the
-// postgres build, and a sqlite build in that same pipeline must not fail
-// unconditionally. There is no drift possible because there is nothing derived.
+// runDBReconcile is a successful no-op: this build synthesizes no
+// derived-schema objects, so there is nothing that could drift.
+//
+// Returning nil rather than an error is deliberate. `rela db reconcile
+// --dry-run` is a documented CI drift gate on the postgres build, and a sqlite
+// build in that same pipeline must not fail unconditionally.
 func runDBReconcile(_, _ bool) error {
 	fmt.Println("Nothing to reconcile: the sqlite build synthesizes no derived-schema")
 	fmt.Println("objects. `unique:` is enforced by the application-level check, which")

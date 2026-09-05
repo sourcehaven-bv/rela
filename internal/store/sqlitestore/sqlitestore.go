@@ -70,9 +70,9 @@ type Options struct {
 	// defaultBusyTimeout.
 	BusyTimeout time.Duration
 
-	// MaxOpenConns caps the connection pool. Zero uses defaultMaxOpenConns.
-	// Values below 2 are raised to 2 — a pool of one deadlocks any Tx that
-	// runs concurrently with a read.
+	// MaxOpenConns caps the connection pool. Values below 2 — the zero value
+	// included — are raised to defaultMaxOpenConns, because a pool of one
+	// deadlocks any Tx that runs concurrently with a read.
 	MaxOpenConns int
 
 	// AllowNonWAL permits opening a database where WAL could not be enabled.
@@ -102,8 +102,13 @@ type Options struct {
 // Two bumps since the first draft, both from review and both unexported
 // helpers rather than new API: wrapping DeleteEntity in a transaction split it
 // into an exported method plus a locked helper (the shape RenameEntity already
-// had), and checkSchemaVersion carries the user_version guard. The EXPORTED
+// had), and the schema guard carried the user_version check. The EXPORTED
 // count has not moved, which is the number that actually measures coupling.
+//
+// The count came back DOWN when the connection was split out (TKT-S1EVV7):
+// opening, PRAGMA verification and the migration ladder are Conn's, not the
+// store's. Ratcheting the directive down with it is the point — see
+// TKT-N0IKN9.
 //
 // The content-states surface (TKT-DOFYR1 / TKT-C1XUA8 / TKT-WAV8XP) is the
 // latest interface growth: GetEntityState, DeleteEntityState and
@@ -112,7 +117,7 @@ type Options struct {
 // Interface-driven again, so the numbers move with store.Store rather than
 // with this type.
 //
-//plimsoll:max-methods=53
+//plimsoll:max-methods=50
 //plimsoll:max-exported-methods=32
 type Store struct {
 	db   *sql.DB
@@ -164,8 +169,37 @@ type pendingEvents struct {
 	notes []func(*Store)
 }
 
-// Open opens (creating if absent) the SQLite database at opts.Path, using the
-// background context for the schema and PRAGMA verification it performs.
+// New builds a store on an already-opened [Conn], TAKING OWNERSHIP of it:
+// [Store.Close] closes the database and releases the single-writer lock, so
+// the caller must not also close the Conn.
+//
+// Taking a connection rather than a path is what lets config living in this
+// same database be read before the store exists — see the [Conn] doc for the
+// ordering. It mirrors pgstore's New, which likewise takes an injected pool.
+//
+// Nil: rejected — a nil Conn is a wiring mistake, and failing here beats a
+// panic on the first query.
+func New(conn *Conn, options ...Option) (*Store, error) {
+	if conn == nil {
+		return nil, errors.New("sqlitestore: nil Conn")
+	}
+	s := &Store{
+		db:          conn.db,
+		opts:        conn.opts,
+		journalMode: conn.journalMode,
+		lock:        conn.lock,
+		subs:        map[int]chan store.Event{},
+	}
+	for _, opt := range options {
+		opt(s)
+	}
+	return s, nil
+}
+
+// Open connects to the database at opts.Path and builds a store on it.
+//
+// A convenience for callers that need nothing between the two steps;
+// [Connect] plus [New] is the path for those that do.
 //
 // Nil: never returns a nil Store with a nil error.
 func Open(opts Options, options ...Option) (*Store, error) {
@@ -173,7 +207,7 @@ func Open(opts Options, options ...Option) (*Store, error) {
 }
 
 // OpenContext is [Open] with a caller-supplied context governing the
-// startup work — the PRAGMA read-back and the schema creation.
+// startup work — the PRAGMA read-back, schema creation and migration.
 //
 // Separate from Open because the context bounds only opening: it does NOT
 // govern the returned store, whose own methods each take their own. A caller
@@ -182,37 +216,13 @@ func Open(opts Options, options ...Option) (*Store, error) {
 //
 // Nil: never returns a nil Store with a nil error.
 func OpenContext(ctx context.Context, opts Options, options ...Option) (*Store, error) {
-	if opts.Path == "" {
-		return nil, errors.New("sqlitestore: Options.Path is required")
-	}
-	if opts.BusyTimeout <= 0 {
-		opts.BusyTimeout = defaultBusyTimeout
-	}
-	if opts.MaxOpenConns < 2 {
-		opts.MaxOpenConns = defaultMaxOpenConns
-	}
-
-	// Take the single-writer lock BEFORE opening the database, so a second
-	// process is refused before it can write anything.
-	lock, err := acquireProcessLock(opts.Path)
+	conn, err := Connect(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
-
-	db, err := sql.Open("sqlite", dsn(opts))
+	s, err := New(conn, options...)
 	if err != nil {
-		_ = lock.release()
-		return nil, fmt.Errorf("sqlitestore: open %s: %w", opts.Path, err)
-	}
-	db.SetMaxOpenConns(opts.MaxOpenConns)
-
-	s := &Store{db: db, opts: opts, lock: lock, subs: map[int]chan store.Event{}}
-	for _, opt := range options {
-		opt(s)
-	}
-	if err := s.init(ctx); err != nil {
-		_ = db.Close()
-		_ = lock.release()
+		_ = conn.Close()
 		return nil, err
 	}
 	return s, nil
@@ -227,133 +237,14 @@ func dsn(opts Options) string {
 		opts.Path, opts.BusyTimeout.Milliseconds())
 }
 
-// init verifies the connection settings actually took and creates the schema.
-func (s *Store) init(ctx context.Context) error {
-	if err := s.db.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&s.journalMode); err != nil {
-		return fmt.Errorf("sqlitestore: read journal_mode: %w", err)
-	}
-	if s.journalMode != "wal" && !s.opts.AllowNonWAL {
-		return fmt.Errorf(
-			"sqlitestore: WAL could not be enabled (journal_mode=%q) for %s — "+
-				"this usually means the file is on a network or file-sync "+
-				"filesystem (iCloud, Dropbox, SMB), where SQLite is not safe. "+
-				"Move the project to local storage, or set AllowNonWAL if you "+
-				"understand the risk",
-			s.journalMode, s.opts.Path)
-	}
-
-	if err := s.verifyBusyTimeout(ctx); err != nil {
-		return err
-	}
-	if _, err := s.db.ExecContext(ctx, schemaSQL); err != nil {
-		return fmt.Errorf("sqlitestore: create schema: %w", err)
-	}
-	return s.checkSchemaVersion(ctx)
-}
-
-// schemaVersion is the shape of the tables this binary expects. Bump it
-// whenever schemaSQL changes shape, and add the migration that carries an
-// existing database forward.
-const schemaVersion = 1
-
-// SchemaVersion reports the table shape this binary expects, so the CLI can
-// show a real number rather than prose.
-func SchemaVersion() int { return schemaVersion }
-
-// checkSchemaVersion stamps the version on a fresh database and refuses one
-// written by a newer binary.
-//
-// The marker matters more than it looks. schemaSQL is CREATE TABLE IF NOT
-// EXISTS, which is a silent NO-OP against an existing table of a DIFFERENT
-// shape — so without a version an old database opens happily and then fails at
-// the first query with "no such column", at runtime, on user data, with nothing
-// pointing at the schema. Stamping from the start is what makes a real
-// migration ladder possible later; retrofitting one means sniffing
-// pragma_table_info to guess which shape you are looking at, because neither
-// version ever recorded itself.
-//
-// Forward-only and fail-loud, matching pgstore.Migrate: a database from a
-// newer binary is refused rather than opened and silently mis-read.
-func (s *Store) checkSchemaVersion(ctx context.Context) error {
-	var found int
-	if err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&found); err != nil {
-		return fmt.Errorf("sqlitestore: read user_version: %w", err)
-	}
-
-	switch {
-	case found == schemaVersion:
-		return nil
-	case found == 0:
-		// Either brand new, or written before versions were stamped. Both are
-		// this shape, so claim it.
-		if _, err := s.db.ExecContext(ctx,
-			fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
-			return fmt.Errorf("sqlitestore: stamp user_version: %w", err)
-		}
-		return nil
-	case found > schemaVersion:
-		return fmt.Errorf(
-			"sqlitestore: %s was written by a newer rela (schema version %d, "+
-				"this binary understands %d); upgrade rela rather than "+
-				"downgrading the database",
-			s.opts.Path, found, schemaVersion)
-	default:
-		// An older shape with no migration to carry it forward. Refusing is
-		// the honest answer: opening would mean querying columns that may not
-		// exist, and failing later with a much worse error.
-		return fmt.Errorf(
-			"sqlitestore: %s has schema version %d but this binary expects %d, "+
-				"and no migration is available; this backend does not yet have "+
-				"a migration ladder",
-			s.opts.Path, found, schemaVersion)
-	}
-}
-
-// verifyBusyTimeout confirms the PRAGMA reached more than one connection.
-//
-// This exists because the failure it guards is SILENT: a per-connection PRAGMA
-// applied to a single pooled connection reads back correctly while leaving
-// every other connection at 0. Pinning two connections open simultaneously
-// forces database/sql to open a genuinely different one, so a regression here
-// (someone "simplifying" the DSN back to a db.Exec) fails at Open rather than
-// as mysterious SQLITE_BUSY under load.
-func (s *Store) verifyBusyTimeout(ctx context.Context) error {
-	first, err := s.db.Conn(ctx)
-	if err != nil {
-		return fmt.Errorf("sqlitestore: verify busy_timeout: %w", err)
-	}
-	defer first.Close()
-	second, err := s.db.Conn(ctx)
-	if err != nil {
-		return fmt.Errorf("sqlitestore: verify busy_timeout: %w", err)
-	}
-	defer second.Close()
-
-	want := s.opts.BusyTimeout.Milliseconds()
-	for i, c := range []*sql.Conn{first, second} {
-		var got int64
-		if err := c.QueryRowContext(ctx, "PRAGMA busy_timeout").Scan(&got); err != nil {
-			return fmt.Errorf("sqlitestore: verify busy_timeout: %w", err)
-		}
-		if got != want {
-			return fmt.Errorf(
-				"sqlitestore: busy_timeout is %dms on connection %d, want %dms — "+
-					"PRAGMAs must be set via DSN _pragma= parameters, not db.Exec",
-				got, i, want)
-		}
-	}
-	return nil
-}
-
 // JournalMode reports the journal mode actually in effect.
 func (s *Store) JournalMode() string { return s.journalMode }
 
-// schemaSQL is created unconditionally at Open. There is no migration
-// mechanism here and none is needed yet: this package is not wired into a
-// binary, so no database it created is in the field. When one ships, a
-// versioned migration step must land BEFORE the first release — a column
-// added to these CREATE statements afterwards is silently absent from every
-// existing file, and STRICT tables fail the first write rather than the open.
+// schemaSQL is created unconditionally at Connect, and is the shape of a
+// FRESH database. It is CREATE TABLE IF NOT EXISTS throughout, so it is a
+// silent no-op against an existing table of a different shape — carrying an
+// older database forward is migrate.go's job, and every change here needs a
+// matching step there.
 const schemaSQL = `
 CREATE TABLE IF NOT EXISTS entities (
 	id          TEXT NOT NULL,
@@ -419,7 +310,31 @@ CREATE TABLE IF NOT EXISTS attachments (
 	PRIMARY KEY (entity_id, property, file_name)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS attachments_entity_idx ON attachments(entity_id);
+` + projectFilesDDL + `
 `
+
+// projectFilesDDL carries the operator-authored config — schema.yaml,
+// data-entry.yaml, acl.yaml, scripts/, templates/, custom/ — so a single
+// database file can be a complete, shippable rela project rather than the data
+// half of one.
+//
+// Flat path keys with no directory rows: listing is a prefix scan, which is
+// all any consumer needs, and it keeps the two config backends agreeing about
+// what a directory is (a filesystem has real ones; this has keys containing
+// slashes). BLOB rather than TEXT because custom/ and apps/ carry fonts and
+// images alongside the YAML.
+//
+// Shared between schemaSQL (fresh databases) and the v1→v2 migration
+// (existing ones). One definition, not two copies: when duplicated DDL drifts,
+// a fresh database and a migrated one end up with different shapes — precisely
+// the failure the version-stamping apparatus exists to prevent, arriving by
+// the one route it cannot detect.
+const projectFilesDDL = `
+CREATE TABLE IF NOT EXISTS project_files (
+	path       TEXT PRIMARY KEY,
+	content    BLOB NOT NULL,
+	updated_at TEXT NOT NULL
+) STRICT;`
 
 // --- execution seam -------------------------------------------------------
 
