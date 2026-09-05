@@ -711,7 +711,13 @@ jobs:
   # critical path of a job that waits on a postgres service container.
   sqlite:
     name: SQLite Backend
-    runs-on: ubuntu-latest
+    # 26.04, not ubuntu-latest — the same reason the Test job pins it: the
+    # command sandbox needs unprivileged user namespaces, which 24.04 restricts
+    # via AppArmor (apparmor_restrict_unprivileged_userns=1, surfacing as
+    # bwrap "Failed RTM_NEWADDR: Operation not permitted"). internal/cli is in
+    # scope and its render tests run confined, so they fail on 24.04 even with
+    # bubblewrap installed.
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
 
@@ -727,6 +733,12 @@ jobs:
       # reason; a job running the same packages needs the same runner.
       - name: Install bubblewrap (command sandbox)
         run: sudo apt-get update && sudo apt-get install -y bubblewrap
+
+      - name: Verify the sandbox actually works on this runner
+        # A hard failure here beats a confusing test failure downstream: it
+        # says "the confinement is absent" rather than "render produced the
+        # wrong bytes".
+        run: bwrap --unshare-all --ro-bind / / /bin/true
 
       # Scoped to the packages the tag actually changes rather than ./... — the
       # rest is byte-identical to what the Test job already ran, and paying for

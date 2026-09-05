@@ -39,7 +39,10 @@ backend, and sqlitestore's own concurrency is covered by the conformance
 suite. Worth adding if this job ever grows a genuinely sqlite-specific
 concurrency test.
 
-The job installs bubblewrap, like the Test job does. `internal/cli` is in
+The job runs on `ubuntu-26.04` and installs bubblewrap, matching the Test job
+on both counts. 24.04 restricts unprivileged user namespaces via AppArmor, so
+the sandbox fails there with `bwrap: Failed RTM_NEWADDR: Operation not
+permitted` even when bubblewrap is installed. `internal/cli` is in
 scope and its render/export tests shell out through `internal/cmdexec`, which
 fails closed with no sandbox available — so without it they do not skip, they
 fail. CI caught that too, on the second run.
