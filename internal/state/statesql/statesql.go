@@ -42,7 +42,7 @@ const timeFmt = time.RFC3339Nano
 // internal/state would make this package depend on the one that wraps it, and
 // the wiring site already binds the two. The conformance suite
 // (state/statetest) is what proves the match, which is stronger than a
-// compile-time assertion because it checks behaviour, not just shape.
+// compile-time assertion because it checks behavior, not just shape.
 //
 // # Key policy lives with the caller
 //

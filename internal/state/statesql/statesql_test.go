@@ -16,7 +16,7 @@ import (
 // The package deliberately does not name the state.KV interface (importing
 // internal/state would invert the dependency), so there is no compile-time
 // assertion to lean on. The conformance suite is the stronger check anyway: it
-// pins BEHAVIOUR — that a missing key is os.ErrNotExist-compatible, that
+// pins BEHAVIOR — that a missing key is os.ErrNotExist-compatible, that
 // delete is idempotent, that an empty value round-trips distinctly from an
 // absent one — none of which a type assertion would catch.
 //
