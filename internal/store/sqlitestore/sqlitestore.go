@@ -1,5 +1,9 @@
-// Package sqlitestore implements [store.Store] on an embedded SQLite database
-// via the pure-Go modernc.org/sqlite driver (no cgo).
+// Package sqlitestore implements [store.Store] on an embedded SQLite database.
+//
+// It BORROWS a handle opened by [sqlitedb], which owns the file: the pool, the
+// single-writer lock and the schema ladder are all that package's. A rela
+// database holds the entity graph AND the operator's config, so neither owns
+// the other; this package's job is the graph.
 //
 // It targets the SINGLE-PROCESS deployment — the desktop app and a single
 // rela-server — and sits between fsstore and pgstore: it gives up fsstore's
@@ -35,56 +39,19 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"sync"
 	"time"
 
-	_ "modernc.org/sqlite" // registers the "sqlite" driver
-
+	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// timeFmt is the on-disk timestamp format. RFC3339Nano keeps the timezone,
-// which is load-bearing: a naive timestamp parses back to a time that compares
-// wrong against every consumer's clock, and store.Freshness is consumed by
-// index-rebuild logic that does exactly that comparison.
+// timeFmt is the on-disk timestamp format for entity and relation rows.
+// RFC3339Nano keeps the timezone, which is load-bearing: a naive timestamp
+// parses back to a time that compares wrong against every consumer's clock,
+// and store.Freshness is consumed by index-rebuild logic that does exactly
+// that comparison.
 const timeFmt = time.RFC3339Nano
-
-// defaultBusyTimeout is how long a writer waits for the write lock before
-// giving up. Generous on purpose — with the in-process write mutex below, a
-// queued writer normally waits on the mutex rather than spending this budget,
-// so reaching it means genuine contention worth waiting out.
-const defaultBusyTimeout = 5 * time.Second
-
-// defaultMaxOpenConns sizes the pool. Must be > 1: see the package doc on pool
-// starvation.
-const defaultMaxOpenConns = 8
-
-// Options configures a store. The zero value is valid for every field except
-// Path.
-type Options struct {
-	// Path is the database file. Required.
-	Path string
-
-	// BusyTimeout is how long a blocked writer waits. Zero uses
-	// defaultBusyTimeout.
-	BusyTimeout time.Duration
-
-	// MaxOpenConns caps the connection pool. Values below 2 — the zero value
-	// included — are raised to defaultMaxOpenConns, because a pool of one
-	// deadlocks any Tx that runs concurrently with a read.
-	MaxOpenConns int
-
-	// AllowNonWAL permits opening a database where WAL could not be enabled.
-	//
-	// Default false, and that default is the point: WAL needs shared memory,
-	// so it silently stays "delete" on most network and sync filesystems
-	// (iCloud, Dropbox, SMB) — where SQLite is unsafe and the sidecar lock is
-	// unreliable too. A desktop user who puts a project in iCloud otherwise
-	// gets corruption with no diagnostic. Set this only for a deliberate,
-	// understood exception.
-	AllowNonWAL bool
-}
 
 // Store is a SQLite-backed [store.Store].
 //
@@ -127,15 +94,7 @@ type Options struct {
 //plimsoll:max-methods=51
 //plimsoll:max-exported-methods=33
 type Store struct {
-	db   *sql.DB
-	opts Options
-
-	// journalMode is what PRAGMA journal_mode actually reported, not what was
-	// requested.
-	journalMode string
-
-	// lock is the sidecar single-writer lock; released by Close.
-	lock *processLock
+	db *sql.DB
 
 	// observers receive derived-state callbacks. Fixed at construction — see
 	// WithObserver.
@@ -176,172 +135,33 @@ type pendingEvents struct {
 	notes []func(*Store)
 }
 
-// New builds a store on an already-opened [Conn], TAKING OWNERSHIP of it:
-// [Store.Close] closes the database and releases the single-writer lock, so
-// the caller must not also close the Conn.
+// New builds a store on an already-opened database.
 //
-// Taking a connection rather than a path is what lets config living in this
-// same database be read before the store exists — see the [Conn] doc for the
-// ordering. It mirrors pgstore's New, which likewise takes an injected pool.
+// It BORROWS the handle rather than owning it: the file — the pool, the
+// single-writer lock, the schema — belongs to [sqlitedb.DB], and closing the
+// store does not close the database. That inversion is deliberate. A rela
+// database holds two unrelated things, the entity graph and the operator's
+// config, and neither should own the other or the file they share; the caller
+// opens once and hands the same handle to both.
 //
-// Nil: rejected — a nil Conn is a wiring mistake, and failing here beats a
+// It also mirrors pgstore, whose New likewise takes an injected pool that the
+// wiring site owns and closes.
+//
+// Nil: rejected — a nil database is a wiring mistake, and failing here beats a
 // panic on the first query.
-func New(conn *Conn, options ...Option) (*Store, error) {
-	if conn == nil {
-		return nil, errors.New("sqlitestore: nil Conn")
+func New(db *sqlitedb.DB, options ...Option) (*Store, error) {
+	if db == nil {
+		return nil, errors.New("sqlitestore: nil database")
 	}
 	s := &Store{
-		db:          conn.db,
-		opts:        conn.opts,
-		journalMode: conn.journalMode,
-		lock:        conn.lock,
-		subs:        map[int]chan store.Event{},
+		db:   db.DB(),
+		subs: map[int]chan store.Event{},
 	}
 	for _, opt := range options {
 		opt(s)
 	}
 	return s, nil
 }
-
-// Open connects to the database at opts.Path and builds a store on it.
-//
-// A convenience for callers that need nothing between the two steps;
-// [Connect] plus [New] is the path for those that do.
-//
-// Nil: never returns a nil Store with a nil error.
-func Open(opts Options, options ...Option) (*Store, error) {
-	return OpenContext(context.Background(), opts, options...)
-}
-
-// OpenContext is [Open] with a caller-supplied context governing the
-// startup work — the PRAGMA read-back, schema creation and migration.
-//
-// Separate from Open because the context bounds only opening: it does NOT
-// govern the returned store, whose own methods each take their own. A caller
-// that passed a request context here and expected it to cancel later writes
-// would be wrong, so the two are kept visibly distinct.
-//
-// Nil: never returns a nil Store with a nil error.
-func OpenContext(ctx context.Context, opts Options, options ...Option) (*Store, error) {
-	conn, err := Connect(ctx, opts)
-	if err != nil {
-		return nil, err
-	}
-	s, err := New(conn, options...)
-	if err != nil {
-		_ = conn.Close()
-		return nil, err
-	}
-	return s, nil
-}
-
-// dsn builds the connection string. Every PRAGMA is a DSN parameter so it
-// applies to EVERY pooled connection — see the package doc.
-func dsn(opts Options) string {
-	return fmt.Sprintf(
-		"%s?_pragma=busy_timeout(%d)&_pragma=journal_mode(WAL)"+
-			"&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)",
-		opts.Path, opts.BusyTimeout.Milliseconds())
-}
-
-// JournalMode reports the journal mode actually in effect.
-func (s *Store) JournalMode() string { return s.journalMode }
-
-// schemaSQL is created unconditionally at Connect, and is the shape of a
-// FRESH database. It is CREATE TABLE IF NOT EXISTS throughout, so it is a
-// silent no-op against an existing table of a different shape — carrying an
-// older database forward is migrate.go's job, and every change here needs a
-// matching step there.
-const schemaSQL = `
-CREATE TABLE IF NOT EXISTS entities (
-	id          TEXT NOT NULL,
-	-- face is the content-state coordinate (TKT-DOFYR1); '' is the DEFAULT
-	-- state, so a faceless project stores exactly the rows it always did.
-	--
-	-- '' NOT NULL rather than NULL, matching pgstore: the face joins the
-	-- primary key, and PK columns cannot be NULL. One convention everywhere —
-	-- Go zero value, omitted frontmatter key, '' column.
-	--
-	-- The store only ever EQUALITY-MATCHES this value (see entity.Face), so
-	-- one plain TEXT column suffices and keeps suffixing when multi-axis
-	-- coordinates arrive: worlds compile to sets of concrete coordinates
-	-- before they reach a store.
-	face        TEXT NOT NULL DEFAULT '',
-	type        TEXT NOT NULL,
-	properties  TEXT NOT NULL DEFAULT '{}',
-	content     TEXT NOT NULL DEFAULT '',
-	updated_at  TEXT NOT NULL,
-	PRIMARY KEY (id, face)
-) STRICT;
-CREATE INDEX IF NOT EXISTS entities_type_idx ON entities(type);
--- Entity IDs are case-insensitive IDENTITIES (BUG-3RCWNS): "abc" and "ABC"
--- cannot coexist. Enforced as a unique index on lower(id) rather than by
--- changing the column collation, exactly as pgstore does — the primary key
--- stays byte-exact so every id lookup keeps its semantics and index usage, and
--- casing is still PRESERVED on the row. Only the uniqueness rule widens.
---
--- The backends must agree on identity to stay substitutable: fsstore writes
--- "<id>.md" and so inherits the host filesystem's case folding, which would
--- silently drop one of the pair on macOS or Windows.
---
--- The face joins the key here too (pgstore's 0011 migration does the same):
--- states of ONE id legitimately share lower(id), so uniqueness is per
--- (lower(id), face). What the index does NOT catch — ('ABC','') alongside an
--- existing ('abc','draft') — is rejected by the write path's family probe
--- instead: a state requires ITS OWN default row, and 'abc' has none.
-CREATE UNIQUE INDEX IF NOT EXISTS entities_id_lower_key ON entities(lower(id), face);
-
-CREATE TABLE IF NOT EXISTS relations (
-	from_id    TEXT NOT NULL,
-	-- from_face is the state-specific TAIL (design doc §2.3). There is
-	-- deliberately no to_face: heads stay entity-level, which is what makes
-	-- cross-world dangling references impossible.
-	from_face  TEXT NOT NULL DEFAULT '',
-	rel_type   TEXT NOT NULL,
-	to_id      TEXT NOT NULL,
-	properties TEXT NOT NULL DEFAULT '{}',
-	content    TEXT NOT NULL DEFAULT '',
-	updated_at TEXT NOT NULL,
-	PRIMARY KEY (from_id, from_face, rel_type, to_id)
-) STRICT;
-CREATE INDEX IF NOT EXISTS relations_from_idx ON relations(from_id);
-CREATE INDEX IF NOT EXISTS relations_to_idx   ON relations(to_id);
-
-CREATE TABLE IF NOT EXISTS attachments (
-	entity_id  TEXT NOT NULL,
-	property   TEXT NOT NULL,
-	file_name  TEXT NOT NULL,
-	data       BLOB NOT NULL,
-	size       INTEGER NOT NULL,
-	updated_at TEXT NOT NULL,
-	PRIMARY KEY (entity_id, property, file_name)
-) STRICT;
-CREATE INDEX IF NOT EXISTS attachments_entity_idx ON attachments(entity_id);
-` + projectFilesDDL + `
-`
-
-// projectFilesDDL carries the operator-authored config — schema.yaml,
-// data-entry.yaml, acl.yaml, scripts/, templates/, custom/ — so a single
-// database file can be a complete, shippable rela project rather than the data
-// half of one.
-//
-// Flat path keys with no directory rows: listing is a prefix scan, which is
-// all any consumer needs, and it keeps the two config backends agreeing about
-// what a directory is (a filesystem has real ones; this has keys containing
-// slashes). BLOB rather than TEXT because custom/ and apps/ carry fonts and
-// images alongside the YAML.
-//
-// Shared between schemaSQL (fresh databases) and the v1→v2 migration
-// (existing ones). One definition, not two copies: when duplicated DDL drifts,
-// a fresh database and a migrated one end up with different shapes — precisely
-// the failure the version-stamping apparatus exists to prevent, arriving by
-// the one route it cannot detect.
-const projectFilesDDL = `
-CREATE TABLE IF NOT EXISTS project_files (
-	path       TEXT PRIMARY KEY,
-	content    BLOB NOT NULL,
-	updated_at TEXT NOT NULL
-) STRICT;`
 
 // --- execution seam -------------------------------------------------------
 
@@ -367,8 +187,11 @@ func (s *Store) write(ctx context.Context, q string, args ...any) (sql.Result, e
 
 // --- Lifecycle ------------------------------------------------------------
 
-// Close tears down the pool, closes every subscriber channel and releases the
-// single-writer lock. A transaction view never closes the shared pool.
+// Close releases this store's subscribers.
+//
+// It does NOT close the database: the store borrows a handle owned by
+// [sqlitedb.DB], and the wiring site that opened the file closes it. A
+// transaction view closes nothing at all.
 func (s *Store) Close() error {
 	if s.parent != nil {
 		return nil
@@ -380,9 +203,5 @@ func (s *Store) Close() error {
 	}
 	s.subMu.Unlock()
 
-	err := s.db.Close()
-	if lockErr := s.lock.release(); lockErr != nil && err == nil {
-		err = lockErr
-	}
-	return err
+	return nil
 }

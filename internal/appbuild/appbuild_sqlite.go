@@ -9,7 +9,9 @@ import (
 	"log/slog"
 	"path/filepath"
 
+	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/search"
+	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/sqlitestore"
 )
@@ -42,13 +44,23 @@ func New(cfg Config, opts ...Option) (*Services, error) {
 	if err != nil {
 		return nil, err
 	}
-	st, searcher, closer, err := openBackend(context.Background(), base)
+	ctx := context.Background()
+	db, st, searcher, closer, err := openBackend(ctx, base)
 	if err != nil {
 		return nil, err
 	}
+
+	// Files first, then whatever config this database carries. Built here
+	// because the handle belongs to this recipe, not to the store.
+	cfgLoader, err := layerProjectConfig(config.NewFSLoader(cfg.FS, cfg.Paths.Root), db)
+	if err != nil {
+		_ = closer.Close()
+		return nil, err
+	}
+
 	// nil VisibleSearcher → assemble derives the generic search.NewVisible
 	// wrapper. Only the postgres recipe has a native implementation.
-	return assemble(base, st, searcher, nil, closer)
+	return assemble(base, st, searcher, nil, closer, cfgLoader)
 }
 
 // openBackend opens the SQLite store and the bleve-backed searcher.
@@ -61,9 +73,11 @@ func New(cfg Config, opts ...Option) (*Services, error) {
 // A nil index is non-fatal — the store still opens and the read/write paths
 // keep working with an error-Searcher, because losing search is much less bad
 // than refusing to start.
-func openBackend(ctx context.Context, base *SharedBase) (store.Store, search.Searcher, io.Closer, error) {
+func openBackend(
+	ctx context.Context, base *SharedBase,
+) (*sqlitedb.DB, store.Store, search.Searcher, io.Closer, error) {
 	if base.cfg.Paths.CacheDir == "" {
-		return nil, nil, nil, errors.New("appbuild: sqlite backend requires a project cache directory")
+		return nil, nil, nil, nil, errors.New("appbuild: sqlite backend requires a project cache directory")
 	}
 
 	idx := openSearchIndex(base)
@@ -73,36 +87,60 @@ func openBackend(ctx context.Context, base *SharedBase) (store.Store, search.Sea
 		opts = append(opts, sqlitestore.WithObserver(idx))
 	}
 
-	// Connect first, build the store second. Splitting the two is what will
-	// let config living IN this database be read before the store exists (the
-	// metamodel has to be loaded before anything that consumes one); today the
-	// two steps are adjacent, and the seam is the point.
-	conn, err := sqlitestore.Connect(ctx, sqlitestore.Options{
+	// The DATABASE is opened here and owned here — not by the store. A rela
+	// database file holds two unrelated things, the entity graph and the
+	// operator's config, so neither owns the other or the file they share:
+	// this recipe opens once and hands the same handle to both.
+	db, err := sqlitedb.Open(ctx, sqlitedb.Options{
 		Path: filepath.Join(base.cfg.Paths.CacheDir, dbFileName),
 	})
 	if err != nil {
-		// Surfaced unchanged: Connect's errors are the actionable ones —
-		// another process holds the single-writer lock, or WAL could not be
-		// enabled because the project sits on a network/sync filesystem.
-		// Wrapping them in "open store" would bury the part the operator needs.
-		return nil, nil, nil, err
+		// Surfaced unchanged: Open's errors are the actionable ones — another
+		// process holds the single-writer lock, or WAL could not be enabled
+		// because the project sits on a network/sync filesystem. Wrapping them
+		// in "open store" would bury the part the operator needs.
+		return nil, nil, nil, nil, err
 	}
 
-	// New takes ownership of conn, so from here the store's Close is what
-	// releases the database and the single-writer lock.
-	st, err := sqlitestore.New(conn, opts...)
+	st, err := sqlitestore.New(db, opts...)
 	if err != nil {
-		_ = conn.Close()
-		return nil, nil, nil, err
+		_ = db.Close()
+		return nil, nil, nil, nil, err
 	}
 
 	if idx == nil {
-		return st, search.ErrSearcher(errors.New("search index not available")), noopSQLiteCloser{}, nil
+		return db, st, search.ErrSearcher(errors.New("search index not available")), dbCloser{db: db}, nil
 	}
 	if err := backfillBleve(ctx, idx, st); err != nil {
 		slog.Warn("appbuild: failed to index entities", "error", err)
 	}
-	return st, search.New(st, idx), idx, nil
+	return db, st, search.New(st, idx), bothCloser{db: db, idx: idx}, nil
+}
+
+// dbCloser releases the database when there is no search index to close too.
+//
+// The database needs a closer at all because the store only BORROWS it — the
+// file is this recipe's to own, so tearing it down is this recipe's job.
+type dbCloser struct{ db *sqlitedb.DB }
+
+func (c dbCloser) Close() error { return c.db.Close() }
+
+// bothCloser releases the search index and then the database.
+//
+// Index first: it holds no handle on the database, but closing the database
+// out from under a still-running index would be the harder failure to
+// diagnose of the two.
+type bothCloser struct {
+	db  *sqlitedb.DB
+	idx io.Closer
+}
+
+func (c bothCloser) Close() error {
+	err := c.idx.Close()
+	if dbErr := c.db.Close(); dbErr != nil && err == nil {
+		err = dbErr
+	}
+	return err
 }
 
 // noopSQLiteCloser is the io.Closer assemble tears down when there is no search

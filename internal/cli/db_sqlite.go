@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
-	"github.com/Sourcehaven-BV/rela/internal/store/sqlitestore"
 )
 
 // dbFileName duplicates appbuild's constant rather than importing it: the
@@ -35,7 +35,7 @@ func runDBMigrate() error {
 	}
 	ctx := context.Background()
 
-	before, target, err := sqlitestore.Status(ctx, path)
+	before, target, err := sqlitedb.Status(ctx, path)
 	if err != nil {
 		return err
 	}
@@ -44,11 +44,11 @@ func runDBMigrate() error {
 		return nil
 	}
 
-	// Connecting IS migrating: sqlitestore.Connect runs the ladder. Going
+	// Connecting IS migrating: sqlitedb.Open runs the ladder. Going
 	// through it rather than exposing a separate migrate entry point keeps one
 	// migration path, so an operator running this command and a server
 	// starting up execute exactly the same code and cannot drift apart.
-	conn, err := sqlitestore.Connect(ctx, sqlitestore.Options{Path: path})
+	conn, err := sqlitedb.Open(ctx, sqlitedb.Options{Path: path})
 	if err != nil {
 		return err
 	}
@@ -75,7 +75,7 @@ func runDBStatus() error {
 	if err != nil {
 		return err
 	}
-	current, target, err := sqlitestore.Status(context.Background(), path)
+	current, target, err := sqlitedb.Status(context.Background(), path)
 	if err != nil {
 		return err
 	}

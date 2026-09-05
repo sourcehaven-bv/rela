@@ -1,4 +1,4 @@
-package sqlitestore
+package sqlitedb
 
 import (
 	"context"
@@ -87,7 +87,7 @@ var migrations = []migration{
 //
 // Fail-loud on a newer version, matching pgstore.Migrate: a database from a
 // newer binary is refused rather than opened and silently mis-read.
-func (c *Conn) migrate(ctx context.Context, fresh bool) error {
+func (c *DB) migrate(ctx context.Context, fresh bool) error {
 	found, err := c.userVersion(ctx)
 	if err != nil {
 		return err
@@ -98,7 +98,7 @@ func (c *Conn) migrate(ctx context.Context, fresh bool) error {
 		return nil
 	case found > schemaVersion:
 		return fmt.Errorf(
-			"sqlitestore: %s was written by a newer rela (schema version %d, "+
+			"sqlitedb: %s was written by a newer rela (schema version %d, "+
 				"this binary understands %d); upgrade rela rather than "+
 				"downgrading the database",
 			c.opts.Path, found, schemaVersion)
@@ -132,12 +132,12 @@ func (c *Conn) migrate(ctx context.Context, fresh bool) error {
 // direction. Assuming "not fresh" would replay the ladder over a database that
 // may already be current, which is only safe while every step happens to be
 // idempotent.
-func (c *Conn) isFresh(ctx context.Context) (bool, error) {
+func (c *DB) isFresh(ctx context.Context) (bool, error) {
 	var n int
 	if err := c.db.QueryRowContext(ctx,
 		`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='entities'`,
 	).Scan(&n); err != nil {
-		return false, fmt.Errorf("sqlitestore: inspect schema: %w", err)
+		return false, fmt.Errorf("sqlitedb: inspect schema: %w", err)
 	}
 	return n == 0, nil
 }
@@ -155,9 +155,9 @@ func (c *Conn) isFresh(ctx context.Context) (bool, error) {
 // connection returned to the pool with a transaction still open poisons every
 // later use of it. It runs on WithoutCancel so a cancelled context still
 // releases the transaction rather than abandoning it open.
-func (c *Conn) applyMigration(ctx context.Context, m migration) error {
+func (c *DB) applyMigration(ctx context.Context, m migration) error {
 	fail := func(err error) error {
-		return fmt.Errorf("sqlitestore: migrate to v%d: %w", m.to, err)
+		return fmt.Errorf("sqlitedb: migrate to v%d: %w", m.to, err)
 	}
 
 	conn, err := c.db.Conn(ctx)
@@ -191,20 +191,20 @@ func (c *Conn) applyMigration(ctx context.Context, m migration) error {
 }
 
 // userVersion reads the schema version stamped on the database.
-func (c *Conn) userVersion(ctx context.Context) (int, error) {
+func (c *DB) userVersion(ctx context.Context) (int, error) {
 	var v int
 	if err := c.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&v); err != nil {
-		return 0, fmt.Errorf("sqlitestore: read user_version: %w", err)
+		return 0, fmt.Errorf("sqlitedb: read user_version: %w", err)
 	}
 	return v, nil
 }
 
 // setUserVersion stamps the schema version on the database.
-func (c *Conn) setUserVersion(ctx context.Context, v int) error {
+func (c *DB) setUserVersion(ctx context.Context, v int) error {
 	// Interpolated for the same reason as in applyMigration: PRAGMA takes no
 	// bind parameter, and v is a package constant.
 	if _, err := c.db.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", v)); err != nil {
-		return fmt.Errorf("sqlitestore: stamp user_version: %w", err)
+		return fmt.Errorf("sqlitedb: stamp user_version: %w", err)
 	}
 	return nil
 }
@@ -212,7 +212,7 @@ func (c *Conn) setUserVersion(ctx context.Context, v int) error {
 // Status reports the version a database is stamped with and the version this
 // binary expects, WITHOUT migrating it.
 //
-// Deliberately not implemented via [Connect]: connecting runs the ladder, so
+// Deliberately not implemented via [Open]: connecting runs the ladder, so
 // it could only ever report "already current" and `rela db status` would have
 // nothing to say. This opens read-only and takes no single-writer lock, so it
 // can answer while a server is running.
@@ -228,12 +228,12 @@ func Status(ctx context.Context, path string) (found, want int, err error) {
 	}
 	db, err := sql.Open("sqlite", readOnlyDSN(path))
 	if err != nil {
-		return 0, schemaVersion, fmt.Errorf("sqlitestore: open %s: %w", path, err)
+		return 0, schemaVersion, fmt.Errorf("sqlitedb: open %s: %w", path, err)
 	}
 	defer func() { _ = db.Close() }()
 
 	if err := db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&found); err != nil {
-		return 0, schemaVersion, fmt.Errorf("sqlitestore: read user_version for %s: %w", path, err)
+		return 0, schemaVersion, fmt.Errorf("sqlitedb: read user_version for %s: %w", path, err)
 	}
 	return found, schemaVersion, nil
 }

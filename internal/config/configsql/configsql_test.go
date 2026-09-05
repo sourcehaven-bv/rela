@@ -1,4 +1,4 @@
-package sqlitestore_test
+package configsql_test
 
 import (
 	"bytes"
@@ -9,44 +9,46 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/config"
-	"github.com/Sourcehaven-BV/rela/internal/store/sqlitestore"
+	"github.com/Sourcehaven-BV/rela/internal/config/configsql"
+	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 )
 
-// TestProjectFilesSatisfiesConfigLoader is the whole point of the type: it
-// must be usable as a config.Loader WITHOUT sqlitestore importing config
-// (arch-lint forbids a store depending on an application package). The match
-// is therefore structural, and nothing but this assertion proves it holds —
-// renaming a method or changing a signature would otherwise fail far away, at
-// the wiring site, with a confusing message.
-func TestProjectFilesSatisfiesConfigLoader(_ *testing.T) {
-	var _ config.Loader = (*sqlitestore.ProjectFiles)(nil)
-	// And the store's own read interface must stay identical to it, or the
-	// wiring site's type assertion silently stops matching.
-	var _ config.Loader = sqlitestore.ConfigReader(nil)
-}
+// The config.Loader conformance is DECLARED in configsql.go (var _ ...), not
+// asserted here: this package may import config, so the compiler checks it
+// directly and no test is needed to stand in for a type system.
 
-func newProjectFiles(t *testing.T) (*sqlitestore.ProjectFiles, context.Context) {
+// newLoader opens a database and returns a Loader over it.
+//
+// It goes through sqlitedb.Open rather than sql.Open because that is what
+// creates the project_files table and stamps the schema version — owning the
+// FILE is sqlitedb's job, while reading config out of it is this package's.
+// Only the *sql.DB crosses the boundary.
+func newLoader(t *testing.T) (*configsql.Loader, context.Context) {
 	t.Helper()
 	ctx := context.Background()
-	conn, err := sqlitestore.Connect(ctx, sqlitestore.Options{
+	conn, err := sqlitedb.Open(ctx, sqlitedb.Options{
 		Path: filepath.Join(t.TempDir(), "cfg.db"),
 	})
 	if err != nil {
-		t.Fatalf("Connect: %v", err)
+		t.Fatalf("Open: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
-	return conn.ProjectFilesStore(), ctx
+
+	l, err := configsql.New(conn.DB())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return l, ctx
 }
 
-func TestProjectFiles_RoundTrip(t *testing.T) {
-	pf, ctx := newProjectFiles(t)
+func TestLoader_RoundTrip(t *testing.T) {
+	l, ctx := newLoader(t)
 	want := []byte("entity_types:\n  - ticket\n")
 
-	if err := pf.Put(ctx, "schema.yaml", want); err != nil {
+	if err := l.Put(ctx, "schema.yaml", want); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	got, err := pf.Load(ctx, "schema.yaml")
+	got, err := l.Load(ctx, "schema.yaml")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -55,10 +57,10 @@ func TestProjectFiles_RoundTrip(t *testing.T) {
 	}
 
 	// Put replaces rather than duplicating: config is loaded as a set.
-	if putErr := pf.Put(ctx, "schema.yaml", []byte("replaced")); putErr != nil {
+	if putErr := l.Put(ctx, "schema.yaml", []byte("replaced")); putErr != nil {
 		t.Fatalf("Put again: %v", putErr)
 	}
-	got, err = pf.Load(ctx, "schema.yaml")
+	got, err = l.Load(ctx, "schema.yaml")
 	if err != nil {
 		t.Fatalf("Load after replace: %v", err)
 	}
@@ -67,19 +69,19 @@ func TestProjectFiles_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestProjectFiles_MissingIsNotExist(t *testing.T) {
-	pf, ctx := newProjectFiles(t)
+func TestLoader_MissingIsNotExist(t *testing.T) {
+	l, ctx := newLoader(t)
 
 	// A layered loader falls through to the next source on exactly this error
 	// and nothing else, so a different one here would make a baked-in file
 	// shadow the one on disk.
-	if _, err := pf.Load(ctx, "absent.yaml"); !errors.Is(err, fs.ErrNotExist) {
+	if _, err := l.Load(ctx, "absent.yaml"); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("error %v is not fs.ErrNotExist-compatible", err)
 	}
 }
 
-func TestProjectFiles_List(t *testing.T) {
-	pf, ctx := newProjectFiles(t)
+func TestLoader_List(t *testing.T) {
+	l, ctx := newLoader(t)
 	for _, p := range []string{
 		"scripts/zeta.lua",
 		"scripts/alpha.lua",
@@ -87,12 +89,12 @@ func TestProjectFiles_List(t *testing.T) {
 		"templates/other.md",
 		"scriptsnotadir.yaml",
 	} {
-		if err := pf.Put(ctx, p, []byte("x")); err != nil {
+		if err := l.Put(ctx, p, []byte("x")); err != nil {
 			t.Fatalf("Put %s: %v", p, err)
 		}
 	}
 
-	got, err := pf.List(ctx, "scripts")
+	got, err := l.List(ctx, "scripts")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -105,13 +107,13 @@ func TestProjectFiles_List(t *testing.T) {
 	}
 }
 
-func TestProjectFiles_ListAbsentDirIsEmpty(t *testing.T) {
-	pf, ctx := newProjectFiles(t)
+func TestLoader_ListAbsentDirIsEmpty(t *testing.T) {
+	l, ctx := newLoader(t)
 
 	// A project with no scripts/ is ordinary, not an error — the same
 	// asymmetry the filesystem loader has, and the one datamigration.LoadDir
 	// relies on to tell "no migrations" from "unreadable migrations".
-	got, err := pf.List(ctx, "scripts")
+	got, err := l.List(ctx, "scripts")
 	if err != nil {
 		t.Fatalf("List of an absent directory: %v", err)
 	}
@@ -120,10 +122,10 @@ func TestProjectFiles_ListAbsentDirIsEmpty(t *testing.T) {
 	}
 }
 
-func TestProjectFiles_ListTreatsDirAsLiteral(t *testing.T) {
-	pf, ctx := newProjectFiles(t)
+func TestLoader_ListTreatsDirAsLiteral(t *testing.T) {
+	l, ctx := newLoader(t)
 	for _, p := range []string{"a_b/one.lua", "axb/two.lua"} {
-		if err := pf.Put(ctx, p, []byte("x")); err != nil {
+		if err := l.Put(ctx, p, []byte("x")); err != nil {
 			t.Fatalf("Put %s: %v", p, err)
 		}
 	}
@@ -132,7 +134,7 @@ func TestProjectFiles_ListTreatsDirAsLiteral(t *testing.T) {
 	// pattern, so "a_b" would also match "axb" ('_' being LIKE's
 	// single-character wildcard). The literal prefix comparison keeps a
 	// directory name a directory name.
-	got, err := pf.List(ctx, "a_b")
+	got, err := l.List(ctx, "a_b")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -141,15 +143,15 @@ func TestProjectFiles_ListTreatsDirAsLiteral(t *testing.T) {
 	}
 }
 
-func TestProjectFiles_Paths(t *testing.T) {
-	pf, ctx := newProjectFiles(t)
+func TestLoader_Paths(t *testing.T) {
+	l, ctx := newLoader(t)
 	for _, p := range []string{"schema.yaml", "scripts/a.lua", "acl.yaml"} {
-		if err := pf.Put(ctx, p, []byte("x")); err != nil {
+		if err := l.Put(ctx, p, []byte("x")); err != nil {
 			t.Fatalf("Put %s: %v", p, err)
 		}
 	}
 
-	got, err := pf.Paths(ctx)
+	got, err := l.Paths(ctx)
 	if err != nil {
 		t.Fatalf("Paths: %v", err)
 	}
@@ -159,8 +161,8 @@ func TestProjectFiles_Paths(t *testing.T) {
 	}
 }
 
-func TestProjectFiles_RejectsUnsafeNames(t *testing.T) {
-	pf, ctx := newProjectFiles(t)
+func TestLoader_RejectsUnsafeNames(t *testing.T) {
+	l, ctx := newLoader(t)
 
 	// The two backends must accept and reject exactly the same set. A name
 	// that works on disk but fails once baked in would break a project at
@@ -178,13 +180,13 @@ func TestProjectFiles_RejectsUnsafeNames(t *testing.T) {
 		{"drive letter", "C:secret.yaml"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := pf.Load(ctx, tc.input); err == nil {
+			if _, err := l.Load(ctx, tc.input); err == nil {
 				t.Errorf("Load(%q) should be rejected", tc.input)
 			}
-			if _, err := pf.List(ctx, tc.input); err == nil {
+			if _, err := l.List(ctx, tc.input); err == nil {
 				t.Errorf("List(%q) should be rejected", tc.input)
 			}
-			if err := pf.Put(ctx, tc.input, nil); err == nil {
+			if err := l.Put(ctx, tc.input, nil); err == nil {
 				t.Errorf("Put(%q) should be rejected", tc.input)
 			}
 		})

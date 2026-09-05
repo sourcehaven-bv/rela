@@ -1,4 +1,4 @@
-package sqlitestore_test
+package sqlitedb_test
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/store/sqlitestore"
+	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 )
 
 // TestSchemaVersionStamped pins that a fresh database records its shape.
@@ -18,7 +18,7 @@ import (
 // to guess from pragma_table_info.
 func TestSchemaVersionStamped(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "v.db")
-	s, err := sqlitestore.Open(sqlitestore.Options{Path: path})
+	s, err := sqlitedb.Open(context.Background(), sqlitedb.Options{Path: path})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -28,7 +28,7 @@ func TestSchemaVersionStamped(t *testing.T) {
 	if err != nil {
 		t.Skipf("sqlite3 CLI unavailable: %v", err)
 	}
-	want := strconv.Itoa(sqlitestore.SchemaVersion())
+	want := strconv.Itoa(sqlitedb.SchemaVersion())
 	if got := strings.TrimSpace(string(out)); got != want {
 		t.Errorf("user_version = %q, want %q", got, want)
 	}
@@ -38,7 +38,7 @@ func TestSchemaVersionStamped(t *testing.T) {
 // a newer rela must be refused, not opened and silently mis-read.
 func TestRefusesNewerSchema(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "future.db")
-	s, err := sqlitestore.Open(sqlitestore.Options{Path: path})
+	s, err := sqlitedb.Open(context.Background(), sqlitedb.Options{Path: path})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -48,7 +48,7 @@ func TestRefusesNewerSchema(t *testing.T) {
 		t.Skipf("sqlite3 CLI unavailable: %v", err)
 	}
 
-	_, reopenErr := sqlitestore.Open(sqlitestore.Options{Path: path})
+	_, reopenErr := sqlitedb.Open(context.Background(), sqlitedb.Options{Path: path})
 	if reopenErr == nil {
 		t.Fatal("opened a database from a newer rela; must refuse")
 	}
@@ -64,8 +64,8 @@ func TestRefusesNewerSchema(t *testing.T) {
 // silent no-op CREATE TABLE IF NOT EXISTS makes possible. Without the second,
 // a mis-ordered ladder would skip or repeat a step while still counting right.
 func TestMigrationLadderIsWellFormed(t *testing.T) {
-	steps := sqlitestore.MigrationSteps()
-	if got, want := len(steps)+1, sqlitestore.SchemaVersion(); got != want {
+	steps := sqlitedb.MigrationSteps()
+	if got, want := len(steps)+1, sqlitedb.SchemaVersion(); got != want {
 		t.Errorf("ladder produces version %d, schemaVersion is %d — "+
 			"every bump needs a matching migration step", got, want)
 	}
@@ -94,7 +94,7 @@ PRAGMA user_version = 1;`).Run(); err != nil {
 		t.Skipf("sqlite3 CLI unavailable: %v", err)
 	}
 
-	s, err := sqlitestore.Open(sqlitestore.Options{Path: path})
+	s, err := sqlitedb.Open(context.Background(), sqlitedb.Options{Path: path})
 	if err != nil {
 		t.Fatalf("open a v1 database: %v", err)
 	}
@@ -106,7 +106,7 @@ PRAGMA user_version = 1;`).Run(); err != nil {
 		t.Fatalf("inspect migrated database: %v", err)
 	}
 	got := strings.Fields(strings.TrimSpace(string(out)))
-	want := []string{strconv.Itoa(sqlitestore.SchemaVersion()), "0", "1"}
+	want := []string{strconv.Itoa(sqlitedb.SchemaVersion()), "0", "1"}
 	if !slices.Equal(got, want) {
 		t.Errorf("after migration got %v, want %v (version, project_files rows, "+
 			"preserved entities)", got, want)
@@ -119,7 +119,7 @@ PRAGMA user_version = 1;`).Run(); err != nil {
 func TestMigrateIsIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "twice.db")
 	for i := range 3 {
-		s, err := sqlitestore.Open(sqlitestore.Options{Path: path})
+		s, err := sqlitedb.Open(context.Background(), sqlitedb.Options{Path: path})
 		if err != nil {
 			t.Fatalf("open %d: %v", i, err)
 		}
@@ -142,7 +142,7 @@ func TestMigrateIsIdempotent(t *testing.T) {
 // on every new install.
 func TestFreshDatabaseSkipsTheLadder(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "fresh.db")
-	s, err := sqlitestore.Open(sqlitestore.Options{Path: path})
+	s, err := sqlitedb.Open(context.Background(), sqlitedb.Options{Path: path})
 	if err != nil {
 		t.Fatalf("open a fresh database: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestFreshDatabaseSkipsTheLadder(t *testing.T) {
 	// A fresh database lands on the current version without the ladder having
 	// had to produce it. The observable proxy is that it is stamped current
 	// and holds the current shape.
-	got, want, err := sqlitestore.Status(context.Background(), path)
+	got, want, err := sqlitedb.Status(context.Background(), path)
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
@@ -173,13 +173,13 @@ func TestStatusHandlesURIMetacharactersInPath(t *testing.T) {
 			dir := t.TempDir()
 			path := filepath.Join(dir, name)
 
-			s, err := sqlitestore.Open(sqlitestore.Options{Path: path})
+			s, err := sqlitedb.Open(context.Background(), sqlitedb.Options{Path: path})
 			if err != nil {
 				t.Skipf("this path shape is not openable at all: %v", err)
 			}
 			_ = s.Close()
 
-			got, want, err := sqlitestore.Status(context.Background(), path)
+			got, want, err := sqlitedb.Status(context.Background(), path)
 			if err != nil {
 				t.Fatalf("Status: %v", err)
 			}

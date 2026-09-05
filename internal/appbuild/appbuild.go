@@ -1401,7 +1401,7 @@ func (b *SharedBase) Assemble(
 	st store.Store, searcher search.Searcher,
 	visible search.VisibleSearcher, searchCloser io.Closer,
 ) (*Services, error) {
-	return assemble(b, st, searcher, visible, searchCloser)
+	return assemble(b, st, searcher, visible, searchCloser, nil)
 }
 
 // buildEntityManager assembles the write-path manager from the collaborators
@@ -1562,9 +1562,17 @@ func cascadeReadDeps(
 	}
 }
 
+// assemble builds the services bundle from an opened store.
+//
+// projectConfig, when non-nil, replaces the filesystem config loader. Only the
+// sqlite recipe supplies one: it opens a database that may CARRY the project's
+// config, and layers that behind the files. Passed in rather than derived here
+// because the database handle belongs to the recipe that opened it, and
+// assemble is deliberately build-agnostic.
 func assemble(
 	base *SharedBase, st store.Store, searcher search.Searcher,
 	visible search.VisibleSearcher, searchCloser io.Closer,
+	projectConfig config.Loader,
 ) (*Services, error) {
 	cfg := base.cfg
 
@@ -1586,10 +1594,10 @@ func assemble(
 
 	tr := tracer.New(st)
 	templater := templating.NewFSTemplater(cfg.FS, cfg.Paths)
-	// Files first, then whatever config the store itself carries. On every
-	// build but sqlite the second layer does not exist and this is the
-	// filesystem loader unchanged.
-	cfgLoader := layerStoreConfig(config.NewFSLoader(cfg.FS, cfg.Paths.Root), st)
+	cfgLoader := projectConfig
+	if cfgLoader == nil {
+		cfgLoader = config.NewFSLoader(cfg.FS, cfg.Paths.Root)
+	}
 
 	// Build the static lua read deps once — the ScriptRunner (automation
 	// cascades) is constructed with these.
