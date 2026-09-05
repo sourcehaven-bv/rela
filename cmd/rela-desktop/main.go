@@ -18,9 +18,11 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
@@ -65,6 +67,8 @@ type Desktop struct {
 	pendingSetupDir   string           // project dir awaiting data-entry.yaml setup
 	pendingSetupFS    storage.FS       // fs for pending setup
 	pendingSetupPaths *project.Context // project paths for pending setup
+	pendingProject    string           // project to load once the instance lock is held
+	menuReady         atomic.Bool      // true once the native menu exists (post-Run)
 	stopScheduler     context.CancelFunc
 }
 
@@ -90,6 +94,19 @@ func (d *Desktop) ServiceStartup(ctx context.Context, _ application.ServiceOptio
 		User: principal.SystemUser(),
 		Tool: principal.ToolDesktop,
 	})
+
+	// Deferred from main so a redundant second instance never opens the store.
+	// The menu is not live yet (see refreshMenu), so any refresh triggered by
+	// this load is suppressed; main sets the fully-built menu straight after.
+	if d.pendingProject != "" {
+		// contextcheck: LoadProject takes no ctx by design — it owns the
+		// project lifetime and cancels via d.stopScheduler, not the caller's
+		// context. Threading ctx here would be a wider refactor.
+		//nolint:contextcheck // see above
+		if errMsg := d.LoadProject(d.pendingProject); errMsg != "" {
+			slog.Warn("could not load project", "path", d.pendingProject, "error", errMsg)
+		}
+	}
 	return nil
 }
 
@@ -102,6 +119,63 @@ func (d *Desktop) ServiceStartup(ctx context.Context, _ application.ServiceOptio
 func (d *Desktop) ServiceShutdown() error {
 	d.releaseLoadedProject()
 	return nil
+}
+
+// onSecondInstanceLaunch handles another rela-desktop being started while this
+// one is running. Only one instance may hold a project: the sqlite backend
+// takes an exclusive lock at Open (DEC-LFSYNY), so a second process would fail
+// to open the store rather than compete for it. Instead of letting that happen,
+// we adopt the second instance's project and focus this window.
+//
+// data.Args is the second process's argv and data.WorkingDir its cwd, so a
+// relative -project must be resolved against THAT directory, not ours.
+// coverage-ignore-func: requires a second process
+func (d *Desktop) onSecondInstanceLaunch(data application.SecondInstanceData) {
+	if dir := projectDirFromArgs(data.Args, data.WorkingDir); dir != "" {
+		if errMsg := d.LoadProject(dir); errMsg != "" {
+			slog.Warn("second instance: could not load project", "path", dir, "error", errMsg)
+		} else {
+			d.reloadWindow()
+		}
+	}
+
+	// Bring this window forward regardless — the user asked for the app.
+	if d.win != nil {
+		d.win.Show()
+		d.win.UnMinimise()
+		d.win.Focus()
+	}
+}
+
+// projectDirFromArgs extracts an absolute project directory from a second
+// instance's argv. It returns "" when no project was named, so the caller
+// leaves the currently-open project alone.
+func projectDirFromArgs(args []string, workingDir string) string {
+	val := ""
+	for i := 1; i < len(args); i++ {
+		switch a := args[i]; {
+		case a == "-project" || a == "--project":
+			if i+1 < len(args) {
+				val = args[i+1]
+			}
+		case strings.HasPrefix(a, "-project="):
+			val = strings.TrimPrefix(a, "-project=")
+		case strings.HasPrefix(a, "--project="):
+			val = strings.TrimPrefix(a, "--project=")
+		}
+	}
+	if val == "" {
+		return ""
+	}
+	if !filepath.IsAbs(val) {
+		val = filepath.Join(workingDir, val)
+	}
+	// "." resolves to the launching shell's cwd, which is only a project if it
+	// actually looks like one; otherwise treat it as "no project named".
+	if !isRelaProject(val) {
+		return ""
+	}
+	return val
 }
 
 // pickDirectory shows a native directory chooser and returns the chosen path
@@ -792,9 +866,12 @@ func (d *Desktop) buildAppMenu() *application.Menu {
 
 // refreshMenu rebuilds and applies the application menu.
 func (d *Desktop) refreshMenu() {
-	// Menu.Update() is a silent no-op before app.Run(), so this is skipped
-	// entirely until the application exists.
-	if d.wails == nil {
+	// The native menu does not exist until app.Run() has built it. Setting it
+	// earlier is not merely a no-op: MenuManager.Set panics on a nil menuImpl
+	// (application_darwin.go setApplicationMenu). ServiceStartup runs before
+	// that point, so this must stay guarded on the post-Run flag rather than
+	// on d.wails, which is assigned in main.
+	if d.wails == nil || !d.menuReady.Load() {
 		return
 	}
 	m := d.buildAppMenu()
@@ -826,18 +903,16 @@ func main() {
 
 	d := &Desktop{prefs: prefs}
 
-	// Determine which project to open.
-	projectToLoad := resolveProjectDir(*projectDir, prefs)
-	if projectToLoad != "" {
-		if errMsg := d.LoadProject(projectToLoad); errMsg != "" {
-			slog.Warn("could not load project", "path", projectToLoad, "error", errMsg)
-		}
-	}
+	// Which project to open — resolved now, but NOT loaded yet. Opening the
+	// store here would mean a redundant second instance takes the sqlite and
+	// search locks before app.Run() discovers it should exit, which is the
+	// contention SingleInstance exists to prevent. The load happens in
+	// ServiceStartup, which only runs once this process owns the lock.
+	d.pendingProject = resolveProjectDir(*projectDir, prefs)
 
+	// The window is created before the project loads, so it opens with a
+	// generic title; ServiceStartup renames it once the name is known.
 	title := "Rela Desktop"
-	if d.app != nil {
-		title = d.app.ProjectName()
-	}
 
 	app := application.New(application.Options{
 		Name: "Rela Desktop",
@@ -850,6 +925,11 @@ func main() {
 		// v2 had no shutdown hook, so the scheduler and services leaked on
 		// quit. ServiceShutdown now releases them.
 		OnShutdown: func() { slog.Info("shutting down") },
+		// One instance only: see onSecondInstanceLaunch.
+		SingleInstance: &application.SingleInstanceOptions{
+			UniqueID:               "com.sourcehaven.rela-desktop",
+			OnSecondInstanceLaunch: d.onSecondInstanceLaunch,
+		},
 	})
 	d.wails = app
 
@@ -859,8 +939,15 @@ func main() {
 		Height: 800,
 	})
 
-	// Menus must be set after the application exists; Menu.Update() is a
-	// silent no-op before Run().
+	// Wails calls this on the main thread while initializing, which is the
+	// only context where the native menu can be built. Any refreshMenu before
+	// this point is suppressed by menuReady; the ServiceStartup load happens
+	// first, so the menu built here already reflects it.
+	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
+		d.menuReady.Store(true)
+		d.refreshMenu()
+	})
+
 	app.Menu.Set(d.buildAppMenu())
 
 	if err := app.Run(); err != nil {

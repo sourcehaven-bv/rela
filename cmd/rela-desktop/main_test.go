@@ -283,3 +283,98 @@ func TestGenerateDataEntryConfig_YAMLSpecialChars(t *testing.T) {
 		assert.ElementsMatch(t, []string{`back\slash`, "newline\nprop", "tab\tprop"}, propNames)
 	}
 }
+
+// TestProjectDirFromArgs covers argv parsing for a second instance launch.
+// The second process's cwd — not this one's — anchors a relative -project.
+func TestProjectDirFromArgs(t *testing.T) {
+	tmpDir := t.TempDir()
+	proj := filepath.Join(tmpDir, "myproject")
+	require.NoError(t, os.MkdirAll(proj, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(proj, "schema.yaml"), []byte("entities: {}"), 0o644))
+
+	notProj := filepath.Join(tmpDir, "notaproject")
+	require.NoError(t, os.MkdirAll(notProj, 0o755))
+
+	tests := []struct {
+		name       string
+		args       []string
+		workingDir string
+		want       string
+	}{
+		{
+			name: "no args",
+			args: []string{"rela-desktop"},
+			want: "",
+		},
+		{
+			name: "separate value, absolute",
+			args: []string{"rela-desktop", "-project", proj},
+			want: proj,
+		},
+		{
+			name: "double dash form",
+			args: []string{"rela-desktop", "--project", proj},
+			want: proj,
+		},
+		{
+			name: "equals form",
+			args: []string{"rela-desktop", "-project=" + proj},
+			want: proj,
+		},
+		{
+			name: "double dash equals form",
+			args: []string{"rela-desktop", "--project=" + proj},
+			want: proj,
+		},
+		{
+			name:       "relative resolves against the second instance's cwd",
+			args:       []string{"rela-desktop", "-project", "myproject"},
+			workingDir: tmpDir,
+			want:       proj,
+		},
+		{
+			name:       "dot resolves to the launching cwd",
+			args:       []string{"rela-desktop", "-project", "."},
+			workingDir: proj,
+			want:       proj,
+		},
+		{
+			name: "directory that is not a rela project is ignored",
+			args: []string{"rela-desktop", "-project", notProj},
+			want: "",
+		},
+		{
+			name: "flag with no value is ignored",
+			args: []string{"rela-desktop", "-project"},
+			want: "",
+		},
+		{
+			name: "unrelated flags are ignored",
+			args: []string{"rela-desktop", "-verbose"},
+			want: "",
+		},
+		{
+			name: "last occurrence wins",
+			args: []string{"rela-desktop", "-project", notProj, "-project", proj},
+			want: proj,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := projectDirFromArgs(tc.args, tc.workingDir)
+			// Symlinked temp dirs (/var vs /private/var on macOS) make a raw
+			// string compare flaky; compare resolved paths instead.
+			if tc.want == "" {
+				require.Empty(t, got)
+				return
+			}
+			require.NotEmpty(t, got)
+			wantEval, err := filepath.EvalSymlinks(tc.want)
+			require.NoError(t, err)
+			gotEval, err := filepath.EvalSymlinks(got)
+			require.NoError(t, err)
+			require.Equal(t, wantEval, gotEval)
+		})
+	}
+}
