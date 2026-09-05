@@ -26,10 +26,10 @@ func (s *Server) handleListEntities(
 	limit := args.GetInt("limit", 0)
 	offset := args.GetInt("offset", 0)
 
-	st := s.deps.Store
+	st := s.deps().Store
 	q := store.EntityQuery{}
 	if entityType != "" {
-		q.Type = s.types.resolveType(entityType)
+		q.Type = group(s, selTypes).resolveType(entityType)
 	}
 
 	entities := make([]*entity.Entity, 0)
@@ -84,7 +84,7 @@ func (s *Server) handleShowEntity(
 	}
 	id = trimID(id)
 
-	st := s.deps.Store
+	st := s.deps().Store
 	e, getErr := st.GetEntity(ctx, id)
 	if getErr != nil {
 		return errorResult("entity not found: " + id), nil
@@ -111,12 +111,12 @@ func (s *Server) handleSearchEntities(
 
 	q := search.Query{Text: query, Limit: limit}
 	if entityType != "" {
-		q.Types = []string{s.types.resolveType(entityType)}
+		q.Types = []string{group(s, selTypes).resolveType(entityType)}
 	}
 
-	st := s.deps.Store
+	st := s.deps().Store
 	summaries := make([]map[string]any, 0)
-	for hit, searchErr := range s.deps.Searcher.Search(ctx, q) {
+	for hit, searchErr := range s.deps().Searcher.Search(ctx, q) {
 		if searchErr != nil {
 			return errorResult(fmt.Sprintf("search failed: %v", searchErr)), nil
 		}
@@ -151,7 +151,7 @@ func (s *Server) handleCreateEntity(
 	customID := args.GetString("id", "")
 
 	// Resolve type
-	resolvedType, _, resolveErr := s.types.resolveEntityType(typeName)
+	resolvedType, _, resolveErr := group(s, selTypes).resolveEntityType(typeName)
 	if resolveErr != nil {
 		return errorResult(resolveErr.Error()), nil
 	}
@@ -160,11 +160,11 @@ func (s *Server) handleCreateEntity(
 	properties := extractProperties(request)
 
 	// Validate property names early for better error messages
-	if errResult := s.types.validatePropertyNames(resolvedType, properties); errResult != nil {
+	if errResult := group(s, selTypes).validatePropertyNames(resolvedType, properties); errResult != nil {
 		return errResult, nil
 	}
 
-	result, createErr := s.deps.EntityManager.CreateEntity(ctx,
+	result, createErr := s.deps().EntityManager.CreateEntity(ctx,
 		&entity.Entity{
 			Type:       resolvedType,
 			Properties: properties,
@@ -177,7 +177,7 @@ func (s *Server) handleCreateEntity(
 	}
 	created := result.Entity
 
-	st := s.deps.Store
+	st := s.deps().Store
 	e, _ := st.GetEntity(ctx, created.ID)
 	if e == nil {
 		// Fallback: return minimal info
@@ -202,7 +202,7 @@ func (s *Server) handleUpdateEntity(
 	}
 	id = trimID(id)
 
-	st := s.deps.Store
+	st := s.deps().Store
 	e, getErr := st.GetEntity(ctx, id)
 	if getErr != nil {
 		return errorResult("entity not found: " + id), nil
@@ -216,7 +216,7 @@ func (s *Server) handleUpdateEntity(
 	}
 
 	// Validate property names early for better error messages
-	if errResult := s.types.validatePropertyNames(e.Type, properties); errResult != nil {
+	if errResult := group(s, selTypes).validatePropertyNames(e.Type, properties); errResult != nil {
 		return errResult, nil
 	}
 
@@ -243,7 +243,7 @@ func (s *Server) handleUpdateEntity(
 		patch.Content = &content
 	}
 
-	updateResult, updateErr := s.deps.EntityManager.PatchEntity(ctx, id, patch)
+	updateResult, updateErr := s.deps().EntityManager.PatchEntity(ctx, id, patch)
 	if updateErr != nil {
 		return errorResult(updateErr.Error()), nil
 	}
@@ -299,7 +299,7 @@ func (s *Server) handleDeleteEntity(
 	id = trimID(id)
 	cascade := args.GetBool("cascade", false)
 
-	st := s.deps.Store
+	st := s.deps().Store
 	e, getErr := st.GetEntity(ctx, id)
 	if getErr != nil {
 		return errorResult("entity not found: " + id), nil
@@ -314,7 +314,7 @@ func (s *Server) handleDeleteEntity(
 		}
 	}
 
-	result, delErr := s.deps.EntityManager.DeleteEntity(ctx, id, cascade)
+	result, delErr := s.deps().EntityManager.DeleteEntity(ctx, id, cascade)
 	if delErr != nil {
 		return errorResult(delErr.Error()), nil
 	}
@@ -346,10 +346,10 @@ func (s *Server) handleRenameEntity(
 	dryRun := args.GetBool("dry_run", false)
 
 	// Pause watcher during rename
-	s.deps.Watcher.Pause()
-	defer s.deps.Watcher.Resume()
+	s.deps().Watcher.Pause()
+	defer s.deps().Watcher.Resume()
 
-	result, renameErr := s.deps.EntityManager.RenameEntity(
+	result, renameErr := s.deps().EntityManager.RenameEntity(
 		ctx, oldID, newID, entity.RenameOptions{DryRun: dryRun})
 	if renameErr != nil {
 		return errorResult(renameErr.Error()), nil

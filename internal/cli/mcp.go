@@ -40,5 +40,11 @@ func (c *McpCmd) Run() error {
 	if srvErr != nil {
 		return fmt.Errorf("mcp startup: %w", srvErr)
 	}
+
+	// Pick up schema.yaml edits without a restart (TKT-NU247U). Never fails
+	// startup: a project or backend that cannot be watched just serves the
+	// schema it booted with.
+	svc.watchSchema(srv)
+
 	return srv.Serve(context.Background())
 }

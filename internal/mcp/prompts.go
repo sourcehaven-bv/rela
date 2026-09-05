@@ -16,10 +16,10 @@ import (
 )
 
 func (s *Server) registerPrompts() {
-	s.mcp.AddPrompt(promptAnalyzeTraceability(), s.prompts.handleAnalyzeTraceabilityPrompt)
-	s.mcp.AddPrompt(promptReviewOrphans(), s.prompts.handleReviewOrphansPrompt)
-	s.mcp.AddPrompt(promptSummarizeProject(), s.prompts.handleSummarizeProjectPrompt)
-	s.mcp.AddPrompt(promptReviewEntity(), s.prompts.handleReviewEntityPrompt)
+	s.mcp.AddPrompt(promptAnalyzeTraceability(), bind(s, selPrompts, promptHandler.handleAnalyzeTraceabilityPrompt))
+	s.mcp.AddPrompt(promptReviewOrphans(), bind(s, selPrompts, promptHandler.handleReviewOrphansPrompt))
+	s.mcp.AddPrompt(promptSummarizeProject(), bind(s, selPrompts, promptHandler.handleSummarizeProjectPrompt))
+	s.mcp.AddPrompt(promptReviewEntity(), bind(s, selPrompts, promptHandler.handleReviewEntityPrompt))
 }
 
 // promptHandler serves the four registered prompts. A type of its own rather

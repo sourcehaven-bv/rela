@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
@@ -273,4 +274,142 @@ worlds:
 			}
 		}
 	})
+}
+
+// TestCloseAssembly_LeavesStoreAndSearcherUsable is the property the MCP
+// schema hot-reload rests on (TKT-NU247U).
+//
+// A reload assembles a successor against the store and searcher the previous
+// assembly opened, then retires the previous one. If that retirement closed the
+// store, the successor — and every in-flight request — would be reading a
+// closed store. CloseAssembly must stop only what its own Assemble started.
+func TestCloseAssembly_LeavesStoreAndSearcherUsable(t *testing.T) {
+	base := newSharedBase(t)
+
+	st := memstore.New()
+	searcher := search.New(st, search.NewLinearSearch())
+
+	first, err := base.Assemble(st, searcher, nil, nil)
+	if err != nil {
+		t.Fatalf("Assemble first: %v", err)
+	}
+
+	// A successor over the SAME store and searcher, exactly as a reload does.
+	second, err := base.Assemble(first.Store(), first.Searcher(), first.VisibleSearcher(), nil)
+	if err != nil {
+		t.Fatalf("Assemble successor: %v", err)
+	}
+	t.Cleanup(func() { _ = first.Close() })
+
+	first.CloseAssembly()
+
+	ctx := context.Background()
+	if err := second.Store().CreateEntity(ctx, entity.New("DOC-3", "doc")); err != nil {
+		t.Fatalf("store unusable after retiring the previous assembly: %v", err)
+	}
+	if _, err := second.Store().GetEntity(ctx, "DOC-3"); err != nil {
+		t.Fatalf("read-back failed after CloseAssembly: %v", err)
+	}
+}
+
+// TestCloseAssembly_ThenCloseIsSafe covers the shutdown sequence the reload
+// path actually runs: retire the superseded assembly, then Close the one that
+// owns the store. Both teardowns must be safe together and repeatable — a
+// double-stopped job queue or a double-closed store would surface as a panic
+// on exit, long after the reload that caused it.
+func TestCloseAssembly_ThenCloseIsSafe(t *testing.T) {
+	base := newSharedBase(t)
+	svc := assembleOver(t, base)
+
+	svc.CloseAssembly()
+	svc.CloseAssembly() // idempotent
+
+	if err := svc.Close(); err != nil {
+		t.Fatalf("Close after CloseAssembly: %v", err)
+	}
+	if err := svc.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+}
+
+// TestServices_BaseRoundTrips pins that an assembled Services can hand back the
+// base it came from, which is how a reload builds a successor base from the
+// same project inputs without re-discovering the project.
+func TestServices_BaseRoundTrips(t *testing.T) {
+	base := newSharedBase(t)
+	svc := assembleOver(t, base)
+	t.Cleanup(func() { _ = svc.Close() })
+
+	if svc.Base() != base {
+		t.Fatal("Services.Base() did not return the base it was assembled from")
+	}
+
+	// The Config it carries must be enough to build an equivalent successor.
+	next, err := appbuild.NewSharedBase(svc.Base().Config())
+	if err != nil {
+		t.Fatalf("NewSharedBase from Services.Base().Config(): %v", err)
+	}
+	if got, want := len(next.Meta().Entities), len(base.Meta().Entities); got != want {
+		t.Errorf("successor base has %d entity types, want %d", got, want)
+	}
+}
+
+// countingCloser records how many times it was closed.
+type countingCloser struct{ n atomic.Int32 }
+
+func (c *countingCloser) Close() error { c.n.Add(1); return nil }
+
+// TestReassembly_ClosesSearchCloserExactlyOnce converts the "successor must not
+// get the searchCloser" rule from a comment into a guarantee.
+//
+// The origin assembly owns the search closer; a successor is assembled with nil
+// so the two never share it. Passing it to both would double-close — on
+// postgres that closer is the shared pgxpool.
+func TestReassembly_ClosesSearchCloserExactlyOnce(t *testing.T) {
+	base := newSharedBase(t)
+
+	st := memstore.New()
+	searcher := search.New(st, search.NewLinearSearch())
+	closer := &countingCloser{}
+
+	origin, err := base.Assemble(st, searcher, nil, closer)
+	if err != nil {
+		t.Fatalf("Assemble origin: %v", err)
+	}
+	successor, err := base.ForReassembly().Assemble(
+		origin.Store(), origin.Searcher(), origin.VisibleSearcher(), nil)
+	if err != nil {
+		t.Fatalf("Assemble successor: %v", err)
+	}
+
+	// The shutdown sequence the reload wiring runs.
+	origin.CloseAssembly()
+	successor.CloseAssembly()
+	if err := origin.Close(); err != nil {
+		t.Fatalf("Close origin: %v", err)
+	}
+
+	if got := closer.n.Load(); got != 1 {
+		t.Errorf("search closer closed %d times, want exactly 1", got)
+	}
+}
+
+// TestReassembly_SkipsStoreOpenOnlySteps pins that a re-assembly is marked as
+// such. The postgres derived-schema reconciler issues DDL and is documented
+// boot-only on pgstore.Store.Reconcile — running it off a file watcher would
+// mean CREATE/DROP INDEX on every save, and a metamodel saved mid-edit that
+// lost a `unique:` would DROP the live index.
+func TestReassembly_SkipsStoreOpenOnlySteps(t *testing.T) {
+	base := newSharedBase(t)
+
+	reassembly := base.ForReassembly()
+	if !reassembly.IsReassembly() {
+		t.Error("ForReassembly() must mark the base as re-assembling")
+	}
+	if base.IsReassembly() {
+		t.Error("ForReassembly() must not mutate the receiver — it is shared")
+	}
+	if reassembly.Meta() != base.Meta() {
+		t.Error("a re-assembly base must carry the same metamodel")
+	}
 }

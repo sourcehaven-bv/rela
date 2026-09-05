@@ -43,7 +43,7 @@ func TestHandleLuaEval_ReturnsScriptErrorEnvelope(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
 
-	result, err := s.lua.handleLuaEval(context.Background(),
+	result, err := group(s, selLua).handleLuaEval(context.Background(),
 		luaCallToolReq(map[string]any{"code": "print('hello')\nerror('kaboom')"}))
 	if err != nil {
 		t.Fatalf("handler returned Go error: %v", err)
@@ -77,7 +77,7 @@ func TestHandleLuaEval_ReturnsScriptErrorEnvelope(t *testing.T) {
 func TestHandleLuaEval_PreservesIsErrorFlag(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	result, _ := s.lua.handleLuaEval(context.Background(),
+	result, _ := group(s, selLua).handleLuaEval(context.Background(),
 		luaCallToolReq(map[string]any{"code": "error('x')"}))
 	if !result.IsError {
 		t.Error("IsError flag must remain true on Lua failure for MCP clients to branch")
