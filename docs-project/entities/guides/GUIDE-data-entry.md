@@ -216,6 +216,39 @@ app:
 | `description` | Subtitle shown below the title   |
 | `default_world` | World a request lands in when the URL carries no `?world=`. See [Worlds in the web app and API](#worlds-in-the-web-app-and-api) |
 
+### PlantUML diagrams
+
+Set `plantuml_server_url` to render ` ```plantuml ` fenced code blocks as
+diagrams. Leaving it unset (the default) disables the feature: those blocks
+render as plain code and no diagram source leaves the browser.
+
+```yaml
+app:
+  name: "Support Tickets"
+  plantuml_server_url: "https://plantuml.internal.example.com"
+```
+
+| Field                 | Description                                          |
+| --------------------- | ---------------------------------------------------- |
+| `plantuml_server_url` | Base URL of a PlantUML server. Empty = disabled.     |
+
+Rendering happens on the server you name here: the browser encodes the diagram
+source into the image URL it requests. **That source is your content**, so point
+this at a server you trust — it is deliberately not defaulted to the public
+`plantuml.com`, which would publish private diagrams to a third party.
+
+For the same reason `http://` is accepted **only for loopback hosts**
+(`localhost`, `127.0.0.0/8`, `::1`), which covers the common case of running
+PlantUML as a local sidecar. Any other host must use `https://`, because a
+cleartext request exposes the diagram source to everything on the network path.
+A hostname that merely looks local (`localhost.example.com`) is treated as
+remote. Invalid combinations are rejected when the config loads, not silently at
+render time.
+
+The check covers the URL you configure, not where it ends up: an `https://` URL
+whose server redirects to `http://` still sends the source in cleartext, and
+rela cannot see that. Point this at a server you control.
+
 ## Git
 
 Configure git synchronization behavior:
