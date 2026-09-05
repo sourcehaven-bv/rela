@@ -105,6 +105,8 @@ func schemaWorlds(ctx context.Context, meta *metamodel.Metamodel) map[string]v1.
 			// shared by every assembled Services.
 			PrimaryFor: append([]string(nil), def.PrimaryFor...),
 			Banner:     def.Banner,
+			Messages:   worldMessagesWire(def.Messages),
+			OnAbsent:   worldOnAbsentWire(def.OnAbsent),
 			Readable:   readable,
 		}
 	}
@@ -144,7 +146,33 @@ func schemaFaceDefs(def metamodel.EntityDef) map[string]v1.FaceDef {
 	}
 	out := make(map[string]v1.FaceDef, len(def.Faces))
 	for name, p := range def.Faces {
-		out[name] = v1.FaceDef{Label: p.Label}
+		out[name] = v1.FaceDef{Label: p.Label, Messages: faceMessagesWire(p.Messages)}
 	}
 	return out
+}
+
+// The operator's chrome text and behavior, projected verbatim. Each projector
+// returns nil for an undeclared block so the key is omitted, not sent empty —
+// a client treats absence and emptiness alike (render nothing), so the wire
+// need not carry a block that says nothing.
+
+func worldMessagesWire(m metamodel.WorldMessages) *v1.WorldMessages {
+	if m == (metamodel.WorldMessages{}) {
+		return nil
+	}
+	return &v1.WorldMessages{Absent: m.Absent, Projection: m.Projection, StandIn: m.StandIn}
+}
+
+func worldOnAbsentWire(o metamodel.WorldOnAbsent) *v1.WorldOnAbsent {
+	if o.Redirect == "" {
+		return nil
+	}
+	return &v1.WorldOnAbsent{Redirect: o.Redirect}
+}
+
+func faceMessagesWire(m metamodel.FaceMessages) *v1.FaceMessages {
+	if m == (metamodel.FaceMessages{}) {
+		return nil
+	}
+	return &v1.FaceMessages{ReadOnly: m.ReadOnly}
 }

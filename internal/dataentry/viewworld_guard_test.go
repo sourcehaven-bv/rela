@@ -62,7 +62,14 @@ func TestExecuteViewCallersDeclareTheirWorld(t *testing.T) {
 				return true
 			}
 			sel, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok || sel.Sel == nil || sel.Sel.Name != "executeView" {
+			if !ok || sel.Sel == nil || (sel.Sel.Name != "executeView" && sel.Sel.Name != "executeViewRef") {
+				return true
+			}
+			if name == "views.go" && sel.Sel.Name == "executeViewRef" {
+				// The engine itself: executeView is a thin address-parsing
+				// wrapper that forwards its OWN world parameter to
+				// executeViewRef. That one forward is not a surface choosing
+				// a world. Any OTHER executeView call in the file is.
 				return true
 			}
 			checked++

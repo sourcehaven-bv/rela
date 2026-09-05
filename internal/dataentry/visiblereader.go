@@ -107,6 +107,60 @@ func (vr visibleReader) getVisible(ctx context.Context, entityType, id string) (
 	return e, true, nil
 }
 
+// getVisibleRef is [visibleReader.getVisible] for a parsed address.
+//
+// A bare address takes the ordinary path: the request's world resolves it. An
+// EXPLICIT address (`ID@face`, including the bare face by its declared name)
+// is served literally, whatever world the request is in — the caller named
+// the row, so there is nothing for the world to resolve (see [entityRef]).
+//
+// The gates are the same two the world path applies, in the same order: the
+// face-blind row gate on the BARE id first (a suffixed string handed to a
+// query-shaped policy matches nothing, which would 404 every explicit address
+// under a non-wildcard grant), then the face gate on the row that came back.
+// A denied face returns the (nil,false,nil) a missing one produces, so a
+// `type@face` grant still withholds the existence of what it withholds.
+//
+// A denied WORLD blocks the read as well, even though the address does not
+// use the world: a principal who may not select `?world=editorial` must get
+// the same empty answer whatever they append to the path, or the world grant
+// would be bypassable by spelling the face.
+func (vr visibleReader) getVisibleRef(
+	ctx context.Context, entityType string, ref entityRef,
+) (*entitypkg.Entity, bool, error) {
+	if !ref.Explicit {
+		return vr.getVisible(ctx, entityType, ref.ID)
+	}
+	if worldFromContext(ctx).blocksAllReads() {
+		return nil, false, nil
+	}
+	ok, err := readGateFromContext(ctx).PermitsRead(ctx, entityType, ref.ID)
+	if err != nil {
+		return nil, false, err
+	}
+	if !ok {
+		return nil, false, nil
+	}
+	e, gerr := vr.store.GetEntityState(ctx, ref.ID, ref.Face)
+	if gerr != nil {
+		// A store miss is not-found, as on the default-world branch of
+		// getVisible: GetEntityState reports ErrNotFound for a missing state
+		// even when sibling states exist, which is exactly "no such row".
+		// Anything else is an infrastructure fault; it still answers
+		// not-found (the inherited GetEntity contract) but is logged so an
+		// outage does not read as "no such face" with no operator signal.
+		if !errors.Is(gerr, store.ErrNotFound) {
+			slog.Warn("dataentry: reading an addressed face failed; answering not-found",
+				"type", entityType, "ref", ref.String(), "err", gerr)
+		}
+		return nil, false, nil
+	}
+	if !faceReadable(ctx, entityType, e.Face) {
+		return nil, false, nil
+	}
+	return e, true, nil
+}
+
 // faceReadable reports whether this principal's read grants cover the given
 // content state.
 //

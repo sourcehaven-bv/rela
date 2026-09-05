@@ -1035,6 +1035,7 @@ entities:
 | --- | --- |
 | `faces` | A map from face name to face definition. A type without it has exactly one state, and that state appears in every world. |
 | `faces.<name>.label` | Display text for the web app. Falls back to the face name. It has no effect on resolution. |
+| `faces.<name>.messages.read_only` | The sentence the web app shows on a page or form that reached this face while the reader may not write it. Placeholders `{face}` (this face's label), `{bare_face}`, `{world}`, `{title}` (the entity's display title). Undeclared shows nothing. |
 | `bare_face` | The declared face that the bare entity id addresses. It must name a declared face. Omitting it leaves the entity's own row without a name and makes every declared face a separate suffixed row, which is legal but rarely intended. |
 
 `bare_face:` names a row that already exists: every entity has a row under its
@@ -1070,7 +1071,9 @@ worlds:
 | `select` | The face to show, or an ordered list. The first face the entity has wins. A single name and a one-element list mean the same thing. |
 | `overrides` | A map from entity type to a chain that replaces `select` for that type. It replaces the chain rather than extending it. |
 | `otherwise` | **Required.** What happens to an entity whose type declares faces but that has none the chain names: `exclude` leaves it out of the world, `default` shows its bare face. |
-| `banner` | Optional text the web app shows on every page in this world. Empty shows no announcement. The read-only note and the way back to the default world are not configurable. |
+| `banner` | Optional text the web app shows on every page in this world. Empty shows no announcement. |
+| `messages` | Optional. The web app's wording for what this world changes on a screen: `absent` (a detail page for an entity with no face here; placeholders `{face}`, `{bare_face}`, `{world}`, `{title}`), `projection` (a list or board note on a faced type; `{world}` only, since a list has no single entity), `stand_in` (the badge on a row served a stand-in; `{face}`, `{bare_face}`, `{world}`). A placeholder a surface cannot fill is left as written. The app has no default sentence; an undeclared entry shows nothing. |
+| `on_absent` | Optional. `redirect: <world>` sends a reader who opens an entity with no face in this world to that world (or `default`) instead of showing the page. |
 | `primary_for` | Optional. The faces this world is the canonical home of. Needed only when two worlds lead with the same face for a type. See below. |
 | `edits` | Accepted and validated as a declared face name. Not used yet. |
 
@@ -1114,6 +1117,8 @@ a world:
 - names, in `overrides:`, an unknown type, a type that declares no faces, an
   empty chain, or a face that type does not declare;
 - names a face in `edits:` or `primary_for:` that it does not qualify for;
+- sets `on_absent.redirect` to a world that is not declared, or to a chain
+  of redirects that returns to a world it has visited (itself included);
 - is called `default` in any capitalization, or has a name outside the face
   grammar.
 
@@ -1192,6 +1197,8 @@ copies:
 | `from` | The source face, as `type` or `type@face`. |
 | `to` | The target face. When it names a non-bare face, `guard:` is mandatory. |
 | `label` | Display text for the action in the web app. Plain text, no interpolation. Falls back to the definition name. |
+| `on_success.message` | The confirmation the web app shows after the copy. Placeholders as for world messages; `{face}` is the face written. Falls back to the label. |
+| `on_success.landing` | Where the web app goes afterwards: `written` (the face written, the default), `stay` (reload in place), `{world: <name>}` or `{face: <name>}`. |
 | `fields` | `all` to copy every declared property, or a map from target property to source expression using the `{{...}}` interpolation grammar. A copy between different types requires an explicit map. |
 | `relations` | A map from relation type to `merge` (add the edges the target lacks) or `replace` (swap the target face's edges of that type). Only `scope: content` relation types can be listed. An omitted type is not copied. |
 | `guard.permission` | The ACL permission a caller must hold on the source entity. **Required** when `to` names a non-bare face. |
@@ -1213,7 +1220,10 @@ The loader refuses a copy definition that:
 - lists an identity-scoped relation type, because such an edge is shared by
   every face and copying it could duplicate an edge that confers roles;
 - sets `guard.when`, which is not implemented yet. A condition that is written
-  but never evaluated is refused rather than ignored.
+  but never evaluated is refused rather than ignored;
+- sets `on_success.landing` to anything but `written`, `stay`, a declared
+  world, or a face the target type declares — or to both a world and a face,
+  to an empty mapping, or to a mapping with a key other than `world` or `face`.
 
 A copy runs as one store transaction and is audited after it commits. The
 PostgreSQL backend rolls back a failed copy. On the filesystem and in-memory

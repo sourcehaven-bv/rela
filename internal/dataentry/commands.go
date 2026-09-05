@@ -424,7 +424,17 @@ func (h *commandHandler) handleCommandExec(w http.ResponseWriter, r *http.Reques
 	case "entity":
 		entityID := r.URL.Query().Get("entity_id")
 		svc := h.services()
-		entityDomain, err := svc.Store.GetEntity(r.Context(), entityID)
+		// An ADDRESS, as everywhere an id is accepted: `ID` or `ID@face`.
+		// Parsed rather than handed to the store whole — on fsstore the raw
+		// string happens to hit a faced row's index key, on pgstore it never
+		// does, and a command that runs on one backend and 404s on the
+		// other is the split this grammar exists to remove.
+		id, face, perr := entity.ParseStateRef(entityID)
+		if perr != nil {
+			http.Error(w, "Entity not found: "+entityID, http.StatusNotFound)
+			return
+		}
+		entityDomain, err := svc.Store.GetEntityState(r.Context(), id, face)
 		if err != nil {
 			http.Error(w, "Entity not found: "+entityID, http.StatusNotFound)
 			return

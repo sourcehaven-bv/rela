@@ -142,8 +142,15 @@ worlds:
     otherwise: default
     # No `banner:`. A banner announces something the reader would not otherwise
     # know; someone who asked for the Dutch site does not need to be told they
-    # are reading Dutch. The read-only note and the way back are not config and
-    # still appear.
+    # are reading Dutch. The way back (the face switcher) is not config and
+    # still appears.
+    #
+    # The badge on a row that is a stand-in IS config: the web app has no
+    # words of its own for it, so with nothing declared the stand-in row is
+    # unmarked. `{face}` is the served face's label — `en` for a guide with
+    # no Dutch face — which is what the manual's badge claims read.
+    messages:
+      stand_in: '{face}'
 
 copies:
   # Publishing, as an OPERATION. The manual's "Writing" section claims a write

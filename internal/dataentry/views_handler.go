@@ -80,6 +80,37 @@ func (h *viewsHandler) redactor() visibility.FieldRedactor {
 	return affRedactor{aff: func() affordanceService { return h.affordances }}
 }
 
+// sidePanelEntry resolves and gates the side panel's entry entity from its
+// address, writing the uniform not-found itself. Returns ok=false when a
+// response has been written.
+//
+// The id segment is an ADDRESS (`ID` or `ID@face`), the same grammar the
+// entity view accepts — the form that mounts this panel is opened on the
+// address of the row it edits. The row gate sees the bare id (ACL gate,
+// TKT-6N9O1Y: gated BEFORE any read so a denied principal gets a 404
+// indistinguishable from a missing id and the traversal never runs), and the
+// face half of a `type@face` grant is applied to the row that came back
+// (TKT-O7R2A1), with the same 404 so a denied face is indistinguishable from
+// an absent one.
+func (h *viewsHandler) sidePanelEntry(
+	w http.ResponseWriter, r *http.Request, s *Schema, entityType, entityID string,
+) (*entityPkg.Entity, bool) {
+	ref, ok := parseEntityRef(s.Meta, entityType, entityID)
+	if !ok {
+		writeV1Error(w, r, http.StatusNotFound, "entity_not_found", "Entity not found", "")
+		return nil, false
+	}
+	if !h.gateRead(w, r, entityType, ref.ID) {
+		return nil, false
+	}
+	entry, found := h.reader.getEntityRef(r.Context(), ref)
+	if !found || !faceReadable(r.Context(), entry.Type, entry.Face) {
+		writeV1Error(w, r, http.StatusNotFound, "entity_not_found", "Entity not found", "")
+		return nil, false
+	}
+	return entry, true
+}
+
 // handleV1SidePanel handles GET /api/v1/_sidepanel/{formId}/{entityId}.
 func (h *viewsHandler) handleV1SidePanel(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -110,23 +141,8 @@ func (h *viewsHandler) handleV1SidePanel(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// ACL gate (TKT-6N9O1Y): the side panel reveals the entry entity and its
-	// traversal neighbors. Gate the entry read BEFORE getEntity/executeSidePanel
-	// so a principal who cannot read it gets a 404 indistinguishable from a
-	// missing id, and the traversal never runs for a denied caller.
-	if !h.gateRead(w, r, form.EntityType, entityID) {
-		return
-	}
-
-	// Get the entry entity.
-	//
-	// The gateRead above authorized by (type, id), which a `type@face` grant is
-	// invisible to, and this reader is the RAW store — so the face half of the
-	// grant is owed here (TKT-O7R2A1). Same 404 the row gate writes, keeping a
-	// denied face indistinguishable from an absent one.
-	entry, found := h.reader.getEntity(r.Context(), entityID)
-	if !found || !faceReadable(r.Context(), entry.Type, entry.Face) {
-		writeV1Error(w, r, http.StatusNotFound, "entity_not_found", "Entity not found", "")
+	entry, ok := h.sidePanelEntry(w, r, s, form.EntityType, entityID)
+	if !ok {
 		return
 	}
 
@@ -467,12 +483,21 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The id segment is an ADDRESS (`ID` or `ID@face`), parsed once here so
+	// the row gate below sees the BARE id (it is face-blind by design and
+	// matches nothing on a suffixed string) and the engine sees the face.
+	ref, ok := parseEntityRef(s.Meta, entityType, entityID)
+	if !ok {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return
+	}
+
 	// ACL gate (TKT-BNX2PN): _views is an entity-read chokepoint just like
 	// GET /{plural}/{id} — it serves _title, properties, and content body via
 	// executeView + serializeEntityForWire. Gate BEFORE executeView so a hidden
 	// id is indistinguishable from a missing one (404, no oracle) and the view
 	// pipeline never runs for a denied principal.
-	if !h.gateRead(w, r, entityType, entityID) {
+	if !h.gateRead(w, r, entityType, ref.ID) {
 		return
 	}
 
@@ -491,14 +516,14 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	// (TKT-WRLDAPI item 4b); the other two executeView callers pass
 	// defaultViewWorld() explicitly. See the viewWorld doc for why the world
 	// is a parameter rather than something the engine reads off ctx.
-	result, err := h.executeView(r.Context(), viewCfg, entityID,
+	result, err := h.executeViewRef(r.Context(), viewCfg, ref,
 		viewWorldFromRequest(r.Context()))
 	if errors.Is(err, errNoFaceInWorld) {
 		// The entity EXISTS and this caller may read it; it simply has no face
 		// in the world they asked for — the ordinary state of an unpublished
 		// draft. Answer with the face that does exist plus a marker, so the
 		// page can offer a way through rather than a dead end (BUG-1).
-		h.writeWorldAbsentView(w, r, entityType, entityID)
+		h.writeWorldAbsentView(w, r, entityType, ref.ID)
 		return
 	}
 	if err != nil {
@@ -576,6 +601,7 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 				EntityType: row.EntityType,
 				EditFormID: row.EditFormID,
 				Content:    row.Content,
+				Self:       row.Self,
 			}
 			for _, cell := range row.Cells {
 				v1Row.Cells = append(v1Row.Cells, v1.ViewCell(cell))

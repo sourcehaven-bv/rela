@@ -236,7 +236,14 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 		case "_actions":
 			a.handleV1EntityAction(w, r, typeName, parts[1], parts[3])
 		case "_attachments":
-			a.attachments.handleV1AttachmentRoute(w, r, typeName, plural, parts[1], parts[3])
+			// Attachments are per ENTITY (the store keys them by bare id), so
+			// a faced address names the same files as the bare one.
+			id, ok := bareEntityID(a.Meta(), typeName, parts[1])
+			if !ok {
+				writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+				return
+			}
+			a.attachments.handleV1AttachmentRoute(w, r, typeName, plural, id, parts[3])
 		default:
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
 		}
@@ -247,7 +254,12 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 		case "relations":
 			a.handleV1RelationTarget(w, r, typeName, parts[1], parts[3], parts[4])
 		case "_attachments":
-			a.attachments.handleV1AttachmentFileRoute(w, r, typeName, parts[1], parts[3], parts[4])
+			id, ok := bareEntityID(a.Meta(), typeName, parts[1])
+			if !ok {
+				writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+				return
+			}
+			a.attachments.handleV1AttachmentFileRoute(w, r, typeName, id, parts[3], parts[4])
 		default:
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
 		}
@@ -814,6 +826,15 @@ func (a *App) gateReadOrNotFound(w http.ResponseWriter, r *http.Request, typeNam
 func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName, plural, entityID string) {
 	ctx := r.Context()
 
+	// The path segment is an ADDRESS — `ID` or `ID@face` — parsed here and
+	// nowhere downstream (TKT-SLFURL). An address the grammar rejects cannot
+	// name a row, so it gets the same not-found a missing row does.
+	ref, ok := parseEntityRef(a.Meta(), typeName, entityID)
+	if !ok {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return
+	}
+
 	// ACL gate (TKT-VQGN). visibleReader.getVisible applies PermitsRead
 	// BEFORE the store read so a hidden id and a nonexistent id spend the
 	// same MatchingIDs roundtrip — otherwise the timing difference
@@ -821,7 +842,7 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	// side channel that defeats the indistinguishable-404-body invariant
 	// (RR-NGMI). A gate error surfaces via writeGateError; a deny is
 	// returned as (nil,false,nil), indistinguishable from a real miss.
-	entity, found, err := a.visibleReader.getVisible(ctx, typeName, entityID)
+	entity, found, err := a.visibleReader.getVisibleRef(ctx, typeName, ref)
 	if err != nil {
 		writeGateError(w, r, err)
 		return
@@ -868,7 +889,15 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	// of a PUBLISHED face would report the default coordinate. An affordance
 	// map that lies is a trap for every future consumer (Ruling 11); so is a
 	// provenance block.
-	result.World = worldProvenance(ctx, a.Meta(), entity)
+	//
+	// An EXPLICIT address was not resolved by the world at all, so it is
+	// labeled by [addressedProvenance] rather than by the chain position it
+	// happens to hold — see that function for why.
+	if ref.Explicit {
+		result.World = addressedProvenance(ctx, a.Meta(), entity)
+	} else {
+		result.World = worldProvenance(ctx, a.Meta(), entity)
+	}
 
 	// Handle includes for related entities
 	if includes := query.Get("include"); includes != "" {
@@ -2692,5 +2721,6 @@ func sectionEntityToV1(e SectionEntityData) v1.ViewEntity {
 		v1Ent.FieldAffordances = &fa
 	}
 	v1Ent.World = e.World
+	v1Ent.Self = e.Self
 	return v1Ent
 }

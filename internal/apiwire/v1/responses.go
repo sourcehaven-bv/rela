@@ -390,6 +390,15 @@ type World struct {
 	// Config, not data: world names and their banners are operator-authored
 	// and public, so this is served identically to every principal.
 	Banner string `json:"banner,omitempty"`
+	// Messages is the operator's wording for what this world changes on a
+	// screen (TKT-5SZG2L). Each entry is optional and an absent one renders
+	// nothing: the web app has no sentence of its own for any of them.
+	// Placeholders `{face}`, `{bare_face}`, `{world}` and `{title}` are
+	// substituted by the client. Mirrors metamodel.WorldMessages.
+	Messages *WorldMessages `json:"messages,omitempty"`
+	// OnAbsent is the behavior for an entity with no face in this world.
+	// Mirrors metamodel.WorldOnAbsent.
+	OnAbsent *WorldOnAbsent `json:"on_absent,omitempty"`
 	// Readable reports whether THIS caller may select the world via
 	// `?world=`. False means a request naming it is served an empty result
 	// rather than a 403 — so a client that respects this flag shows the user
@@ -445,6 +454,33 @@ type EntityType struct {
 	BareFace string `json:"bare_face,omitempty"`
 }
 
+// WorldMessages is the operator's chrome text for one world. See
+// [World.Messages].
+type WorldMessages struct {
+	// Absent is the detail-page note for an entity with no face in the world.
+	Absent string `json:"absent,omitempty"`
+	// Projection is the list/board note for a type that declares faces.
+	Projection string `json:"projection,omitempty"`
+	// StandIn is the badge text for a stand-in row or card; empty means no
+	// badge.
+	StandIn string `json:"stand_in,omitempty"`
+}
+
+// WorldOnAbsent is the behavior for an entity with no face in a world.
+type WorldOnAbsent struct {
+	// Redirect names the world the client navigates to instead of rendering
+	// the absent page. Validated at schema load.
+	Redirect string `json:"redirect,omitempty"`
+}
+
+// FaceMessages is the operator's chrome text for one face. See
+// [FaceDef.Messages].
+type FaceMessages struct {
+	// ReadOnly is the note for a page or form showing this face while the
+	// reader may not write it. Empty renders nothing.
+	ReadOnly string `json:"read_only,omitempty"`
+}
+
 // Face is the JSON representation of one declared content state,
 // mirroring metamodel.FaceDef.
 //
@@ -460,6 +496,9 @@ type FaceDef struct {
 	// face it has not fetched — a "return to the default face" button must
 	// say "Go to English" before it has loaded anything English.
 	Label string `json:"label,omitempty"`
+	// Messages is the operator's chrome text about this face (TKT-5SZG2L).
+	// Nil when none is declared. Mirrors metamodel.FaceMessages.
+	Messages *FaceMessages `json:"messages,omitempty"`
 }
 
 // PropertyDef is the JSON representation of a property definition.
@@ -859,10 +898,6 @@ type ViewResponse struct {
 	// Omitted when false, so an ordinary view response is byte-identical to
 	// what it was before this field existed.
 	WorldAbsent bool `json:"_world_absent,omitempty"`
-	// WorldAbsentName is the world that has no face for this entity, so the
-	// page can name it ("no published face") rather than saying "this world".
-	// Set only alongside WorldAbsent.
-	WorldAbsentName string `json:"_world_absent_name,omitempty"`
 }
 
 // ViewSection represents a section with resolved data.
@@ -932,6 +967,12 @@ type ViewEntity struct {
 	// entity resolves to its default state by definition, so a provenance
 	// block would be noise on every row of every existing view.
 	World *EntityWorld `json:"_world,omitempty"`
+	// Self addresses the ROW this collection entity is, face included — the
+	// same contract as [Entity.Self]. Under a world a collection entity is a
+	// neighbour's RESOLVED face, so a client that edits it in place (a row's
+	// inline edit, its Edit button) must write to this address and not to
+	// the bare id, or it edits a state the page is not showing.
+	Self string `json:"_self,omitempty"`
 }
 
 // ViewColumn represents a column definition.
@@ -949,6 +990,9 @@ type ViewRow struct {
 	EditFormID string     `json:"editFormId,omitempty"`
 	Cells      []ViewCell `json:"cells"`
 	Content    string     `json:"content,omitempty"`
+	// Self addresses the ROW this entry describes, face included — the same
+	// contract as [Entity.Self]. See [ViewEntity.Self].
+	Self string `json:"_self,omitempty"`
 }
 
 // ViewCell represents a table cell.
@@ -1060,6 +1104,17 @@ type Face struct {
 	// Display-only, like [CopyOffer.Label] — a client addresses the face by
 	// Face and never by this string.
 	Label string `json:"label,omitempty"`
+	// Ref is the face's ADDRESS: the path segment that reads this row
+	// literally under any world — `POL-1@published`, and `POL-1@draft` for
+	// the bare face when the type declares a `bare_face` name.
+	//
+	// It exists so a client can offer "view the published face" as a plain
+	// link, without deriving which declared world happens to lead with that
+	// face — a derivation that needs the chain, the per-type overrides and a
+	// tie-break rule, and that produced a dead control for any face no world
+	// headed. A bare face with no declared name has no explicit spelling and
+	// falls back to the bare id, which is literal only in the default world.
+	Ref string `json:"ref,omitempty"`
 }
 
 // CopyOffer is one declared copy definition offered for a source face
@@ -1089,6 +1144,29 @@ type CopyOffer struct {
 	// Advisory, and never carries content from an entity the caller cannot
 	// read.
 	Reason string `json:"reason,omitempty"`
+	// OnSuccess is the operator's follow-through for this copy: the toast
+	// and where the client lands (TKT-5SZG2L). Nil when nothing is declared,
+	// in which case the client shows the copy's label and lands on the face
+	// written. Mirrors metamodel.CopyOnSuccess.
+	OnSuccess *CopyOnSuccess `json:"onSuccess,omitempty"`
+}
+
+// CopyOnSuccess is the operator's follow-through for a successful copy.
+type CopyOnSuccess struct {
+	// Message is the confirmation toast; empty means the copy's label.
+	Message string `json:"message,omitempty"`
+	// Landing is where the client goes afterwards.
+	Landing CopyLanding `json:"landing"`
+}
+
+// CopyLanding is a copy's landing target, mirroring metamodel.CopyLanding
+// with the default spelled out so a client never has to infer it.
+type CopyLanding struct {
+	// Mode is "written" (the face the copy wrote), "stay" (reload in
+	// place), "world" or "face" (see the field of that name).
+	Mode  string `json:"mode"`
+	World string `json:"world,omitempty"`
+	Face  string `json:"face,omitempty"`
 }
 
 // CopyResult reports what an invoked copy produced.

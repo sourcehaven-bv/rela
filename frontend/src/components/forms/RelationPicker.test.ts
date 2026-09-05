@@ -443,11 +443,13 @@ describe('RelationPicker incoming label resolution', () => {
 })
 
 // BUG-3: the picker offers entities that may have several faces, and gave no
-// indication which one a row was. The badge names the face — but only when it
-// is a surprise.
+// indication which one a row was. The badge marks a stand-in — but only when
+// it is a surprise, and only in the operator's words (`messages.stand_in`);
+// with nothing declared it renders nothing (TKT-5SZG2L).
 describe('RelationPicker — face badge (BUG-3)', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+    useSchemaStore().worlds.set('published', { readable: true, messages: { stand_in: 'stand-in' } } as never)
   })
 
   function faced(id: string, world?: Entity['_world']): Entity {

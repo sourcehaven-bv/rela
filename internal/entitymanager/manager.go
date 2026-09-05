@@ -1280,6 +1280,98 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 	}, nil
 }
 
+// DeleteEntityFace removes ONE non-bare content state of an entity and the
+// content-scoped edges that belong to it, leaving the rest of the family
+// standing — what a DELETE addressed to `ID@face` means, and the only way to
+// "unpublish" short of deleting the entity (TKT-SLFURL).
+//
+// It is [Manager.DeleteEntity]'s sibling, not a narrower spelling of it:
+// DeleteEntity sweeps the whole family and every incident edge on both sides,
+// whereas a face owns only the OUTGOING edges tailed at that face — incoming
+// edges point at the entity, not at one of its states, and survive (see
+// [store.Store.DeleteEntityState] for the rule). The bare face is refused
+// here rather than delegated, because "delete the bare face" is either the
+// whole entity (when no other face exists) or undefined (when one does), and
+// neither is what a caller who spelled a face meant.
+//
+// Authorization names the face, so a role holding the bare `delete: [policy]`
+// cannot remove a published face — the same narrowing every state-shaped
+// write grant applies (GrantsVerbOnState). The cascade edges are authorized
+// inside the transaction for the reason DeleteEntity gives: the store
+// re-derives the set under its own lock and deletes THAT set.
+func (m *Manager) DeleteEntityFace(
+	ctx context.Context, id string, face entity.Face,
+) (*entity.DeleteResult, error) {
+	if face.IsDefault() {
+		return nil, fmt.Errorf("delete face: %s names the bare face; delete the entity instead", id)
+	}
+	current, err := m.deps.Store.GetEntityState(ctx, id, face)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, entity.FormatStateRef(id, face))
+	}
+	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
+		Op:      acl.OpDelete,
+		Subject: acl.EntitySubject{Type: current.Type, ID: id, Face: current.Face},
+	}); aclErr != nil {
+		return nil, aclErr
+	}
+
+	var (
+		res      *store.DeleteResult
+		outgoing []*entity.Relation
+	)
+	txErr := m.deps.Store.Tx(ctx, func(tx store.Store) error {
+		// Only the edges TAILED AT THIS FACE go with it; the query's FromFace
+		// is an equality match on the tail, so the bare face's edges and the
+		// other faces' edges are not collected and not authorized here.
+		tail := face
+		var cErr error
+		outgoing, cErr = collectRelations(ctx, tx, store.RelationQuery{
+			EntityID: id, Direction: store.DirectionOutgoing, FromFace: &tail,
+		})
+		if cErr != nil {
+			return fmt.Errorf("collect outgoing relations for %q: %w", entity.FormatStateRef(id, face), cErr)
+		}
+		if len(outgoing) > 0 {
+			if aErr := m.authorizeCascadeRelations(ctx, tx, id, nil, outgoing); aErr != nil {
+				return aErr
+			}
+		}
+		var dErr error
+		res, dErr = tx.DeleteEntityState(ctx, id, face)
+		if dErr != nil {
+			return fmt.Errorf("delete face: %w", dErr)
+		}
+		return nil
+	})
+	if txErr != nil {
+		return nil, txErr
+	}
+
+	// Version capture, audit and relation attribution after commit, exactly
+	// as DeleteEntity orders them and for the same reasons.
+	m.recordEntityVersion(ctx, store.VersionOpDelete, current, "")
+	ref := entity.FormatStateRef(id, face)
+	cascadeCtx := ctx
+	if len(res.DeletedRelations) > 0 {
+		cascadeCtx = audit.WithTriggeredBy(ctx, "cascade:delete-face:"+ref)
+	}
+	for _, rel := range res.DeletedRelations {
+		m.recordRelationVersion(ctx, store.VersionOpDelete, rel, "", "", "cascade:delete-face:"+ref)
+		m.recordRelationAudit(cascadeCtx, audit.OpDeleteRelation, rel, "deleted")
+	}
+	summary := fmt.Sprintf("deleted face %s", face)
+	if len(res.DeletedRelations) > 0 {
+		summary = fmt.Sprintf("deleted face %s (cascade: %d relations)", face, len(res.DeletedRelations))
+	}
+	m.recordEntityAudit(ctx, audit.OpDeleteEntity, current, summary)
+
+	return &entity.DeleteResult{
+		DeletedEntities:  []*entity.Entity{current},
+		DeletedRelations: res.DeletedRelations,
+	}, nil
+}
+
 // RenameEntity changes an entity's ID and rewrites all incident
 // relations. **No automation, no cascade, no metamodel re-validation
 // of the post-rename state** (preserved verbatim from pre-refactor

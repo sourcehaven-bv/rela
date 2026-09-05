@@ -1,9 +1,8 @@
 import { computed, type Ref } from 'vue'
 import type { RouteLocationRaw } from 'vue-router'
-import { useSchemaStore } from '@/stores/schema'
 
 /**
- * Where a list's "create" button goes, and whether it may be shown.
+ * Where a list's "create" button goes.
  *
  * ## Why a create button has a world of its own
  *
@@ -21,33 +20,23 @@ import { useSchemaStore } from '@/stores/schema'
  * field layout. The form receives the world as a runtime parameter and carries
  * it onto the post-create redirect.
  *
- * ## Why readability is checked against the TARGET world
+ * ## Whether the button SHOWS is the server's answer, not this composable's
  *
- * World-read is a global, role-level grant the SPA already holds from
- * `/_schema`.worlds, so this costs no request. Gating on the ambient world
- * would be the wrong question: the button lands somewhere else. Offering a link
- * into a world the principal cannot read produces an empty page that reads as
- * "nothing is there" rather than as the denial it is.
- *
- * An unknown world name reads as READABLE, matching `schemaStore.worldReadable`
- * — absence means "unknown", and the server is the authority that will refuse.
+ * The list response's `_actions.create` is the create verdict; this only
+ * computes the destination. An earlier revision also checked the target
+ * world's readability from `/_schema` and hid the button on that basis — a
+ * second, client-side gate re-deriving something the server already decides,
+ * which is the pattern that made every world-bound page read-only (atlas
+ * worlds issue 3). A world the principal cannot read answers with its ordinary
+ * empty result on arrival, the same as a typed URL.
  */
 export function useCreateTarget(
   createForm: Ref<string | undefined>,
   createWorld: Ref<string | undefined>,
   ambientWorld: Ref<string | undefined>,
 ) {
-  const schemaStore = useSchemaStore()
-
   /** The world the form opens in: the list's `create_world`, else the ambient one. */
   const targetWorld = computed(() => createWorld.value || ambientWorld.value)
-
-  /** Whether the principal may read the world the button LANDS in. */
-  const targetReadable = computed(() => {
-    const target = targetWorld.value
-    if (!target) return true
-    return schemaStore.worldReadable(target)
-  })
 
   /** The route to push, or null when this list has no create form. */
   const target = computed<RouteLocationRaw | null>(() => {
@@ -58,5 +47,5 @@ export function useCreateTarget(
     }
   })
 
-  return { targetWorld, targetReadable, target }
+  return { targetWorld, target }
 }

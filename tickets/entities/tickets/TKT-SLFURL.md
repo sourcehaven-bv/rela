@@ -3,57 +3,51 @@ id: TKT-SLFURL
 type: ticket
 title: '`_self` on a non-bare face 404s under a configured default_world'
 kind: enhancement
-priority: medium
-effort: s
-status: backlog
+priority: high
+effort: l
+status: done
 ---
 
 A faced response advertises `_self: "/api/v1/policys/POL-1@published"`. That URL
-does not resolve when the project sets `app.default_world`, which the shipped
-worlds prototype and the documented ISMS setup both do.
+did not resolve when the project set `app.default_world`, and the SPA locked
+every world-bound page read-only on top of it — for every type, including types
+without faces. Atlas's adoption of worlds (`default_world: actueel`) made the
+whole app read-only. Findings: `atlas-world/docs/rela-worlds-issues.md` (issues
+1-5, 7, 9, 10; a minimal form of 8); executable acceptance manual in
+`atlas-world/verify/`.
 
-## Reproduction
+## Rule
 
-Verified 2026-09-04 against `prototypes/worlds/project` (which sets
-`default_world: published`) through the docs harness on the postgres backend:
-
-```lua
-api{ path = "/api/v1/policys/POL-1@published", as = "editor", status = 404 }
+```
+view[entity@face]  --Edit-->  form[entity@face]  --Save-->  PATCH entity@face
 ```
 
-That assertion PASSES — a 404 on the URL the server itself just handed out. The
-same request with an explicit `?world=default` returns 200.
+The face is part of the address, exactly as the id is. What you look at is what
+you edit is what you save.
 
-## Mechanism
+## Server
 
-`selfHref` (entityserializer.go:207) appends the declared face name, which is
-correct and deliberate: `_self` must address the ROW the response describes, or
-a client's GET-`_self`/PATCH-`_self` loop silently edits a different face. That
-reasoning stands.
+- `entityRef` parses `ID` / `ID@face` once at the HTTP boundary
+(`internal/dataentry/entityref.go`); the row gate keys on the bare id, the face
+gate on the face. The bare face by its declared name (`POL-1@draft`) is the bare
+row, explicit.
+- An explicit address is served literally under every world on GET, PATCH,
+DELETE and `_views`; `_world.via` is `unscoped` for it.
+- `DELETE ID@face` removes that face only (`Manager.DeleteEntityFace`);
+`ID@<bare>` deletes the entity.
+- A PATCH to a non-bare face refuses `scope: content` relations
+(`422 face_relations_unsupported`).
+- `_faces[].ref` carries each face's address; `_self` on view rows.
 
-The break is on the read side. There is no `@` parser in the HTTP layer
-(`ParseStateRef` is never called from `internal/dataentry`), so `POL-1@published`
-is treated as a literal id. Under a configured `default_world` the world chain
-then looks for face `published` on an id that has no such row, and 404s. On
-fsstore without a default world it appears to work by accident:
-`GetEntity("POL-1@published")` builds a key that happens to equal the published
-face's index key. On pgstore it never works.
+## SPA
 
-So the field is backend-dependent and config-dependent, which is worse than
-either working or failing consistently.
+- Every write goes to `entityRef(row)` (`_self`); affordances come from
+`_actions` alone. `isWorldBound` no longer gates anything.
+- The edit form fetches its address in the default world and explains a
+read-only non-bare face instead of blaming permissions.
+- Face switcher links by address; copy toast speaks the copy's label and
+lands on the written face; world note only on lists/boards of faced types.
 
-## Options
+## Left out (follow-up)
 
-1. Parse `id@face` at the route on reads and writes, so `_self` round-trips.
-2. Emit `_self` as `/api/v1/policys/POL-1?world=<world>` when serving a world.
-3. Keep the bare id and rely on the 422 write refusal as the only guard —
-   rejected once already, for the reason in the `selfHref` doc comment.
-
-Option 1 is the one that makes the existing `world_read_only` error hint true;
-it still says "address the face directly by id (`ID` or `ID@face`)".
-
-## Note
-
-The `@`-URL examples were already removed from the docs rather than document a
-backend-dependent accident, so this is not currently a documented promise —
-but `_self` is in every faced response body, which is a promise of its own.
+Issue 6: operator-configurable world chrome text and redirect targets.

@@ -132,22 +132,25 @@ describe('KanbanView world scoping', () => {
 })
 
 describe('KanbanView per-card world badge', () => {
-  it('badges only the card that resolved to a stand-in', async () => {
+  it('badges only the card that resolved to a stand-in, in the operator\'s words', async () => {
     mockRoute.query = { world: 'site-nl' }
-    const wrapper = await mountBoard([
-      card('PRC-1', 'Herstellen vanaf back-up', {
-        name: 'site-nl',
-        face: 'nl',
-        via: 'chain',
-        chain_position: 0,
-      }),
-      card('PRC-2', "Revoke a leaver's access", {
-        name: 'site-nl',
-        face: 'en',
-        via: 'chain',
-        chain_position: 1,
-      }),
-    ])
+    const store = seedSchema()
+    store.worlds.set('site-nl', { name: 'site-nl', readable: true, messages: { stand_in: '{face}' } } as never)
+    listAllEntitiesMock.mockResolvedValue({
+      data: [
+        card('PRC-1', 'Herstellen vanaf back-up', { name: 'site-nl', face: 'nl', via: 'chain', chain_position: 0 }),
+        card('PRC-2', "Revoke a leaver's access", { name: 'site-nl', face: 'en', via: 'chain', chain_position: 1 }),
+      ],
+      meta: { total: 2, page: 1, per_page: 100, has_more: false },
+      included: {},
+      _actions: { create: true },
+    } as never)
+    const wrapper = mount(KanbanView, {
+      props: { id: KANBAN_ID },
+      attachTo: document.body,
+      global: { plugins: [pinia, PiniaColada] },
+    })
+    await flushPromises()
     // Anti-vacuity: both cards really rendered, so the single badge is a
     // statement about provenance and not about a board that came up short.
     expect(wrapper.text()).toContain('Herstellen vanaf back-up')
@@ -155,8 +158,18 @@ describe('KanbanView per-card world badge', () => {
 
     const badges = wrapper.findAll('.world-badge')
     expect(badges).toHaveLength(1)
-    expect(badges[0].text()).toBe('en')
+    // `{face}` is the served face's LABEL from the type's faces.
+    expect(badges[0].text()).toBe('English')
     expect(badges[0].classes()).toContain('is-fallback')
+  })
+
+  it('renders no badge for a stand-in when the world declares no stand_in text', async () => {
+    mockRoute.query = { world: 'site-nl' }
+    const wrapper = await mountBoard([
+      card('PRC-2', "Revoke a leaver's access", { name: 'site-nl', face: 'en', via: 'chain', chain_position: 1 }),
+    ])
+    expect(wrapper.text()).toContain("Revoke a leaver's access")
+    expect(wrapper.find('.world-badge').exists()).toBe(false)
   })
 
   it('renders no badge under the default world', async () => {
@@ -166,29 +179,32 @@ describe('KanbanView per-card world badge', () => {
   })
 })
 
+// Under a world a card's drag and Edit go to the card's ADDRESS (`_self`,
+// face included), so the affordances are `_actions` alone — the server
+// computes them for the face each card shows. The world itself no longer
+// withdraws anything.
 describe('KanbanView write affordances under a world', () => {
-  it('makes cards undraggable under a world', async () => {
-    // The bug this pins: the API refuses `?world=` on a write, so a drag that
-    // the board accepts fails only after the card has visibly moved to another
-    // column. Refusing the gesture is the honest ordering.
+  it('keeps cards draggable under a world when _actions permits it', async () => {
     mockRoute.query = { world: 'site-nl' }
     const wrapper = await mountBoard([card('PRC-1', 'Herstellen vanaf back-up')])
-    expect(wrapper.find('.kanban-card').attributes('draggable')).toBe('false')
-  })
-
-  it('keeps the SAME card draggable in the default world', async () => {
-    // The positive control: `_actions.update` is true in both tests, so the
-    // difference above is the world and nothing else.
-    const wrapper = await mountBoard([card('PRC-1', 'Restore from backup')])
     expect(wrapper.find('.kanban-card').attributes('draggable')).toBe('true')
   })
 
-  it('withdraws the create button under a world', async () => {
-    // Same reasoning as the drag: a create lands in the default world, so a
-    // "+ New" on a world-bound board offers a write this request cannot carry.
+  it('refuses the drag for a card whose served face is not writable', async () => {
+    // The positive control above has `_actions.update: true`; this is the
+    // same card with the server's verdict flipped, so the difference is the
+    // verdict and nothing else.
+    mockRoute.query = { world: 'site-nl' }
+    const c = card('PRC-1', 'Herstellen vanaf back-up')
+    c._actions = { update: false, create: true }
+    const wrapper = await mountBoard([c])
+    expect(wrapper.find('.kanban-card').attributes('draggable')).toBe('false')
+  })
+
+  it('keeps the create button under a world when _actions permits it', async () => {
     mockRoute.query = { world: 'site-nl' }
     const wrapper = await mountBoard([card('PRC-1', 'Herstellen vanaf back-up')])
-    expect(wrapper.text()).not.toContain('+ New')
+    expect(wrapper.text()).toContain('+ New')
   })
 
   it('shows the create button in the default world', async () => {
@@ -196,14 +212,15 @@ describe('KanbanView write affordances under a world', () => {
     expect(wrapper.text()).toContain('+ New')
   })
 
-  // A card with `edit_form` opened the form from a world-bound board: a write
-  // surface on the DEFAULT face of an entity shown at another. Under a world
-  // the card goes to the detail page, carrying the world.
-  it('sends a card to the detail page, not the edit form, under a world', async () => {
+  // A card with `edit_form` opens the form on the card's ADDRESS, so an edit
+  // from a world-bound board edits the face the card showed.
+  it('sends a card to the edit form at its address under a world', async () => {
     mockRoute.query = { world: 'site-nl' }
-    const wrapper = await mountBoard([card('PRC-1', 'Herstellen')], { editForm: 'edit_procedure' })
+    const c = card('PRC-1', 'Herstellen')
+    c._self = '/api/v1/procedures/PRC-1@nl'
+    const wrapper = await mountBoard([c], { editForm: 'edit_procedure' })
     const to = JSON.parse(wrapper.find('.kanban-card').attributes('data-to') ?? 'null')
-    expect(to).toEqual({ path: '/entity/procedure/PRC-1', query: { world: 'site-nl' } })
+    expect(to).toBe('/form/edit_procedure/PRC-1@nl')
   })
 
   it('sends the SAME card to the edit form in the default world', async () => {
@@ -211,23 +228,41 @@ describe('KanbanView write affordances under a world', () => {
     const to = JSON.parse(wrapper.find('.kanban-card').attributes('data-to') ?? 'null')
     expect(to).toBe('/form/edit_procedure/PRC-1')
   })
+
+  it('sends a card without an edit form to the detail page, carrying the world', async () => {
+    mockRoute.query = { world: 'site-nl' }
+    const wrapper = await mountBoard([card('PRC-1', 'Herstellen')])
+    const to = JSON.parse(wrapper.find('.kanban-card').attributes('data-to') ?? 'null')
+    expect(to).toEqual({ path: '/entity/procedure/PRC-1', query: { world: 'site-nl' } })
+  })
 })
 
 describe('KanbanView world banner', () => {
-  it('explains the read-only board and offers the way back', async () => {
-    // Withdrawing the drag without saying why is a bug from the reader's
-    // side: cards that will not move and no account of it.
+  it('renders the operator\'s projection note on a board of a FACED type', async () => {
+    // A board under a world is a projection: cards may be missing entirely.
+    // What that says to a reader is the operator's `messages.projection`;
+    // the app has no sentence of its own (TKT-5SZG2L).
     mockRoute.query = { world: 'site-nl' }
-    const wrapper = await mountBoard([card('PRC-1', 'Herstellen vanaf back-up')])
+    const store = seedSchema()
+    store.worlds.set('site-nl', {
+      name: 'site-nl', readable: true, messages: { projection: 'Alleen vertaalde procedures.' },
+    } as never)
+    listAllEntitiesMock.mockResolvedValue({
+      data: [card('PRC-1', 'Herstellen vanaf back-up')],
+      meta: { total: 1, page: 1, per_page: 100, has_more: false },
+      included: {},
+      _actions: { create: true },
+    } as never)
+    const wrapper = mount(KanbanView, {
+      props: { id: KANBAN_ID },
+      attachTo: document.body,
+      global: { plugins: [pinia, PiniaColada] },
+    })
+    await flushPromises()
     const banner = wrapper.find('.world-banner')
     expect(banner.exists()).toBe(true)
-    expect(banner.text()).toContain('read-only')
-    // Both halves the board withdraws: the write, and the projection.
-    expect(banner.text()).toContain('cannot be dragged')
-    expect(banner.text()).toContain('not on the board at all')
-    // The exit. A world-bound board with no way out is the trap the detail
-    // page's banner comment warns about.
-    expect(banner.text()).toContain('Go to English')
+    expect(banner.find('.world-banner__note').text()).toBe('Alleen vertaalde procedures.')
+    expect(banner.text()).not.toContain('read-only')
   })
 
   it('renders the operator announcement when the world declares one', async () => {
@@ -252,13 +287,42 @@ describe('KanbanView world banner', () => {
     expect(wrapper.find('.world-banner__label').text()).toBe('Dutch site')
   })
 
-  it('announces nothing when the world declares no banner', async () => {
-    // `site-nl` in the seed has no `banner:`. The read-only note still
-    // renders — it is not the operator's to suppress.
+  it('renders no banner at all when the world declares neither banner nor note', async () => {
+    // `site-nl` in the seed declares nothing, so nothing renders — the app
+    // has no words of its own for a world.
     mockRoute.query = { world: 'site-nl' }
     const wrapper = await mountBoard([card('PRC-1', 'Herstellen vanaf back-up')])
-    expect(wrapper.find('.world-banner__label').exists()).toBe(false)
-    expect(wrapper.find('.world-banner__note').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Herstellen vanaf back-up')
+    expect(wrapper.find('.world-banner').exists()).toBe(false)
+  })
+
+  it('renders no note on a board of a type WITHOUT faces', async () => {
+    // A type without faces has one state, present in every world, so no card
+    // can be missing on the world's account — the note would be false.
+    mockRoute.query = { world: 'site-nl' }
+    const store = seedSchema()
+    store.entityTypes.set(ENTITY_TYPE, {
+      name: ENTITY_TYPE,
+      label: 'Procedure',
+      properties: {
+        title: { type: 'string' },
+        readiness: { type: 'enum', values: ['drilled'] },
+      },
+    } as never)
+    listAllEntitiesMock.mockResolvedValue({
+      data: [card('PRC-1', 'Herstellen vanaf back-up')],
+      meta: { total: 1, page: 1, per_page: 100, has_more: false },
+      included: {},
+      _actions: { create: true },
+    } as never)
+    const wrapper = mount(KanbanView, {
+      props: { id: KANBAN_ID },
+      attachTo: document.body,
+      global: { plugins: [pinia, PiniaColada] },
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('Herstellen vanaf back-up')
+    expect(wrapper.find('.world-banner').exists()).toBe(false)
   })
 
   it('renders no banner at all in the default world', async () => {

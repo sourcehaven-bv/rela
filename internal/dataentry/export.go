@@ -134,6 +134,18 @@ func (h *exportHandler) handleV1ExportEntity(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// The id segment is an ADDRESS (`ID` or `ID@face`). Export renders the
+	// bare face only: the redacting reader below reads by bare id, so a
+	// non-bare address is answered with the same not-found a missing entity
+	// gets rather than with the bare face's document under a faced name.
+	// Exporting a non-bare face is a follow-up (TKT-5SZG2L records the gap).
+	ref, ok := parseEntityRef(h.meta(), typeName, entityID)
+	if !ok || !ref.Face.IsDefault() {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return
+	}
+	entityID = ref.ID
+
 	// ACL gate BEFORE any render (same as handleV1GetEntity): a deny is an
 	// indistinguishable 404, and the render never runs for a hidden entity.
 	// visReader.Get also owns the stored-type check (RR-SRZK6X) and returns
