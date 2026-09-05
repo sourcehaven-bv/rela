@@ -770,6 +770,49 @@ type VersionWriter interface {
 // missed change strands a client forever. Do not "optimize" this into a
 // per-collection or per-principal scope without solving the tombstone problem
 // first.
+//
+// # The over-triggering is also a disclosure, and it is accepted
+//
+// The paragraph above argues that over-triggering is FUNCTIONALLY safe. That is
+// a different question from whether it is CONFIDENTIAL, and the second question
+// only appears once one type is exposed through several differently-authorized
+// collections — which graph-driven CalDAV collections do (`project_tasks--PRJ-1`
+// and `project_tasks--PRJ-2` are one type, two ACLs).
+//
+// Those two collections do not share a tag VALUE; the CalDAV layer hashes the
+// collection name in alongside the sequence. They do share the tag's only
+// varying input, so they move at the same TIME. A principal who may read PRJ-1
+// alone sees their ctag advance whenever ANY entity of the type is written,
+// including in a project the ACL hides from them.
+//
+// Size it before weighing it. The observer learns one bit — "something of this
+// type changed" — with no id, no content, no count, and no timing resolution
+// finer than their own poll interval. They already knew the deployment has that
+// type; that is why they have a collection over it. It is the class of signal
+// any shared multi-tenant system emits through caches and latency.
+//
+// Accepted as a documented residual risk (GitHub issue #1370, CONTROL-5-15,
+// severity low). The alternatives are worse, and it is worth knowing WHY before
+// proposing one again:
+//
+//   - A per-principal or per-driver watermark is not merely unimplemented, it is
+//     unavailable. It could not see deletions inside its own scope — the
+//     tombstone does not record the scope — so its max(seq) would run BACKWARDS
+//     when the newest row in scope is deleted. That is the failure the section
+//     above calls unrecoverable: a client that already saw the higher value
+//     stops polling and is stale forever. Trading a one-bit signal for silent
+//     data loss is not a security improvement.
+//   - Teaching the tombstone to remember the driver relation would make that
+//     scope reconstructible, and from pgstore's writeEntityTombstone it looks
+//     like one more column. It is not a schema question. The row would then
+//     assert "this deleted subject belonged to that project", so a relational
+//     fact about a person SURVIVES their deletion — which inverts what deletion
+//     is for and is a GDPR/AVG question before it is a performance one. That is
+//     the precondition: answer it, then widen the tombstone, then narrow the
+//     watermark. Not in the other order.
+//   - Falling back to per-entry ETag hashing is not an alternative design; it is
+//     what happens already when the store is not a TypeWatermark, and it costs
+//     exactly what "Why this exists" above says this interface exists to avoid.
 type TypeWatermark interface {
 	// EntityTypeWatermark returns a monotonic value that changes whenever any
 	// entity of entityType is created, updated, renamed or deleted.

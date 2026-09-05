@@ -511,3 +511,15 @@ entity was deleted, including deletions made while the server was stopped.
   a future principal-bound `where:` filter work: when a clause resolves to a
   different member set per principal, one config key is no longer one
   collection, and the alias table has to be able to say so.
+- **The `getctag` poll signals activity across the whole entity type.** Two
+  graph-driven collections over `task` get different tag values, but they change
+  at the same moment, because the tag is derived from a per-type change counter.
+  A user who may see only one project therefore learns that *some* task changed
+  somewhere — one bit, no id, no content, no timing precision beyond their poll
+  interval — even when the change was in a project they cannot read. Accepted as
+  a documented residual risk: the counter cannot be narrowed to a project
+  without making deletion records remember which project a deleted entity
+  belonged to, and a per-project counter would run backwards on deletion and
+  strand clients. See the `store.TypeWatermark` godoc for the full analysis. If
+  the mere fact of activity is sensitive between your tenants, give them
+  separate entity types rather than separate collections over one type.
