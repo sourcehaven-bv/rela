@@ -1,14 +1,18 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 
+	"github.com/Sourcehaven-BV/rela/internal/desktop"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
@@ -375,6 +379,89 @@ func TestProjectDirFromArgs(t *testing.T) {
 			gotEval, err := filepath.EvalSymlinks(got)
 			require.NoError(t, err)
 			require.Equal(t, wantEval, gotEval)
+		})
+	}
+}
+
+// The Desktop struct IS the Wails asset-server handler: every SPA asset and
+// every API call reaches the Go router through this one method. These tests
+// pin that seam without needing a webview, so a regression in the v3 asset
+// wiring is caught in CI rather than by launching the app.
+func TestDesktopServeHTTP_WelcomePageWhenNoProject(t *testing.T) {
+	d := &Desktop{prefs: &desktop.Preferences{}}
+
+	rec := httptest.NewRecorder()
+	d.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", http.NoBody))
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	assert.Contains(t, body, "Rela Desktop", "should be the welcome page")
+	assert.Contains(t, body, "Open Project", "welcome page must offer a project picker")
+}
+
+// A failed load must surface its error on the welcome page rather than
+// silently showing an empty picker.
+func TestDesktopServeHTTP_ShowsLoadError(t *testing.T) {
+	d := &Desktop{prefs: &desktop.Preferences{}, loadErr: "sentinel-load-failure"}
+
+	rec := httptest.NewRecorder()
+	d.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", http.NoBody))
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), "sentinel-load-failure")
+}
+
+// Once a project is loaded, every request must be delegated to the project
+// router — including API paths, which is what the SPA actually talks to.
+func TestDesktopServeHTTP_DelegatesToProjectHandler(t *testing.T) {
+	var gotPath string
+	d := &Desktop{
+		prefs: &desktop.Preferences{},
+		handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotPath = r.URL.Path
+			w.WriteHeader(http.StatusTeapot)
+		}),
+	}
+
+	for _, path := range []string{"/", "/api/v1/entities", "/assets/app.js"} {
+		t.Run(path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			d.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, http.NoBody))
+
+			assert.Equal(t, http.StatusTeapot, rec.Code, "must reach the project handler")
+			assert.Equal(t, path, gotPath, "path must be passed through unchanged")
+		})
+	}
+}
+
+// The welcome page drives the Go backend through window.go.main.Desktop, which
+// Wails v2 injected and v3 does not. The page carries a shim rebuilding that
+// namespace over the v3 runtime; if the shim or a method name is dropped, the
+// buttons silently stop working. Assert both the shim and every method it
+// exposes are actually bound on Desktop.
+func TestWelcomePageBindingsExist(t *testing.T) {
+	rec := httptest.NewRecorder()
+	serveWelcomePage(rec, &desktop.Preferences{}, "")
+	page := rec.Body.String()
+
+	// Assert on the executable line, not the surrounding comment: window._wails
+	// is a real object (flags + invoke) that does NOT carry Call, so reaching
+	// for it fails silently at runtime. Matching prose would pass either way.
+	require.Contains(t, page, "function rt() { return window.wails && window.wails.Call",
+		"the runtime accessor must read window.wails; window._wails has no Call")
+
+	// Every method the page invokes must exist on *Desktop.
+	for _, method := range []string{
+		"OpenProject", "OpenRecentProject", "GetSetupInfo",
+		"GenerateDataEntryConfig", "GetDefaultCloneDir", "PickCloneDirectory",
+		"HasGitHubToken", "CloneProject", "OpenClonedProject",
+		"InitRelaProject", "StartGitHubAuth", "CompleteGitHubAuth",
+	} {
+		t.Run(method, func(t *testing.T) {
+			assert.Contains(t, page, "Desktop."+method,
+				"welcome page should call Desktop.%s", method)
+			_, ok := reflect.TypeFor[*Desktop]().MethodByName(method)
+			assert.True(t, ok, "Desktop must expose bound method %s", method)
 		})
 	}
 }
