@@ -720,6 +720,14 @@ jobs:
         with:
           go-version: '1.26.6'
 
+      # internal/cli is in scope and its render/export tests shell out through
+      # internal/cmdexec, which FAILS CLOSED when no sandbox is available — so
+      # without bwrap they do not skip, they fail ("cmdexec: start bwrap:
+      # executable file not found"). The Test job installs it for the same
+      # reason; a job running the same packages needs the same runner.
+      - name: Install bubblewrap (command sandbox)
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+
       # Scoped to the packages the tag actually changes rather than ./... — the
       # rest is byte-identical to what the Test job already ran, and paying for
       # a second full suite to re-verify it is not worth the minutes.

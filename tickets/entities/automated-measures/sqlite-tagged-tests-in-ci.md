@@ -39,6 +39,11 @@ backend, and sqlitestore's own concurrency is covered by the conformance
 suite. Worth adding if this job ever grows a genuinely sqlite-specific
 concurrency test.
 
+The job installs bubblewrap, like the Test job does. `internal/cli` is in
+scope and its render/export tests shell out through `internal/cmdexec`, which
+fails closed with no sandbox available — so without it they do not skip, they
+fail. CI caught that too, on the second run.
+
 ## Verified, not assumed
 
 Reverting the build-tag fix and running the job's exact command reproduces
