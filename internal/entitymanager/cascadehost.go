@@ -207,6 +207,19 @@ func (h *cascadeHost) DeleteEntity(ctx context.Context, _, id string, cascade bo
 	// behind a deleted entity (issue #888).
 	res, delErr := h.deps.Store.DeleteEntity(ctx, id, cascade)
 	if delErr != nil {
+		// Same partial-cascade rule as Manager.DeleteEntity (issue #929): a
+		// non-transactional backend reports the relations it already removed,
+		// and those removals stick, so they must reach the log. Relations
+		// only — the entity survived. Kept in step with the manager's path
+		// deliberately: an if_exists:replace delete and a direct delete must
+		// not log differently for the same failure.
+		if res != nil {
+			for _, rel := range res.DeletedRelations {
+				h.recordCascade(
+					audit.WithTriggeredBy(ctx, "cascade:delete-entity:"+id),
+					audit.OpDeleteRelation, relationSubject(rel), "deleted")
+			}
+		}
 		return fmt.Errorf("delete entity: %w", delErr)
 	}
 

@@ -2,8 +2,10 @@ package fsstore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"iter"
+	"log/slog"
 	"os"
 	"sort"
 	"strings"
@@ -383,6 +385,39 @@ func (s *FSStore) updateEntity(_ context.Context, e *entity.Entity) error {
 	return nil
 }
 
+// forgetRelations drops index entries for relations whose files have been
+// removed from disk. Used on the abort paths of a cascade delete so the
+// in-memory view does not keep asserting the existence of files the caller is
+// about to record as deleted (TKT-A23L87).
+//
+// A package function rather than a method on FSStore: the store sits on the
+// plimsoll method load line, and this needs only the two index fields.
+// Caller must hold s.mu.
+func forgetRelations(s *FSStore, metas []relationMeta) {
+	for _, rm := range metas {
+		key := rm.key()
+		delete(s.relations, key)
+		s.relationOrder = storeutil.SortedRemove(s.relationOrder, key)
+	}
+}
+
+// forgetStates drops index entries for state files already removed from disk,
+// the entity-side counterpart to forgetRelations. Same reason: on a partial
+// cascade delete the caller records these as deleted, so the index must stop
+// listing them (TKT-A23L87). states is index-aligned with metas.
+// Caller must hold s.mu.
+func (s *FSStore) forgetStates(metas []entityMeta, states []*entity.Entity) {
+	for i, meta := range metas {
+		key := stateKey(meta.ID, meta.Face)
+		delete(s.entities, key)
+		s.entityOrder = storeutil.SortedRemoveFunc(s.entityOrder, key, storeutil.CompareStateKeys)
+		if meta.Face.IsDefault() {
+			removeEntityFromCache(s.propCache, states[i])
+		}
+		s.notifyFaceDelete(meta.ID, meta.Face)
+	}
+}
+
 // stateFamily returns every indexed state of the bare id, sorted by
 // face (default first), plus every relation touching the id on
 // either endpoint. Defensive family scan (works for a headless family
@@ -428,8 +463,10 @@ func (s *FSStore) deleteEntity(_ context.Context, id string, cascade bool) (*sto
 		states = append(states, e)
 	}
 
-	// Load relations for result.
-	deletedRelations := make([]*entity.Relation, 0)
+	// Load relations for result. Index-aligned with `related` — one append per
+	// entry, no skips — which the removal loop below relies on to pair a
+	// removed file with the relation value it represents. Keep it that way.
+	deletedRelations := make([]*entity.Relation, 0, len(related))
 	for _, rm := range related {
 		r, loadErr := s.loadRelationMeta(rm)
 		if loadErr != nil {
@@ -446,25 +483,87 @@ func (s *FSStore) deleteEntity(_ context.Context, id string, cascade bool) (*sto
 	// orphaned-from entity (BUG-C20T / issue #888). Not transactional: a
 	// relation file removed before a later failure stays removed, but the
 	// whole op runs under s.mu and the index is updated only on success.
-	for _, rm := range related {
+	//
+	// Because those removals stick, an abort returns a PARTIAL DeleteResult
+	// alongside the error, naming exactly what came off disk (TKT-A23L87 /
+	// issue #929). Without it the caller's audit loop reads a nil result and
+	// the log denies a deletion that really happened.
+	//
+	// DeletedEntities stays empty on both abort paths below, and that is
+	// exactly true rather than approximately: the relation loop aborts before
+	// any entity file is touched, and the entity-file removal aborts on the
+	// first failure, before that state is recorded as deleted. There is no
+	// path that returns an error with a state file already gone unreported —
+	// attachment-dir failure is non-fatal for precisely that reason (below).
+	//
+	// A file that was ALREADY gone (os.IsNotExist) is not counted — this call
+	// did not delete it, and auditing it would over-report.
+	removed := make([]*entity.Relation, 0, len(related))
+	removedMeta := make([]relationMeta, 0, len(related))
+	for i, rm := range related {
 		key := s.layout.relationFileKeyMeta(rm)
-		if err := s.rooted.Remove(key); err != nil && !os.IsNotExist(err) {
-			return nil, fmt.Errorf("delete relation file %s: %w", rm.key(), err)
+		if err := s.rooted.Remove(key); err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				// Drop the index entries for the files that DID come off disk
+				// before handing back the partial result. The caller is about
+				// to record those deletions in the audit log, and an index
+				// still listing them would have ListRelations returning rows
+				// the log says are gone — a live contradiction that outlives
+				// the failed call (TKT-A23L87). The entity index is untouched:
+				// the entity files are still there.
+				forgetRelations(s, removedMeta)
+				return &store.DeleteResult{DeletedRelations: removed},
+					fmt.Errorf("delete relation file %s: %w", rm.key(), err)
+			}
+			// Already gone: not deleted BY US, so not reported and not counted.
+			// Worth a signal — it means the index and disk had drifted before
+			// this call, which nothing else would surface.
+			slog.Warn("fsstore: relation file already absent during cascade delete",
+				"from", rm.From, "type", rm.Type, "to", rm.To)
+		} else {
+			removed = append(removed, deletedRelations[i])
+			removedMeta = append(removedMeta, rm)
 		}
 		s.echoes.Forget(s.layout.absPath(key))
 	}
-	for _, meta := range family {
+	// Same partial-result contract for the state files: a family can be
+	// several files, and a failure on the second one leaves the first
+	// genuinely deleted. Report the states that came off disk rather than
+	// nil, and forget them in the index so it does not keep asserting rows
+	// the audit log has recorded as gone (TKT-A23L87).
+	removedStates := make([]*entity.Entity, 0, len(family))
+	removedFamily := make([]entityMeta, 0, len(family))
+	for i, meta := range family {
 		key := s.layout.entityFileKey(meta.Type, stateKey(meta.ID, meta.Face))
-		if err := s.rooted.Remove(key); err != nil && !os.IsNotExist(err) {
-			return nil, err
+		if err := s.rooted.Remove(key); err != nil && !errors.Is(err, os.ErrNotExist) {
+			forgetRelations(s, removedMeta)
+			s.forgetStates(removedFamily, removedStates)
+			return &store.DeleteResult{
+				DeletedEntities:  removedStates,
+				DeletedRelations: removed,
+			}, err
 		}
+		removedStates = append(removedStates, states[i])
+		removedFamily = append(removedFamily, meta)
 		s.echoes.Forget(s.layout.absPath(key))
 	}
 
-	// Cascade attachments — under the per-entity layout the
-	// attachment directory is owned 1:1 by the entity.
+	// Cascade attachments — under the per-entity layout the attachment
+	// directory is owned 1:1 by the entity.
+	//
+	// A failure here is NON-FATAL, deliberately. The entity file and every
+	// relation file are already gone by this point, so the delete has
+	// materially succeeded; returning an error would tell the caller the
+	// operation failed and leave the audit log denying a deletion that
+	// happened — the exact failure mode TKT-A23L87 exists to remove, one
+	// layer down. An orphaned attachment directory is the lesser evil, and
+	// `analyze` already reports orphaned attachment dirs.
+	//
+	// Note removeAttachmentDir prunes the in-memory attachment index BEFORE
+	// any I/O that can fail, so the index is consistent either way.
 	if err := s.removeAttachmentDir(id); err != nil {
-		return nil, err
+		slog.Warn("fsstore: entity deleted but its attachment directory could not be removed",
+			"entity", id, "error", err)
 	}
 
 	// Update index
