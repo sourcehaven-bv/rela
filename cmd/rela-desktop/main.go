@@ -833,7 +833,11 @@ func (d *Desktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	d.mu.RUnlock()
 
 	if h != nil {
-		h.ServeHTTP(w, r)
+		// Buffer HTML so the multi-window script can be appended; everything
+		// else, including SSE, streams through untouched.
+		inj := &htmlInjector{ResponseWriter: w}
+		h.ServeHTTP(inj, r)
+		inj.finish()
 		return
 	}
 
@@ -903,6 +907,12 @@ func (d *Desktop) buildAppMenu() *application.Menu {
 	}
 
 	fileMenu := appMenu.AddSubmenu("File")
+	fileMenu.Add("New Window").SetAccelerator("CmdOrCtrl+n").OnClick(func(*application.Context) {
+		if errMsg := d.OpenWindow("/", ""); errMsg != "" {
+			slog.Warn("could not open window", "error", errMsg)
+		}
+	})
+	fileMenu.AddSeparator()
 	fileMenu.Add("Open Project...").SetAccelerator("CmdOrCtrl+o").OnClick(d.openProjectFromMenu)
 	fileMenu.Add("Clone from Git...").SetAccelerator("CmdOrCtrl+shift+o").OnClick(d.cloneFromGitMenu)
 	fileMenu.AddSeparator()
