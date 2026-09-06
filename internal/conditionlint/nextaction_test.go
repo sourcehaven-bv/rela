@@ -9,6 +9,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 )
 
 // naMeta declares two types sharing `due` (so a cross-type condition is
@@ -17,8 +18,10 @@ func naMeta() *metamodel.Metamodel {
 	return &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"task": {Properties: map[string]metamodel.PropertyDef{
-				"due":    {Type: metamodel.PropertyTypeDate},
-				"status": {Type: metamodel.PropertyTypeString},
+				"due":      {Type: metamodel.PropertyTypeDate},
+				"status":   {Type: metamodel.PropertyTypeString},
+				"assignee": {Type: metamodel.PropertyTypeString},
+				"watchers": {Type: metamodel.PropertyTypeString, List: true},
 			}},
 			"bug": {Properties: map[string]metamodel.PropertyDef{
 				"due": {Type: metamodel.PropertyTypeDate},
@@ -162,4 +165,59 @@ func taskWith(id, status string) *entity.Entity {
 	e := entity.New(id, "task")
 	e.Properties["status"] = status
 	return e
+}
+
+// A next-action condition may name the current user. Compiling proves the
+// request-scoped profile is in use; the three Match cases pin the identity
+// contract: fail closed without one, honor a stamped one, and leave a
+// condition that never mentions the user untouched.
+func TestNextActionMatchers_CurrentUser(t *testing.T) {
+	t.Parallel()
+	lookup, errs := NextActionMatchers(naCfg(dataentryconfig.NextActionSource{
+		Query:     "type:task",
+		Condition: "is_current_user(entity.assignee) or has_current_user(entity.watchers)",
+	}), naMeta())
+	require.Empty(t, errs)
+	m, ok := lookup("s")
+	require.True(t, ok)
+
+	mine := entity.New("T-1", "task")
+	mine.Properties["assignee"] = "PERS-JV"
+	watched := entity.New("T-2", "task")
+	watched.Properties["watchers"] = []any{"PERS-AB", "PERS-JV"}
+	theirs := entity.New("T-3", "task")
+	theirs.Properties["assignee"] = "PERS-AB"
+
+	// No identity: refused, not a quiet non-match.
+	_, err := m.Match(context.Background(), mine)
+	require.ErrorIs(t, err, predicatefns.ErrNoCurrentUser)
+
+	ctx := predicatefns.WithQueryIdentity(context.Background(), predicatefns.QueryIdentity{EntityID: "PERS-JV"})
+	for _, tc := range []struct {
+		e    *entity.Entity
+		want bool
+	}{{mine, true}, {watched, true}, {theirs, false}} {
+		got, err := m.Match(ctx, tc.e)
+		require.NoError(t, err, tc.e.ID)
+		require.Equal(t, tc.want, got, tc.e.ID)
+	}
+
+	// The compiled program is exposed for the pushdown, per type.
+	prog, ok := m.Program("task")
+	require.True(t, ok)
+	require.NotNil(t, prog)
+	_, ok = m.Program("quip")
+	require.False(t, ok)
+}
+
+func TestNextActionMatchers_IdentityFreeConditionNeedsNoIdentity(t *testing.T) {
+	t.Parallel()
+	lookup, errs := NextActionMatchers(naCfg(dataentryconfig.NextActionSource{
+		Query: "type:task", Condition: "entity.status == 'todo'",
+	}), naMeta())
+	require.Empty(t, errs)
+	m, _ := lookup("s")
+	got, err := m.Match(context.Background(), taskWith("T-1", "todo"))
+	require.NoError(t, err)
+	require.True(t, got)
 }

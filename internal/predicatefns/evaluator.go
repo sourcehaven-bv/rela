@@ -144,11 +144,17 @@ func (e *Evaluator) Matches(
 // MatchesAs evaluates a Program compiled by [Evaluator.CompileWithCurrentUser],
 // binding the query identity carried by ctx (see [WithQueryIdentity]).
 //
-// Returns [ErrNoCurrentUser] if ctx carries no identity. That is a hard
-// failure rather than a non-match: a caller that reached this point has
-// already accepted a condition referencing the current user, and the
-// honest outcomes are "the right rows" or "an error" — never "somebody
-// else's rows".
+// The identity is bound only when the program needs it (see
+// [RequiresCurrentUser]); a condition that never mentions the current
+// user evaluates exactly as [Evaluator.Matches] would, so one
+// request-scoped matcher serves both kinds without the caller telling
+// them apart.
+//
+// Returns [ErrNoCurrentUser] if the program needs an identity and ctx
+// carries none. That is a hard failure rather than a non-match: a caller
+// that reached this point has already accepted a condition referencing
+// the current user, and the honest outcomes are "the right rows" or "an
+// error" — never "somebody else's rows".
 func (e *Evaluator) MatchesAs(
 	ctx context.Context, prog *predicate.Program, entityType, id string, props map[string]any,
 ) (bool, error) {
@@ -170,7 +176,7 @@ func (e *Evaluator) matches(
 	if err := Bind(b, e.now()); err != nil {
 		return false, err
 	}
-	if withUser {
+	if withUser && RequiresCurrentUser(prog) {
 		if err := BindCurrentUser(ctx, b); err != nil {
 			return false, err
 		}

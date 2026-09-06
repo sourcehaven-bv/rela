@@ -50,13 +50,27 @@ func PushdownPrefilters(filters []*filter.Filter, meta *metamodel.Metamodel, typ
 }
 
 func stringComparableOnEveryType(meta *metamodel.Metamodel, types []string, prop string) bool {
+	return declaredOnEveryType(meta, types, prop, false)
+}
+
+// stringListOnEveryType is the list twin of stringComparableOnEveryType: the
+// property must be a LIST of strings on every type, so a membership predicate
+// compares element text the same way the Go pass does.
+func stringListOnEveryType(meta *metamodel.Metamodel, types []string, prop string) bool {
+	return declaredOnEveryType(meta, types, prop, true)
+}
+
+func declaredOnEveryType(meta *metamodel.Metamodel, types []string, prop string, list bool) bool {
+	if len(types) == 0 {
+		return false
+	}
 	for _, typ := range types {
 		def, ok := meta.GetEntityDef(typ)
 		if !ok {
 			return false
 		}
 		pd, ok := def.Properties[prop]
-		if !ok || pd.List || pd.Type != metamodel.PropertyTypeString {
+		if !ok || pd.List != list || pd.Type != metamodel.PropertyTypeString {
 			return false
 		}
 	}
@@ -69,38 +83,17 @@ func StaticIndexSpecs(cfg *dataentryconfig.Config, meta *metamodel.Metamodel) []
 	if cfg == nil || meta == nil {
 		return nil
 	}
-	var queries []string
-	if cfg.Dashboard != nil {
-		for _, card := range cfg.Dashboard.Cards {
-			queries = append(queries, card.Query)
-		}
-	}
-	for _, src := range cfg.NextActions {
-		if src.Query != "" {
-			queries = append(queries, src.Query)
-		}
-		for _, offer := range src.Actions {
-			if offer.PickOne != nil {
-				queries = append(queries, offer.PickOne.Query)
-			}
-		}
-	}
-
+	var ev *predicatefns.Evaluator
 	byKey := make(map[string]store.DerivedObjectSpec)
-	for _, raw := range queries {
-		sq := searchparser.ParseQuery(raw)
+	for _, q := range staticQueries(cfg) {
+		sq := searchparser.ParseQuery(q.query)
 		if len(sq.ParseErrors) != 0 || len(sq.EntityTypes) != 1 || sq.HasFreeText() {
 			continue
 		}
-		pushed := PushdownPrefilters(sq.PropertyFilters, meta, sq.EntityTypes)
-		props := make([]string, 0, len(pushed))
-		for _, p := range pushed {
-			if p.Scalar {
-				props = append(props, p.Property)
-			}
+		if q.condition != "" && ev == nil {
+			ev = predicatefns.NewEvaluator(meta)
 		}
-		slices.Sort(props)
-		props = slices.Compact(props)
+		props := staticIndexProps(sq, q.condition, meta, ev)
 		if len(props) == 0 {
 			continue
 		}
@@ -119,6 +112,60 @@ func StaticIndexSpecs(cfg *dataentryconfig.Config, meta *metamodel.Metamodel) []
 	return out
 }
 
+// staticQuery is one operator-declared query and, for a next-action source,
+// the condition that is pushed down beside it at runtime. The two are ANDed
+// by the store, so they share ONE composite index — the same shape the
+// runtime pushdown (dataentry's executeQuery with the condition prefilters
+// appended) actually probes.
+type staticQuery struct{ query, condition string }
+
+// staticQueries collects every query shape the config declares statically.
+func staticQueries(cfg *dataentryconfig.Config) []staticQuery {
+	var queries []staticQuery
+	if cfg.Dashboard != nil {
+		for _, card := range cfg.Dashboard.Cards {
+			queries = append(queries, staticQuery{query: card.Query})
+		}
+	}
+	for _, src := range cfg.NextActions {
+		if src.Query != "" {
+			queries = append(queries, staticQuery{query: src.Query, condition: src.Condition})
+		}
+		for _, offer := range src.Actions {
+			if offer.PickOne != nil {
+				queries = append(queries, staticQuery{query: offer.PickOne.Query})
+			}
+		}
+	}
+	return queries
+}
+
+// staticIndexProps returns the sorted, deduplicated index columns for one
+// static query: the query's scalar pushdown properties plus, when a condition
+// is present, its scalar pushdown properties ([ConditionIndexProperties]).
+//
+// A condition that does not compile contributes nothing, and that is not a
+// partial-set hazard: conditionlint refuses the same expression at load, so
+// no runtime query will ever probe for the index it would have described.
+func staticIndexProps(
+	sq *searchparser.SearchQuery, condition string, meta *metamodel.Metamodel, ev *predicatefns.Evaluator,
+) []string {
+	pushed := PushdownPrefilters(sq.PropertyFilters, meta, sq.EntityTypes)
+	props := make([]string, 0, len(pushed))
+	for _, p := range pushed {
+		if p.Scalar {
+			props = append(props, p.Property)
+		}
+	}
+	if condition != "" && ev != nil {
+		if prog, err := ev.CompileWithCurrentUser(sq.EntityTypes[0], condition); err == nil {
+			props = append(props, ConditionIndexProperties(prog, meta, sq.EntityTypes)...)
+		}
+	}
+	slices.Sort(props)
+	return slices.Compact(props)
+}
+
 // ConditionPrefilters returns the store-evaluable pre-filter subset of a
 // compiled predicate condition, resolving the current user's identity to
 // a literal.
@@ -131,12 +178,20 @@ func StaticIndexSpecs(cfg *dataentryconfig.Config, meta *metamodel.Metamodel) []
 // Soundness rests on two independent gates:
 //
 //   - [predicate.Program.ConstEqualities] restricts the shape to
-//     top-level ANDed equalities against a request-constant, so a
-//     pushed predicate can never contradict the program.
-//   - stringComparableOnEveryType (shared with the filter path)
-//     restricts it to declared non-list string properties, so the
-//     store's string-form comparison cannot disagree with the
-//     metamodel-aware Go pass on a typed value.
+//     top-level ANDed equalities against a request-constant (a literal,
+//     current_user.id, or the is_current_user / has_current_user sugar),
+//     so a pushed predicate can never contradict the program.
+//   - The metamodel gate (shared with the filter path) restricts it to
+//     declared string properties — scalar for an equality, list-of-string
+//     for a membership — so the store's string-form comparison cannot
+//     disagree with the metamodel-aware Go pass on a typed value.
+//
+// A membership (`has_current_user(entity.watchers)`) lowers to a
+// NON-scalar [store.PropEqual], which every backend already defines as
+// "some element equals" for a list value (the multi-select rule pinned by
+// storetest's Props_value_shapes). It needs no new store operator, but it
+// is not indexable by the derived static-query index, which covers scalar
+// text only — see [ConditionIndexProperties].
 //
 // `identity` is the current user's query identity (see
 // predicatefns.QueryIdentity.ID). An EMPTY identity pushes nothing
@@ -147,28 +202,71 @@ func StaticIndexSpecs(cfg *dataentryconfig.Config, meta *metamodel.Metamodel) []
 func ConditionPrefilters(
 	prog *predicate.Program, meta *metamodel.Metamodel, types []string, identity string,
 ) []store.PropPredicate {
-	if prog == nil || meta == nil || len(types) == 0 {
-		return nil
-	}
 	var pushed []store.PropPredicate
-	for _, eq := range prog.ConstEqualities(predicatefns.VarEntity, predicatefns.VarCurrentUser) {
+	for _, eq := range conditionEqualities(prog, meta, types) {
 		value := eq.Value
 		if eq.FromVar != "" {
-			// Only the identity field resolves to a value here. `tool` is
-			// deliberately not pushable: it is diagnostic, never an
-			// authorization or membership input (see internal/affordances),
-			// and pushing it would invite exactly that use.
-			if eq.FromVar != predicatefns.FieldCurrentUserID || identity == "" {
+			if identity == "" {
 				continue
 			}
 			value = identity
 		}
-		if !stringComparableOnEveryType(meta, types, eq.Attribute) {
-			continue
-		}
 		pushed = append(pushed, store.PropPredicate{
-			Property: eq.Attribute, Op: store.PropEqual, Value: value, Scalar: value != "",
+			Property: eq.Attribute, Op: store.PropEqual, Value: value, Scalar: !eq.List && value != "",
 		})
 	}
 	return pushed
+}
+
+// ConditionIndexProperties returns the properties of a compiled condition
+// that [ConditionPrefilters] would push as SCALAR equalities — the shape
+// the derived static-query index covers — regardless of what the identity
+// resolves to at request time.
+//
+// It is the index-inference half of the eligibility decision
+// ConditionPrefilters makes at runtime, and the two must not drift: an
+// index derived for a predicate that is never pushed is dead weight, and
+// a pushed predicate with no index is a sequential scan the operator was
+// promised would not happen. Both call conditionEqualities, so they
+// cannot disagree about which conjuncts qualify. Memberships are
+// excluded here because the composite btree over `properties ->> p` does
+// not serve a jsonb containment probe.
+func ConditionIndexProperties(prog *predicate.Program, meta *metamodel.Metamodel, types []string) []string {
+	var props []string
+	for _, eq := range conditionEqualities(prog, meta, types) {
+		if eq.List {
+			continue
+		}
+		props = append(props, eq.Attribute)
+	}
+	return props
+}
+
+// conditionEqualities is the shared eligibility core: the program's
+// request-constant equalities that ALSO pass the metamodel gate for every
+// type they will be evaluated against. Only the identity field of
+// current_user resolves — `tool` is deliberately not pushable: it is
+// diagnostic, never an authorization or membership input (see
+// internal/affordances), and pushing it would invite exactly that use.
+func conditionEqualities(
+	prog *predicate.Program, meta *metamodel.Metamodel, types []string,
+) []predicate.ConstEquality {
+	if prog == nil || meta == nil || len(types) == 0 {
+		return nil
+	}
+	var out []predicate.ConstEquality
+	for _, eq := range prog.ConstEqualities(predicatefns.CurrentUserPrefilterSpec()) {
+		if eq.FromVar != "" && eq.FromVar != predicatefns.FieldCurrentUserID {
+			continue
+		}
+		if eq.List {
+			if !stringListOnEveryType(meta, types, eq.Attribute) {
+				continue
+			}
+		} else if !stringComparableOnEveryType(meta, types, eq.Attribute) {
+			continue
+		}
+		out = append(out, eq)
+	}
+	return out
 }

@@ -194,6 +194,57 @@ func CurrentUserBindings(identity string) map[string]predicate.FuncFunc {
 	}
 }
 
+// CurrentUserPrefilterSpec is the [predicate.PrefilterSpec] a pushdown
+// hands to [predicate.Program.ConstEqualities] to lower current-user
+// comparisons: the entity record under test, the constant current_user
+// record, and the two sugar functions read as equalities against its id.
+//
+// Defined HERE, beside the implementations it describes, because the
+// spec is an assertion about what the functions mean — is_current_user(s)
+// is `s == current_user.id`, has_current_user(xs) is "current_user.id is
+// an element of xs" — and the engine cannot check it. Keeping the
+// assertion in the file that defines the functions is what stops the two
+// from drifting.
+func CurrentUserPrefilterSpec() predicate.PrefilterSpec {
+	return predicate.PrefilterSpec{
+		RecordVar: VarEntity,
+		ConstVar:  VarCurrentUser,
+		ConstFuncs: map[string]string{
+			FuncIsCurrentUser:  FieldCurrentUserID,
+			FuncHasCurrentUser: FieldCurrentUserID,
+		},
+	}
+}
+
+// RequiresCurrentUser reports whether evaluating prog needs an identity:
+// it references the current_user record, or calls one of the sugar
+// functions that close over it.
+//
+// This is what lets one request-scoped profile serve conditions with and
+// without an identity clause. A program compiled with current_user
+// DECLARED but never USED evaluates identically with or without the
+// binding, so refusing it for want of an identity would fail a plain
+// `entity.status == 'todo'` on every unauthenticated deployment for no
+// gain. Only a program that would actually read the identity is held to
+// [ErrNoCurrentUser].
+//
+// Nil: accepted — a nil program requires nothing.
+func RequiresCurrentUser(prog *predicate.Program) bool {
+	if prog == nil {
+		return false
+	}
+	if prog.References(VarCurrentUser) {
+		return true
+	}
+	funcs := CurrentUserFuncs()
+	for _, name := range prog.Functions() {
+		if _, ok := funcs[name]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 // DeclareCurrentUser registers the current-user variable and its sugar
 // functions on env.
 //

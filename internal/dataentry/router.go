@@ -520,7 +520,7 @@ type PrincipalResolver func(*http.Request) principal.Principal
 // be actively misleading.
 func defaultPrincipalResolver(_ *http.Request) principal.Principal {
 	return principal.Principal{
-		User: "unknown",
+		User: principal.Unknown,
 		Tool: principal.ToolDataEntry,
 	}
 }

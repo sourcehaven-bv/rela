@@ -46,6 +46,42 @@ func TestStaticIndexSpecsCollectsAndCanonicalizesStaticQueries(t *testing.T) {
 	}
 }
 
+// A next-action condition's pushable equalities join the query's in ONE
+// composite index, because the runtime pushes both into the same store
+// query. Memberships and unpushable shapes contribute no column, and a
+// condition that does not compile contributes nothing at all.
+func TestStaticIndexSpecsIncludeNextActionConditionEqualities(t *testing.T) {
+	t.Parallel()
+	cfg := &dataentryconfig.Config{
+		NextActions: map[string]dataentryconfig.NextActionSource{
+			"mine": {
+				Query:     "type:task prop:status=open",
+				Condition: "is_current_user(entity.owner) and contains(entity.tags, 'x')",
+			},
+			"watched": {
+				Query:     "type:task prop:status=open",
+				Condition: "has_current_user(entity.tags)",
+			},
+			"broken": {
+				Query:     "type:task prop:owner=alice",
+				Condition: "entity.nope == 1",
+			},
+			"ordered": {
+				Query:     "type:task",
+				Condition: "entity.count >= 3 and entity.owner == current_user.id",
+			},
+		},
+	}
+	want := []store.DerivedObjectSpec{
+		{Kind: store.DerivedQueryIndex, Type: "task", Properties: []string{"owner"}},
+		{Kind: store.DerivedQueryIndex, Type: "task", Properties: []string{"owner", "status"}},
+		{Kind: store.DerivedQueryIndex, Type: "task", Properties: []string{"status"}},
+	}
+	if got := StaticIndexSpecs(cfg, testMeta()); !reflect.DeepEqual(got, want) {
+		t.Fatalf("StaticIndexSpecs() = %#v, want %#v", got, want)
+	}
+}
+
 func TestStaticIndexSpecsSkipsUnsupportedShapes(t *testing.T) {
 	t.Parallel()
 	queries := []string{

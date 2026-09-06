@@ -151,6 +151,19 @@ type NextActionSource struct {
 	// refines (predicate syntax, evaluated per candidate). Date arithmetic
 	// lives here because ordered comparison needs the property's declared
 	// type from the metamodel, which the store layer does not consult.
+	//
+	// The split is about LANGUAGE, not about where work happens: the
+	// condition's store-safe conjuncts — string equalities, and the
+	// current-user forms `entity.assignee == current_user.id`,
+	// `is_current_user(entity.assignee)`, `has_current_user(entity.watchers)`
+	// — are ALSO pushed into the candidate query as a pre-filter
+	// (internal/queryplan.ConditionPrefilters), and derive the same static
+	// index the query does. The per-candidate pass still evaluates the whole
+	// condition and remains authoritative.
+	//
+	// A condition naming the current user requires an identified request:
+	// on a deployment with no identity source the source is refused at
+	// render (never answered with nobody's rows).
 	Condition string `yaml:"condition,omitempty" json:"condition,omitempty"`
 
 	// Count makes this an entity-LESS source: it fires on a whole-graph

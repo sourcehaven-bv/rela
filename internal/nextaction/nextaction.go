@@ -53,6 +53,13 @@ const DefaultCooldown = 24 * time.Hour
 // the pick. Engine-owned, not configurable — see the package doc.
 const DefaultCandidateCap = 20
 
+// ErrIdentityRequired is wrapped by a [Matcher] whose condition names the
+// current user when the request carries no usable identity. It lets the
+// HTTP layer report a misconfiguration — a per-user source on a deployment
+// with no identity source — rather than a generic failure, without this
+// package or that layer learning the predicate engine's own error type.
+var ErrIdentityRequired = errors.New("nextaction: condition requires an identified principal")
+
 // Candidate is one entity a source proposes, already ACL-filtered by the
 // caller's reader.
 type Candidate struct {
@@ -106,10 +113,17 @@ type Matcher interface {
 // site so this package depends on no store, searcher or ACL type: it is the
 // consumer-side interface that keeps the engine testable without a graph.
 //
+// It receives the source's config id as well as the source, because the
+// wiring site pairs the candidate query with that source's compiled
+// `condition:` (looked up by id — see [MatcherFunc]) to push the condition's
+// store-evaluable conjuncts into the same query. The engine still runs the
+// whole condition over what comes back; the id only lets the fetch be
+// narrower.
+//
 // Implementations MUST apply the caller's read gate. The engine never sees
 // an entity the principal may not read, which is also why there is no cache
 // here — see [Engine.Resolve].
-type CandidateFunc func(ctx context.Context, src dataentryconfig.NextActionSource) ([]Candidate, error)
+type CandidateFunc func(ctx context.Context, id string, src dataentryconfig.NextActionSource) ([]Candidate, error)
 
 // Suggestion is the resolved hint.
 type Suggestion struct {
@@ -368,7 +382,7 @@ func (e *Engine) applyCondition(
 func (e *Engine) eligibleFromSource(
 	ctx context.Context, user, id string, src dataentryconfig.NextActionSource, bandID string, now time.Time,
 ) ([]Suggestion, error) {
-	cands, err := e.candidates(ctx, src)
+	cands, err := e.candidates(ctx, id, src)
 	if err != nil {
 		return nil, fmt.Errorf("nextaction: candidates for %q: %w", id, err)
 	}

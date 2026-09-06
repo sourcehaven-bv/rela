@@ -671,7 +671,14 @@ Rules when touching this:
   failure: an absent desired object means DROP, so partial input is destructive.
   Runtime/ad-hoc queries never issue DDL. Pushdown and index inference must use
   the same `internal/queryplan` eligibility decision, and an EXPLAIN test must
-  prove each newly supported SQL shape actually uses its generated index.
+  prove each newly supported SQL shape actually uses its generated index. A
+  next-action `condition:` participates on both sides: its store-safe scalar
+  equalities (`entity.x == 'lit'`, `entity.x == current_user.id`,
+  `is_current_user(entity.x)`) are pushed with the query and derive columns of
+  the SAME composite index; `has_current_user(list)` is pushed as a non-scalar
+  `PropEqual` (jsonb containment) and deliberately derives no index, since the
+  btree over `->>` does not serve it — a GIN shape would need its own EXPLAIN
+  test first.
 - **Migrations** are embedded SQL (`pgstore/migrations/*.sql`), applied by
   `pgstore.Migrate` in one transaction under a `pg_advisory_xact_lock`
   (concurrent-start safe; forward-only). Auto-applied on first store open;

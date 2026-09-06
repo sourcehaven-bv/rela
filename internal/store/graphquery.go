@@ -88,7 +88,11 @@ type PropOp int
 
 const (
 	// PropEqual matches when the property equals Value. With an empty
-	// Value it means "is empty" — see [PropPredicate].
+	// Value it means "is empty" — see [PropPredicate]. Against a LIST value
+	// (multi-select) a non-scalar PropEqual is MEMBERSHIP: it matches when
+	// any element equals Value, which is how `has_current_user(entity.watchers)`
+	// lowers without a dedicated operator. [PropPredicate.Scalar] opts out
+	// of that reading.
 	PropEqual PropOp = iota
 	// PropNotEqual is the negation. With an empty Value it means "is not
 	// empty".

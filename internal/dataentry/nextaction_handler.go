@@ -3,7 +3,9 @@ package dataentry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -114,6 +116,18 @@ func (a *App) handleV1NextActionGet(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	sug, found, err := eng.Resolve(ctx, nextActionUser(ctx), time.Now())
+	if errors.Is(err, nextaction.ErrIdentityRequired) {
+		// A source's condition names current_user but this request has no
+		// identity (no identity source configured, or the placeholder
+		// principal). Operator misconfiguration, not a client fault: name it
+		// so the log says what to fix, rather than "search failed".
+		slog.Warn("dataentry: next-action condition needs an identified principal",
+			"err", err, "path", r.URL.Path)
+		writeV1Error(w, r, http.StatusInternalServerError, "next_action_identity_required",
+			"A next-action condition references current_user but the request has no identity",
+			"configure an identity source (see docs/data-entry.md, next actions)")
+		return
+	}
 	if err != nil {
 		writeListPipelineError(w, r, err)
 		return
@@ -298,17 +312,22 @@ func (a *App) nextActionEngine(displayWorld string) (*nextaction.Engine, bool) {
 		nextaction.WithOptions(a.nextActionOptions()),
 		nextaction.WithDisplayWorld(displayWorld),
 	}
+	var lookup nextaction.MatcherFunc
 	if a.nextActionMatchers != nil {
 		// Compile errors are already reported at load by projectsetup; a
 		// config that reached here should compile. If it somehow does not,
 		// leave matchers unwired so New fails loudly for a source that
 		// declares a condition, rather than silently keeping every candidate.
-		if lookup, issues := a.nextActionMatchers(cfg, st.Meta); len(issues) == 0 && lookup != nil {
+		if l, issues := a.nextActionMatchers(cfg, st.Meta); len(issues) == 0 && l != nil {
+			lookup = l
 			opts = append(opts, nextaction.WithMatchers(lookup))
 		}
 	}
 
-	eng, err := nextaction.New(cfg, a.userState, a.nextActionCandidates(), opts...)
+	// The SAME lookup feeds both the engine (which runs each condition in
+	// full) and the candidate func (which pushes the condition's
+	// store-evaluable part into the query) — see nextActionCandidates.
+	eng, err := nextaction.New(cfg, a.userState, a.nextActionCandidates(st.Meta, lookup), opts...)
 	if err != nil {
 		return nil, false
 	}

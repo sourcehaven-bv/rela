@@ -557,7 +557,13 @@ deps:
       - datamigration
       # Bridges conditionlint's next-action condition compiler to the seam
       # dataentry declares, so the app never imports the predicate engine.
+      # predicatefns + principal: the same bridge derives the query identity
+      # (`current_user`) from the request principal and stamps it for the
+      # matcher, so dataentry never learns the predicate engine's identity
+      # type either.
       - conditionlint
+      - predicatefns
+      - principal
       - computed
       - dataentryconfig
       - nextaction
