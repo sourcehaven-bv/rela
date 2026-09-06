@@ -37,6 +37,53 @@ build-desktop: build-frontend
     @mkdir -p {{build_dir}}
     CGO_ENABLED=1 CGO_LDFLAGS="-framework UniformTypeIdentifiers" go build -tags production -trimpath -ldflags "-s -w" -o {{build_dir}}/rela-desktop ./cmd/rela-desktop
 
+# Build and install the desktop app into /Applications
+[macos]
+install-desktop: build-desktop
+    #!/usr/bin/env bash
+    # Assembles the same .app bundle the release workflow builds — binary +
+    # .icns + Info.plist, ad-hoc signed — then registers it with Launch
+    # Services so .rela bundles open with it. Ad-hoc signing (-s -) matches
+    # CI: enough to run locally, but NOT enough for native notifications,
+    # which need a real Developer ID.
+    set -euo pipefail
+    APP="/Applications/Rela Desktop.app"
+    if pgrep -f "Rela Desktop.app" >/dev/null 2>&1; then
+        echo "Quitting the running Rela Desktop..."
+        osascript -e 'quit app "Rela Desktop"' 2>/dev/null || killall rela-desktop 2>/dev/null || true
+        sleep 2
+    fi
+    echo "Installing to $APP..."
+    rm -rf "$APP"
+    mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+    cp {{build_dir}}/rela-desktop "$APP/Contents/MacOS/rela-desktop"
+    cp build/package/macos/rela-desktop.icns "$APP/Contents/Resources/"
+    sed "s/VERSION_PLACEHOLDER/dev/g" build/package/macos/Info.plist > "$APP/Contents/Info.plist"
+    codesign --force --deep -s - "$APP"
+    /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP"
+    touch "$APP"
+    echo "Installed. Open from /Applications, or: open -a 'Rela Desktop'"
+
+# Build and install the desktop app into LOCALAPPDATA
+[windows]
+install-desktop: build-frontend
+    #!/usr/bin/env bash
+    # Windows needs no CGO (Wails v3 defaults CGO_ENABLED=0 there) and has no
+    # bundle format, so this does not reuse build-desktop's macOS-only flags.
+    set -euo pipefail
+    DEST="${LOCALAPPDATA:-$HOME/AppData/Local}/Rela Desktop"
+    echo "Installing to $DEST..."
+    mkdir -p "$DEST"
+    CGO_ENABLED=0 go build -tags production -trimpath -ldflags "-s -w" \
+        -o "$DEST/rela-desktop.exe" ./cmd/rela-desktop
+    echo "Installed to $DEST/rela-desktop.exe"
+    echo "File associations need the MSI (build/package/windows/rela-desktop.wxs)."
+
+# Desktop builds target macOS and Windows only
+[linux]
+install-desktop:
+    @echo "Linux is not a desktop target — see .github/workflows/release.yml." && exit 1
+
 # Build the desktop app with debug/devtools support for E2E testing
 build-desktop-debug: build-frontend
     @echo "Building rela-desktop (debug)..."
