@@ -5,7 +5,7 @@ title: Migrate rela-desktop to Wails v3
 kind: enhancement
 priority: medium
 effort: l
-status: ready
+status: backlog
 ---
 
 Move `cmd/rela-desktop` from Wails v2.15.0 to v3.0.0-beta.16, then add

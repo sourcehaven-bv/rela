@@ -95,8 +95,12 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
-      - name: Install bubblewrap (command sandbox)
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      # bubblewrap for the command sandbox; GTK4 + WebKitGTK because the
+      # coverage run builds cmd/rela-desktop, which links Wails v3.
+      - name: Install bubblewrap (command sandbox) and Wails deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap libgtk-4-dev libwebkitgtk-6.0-dev
 
       - name: Measure reachability (report-only, no threshold)
         run: ./scripts/reachability.sh
@@ -624,6 +628,14 @@ jobs:
           ! go build -tags sqlite,memorybackend ./internal/appbuild/ 2>/dev/null
           ! go build -tags postgres,memorybackend ./internal/appbuild/ 2>/dev/null
           echo "OK: conflicting backend tags are rejected at compile time."
+
+      # cmd/rela-desktop links Wails v3, whose Linux build needs GTK4 +
+      # WebKitGTK headers. `go build ./...` covers it in every tag combination
+      # below, so the headers are needed even though this job is about postgres.
+      - name: Install Wails Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
 
       - name: Compile all backend build-tag combinations
         run: |
