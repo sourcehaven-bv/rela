@@ -11,6 +11,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/predicate"
+	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 	"github.com/Sourcehaven-BV/rela/internal/search/searchparser"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -115,4 +117,57 @@ func StaticIndexSpecs(cfg *dataentryconfig.Config, meta *metamodel.Metamodel) []
 		out = append(out, byKey[key])
 	}
 	return out
+}
+
+// ConditionPrefilters returns the store-evaluable pre-filter subset of a
+// compiled predicate condition, resolving the current user's identity to
+// a literal.
+//
+// It is the predicate-path twin of [PushdownPrefilters] and carries the
+// identical contract: the returned predicates are a PRE-FILTER only, and
+// the caller must still evaluate the whole program in Go. The store may
+// remove rows the Go pass would also have removed — never more.
+//
+// Soundness rests on two independent gates:
+//
+//   - [predicate.Program.ConstEqualities] restricts the shape to
+//     top-level ANDed equalities against a request-constant, so a
+//     pushed predicate can never contradict the program.
+//   - stringComparableOnEveryType (shared with the filter path)
+//     restricts it to declared non-list string properties, so the
+//     store's string-form comparison cannot disagree with the
+//     metamodel-aware Go pass on a typed value.
+//
+// `me` is the current user's query identity. An EMPTY `me` pushes
+// nothing rather than pushing an empty-string equality: an unidentified
+// request must not silently pre-filter to the rows whose property is
+// unset. The Go pass fails that request closed on its own; this must not
+// quietly answer it first.
+func ConditionPrefilters(
+	prog *predicate.Program, meta *metamodel.Metamodel, types []string, me string,
+) []store.PropPredicate {
+	if prog == nil || meta == nil || len(types) == 0 {
+		return nil
+	}
+	var pushed []store.PropPredicate
+	for _, eq := range prog.ConstEqualities(predicatefns.VarEntity, predicatefns.VarCurrentUser) {
+		value := eq.Value
+		if eq.FromVar != "" {
+			// Only the identity field resolves to a value here. `tool` is
+			// deliberately not pushable: it is diagnostic, never an
+			// authorization or membership input (see internal/affordances),
+			// and pushing it would invite exactly that use.
+			if eq.FromVar != predicatefns.FieldCurrentUserID || me == "" {
+				continue
+			}
+			value = me
+		}
+		if !stringComparableOnEveryType(meta, types, eq.Attribute) {
+			continue
+		}
+		pushed = append(pushed, store.PropPredicate{
+			Property: eq.Attribute, Op: store.PropEqual, Value: value, Scalar: value != "",
+		})
+	}
+	return pushed
 }

@@ -1,0 +1,281 @@
+package predicatefns
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/Sourcehaven-BV/rela/internal/predicate"
+)
+
+// Names of the current-user surface. Exported so generated predicate
+// source (FromFilter, and any future sugar) references them without
+// stringly-typed drift, exactly as the stdlib names above do.
+const (
+	// VarCurrentUser is the record variable naming the request's identity.
+	VarCurrentUser = "current_user"
+
+	// VarEntity is the record variable naming the entity under test. It
+	// is declared by the Evaluator rather than here, but the name is
+	// exported alongside VarCurrentUser so a pushdown caller naming both
+	// records reads them from one place.
+	VarEntity = "entity"
+
+	// FieldCurrentUserID is the identity field of [VarCurrentUser] — the
+	// only field a pushdown may resolve to a value.
+	FieldCurrentUserID = "id"
+
+	// FuncIsMe reports whether a string equals the current user's query
+	// identity: is_me(entity.assignee).
+	FuncIsMe = "is_me"
+
+	// FuncMeIn reports whether the current user's query identity appears
+	// in a list of strings: me_in(entity.watchers).
+	FuncMeIn = "me_in"
+)
+
+// CurrentUserType is the declared shape of [VarCurrentUser].
+//
+// It is a RECORD, not a bare string, and that is a compatibility
+// constraint rather than a preference: operator-authored acl.yaml
+// already passes the variable whole to affordance host functions
+// (`has_role(current_user, entity, "editor")`), and internal/affordances
+// declares it as predicate.RecordType. Redeclaring it as a string here
+// would make the same identifier mean two different types in two
+// dialects an operator experiences as one language.
+//
+// The fields mirror internal/affordances/env.go so a `when:` clause and
+// a query condition read identically:
+//
+//   - id   — the query identity (see [QueryIdentity]).
+//   - tool — the entry-point tool ("data-entry", "mcp", "cli", ...).
+//
+// As in affordances, `tool` is NOT a user classification. It exists for
+// diagnostics and transport-shaped conditions; authorization gates by
+// role, never by inspecting it.
+var CurrentUserType = predicate.RecordType{
+	"id":   predicate.StringType,
+	"tool": predicate.StringType,
+}
+
+// ErrNoCurrentUser is returned by [BindCurrentUser] when the context
+// carries no usable query identity.
+//
+// It is an ERROR rather than a nil/empty binding by deliberate design.
+// An empty identity would make `entity.assignee == current_user.id`
+// match every entity whose assignee is unset — turning "who am I?"
+// being unanswerable into a filter that silently WIDENS. Every other
+// direction in this codebase fails closed (acl.ResolvePrincipal returns
+// no id on ambiguity; an unparseable where: clause is a load error), and
+// a personal inbox that shows a stranger's rows is the worst version of
+// getting this wrong.
+var ErrNoCurrentUser = errors.New("predicatefns: no current user on this context")
+
+// QueryIdentity is the value `current_user.id` binds to.
+//
+// # Why a distinct type
+//
+// The string a principal carries is NOT stable across transports.
+// internal/dataentry rewrites principal.User to the resolved user-entity
+// id on /api/ (resolvePrincipalEntity), while CLI, MCP, scheduler and
+// desktop keep the raw identifier — acl.Declarative.ResolvePrincipal
+// documents that split and its fail-closed rationale. A query condition
+// compares against entity DATA (`entity.assignee`, which holds an entity
+// id), so binding whichever string happened to be on the context would
+// make the same view correct in the browser and silently empty from the
+// CLI.
+//
+// So the identity is resolved ONCE, by the wiring site that knows the
+// ACL policy, and carried on the context as this type. Consumers bind it
+// verbatim; they never re-derive it from principal.User.
+type QueryIdentity struct {
+	// EntityID is the user entity this principal resolves to. Empty when
+	// the deployment configures no user_entity_type, in which case there
+	// is no entity id to compare against and Raw is used instead.
+	EntityID string
+
+	// Raw is the underlying principal identifier (an email, a UPN, a
+	// service account name).
+	Raw string
+
+	// Tool is the entry-point tool, bound to current_user.tool.
+	Tool string
+}
+
+// ID returns the value bound to current_user.id: the resolved user
+// entity id when the deployment has one, else the raw principal.
+//
+// Preferring the entity id is what makes `entity.assignee ==
+// current_user.id` mean what an operator reads it to mean, since an
+// assignee property holds an entity id. Falling back to the raw
+// identifier keeps the feature usable in deployments with no user
+// entity type at all (the data-entry prototype is one), where the raw
+// string IS the only identity the graph could reference.
+func (q QueryIdentity) ID() string {
+	if q.EntityID != "" {
+		return q.EntityID
+	}
+	return q.Raw
+}
+
+// Valid reports whether this identity can be compared against graph
+// data. A zero QueryIdentity is invalid, which is what makes the
+// unstamped-context case fail closed.
+func (q QueryIdentity) Valid() bool { return q.ID() != "" }
+
+type queryIdentityKey struct{}
+
+// WithQueryIdentity stamps the resolved identity on ctx.
+//
+// Call it at a REQUEST boundary that has already resolved the principal
+// against the ACL policy. It is deliberately not derived lazily inside
+// the evaluator: resolution is a store lookup, and doing it per matched
+// entity would turn one list render into one query per row.
+func WithQueryIdentity(ctx context.Context, q QueryIdentity) context.Context {
+	return context.WithValue(ctx, queryIdentityKey{}, q)
+}
+
+// QueryIdentityFrom returns the identity stamped on ctx, if any.
+//
+// Absence is reported rather than defaulted. principal.From supplies an
+// "unknown/unknown" default for attribution, which is right for an audit
+// record and wrong here: "unknown" is not a user id, and binding it
+// would let a condition match an entity whose assignee is literally
+// "unknown".
+func QueryIdentityFrom(ctx context.Context) (QueryIdentity, bool) {
+	q, ok := ctx.Value(queryIdentityKey{}).(QueryIdentity)
+	if !ok || !q.Valid() {
+		return QueryIdentity{}, false
+	}
+	return q, true
+}
+
+// DeclareCurrentUser registers the current-user variable and its sugar
+// functions on env.
+//
+// Kept SEPARATE from [Declare] rather than folded into it, because the
+// stdlib is safe everywhere and this is not. Validation compiles with
+// context.Background() (internal/validation), the scheduler and mail
+// templates compile at load with no request in sight, and index
+// derivation compiles a query shape with no user at all. Those profiles
+// must NOT declare current_user: referencing it there is an operator
+// mistake, and an undeclared variable is a COMPILE error naming the line
+// — which is the failure an operator can act on, and the direction
+// CLAUDE.md mandates for a condition that cannot be honored.
+//
+// Call it after DeclareVar("entity", ...) and before Compile, alongside
+// [Declare].
+func DeclareCurrentUser(env *predicate.Env) error {
+	if err := env.DeclareVar(VarCurrentUser, CurrentUserType); err != nil {
+		return fmt.Errorf("predicatefns: declare %s: %w", VarCurrentUser, err)
+	}
+	str := predicate.StringType
+	decls := []struct {
+		name string
+		sig  predicate.FuncSig
+	}{
+		// Both are SQL-portable: each compares stored data against a
+		// scalar that is CONSTANT for the request, which is exactly the
+		// shape a pushdown binds as a query parameter. Classifying them
+		// portable is what lets a future predicate->SQL compiler push
+		// `is_me(entity.assignee)` down as `assignee = $1`; it does not
+		// by itself perform any pushdown.
+		{FuncIsMe, predicate.FuncSig{Params: []predicate.Type{str}, Return: predicate.BoolType, SQLPortable: true}},
+		{FuncMeIn, predicate.FuncSig{
+			Params: []predicate.Type{predicate.ListType{Elem: predicate.StringType}},
+			Return: predicate.BoolType, SQLPortable: true,
+		}},
+	}
+	for _, d := range decls {
+		if err := env.DeclareFunc(d.name, d.sig); err != nil {
+			return fmt.Errorf("predicatefns: declare %s: %w", d.name, err)
+		}
+	}
+	return nil
+}
+
+// BindCurrentUser binds the variable and sugar functions declared by
+// [DeclareCurrentUser], reading the identity from ctx.
+//
+// Returns [ErrNoCurrentUser] when ctx carries none. A caller that
+// compiled a program referencing current_user and then cannot bind it
+// has a wiring bug, and surfacing it beats evaluating a condition whose
+// identity is a guess.
+func BindCurrentUser(ctx context.Context, b *predicate.Bindings) error {
+	q, ok := QueryIdentityFrom(ctx)
+	if !ok {
+		return ErrNoCurrentUser
+	}
+	me := q.ID()
+	if err := b.SetVar(VarCurrentUser, predicate.NewRecord(map[string]predicate.Value{
+		"id":   predicate.NewString(me),
+		"tool": predicate.NewString(q.Tool),
+	})); err != nil {
+		return err
+	}
+	binds := []struct {
+		name string
+		fn   predicate.FuncFunc
+	}{
+		{FuncIsMe, isMe(me)},
+		{FuncMeIn, meIn(me)},
+	}
+	for _, bd := range binds {
+		if err := b.SetFunc(bd.name, bd.fn); err != nil {
+			return fmt.Errorf("predicatefns: bind %s: %w", bd.name, err)
+		}
+	}
+	return nil
+}
+
+// isMe implements is_me(s).
+//
+// A Nil argument (an unset property binds Nil, per coerceScalar) is a
+// non-match rather than an error: `is_me(entity.assignee)` on an
+// unassigned entity is a legitimate question with the answer "no". Only
+// a genuinely off-type argument fails, which the type checker should
+// already have rejected.
+func isMe(me string) predicate.FuncFunc {
+	return func(_ context.Context, args []predicate.Value) (predicate.Value, error) {
+		if len(args) != 1 {
+			return nil, errArg
+		}
+		switch v := args[0].(type) {
+		case predicate.Nil:
+			return predicate.NewBool(false), nil
+		case predicate.String:
+			// me is non-empty (QueryIdentity.Valid gates the binding), so
+			// this cannot degenerate into matching every empty property.
+			return predicate.NewBool(v.String() == me), nil
+		default:
+			return nil, errArg
+		}
+	}
+}
+
+// meIn implements me_in(list).
+//
+// Argument order follows contains(list, elem) — the stdlib member of
+// this package — rather than affordances' string_in_list(value, list).
+// The two disagree already; a third convention would be worse than
+// picking the one a caller of this package meets first.
+func meIn(me string) predicate.FuncFunc {
+	return func(_ context.Context, args []predicate.Value) (predicate.Value, error) {
+		if len(args) != 1 {
+			return nil, errArg
+		}
+		switch v := args[0].(type) {
+		case predicate.Nil:
+			return predicate.NewBool(false), nil
+		case predicate.List:
+			for _, e := range v.Elems() {
+				if s, ok := e.(predicate.String); ok && s.String() == me {
+					return predicate.NewBool(true), nil
+				}
+			}
+			return predicate.NewBool(false), nil
+		default:
+			return nil, errArg
+		}
+	}
+}
