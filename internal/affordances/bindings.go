@@ -9,6 +9,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
+	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
@@ -113,6 +114,14 @@ func (bc *bindingContext) newBindings(meta *metamodel.Metamodel) (*predicate.Bin
 	}
 	for _, s := range setters {
 		if err := b.SetFunc(s.name, s.fn); err != nil {
+			return nil, err
+		}
+	}
+	// Bound from bc.userID — this package's own resolved principal —
+	// rather than the query-identity context, so the sugar agrees with
+	// current_user.id above whichever way identity arrived.
+	for name, fn := range predicatefns.CurrentUserBindings(bc.userID) {
+		if err := b.SetFunc(name, fn); err != nil {
 			return nil, err
 		}
 	}

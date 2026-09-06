@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
@@ -152,6 +153,47 @@ func QueryIdentityFrom(ctx context.Context) (QueryIdentity, bool) {
 	return q, true
 }
 
+// CurrentUserFuncs returns the sugar-function signatures, so a package
+// that declares its own host-function set (internal/affordances) can add
+// them without also inheriting the stdlib.
+//
+// Pair every entry with the matching [CurrentUserBindings] entry: the
+// two are keyed by the same names and must not drift.
+func CurrentUserFuncs() map[string]predicate.FuncSig {
+	str := predicate.StringType
+	return map[string]predicate.FuncSig{
+		// Both are SQL-portable: each compares stored data against a
+		// scalar that is CONSTANT for the request, which is exactly the
+		// shape a pushdown binds as a query parameter. Classifying them
+		// portable is what lets a future predicate->SQL compiler push
+		// `is_current_user(entity.assignee)` down as `assignee = $1`; it
+		// does not by itself perform any pushdown.
+		FuncIsCurrentUser: {
+			Params: []predicate.Type{str}, Return: predicate.BoolType, SQLPortable: true,
+		},
+		FuncHasCurrentUser: {
+			Params: []predicate.Type{predicate.ListType{Elem: predicate.StringType}},
+			Return: predicate.BoolType, SQLPortable: true,
+		},
+	}
+}
+
+// CurrentUserBindings returns the sugar implementations closed over
+// identity — the value bound to current_user.id.
+//
+// Exported for the same reason as [CurrentUserFuncs]: a package with its
+// own identity source (affordances resolves the principal through its
+// own resolver, not through [QueryIdentityFrom]) must be able to bind
+// the SAME semantics rather than reimplement them. Two implementations
+// of "is this the current user" that disagree on, say, an unset property
+// is exactly the drift this avoids.
+func CurrentUserBindings(identity string) map[string]predicate.FuncFunc {
+	return map[string]predicate.FuncFunc{
+		FuncIsCurrentUser:  isCurrentUser(identity),
+		FuncHasCurrentUser: hasCurrentUser(identity),
+	}
+}
+
 // DeclareCurrentUser registers the current-user variable and its sugar
 // functions on env.
 //
@@ -171,31 +213,18 @@ func DeclareCurrentUser(env *predicate.Env) error {
 	if err := env.DeclareVar(VarCurrentUser, CurrentUserType); err != nil {
 		return fmt.Errorf("predicatefns: declare %s: %w", VarCurrentUser, err)
 	}
-	str := predicate.StringType
-	decls := []struct {
-		name string
-		sig  predicate.FuncSig
-	}{
-		// Both are SQL-portable: each compares stored data against a
-		// scalar that is CONSTANT for the request, which is exactly the
-		// shape a pushdown binds as a query parameter. Classifying them
-		// portable is what lets a future predicate->SQL compiler push
-		// `is_current_user(entity.assignee)` down as `assignee = $1`; it does not
-		// by itself perform any pushdown.
-		{FuncIsCurrentUser, predicate.FuncSig{
-			Params: []predicate.Type{str}, Return: predicate.BoolType, SQLPortable: true,
-		}},
-		{FuncHasCurrentUser, predicate.FuncSig{
-			Params: []predicate.Type{predicate.ListType{Elem: predicate.StringType}},
-			Return: predicate.BoolType, SQLPortable: true,
-		}},
+	return DeclareCurrentUserFuncs(env)
+}
+
+// sortedFuncNames orders a signature map so declaration (and any error
+// it produces) is deterministic across runs.
+func sortedFuncNames(m map[string]predicate.FuncSig) []string {
+	out := make([]string, 0, len(m))
+	for name := range m {
+		out = append(out, name)
 	}
-	for _, d := range decls {
-		if err := env.DeclareFunc(d.name, d.sig); err != nil {
-			return fmt.Errorf("predicatefns: declare %s: %w", d.name, err)
-		}
-	}
-	return nil
+	sort.Strings(out)
+	return out
 }
 
 // BindCurrentUser binds the variable and sugar functions declared by
@@ -217,16 +246,9 @@ func BindCurrentUser(ctx context.Context, b *predicate.Bindings) error {
 	})); err != nil {
 		return err
 	}
-	binds := []struct {
-		name string
-		fn   predicate.FuncFunc
-	}{
-		{FuncIsCurrentUser, isCurrentUser(identity)},
-		{FuncHasCurrentUser, hasCurrentUser(identity)},
-	}
-	for _, bd := range binds {
-		if err := b.SetFunc(bd.name, bd.fn); err != nil {
-			return fmt.Errorf("predicatefns: bind %s: %w", bd.name, err)
+	for name, fn := range CurrentUserBindings(identity) {
+		if err := b.SetFunc(name, fn); err != nil {
+			return fmt.Errorf("predicatefns: bind %s: %w", name, err)
 		}
 	}
 	return nil
@@ -336,4 +358,20 @@ func ResolveQueryIdentity(
 		q.EntityID = id
 	}
 	return q, nil
+}
+
+// DeclareCurrentUserFuncs registers ONLY the sugar functions, without
+// the current_user variable or the stdlib.
+//
+// For a package that declares current_user itself (internal/affordances
+// binds it from its own resolver) but wants the shared sugar. Use
+// [DeclareCurrentUser] when the variable is not already declared.
+func DeclareCurrentUserFuncs(env *predicate.Env) error {
+	funcs := CurrentUserFuncs()
+	for _, name := range sortedFuncNames(funcs) {
+		if err := env.DeclareFunc(name, funcs[name]); err != nil {
+			return fmt.Errorf("predicatefns: declare %s: %w", name, err)
+		}
+	}
+	return nil
 }
