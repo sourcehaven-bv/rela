@@ -33,7 +33,7 @@ require (
 	github.com/teekennedy/goldmark-markdown v0.5.1
 	github.com/wailsapp/wails/v2 v2.15.0
 	github.com/wneessen/go-mail v0.8.1
-	github.com/yuin/goldmark v1.8.5
+	github.com/yuin/goldmark v1.8.6
 	github.com/yuin/gopher-lua v1.1.2
 	go.uber.org/goleak v1.3.0
 	golang.org/x/image v0.45.0
