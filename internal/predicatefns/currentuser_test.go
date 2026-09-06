@@ -336,3 +336,98 @@ func TestCurrentUser_TypeMatchesAffordances(t *testing.T) {
 			len(predicatefns.CurrentUserType), len(want), strings.Join(want, ", "))
 	}
 }
+
+// stubResolver is a PrincipalResolver for the resolution tests.
+type stubResolver struct {
+	id  string
+	err error
+}
+
+func (s stubResolver) ResolvePrincipal(context.Context, string) (string, error) {
+	return s.id, s.err
+}
+
+func TestResolveQueryIdentity(t *testing.T) {
+	tests := []struct {
+		name     string
+		resolver predicatefns.PrincipalResolver
+		raw      string
+		tool     string
+		wantID   string
+		wantErr  bool
+	}{
+		{
+			name:     "resolves to the user entity id",
+			resolver: stubResolver{id: "PERS-JV"},
+			raw:      "jeroen@example.com",
+			tool:     "data-entry",
+			wantID:   "PERS-JV",
+		},
+		{
+			name:     "no resolver means the raw principal is the identity",
+			resolver: nil,
+			raw:      "jeroen@example.com",
+			tool:     "cli",
+			wantID:   "jeroen@example.com",
+		},
+		{
+			name:     "an unmatched principal falls back to raw",
+			resolver: stubResolver{id: ""},
+			raw:      "jeroen@example.com",
+			tool:     "data-entry",
+			wantID:   "jeroen@example.com",
+		},
+		{
+			name:     "resolving to itself is not treated as an entity id",
+			resolver: stubResolver{id: "jeroen@example.com"},
+			raw:      "jeroen@example.com",
+			tool:     "data-entry",
+			wantID:   "jeroen@example.com",
+		},
+		{
+			name:     "whitespace is trimmed before resolution",
+			resolver: nil,
+			raw:      "  jeroen@example.com  ",
+			tool:     "cli",
+			wantID:   "jeroen@example.com",
+		},
+		{
+			name:     "an empty principal yields an invalid identity, not an error",
+			resolver: stubResolver{id: "PERS-JV"},
+			raw:      "",
+			tool:     "cli",
+			wantID:   "",
+		},
+		{
+			name:     "a resolver error is surfaced, never degraded to raw",
+			resolver: stubResolver{err: errors.New("backend down")},
+			raw:      "jeroen@example.com",
+			tool:     "data-entry",
+			wantErr:  true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			q, err := predicatefns.ResolveQueryIdentity(
+				context.Background(), tc.resolver, tc.raw, tc.tool)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected an error")
+				}
+				if q.Valid() {
+					t.Fatalf("a failed resolution must not yield a usable identity, got %+v", q)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got := q.ID(); got != tc.wantID {
+				t.Fatalf("ID() = %q, want %q", got, tc.wantID)
+			}
+			if q.Tool != tc.tool {
+				t.Fatalf("Tool = %q, want %q", q.Tool, tc.tool)
+			}
+		})
+	}
+}
