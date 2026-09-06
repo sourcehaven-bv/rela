@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -447,6 +448,11 @@ func TestWelcomePageBindingsExist(t *testing.T) {
 	// Assert on the executable line, not the surrounding comment: window._wails
 	// is a real object (flags + invoke) that does NOT carry Call, so reaching
 	// for it fails silently at runtime. Matching prose would pass either way.
+	require.Contains(t, page, `src="/wails/runtime.js"`,
+		"v3 does not inject its runtime; the page must request it or window.wails is undefined")
+	assert.Less(t, strings.Index(page, "/wails/runtime.js"), strings.Index(page, "window.go.main.Desktop"),
+		"the runtime must load before the shim that uses it")
+
 	require.Contains(t, page, "function rt() { return window.wails && window.wails.Call",
 		"the runtime accessor must read window.wails; window._wails has no Call")
 

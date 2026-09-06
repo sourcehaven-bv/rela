@@ -27,6 +27,18 @@ func TestBuiltSPAHasBodyTag(t *testing.T) {
 		"the injector needs a </body> to append before")
 }
 
+// Wails v3 serves its runtime at /wails/runtime.js but, unlike v2, does not
+// inject it into the page. A page that never requests it has no window.wails,
+// so every bound call fails with "Wails runtime unavailable" and multi-window
+// silently does nothing. Both injected surfaces must load it.
+func TestInjectedScriptLoadsWailsRuntime(t *testing.T) {
+	out := string(injectMultiWindow([]byte("<html><body>app</body></html>")))
+	require.Contains(t, out, `src="/wails/runtime.js"`,
+		"the runtime must be loaded or window.wails is undefined")
+	assert.Less(t, strings.Index(out, "/wails/runtime.js"), strings.Index(out, "main.Desktop.OpenWindow"),
+		"the runtime must load before the script that uses it")
+}
+
 func TestSafeRoute(t *testing.T) {
 	tests := []struct {
 		name    string

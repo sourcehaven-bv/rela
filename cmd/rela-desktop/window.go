@@ -121,6 +121,10 @@ func (d *Desktop) projectTitle() string {
 // through "to default browser behavior", which in a browser opens a tab and
 // in a webview does nothing at all.
 const multiWindowScript = `
+<!-- v3 serves its runtime at /wails/runtime.js but does not inject it, so a
+     page that never requests it has no window.wails. Must load before the
+     script below, which depends on it. -->
+<script src="/wails/runtime.js"></script>
 <script>
 (function () {
   if (!window.wails || !window.wails.Call) return; // browser: leave as-is

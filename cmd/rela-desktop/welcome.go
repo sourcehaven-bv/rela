@@ -232,6 +232,10 @@ body { font-family: var(--font); background: var(--bg); color: var(--text);
 
   %s
 </div>
+<!-- Wails v3 serves its runtime at /wails/runtime.js but, unlike v2, does NOT
+     inject it: a page that never requests it has no window.wails at all. The
+     shim below depends on it, so it must load first (no defer/module). -->
+<script src="/wails/runtime.js"></script>
 <script>
 // --- Wails v3 compatibility shim -------------------------------------------
 // v2 injected window.go.main.Desktop.<Method> and window.runtime.EventsOn.
