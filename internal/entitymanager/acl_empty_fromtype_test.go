@@ -207,7 +207,7 @@ func createRelationAllowed(t *testing.T, createGrants []string, seedSource bool)
 		// Not a copy test: opt out of the copy read gates explicitly, which is
 		// what New requires of a policy-backed Deps (#1437).
 		CopyReadGate:   entitymanager.AllowAllCopyReadGate{},
-		CopyVisibility: entitymanager.AllowAllCopyVisibility{Store: st},
+		CopyVisibility: allowAllCopyVisibility(t, st),
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)

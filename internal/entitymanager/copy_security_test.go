@@ -362,7 +362,7 @@ func TestCopy_GuardedFaceIsWritableOnlyViaDefinition(t *testing.T) {
 		// gates, so both are opted out explicitly — permissive, so a refusal
 		// below can only come from the mechanism under test (#1437).
 		CopyReadGate:   entitymanager.AllowAllCopyReadGate{},
-		CopyVisibility: entitymanager.AllowAllCopyVisibility{Store: st},
+		CopyVisibility: allowAllCopyVisibility(t, st),
 	})
 	if merr != nil {
 		t.Fatalf("entitymanager.New: %v", merr)
@@ -413,7 +413,7 @@ func TestCopy_GuardedFaceIsWritableOnlyViaDefinition(t *testing.T) {
 		// Permissive read gates, so the refusal below can only be the
 		// denying guard — the point of case (c) (#1437).
 		CopyReadGate:   entitymanager.AllowAllCopyReadGate{},
-		CopyVisibility: entitymanager.AllowAllCopyVisibility{Store: st},
+		CopyVisibility: allowAllCopyVisibility(t, st),
 	})
 	if derr2 != nil {
 		t.Fatalf("entitymanager.New: %v", derr2)
@@ -469,7 +469,7 @@ func TestCopy_StrangerCannotPromote(t *testing.T) {
 		// (it reads raw and elevated by design). Opted out explicitly rather
 		// than left nil so the refusal under test can only come from
 		// CopyReadGate above (#1437).
-		CopyVisibility: entitymanager.AllowAllCopyVisibility{Store: st},
+		CopyVisibility: allowAllCopyVisibility(t, st),
 	})
 	if merr != nil {
 		t.Fatalf("entitymanager.New: %v", merr)

@@ -15,6 +15,19 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
+// allowAllCopyVisibility is the opt-out every non-copy test wants: ungated
+// reads, built through the real constructor so the tests exercise the same
+// validation production would. Failing the construction is a test bug, not an
+// assertion, hence t.Fatalf rather than a returned error.
+func allowAllCopyVisibility(t *testing.T, st store.Store) entitymanager.AllowAllCopyVisibility {
+	t.Helper()
+	v, err := entitymanager.NewAllowAllCopyVisibility(st)
+	if err != nil {
+		t.Fatalf("NewAllowAllCopyVisibility: %v", err)
+	}
+	return v
+}
+
 // declarativeForGateTest builds the production-shaped ACL: a compiled policy,
 // which is the state that makes the copy read gates mandatory.
 func declarativeForGateTest(t *testing.T) *acl.Declarative {
@@ -118,7 +131,7 @@ func TestNew_CopyGatesRequiredUnderPolicy(t *testing.T) {
 		t.Parallel()
 		d := depsForGateTest(t, st, declarativeForGateTest(t))
 		d.CopyReadGate = entitymanager.AllowAllCopyReadGate{}
-		d.CopyVisibility = entitymanager.AllowAllCopyVisibility{Store: st}
+		d.CopyVisibility = allowAllCopyVisibility(t, st)
 		if _, err := entitymanager.New(d); err != nil {
 			t.Fatalf("explicitly opting out must be ACCEPTED — the guard is about "+
 				"forgotten wiring, not about forbidding allow-all; got %v", err)
@@ -145,6 +158,30 @@ func TestNew_CopyGatesRequiredUnderPolicy(t *testing.T) {
 	}
 }
 
+// TestNewAllowAllCopyVisibility_RejectsNilStore keeps the opt-out from
+// reintroducing the very failure the guard exists to prevent.
+//
+// A bare AllowAllCopyVisibility{} satisfies CopyReader, so it passes
+// requireCopyGates and then nil-panics on the first cross-entity copy — a code
+// path that may not run until long after deploy. That is the
+// deferred-downstream-symptom shape CLAUDE.md's "constructors reject nil
+// required fields" rule is about, which would be an awkward thing for THIS
+// change to ship.
+//
+// The store field is unexported, so the constructor is the only way in and
+// this is the only place the check can be bypassed. Note it is validated here
+// rather than in requireCopyGates because a nil store is broken under ANY
+// ACL, not only a policy-backed one.
+func TestNewAllowAllCopyVisibility_RejectsNilStore(t *testing.T) {
+	t.Parallel()
+
+	if _, err := entitymanager.NewAllowAllCopyVisibility(nil); err == nil {
+		t.Fatal("a nil store must be rejected at construction: the zero value " +
+			"would satisfy CopyReader, pass New, and nil-panic on the first " +
+			"cross-entity copy")
+	}
+}
+
 // TestAllowAllCopyVisibility_ReportsAbsentAsMiss pins the opt-out's failure
 // shape rather than only its happy path: a read gate must report a missing
 // entity as a MISS, never as an error, because absent and denied are
@@ -154,7 +191,7 @@ func TestAllowAllCopyVisibility_ReportsAbsentAsMiss(t *testing.T) {
 	t.Parallel()
 
 	st := memstore.New()
-	v := entitymanager.AllowAllCopyVisibility{Store: st}
+	v := allowAllCopyVisibility(t, st)
 	ctx := context.Background()
 
 	if err := st.CreateEntity(ctx, &entity.Entity{

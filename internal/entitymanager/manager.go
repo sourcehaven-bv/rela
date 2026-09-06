@@ -237,15 +237,19 @@ type Deps struct {
 	FieldGate FieldWriteGate
 
 	// CopyVisibility is the CALLER'S read gate, used only by CROSS-ENTITY
-	// copies (TKT-C1XUA8, design doc §9.2). Nil disables the gating, which is
-	// correct for a deployment with no ACL — every other read there is raw
-	// too — and is what the CLI passes.
+	// copies (TKT-C1XUA8, design doc §9.2).
 	//
 	// Deliberately NOT used by same-entity copies: those run elevated,
 	// because hidden fields travel with the entity and the same policy
 	// governs them on the target face. Routing them through this gate would
 	// be the redacted-read-feeds-a-write bug, which destroys the fields the
 	// principal could not see.
+	//
+	// Nil: accepted without a policy — the read is then raw, which is what
+	// every other read on such a deployment does, and is what the CLI passes.
+	// REJECTED when ACL is an [*acl.Declarative]; pass
+	// [AllowAllCopyVisibility] to opt out explicitly. See [requireCopyGates]
+	// for why the tolerance is conditioned rather than unconditional.
 	CopyVisibility CopyReader
 
 	// CopyGuard evaluates a copy definition's `guard:` permission against the
@@ -256,12 +260,14 @@ type Deps struct {
 
 	// CopyReadGate answers "may this principal READ the copy's source at
 	// all", before either half of the elevation split runs (TKT-C1XUA8).
+	// Elevation decides which FIELDS travel, not whether the principal may
+	// touch the entity.
 	//
-	// Required in spirit and nil-tolerant in practice for the same reason
-	// every other gate here is: a deployment with no acl.yaml has no gate to
-	// consult, and every other read on it is ungated too. What it must never
-	// be is absent on a deployment that HAS a policy — elevation decides
-	// which fields travel, not whether the principal may touch the entity.
+	// Nil: accepted without a policy — a deployment with no acl.yaml has no
+	// gate to consult, and every other read on it is ungated too. REJECTED
+	// when ACL is an [*acl.Declarative]; pass [AllowAllCopyReadGate] to opt
+	// out explicitly. This used to say "required in spirit and nil-tolerant
+	// in practice", which is exactly the gap [requireCopyGates] closes.
 	CopyReadGate CopyReadGate
 }
 
@@ -364,17 +370,42 @@ func (AllowAllCopyReadGate) PermitsReadFace(
 // redaction. The explicit opt-out counterpart to [AllowAllCopyReadGate];
 // the same "named, never nil" rule applies.
 //
-// It needs a store to read through, so unlike the other opt-outs it is
-// constructed rather than a bare struct literal.
-type AllowAllCopyVisibility struct{ Store store.Store }
+// Unlike the other opt-outs it needs a store to read through, so the field is
+// unexported and [NewAllowAllCopyVisibility] is the only way to build one. A
+// bare `AllowAllCopyVisibility{}` would pass [requireCopyGates] and then nil-
+// panic on the first cross-entity copy — the deferred-downstream-symptom
+// failure this whole guard exists to prevent, reintroduced by its own opt-out.
+type AllowAllCopyVisibility struct{ store store.Store }
 
-// Get implements [CopyReader] by reading the stored face ungated.
+// NewAllowAllCopyVisibility builds the ungated copy reader.
+//
+// Nil: st is rejected — a nil store here is broken under ANY ACL, not only a
+// policy-backed one, which is why this is validated at construction rather
+// than inside [requireCopyGates].
+func NewAllowAllCopyVisibility(st store.Store) (AllowAllCopyVisibility, error) {
+	if st == nil {
+		return AllowAllCopyVisibility{}, errors.New(
+			"entitymanager: NewAllowAllCopyVisibility: Store is required")
+	}
+	return AllowAllCopyVisibility{store: st}, nil
+}
+
+// Get implements [CopyReader] by reading the stored face ungated. entityType
+// is ignored: allow-all draws no per-type distinction.
+//
+// A store error is reported as a MISS rather than propagated, matching
+// appbuild's real copyVisibility so a caller's `!ok` handling is uniform
+// across the two. Note the usual "absent and denied are indistinguishable"
+// rationale does NOT apply here — this gate denies nothing, so there is no
+// confidentiality property to preserve; the reason is shape-consistency
+// alone. Both share the same wart: a transient store failure surfaces to the
+// operator as ErrCopySourceMissing for an entity that plainly exists.
 func (v AllowAllCopyVisibility) Get(
 	ctx context.Context, _, id string, face entity.Face,
 ) (*entity.Entity, bool, error) {
-	e, err := v.Store.GetEntityState(ctx, id, face)
+	e, err := v.store.GetEntityState(ctx, id, face)
 	if err != nil {
-		return nil, false, nil //nolint:nilerr // absent and denied are indistinguishable, as in every read gate
+		return nil, false, nil //nolint:nilerr // a miss, to match copyVisibility's shape; see the doc comment
 	}
 	return e, true, nil
 }
@@ -459,6 +490,13 @@ func New(d Deps) (*Manager, error) {
 // Checking d.ACL == nil instead would be vacuous: ACL is already required
 // above, so it is never nil by the time this runs.
 //
+// The assertion is safe only because the implementation set is CLOSED — an
+// unrecognized type falls through to "no policy", i.e. open, whereas
+// internal/dataentry spells the same question as a switch that fails closed.
+// A decorating implementation would split those two apart. That is guarded in
+// the acl package itself by TestACLImplementations_AreAClosedSet, which fails
+// on a new implementation and names the sites to update.
+//
 // This is the same fail-fast posture as [Deps.FieldGate] (RR-X9NVHI:
 // forgotten wiring must not become an ACL bypass) and the sibling
 // [Deps.CopyGuard], which already fails closed on a guarded copy. Those two
@@ -478,7 +516,7 @@ func requireCopyGates(d Deps) error {
 	}
 	if d.CopyVisibility == nil {
 		missing = append(missing, "CopyVisibility")
-		optOuts = append(optOuts, "AllowAllCopyVisibility{Store: ...}")
+		optOuts = append(optOuts, "NewAllowAllCopyVisibility(store)")
 	}
 	if len(missing) == 0 {
 		return nil
