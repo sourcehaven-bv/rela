@@ -25,13 +25,14 @@ const (
 	// only field a pushdown may resolve to a value.
 	FieldCurrentUserID = "id"
 
-	// FuncIsMe reports whether a string equals the current user's query
-	// identity: is_me(entity.assignee).
-	FuncIsMe = "is_me"
+	// FuncIsCurrentUser reports whether a string equals the current
+	// user's query identity: is_current_user(entity.assignee).
+	FuncIsCurrentUser = "is_current_user"
 
-	// FuncMeIn reports whether the current user's query identity appears
-	// in a list of strings: me_in(entity.watchers).
-	FuncMeIn = "me_in"
+	// FuncHasCurrentUser reports whether the current user's query
+	// identity appears in a list of strings:
+	// has_current_user(entity.watchers).
+	FuncHasCurrentUser = "has_current_user"
 )
 
 // CurrentUserType is the declared shape of [VarCurrentUser].
@@ -178,10 +179,12 @@ func DeclareCurrentUser(env *predicate.Env) error {
 		// scalar that is CONSTANT for the request, which is exactly the
 		// shape a pushdown binds as a query parameter. Classifying them
 		// portable is what lets a future predicate->SQL compiler push
-		// `is_me(entity.assignee)` down as `assignee = $1`; it does not
+		// `is_current_user(entity.assignee)` down as `assignee = $1`; it does not
 		// by itself perform any pushdown.
-		{FuncIsMe, predicate.FuncSig{Params: []predicate.Type{str}, Return: predicate.BoolType, SQLPortable: true}},
-		{FuncMeIn, predicate.FuncSig{
+		{FuncIsCurrentUser, predicate.FuncSig{
+			Params: []predicate.Type{str}, Return: predicate.BoolType, SQLPortable: true,
+		}},
+		{FuncHasCurrentUser, predicate.FuncSig{
 			Params: []predicate.Type{predicate.ListType{Elem: predicate.StringType}},
 			Return: predicate.BoolType, SQLPortable: true,
 		}},
@@ -206,9 +209,9 @@ func BindCurrentUser(ctx context.Context, b *predicate.Bindings) error {
 	if !ok {
 		return ErrNoCurrentUser
 	}
-	me := q.ID()
+	identity := q.ID()
 	if err := b.SetVar(VarCurrentUser, predicate.NewRecord(map[string]predicate.Value{
-		"id":   predicate.NewString(me),
+		"id":   predicate.NewString(identity),
 		"tool": predicate.NewString(q.Tool),
 	})); err != nil {
 		return err
@@ -217,8 +220,8 @@ func BindCurrentUser(ctx context.Context, b *predicate.Bindings) error {
 		name string
 		fn   predicate.FuncFunc
 	}{
-		{FuncIsMe, isMe(me)},
-		{FuncMeIn, meIn(me)},
+		{FuncIsCurrentUser, isCurrentUser(identity)},
+		{FuncHasCurrentUser, hasCurrentUser(identity)},
 	}
 	for _, bd := range binds {
 		if err := b.SetFunc(bd.name, bd.fn); err != nil {
@@ -228,14 +231,14 @@ func BindCurrentUser(ctx context.Context, b *predicate.Bindings) error {
 	return nil
 }
 
-// isMe implements is_me(s).
+// isCurrentUser implements is_current_user(s).
 //
 // A Nil argument (an unset property binds Nil, per coerceScalar) is a
-// non-match rather than an error: `is_me(entity.assignee)` on an
+// non-match rather than an error: is_current_user(entity.assignee) on an
 // unassigned entity is a legitimate question with the answer "no". Only
 // a genuinely off-type argument fails, which the type checker should
 // already have rejected.
-func isMe(me string) predicate.FuncFunc {
+func isCurrentUser(identity string) predicate.FuncFunc {
 	return func(_ context.Context, args []predicate.Value) (predicate.Value, error) {
 		if len(args) != 1 {
 			return nil, errArg
@@ -244,22 +247,22 @@ func isMe(me string) predicate.FuncFunc {
 		case predicate.Nil:
 			return predicate.NewBool(false), nil
 		case predicate.String:
-			// me is non-empty (QueryIdentity.Valid gates the binding), so
-			// this cannot degenerate into matching every empty property.
-			return predicate.NewBool(v.String() == me), nil
+			// identity is non-empty (QueryIdentity.Valid gates the
+			// binding), so this cannot degenerate into matching every
+			// entity whose property is unset.
+			return predicate.NewBool(v.String() == identity), nil
 		default:
 			return nil, errArg
 		}
 	}
 }
 
-// meIn implements me_in(list).
+// hasCurrentUser implements has_current_user(list).
 //
-// Argument order follows contains(list, elem) — the stdlib member of
-// this package — rather than affordances' string_in_list(value, list).
-// The two disagree already; a third convention would be worse than
-// picking the one a caller of this package meets first.
-func meIn(me string) predicate.FuncFunc {
+// Named for the LIST, not the user: it reads as a question about the
+// property being tested ("do the watchers include the current user?"),
+// which is the direction an operator is thinking in when they write it.
+func hasCurrentUser(identity string) predicate.FuncFunc {
 	return func(_ context.Context, args []predicate.Value) (predicate.Value, error) {
 		if len(args) != 1 {
 			return nil, errArg
@@ -269,7 +272,7 @@ func meIn(me string) predicate.FuncFunc {
 			return predicate.NewBool(false), nil
 		case predicate.List:
 			for _, e := range v.Elems() {
-				if s, ok := e.(predicate.String); ok && s.String() == me {
+				if s, ok := e.(predicate.String); ok && s.String() == identity {
 					return predicate.NewBool(true), nil
 				}
 			}

@@ -138,13 +138,14 @@ func StaticIndexSpecs(cfg *dataentryconfig.Config, meta *metamodel.Metamodel) []
 //     store's string-form comparison cannot disagree with the
 //     metamodel-aware Go pass on a typed value.
 //
-// `me` is the current user's query identity. An EMPTY `me` pushes
-// nothing rather than pushing an empty-string equality: an unidentified
-// request must not silently pre-filter to the rows whose property is
-// unset. The Go pass fails that request closed on its own; this must not
-// quietly answer it first.
+// `identity` is the current user's query identity (see
+// predicatefns.QueryIdentity.ID). An EMPTY identity pushes nothing
+// rather than an empty-string equality: an unidentified request must not
+// silently pre-filter to the rows whose property is unset. The Go pass
+// fails that request closed on its own; this must not quietly answer it
+// first.
 func ConditionPrefilters(
-	prog *predicate.Program, meta *metamodel.Metamodel, types []string, me string,
+	prog *predicate.Program, meta *metamodel.Metamodel, types []string, identity string,
 ) []store.PropPredicate {
 	if prog == nil || meta == nil || len(types) == 0 {
 		return nil
@@ -157,10 +158,10 @@ func ConditionPrefilters(
 			// deliberately not pushable: it is diagnostic, never an
 			// authorization or membership input (see internal/affordances),
 			// and pushing it would invite exactly that use.
-			if eq.FromVar != predicatefns.FieldCurrentUserID || me == "" {
+			if eq.FromVar != predicatefns.FieldCurrentUserID || identity == "" {
 				continue
 			}
-			value = me
+			value = identity
 		}
 		if !stringComparableOnEveryType(meta, types, eq.Attribute) {
 			continue

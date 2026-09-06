@@ -23,10 +23,10 @@ func prefilterEnv(t *testing.T) *Env {
 	}); err != nil {
 		t.Fatalf("declare current_user: %v", err)
 	}
-	if err := env.DeclareFunc("is_me", FuncSig{
+	if err := env.DeclareFunc("is_current_user", FuncSig{
 		Params: []Type{StringType}, Return: BoolType, SQLPortable: true,
 	}); err != nil {
-		t.Fatalf("declare is_me: %v", err)
+		t.Fatalf("declare is_current_user: %v", err)
 	}
 	return env
 }
@@ -98,7 +98,7 @@ func TestConstEqualities(t *testing.T) {
 		},
 		{
 			name: "a host-func call is not an equality",
-			src:  "is_me(entity.assignee)",
+			src:  "is_current_user(entity.assignee)",
 			want: nil,
 		},
 		{

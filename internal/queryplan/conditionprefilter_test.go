@@ -28,98 +28,98 @@ func conditionMeta() *metamodel.Metamodel {
 
 func TestConditionPrefilters(t *testing.T) {
 	meta := conditionMeta()
-	const me = "PERS-JV"
+	const identity = "PERS-JV"
 
 	tests := []struct {
-		name  string
-		src   string
-		types []string
-		me    string
-		want  []store.PropPredicate
+		name     string
+		src      string
+		types    []string
+		identity string
+		want     []store.PropPredicate
 	}{
 		{
-			name:  "current-user equality resolves to the identity",
-			src:   "entity.assignee == current_user.id",
-			types: []string{"task"},
-			me:    me,
+			name:     "current-user equality resolves to the identity",
+			src:      "entity.assignee == current_user.id",
+			types:    []string{"task"},
+			identity: identity,
 			want: []store.PropPredicate{
-				{Property: "assignee", Op: store.PropEqual, Value: me, Scalar: true},
+				{Property: "assignee", Op: store.PropEqual, Value: identity, Scalar: true},
 			},
 		},
 		{
-			name:  "literal and identity push together",
-			src:   "entity.status == 'open' and entity.assignee == current_user.id",
-			types: []string{"task"},
-			me:    me,
+			name:     "literal and identity push together",
+			src:      "entity.status == 'open' and entity.assignee == current_user.id",
+			types:    []string{"task"},
+			identity: identity,
 			want: []store.PropPredicate{
-				{Property: "assignee", Op: store.PropEqual, Value: me, Scalar: true},
+				{Property: "assignee", Op: store.PropEqual, Value: identity, Scalar: true},
 				{Property: "status", Op: store.PropEqual, Value: "open", Scalar: true},
 			},
 		},
 		{
-			name:  "pushes only across types that all declare the property as a string",
-			src:   "entity.assignee == current_user.id",
-			types: []string{"task", "bug"},
-			me:    me,
+			name:     "pushes only across types that all declare the property as a string",
+			src:      "entity.assignee == current_user.id",
+			types:    []string{"task", "bug"},
+			identity: identity,
 			want: []store.PropPredicate{
-				{Property: "assignee", Op: store.PropEqual, Value: me, Scalar: true},
+				{Property: "assignee", Op: store.PropEqual, Value: identity, Scalar: true},
 			},
 		},
 		{
-			name:  "a property missing on one type pushes nothing",
-			src:   "entity.count == 3 and entity.assignee == current_user.id",
-			types: []string{"task", "bug"},
-			me:    me,
+			name:     "a property missing on one type pushes nothing",
+			src:      "entity.count == 3 and entity.assignee == current_user.id",
+			types:    []string{"task", "bug"},
+			identity: identity,
 			want: []store.PropPredicate{
-				{Property: "assignee", Op: store.PropEqual, Value: me, Scalar: true},
+				{Property: "assignee", Op: store.PropEqual, Value: identity, Scalar: true},
 			},
 		},
 
 		// --- fail-closed and soundness ---
 		{
-			name:  "an empty identity pushes NOTHING, never an empty-string equality",
-			src:   "entity.assignee == current_user.id",
-			types: []string{"task"},
-			me:    "",
-			want:  nil,
+			name:     "an empty identity pushes NOTHING, never an empty-string equality",
+			src:      "entity.assignee == current_user.id",
+			types:    []string{"task"},
+			identity: "",
+			want:     nil,
 		},
 		{
-			name:  "an OR pushes nothing",
-			src:   "entity.assignee == current_user.id or entity.status == 'open'",
-			types: []string{"task"},
-			me:    me,
-			want:  nil,
+			name:     "an OR pushes nothing",
+			src:      "entity.assignee == current_user.id or entity.status == 'open'",
+			types:    []string{"task"},
+			identity: identity,
+			want:     nil,
 		},
 		{
-			name:  "the is_me sugar is not a pushable equality shape",
-			src:   "is_me(entity.assignee)",
-			types: []string{"task"},
-			me:    me,
-			want:  nil,
+			name:     "the is_current_user sugar is not a pushable equality shape",
+			src:      "is_current_user(entity.assignee)",
+			types:    []string{"task"},
+			identity: identity,
+			want:     nil,
 		},
 		{
-			name:  "current_user.tool is never pushed",
-			src:   "entity.status == current_user.tool",
-			types: []string{"task"},
-			me:    me,
-			want:  nil,
+			name:     "current_user.tool is never pushed",
+			src:      "entity.status == current_user.tool",
+			types:    []string{"task"},
+			identity: identity,
+			want:     nil,
 		},
 		{
 			// A list property cannot even be COMPARED (the type checker
-			// rejects it), so membership is spelled me_in — and a host
+			// rejects it), so membership is spelled has_current_user — and a host
 			// call is not an equality shape, so it pushes nothing.
-			name:  "list membership is not pushed",
-			src:   "me_in(entity.watchers)",
-			types: []string{"task"},
-			me:    me,
-			want:  nil,
+			name:     "list membership is not pushed",
+			src:      "has_current_user(entity.watchers)",
+			types:    []string{"task"},
+			identity: identity,
+			want:     nil,
 		},
 		{
-			name:  "no types pushes nothing",
-			src:   "entity.assignee == current_user.id",
-			types: nil,
-			me:    me,
-			want:  nil,
+			name:     "no types pushes nothing",
+			src:      "entity.assignee == current_user.id",
+			types:    nil,
+			identity: identity,
+			want:     nil,
 		},
 	}
 
@@ -134,7 +134,7 @@ func TestConditionPrefilters(t *testing.T) {
 			if err != nil {
 				t.Fatalf("compile %q: %v", tc.src, err)
 			}
-			got := queryplan.ConditionPrefilters(prog, meta, tc.types, tc.me)
+			got := queryplan.ConditionPrefilters(prog, meta, tc.types, tc.identity)
 			if len(got) != len(tc.want) {
 				t.Fatalf("got %d predicates %+v, want %d %+v", len(got), got, len(tc.want), tc.want)
 			}

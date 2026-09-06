@@ -56,20 +56,20 @@ func evalWithUser(
 	return bv.Bool(), nil
 }
 
-func meCtx(entityID, raw, tool string) context.Context {
+func identityCtx(entityID, raw, tool string) context.Context {
 	return predicatefns.WithQueryIdentity(context.Background(), predicatefns.QueryIdentity{
 		EntityID: entityID, Raw: raw, Tool: tool,
 	})
 }
 
 // TestCurrentUser_EqualityAndSugar pins the three spellings an operator
-// may write for "assigned to me" and proves they agree.
+// may write for "assigned to the current user", proving they agree.
 func TestCurrentUser_EqualityAndSugar(t *testing.T) {
 	fields := predicate.RecordType{
 		"assignee": predicate.StringType,
 		"watchers": predicate.ListType{Elem: predicate.StringType},
 	}
-	ctx := meCtx("PERS-JV", "jeroen@example.com", "data-entry")
+	ctx := identityCtx("PERS-JV", "jeroen@example.com", "data-entry")
 
 	tests := []struct {
 		name     string
@@ -91,20 +91,20 @@ func TestCurrentUser_EqualityAndSugar(t *testing.T) {
 			want:     false,
 		},
 		{
-			name:     "is_me sugar matches",
-			src:      "is_me(entity.assignee)",
+			name:     "is_current_user sugar matches",
+			src:      "is_current_user(entity.assignee)",
 			assignee: predicate.NewString("PERS-JV"),
 			want:     true,
 		},
 		{
-			name:     "is_me on an unset property is a non-match, not an error",
-			src:      "is_me(entity.assignee)",
+			name:     "is_current_user on an unset property is a non-match, not an error",
+			src:      "is_current_user(entity.assignee)",
 			assignee: predicate.NewNil(),
 			want:     false,
 		},
 		{
-			name:     "me_in finds the user in a list",
-			src:      "me_in(entity.watchers)",
+			name:     "has_current_user finds the user in a list",
+			src:      "has_current_user(entity.watchers)",
 			assignee: predicate.NewNil(),
 			watchers: predicate.NewList([]predicate.Value{
 				predicate.NewString("PERS-AB"), predicate.NewString("PERS-JV"),
@@ -112,22 +112,22 @@ func TestCurrentUser_EqualityAndSugar(t *testing.T) {
 			want: true,
 		},
 		{
-			name:     "me_in rejects a list without the user",
-			src:      "me_in(entity.watchers)",
+			name:     "has_current_user rejects a list without the user",
+			src:      "has_current_user(entity.watchers)",
 			assignee: predicate.NewNil(),
 			watchers: predicate.NewList([]predicate.Value{predicate.NewString("PERS-AB")}),
 			want:     false,
 		},
 		{
-			name:     "me_in on an unset list is a non-match",
-			src:      "me_in(entity.watchers)",
+			name:     "has_current_user on an unset list is a non-match",
+			src:      "has_current_user(entity.watchers)",
 			assignee: predicate.NewNil(),
 			watchers: predicate.NewNil(),
 			want:     false,
 		},
 		{
 			name:     "the inbox shape: mine or watched, composed with or",
-			src:      "is_me(entity.assignee) or me_in(entity.watchers)",
+			src:      "is_current_user(entity.assignee) or has_current_user(entity.watchers)",
 			assignee: predicate.NewString("PERS-AB"),
 			watchers: predicate.NewList([]predicate.Value{predicate.NewString("PERS-JV")}),
 			want:     true,
@@ -157,7 +157,7 @@ func TestCurrentUser_EqualityAndSugar(t *testing.T) {
 // TestCurrentUser_RecordComparisonIsACompileError documents WHY the
 // ergonomic `entity.assignee == current_user` is not the spelling: the
 // variable must stay a record for affordance compatibility, and the type
-// checker rejects record-vs-string. is_me() is the sugar that replaces it.
+// checker rejects record-vs-string. is_current_user() is the sugar that replaces it.
 func TestCurrentUser_RecordComparisonIsACompileError(t *testing.T) {
 	env := predicate.NewEnv()
 	if err := env.DeclareVar("entity", predicate.RecordType{"assignee": predicate.StringType}); err != nil {
@@ -178,7 +178,7 @@ func TestCurrentUser_RecordComparisonIsACompileError(t *testing.T) {
 // profile that did not opt in must REJECT a current_user reference
 // rather than evaluate it against a guessed identity.
 func TestCurrentUser_UndeclaredInStdlibProfile(t *testing.T) {
-	for _, src := range []string{"entity.assignee == current_user.id", "is_me(entity.assignee)"} {
+	for _, src := range []string{"entity.assignee == current_user.id", "is_current_user(entity.assignee)"} {
 		t.Run(src, func(t *testing.T) {
 			env := predicate.NewEnv()
 			if err := env.DeclareVar("entity", predicate.RecordType{"assignee": predicate.StringType}); err != nil {
@@ -214,7 +214,7 @@ func TestCurrentUser_BindFailsClosed(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			if tc.stamp {
-				ctx = meCtx("", "", tc.tool)
+				ctx = identityCtx("", "", tc.tool)
 			}
 			b := predicate.NewBindings()
 			err := predicatefns.BindCurrentUser(ctx, b)
@@ -276,10 +276,10 @@ func TestQueryIdentity_PrefersEntityIDFallsBackToRaw(t *testing.T) {
 // no-user_entity_type deployment (the data-entry prototype): the raw
 // identifier is what the graph can reference, so that is what binds.
 func TestCurrentUser_RawFallbackComparesAgainstRawPrincipal(t *testing.T) {
-	prog := compileWithUser(t, "is_me(entity.reporter)", predicate.RecordType{
+	prog := compileWithUser(t, "is_current_user(entity.reporter)", predicate.RecordType{
 		"reporter": predicate.StringType,
 	})
-	ctx := meCtx("", "jeroen@example.com", "data-entry")
+	ctx := identityCtx("", "jeroen@example.com", "data-entry")
 	got, err := evalWithUser(ctx, t, prog, predicate.NewRecord(map[string]predicate.Value{
 		"reporter": predicate.NewString("jeroen@example.com"),
 	}))
@@ -304,12 +304,12 @@ func TestCurrentUser_SQLPortableClassification(t *testing.T) {
 		portable bool
 	}{
 		{src: "entity.assignee == current_user.id", portable: true},
-		{src: "is_me(entity.assignee)", portable: true},
-		{src: "me_in(entity.watchers)", portable: true},
-		{src: "is_me(entity.assignee) or me_in(entity.watchers)", portable: true},
+		{src: "is_current_user(entity.assignee)", portable: true},
+		{src: "has_current_user(entity.watchers)", portable: true},
+		{src: "is_current_user(entity.assignee) or has_current_user(entity.watchers)", portable: true},
 		// A non-portable stdlib func still poisons the program, proving the
 		// classification is genuinely computed rather than always true.
-		{src: "is_me(sha256(entity.assignee))", portable: false},
+		{src: "is_current_user(sha256(entity.assignee))", portable: false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.src, func(t *testing.T) {

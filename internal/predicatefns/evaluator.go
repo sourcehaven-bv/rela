@@ -62,7 +62,7 @@ func (e *Evaluator) Compile(entityType, source string) (*predicate.Program, erro
 
 // CompileWithCurrentUser is [Evaluator.Compile] for a REQUEST-SCOPED
 // surface: the Env additionally carries current_user and its sugar (see
-// [DeclareCurrentUser]), so `is_me(entity.assignee)` compiles.
+// [DeclareCurrentUser]), so `is_current_user(entity.assignee)` compiles.
 //
 // It is a separate entry point rather than a flag on Compile because the
 // two profiles must not be confused at a call site. A program compiled
