@@ -115,33 +115,19 @@ func (a *App) handleV1NextActionGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	var err error
 	if scope != nil {
 		// Once per request, before any source runs: every matcher and
 		// pre-filter below reads what this stamps.
-		ctx, err = scope(ctx)
+		scoped, err := scope(ctx)
+		if err != nil {
+			writeNextActionError(w, r, err)
+			return
+		}
+		ctx = scoped
 	}
-	var (
-		sug   nextaction.Suggestion
-		found bool
-	)
-	if err == nil {
-		sug, found, err = eng.Resolve(ctx, nextActionUser(ctx), time.Now())
-	}
-	if errors.Is(err, nextaction.ErrIdentityRequired) {
-		// A source's condition names current_user but this request has no
-		// identity (no identity source configured, or the placeholder
-		// principal). Operator misconfiguration, not a client fault: name it
-		// so the log says what to fix, rather than "search failed".
-		slog.Warn("dataentry: next-action condition needs an identified principal",
-			"err", err, "path", r.URL.Path)
-		writeV1Error(w, r, http.StatusInternalServerError, "next_action_identity_required",
-			"A next-action condition references current_user but the request has no identity",
-			"configure an identity source (see docs/data-entry.md, next actions)")
-		return
-	}
+	sug, found, err := eng.Resolve(ctx, nextActionUser(ctx), time.Now())
 	if err != nil {
-		writeListPipelineError(w, r, err)
+		writeNextActionError(w, r, err)
 		return
 	}
 	if !found {
@@ -158,6 +144,26 @@ func (a *App) handleV1NextActionGet(w http.ResponseWriter, r *http.Request) {
 		Actions:     sug.Actions,
 		PickOptions: pickOptionsWire(sug.PickOptions),
 	}})
+}
+
+// writeNextActionError maps a resolve failure to a response. The one error
+// this surface owns is an identity CONFLICT — the request carries a
+// boundary-stamped identity and a principal that name different users — which
+// is named so the operator can find the layer that disagrees rather than
+// reading "search failed". (An unidentified caller on a per-user source is not
+// an error at all: the engine skips that source, see
+// nextaction.ErrIdentityRequired.) Everything else is the shared list-pipeline
+// mapping. A free function: App is at its plimsoll method cap.
+func writeNextActionError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, nextaction.ErrIdentityConflict) {
+		slog.Warn("dataentry: next-action request carries disagreeing identities",
+			"err", err, "path", r.URL.Path)
+		writeV1Error(w, r, http.StatusInternalServerError, "next_action_identity_conflict",
+			"The request's query identity disagrees with its principal",
+			"an upstream layer stamped an identity for a different user than the request principal")
+		return
+	}
+	writeListPipelineError(w, r, err)
 }
 
 // pickOptionsWire converts the engine's index-keyed options to the wire

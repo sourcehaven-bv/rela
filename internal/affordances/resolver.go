@@ -662,6 +662,7 @@ func (r *PolicyResolver) bindingFor(ctx context.Context, e *entity.Entity) (bc *
 		userID:      p.User,
 		resolver:    r,
 	}
+	bc.userFuncs = predicatefns.CurrentUserBindings(bc.identity())
 	return bc, roles
 }
 

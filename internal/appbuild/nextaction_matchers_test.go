@@ -164,7 +164,9 @@ func TestNextActionRequestScope(t *testing.T) {
 	require.Equal(t, "alice", q.ID())
 
 	_, err = nextActionRequestScope(predicatefns.WithQueryIdentity(stampedCtx(bobP), aliceQ))
-	require.ErrorIs(t, err, nextaction.ErrIdentityRequired)
+	require.ErrorIs(t, err, nextaction.ErrIdentityConflict)
+	require.NotErrorIs(t, err, nextaction.ErrIdentityRequired,
+		"a conflict is not an unauthenticated caller and must not be skipped as one")
 
 	ctx, err = nextActionRequestScope(context.Background())
 	require.NoError(t, err)

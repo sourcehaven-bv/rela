@@ -1822,6 +1822,10 @@ Rules worth knowing:
   "dew" on record`. A condition that silently matched nothing would be
   indistinguishable from a source with nothing to say.
 - **Not available on a `count` source** — there is no entity to test.
+- **Not available with free text in `query`** (`type:task urgent`). Free-text
+  results are capped by relevance before the condition runs, so a condition
+  matching only a hit past the cut would silently never fire. Select with
+  `prop:` filters instead.
 
 The available functions are the ones automations use: `days_between`,
 `date_add`, `rrule_next`, `today`, plus `match`, `regex`, `contains` and
@@ -1863,10 +1867,12 @@ property must hold that string instead. `current_user.tool` (`data-entry`,
 `mcp`, …) is available for diagnostics and is never a permission input.
 
 **Fail-closed.** A per-user condition on a request that carries no identity —
-a deployment without an identity source, for example — is refused with
-`next_action_identity_required`, never evaluated as "matches nothing" or
-"matches everyone". A condition that does not mention the current user is
-unaffected and keeps working unauthenticated.
+a deployment without an identity source, for example — makes that source
+contribute nothing for the request, with a warning in the server log naming
+the source. It is never evaluated against a placeholder identity, so it can
+never match "everyone's unset rows" or another user's. Other sources are
+unaffected, and a condition that does not mention the current user keeps
+working unauthenticated.
 
 **Pushed to the store.** The current-user forms (and plain string equalities)
 in a top-level `and` chain are lowered into the candidate query as a

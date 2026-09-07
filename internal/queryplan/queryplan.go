@@ -4,6 +4,7 @@ package queryplan
 
 import (
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 
@@ -169,7 +170,11 @@ func staticIndexProps(
 		}
 	}
 	if condition != "" && ev != nil {
-		if prog, err := ev.CompileWithCurrentUser(sq.EntityTypes[0], condition); err == nil {
+		prog, err := ev.CompileWithCurrentUser(sq.EntityTypes[0], condition)
+		if err != nil {
+			slog.Warn("queryplan: next-action condition skipped for index derivation",
+				"type", sq.EntityTypes[0], "error", err)
+		} else {
 			props = append(props, ConditionIndexProperties(prog, meta, sq.EntityTypes)...)
 		}
 	}
@@ -227,8 +232,13 @@ func ConditionPrefilters(
 			}
 			value = identity
 		}
+		// Scalar opts into the indexable string-only comparison; a
+		// membership must keep the store's list reading. An empty value
+		// cannot reach here — an empty identity continued above and an
+		// empty literal is refused by ConstEqualities — so "is empty" is
+		// never what this predicate means.
 		pushed = append(pushed, store.PropPredicate{
-			Property: eq.Attribute, Op: store.PropEqual, Value: value, Scalar: !eq.List && value != "",
+			Property: eq.Attribute, Op: store.PropEqual, Value: value, Scalar: !eq.List,
 		})
 	}
 	return pushed

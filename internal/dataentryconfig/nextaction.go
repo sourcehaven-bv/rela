@@ -162,8 +162,9 @@ type NextActionSource struct {
 	// condition and remains authoritative.
 	//
 	// A condition naming the current user requires an identified request:
-	// on a deployment with no identity source the source is refused at
-	// render (never answered with nobody's rows).
+	// for an unidentified caller (no identity source configured) the source
+	// contributes nothing and a warning is logged — never nobody's rows, and
+	// never another caller's. Other sources are unaffected.
 	Condition string `yaml:"condition,omitempty" json:"condition,omitempty"`
 
 	// Count makes this an entity-LESS source: it fires on a whole-graph

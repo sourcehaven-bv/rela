@@ -37,8 +37,13 @@ condition that does not compile is a load error.
 - Stamp the identity once per request at the router boundary
 (`predicatefns.ResolveQueryIdentity` + `WithQueryIdentity`, after
 `resolvePrincipalEntity`), so every surface shares one derivation. The
-next-action adapter in `appbuild` currently derives it from the principal
-itself; converge on the boundary stamp.
+next-action path currently derives it in a per-request scope binder supplied by
+`appbuild` (`nextActionRequestScope`); converge on the boundary stamp and reduce
+the binder to the agreement check. When doing so, compare `Tool` as well as
+`ID()` in that check — today only the id is compared, which is fine while
+nothing stamps upstream, but a boundary stamp with a divergent tool would bind
+`current_user.tool` from the stamp (security review note on TKT-OIRBFH; `tool`
+is diagnostic and never pushed, so no exposure today).
 - Push `queryplan.ConditionPrefilters` into the list/feed query where the path
 already goes through `visibleListByTypes`, and include the condition in
 `StaticIndexSpecs` for the surfaces that are static.
@@ -57,6 +62,9 @@ keep `current_user` undeclared on the CLI and say so.
 - **Wizard forms.** The SPA's client-side condition engine passes
 `current_user: {}`; decide whether the server supplies the identity to the form
 context or the namespace stays server-only.
+- **Free-text queries.** Next actions refuse a `condition:` on a free-text
+query because the relevance cap runs before the condition. A view or feed
+`where:` is not capped the same way; confirm before allowing the combination.
 
 ## Acceptance
 

@@ -54,11 +54,26 @@ const DefaultCooldown = 24 * time.Hour
 const DefaultCandidateCap = 20
 
 // ErrIdentityRequired is wrapped by a [Matcher] whose condition names the
-// current user when the request carries no usable identity. It lets the
-// HTTP layer report a misconfiguration — a per-user source on a deployment
-// with no identity source — rather than a generic failure, without this
-// package or that layer learning the predicate engine's own error type.
+// current user when the request carries no usable identity — a per-user
+// source resolved for an unauthenticated caller.
+//
+// The engine treats it as a per-source SKIP, not a failure: the source
+// contributes no candidates for that request and a warning is logged (see
+// the engine's condition pass). Propagating it would fail the whole resolve —
+// every band, every other source — and only when the short-circuit happened
+// to reach that source, so the same config would 500 for one caller and
+// answer for another. Contributing nothing is deterministic, fails closed
+// (no rows, never somebody else's), and matches how a source whose world
+// the caller may not read is handled.
 var ErrIdentityRequired = errors.New("nextaction: condition requires an identified principal")
+
+// ErrIdentityConflict is returned by a wiring site's request-scope binder
+// when the request carries TWO identities that disagree — one stamped by a
+// boundary and one derived from the principal. Unlike [ErrIdentityRequired]
+// this is not an unauthenticated caller but two layers disagreeing about who
+// is calling, so it is a refusal of the whole request: evaluating for either
+// would be evaluating for the wrong one.
+var ErrIdentityConflict = errors.New("nextaction: query identity on the context disagrees with the request principal")
 
 // Candidate is one entity a source proposes, already ACL-filtered by the
 // caller's reader.
@@ -367,6 +382,14 @@ func (e *Engine) applyCondition(
 	out := make([]Candidate, 0, len(cands))
 	for _, c := range cands {
 		match, err := m.Match(ctx, c.Entity)
+		if errors.Is(err, ErrIdentityRequired) {
+			// A per-user condition for a caller with no identity: this
+			// source has nothing to say to them. Skip it — see the
+			// sentinel's doc for why this is not propagated.
+			slog.Warn("nextaction: source skipped, its condition needs an identified principal",
+				"source", id)
+			return nil, nil
+		}
 		if err != nil {
 			return nil, fmt.Errorf("nextaction: condition for %q: %w", id, err)
 		}

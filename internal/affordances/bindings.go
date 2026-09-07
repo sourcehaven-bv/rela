@@ -9,7 +9,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
-	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
@@ -58,6 +57,11 @@ type bindingContext struct {
 	// userID is the principal's identity as it appears on role-relation
 	// edges and current_user.id.
 	userID string
+	// userFuncs are the is_current_user / has_current_user implementations
+	// closed over identity(), built ONCE per binding context: newBindings
+	// runs per grant per role per entity on the list-render path, and the
+	// identity does not change across those calls.
+	userFuncs map[string]predicate.FuncFunc
 
 	// outgoing caches the entity's outgoing-edge counts, loaded once
 	// on first host-func use (has_relation / count_relations) so a
@@ -128,7 +132,7 @@ func (bc *bindingContext) newBindings(meta *metamodel.Metamodel) (*predicate.Bin
 	// package's own resolved principal, not the query-identity context —
 	// so the sugar and the explicit comparison agree whichever way
 	// identity arrived, including the no-identity case.
-	for name, fn := range predicatefns.CurrentUserBindings(identity) {
+	for name, fn := range bc.userFuncs {
 		if err := b.SetFunc(name, fn); err != nil {
 			return nil, err
 		}

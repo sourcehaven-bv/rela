@@ -72,17 +72,18 @@ func (w nextActionMatcher) Prefilters(ctx context.Context, meta *metamodel.Metam
 // different user than the principal means two layers disagree about who is
 // calling, and silently preferring either would evaluate every condition for
 // the wrong person with no signal — the hazard dataentry's attachACLRequest
-// refuses for an ACL request whose principal disagrees with ctx. Nothing
-// stamps upstream in production today (that boundary stamp is TKT-ZQV9O5), so
-// this is the guard that keeps that future change from widening quietly.
+// refuses for an ACL request whose principal disagrees with ctx. That is
+// [nextaction.ErrIdentityConflict], a refusal of the whole request, distinct
+// from the per-source [nextaction.ErrIdentityRequired] an unauthenticated
+// caller gets. Nothing stamps upstream in production today (that boundary
+// stamp is TKT-ZQV9O5), so this is the guard that keeps that future change
+// from widening quietly.
 func nextActionRequestScope(ctx context.Context) (context.Context, error) {
 	stamped, hasStamp := predicatefns.QueryIdentityFrom(ctx)
 	derived, hasPrincipal := queryIdentityFor(ctx)
 	switch {
 	case hasStamp && hasPrincipal && stamped.ID() != derived.ID():
-		return ctx, fmt.Errorf(
-			"%w: query identity on the context disagrees with the request principal",
-			nextaction.ErrIdentityRequired)
+		return ctx, nextaction.ErrIdentityConflict
 	case hasStamp:
 		return ctx, nil
 	case hasPrincipal:

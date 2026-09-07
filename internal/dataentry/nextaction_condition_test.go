@@ -97,6 +97,8 @@ func matcherFuncFor(m nextaction.Matcher) NextActionMatcherFunc {
 // before the engine sees candidates, and the engine's own pass stays
 // authoritative over whatever the pre-filter let through.
 func TestNextAction_ConditionPrefiltersReachTheStore(t *testing.T) {
+	// The subtests share one app and swap its matcher func between them, so
+	// they must stay sequential — do not add t.Parallel() to them.
 	app := newTestAppV1(t)
 	withTicketAssignment(t, app)
 	seedAssignedTicket(app, "TKT-mine", "alice")
@@ -133,10 +135,15 @@ func TestNextAction_ConditionPrefiltersReachTheStore(t *testing.T) {
 	})
 
 	t.Run("no pre-filter falls back to the unpushed query", func(t *testing.T) {
+		// Nothing pushed and Match accepts everything: BOTH tickets are
+		// candidates, so whichever the stable-random pick lands on, it must
+		// be one of them — proving the empty pre-filter did not narrow.
 		m := &recordingMatcher{match: true}
 		require.NoError(t, app.SetNextActionMatchers(matcherFuncFor(m)))
-		_, status := getNextAction(aliceCtx(), t, app)
+		resp, status := getNextAction(aliceCtx(), t, app)
 		require.Equal(t, http.StatusOK, status)
+		require.NotNil(t, resp.Suggestion)
+		require.Contains(t, []string{"TKT-mine", "TKT-theirs"}, resp.Suggestion.EntityID)
 		require.Equal(t, 1, m.calls)
 	})
 }
@@ -198,34 +205,66 @@ func TestNextAction_CurrentUserConditionEndToEnd(t *testing.T) {
 	}
 }
 
-// TestNextAction_CurrentUserConditionWithoutIdentityIsNamed pins the
-// fail-closed direction at the HTTP layer: a per-user condition on a request
-// with no identity (the "unknown" placeholder the server stamps without an
-// identity source) is refused with an error that names the misconfiguration
-// — never answered with nobody's rows, and never dressed as "search failed".
-func TestNextAction_CurrentUserConditionWithoutIdentityIsNamed(t *testing.T) {
+// TestNextAction_CurrentUserConditionWithoutIdentitySkipsTheSource pins the
+// fail-closed direction at the HTTP layer for an UNIDENTIFIED caller (no
+// principal, or the "unknown" placeholder the server stamps without an
+// identity source): a per-user source contributes nothing — never nobody's
+// rows, never everyone's — while every identity-free source keeps answering,
+// and the result does not depend on band order.
+func TestNextAction_CurrentUserConditionWithoutIdentitySkipsTheSource(t *testing.T) {
 	app := newTestAppV1(t)
 	withTicketAssignment(t, app)
 	seedAssignedTicket(app, "TKT-alice", "alice")
 	require.NoError(t, app.SetNextActionMatchers(appbuild.NextActionMatchers))
-	withNextActions(t, app, oneBand, map[string]dataentryconfig.NextActionSource{
-		"s": {Band: "b", Query: "type:ticket", Condition: "is_current_user(entity.assignee)", Suggest: "{id}"},
+	twoBands := []dataentryconfig.NextActionBand{{ID: "b"}, {ID: "c"}}
+	withNextActions(t, app, twoBands, map[string]dataentryconfig.NextActionSource{
+		"mine": {Band: "b", Query: "type:ticket", Condition: "is_current_user(entity.assignee)", Suggest: "mine {id}"},
+		"any":  {Band: "c", Query: "type:ticket", Suggest: "any {id}"},
 	})
 
 	for _, ctx := range []context.Context{context.Background(), principalCtx(principal.Unknown)} {
-		rec := doNextActionGet(ctx, t, app)
-		require.Equal(t, http.StatusInternalServerError, rec.Code)
-		require.Contains(t, rec.Body.String(), "next_action_identity_required")
+		resp, status := getNextAction(ctx, t, app)
+		require.Equal(t, http.StatusOK, status)
+		require.NotNil(t, resp.Suggestion)
+		require.Equal(t, "any", resp.Suggestion.Source, "the identity-free source still resolves")
 	}
 
-	// A condition that never mentions the user is unaffected on the same
-	// unidentified request.
-	withNextActions(t, app, oneBand, map[string]dataentryconfig.NextActionSource{
-		"s": {Band: "b", Query: "type:ticket", Condition: "entity.status == 'open'", Suggest: "{id}"},
-	})
-	resp, status := getNextAction(context.Background(), t, app)
+	// An identified caller gets the higher band.
+	resp, status := getNextAction(principalCtx("alice"), t, app)
 	require.Equal(t, http.StatusOK, status)
-	require.NotNil(t, resp.Suggestion)
+	require.Equal(t, "mine", resp.Suggestion.Source)
+
+	// With only per-user sources, an unidentified caller gets silence, not an
+	// error and not a stranger's ticket.
+	withNextActions(t, app, oneBand, map[string]dataentryconfig.NextActionSource{
+		"mine": {Band: "b", Query: "type:ticket", Condition: "is_current_user(entity.assignee)", Suggest: "{id}"},
+	})
+	resp, status = getNextAction(context.Background(), t, app)
+	require.Equal(t, http.StatusOK, status)
+	require.Nil(t, resp.Suggestion)
+}
+
+// TestNextAction_IdentityConflictIsNamed pins the one error this surface owns:
+// a request-scope binder that finds two disagreeing identities refuses the
+// whole request with its own code, distinct from an unidentified caller.
+func TestNextAction_IdentityConflictIsNamed(t *testing.T) {
+	app := newTestAppV1(t)
+	seedNextActionTickets(t, app, "TKT-1")
+	conflicting := func(
+		*dataentryconfig.Config, *metamodel.Metamodel,
+	) (func(string) (nextaction.Matcher, bool), func(context.Context) (context.Context, error), []string) {
+		return func(string) (nextaction.Matcher, bool) { return &recordingMatcher{match: true}, true },
+			func(ctx context.Context) (context.Context, error) { return ctx, nextaction.ErrIdentityConflict },
+			nil
+	}
+	require.NoError(t, app.SetNextActionMatchers(conflicting))
+	withNextActions(t, app, oneBand, map[string]dataentryconfig.NextActionSource{
+		"s": {Band: "b", Query: "type:ticket", Condition: "x", Suggest: "{id}"},
+	})
+	rec := doNextActionGet(aliceCtx(), t, app)
+	require.Equal(t, http.StatusInternalServerError, rec.Code)
+	require.Contains(t, rec.Body.String(), "next_action_identity_conflict")
+	require.NotContains(t, rec.Body.String(), "alice", "neither identity is echoed")
 }
 
 // TestNextAction_HiddenPropertyMakesCurrentUserConditionFalse pins the

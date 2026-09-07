@@ -243,13 +243,21 @@ func RequiresCurrentUser(prog *predicate.Program) bool {
 	if prog.References(VarCurrentUser) {
 		return true
 	}
-	funcs := CurrentUserFuncs()
 	for _, name := range prog.Functions() {
-		if _, ok := funcs[name]; ok {
+		if _, ok := currentUserFuncNames[name]; ok {
 			return true
 		}
 	}
 	return false
+}
+
+// currentUserFuncNames is the set of sugar-function names, precomputed so
+// RequiresCurrentUser — called per candidate on the query path — does not
+// rebuild the signature map each time. Kept in step with [CurrentUserFuncs]
+// by TestCurrentUserPrefilterSpec_MatchesTheDeclaredFuncs.
+var currentUserFuncNames = map[string]struct{}{
+	FuncIsCurrentUser:  {},
+	FuncHasCurrentUser: {},
 }
 
 // DeclareCurrentUser registers the current-user variable and its sugar

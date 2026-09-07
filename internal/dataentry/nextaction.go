@@ -51,6 +51,15 @@ import (
 // store can only ever remove rows the engine's condition pass would also have
 // removed. `meta` and `lookup` are the request's snapshot and matcher lookup,
 // captured once by the caller.
+//
+// `meta` is the SAME snapshot the matchers were compiled against, which is
+// the coherence that matters: the condition's pre-filter and its Go pass must
+// agree on property types. executeQuery gates the QUERY's own pushdown against
+// the read bundle's metamodel, resolved separately; a reload landing between
+// the two can make one request mix snapshots for the two pushdowns, but each
+// pushdown is coherent with its own authoritative pass, and a gate can only
+// decline to push, never widen — so the divergence is tolerated rather than
+// threaded through queryService.
 func (a *App) nextActionCandidates(
 	meta *metamodel.Metamodel, lookup nextaction.MatcherFunc,
 ) nextaction.CandidateFunc {

@@ -137,6 +137,21 @@ func TestCurrentUserPrefilterSpec_MatchesTheDeclaredFuncs(t *testing.T) {
 	if len(spec.ConstFuncs) != len(predicatefns.CurrentUserFuncs()) {
 		t.Fatalf("spec lists %d functions, %d are declared", len(spec.ConstFuncs), len(predicatefns.CurrentUserFuncs()))
 	}
+	// And RequiresCurrentUser recognizes every declared function — its
+	// precomputed name set must not lag a new declaration.
+	for name := range predicatefns.CurrentUserFuncs() {
+		src := name + "(entity.assignee)"
+		if name == predicatefns.FuncHasCurrentUser {
+			src = name + "(entity.watchers)"
+		}
+		prog, err := predicatefns.NewEvaluator(evaluatorMeta()).CompileWithCurrentUser("task", src)
+		if err != nil {
+			t.Fatalf("compile %q: %v", src, err)
+		}
+		if !predicatefns.RequiresCurrentUser(prog) {
+			t.Fatalf("RequiresCurrentUser does not recognize declared function %q", name)
+		}
+	}
 
 	// And the spec drives ConstEqualities as the pushdown expects.
 	ev := predicatefns.NewEvaluator(evaluatorMeta())

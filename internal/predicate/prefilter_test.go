@@ -350,3 +350,51 @@ func TestProgram_ReferencesAndFunctions(t *testing.T) {
 		})
 	}
 }
+
+// TestProgram_InspectCoversEveryNodeType compiles one expression per sealed
+// node type and reads the dependency accessors, so the default arm in
+// inspect (which panics on an unhandled node) is exercised by construction:
+// a node type added without extending the walk fails here, not at runtime.
+func TestProgram_InspectCoversEveryNodeType(t *testing.T) {
+	env := prefilterEnv(t)
+	if err := env.DeclareFunc("with_table", FuncSig{
+		Params: []Type{StringType, tableArgType{}}, Return: BoolType,
+	}); err != nil {
+		t.Fatalf("declare with_table: %v", err)
+	}
+	value := ValueProfile(StringType)
+	number := ValueProfile(IntType)
+	tests := []struct {
+		name    string
+		src     string
+		profile *Profile // nil → boolean condition profile
+	}{
+		{"const + var + attr + relational", "entity.status == 'x'", nil},
+		{"logical + not", "not (entity.done and entity.count == 1)", nil},
+		{"call", "is_current_user(entity.assignee)", nil},
+		{"table argument", "with_table(entity.status, {mode='x'})", nil},
+		{"arithmetic", "entity.count + 1", &number},
+		{"unary minus", "-entity.count", &number},
+		{"concatenation", "entity.status .. 'x'", &value},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var (
+				prog *Program
+				err  error
+			)
+			if tc.profile == nil {
+				prog, err = Compile(env, tc.src)
+			} else {
+				prog, err = CompileValue(env, tc.src, *tc.profile)
+			}
+			if err != nil {
+				t.Fatalf("compile %q: %v", tc.src, err)
+			}
+			if !prog.References("entity") {
+				t.Fatalf("%q: entity not reported as referenced", tc.src)
+			}
+			_ = prog.Functions()
+		})
+	}
+}
