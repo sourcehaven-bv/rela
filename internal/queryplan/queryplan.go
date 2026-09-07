@@ -3,11 +3,13 @@
 package queryplan
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Sourcehaven-BV/rela/internal/conditionlint"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -27,6 +29,13 @@ func LoadStaticIndexSpecs(data []byte, meta *metamodel.Metamodel) ([]store.Deriv
 	}
 	if err := dataentryconfig.ValidateConfig(data, &cfg, meta); err != nil {
 		return nil, err
+	}
+	// A next-action condition that does not compile is a load error on the
+	// server (projectsetup), so the desired set must be computed from the
+	// same gate here: `rela db reconcile` reading a config the server would
+	// refuse must not converge to an index shape the server never derives.
+	if _, problems := conditionlint.CompileNextActions(&cfg, meta); len(problems) > 0 {
+		return nil, fmt.Errorf("next-action condition: %s", problems[0])
 	}
 	return StaticIndexSpecs(&cfg, meta), nil
 }
@@ -144,9 +153,11 @@ func staticQueries(cfg *dataentryconfig.Config) []staticQuery {
 // static query: the query's scalar pushdown properties plus, when a condition
 // is present, its scalar pushdown properties ([ConditionIndexProperties]).
 //
-// A condition that does not compile contributes nothing, and that is not a
-// partial-set hazard: conditionlint refuses the same expression at load, so
-// no runtime query will ever probe for the index it would have described.
+// A condition that does not compile contributes nothing. Every production
+// entry point ([LoadStaticIndexSpecs], and the server's own load) has
+// already refused such a config through conditionlint, so this branch is
+// reachable only from a caller building a Config in code; skipping keeps it
+// non-destructive there rather than pretending to a guarantee.
 func staticIndexProps(
 	sq *searchparser.SearchQuery, condition string, meta *metamodel.Metamodel, ev *predicatefns.Evaluator,
 ) []string {
@@ -192,6 +203,11 @@ func staticIndexProps(
 // storetest's Props_value_shapes). It needs no new store operator, but it
 // is not indexable by the derived static-query index, which covers scalar
 // text only — see [ConditionIndexProperties].
+//
+// The metamodel gate is the one [PushdownPrefilters] uses, so enum-typed
+// (custom-type) properties are not pushed from either path even though the
+// predicate compiler treats them as strings. Widening that gate is a
+// shared decision for both pushdowns, not one to take here alone.
 //
 // `identity` is the current user's query identity (see
 // predicatefns.QueryIdentity.ID). An EMPTY identity pushes nothing

@@ -3,6 +3,7 @@ package conditionlint
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -63,6 +64,19 @@ func (m *NextActionMatcher) Match(ctx context.Context, e *entity.Entity) (bool, 
 func (m *NextActionMatcher) Program(entityType string) (*predicate.Program, bool) {
 	prog, ok := m.progs[entityType]
 	return prog, ok
+}
+
+// Types returns, sorted, the entity types the condition was compiled against
+// — the types the source's query names. A pushdown caller takes them from
+// here rather than re-parsing the query, so the two cannot disagree about
+// which types the compiled programs cover.
+func (m *NextActionMatcher) Types() []string {
+	out := make([]string, 0, len(m.progs))
+	for t := range m.progs {
+		out = append(out, t)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // NextActionMatchers compiles every source's condition and returns a lookup

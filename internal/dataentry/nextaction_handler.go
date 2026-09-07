@@ -106,7 +106,7 @@ func (a *App) handleV1NextActionGet(w http.ResponseWriter, r *http.Request) {
 	// The request's world is the DISPLAY world: it decides which sources may
 	// surface here (visible_worlds), never which world a source queries. See
 	// nextActionSourceWorld.
-	eng, ok := a.nextActionEngine(nextActionDisplayWorld(r.Context()))
+	eng, scope, ok := a.nextActionEngine(nextActionDisplayWorld(r.Context()))
 	if !ok {
 		// No sources configured: a valid, common state (the feature is
 		// opt-in). An empty answer, not a 404 — the SPA renders nothing.
@@ -115,7 +115,19 @@ func (a *App) handleV1NextActionGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	sug, found, err := eng.Resolve(ctx, nextActionUser(ctx), time.Now())
+	var err error
+	if scope != nil {
+		// Once per request, before any source runs: every matcher and
+		// pre-filter below reads what this stamps.
+		ctx, err = scope(ctx)
+	}
+	var (
+		sug   nextaction.Suggestion
+		found bool
+	)
+	if err == nil {
+		sug, found, err = eng.Resolve(ctx, nextActionUser(ctx), time.Now())
+	}
 	if errors.Is(err, nextaction.ErrIdentityRequired) {
 		// A source's condition names current_user but this request has no
 		// identity (no identity source configured, or the placeholder
@@ -299,27 +311,30 @@ func nextActionDisplayWorld(ctx context.Context) string {
 	return defaultWorldName
 }
 
-func (a *App) nextActionEngine(displayWorld string) (*nextaction.Engine, bool) {
+func (a *App) nextActionEngine(displayWorld string) (*nextaction.Engine, NextActionRequestScope, bool) {
 	// Snapshot the config once: State() reads an atomic face, and two
 	// reads could observe different snapshots if a reload lands between them.
 	st := a.State()
 	cfg := st.Cfg
 	if cfg == nil || len(cfg.NextActions) == 0 || a.userState == nil {
-		return nil, false
+		return nil, nil, false
 	}
 
 	opts := []nextaction.Option{
 		nextaction.WithOptions(a.nextActionOptions()),
 		nextaction.WithDisplayWorld(displayWorld),
 	}
-	var lookup nextaction.MatcherFunc
+	var (
+		lookup nextaction.MatcherFunc
+		scope  NextActionRequestScope
+	)
 	if a.nextActionMatchers != nil {
 		// Compile errors are already reported at load by projectsetup; a
 		// config that reached here should compile. If it somehow does not,
 		// leave matchers unwired so New fails loudly for a source that
 		// declares a condition, rather than silently keeping every candidate.
-		if l, issues := a.nextActionMatchers(cfg, st.Meta); len(issues) == 0 && l != nil {
-			lookup = l
+		if l, s, issues := a.nextActionMatchers(cfg, st.Meta); len(issues) == 0 && l != nil {
+			lookup, scope = l, s
 			opts = append(opts, nextaction.WithMatchers(lookup))
 		}
 	}
@@ -329,7 +344,7 @@ func (a *App) nextActionEngine(displayWorld string) (*nextaction.Engine, bool) {
 	// store-evaluable part into the query) — see nextActionCandidates.
 	eng, err := nextaction.New(cfg, a.userState, a.nextActionCandidates(st.Meta, lookup), opts...)
 	if err != nil {
-		return nil, false
+		return nil, nil, false
 	}
-	return eng, true
+	return eng, scope, true
 }

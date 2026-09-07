@@ -159,3 +159,28 @@ func TestCurrentUserPrefilterSpec_MatchesTheDeclaredFuncs(t *testing.T) {
 		}
 	}
 }
+
+// TestCurrentUserBindings_EmptyIdentityNeverMatches pins the fail-closed
+// reading a caller without an identity gets from the shared bindings: an
+// empty identity is not "the user whose id is the empty string".
+func TestCurrentUserBindings_EmptyIdentityNeverMatches(t *testing.T) {
+	fns := predicatefns.CurrentUserBindings("")
+	ctx := context.Background()
+	for _, arg := range []predicate.Value{predicate.NewString(""), predicate.NewString("unknown")} {
+		got, err := fns[predicatefns.FuncIsCurrentUser](ctx, []predicate.Value{arg})
+		if err != nil {
+			t.Fatalf("is_current_user: %v", err)
+		}
+		if got.(predicate.Bool).Bool() {
+			t.Fatalf("is_current_user(%v) matched with an empty identity", arg)
+		}
+	}
+	list := predicate.NewList([]predicate.Value{predicate.NewString(""), predicate.NewString("x")})
+	got, err := fns[predicatefns.FuncHasCurrentUser](ctx, []predicate.Value{list})
+	if err != nil {
+		t.Fatalf("has_current_user: %v", err)
+	}
+	if got.(predicate.Bool).Bool() {
+		t.Fatal("has_current_user matched with an empty identity")
+	}
+}

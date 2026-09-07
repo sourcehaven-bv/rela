@@ -116,6 +116,17 @@ func conditionEntityTypes(src dataentryconfig.NextActionSource) ([]string, error
 			return nil, errors.New(
 				"condition requires the query to name at least one entity type (e.g. \"type:task ...\")")
 		}
+		if sq.HasFreeText() {
+			// A free-text query runs through the search index, which caps
+			// hits by relevance BEFORE the engine applies the condition. A
+			// selection predicate after a cap is lossy (a match ranked past
+			// the cut silently never fires) — the very failure the
+			// condition-before-cap rule in internal/nextaction exists to
+			// prevent, so refuse the combination rather than under-report.
+			return nil, errors.New(
+				"condition is not supported with free text in the query " +
+					"(search results are capped before the condition runs); use prop: filters")
+		}
 		return sq.EntityTypes, nil
 	}
 	return nil, errors.New("condition requires a query or context source")

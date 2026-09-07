@@ -1123,6 +1123,9 @@ deps:
       - filter
   queryplan:
     mayDependOn:
+      # Static index derivation must refuse exactly the configs the server
+      # refuses, so it runs the same next-action condition compiler.
+      - conditionlint
       - dataentryconfig
       - filter
       - metamodel

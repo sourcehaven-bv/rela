@@ -221,3 +221,24 @@ func TestNextActionMatchers_IdentityFreeConditionNeedsNoIdentity(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, got)
 }
+
+// A free-text query is relevance-capped before the condition runs, so a
+// condition on it would silently under-report; it is refused at load.
+func TestCompileNextActions_RefusesFreeTextQuery(t *testing.T) {
+	t.Parallel()
+	_, errs := CompileNextActions(naCfg(dataentryconfig.NextActionSource{
+		Query: "type:task urgent", Condition: "entity.status == 'todo'",
+	}), naMeta())
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0], "free text")
+}
+
+func TestNextActionMatcher_TypesAreTheCompiledTypes(t *testing.T) {
+	t.Parallel()
+	lookup, errs := NextActionMatchers(naCfg(dataentryconfig.NextActionSource{
+		Query: "type:task,bug", Condition: "days_between(entity.due, today()) > 1",
+	}), naMeta())
+	require.Empty(t, errs)
+	m, _ := lookup("s")
+	require.Equal(t, []string{"bug", "task"}, m.Types())
+}

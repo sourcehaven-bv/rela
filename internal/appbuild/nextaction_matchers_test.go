@@ -68,29 +68,39 @@ func TestQueryIdentityFor(t *testing.T) {
 	}
 }
 
+// scoped applies the per-request scope binder the way the handler does.
+func scoped(ctx context.Context, t *testing.T, scope func(context.Context) (context.Context, error)) context.Context {
+	t.Helper()
+	out, err := scope(ctx)
+	require.NoError(t, err)
+	return out
+}
+
 // TestNextActionMatchers_PrefiltersAndMatchShareTheIdentity is the contract
-// dataentry builds on: whatever identity the pre-filter pushes to the store
-// is the one the authoritative pass compares against.
+// dataentry builds on: the identity is stamped ONCE per request by the scope
+// binder, and whatever the pre-filter pushes to the store is what the
+// authoritative pass compares against.
 func TestNextActionMatchers_PrefiltersAndMatchShareTheIdentity(t *testing.T) {
 	t.Parallel()
 	meta := matcherMeta()
-	lookup, problems := NextActionMatchers(
+	lookup, scope, problems := NextActionMatchers(
 		matcherCfg("entity.status == 'open' and is_current_user(entity.assignee) and has_current_user(entity.watchers)"),
 		meta)
 	require.Empty(t, problems)
+	require.NotNil(t, scope)
 	m, ok := lookup("s")
 	require.True(t, ok)
 	pf, ok := m.(interface {
-		Prefilters(context.Context, *metamodel.Metamodel, []string) []store.PropPredicate
+		Prefilters(context.Context, *metamodel.Metamodel) []store.PropPredicate
 	})
 	require.True(t, ok, "the matcher must offer the pre-filter capability dataentry looks for")
 
-	alice := stampedCtx(principal.Principal{User: "alice", Tool: "data-entry"})
+	alice := scoped(stampedCtx(principal.Principal{User: "alice", Tool: "data-entry"}), t, scope)
 	require.Equal(t, []store.PropPredicate{
 		{Property: "assignee", Op: store.PropEqual, Value: "alice", Scalar: true},
 		{Property: "status", Op: store.PropEqual, Value: "open", Scalar: true},
 		{Property: "watchers", Op: store.PropEqual, Value: "alice", Scalar: false},
-	}, pf.Prefilters(alice, meta, []string{"task"}))
+	}, pf.Prefilters(alice, meta))
 
 	mine := entity.New("T-1", "task")
 	mine.Properties["status"] = "open"
@@ -100,39 +110,76 @@ func TestNextActionMatchers_PrefiltersAndMatchShareTheIdentity(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, got)
 
-	bob := stampedCtx(principal.Principal{User: "bob", Tool: "data-entry"})
+	bob := scoped(stampedCtx(principal.Principal{User: "bob", Tool: "data-entry"}), t, scope)
 	got, err = m.Match(bob, mine)
 	require.NoError(t, err)
 	require.False(t, got)
 
-	// No identity: the current-user conjuncts are not pushed (the literal
-	// still is), and the Go pass refuses with the engine's sentinel.
-	require.Equal(t, []store.PropPredicate{
-		{Property: "status", Op: store.PropEqual, Value: "open", Scalar: true},
-	}, pf.Prefilters(context.Background(), meta, []string{"task"}))
-	_, err = m.Match(context.Background(), mine)
+	// No identity (unstamped, or the placeholder): the current-user
+	// conjuncts are not pushed (the literal still is), and the Go pass
+	// refuses with the engine's sentinel.
+	for _, ctx := range []context.Context{
+		scoped(context.Background(), t, scope),
+		scoped(stampedCtx(principal.Principal{User: principal.Unknown, Tool: "data-entry"}), t, scope),
+	} {
+		require.Equal(t, []store.PropPredicate{
+			{Property: "status", Op: store.PropEqual, Value: "open", Scalar: true},
+		}, pf.Prefilters(ctx, meta))
+		_, err = m.Match(ctx, mine)
+		require.ErrorIs(t, err, nextaction.ErrIdentityRequired)
+		require.ErrorIs(t, err, predicatefns.ErrNoCurrentUser)
+	}
+
+	// The matcher never derives on its own: an unscoped ctx with a principal
+	// still has no identity. This is what makes "once per request" true.
+	_, err = m.Match(stampedCtx(principal.Principal{User: "alice", Tool: "data-entry"}), mine)
 	require.ErrorIs(t, err, nextaction.ErrIdentityRequired)
-	require.ErrorIs(t, err, predicatefns.ErrNoCurrentUser)
+}
 
-	// An identity already stamped by a boundary wins over the principal.
-	pre := predicatefns.WithQueryIdentity(bob, predicatefns.QueryIdentity{EntityID: "alice"})
-	got, err = m.Match(pre, mine)
+// TestNextActionRequestScope pins the scope binder: a boundary stamp is
+// honored when it agrees with the principal (or there is none), derived
+// from the principal otherwise, and REFUSED when the two disagree — two
+// layers disagreeing about who is calling must never select either one's
+// rows quietly.
+func TestNextActionRequestScope(t *testing.T) {
+	t.Parallel()
+	aliceP := principal.Principal{User: "alice", Tool: "data-entry"}
+	bobP := principal.Principal{User: "bob", Tool: "data-entry"}
+	aliceQ := predicatefns.QueryIdentity{EntityID: "alice"}
+
+	ctx, err := nextActionRequestScope(stampedCtx(aliceP))
 	require.NoError(t, err)
-	require.True(t, got)
-	require.Equal(t, "alice", pf.Prefilters(pre, meta, []string{"task"})[0].Value)
+	q, ok := predicatefns.QueryIdentityFrom(ctx)
+	require.True(t, ok)
+	require.Equal(t, "alice", q.ID())
 
-	// No types: nothing to gate against, nothing pushed.
-	require.Nil(t, pf.Prefilters(alice, meta, nil))
+	ctx, err = nextActionRequestScope(predicatefns.WithQueryIdentity(context.Background(), aliceQ))
+	require.NoError(t, err)
+	q, _ = predicatefns.QueryIdentityFrom(ctx)
+	require.Equal(t, "alice", q.ID())
+
+	ctx, err = nextActionRequestScope(predicatefns.WithQueryIdentity(stampedCtx(aliceP), aliceQ))
+	require.NoError(t, err)
+	q, _ = predicatefns.QueryIdentityFrom(ctx)
+	require.Equal(t, "alice", q.ID())
+
+	_, err = nextActionRequestScope(predicatefns.WithQueryIdentity(stampedCtx(bobP), aliceQ))
+	require.ErrorIs(t, err, nextaction.ErrIdentityRequired)
+
+	ctx, err = nextActionRequestScope(context.Background())
+	require.NoError(t, err)
+	_, ok = predicatefns.QueryIdentityFrom(ctx)
+	require.False(t, ok)
 }
 
 func TestNextActionMatchers_IdentityFreeConditionWorksUnidentified(t *testing.T) {
 	t.Parallel()
-	lookup, problems := NextActionMatchers(matcherCfg("entity.status == 'open'"), matcherMeta())
+	lookup, scope, problems := NextActionMatchers(matcherCfg("entity.status == 'open'"), matcherMeta())
 	require.Empty(t, problems)
 	m, _ := lookup("s")
 	e := entity.New("T-1", "task")
 	e.Properties["status"] = "open"
-	got, err := m.Match(context.Background(), e)
+	got, err := m.Match(scoped(context.Background(), t, scope), e)
 	require.NoError(t, err)
 	require.True(t, got)
 }

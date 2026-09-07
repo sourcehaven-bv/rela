@@ -1,6 +1,7 @@
 package affordances_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
@@ -107,4 +108,60 @@ assignments:
 // expressions use.
 func quoteYAML(s string) string {
 	return `"` + s + `"`
+}
+
+// TestAffordances_CurrentUserSugar_UnknownPlaceholderNeverMatches pins the
+// fail-closed reading on the one path where an UNIDENTIFIED caller reaches a
+// `when:` clause: the `everyone` role, which the resolver applies to an
+// unstamped principal and to the "unknown" attribution placeholder alike.
+// An entity whose property literally holds "unknown" is not owned by an
+// anonymous caller, in any of the three spellings. The control case proves
+// the same grant DOES evaluate for a real principal, so the refusal is not
+// an artifact of the role never applying.
+func TestAffordances_CurrentUserSugar_UnknownPlaceholderNeverMatches(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		when        string
+		props       map[string]any
+		ctx         context.Context //nolint:containedctx // table fixture
+		wantVisible bool
+	}{
+		{"control: a real principal matches via everyone",
+			"is_current_user(entity.assignee)", map[string]any{"assignee": "alice"}, ctxAs("alice"), true},
+		{"unknown placeholder, sugar",
+			"is_current_user(entity.assignee)", map[string]any{"assignee": "unknown"}, ctxAs("unknown"), false},
+		{"unknown placeholder, explicit comparison",
+			"entity.assignee == current_user.id", map[string]any{"assignee": "unknown"}, ctxAs("unknown"), false},
+		{"unknown placeholder, list membership",
+			"has_current_user(entity.tags)", map[string]any{"tags": []any{"unknown"}}, ctxAs("unknown"), false},
+		{"unstamped context, sugar",
+			"is_current_user(entity.assignee)", map[string]any{"assignee": "unknown"}, context.Background(), false},
+		{"unstamped context, explicit comparison against an empty owner",
+			"entity.assignee == current_user.id", map[string]any{"assignee": ""}, context.Background(), false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := policyFromYAML(t, `
+roles:
+  everyone:
+    visible:
+      ticket:
+        - field: assignee
+          when: `+quoteYAML(tc.when)+`
+`)
+			r, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, p))
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			fv := r.FieldVerdicts(tc.ctx, ticket("T-1", tc.props))
+			v, ok := fv.Visible["assignee"]
+			hidden := ok && !v
+			if hidden == tc.wantVisible {
+				t.Fatalf("when %q: visible=%v, want visible=%v", tc.when, !hidden, tc.wantVisible)
+			}
+		})
+	}
 }

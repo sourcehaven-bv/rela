@@ -169,7 +169,13 @@ func constEqualityFrom(lhs, rhs node, spec PrefilterSpec) (string, ConstEquality
 	switch c := rhs.(type) {
 	case *constNode:
 		s, isStr := c.v.(String)
-		if !isStr {
+		// An empty literal is refused. Every store backend reads an
+		// empty-valued equality as "is empty" (absent key, null, empty
+		// list), while `x == ''` in this language is false for an unset
+		// attribute (Nil is not String). The direction would still be safe
+		// — the store keeps a superset — but the two operators would mean
+		// different things by the same expression, so it is not reported.
+		if !isStr || s.String() == "" {
 			return "", ConstEquality{}, false
 		}
 		return attr, ConstEquality{Attribute: attr, Value: s.String()}, true

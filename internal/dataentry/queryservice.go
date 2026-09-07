@@ -117,8 +117,12 @@ func (q *queryService) executeQuery(ctx context.Context, query string) ([]*entit
 // also enforce has widened nothing but has narrowed on its own authority.
 //
 // They are ignored on the free-text branch, which runs through the search
-// index rather than a type-scoped store list; the caller's Go pass still
-// applies, so the result is the same, only unpushed.
+// index rather than a type-scoped store list. That branch is also
+// relevance-CAPPED (maxFreeTextSearchResults) before any caller's pass runs,
+// so a selection predicate over it would be lossy; the only caller with a
+// condition — the next-action engine — is refused a free-text query at load
+// (conditionlint) for exactly that reason, and this comment is the reminder
+// for the next one.
 func (q *queryService) executeQueryPrefiltered(
 	ctx context.Context, query string, extra []store.PropPredicate,
 ) ([]*entity.Entity, error) {

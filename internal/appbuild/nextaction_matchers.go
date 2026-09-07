@@ -23,22 +23,16 @@ import (
 // cycle — which is why dataentry's own test suite asserts the adapter
 // satisfies it (TestNextAction_CurrentUserConditionEndToEnd).
 //
-// It is also where "who is the current user?" is answered for next actions.
-// Both methods derive the identity from the principal on ctx through ONE
-// function, queryIdentityFor, so the pre-filter and the Go pass cannot
-// disagree about whose rows they are selecting.
+// Neither method derives an identity. Both read the [predicatefns.QueryIdentity]
+// that [nextActionRequestScope] stamped ONCE per request, so the pre-filter
+// and the Go pass cannot disagree about whose rows they select, and a
+// resolve over N candidates costs one derivation, not N.
 type nextActionMatcher struct {
 	m *conditionlint.NextActionMatcher
 }
 
-// Match evaluates the whole condition, with the identity stamped on ctx if
-// the request boundary has not already done so.
+// Match evaluates the whole condition against the identity on ctx.
 func (w nextActionMatcher) Match(ctx context.Context, e *entity.Entity) (bool, error) {
-	if _, stamped := predicatefns.QueryIdentityFrom(ctx); !stamped {
-		if q, ok := queryIdentityFor(ctx); ok {
-			ctx = predicatefns.WithQueryIdentity(ctx, q)
-		}
-	}
 	ok, err := w.m.Match(ctx, e)
 	if errors.Is(err, predicatefns.ErrNoCurrentUser) {
 		// Translate to the engine's sentinel so the HTTP layer can name the
@@ -49,13 +43,12 @@ func (w nextActionMatcher) Match(ctx context.Context, e *entity.Entity) (bool, e
 }
 
 // Prefilters lowers the condition's store-evaluable conjuncts for the types
-// the source's query names (queryplan.ConditionPrefilters). With no
-// resolvable identity the current-user conjuncts push nothing; Match then
+// the condition was compiled against (queryplan.ConditionPrefilters). With
+// no identity on ctx the current-user conjuncts push nothing; Match then
 // fails the same condition closed, so the request is refused rather than
 // answered with the wrong rows.
-func (w nextActionMatcher) Prefilters(
-	ctx context.Context, meta *metamodel.Metamodel, types []string,
-) []store.PropPredicate {
+func (w nextActionMatcher) Prefilters(ctx context.Context, meta *metamodel.Metamodel) []store.PropPredicate {
+	types := w.m.Types()
 	if len(types) == 0 {
 		return nil
 	}
@@ -66,10 +59,36 @@ func (w nextActionMatcher) Prefilters(
 	var identity string
 	if q, stamped := predicatefns.QueryIdentityFrom(ctx); stamped {
 		identity = q.ID()
-	} else if q, ok := queryIdentityFor(ctx); ok {
-		identity = q.ID()
 	}
 	return queryplan.ConditionPrefilters(prog, meta, types, identity)
+}
+
+// nextActionRequestScope stamps the query identity on ctx once per
+// next-action resolve. It is the ONE place the identity is derived for this
+// surface (dataentry.NextActionRequestScope).
+//
+// A boundary-stamped identity already on ctx is honored — but when the
+// request also carries a principal, the two must AGREE. A stamp naming a
+// different user than the principal means two layers disagree about who is
+// calling, and silently preferring either would evaluate every condition for
+// the wrong person with no signal — the hazard dataentry's attachACLRequest
+// refuses for an ACL request whose principal disagrees with ctx. Nothing
+// stamps upstream in production today (that boundary stamp is TKT-ZQV9O5), so
+// this is the guard that keeps that future change from widening quietly.
+func nextActionRequestScope(ctx context.Context) (context.Context, error) {
+	stamped, hasStamp := predicatefns.QueryIdentityFrom(ctx)
+	derived, hasPrincipal := queryIdentityFor(ctx)
+	switch {
+	case hasStamp && hasPrincipal && stamped.ID() != derived.ID():
+		return ctx, fmt.Errorf(
+			"%w: query identity on the context disagrees with the request principal",
+			nextaction.ErrIdentityRequired)
+	case hasStamp:
+		return ctx, nil
+	case hasPrincipal:
+		return predicatefns.WithQueryIdentity(ctx, derived), nil
+	}
+	return ctx, nil
 }
 
 // queryIdentityFor derives the query identity from the principal on ctx.
@@ -86,6 +105,14 @@ func (w nextActionMatcher) Prefilters(
 // no identity source. Neither is a user, and comparing either against
 // `entity.assignee` would be a match against nobody at best and against an
 // entity literally assigned to "unknown" at worst.
+//
+// One degradation is inherited from the router and worth knowing: when the
+// principal_property lookup fails with a BACKEND error, resolvePrincipalEntity
+// keeps the raw principal, so this derives the raw identifier while the
+// operator's condition compares against user-entity ids. The source then
+// matches NOTHING for that request (narrowing, never widening) rather than
+// erroring; predicatefns.ResolveQueryIdentity is the stricter shape the
+// boundary stamp (TKT-ZQV9O5) should adopt.
 func queryIdentityFor(ctx context.Context) (predicatefns.QueryIdentity, bool) {
 	p, ok := principal.Stamped(ctx)
 	if !ok || p.User == "" || p.User == principal.Unknown {
@@ -109,12 +136,20 @@ func queryIdentityFor(ctx context.Context) (predicatefns.QueryIdentity, bool) {
 // Takes config + metamodel rather than returning a prebuilt lookup because
 // both reload at runtime — a lookup captured at boot would keep evaluating a
 // condition the operator has since edited.
+//
+// The second result is the per-request scope binder (dataentry.NextActionRequestScope):
+// the handler applies it to the request ctx once, before resolving, and every
+// matcher then reads the identity it stamped. Returned alongside the lookup
+// because the two are one contract — matchers compiled here evaluate only
+// against an identity stamped here.
 func NextActionMatchers(
 	cfg *dataentryconfig.Config, meta *metamodel.Metamodel,
-) (lookup func(string) (nextaction.Matcher, bool), problems []string) {
+) (lookup func(string) (nextaction.Matcher, bool), scope func(context.Context) (context.Context, error),
+	problems []string,
+) {
 	compiled, issues := conditionlint.NextActionMatchers(cfg, meta)
 	if len(issues) > 0 || compiled == nil {
-		return nil, issues
+		return nil, nil, issues
 	}
 	return func(id string) (nextaction.Matcher, bool) {
 		m, ok := compiled(id)
@@ -124,5 +159,5 @@ func NextActionMatchers(
 			return nil, false
 		}
 		return nextActionMatcher{m: m}, true
-	}, nil
+	}, nextActionRequestScope, nil
 }

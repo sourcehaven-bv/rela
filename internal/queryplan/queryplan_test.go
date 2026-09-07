@@ -110,3 +110,24 @@ func TestLoadStaticIndexSpecsRejectsIncompleteConfig(t *testing.T) {
 		t.Fatalf("LoadStaticIndexSpecs() = %#v, %v; want nil specs and an error", got, err)
 	}
 }
+
+// LoadStaticIndexSpecs must refuse a config whose next-action condition
+// does not compile, exactly as the server does at load — otherwise
+// `rela db reconcile` would converge to a desired set the server never
+// derives.
+func TestLoadStaticIndexSpecsRejectsBrokenCondition(t *testing.T) {
+	t.Parallel()
+	data := []byte(`
+next_action_bands:
+  - id: b
+next_actions:
+  s:
+    band: b
+    query: "type:task prop:status=open"
+    condition: "entity.nope == 1"
+    suggest: "x"
+`)
+	if _, err := LoadStaticIndexSpecs(data, testMeta()); err == nil {
+		t.Fatal("expected an error for a non-compiling condition")
+	}
+}

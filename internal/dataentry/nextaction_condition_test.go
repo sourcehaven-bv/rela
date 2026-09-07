@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -57,21 +58,19 @@ var oneBand = []dataentryconfig.NextActionBand{{ID: "b"}}
 
 // recordingMatcher is a fake condition matcher: it pushes whatever
 // predicates the test hands it and answers Match with a fixed verdict,
-// recording the types it was asked to pre-filter for.
+// counting how often it was asked to pre-filter.
 type recordingMatcher struct {
 	push  []store.PropPredicate
 	match bool
-	types [][]string
+	calls int
 }
 
 func (m *recordingMatcher) Match(context.Context, *entity.Entity) (bool, error) {
 	return m.match, nil
 }
 
-func (m *recordingMatcher) Prefilters(
-	_ context.Context, _ *metamodel.Metamodel, types []string,
-) []store.PropPredicate {
-	m.types = append(m.types, types)
+func (m *recordingMatcher) Prefilters(context.Context, *metamodel.Metamodel) []store.PropPredicate {
+	m.calls++
 	return m.push
 }
 
@@ -86,8 +85,10 @@ func doNextActionGet(ctx context.Context, t *testing.T, app *App) *httptest.Resp
 }
 
 func matcherFuncFor(m nextaction.Matcher) NextActionMatcherFunc {
-	return func(*dataentryconfig.Config, *metamodel.Metamodel) (func(string) (nextaction.Matcher, bool), []string) {
-		return func(string) (nextaction.Matcher, bool) { return m, true }, nil
+	return func(
+		*dataentryconfig.Config, *metamodel.Metamodel,
+	) (func(string) (nextaction.Matcher, bool), func(context.Context) (context.Context, error), []string) {
+		return func(string) (nextaction.Matcher, bool) { return m, true }, nil, nil
 	}
 }
 
@@ -116,7 +117,7 @@ func TestNextAction_ConditionPrefiltersReachTheStore(t *testing.T) {
 		require.Equal(t, http.StatusOK, status)
 		require.NotNil(t, resp.Suggestion)
 		require.Equal(t, "TKT-mine", resp.Suggestion.EntityID)
-		require.Equal(t, [][]string{{"ticket"}}, m.types, "pre-filtered for the query's types")
+		require.Equal(t, 1, m.calls, "pre-filtered exactly once for the source")
 	})
 
 	t.Run("the Go pass stays authoritative", func(t *testing.T) {
@@ -136,7 +137,7 @@ func TestNextAction_ConditionPrefiltersReachTheStore(t *testing.T) {
 		require.NoError(t, app.SetNextActionMatchers(matcherFuncFor(m)))
 		_, status := getNextAction(aliceCtx(), t, app)
 		require.Equal(t, http.StatusOK, status)
-		require.Equal(t, [][]string{{"ticket"}}, m.types)
+		require.Equal(t, 1, m.calls)
 	})
 }
 
@@ -153,12 +154,13 @@ func TestNextAction_CurrentUserConditionEndToEnd(t *testing.T) {
 	require.NoError(t, app.SetNextActionMatchers(appbuild.NextActionMatchers))
 
 	t.Run("the composition-root matcher offers the pre-filter capability", func(t *testing.T) {
-		lookup, problems := appbuild.NextActionMatchers(&dataentryconfig.Config{
+		lookup, scope, problems := appbuild.NextActionMatchers(&dataentryconfig.Config{
 			NextActions: map[string]dataentryconfig.NextActionSource{
 				"s": {Query: "type:ticket", Condition: "is_current_user(entity.assignee)"},
 			},
 		}, app.State().Meta)
 		require.Empty(t, problems)
+		require.NotNil(t, scope, "appbuild supplies the per-request scope binder")
 		m, ok := lookup("s")
 		require.True(t, ok)
 		_, ok = m.(ConditionPrefilterer)
@@ -224,4 +226,40 @@ func TestNextAction_CurrentUserConditionWithoutIdentityIsNamed(t *testing.T) {
 	resp, status := getNextAction(context.Background(), t, app)
 	require.Equal(t, http.StatusOK, status)
 	require.NotNil(t, resp.Suggestion)
+}
+
+// TestNextAction_HiddenPropertyMakesCurrentUserConditionFalse pins the
+// raw-vs-redacted asymmetry documented on ConditionPrefilterer: the store
+// pre-filter keeps alice's ticket (it compares the raw assignee), but the
+// authoritative Go pass evaluates the REDACTED candidate, where a
+// visible:-hidden assignee binds Nil and is_current_user is false. The Go
+// pass is therefore strictly narrower, and a hidden value can never drive a
+// suggestion.
+func TestNextAction_HiddenPropertyMakesCurrentUserConditionFalse(t *testing.T) {
+	app := newTestAppV1(t)
+	withTicketAssignment(t, app)
+	seedAssignedTicket(app, "TKT-alice", "alice")
+	require.NoError(t, app.SetNextActionMatchers(appbuild.NextActionMatchers))
+	d := mustNewACL(t, &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
+		Assignments: map[string]string{"alice": "viewer"},
+	}, app.store)
+	app.acl = d
+	withNextActions(t, app, oneBand, map[string]dataentryconfig.NextActionSource{
+		"s": {Band: "b", Query: "type:ticket", Condition: "is_current_user(entity.assignee)", Suggest: "{id}"},
+	})
+	ctx := gateCtxFor(principalCtx("alice"), t, d)
+
+	// Baseline: with the assignee visible the suggestion fires.
+	resp, status := getNextAction(ctx, t, app)
+	require.Equal(t, http.StatusOK, status)
+	require.NotNil(t, resp.Suggestion)
+	require.Equal(t, "TKT-alice", resp.Suggestion.EntityID)
+
+	// Hide the assignee: the pre-filter still selects the row, the Go pass
+	// does not.
+	app.fieldResolver = fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"assignee": false}}}
+	resp, status = getNextAction(ctx, t, app)
+	require.Equal(t, http.StatusOK, status)
+	require.Nil(t, resp.Suggestion, "a hidden property must not satisfy a per-user condition")
 }

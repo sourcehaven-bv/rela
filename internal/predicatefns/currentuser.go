@@ -187,6 +187,13 @@ func CurrentUserFuncs() map[string]predicate.FuncSig {
 // the SAME semantics rather than reimplement them. Two implementations
 // of "is this the current user" that disagree on, say, an unset property
 // is exactly the drift this avoids.
+//
+// An EMPTY identity binds functions that never match. [BindCurrentUser]
+// refuses to reach this point at all (ErrNoCurrentUser), but a caller that
+// must still evaluate the rest of an expression without an identity — an
+// affordance `when:` on an unauthenticated deployment — gets the
+// fail-closed reading here rather than "matches every entity whose
+// property is the empty string".
 func CurrentUserBindings(identity string) map[string]predicate.FuncFunc {
 	return map[string]predicate.FuncFunc{
 		FuncIsCurrentUser:  isCurrentUser(identity),
@@ -321,10 +328,8 @@ func isCurrentUser(identity string) predicate.FuncFunc {
 		case predicate.Nil:
 			return predicate.NewBool(false), nil
 		case predicate.String:
-			// identity is non-empty (QueryIdentity.Valid gates the
-			// binding), so this cannot degenerate into matching every
-			// entity whose property is unset.
-			return predicate.NewBool(v.String() == identity), nil
+			// An empty identity matches nothing — see CurrentUserBindings.
+			return predicate.NewBool(identity != "" && v.String() == identity), nil
 		default:
 			return nil, errArg
 		}
@@ -345,6 +350,9 @@ func hasCurrentUser(identity string) predicate.FuncFunc {
 		case predicate.Nil:
 			return predicate.NewBool(false), nil
 		case predicate.List:
+			if identity == "" {
+				return predicate.NewBool(false), nil
+			}
 			for _, e := range v.Elems() {
 				if s, ok := e.(predicate.String); ok && s.String() == identity {
 					return predicate.NewBool(true), nil
@@ -391,6 +399,12 @@ type PrincipalResolver interface {
 // An unstamped context yields an invalid identity (not an error): "no
 // identity" is a legitimate state for the CLI and the scheduler, and it
 // is [BindCurrentUser] that refuses to evaluate against it.
+//
+// No request boundary calls this yet. The next-action adapter
+// (internal/appbuild) reads the principal the data-entry router has
+// ALREADY resolved instead, which is equivalent on that transport; the
+// boundary stamp that makes every surface share one derivation is the
+// first step of the `where:`-surfaces follow-up (TKT-ZQV9O5).
 func ResolveQueryIdentity(
 	ctx context.Context, r PrincipalResolver, rawUser, tool string,
 ) (QueryIdentity, error) {

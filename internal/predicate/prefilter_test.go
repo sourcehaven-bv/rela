@@ -175,6 +175,11 @@ func TestConstEqualities(t *testing.T) {
 			want: nil,
 		},
 		{
+			name: "an empty string literal is not pushed: the store reads it as 'is empty'",
+			src:  "entity.status == ''",
+			want: nil,
+		},
+		{
 			name: "a typed (int) equality is not pushed: string-form comparison could disagree",
 			src:  "entity.count == 3",
 			want: nil,

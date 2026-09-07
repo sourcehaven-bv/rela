@@ -1,6 +1,9 @@
 package predicate
 
-import "sort"
+import (
+	"fmt"
+	"sort"
+)
 
 // Program is a compiled predicate, ready for repeated evaluation.
 //
@@ -107,6 +110,14 @@ func (p *Program) inspect() {
 		case *concatNode:
 			visit(x.lhs)
 			visit(x.rhs)
+		default:
+			// The node set is sealed (sealedNode), so this is reachable only
+			// from a new node type added without extending this walk. Failing
+			// loudly is the point: References/Functions/Attributes are exact
+			// dependency sets that callers use to decide whether a binding is
+			// REQUIRED, and a node silently skipped here would make a program
+			// look independent of a variable it reads.
+			panic(fmt.Sprintf("predicate: inspect: unhandled node type %T", n))
 		}
 	}
 	visit(p.root)
