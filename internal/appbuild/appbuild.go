@@ -37,6 +37,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/caldavalias"
+	"github.com/Sourcehaven-BV/rela/internal/comments"
 	"github.com/Sourcehaven-BV/rela/internal/computed"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -96,8 +97,14 @@ import (
 // Develop raised this to 26; the three recipient-scoped scheduler methods
 // take it to 29. They are exported because scheduler consumes them through
 // narrow capability interfaces; they do not add general Services getters.
+// Comments() (TKT-FIO205) takes it to 31: the commentary service is chosen and
+// constructed here and handed to the App at the wiring site, exactly like
+// CalDAVAliases() and UserState(). It is one more instance of the pattern this
+// comment already describes — a new subsystem composed by the facade — not a
+// new kind of growth, and the fix remains splitting the bundle (TKT-N0IKN9)
+// rather than hiding the getter.
 //
-//plimsoll:max-exported-methods=30
+//plimsoll:max-exported-methods=31
 type Services struct {
 	fs    storage.FS
 	paths *project.Context
@@ -130,9 +137,13 @@ type Services struct {
 	// durable PostgreSQL on the postgres build. Torn down in Close.
 	jobQueue      jobs.Queue
 	caldavAliases *caldavalias.Service
-	scriptEngine  *script.Engine
-	searchCloser  io.Closer
-	acl           acl.ACL
+	// comments is the commentary layer (internal/comments). Nil when the
+	// metamodel declares no `comments:` block — the feature then does not
+	// exist, and the data-entry app serves no comment routes.
+	comments     *comments.Service
+	scriptEngine *script.Engine
+	searchCloser io.Closer
+	acl          acl.ACL
 	// aclDeclarative is set when buildACL constructs a Declarative; nil
 	// for NopACL, ReadOnlyACL, or when Declarative construction fails.
 	aclDeclarative *acl.Declarative
@@ -318,6 +329,14 @@ func (s *Services) Jobs() jobs.Client { return s.jobQueue }
 // service is always constructed (an empty table is the normal first-run state),
 // so consumers need no nil check.
 func (s *Services) CalDAVAliases() *caldavalias.Service { return s.caldavAliases }
+
+// Comments returns the commentary service, or nil when the metamodel declares
+// no enabled `comments:` block.
+//
+// Nil means the feature does not exist for this project: the data-entry app
+// serves no comment routes and no storage is created. Callers must nil-check
+// rather than assume a usable service.
+func (s *Services) Comments() *comments.Service { return s.comments }
 
 // LuaReadDeps materializes the read-only Lua capability bundle with
 // UNRESTRICTED reads — the operator-trust-boundary wiring used by the CLI
@@ -1612,7 +1631,19 @@ func assemble(
 		return nil, err
 	}
 
-	mgr, err := buildEntityManager(base, st, aliases, templater, resolvedACL,
+	// Comments are keyed by target entity id, so the service must learn about
+	// renames and deletes. It rides the AliasRewriter hook rather than
+	// store.EntityObserver for the reason that hook documents: stores fire the
+	// observer with the error discarded, which is fine for a rebuildable search
+	// index but not for records that exist ONLY in the comment store.
+	commentSvc, err := buildComments(cfg.FS, cfg.Paths, base.meta)
+	if err != nil {
+		return nil, err
+	}
+
+	// Upstream's parameter order (readDeps after cascadeRunner) with the
+	// comment fanout wrapping the alias rewriter.
+	mgr, err := buildEntityManager(base, st, newAliasFanout(aliases, commentSvc), templater, resolvedACL,
 		autoEngine, cascadeRunner, readDeps, versions, tw, computedSet)
 	if err != nil {
 		return nil, err
@@ -1659,6 +1690,7 @@ func assemble(
 		stateKV:         stateKV,
 		jobQueue:        jobQueue,
 		caldavAliases:   aliases,
+		comments:        commentSvc,
 		scriptEngine:    cfg.ScriptEngine,
 		searchCloser:    searchCloser,
 		acl:             resolvedACL,

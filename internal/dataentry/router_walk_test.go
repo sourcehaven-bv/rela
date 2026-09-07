@@ -75,6 +75,12 @@ func TestRouterWalk_AllAPIRoutesReachHandlers(t *testing.T) {
 		{http.MethodGet, "/api/v1/_sidepanel/ticket/TKT-001", 0},
 		{http.MethodGet, "/api/v1/_sidebar", http.StatusOK},
 		{http.MethodGet, "/api/v1/_dashboard", http.StatusOK},
+		// Comments: the fixture declares no `comments:` block, so the handler
+		// answers 404 itself — a JSON error from a registered handler, not the
+		// stdlib's unregistered-route 404. Probed with a body-bearing method so
+		// a regression that drops the registration shows up as a reachability
+		// failure rather than a silently-identical status.
+		{http.MethodGet, "/api/v1/_comments/ticket/TKT-001", http.StatusNotFound},
 		{http.MethodGet, "/api/v1/_conflicts", 0},
 		{http.MethodGet, "/api/v1/_conflicts/some-id", 0},
 		{http.MethodGet, "/api/v1/_documents/readme", 0},

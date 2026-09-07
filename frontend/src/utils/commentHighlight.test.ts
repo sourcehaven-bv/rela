@@ -1,0 +1,195 @@
+import { describe, it, expect } from 'vitest'
+import { applyHighlights, type HighlightRange } from './commentHighlight'
+
+/** Byte offsets of `needle` within `body`, as the Go server would report them. */
+function byteRange(body: string, needle: string, id = 'c1'): HighlightRange {
+  const bytes = new TextEncoder().encode(body)
+  const target = new TextEncoder().encode(needle)
+  outer: for (let i = 0; i + target.length <= bytes.length; i++) {
+    for (let j = 0; j < target.length; j++) {
+      if (bytes[i + j] !== target[j]) continue outer
+    }
+    return { id, start: i, end: i + target.length }
+  }
+  throw new Error(`needle not found: ${needle}`)
+}
+
+describe('applyHighlights', () => {
+  const body = 'The quick brown fox jumps over the lazy dog.'
+
+  it('wraps a single range', () => {
+    const out = applyHighlights(body, [byteRange(body, 'brown fox')])
+
+    expect(out).toBe(
+      'The quick <mark data-comment-id="c1">brown fox</mark> jumps over the lazy dog.'
+    )
+  })
+
+  it('wraps several ranges without shifting each other', () => {
+    // The bug this guards: applying front-to-back makes every insertion shift
+    // the offsets of the ranges after it, so the second mark lands mid-word.
+    const out = applyHighlights(body, [
+      byteRange(body, 'The quick', 'a'),
+      byteRange(body, 'lazy dog', 'b'),
+    ])
+
+    expect(out).toContain('<mark data-comment-id="a">The quick</mark>')
+    expect(out).toContain('<mark data-comment-id="b">lazy dog</mark>')
+  })
+
+  it('marks uncertain ranges distinctly', () => {
+    const r = { ...byteRange(body, 'brown fox'), uncertain: true }
+    const out = applyHighlights(body, [r])
+
+    expect(out).toContain('data-comment-uncertain="true"')
+  })
+
+  it('slices correctly across multi-byte characters', () => {
+    // JS strings are UTF-16 and the server sends BYTE offsets, so slicing the
+    // string directly would cut in the wrong place after any non-ASCII text.
+    const utf = 'Le café serveert góéde köffie vandaag.'
+    const out = applyHighlights(utf, [byteRange(utf, 'góéde köffie')])
+
+    expect(out).toContain('<mark data-comment-id="c1">góéde köffie</mark>')
+    // The text either side must be preserved intact.
+    expect(out).toContain('Le café serveert ')
+    expect(out).toContain(' vandaag.')
+  })
+
+  it('drops overlapping ranges rather than nesting them', () => {
+    const a = byteRange(body, 'quick brown', 'a')
+    const b = byteRange(body, 'brown fox', 'b') // overlaps a
+
+    const out = applyHighlights(body, [a, b])
+
+    expect(out).toContain('<mark data-comment-id="a">quick brown</mark>')
+    expect(out).not.toContain('data-comment-id="b"')
+    // Exactly one opening and one closing tag — no interleaving.
+    expect(out.match(/<mark /g)).toHaveLength(1)
+    expect(out.match(/<\/mark>/g)).toHaveLength(1)
+  })
+
+  it('drops ranges outside the body', () => {
+    // Offsets resolved against a body that has since changed.
+    const out = applyHighlights(body, [
+      { id: 'past-end', start: 10, end: 9999 },
+      { id: 'negative', start: -5, end: 4 },
+      { id: 'empty', start: 4, end: 4 },
+    ])
+
+    expect(out).toBe(body)
+  })
+
+  it('escapes a quote in the id rather than breaking out of the attribute', () => {
+    const out = applyHighlights(body, [{ ...byteRange(body, 'fox'), id: 'a"><script>x' }])
+
+    expect(out).not.toContain('"><script>')
+    expect(out).toContain('&quot;')
+  })
+
+  it('returns the body unchanged when there is nothing to mark', () => {
+    expect(applyHighlights(body, [])).toBe(body)
+    expect(applyHighlights('', [{ id: 'x', start: 0, end: 1 }])).toBe('')
+  })
+})
+
+describe('applyHighlights leaves code untouched', () => {
+  // Regression: a mark inserted into a code span rendered as literal
+  // `<mark data-comment-id="…">` text, because markdown does not parse HTML
+  // inside code. Skipping the highlight is strictly better than showing markup.
+  it('skips a range inside an inline code span', () => {
+    const body = 'Rename it with `rela rename id` today.'
+    const out = applyHighlights(body, [byteRange(body, 'rela rename id')])
+
+    expect(out).toBe(body)
+    expect(out).not.toContain('<mark')
+  })
+
+  it('skips a range that only partially overlaps code', () => {
+    const body = 'Rename it with `rela rename id` today.'
+    // Starts in plain text, ends inside the code span.
+    const out = applyHighlights(body, [byteRange(body, 'with `rela rename')])
+
+    expect(out).toBe(body)
+  })
+
+  it('skips a range inside a fenced block', () => {
+    const body = 'Before.\n\n```sh\nrela rename id TKT-1 TKT-2\n```\n\nAfter.'
+    const out = applyHighlights(body, [byteRange(body, 'rela rename id TKT-1')])
+
+    expect(out).toBe(body)
+  })
+
+  it('still marks prose alongside code in the same document', () => {
+    const body = 'Rename it with `rela rename id` today, then verify the result.'
+    const out = applyHighlights(body, [byteRange(body, 'verify the result')])
+
+    expect(out).toContain('<mark data-comment-id="c1">verify the result</mark>')
+    // The code span is untouched.
+    expect(out).toContain('`rela rename id`')
+  })
+
+  it('does not treat backticks inside a fence as inline spans', () => {
+    const body = 'Text.\n\n```\na ` stray backtick\n```\n\nMore prose here to mark.'
+    const out = applyHighlights(body, [byteRange(body, 'More prose here')])
+
+    expect(out).toContain('<mark data-comment-id="c1">More prose here</mark>')
+  })
+})
+
+describe('applyHighlights and indented code blocks', () => {
+  // Regression: only fenced and inline code were skipped, so a 4-space
+  // indented block still received a mark and rendered
+  // `<mark data-comment-id="…">` as literal text inside <pre><code>.
+  it('skips a range inside a 4-space indented block', () => {
+    const body =
+      'Intro.\n\n    Ingesprongen codeblok (vier spaties).\n    Praesent commodo.\n\nAfter.'
+    const out = applyHighlights(body, [byteRange(body, 'Ingesprongen codeblok')])
+
+    expect(out).toBe(body)
+    expect(out).not.toContain('<mark')
+  })
+
+  it('skips a tab-indented block', () => {
+    const body = 'Intro.\n\n\tcode line here\n\nAfter.'
+    const out = applyHighlights(body, [byteRange(body, 'code line here')])
+
+    expect(out).toBe(body)
+  })
+
+  it('still marks prose that merely follows an indented block', () => {
+    const body = 'Intro.\n\n    indented code here\n\nProse worth marking follows.'
+    const out = applyHighlights(body, [byteRange(body, 'Prose worth marking')])
+
+    expect(out).toContain('<mark data-comment-id="c1">Prose worth marking</mark>')
+  })
+})
+
+describe('applyHighlights and links', () => {
+  // A mark wrapping a link used to swallow the click, leaving the link dead.
+  // The chip carries the thread so the link keeps navigating.
+  it('appends a chip when the marked text contains a markdown link', () => {
+    const body = 'See the [rela docs](https://example.com/docs) for details.'
+    const out = applyHighlights(body, [byteRange(body, '[rela docs](https://example.com/docs)')])
+
+    expect(out).toContain('data-comment-chip="true"')
+    expect(out).toContain('data-comment-id="c1"')
+    // The link markup itself is untouched inside the mark.
+    expect(out).toContain('[rela docs](https://example.com/docs)')
+  })
+
+  it('appends a chip for a bare autolink', () => {
+    const body = 'Reference: https://example.com/page here.'
+    const out = applyHighlights(body, [byteRange(body, 'https://example.com/page')])
+
+    expect(out).toContain('data-comment-chip="true"')
+  })
+
+  it('adds no chip for ordinary prose', () => {
+    const body = 'Just some ordinary prose to mark up.'
+    const out = applyHighlights(body, [byteRange(body, 'ordinary prose')])
+
+    expect(out).not.toContain('data-comment-chip')
+    expect(out).toContain('<mark data-comment-id="c1">ordinary prose</mark>')
+  })
+})

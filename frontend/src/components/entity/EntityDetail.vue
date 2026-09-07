@@ -37,6 +37,14 @@ import type { WidgetRoutingHint } from '@/widgets/types'
 import type { PropertyDef } from '@/types'
 import type { Component } from 'vue'
 import DocumentsPanel from '@/components/entity/DocumentsPanel.vue'
+import CommentsPanel from '@/components/entity/CommentsPanel.vue'
+import CommentIndicator from '@/components/entity/CommentIndicator.vue'
+import TextSelectionComment from '@/components/entity/TextSelectionComment.vue'
+import TextCommentPopover from '@/components/entity/TextCommentPopover.vue'
+import BlockCommentOverlay from '@/components/entity/BlockCommentOverlay.vue'
+import { listComments, type Comment } from '@/api/comments'
+import { shouldFlipPopover } from '@/utils/popoverFlip'
+import { applyHighlights, type HighlightRange } from '@/utils/commentHighlight'
 import CommandModal from '@/components/entity/CommandModal.vue'
 import ExportMenu from '@/components/entity/ExportMenu.vue'
 import { entityExportUrl } from '@/api/transforms'
@@ -108,9 +116,7 @@ const worldAbsent = computed(() => viewData.value?._world_absent === true)
 
 // The world that has no face here. Falls back to the requested world name, so
 // the banner still reads correctly against a server that omits the field.
-const worldAbsentName = computed(
-  () => viewData.value?._world_absent_name || world.value || '',
-)
+const worldAbsentName = computed(() => viewData.value?._world_absent_name || world.value || '')
 
 // --- The ONE read-only seam ----------------------------------------------
 //
@@ -133,7 +139,9 @@ const readOnly = computed(() => isWorldBound.value && !worldAbsent.value)
 // (return_to / from precedence). Two parallel concerns: scope-nav walks
 // a list; backTarget answers "where do I go back to". Both can be active
 // at once.
-const { scopeNav, loadScopeNav, scopeTarget, navigateScope } = useScopeNavigation(() => props.entityId)
+const { scopeNav, loadScopeNav, scopeTarget, navigateScope } = useScopeNavigation(
+  () => props.entityId
+)
 const backTarget = useBackTarget()
 
 // State
@@ -167,9 +175,7 @@ const loadedCommands = ref<Command[]>([])
 //
 // Gated HERE rather than on the two button sites (desktop header + mobile
 // overflow) so a third render site cannot be added without inheriting it.
-const commands = computed<Command[]>(() =>
-  readOnly.value ? [] : loadedCommands.value,
-)
+const commands = computed<Command[]>(() => (readOnly.value ? [] : loadedCommands.value))
 
 // Prev/next within a list re-fetches this component in place. Blanking the
 // page to a centred spinner on every step was the worst layout shift in
@@ -180,13 +186,10 @@ const commands = computed<Command[]>(() =>
 // already on screen, stepping to a neighbour holds it until the next
 // resolves, so nothing is shown at all. (2) On a genuine cold load, the
 // gate still suppresses anything quicker than the navigation delay.
-const showBlockLoader = useDelayedPending(
-  () => loading.value && !viewData.value,
-  {
-    delay: PENDING_TIMINGS.navDelayMs,
-    minDuration: PENDING_TIMINGS.navMinDurationMs,
-  }
-)
+const showBlockLoader = useDelayedPending(() => loading.value && !viewData.value, {
+  delay: PENDING_TIMINGS.navDelayMs,
+  minDuration: PENDING_TIMINGS.navMinDurationMs,
+})
 const showOverflowMenu = ref(false)
 
 const commandModalRef = ref<InstanceType<typeof CommandModal> | null>(null)
@@ -276,7 +279,6 @@ const editTarget = computed<RouteLocationRaw | undefined>(() => {
   return { name: 'form-edit', params: { id: editFormId.value, entityId: props.entityId } }
 })
 
-
 // The entry's content section gets a custom renderer (mermaid + interactive
 // checkboxes) instead of the generic section render-path. Other content
 // sections — content cards from configured views — use the generic path.
@@ -292,6 +294,65 @@ const entryContentSection = computed(() => {
   if (!sections) return null
   return sections.find(isEntryContentSection) || null
 })
+
+// Section ids offered as comment anchor targets (TKT-FIO205). `sectionId` is
+// the operator-authored name from data-entry.yaml, which is why it is anchorable
+// at all: it is a NAME, not an offset, so it survives edits to the entity body.
+const commentSectionIds = computed(
+  () => viewData.value?.sections?.map((s) => s.sectionId).filter(Boolean) ?? []
+)
+
+// ─── Per-field comments (TKT-FIO205) ─────────────────────────────────────
+//
+// Fetched ONCE per entity and grouped by anchor ref, not once per field: a
+// per-field request would be N round-trips for N properties, and the server
+// already returns the whole thread in one call.
+const comments = ref<Comment[]>([])
+
+const commentsEnabled = computed(
+  () => schemaStore.getEntityType(props.entityType)?.commentable === true
+)
+
+const commentsByProperty = computed(() => {
+  const byRef = new Map<string, Comment[]>()
+  for (const c of comments.value) {
+    if (c.anchor.kind !== 'property') continue
+    const bucket = byRef.get(c.anchor.ref)
+    if (bucket) bucket.push(c)
+    else byRef.set(c.anchor.ref, [c])
+  }
+  return byRef
+})
+
+function commentsForProperty(name: string): Comment[] {
+  return commentsByProperty.value.get(name) ?? []
+}
+
+/**
+ * The entity id addressed for comments, carrying the resolved face.
+ *
+ * Comments are per content state (FEAT-9CD2MX): a remark on the draft is not a
+ * remark on the published version. The view response reports which face the
+ * world actually served, so the thread follows the content on screen rather
+ * than always addressing the default face.
+ */
+const commentEntityId = computed(() => {
+  const face = viewData.value?.entry?._world?.face
+  return face ? `${props.entityId}@${face}` : props.entityId
+})
+
+async function loadComments() {
+  if (!commentsEnabled.value) return
+  try {
+    comments.value = await listComments(props.entityType, commentEntityId.value)
+  } catch {
+    // A failure here means "cannot read the target, or commenting is off" —
+    // the server makes those indistinguishable on purpose. Either way there is
+    // no thread to show, and the page's primary content must still render, so
+    // this degrades to "no comments" rather than surfacing an error.
+    comments.value = []
+  }
+}
 
 const checkboxStats = computed(() => {
   const c = entryContentSection.value?.content
@@ -317,14 +378,32 @@ const refResolver = computed<EntityRefResolver | undefined>(() => {
   }
 })
 
-const renderedEntryContent = computed(() =>
-  entryContentSection.value
-    ? renderMarkdown(entryContentSection.value.content || '', {
-        refResolver: refResolver.value,
-        interactive: true,
-      })
-    : ''
+// Text-anchored comments as source ranges (TKT-FIO205 stage 2). Offsets are
+// resolved server-side per read; a detached anchor has none and is simply not
+// highlighted (it still shows in the panel).
+const textHighlights = computed<HighlightRange[]>(() =>
+  comments.value
+    .filter((c) => c.anchor.kind === 'text' && c.anchor.start != null && c.anchor.end != null)
+    .map((c) => ({
+      id: c.id,
+      start: c.anchor.start as number,
+      end: c.anchor.end as number,
+      uncertain: c.anchor.uncertain,
+    }))
 )
+
+const renderedEntryContent = computed(() => {
+  if (!entryContentSection.value) return ''
+  // Marks are inserted into the SOURCE before rendering: the server's offsets
+  // are source coordinates, and re-finding the text in the rendered DOM would
+  // mean re-implementing the matcher against a document the renderer (and then
+  // mermaid) has already transformed.
+  const source = applyHighlights(entryContentSection.value.content || '', textHighlights.value)
+  return renderMarkdown(source, {
+    refResolver: refResolver.value,
+    interactive: true,
+  })
+})
 
 // Re-renders re-process mermaid diagrams inside the content body. Checkbox
 // clicks are handled via delegation on contentRef (see contentClick), which
@@ -394,6 +473,29 @@ const contentAutoSave = useAutoSave({
 
 function contentClick(event: MouseEvent) {
   const target = event.target as HTMLElement | null
+
+  // The chip beside a highlighted link opens that link's thread. Checked first
+  // because it sits inside the mark it belongs to.
+  const chip = target?.closest<HTMLElement>('[data-comment-chip]')
+  if (chip) {
+    event.preventDefault()
+    openTextComment(chip.dataset.commentId, chip)
+    return
+  }
+
+  // A LINK inside a highlight keeps its own click: navigation is the primary
+  // action, and the chip above is how that thread is reached instead.
+  if (target?.closest('a[href]')) return
+
+  // Any other comment highlight opens its thread. Checked before the checkbox
+  // branch because both are delegated from the same handler.
+  const mark = target?.closest<HTMLElement>('mark[data-comment-id]')
+  if (mark) {
+    event.preventDefault()
+    openTextComment(mark.dataset.commentId, mark)
+    return
+  }
+
   const checkbox = target?.closest<HTMLInputElement>('input[type="checkbox"][data-cb-idx]')
   if (!checkbox) return
   event.preventDefault()
@@ -403,6 +505,65 @@ function contentClick(event: MouseEvent) {
   if (Number.isNaN(idx)) return
   handleCheckboxToggle(idx)
 }
+
+/**
+ * The text comment whose thread is open, plus where to anchor its popover.
+ *
+ * Held here rather than in the highlight itself: the marks live inside v-html
+ * output, so there is no component per highlight to own the state.
+ */
+const openTextCommentId = ref<string | null>(null)
+const textCommentAnchorEl = ref<HTMLElement | null>(null)
+
+function openTextComment(id: string | undefined, el: HTMLElement) {
+  if (!id) return
+  // Clicking the open highlight again closes it, matching the field indicators.
+  if (openTextCommentId.value === id) {
+    closeTextComment()
+    return
+  }
+  openTextCommentId.value = id
+  textCommentAnchorEl.value = el
+}
+
+function closeTextComment() {
+  openTextCommentId.value = null
+  textCommentAnchorEl.value = null
+}
+
+/**
+ * The whole thread at the clicked highlight — every comment resolving to the
+ * same range, not just the one whose id is on the mark.
+ *
+ * Replies are separate comments sharing an anchor (stage 1 has no threading),
+ * so they resolve to the SAME range and only the first one gets a mark. Keying
+ * the popover on the mark's id alone showed a single comment and made a saved
+ * reply look lost.
+ */
+const openTextComments = computed(() => {
+  const clicked = comments.value.find((c) => c.id === openTextCommentId.value)
+  if (!clicked) return []
+  const { start, end } = clicked.anchor
+  if (start == null || end == null) return [clicked]
+  return comments.value.filter(
+    (c) => c.anchor.kind === 'text' && c.anchor.start === start && c.anchor.end === end
+  )
+})
+
+/**
+ * Where to place the thread popover, in coordinates relative to the body.
+ *
+ * Read from the clicked element rather than tracked reactively: the mark is
+ * re-created on every render of the body, so a stored reference would go stale.
+ */
+const textCommentPos = computed(() => {
+  const el = textCommentAnchorEl.value
+  const host = contentRef.value
+  if (!el || !host) return null
+  const r = el.getBoundingClientRect()
+  const h = host.getBoundingClientRect()
+  return { top: r.bottom - h.top + 6, left: Math.max(0, r.left - h.left) }
+})
 
 function handleCheckboxToggle(index: number) {
   const current = entry.value
@@ -538,18 +699,16 @@ async function loadView() {
     // neighbour (TKT-WRLDAPI item 4b). Without it this page rendered draft
     // content while the selector said "published" — the API was correct and
     // the page simply never asked.
-    viewData.value = await fetchView(
-      props.entityType,
-      props.entityId,
-      worldParam.value,
-    )
+    viewData.value = await fetchView(props.entityType, props.entityId, worldParam.value)
     if (viewData.value?.entry) {
       // Seed the autosave baseline so the first toggle's no-op
       // suppression can compare against server state without waiting
       // for the response of a sentinel PATCH.
       contentAutoSave.recordServerSnapshot(viewData.value.entry)
     }
-    await Promise.all([loadCommands(), loadScopeNav()])
+    // loadComments swallows its own failures (see its doc): a comment-service
+    // problem must not fail the entity view it decorates.
+    await Promise.all([loadCommands(), loadScopeNav(), loadComments()])
   } catch (err) {
     if (isCancelledFetch(err)) return
     error.value = getErrorMessage(err, 'Failed to load entity')
@@ -616,9 +775,7 @@ async function requestDelete() {
 // Always an array. The wire keeps `_copies` absent (no capability) distinct
 // from `[]` (none declared), but this page renders nothing for both, so the
 // distinction is collapsed HERE, once, rather than carried into every reader.
-const copyOffers = computed<CopyOffer[]>(() =>
-  readOnly.value ? [] : (entry.value?._copies ?? []),
-)
+const copyOffers = computed<CopyOffer[]>(() => (readOnly.value ? [] : (entry.value?._copies ?? [])))
 
 // Faces render on EVERY screen, world-bound or not — a reader wants the way
 // back to the draft, an author wants to see what readers see, and the
@@ -630,10 +787,9 @@ const copyOffers = computed<CopyOffer[]>(() =>
 // produce a dead control — the affordance-that-lies shape.
 const faceOptions = computed<Face[] | undefined>(() =>
   entry.value?._faces?.filter(
-    (f) => schemaStore.worldForFace(props.entityType, f.face) !== undefined,
-  ),
+    (f) => schemaStore.worldForFace(props.entityType, f.face) !== undefined
+  )
 )
-
 
 function goToFace(f: Face) {
   // Addressed by WORLD, not by face: `?world=` is the read-selection
@@ -680,13 +836,13 @@ async function runCopy(offer: CopyOffer) {
       // Still worth telling them it succeeded — they asked for it — but name
       // the entity, since the page in front of them is no longer the subject.
       uiStore.success(
-        res.created ? `Created the ${face} face of ${subject}` : `Updated the ${face} face of ${subject}`,
+        res.created
+          ? `Created the ${face} face of ${subject}`
+          : `Updated the ${face} face of ${subject}`
       )
       return
     }
-    uiStore.success(
-      res.created ? `Created the ${face} face` : `Updated the ${face} face`,
-    )
+    uiStore.success(res.created ? `Created the ${face} face` : `Updated the ${face} face`)
     // Reload so the offers recompute: a face that now exists may no longer be
     // offered, and the entry's own content may have moved.
     await loadView()
@@ -733,9 +889,8 @@ const canReachDefaultWorld = computed(() => schemaStore.worldReadable(''))
 // The operator's announcement for the world on screen, or '' to announce
 // nothing. Config, not data — served identically to every principal.
 const worldBanner = computed<string>(
-  () => (world.value ? schemaStore.worlds.get(world.value)?.banner : '') || '',
+  () => (world.value ? schemaStore.worlds.get(world.value)?.banner : '') || ''
 )
-
 
 // The button NAMES A DESTINATION, so it is labelled from the destination
 // rather than from a guess about the project's vocabulary.
@@ -755,7 +910,7 @@ const worldBanner = computed<string>(
 // type-neutral and never wrong, which is the right thing to say when the type
 // declares no name for its default face at all.
 const defaultFaceLabel = computed<string>(
-  () => schemaStore.faceLabel(props.entityType, '') || 'default',
+  () => schemaStore.faceLabel(props.entityType, '') || 'default'
 )
 
 // --- The header's mobile home ------------------------------------------
@@ -776,12 +931,8 @@ const showHistory = computed(() => schemaStore.historyEnabled)
 // The same filters the menu components apply to their own props, so the
 // mobile rows and the desktop menus offer an identical set. Duplicating the
 // PREDICATE would let the two drift; duplicating the call does not.
-const overflowFaces = computed<Face[]>(() =>
-  faceOptions.value ?? [],
-)
-const overflowCopies = computed<CopyOffer[]>(() =>
-  copyOffers.value.filter((o) => o.allowed),
-)
+const overflowFaces = computed<Face[]>(() => faceOptions.value ?? [])
+const overflowCopies = computed<CopyOffer[]>(() => copyOffers.value.filter((o) => o.allowed))
 
 // Whether the overflow button renders at all. One expression, read by both
 // the button and its contents: a fourth affordance is added here and cannot
@@ -791,7 +942,7 @@ const hasOverflow = computed(
     commands.value.length > 0 ||
     overflowFaces.value.length > 0 ||
     overflowCopies.value.length > 0 ||
-    showHistory.value,
+    showHistory.value
 )
 
 function goToDefaultWorld() {
@@ -824,7 +975,7 @@ function backTargetAfterDelete(): string {
 // and the template renders plain text instead of an anchor.
 function entityTarget(
   entity: { id: string; type: string },
-  cellLink?: string,
+  cellLink?: string
 ): RouteLocationRaw | undefined {
   const path = entityDetailHref(entity, { cellLink })
   if (!path) return undefined
@@ -846,7 +997,7 @@ function navigateToEntity(entity: { id: string; type: string }, cellLink?: strin
 function onCellLinkClick(
   event: MouseEvent,
   entity: { id: string; type: string },
-  cellLink?: string,
+  cellLink?: string
 ) {
   if (shouldDeferToBrowser(event)) return
   event.preventDefault()
@@ -1158,7 +1309,7 @@ watch(
   () => worldParam.value,
   () => {
     loadView()
-  },
+  }
 )
 
 // Watch for route changes
@@ -1207,21 +1358,13 @@ watch(
       <div v-if="backTarget || scopeNav" class="scope-nav mobile-topbar">
         <BackButton v-if="backTarget" :target="backTarget" />
         <template v-if="scopeNav">
-          <RouterLink
-            v-if="scopeTarget('prev')"
-            class="scope-nav-btn"
-            :to="scopeTarget('prev')!"
-          >
+          <RouterLink v-if="scopeTarget('prev')" class="scope-nav-btn" :to="scopeTarget('prev')!">
             ← Prev <kbd>P</kbd>
           </RouterLink>
           <span v-else class="scope-nav-btn disabled">← Prev</span>
           <span class="scope-nav-progress">[{{ scopeNav.current }}/{{ scopeNav.total }}]</span>
           <span class="scope-nav-label">{{ scopeNav.label }}</span>
-          <RouterLink
-            v-if="scopeTarget('next')"
-            class="scope-nav-btn"
-            :to="scopeTarget('next')!"
-          >
+          <RouterLink v-if="scopeTarget('next')" class="scope-nav-btn" :to="scopeTarget('next')!">
             Next → <kbd>N</kbd>
           </RouterLink>
           <span v-else class="scope-nav-btn disabled">Next →</span>
@@ -1262,14 +1405,10 @@ watch(
         variant="absent"
         :label="`Not in the ${worldAbsentName} world`"
       >
-        This entity has no {{ worldAbsentName }} face yet. You are looking at
-        the {{ defaultFaceLabel }} face, which is where edits are saved.
+        This entity has no {{ worldAbsentName }} face yet. You are looking at the
+        {{ defaultFaceLabel }} face, which is where edits are saved.
         <template #actions>
-          <button
-            v-if="canReachDefaultWorld"
-            class="btn btn-secondary"
-            @click="goToDefaultWorld"
-          >
+          <button v-if="canReachDefaultWorld" class="btn btn-secondary" @click="goToDefaultWorld">
             Go to {{ defaultFaceLabel }}
           </button>
         </template>
@@ -1294,11 +1433,7 @@ watch(
             : 'Read-only in this world.'
         }}
         <template #actions>
-          <button
-            v-if="canReachDefaultWorld"
-            class="btn btn-secondary"
-            @click="goToDefaultWorld"
-          >
+          <button v-if="canReachDefaultWorld" class="btn btn-secondary" @click="goToDefaultWorld">
             Go to {{ defaultFaceLabel }}
           </button>
         </template>
@@ -1326,11 +1461,7 @@ watch(
             a world, where copyOffers is empty; see its comment for why.
           -->
           <CopyMenu :offers="copyOffers" :busy="copyBusy" @invoke="runCopy" />
-          <RouterLink
-            v-if="editTarget"
-            class="btn btn-secondary"
-            :to="editTarget"
-          >
+          <RouterLink v-if="editTarget" class="btn btn-secondary" :to="editTarget">
             Edit <kbd>E</kbd>
           </RouterLink>
           <!--
@@ -1341,7 +1472,9 @@ watch(
             not have. The mobile block below gates on the SAME flag; both sites
             must, which is the trap this header just walked into three times.
           -->
-          <RouterLink v-if="showHistory" class="btn btn-secondary" :to="historyTarget">History</RouterLink>
+          <RouterLink v-if="showHistory" class="btn btn-secondary" :to="historyTarget"
+            >History</RouterLink
+          >
           <ExportMenu :url-for="(t: string) => entityExportUrl(entityType, entityId, t)" />
           <button v-if="canDelete" class="btn btn-danger" @click="requestDelete">
             Delete <kbd>Del</kbd>
@@ -1429,11 +1562,7 @@ watch(
               >
                 {{ o.label || o.name }}
               </button>
-              <RouterLink
-                v-if="showHistory"
-                class="overflow-menu-item"
-                :to="historyTarget"
-              >
+              <RouterLink v-if="showHistory" class="overflow-menu-item" :to="historyTarget">
                 History
               </RouterLink>
             </div>
@@ -1532,23 +1661,74 @@ watch(
           <PropertyDisplay
             v-else-if="section.display === 'properties'"
             :properties="mapFieldsToProperties(section.fields)"
-          />
+          >
+            <!-- Comment affordance per field (TKT-FIO205). Filled only here:
+                 the same component renders list cells and kanban cards, where
+                 a comment control would be noise. -->
+            <template v-if="commentsEnabled" #label-affordance="{ property, index }">
+              <CommentIndicator
+                :entity-type="entityType"
+                :entity-id="commentEntityId"
+                :anchor="{ kind: 'property', ref: property.name }"
+                :comments="commentsForProperty(property.name)"
+                :flip="shouldFlipPopover(section.fields, index)"
+                @changed="loadComments"
+              />
+            </template>
+          </PropertyDisplay>
 
           <!-- Entry content with mermaid + interactive checkboxes.
                Function ref instead of string ref because this template lives
                inside a v-for: Vue would otherwise collect template-refs of
                the same name into an array per iteration. -->
-          <div
-            v-else-if="section === entryContentSection"
-            :ref="
-              (el) => {
-                contentRef = el as HTMLElement | null
-              }
-            "
-            class="content-body md-body"
-            @click="contentClick"
-            v-html="renderedEntryContent"
-          />
+          <div v-else-if="section === entryContentSection" class="entry-content-host">
+            <div
+              :ref="
+                (el) => {
+                  contentRef = el as HTMLElement | null
+                }
+              "
+              class="content-body md-body"
+              :data-comment-source="entryContentSection.content || ''"
+              @click="contentClick"
+              v-html="renderedEntryContent"
+            />
+            <!-- Select-to-comment over the body (TKT-FIO205 stage 2). Absolute
+                 within .entry-content-host, so its offsets are relative to the
+                 body rather than the viewport. -->
+            <TextSelectionComment
+              v-if="commentsEnabled"
+              :entity-type="entityType"
+              :entity-id="commentEntityId"
+              :container="contentRef"
+              @added="loadComments"
+            />
+
+            <!-- Comment affordances for blocks that cannot be text-selected:
+                 images and mermaid/PlantUML diagrams. They anchor to the
+                 block's SOURCE markdown, so they ride the same `text` kind. -->
+            <BlockCommentOverlay
+              v-if="commentsEnabled"
+              :entity-type="entityType"
+              :entity-id="commentEntityId"
+              :container="contentRef"
+              :render-key="renderedEntryContent"
+              :comments="comments"
+              @added="loadComments"
+            />
+
+            <!-- The thread for a clicked highlight. Anchored to the mark, which
+                 lives in v-html output and so has no component of its own. -->
+            <TextCommentPopover
+              v-if="commentsEnabled && textCommentPos && openTextComments.length > 0"
+              :entity-type="entityType"
+              :entity-id="commentEntityId"
+              :comments="openTextComments"
+              :position="textCommentPos"
+              @changed="loadComments"
+              @close="closeTextComment"
+            />
+          </div>
 
           <!-- Other content sections (e.g. content cards from a configured view). -->
           <div
@@ -1876,6 +2056,17 @@ watch(
              container's flex `gap` for free instead of duplicating that
              spacing via its own margin. -->
         <DocumentsPanel :entity-type="entityType" :entity-id="entityId" />
+
+        <!-- Comment thread. Self-gating: renders nothing unless the schema
+             marks this type commentable, so a project with no `comments:`
+             block sees the page it always saw. -->
+        <CommentsPanel
+          :entity-type="entityType"
+          :entity-id="commentEntityId"
+          :comments="comments"
+          :section-ids="commentSectionIds"
+          @changed="loadComments"
+        />
       </div>
 
       <CommandModal ref="commandModalRef" :entity-id="entityId" />
@@ -1892,6 +2083,56 @@ watch(
 </template>
 
 <style scoped>
+/* Positioning context for the select-to-comment popup, so its coordinates are
+ * relative to the body rather than the viewport (which would drift on scroll). */
+.entry-content-host {
+  position: relative;
+}
+
+/* Text-anchored comment highlights (TKT-FIO205 stage 2).
+ *
+ * :deep() because the marks are inserted into v-html output, which scoped-style
+ * hashing does not reach. */
+.content-body :deep(mark[data-comment-id]) {
+  /* Yellow, the annotation convention — and distinct from the accent blue that
+   * already marks links and interactive chrome in the body. */
+  background: color-mix(in srgb, var(--comment-highlight) 32%, transparent);
+  border-bottom: 2px solid var(--comment-highlight);
+  border-radius: 2px;
+  padding: 0 1px;
+  color: inherit;
+  cursor: pointer;
+}
+
+/* A highlighted LINK keeps its own click: navigation is the primary action and
+ * a mark must not swallow it. The chip beside it opens the thread instead. */
+.content-body :deep(mark[data-comment-id] a) {
+  cursor: pointer;
+}
+
+.content-body :deep(.comment-chip) {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: super;
+  margin-left: 2px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--comment-highlight);
+  color: var(--text-color);
+  font-size: 10px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+/* An uncertain anchor resolved below the exact band: the text may have moved,
+ * so it reads as provisional rather than as a confirmed location. */
+.content-body :deep(mark[data-comment-uncertain]) {
+  background: color-mix(in srgb, var(--warning-color) 34%, transparent);
+  border-bottom-style: dashed;
+  border-bottom-color: var(--warning-color);
+}
+
 .entity-detail {
   max-width: 1200px;
   padding: 0 0 24px;
@@ -2457,5 +2698,4 @@ watch(
     padding-bottom: 16px;
   }
 }
-
 </style>

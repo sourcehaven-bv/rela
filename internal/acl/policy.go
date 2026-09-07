@@ -58,6 +58,49 @@ const PermHistoryRead = "history:read"
 // documented in docs/acl-security.md alongside it.
 const PermHistoryReadRedacted = "history:read-redacted"
 
+// Comment permissions gate the commentary layer (internal/comments), which
+// lives alongside the graph rather than in it. They are resolved PER TARGET
+// ENTITY via [Request.HoldsPermissionForEntity], so a role conferred by an
+// ownership relation to the commented-on entity grants them — "the assignee
+// may comment on their own ticket" needs no special case.
+//
+// Read is floored by the target's own read verdict: a principal who cannot
+// read an entity cannot read its comments however these grants read, because
+// otherwise a comment thread becomes an existence oracle for entities the
+// principal is denied.
+const (
+	// PermCommentRead permits listing an entity's comments.
+	PermCommentRead = "comment:read"
+
+	// PermCommentAdd permits adding a comment.
+	PermCommentAdd = "comment:add"
+
+	// PermCommentUpdateOwn permits editing or resolving a comment the
+	// principal authored.
+	PermCommentUpdateOwn = "comment:update-own"
+
+	// PermCommentUpdateAny permits editing or resolving anyone's comment — a
+	// moderator capability. Implies [PermCommentUpdateOwn].
+	PermCommentUpdateAny = "comment:update-any"
+
+	// PermCommentDeleteOwn permits deleting a comment the principal authored.
+	PermCommentDeleteOwn = "comment:delete-own"
+
+	// PermCommentDeleteAny permits deleting anyone's comment — a moderator
+	// capability. Implies [PermCommentDeleteOwn].
+	PermCommentDeleteAny = "comment:delete-any"
+)
+
+// mutatingCommentPerms are the comment permissions that require a covering
+// [PermCommentRead], mirroring the entity-verb rule that update/delete imply
+// read. [PermCommentAdd] is deliberately absent: write-only commenting (leave
+// a remark, cannot read the thread) is a coherent posture, exactly as
+// create-without-read is for entities.
+var mutatingCommentPerms = []string{
+	PermCommentUpdateOwn, PermCommentUpdateAny,
+	PermCommentDeleteOwn, PermCommentDeleteAny,
+}
+
 // BuiltinPermissions returns every global named permission rela itself ships
 // and consumes. These are granted through a role's `permissions:` list exactly
 // like the operator-defined delegate-X permissions, but — unlike those — they
@@ -70,7 +113,12 @@ const PermHistoryReadRedacted = "history:read-redacted"
 // added here; the alternative — each consumer hardcoding its own list — is
 // what let history:read be reported as dead config while it was in use.
 func BuiltinPermissions() []string {
-	return []string{PermHistoryRead, PermHistoryReadRedacted}
+	return []string{
+		PermHistoryRead, PermHistoryReadRedacted,
+		PermCommentRead, PermCommentAdd,
+		PermCommentUpdateOwn, PermCommentUpdateAny,
+		PermCommentDeleteOwn, PermCommentDeleteAny,
+	}
 }
 
 // Policy is the declarative ACL configuration parsed from `acl.yaml`
@@ -1259,35 +1307,74 @@ func (p *Policy) Validate() error {
 // complexity in bounds, the same way validateUnmatchedPrincipal was.
 func (p *Policy) validateWriteReadCoverage() error {
 	for name, role := range p.Roles {
-		// Update and Delete require read coverage: you must be able to read a
-		// type to modify or remove it (TKT-4LQMWP, was the write⊆read invariant
-		// RR-W2J6). Create is EXEMPT — a role may create a type it cannot read,
-		// reading back only what it authored via a role-conferring relation.
-		for _, verb := range []struct {
-			name  string
-			types []string
-		}{{"update", role.Update}, {"delete", role.Delete}} {
-			for _, t := range verb.types {
-				// Compare on the TYPE half. A state-shaped grant
-				// (`update: ["policy@draft"]`) still requires read coverage
-				// of `policy` — the face narrows WHICH FACE is writable,
-				// not which type — so checking the joined string would
-				// reject every state grant with a hint telling the operator
-				// to add "policy@draft" to their read list, which is not a
-				// thing a read list can hold.
-				target := grantTypeOf(t)
-				if !roleGrantsRead(role, target) {
-					hint := fmt.Sprintf("add %q (or \"*\")", target)
-					if target == "*" {
-						hint = `add "*"`
-					}
-					return fmt.Errorf(
-						"roles.%s: grants %s on %q without a covering read grant; "+
-							"%s to the role's read list — a principal must be able to "+
-							"read every type it can %s (create is exempt)",
-						name, verb.name, t, hint, verb.name)
-				}
+		if err := validateVerbReadCoverage(name, role); err != nil {
+			return err
+		}
+		if err := validateCommentPerms(name, role); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateVerbReadCoverage enforces that Update and Delete imply read: you must
+// be able to read a type to modify or remove it (TKT-4LQMWP, was the
+// write⊆read invariant RR-W2J6).
+//
+// Create is EXEMPT — a role may create a type it cannot read, reading back only
+// what it authored via a role-conferring relation.
+func validateVerbReadCoverage(name string, role RoleDef) error {
+	for _, verb := range []struct {
+		name  string
+		types []string
+	}{{"update", role.Update}, {"delete", role.Delete}} {
+		for _, t := range verb.types {
+			// Compare on the TYPE half. A state-shaped grant
+			// (`update: ["policy@draft"]`) still requires read coverage of
+			// `policy` — the face narrows WHICH FACE is writable, not which
+			// type — so checking the joined string would reject every state
+			// grant with a hint telling the operator to add "policy@draft" to
+			// their read list, which is not a thing a read list can hold.
+			target := grantTypeOf(t)
+			if roleGrantsRead(role, target) {
+				continue
 			}
+			hint := fmt.Sprintf("add %q (or \"*\")", target)
+			if target == "*" {
+				hint = `add "*"`
+			}
+			return fmt.Errorf(
+				"roles.%s: grants %s on %q without a covering read grant; "+
+					"%s to the role's read list — a principal must be able to "+
+					"read every type it can %s (create is exempt)",
+				name, verb.name, t, hint, verb.name)
+		}
+	}
+	return nil
+}
+
+// validateCommentPerms applies the covering-read rule to the commentary layer:
+// a role that may edit or delete comments must be able to read them.
+//
+// Without it a policy granting only comment:delete-any loads cleanly and lets
+// its holder remove comments it can never see — an unauditable capability and a
+// usability trap. [PermCommentAdd] is exempt for the same reason `create` is
+// exempt from the entity-verb rule: write-only commenting is a coherent posture.
+//
+// Evaluated PER ROLE. Roles union at request time, but nothing guarantees a
+// principal holding this role also holds one that grants the read, so a role
+// carrying a mutating permission alone is misconfigured on its own terms.
+func validateCommentPerms(name string, role RoleDef) error {
+	if slices.Contains(role.Permissions, PermCommentRead) {
+		return nil
+	}
+	for _, perm := range mutatingCommentPerms {
+		if slices.Contains(role.Permissions, perm) {
+			return fmt.Errorf(
+				"roles.%s: grants %q without %q; add %q to the role's "+
+					"permissions list — a principal must be able to read "+
+					"the comments it can change (%q is exempt)",
+				name, perm, PermCommentRead, PermCommentRead, PermCommentAdd)
 		}
 	}
 

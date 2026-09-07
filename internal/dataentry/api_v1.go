@@ -58,6 +58,10 @@ func toV1EntityType(
 		Properties:  make(map[string]v1.PropertyDef, len(def.Properties)),
 		Faces:       schemaFaceDefs(def),
 		BareFace:    def.BareFace,
+		// Whether this type accepts comments (TKT-FIO205). Policy, not
+		// permission: it tells the SPA whether to offer a comment affordance
+		// at all, never that the caller may use it.
+		Commentable: metamodel.NewCommentPolicy(meta).Commentable(name),
 	}
 	if prefixes := def.GetIDPrefixes(); len(prefixes) > 0 {
 		et.IDPrefix = prefixes[0]
@@ -149,6 +153,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_openapi.json", a.handleV1OpenAPI)
 	mux.HandleFunc("/api/v1/_commands", a.handleV1Commands)
 	mux.HandleFunc("/api/v1/_transforms", a.export.handleV1Transforms)
+	mux.HandleFunc("/api/v1/_comments/", a.comments.handleV1Comments)
 	mux.HandleFunc("/api/v1/_templates/", a.handleV1Templates)
 	mux.HandleFunc("/api/v1/_views/", a.views.handleV1Views)
 	a.registerCopyRoutes(mux)
