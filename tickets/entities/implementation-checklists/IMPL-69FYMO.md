@@ -16,26 +16,31 @@ status: done
 - [x] Error handling in place (errors surfaced, not swallowed)
 
 Unit: `internal/predicate/prefilter_test.go` (ConstEqualities per shape,
-References/Functions), `internal/predicatefns/currentuser_test.go` +
-`evaluator_currentuser_test.go` (bind fail-closed, MatchesAs binds only when
-required, prefilter spec drift guard, empty identity never matches),
-`internal/queryplan/conditionprefilter_test.go`
-+ `queryplan_test.go` (lowering, index derivation, agreement, static specs,
-Load refuses a broken condition), `internal/conditionlint/nextaction_test.go`
-(user profile, identity contract, free-text refusal, Types),
+References/Functions, one expression per IR node type),
+`internal/predicatefns/currentuser_test.go` + `evaluator_currentuser_test.go`
+(bind fail-closed, MatchesAs binds only when required, prefilter spec drift
+guard incl. RequiresCurrentUser, empty identity never matches),
+`internal/queryplan/conditionprefilter_test.go` + `queryplan_test.go` (lowering,
+index derivation, agreement, static specs, Load refuses a broken condition),
+`internal/conditionlint/nextaction_test.go` (user profile, identity contract,
+free-text refusal, Types), `internal/nextaction/condition_test.go`
+(ErrIdentityRequired skips only that source; other errors propagate),
 `internal/appbuild/nextaction_matchers_test.go` (scope binder, agreement,
-mismatch refusal), `internal/affordances/currentuser_sugar_test.go` (sugar,
-unknown placeholder via `everyone`).
+conflict), `internal/affordances/currentuser_sugar_test.go` (sugar; unknown
+placeholder via `everyone`).
 
 Integration: `internal/dataentry/nextaction_condition_test.go` — pre-filter
 reaches the store while the Go pass stays authoritative; real
 `appbuild.NextActionMatchers` behind the HTTP handler for all three spellings
-across principals; unidentified request → `next_action_identity_required`;
-hidden property makes the condition false end to end.
+across principals; unidentified caller gets the identity-free source and null
+when only per-user sources exist; identity conflict →
+`next_action_identity_conflict` with no identity echoed; hidden property makes
+the condition false end to end.
 
-Errors: `ErrNoCurrentUser` → `nextaction.ErrIdentityRequired` → HTTP 500 with a
-named code and a WARN log; a non-compiling or free-text condition is a load
-error; a stamp disagreeing with the principal is refused.
+Errors: an unidentified caller's per-user source is SKIPPED with a WARN naming
+the source (never a placeholder match, never a failure of other sources); a
+stamp/principal conflict is refused whole with a named code; a non-compiling or
+free-text condition is a load error.
 
 ## Test Quality
 
@@ -47,7 +52,7 @@ error; a stamp disagreeing with the principal is refused.
 
 Fixtures: `seedAssignedTicket`, `withTicketAssignment`, `recordingMatcher`,
 `matcherFuncFor`, `scoped`, `prefilterEnv`/`fullSpec`,
-`matcherMeta`/`matcherCfg`.
+`matcherMeta`/`matcherCfg`, `matchIDs`.
 
 ## Manual Verification
 
@@ -62,7 +67,8 @@ Scratch project (`/tmp/rela-cu-verify`): `task` with `assignee` (string) and
 watchers [dave, alice], unassigned); one source `query: "type:task
 prop:status=open"`, `condition: "is_current_user(entity.assignee) or
 has_current_user(entity.watchers)"`. `rela-server -principal-header
-X-Forwarded-User`, `GET /api/v1/_next_action`:
+X-Forwarded-User`, `GET /api/v1/_next_action`, repeated on the final tree (after
+the code-review fixes):
 
 | principal | result |
 |---|---|
@@ -70,10 +76,10 @@ X-Forwarded-User`, `GET /api/v1/_next_action`:
 | bob | `T-bob` |
 | dave | `T-watched` (watcher) |
 | erin | `{"suggestion": null}` |
-| no header (placeholder principal) | HTTP 500 `next_action_identity_required`, WARN logged, no identity or entity data in the body |
+| no header (placeholder principal) | HTTP 200 `{"suggestion": null}`; WARN `nextaction: source skipped, its condition needs an identified principal source=assigned`; no identity or entity data in body or log |
 
 Gates on the final tree: full `./internal/... ./cmd/...` suite, golangci-lint,
-arch-lint, comment-lint, plimsoll, coverage floors — all pass.
+arch-lint, comment-lint, plimsoll, coverage floors (79.3%) — all pass.
 
 ## Quality
 
@@ -90,5 +96,6 @@ Patterns: consumer-side interfaces (`ConditionPrefilterer`,
 `NextActionRequestScope`, `PrincipalResolver`), optional capability by type
 assertion, belt-and-braces pushdown identical to `PushdownPrefilters`, shared
 eligibility core for pushdown and index inference, `principal.Unknown` replaces
-three bare literals. Security: design review RR-2ITZ84/RR-LD2B23 addressed
-(affordance placeholder identity; stamp/principal agreement).
+three bare literals, sugar bindings built once per binding context. Security:
+design review RR-2ITZ84/RR-LD2B23 addressed; code review's security pass found
+no issues.

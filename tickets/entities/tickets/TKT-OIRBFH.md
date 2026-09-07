@@ -5,7 +5,7 @@ title: 'Predicate language: current_user with is_current_user/has_current_user s
 kind: enhancement
 priority: medium
 effort: m
-status: review
+status: done
 ---
 
 ## Problem
@@ -112,10 +112,10 @@ disagrees with it; matchers and pre-filters only read what it stamped.
 - A per-user condition for an unidentified caller (unstamped, or the `unknown`
 placeholder — now `principal.Unknown`) makes that SOURCE contribute nothing,
 with a WARN naming it: `nextaction.ErrIdentityRequired` is a per-source skip in
-the engine, never a match against a placeholder and never a failure of the
-other sources (code review RR-635ZA0). A request carrying two DISAGREEING
-identities — a boundary stamp and a principal naming different users — is
-refused whole with `next_action_identity_conflict` (`nextaction.ErrIdentityConflict`).
+the engine, never a match against a placeholder and never a failure of the other
+sources (code review RR-635ZA0). A request carrying two DISAGREEING identities —
+a boundary stamp and a principal naming different users — is refused whole with
+`next_action_identity_conflict` (`nextaction.ErrIdentityConflict`).
 
 ### Deliberately not exposed
 
@@ -130,8 +130,8 @@ not a graph identity — revisit with [[TKT-ZQV9O5]]).
 `has_current_user(entity.xs)` compile and evaluate in affordance `when:` and
 next-action `condition:`; referencing them in a validation rule is a load error.
 2. An absent/empty identity fails closed (`ErrNoCurrentUser`; affordance grant
-refused; next-action source skipped, other sources unaffected); pushdown with
-an empty identity pushes nothing.
+refused; next-action source skipped, other sources unaffected); pushdown with an
+empty identity pushes nothing.
 3. Equality and membership conjuncts under a top-level `and` reach the store as
 pre-filters; `or`/`not`/typed comparisons do not (tests per restriction).
 4. Pushed scalar equalities and derived index columns agree (drift test).
