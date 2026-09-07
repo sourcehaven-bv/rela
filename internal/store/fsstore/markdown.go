@@ -136,9 +136,7 @@ func marshalOrdered(data map[string]any, keyOrder []string) ([]byte, error) {
 		if !ok {
 			continue
 		}
-		node.Content = append(node.Content,
-			&yaml.Node{Kind: yaml.ScalarNode, Value: key},
-		)
+		node.Content = append(node.Content, markdown.KeyNode(key))
 		valNode, err := valueToNode(val)
 		if err != nil {
 			return nil, err
@@ -156,9 +154,7 @@ func marshalOrdered(data map[string]any, keyOrder []string) ([]byte, error) {
 	sort.Strings(remaining)
 
 	for _, key := range remaining {
-		node.Content = append(node.Content,
-			&yaml.Node{Kind: yaml.ScalarNode, Value: key},
-		)
+		node.Content = append(node.Content, markdown.KeyNode(key))
 		valNode, err := valueToNode(data[key])
 		if err != nil {
 			return nil, err
@@ -169,12 +165,12 @@ func marshalOrdered(data map[string]any, keyOrder []string) ([]byte, error) {
 	return yaml.Marshal(node)
 }
 
+// valueToNode delegates to markdown.ValueToNode so entity writes (here) and
+// relation writes (internal/markdown) cannot disagree about how a value is
+// encoded. They were separate copies until BUG-B1RA3J, where fixing one and
+// re-running the fuzz target still failed.
 func valueToNode(val any) (*yaml.Node, error) {
-	var node yaml.Node
-	if err := node.Encode(val); err != nil {
-		return nil, err
-	}
-	return &node, nil
+	return markdown.ValueToNode(val)
 }
 
 // --- markdown content formatting ---
