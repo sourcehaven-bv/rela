@@ -911,10 +911,11 @@ func (m *MemStore) GetRelation(_ context.Context, from, relType, to string) (*en
 
 func (m *MemStore) ListRelations(_ context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error] {
 	m.mu.RLock()
+	match := storeutil.NewRelationMatcher(q)
 	snapshot := make([]*entity.Relation, 0)
 	for _, key := range m.relationOrder {
 		r := m.relations[key]
-		if !matchRelation(r, q) {
+		if !match(r) {
 			continue
 		}
 		snapshot = append(snapshot, r.Clone())
@@ -939,8 +940,9 @@ func (m *MemStore) ListRelationsPage(_ context.Context, q store.RelationQuery) (
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	match := storeutil.NewRelationMatcher(q)
 	keys := storeutil.PaginateSortedKeys(m.relationOrder, cursorKey, q.Limit, func(key string) bool {
-		return matchRelation(m.relations[key], q)
+		return match(m.relations[key])
 	})
 
 	items := make([]*entity.Relation, 0, len(keys.Keys))
@@ -952,15 +954,14 @@ func (m *MemStore) ListRelationsPage(_ context.Context, q store.RelationQuery) (
 	return store.Page[*entity.Relation]{Items: items, NextCursor: keys.NextCursor}, nil
 }
 
-var matchRelation = storeutil.MatchRelation
-
 func (m *MemStore) CountRelations(_ context.Context, q store.RelationQuery) (int, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	match := storeutil.NewRelationMatcher(q)
 	count := 0
 	for _, key := range m.relationOrder {
-		if matchRelation(m.relations[key], q) {
+		if match(m.relations[key]) {
 			count++
 		}
 	}

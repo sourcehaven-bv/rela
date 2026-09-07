@@ -324,6 +324,31 @@ var errListLoad = errors.New("list load failed")
 // search_failed at the call site); ACL query failures are wrapped in
 // errACLListQuery so call sites map them via writeGateError. Everything
 // else degrades to an empty/whole set as the list endpoint always did.
+// listPage returns one page of the list plus the scoped total. A request the
+// store can page by itself (listpushdown.go) costs one count and one bounded
+// read; everything else takes the whole-type Go pipeline and slices it.
+func (a *App) listPage(
+	ctx context.Context, typeName string, query map[string][]string, page, perPage int,
+) (rows []*entityPkg.Entity, total int, err error) {
+	if !worldFromContext(ctx).blocksAllReads() {
+		rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
+		isRelationKey := relationFilterClassifier(a.Meta(), a.Cfg(), typeName)
+		if plan, ok := planListPushdown(
+			a.Meta(), typeName, query, rqr, worldScopeFrom(ctx), page, perPage, isRelationKey,
+		); ok {
+			return plan.run(ctx, a.Services().Store)
+		}
+	}
+	all, err := a.scopedSortedEntities(ctx, typeName, query)
+	if err != nil {
+		return nil, 0, err
+	}
+	total = len(all)
+	start := min((page-1)*perPage, total)
+	end := min(start+perPage, total)
+	return all[start:end], total, nil
+}
+
 func (a *App) scopedSortedEntities(
 	ctx context.Context,
 	typeName string,
@@ -336,6 +361,8 @@ func (a *App) scopedSortedEntities(
 	}
 	rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
 
+	// Content-free rows throughout (rowcontent.go): the pipeline below reads
+	// properties only, and the served page loads bodies afterwards if asked.
 	var entities []*entityPkg.Entity
 	switch {
 	case rqr.DenyAll:
@@ -353,7 +380,7 @@ func (a *App) scopedSortedEntities(
 		// (TKT-O7R2A1): a face allowlist carried on only the GraphQuery
 		// would leave the AllowAll population — the most privileged — with
 		// no face narrowing, and the two paths would disagree.
-		for e, err := range a.Services().Store.ListEntities(ctx, store.EntityQuery{
+		for h, err := range store.ListEntityHeaders(ctx, a.Services().Store, store.EntityQuery{
 			Type:   typeName,
 			World:  worldScopeFrom(ctx),
 			FaceIn: rqr.Faces,
@@ -361,7 +388,7 @@ func (a *App) scopedSortedEntities(
 			if err != nil {
 				return nil, fmt.Errorf("%w: %w", errListLoad, err)
 			}
-			entities = append(entities, e)
+			entities = append(entities, headerEntity(h))
 		}
 	case rqr.Query == nil:
 		// Defensive: a zero ReadQueryResult would otherwise alias
@@ -375,11 +402,11 @@ func (a *App) scopedSortedEntities(
 		wq := *rqr.Query
 		wq.World = worldScopeFrom(ctx)
 		wq.FaceIn = rqr.Faces
-		for e, err := range a.Services().Store.GraphQuery(ctx, wq) {
+		for h, err := range store.GraphQueryHeaders(ctx, a.Services().Store, wq) {
 			if err != nil {
 				return nil, fmt.Errorf("%w: %w", errACLListQuery, err)
 			}
-			entities = append(entities, e)
+			entities = append(entities, headerEntity(h))
 		}
 	}
 
@@ -535,16 +562,100 @@ func (a *App) applyRelationFilters(
 		}
 
 		direction, _ := cfg.RelationFilterDirection(typeName, relation)
+		matched, merr := matchRelationFilterMany(ctx, a.Services(), entities, relation, direction, want)
+		if merr != nil {
+			return nil, fmt.Errorf("%w: relation filter %q: %w", errListLoad, relation, merr)
+		}
 		filtered := entities[:0]
 		for _, e := range entities {
-			matched := a.matchRelationFilter(ctx, e.ID, relation, direction, want)
-			if (operator == "eq" && matched) || (operator == "ne" && !matched) {
+			if (operator == "eq" && matched[e.ID]) || (operator == "ne" && !matched[e.ID]) {
 				filtered = append(filtered, e)
 			}
 		}
 		entities = filtered
 	}
 	return entities, nil
+}
+
+// matchRelationFilterMany evaluates a relation filter for every row at once
+// (TKT-1U8XYN): one relation query for all rows, one content-free header
+// read for every distinct neighbor, one gate probe per neighbor type. It
+// replaced a per-row helper that ran one relation query plus one entity load
+// per neighbor for each row. The verdict per row is unchanged — the row
+// matches when at least one READABLE neighbor over the relation carries the
+// wanted display title (RR-HK1XNO) — but the cost no longer grows with the
+// type's row count times its fan-out. A free function taking its read seam,
+// not an App method — App sits at its load line (see worldneighbors.go).
+//
+// A store failure is returned, never folded into an empty verdict map: an
+// empty map reads as "no row matches", which for a `ne` filter admits EVERY
+// row — a backend fault would silently widen a filter whose job is to narrow.
+func matchRelationFilterMany(
+	ctx context.Context, svc Services, rows []*entityPkg.Entity,
+	relation string, direction dataentryconfig.Direction, want string,
+) (map[string]bool, error) {
+	matched := make(map[string]bool, len(rows))
+	if len(rows) == 0 {
+		return matched, nil
+	}
+	ids := make([]string, 0, len(rows))
+	for _, e := range rows {
+		ids = append(ids, e.ID)
+	}
+	q := store.RelationQuery{EntityIDs: ids, Type: relation, Direction: relationDirection(direction)}
+	neighborsOf := make(map[string][]string, len(rows)) // row id → neighbor ids
+	var neighborIDs []string
+	seen := make(map[string]struct{})
+	for r, err := range svc.Store.ListRelations(ctx, q) {
+		if err != nil {
+			return nil, err
+		}
+		rowID, targetID := r.From, r.To
+		if direction.IsIncoming() {
+			rowID, targetID = r.To, r.From
+		}
+		neighborsOf[rowID] = append(neighborsOf[rowID], targetID)
+		if _, dup := seen[targetID]; !dup {
+			seen[targetID] = struct{}{}
+			neighborIDs = append(neighborIDs, targetID)
+		}
+	}
+	if len(neighborIDs) == 0 {
+		return matched, nil
+	}
+
+	// Which neighbors carry the wanted title, by type — then gate per type.
+	candidatesByType := map[string][]string{}
+	for h, err := range store.ListEntityHeaders(ctx, svc.Store, store.EntityQuery{IDs: neighborIDs}) {
+		if err != nil {
+			return nil, err
+		}
+		if svc.Meta.DisplayTitle(h.ID, h.Type, h.Properties) == want {
+			candidatesByType[h.Type] = append(candidatesByType[h.Type], h.ID)
+		}
+	}
+	readable := make(map[string]bool)
+	gate := readGateFromContext(ctx)
+	for typ, cids := range candidatesByType {
+		perm, err := gate.PermitsReadMany(ctx, typ, cids)
+		if err != nil {
+			continue
+		}
+		for _, id := range cids {
+			if perm[id] {
+				readable[id] = true
+			}
+		}
+	}
+	for rowID, targets := range neighborsOf {
+		for _, t := range targets {
+			if readable[t] {
+				matched[rowID] = true
+				break
+			}
+		}
+	}
+	return matched, nil
 }
 
 // parseRelationFilterKey parses a `filter[<rel>]` or `filter[<rel>][<op>]` key
@@ -571,71 +682,6 @@ func parseRelationFilterKey(key string) (relation, operator string, ok bool) {
 	return parts[0], operator, true
 }
 
-// matchRelationFilter reports whether entityID has an edge of the given
-// relation+direction to a neighbor the caller can READ whose display title
-// equals want. It gates neighbor entities through the read gate so a hidden
-// neighbor cannot be used as a title-match inference channel (RR-HK1XNO), and
-// short-circuits as soon as a readable neighbor's title matches (RR-38K7K9).
-//
-// Neighbors are gated in batches grouped by type via readGate.PermitsReadMany
-// (one call per neighbor type on the row), rather than a per-neighbor gate
-// call. When the sibling helper App.visibleRelationIDs (TKT-ODHV2D) merges,
-// this should converge on it.
-func (a *App) matchRelationFilter(
-	ctx context.Context, entityID, relation string, direction dataentryconfig.Direction, want string,
-) bool {
-	svc := a.Services()
-	q := store.RelationQuery{
-		EntityID:  entityID,
-		Type:      relation,
-		Direction: relationDirection(direction),
-	}
-
-	// Load each neighbor once, keeping only those whose title matches want.
-	// Group the candidates by type so the read gate can batch per type.
-	candidatesByType := map[string][]string{}
-	entByID := map[string]*entityPkg.Entity{}
-	for r, err := range svc.Store.ListRelations(ctx, q) {
-		if err != nil {
-			return false
-		}
-		targetID := r.To
-		if direction.IsIncoming() {
-			targetID = r.From
-		}
-		if _, seen := entByID[targetID]; seen {
-			continue
-		}
-		e, err := svc.Store.GetEntity(ctx, targetID)
-		if err != nil {
-			continue // dangling relation
-		}
-		entByID[targetID] = e
-		if svc.Meta.DisplayTitle(e.ID, e.Type, e.Properties) == want {
-			candidatesByType[e.Type] = append(candidatesByType[e.Type], targetID)
-		}
-	}
-	if len(candidatesByType) == 0 {
-		return false
-	}
-
-	// A row matches iff at least one title-matching neighbor is READABLE. Gate
-	// only the title-matching candidates (the minimal set) per type.
-	gate := readGateFromContext(ctx)
-	for typ, ids := range candidatesByType {
-		perm, err := gate.PermitsReadMany(ctx, typ, ids)
-		if err != nil {
-			continue
-		}
-		for _, id := range ids {
-			if perm[id] {
-				return true // readable title match (RR-HK1XNO honored)
-			}
-		}
-	}
-	return false
-}
-
 // queryGet returns the first value for key from a raw query map, or "".
 // url.Values.Get over a plain map[string][]string without allocating.
 func queryGet(query map[string][]string, key string) string {
@@ -647,25 +693,23 @@ func queryGet(query map[string][]string, key string) string {
 
 func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeName, plural string) {
 	query := r.URL.Query()
+	page, perPage := parseV1Pagination(query)
 
-	entities, err := a.scopedSortedEntities(r.Context(), typeName, query)
+	entities, total, err := a.listPage(r.Context(), typeName, query, page, perPage)
 	if err != nil {
 		writeListPipelineError(w, r, err)
 		return
 	}
+	end := (page-1)*perPage + len(entities)
 
-	// Pagination
-	total := len(entities)
-	page, perPage := parseV1Pagination(query)
-	start := (page - 1) * perPage
-	end := start + perPage
-	if start > total {
-		start = total
+	// Bodies are opt-in for a collection (rowcontent.go): one read per
+	// distinct face on the page, never for the rows that were paged out.
+	if wantContent(query) {
+		if err := loadRowContent(r.Context(), a.Services().Store, entities); err != nil {
+			writeListPipelineError(w, r, fmt.Errorf("%w: %w", errListLoad, err))
+			return
+		}
 	}
-	if end > total {
-		end = total
-	}
-	entities = entities[start:end]
 
 	// Check if includes are requested (for relation columns)
 	includes := query.Get("include")
@@ -1648,6 +1692,14 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 		}
 		entities = filtered
 	}
+	// Search rows are content-free (rowcontent.go); bodies are opt-in and
+	// bounded by the search result cap.
+	if wantContent(r.URL.Query()) {
+		if err := loadRowContent(r.Context(), a.Services().Store, entities); err != nil {
+			writeListPipelineError(w, r, fmt.Errorf("%w: %w", errListLoad, err))
+			return
+		}
+	}
 
 	meta := a.State().Meta
 	data := make([]v1.Entity, 0, len(entities))
@@ -2053,24 +2105,36 @@ func applyV1Sorting(entities []*entityPkg.Entity, query map[string][]string) []*
 	sorted := make([]*entityPkg.Entity, len(entities))
 	copy(sorted, entities)
 
-	sort.Slice(sorted, func(i, j int) bool {
+	// Byte-wise on the string form, a row WITHOUT the property sorting as
+	// the largest value (last ascending, first descending), id as the final
+	// tiebreak — the same order a store pages by (store.GraphQuery.OrderBy),
+	// so a request served either way reads the same. That replaced the
+	// accident of comparing "<nil>" as text, which put missing values
+	// between digits and letters.
+	sort.SliceStable(sorted, func(i, j int) bool {
 		for _, spec := range sortSpecs {
-			vi := sorted[i].Properties[spec.Property]
-			vj := sorted[j].Properties[spec.Property]
-
+			// A JSON null is "no value" here as it is in SQL (`->>` yields
+			// NULL), so both paths place it with the absent rows.
+			vi, oki := sorted[i].Properties[spec.Property]
+			vj, okj := sorted[j].Properties[spec.Property]
+			oki, okj = oki && vi != nil, okj && vj != nil
+			if oki != okj {
+				return oki != spec.IsDescending()
+			}
+			if !oki {
+				continue
+			}
 			si := fmt.Sprintf("%v", vi)
 			sj := fmt.Sprintf("%v", vj)
-
 			if si == sj {
 				continue
 			}
-
 			if spec.IsDescending() {
 				return si > sj
 			}
 			return si < sj
 		}
-		return false
+		return sorted[i].ID < sorted[j].ID
 	})
 
 	return sorted

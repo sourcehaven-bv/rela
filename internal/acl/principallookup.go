@@ -6,49 +6,41 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// PrincipalLookup resolves the raw principal identifier to a user entity
-// by property equality. It is the narrow, consumer-side contract the
-// resolver needs for `principal_property` substitution — declared here
-// (not next to the store) per CLAUDE.md's "interfaces at the call site"
-// rule. The wiring site supplies a store-backed implementation
-// (StorePrincipalLookup).
-//
-// The method returns EVERY matching entity ID so the resolver can
-// distinguish the three outcomes it cares about: zero (no match — keep
-// the raw principal), one (substitute), and more than one (ambiguous —
-// a data-integrity failure the resolver refuses to guess through).
+// PrincipalLookup resolves a raw principal string to entity ids by a
+// natural-key property (`principal_property` on `user_entity_type`).
+// Returned ids are in store order; the caller treats more than one match
+// as an ambiguous key.
 type PrincipalLookup interface {
-	// LookupEntityByProperty returns the IDs of entities of entityType
-	// whose property equals value (exact string match). A blank value
-	// returns nil without querying — an empty principal never resolves.
-	// Backend errors propagate so the resolver can fail-open-to-raw and
-	// warn rather than silently drop a match.
 	LookupEntityByProperty(ctx context.Context, entityType, property, value string) ([]string, error)
 }
 
-// storePrincipalLookup adapts a store entity reader to [PrincipalLookup].
-// It scans the entities of the requested type and matches the property's
-// string value. Production wiring (appbuild) constructs it over the
-// store; the ACL resolver only ever sees the [PrincipalLookup] interface.
-//
-// The scan is O(entities of type) per lookup, run at most once per
-// request (upstream of the cached member-of walk). For large user-entity
-// sets operators can push the equality into a backend index (see
-// docs/security.md); this adapter is the portable default.
-type storePrincipalLookup struct {
-	s store.EntityReader
+// PrincipalStore is the store capability the lookup needs: exactly the
+// graph-query surface store.GraphQueryHeaders takes, so the property
+// equality is PUSHED DOWN and only headers come back. Named here so the
+// dependency reads as what it is — the lookup must never fall back to
+// scanning a whole entity type in Go, which is what it did before
+// TKT-1U8XYN: every request began by loading every user entity with its
+// body to compare one string, a ~25 ms floor under each API call on the
+// postgres backend regardless of what the request did. store.Store
+// satisfies this.
+type PrincipalStore interface {
+	store.GraphQueryer
 }
 
-// NewStorePrincipalLookup constructs a store-backed [PrincipalLookup]
-// over s. Returned as the interface so callers depend on the contract,
-// not the adapter.
-func NewStorePrincipalLookup(s store.EntityReader) PrincipalLookup {
+type storePrincipalLookup struct {
+	s PrincipalStore
+}
+
+// NewStorePrincipalLookup adapts a store to [PrincipalLookup].
+func NewStorePrincipalLookup(s PrincipalStore) PrincipalLookup {
 	return &storePrincipalLookup{s: s}
 }
 
-// LookupEntityByProperty implements [PrincipalLookup] by scanning
-// entities of entityType and collecting those whose property equals
-// value.
+// LookupEntityByProperty runs one scalar-equality graph query. The
+// predicate is marked Scalar so the postgres backend emits the
+// `(properties ->> $p) = $v` shape its derived unique index (the
+// `unique: true` the policy loader requires on this property) serves
+// directly; fs/mem evaluate the same predicate over their in-memory rows.
 func (l *storePrincipalLookup) LookupEntityByProperty(
 	ctx context.Context, entityType, property, value string,
 ) ([]string, error) {
@@ -56,13 +48,16 @@ func (l *storePrincipalLookup) LookupEntityByProperty(
 		return nil, nil
 	}
 	var ids []string
-	for e, err := range l.s.ListEntities(ctx, store.EntityQuery{Type: entityType}) {
+	// Headers, not rows: the lookup wants ids and nothing else, and the user
+	// entity may carry a body the resolver has no business reading.
+	for h, err := range store.GraphQueryHeaders(ctx, l.s, store.GraphQuery{
+		EntityType: entityType,
+		Props:      []store.PropPredicate{{Property: property, Op: store.PropEqual, Value: value, Scalar: true}},
+	}) {
 		if err != nil {
 			return nil, err
 		}
-		if e.GetString(property) == value {
-			ids = append(ids, e.ID)
-		}
+		ids = append(ids, h.ID)
 	}
 	return ids, nil
 }

@@ -40,9 +40,10 @@ func (s *FSStore) GetRelation(_ context.Context, from, relType, to string) (*ent
 func (s *FSStore) ListRelations(_ context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error] {
 	s.mu.RLock()
 
+	match := storeutil.NewRelationMatcher(q)
 	matches := make([]relationMeta, 0)
 	for _, key := range s.relationOrder {
-		if !matchRelationKey(s, key, q) {
+		if !matchRelationKey(s, key, match) {
 			continue
 		}
 		matches = append(matches, s.relations[key])
@@ -72,8 +73,9 @@ func (s *FSStore) ListRelationsPage(_ context.Context, q store.RelationQuery) (s
 	}
 
 	s.mu.RLock()
+	match := storeutil.NewRelationMatcher(q)
 	keys := storeutil.PaginateSortedKeys(s.relationOrder, cursorKey, q.Limit, func(key string) bool {
-		return matchRelationKey(s, key, q)
+		return matchRelationKey(s, key, match)
 	})
 
 	pairs := make([]relationMeta, 0, len(keys.Keys))
@@ -95,21 +97,20 @@ func (s *FSStore) ListRelationsPage(_ context.Context, q store.RelationQuery) (s
 
 // matchRelationKey reports whether the relation at key in s.relations
 // matches q. Callers must hold s.mu (at least for reading).
-func matchRelationKey(s *FSStore, key string, q store.RelationQuery) bool {
+func matchRelationKey(s *FSStore, key string, match func(*entity.Relation) bool) bool {
 	rm := s.relations[key]
 	r := &entity.Relation{From: rm.From, FromFace: rm.FromFace, Type: rm.Type, To: rm.To}
-	return storeutil.MatchRelation(r, q)
+	return match(r)
 }
 
 func (s *FSStore) CountRelations(_ context.Context, q store.RelationQuery) (int, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	match := storeutil.NewRelationMatcher(q)
 	count := 0
 	for _, key := range s.relationOrder {
-		rm := s.relations[key]
-		r := &entity.Relation{From: rm.From, FromFace: rm.FromFace, Type: rm.Type, To: rm.To}
-		if storeutil.MatchRelation(r, q) {
+		if matchRelationKey(s, key, match) {
 			count++
 		}
 	}

@@ -120,6 +120,29 @@ func buildRelationQueryFrom(q store.RelationQuery, cursorKey string) (sqlText st
 			args = append(args, q.EntityID, q.EntityID)
 		}
 	}
+	if q.EntityIDs != nil {
+		// SQLite has no array parameters: expand to a placeholder list. An
+		// empty slice becomes a constant-false predicate so nil-vs-empty
+		// keeps its documented meaning (nil = unfiltered, empty = nothing).
+		in := "(NULL)"
+		if len(q.EntityIDs) > 0 {
+			in = "(" + strings.TrimSuffix(strings.Repeat("?,", len(q.EntityIDs)), ",") + ")"
+		}
+		for _, id := range q.EntityIDs {
+			args = append(args, id)
+		}
+		switch q.Direction {
+		case store.DirectionOutgoing:
+			conds = append(conds, "from_id IN "+in)
+		case store.DirectionIncoming:
+			conds = append(conds, "to_id IN "+in)
+		default:
+			for _, id := range q.EntityIDs {
+				args = append(args, id)
+			}
+			conds = append(conds, "(from_id IN "+in+" OR to_id IN "+in+")")
+		}
+	}
 
 	sqlText = `SELECT ` + relationColumns + ` FROM relations`
 	if len(conds) > 0 {

@@ -134,6 +134,10 @@ components:
 
   # Project bootstrap utilities
   projectsetup:     { in: internal/projectsetup }
+  # Deterministic graph generator for the perf demo project. A leaf over the
+  # store contract: it emits entities/relations and loads them through
+  # store.Store, and must never learn about entitymanager or the metamodel.
+  perfseed:         { in: internal/perfseed }
 
   # Infrastructure
   acl:              { in: internal/acl }
@@ -340,6 +344,7 @@ deps:
       - memstore
       - metamodel
       - output
+      - perfseed
       - pgstore
       - sqlitestore
       - predicate
@@ -1205,6 +1210,10 @@ deps:
   state:
     mayDependOn:
       - storage
+  perfseed:
+    mayDependOn:
+      - store
+      - storeutil
   storage:
     anyProjectDeps: true
     canUse:

@@ -112,18 +112,22 @@ func (h *viewsHandler) applyViewTraverse(
 	// decide where to step next, while LOADING an entity under a world costs a
 	// resolution. Collect the whole rule's ids first, then resolve once.
 	maxRecursionDepth := 10
-	var foundIDs []string
+	sourceIDs := make([]string, 0, len(sources))
 	for _, src := range sources {
-		if rule.Recursive {
-			maxD := rule.MaxDepth
-			if maxD <= 0 {
-				maxD = maxRecursionDepth
-			}
-			foundIDs = append(foundIDs,
-				h.traverseViewRecursive(ctx, src.ID, rule, 0, maxD, map[string]bool{})...)
-		} else {
-			foundIDs = append(foundIDs, h.traverseViewOnce(ctx, src.ID, rule)...)
+		sourceIDs = append(sourceIDs, src.ID)
+	}
+	var foundIDs []string
+	if rule.Recursive {
+		maxD := rule.MaxDepth
+		if maxD <= 0 {
+			maxD = maxRecursionDepth
 		}
+		foundIDs = h.traverseViewBreadthFirst(ctx, sourceIDs, rule, maxD)
+	} else {
+		// One relation query for every source at once (TKT-1U8XYN), in the
+		// same order the per-source loop produced: sources in collection
+		// order, each source's edges in store order.
+		foundIDs = h.traverseViewMany(ctx, sourceIDs, rule)
 	}
 
 	// ONE resolution for the whole rule application, not one per hop.
@@ -169,77 +173,78 @@ func (h *viewsHandler) applyViewTraverse(
 	}
 }
 
-// traverseViewOnce returns the neighbor IDS one hop from sourceID.
-//
-// It returns IDS, not entities, so the caller can resolve the whole rule's
-// neighbors in one batch — see applyViewTraverse. It also means this function
-// does no entity read at all, which is what removes the per-hop
-// default-world `GetEntity` that made the traversal world-blind.
-//
-// The relation query keeps a NIL tail deliberately. A view traverses the
-// entity GRAPH: it follows an edge to reach a neighbor, and per design §2.3
-// heads are entity-level, so which face the SOURCE is standing on does not
-// change which ids it can reach. Filtering by the source's face here would
-// hide identity edges from any entity whose prime is not the default state —
-// the "fallback trap" documented on worldreader.RelationReader.Neighbors,
-// where the zero face as a FromFace VALUE means default-tail-only rather
-// than unfiltered.
-//
-// (Content-scoped edges are therefore over-returned here relative to what item
-// 4's entity GET shows. That is a known divergence, not an oversight: making
-// view traversal honor edge scope needs the per-type dispatch, which is its
-// own change with its own tests. Recorded in the PR body.)
-func (h *viewsHandler) traverseViewOnce(ctx context.Context, sourceID string, rule ViewTraverse) []string {
-	st := h.store
-	var out []string
-
+// traverseViewMany is [viewsHandler.traverseViewOnce] for many sources in ONE
+// relation query. The result is ordered as the per-source calls would have
+// been concatenated: by source in the given order, then by the store's edge
+// order within a source. A source with no edges contributes nothing.
+func (h *viewsHandler) traverseViewMany(ctx context.Context, sourceIDs []string, rule ViewTraverse) []string {
+	if len(sourceIDs) == 0 {
+		return nil
+	}
 	var relType string
 	var direction store.Direction
-	var useTarget bool // true: collect edge.To; false: collect edge.From
+	var useTarget bool
 	switch {
 	case rule.Follow != "":
-		relType = rule.Follow
-		direction = store.DirectionOutgoing
-		useTarget = true
+		relType, direction, useTarget = rule.Follow, store.DirectionOutgoing, true
 	case rule.FollowIncoming != "":
-		relType = rule.FollowIncoming
-		direction = store.DirectionIncoming
-		useTarget = false
+		relType, direction, useTarget = rule.FollowIncoming, store.DirectionIncoming, false
 	default:
 		return nil
 	}
-
-	q := store.RelationQuery{EntityID: sourceID, Type: relType, Direction: direction}
-	for r, err := range st.ListRelations(ctx, q) {
+	bySource := make(map[string][]string, len(sourceIDs))
+	q := store.RelationQuery{EntityIDs: sourceIDs, Type: relType, Direction: direction}
+	for r, err := range h.store.ListRelations(ctx, q) {
 		if err != nil {
 			break
 		}
-		targetID := r.To
+		sourceID, targetID := r.From, r.To
 		if !useTarget {
-			targetID = r.From
+			sourceID, targetID = r.To, r.From
 		}
 		if targetID != "" {
-			out = append(out, targetID)
+			bySource[sourceID] = append(bySource[sourceID], targetID)
 		}
+	}
+	var out []string
+	for _, id := range sourceIDs {
+		out = append(out, bySource[id]...)
 	}
 	return out
 }
 
-// traverseViewRecursive walks the relation graph depth-first, returning the
-// neighbor IDS found. Like traverseViewOnce it loads no entities — the walk
-// steps by id, so it never needed them.
-func (h *viewsHandler) traverseViewRecursive(
-	ctx context.Context, sourceID string, rule ViewTraverse, depth, maxDepth int, visited map[string]bool,
+// traverseViewBreadthFirst walks the relation graph from every source at
+// once, one relation query per level (TKT-1U8XYN) instead of one per visited
+// node, up to maxDepth levels. It returns the neighbor IDS found, level by
+// level; like traverseViewMany it loads no entities. A node is expanded at
+// most once, but an id reached again is still reported — the caller dedupes
+// when it loads the collection, exactly as it did for the former depth-first
+// walk, and the recursive tests pin the SET of ids, not their order.
+func (h *viewsHandler) traverseViewBreadthFirst(
+	ctx context.Context, sourceIDs []string, rule ViewTraverse, maxDepth int,
 ) []string {
-	if depth >= maxDepth || visited[sourceID] {
-		return nil
+	visited := make(map[string]bool, len(sourceIDs))
+	frontier := make([]string, 0, len(sourceIDs))
+	for _, id := range sourceIDs {
+		if visited[id] {
+			continue
+		}
+		visited[id] = true
+		frontier = append(frontier, id)
 	}
-	visited[sourceID] = true
-	immediate := h.traverseViewOnce(ctx, sourceID, rule)
-	var all []string
-	all = append(all, immediate...)
-	for _, id := range immediate {
-		all = append(all, h.traverseViewRecursive(ctx, id, rule, depth+1, maxDepth, visited)...)
+	all := make([]string, 0, len(frontier))
+	for depth := 0; depth < maxDepth && len(frontier) > 0; depth++ {
+		found := h.traverseViewMany(ctx, frontier, rule)
+		all = append(all, found...)
+		next := make([]string, 0, len(found))
+		for _, id := range found {
+			if visited[id] {
+				continue
+			}
+			visited[id] = true
+			next = append(next, id)
+		}
+		frontier = next
 	}
 	return all
 }

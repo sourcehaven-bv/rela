@@ -350,6 +350,21 @@ func relationWhere(q store.RelationQuery, keysetAfter string) (where string, arg
 			conds = append(conds, fmt.Sprintf("(from_id = $%d OR to_id = $%d)", len(args), len(args)))
 		}
 	}
+	if q.EntityIDs != nil {
+		// The explicit ::text[] cast keeps an EMPTY slice a valid, never-
+		// matching predicate rather than an "unknown array type" error, so
+		// nil-vs-empty keeps its documented meaning.
+		switch q.Direction {
+		case store.DirectionOutgoing:
+			add("from_id = ANY($%d::text[])", q.EntityIDs)
+		case store.DirectionIncoming:
+			add("to_id = ANY($%d::text[])", q.EntityIDs)
+		default: // DirectionBoth
+			args = append(args, q.EntityIDs)
+			conds = append(conds, fmt.Sprintf("(from_id = ANY($%d::text[]) OR to_id = ANY($%d::text[]))",
+				len(args), len(args)))
+		}
+	}
 	if keysetAfter != "" {
 		// An unparseable cursor genuinely RESTARTS (condition omitted):
 		// comparing against garbage would silently skip rows — see the

@@ -57,6 +57,38 @@ func (s *Store) SnoozedUntil(
 	return until, true, nil
 }
 
+func (s *Store) SnoozedUntilMany(
+	_ context.Context, keys []userstate.Key, now time.Time,
+) (map[userstate.Key]time.Time, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return nil, userstate.ErrClosed
+	}
+	out := make(map[userstate.Key]time.Time, len(keys))
+	for _, k := range keys {
+		if until, ok := s.snoozes[k]; ok && now.Before(until) {
+			out[k] = until
+		}
+	}
+	return out, nil
+}
+
+func (s *Store) LastShownMany(_ context.Context, keys []userstate.Key) (map[userstate.Key]time.Time, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return nil, userstate.ErrClosed
+	}
+	out := make(map[userstate.Key]time.Time, len(keys))
+	for _, k := range keys {
+		if at, ok := s.shown[k]; ok {
+			out[k] = at
+		}
+	}
+	return out, nil
+}
+
 func (s *Store) SetSnooze(_ context.Context, key userstate.Key, until time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
