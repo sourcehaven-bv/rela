@@ -1433,19 +1433,6 @@ func buildEntityManager(
 	readDeps lua.ReadDeps, versions store.VersionService, tw TransitionWiring,
 	computedSet *computed.Set,
 ) (*entitymanager.Manager, error) {
-	// A policy is "active" when the resolved ACL is the declarative one — the
-	// same test CompileTransitions applies, spelled here rather than widened
-	// onto TransitionWiring so the copy deps do not depend on the transition
-	// wiring's shape.
-	declarative, policyActive := resolvedACL.(*acl.Declarative)
-	// The cross-entity copy reads the source through the caller's FIELD
-	// redaction too — the same redactor the API read path uses, so a
-	// `visible:`-hidden property cannot travel into a new entity.
-	copyRedactor, err := buildFieldRedactor(base.meta, st, declarative)
-	if err != nil {
-		return nil, fmt.Errorf("build entitymanager: copy redactor: %w", err)
-	}
-
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		AliasRewriter:           aliases,
 		Store:                   st,
@@ -1475,8 +1462,8 @@ func buildEntityManager(
 		// identical implementation and cannot drift into asking different
 		// ones.
 		CopyGuard:      tw.Guard,
-		CopyReadGate:   copyReadGate{policyActive: policyActive},
-		CopyVisibility: copyVisibility{st: st, redact: copyRedactor, policyActive: policyActive},
+		CopyReadGate:   tw.ReadGate,
+		CopyVisibility: tw.Visibility,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build entitymanager: %w", err)
