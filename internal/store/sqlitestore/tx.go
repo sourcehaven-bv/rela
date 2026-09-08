@@ -68,12 +68,10 @@ func (s *Store) Tx(ctx context.Context, fn func(store.Store) error) error {
 
 	pending := &pendingEvents{}
 	view := &Store{
-		db:          s.db,
-		opts:        s.opts,
-		journalMode: s.journalMode,
-		conn:        conn,
-		txPending:   pending,
-		parent:      s,
+		db:        s.db,
+		conn:      conn,
+		txPending: pending,
+		parent:    s,
 	}
 
 	if err := fn(view); err != nil {

@@ -1,4 +1,4 @@
-package sqlitestore
+package sqlitedb
 
 // Test-only accessors. They live here so the ladder's shape can be asserted
 // without widening the package's real API for it.

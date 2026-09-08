@@ -1,4 +1,4 @@
-package sqlitestore
+package sqlitedb
 
 import (
 	"encoding/json"
@@ -60,14 +60,14 @@ func acquireProcessLock(dbPath string) (*processLock, error) {
 
 	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
-		return nil, fmt.Errorf("sqlitestore: open lock file %s: %w", path, err)
+		return nil, fmt.Errorf("sqlitedb: open lock file %s: %w", path, err)
 	}
 
 	if err := lockFile(file); err != nil {
 		holder := readHolder(path)
 		_ = file.Close()
 		return nil, fmt.Errorf(
-			"sqlitestore: another process is using %s%s; "+
+			"sqlitedb: another process is using %s%s; "+
 				"this backend is single-process by design (see DEC-LFSYNY). "+
 				"Stop the other process, or use the PostgreSQL build for a "+
 				"multi-process deployment: %w",
@@ -102,10 +102,10 @@ func (l *processLock) release() error {
 	_ = l.file.Truncate(0)
 	if err := unlockFile(l.file); err != nil {
 		_ = l.file.Close()
-		return fmt.Errorf("sqlitestore: release lock: %w", err)
+		return fmt.Errorf("sqlitedb: release lock: %w", err)
 	}
 	if err := l.file.Close(); err != nil {
-		return fmt.Errorf("sqlitestore: close lock file: %w", err)
+		return fmt.Errorf("sqlitedb: close lock file: %w", err)
 	}
 	l.file = nil
 	return nil
@@ -115,13 +115,13 @@ func writeHolder(f *os.File) error {
 	host, _ := os.Hostname() // best effort; an empty hostname is not fatal
 	b, err := json.Marshal(lockHolder{PID: os.Getpid(), Hostname: host, Since: time.Now().UTC()})
 	if err != nil {
-		return fmt.Errorf("sqlitestore: encode lock holder: %w", err)
+		return fmt.Errorf("sqlitedb: encode lock holder: %w", err)
 	}
 	if err := f.Truncate(0); err != nil {
-		return fmt.Errorf("sqlitestore: truncate lock file: %w", err)
+		return fmt.Errorf("sqlitedb: truncate lock file: %w", err)
 	}
 	if _, err := f.WriteAt(b, 0); err != nil {
-		return fmt.Errorf("sqlitestore: write lock holder: %w", err)
+		return fmt.Errorf("sqlitedb: write lock holder: %w", err)
 	}
 	return f.Sync()
 }

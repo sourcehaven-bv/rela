@@ -1,6 +1,7 @@
 package sqlitestore_test
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,18 +9,33 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/search"
+	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/sqlitestore"
 	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 )
 
+// open builds a store over a fresh database.
+//
+// Two steps rather than one because the store no longer owns the file:
+// sqlitedb opens it (and is what the cleanup closes), sqlitestore borrows the
+// handle.
 func open(t *testing.T, opts ...sqlitestore.Option) *sqlitestore.Store {
 	t.Helper()
-	s, err := sqlitestore.Open(sqlitestore.Options{
-		Path: filepath.Join(t.TempDir(), "conformance.db"),
-	}, opts...)
+	return openAt(t, filepath.Join(t.TempDir(), "conformance.db"), opts...)
+}
+
+func openAt(t *testing.T, path string, opts ...sqlitestore.Option) *sqlitestore.Store {
+	t.Helper()
+	db, err := sqlitedb.Open(context.Background(), sqlitedb.Options{Path: path})
 	if err != nil {
-		t.Fatalf("open: %v", err)
+		t.Fatalf("open database: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	s, err := sqlitestore.New(db, opts...)
+	if err != nil {
+		t.Fatalf("new store: %v", err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
 	return s
@@ -108,10 +124,15 @@ func fuzzFactory() storetest.FuzzFactory {
 		panic(err)
 	}
 	return func() store.Store {
-		s, err := sqlitestore.Open(sqlitestore.Options{
+		db, err := sqlitedb.Open(context.Background(), sqlitedb.Options{
 			Path: filepath.Join(dir, fmt.Sprintf("fuzz%d.db", n.Add(1))),
 		})
 		if err != nil {
+			panic(err)
+		}
+		s, err := sqlitestore.New(db)
+		if err != nil {
+			_ = db.Close()
 			panic(err)
 		}
 		return s
