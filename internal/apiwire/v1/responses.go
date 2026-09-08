@@ -443,6 +443,15 @@ type EntityType struct {
 	// `bare_face:` in the schema. Empty when the type declares no faces, or
 	// when it declares faces but names none of them as the bare one.
 	BareFace string `json:"bare_face,omitempty"`
+	// Commentable reports that this type accepts comments (TKT-FIO205), so the
+	// SPA knows whether to offer a comment affordance at all. Policy, not
+	// permission: it says commenting is POSSIBLE here, never that the current
+	// principal may do it — the `comment:*` grants answer that, and the server
+	// re-authorizes every call regardless of what this flag says.
+	//
+	// Omitted when false, so a project with no `comments:` block serves a
+	// schema byte-identical to one built before the feature existed.
+	Commentable bool `json:"commentable,omitempty"`
 }
 
 // Face is the JSON representation of one declared content state,

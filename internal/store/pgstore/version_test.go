@@ -248,3 +248,38 @@ func mkEntity(id, typ, content string) *entity.Entity {
 	e.Content = content
 	return e
 }
+
+// TestWriteVersionRejectsInvalidText pins that the version tables sit behind
+// the same text gate as the live rows (BUG-X7ICNM). Version rows are the
+// audit trail; a U+FFFD substituted there would record something the entity
+// never contained, and this backend is the only one that writes them, so the
+// shared conformance suite cannot cover it.
+func TestWriteVersionRejectsInvalidText(t *testing.T) {
+	s, err := pgstore.New(newScopedPool(t))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+
+	for name, bad := range map[string]string{"invalid UTF-8": "\n\xc80", "NUL": "a\x00b"} {
+		t.Run(name, func(t *testing.T) {
+			in := newVersionInput("TKT-V", "content", map[string]any{"title": bad})
+			in.Op = store.VersionOpCreate
+			writeErr := s.VersionStore().WriteVersion(ctx, in)
+			require.Error(t, writeErr)
+			require.Contains(t, writeErr.Error(), "store: property")
+
+			metas, listErr := s.VersionStore().ListVersions(ctx, "TKT-V")
+			require.NoError(t, listErr)
+			require.Empty(t, metas, "a refused version write must persist nothing")
+		})
+	}
+
+	rel := store.RelationVersionInput{
+		From: "TKT-V", Type: "blocks", To: "TKT-W", RecordID: 1,
+		Op: store.VersionOpCreate, Properties: map[string]any{"p": "\xc8"},
+		SchemaHash: "schema-abc", Projection: []byte(`{"entities":{},"types":{}}`),
+	}
+	err = s.VersionStore().WriteRelationVersion(ctx, rel)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid UTF-8")
+}

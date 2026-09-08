@@ -60,6 +60,14 @@ func Split(content string) (frontmatter, body string) {
 	}
 
 	frontmatter = strings.Join(fmLines, "\n")
+	if len(fmLines) > 0 {
+		// Every frontmatter line was terminated in the file, including the
+		// last one before the closing delimiter. Without restoring that
+		// terminator a clip block scalar ("|") as the final property reads
+		// back one newline short: "0\n" came back as "0", silently and only
+		// for the last key (BUG-NWQA0E).
+		frontmatter += "\n"
+	}
 	body = strings.TrimPrefix(strings.Join(bodyLines, "\n"), "\n")
 	return frontmatter, body
 }
