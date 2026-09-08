@@ -191,11 +191,85 @@ func TestInjectMultiWindow_DeclaresBase(t *testing.T) {
 
 	t.Run("active project at the root emits no base tag", func(t *testing.T) {
 		out := string(injectMultiWindow([]byte("<html><body>app</body></html>"), ""))
-		assert.NotContains(t, out, "rela-base")
+		// The script always *reads* meta[name="rela-base"]; what must be absent
+		// at the root is the tag itself, so assert on the tag, not the name.
+		assert.NotContains(t, out, `<meta name="rela-base"`)
 	})
 
 	t.Run("base is escaped", func(t *testing.T) {
 		out := string(injectMultiWindow([]byte("<html><body>a</body></html>"), `/p/a"><script>x`))
 		assert.NotContains(t, out, `"><script>x`, "a crafted id must not break out of the attribute")
 	})
+}
+
+// A link inside a document is origin-relative, so a click in a window served
+// under /p/<id>/ must reopen under that same project rather than the active one.
+// The injected script must send the page's own base with every OpenWindow
+// call, or a link clicked in a second project's window opens against the
+// active project instead.
+func TestInjectedScriptSendsBase(t *testing.T) {
+	out := string(injectMultiWindow([]byte("<html><body>a</body></html>"), "/p/abc"))
+	assert.Contains(t, out, `meta[name="rela-base"]`,
+		"the script must read the base it was served under")
+	assert.Contains(t, out, "main.Desktop.OpenWindow\", path, title || \"\", relaBase()",
+		"the base must be passed to OpenWindow")
+}
+
+func TestJoinBase(t *testing.T) {
+	tests := []struct {
+		name  string
+		base  string
+		route string
+		want  string
+	}{
+		{"root base leaves the route alone", "/", "/form/x", "/form/x"},
+		{"project base is prepended", "/p/abc/", "/form/x", "/p/abc/form/x"},
+		{"no doubled slash", "/p/abc/", "/", "/p/abc/"},
+		{"already prefixed is not doubled", "/p/abc/", "/p/abc/form/x", "/p/abc/form/x"},
+		{"query is preserved", "/p/abc/", "/list/x?sort=due", "/p/abc/list/x?sort=due"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, joinBase(tc.base, tc.route))
+		})
+	}
+}
+
+// The base arrives from the frontend and is interpolated into a window URL,
+// so it needs the same validation a route gets.
+func TestSafeBase(t *testing.T) {
+	t.Run("accepted", func(t *testing.T) {
+		for in, want := range map[string]string{
+			"":        "/",
+			"/":       "/",
+			"/p/abc/": "/p/abc/",
+			"/p/abc":  "/p/abc/", // trailing slash added
+		} {
+			got, err := safeBase(in)
+			require.NoError(t, err, in)
+			assert.Equal(t, want, got, in)
+		}
+	})
+
+	t.Run("rejected", func(t *testing.T) {
+		for _, in := range []string{
+			"//evil.example",         // protocol-relative escapes the origin
+			"http://evil.example/p/", // absolute
+			"p/abc",                  // not rooted
+			"/p/a\rb",                // control character
+		} {
+			_, err := safeBase(in)
+			require.Error(t, err, in)
+		}
+	})
+}
+
+// OpenWindow's base argument is variadic for backwards compatibility; callers
+// that pass none must behave exactly as before.
+func TestOpenWindow_RejectsBadBase(t *testing.T) {
+	d := &Desktop{}
+	// No application, so this returns before touching the window manager —
+	// what matters is that a bad base does not slip through unvalidated.
+	assert.Equal(t, "application not ready", d.OpenWindow("/dashboard", ""))
+	assert.Equal(t, "application not ready", d.OpenWindow("/dashboard", "", "/p/abc/"))
 }

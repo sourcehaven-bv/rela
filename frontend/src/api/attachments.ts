@@ -89,11 +89,13 @@ export async function uploadAttachment(
 
 /** Remove one file from a property, given the server-provided per-file
  *  `href` (the same URL serves GET and DELETE). Using the href verbatim
- *  avoids re-escaping the filename, so there's a single escaper. Idempotent.
- *  Throws AttachmentError on a non-2xx (non-204) response. */
+ *  avoids re-escaping the filename, so there's a single escaper — apiUrl only
+ *  prepends the project base, it never re-encodes, so that still holds under a
+ *  prefix. Idempotent. Throws AttachmentError on a non-2xx (non-204)
+ *  response. */
 export async function deleteAttachment(href: string): Promise<void> {
   try {
-    await axios.delete(href)
+    await axios.delete(apiUrl(href))
   } catch (err) {
     throw toAttachmentError(err)
   }

@@ -23,6 +23,7 @@ import {
   normalizeHex,
 } from '@/utils/palette'
 import { buildPalettePayload, loadPaletteState } from './SettingsView.palette'
+import { apiUrl } from '@/api/base'
 
 // Per-role color text inputs accept hex with optional `#` and 3 or 6
 // digits. Used for whitespace-trim + normalize on paste.
@@ -77,7 +78,11 @@ const stagedLogoPreviewUrl = ref<string | null>(null)
 const uploadingLogo = ref(false)
 const removingLogo = ref(false)
 
-const logoPreviewSrc = computed(() => stagedLogoPreviewUrl.value ?? logoUrl.value)
+// The staged preview is a local blob: URL and must NOT be prefixed. Only the
+// server-supplied logoUrl is a path relative to the project base.
+const logoPreviewSrc = computed(() =>
+  stagedLogoPreviewUrl.value ?? (logoUrl.value ? apiUrl(logoUrl.value) : null),
+)
 
 const ACCEPT_LOGO_TYPES = 'image/png,image/jpeg,image/svg+xml,image/webp'
 

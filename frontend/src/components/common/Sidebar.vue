@@ -16,6 +16,7 @@ import {
   IconWarning,
 } from '@/utils/icons'
 import NavIcon from './NavIcon.vue'
+import { apiUrl } from '@/api/base'
 
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
@@ -156,7 +157,7 @@ async function handleAction(item: SidebarItem, ev?: Event) {
   >
     <div class="sidebar-header">
       <RouterLink to="/" class="logo" :aria-label="appName">
-        <img v-if="logoUrl" :src="logoUrl" :alt="appName" class="logo-img" />
+        <img v-if="logoUrl" :src="apiUrl(logoUrl)" :alt="appName" class="logo-img" />
         <span v-else>{{ appName }}</span>
       </RouterLink>
       <button class="collapse-btn" @click="uiStore.toggleSidebar">
