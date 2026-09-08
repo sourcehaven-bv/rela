@@ -376,7 +376,16 @@ func (d *Desktop) releaseLoadedProject() {
 	}
 }
 
+// LoadProject loads a project, replacing whichever project is currently open.
+// Bound to the frontend, so it keeps the string-error convention.
 func (d *Desktop) LoadProject(dir string) string {
+	return d.loadProject(dir, false)
+}
+
+// loadProject opens dir. When keepExisting is set the currently-loaded project
+// is left running, which is what opening a second window needs; otherwise it
+// is released first — the ordering that matters, see releaseLoadedProject.
+func (d *Desktop) loadProject(dir string, keepExisting bool) string {
 	fs, projCtx, err := discoverProject(dir)
 	if err != nil {
 		return d.failLoad(err)
@@ -395,7 +404,11 @@ func (d *Desktop) LoadProject(dir string) string {
 		return "needs_setup"
 	}
 
-	d.releaseLoadedProject()
+	// Opening a project in a NEW window must not close the one already open;
+	// replacing the current project must. Both share the load below.
+	if !keepExisting {
+		d.releaseLoadedProject()
+	}
 
 	auditSink, auditErr := audit.NewFilesystem(filepath.Join(projCtx.CacheDir, "audit"))
 	if auditErr != nil {
@@ -892,11 +905,33 @@ func (d *Desktop) openProjectFromMenu(_ *application.Context) {
 	if err != nil || dir == "" {
 		return
 	}
-	if errMsg := d.LoadProject(projectRootOf(dir)); errMsg != "" {
+	root := projectRootOf(dir)
+
+	// Already open? Bring its window forward instead of loading it twice.
+	if p := d.registry.byRoot(root); p != nil {
+		if errMsg := d.OpenWindow(projectPrefix+p.id+"/", p.name); errMsg != "" {
+			d.errorDialog("Failed to open window", errMsg)
+		}
+		return
+	}
+
+	// Keep the current project running: Open Project adds a project, it does
+	// not replace the one the user is looking at.
+	if errMsg := d.loadProject(root, true); errMsg != "" {
 		d.errorDialog("Failed to open project", errMsg)
 		return
 	}
-	d.reloadWindow()
+
+	p := d.registry.byRoot(root)
+	if p == nil {
+		// needs_setup returns "" without registering; fall back to reloading
+		// so the current window shows the setup prompt.
+		d.reloadWindow()
+		return
+	}
+	if errMsg := d.OpenWindow(projectPrefix+p.id+"/", p.name); errMsg != "" {
+		d.errorDialog("Failed to open window", errMsg)
+	}
 }
 
 // cloneFromGitMenu handles File > Clone from Git from the native menu bar.
