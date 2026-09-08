@@ -253,3 +253,53 @@ func TestMarshalOrdered_KeysRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// A conflict-marker key round-trips through YAML perfectly well — which is
+// exactly why the previous test does not catch it. The breakage is one level
+// up: a mapping key is emitted at column 0, so `<<<<<<< HEAD` written plain
+// makes the whole FILE scan as an unresolved merge and [ParseDocument]
+// refuses it. The entity is written successfully and is then unreadable, and
+// silently drops out of the validator and the search index (BUG-TOXQAA /
+// issue #993, found by FuzzCloneNestedValues with property name "<<<<<<<").
+//
+// So this asserts on the emitted bytes, not just the decoded map: the marker
+// must not survive at column 0. Values need no equivalent case — yaml.v3
+// always writes them after "key: " or indented under a block scalar.
+func TestMarshalOrdered_ConflictMarkerKeyIsNotWrittenAtColumnZero(t *testing.T) {
+	for _, key := range []string{"<<<<<<<", "<<<<<<< HEAD", "<<<<<<<<", "<<<<<<< a\nb"} {
+		t.Run(key, func(t *testing.T) {
+			data := map[string]any{key: "v", "id": "T-1"}
+			raw, err := marshalOrdered(data, nil)
+			if err != nil {
+				t.Fatalf("marshalOrdered: %v", err)
+			}
+			if HasConflictMarkers(raw) {
+				t.Errorf("emitted frontmatter scans as a git conflict:\n%s", raw)
+			}
+			var got map[string]any
+			if err := yaml.Unmarshal(raw, &got); err != nil {
+				t.Fatalf("emitted %q, cannot read back: %v", raw, err)
+			}
+			if !reflect.DeepEqual(got, data) {
+				t.Errorf("keys changed in round trip: emitted %q, got %#v", raw, got)
+			}
+		})
+	}
+}
+
+// A key that merely CONTAINS the marker, but not at the start, is written
+// plain: the emitter puts it at a non-zero column anyway, and quoting it
+// would reflow files for no gain. This pins the scope of the fix, matching
+// the line-anchoring [HasConflictMarkers] already documents (BUG-WN6D).
+func TestMarshalOrdered_InteriorMarkerKeyStaysPlain(t *testing.T) {
+	raw, err := marshalOrdered(map[string]any{"x<<<<<<<": "v"}, nil)
+	if err != nil {
+		t.Fatalf("marshalOrdered: %v", err)
+	}
+	if !strings.Contains(string(raw), "x<<<<<<<: v") {
+		t.Errorf("interior-marker key was not written plain: %q", raw)
+	}
+	if HasConflictMarkers(raw) {
+		t.Errorf("emitted frontmatter scans as a git conflict:\n%s", raw)
+	}
+}

@@ -100,14 +100,11 @@ func formatDocumentOrdered(fm map[string]any, content string, keyOrder []string)
 		sb.WriteString(frontmatterDelimiter)
 		sb.WriteString("\n")
 
-		var yamlBytes []byte
-		var err error
-
-		if len(keyOrder) > 0 {
-			yamlBytes, err = marshalOrdered(fm, keyOrder)
-		} else {
-			yamlBytes, err = yaml.Marshal(fm)
-		}
+		// Both branches go through marshalOrdered: with an empty keyOrder it
+		// emits every key alphabetically, which is what yaml.Marshal of a map
+		// already did, but through markdown.KeyNode and markdown.ValueToNode
+		// so the round-trip guards apply to a write that carries no order.
+		yamlBytes, err := marshalOrdered(fm, keyOrder)
 		if err != nil {
 			return "", err
 		}
