@@ -16,6 +16,9 @@ function mockFetch(body: unknown, ok = true) {
 
 describe('ProjectSwitcher', () => {
   beforeEach(() => {
+    // The switcher only queries inside the desktop shell, which is the only
+    // thing that injects the Wails runtime.
+    vi.stubGlobal('wails', {})
     vi.stubGlobal('fetch', mockFetch(two))
   })
   afterEach(() => {
@@ -50,6 +53,18 @@ describe('ProjectSwitcher', () => {
     vi.stubGlobal('fetch', mockFetch(null, false))
     const w = mount(ProjectSwitcher)
     await flushPromises()
+    expect(w.find('.switcher-btn').exists()).toBe(false)
+  })
+
+  // On rela-server there is no Wails runtime, so the switcher must not even
+  // ask — a request per page load is one `networkidle` never needed to wait on.
+  it('does not fetch outside the desktop shell', async () => {
+    vi.unstubAllGlobals()
+    const spy = mockFetch(two)
+    vi.stubGlobal('fetch', spy)
+    const w = mount(ProjectSwitcher)
+    await flushPromises()
+    expect(spy).not.toHaveBeenCalled()
     expect(w.find('.switcher-btn').exists()).toBe(false)
   })
 
