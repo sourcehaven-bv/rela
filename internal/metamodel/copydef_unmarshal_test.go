@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // TestCopyDef_UnmarshalCoversEveryField is the guard [CopyDef.UnmarshalYAML]'s
@@ -65,6 +67,13 @@ copies:
       mentions: merge
     guard:
       permission: promote-page
+    on_success:
+      message: "Published {title}"
+      landing: { world: everything }
+worlds:
+  everything:
+    select: published
+    otherwise: default
 `
 	m, err := Parse([]byte(doc))
 	if err != nil {
@@ -88,6 +97,8 @@ copies:
 		// without evaluating the condition you wrote"), so a document setting
 		// it cannot parse. Permission alone proves the Guard struct arrives.
 		"Guard": def.Guard.Permission == "promote-page",
+		"OnSuccess": def.OnSuccess.Message == "Published {title}" &&
+			def.OnSuccess.Landing.World == "everything",
 	}
 	for name, ok := range checks {
 		if !ok {
@@ -179,6 +190,12 @@ worlds:
     edits: draft
     banner: "DRAFT — not in force"
     primary_for: published
+    messages:
+      absent: "Not here yet"
+      projection: "Only what is in force"
+      stand_in: "{face}"
+    on_absent:
+      redirect: default
 `
 	m, err := Parse([]byte(doc))
 	if err != nil {
@@ -199,6 +216,10 @@ worlds:
 		// spelling: `primary_for: published` must decode to a one-element
 		// slice, not be dropped for not being a list.
 		"PrimaryFor": len(def.PrimaryFor) == 1 && def.PrimaryFor[0] == "published",
+		"Messages": def.Messages.Absent == "Not here yet" &&
+			def.Messages.Projection == "Only what is in force" &&
+			def.Messages.StandIn == "{face}",
+		"OnAbsent": def.OnAbsent.Redirect == "default",
 	}
 	for name, ok := range checks {
 		if !ok {
@@ -245,7 +266,7 @@ entities:
     bare_face: en
     faces:
       en: {label: English}
-      nl: {label: Nederlands}
+      nl: {label: Nederlands, messages: {read_only: "Alleen lezen"}}
     properties:
       title: {type: string}
 `
@@ -265,6 +286,7 @@ entities:
 	checks := map[string]bool{
 		"EntityDef.BareFace": def.BareFace == "en",
 		"Label":              def.Faces["en"].Label == "English" && def.Faces["nl"].Label == "Nederlands",
+		"Messages":           def.Faces["nl"].Messages.ReadOnly == "Alleen lezen" && def.Faces["en"].Messages.ReadOnly == "",
 	}
 	for name, ok := range checks {
 		if !ok {
@@ -340,5 +362,50 @@ entities:
 	}
 	if got := FaceLabel(nil, "page", ""); got != "" {
 		t.Errorf("FaceLabel(nil, page, \"\") = %q, want empty", got)
+	}
+}
+
+// TestCopyLanding_UnmarshalRefusesWhatItCannotMean pins the mapping form of
+// `landing:` (TKT-5SZG2L, RR-51XOG3): a key it does not know, an empty
+// mapping and an empty name are load errors. Decoded into a struct they
+// would all come out as the zero value, which MEANS `written` — the
+// operator's declaration discarded without a word, which is the failure
+// BUG-I0N3YR closed for affordance grants.
+func TestCopyLanding_UnmarshalRefusesWhatItCannotMean(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, yaml string
+		want       CopyLanding
+		wantErr    string
+	}{
+		{"scalar written", "written", CopyLanding{Mode: LandingWritten}, ""},
+		{"scalar stay", "stay", CopyLanding{Mode: LandingStay}, ""},
+		{"a world", "{world: site}", CopyLanding{World: "site"}, ""},
+		{"a face", "{face: draft}", CopyLanding{Face: "draft"}, ""},
+		{"a typo'd key", "{wrold: site}", CopyLanding{}, `unknown key "wrold"`},
+		{"an empty mapping", "{}", CopyLanding{}, "empty mapping"},
+		{"an empty world", `{world: ""}`, CopyLanding{}, "`world` needs a name"},
+		{"a nested value", "{face: [a, b]}", CopyLanding{}, "`face` needs a name"},
+		{"a sequence", "[written]", CopyLanding{}, "want `written`, `stay`"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var got struct {
+				Landing CopyLanding `yaml:"landing"`
+			}
+			err := yaml.Unmarshal([]byte("landing: "+tc.yaml), &got)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("want an error containing %q, got %v", tc.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got.Landing != tc.want {
+				t.Fatalf("got %+v, want %+v", got.Landing, tc.want)
+			}
+		})
 	}
 }

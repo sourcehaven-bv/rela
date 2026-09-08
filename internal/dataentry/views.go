@@ -30,15 +30,30 @@ type viewResult struct {
 // surfaces call it (the `_views` route, `_sidepanel` via executeSidePanel, and
 // the command runner's `kind: view`). That is why the world arrives as an
 // explicit PARAMETER rather than being read off ctx — see [viewWorld].
+//
+// entryID is an ADDRESS (`ID` or `ID@face`, see [entityRef]); an address the
+// grammar rejects is the same not-found a missing entry is.
 func (h *viewsHandler) executeView(
 	ctx context.Context, view ViewConfig, entryID string, w viewWorld,
 ) (*viewResult, error) {
-	entry, err := h.viewEntry(ctx, entryID, w)
+	ref, ok := parseEntityRef(h.schema().Meta, view.Entry.Type, entryID)
+	if !ok {
+		return nil, errViewEntryNotFound(entryID)
+	}
+	return h.executeViewRef(ctx, view, ref, w)
+}
+
+// executeViewRef is [viewsHandler.executeView] for an already-parsed entry
+// address.
+func (h *viewsHandler) executeViewRef(
+	ctx context.Context, view ViewConfig, entryRef entityRef, w viewWorld,
+) (*viewResult, error) {
+	entry, err := h.viewEntry(ctx, entryRef, w)
 	if err != nil {
 		return nil, err
 	}
 	if entry.Type != view.Entry.Type {
-		return nil, fmt.Errorf("entry entity %s is type %s, expected %s", entryID, entry.Type, view.Entry.Type)
+		return nil, fmt.Errorf("entry entity %s is type %s, expected %s", entryRef, entry.Type, view.Entry.Type)
 	}
 
 	result := &viewResult{
