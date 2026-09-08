@@ -227,7 +227,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Run markdownlint
         uses: DavidAnson/markdownlint-cli2-action@v24.2.0
@@ -249,7 +249,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
 
@@ -318,7 +318,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: e2e/package-lock.json
 
