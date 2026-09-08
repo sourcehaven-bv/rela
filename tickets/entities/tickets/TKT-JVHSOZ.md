@@ -5,7 +5,7 @@ title: Capability-gate mail.send like http and ai
 kind: enhancement
 priority: high
 effort: s
-status: backlog
+status: done
 ---
 
 ## Description

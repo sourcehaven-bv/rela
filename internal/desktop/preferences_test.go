@@ -234,3 +234,70 @@ func TestPreferencesPath(t *testing.T) {
 		t.Errorf("parent dir = %q, want %q", filepath.Base(filepath.Dir(path)), appDir)
 	}
 }
+
+func TestWindowStateValid(t *testing.T) {
+	tests := []struct {
+		name  string
+		state WindowState
+		want  bool
+	}{
+		{"zero value is not valid", WindowState{}, false},
+		{"normal geometry", WindowState{Width: 1280, Height: 800}, true},
+		{"at the minimum", WindowState{Width: 200, Height: 200}, true},
+		{"too narrow", WindowState{Width: 199, Height: 800}, false},
+		{"too short", WindowState{Width: 1280, Height: 199}, false},
+		{"negative", WindowState{Width: -1280, Height: -800}, false},
+		{"position at origin is still valid", WindowState{Width: 800, Height: 600, X: 0, Y: 0}, true},
+		{"negative position is valid (second display)", WindowState{Width: 800, Height: 600, X: -1920}, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.state.Valid(); got != tc.want {
+				t.Errorf("Valid() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// Window geometry must survive a save/load cycle unchanged.
+func TestWindowStateRoundTrip(t *testing.T) {
+	path := setupTestDir(t)
+	want := WindowState{Width: 1024, Height: 768, X: 100, Y: 50, Maximized: true}
+	writePrefsFile(t, path, &Preferences{Window: want})
+
+	var got Preferences
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Window != want {
+		t.Errorf("Window = %+v, want %+v", got.Window, want)
+	}
+	if !got.Window.Valid() {
+		t.Error("round-tripped state should be valid")
+	}
+}
+
+// An older preferences file has no window key at all. It must load cleanly and
+// report no usable state, rather than restoring a 0x0 window.
+func TestWindowStateAbsentFromOlderFile(t *testing.T) {
+	path := setupTestDir(t)
+	if err := os.WriteFile(path, []byte(`{"last_project":"/some/project"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var got Preferences
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Window.Valid() {
+		t.Error("absent window state should not be valid")
+	}
+}

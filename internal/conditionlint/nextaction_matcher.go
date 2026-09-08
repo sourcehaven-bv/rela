@@ -3,10 +3,12 @@ package conditionlint
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 )
 
@@ -19,6 +21,14 @@ type NextActionMatcher struct {
 }
 
 // Match reports whether e satisfies the condition.
+//
+// The identity for `current_user` is read from ctx (predicatefns.QueryIdentityFrom),
+// stamped by the wiring site that resolved the principal. A condition that
+// names the current user on a ctx carrying no identity returns
+// predicatefns.ErrNoCurrentUser rather than false: evaluating it against a
+// guessed identity would surface someone else's rows, and treating it as a
+// non-match would make a mis-wired deployment look like a quiet source. A
+// condition that never names the current user is unaffected.
 //
 // An entity whose type has no compiled program does NOT match. That is
 // unreachable through the normal path — [CompileNextActions] compiles against
@@ -34,7 +44,7 @@ func (m *NextActionMatcher) Match(ctx context.Context, e *entity.Entity) (bool, 
 	if !ok {
 		return false, nil
 	}
-	ok, err := m.ev.Matches(ctx, prog, e.Type, e.ID, e.Properties)
+	ok, err := m.ev.MatchesAs(ctx, prog, e.Type, e.ID, e.Properties)
 	if err != nil {
 		// Surfaced, not swallowed. A missing date property is an eval error,
 		// and treating it as "does not match" would make a broken condition
@@ -43,6 +53,30 @@ func (m *NextActionMatcher) Match(ctx context.Context, e *entity.Entity) (bool, 
 		return false, fmt.Errorf("conditionlint: evaluating condition for %s: %w", e.ID, err)
 	}
 	return ok, nil
+}
+
+// Program returns the compiled condition for one entity type, for a caller
+// that lowers part of it to the store (internal/queryplan.ConditionPrefilters)
+// before Match runs the whole of it in Go. The programs for the types a
+// source's query names are compiled from one source text, so any of them
+// describes the pushable shape; the metamodel gate in queryplan is what makes
+// the result valid across all of them.
+func (m *NextActionMatcher) Program(entityType string) (*predicate.Program, bool) {
+	prog, ok := m.progs[entityType]
+	return prog, ok
+}
+
+// Types returns, sorted, the entity types the condition was compiled against
+// — the types the source's query names. A pushdown caller takes them from
+// here rather than re-parsing the query, so the two cannot disagree about
+// which types the compiled programs cover.
+func (m *NextActionMatcher) Types() []string {
+	out := make([]string, 0, len(m.progs))
+	for t := range m.progs {
+		out = append(out, t)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // NextActionMatchers compiles every source's condition and returns a lookup

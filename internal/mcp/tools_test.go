@@ -86,11 +86,8 @@ func makeTestServerWithStore(t *testing.T) (*Server, *memstore.MemStore) {
 
 	meta, st := makeTestFixture(t)
 	deps := newTestDeps(t, meta, st)
-	srv := &Server{
-		deps:   deps,
-		logger: slog.New(slog.DiscardHandler),
-	}
-	srv.handlerSet = deps.handlers()
+	srv := &Server{logger: slog.New(slog.DiscardHandler)}
+	setDeps(srv, deps)
 	return srv, st
 }
 
@@ -305,7 +302,7 @@ func TestHandleUpdateEntity_DeletesPropertyOnNil(t *testing.T) {
 	if isErrorResult(result) {
 		t.Fatalf("expected success, got error: %s", getResultText(t, result))
 	}
-	updated, getErr := s.deps.Store.GetEntity(context.Background(), "REQ-001")
+	updated, getErr := s.deps().Store.GetEntity(context.Background(), "REQ-001")
 	if getErr != nil {
 		t.Fatalf("get entity: %v", getErr)
 	}
@@ -339,7 +336,7 @@ func TestHandleUpdateEntity_DeleteAbsentPropertyIsNoOp(t *testing.T) {
 	t.Parallel()
 	// `priority` is in the metamodel but not set on REQ-001; deleting it should be a no-op.
 	s := makeTestServer(t)
-	before, _ := s.deps.Store.GetEntity(context.Background(), "REQ-001")
+	before, _ := s.deps().Store.GetEntity(context.Background(), "REQ-001")
 	if _, present := before.Properties["priority"]; present {
 		t.Fatalf("test setup: REQ-001 should not have a priority property")
 	}
@@ -355,7 +352,7 @@ func TestHandleUpdateEntity_DeleteAbsentPropertyIsNoOp(t *testing.T) {
 	if isErrorResult(result) {
 		t.Fatalf("expected success on no-op delete, got error: %s", getResultText(t, result))
 	}
-	after, _ := s.deps.Store.GetEntity(context.Background(), "REQ-001")
+	after, _ := s.deps().Store.GetEntity(context.Background(), "REQ-001")
 	if _, present := after.Properties["priority"]; present {
 		t.Errorf("priority should remain absent")
 	}
@@ -369,7 +366,7 @@ func TestHandleUpdateEntity_DeleteRequiredPropertyRejected(t *testing.T) {
 	// `title` is required; attempting to delete it must surface an actionable error
 	// rather than silently producing a now-invalid entity.
 	s := makeTestServer(t)
-	before, _ := s.deps.Store.GetEntity(context.Background(), "REQ-001")
+	before, _ := s.deps().Store.GetEntity(context.Background(), "REQ-001")
 	beforeTitle := before.GetString("title")
 
 	req := makeToolRequest(map[string]any{
@@ -387,7 +384,7 @@ func TestHandleUpdateEntity_DeleteRequiredPropertyRejected(t *testing.T) {
 		t.Errorf("expected 'required' in error message, got %s", getResultText(t, result))
 	}
 	// Entity must be unchanged.
-	after, _ := s.deps.Store.GetEntity(context.Background(), "REQ-001")
+	after, _ := s.deps().Store.GetEntity(context.Background(), "REQ-001")
 	if after.GetString("title") != beforeTitle {
 		t.Errorf("entity must be unchanged after rejected delete: title was %q, now %q", beforeTitle, after.GetString("title"))
 	}
@@ -408,7 +405,7 @@ func TestHandleUpdateEntity_JSONStringPropertiesNullDeletes(t *testing.T) {
 	if isErrorResult(result) {
 		t.Fatalf("expected success, got error: %s", getResultText(t, result))
 	}
-	updated, _ := s.deps.Store.GetEntity(context.Background(), "REQ-001")
+	updated, _ := s.deps().Store.GetEntity(context.Background(), "REQ-001")
 	if _, present := updated.Properties["status"]; present {
 		t.Errorf("status should be removed when sent as JSON string with null")
 	}
@@ -450,7 +447,7 @@ func TestHandleUpdateEntity_MixedSetAndUnset(t *testing.T) {
 	if isErrorResult(result) {
 		t.Fatalf("expected success, got error: %s", getResultText(t, result))
 	}
-	updated, _ := s.deps.Store.GetEntity(context.Background(), "REQ-001")
+	updated, _ := s.deps().Store.GetEntity(context.Background(), "REQ-001")
 	if _, present := updated.Properties["status"]; present {
 		t.Errorf("status should be removed")
 	}
@@ -480,7 +477,7 @@ func TestHandleUpdateEntity_EmptyStringIsNoOp(t *testing.T) {
 		t.Errorf("expected 'no updates specified', got %s", getResultText(t, result))
 	}
 	// And the existing status is untouched.
-	updated, _ := s.deps.Store.GetEntity(context.Background(), "REQ-001")
+	updated, _ := s.deps().Store.GetEntity(context.Background(), "REQ-001")
 	if got := updated.GetString("status"); got != "accepted" {
 		t.Errorf("status should remain 'accepted', got %q", got)
 	}
@@ -501,7 +498,7 @@ func TestHandleUpdateEntity_SetAndOverwriteStillWorks(t *testing.T) {
 	if isErrorResult(result) {
 		t.Fatalf("expected success, got error: %s", getResultText(t, result))
 	}
-	updated, _ := s.deps.Store.GetEntity(context.Background(), "REQ-001")
+	updated, _ := s.deps().Store.GetEntity(context.Background(), "REQ-001")
 	if got := updated.GetString("status"); got != "rejected" {
 		t.Errorf("expected status 'rejected', got %q", got)
 	}
@@ -766,7 +763,7 @@ func TestHandleTraceFrom(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]any{"id": "REQ-001"})
-	result, err := s.trace.handleTraceFrom(context.Background(), req)
+	result, err := group(s, selTrace).handleTraceFrom(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -780,7 +777,7 @@ func TestHandleTraceFrom_NotFound(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]any{"id": "NONEXISTENT"})
-	result, err := s.trace.handleTraceFrom(context.Background(), req)
+	result, err := group(s, selTrace).handleTraceFrom(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -793,7 +790,7 @@ func TestHandleTraceTo(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]any{"id": "REQ-001"})
-	result, err := s.trace.handleTraceTo(context.Background(), req)
+	result, err := group(s, selTrace).handleTraceTo(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -807,7 +804,7 @@ func TestHandleFindPath(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]any{"from": "DEC-001", "to": "REQ-001"})
-	result, err := s.trace.handleFindPath(context.Background(), req)
+	result, err := group(s, selTrace).handleFindPath(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -821,7 +818,7 @@ func TestHandleFindPath_NoPath(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]any{"from": "REQ-002", "to": "REQ-003"})
-	result, err := s.trace.handleFindPath(context.Background(), req)
+	result, err := group(s, selTrace).handleFindPath(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -835,7 +832,7 @@ func TestHandleFindPath_NotFound(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]any{"from": "NONEXISTENT", "to": "REQ-001"})
-	result, err := s.trace.handleFindPath(context.Background(), req)
+	result, err := group(s, selTrace).handleFindPath(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -893,7 +890,7 @@ func TestHandleAnalyzeCardinality_WithViolation(t *testing.T) {
 	s := makeTestServer(t)
 	// Set a minimum cardinality that won't be met
 	minVal := 5
-	meta := s.deps.Meta
+	meta := s.deps().Meta
 	meta.Relations["addresses"] = metamodel.RelationDef{
 		From:        []string{"decision"},
 		To:          []string{"requirement"},
@@ -941,7 +938,7 @@ func TestHandleAnalyzeValidations_NoRules(t *testing.T) {
 func TestHandleGetMetamodel(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	result, err := s.schemaRes.handleGetSchema(context.Background(), &mcpgo.CallToolRequest{})
+	result, err := group(s, selSchemaRes).handleGetSchema(context.Background(), &mcpgo.CallToolRequest{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -961,7 +958,7 @@ func TestHandleGetMetamodel(t *testing.T) {
 func TestHandleListEntityTypes(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	result, err := s.schemaRes.handleListEntityTypes(context.Background(), &mcpgo.CallToolRequest{})
+	result, err := group(s, selSchemaRes).handleListEntityTypes(context.Background(), &mcpgo.CallToolRequest{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -978,7 +975,7 @@ func TestHandleListEntityTypes(t *testing.T) {
 func TestHandleListRelationTypes(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	result, err := s.schemaRes.handleListRelationTypes(context.Background(), &mcpgo.CallToolRequest{})
+	result, err := group(s, selSchemaRes).handleListRelationTypes(context.Background(), &mcpgo.CallToolRequest{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -999,7 +996,7 @@ func TestHandleReadEntity(t *testing.T) {
 	s := makeTestServer(t)
 	req := &mcpgo.ReadResourceRequest{Params: &mcpgo.ReadResourceParams{}}
 	req.Params.URI = "rela://entity/requirement/REQ-001"
-	contents, err := s.schemaRes.handleReadEntity(context.Background(), req)
+	contents, err := group(s, selSchemaRes).handleReadEntity(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1017,7 +1014,7 @@ func TestHandleReadEntity_TypeMismatch(t *testing.T) {
 	s := makeTestServer(t)
 	req := &mcpgo.ReadResourceRequest{Params: &mcpgo.ReadResourceParams{}}
 	req.Params.URI = "rela://entity/decision/REQ-001"
-	_, err := s.schemaRes.handleReadEntity(context.Background(), req)
+	_, err := group(s, selSchemaRes).handleReadEntity(context.Background(), req)
 	if err == nil {
 		t.Error("expected error for type mismatch")
 	}
@@ -1031,7 +1028,7 @@ func TestHandleReadEntity_NotFound(t *testing.T) {
 	s := makeTestServer(t)
 	req := &mcpgo.ReadResourceRequest{Params: &mcpgo.ReadResourceParams{}}
 	req.Params.URI = "rela://entity/requirement/REQ-999"
-	_, err := s.schemaRes.handleReadEntity(context.Background(), req)
+	_, err := group(s, selSchemaRes).handleReadEntity(context.Background(), req)
 	if err == nil {
 		t.Error("expected error for nonexistent entity")
 	}
@@ -1042,7 +1039,7 @@ func TestHandleReadEntity_InvalidURI(t *testing.T) {
 	s := makeTestServer(t)
 	req := &mcpgo.ReadResourceRequest{Params: &mcpgo.ReadResourceParams{}}
 	req.Params.URI = "rela://entity/onlyone"
-	_, err := s.schemaRes.handleReadEntity(context.Background(), req)
+	_, err := group(s, selSchemaRes).handleReadEntity(context.Background(), req)
 	if err == nil {
 		t.Error("expected error for invalid URI")
 	}
@@ -1053,7 +1050,7 @@ func TestHandleReadRelation(t *testing.T) {
 	s := makeTestServer(t)
 	req := &mcpgo.ReadResourceRequest{Params: &mcpgo.ReadResourceParams{}}
 	req.Params.URI = "rela://relation/DEC-001/addresses/REQ-001"
-	contents, err := s.schemaRes.handleReadRelation(context.Background(), req)
+	contents, err := group(s, selSchemaRes).handleReadRelation(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1071,7 +1068,7 @@ func TestHandleReadRelation_NotFound(t *testing.T) {
 	s := makeTestServer(t)
 	req := &mcpgo.ReadResourceRequest{Params: &mcpgo.ReadResourceParams{}}
 	req.Params.URI = "rela://relation/REQ-001/nonexistent/REQ-002"
-	_, err := s.schemaRes.handleReadRelation(context.Background(), req)
+	_, err := group(s, selSchemaRes).handleReadRelation(context.Background(), req)
 	if err == nil {
 		t.Error("expected error for nonexistent relation")
 	}
@@ -1093,7 +1090,7 @@ func TestResolveType(t *testing.T) {
 		{"unknown", "unknown"}, // falls through
 	}
 	for _, tt := range tests {
-		got := s.types.resolveType(tt.input)
+		got := group(s, selTypes).resolveType(tt.input)
 		if got != tt.expected {
 			t.Errorf("resolveType(%q) = %q, want %q", tt.input, got, tt.expected)
 		}
@@ -1103,7 +1100,7 @@ func TestResolveType(t *testing.T) {
 func TestResolveEntityType(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	resolved, def, err := s.types.resolveEntityType("requirement")
+	resolved, def, err := group(s, selTypes).resolveEntityType("requirement")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1118,7 +1115,7 @@ func TestResolveEntityType(t *testing.T) {
 func TestResolveEntityType_Unknown(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	_, _, err := s.types.resolveEntityType("nonexistent")
+	_, _, err := group(s, selTypes).resolveEntityType("nonexistent")
 	if err == nil {
 		t.Error("expected error for unknown type")
 	}

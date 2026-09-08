@@ -910,6 +910,12 @@ func NewApp(
 		}
 	}
 
+	// Warn about scripts that mail without the grant (TKT-JVHSOZ). AFTER the
+	// existence check above, so a project with a missing script fails on that
+	// rather than on a lint that could not read it. See mailgate.go for why
+	// this is a hint rather than a check.
+	warnUngatedMailActionsFromDisk(cfg.Actions, paths.Root)
+
 	// Verify document scripts exist on disk. Shell-command documents are
 	// not checkable this way (the binary may be on PATH at render time
 	// but unavailable now); Lua scripts live in scripts/ under the
@@ -1197,14 +1203,17 @@ func NewApp(
 		store:   st,
 		manager: em, // concrete; writeHandler narrows to entityMutator
 
-		reader:             app.reader,
-		serializer:         app.serializer,
-		affordances:        app.affordances,
-		acl:                func() acl.ACL { return app.acl },
-		audit:              func() audit.Audit { return app.auditSink },
-		gateRead:           app.gateReadOrNotFound,
-		denyAfford:         app.denyAffordance,
-		computeETag:        app.computeEntityETag,
+		reader:      app.reader,
+		serializer:  app.serializer,
+		affordances: app.affordances,
+		acl:         func() acl.ACL { return app.acl },
+		audit:       func() audit.Audit { return app.auditSink },
+		gateRead:    app.gateReadOrNotFound,
+		denyAfford:  app.denyAffordance,
+		computeETag: app.computeEntityETag,
+		faceEdges: func(ctx context.Context, e *entity.Entity) ([]*entity.Relation, map[string]bool, error) {
+			return servedFaceEdges(ctx, app.reader, app.worldNeighbors, app.visibleReader, e)
+		},
 		currentEdgesByPeer: app.currentEdgesByPeer,
 		engine:             func() *script.Engine { return app.scriptEngine },
 		luaDeps:            app.luaWriteDeps,

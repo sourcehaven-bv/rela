@@ -50,6 +50,22 @@ func (er entityReader) getEntity(ctx context.Context, id string) (*entity.Entity
 	return e, true
 }
 
+// getEntityRef looks up the ROW an address names: the bare face for a bare
+// id, the named state for `ID@face`.
+//
+// The write handlers used to hand the raw path segment to getEntity, which
+// works on fsstore and memstore only because their index key IS the state
+// reference (FormatStateRef), and never on pgstore, whose lookup is by
+// (id, face) column. Parsing the address and asking for the state by name
+// is the backend-independent spelling.
+func (er entityReader) getEntityRef(ctx context.Context, ref entityRef) (*entity.Entity, bool) {
+	e, err := er.store.GetEntityState(ctx, ref.ID, ref.Face)
+	if err != nil {
+		return nil, false
+	}
+	return e, true
+}
+
 // entityType returns the type of the entity with the given ID, or empty
 // string if it can't be resolved. The relation GET handlers call it on a
 // relation endpoint's ID to emit a `type` field per edge, so SPA clients can

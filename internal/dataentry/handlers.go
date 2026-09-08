@@ -62,6 +62,25 @@ type TransitionHelp struct {
 
 // handleEntityHelp returns HTML fragment with documentation for an entity type.
 // GET /api/help/{entityType}
+//
+// Deliberately NOT read-gated on the entity type (TKT-TG5RG8 / issue #1176).
+// Help is public, like the schema itself.
+//
+// The clarifying test is an open-source deployment: the entity model, the field
+// descriptions and this help prose all live in the repository. Guarding the
+// endpoint that serves them protects nothing an interested party cannot read on
+// GitHub — it only makes the running app less usable than its own source. Help
+// text is documentation ABOUT the application, not data IN it, and read
+// authorization governs the latter.
+//
+// The same information is already served ungated one endpoint over:
+// handleV1Schema (GET /api/v1/_schema) returns every type name, property and
+// relation, registered in this same router. So gating help alone would be a
+// boundary that LOOKS deliberate while defending nothing — worse than no
+// boundary, because it invites the reader to assume the model is private.
+//
+// What would change the answer: if /api/v1/_schema were ever read-gated, this
+// argument loses its second leg and should be re-decided rather than inherited.
 func (a *App) handleEntityHelp(w http.ResponseWriter, r *http.Request) {
 	entityType := strings.TrimPrefix(r.URL.Path, "/api/help/")
 	if entityType == "" {

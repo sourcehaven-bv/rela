@@ -113,12 +113,13 @@ func TestCapabilitiesFromPayload_DurableJSONShape(t *testing.T) {
 	got := capabilitiesFromPayload(map[string]any{
 		payloadHTTP:      true,
 		payloadAI:        true,
+		payloadMail:      true,
 		payloadWriteFile: true,
 		payloadSecrets:   []any{"reporting_token", "mail_password"},
 	})
 
 	require.Equal(t, metamodel.Capabilities{
-		HTTP: true, AI: true, WriteFile: true,
+		HTTP: true, AI: true, Mail: true, WriteFile: true,
 		Secrets: []string{"reporting_token", "mail_password"},
 	}, got, "capabilities must survive the durable backend's JSON round-trip")
 }
@@ -129,6 +130,7 @@ func TestCapabilitiesFromPayload_EmptyGrantStaysClosed(t *testing.T) {
 	got := capabilitiesFromPayload(map[string]any{
 		payloadHTTP:      false,
 		payloadAI:        false,
+		payloadMail:      false,
 		payloadWriteFile: false,
 		payloadSecrets:   []any{},
 	})
@@ -144,6 +146,7 @@ func TestCapabilitiesFromPayload_MalformedGrantFailsClosed(t *testing.T) {
 	got := capabilitiesFromPayload(map[string]any{
 		payloadHTTP:      "true",
 		payloadAI:        1,
+		payloadMail:      "yes",
 		payloadWriteFile: []any{true},
 		payloadSecrets:   []any{42, true, nil},
 	})
@@ -176,6 +179,41 @@ func TestEnqueuedJob_UsesIdempotencyKey(t *testing.T) {
 		"the task name is the dedupe identity, so a pending run suppresses the next")
 	require.True(t, submitted[0].Deadline.IsZero(),
 		"a scheduled job must carry NO deadline: a deadline drops the job under load")
+}
+
+// TestEnqueuedJob_CapabilitiesSurviveTheQueueHop closes the loop the two
+// halves above only test separately: enqueue writes the grant into the job
+// payload, capabilitiesFromPayload reads it back, and the task the worker runs
+// must be authorized exactly as the one the operator declared.
+//
+// Testing the halves in isolation is not enough — they agree on a set of
+// payload KEYS, and a capability added to one side and not the other passes
+// both. That is the failure mode TKT-YH52OM already hit once, on this exact
+// path. Asserting on the whole struct (rather than field by field) is what
+// makes a newly-added capability show up here instead of being silently
+// dropped in transit.
+func TestEnqueuedJob_CapabilitiesSurviveTheQueueHop(t *testing.T) {
+	t.Parallel()
+
+	declared := metamodel.Capabilities{
+		HTTP: true, AI: true, Mail: true, WriteFile: true,
+		Secrets: []string{"smtp_password"},
+	}
+
+	q := newFakeQueue()
+	s := newQueuedScheduler(t, q, time.Now(), TaskConfig{
+		Name:         "nightly-digest",
+		Script:       "digest.lua",
+		Every:        intervalSchedule(time.Hour),
+		Capabilities: declared,
+	})
+
+	require.NoError(t, s.enqueueTask(context.Background(), s.config.Tasks[0]))
+
+	submitted := q.jobs()
+	require.Len(t, submitted, 1)
+	require.Equal(t, declared, capabilitiesFromPayload(submitted[0].Payload),
+		"the grant the worker restores must be the grant the operator declared")
 }
 
 // TestEnqueuedJob_KeyIsPerTask pins that two tasks never suppress each other.

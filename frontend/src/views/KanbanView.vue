@@ -19,6 +19,8 @@ import BackButton from '@/components/common/BackButton.vue'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { useWorld } from '@/composables/useWorld'
 import { actionAllowed } from '@/utils/affordancesWarning'
+import { entityRef } from '@/utils/entityRef'
+import { worldText } from '@/utils/worldText'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { renderMarkdown } from '@/utils/markdown'
 import { hasIcon, resolveIcon } from '@/utils/icons'
@@ -55,7 +57,7 @@ const draggedCard = ref<Entity | null>(null)
 // CACHE KEY below for the same reason EntityList keys on its params: two
 // worlds are two different boards, and serving one from the other's cache
 // would show faces the reader did not ask for.
-const { world, isWorldBound, worldParam, setWorld } = useWorld()
+const { world, isWorldBound, worldParam } = useWorld()
 
 // The operator's announcement for the world on screen, or '' to announce
 // nothing — the same split the list and detail pages make. Config, not data.
@@ -63,45 +65,38 @@ const worldBanner = computed<string>(
   () => (world.value ? schemaStore.worlds.get(world.value)?.banner : '') || '',
 )
 
-// Whether the reader may read the default world at all. The way back is only
-// offered when it leads somewhere they can go; a button onto a denial is a
-// worse exit than none.
-const canReachDefaultWorld = computed(() => schemaStore.worldReadable(''))
-
-// The default face's name in the operator's own vocabulary ("Go to draft",
-// "Go to English"), falling back to the type-neutral "default" when the type
-// declares no label for it. Same lookup EntityDetail makes.
-const defaultFaceLabel = computed<string>(
-  () => schemaStore.faceLabel(kanbanConfig.value?.entity ?? '', '') || 'default',
-)
-
-function goToDefaultWorld() {
-  setWorld('')
-}
-
 // Affordance gates: `_actions` map from the server. `false` → hide;
 // anything else → render. Helper keeps the contract DRY across
 // components; see frontend/src/utils/affordancesWarning.ts.
 //
-// Both AND in `!isWorldBound`, for the reason EntityDetail's canUpdate
-// documents (RULING 11): `_actions` answers "may this principal write this
-// entity", which is a true answer to the question it is defined to answer and
-// knows nothing about the request's world. But a non-default world is
-// READ-ONLY on this API — `attachWorld` refuses `?world=` on a non-GET — so
-// on a world-bound board the map alone would promise a verb the surface will
-// reject.
-//
-// On a board that promise is worse than a dud button: the write is triggered
-// by a DRAG. A card that accepts the gesture, animates into another column and
-// only then fails has already told the reader their change landed. Refusing
-// the affordance up front is the honest ordering, and the banner below is what
-// keeps it from reading as a bug.
+// From `_actions` alone, under every world. The server computes the map for
+// the FACE each card shows, and the drag writes to that card's ADDRESS
+// (`entityRef`) rather than its bare id, so a card that accepts the gesture
+// writes the row the reader is looking at. A stand-in face the principal may
+// not write reports `update: false` and refuses the drag up front — the
+// honest ordering for a write triggered by a gesture. An earlier revision
+// ANDed in `!isWorldBound`, which made every board read-only under a
+// configured `default_world` (atlas worlds issue 2).
 function canCreate(): boolean {
-  return actionAllowed({ _actions: collectionActions.value }, 'create') && !isWorldBound.value
+  return actionAllowed({ _actions: collectionActions.value }, 'create')
 }
 function canUpdate(entity: Entity): boolean {
-  return actionAllowed(entity, 'update') && !isWorldBound.value
+  return actionAllowed(entity, 'update')
 }
+
+// The world note is a fact about a FACED type only: an entity of a type
+// without faces has one state, present in every world, so no card can be
+// missing from the board on the world's account (atlas worlds issue 1).
+const boardTypeHasFaces = computed(() => {
+  const def = schemaStore.getEntityType(kanbanConfig.value?.entity ?? '')
+  return Object.keys(def?.faces ?? {}).length > 0
+})
+// The operator's `messages.projection` for the world, or nothing.
+const projectionNote = computed<string>(() => {
+  if (!boardTypeHasFaces.value) return ''
+  const info = world.value ? schemaStore.worlds.get(world.value) : undefined
+  return worldText(info?.messages?.projection, { world: world.value })
+})
 
 // Computed
 const kanbanConfig = computed(() => schemaStore.getKanban(props.id) as KanbanConfig | undefined)
@@ -397,7 +392,8 @@ const { mutate: moveCard } = useMutation({
   mutation: ({ entity, updates }: MoveCardVars) => {
     const config = kanbanConfig.value
     if (!config) throw new Error(`unknown kanban view: ${props.id}`)
-    return updateEntity(config.entity, entity.id, { properties: updates })
+    // To the card's ADDRESS, face included — see utils/entityRef.
+    return updateEntity(config.entity, entityRef(entity), { properties: updates })
   },
   onMutate({ entity, updates }: MoveCardVars) {
     return beginOptimistic(
@@ -615,12 +611,12 @@ function onDragEnd() {
 // Enter-activatable, so the keyboard half of the contract comes for free and
 // cmd/middle-click open a tab, which the shim could never do.
 function cardTarget(entity: Entity): RouteLocationRaw {
-  // The edit form writes the DEFAULT face, so under a world a card opens the
-  // detail page instead — the same rule canUpdate applies to the drag. The
-  // world rides along so the detail resolves the face the card showed.
-  if (kanbanConfig.value?.edit_form && !isWorldBound.value) {
-    return `/form/${kanbanConfig.value.edit_form}/${entity.id}`
+  // The form opens on the card's ADDRESS, face included, so an edit from a
+  // world-bound board edits the face the card showed and not its bare id.
+  if (kanbanConfig.value?.edit_form) {
+    return `/form/${kanbanConfig.value.edit_form}/${entityRef(entity)}`
   }
+  // The world rides along so the detail resolves the face the card showed.
   const path = `/entity/${entity.type}/${entity.id}`
   return worldParam.value ? { path, query: { world: worldParam.value } } : path
 }
@@ -651,44 +647,24 @@ function createNew() {
     </header>
 
     <!--
-      A board under a world is READ-ONLY, and unlike a list it has a write
-      affordance to withdraw: drag-drop. `canUpdate` already refuses the drag,
-      so without this the cards would simply stop moving with no account of
-      why — which from the reader's side is indistinguishable from a broken
-      board.
+      A board under a world is a PROJECTION: each card is one entity at the
+      face the world resolved, and an entity with no face here has no card.
+      Cards move — a drag writes the face the card shows — so the banner no
+      longer claims the board is read-only; a card the principal may not write
+      simply refuses the drag through `_actions`, as in the default world.
     -->
-    <div v-if="isWorldBound && !loadError" class="world-banner">
+    <div v-if="isWorldBound && !loadError && (worldBanner || projectionNote)" class="world-banner">
       <!--
-        The ANNOUNCEMENT is operator config (`banner:` on the world). Absent on
-        a language world, where telling someone who asked for Dutch that they
-        are reading Dutch is noise.
+        Both halves are operator config: the ANNOUNCEMENT (`banner:`) and the
+        NOTE (`messages.projection`, only on a board of a faced type). Neither
+        declared: no banner (TKT-5SZG2L).
       -->
       <span v-if="worldBanner" class="world-banner__label">
         {{ worldBanner }}
       </span>
-      <!--
-        The NOTE and the way back are NOT configurable, for the reason
-        EntityDetail's banner records: both are facts about the REQUEST, true
-        whatever the operator declares. Letting an operator suppress them would
-        leave a reader on a board whose cards refuse to move, with no
-        explanation and no exit.
-
-        Two sentences because the board withdraws two different things: cards
-        do not move (the write half), and cards may be missing entirely (the
-        projection half — an entity with no face here is not on the board).
-      -->
-      <span class="world-banner__note">
-        This board is read-only in this world — cards cannot be dragged. Each
-        card shows the face this world resolved, and entities with no face here
-        are not on the board at all.
+      <span v-if="projectionNote" class="world-banner__note">
+        {{ projectionNote }}
       </span>
-      <button
-        v-if="canReachDefaultWorld"
-        class="btn btn-secondary"
-        @click="goToDefaultWorld"
-      >
-        Go to {{ defaultFaceLabel }}
-      </button>
     </div>
 
     <!-- Filter controls -->
@@ -781,7 +757,7 @@ function createNew() {
                 absent entirely — shows nothing at all.
               -->
               <div class="card-title text-wrap-anywhere">
-                {{ getCardTitle(entity) }}<WorldBadge :world="entity._world" />
+                {{ getCardTitle(entity) }}<WorldBadge :world="entity._world" :entity-type="entity.type" />
               </div>
               <CardFieldList
                 :fields="resolvedCardFields(entity)"
@@ -865,7 +841,7 @@ function createNew() {
               <div class="card-id">{{ entity.id }}</div>
               <!-- Face provenance; see the simple board above. -->
               <div class="card-title text-wrap-anywhere">
-                {{ getCardTitle(entity) }}<WorldBadge :world="entity._world" />
+                {{ getCardTitle(entity) }}<WorldBadge :world="entity._world" :entity-type="entity.type" />
               </div>
               <CardFieldList
                 :fields="resolvedCardFields(entity)"
