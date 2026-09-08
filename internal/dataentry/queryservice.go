@@ -240,6 +240,11 @@ func (q *queryService) runVisibleFreeTextSearch(
 // search never matches on draft-only text; an entity the world excludes
 // resolves to no face and cannot appear. A denied world yields nothing here
 // for the same reason the list itself does — see the blocksAllReads guard.
+//
+// attachWorld refused `?world=` combined with `?q=` outright
+// (`world_search_unsupported`) until that step landed. Do not restore that
+// refusal without also reverting this threading: a bare refusal would leave the
+// per-world index built and unreachable.
 func (q *queryService) freeTextIDsForType(
 	ctx context.Context, query, typeName string,
 ) (freeTextIDsForTypeResult, error) {
