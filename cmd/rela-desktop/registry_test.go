@@ -1,10 +1,14 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Sourcehaven-BV/rela/internal/desktop"
 )
 
 // Desktop projects arrive through a file picker from anywhere on disk, so two
@@ -141,4 +145,83 @@ func TestRegistryByRoot(t *testing.T) {
 	assert.Equal(t, p, r.byRoot(root))
 	assert.Equal(t, p, r.byRoot(root+"/"), "trailing slash is the same project")
 	assert.Nil(t, r.byRoot("/Users/x/work/globex/tickets"))
+}
+
+// Routing is the whole point of the registry: a /p/<id>/ request must reach
+// that project's handler with the prefix stripped, and everything else must
+// reach the active project unchanged.
+func TestServeHTTP_RoutesByProject(t *testing.T) {
+	newStub := func(name string, seen *string) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			*seen = r.URL.Path
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = w.Write([]byte(name))
+		})
+	}
+
+	var pathA, pathB string
+	a := &loadedProject{id: "aaa", root: "/a", name: "A", handler: newStub("A", &pathA)}
+	b := &loadedProject{id: "bbb", root: "/b", name: "B", handler: newStub("B", &pathB)}
+
+	d := &Desktop{prefs: &desktop.Preferences{}, registry: newProjectRegistry()}
+	d.registry.add(a)
+	d.registry.add(b) // b is active, being added last
+	d.handler = b.handler
+
+	t.Run("prefixed request reaches its own project", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		d.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/p/aaa/api/v1/entities", http.NoBody))
+
+		assert.Equal(t, "A", rec.Body.String(), "must reach project A, not the active one")
+		assert.Equal(t, "/api/v1/entities", pathA, "the prefix must be stripped")
+	})
+
+	t.Run("the other project is reachable at the same time", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		d.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/p/bbb/list/x", http.NoBody))
+
+		assert.Equal(t, "B", rec.Body.String())
+		assert.Equal(t, "/list/x", pathB)
+	})
+
+	t.Run("project root keeps a rooted path", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		d.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/p/aaa", http.NoBody))
+
+		assert.Equal(t, "/", pathA)
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+
+	t.Run("unprefixed request reaches the active project", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		d.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/entities", http.NoBody))
+
+		assert.Equal(t, "B", rec.Body.String())
+	})
+
+	t.Run("unknown project serves the welcome page, not a bare 404", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		d.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/p/gone/list/x", http.NoBody))
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), "not open",
+			"a closed project should say so rather than 404")
+	})
+}
+
+// The request handed to a project must be a copy: mutating the caller's
+// URL would corrupt it for anything sharing the request.
+func TestServeHTTP_DoesNotMutateCallerRequest(t *testing.T) {
+	d := &Desktop{prefs: &desktop.Preferences{}, registry: newProjectRegistry()}
+	d.registry.add(&loadedProject{
+		id: "aaa",
+		handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/p/aaa/list/x", http.NoBody)
+	d.ServeHTTP(httptest.NewRecorder(), req)
+
+	assert.Equal(t, "/p/aaa/list/x", req.URL.Path, "the caller's request must be untouched")
 }

@@ -354,6 +354,11 @@ func (d *Desktop) failLoad(err error) string {
 // is holding a store the caller believes it replaced.
 func (d *Desktop) releaseLoadedProject() {
 	d.mu.Lock()
+	if d.app != nil {
+		// Drop it from the registry too, or /p/<id>/ keeps routing to a
+		// handler whose store is about to close.
+		d.registry.remove(projectID(d.app.ProjectRoot()))
+	}
 	prevSvc := d.svc
 	prevStopScheduler := d.stopScheduler
 	d.svc = nil
@@ -427,21 +432,35 @@ func (d *Desktop) LoadProject(dir string) string {
 	if err != nil {
 		return d.failLoad(err)
 	}
+	handler := app.NewRouter()
+
+	// Start background scheduler for the new project.
+	schedCtx, schedCancel := context.WithCancel(context.Background())
+
 	d.mu.Lock()
 	// The previous project's scheduler and services were already stopped and
 	// closed above, before the new store was opened — see the comment there.
 	d.svc = svc
 	d.app = app
-	d.handler = app.NewRouter()
+	d.handler = handler
 	d.loadErr = ""
 	d.pendingSetupDir = ""
 	d.pendingSetupFS = nil
 	d.pendingSetupPaths = nil
-
-	// Start background scheduler for the new project.
-	schedCtx, schedCancel := context.WithCancel(context.Background())
 	d.stopScheduler = schedCancel
 	d.mu.Unlock()
+
+	// Register it so /p/<id>/ can reach it, and so a later Open Project on the
+	// same directory can focus this project rather than loading a second copy.
+	d.registry.add(&loadedProject{
+		id:            projectID(app.ProjectRoot()),
+		root:          app.ProjectRoot(),
+		name:          app.ProjectName(),
+		app:           app,
+		svc:           svc,
+		handler:       handler,
+		stopScheduler: schedCancel,
+	})
 
 	scheduler.StartBackground(schedCtx, svc, slog.Default())
 
@@ -833,10 +852,31 @@ func (d *Desktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	loadErr := d.loadErr
 	d.mu.RUnlock()
 
+	// A /p/<id>/ request names its project explicitly; anything else is served
+	// by the active one, which is what the welcome page and any window opened
+	// without a prefix expect.
+	base := ""
+	if id, rest, ok := splitProjectPath(r.URL.Path); ok {
+		p := d.registry.get(id)
+		if p == nil {
+			// An unknown id means a stale window or a hand-typed URL. Serving
+			// the welcome page is more useful than a bare 404: the project may
+			// simply have been closed.
+			serveWelcomePage(w, d.prefs, "That project is not open.")
+			return
+		}
+		h = p.handler
+		base = projectPrefix + id
+		// Route within the project as if it were mounted at the root; the
+		// project's own mux knows nothing about the prefix.
+		r = r.Clone(r.Context())
+		r.URL.Path = rest
+	}
+
 	if h != nil {
-		// Buffer HTML so the multi-window script can be appended; everything
-		// else, including SSE, streams through untouched.
-		inj := &htmlInjector{ResponseWriter: w}
+		// Buffer HTML so the multi-window script and base tag can be appended;
+		// everything else, including SSE, streams through untouched.
+		inj := &htmlInjector{ResponseWriter: w, base: base}
 		h.ServeHTTP(inj, r)
 		inj.finish()
 		return
